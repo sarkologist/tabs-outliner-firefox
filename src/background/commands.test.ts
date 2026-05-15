@@ -192,6 +192,62 @@ describe("background commands", () => {
     expect(result.state.nodes["tab:2"]?.live).toEqual({ tabId: 23, windowId: 10 });
   });
 
+  it("uses the owning closed window session when restoring its only tab", async () => {
+    const url = "moz-extension://one-sec/dashboard.html";
+    const state = closeWindow(bootstrapFromWindows([
+      ...runtimeWindows,
+      {
+        id: 20,
+        focused: false,
+        incognito: false,
+        tabs: [
+          {
+            id: 5,
+            windowId: 20,
+            index: 0,
+            active: true,
+            url,
+            title: "Dashboard | one sec"
+          }
+        ]
+      }
+    ], { now: 1000 }), 20, {
+      now: 2000,
+      sessionId: "session-window-20"
+    });
+    const adapter = fakeAdapter({
+      restoreSession: vi.fn(async () => ({
+        window: {
+          id: 42,
+          focused: true,
+          incognito: false,
+          tabs: [
+            {
+              id: 200,
+              windowId: 42,
+              index: 0,
+              active: true,
+              url,
+              title: "Dashboard | one sec"
+            }
+          ]
+        }
+      })),
+      createWindow: vi.fn(async () => {
+        throw new Error("Illegal URL");
+      })
+    });
+
+    const result = await runCommand(state, adapter, { type: "restoreNode", nodeId: "tab:5" });
+
+    expect(adapter.restoreSession).toHaveBeenCalledWith("session-window-20");
+    expect(adapter.createWindow).not.toHaveBeenCalled();
+    expect(result.state.nodes["window:20"]?.status).toBe("live");
+    expect(result.state.nodes["window:20"]?.live).toEqual({ windowId: 42 });
+    expect(result.state.nodes["tab:5"]?.status).toBe("live");
+    expect(result.state.nodes["tab:5"]?.live).toEqual({ tabId: 200, windowId: 42 });
+  });
+
   it("restores a tab from a closed single-tab window into a new window", async () => {
     const state = closeWindow(bootstrapFromWindows([
       ...runtimeWindows,

@@ -17,7 +17,14 @@ export function createBrowserAdapter(api: WebExtensionBrowser = browser): Browse
     },
 
     async restoreSession(sessionId) {
-      return normalizeSession(await api.sessions.restore(sessionId));
+      const session = normalizeSession(await api.sessions.restore(sessionId));
+      if (session.window && (session.window.tabs?.length ?? 0) === 0) {
+        session.window = {
+          ...session.window,
+          tabs: (await api.tabs.query({ windowId: session.window.id })).map(normalizeTab)
+        };
+      }
+      return session;
     },
 
     async createTab(createProperties) {

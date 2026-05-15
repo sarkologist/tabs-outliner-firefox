@@ -190,6 +190,10 @@ async function restoreNode(
   const plans = planRestore(state, nodeId);
 
   for (const plan of plans) {
+    if (next.nodes[plan.nodeId]?.status !== "closed") {
+      continue;
+    }
+
     const restoredNodes = await runRestorePlan(next, adapter, plan);
     if (restoredNodes.length > 0) {
       next = restoreNodes(next, restoredNodes);
@@ -207,9 +211,9 @@ async function runRestorePlan(
   if (plan.kind === "session") {
     try {
       const restoredSession = await adapter.restoreSession(plan.sessionId);
-      const restored = restoredFromSession(plan.nodeId, restoredSession);
-      if (restored) {
-        return [restored];
+      const restored = restoredFromSession(state, plan, restoredSession);
+      if (restored.length > 0) {
+        return restored;
       }
     } catch {
       // Fall through to URL fallback below.
@@ -242,6 +246,13 @@ async function createFallbackTab(
   }
 
   if (plannedWindow?.kind === "window" && plannedWindow.status === "closed" && windowNodeId) {
+    const sessionRestored = closedWindowHasOnlyTab(state, windowNodeId, nodeId)
+      ? await restoreClosedWindowSessionForTab(state, adapter, nodeId, plannedWindow)
+      : [];
+    if (sessionRestored.length > 0) {
+      return sessionRestored;
+    }
+
     const createdWindow = await adapter.createWindow({ url });
     const createdTab = createdWindow.tabs?.[0];
     if (!createdTab) {
@@ -278,19 +289,126 @@ function restoredTabFromRuntime(nodeId: NodeId, tab: RuntimeTab): RestoredNode {
   };
 }
 
-function restoredFromSession(nodeId: NodeId, session: RestoredSession): RestoredNode | undefined {
+function restoredFromSession(
+  state: OutlineState,
+  plan: RestorePlan,
+  session: RestoredSession
+): RestoredNode[] {
   if (session.tab) {
-    return restoredTabFromRuntime(nodeId, session.tab);
+    return [restoredTabFromRuntime(plan.nodeId, session.tab)];
   }
 
   if (session.window) {
-    return {
-      nodeId,
-      windowId: session.window.id
-    };
+    const windowNodeId = windowNodeIdForSessionPlan(state, plan);
+    if (!windowNodeId) {
+      return [];
+    }
+
+    return [
+      {
+        nodeId: windowNodeId,
+        windowId: session.window.id
+      },
+      ...restoredTabsFromWindowSession(state, plan, windowNodeId, session.window.tabs ?? [])
+    ];
   }
 
-  return undefined;
+  return [];
+}
+
+async function restoreClosedWindowSessionForTab(
+  state: OutlineState,
+  adapter: BrowserAdapter,
+  nodeId: NodeId,
+  windowNode: OutlineNode
+): Promise<RestoredNode[]> {
+  const sessionId = windowNode.restore?.sessionId;
+  if (!sessionId) {
+    return [];
+  }
+
+  try {
+    const restored = restoredFromSession(state, {
+      kind: "session",
+      nodeId,
+      sessionId,
+      windowNodeId: windowNode.id
+    }, await adapter.restoreSession(sessionId));
+
+    return restored.some((node) => node.nodeId === nodeId && typeof node.tabId === "number")
+      ? restored
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function windowNodeIdForSessionPlan(state: OutlineState, plan: RestorePlan): NodeId | undefined {
+  if (plan.windowNodeId && state.nodes[plan.windowNodeId]?.kind === "window") {
+    return plan.windowNodeId;
+  }
+
+  const node = state.nodes[plan.nodeId];
+  return node?.kind === "window" ? node.id : undefined;
+}
+
+function restoredTabsFromWindowSession(
+  state: OutlineState,
+  plan: RestorePlan,
+  windowNodeId: NodeId,
+  tabs: RuntimeTab[]
+): RestoredNode[] {
+  if (tabs.length === 0) {
+    return [];
+  }
+
+  const plannedNode = state.nodes[plan.nodeId];
+  if (plannedNode?.kind === "tab") {
+    const tab = matchingRestoredTab(plannedNode, tabs) ?? (tabs.length === 1 ? tabs[0] : undefined);
+    return tab ? [restoredTabFromRuntime(plannedNode.id, tab)] : [];
+  }
+
+  const tabNodes = collectSubtreeEntries(state, windowNodeId)
+    .map((entry) => entry.node)
+    .filter((node) => node.kind === "tab" && node.status === "closed");
+  const availableTabs = [...tabs];
+  const restored: RestoredNode[] = [];
+
+  for (const node of tabNodes) {
+    const matchIndex = matchingRestoredTabIndex(node, availableTabs);
+    if (matchIndex < 0) {
+      continue;
+    }
+
+    const [tab] = availableTabs.splice(matchIndex, 1);
+    if (tab) {
+      restored.push(restoredTabFromRuntime(node.id, tab));
+    }
+  }
+
+  return restored;
+}
+
+function matchingRestoredTab(node: OutlineNode, tabs: RuntimeTab[]): RuntimeTab | undefined {
+  const index = matchingRestoredTabIndex(node, tabs);
+  return index >= 0 ? tabs[index] : undefined;
+}
+
+function matchingRestoredTabIndex(node: OutlineNode, tabs: RuntimeTab[]): number {
+  const url = node.restore?.url ?? node.url;
+  if (!url) {
+    return -1;
+  }
+
+  return tabs.findIndex((tab) => tab.url === url);
+}
+
+function closedWindowHasOnlyTab(state: OutlineState, windowNodeId: NodeId, tabNodeId: NodeId): boolean {
+  const tabNodeIds = collectSubtreeEntries(state, windowNodeId)
+    .map((entry) => entry.node)
+    .filter((node) => node.kind === "tab" && node.status === "closed")
+    .map((node) => node.id);
+  return tabNodeIds.length === 1 && tabNodeIds[0] === tabNodeId;
 }
 
 async function syncBrowserOrder(state: OutlineState, adapter: BrowserAdapter): Promise<void> {
