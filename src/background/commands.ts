@@ -1,5 +1,6 @@
 import type { BrowserAdapter, RestoredSession } from "./adapter.js";
 import {
+  deleteNode,
   moveNode,
   planRestore,
   projectLiveTabs,
@@ -91,10 +92,93 @@ export async function runCommand(
       return { state: toggleCollapsed(state, command.nodeId) };
 
     case "deleteNode": {
-      const { deleteNode } = await import("../model/outline.js");
-      return { state: deleteNode(state, command.nodeId) };
+      if (!state.nodes[command.nodeId]) {
+        return { state };
+      }
+
+      await closeLiveSubtree(state, adapter, command.nodeId);
+      return { state: deleteNode(state, command.nodeId, { allowLive: true }) };
     }
   }
+}
+
+async function closeLiveSubtree(
+  state: OutlineState,
+  adapter: BrowserAdapter,
+  nodeId: NodeId
+): Promise<void> {
+  const entries = collectSubtreeEntries(state, nodeId);
+  const liveWindowNodeIds = new Set(
+    entries
+      .filter((entry) => isLiveWindow(entry.node))
+      .map((entry) => entry.node.id)
+  );
+
+  for (const { node } of entries) {
+    if (isLiveWindow(node)) {
+      await adapter.closeWindow(node.live.windowId);
+    }
+  }
+
+  const liveTabs = entries
+    .filter(({ node }) => isLiveTab(node) && !hasLiveWindowAncestor(state, node.id, liveWindowNodeIds))
+    .sort((left, right) => right.depth - left.depth);
+
+  for (const { node } of liveTabs) {
+    if (isLiveTab(node)) {
+      await adapter.closeTab(node.live.tabId);
+    }
+  }
+}
+
+type SubtreeEntry = {
+  node: OutlineNode;
+  depth: number;
+};
+
+function collectSubtreeEntries(
+  state: OutlineState,
+  nodeId: NodeId,
+  depth = 0,
+  visited = new Set<NodeId>()
+): SubtreeEntry[] {
+  if (visited.has(nodeId)) {
+    return [];
+  }
+  visited.add(nodeId);
+
+  const node = state.nodes[nodeId];
+  if (!node) {
+    return [];
+  }
+
+  return [
+    { node, depth },
+    ...node.childIds.flatMap((childId) => collectSubtreeEntries(state, childId, depth + 1, visited))
+  ];
+}
+
+function hasLiveWindowAncestor(
+  state: OutlineState,
+  nodeId: NodeId,
+  liveWindowNodeIds: Set<NodeId>
+): boolean {
+  let current = state.nodes[nodeId];
+  const visited = new Set<NodeId>();
+
+  while (current?.parentId) {
+    if (visited.has(current.id)) {
+      return false;
+    }
+    visited.add(current.id);
+
+    if (liveWindowNodeIds.has(current.parentId)) {
+      return true;
+    }
+    current = state.nodes[current.parentId];
+  }
+
+  return false;
 }
 
 async function restoreNode(

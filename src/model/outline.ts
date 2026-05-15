@@ -393,19 +393,26 @@ export function restoreNodes(state: OutlineState, restoredNodes: RestoredNode[])
   return next;
 }
 
-export function deleteNode(state: OutlineState, nodeId: NodeId): OutlineState {
+export function deleteNode(
+  state: OutlineState,
+  nodeId: NodeId,
+  options: { allowLive?: boolean } = {}
+): OutlineState {
   const node = state.nodes[nodeId];
   if (!node) {
     return state;
   }
 
   const subtreeIds = collectSubtreeIds(state, nodeId);
-  const liveNode = subtreeIds
-    .map((id) => state.nodes[id])
-    .find((candidate): candidate is OutlineNode => Boolean(candidate && candidate.status === "live"));
 
-  if (liveNode) {
-    throw new Error(`Cannot delete live node ${liveNode.id}`);
+  if (!options.allowLive) {
+    const liveNode = subtreeIds
+      .map((id) => state.nodes[id])
+      .find((candidate): candidate is OutlineNode => Boolean(candidate && candidate.status === "live"));
+
+    if (liveNode) {
+      throw new Error(`Cannot delete live node ${liveNode.id}`);
+    }
   }
 
   const next = cloneState(state);

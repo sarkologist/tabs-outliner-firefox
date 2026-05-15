@@ -95,6 +95,48 @@ describe("background commands", () => {
     expect(adapter.closeWindow).toHaveBeenCalledWith(10);
   });
 
+  it("deletes closed nodes without closing browser items", async () => {
+    const state = closeTab(bootstrapFromWindows(runtimeWindows, { now: 1000 }), 1, {
+      now: 2000,
+      sessionId: "session-tab-1"
+    });
+    const adapter = fakeAdapter();
+
+    const result = await runCommand(state, adapter, { type: "deleteNode", nodeId: "tab:1" });
+
+    expect(adapter.closeTab).not.toHaveBeenCalled();
+    expect(adapter.closeWindow).not.toHaveBeenCalled();
+    expect(result.state.nodes["tab:1"]).toBeUndefined();
+    expect(result.state.nodes["tab:2"]).toBeUndefined();
+    expect(result.state.nodes["window:10"]?.childIds).toEqual(["tab:3"]);
+  });
+
+  it("closes live tab subtrees before deleting them", async () => {
+    const state = bootstrapFromWindows(runtimeWindows, { now: 1000 });
+    const adapter = fakeAdapter();
+
+    const result = await runCommand(state, adapter, { type: "deleteNode", nodeId: "tab:1" });
+
+    expect(adapter.closeTab).toHaveBeenNthCalledWith(1, 2);
+    expect(adapter.closeTab).toHaveBeenNthCalledWith(2, 1);
+    expect(adapter.closeWindow).not.toHaveBeenCalled();
+    expect(result.state.nodes["tab:1"]).toBeUndefined();
+    expect(result.state.nodes["tab:2"]).toBeUndefined();
+    expect(result.state.nodes["window:10"]?.childIds).toEqual(["tab:3"]);
+  });
+
+  it("closes live windows before deleting them", async () => {
+    const state = bootstrapFromWindows(runtimeWindows, { now: 1000 });
+    const adapter = fakeAdapter();
+
+    const result = await runCommand(state, adapter, { type: "deleteNode", nodeId: "window:10" });
+
+    expect(adapter.closeWindow).toHaveBeenCalledWith(10);
+    expect(adapter.closeTab).not.toHaveBeenCalled();
+    expect(result.state.rootIds).toEqual([]);
+    expect(result.state.nodes).toEqual({});
+  });
+
   it("restores with native sessions before falling back to urls", async () => {
     const state = closeTab(bootstrapFromWindows(runtimeWindows, { now: 1000 }), 2, {
       now: 2000,

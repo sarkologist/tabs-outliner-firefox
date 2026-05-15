@@ -239,6 +239,16 @@ describe("outline model", () => {
     expect(() => deleteNode(state, "tab:1")).toThrow(/live node/i);
   });
 
+  it("deletes live subtrees when explicitly allowed", () => {
+    const state: OutlineState = bootstrapFromWindows(windows, { now: 1000 });
+
+    const deleted = deleteNode(state, "tab:1", { allowLive: true });
+
+    expect(deleted.nodes["tab:1"]).toBeUndefined();
+    expect(deleted.nodes["tab:2"]).toBeUndefined();
+    expect(deleted.nodes["window:10"]?.childIds).toEqual(["tab:3"]);
+  });
+
   it("repairs cyclic and duplicate child links in stored state", () => {
     const state = bootstrapFromWindows(windows, { now: 1000 });
     state.nodes["tab:1"]!.childIds = ["tab:2", "tab:2", "tab:1", "missing"];

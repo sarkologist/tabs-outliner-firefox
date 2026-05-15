@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createBackgroundController } from "./controller.js";
+import { STATE_KEY } from "./storage.js";
 import type { OutlineState, RuntimeTab, RuntimeWindow } from "../model/types.js";
 
 type Listener<TArgs extends unknown[]> = (...args: TArgs) => unknown | Promise<unknown>;
@@ -540,5 +541,60 @@ describe("background controller lifecycle", () => {
     const state = (await controller.handleMessage({ type: "refresh" })) as OutlineState;
 
     expect(state.nodes["tab:1"]?.status).toBe("closed");
+  });
+
+  it("deletes live nodes through commands and ignores later remove events", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        },
+        {
+          id: 2,
+          windowId: 10,
+          index: 1,
+          active: false,
+          url: "https://two.example/",
+          title: "Two"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+
+    const deleted = (await controller.handleMessage({ type: "deleteNode", nodeId: "tab:2" })) as OutlineState;
+
+    expect(runtime.api.tabs.remove).toHaveBeenCalledWith(2);
+    expect(deleted.nodes["tab:2"]).toBeUndefined();
+    expect(deleted.nodes["window:10"]?.childIds).toEqual(["tab:1"]);
+
+    const lastSave = vi.mocked(runtime.api.storage.local.set).mock.calls.at(-1)?.[0] as
+      | Record<string, OutlineState>
+      | undefined;
+    expect(lastSave?.[STATE_KEY]?.nodes["tab:2"]).toBeUndefined();
+
+    const lastBroadcast = runtime.broadcasts.at(-1) as { type?: string; state?: OutlineState } | undefined;
+    expect(lastBroadcast?.type).toBe("stateUpdated");
+    expect(lastBroadcast?.state?.nodes["tab:2"]).toBeUndefined();
+
+    runtime.tabs = runtime.tabs.filter((tab) => tab.id !== 2);
+    await runtime.events.tabRemoved.emit(2, { windowId: 10, isWindowClosing: false });
+
+    const afterRemoveEvent = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(afterRemoveEvent.nodes["tab:2"]).toBeUndefined();
+    expect(afterRemoveEvent.nodes["tab:1"]?.status).toBe("live");
+    expect(afterRemoveEvent.nodes["window:10"]?.childIds).toEqual(["tab:1"]);
   });
 });

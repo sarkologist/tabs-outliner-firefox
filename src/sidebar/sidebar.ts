@@ -141,11 +141,9 @@ function renderNode(state: OutlineState, node: OutlineNode, depth: number): HTML
     });
   }));
 
-  if (node.status === "closed") {
-    row.append(actionButton("Delete", () => {
-      void runAndRender({ type: "deleteNode", nodeId: node.id });
-    }));
-  }
+  row.append(actionButton("Delete", () => {
+    void runAndRender({ type: "deleteNode", nodeId: node.id });
+  }));
 
   item.append(row);
 
