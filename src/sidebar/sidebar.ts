@@ -1,6 +1,13 @@
 import type { BackgroundCommand } from "../background/commands.js";
 import type { OutlineDiagnostics } from "../background/diagnostics.js";
 import type { NodeId, OutlineNode, OutlineState } from "../model/types.js";
+import {
+  commandForDropPlacement,
+  dropModeForPointer,
+  dropPlacementForNode,
+  dropPlacementForRoot,
+  type DropPlacement
+} from "./drop-target.js";
 
 const stateCount = document.querySelector<HTMLSpanElement>("#state-count");
 const diagnostics = document.querySelector<HTMLSpanElement>("#diagnostics");
@@ -11,6 +18,14 @@ const empty = document.querySelector<HTMLElement>("#empty");
 
 let currentState: OutlineState | undefined;
 let draggedNodeId: NodeId | undefined;
+let activeDropPlacement: DropPlacement | undefined;
+
+const dropMarker = document.createElement("li");
+dropMarker.className = "drop-marker";
+dropMarker.setAttribute("aria-hidden", "true");
+
+const dropPreviewChildren = document.createElement("ol");
+dropPreviewChildren.className = "children drop-preview-children";
 
 void loadState();
 
@@ -19,13 +34,21 @@ refresh?.addEventListener("click", () => {
 });
 
 rootDropSurface?.addEventListener("dragover", (event) => {
-  if (isNodeRowEvent(event)) {
-    rootDropSurface.classList.remove("root-drop-target");
+  if (isNodeRowEvent(event) || isTreeEvent(event)) {
+    if (activeDropPlacement) {
+      event.preventDefault();
+    }
+    return;
+  }
+
+  const placement = currentState && draggedNodeId ? dropPlacementForRoot(currentState, draggedNodeId) : undefined;
+  if (!placement) {
+    clearDropPreview();
     return;
   }
 
   event.preventDefault();
-  rootDropSurface.classList.add("root-drop-target");
+  showDropPlacement(placement);
 });
 
 rootDropSurface?.addEventListener("dragleave", (event) => {
@@ -33,7 +56,7 @@ rootDropSurface?.addEventListener("dragleave", (event) => {
     return;
   }
 
-  rootDropSurface.classList.remove("root-drop-target");
+  clearDropPreview();
 });
 
 rootDropSurface?.addEventListener("drop", (event) => {
@@ -41,13 +64,16 @@ rootDropSurface?.addEventListener("drop", (event) => {
     return;
   }
 
-  event.preventDefault();
-  rootDropSurface.classList.remove("root-drop-target");
-  const sourceId = draggedNodeId ?? event.dataTransfer?.getData("text/plain");
-  draggedNodeId = undefined;
-  if (sourceId) {
-    void runAndRender({ type: "moveNodeToNewWindow", nodeId: sourceId });
+  const placement =
+    activeDropPlacement ??
+    (currentState && draggedNodeId ? dropPlacementForRoot(currentState, draggedNodeId) : undefined);
+  if (!placement) {
+    clearDragState();
+    return;
   }
+
+  event.preventDefault();
+  performDrop(placement);
 });
 
 browser.runtime.onMessage.addListener((message) => {
@@ -73,6 +99,7 @@ function render(): void {
     return;
   }
 
+  clearDropPreview();
   tree.textContent = "";
   const state = currentState;
   if (!state) {
@@ -111,23 +138,36 @@ function renderNode(state: OutlineState, node: OutlineNode, depth: number): HTML
     event.dataTransfer?.setDragImage(row, 12, 12);
   });
   row.addEventListener("dragover", (event) => {
+    const placement = dropPlacementForRowEvent(state, node.id, event.clientY, row);
+    if (!placement) {
+      clearDropPreview();
+      return;
+    }
+
     event.preventDefault();
-    row.classList.add("drop-target");
-  });
-  row.addEventListener("dragleave", () => {
-    row.classList.remove("drop-target");
+    event.stopPropagation();
+    showDropPlacement(placement);
   });
   row.addEventListener("drop", (event) => {
-    event.preventDefault();
-    row.classList.remove("drop-target");
-    const sourceId = draggedNodeId ?? event.dataTransfer?.getData("text/plain");
-    draggedNodeId = undefined;
-    if (sourceId && sourceId !== node.id) {
-      void sendCommand(moveCommandForDrop(state, sourceId, node, event.clientY, row)).then((next) => {
-        currentState = next as OutlineState;
-        render();
-      });
+    const sourceId = draggedNodeId;
+    const placement =
+      sourceId &&
+      activeDropPlacement?.kind === "node" &&
+      activeDropPlacement.sourceId === sourceId &&
+      activeDropPlacement.targetId === node.id
+        ? activeDropPlacement
+        : dropPlacementForRowEvent(state, node.id, event.clientY, row);
+    if (!placement) {
+      clearDragState();
+      return;
     }
+
+    event.preventDefault();
+    event.stopPropagation();
+    performDrop(placement);
+  });
+  row.addEventListener("dragend", () => {
+    clearDragState();
   });
 
   const twisty = document.createElement("button");
@@ -191,34 +231,19 @@ function renderNode(state: OutlineState, node: OutlineNode, depth: number): HTML
   return item;
 }
 
-function moveCommandForDrop(
+function dropPlacementForRowEvent(
   state: OutlineState,
-  sourceId: NodeId,
-  target: OutlineNode,
+  targetId: NodeId,
   clientY: number,
   row: HTMLElement
-): BackgroundCommand {
-  const rect = row.getBoundingClientRect();
-  const relativeY = clientY - rect.top;
-  const mode = relativeY < rect.height / 3 ? "before" : relativeY > (rect.height * 2) / 3 ? "after" : "inside";
-
-  if (mode === "inside") {
-    return {
-      type: "moveNode",
-      nodeId: sourceId,
-      parentId: target.id,
-      index: target.childIds.length
-    };
+): DropPlacement | undefined {
+  if (!draggedNodeId) {
+    return undefined;
   }
 
-  const siblings = target.parentId ? state.nodes[target.parentId]?.childIds ?? [] : state.rootIds;
-  const targetIndex = siblings.indexOf(target.id);
-  return {
-    type: "moveNode",
-    nodeId: sourceId,
-    ...(target.parentId ? { parentId: target.parentId } : {}),
-    index: Math.max(0, targetIndex + (mode === "after" ? 1 : 0))
-  };
+  const rect = row.getBoundingClientRect();
+  const relativeY = clientY - rect.top;
+  return dropPlacementForNode(state, draggedNodeId, targetId, dropModeForPointer(relativeY, rect.height));
 }
 
 function actionButton(label: string, onClick: () => void): HTMLButtonElement {
@@ -236,6 +261,106 @@ function actionButton(label: string, onClick: () => void): HTMLButtonElement {
 
 function isNodeRowEvent(event: DragEvent): boolean {
   return event.target instanceof Element && Boolean(event.target.closest(".node-row"));
+}
+
+function isTreeEvent(event: DragEvent): boolean {
+  return Boolean(event.target instanceof Node && tree?.contains(event.target));
+}
+
+function showDropPlacement(placement: DropPlacement): void {
+  if (!tree) {
+    return;
+  }
+
+  removeDropPreviewElements();
+  activeDropPlacement = placement;
+
+  if (placement.kind === "root") {
+    rootDropSurface?.classList.add("root-drop-target");
+    prepareDropMarker("drop-root", 0);
+    tree.append(dropMarker);
+    return;
+  }
+
+  const targetItem = nodeItemForId(placement.targetId);
+  const targetRow = targetItem ? rowForItem(targetItem) : undefined;
+  if (!targetItem || !targetRow) {
+    clearDropPreview();
+    return;
+  }
+
+  const targetDepth = Number(targetRow.style.getPropertyValue("--depth")) || 0;
+  const markerDepth = placement.mode === "inside" ? targetDepth + 1 : targetDepth;
+  prepareDropMarker(`drop-${placement.mode}`, markerDepth);
+
+  if (placement.mode === "before") {
+    targetItem.before(dropMarker);
+    return;
+  }
+
+  if (placement.mode === "after") {
+    targetItem.after(dropMarker);
+    return;
+  }
+
+  targetRow.classList.add("drop-inside-target");
+  const children = childrenForItem(targetItem);
+  if (children) {
+    children.append(dropMarker);
+    return;
+  }
+
+  dropPreviewChildren.append(dropMarker);
+  targetRow.after(dropPreviewChildren);
+}
+
+function prepareDropMarker(className: string, depth: number): void {
+  dropMarker.className = `drop-marker ${className}`;
+  dropMarker.style.setProperty("--depth", String(depth));
+}
+
+function nodeItemForId(nodeId: NodeId): HTMLElement | undefined {
+  if (!tree) {
+    return undefined;
+  }
+
+  return Array.from(tree.querySelectorAll<HTMLElement>(".node")).find((item) => item.dataset.nodeId === nodeId);
+}
+
+function rowForItem(item: HTMLElement): HTMLElement | undefined {
+  const firstChild = item.firstElementChild;
+  return firstChild instanceof HTMLElement && firstChild.classList.contains("node-row") ? firstChild : undefined;
+}
+
+function childrenForItem(item: HTMLElement): HTMLOListElement | undefined {
+  return Array.from(item.children).find(
+    (child): child is HTMLOListElement => child instanceof HTMLOListElement && child.classList.contains("children")
+  );
+}
+
+function performDrop(placement: DropPlacement): void {
+  const command = commandForDropPlacement(placement);
+  clearDragState();
+  void runAndRender(command);
+}
+
+function clearDragState(): void {
+  draggedNodeId = undefined;
+  clearDropPreview();
+}
+
+function clearDropPreview(): void {
+  activeDropPlacement = undefined;
+  removeDropPreviewElements();
+}
+
+function removeDropPreviewElements(): void {
+  dropMarker.remove();
+  dropPreviewChildren.remove();
+  rootDropSurface?.classList.remove("root-drop-target");
+  tree
+    ?.querySelectorAll<HTMLElement>(".drop-inside-target")
+    .forEach((element) => element.classList.remove("drop-inside-target"));
 }
 
 async function runAndRender(command: BackgroundCommand): Promise<void> {
