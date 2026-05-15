@@ -403,7 +403,130 @@ describe("background commands", () => {
     expect(result.state.nodes["tab:1"]?.parentId).toBe(placeholderId);
   });
 
-  it("restores a closed placeholder window by creating and filling a Firefox window", async () => {
+  it("restores a root-dropped closed tab itself through its native session", async () => {
+    const state = closeTab(bootstrapFromWindows(runtimeWindows, { now: 1000 }), 2, {
+      now: 2000,
+      sessionId: "session-tab-2"
+    });
+    const adapter = fakeAdapter({
+      restoreSession: vi.fn(async () => ({
+        tab: {
+          id: 22,
+          windowId: 10,
+          index: 1,
+          active: true,
+          url: "about:debugging#/runtime/this-firefox",
+          title: "Debugging - Runtime / this-firefox"
+        }
+      })),
+      createWindow: vi.fn(async ({ tabId, url }) => {
+        if (url) {
+          throw new Error("Internal URL cannot be created directly");
+        }
+
+        return {
+          id: 42,
+          focused: true,
+          incognito: false,
+          tabs: typeof tabId === "number"
+            ? [
+                {
+                  id: tabId,
+                  windowId: 42,
+                  index: 0,
+                  active: true,
+                  url: "about:debugging#/runtime/this-firefox",
+                  title: "Debugging - Runtime / this-firefox"
+                }
+              ]
+            : []
+        };
+      })
+    });
+    const moved = await runCommand(state, adapter, {
+      type: "moveNodeToNewWindow",
+      nodeId: "tab:2"
+    });
+    const placeholderId = moved.state.rootIds.at(-1)!;
+
+    const restored = await runCommand(moved.state, adapter, {
+      type: "restoreNode",
+      nodeId: "tab:2"
+    });
+
+    expect(adapter.restoreSession).toHaveBeenCalledWith("session-tab-2");
+    expect(adapter.createWindow).toHaveBeenCalledWith({ tabId: 22 });
+    expect(restored.state.nodes[placeholderId]?.status).toBe("live");
+    expect(restored.state.nodes[placeholderId]?.live).toEqual({ windowId: 42 });
+    expect(restored.state.nodes["tab:2"]?.status).toBe("live");
+    expect(restored.state.nodes["tab:2"]?.live).toEqual({ tabId: 22, windowId: 42 });
+  });
+
+  it("restores a closed placeholder window through the dragged tab session", async () => {
+    const state = closeTab(bootstrapFromWindows(runtimeWindows, { now: 1000 }), 1, {
+      now: 2000,
+      sessionId: "session-tab-1"
+    });
+    const adapter = fakeAdapter({
+      restoreSession: vi.fn(async () => ({
+        tab: {
+          id: 21,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "about:debugging#/runtime/this-firefox",
+          title: "Debugging - Runtime / this-firefox"
+        }
+      })),
+      createWindow: vi.fn(async ({ tabId, url }) => {
+        if (url) {
+          throw new Error("Internal URL cannot be created directly");
+        }
+
+        return {
+          id: 42,
+          focused: true,
+          incognito: false,
+          tabs: typeof tabId === "number"
+            ? [
+                {
+                  id: tabId,
+                  windowId: 42,
+                  index: 0,
+                  active: true,
+                  url: "about:debugging#/runtime/this-firefox",
+                  title: "Debugging - Runtime / this-firefox"
+                }
+              ]
+            : []
+        };
+      })
+    });
+    const moved = await runCommand(state, adapter, {
+      type: "moveNodeToNewWindow",
+      nodeId: "tab:1"
+    });
+    const placeholderId = moved.state.rootIds.at(-1)!;
+
+    const restored = await runCommand(moved.state, adapter, {
+      type: "restoreNode",
+      nodeId: placeholderId
+    });
+
+    expect(adapter.restoreSession).toHaveBeenCalledWith("session-tab-1");
+    expect(adapter.createWindow).toHaveBeenCalledWith({ tabId: 21 });
+    expect(adapter.createTab).toHaveBeenCalledWith({
+      url: "https://example.com/child",
+      windowId: 42,
+      active: false
+    });
+    expect(restored.state.nodes[placeholderId]?.status).toBe("live");
+    expect(restored.state.nodes[placeholderId]?.live).toEqual({ windowId: 42 });
+    expect(restored.state.nodes["tab:1"]?.live).toEqual({ tabId: 21, windowId: 42 });
+    expect(restored.state.nodes["tab:2"]?.live).toEqual({ tabId: 99, windowId: 42 });
+  });
+
+  it("falls back to urls when restoring a closed placeholder window without a session match", async () => {
     const state = closeTab(bootstrapFromWindows(runtimeWindows, { now: 1000 }), 1, {
       now: 2000,
       sessionId: "session-tab-1"
@@ -420,7 +543,7 @@ describe("background commands", () => {
       nodeId: placeholderId
     });
 
-    expect(adapter.restoreSession).not.toHaveBeenCalled();
+    expect(adapter.restoreSession).toHaveBeenCalledWith("session-tab-1");
     expect(adapter.createWindow).toHaveBeenCalledWith({ url: "https://example.com/" });
     expect(adapter.createTab).toHaveBeenCalledWith({
       url: "https://example.com/child",

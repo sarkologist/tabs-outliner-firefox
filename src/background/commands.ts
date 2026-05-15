@@ -228,8 +228,11 @@ async function runRestorePlan(
   plan: RestorePlan
 ): Promise<RestoredNode[]> {
   if (plan.kind === "session") {
-    if (plan.fallbackUrl && shouldCreateClosedWindowDestination(state, plan)) {
-      return createFallbackTab(state, adapter, plan.nodeId, plan.fallbackUrl, plan.windowNodeId);
+    if (shouldCreateClosedWindowDestination(state, plan)) {
+      const restoredInWindow = await restoreSessionIntoClosedWindowDestination(state, adapter, plan);
+      if (restoredInWindow.length > 0) {
+        return restoredInWindow;
+      }
     }
 
     try {
@@ -249,6 +252,43 @@ async function runRestorePlan(
   }
 
   return createFallbackTab(state, adapter, plan.nodeId, plan.url, plan.windowNodeId);
+}
+
+async function restoreSessionIntoClosedWindowDestination(
+  state: OutlineState,
+  adapter: BrowserAdapter,
+  plan: Extract<RestorePlan, { kind: "session" }>
+): Promise<RestoredNode[]> {
+  try {
+    const restoredSession = await adapter.restoreSession(plan.sessionId);
+    if (restoredSession.tab && plan.windowNodeId) {
+      const createdWindow = await adapter.createWindow({ tabId: restoredSession.tab.id });
+      const movedTab =
+        createdWindow.tabs?.find((tab) => tab.id === restoredSession.tab?.id) ??
+        {
+          ...restoredSession.tab,
+          windowId: createdWindow.id,
+          index: 0
+        };
+
+      return [
+        {
+          nodeId: plan.windowNodeId,
+          windowId: createdWindow.id
+        },
+        restoredTabFromRuntime(plan.nodeId, movedTab)
+      ];
+    }
+
+    const restored = restoredFromSession(state, plan, restoredSession);
+    if (restored.length > 0) {
+      return restored;
+    }
+  } catch {
+    // Fall through to URL fallback below.
+  }
+
+  return plan.fallbackUrl ? createFallbackTab(state, adapter, plan.nodeId, plan.fallbackUrl, plan.windowNodeId) : [];
 }
 
 function shouldCreateClosedWindowDestination(state: OutlineState, plan: RestorePlan): boolean {
