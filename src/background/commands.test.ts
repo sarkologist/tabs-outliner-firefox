@@ -283,6 +283,53 @@ describe("background commands", () => {
     expect(result.state.nodes["tab:5"]?.live).toEqual({ tabId: 200, windowId: 42 });
   });
 
+  it("does not fall through to child url restore when a window session reports no tabs yet", async () => {
+    const url = "about:debugging#/runtime/this-firefox";
+    const state = closeWindow(bootstrapFromWindows([
+      ...runtimeWindows,
+      {
+        id: 20,
+        focused: false,
+        incognito: false,
+        tabs: [
+          {
+            id: 5,
+            windowId: 20,
+            index: 0,
+            active: true,
+            url,
+            title: "Debugging - Runtime / this-firefox"
+          }
+        ]
+      }
+    ], { now: 1000 }), 20, {
+      now: 2000,
+      sessionId: "session-window-20"
+    });
+    const adapter = fakeAdapter({
+      restoreSession: vi.fn(async () => ({
+        window: {
+          id: 42,
+          focused: true,
+          incognito: false,
+          tabs: []
+        }
+      })),
+      createTab: vi.fn(async () => {
+        throw new Error("Internal URL cannot be created directly");
+      })
+    });
+
+    const result = await runCommand(state, adapter, { type: "restoreNode", nodeId: "window:20" });
+
+    expect(adapter.restoreSession).toHaveBeenCalledWith("session-window-20");
+    expect(adapter.createTab).not.toHaveBeenCalled();
+    expect(adapter.createWindow).not.toHaveBeenCalled();
+    expect(result.state.nodes["window:20"]?.status).toBe("live");
+    expect(result.state.nodes["window:20"]?.live).toEqual({ windowId: 42 });
+    expect(result.state.nodes["tab:5"]?.status).toBe("closed");
+  });
+
   it("moves outline nodes and asks Firefox to match preorder", async () => {
     const state: OutlineState = bootstrapFromWindows(runtimeWindows, { now: 1000 });
     const adapter = fakeAdapter();

@@ -188,15 +188,24 @@ async function restoreNode(
 ): Promise<OutlineState> {
   let next = state;
   const plans = planRestore(state, nodeId);
+  const restoredWindowNodeIds = new Set<NodeId>();
 
   for (const plan of plans) {
     if (next.nodes[plan.nodeId]?.status !== "closed") {
+      continue;
+    }
+    if (hasAncestor(plan.nodeId, restoredWindowNodeIds, next)) {
       continue;
     }
 
     const restoredNodes = await runRestorePlan(next, adapter, plan);
     if (restoredNodes.length > 0) {
       next = restoreNodes(next, restoredNodes);
+      for (const restored of restoredNodes) {
+        if (next.nodes[restored.nodeId]?.kind === "window") {
+          restoredWindowNodeIds.add(restored.nodeId);
+        }
+      }
     }
   }
 
@@ -256,7 +265,12 @@ async function createFallbackTab(
     const createdWindow = await adapter.createWindow({ url });
     const createdTab = createdWindow.tabs?.[0];
     if (!createdTab) {
-      throw new Error("Created restore window did not include tabs");
+      return [
+        {
+          nodeId: windowNodeId,
+          windowId: createdWindow.id
+        }
+      ];
     }
 
     return [
@@ -409,6 +423,24 @@ function closedWindowHasOnlyTab(state: OutlineState, windowNodeId: NodeId, tabNo
     .filter((node) => node.kind === "tab" && node.status === "closed")
     .map((node) => node.id);
   return tabNodeIds.length === 1 && tabNodeIds[0] === tabNodeId;
+}
+
+function hasAncestor(nodeId: NodeId, ancestorIds: Set<NodeId>, state: OutlineState): boolean {
+  let current = state.nodes[nodeId];
+  const seen = new Set<NodeId>();
+
+  while (current?.parentId) {
+    if (seen.has(current.id)) {
+      return false;
+    }
+    seen.add(current.id);
+    if (ancestorIds.has(current.parentId)) {
+      return true;
+    }
+    current = state.nodes[current.parentId];
+  }
+
+  return false;
 }
 
 async function syncBrowserOrder(state: OutlineState, adapter: BrowserAdapter): Promise<void> {

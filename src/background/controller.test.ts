@@ -543,6 +543,95 @@ describe("background controller lifecycle", () => {
     expect(state.nodes["tab:1"]?.status).toBe("closed");
   });
 
+  it("reattaches delayed tabs after restoring a closed single-tab window node", async () => {
+    const url = "about:debugging#/runtime/this-firefox";
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        },
+        {
+          id: 20,
+          focused: false,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        },
+        {
+          id: 5,
+          windowId: 20,
+          index: 0,
+          active: true,
+          url,
+          title: "Debugging - Runtime / this-firefox"
+        }
+      ]
+    );
+    vi.mocked(runtime.api.tabs.query).mockImplementation(async (queryInfo: Record<string, unknown> = {}) => {
+      const windowId = queryInfo.windowId;
+      return typeof windowId === "number"
+        ? runtime.tabs.filter((tab) => tab.windowId === windowId)
+        : runtime.tabs;
+    });
+    vi.mocked(runtime.api.sessions.getRecentlyClosed).mockResolvedValue([
+      { window: { sessionId: "session-window-20" } } as never
+    ]);
+    vi.mocked(runtime.api.sessions.restore).mockResolvedValue({
+      window: {
+        id: 42,
+        focused: true,
+        incognito: false,
+        tabs: []
+      }
+    });
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+
+    runtime.windows = runtime.windows.filter((windowInfo) => windowInfo.id !== 20);
+    runtime.tabs = runtime.tabs.filter((tab) => tab.windowId !== 20);
+    await runtime.events.windowRemoved.emit(20);
+
+    const restored = (await controller.handleMessage({ type: "restoreNode", nodeId: "window:20" })) as OutlineState;
+    expect(restored.nodes["window:20"]?.live).toEqual({ windowId: 42 });
+    expect(restored.nodes["tab:5"]?.status).toBe("closed");
+    expect(restored.nodes["window:42"]).toBeUndefined();
+
+    runtime.windows = [
+      ...runtime.windows,
+      {
+        id: 42,
+        focused: true,
+        incognito: false
+      }
+    ];
+    const restoredTab: RuntimeTab = {
+      id: 50,
+      windowId: 42,
+      index: 0,
+      active: true,
+      url,
+      title: "Debugging - Runtime / this-firefox"
+    };
+    runtime.tabs = [...runtime.tabs, restoredTab];
+    await runtime.events.tabCreated.emit(restoredTab);
+
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(state.nodes["window:20"]?.live).toEqual({ windowId: 42 });
+    expect(state.nodes["tab:5"]?.live).toEqual({ tabId: 50, windowId: 42 });
+    expect(state.nodes["window:42"]).toBeUndefined();
+    expect(state.rootIds).not.toContain("window:42");
+  });
+
   it("deletes live nodes through commands and ignores later remove events", async () => {
     const runtime = fakeRuntime(
       [
