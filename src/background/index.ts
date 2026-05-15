@@ -1,5 +1,6 @@
 import { createBrowserAdapter } from "./browser-adapter.js";
 import { runCommand } from "./commands.js";
+import { createStateCache } from "./state-cache.js";
 import { loadState, saveState } from "./storage.js";
 import {
   bootstrapFromWindows,
@@ -13,7 +14,7 @@ const api = browser;
 const adapter = createBrowserAdapter(api);
 
 let state: OutlineState | undefined;
-let stateReady: Promise<OutlineState> | undefined;
+const stateCache = createStateCache(initializeState);
 
 api.runtime.onInstalled.addListener(() => {
   void ensureState();
@@ -35,6 +36,7 @@ api.runtime.onMessage.addListener(async (message) => {
   const current = await ensureState();
   const result = await runCommand(current, adapter, message);
   state = result.state;
+  stateCache.replace(result.state);
   await persistAndBroadcast();
   return result.state;
 });
@@ -55,6 +57,7 @@ api.tabs.onRemoved.addListener(async (tabId, removeInfo) => {
       now: Date.now(),
       ...(recent?.tab?.sessionId ? { sessionId: recent.tab.sessionId } : {})
     });
+    stateCache.replace(state);
     await persistAndBroadcast();
   }
 });
@@ -66,6 +69,7 @@ api.windows.onRemoved.addListener(async (windowId) => {
     now: Date.now(),
     ...(recent?.window?.sessionId ? { sessionId: recent.window.sessionId } : {})
   });
+  stateCache.replace(state);
   await persistAndBroadcast();
 });
 
@@ -74,10 +78,7 @@ api.sessions.onChanged.addListener(async () => {
 });
 
 async function ensureState(): Promise<OutlineState> {
-  if (!stateReady) {
-    stateReady = initializeState();
-  }
-  return stateReady;
+  return stateCache.get();
 }
 
 async function initializeState(): Promise<OutlineState> {
@@ -93,6 +94,7 @@ async function initializeState(): Promise<OutlineState> {
 async function refreshFromRuntime(): Promise<void> {
   const current = await ensureState();
   state = reconcileWithWindows(current, await getNormalWindows(), { now: Date.now() });
+  stateCache.replace(state);
   await persistAndBroadcast();
 }
 
