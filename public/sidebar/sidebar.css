@@ -7,6 +7,17 @@
     "Segoe UI",
     sans-serif;
   font-size: 13px;
+  --outline-zoom: 1;
+  --outline-font-size: 13px;
+  --node-row-height: 18px;
+  --node-icon-size: 16px;
+  --node-indent: 11px;
+  --node-row-padding-x: 4px;
+  --node-label-padding-x: 3px;
+  --node-row-gap: 1px;
+  --node-border-width: 3px;
+  --drop-marker-height: 8px;
+  --drop-marker-inside-height: 14px;
 }
 
 body {
@@ -73,7 +84,7 @@ h1 {
 }
 
 main {
-  padding: 6px 0 16px;
+  padding: 3px 0 10px;
 }
 
 main.root-drop-target {
@@ -93,14 +104,20 @@ main.root-drop-target {
   list-style: none;
 }
 
+.tree {
+  font-size: var(--outline-font-size);
+}
+
 .node-row {
   display: grid;
-  grid-template-columns: 18px minmax(0, 1fr) 22px 22px;
-  gap: 1px;
+  grid-template-columns: var(--node-icon-size) minmax(0, 1fr) var(--node-icon-size) var(--node-icon-size);
+  gap: var(--node-row-gap);
   align-items: center;
-  min-height: 24px;
-  padding: 1px 5px 1px calc(5px + var(--depth) * 13px);
-  border-left: 3px solid transparent;
+  min-height: var(--node-row-height);
+  padding: 0 var(--node-row-padding-x) 0
+    calc(var(--node-row-padding-x) + var(--depth) * var(--node-indent));
+  border-left: var(--node-border-width) solid transparent;
+  line-height: 1.15;
 }
 
 .node-row:hover {
@@ -138,9 +155,10 @@ main.root-drop-target {
   --drop-color: color-mix(in srgb, Highlight 78%, CanvasText 12%);
 
   position: relative;
-  height: 10px;
+  height: var(--drop-marker-height);
   margin: 0;
-  padding: 0 5px 0 calc(5px + var(--depth) * 13px);
+  padding: 0 var(--node-row-padding-x) 0
+    calc(var(--node-row-padding-x) + var(--depth) * var(--node-indent));
   list-style: none;
   pointer-events: none;
 }
@@ -149,7 +167,8 @@ main.root-drop-target {
   content: "";
   display: block;
   height: 2px;
-  margin: 4px 24px 4px 21px;
+  margin: calc((var(--drop-marker-height) - 2px) / 2) calc(var(--node-icon-size) + 8px)
+    calc((var(--drop-marker-height) - 2px) / 2) calc(var(--node-icon-size) + var(--node-row-gap));
   border-radius: 999px;
   background: var(--drop-color);
 }
@@ -157,8 +176,10 @@ main.root-drop-target {
 .drop-marker::after {
   content: "";
   position: absolute;
-  top: 2px;
-  left: calc(5px + var(--depth) * 13px + 17px);
+  top: calc((var(--drop-marker-height) - 6px) / 2);
+  left: calc(
+    var(--node-row-padding-x) + var(--depth) * var(--node-indent) + var(--node-icon-size) - 3px
+  );
   width: 6px;
   height: 6px;
   border-radius: 999px;
@@ -167,18 +188,19 @@ main.root-drop-target {
 
 .drop-marker.drop-inside,
 .drop-marker.drop-root {
-  height: 18px;
+  height: var(--drop-marker-inside-height);
 }
 
 .drop-marker.drop-inside::before {
   height: 2px;
-  margin: 8px 24px 8px 18px;
+  margin: calc((var(--drop-marker-inside-height) - 2px) / 2) calc(var(--node-icon-size) + 8px)
+    calc((var(--drop-marker-inside-height) - 2px) / 2) calc(var(--node-icon-size) + 2px);
   background: color-mix(in srgb, Highlight 62%, transparent);
 }
 
 .drop-marker.drop-inside::after {
-  top: 5px;
-  left: calc(5px + var(--depth) * 13px + 8px);
+  top: calc((var(--drop-marker-inside-height) - 10px) / 2);
+  left: calc(var(--node-row-padding-x) + var(--depth) * var(--node-indent) + var(--node-icon-size) / 2);
   width: 6px;
   height: 6px;
   border: 2px solid var(--drop-color);
@@ -187,7 +209,8 @@ main.root-drop-target {
 
 .drop-marker.drop-root::before {
   height: 2px;
-  margin: 8px 24px 8px 3px;
+  margin: calc((var(--drop-marker-inside-height) - 2px) / 2) calc(var(--node-icon-size) + 8px)
+    calc((var(--drop-marker-inside-height) - 2px) / 2) 3px;
   background: repeating-linear-gradient(
     90deg,
     var(--drop-color) 0 8px,
@@ -196,8 +219,8 @@ main.root-drop-target {
 }
 
 .drop-marker.drop-root::after {
-  top: 5px;
-  left: 5px;
+  top: calc((var(--drop-marker-inside-height) - 8px) / 2);
+  left: var(--node-row-padding-x);
   width: 8px;
   height: 8px;
 }
@@ -222,7 +245,8 @@ main.root-drop-target {
 .node-label {
   display: block;
   min-width: 0;
-  padding: 1px 4px;
+  padding: 0 var(--node-label-padding-x);
+  line-height: 1.15;
   text-align: left;
 }
 
@@ -237,16 +261,17 @@ main.root-drop-target {
   min-width: 0;
   overflow: hidden;
   font-weight: 600;
+  line-height: 1.15;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .icon-button {
-  width: 20px;
-  height: 20px;
+  width: var(--node-icon-size);
+  height: var(--node-icon-size);
   padding: 0;
-  border-radius: 4px;
-  line-height: 20px;
+  border-radius: 3px;
+  line-height: var(--node-icon-size);
   text-align: center;
 }
 

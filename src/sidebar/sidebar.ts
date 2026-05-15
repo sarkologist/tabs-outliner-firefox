@@ -8,6 +8,16 @@ import {
   dropPlacementForRoot,
   type DropPlacement
 } from "./drop-target.js";
+import {
+  DEFAULT_ZOOM,
+  ZOOM_STORAGE_KEY,
+  clampZoom,
+  normalizeStoredZoom,
+  resetZoom,
+  stepZoom,
+  type ZoomDirection,
+  zoomCssMetrics
+} from "./zoom.js";
 
 const stateCount = document.querySelector<HTMLSpanElement>("#state-count");
 const diagnostics = document.querySelector<HTMLSpanElement>("#diagnostics");
@@ -19,6 +29,10 @@ const empty = document.querySelector<HTMLElement>("#empty");
 let currentState: OutlineState | undefined;
 let draggedNodeId: NodeId | undefined;
 let activeDropPlacement: DropPlacement | undefined;
+let currentZoom = DEFAULT_ZOOM;
+let wheelZoomDelta = 0;
+
+const WHEEL_ZOOM_THRESHOLD_PX = 80;
 
 const dropMarker = document.createElement("li");
 dropMarker.className = "drop-marker";
@@ -27,6 +41,9 @@ dropMarker.setAttribute("aria-hidden", "true");
 const dropPreviewChildren = document.createElement("ol");
 dropPreviewChildren.className = "children drop-preview-children";
 
+applyZoom(currentZoom);
+registerZoomShortcuts();
+void loadZoomPreference();
 void loadState();
 
 refresh?.addEventListener("click", () => {
@@ -92,6 +109,123 @@ async function loadState(): Promise<void> {
   } catch (error) {
     showLoadError(error);
   }
+}
+
+async function loadZoomPreference(): Promise<void> {
+  const stored = await browser.storage.local.get(ZOOM_STORAGE_KEY).catch(() => undefined);
+  if (!stored) {
+    return;
+  }
+
+  setZoom(normalizeStoredZoom(stored[ZOOM_STORAGE_KEY]), { persist: false });
+}
+
+function registerZoomShortcuts(): void {
+  document.addEventListener("keydown", (event) => {
+    if (!isZoomModifierEvent(event)) {
+      return;
+    }
+
+    const action = zoomKeyboardAction(event.key);
+    if (!action) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    wheelZoomDelta = 0;
+
+    if (action === "reset") {
+      setZoom(resetZoom());
+      return;
+    }
+
+    setZoom(stepZoom(currentZoom, action));
+  });
+
+  document.addEventListener(
+    "wheel",
+    (event) => {
+      if (!isZoomModifierEvent(event)) {
+        return;
+      }
+
+      const deltaY = normalizedWheelDeltaY(event);
+      if (deltaY === 0) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      wheelZoomDelta += deltaY;
+
+      if (Math.abs(wheelZoomDelta) < WHEEL_ZOOM_THRESHOLD_PX) {
+        return;
+      }
+
+      const direction: ZoomDirection = wheelZoomDelta < 0 ? "in" : "out";
+      wheelZoomDelta = 0;
+      setZoom(stepZoom(currentZoom, direction));
+    },
+    { passive: false }
+  );
+}
+
+function isZoomModifierEvent(event: KeyboardEvent | WheelEvent): boolean {
+  return (event.ctrlKey || event.metaKey) && !event.altKey;
+}
+
+function zoomKeyboardAction(key: string): ZoomDirection | "reset" | undefined {
+  if (key === "+" || key === "=") {
+    return "in";
+  }
+
+  if (key === "-" || key === "_") {
+    return "out";
+  }
+
+  if (key === "0" || key === ")") {
+    return "reset";
+  }
+
+  return undefined;
+}
+
+function normalizedWheelDeltaY(event: WheelEvent): number {
+  if (event.deltaMode === WheelEvent.DOM_DELTA_LINE) {
+    return event.deltaY * 16;
+  }
+
+  if (event.deltaMode === WheelEvent.DOM_DELTA_PAGE) {
+    return event.deltaY * window.innerHeight;
+  }
+
+  return event.deltaY;
+}
+
+function setZoom(zoom: number, options: { persist?: boolean } = {}): void {
+  const nextZoom = clampZoom(zoom);
+  if (nextZoom === currentZoom) {
+    return;
+  }
+
+  currentZoom = nextZoom;
+  applyZoom(currentZoom);
+
+  if (options.persist ?? true) {
+    void saveZoomPreference(currentZoom);
+  }
+}
+
+function applyZoom(zoom: number): void {
+  const metrics = zoomCssMetrics(zoom);
+  for (const [name, value] of Object.entries(metrics)) {
+    document.documentElement.style.setProperty(name, value);
+  }
+}
+
+async function saveZoomPreference(zoom: number): Promise<void> {
+  await browser.storage.local.set({ [ZOOM_STORAGE_KEY]: zoom }).catch(() => undefined);
 }
 
 function render(): void {
