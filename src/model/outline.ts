@@ -21,6 +21,10 @@ export function windowNodeId(windowId: number): NodeId {
   return `window:${windowId}`;
 }
 
+function windowTitle(): string {
+  return "Window";
+}
+
 export function bootstrapFromWindows(windows: RuntimeWindow[], clock: Clock): OutlineState {
   const state: OutlineState = {
     version: 1,
@@ -36,7 +40,7 @@ export function bootstrapFromWindows(windows: RuntimeWindow[], clock: Clock): Ou
       kind: "window",
       status: "live",
       childIds: [],
-      title: win.focused ? "Current window" : `Window ${win.id}`,
+      title: windowTitle(),
       active: win.focused,
       collapsed: false,
       createdAt: clock.now,
@@ -94,7 +98,7 @@ export function reconcileWithWindows(
 
     if (existingWindow) {
       existingWindow.status = "live";
-      existingWindow.title = win.focused ? "Current window" : existingWindow.title || `Window ${win.id}`;
+      existingWindow.title = windowTitle();
       existingWindow.active = win.focused;
       existingWindow.live = { windowId: win.id };
       existingWindow.updatedAt = clock.now;
@@ -106,7 +110,7 @@ export function reconcileWithWindows(
         kind: "window",
         status: "live",
         childIds: [],
-        title: win.focused ? "Current window" : `Window ${win.id}`,
+        title: windowTitle(),
         active: win.focused,
         collapsed: false,
         createdAt: clock.now,
@@ -196,6 +200,9 @@ export function repairState(state: OutlineState): OutlineState {
   );
 
   for (const [nodeId, node] of Object.entries(next.nodes)) {
+    if (node.kind === "window") {
+      node.title = windowTitle();
+    }
     node.childIds = [];
     if (
       node.parentId &&
@@ -325,7 +332,7 @@ export function moveTabToNewLiveWindow(
     kind: "window",
     status: "live",
     childIds: [],
-    title: windowInfo.focused ? "Current window" : `Window ${windowInfo.id}`,
+    title: windowTitle(),
     active: windowInfo.focused,
     collapsed: false,
     createdAt: clock.now,
@@ -337,9 +344,7 @@ export function moveTabToNewLiveWindow(
     for (const existing of Object.values(next.nodes)) {
       if (existing.id !== newWindowNodeId && isNodeLiveWindow(existing)) {
         existing.active = false;
-        if (existing.title === "Current window") {
-          existing.title = `Window ${existing.live.windowId}`;
-        }
+        existing.title = windowTitle();
       }
     }
   }
@@ -373,7 +378,7 @@ export function moveTabToNewClosedWindow(
     kind: "window",
     status: "closed",
     childIds: [],
-    title: sourceWindow?.title || "Saved window",
+    title: windowTitle(),
     collapsed: false,
     createdAt: clock.now,
     updatedAt: clock.now,

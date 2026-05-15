@@ -73,7 +73,7 @@ describe("dropPlacementForRoot", () => {
     state.nodes["window:2"] = {
       ...windowNode([]),
       id: "window:2",
-      title: "Window 2",
+      title: "Window",
       live: { windowId: 2 }
     };
 
@@ -92,7 +92,7 @@ describe("dropPlacementForRoot", () => {
     state.nodes["window:2"] = {
       ...windowNode([]),
       id: "window:2",
-      title: "Window 2",
+      title: "Window",
       live: { windowId: 2 }
     };
 

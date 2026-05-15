@@ -98,6 +98,8 @@ describe("outline model", () => {
     const state = bootstrapFromWindows(windows, { now: 1000 });
 
     expect(state.rootIds).toEqual(["window:10"]);
+    expect(state.nodes["window:10"]?.title).toBe("Window");
+    expect(state.nodes["window:10"]?.active).toBe(true);
     expect(state.nodes["window:10"]?.childIds).toEqual(["tab:1", "tab:3"]);
     expect(state.nodes["tab:1"]?.childIds).toEqual(["tab:2"]);
     expect(state.nodes["tab:2"]?.parentId).toBe("tab:1");
@@ -198,6 +200,10 @@ describe("outline model", () => {
     expect(moved.nodes["window:10"]?.childIds).toEqual(["tab:3"]);
     expect(moved.nodes["window:42"]?.childIds).toEqual(["tab:1"]);
     expect(moved.nodes["window:42"]?.status).toBe("live");
+    expect(moved.nodes["window:42"]?.title).toBe("Window");
+    expect(moved.nodes["window:10"]?.title).toBe("Window");
+    expect(moved.nodes["window:42"]?.active).toBe(true);
+    expect(moved.nodes["window:10"]?.active).toBe(false);
     expect(moved.nodes["window:42"]?.live).toEqual({ windowId: 42 });
     expect(moved.nodes["tab:1"]?.parentId).toBe("window:42");
     expect(moved.nodes["tab:1"]?.live).toEqual({ tabId: 1, windowId: 42 });
@@ -252,7 +258,7 @@ describe("outline model", () => {
       kind: "window",
       status: "closed",
       childIds: ["tab:1"],
-      title: "Saved window",
+      title: "Window",
       closedAt: 3000
     });
     expect(moved.nodes[placeholderId]?.live).toBeUndefined();
@@ -492,6 +498,18 @@ describe("outline model", () => {
     expect(repaired.nodes["tab:2"]?.childIds).toEqual([]);
   });
 
+  it("repairs stored window titles to the generic label", () => {
+    const state = closeWindow(bootstrapFromWindows(windows, { now: 1000 }), 10, {
+      now: 2000,
+      sessionId: "session-window-10"
+    });
+    state.nodes["window:10"]!.title = "Window 10";
+
+    const repaired = repairState(state);
+
+    expect(repaired.nodes["window:10"]?.title).toBe("Window");
+  });
+
   it("repairs stored state by pruning empty windows", () => {
     const state = bootstrapFromWindows(windows, { now: 1000 });
     state.nodes["window:empty-parent"] = {
@@ -499,7 +517,7 @@ describe("outline model", () => {
       kind: "window",
       status: "closed",
       childIds: ["window:empty-child"],
-      title: "Saved window",
+      title: "Window",
       collapsed: false,
       createdAt: 1000,
       updatedAt: 1000,
@@ -511,7 +529,7 @@ describe("outline model", () => {
       status: "closed",
       parentId: "window:empty-parent",
       childIds: [],
-      title: "Saved window",
+      title: "Window",
       collapsed: false,
       createdAt: 1000,
       updatedAt: 1000,
@@ -531,6 +549,7 @@ describe("outline model", () => {
       now: 2000,
       sessionId: "session-tab-2"
     });
+    stored.nodes["window:10"]!.title = "Current window";
 
     const reconciled = reconcileWithWindows(stored, [
       {
@@ -560,6 +579,8 @@ describe("outline model", () => {
     ], { now: 4000 });
 
     expect(reconciled.nodes["tab:2"]?.status).toBe("closed");
+    expect(reconciled.nodes["window:10"]?.title).toBe("Window");
+    expect(reconciled.nodes["window:10"]?.active).toBe(true);
     expect(reconciled.nodes["tab:1"]?.title).toBe("Example updated");
     expect(reconciled.nodes["tab:1"]?.childIds).toEqual(["tab:2", "tab:5"]);
     expect(reconciled.nodes["tab:5"]?.parentId).toBe("tab:1");

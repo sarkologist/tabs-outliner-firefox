@@ -125,7 +125,7 @@ function render(): void {
 
 function renderNode(state: OutlineState, node: OutlineNode, depth: number): HTMLElement {
   const item = document.createElement("li");
-  item.className = `node node-${node.kind} is-${node.status}`;
+  item.className = `node node-${node.kind} is-${node.status}${node.active ? " is-active" : ""}`;
   item.dataset.nodeId = node.id;
 
   const row = document.createElement("div");

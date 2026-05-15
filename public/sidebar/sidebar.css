@@ -107,6 +107,22 @@ main.root-drop-target {
   background: color-mix(in srgb, Highlight 16%, transparent);
 }
 
+.node-window.is-active > .node-row {
+  border-left-color: color-mix(in srgb, Highlight 78%, CanvasText 10%);
+  background: color-mix(in srgb, Highlight 12%, transparent);
+}
+
+.node-tab.is-active > .node-row {
+  border-left-color: color-mix(in srgb, Highlight 64%, CanvasText 12%);
+  background: color-mix(in srgb, Highlight 8%, transparent);
+}
+
+.node-window.is-active > .node-row .node-title,
+.node-tab.is-active > .node-row .node-title {
+  color: color-mix(in srgb, Highlight 72%, CanvasText 28%);
+  font-weight: 700;
+}
+
 .node-row.drop-inside-target {
   background: color-mix(in srgb, Highlight 12%, transparent);
   box-shadow: inset 3px 0 0 color-mix(in srgb, Highlight 70%, CanvasText 10%);
