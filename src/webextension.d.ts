@@ -42,10 +42,12 @@ type WebExtensionBrowserApi = {
     };
   };
   windows: {
+    WINDOW_ID_NONE: number;
     getAll(getInfo?: { populate?: boolean; windowTypes?: string[] }): Promise<RuntimeWindow[]>;
     update(windowId: number, updateInfo: { focused?: boolean }): Promise<RuntimeWindow>;
     remove(windowId: number): Promise<void>;
     create(createData: { url?: string | string[]; tabId?: number }): Promise<RuntimeWindow>;
+    onFocusChanged: Listener<(windowId: number) => void | Promise<void>>;
     onRemoved: Listener<(windowId: number) => void | Promise<void>>;
   };
   tabs: {
@@ -54,6 +56,7 @@ type WebExtensionBrowserApi = {
     remove(tabId: number | number[]): Promise<void>;
     create(createProperties: { url: string; windowId?: number; active?: boolean }): Promise<RuntimeTab>;
     move(tabIds: number | number[], moveProperties: { windowId?: number; index: number }): Promise<RuntimeTab | RuntimeTab[]>;
+    onActivated: Listener<(activeInfo: { tabId: number; windowId: number; previousTabId?: number }) => void | Promise<void>>;
     onCreated: Listener<(tab: RuntimeTab) => void | Promise<void>>;
     onUpdated: Listener<(tabId: number, changeInfo: Partial<RuntimeTab>, tab: RuntimeTab) => void | Promise<void>>;
     onRemoved: Listener<(tabId: number, removeInfo: { windowId: number; isWindowClosing: boolean }) => void | Promise<void>>;

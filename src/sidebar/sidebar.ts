@@ -118,14 +118,16 @@ function render(): void {
   for (const rootId of state.rootIds) {
     const root = state.nodes[rootId];
     if (root) {
-      tree.append(renderNode(state, root, 0));
+      tree.append(renderNode(state, root, 0, false));
     }
   }
 }
 
-function renderNode(state: OutlineState, node: OutlineNode, depth: number): HTMLElement {
+function renderNode(state: OutlineState, node: OutlineNode, depth: number, insideActiveWindow: boolean): HTMLElement {
+  const isActiveWindow = node.kind === "window" && Boolean(node.active);
+  const isActiveTab = node.kind === "tab" && Boolean(node.active) && insideActiveWindow;
   const item = document.createElement("li");
-  item.className = `node node-${node.kind} is-${node.status}${node.active ? " is-active" : ""}`;
+  item.className = `node node-${node.kind} is-${node.status}${isActiveWindow || isActiveTab ? " is-active" : ""}`;
   item.dataset.nodeId = node.id;
 
   const row = document.createElement("div");
@@ -219,10 +221,11 @@ function renderNode(state: OutlineState, node: OutlineNode, depth: number): HTML
   if (!node.collapsed && node.childIds.length > 0) {
     const children = document.createElement("ol");
     children.className = "children";
+    const childInsideActiveWindow = insideActiveWindow || isActiveWindow;
     for (const childId of node.childIds) {
       const child = state.nodes[childId];
       if (child) {
-        children.append(renderNode(state, child, depth + 1));
+        children.append(renderNode(state, child, depth + 1, childInsideActiveWindow));
       }
     }
     item.append(children);

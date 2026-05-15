@@ -28,8 +28,10 @@ type FakeRuntime = {
   api: WebExtensionBrowser;
   events: {
     tabCreated: FakeEvent<[RuntimeTab]>;
+    tabActivated: FakeEvent<[{ tabId: number; windowId: number; previousTabId?: number }]>;
     tabUpdated: FakeEvent<[number, Partial<RuntimeTab>, RuntimeTab]>;
     tabRemoved: FakeEvent<[number, { windowId: number; isWindowClosing: boolean }]>;
+    windowFocusChanged: FakeEvent<[number]>;
     windowRemoved: FakeEvent<[number]>;
   };
   tabs: RuntimeTab[];
@@ -39,8 +41,10 @@ type FakeRuntime = {
 
 function fakeRuntime(windows: RuntimeWindow[], tabs: RuntimeTab[]): FakeRuntime {
   const tabCreated = new FakeEvent<[RuntimeTab]>();
+  const tabActivated = new FakeEvent<[{ tabId: number; windowId: number; previousTabId?: number }]>();
   const tabUpdated = new FakeEvent<[number, Partial<RuntimeTab>, RuntimeTab]>();
   const tabRemoved = new FakeEvent<[number, { windowId: number; isWindowClosing: boolean }]>();
+  const windowFocusChanged = new FakeEvent<[number]>();
   const windowRemoved = new FakeEvent<[number]>();
   const storage = new Map<string, unknown>();
   const broadcasts: unknown[] = [];
@@ -50,8 +54,10 @@ function fakeRuntime(windows: RuntimeWindow[], tabs: RuntimeTab[]): FakeRuntime 
     broadcasts,
     events: {
       tabCreated,
+      tabActivated,
       tabUpdated,
       tabRemoved,
+      windowFocusChanged,
       windowRemoved
     },
     api: {
@@ -93,12 +99,14 @@ function fakeRuntime(windows: RuntimeWindow[], tabs: RuntimeTab[]): FakeRuntime 
         }
       },
       windows: {
+        WINDOW_ID_NONE: -1,
         getAll: vi.fn(async () => runtime.windows),
         update: vi.fn(async (windowId: number) => runtime.windows.find((windowInfo) => windowInfo.id === windowId)!),
         remove: vi.fn(async () => undefined),
         create: vi.fn(async () => {
           throw new Error("not implemented");
         }),
+        onFocusChanged: windowFocusChanged as never,
         onRemoved: windowRemoved as never
       },
       tabs: {
@@ -109,6 +117,7 @@ function fakeRuntime(windows: RuntimeWindow[], tabs: RuntimeTab[]): FakeRuntime 
           throw new Error("not implemented");
         }),
         move: vi.fn(async () => []),
+        onActivated: tabActivated as never,
         onCreated: tabCreated as never,
         onUpdated: tabUpdated as never,
         onRemoved: tabRemoved as never
@@ -240,6 +249,154 @@ describe("background controller lifecycle", () => {
 
     const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
     expect(liveTabIds(state)).toEqual([1, 2, 3]);
+  });
+
+  it("updates active tab state from activation events", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        },
+        {
+          id: 2,
+          windowId: 10,
+          index: 1,
+          active: false,
+          url: "https://two.example/",
+          title: "Two"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+
+    runtime.tabs = runtime.tabs.map((tab) => ({
+      ...tab,
+      active: tab.id === 2
+    }));
+    await runtime.events.tabActivated.emit({ tabId: 2, windowId: 10, previousTabId: 1 });
+
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(state.nodes["tab:1"]?.active).toBe(false);
+    expect(state.nodes["tab:2"]?.active).toBe(true);
+  });
+
+  it("clears the previous active tab during partial active updates", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        },
+        {
+          id: 2,
+          windowId: 10,
+          index: 1,
+          active: false,
+          url: "https://two.example/",
+          title: "Two"
+        },
+        {
+          id: 3,
+          windowId: 10,
+          index: 2,
+          active: false,
+          url: "https://three.example/",
+          title: "Three"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+
+    runtime.tabs = [
+      {
+        id: 2,
+        windowId: 10,
+        index: 1,
+        active: true,
+        url: "https://two.example/",
+        title: "Two"
+      }
+    ];
+    await runtime.events.tabUpdated.emit(2, { active: true }, runtime.tabs[0]!);
+
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(state.nodes["tab:1"]?.active).toBe(false);
+    expect(state.nodes["tab:2"]?.active).toBe(true);
+    expect(state.nodes["tab:3"]?.active).toBe(false);
+    expect(state.nodes["tab:1"]?.status).toBe("live");
+    expect(state.nodes["tab:3"]?.status).toBe("live");
+  });
+
+  it("updates active window state from focus change events", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        },
+        {
+          id: 20,
+          focused: false,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        },
+        {
+          id: 2,
+          windowId: 20,
+          index: 0,
+          active: true,
+          url: "https://two.example/",
+          title: "Two"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+
+    runtime.windows = runtime.windows.map((windowInfo) => ({
+      ...windowInfo,
+      focused: windowInfo.id === 20
+    }));
+    await runtime.events.windowFocusChanged.emit(20);
+
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(state.nodes["window:10"]?.active).toBe(false);
+    expect(state.nodes["window:20"]?.active).toBe(true);
   });
 
   it("closes explicit removed tabs while preserving other live tabs", async () => {

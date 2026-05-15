@@ -6,10 +6,15 @@ import type { RuntimeTab, RuntimeWindow } from "../model/types.js";
 function snapshotApi(windows: RuntimeWindow[], tabs: RuntimeTab[]): Pick<WebExtensionBrowser, "windows" | "tabs"> {
   return {
     windows: {
+      WINDOW_ID_NONE: -1,
       getAll: vi.fn(async () => windows),
       update: vi.fn(),
       remove: vi.fn(),
       create: vi.fn(),
+      onFocusChanged: {
+        addListener: vi.fn(),
+        removeListener: vi.fn()
+      },
       onRemoved: {
         addListener: vi.fn(),
         removeListener: vi.fn()
@@ -21,6 +26,10 @@ function snapshotApi(windows: RuntimeWindow[], tabs: RuntimeTab[]): Pick<WebExte
       remove: vi.fn(),
       create: vi.fn(),
       move: vi.fn(),
+      onActivated: {
+        addListener: vi.fn(),
+        removeListener: vi.fn()
+      },
       onCreated: {
         addListener: vi.fn(),
         removeListener: vi.fn()

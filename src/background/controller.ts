@@ -17,7 +17,11 @@ import type { OutlineState, RuntimeTab } from "../model/types.js";
 export type BackgroundController = {
   ensureState(): Promise<OutlineState>;
   handleMessage(message: unknown): Promise<unknown>;
-  refreshFromRuntime(eventTabs?: RuntimeTab[]): Promise<void>;
+  refreshFromRuntime(eventTabs?: RuntimeTab[], options?: RefreshOptions): Promise<void>;
+};
+
+type RefreshOptions = {
+  closeMissing?: boolean;
 };
 
 export type BackgroundControllerOptions = {
@@ -56,6 +60,10 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     await refreshFromRuntime([tab]);
   });
 
+  api.tabs.onActivated.addListener(async () => {
+    await refreshFromRuntime([], { closeMissing: false });
+  });
+
   api.tabs.onRemoved.addListener(async (tabId, removeInfo) => {
     if (!removeInfo.isWindowClosing) {
       await enqueueMutation(async () => {
@@ -82,6 +90,10 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       stateCache.replace(state);
       await persistAndBroadcast();
     });
+  });
+
+  api.windows.onFocusChanged.addListener(async () => {
+    await refreshFromRuntime([], { closeMissing: false });
   });
 
   api.sessions.onChanged.addListener(async () => {
@@ -133,20 +145,20 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     return state;
   }
 
-  async function refreshFromRuntime(eventTabs: RuntimeTab[] = []): Promise<void> {
+  async function refreshFromRuntime(eventTabs: RuntimeTab[] = [], options: RefreshOptions = {}): Promise<void> {
     await enqueueMutation(async () => {
-      await refreshFromRuntimeNow(eventTabs);
+      await refreshFromRuntimeNow(eventTabs, options);
     });
   }
 
-  async function refreshFromRuntimeNow(eventTabs: RuntimeTab[] = []): Promise<void> {
+  async function refreshFromRuntimeNow(eventTabs: RuntimeTab[] = [], options: RefreshOptions = {}): Promise<void> {
     const current = await ensureState();
     const windows =
       eventTabs.length > 0
         ? await getNormalWindowsIncludingTabs(api, eventTabs)
         : await getNormalWindows(api);
     state = reconcileWithWindows(current, windows, { now: now() }, {
-      closeMissing: eventTabs.length === 0
+      closeMissing: options.closeMissing ?? eventTabs.length === 0
     });
     stateCache.replace(state);
     await persistAndBroadcast();

@@ -174,6 +174,12 @@ export function reconcileWithWindows(
         ensureParent(next, nodeId, winId);
       }
     }
+
+    const activeTab = tabs.find((tab) => tab.active);
+    const activeNodeId = activeTab ? runtimeToNode.get(activeTab.id) : undefined;
+    if (activeNodeId) {
+      setActiveTabInRuntimeWindow(next, win.id, activeNodeId);
+    }
   }
 
   if (closeMissing) {
@@ -556,6 +562,18 @@ function updateLiveTabNode(node: OutlineNode, tab: RuntimeTab, now: number): voi
   }
   delete node.closedAt;
   delete node.restore;
+}
+
+function setActiveTabInRuntimeWindow(
+  state: OutlineState,
+  runtimeWindowId: number,
+  activeNodeId: NodeId
+): void {
+  for (const node of Object.values(state.nodes)) {
+    if (isNodeLiveTab(node) && node.live.windowId === runtimeWindowId) {
+      node.active = node.id === activeNodeId;
+    }
+  }
 }
 
 function findRestorableClosedTabNode(
