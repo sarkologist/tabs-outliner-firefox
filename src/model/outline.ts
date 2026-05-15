@@ -433,6 +433,10 @@ function findRestorableClosedTabNode(
     return undefined;
   }
 
+  if (isLikelyDuplicateOfLiveTab(state, tab)) {
+    return undefined;
+  }
+
   const candidates = Object.values(state.nodes)
     .filter((node) => {
       return (
@@ -462,6 +466,16 @@ function isInCompatibleWindow(
     return true;
   }
   return Boolean(owner.live && "windowId" in owner.live && owner.live.windowId === runtimeWindowId);
+}
+
+function isLikelyDuplicateOfLiveTab(state: OutlineState, tab: RuntimeTab): boolean {
+  if (typeof tab.openerTabId !== "number" || !tab.url) {
+    return false;
+  }
+
+  const openerNodeId = findLiveTabNode(state, tab.openerTabId);
+  const opener = openerNodeId ? state.nodes[openerNodeId] : undefined;
+  return Boolean(opener?.kind === "tab" && opener.status === "live" && opener.url === tab.url);
 }
 
 function isBlankUrl(url: string): boolean {

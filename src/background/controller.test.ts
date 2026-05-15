@@ -316,6 +316,61 @@ describe("background controller lifecycle", () => {
     expect(liveTabIds(state)).toEqual([1, 22]);
   });
 
+  it("does not reattach saved closed nodes when duplicating a live tab", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://same.example/",
+          title: "Original"
+        },
+        {
+          id: 2,
+          windowId: 10,
+          index: 1,
+          active: false,
+          url: "https://same.example/",
+          title: "Previously saved"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+
+    runtime.tabs = runtime.tabs.filter((tab) => tab.id !== 2);
+    await runtime.events.tabRemoved.emit(2, { windowId: 10, isWindowClosing: false });
+
+    runtime.tabs = [
+      ...runtime.tabs,
+      {
+        id: 22,
+        windowId: 10,
+        index: 1,
+        active: true,
+        openerTabId: 1,
+        url: "https://same.example/",
+        title: "Original"
+      }
+    ];
+    await runtime.events.tabCreated.emit(runtime.tabs[1]!);
+
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(state.nodes["tab:2"]?.status).toBe("closed");
+    expect(state.nodes["tab:22"]?.status).toBe("live");
+    expect(state.nodes["tab:22"]?.live).toEqual({ tabId: 22, windowId: 10 });
+    expect(liveTabIds(state)).toEqual([1, 22]);
+  });
+
   it("manual refresh performs a full snapshot reconciliation", async () => {
     const runtime = fakeRuntime(
       [
