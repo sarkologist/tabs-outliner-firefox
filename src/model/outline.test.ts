@@ -75,6 +75,46 @@ describe("outline model", () => {
     expect(state.nodes["tab:4"]).toBeUndefined();
   });
 
+  it("keeps tabs under their owning window when opener metadata crosses windows", () => {
+    const state = bootstrapFromWindows([
+      {
+        id: 10,
+        incognito: false,
+        focused: true,
+        tabs: [
+          {
+            id: 1,
+            windowId: 10,
+            index: 0,
+            active: true,
+            url: "https://source.example/",
+            title: "Source"
+          }
+        ]
+      },
+      {
+        id: 20,
+        incognito: false,
+        focused: false,
+        tabs: [
+          {
+            id: 5,
+            windowId: 20,
+            index: 0,
+            active: true,
+            openerTabId: 1,
+            url: "https://target.example/",
+            title: "Target"
+          }
+        ]
+      }
+    ], { now: 1000 });
+
+    expect(state.nodes["window:20"]?.childIds).toEqual(["tab:5"]);
+    expect(state.nodes["tab:1"]?.childIds).toEqual([]);
+    expect(state.nodes["tab:5"]?.parentId).toBe("window:20");
+  });
+
   it("captures closed tabs in place with restore metadata", () => {
     const state = bootstrapFromWindows(windows, { now: 1000 });
     const next = closeTab(state, 2, {
@@ -209,5 +249,72 @@ describe("outline model", () => {
     expect(reconciled.nodes["tab:1"]?.title).toBe("Example updated");
     expect(reconciled.nodes["tab:1"]?.childIds).toEqual(["tab:2", "tab:5"]);
     expect(reconciled.nodes["tab:5"]?.parentId).toBe("tab:1");
+  });
+
+  it("reconciles cross-window opener tabs back into their owning window", () => {
+    const stored = bootstrapFromWindows([
+      {
+        id: 10,
+        incognito: false,
+        focused: true,
+        tabs: [
+          {
+            id: 1,
+            windowId: 10,
+            index: 0,
+            active: true,
+            url: "https://source.example/",
+            title: "Source"
+          },
+          {
+            id: 5,
+            windowId: 20,
+            index: 0,
+            active: true,
+            openerTabId: 1,
+            url: "https://target.example/",
+            title: "Target"
+          }
+        ]
+      }
+    ], { now: 1000 });
+
+    const reconciled = reconcileWithWindows(stored, [
+      {
+        id: 10,
+        incognito: false,
+        focused: true,
+        tabs: [
+          {
+            id: 1,
+            windowId: 10,
+            index: 0,
+            active: true,
+            url: "https://source.example/",
+            title: "Source"
+          }
+        ]
+      },
+      {
+        id: 20,
+        incognito: false,
+        focused: false,
+        tabs: [
+          {
+            id: 5,
+            windowId: 20,
+            index: 0,
+            active: true,
+            openerTabId: 1,
+            url: "https://target.example/",
+            title: "Target"
+          }
+        ]
+      }
+    ], { now: 2000 });
+
+    expect(reconciled.nodes["window:20"]?.childIds).toEqual(["tab:5"]);
+    expect(reconciled.nodes["tab:1"]?.childIds).toEqual([]);
+    expect(reconciled.nodes["tab:5"]?.parentId).toBe("window:20");
   });
 });

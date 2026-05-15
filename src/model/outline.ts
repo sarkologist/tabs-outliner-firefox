@@ -46,6 +46,7 @@ export function bootstrapFromWindows(windows: RuntimeWindow[], clock: Clock): Ou
     const tabs = [...(win.tabs ?? [])]
       .filter((tab) => !tab.incognito)
       .sort((a, b) => a.index - b.index);
+    const tabIdsInWindow = new Set(tabs.map((tab) => tab.id));
 
     for (const tab of tabs) {
       const id = tabNodeId(tab.id);
@@ -54,7 +55,10 @@ export function bootstrapFromWindows(windows: RuntimeWindow[], clock: Clock): Ou
 
     for (const tab of tabs) {
       const id = tabNodeId(tab.id);
-      const openerId = typeof tab.openerTabId === "number" ? tabNodeId(tab.openerTabId) : undefined;
+      const openerId =
+        typeof tab.openerTabId === "number" && tabIdsInWindow.has(tab.openerTabId)
+          ? tabNodeId(tab.openerTabId)
+          : undefined;
       const parentId = openerId && state.nodes[openerId] ? openerId : winId;
       const node = state.nodes[id];
       const parent = state.nodes[parentId];
