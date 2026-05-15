@@ -584,6 +584,41 @@ describe("outline model", () => {
     expect(repaired.nodes["window:10"]?.title).toBe("Window");
   });
 
+  it("repairs closed tab children in live windows by promoting them", () => {
+    const state = bootstrapFromWindows(windows, { now: 1000 });
+    state.nodes["tab:1"] = {
+      ...state.nodes["tab:1"]!,
+      status: "closed",
+      closedAt: 2000,
+      restore: {
+        url: "https://example.com/",
+        title: "Example"
+      }
+    };
+    delete state.nodes["tab:1"]!.live;
+    delete state.nodes["tab:1"]!.active;
+
+    const repaired = repairState(state);
+
+    expect(repaired.nodes["tab:1"]?.childIds).toEqual([]);
+    expect(repaired.nodes["tab:2"]?.parentId).toBe("window:10");
+    expect(repaired.nodes["window:10"]?.childIds).toEqual(["tab:1", "tab:2", "tab:3"]);
+  });
+
+  it("keeps closed window tab subtrees intact during repair", () => {
+    const state = closeWindow(bootstrapFromWindows(windows, { now: 1000 }), 10, {
+      now: 2000,
+      sessionId: "session-window-10"
+    });
+
+    const repaired = repairState(state);
+
+    expect(repaired.nodes["window:10"]?.status).toBe("closed");
+    expect(repaired.nodes["tab:1"]?.status).toBe("closed");
+    expect(repaired.nodes["tab:1"]?.childIds).toEqual(["tab:2"]);
+    expect(repaired.nodes["tab:2"]?.parentId).toBe("tab:1");
+  });
+
   it("repairs stored state by pruning empty windows", () => {
     const state = bootstrapFromWindows(windows, { now: 1000 });
     state.nodes["window:empty-parent"] = {

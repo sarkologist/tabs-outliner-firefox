@@ -264,6 +264,7 @@ export function repairState(state: OutlineState): OutlineState {
   }
 
   reattachLiveTabsToOwningWindows(next);
+  promoteClosedTabChildrenInLiveWindows(next);
 
   next.rootIds = uniqueIds([
     ...originalRootIds.filter((id) => !next.nodes[id]?.parentId),
@@ -773,6 +774,26 @@ function reattachLiveTabsToOwningWindows(state: OutlineState): void {
     }
 
     ensureParent(state, node.id, owningWindowNodeId);
+  }
+}
+
+function promoteClosedTabChildrenInLiveWindows(state: OutlineState): void {
+  let promoted = true;
+  while (promoted) {
+    promoted = false;
+    for (const node of Object.values(state.nodes)) {
+      if (node.kind !== "tab" || node.status !== "closed" || node.childIds.length === 0) {
+        continue;
+      }
+
+      const owner = nearestWindow(state, node.id);
+      if (!owner || !isNodeLiveWindow(owner)) {
+        continue;
+      }
+
+      promoteChildrenAfterNode(state, node.id);
+      promoted = true;
+    }
   }
 }
 
