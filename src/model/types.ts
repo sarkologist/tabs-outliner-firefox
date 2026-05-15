@@ -92,6 +92,7 @@ export type RestorePlan =
       nodeId: NodeId;
       sessionId: string;
       fallbackUrl?: string;
+      windowNodeId?: NodeId;
     }
   | {
       kind: "url";

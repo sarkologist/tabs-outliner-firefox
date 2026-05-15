@@ -195,7 +195,24 @@ describe("outline model", () => {
         nodeId: "tab:2",
         kind: "session",
         sessionId: "session-tab-2",
-        fallbackUrl: "https://example.com/child"
+        fallbackUrl: "https://example.com/child",
+        windowNodeId: "window:10"
+      }
+    ]);
+  });
+
+  it("keeps the closed window destination when planning url restores", () => {
+    const state = closeWindow(bootstrapFromWindows(windows, { now: 1000 }), 10, {
+      now: 2000,
+      sessionId: "session-window-10"
+    });
+
+    expect(planRestore(state, "tab:2")).toEqual([
+      {
+        nodeId: "tab:2",
+        kind: "url",
+        url: "https://example.com/child",
+        windowNodeId: "window:10"
       }
     ]);
   });

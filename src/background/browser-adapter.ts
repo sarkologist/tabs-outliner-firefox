@@ -25,7 +25,15 @@ export function createBrowserAdapter(api: WebExtensionBrowser = browser): Browse
     },
 
     async createWindow(createData) {
-      return normalizeWindow(await api.windows.create(createData));
+      const windowInfo = normalizeWindow(await api.windows.create(createData));
+      if ((windowInfo.tabs?.length ?? 0) > 0) {
+        return windowInfo;
+      }
+
+      return {
+        ...windowInfo,
+        tabs: (await api.tabs.query({ windowId: windowInfo.id })).map(normalizeTab)
+      };
     },
 
     async moveTabs(tabIds, moveProperties) {

@@ -331,18 +331,19 @@ export function planRestore(state: OutlineState, nodeId: NodeId): RestorePlan[] 
       return;
     }
 
+    const parentWindow = nearestWindow(state, current.id);
     if (current.restore?.sessionId) {
       plans.push({
         kind: "session",
         nodeId: current.id,
         sessionId: current.restore.sessionId,
-        ...(current.restore.url ? { fallbackUrl: current.restore.url } : {})
+        ...(current.restore.url ? { fallbackUrl: current.restore.url } : {}),
+        ...(parentWindow ? { windowNodeId: parentWindow.id } : {})
       });
       return;
     }
 
     if (current.kind === "tab" && current.restore?.url) {
-      const parentWindow = nearestWindow(state, current.id);
       plans.push({
         kind: "url",
         nodeId: current.id,

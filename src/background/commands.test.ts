@@ -54,21 +54,22 @@ function fakeAdapter(overrides: Partial<BrowserAdapter> = {}): BrowserAdapter {
       url,
       title: url
     })),
-    createWindow: vi.fn(async ({ url }) => ({
-      id: 42,
-      focused: true,
-      incognito: false,
-      tabs: Array.isArray(url)
-        ? url.map((tabUrl, index) => ({
-            id: 200 + index,
-            windowId: 42,
-            index,
-            active: index === 0,
-            url: tabUrl,
-            title: tabUrl
-          }))
-        : []
-    })),
+    createWindow: vi.fn(async ({ url }) => {
+      const urls = Array.isArray(url) ? url : url ? [url] : [];
+      return {
+        id: 42,
+        focused: true,
+        incognito: false,
+        tabs: urls.map((tabUrl, index) => ({
+          id: 200 + index,
+          windowId: 42,
+          index,
+          active: index === 0,
+          url: tabUrl,
+          title: tabUrl
+        }))
+      };
+    }),
     moveTabs: vi.fn(async () => undefined),
     ...overrides
   };
@@ -189,6 +190,41 @@ describe("background commands", () => {
       active: false
     });
     expect(result.state.nodes["tab:2"]?.live).toEqual({ tabId: 23, windowId: 10 });
+  });
+
+  it("restores a tab from a closed single-tab window into a new window", async () => {
+    const state = closeWindow(bootstrapFromWindows([
+      ...runtimeWindows,
+      {
+        id: 20,
+        focused: false,
+        incognito: false,
+        tabs: [
+          {
+            id: 5,
+            windowId: 20,
+            index: 0,
+            active: true,
+            url: "https://solo.example/",
+            title: "Solo"
+          }
+        ]
+      }
+    ], { now: 1000 }), 20, {
+      now: 2000,
+      sessionId: "session-window-20"
+    });
+    const adapter = fakeAdapter();
+
+    const result = await runCommand(state, adapter, { type: "restoreNode", nodeId: "tab:5" });
+
+    expect(adapter.createWindow).toHaveBeenCalledWith({ url: "https://solo.example/" });
+    expect(adapter.createTab).not.toHaveBeenCalled();
+    expect(result.state.nodes["window:20"]?.status).toBe("live");
+    expect(result.state.nodes["window:20"]?.live).toEqual({ windowId: 42 });
+    expect(result.state.nodes["window:20"]?.childIds).toEqual(["tab:5"]);
+    expect(result.state.nodes["tab:5"]?.parentId).toBe("window:20");
+    expect(result.state.nodes["tab:5"]?.live).toEqual({ tabId: 200, windowId: 42 });
   });
 
   it("moves outline nodes and asks Firefox to match preorder", async () => {

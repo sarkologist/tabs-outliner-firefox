@@ -6,7 +6,7 @@ import {
   projectLiveTabs,
   restoreNodes
 } from "../model/outline.js";
-import type { NodeId, OutlineNode, OutlineState, RestoredNode, RestorePlan } from "../model/types.js";
+import type { NodeId, OutlineNode, OutlineState, RestoredNode, RestorePlan, RuntimeTab } from "../model/types.js";
 
 export type BackgroundCommand =
   | {
@@ -190,9 +190,9 @@ async function restoreNode(
   const plans = planRestore(state, nodeId);
 
   for (const plan of plans) {
-    const restored = await runRestorePlan(next, adapter, plan);
-    if (restored) {
-      next = restoreNodes(next, [restored]);
+    const restoredNodes = await runRestorePlan(next, adapter, plan);
+    if (restoredNodes.length > 0) {
+      next = restoreNodes(next, restoredNodes);
     }
   }
 
@@ -203,33 +203,60 @@ async function runRestorePlan(
   state: OutlineState,
   adapter: BrowserAdapter,
   plan: RestorePlan
-): Promise<RestoredNode | undefined> {
+): Promise<RestoredNode[]> {
   if (plan.kind === "session") {
     try {
       const restoredSession = await adapter.restoreSession(plan.sessionId);
       const restored = restoredFromSession(plan.nodeId, restoredSession);
       if (restored) {
-        return restored;
+        return [restored];
       }
     } catch {
       // Fall through to URL fallback below.
     }
 
     if (plan.fallbackUrl) {
-      return createFallbackTab(state, adapter, plan.nodeId, plan.fallbackUrl);
+      return createFallbackTab(state, adapter, plan.nodeId, plan.fallbackUrl, plan.windowNodeId);
     }
-    return undefined;
+    return [];
   }
 
-  return createFallbackTab(state, adapter, plan.nodeId, plan.url);
+  return createFallbackTab(state, adapter, plan.nodeId, plan.url, plan.windowNodeId);
 }
 
 async function createFallbackTab(
   state: OutlineState,
   adapter: BrowserAdapter,
   nodeId: NodeId,
-  url: string
-): Promise<RestoredNode> {
+  url: string,
+  windowNodeId?: NodeId
+): Promise<RestoredNode[]> {
+  const plannedWindow = windowNodeId ? state.nodes[windowNodeId] : undefined;
+  if (isLiveWindow(plannedWindow)) {
+    const created = await adapter.createTab({
+      url,
+      windowId: plannedWindow.live.windowId,
+      active: false
+    });
+    return [restoredTabFromRuntime(nodeId, created)];
+  }
+
+  if (plannedWindow?.kind === "window" && plannedWindow.status === "closed" && windowNodeId) {
+    const createdWindow = await adapter.createWindow({ url });
+    const createdTab = createdWindow.tabs?.[0];
+    if (!createdTab) {
+      throw new Error("Created restore window did not include tabs");
+    }
+
+    return [
+      {
+        nodeId: windowNodeId,
+        windowId: createdWindow.id
+      },
+      restoredTabFromRuntime(nodeId, createdTab)
+    ];
+  }
+
   const parentWindow = nearestLiveWindow(state, nodeId);
   const created = await adapter.createTab({
     url,
@@ -237,26 +264,23 @@ async function createFallbackTab(
     active: false
   });
 
+  return [restoredTabFromRuntime(nodeId, created)];
+}
+
+function restoredTabFromRuntime(nodeId: NodeId, tab: RuntimeTab): RestoredNode {
   return {
     nodeId,
-    tabId: created.id,
-    windowId: created.windowId,
-    ...(created.url ? { url: created.url } : {}),
-    ...(created.title ? { title: created.title } : {}),
-    ...(created.favIconUrl ? { favIconUrl: created.favIconUrl } : {})
+    tabId: tab.id,
+    windowId: tab.windowId,
+    ...(tab.url ? { url: tab.url } : {}),
+    ...(tab.title ? { title: tab.title } : {}),
+    ...(tab.favIconUrl ? { favIconUrl: tab.favIconUrl } : {})
   };
 }
 
 function restoredFromSession(nodeId: NodeId, session: RestoredSession): RestoredNode | undefined {
   if (session.tab) {
-    return {
-      nodeId,
-      tabId: session.tab.id,
-      windowId: session.tab.windowId,
-      ...(session.tab.url ? { url: session.tab.url } : {}),
-      ...(session.tab.title ? { title: session.tab.title } : {}),
-      ...(session.tab.favIconUrl ? { favIconUrl: session.tab.favIconUrl } : {})
-    };
+    return restoredTabFromRuntime(nodeId, session.tab);
   }
 
   if (session.window) {
