@@ -90,11 +90,11 @@ main {
 
 .node-row {
   display: grid;
-  grid-template-columns: 20px minmax(0, 1fr) 24px 24px;
-  gap: 2px;
+  grid-template-columns: 18px minmax(0, 1fr) 22px 22px;
+  gap: 1px;
   align-items: center;
-  min-height: 30px;
-  padding: 2px 6px 2px calc(6px + var(--depth) * 14px);
+  min-height: 24px;
+  padding: 1px 5px 1px calc(5px + var(--depth) * 13px);
   border-left: 3px solid transparent;
 }
 
@@ -121,9 +121,9 @@ main {
 }
 
 .node-label {
-  display: grid;
+  display: block;
   min-width: 0;
-  padding: 2px 4px;
+  padding: 1px 4px;
   text-align: left;
 }
 
@@ -133,29 +133,21 @@ main {
   outline-offset: 1px;
 }
 
-.node-title,
-.node-url {
+.node-title {
+  display: block;
   min-width: 0;
   overflow: hidden;
+  font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.node-title {
-  font-weight: 600;
-}
-
-.node-url {
-  color: color-mix(in srgb, CanvasText 54%, transparent);
-  font-size: 11px;
-}
-
 .icon-button {
-  width: 22px;
-  height: 22px;
+  width: 20px;
+  height: 20px;
   padding: 0;
   border-radius: 4px;
-  line-height: 22px;
+  line-height: 20px;
   text-align: center;
 }
 

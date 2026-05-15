@@ -112,7 +112,9 @@ function renderNode(state: OutlineState, node: OutlineNode, depth: number): HTML
   const label = document.createElement("button");
   label.className = "node-label";
   label.type = "button";
-  label.title = node.url ?? node.title;
+  const titleText = node.title || "Untitled";
+  label.title = node.url ?? titleText;
+  label.ariaLabel = node.url ? `${titleText} - ${node.url}` : titleText;
   label.addEventListener("click", () => {
     if (node.status === "live") {
       void sendCommand({ type: "focusNode", nodeId: node.id });
@@ -123,15 +125,9 @@ function renderNode(state: OutlineState, node: OutlineNode, depth: number): HTML
 
   const title = document.createElement("span");
   title.className = "node-title";
-  title.textContent = node.title || "Untitled";
+  title.textContent = titleText;
   label.append(title);
 
-  if (node.url) {
-    const url = document.createElement("span");
-    url.className = "node-url";
-    url.textContent = readableUrl(node.url);
-    label.append(url);
-  }
   row.append(label);
 
   row.append(actionButton(node.status === "live" ? "Close" : "Restore", () => {
@@ -252,15 +248,6 @@ function diagnosticsText(result: OutlineDiagnostics): string {
     return `Firefox ${result.runtimeTabCount} / visible ${result.visibleLiveTabNodeCount}`;
   }
   return `Firefox ${result.runtimeTabCount}`;
-}
-
-function readableUrl(url: string): string {
-  try {
-    const parsed = new URL(url);
-    return parsed.hostname || parsed.href;
-  } catch {
-    return url;
-  }
 }
 
 function isStateUpdated(message: unknown): message is { type: "stateUpdated"; state: OutlineState } {
