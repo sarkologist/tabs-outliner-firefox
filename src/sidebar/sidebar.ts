@@ -1,7 +1,9 @@
 import type { BackgroundCommand } from "../background/commands.js";
+import type { OutlineDiagnostics } from "../background/diagnostics.js";
 import type { NodeId, OutlineNode, OutlineState } from "../model/types.js";
 
 const stateCount = document.querySelector<HTMLSpanElement>("#state-count");
+const diagnostics = document.querySelector<HTMLSpanElement>("#diagnostics");
 const tree = document.querySelector<HTMLElement>("#tree");
 const empty = document.querySelector<HTMLElement>("#empty");
 
@@ -14,12 +16,14 @@ browser.runtime.onMessage.addListener((message) => {
   if (isStateUpdated(message)) {
     currentState = message.state;
     render();
+    void loadDiagnostics();
   }
 });
 
 async function loadState(): Promise<void> {
   currentState = (await sendCommand({ type: "getState" })) as OutlineState;
   render();
+  void loadDiagnostics();
 }
 
 function render(): void {
@@ -197,10 +201,40 @@ function actionButton(label: string, onClick: () => void): HTMLButtonElement {
 async function runAndRender(command: BackgroundCommand): Promise<void> {
   currentState = (await sendCommand(command)) as OutlineState;
   render();
+  void loadDiagnostics();
 }
 
 async function sendCommand(command: BackgroundCommand): Promise<unknown> {
   return browser.runtime.sendMessage(command);
+}
+
+async function loadDiagnostics(): Promise<void> {
+  if (!diagnostics) {
+    return;
+  }
+
+  const result = (await browser.runtime.sendMessage({ type: "getDiagnostics" }).catch(() => undefined)) as
+    | OutlineDiagnostics
+    | undefined;
+  if (!result) {
+    diagnostics.textContent = "";
+    return;
+  }
+
+  diagnostics.textContent = diagnosticsText(result);
+  diagnostics.title = result.missingRuntimeTabIds.length
+    ? `Missing Firefox tab IDs: ${result.missingRuntimeTabIds.join(", ")}`
+    : "";
+}
+
+function diagnosticsText(result: OutlineDiagnostics): string {
+  if (result.missingRuntimeTabIds.length > 0) {
+    return `Firefox ${result.runtimeTabCount} / outline ${result.liveTabNodeCount} / missing ${result.missingRuntimeTabIds.length}`;
+  }
+  if (result.hiddenLiveTabNodeCount > 0) {
+    return `Firefox ${result.runtimeTabCount} / visible ${result.visibleLiveTabNodeCount}`;
+  }
+  return `Firefox ${result.runtimeTabCount}`;
 }
 
 function readableUrl(url: string): string {

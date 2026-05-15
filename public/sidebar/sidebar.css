@@ -35,13 +35,24 @@ h1 {
   font-weight: 700;
 }
 
-.count {
+.status {
+  display: grid;
+  min-width: 0;
+  justify-items: end;
+}
+
+.count,
+.diagnostics {
   min-width: 0;
   overflow: hidden;
   color: color-mix(in srgb, CanvasText 62%, transparent);
   font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.diagnostics {
+  color: color-mix(in srgb, CanvasText 48%, transparent);
 }
 
 main {

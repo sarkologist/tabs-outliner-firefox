@@ -1,4 +1,5 @@
 import { createBrowserAdapter } from "./browser-adapter.js";
+import { computeDiagnostics } from "./diagnostics.js";
 import { runCommand } from "./commands.js";
 import { getNormalWindows } from "./runtime-snapshot.js";
 import { createStateCache } from "./state-cache.js";
@@ -30,6 +31,10 @@ api.action.onClicked.addListener(async () => {
 });
 
 api.runtime.onMessage.addListener(async (message) => {
+  if (isDiagnosticsRequest(message)) {
+    return computeDiagnostics(await ensureState(), await getNormalWindows(api));
+  }
+
   if (!isCommand(message)) {
     return undefined;
   }
@@ -126,4 +131,12 @@ function isCommand(message: unknown): message is Parameters<typeof runCommand>[2
     "moveNode",
     "toggleCollapsed"
   ].includes(String((message as { type: unknown }).type));
+}
+
+function isDiagnosticsRequest(message: unknown): message is { type: "getDiagnostics" } {
+  return Boolean(
+    message &&
+      typeof message === "object" &&
+      (message as { type?: unknown }).type === "getDiagnostics"
+  );
 }
