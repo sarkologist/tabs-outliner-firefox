@@ -13,7 +13,7 @@ import {
   reconcileWithWindows,
   repairState
 } from "../model/outline.js";
-import type { NodeId, OutlineState, RuntimeTab } from "../model/types.js";
+import type { NodeId, OutlineNode, OutlineState, RuntimeTab } from "../model/types.js";
 
 export type BackgroundController = {
   ensureState(): Promise<OutlineState>;
@@ -68,7 +68,6 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
   api.tabs.onRemoved.addListener(async (tabId, removeInfo) => {
     if (removeInfo.isWindowClosing) {
-      outlinerClosingTabIds.delete(tabId);
       return;
     }
 
@@ -91,6 +90,9 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   api.windows.onRemoved.addListener(async (windowId) => {
     await enqueueMutation(async () => {
       const current = await ensureState();
+      for (const tabId of liveTabIdsInWindow(current, windowId)) {
+        outlinerClosingTabIds.delete(tabId);
+      }
       const recent = await mostRecentClosedSession();
       state = closeWindow(current, windowId, {
         now: now(),
@@ -106,8 +108,10 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   });
 
   api.sessions.onChanged.addListener(async () => {
-    await mutationQueue;
-    await persistAndBroadcast();
+    await enqueueMutation(async () => {
+      await reconcileMissingLiveTabsInOpenWindows();
+      await persistAndBroadcast();
+    });
   });
 
   async function handleMessage(message: unknown): Promise<unknown> {
@@ -208,6 +212,34 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     await api.runtime.sendMessage({ type: "stateUpdated", state }).catch(() => undefined);
   }
 
+  async function reconcileMissingLiveTabsInOpenWindows(): Promise<void> {
+    const current = await ensureState();
+    const windows = await getNormalWindows(api);
+    const openWindowIds = new Set(windows.map((windowInfo) => windowInfo.id));
+    const openTabIds = new Set(
+      windows.flatMap((windowInfo) => windowInfo.tabs ?? []).map((tab) => tab.id)
+    );
+    const missingLiveTabIds = Object.values(current.nodes)
+      .filter(isLiveTabInOpenWindow(openWindowIds, openTabIds))
+      .map((node) => node.live.tabId);
+
+    let next = current;
+    for (const tabId of missingLiveTabIds) {
+      if (outlinerClosingTabIds.delete(tabId)) {
+        const recent = await mostRecentClosedSession();
+        next = closeTab(next, tabId, {
+          now: now(),
+          ...(recent?.tab?.sessionId ? { sessionId: recent.tab.sessionId } : {})
+        });
+      } else {
+        next = deleteLiveTabNodeByTabId(next, tabId);
+      }
+    }
+
+    state = next;
+    stateCache.replace(next);
+  }
+
   async function mostRecentClosedSession(): Promise<{ tab?: { sessionId?: string }; window?: { sessionId?: string } } | undefined> {
     const sessions = await api.sessions.getRecentlyClosed({ maxResults: 1 }).catch(() => []);
     return sessions[0];
@@ -225,6 +257,32 @@ function liveTabIdForNode(state: OutlineState, nodeId: NodeId): number | undefin
   return node?.kind === "tab" && node.status === "live" && node.live && "tabId" in node.live
     ? node.live.tabId
     : undefined;
+}
+
+function liveTabIdsInWindow(state: OutlineState, windowId: number): number[] {
+  return Object.values(state.nodes).flatMap((node) => {
+    if (!isLiveTabNode(node) || node.live.windowId !== windowId) {
+      return [];
+    }
+    return [node.live.tabId];
+  });
+}
+
+function isLiveTabInOpenWindow(
+  openWindowIds: Set<number>,
+  openTabIds: Set<number>
+): (node: OutlineNode) => node is OutlineNode & { live: { tabId: number; windowId: number } } {
+  return (node): node is OutlineNode & { live: { tabId: number; windowId: number } } => {
+    return Boolean(
+      isLiveTabNode(node) &&
+        openWindowIds.has(node.live.windowId) &&
+        !openTabIds.has(node.live.tabId)
+    );
+  };
+}
+
+function isLiveTabNode(node: OutlineNode): node is OutlineNode & { live: { tabId: number; windowId: number } } {
+  return Boolean(node.kind === "tab" && node.status === "live" && node.live && "tabId" in node.live);
 }
 
 function isCommand(message: unknown): message is Parameters<typeof runCommand>[2] {
