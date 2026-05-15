@@ -118,6 +118,7 @@ export function reconcileWithWindows(
       .sort((a, b) => a.index - b.index);
 
     const runtimeToNode = new Map<number, NodeId>();
+    const reattachedNodeIds = new Set<NodeId>();
     for (const tab of tabs) {
       openTabIds.add(tab.id);
       const existingTabId = findLiveTabNode(next, tab.id);
@@ -128,14 +129,23 @@ export function reconcileWithWindows(
         continue;
       }
 
-      const nodeId = uniqueNodeId(next, tabNodeId(tab.id), clock.now);
-      next.nodes[nodeId] = tabToNode(tab, nodeId, winId, clock.now);
+      const reattachedNodeId = findRestorableClosedTabNode(next, tab, winId, reattachedNodeIds);
+      const nodeId = reattachedNodeId ?? uniqueNodeId(next, tabNodeId(tab.id), clock.now);
+      if (reattachedNodeId) {
+        updateLiveTabNode(requireNode(next, reattachedNodeId), tab, clock.now);
+        reattachedNodeIds.add(reattachedNodeId);
+      } else {
+        next.nodes[nodeId] = tabToNode(tab, nodeId, winId, clock.now);
+      }
       runtimeToNode.set(tab.id, nodeId);
     }
 
     for (const tab of tabs) {
       const nodeId = runtimeToNode.get(tab.id);
       if (!nodeId) {
+        continue;
+      }
+      if (reattachedNodeIds.has(nodeId)) {
         continue;
       }
       const openerId = typeof tab.openerTabId === "number" ? runtimeToNode.get(tab.openerTabId) : undefined;
@@ -370,6 +380,51 @@ function updateLiveTabNode(node: OutlineNode, tab: RuntimeTab, now: number): voi
   }
   delete node.closedAt;
   delete node.restore;
+}
+
+function findRestorableClosedTabNode(
+  state: OutlineState,
+  tab: RuntimeTab,
+  windowNodeIdForTab: NodeId,
+  alreadyMatched: Set<NodeId>
+): NodeId | undefined {
+  if (!tab.url || isBlankUrl(tab.url)) {
+    return undefined;
+  }
+
+  const candidates = Object.values(state.nodes)
+    .filter((node) => {
+      return (
+        node.kind === "tab" &&
+        node.status === "closed" &&
+        !alreadyMatched.has(node.id) &&
+        node.restore?.url === tab.url &&
+        isInCompatibleWindow(state, node, tab.windowId, windowNodeIdForTab)
+      );
+    })
+    .sort((a, b) => (b.closedAt ?? 0) - (a.closedAt ?? 0));
+
+  return candidates[0]?.id;
+}
+
+function isInCompatibleWindow(
+  state: OutlineState,
+  node: OutlineNode,
+  runtimeWindowId: number,
+  windowNodeIdForTab: NodeId
+): boolean {
+  const owner = nearestWindow(state, node.id);
+  if (!owner) {
+    return true;
+  }
+  if (owner.id === windowNodeIdForTab) {
+    return true;
+  }
+  return Boolean(owner.live && "windowId" in owner.live && owner.live.windowId === runtimeWindowId);
+}
+
+function isBlankUrl(url: string): boolean {
+  return url === "about:blank" || url === "about:newtab";
 }
 
 function ensureParent(state: OutlineState, nodeId: NodeId, parentId: NodeId): void {

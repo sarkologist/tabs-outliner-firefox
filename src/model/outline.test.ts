@@ -251,6 +251,45 @@ describe("outline model", () => {
     expect(reconciled.nodes["tab:5"]?.parentId).toBe("tab:1");
   });
 
+  it("reattaches a natively restored closed tab in place", () => {
+    const stored = closeTab(bootstrapFromWindows(windows, { now: 1000 }), 2, {
+      now: 2000,
+      sessionId: "session-tab-2"
+    });
+
+    const reconciled = reconcileWithWindows(stored, [
+      {
+        id: 10,
+        incognito: false,
+        focused: true,
+        tabs: [
+          {
+            id: 1,
+            windowId: 10,
+            index: 0,
+            active: true,
+            url: "https://example.com/",
+            title: "Example"
+          },
+          {
+            id: 22,
+            windowId: 10,
+            index: 1,
+            active: false,
+            url: "https://example.com/child",
+            title: "Child"
+          }
+        ]
+      }
+    ], { now: 5000 });
+
+    expect(reconciled.nodes["tab:2"]?.status).toBe("live");
+    expect(reconciled.nodes["tab:2"]?.live).toEqual({ tabId: 22, windowId: 10 });
+    expect(reconciled.nodes["tab:2"]?.parentId).toBe("tab:1");
+    expect(reconciled.nodes["tab:22"]).toBeUndefined();
+    expect(reconciled.nodes["tab:1"]?.childIds).toEqual(["tab:2"]);
+  });
+
   it("reconciles cross-window opener tabs back into their owning window", () => {
     const stored = bootstrapFromWindows([
       {
