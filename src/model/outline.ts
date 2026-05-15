@@ -124,6 +124,15 @@ export function reconcileWithWindows(
       const existingTabId = findLiveTabNode(next, tab.id);
       if (existingTabId) {
         const node = requireNode(next, existingTabId);
+        const reattachedNodeId = findRestorableClosedTabNode(next, tab, winId, reattachedNodeIds);
+        if (reattachedNodeId && isProvisionalLiveTabNode(node)) {
+          replaceProvisionalNode(next, node.id, reattachedNodeId);
+          updateLiveTabNode(requireNode(next, reattachedNodeId), tab, clock.now);
+          reattachedNodeIds.add(reattachedNodeId);
+          runtimeToNode.set(tab.id, reattachedNodeId);
+          continue;
+        }
+
         updateLiveTabNode(node, tab, clock.now);
         runtimeToNode.set(tab.id, existingTabId);
         continue;
@@ -425,6 +434,29 @@ function isInCompatibleWindow(
 
 function isBlankUrl(url: string): boolean {
   return url === "about:blank" || url === "about:newtab";
+}
+
+function isProvisionalLiveTabNode(node: OutlineNode): boolean {
+  return node.kind === "tab" && node.status === "live" && Boolean(node.url && isBlankUrl(node.url));
+}
+
+function replaceProvisionalNode(state: OutlineState, provisionalNodeId: NodeId, replacementNodeId: NodeId): void {
+  const provisional = requireNode(state, provisionalNodeId);
+  const replacement = requireNode(state, replacementNodeId);
+  const siblings = provisional.parentId ? requireNode(state, provisional.parentId).childIds : state.rootIds;
+  removeId(siblings, provisionalNodeId);
+
+  for (const childId of provisional.childIds) {
+    const child = state.nodes[childId];
+    if (child) {
+      child.parentId = replacementNodeId;
+    }
+    if (!replacement.childIds.includes(childId)) {
+      replacement.childIds.push(childId);
+    }
+  }
+
+  delete state.nodes[provisionalNodeId];
 }
 
 function ensureParent(state: OutlineState, nodeId: NodeId, parentId: NodeId): void {
