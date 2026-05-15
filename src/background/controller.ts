@@ -13,7 +13,7 @@ import {
   reconcileWithWindows,
   repairState
 } from "../model/outline.js";
-import type { NodeId, OutlineNode, OutlineState, RuntimeTab } from "../model/types.js";
+import type { NodeId, OutlineNode, OutlineState, RuntimeTab, RuntimeWindow } from "../model/types.js";
 
 export type BackgroundController = {
   ensureState(): Promise<OutlineState>;
@@ -38,6 +38,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   let state: OutlineState | undefined;
   let mutationQueue: Promise<void> = Promise.resolve();
   const outlinerClosingTabIds = new Set<number>();
+  const outlinerClosingWindowIds = new Set<number>();
   const removedTabIds = new Set<number>();
   const stateCache = createStateCache(initializeState);
 
@@ -92,7 +93,23 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   api.windows.onRemoved.addListener(async (windowId) => {
     await enqueueMutation(async () => {
       const current = await ensureState();
-      for (const tabId of liveTabIdsInWindow(current, windowId)) {
+      const liveTabIds = liveTabIdsInWindow(current, windowId);
+      const outlinerClosingWindow = outlinerClosingWindowIds.delete(windowId);
+      const singleNativeRemovedTabId = !outlinerClosingWindow &&
+        liveTabIds.length === 1 &&
+        removedTabIds.has(liveTabIds[0]!) &&
+        !outlinerClosingTabIds.has(liveTabIds[0]!)
+        ? liveTabIds[0]
+        : undefined;
+
+      if (typeof singleNativeRemovedTabId === "number") {
+        state = deleteLiveTabNodeByTabId(current, singleNativeRemovedTabId);
+        stateCache.replace(state);
+        await persistAndBroadcast();
+        return;
+      }
+
+      for (const tabId of liveTabIds) {
         outlinerClosingTabIds.delete(tabId);
       }
       const recent = await mostRecentClosedSession();
@@ -141,8 +158,14 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       const outlinerClosingTabId = message.type === "closeNode"
         ? liveTabIdForNode(current, message.nodeId)
         : undefined;
+      const outlinerClosingWindowId = message.type === "closeNode"
+        ? liveWindowIdForNode(current, message.nodeId)
+        : undefined;
       if (typeof outlinerClosingTabId === "number") {
         outlinerClosingTabIds.add(outlinerClosingTabId);
+      }
+      if (typeof outlinerClosingWindowId === "number") {
+        outlinerClosingWindowIds.add(outlinerClosingWindowId);
       }
 
       let result: Awaited<ReturnType<typeof runCommand>>;
@@ -151,6 +174,9 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       } catch (error) {
         if (typeof outlinerClosingTabId === "number") {
           outlinerClosingTabIds.delete(outlinerClosingTabId);
+        }
+        if (typeof outlinerClosingWindowId === "number") {
+          outlinerClosingWindowIds.delete(outlinerClosingWindowId);
         }
         throw error;
       }
@@ -184,10 +210,11 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   async function refreshFromRuntimeNow(eventTabs: RuntimeTab[] = [], options: RefreshOptions = {}): Promise<void> {
     const current = await ensureState();
     const currentEventTabs = eventTabs.filter((tab) => !removedTabIds.has(tab.id));
-    const windows =
+    const windowsSnapshot =
       currentEventTabs.length > 0
         ? await getNormalWindowsIncludingTabs(api, currentEventTabs)
         : await getNormalWindows(api);
+    const windows = filterRemovedTabsFromWindows(windowsSnapshot, removedTabIds);
     state = reconcileWithWindows(current, windows, { now: now() }, {
       closeMissing: options.closeMissing ?? eventTabs.length === 0
     });
@@ -217,7 +244,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
   async function reconcileMissingLiveTabsInOpenWindows(): Promise<void> {
     const current = await ensureState();
-    const windows = await getNormalWindows(api);
+    const windows = filterRemovedTabsFromWindows(await getNormalWindows(api), removedTabIds);
     const openWindowIds = new Set(windows.map((windowInfo) => windowInfo.id));
     const openTabIds = new Set(
       windows.flatMap((windowInfo) => windowInfo.tabs ?? []).map((tab) => tab.id)
@@ -262,6 +289,13 @@ function liveTabIdForNode(state: OutlineState, nodeId: NodeId): number | undefin
     : undefined;
 }
 
+function liveWindowIdForNode(state: OutlineState, nodeId: NodeId): number | undefined {
+  const node = state.nodes[nodeId];
+  return node?.kind === "window" && node.status === "live" && node.live && "windowId" in node.live
+    ? node.live.windowId
+    : undefined;
+}
+
 function liveTabIdsInWindow(state: OutlineState, windowId: number): number[] {
   return Object.values(state.nodes).flatMap((node) => {
     if (!isLiveTabNode(node) || node.live.windowId !== windowId) {
@@ -286,6 +320,17 @@ function isLiveTabInOpenWindow(
 
 function isLiveTabNode(node: OutlineNode): node is OutlineNode & { live: { tabId: number; windowId: number } } {
   return Boolean(node.kind === "tab" && node.status === "live" && node.live && "tabId" in node.live);
+}
+
+function filterRemovedTabsFromWindows(windows: RuntimeWindow[], removedTabIds: Set<number>): RuntimeWindow[] {
+  if (removedTabIds.size === 0) {
+    return windows;
+  }
+
+  return windows.map((windowInfo) => ({
+    ...windowInfo,
+    tabs: (windowInfo.tabs ?? []).filter((tab) => !removedTabIds.has(tab.id))
+  }));
 }
 
 function isCommand(message: unknown): message is Parameters<typeof runCommand>[2] {
