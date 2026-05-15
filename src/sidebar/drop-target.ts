@@ -15,6 +15,10 @@ export type NodeDropPlacement = {
 export type RootDropPlacement = {
   kind: "root";
   sourceId: NodeId;
+  index: number;
+  createsWindow: boolean;
+  targetId?: NodeId;
+  mode?: Exclude<DropMode, "inside">;
 };
 
 export type DropPlacement = NodeDropPlacement | RootDropPlacement;
@@ -34,7 +38,7 @@ export function dropPlacementForNode(
   sourceId: NodeId,
   targetId: NodeId,
   mode: DropMode
-): NodeDropPlacement | undefined {
+): DropPlacement | undefined {
   const source = state.nodes[sourceId];
   const target = state.nodes[targetId];
   if (!source || !target || sourceId === targetId || isDescendant(state, targetId, sourceId)) {
@@ -51,6 +55,16 @@ export function dropPlacementForNode(
     return undefined;
   }
 
+  if (!target.parentId) {
+    return placementForRootTarget(
+      state,
+      source,
+      targetIndex + (mode === "after" ? 1 : 0),
+      target.id,
+      mode
+    );
+  }
+
   return placementForTargetParent(
     state,
     source,
@@ -63,21 +77,27 @@ export function dropPlacementForNode(
 
 export function dropPlacementForRoot(state: OutlineState, sourceId: NodeId): RootDropPlacement | undefined {
   const source = state.nodes[sourceId];
-  if (source?.kind !== "tab") {
+  if (!source) {
     return undefined;
   }
 
-  return {
-    kind: "root",
-    sourceId
-  };
+  return placementForRootTarget(state, source, state.rootIds.length);
 }
 
 export function commandForDropPlacement(placement: DropPlacement): BackgroundCommand {
   if (placement.kind === "root") {
+    if (!placement.createsWindow) {
+      return {
+        type: "moveNode",
+        nodeId: placement.sourceId,
+        index: placement.index
+      };
+    }
+
     return {
       type: "moveNodeToNewWindow",
-      nodeId: placement.sourceId
+      nodeId: placement.sourceId,
+      index: placement.index
     };
   }
 
@@ -86,6 +106,31 @@ export function commandForDropPlacement(placement: DropPlacement): BackgroundCom
     nodeId: placement.sourceId,
     ...(placement.parentId ? { parentId: placement.parentId } : {}),
     index: placement.index
+  };
+}
+
+function placementForRootTarget(
+  state: OutlineState,
+  source: OutlineNode,
+  rawIndex: number,
+  targetId?: NodeId,
+  mode?: Exclude<DropMode, "inside">
+): RootDropPlacement | undefined {
+  const sourceSiblings = source.parentId ? state.nodes[source.parentId]?.childIds : state.rootIds;
+  if (!sourceSiblings) {
+    return undefined;
+  }
+
+  const sourceIndex = sourceSiblings.indexOf(source.id);
+  const adjustedIndex = !source.parentId && sourceIndex >= 0 && sourceIndex < rawIndex ? rawIndex - 1 : rawIndex;
+
+  return {
+    kind: "root",
+    sourceId: source.id,
+    index: Math.max(0, adjustedIndex),
+    createsWindow: source.kind === "tab",
+    ...(targetId ? { targetId } : {}),
+    ...(mode ? { mode } : {})
   };
 }
 

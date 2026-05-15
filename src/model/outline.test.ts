@@ -208,6 +208,36 @@ describe("outline model", () => {
     ]);
   });
 
+  it("inserts a new live window at the requested root index", () => {
+    const state = bootstrapFromWindows([
+      ...windows,
+      {
+        id: 20,
+        incognito: false,
+        focused: false,
+        tabs: [
+          {
+            id: 5,
+            windowId: 20,
+            index: 0,
+            active: true,
+            url: "https://target.example/",
+            title: "Target"
+          }
+        ]
+      }
+    ], { now: 1000 });
+
+    const moved = moveTabToNewLiveWindow(state, "tab:1", {
+      id: 42,
+      focused: true,
+      incognito: false
+    }, { now: 2000, rootIndex: 1 });
+
+    expect(moved.rootIds).toEqual(["window:10", "window:42", "window:20"]);
+    expect(moved.nodes["window:42"]?.childIds).toEqual(["tab:1"]);
+  });
+
   it("wraps a closed tab subtree in a closed window placeholder", () => {
     const state = closeTab(bootstrapFromWindows(windows, { now: 1000 }), 1, {
       now: 2000,

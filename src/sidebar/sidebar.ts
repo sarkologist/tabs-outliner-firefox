@@ -34,7 +34,7 @@ refresh?.addEventListener("click", () => {
 });
 
 rootDropSurface?.addEventListener("dragover", (event) => {
-  if (isNodeRowEvent(event) || isTreeEvent(event)) {
+  if (isNodeRowEvent(event) || isNestedTreeEvent(event)) {
     if (activeDropPlacement) {
       event.preventDefault();
     }
@@ -263,8 +263,8 @@ function isNodeRowEvent(event: DragEvent): boolean {
   return event.target instanceof Element && Boolean(event.target.closest(".node-row"));
 }
 
-function isTreeEvent(event: DragEvent): boolean {
-  return Boolean(event.target instanceof Node && tree?.contains(event.target));
+function isNestedTreeEvent(event: DragEvent): boolean {
+  return event.target instanceof Element && Boolean(event.target.closest(".node, .children"));
 }
 
 function showDropPlacement(placement: DropPlacement): void {
@@ -277,7 +277,22 @@ function showDropPlacement(placement: DropPlacement): void {
 
   if (placement.kind === "root") {
     rootDropSurface?.classList.add("root-drop-target");
-    prepareDropMarker("drop-root", 0);
+    prepareDropMarker(placement.mode ? `drop-${placement.mode}` : "drop-root", 0);
+    if (placement.targetId && placement.mode) {
+      const targetItem = nodeItemForId(placement.targetId);
+      if (!targetItem) {
+        clearDropPreview();
+        return;
+      }
+
+      if (placement.mode === "before") {
+        targetItem.before(dropMarker);
+      } else {
+        targetItem.after(dropMarker);
+      }
+      return;
+    }
+
     tree.append(dropMarker);
     return;
   }

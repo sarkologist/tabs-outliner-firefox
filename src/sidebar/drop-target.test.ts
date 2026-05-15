@@ -62,14 +62,47 @@ describe("dropPlacementForRoot", () => {
 
     expect(placement && commandForDropPlacement(placement)).toEqual({
       type: "moveNodeToNewWindow",
-      nodeId: "tab:a"
+      nodeId: "tab:a",
+      index: 1
     });
   });
 
-  it("rejects non-tab nodes", () => {
+  it("creates a new-window command when a tab is dropped between root windows", () => {
     const state = outlineState(["tab:a"]);
+    state.rootIds.push("window:2");
+    state.nodes["window:2"] = {
+      ...windowNode([]),
+      id: "window:2",
+      title: "Window 2",
+      live: { windowId: 2 }
+    };
 
-    expect(dropPlacementForRoot(state, "window:1")).toBeUndefined();
+    const placement = dropPlacementForNode(state, "tab:a", "window:2", "before");
+
+    expect(placement && commandForDropPlacement(placement)).toEqual({
+      type: "moveNodeToNewWindow",
+      nodeId: "tab:a",
+      index: 1
+    });
+  });
+
+  it("creates a root move command for window nodes", () => {
+    const state = outlineState(["tab:a"]);
+    state.rootIds.push("window:2");
+    state.nodes["window:2"] = {
+      ...windowNode([]),
+      id: "window:2",
+      title: "Window 2",
+      live: { windowId: 2 }
+    };
+
+    const placement = dropPlacementForRoot(state, "window:1");
+
+    expect(placement && commandForDropPlacement(placement)).toEqual({
+      type: "moveNode",
+      nodeId: "window:1",
+      index: 1
+    });
   });
 });
 

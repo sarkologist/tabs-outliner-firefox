@@ -305,7 +305,7 @@ export function moveTabToNewLiveWindow(
   state: OutlineState,
   nodeId: NodeId,
   windowInfo: RuntimeWindow,
-  clock: Clock
+  clock: Clock & { rootIndex?: number }
 ): OutlineState {
   const node = state.nodes[nodeId];
   if (!node) {
@@ -344,12 +344,16 @@ export function moveTabToNewLiveWindow(
     }
   }
 
-  moveExistingNodeUnderNewWindow(next, nodeId, newWindowNodeId, clock.now);
+  moveExistingNodeUnderNewWindow(next, nodeId, newWindowNodeId, clock.now, clock.rootIndex);
   updateLiveTabWindowRefs(next, nodeId, windowInfo.id, clock.now);
   return repairState(next);
 }
 
-export function moveTabToNewClosedWindow(state: OutlineState, nodeId: NodeId, clock: Clock): OutlineState {
+export function moveTabToNewClosedWindow(
+  state: OutlineState,
+  nodeId: NodeId,
+  clock: Clock & { rootIndex?: number }
+): OutlineState {
   const node = state.nodes[nodeId];
   if (!node) {
     throw new Error(`Cannot move missing node: ${nodeId}`);
@@ -377,7 +381,7 @@ export function moveTabToNewClosedWindow(state: OutlineState, nodeId: NodeId, cl
     ...(sourceWindow?.restore ? { restore: { ...sourceWindow.restore } } : {})
   };
 
-  moveExistingNodeUnderNewWindow(next, nodeId, newWindowNodeId, clock.now);
+  moveExistingNodeUnderNewWindow(next, nodeId, newWindowNodeId, clock.now, clock.rootIndex);
   return repairState(next);
 }
 
@@ -722,13 +726,17 @@ function moveExistingNodeUnderNewWindow(
   state: OutlineState,
   nodeId: NodeId,
   windowNodeId: NodeId,
-  now: number
+  now: number,
+  rootIndex?: number
 ): void {
   const moving = requireNode(state, nodeId);
   const oldSiblings = moving.parentId ? requireNode(state, moving.parentId).childIds : state.rootIds;
   removeId(oldSiblings, nodeId);
 
-  state.rootIds.push(windowNodeId);
+  const boundedIndex = typeof rootIndex === "number"
+    ? Math.max(0, Math.min(rootIndex, state.rootIds.length))
+    : state.rootIds.length;
+  state.rootIds.splice(boundedIndex, 0, windowNodeId);
   moving.parentId = windowNodeId;
   moving.updatedAt = now;
   requireNode(state, windowNodeId).childIds.push(nodeId);

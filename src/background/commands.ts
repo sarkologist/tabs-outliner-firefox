@@ -39,6 +39,7 @@ export type BackgroundCommand =
   | {
       type: "moveNodeToNewWindow";
       nodeId: NodeId;
+      index?: number;
     }
   | {
       type: "toggleCollapsed";
@@ -86,6 +87,11 @@ export async function runCommand(
       return { state: await restoreNode(state, adapter, command.nodeId) };
 
     case "moveNode": {
+      const node = state.nodes[command.nodeId];
+      if (node?.kind === "tab" && !command.parentId) {
+        return { state: await moveNodeToNewWindow(state, adapter, command.nodeId, command.index) };
+      }
+
       const next = moveNode(state, command.nodeId, {
         ...(command.parentId ? { parentId: command.parentId } : {}),
         index: command.index
@@ -95,7 +101,7 @@ export async function runCommand(
     }
 
     case "moveNodeToNewWindow":
-      return { state: await moveNodeToNewWindow(state, adapter, command.nodeId) };
+      return { state: await moveNodeToNewWindow(state, adapter, command.nodeId, command.index) };
 
     case "toggleCollapsed":
       return { state: toggleCollapsed(state, command.nodeId) };
@@ -364,7 +370,8 @@ async function createFallbackTab(
 async function moveNodeToNewWindow(
   state: OutlineState,
   adapter: BrowserAdapter,
-  nodeId: NodeId
+  nodeId: NodeId,
+  rootIndex?: number
 ): Promise<OutlineState> {
   const node = state.nodes[nodeId];
   if (!node || node.kind !== "tab") {
@@ -373,13 +380,19 @@ async function moveNodeToNewWindow(
 
   if (isLiveTab(node)) {
     const createdWindow = await adapter.createWindow({ tabId: node.live.tabId });
-    const next = moveTabToNewLiveWindow(state, nodeId, createdWindow, { now: Date.now() });
+    const next = moveTabToNewLiveWindow(state, nodeId, createdWindow, {
+      now: Date.now(),
+      ...(typeof rootIndex === "number" ? { rootIndex } : {})
+    });
     await syncBrowserOrder(next, adapter);
     return next;
   }
 
   if (node.status === "closed") {
-    return moveTabToNewClosedWindow(state, nodeId, { now: Date.now() });
+    return moveTabToNewClosedWindow(state, nodeId, {
+      now: Date.now(),
+      ...(typeof rootIndex === "number" ? { rootIndex } : {})
+    });
   }
 
   return state;

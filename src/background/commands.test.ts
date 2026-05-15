@@ -382,6 +382,40 @@ describe("background commands", () => {
     expect(adapter.moveTabs).toHaveBeenNthCalledWith(2, [1, 2], { windowId: 42, index: 0 });
   });
 
+  it("keeps root-positioned tab drops inside a newly created window", async () => {
+    const state: OutlineState = bootstrapFromWindows(runtimeWindows, { now: 1000 });
+    const adapter = fakeAdapter({
+      createWindow: vi.fn(async ({ tabId }) => ({
+        id: 42,
+        focused: true,
+        incognito: false,
+        tabs: typeof tabId === "number"
+          ? [
+              {
+                id: tabId,
+                windowId: 42,
+                index: 0,
+                active: true,
+                url: "https://example.com/",
+                title: "Example"
+              }
+            ]
+          : []
+      }))
+    });
+
+    const result = await runCommand(state, adapter, {
+      type: "moveNode",
+      nodeId: "tab:1",
+      index: 0
+    });
+
+    expect(result.state.rootIds).toEqual(["window:42", "window:10"]);
+    expect(result.state.nodes["window:42"]?.childIds).toEqual(["tab:1"]);
+    expect(result.state.nodes["tab:1"]?.parentId).toBe("window:42");
+    expect(result.state.rootIds).not.toContain("tab:1");
+  });
+
   it("moves a closed tab subtree into a placeholder without touching Firefox", async () => {
     const state = closeTab(bootstrapFromWindows(runtimeWindows, { now: 1000 }), 1, {
       now: 2000,
