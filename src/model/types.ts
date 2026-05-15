@@ -1,0 +1,108 @@
+export type NodeId = string;
+
+export type RuntimeTab = {
+  id: number;
+  windowId: number;
+  index: number;
+  active: boolean;
+  openerTabId?: number;
+  url?: string;
+  title?: string;
+  favIconUrl?: string;
+  incognito?: boolean;
+  sessionId?: string;
+};
+
+export type RuntimeWindow = {
+  id: number;
+  focused: boolean;
+  incognito: boolean;
+  tabs?: RuntimeTab[];
+  sessionId?: string;
+};
+
+export type OutlineNodeKind = "window" | "tab";
+export type OutlineNodeStatus = "live" | "closed";
+
+export type LiveRef =
+  | {
+      windowId: number;
+      tabId?: number;
+    }
+  | {
+      tabId: number;
+      windowId: number;
+    };
+
+export type RestoreRef = {
+  sessionId?: string;
+  url?: string;
+  title?: string;
+  favIconUrl?: string;
+};
+
+export type OutlineNode = {
+  id: NodeId;
+  kind: OutlineNodeKind;
+  status: OutlineNodeStatus;
+  parentId?: NodeId;
+  childIds: NodeId[];
+  title: string;
+  url?: string;
+  favIconUrl?: string;
+  active?: boolean;
+  collapsed: boolean;
+  createdAt: number;
+  updatedAt: number;
+  closedAt?: number;
+  live?: LiveRef;
+  restore?: RestoreRef;
+};
+
+export type OutlineState = {
+  version: 1;
+  rootIds: NodeId[];
+  nodes: Record<NodeId, OutlineNode>;
+};
+
+export type Clock = {
+  now: number;
+};
+
+export type CloseContext = Clock & {
+  sessionId?: string;
+};
+
+export type MoveTarget = {
+  parentId?: NodeId;
+  index: number;
+  now?: number;
+};
+
+export type LiveTabProjection = {
+  tabId: number;
+  windowId: number;
+};
+
+export type RestorePlan =
+  | {
+      kind: "session";
+      nodeId: NodeId;
+      sessionId: string;
+      fallbackUrl?: string;
+    }
+  | {
+      kind: "url";
+      nodeId: NodeId;
+      url: string;
+      windowNodeId?: NodeId;
+    };
+
+export type RestoredNode = {
+  nodeId: NodeId;
+  windowId: number;
+  tabId?: number;
+  url?: string;
+  title?: string;
+  favIconUrl?: string;
+};

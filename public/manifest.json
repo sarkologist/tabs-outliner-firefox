@@ -1,0 +1,38 @@
+{
+  "manifest_version": 3,
+  "name": "Tab Session Outliner",
+  "version": "0.1.0",
+  "description": "A durable Firefox sidebar outline for live and recently closed tabs.",
+  "incognito": "not_allowed",
+  "permissions": ["tabs", "sessions", "storage", "unlimitedStorage"],
+  "action": {
+    "default_title": "Open Tab Session Outliner",
+    "default_icon": {
+      "16": "icons/icon.svg",
+      "32": "icons/icon.svg"
+    }
+  },
+  "sidebar_action": {
+    "default_title": "Tab Session Outliner",
+    "default_panel": "sidebar/sidebar.html",
+    "default_icon": "icons/icon.svg",
+    "open_at_install": true
+  },
+  "background": {
+    "scripts": ["background/index.js"],
+    "type": "module"
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "tab-session-outliner@example.local",
+      "data_collection_permissions": {
+        "required": ["none"]
+      },
+      "strict_min_version": "127.0"
+    }
+  },
+  "icons": {
+    "48": "icons/icon.svg",
+    "96": "icons/icon.svg"
+  }
+}

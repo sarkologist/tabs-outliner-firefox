@@ -1,0 +1,222 @@
+import type { BackgroundCommand } from "../background/commands.js";
+import type { NodeId, OutlineNode, OutlineState } from "../model/types.js";
+
+const stateCount = document.querySelector<HTMLSpanElement>("#state-count");
+const tree = document.querySelector<HTMLElement>("#tree");
+const empty = document.querySelector<HTMLElement>("#empty");
+
+let currentState: OutlineState | undefined;
+let draggedNodeId: NodeId | undefined;
+
+void loadState();
+
+browser.runtime.onMessage.addListener((message) => {
+  if (isStateUpdated(message)) {
+    currentState = message.state;
+    render();
+  }
+});
+
+async function loadState(): Promise<void> {
+  currentState = (await sendCommand({ type: "getState" })) as OutlineState;
+  render();
+}
+
+function render(): void {
+  if (!tree || !stateCount) {
+    return;
+  }
+
+  tree.textContent = "";
+  const state = currentState;
+  if (!state) {
+    stateCount.textContent = "Loading";
+    return;
+  }
+
+  const nodes = Object.values(state.nodes);
+  const closedCount = nodes.filter((node) => node.status === "closed").length;
+  stateCount.textContent = `${nodes.length} items / ${closedCount} saved`;
+
+  if (empty) {
+    empty.hidden = nodes.length > 0;
+  }
+
+  for (const rootId of state.rootIds) {
+    const root = state.nodes[rootId];
+    if (root) {
+      tree.append(renderNode(state, root, 0));
+    }
+  }
+}
+
+function renderNode(state: OutlineState, node: OutlineNode, depth: number): HTMLElement {
+  const item = document.createElement("li");
+  item.className = `node node-${node.kind} is-${node.status}`;
+  item.dataset.nodeId = node.id;
+
+  const row = document.createElement("div");
+  row.className = "node-row";
+  row.draggable = true;
+  row.style.setProperty("--depth", String(depth));
+  row.addEventListener("dragstart", (event) => {
+    draggedNodeId = node.id;
+    event.dataTransfer?.setData("text/plain", node.id);
+    event.dataTransfer?.setDragImage(row, 12, 12);
+  });
+  row.addEventListener("dragover", (event) => {
+    event.preventDefault();
+    row.classList.add("drop-target");
+  });
+  row.addEventListener("dragleave", () => {
+    row.classList.remove("drop-target");
+  });
+  row.addEventListener("drop", (event) => {
+    event.preventDefault();
+    row.classList.remove("drop-target");
+    const sourceId = draggedNodeId ?? event.dataTransfer?.getData("text/plain");
+    draggedNodeId = undefined;
+    if (sourceId && sourceId !== node.id) {
+      void sendCommand(moveCommandForDrop(state, sourceId, node, event.clientY, row)).then((next) => {
+        currentState = next as OutlineState;
+        render();
+      });
+    }
+  });
+
+  const twisty = document.createElement("button");
+  twisty.className = "icon-button twisty";
+  twisty.type = "button";
+  twisty.title = node.collapsed ? "Expand" : "Collapse";
+  twisty.textContent = node.childIds.length ? (node.collapsed ? "+" : "-") : "";
+  twisty.disabled = node.childIds.length === 0;
+  twisty.addEventListener("click", (event) => {
+    event.stopPropagation();
+    void runAndRender({ type: "toggleCollapsed", nodeId: node.id });
+  });
+  row.append(twisty);
+
+  const label = document.createElement("button");
+  label.className = "node-label";
+  label.type = "button";
+  label.title = node.url ?? node.title;
+  label.addEventListener("click", () => {
+    if (node.status === "live") {
+      void sendCommand({ type: "focusNode", nodeId: node.id });
+    } else {
+      void runAndRender({ type: "restoreNode", nodeId: node.id });
+    }
+  });
+
+  const title = document.createElement("span");
+  title.className = "node-title";
+  title.textContent = node.title || "Untitled";
+  label.append(title);
+
+  if (node.url) {
+    const url = document.createElement("span");
+    url.className = "node-url";
+    url.textContent = readableUrl(node.url);
+    label.append(url);
+  }
+  row.append(label);
+
+  row.append(actionButton(node.status === "live" ? "Close" : "Restore", () => {
+    void runAndRender({
+      type: node.status === "live" ? "closeNode" : "restoreNode",
+      nodeId: node.id
+    });
+  }));
+
+  if (node.status === "closed") {
+    row.append(actionButton("Delete", () => {
+      void runAndRender({ type: "deleteNode", nodeId: node.id });
+    }));
+  }
+
+  item.append(row);
+
+  if (!node.collapsed && node.childIds.length > 0) {
+    const children = document.createElement("ol");
+    children.className = "children";
+    for (const childId of node.childIds) {
+      const child = state.nodes[childId];
+      if (child) {
+        children.append(renderNode(state, child, depth + 1));
+      }
+    }
+    item.append(children);
+  }
+
+  return item;
+}
+
+function moveCommandForDrop(
+  state: OutlineState,
+  sourceId: NodeId,
+  target: OutlineNode,
+  clientY: number,
+  row: HTMLElement
+): BackgroundCommand {
+  const rect = row.getBoundingClientRect();
+  const relativeY = clientY - rect.top;
+  const mode = relativeY < rect.height / 3 ? "before" : relativeY > (rect.height * 2) / 3 ? "after" : "inside";
+
+  if (mode === "inside") {
+    return {
+      type: "moveNode",
+      nodeId: sourceId,
+      parentId: target.id,
+      index: target.childIds.length
+    };
+  }
+
+  const siblings = target.parentId ? state.nodes[target.parentId]?.childIds ?? [] : state.rootIds;
+  const targetIndex = siblings.indexOf(target.id);
+  return {
+    type: "moveNode",
+    nodeId: sourceId,
+    ...(target.parentId ? { parentId: target.parentId } : {}),
+    index: Math.max(0, targetIndex + (mode === "after" ? 1 : 0))
+  };
+}
+
+function actionButton(label: string, onClick: () => void): HTMLButtonElement {
+  const button = document.createElement("button");
+  button.className = "icon-button action";
+  button.type = "button";
+  button.title = label;
+  button.textContent = label === "Delete" ? "x" : label[0] ?? "?";
+  button.addEventListener("click", (event) => {
+    event.stopPropagation();
+    onClick();
+  });
+  return button;
+}
+
+async function runAndRender(command: BackgroundCommand): Promise<void> {
+  currentState = (await sendCommand(command)) as OutlineState;
+  render();
+}
+
+async function sendCommand(command: BackgroundCommand): Promise<unknown> {
+  return browser.runtime.sendMessage(command);
+}
+
+function readableUrl(url: string): string {
+  try {
+    const parsed = new URL(url);
+    return parsed.hostname || parsed.href;
+  } catch {
+    return url;
+  }
+}
+
+function isStateUpdated(message: unknown): message is { type: "stateUpdated"; state: OutlineState } {
+  return Boolean(
+    message &&
+      typeof message === "object" &&
+      (message as { type?: unknown }).type === "stateUpdated" &&
+      (message as { state?: unknown }).state
+  );
+}

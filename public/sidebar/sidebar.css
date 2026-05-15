@@ -1,0 +1,140 @@
+:root {
+  color-scheme: light dark;
+  font-family:
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
+  font-size: 13px;
+}
+
+body {
+  min-width: 240px;
+  margin: 0;
+  color: CanvasText;
+  background: Canvas;
+}
+
+.toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid color-mix(in srgb, CanvasText 18%, transparent);
+  background: Canvas;
+}
+
+h1 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.count {
+  min-width: 0;
+  overflow: hidden;
+  color: color-mix(in srgb, CanvasText 62%, transparent);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+main {
+  padding: 6px 0 16px;
+}
+
+.empty {
+  margin: 20px 12px;
+  color: color-mix(in srgb, CanvasText 60%, transparent);
+}
+
+.tree,
+.children {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.node-row {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) 24px 24px;
+  gap: 2px;
+  align-items: center;
+  min-height: 30px;
+  padding: 2px 6px 2px calc(6px + var(--depth) * 14px);
+  border-left: 3px solid transparent;
+}
+
+.node-row:hover,
+.node-row.drop-target {
+  background: color-mix(in srgb, Highlight 16%, transparent);
+}
+
+.is-closed > .node-row {
+  color: color-mix(in srgb, CanvasText 58%, transparent);
+}
+
+.is-closed > .node-row {
+  border-left-color: color-mix(in srgb, CanvasText 22%, transparent);
+}
+
+.node-label,
+.icon-button {
+  appearance: none;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+}
+
+.node-label {
+  display: grid;
+  min-width: 0;
+  padding: 2px 4px;
+  text-align: left;
+}
+
+.node-label:focus-visible,
+.icon-button:focus-visible {
+  outline: 2px solid Highlight;
+  outline-offset: 1px;
+}
+
+.node-title,
+.node-url {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.node-title {
+  font-weight: 600;
+}
+
+.node-url {
+  color: color-mix(in srgb, CanvasText 54%, transparent);
+  font-size: 11px;
+}
+
+.icon-button {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border-radius: 4px;
+  line-height: 22px;
+  text-align: center;
+}
+
+.icon-button:not(:disabled):hover {
+  background: color-mix(in srgb, CanvasText 12%, transparent);
+}
+
+.icon-button:disabled {
+  opacity: 0.28;
+}
