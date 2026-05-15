@@ -4,6 +4,7 @@ import {
   bootstrapFromWindows,
   closeTab,
   closeWindow,
+  deleteLiveTabNodeByTabId,
   deleteNode,
   moveNode,
   moveTabToNewClosedWindow,
@@ -171,6 +172,70 @@ describe("outline model", () => {
     expect(next.nodes["tab:1"]?.status).toBe("closed");
     expect(next.nodes["tab:2"]?.status).toBe("closed");
     expect(next.nodes["window:10"]?.restore?.sessionId).toBe("session-window-10");
+  });
+
+  it("deletes a live tab node by runtime id and promotes its live children", () => {
+    const state = bootstrapFromWindows(windows, { now: 1000 });
+
+    const deleted = deleteLiveTabNodeByTabId(state, 1);
+
+    expect(deleted.nodes["tab:1"]).toBeUndefined();
+    expect(deleted.nodes["window:10"]?.childIds).toEqual(["tab:2", "tab:3"]);
+    expect(deleted.nodes["tab:2"]?.parentId).toBe("window:10");
+    expect(deleted.nodes["tab:2"]?.status).toBe("live");
+    expect(deleted.nodes["tab:2"]?.live).toEqual({ tabId: 2, windowId: 10 });
+    expect(deleted.nodes["tab:3"]?.status).toBe("live");
+  });
+
+  it("preserves closed child restore metadata when deleting a live tab node", () => {
+    const state = closeTab(bootstrapFromWindows(windows, { now: 1000 }), 2, {
+      now: 2000,
+      sessionId: "session-tab-2"
+    });
+
+    const deleted = deleteLiveTabNodeByTabId(state, 1);
+
+    expect(deleted.nodes["tab:1"]).toBeUndefined();
+    expect(deleted.nodes["window:10"]?.childIds).toEqual(["tab:2", "tab:3"]);
+    expect(deleted.nodes["tab:2"]?.parentId).toBe("window:10");
+    expect(deleted.nodes["tab:2"]?.status).toBe("closed");
+    expect(deleted.nodes["tab:2"]?.restore).toEqual({
+      sessionId: "session-tab-2",
+      url: "https://example.com/child",
+      title: "Child"
+    });
+  });
+
+  it("does not change state for an unknown live tab id deletion", () => {
+    const state = bootstrapFromWindows(windows, { now: 1000 });
+
+    expect(deleteLiveTabNodeByTabId(state, 999)).toBe(state);
+  });
+
+  it("removes an empty window after deleting its only live tab node by runtime id", () => {
+    const state = bootstrapFromWindows([
+      {
+        id: 10,
+        incognito: false,
+        focused: true,
+        tabs: [
+          {
+            id: 1,
+            windowId: 10,
+            index: 0,
+            active: true,
+            url: "https://solo.example/",
+            title: "Solo"
+          }
+        ]
+      }
+    ], { now: 1000 });
+
+    const deleted = deleteLiveTabNodeByTabId(state, 1);
+
+    expect(deleted.nodes["tab:1"]).toBeUndefined();
+    expect(deleted.nodes["window:10"]).toBeUndefined();
+    expect(deleted.rootIds).toEqual([]);
   });
 
   it("moves a subtree and projects live tabs in preorder", () => {

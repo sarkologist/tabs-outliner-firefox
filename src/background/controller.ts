@@ -9,10 +9,11 @@ import {
   bootstrapFromWindows,
   closeTab,
   closeWindow,
+  deleteLiveTabNodeByTabId,
   reconcileWithWindows,
   repairState
 } from "../model/outline.js";
-import type { OutlineState, RuntimeTab } from "../model/types.js";
+import type { NodeId, OutlineState, RuntimeTab } from "../model/types.js";
 
 export type BackgroundController = {
   ensureState(): Promise<OutlineState>;
@@ -36,6 +37,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
   let state: OutlineState | undefined;
   let mutationQueue: Promise<void> = Promise.resolve();
+  const outlinerClosingTabIds = new Set<number>();
   const stateCache = createStateCache(initializeState);
 
   api.runtime.onInstalled.addListener(() => {
@@ -65,18 +67,25 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   });
 
   api.tabs.onRemoved.addListener(async (tabId, removeInfo) => {
-    if (!removeInfo.isWindowClosing) {
-      await enqueueMutation(async () => {
-        const current = await ensureState();
+    if (removeInfo.isWindowClosing) {
+      outlinerClosingTabIds.delete(tabId);
+      return;
+    }
+
+    await enqueueMutation(async () => {
+      const current = await ensureState();
+      if (outlinerClosingTabIds.delete(tabId)) {
         const recent = await mostRecentClosedSession();
         state = closeTab(current, tabId, {
           now: now(),
           ...(recent?.tab?.sessionId ? { sessionId: recent.tab.sessionId } : {})
         });
-        stateCache.replace(state);
-        await persistAndBroadcast();
-      });
-    }
+      } else {
+        state = deleteLiveTabNodeByTabId(current, tabId);
+      }
+      stateCache.replace(state);
+      await persistAndBroadcast();
+    });
   });
 
   api.windows.onRemoved.addListener(async (windowId) => {
@@ -123,7 +132,22 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
     return enqueueMutation(async () => {
       const current = await ensureState();
-      const result = await runCommand(current, adapter, message);
+      const outlinerClosingTabId = message.type === "closeNode"
+        ? liveTabIdForNode(current, message.nodeId)
+        : undefined;
+      if (typeof outlinerClosingTabId === "number") {
+        outlinerClosingTabIds.add(outlinerClosingTabId);
+      }
+
+      let result: Awaited<ReturnType<typeof runCommand>>;
+      try {
+        result = await runCommand(current, adapter, message);
+      } catch (error) {
+        if (typeof outlinerClosingTabId === "number") {
+          outlinerClosingTabIds.delete(outlinerClosingTabId);
+        }
+        throw error;
+      }
       state = result.state;
       stateCache.replace(result.state);
       await persistAndBroadcast();
@@ -194,6 +218,13 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     handleMessage,
     refreshFromRuntime
   };
+}
+
+function liveTabIdForNode(state: OutlineState, nodeId: NodeId): number | undefined {
+  const node = state.nodes[nodeId];
+  return node?.kind === "tab" && node.status === "live" && node.live && "tabId" in node.live
+    ? node.live.tabId
+    : undefined;
 }
 
 function isCommand(message: unknown): message is Parameters<typeof runCommand>[2] {

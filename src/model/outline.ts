@@ -279,6 +279,38 @@ export function closeWindow(state: OutlineState, windowId: number, context: Clos
   return removeEmptyWindowNodes(next);
 }
 
+export function deleteLiveTabNodeByTabId(state: OutlineState, tabId: number): OutlineState {
+  const nodeId = findLiveTabNode(state, tabId);
+  if (!nodeId) {
+    return state;
+  }
+
+  const next = cloneState(state);
+  const deleting = requireNode(next, nodeId);
+  const promotedChildIds = [...deleting.childIds];
+  const siblings = deleting.parentId ? requireNode(next, deleting.parentId).childIds : next.rootIds;
+  const index = siblings.indexOf(nodeId);
+
+  if (index >= 0) {
+    siblings.splice(index, 1, ...promotedChildIds);
+  }
+
+  for (const childId of promotedChildIds) {
+    const child = next.nodes[childId];
+    if (!child) {
+      continue;
+    }
+    if (deleting.parentId) {
+      child.parentId = deleting.parentId;
+    } else {
+      delete child.parentId;
+    }
+  }
+
+  delete next.nodes[nodeId];
+  return removeEmptyWindowNodes(next);
+}
+
 export function moveNode(state: OutlineState, nodeId: NodeId, target: MoveTarget): OutlineState {
   const node = state.nodes[nodeId];
   if (!node) {
