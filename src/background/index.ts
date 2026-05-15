@@ -1,5 +1,6 @@
 import { createBrowserAdapter } from "./browser-adapter.js";
 import { runCommand } from "./commands.js";
+import { getNormalWindows } from "./runtime-snapshot.js";
 import { createStateCache } from "./state-cache.js";
 import { loadState, saveState } from "./storage.js";
 import {
@@ -8,7 +9,7 @@ import {
   closeWindow,
   reconcileWithWindows
 } from "../model/outline.js";
-import type { OutlineState, RuntimeWindow } from "../model/types.js";
+import type { OutlineState } from "../model/types.js";
 
 const api = browser;
 const adapter = createBrowserAdapter(api);
@@ -96,14 +97,6 @@ async function refreshFromRuntime(): Promise<void> {
   state = reconcileWithWindows(current, await getNormalWindows(), { now: Date.now() });
   stateCache.replace(state);
   await persistAndBroadcast();
-}
-
-async function getNormalWindows(): Promise<RuntimeWindow[]> {
-  const windows = await api.windows.getAll({
-    populate: true,
-    windowTypes: ["normal"]
-  });
-  return windows.filter((windowInfo) => !windowInfo.incognito);
 }
 
 async function persistAndBroadcast(): Promise<void> {

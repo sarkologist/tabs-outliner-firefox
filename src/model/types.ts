@@ -11,6 +11,8 @@ export type RuntimeTab = {
   favIconUrl?: string;
   incognito?: boolean;
   sessionId?: string;
+  discarded?: boolean;
+  hidden?: boolean;
 };
 
 export type RuntimeWindow = {
