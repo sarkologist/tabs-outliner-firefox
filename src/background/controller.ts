@@ -64,7 +64,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   });
 
   api.tabs.onActivated.addListener(async () => {
-    await refreshFromRuntime([], { closeMissing: false });
+    await refreshFromRuntime();
   });
 
   api.tabs.onRemoved.addListener(async (tabId, removeInfo) => {

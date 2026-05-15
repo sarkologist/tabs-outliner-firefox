@@ -563,6 +563,50 @@ describe("background controller lifecycle", () => {
     expect(state.nodes["tab:2"]?.active).toBe(true);
   });
 
+  it("uses activation snapshots to remove tabs Firefox no longer reports", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+
+    await createTabFromBrowser(runtime, {
+      id: 2,
+      windowId: 10,
+      index: 1,
+      active: true,
+      openerTabId: 1,
+      url: "about:newtab",
+      title: "New Tab"
+    });
+    runtime.tabs = runtime.tabs.filter((tab) => tab.id !== 2);
+    reindexWindowTabs(runtime, 10);
+    await activateTabFromBrowser(runtime, 1);
+
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(runtime.tabs.map((tab) => tab.id)).toEqual([1]);
+    expect(state.nodes["tab:2"]).toBeUndefined();
+    expect(state.nodes["tab:1"]?.active).toBe(true);
+    expect(state.nodes["tab:1"]?.childIds).toEqual([]);
+    expect(state.nodes["window:10"]?.childIds).toEqual(["tab:1"]);
+  });
+
   it("clears the previous active tab during partial active updates", async () => {
     const runtime = fakeRuntime(
       [
