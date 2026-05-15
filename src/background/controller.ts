@@ -38,6 +38,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   let state: OutlineState | undefined;
   let mutationQueue: Promise<void> = Promise.resolve();
   const outlinerClosingTabIds = new Set<number>();
+  const removedTabIds = new Set<number>();
   const stateCache = createStateCache(initializeState);
 
   api.runtime.onInstalled.addListener(() => {
@@ -67,6 +68,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   });
 
   api.tabs.onRemoved.addListener(async (tabId, removeInfo) => {
+    removedTabIds.add(tabId);
     if (removeInfo.isWindowClosing) {
       return;
     }
@@ -181,9 +183,10 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
   async function refreshFromRuntimeNow(eventTabs: RuntimeTab[] = [], options: RefreshOptions = {}): Promise<void> {
     const current = await ensureState();
+    const currentEventTabs = eventTabs.filter((tab) => !removedTabIds.has(tab.id));
     const windows =
-      eventTabs.length > 0
-        ? await getNormalWindowsIncludingTabs(api, eventTabs)
+      currentEventTabs.length > 0
+        ? await getNormalWindowsIncludingTabs(api, currentEventTabs)
         : await getNormalWindows(api);
     state = reconcileWithWindows(current, windows, { now: now() }, {
       closeMissing: options.closeMissing ?? eventTabs.length === 0
