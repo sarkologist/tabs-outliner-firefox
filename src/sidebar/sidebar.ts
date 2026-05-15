@@ -5,6 +5,7 @@ import type { NodeId, OutlineNode, OutlineState } from "../model/types.js";
 const stateCount = document.querySelector<HTMLSpanElement>("#state-count");
 const diagnostics = document.querySelector<HTMLSpanElement>("#diagnostics");
 const refresh = document.querySelector<HTMLButtonElement>("#refresh");
+const rootDropSurface = document.querySelector<HTMLElement>("main");
 const tree = document.querySelector<HTMLElement>("#tree");
 const empty = document.querySelector<HTMLElement>("#empty");
 
@@ -15,6 +16,38 @@ void loadState();
 
 refresh?.addEventListener("click", () => {
   void runAndRender({ type: "refresh" });
+});
+
+rootDropSurface?.addEventListener("dragover", (event) => {
+  if (isNodeRowEvent(event)) {
+    rootDropSurface.classList.remove("root-drop-target");
+    return;
+  }
+
+  event.preventDefault();
+  rootDropSurface.classList.add("root-drop-target");
+});
+
+rootDropSurface?.addEventListener("dragleave", (event) => {
+  if (event.relatedTarget instanceof Node && rootDropSurface.contains(event.relatedTarget)) {
+    return;
+  }
+
+  rootDropSurface.classList.remove("root-drop-target");
+});
+
+rootDropSurface?.addEventListener("drop", (event) => {
+  if (isNodeRowEvent(event)) {
+    return;
+  }
+
+  event.preventDefault();
+  rootDropSurface.classList.remove("root-drop-target");
+  const sourceId = draggedNodeId ?? event.dataTransfer?.getData("text/plain");
+  draggedNodeId = undefined;
+  if (sourceId) {
+    void runAndRender({ type: "moveNodeToNewWindow", nodeId: sourceId });
+  }
 });
 
 browser.runtime.onMessage.addListener((message) => {
@@ -199,6 +232,10 @@ function actionButton(label: string, onClick: () => void): HTMLButtonElement {
     onClick();
   });
   return button;
+}
+
+function isNodeRowEvent(event: DragEvent): boolean {
+  return event.target instanceof Element && Boolean(event.target.closest(".node-row"));
 }
 
 async function runAndRender(command: BackgroundCommand): Promise<void> {

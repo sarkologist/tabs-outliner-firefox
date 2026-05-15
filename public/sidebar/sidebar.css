@@ -76,6 +76,11 @@ main {
   padding: 6px 0 16px;
 }
 
+main.root-drop-target {
+  background: color-mix(in srgb, Highlight 10%, transparent);
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, Highlight 45%, transparent);
+}
+
 .empty {
   margin: 20px 12px;
   color: color-mix(in srgb, CanvasText 60%, transparent);
