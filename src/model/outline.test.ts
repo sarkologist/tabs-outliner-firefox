@@ -613,6 +613,49 @@ describe("outline model", () => {
     expect(repaired.nodes["tab:2"]?.parentId).toBe("tab:1");
   });
 
+  it("repairs root live tabs by reattaching them to their owning window", () => {
+    const state = bootstrapFromWindows(windows, { now: 1000 });
+    state.nodes["window:10"]!.childIds = ["tab:1"];
+    delete state.nodes["tab:3"]!.parentId;
+    state.rootIds = ["window:10", "tab:3"];
+
+    const repaired = repairState(state);
+
+    expect(repaired.rootIds).toEqual(["window:10"]);
+    expect(repaired.nodes["window:10"]?.childIds).toEqual(["tab:1", "tab:3"]);
+    expect(repaired.nodes["tab:3"]?.parentId).toBe("window:10");
+  });
+
+  it("reattaches orphaned live tabs during partial event reconciliation", () => {
+    const state = bootstrapFromWindows(windows, { now: 1000 });
+    state.nodes["window:10"]!.childIds = ["tab:1"];
+    delete state.nodes["tab:3"]!.parentId;
+    state.rootIds = ["window:10", "tab:3"];
+
+    const reconciled = reconcileWithWindows(state, [
+      {
+        id: 10,
+        incognito: false,
+        focused: true,
+        tabs: [
+          {
+            id: 5,
+            windowId: 10,
+            index: 3,
+            active: true,
+            url: "https://new.example/",
+            title: "New"
+          }
+        ]
+      }
+    ], { now: 2000 }, { closeMissing: false });
+
+    expect(reconciled.rootIds).toEqual(["window:10"]);
+    expect(reconciled.nodes["tab:3"]?.parentId).toBe("window:10");
+    expect(reconciled.nodes["window:10"]?.childIds).toEqual(["tab:1", "tab:5", "tab:3"]);
+    expect(reconciled.nodes["tab:5"]?.status).toBe("live");
+  });
+
   it("repairs orphaned parent cycles into reachable roots", () => {
     const state = bootstrapFromWindows(windows, { now: 1000 });
     state.rootIds = ["window:10"];

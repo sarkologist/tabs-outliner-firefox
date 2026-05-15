@@ -233,6 +233,8 @@ export function repairState(state: OutlineState): OutlineState {
     parent.childIds = [...ordered, ...remaining];
   }
 
+  reattachLiveTabsToOwningWindows(next);
+
   next.rootIds = uniqueIds([
     ...originalRootIds.filter((id) => !next.nodes[id]?.parentId),
     ...Object.entries(next.nodes)
@@ -668,6 +670,33 @@ function parentForNewRuntimeTab(state: OutlineState, tab: RuntimeTab, fallbackWi
 function isUnderRuntimeWindow(state: OutlineState, nodeId: NodeId, runtimeWindowId: number): boolean {
   const owner = nearestWindow(state, nodeId);
   return Boolean(owner?.live && "windowId" in owner.live && owner.live.windowId === runtimeWindowId);
+}
+
+function reattachLiveTabsToOwningWindows(state: OutlineState): void {
+  const liveWindowNodeIdsByRuntimeId = new Map<number, NodeId>();
+  for (const node of Object.values(state.nodes)) {
+    if (isNodeLiveWindow(node)) {
+      liveWindowNodeIdsByRuntimeId.set(node.live.windowId, node.id);
+    }
+  }
+
+  for (const node of Object.values(state.nodes)) {
+    if (!isNodeLiveTab(node)) {
+      continue;
+    }
+
+    const owner = nearestWindow(state, node.id);
+    if (owner && isNodeLiveWindow(owner) && owner.live.windowId === node.live.windowId) {
+      continue;
+    }
+
+    const owningWindowNodeId = liveWindowNodeIdsByRuntimeId.get(node.live.windowId);
+    if (!owningWindowNodeId || createsParentCycle(state, node.id, owningWindowNodeId)) {
+      continue;
+    }
+
+    ensureParent(state, node.id, owningWindowNodeId);
+  }
 }
 
 function markClosedSubtree(state: OutlineState, nodeId: NodeId, context: CloseContext): void {
