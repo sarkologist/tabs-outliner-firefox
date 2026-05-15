@@ -8,6 +8,7 @@ type Listener<TArgs extends unknown[]> = (...args: TArgs) => unknown | Promise<u
 
 class FakeEvent<TArgs extends unknown[]> {
   private listeners: Listener<TArgs>[] = [];
+  private pending: Promise<unknown>[] = [];
 
   addListener(listener: Listener<TArgs>): void {
     this.listeners.push(listener);
@@ -17,9 +18,37 @@ class FakeEvent<TArgs extends unknown[]> {
     this.listeners = this.listeners.filter((candidate) => candidate !== listener);
   }
 
-  async emit(...args: TArgs): Promise<void> {
+  dispatch(...args: TArgs): void {
     for (const listener of this.listeners) {
-      await listener(...args);
+      try {
+        this.track(listener(...args));
+      } catch (error) {
+        this.track(Promise.reject(error));
+      }
+    }
+  }
+
+  // Test-only barrier: Firefox dispatches extension events without waiting for async listeners.
+  async emit(...args: TArgs): Promise<void> {
+    this.dispatch(...args);
+    await this.flush();
+  }
+
+  async flush(): Promise<void> {
+    while (this.pending.length > 0) {
+      const pending = this.pending;
+      this.pending = [];
+      const results = await Promise.allSettled(pending);
+      const rejected = results.find((result) => result.status === "rejected");
+      if (rejected?.status === "rejected") {
+        throw rejected.reason;
+      }
+    }
+  }
+
+  private track(result: unknown): void {
+    if (isPromiseLike(result)) {
+      this.pending.push(result);
     }
   }
 }
@@ -38,6 +67,7 @@ type FakeRuntime = {
   tabs: RuntimeTab[];
   windows: RuntimeWindow[];
   broadcasts: unknown[];
+  setNextTabQueryResult(tabs: RuntimeTab[]): void;
 };
 
 type TabCloseEventOrder =
@@ -60,10 +90,14 @@ function fakeRuntime(windows: RuntimeWindow[], tabs: RuntimeTab[], options: Fake
   const sessionChanged = new FakeEvent<[]>();
   const storage = new Map<string, unknown>();
   const broadcasts: unknown[] = [];
+  let nextTabQueryResult: RuntimeTab[] | undefined;
   const runtime: FakeRuntime = {
-    windows,
-    tabs,
+    windows: windows.map(copyWindow),
+    tabs: tabs.map(copyTab),
     broadcasts,
+    setNextTabQueryResult(tabs) {
+      nextTabQueryResult = tabs.map(copyTab);
+    },
     events: {
       tabCreated,
       tabActivated,
@@ -113,8 +147,31 @@ function fakeRuntime(windows: RuntimeWindow[], tabs: RuntimeTab[], options: Fake
       },
       windows: {
         WINDOW_ID_NONE: -1,
-        getAll: vi.fn(async () => runtime.windows),
-        update: vi.fn(async (windowId: number) => runtime.windows.find((windowInfo) => windowInfo.id === windowId)!),
+        getAll: vi.fn(async (getInfo: { populate?: boolean; windowTypes?: string[] } = {}) =>
+          runtime.windows.map((windowInfo) => {
+            const windowCopy = copyWindowWithoutTabs(windowInfo);
+            return {
+              ...windowCopy,
+              ...(getInfo.populate
+                ? {
+                    tabs: runtime.tabs
+                      .filter((tab) => tab.windowId === windowInfo.id)
+                      .map(copyTab)
+                  }
+                : {})
+            };
+          })
+        ),
+        update: vi.fn(async (windowId: number, updateInfo: { focused?: boolean } = {}) => {
+          if (updateInfo.focused) {
+            runtime.windows = runtime.windows.map((windowInfo) => ({
+              ...windowInfo,
+              focused: windowInfo.id === windowId
+            }));
+            runtime.events.windowFocusChanged.dispatch(windowId);
+          }
+          return copyWindowWithoutTabs(runtime.windows.find((windowInfo) => windowInfo.id === windowId)!);
+        }),
         remove: vi.fn(async () => undefined),
         create: vi.fn(async () => {
           throw new Error("not implemented");
@@ -123,11 +180,23 @@ function fakeRuntime(windows: RuntimeWindow[], tabs: RuntimeTab[], options: Fake
         onRemoved: windowRemoved as never
       },
       tabs: {
-        query: vi.fn(async () => runtime.tabs),
-        update: vi.fn(async (tabId: number) => runtime.tabs.find((tab) => tab.id === tabId)!),
-        remove: vi.fn(async (tabId: number) => {
-          if (options.browserLikeTabRemove) {
-            closeRuntimeTab(runtime, tabId, options.browserLikeTabRemove, { awaitListeners: false });
+        query: vi.fn(async (queryInfo: Record<string, unknown> = {}) => {
+          const source = nextTabQueryResult ?? runtime.tabs;
+          nextTabQueryResult = undefined;
+          return source
+            .filter((tab) => tabMatchesQuery(tab, queryInfo))
+            .map(copyTab);
+        }),
+        update: vi.fn(async (tabId: number, updateProperties: { active?: boolean } = {}) => {
+          await updateTabFromBrowser(runtime, tabId, updateProperties, { awaitListeners: false });
+          return copyTab(runtime.tabs.find((tab) => tab.id === tabId)!);
+        }),
+        remove: vi.fn(async (tabId: number | number[]) => {
+          const tabIds = Array.isArray(tabId) ? tabId : [tabId];
+          for (const currentTabId of tabIds) {
+            await closeRuntimeTab(runtime, currentTabId, options.browserLikeTabRemove ?? "tabRemovedThenSessionChanged", {
+              awaitListeners: false
+            });
           }
         }),
         create: vi.fn(async () => {
@@ -148,6 +217,94 @@ function fakeRuntime(windows: RuntimeWindow[], tabs: RuntimeTab[], options: Fake
   };
 
   return runtime;
+}
+
+function createTabFromBrowser(
+  runtime: FakeRuntime,
+  tab: RuntimeTab,
+  options: { awaitListeners?: boolean; queryLag?: boolean } = {}
+): Promise<void> | void {
+  runtime.tabs = runtime.tabs.map((candidate) => candidate.windowId === tab.windowId && candidate.index >= tab.index
+    ? {
+        ...candidate,
+        index: candidate.index + 1,
+        ...(tab.active ? { active: false } : {})
+      }
+    : {
+        ...candidate,
+        ...(candidate.windowId === tab.windowId && tab.active ? { active: false } : {})
+      });
+  runtime.tabs = [...runtime.tabs, copyTab(tab)];
+  reindexWindowTabs(runtime, tab.windowId);
+  if (options.queryLag) {
+    runtime.setNextTabQueryResult(runtime.tabs.filter((candidate) => candidate.id !== tab.id));
+  }
+
+  const eventTab = copyTab(tab);
+  if (options.awaitListeners === false) {
+    runtime.events.tabCreated.dispatch(eventTab);
+    return;
+  }
+  return runtime.events.tabCreated.emit(eventTab);
+}
+
+async function updateTabFromBrowser(
+  runtime: FakeRuntime,
+  tabId: number,
+  changes: Partial<RuntimeTab>,
+  options: { awaitListeners?: boolean; queryResult?: RuntimeTab[] } = {}
+): Promise<void> {
+  const tab = runtime.tabs.find((candidate) => candidate.id === tabId);
+  if (!tab) {
+    return;
+  }
+
+  if (changes.active) {
+    runtime.tabs = runtime.tabs.map((candidate) => candidate.windowId === tab.windowId
+      ? { ...candidate, active: candidate.id === tabId }
+      : copyTab(candidate));
+  }
+
+  runtime.tabs = runtime.tabs.map((candidate) => candidate.id === tabId
+    ? { ...candidate, ...changes }
+    : candidate);
+  if (options.queryResult) {
+    runtime.setNextTabQueryResult(options.queryResult);
+  }
+
+  const updatedTab = runtime.tabs.find((candidate) => candidate.id === tabId);
+  if (updatedTab) {
+    const eventTab = copyTab(updatedTab);
+    if (options.awaitListeners === false) {
+      runtime.events.tabUpdated.dispatch(tabId, changes, eventTab);
+    } else {
+      await runtime.events.tabUpdated.emit(tabId, changes, eventTab);
+    }
+  }
+}
+
+async function activateTabFromBrowser(runtime: FakeRuntime, tabId: number): Promise<void> {
+  const tab = runtime.tabs.find((candidate) => candidate.id === tabId);
+  if (!tab) {
+    return;
+  }
+  const previousTab = runtime.tabs.find((candidate) => candidate.windowId === tab.windowId && candidate.active);
+  runtime.tabs = runtime.tabs.map((candidate) => candidate.windowId === tab.windowId
+    ? { ...candidate, active: candidate.id === tabId }
+    : copyTab(candidate));
+  await runtime.events.tabActivated.emit({
+    tabId,
+    windowId: tab.windowId,
+    ...(previousTab ? { previousTabId: previousTab.id } : {})
+  });
+}
+
+async function focusWindowFromBrowser(runtime: FakeRuntime, windowId: number): Promise<void> {
+  runtime.windows = runtime.windows.map((windowInfo) => ({
+    ...windowInfo,
+    focused: windowInfo.id === windowId
+  }));
+  await runtime.events.windowFocusChanged.emit(windowId);
 }
 
 async function closeTabFromBrowser(
@@ -173,11 +330,11 @@ async function closeRuntimeTab(
   reindexWindowTabs(runtime, tab.windowId);
 
   const emit = async (): Promise<void> => {
-    const tabRemoved = (): Promise<void> => runtime.events.tabRemoved.emit(tabId, {
+    const tabRemoved = (): Promise<void> | void => fireEvent(runtime.events.tabRemoved, options.awaitListeners, tabId, {
       windowId: tab.windowId,
       isWindowClosing: !runtime.windows.some((windowInfo) => windowInfo.id === tab.windowId)
     });
-    const sessionChanged = (): Promise<void> => runtime.events.sessionChanged.emit();
+    const sessionChanged = (): Promise<void> | void => fireEvent(runtime.events.sessionChanged, options.awaitListeners);
 
     if (order === "tabRemovedThenSessionChanged") {
       await tabRemoved();
@@ -199,6 +356,18 @@ async function closeRuntimeTab(
   }
 }
 
+function fireEvent<TArgs extends unknown[]>(
+  event: FakeEvent<TArgs>,
+  awaitListeners: boolean,
+  ...args: TArgs
+): Promise<void> | void {
+  if (awaitListeners) {
+    return event.emit(...args);
+  }
+
+  event.dispatch(...args);
+}
+
 function reindexWindowTabs(runtime: FakeRuntime, windowId: number): void {
   runtime.tabs = runtime.tabs
     .map((tab) => ({ ...tab }))
@@ -211,6 +380,31 @@ function reindexWindowTabs(runtime: FakeRuntime, windowId: number): void {
             .length
         }
       : tab);
+}
+
+function tabMatchesQuery(tab: RuntimeTab, queryInfo: Record<string, unknown>): boolean {
+  return (typeof queryInfo.windowId !== "number" || tab.windowId === queryInfo.windowId) &&
+    (typeof queryInfo.active !== "boolean" || tab.active === queryInfo.active);
+}
+
+function copyTab(tab: RuntimeTab): RuntimeTab {
+  return { ...tab };
+}
+
+function copyWindow(windowInfo: RuntimeWindow): RuntimeWindow {
+  return {
+    ...windowInfo,
+    ...(windowInfo.tabs ? { tabs: windowInfo.tabs.map(copyTab) } : {})
+  };
+}
+
+function copyWindowWithoutTabs(windowInfo: RuntimeWindow): RuntimeWindow {
+  const { tabs: _tabs, ...rest } = windowInfo;
+  return { ...rest };
+}
+
+function isPromiseLike(value: unknown): value is Promise<unknown> {
+  return typeof value === "object" && value !== null && "then" in value;
 }
 
 function liveTabIds(state: OutlineState): number[] {
@@ -270,14 +464,14 @@ describe("background controller lifecycle", () => {
     const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
     await controller.ensureState();
 
-    await runtime.events.tabCreated.emit({
+    await createTabFromBrowser(runtime, {
       id: 2,
       windowId: 10,
       index: 1,
       active: true,
       url: "about:newtab",
       title: "New Tab"
-    });
+    }, { queryLag: true });
 
     const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
     expect(liveTabIds(state)).toEqual([1, 2]);
@@ -309,7 +503,7 @@ describe("background controller lifecycle", () => {
     await controller.ensureState();
 
     await Promise.all([
-      runtime.events.tabCreated.emit({
+      createTabFromBrowser(runtime, {
         id: 2,
         windowId: 10,
         index: 1,
@@ -317,7 +511,7 @@ describe("background controller lifecycle", () => {
         url: "about:newtab",
         title: "New Tab"
       }),
-      runtime.events.tabCreated.emit({
+      createTabFromBrowser(runtime, {
         id: 3,
         windowId: 10,
         index: 2,
@@ -362,11 +556,7 @@ describe("background controller lifecycle", () => {
     const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
     await controller.ensureState();
 
-    runtime.tabs = runtime.tabs.map((tab) => ({
-      ...tab,
-      active: tab.id === 2
-    }));
-    await runtime.events.tabActivated.emit({ tabId: 2, windowId: 10, previousTabId: 1 });
+    await activateTabFromBrowser(runtime, 2);
 
     const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
     expect(state.nodes["tab:1"]?.active).toBe(false);
@@ -412,17 +602,18 @@ describe("background controller lifecycle", () => {
     const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
     await controller.ensureState();
 
-    runtime.tabs = [
-      {
-        id: 2,
-        windowId: 10,
-        index: 1,
-        active: true,
-        url: "https://two.example/",
-        title: "Two"
-      }
-    ];
-    await runtime.events.tabUpdated.emit(2, { active: true }, runtime.tabs[0]!);
+    await updateTabFromBrowser(runtime, 2, { active: true }, {
+      queryResult: [
+        {
+          id: 2,
+          windowId: 10,
+          index: 1,
+          active: true,
+          url: "https://two.example/",
+          title: "Two"
+        }
+      ]
+    });
 
     const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
     expect(state.nodes["tab:1"]?.active).toBe(false);
@@ -468,11 +659,7 @@ describe("background controller lifecycle", () => {
     const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
     await controller.ensureState();
 
-    runtime.windows = runtime.windows.map((windowInfo) => ({
-      ...windowInfo,
-      focused: windowInfo.id === 20
-    }));
-    await runtime.events.windowFocusChanged.emit(20);
+    await focusWindowFromBrowser(runtime, 20);
 
     const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
     expect(state.nodes["window:10"]?.active).toBe(false);
@@ -510,8 +697,7 @@ describe("background controller lifecycle", () => {
     const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
     await controller.ensureState();
 
-    runtime.tabs = runtime.tabs.filter((tab) => tab.id !== 2);
-    await runtime.events.tabRemoved.emit(2, { windowId: 10, isWindowClosing: false });
+    await closeTabFromBrowser(runtime, 2);
 
     const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
     expect(state.nodes["tab:1"]?.status).toBe("live");
@@ -562,9 +748,6 @@ describe("background controller lifecycle", () => {
 
     await controller.handleMessage({ type: "closeNode", nodeId: "tab:2" });
     expect(runtime.api.tabs.remove).toHaveBeenCalledWith(2);
-
-    runtime.tabs = runtime.tabs.filter((tab) => tab.id !== 2);
-    await runtime.events.tabRemoved.emit(2, { windowId: 10, isWindowClosing: false });
 
     const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
     expect(state.nodes["tab:1"]?.status).toBe("live");
@@ -739,20 +922,18 @@ describe("background controller lifecycle", () => {
           url: "https://two.example/",
           title: "Two"
         }
-      ]
+      ],
+      { browserLikeTabRemove: "sessionChangedThenTabRemoved" }
     );
     const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
     await controller.ensureState();
 
     await controller.handleMessage({ type: "closeNode", nodeId: "tab:2" });
-    runtime.tabs = runtime.tabs.filter((tab) => tab.id !== 2);
-    await runtime.events.sessionChanged.emit();
 
     let state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
     expect(state.nodes["tab:2"]?.status).toBe("closed");
     expect(state.nodes["tab:2"]?.restore?.sessionId).toBe("recent-session");
 
-    await runtime.events.tabRemoved.emit(2, { windowId: 10, isWindowClosing: false });
     state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
     expect(state.nodes["tab:2"]?.status).toBe("closed");
   });
@@ -842,8 +1023,8 @@ describe("background controller lifecycle", () => {
       url: "about:newtab",
       title: "New Tab"
     };
-    await runtime.events.tabRemoved.emit(2, { windowId: 10, isWindowClosing: false });
-    await runtime.events.tabCreated.emit(staleTab);
+    createTabFromBrowser(runtime, staleTab, { awaitListeners: false });
+    await closeTabFromBrowser(runtime, 2);
 
     const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
     expect(runtime.tabs.map((tab) => tab.id)).toEqual([1]);
@@ -894,10 +1075,10 @@ describe("background controller lifecycle", () => {
       title: "New Tab"
     };
 
-    await runtime.events.tabRemoved.emit(3, { windowId: 10, isWindowClosing: false });
-    await runtime.events.tabRemoved.emit(2, { windowId: 10, isWindowClosing: false });
-    await runtime.events.tabCreated.emit(staleTab2);
-    await runtime.events.tabCreated.emit(staleTab3);
+    createTabFromBrowser(runtime, staleTab2, { awaitListeners: false });
+    createTabFromBrowser(runtime, staleTab3, { awaitListeners: false });
+    await closeTabFromBrowser(runtime, 3);
+    await closeTabFromBrowser(runtime, 2);
 
     const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
     expect(runtime.tabs.map((tab) => tab.id)).toEqual([1]);
@@ -939,8 +1120,9 @@ describe("background controller lifecycle", () => {
       url: "https://two.example/",
       title: "Two"
     };
-    await runtime.events.tabRemoved.emit(2, { windowId: 10, isWindowClosing: false });
-    await runtime.events.tabUpdated.emit(2, { url: "https://two.example/" }, staleTab);
+    createTabFromBrowser(runtime, staleTab, { awaitListeners: false });
+    await updateTabFromBrowser(runtime, 2, { url: "https://two.example/" }, { awaitListeners: false });
+    await closeTabFromBrowser(runtime, 2);
 
     const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
     expect(state.nodes["tab:2"]).toBeUndefined();
@@ -978,10 +1160,9 @@ describe("background controller lifecycle", () => {
     const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
     await controller.ensureState();
 
-    runtime.tabs = runtime.tabs.filter((tab) => tab.id !== 2);
-    await runtime.events.tabRemoved.emit(2, { windowId: 10, isWindowClosing: false });
+    await closeTabFromBrowser(runtime, 2);
 
-    await runtime.events.tabCreated.emit({
+    await createTabFromBrowser(runtime, {
       id: 22,
       windowId: 10,
       index: 1,
@@ -989,18 +1170,7 @@ describe("background controller lifecycle", () => {
       url: "about:blank",
       title: "New Tab"
     });
-    runtime.tabs = [
-      ...runtime.tabs,
-      {
-        id: 22,
-        windowId: 10,
-        index: 1,
-        active: true,
-        url: "https://two.example/",
-        title: "Two"
-      }
-    ];
-    await runtime.events.tabUpdated.emit(22, { url: "https://two.example/", title: "Two" }, runtime.tabs[1]!);
+    await updateTabFromBrowser(runtime, 22, { url: "https://two.example/", title: "Two" });
 
     const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
     expect(state.nodes["tab:2"]).toBeUndefined();
@@ -1040,22 +1210,17 @@ describe("background controller lifecycle", () => {
     const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
     await controller.ensureState();
 
-    runtime.tabs = runtime.tabs.filter((tab) => tab.id !== 2);
-    await runtime.events.tabRemoved.emit(2, { windowId: 10, isWindowClosing: false });
+    await closeTabFromBrowser(runtime, 2);
 
-    runtime.tabs = [
-      ...runtime.tabs,
-      {
-        id: 22,
-        windowId: 10,
-        index: 1,
-        active: true,
-        openerTabId: 1,
-        url: "https://same.example/",
-        title: "Original"
-      }
-    ];
-    await runtime.events.tabCreated.emit(runtime.tabs[1]!);
+    await createTabFromBrowser(runtime, {
+      id: 22,
+      windowId: 10,
+      index: 1,
+      active: true,
+      openerTabId: 1,
+      url: "https://same.example/",
+      title: "Original"
+    });
 
     const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
     expect(state.nodes["tab:2"]).toBeUndefined();
@@ -1104,10 +1269,21 @@ describe("background controller lifecycle", () => {
     const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
     await controller.ensureState();
 
-    runtime.tabs = [runtime.tabs[1]!];
-    await runtime.events.tabUpdated.emit(2, { active: true }, runtime.tabs[0]!);
+    await updateTabFromBrowser(runtime, 2, { active: true }, {
+      queryResult: [
+        {
+          id: 2,
+          windowId: 10,
+          index: 1,
+          active: true,
+          openerTabId: 1,
+          url: "https://two.example/",
+          title: "Two"
+        }
+      ]
+    });
 
-    await runtime.events.tabCreated.emit({
+    await createTabFromBrowser(runtime, {
       id: 4,
       windowId: 10,
       index: 3,
@@ -1116,35 +1292,9 @@ describe("background controller lifecycle", () => {
       title: "New Tab"
     });
 
-    runtime.tabs = [
-      {
-        id: 1,
-        windowId: 10,
-        index: 0,
-        active: false,
-        url: "https://one.example/",
-        title: "One"
-      },
-      {
-        id: 3,
-        windowId: 10,
-        index: 1,
-        active: false,
-        url: "https://three.example/",
-        title: "Three"
-      },
-      {
-        id: 4,
-        windowId: 10,
-        index: 2,
-        active: true,
-        url: "about:newtab",
-        title: "New Tab"
-      }
-    ];
-    await runtime.events.tabRemoved.emit(2, { windowId: 10, isWindowClosing: false });
+    await closeTabFromBrowser(runtime, 2);
 
-    await runtime.events.tabCreated.emit({
+    await createTabFromBrowser(runtime, {
       id: 22,
       windowId: 10,
       index: 1,
@@ -1152,26 +1302,7 @@ describe("background controller lifecycle", () => {
       url: "about:blank",
       title: "New Tab"
     });
-    runtime.tabs = [
-      runtime.tabs[0]!,
-      {
-        id: 22,
-        windowId: 10,
-        index: 1,
-        active: true,
-        url: "https://two.example/",
-        title: "Two"
-      },
-      {
-        ...runtime.tabs[1]!,
-        index: 2
-      },
-      {
-        ...runtime.tabs[2]!,
-        index: 3
-      }
-    ];
-    await runtime.events.tabUpdated.emit(22, { url: "https://two.example/", title: "Two" }, runtime.tabs[1]!);
+    await updateTabFromBrowser(runtime, 22, { url: "https://two.example/", title: "Two" });
 
     const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
     expect(reachableNodeIds(state)).toEqual(Object.keys(state.nodes).sort());
@@ -1394,12 +1525,6 @@ describe("background controller lifecycle", () => {
         }
       ]
     );
-    vi.mocked(runtime.api.tabs.query).mockImplementation(async (queryInfo: Record<string, unknown> = {}) => {
-      const windowId = queryInfo.windowId;
-      return typeof windowId === "number"
-        ? runtime.tabs.filter((tab) => tab.windowId === windowId)
-        : runtime.tabs;
-    });
     vi.mocked(runtime.api.sessions.getRecentlyClosed).mockResolvedValue([
       { window: { sessionId: "session-window-20" } } as never
     ]);
@@ -1439,8 +1564,7 @@ describe("background controller lifecycle", () => {
       url,
       title: "Debugging - Runtime / this-firefox"
     };
-    runtime.tabs = [...runtime.tabs, restoredTab];
-    await runtime.events.tabCreated.emit(restoredTab);
+    await createTabFromBrowser(runtime, restoredTab);
 
     const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
     expect(state.nodes["window:20"]?.live).toEqual({ windowId: 42 });
@@ -1495,9 +1619,6 @@ describe("background controller lifecycle", () => {
     expect(lastBroadcast?.type).toBe("stateUpdated");
     expect(lastBroadcast?.state?.nodes["tab:2"]).toBeUndefined();
 
-    runtime.tabs = runtime.tabs.filter((tab) => tab.id !== 2);
-    await runtime.events.tabRemoved.emit(2, { windowId: 10, isWindowClosing: false });
-
     const afterRemoveEvent = (await controller.handleMessage({ type: "getState" })) as OutlineState;
     expect(afterRemoveEvent.nodes["tab:2"]).toBeUndefined();
     expect(afterRemoveEvent.nodes["tab:1"]?.status).toBe("live");
@@ -1542,9 +1663,6 @@ describe("background controller lifecycle", () => {
     const lastBroadcast = runtime.broadcasts.at(-1) as { type?: string; state?: OutlineState } | undefined;
     expect(lastBroadcast?.type).toBe("stateUpdated");
     expect(lastBroadcast?.state?.nodes["window:10"]).toBeUndefined();
-
-    runtime.tabs = [];
-    await runtime.events.tabRemoved.emit(1, { windowId: 10, isWindowClosing: false });
 
     const afterRemoveEvent = (await controller.handleMessage({ type: "getState" })) as OutlineState;
     expect(afterRemoveEvent.nodes["tab:1"]).toBeUndefined();
