@@ -6,6 +6,8 @@ import {
   closeWindow,
   deleteNode,
   moveNode,
+  moveTabToNewClosedWindow,
+  moveTabToNewLiveWindow,
   planRestore,
   projectLiveTabs,
   reconcileWithWindows,
@@ -181,6 +183,69 @@ describe("outline model", () => {
       { tabId: 1, windowId: 10 },
       { tabId: 3, windowId: 10 },
       { tabId: 2, windowId: 10 }
+    ]);
+  });
+
+  it("wraps a live tab subtree in a new live window", () => {
+    const state = bootstrapFromWindows(windows, { now: 1000 });
+    const moved = moveTabToNewLiveWindow(state, "tab:1", {
+      id: 42,
+      focused: true,
+      incognito: false
+    }, { now: 2000 });
+
+    expect(moved.rootIds).toEqual(["window:10", "window:42"]);
+    expect(moved.nodes["window:10"]?.childIds).toEqual(["tab:3"]);
+    expect(moved.nodes["window:42"]?.childIds).toEqual(["tab:1"]);
+    expect(moved.nodes["window:42"]?.status).toBe("live");
+    expect(moved.nodes["window:42"]?.live).toEqual({ windowId: 42 });
+    expect(moved.nodes["tab:1"]?.parentId).toBe("window:42");
+    expect(moved.nodes["tab:1"]?.live).toEqual({ tabId: 1, windowId: 42 });
+    expect(moved.nodes["tab:2"]?.live).toEqual({ tabId: 2, windowId: 42 });
+    expect(projectLiveTabs(moved, "window:42")).toEqual([
+      { tabId: 1, windowId: 42 },
+      { tabId: 2, windowId: 42 }
+    ]);
+  });
+
+  it("wraps a closed tab subtree in a closed window placeholder", () => {
+    const state = closeTab(bootstrapFromWindows(windows, { now: 1000 }), 1, {
+      now: 2000,
+      sessionId: "session-tab-1"
+    });
+    const moved = moveTabToNewClosedWindow(state, "tab:1", { now: 3000 });
+    const placeholderId = moved.rootIds[1]!;
+
+    expect(placeholderId).toBe("window:placeholder:3000");
+    expect(moved.nodes["window:10"]?.childIds).toEqual(["tab:3"]);
+    expect(moved.nodes[placeholderId]).toMatchObject({
+      kind: "window",
+      status: "closed",
+      childIds: ["tab:1"],
+      title: "Saved window",
+      closedAt: 3000
+    });
+    expect(moved.nodes[placeholderId]?.live).toBeUndefined();
+    expect(moved.nodes[placeholderId]?.restore).toBeUndefined();
+    expect(moved.nodes["tab:1"]?.parentId).toBe(placeholderId);
+    expect(moved.nodes["tab:1"]?.status).toBe("closed");
+    expect(planRestore(moved, placeholderId).map((plan) => ({
+      ...plan,
+      windowNodeId: plan.windowNodeId
+    }))).toEqual([
+      {
+        nodeId: "tab:1",
+        kind: "session",
+        sessionId: "session-tab-1",
+        fallbackUrl: "https://example.com/",
+        windowNodeId: placeholderId
+      },
+      {
+        nodeId: "tab:2",
+        kind: "url",
+        url: "https://example.com/child",
+        windowNodeId: placeholderId
+      }
     ]);
   });
 

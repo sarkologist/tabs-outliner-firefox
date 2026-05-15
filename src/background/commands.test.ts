@@ -345,6 +345,94 @@ describe("background commands", () => {
     expect(adapter.moveTabs).toHaveBeenCalledWith([1, 3, 2], { windowId: 10, index: 0 });
   });
 
+  it("moves a live tab subtree into a newly created browser window", async () => {
+    const state: OutlineState = bootstrapFromWindows(runtimeWindows, { now: 1000 });
+    const adapter = fakeAdapter({
+      createWindow: vi.fn(async ({ tabId }) => ({
+        id: 42,
+        focused: true,
+        incognito: false,
+        tabs: typeof tabId === "number"
+          ? [
+              {
+                id: tabId,
+                windowId: 42,
+                index: 0,
+                active: true,
+                url: "https://example.com/",
+                title: "Example"
+              }
+            ]
+          : []
+      }))
+    });
+
+    const result = await runCommand(state, adapter, {
+      type: "moveNodeToNewWindow",
+      nodeId: "tab:1"
+    });
+
+    expect(adapter.createWindow).toHaveBeenCalledWith({ tabId: 1 });
+    expect(result.state.rootIds).toEqual(["window:10", "window:42"]);
+    expect(result.state.nodes["window:10"]?.childIds).toEqual(["tab:3"]);
+    expect(result.state.nodes["window:42"]?.childIds).toEqual(["tab:1"]);
+    expect(result.state.nodes["tab:1"]?.live).toEqual({ tabId: 1, windowId: 42 });
+    expect(result.state.nodes["tab:2"]?.live).toEqual({ tabId: 2, windowId: 42 });
+    expect(adapter.moveTabs).toHaveBeenNthCalledWith(1, [3], { windowId: 10, index: 0 });
+    expect(adapter.moveTabs).toHaveBeenNthCalledWith(2, [1, 2], { windowId: 42, index: 0 });
+  });
+
+  it("moves a closed tab subtree into a placeholder without touching Firefox", async () => {
+    const state = closeTab(bootstrapFromWindows(runtimeWindows, { now: 1000 }), 1, {
+      now: 2000,
+      sessionId: "session-tab-1"
+    });
+    const adapter = fakeAdapter();
+
+    const result = await runCommand(state, adapter, {
+      type: "moveNodeToNewWindow",
+      nodeId: "tab:1"
+    });
+    const placeholderId = result.state.rootIds.at(-1)!;
+
+    expect(adapter.createWindow).not.toHaveBeenCalled();
+    expect(adapter.moveTabs).not.toHaveBeenCalled();
+    expect(result.state.nodes[placeholderId]?.kind).toBe("window");
+    expect(result.state.nodes[placeholderId]?.status).toBe("closed");
+    expect(result.state.nodes[placeholderId]?.childIds).toEqual(["tab:1"]);
+    expect(result.state.nodes["tab:1"]?.parentId).toBe(placeholderId);
+  });
+
+  it("restores a closed placeholder window by creating and filling a Firefox window", async () => {
+    const state = closeTab(bootstrapFromWindows(runtimeWindows, { now: 1000 }), 1, {
+      now: 2000,
+      sessionId: "session-tab-1"
+    });
+    const adapter = fakeAdapter();
+    const moved = await runCommand(state, adapter, {
+      type: "moveNodeToNewWindow",
+      nodeId: "tab:1"
+    });
+    const placeholderId = moved.state.rootIds.at(-1)!;
+
+    const restored = await runCommand(moved.state, adapter, {
+      type: "restoreNode",
+      nodeId: placeholderId
+    });
+
+    expect(adapter.restoreSession).not.toHaveBeenCalled();
+    expect(adapter.createWindow).toHaveBeenCalledWith({ url: "https://example.com/" });
+    expect(adapter.createTab).toHaveBeenCalledWith({
+      url: "https://example.com/child",
+      windowId: 42,
+      active: false
+    });
+    expect(restored.state.nodes[placeholderId]?.status).toBe("live");
+    expect(restored.state.nodes[placeholderId]?.live).toEqual({ windowId: 42 });
+    expect(restored.state.nodes["tab:1"]?.live).toEqual({ tabId: 200, windowId: 42 });
+    expect(restored.state.nodes["tab:2"]?.live).toEqual({ tabId: 99, windowId: 42 });
+  });
+
   it("toggles collapsed state locally", async () => {
     const state = bootstrapFromWindows(runtimeWindows, { now: 1000 });
     const adapter = fakeAdapter();

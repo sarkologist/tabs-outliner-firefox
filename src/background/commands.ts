@@ -2,6 +2,8 @@ import type { BrowserAdapter, RestoredSession } from "./adapter.js";
 import {
   deleteNode,
   moveNode,
+  moveTabToNewClosedWindow,
+  moveTabToNewLiveWindow,
   planRestore,
   projectLiveTabs,
   restoreNodes
@@ -33,6 +35,10 @@ export type BackgroundCommand =
       nodeId: NodeId;
       parentId?: NodeId;
       index: number;
+    }
+  | {
+      type: "moveNodeToNewWindow";
+      nodeId: NodeId;
     }
   | {
       type: "toggleCollapsed";
@@ -87,6 +93,9 @@ export async function runCommand(
       await syncBrowserOrder(next, adapter);
       return { state: next };
     }
+
+    case "moveNodeToNewWindow":
+      return { state: await moveNodeToNewWindow(state, adapter, command.nodeId) };
 
     case "toggleCollapsed":
       return { state: toggleCollapsed(state, command.nodeId) };
@@ -198,11 +207,12 @@ async function restoreNode(
       continue;
     }
 
+    const planNodeIsWindow = next.nodes[plan.nodeId]?.kind === "window";
     const restoredNodes = await runRestorePlan(next, adapter, plan);
     if (restoredNodes.length > 0) {
       next = restoreNodes(next, restoredNodes);
       for (const restored of restoredNodes) {
-        if (next.nodes[restored.nodeId]?.kind === "window") {
+        if (planNodeIsWindow && next.nodes[restored.nodeId]?.kind === "window") {
           restoredWindowNodeIds.add(restored.nodeId);
         }
       }
@@ -218,6 +228,10 @@ async function runRestorePlan(
   plan: RestorePlan
 ): Promise<RestoredNode[]> {
   if (plan.kind === "session") {
+    if (plan.fallbackUrl && shouldCreateClosedWindowDestination(state, plan)) {
+      return createFallbackTab(state, adapter, plan.nodeId, plan.fallbackUrl, plan.windowNodeId);
+    }
+
     try {
       const restoredSession = await adapter.restoreSession(plan.sessionId);
       const restored = restoredFromSession(state, plan, restoredSession);
@@ -235,6 +249,21 @@ async function runRestorePlan(
   }
 
   return createFallbackTab(state, adapter, plan.nodeId, plan.url, plan.windowNodeId);
+}
+
+function shouldCreateClosedWindowDestination(state: OutlineState, plan: RestorePlan): boolean {
+  if (!plan.windowNodeId) {
+    return false;
+  }
+
+  const plannedWindow = state.nodes[plan.windowNodeId];
+  const plannedNode = state.nodes[plan.nodeId];
+  return Boolean(
+    plannedNode?.kind === "tab" &&
+      plannedWindow?.kind === "window" &&
+      plannedWindow.status === "closed" &&
+      !plannedWindow.restore?.sessionId
+  );
 }
 
 async function createFallbackTab(
@@ -290,6 +319,30 @@ async function createFallbackTab(
   });
 
   return [restoredTabFromRuntime(nodeId, created)];
+}
+
+async function moveNodeToNewWindow(
+  state: OutlineState,
+  adapter: BrowserAdapter,
+  nodeId: NodeId
+): Promise<OutlineState> {
+  const node = state.nodes[nodeId];
+  if (!node || node.kind !== "tab") {
+    return state;
+  }
+
+  if (isLiveTab(node)) {
+    const createdWindow = await adapter.createWindow({ tabId: node.live.tabId });
+    const next = moveTabToNewLiveWindow(state, nodeId, createdWindow, { now: Date.now() });
+    await syncBrowserOrder(next, adapter);
+    return next;
+  }
+
+  if (node.status === "closed") {
+    return moveTabToNewClosedWindow(state, nodeId, { now: Date.now() });
+  }
+
+  return state;
 }
 
 function restoredTabFromRuntime(nodeId: NodeId, tab: RuntimeTab): RestoredNode {

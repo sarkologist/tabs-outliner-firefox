@@ -11,6 +11,6 @@ export type BrowserAdapter = {
   closeWindow(windowId: number): Promise<void>;
   restoreSession(sessionId: string): Promise<RestoredSession>;
   createTab(createProperties: { url: string; windowId?: number; active?: boolean }): Promise<RuntimeTab>;
-  createWindow(createData: { url?: string | string[] }): Promise<RuntimeWindow>;
+  createWindow(createData: { url?: string | string[]; tabId?: number }): Promise<RuntimeWindow>;
   moveTabs(tabIds: number[], moveProperties: { windowId: number; index: number }): Promise<void>;
 };

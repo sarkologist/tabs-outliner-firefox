@@ -196,6 +196,7 @@ function isCommand(message: unknown): message is Parameters<typeof runCommand>[2
     "restoreNode",
     "deleteNode",
     "moveNode",
+    "moveNodeToNewWindow",
     "toggleCollapsed",
     "refresh"
   ].includes(String((message as { type: unknown }).type));

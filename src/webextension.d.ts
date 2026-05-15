@@ -45,7 +45,7 @@ type WebExtensionBrowserApi = {
     getAll(getInfo?: { populate?: boolean; windowTypes?: string[] }): Promise<RuntimeWindow[]>;
     update(windowId: number, updateInfo: { focused?: boolean }): Promise<RuntimeWindow>;
     remove(windowId: number): Promise<void>;
-    create(createData: { url?: string | string[] }): Promise<RuntimeWindow>;
+    create(createData: { url?: string | string[]; tabId?: number }): Promise<RuntimeWindow>;
     onRemoved: Listener<(windowId: number) => void | Promise<void>>;
   };
   tabs: {

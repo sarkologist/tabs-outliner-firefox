@@ -299,6 +299,84 @@ export function moveNode(state: OutlineState, nodeId: NodeId, target: MoveTarget
   return next;
 }
 
+export function moveTabToNewLiveWindow(
+  state: OutlineState,
+  nodeId: NodeId,
+  windowInfo: RuntimeWindow,
+  clock: Clock
+): OutlineState {
+  const node = state.nodes[nodeId];
+  if (!node) {
+    throw new Error(`Cannot move missing node: ${nodeId}`);
+  }
+  if (node.kind !== "tab") {
+    throw new Error("Only tab nodes can be moved into a new window");
+  }
+  if (node.status !== "live") {
+    throw new Error("Only live tab nodes can be moved into a live window");
+  }
+
+  const next = cloneState(state);
+  const newWindowNodeId = uniqueNodeId(next, windowNodeId(windowInfo.id), clock.now);
+  next.nodes[newWindowNodeId] = {
+    id: newWindowNodeId,
+    kind: "window",
+    status: "live",
+    childIds: [],
+    title: windowInfo.focused ? "Current window" : `Window ${windowInfo.id}`,
+    active: windowInfo.focused,
+    collapsed: false,
+    createdAt: clock.now,
+    updatedAt: clock.now,
+    live: { windowId: windowInfo.id }
+  };
+
+  if (windowInfo.focused) {
+    for (const existing of Object.values(next.nodes)) {
+      if (existing.id !== newWindowNodeId && isNodeLiveWindow(existing)) {
+        existing.active = false;
+        if (existing.title === "Current window") {
+          existing.title = `Window ${existing.live.windowId}`;
+        }
+      }
+    }
+  }
+
+  moveExistingNodeUnderNewWindow(next, nodeId, newWindowNodeId, clock.now);
+  updateLiveTabWindowRefs(next, nodeId, windowInfo.id, clock.now);
+  return repairState(next);
+}
+
+export function moveTabToNewClosedWindow(state: OutlineState, nodeId: NodeId, clock: Clock): OutlineState {
+  const node = state.nodes[nodeId];
+  if (!node) {
+    throw new Error(`Cannot move missing node: ${nodeId}`);
+  }
+  if (node.kind !== "tab") {
+    throw new Error("Only tab nodes can be moved into a new window");
+  }
+  if (node.status !== "closed") {
+    throw new Error("Only closed tab nodes can be moved into a closed window placeholder");
+  }
+
+  const next = cloneState(state);
+  const newWindowNodeId = uniqueNodeId(next, `window:placeholder:${clock.now}`, clock.now);
+  next.nodes[newWindowNodeId] = {
+    id: newWindowNodeId,
+    kind: "window",
+    status: "closed",
+    childIds: [],
+    title: "Saved window",
+    collapsed: false,
+    createdAt: clock.now,
+    updatedAt: clock.now,
+    closedAt: clock.now
+  };
+
+  moveExistingNodeUnderNewWindow(next, nodeId, newWindowNodeId, clock.now);
+  return repairState(next);
+}
+
 export function projectLiveTabs(state: OutlineState, windowIdOrNodeId: number | NodeId): LiveTabProjection[] {
   const windowId = typeof windowIdOrNodeId === "number" ? windowNodeId(windowIdOrNodeId) : windowIdOrNodeId;
   const root = state.nodes[windowId];
@@ -607,6 +685,39 @@ function markClosedSubtree(state: OutlineState, nodeId: NodeId, context: CloseCo
     delete node.live;
     delete node.active;
   }
+}
+
+function moveExistingNodeUnderNewWindow(
+  state: OutlineState,
+  nodeId: NodeId,
+  windowNodeId: NodeId,
+  now: number
+): void {
+  const moving = requireNode(state, nodeId);
+  const oldSiblings = moving.parentId ? requireNode(state, moving.parentId).childIds : state.rootIds;
+  removeId(oldSiblings, nodeId);
+
+  state.rootIds.push(windowNodeId);
+  moving.parentId = windowNodeId;
+  moving.updatedAt = now;
+  requireNode(state, windowNodeId).childIds.push(nodeId);
+}
+
+function updateLiveTabWindowRefs(
+  state: OutlineState,
+  nodeId: NodeId,
+  windowId: number,
+  now: number
+): void {
+  walk(state, nodeId, (node) => {
+    if (isNodeLiveTab(node)) {
+      node.live = {
+        tabId: node.live.tabId,
+        windowId
+      };
+      node.updatedAt = now;
+    }
+  });
 }
 
 function collectSubtreeIds(state: OutlineState, nodeId: NodeId): NodeId[] {
