@@ -449,6 +449,13 @@ function liveTabIds(state: OutlineState): number[] {
     .sort((a, b) => a - b);
 }
 
+function liveWindowIds(state: OutlineState): number[] {
+  return Object.values(state.nodes)
+    .filter((node) => node.kind === "window" && node.status === "live" && node.live && "windowId" in node.live)
+    .map((node) => node.live!.windowId)
+    .sort((a, b) => a - b);
+}
+
 function reachableNodeIds(state: OutlineState): string[] {
   const ids: string[] = [];
   const seen = new Set<string>();
@@ -473,6 +480,489 @@ function reachableNodeIds(state: OutlineState): string[] {
   }
 
   return ids.sort();
+}
+
+type GeneratedTraceContext = {
+  runtime: FakeRuntime;
+  controller: ReturnType<typeof createBackgroundController>;
+  nextTabId: number;
+  history: string[];
+  nativeDeletedNodeIds: Set<string>;
+  expectedClosedNodeIds: Set<string>;
+  staleTabs: RuntimeTab[];
+  rng: () => number;
+};
+
+type GeneratedOperation = {
+  name: string;
+  run(context: GeneratedTraceContext): Promise<void>;
+};
+
+function seededRandom(seed: number): () => number {
+  let value = seed >>> 0;
+  return () => {
+    value += 0x6D2B79F5;
+    let next = value;
+    next = Math.imul(next ^ (next >>> 15), next | 1);
+    next ^= next + Math.imul(next ^ (next >>> 7), next | 61);
+    return ((next ^ (next >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function pickOne<T>(rng: () => number, values: T[]): T {
+  return values[Math.floor(rng() * values.length)]!;
+}
+
+function sortedRuntimeTabIds(runtime: FakeRuntime): number[] {
+  return runtime.tabs.map((tab) => tab.id).sort((a, b) => a - b);
+}
+
+function sortedRuntimeWindowIds(runtime: FakeRuntime): number[] {
+  return runtime.windows.map((windowInfo) => windowInfo.id).sort((a, b) => a - b);
+}
+
+function tabsInRuntimeWindow(runtime: FakeRuntime, windowId: number): RuntimeTab[] {
+  return runtime.tabs
+    .filter((tab) => tab.windowId === windowId)
+    .sort((left, right) => left.index - right.index);
+}
+
+function tabNodeIdFor(tabId: number): string {
+  return `tab:${tabId}`;
+}
+
+function windowNodeIdFor(windowId: number): string {
+  return `window:${windowId}`;
+}
+
+function availableGeneratedOperations(context: GeneratedTraceContext): GeneratedOperation[] {
+  const operations: GeneratedOperation[] = [];
+  const staleTabsInOpenWindows = context.staleTabs.filter((tab) =>
+    context.runtime.windows.some((windowInfo) => windowInfo.id === tab.windowId) &&
+      !context.runtime.tabs.some((runtimeTab) => runtimeTab.id === tab.id)
+  );
+  const closeableOutlinerTabs = context.runtime.tabs.filter((tab) =>
+    tabsInRuntimeWindow(context.runtime, tab.windowId).length > 1
+  );
+  const multiTabWindows = context.runtime.windows.filter((windowInfo) =>
+    tabsInRuntimeWindow(context.runtime, windowInfo.id).length > 1
+  );
+
+  if (context.runtime.windows.length > 0) {
+    operations.push(
+      { name: "open-tab", run: openGeneratedTab },
+      { name: "open-tab", run: openGeneratedTab }
+    );
+  }
+  if (context.runtime.tabs.length > 0) {
+    operations.push(
+      { name: "activate-tab", run: activateGeneratedTab },
+      { name: "native-close-tab", run: nativeCloseGeneratedTab },
+      { name: "native-close-tab", run: nativeCloseGeneratedTab }
+    );
+  }
+  if (closeableOutlinerTabs.length > 0) {
+    operations.push({ name: "outliner-close-tab", run: outlinerCloseGeneratedTab });
+  }
+  if (context.runtime.windows.length > 1) {
+    operations.push({ name: "outliner-close-window", run: outlinerCloseGeneratedWindow });
+  }
+  if (multiTabWindows.length > 0) {
+    operations.push({ name: "native-close-window", run: nativeCloseGeneratedWindow });
+  }
+  if (context.runtime.tabs.length > 0 && staleTabsInOpenWindows.length > 0) {
+    operations.push(
+      { name: "stale-activation-snapshot", run: staleActivationSnapshot },
+      { name: "stale-tab-created-event", run: staleCreatedEvent },
+      { name: "stale-tab-updated-event", run: staleUpdatedEvent }
+    );
+  }
+
+  return operations;
+}
+
+async function openGeneratedTab(context: GeneratedTraceContext): Promise<void> {
+  const windowInfo = pickOne(context.rng, context.runtime.windows);
+  const existingTabs = tabsInRuntimeWindow(context.runtime, windowInfo.id);
+  const openerTab = existingTabs.length > 0 && context.rng() < 0.75
+    ? pickOne(context.rng, existingTabs)
+    : undefined;
+  const tabId = context.nextTabId++;
+  const tab: RuntimeTab = {
+    id: tabId,
+    windowId: windowInfo.id,
+    index: Math.floor(context.rng() * (existingTabs.length + 1)),
+    active: true,
+    url: `https://generated.example/${tabId}`,
+    title: `Generated ${tabId}`
+  };
+  if (openerTab) {
+    tab.openerTabId = openerTab.id;
+  }
+  const queryLag = context.rng() < 0.25;
+  context.history.push(`open tab ${tab.id} in window ${tab.windowId}${queryLag ? " with stale query" : ""}`);
+  await createTabFromBrowser(context.runtime, tab, { queryLag });
+}
+
+async function activateGeneratedTab(context: GeneratedTraceContext): Promise<void> {
+  const tab = pickOne(context.rng, context.runtime.tabs);
+  context.history.push(`activate tab ${tab.id}`);
+  await activateTabFromBrowser(context.runtime, tab.id);
+}
+
+async function nativeCloseGeneratedTab(context: GeneratedTraceContext): Promise<void> {
+  const tab = pickOne(context.rng, context.runtime.tabs);
+  const tabsInWindow = tabsInRuntimeWindow(context.runtime, tab.windowId);
+  context.staleTabs.push(copyTab(tab));
+
+  if (tabsInWindow.length === 1) {
+    context.nativeDeletedNodeIds.add(tabNodeIdFor(tab.id));
+    if (await liveRuntimeWindowHasOtherOutlineChildren(context, tab.windowId, tabNodeIdFor(tab.id))) {
+      context.expectedClosedNodeIds.add(windowNodeIdFor(tab.windowId));
+    } else {
+      context.nativeDeletedNodeIds.add(windowNodeIdFor(tab.windowId));
+    }
+    context.history.push(`native close last tab ${tab.id} in window ${tab.windowId}`);
+    await closeRuntimeWindow(context.runtime, tab.windowId, { awaitListeners: true });
+    return;
+  }
+
+  const order = pickOne(context.rng, [
+    "tabRemovedThenSessionChanged",
+    "sessionChangedThenTabRemoved",
+    "tabRemovedOnly",
+    "sessionChangedOnly"
+  ] satisfies TabCloseEventOrder[]);
+  context.nativeDeletedNodeIds.add(tabNodeIdFor(tab.id));
+  context.history.push(`native close tab ${tab.id} with ${order}`);
+  await closeTabFromBrowser(context.runtime, tab.id, order);
+}
+
+async function outlinerCloseGeneratedTab(context: GeneratedTraceContext): Promise<void> {
+  const candidates = context.runtime.tabs.filter((tab) =>
+    tabsInRuntimeWindow(context.runtime, tab.windowId).length > 1
+  );
+  const tab = pickOne(context.rng, candidates);
+  context.expectedClosedNodeIds.add(tabNodeIdFor(tab.id));
+  context.history.push(`outliner close tab ${tab.id}`);
+  await context.controller.handleMessage({ type: "closeNode", nodeId: tabNodeIdFor(tab.id) });
+}
+
+async function outlinerCloseGeneratedWindow(context: GeneratedTraceContext): Promise<void> {
+  const windowInfo = pickOne(context.rng, context.runtime.windows);
+  const tabs = tabsInRuntimeWindow(context.runtime, windowInfo.id);
+  context.expectedClosedNodeIds.add(windowNodeIdFor(windowInfo.id));
+  for (const tab of tabs) {
+    context.expectedClosedNodeIds.add(tabNodeIdFor(tab.id));
+  }
+  context.history.push(`outliner close window ${windowInfo.id} with ${tabs.length} tabs`);
+  await context.controller.handleMessage({ type: "closeNode", nodeId: windowNodeIdFor(windowInfo.id) });
+}
+
+async function nativeCloseGeneratedWindow(context: GeneratedTraceContext): Promise<void> {
+  const candidates = context.runtime.windows.filter((windowInfo) =>
+    tabsInRuntimeWindow(context.runtime, windowInfo.id).length > 1
+  );
+  const windowInfo = pickOne(context.rng, candidates);
+  const tabs = tabsInRuntimeWindow(context.runtime, windowInfo.id);
+  context.expectedClosedNodeIds.add(windowNodeIdFor(windowInfo.id));
+  for (const tab of tabs) {
+    context.expectedClosedNodeIds.add(tabNodeIdFor(tab.id));
+  }
+  context.history.push(`native close multi-tab window ${windowInfo.id}`);
+  await closeRuntimeWindow(context.runtime, windowInfo.id, { awaitListeners: true });
+}
+
+async function staleActivationSnapshot(context: GeneratedTraceContext): Promise<void> {
+  const stale = pickOne(context.rng, staleTabsInOpenWindows(context));
+  const target = pickOne(context.rng, context.runtime.tabs);
+  context.runtime.setNextTabQueryResult([
+    ...context.runtime.tabs.map((tab) => ({
+      ...tab,
+      active: tab.windowId === target.windowId ? tab.id === target.id : tab.active
+    })),
+    {
+      ...stale,
+      active: false
+    }
+  ]);
+  context.history.push(`activate tab ${target.id} with stale tab ${stale.id} in query result`);
+  await activateTabFromBrowser(context.runtime, target.id);
+}
+
+async function staleCreatedEvent(context: GeneratedTraceContext): Promise<void> {
+  const stale = pickOne(context.rng, staleTabsInOpenWindows(context));
+  context.history.push(`dispatch stale created event for tab ${stale.id}`);
+  await context.runtime.events.tabCreated.emit(copyTab(stale));
+}
+
+async function staleUpdatedEvent(context: GeneratedTraceContext): Promise<void> {
+  const stale = pickOne(context.rng, staleTabsInOpenWindows(context));
+  context.history.push(`dispatch stale updated event for tab ${stale.id}`);
+  await context.runtime.events.tabUpdated.emit(stale.id, { title: "Stale" }, {
+    ...stale,
+    title: "Stale"
+  });
+}
+
+function staleTabsInOpenWindows(context: GeneratedTraceContext): RuntimeTab[] {
+  return context.staleTabs.filter((tab) =>
+    context.runtime.windows.some((windowInfo) => windowInfo.id === tab.windowId) &&
+      !context.runtime.tabs.some((runtimeTab) => runtimeTab.id === tab.id)
+  );
+}
+
+async function liveRuntimeWindowHasOtherOutlineChildren(
+  context: GeneratedTraceContext,
+  runtimeWindowId: number,
+  excludedNodeId: string
+): Promise<boolean> {
+  const state = (await context.controller.handleMessage({ type: "getState" })) as OutlineState;
+  const windowNode = liveWindowNodeForRuntimeWindow(state, runtimeWindowId);
+  return Boolean(windowNode?.childIds.some((childId) => childId !== excludedNodeId));
+}
+
+async function runGeneratedTrace(seed: number, steps: number): Promise<void> {
+  const runtime = fakeRuntime(
+    [
+      {
+        id: 10,
+        focused: true,
+        incognito: false
+      },
+      {
+        id: 20,
+        focused: false,
+        incognito: false
+      }
+    ],
+    [
+      {
+        id: 1,
+        windowId: 10,
+        index: 0,
+        active: true,
+        url: "https://one.example/",
+        title: "One"
+      },
+      {
+        id: 2,
+        windowId: 10,
+        index: 1,
+        active: false,
+        url: "https://two.example/",
+        title: "Two"
+      },
+      {
+        id: 3,
+        windowId: 20,
+        index: 0,
+        active: true,
+        url: "https://three.example/",
+        title: "Three"
+      }
+    ]
+  );
+  const controller = createBackgroundController({ api: runtime.api, now: () => seed * 1000 });
+  const context: GeneratedTraceContext = {
+    runtime,
+    controller,
+    nextTabId: 100,
+    history: [`seed ${seed}`],
+    nativeDeletedNodeIds: new Set(),
+    expectedClosedNodeIds: new Set(),
+    staleTabs: [],
+    rng: seededRandom(seed)
+  };
+
+  await controller.ensureState();
+  await assertGeneratedInvariants(context);
+
+  for (let step = 0; step < steps; step += 1) {
+    const operations = availableGeneratedOperations(context);
+    if (operations.length === 0) {
+      break;
+    }
+
+    const operation = pickOne(context.rng, operations);
+    context.history.push(`step ${step + 1}: ${operation.name}`);
+    await operation.run(context);
+    await assertGeneratedInvariants(context);
+
+    if (context.runtime.windows.length === 0) {
+      break;
+    }
+  }
+}
+
+async function assertGeneratedInvariants(context: GeneratedTraceContext): Promise<void> {
+  const state = (await context.controller.handleMessage({ type: "getState" })) as OutlineState;
+  assertStructureInvariants(state, context.history);
+  assertRuntimeProjectionInvariants(state, context);
+  assertLifecycleExpectationInvariants(state, context);
+  assertClosedSubtreeInvariants(state, context.history);
+}
+
+function assertStructureInvariants(state: OutlineState, history: string[]): void {
+  invariant(new Set(state.rootIds).size === state.rootIds.length, "rootIds contain duplicates", history);
+  invariantEqual(reachableNodeIds(state), Object.keys(state.nodes).sort(), "all nodes are reachable", history);
+
+  for (const rootId of state.rootIds) {
+    const root = state.nodes[rootId];
+    invariant(Boolean(root), `root node ${rootId} is missing`, history);
+    invariant(!root?.parentId, `root node ${rootId} has parent ${root?.parentId}`, history);
+  }
+
+  for (const [nodeId, node] of Object.entries(state.nodes)) {
+    invariant(
+      new Set(node.childIds).size === node.childIds.length,
+      `node ${nodeId} has duplicate children`,
+      history
+    );
+
+    if (node.parentId) {
+      const parent = state.nodes[node.parentId];
+      invariant(Boolean(parent), `node ${nodeId} has missing parent ${node.parentId}`, history);
+      invariant(
+        Boolean(parent?.childIds.includes(nodeId)),
+        `parent ${node.parentId} does not include child ${nodeId}`,
+        history
+      );
+    }
+
+    for (const childId of node.childIds) {
+      const child = state.nodes[childId];
+      invariant(Boolean(child), `node ${nodeId} has missing child ${childId}`, history);
+      invariant(child?.parentId === nodeId, `child ${childId} does not point back to ${nodeId}`, history);
+    }
+  }
+}
+
+function assertRuntimeProjectionInvariants(state: OutlineState, context: GeneratedTraceContext): void {
+  invariantEqual(liveTabIds(state), sortedRuntimeTabIds(context.runtime), "live tab IDs match runtime tabs", context.history);
+  invariantEqual(
+    liveWindowIds(state),
+    sortedRuntimeWindowIds(context.runtime),
+    "live window IDs match runtime windows",
+    context.history
+  );
+
+  for (const runtimeTab of context.runtime.tabs) {
+    const node = liveTabNodeForRuntimeTab(state, runtimeTab.id);
+    invariant(Boolean(node), `runtime tab ${runtimeTab.id} has no live node`, context.history);
+    invariant(node?.live?.windowId === runtimeTab.windowId, `tab ${runtimeTab.id} has wrong live window`, context.history);
+    invariant(node?.active === runtimeTab.active, `tab ${runtimeTab.id} active flag diverged`, context.history);
+  }
+
+  for (const node of Object.values(state.nodes)) {
+    if (node.kind !== "tab" || node.status !== "live" || !node.live || !("tabId" in node.live)) {
+      continue;
+    }
+
+    const owningWindow = nearestWindowNode(state, node.id);
+    invariant(
+      owningWindow?.live && "windowId" in owningWindow.live && owningWindow.live.windowId === node.live.windowId,
+      `live tab ${node.id} is not under its runtime window`,
+      context.history
+    );
+  }
+}
+
+function assertLifecycleExpectationInvariants(state: OutlineState, context: GeneratedTraceContext): void {
+  for (const nodeId of context.nativeDeletedNodeIds) {
+    invariant(!state.nodes[nodeId], `native-deleted node ${nodeId} was resurrected`, context.history);
+  }
+
+  for (const nodeId of context.expectedClosedNodeIds) {
+    if (context.nativeDeletedNodeIds.has(nodeId)) {
+      continue;
+    }
+
+    const node = state.nodes[nodeId];
+    invariant(Boolean(node), `expected closed node ${nodeId} is missing`, context.history);
+    invariant(node?.status === "closed", `expected closed node ${nodeId} is ${node?.status}`, context.history);
+  }
+}
+
+function assertClosedSubtreeInvariants(state: OutlineState, history: string[]): void {
+  for (const node of Object.values(state.nodes)) {
+    if (node.status === "live") {
+      const closedAncestor = nearestAncestor(state, node.id, (candidate) => candidate.status === "closed");
+      invariant(!closedAncestor, `live node ${node.id} is under closed node ${closedAncestor?.id}`, history);
+    }
+
+    if (node.kind === "tab" && node.status === "closed" && node.childIds.length > 0) {
+      const owningWindow = nearestWindowNode(state, node.id);
+      invariant(
+        owningWindow?.status !== "live",
+        `closed tab ${node.id} has children while under live window ${owningWindow?.id}`,
+        history
+      );
+    }
+  }
+}
+
+function liveTabNodeForRuntimeTab(state: OutlineState, tabId: number) {
+  return Object.values(state.nodes).find((node) =>
+    node.kind === "tab" &&
+      node.status === "live" &&
+      node.live &&
+      "tabId" in node.live &&
+      node.live.tabId === tabId
+  );
+}
+
+function liveWindowNodeForRuntimeWindow(state: OutlineState, windowId: number) {
+  return Object.values(state.nodes).find((node) =>
+    node.kind === "window" &&
+      node.status === "live" &&
+      node.live &&
+      "windowId" in node.live &&
+      node.live.windowId === windowId
+  );
+}
+
+function nearestWindowNode(state: OutlineState, nodeId: string) {
+  return nearestAncestor(state, nodeId, (node) => node.kind === "window");
+}
+
+function nearestAncestor(
+  state: OutlineState,
+  nodeId: string,
+  predicate: (node: OutlineState["nodes"][string]) => boolean
+) {
+  let current = state.nodes[nodeId];
+  const visited = new Set<string>();
+
+  while (current) {
+    if (visited.has(current.id)) {
+      return undefined;
+    }
+    visited.add(current.id);
+
+    if (predicate(current)) {
+      return current;
+    }
+    current = current.parentId ? state.nodes[current.parentId] : undefined;
+  }
+
+  return undefined;
+}
+
+function invariant(condition: boolean, message: string, history: string[]): void {
+  if (!condition) {
+    throw new Error(`${message}\nTrace:\n${history.join("\n")}`);
+  }
+}
+
+function invariantEqual<T>(actual: T, expected: T, message: string, history: string[]): void {
+  const actualJson = JSON.stringify(actual);
+  const expectedJson = JSON.stringify(expected);
+  invariant(
+    actualJson === expectedJson,
+    `${message}\nExpected: ${expectedJson}\nReceived: ${actualJson}`,
+    history
+  );
 }
 
 describe("background controller lifecycle", () => {
@@ -748,6 +1238,12 @@ describe("background controller lifecycle", () => {
     expect(state.nodes["tab:4"]).toBeUndefined();
     expect(state.nodes["tab:1"]?.childIds).toEqual([]);
     expect(state.nodes["window:10"]?.childIds).toEqual(["tab:1"]);
+  });
+
+  it("preserves lifecycle invariants across generated Firefox-like traces", async () => {
+    for (let seed = 1; seed <= 24; seed += 1) {
+      await runGeneratedTrace(seed, 32);
+    }
   });
 
   it("clears the previous active tab during partial active updates", async () => {
@@ -1132,6 +1628,47 @@ describe("background controller lifecycle", () => {
 
     const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
     expect(state.nodes["tab:1"]?.status).toBe("live");
+    expect(state.nodes["tab:2"]).toBeUndefined();
+    expect(state.nodes["window:10"]?.childIds).toEqual(["tab:1"]);
+  });
+
+  it("ignores stale created events after a sessions-only native close", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        },
+        {
+          id: 2,
+          windowId: 10,
+          index: 1,
+          active: false,
+          url: "https://two.example/",
+          title: "Two"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+
+    const staleTab = runtime.tabs.find((tab) => tab.id === 2)!;
+    await closeTabFromBrowser(runtime, 2, "sessionChangedOnly");
+    await runtime.events.tabCreated.emit(staleTab);
+
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(runtime.tabs.map((tab) => tab.id)).toEqual([1]);
     expect(state.nodes["tab:2"]).toBeUndefined();
     expect(state.nodes["window:10"]?.childIds).toEqual(["tab:1"]);
   });

@@ -103,7 +103,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         : undefined;
 
       if (typeof singleNativeRemovedTabId === "number") {
-        state = deleteLiveTabNodeByTabId(current, singleNativeRemovedTabId);
+        state = closeWindow(deleteLiveTabNodeByTabId(current, singleNativeRemovedTabId), windowId, { now: now() });
         stateCache.replace(state);
         await persistAndBroadcast();
         return;
@@ -255,6 +255,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
     let next = current;
     for (const tabId of missingLiveTabIds) {
+      removedTabIds.add(tabId);
       if (outlinerClosingTabIds.delete(tabId)) {
         const recent = await mostRecentClosedSession();
         next = closeTab(next, tabId, {
