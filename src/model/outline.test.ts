@@ -9,6 +9,7 @@ import {
   planRestore,
   projectLiveTabs,
   reconcileWithWindows,
+  repairState,
   restoreNodes
 } from "./outline.js";
 import type { OutlineState, RuntimeWindow } from "./types.js";
@@ -210,6 +211,19 @@ describe("outline model", () => {
     const state: OutlineState = bootstrapFromWindows(windows, { now: 1000 });
 
     expect(() => deleteNode(state, "tab:1")).toThrow(/live node/i);
+  });
+
+  it("repairs cyclic and duplicate child links in stored state", () => {
+    const state = bootstrapFromWindows(windows, { now: 1000 });
+    state.nodes["tab:1"]!.childIds = ["tab:2", "tab:2", "tab:1", "missing"];
+    state.nodes["tab:2"]!.childIds = ["tab:1"];
+    state.rootIds = ["window:10", "window:10", "missing-root"];
+
+    const repaired = repairState(state);
+
+    expect(repaired.rootIds).toEqual(["window:10"]);
+    expect(repaired.nodes["tab:1"]?.childIds).toEqual(["tab:2"]);
+    expect(repaired.nodes["tab:2"]?.childIds).toEqual([]);
   });
 
   it("reconciles stored closed nodes with currently open browser state", () => {

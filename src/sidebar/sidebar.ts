@@ -21,9 +21,13 @@ browser.runtime.onMessage.addListener((message) => {
 });
 
 async function loadState(): Promise<void> {
-  currentState = (await sendCommand({ type: "getState" })) as OutlineState;
-  render();
-  void loadDiagnostics();
+  try {
+    currentState = (await sendCommand({ type: "getState" })) as OutlineState;
+    render();
+    void loadDiagnostics();
+  } catch (error) {
+    showLoadError(error);
+  }
 }
 
 function render(): void {
@@ -206,6 +210,16 @@ async function runAndRender(command: BackgroundCommand): Promise<void> {
 
 async function sendCommand(command: BackgroundCommand): Promise<unknown> {
   return browser.runtime.sendMessage(command);
+}
+
+function showLoadError(error: unknown): void {
+  if (stateCount) {
+    stateCount.textContent = "Load failed";
+    stateCount.title = error instanceof Error ? error.message : String(error);
+  }
+  if (diagnostics) {
+    diagnostics.textContent = "reload or inspect errors";
+  }
 }
 
 async function loadDiagnostics(): Promise<void> {

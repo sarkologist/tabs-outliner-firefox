@@ -8,7 +8,8 @@ import {
   bootstrapFromWindows,
   closeTab,
   closeWindow,
-  reconcileWithWindows
+  reconcileWithWindows,
+  repairState
 } from "../model/outline.js";
 import type { OutlineState } from "../model/types.js";
 
@@ -91,7 +92,7 @@ async function initializeState(): Promise<OutlineState> {
   const windows = await getNormalWindows();
   const stored = await loadState(api);
   state = stored
-    ? reconcileWithWindows(stored, windows, { now: Date.now() })
+    ? reconcileWithWindows(repairState(stored), windows, { now: Date.now() })
     : bootstrapFromWindows(windows, { now: Date.now() });
   await saveState(state, api);
   return state;

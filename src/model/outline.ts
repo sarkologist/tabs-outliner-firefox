@@ -174,6 +174,33 @@ export function reconcileWithWindows(
   return next;
 }
 
+export function repairState(state: OutlineState): OutlineState {
+  const next = cloneState(state);
+  next.rootIds = uniqueIds(next.rootIds).filter((id) => Boolean(next.nodes[id]));
+
+  const globallyVisited = new Set<NodeId>();
+  for (const rootId of next.rootIds) {
+    repairSubtree(next, rootId, globallyVisited, new Set());
+  }
+
+  for (const [nodeId, node] of Object.entries(next.nodes)) {
+    node.childIds = uniqueIds(node.childIds).filter((childId) => {
+      const child = next.nodes[childId];
+      return Boolean(child && childId !== nodeId && child.parentId === nodeId);
+    });
+    if (!node.parentId && !next.rootIds.includes(nodeId)) {
+      next.rootIds.push(nodeId);
+    }
+    if (node.parentId && !next.nodes[node.parentId]) {
+      delete node.parentId;
+      next.rootIds.push(nodeId);
+    }
+  }
+
+  next.rootIds = uniqueIds(next.rootIds).filter((id) => Boolean(next.nodes[id]));
+  return next;
+}
+
 export function closeTab(state: OutlineState, tabId: number, context: CloseContext): OutlineState {
   const nodeId = findLiveTabNode(state, tabId);
   if (!nodeId) {
@@ -505,7 +532,17 @@ function collectSubtreeIds(state: OutlineState, nodeId: NodeId): NodeId[] {
   return ids;
 }
 
-function walk(state: OutlineState, nodeId: NodeId, visitor: (node: OutlineNode) => void): void {
+function walk(
+  state: OutlineState,
+  nodeId: NodeId,
+  visitor: (node: OutlineNode) => void,
+  visited = new Set<NodeId>()
+): void {
+  if (visited.has(nodeId)) {
+    return;
+  }
+  visited.add(nodeId);
+
   const node = state.nodes[nodeId];
   if (!node) {
     return;
@@ -513,13 +550,18 @@ function walk(state: OutlineState, nodeId: NodeId, visitor: (node: OutlineNode) 
 
   visitor(node);
   for (const childId of node.childIds) {
-    walk(state, childId, visitor);
+    walk(state, childId, visitor, visited);
   }
 }
 
 function nearestWindow(state: OutlineState, nodeId: NodeId): OutlineNode | undefined {
   let current = state.nodes[nodeId];
+  const visited = new Set<NodeId>();
   while (current) {
+    if (visited.has(current.id)) {
+      return undefined;
+    }
+    visited.add(current.id);
     if (current.kind === "window") {
       return current;
     }
@@ -530,7 +572,12 @@ function nearestWindow(state: OutlineState, nodeId: NodeId): OutlineNode | undef
 
 function isDescendant(state: OutlineState, candidateId: NodeId, ancestorId: NodeId): boolean {
   let current = state.nodes[candidateId];
+  const visited = new Set<NodeId>();
   while (current?.parentId) {
+    if (visited.has(current.id)) {
+      return false;
+    }
+    visited.add(current.id);
     if (current.parentId === ancestorId) {
       return true;
     }
@@ -611,4 +658,36 @@ function removeId(ids: NodeId[], id: NodeId): void {
   if (index >= 0) {
     ids.splice(index, 1);
   }
+}
+
+function repairSubtree(
+  state: OutlineState,
+  nodeId: NodeId,
+  globallyVisited: Set<NodeId>,
+  path: Set<NodeId>
+): void {
+  const node = state.nodes[nodeId];
+  if (!node || globallyVisited.has(nodeId)) {
+    return;
+  }
+
+  globallyVisited.add(nodeId);
+  path.add(nodeId);
+
+  const repairedChildren: NodeId[] = [];
+  for (const childId of uniqueIds(node.childIds)) {
+    const child = state.nodes[childId];
+    if (!child || childId === nodeId || path.has(childId)) {
+      continue;
+    }
+
+    child.parentId = nodeId;
+    repairedChildren.push(childId);
+    repairSubtree(state, childId, globallyVisited, new Set(path));
+  }
+  node.childIds = repairedChildren;
+}
+
+function uniqueIds(ids: NodeId[]): NodeId[] {
+  return [...new Set(ids)];
 }
