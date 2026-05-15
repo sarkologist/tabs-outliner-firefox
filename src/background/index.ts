@@ -1,7 +1,7 @@
 import { createBrowserAdapter } from "./browser-adapter.js";
 import { computeDiagnostics } from "./diagnostics.js";
 import { runCommand } from "./commands.js";
-import { getNormalWindows } from "./runtime-snapshot.js";
+import { getNormalWindows, getNormalWindowsIncludingTabs } from "./runtime-snapshot.js";
 import { createStateCache } from "./state-cache.js";
 import { loadState, saveState } from "./storage.js";
 import {
@@ -40,6 +40,11 @@ api.runtime.onMessage.addListener(async (message) => {
     return undefined;
   }
 
+  if (message.type === "refresh") {
+    await refreshFromRuntime();
+    return state;
+  }
+
   const current = await ensureState();
   const result = await runCommand(current, adapter, message);
   state = result.state;
@@ -48,12 +53,12 @@ api.runtime.onMessage.addListener(async (message) => {
   return result.state;
 });
 
-api.tabs.onCreated.addListener(async () => {
-  await refreshFromRuntime();
+api.tabs.onCreated.addListener(async (tab) => {
+  await refreshFromRuntime([tab]);
 });
 
-api.tabs.onUpdated.addListener(async () => {
-  await refreshFromRuntime();
+api.tabs.onUpdated.addListener(async (_tabId, _changeInfo, tab) => {
+  await refreshFromRuntime([tab]);
 });
 
 api.tabs.onRemoved.addListener(async (tabId, removeInfo) => {
@@ -98,9 +103,13 @@ async function initializeState(): Promise<OutlineState> {
   return state;
 }
 
-async function refreshFromRuntime(): Promise<void> {
+async function refreshFromRuntime(eventTabs: Parameters<typeof getNormalWindowsIncludingTabs>[1] = []): Promise<void> {
   const current = await ensureState();
-  state = reconcileWithWindows(current, await getNormalWindows(), { now: Date.now() });
+  const windows =
+    eventTabs.length > 0
+      ? await getNormalWindowsIncludingTabs(api, eventTabs)
+      : await getNormalWindows(api);
+  state = reconcileWithWindows(current, windows, { now: Date.now() });
   stateCache.replace(state);
   await persistAndBroadcast();
 }

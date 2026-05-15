@@ -4,6 +4,7 @@ import type { NodeId, OutlineNode, OutlineState } from "../model/types.js";
 
 const stateCount = document.querySelector<HTMLSpanElement>("#state-count");
 const diagnostics = document.querySelector<HTMLSpanElement>("#diagnostics");
+const refresh = document.querySelector<HTMLButtonElement>("#refresh");
 const tree = document.querySelector<HTMLElement>("#tree");
 const empty = document.querySelector<HTMLElement>("#empty");
 
@@ -11,6 +12,10 @@ let currentState: OutlineState | undefined;
 let draggedNodeId: NodeId | undefined;
 
 void loadState();
+
+refresh?.addEventListener("click", () => {
+  void runAndRender({ type: "refresh" });
+});
 
 browser.runtime.onMessage.addListener((message) => {
   if (isStateUpdated(message)) {

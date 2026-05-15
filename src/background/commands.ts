@@ -36,6 +36,9 @@ export type BackgroundCommand =
   | {
       type: "toggleCollapsed";
       nodeId: NodeId;
+    }
+  | {
+      type: "refresh";
     };
 
 export type CommandResult = {
@@ -49,6 +52,9 @@ export async function runCommand(
 ): Promise<CommandResult> {
   switch (command.type) {
     case "getState":
+      return { state };
+
+    case "refresh":
       return { state };
 
     case "focusNode": {

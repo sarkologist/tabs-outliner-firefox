@@ -36,6 +36,36 @@ export async function getNormalWindows(api: RuntimeSnapshotApi = browser): Promi
   }));
 }
 
+export async function getNormalWindowsIncludingTabs(
+  api: RuntimeSnapshotApi,
+  eventTabs: RuntimeTab[]
+): Promise<RuntimeWindow[]> {
+  const windows = await getNormalWindows(api);
+  const windowsById = new Map(windows.map((windowInfo) => [windowInfo.id, windowInfo]));
+
+  for (const tab of eventTabs) {
+    if (tab.incognito) {
+      continue;
+    }
+
+    const windowInfo = windowsById.get(tab.windowId);
+    if (!windowInfo) {
+      continue;
+    }
+
+    const tabs = windowInfo.tabs ?? [];
+    const existingIndex = tabs.findIndex((candidate) => candidate.id === tab.id);
+    if (existingIndex >= 0) {
+      tabs[existingIndex] = tab;
+    } else {
+      tabs.push(tab);
+    }
+    windowInfo.tabs = sortTabs(tabs);
+  }
+
+  return [...windowsById.values()];
+}
+
 function sortTabs(tabs: RuntimeTab[]): RuntimeTab[] {
   return [...tabs].sort((a, b) => a.index - b.index);
 }

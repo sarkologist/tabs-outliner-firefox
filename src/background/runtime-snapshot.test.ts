@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { getNormalWindows } from "./runtime-snapshot.js";
+import { getNormalWindows, getNormalWindowsIncludingTabs } from "./runtime-snapshot.js";
 import type { RuntimeTab, RuntimeWindow } from "../model/types.js";
 
 function snapshotApi(windows: RuntimeWindow[], tabs: RuntimeTab[]): Pick<WebExtensionBrowser, "windows" | "tabs"> {
@@ -130,6 +130,52 @@ describe("runtime snapshot", () => {
         focused: true,
         incognito: false,
         tabs: [expect.objectContaining({ id: 1 })]
+      }
+    ]);
+  });
+
+  it("merges event tabs into the runtime snapshot when query lags behind", async () => {
+    const api = snapshotApi(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false,
+          tabs: []
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://existing.example/",
+          title: "Existing"
+        }
+      ]
+    );
+
+    await expect(
+      getNormalWindowsIncludingTabs(api, [
+        {
+          id: 2,
+          windowId: 10,
+          index: 1,
+          active: false,
+          url: "about:newtab",
+          title: "New Tab"
+        }
+      ])
+    ).resolves.toEqual([
+      {
+        id: 10,
+        focused: true,
+        incognito: false,
+        tabs: [
+          expect.objectContaining({ id: 1 }),
+          expect.objectContaining({ id: 2, url: "about:newtab" })
+        ]
       }
     ]);
   });
