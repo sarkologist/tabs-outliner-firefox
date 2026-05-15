@@ -249,6 +249,56 @@ describe("outline model", () => {
     ]);
   });
 
+  it("preserves the source window session when wrapping its only closed tab", () => {
+    const state = closeWindow(bootstrapFromWindows([
+      ...windows,
+      {
+        id: 20,
+        incognito: false,
+        focused: false,
+        tabs: [
+          {
+            id: 5,
+            windowId: 20,
+            index: 0,
+            active: true,
+            url: "about:debugging#/runtime/this-firefox",
+            title: "Debugging - Runtime / this-firefox"
+          }
+        ]
+      }
+    ], { now: 1000 }), 20, {
+      now: 2000,
+      sessionId: "session-window-20"
+    });
+    const moved = moveTabToNewClosedWindow(state, "tab:5", { now: 3000 });
+    const placeholderId = moved.rootIds.at(-1)!;
+
+    expect(moved.nodes["window:20"]).toBeUndefined();
+    expect(moved.nodes[placeholderId]).toMatchObject({
+      kind: "window",
+      status: "closed",
+      childIds: ["tab:5"],
+      restore: {
+        sessionId: "session-window-20"
+      }
+    });
+    expect(planRestore(moved, placeholderId)).toEqual([
+      {
+        nodeId: placeholderId,
+        kind: "session",
+        sessionId: "session-window-20",
+        windowNodeId: placeholderId
+      },
+      {
+        nodeId: "tab:5",
+        kind: "url",
+        url: "about:debugging#/runtime/this-firefox",
+        windowNodeId: placeholderId
+      }
+    ]);
+  });
+
   it("plans session restores first and url fallback second", () => {
     const state = closeTab(bootstrapFromWindows(windows, { now: 1000 }), 2, {
       now: 2000,

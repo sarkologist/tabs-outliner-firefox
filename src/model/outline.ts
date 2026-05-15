@@ -361,16 +361,18 @@ export function moveTabToNewClosedWindow(state: OutlineState, nodeId: NodeId, cl
 
   const next = cloneState(state);
   const newWindowNodeId = uniqueNodeId(next, `window:placeholder:${clock.now}`, clock.now);
+  const sourceWindow = closedSingleTabSourceWindow(next, nodeId);
   next.nodes[newWindowNodeId] = {
     id: newWindowNodeId,
     kind: "window",
     status: "closed",
     childIds: [],
-    title: "Saved window",
+    title: sourceWindow?.title || "Saved window",
     collapsed: false,
     createdAt: clock.now,
     updatedAt: clock.now,
-    closedAt: clock.now
+    closedAt: clock.now,
+    ...(sourceWindow?.restore ? { restore: { ...sourceWindow.restore } } : {})
   };
 
   moveExistingNodeUnderNewWindow(next, nodeId, newWindowNodeId, clock.now);
@@ -718,6 +720,24 @@ function updateLiveTabWindowRefs(
       node.updatedAt = now;
     }
   });
+}
+
+function closedSingleTabSourceWindow(state: OutlineState, nodeId: NodeId): OutlineNode | undefined {
+  const sourceWindow = nearestWindow(state, nodeId);
+  if (
+    !sourceWindow ||
+    sourceWindow.id === nodeId ||
+    sourceWindow.status !== "closed" ||
+    !sourceWindow.restore?.sessionId
+  ) {
+    return undefined;
+  }
+
+  const closedTabIds = collectSubtreeIds(state, sourceWindow.id).filter((id) => {
+    const candidate = state.nodes[id];
+    return candidate?.kind === "tab" && candidate.status === "closed";
+  });
+  return closedTabIds.length === 1 && closedTabIds[0] === nodeId ? sourceWindow : undefined;
 }
 
 function collectSubtreeIds(state: OutlineState, nodeId: NodeId): NodeId[] {
