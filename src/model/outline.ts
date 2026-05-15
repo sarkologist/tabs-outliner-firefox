@@ -73,7 +73,7 @@ export function bootstrapFromWindows(windows: RuntimeWindow[], clock: Clock): Ou
     }
   }
 
-  return state;
+  return removeEmptyWindowNodes(state);
 }
 
 export function reconcileWithWindows(
@@ -239,7 +239,7 @@ export function repairState(state: OutlineState): OutlineState {
       .filter(([, node]) => !node.parentId)
       .map(([nodeId]) => nodeId)
   ]).filter((id) => Boolean(next.nodes[id]));
-  return next;
+  return removeEmptyWindowNodes(next);
 }
 
 export function closeTab(state: OutlineState, tabId: number, context: CloseContext): OutlineState {
@@ -250,7 +250,7 @@ export function closeTab(state: OutlineState, tabId: number, context: CloseConte
 
   const next = cloneState(state);
   markClosedSubtree(next, nodeId, context);
-  return next;
+  return removeEmptyWindowNodes(next);
 }
 
 export function closeWindow(state: OutlineState, windowId: number, context: CloseContext): OutlineState {
@@ -261,7 +261,7 @@ export function closeWindow(state: OutlineState, windowId: number, context: Clos
 
   const next = cloneState(state);
   markClosedSubtree(next, nodeId, context);
-  return next;
+  return removeEmptyWindowNodes(next);
 }
 
 export function moveNode(state: OutlineState, nodeId: NodeId, target: MoveTarget): OutlineState {
@@ -296,7 +296,7 @@ export function moveNode(state: OutlineState, nodeId: NodeId, target: MoveTarget
     moving.updatedAt = target.now;
   }
 
-  return next;
+  return removeEmptyWindowNodes(next);
 }
 
 export function moveTabToNewLiveWindow(
@@ -469,7 +469,7 @@ export function restoreNodes(state: OutlineState, restoredNodes: RestoredNode[])
     }
   }
 
-  return next;
+  return removeEmptyWindowNodes(next);
 }
 
 export function deleteNode(
@@ -501,7 +501,7 @@ export function deleteNode(
     delete next.nodes[id];
   }
 
-  return next;
+  return removeEmptyWindowNodes(next);
 }
 
 function tabToNode(tab: RuntimeTab, nodeId: NodeId, parentId: NodeId, now: number): OutlineNode {
@@ -726,6 +726,27 @@ function collectSubtreeIds(state: OutlineState, nodeId: NodeId): NodeId[] {
     ids.push(node.id);
   });
   return ids;
+}
+
+function removeEmptyWindowNodes(state: OutlineState): OutlineState {
+  let removed = true;
+  while (removed) {
+    removed = false;
+    for (const node of Object.values(state.nodes)) {
+      if (node.kind !== "window" || node.childIds.length > 0) {
+        continue;
+      }
+
+      removeId(state.rootIds, node.id);
+      for (const candidateParent of Object.values(state.nodes)) {
+        removeId(candidateParent.childIds, node.id);
+      }
+      delete state.nodes[node.id];
+      removed = true;
+    }
+  }
+
+  return state;
 }
 
 function walk(

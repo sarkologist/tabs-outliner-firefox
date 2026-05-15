@@ -331,6 +331,74 @@ describe("outline model", () => {
     expect(deleted.nodes["window:10"]?.childIds).toEqual(["tab:3"]);
   });
 
+  it("removes a window when its only child is deleted", () => {
+    const state = bootstrapFromWindows([
+      {
+        id: 10,
+        incognito: false,
+        focused: true,
+        tabs: [
+          {
+            id: 1,
+            windowId: 10,
+            index: 0,
+            active: true,
+            url: "https://solo.example/",
+            title: "Solo"
+          }
+        ]
+      }
+    ], { now: 1000 });
+
+    const deleted = deleteNode(state, "tab:1", { allowLive: true });
+
+    expect(deleted.nodes["tab:1"]).toBeUndefined();
+    expect(deleted.nodes["window:10"]).toBeUndefined();
+    expect(deleted.rootIds).toEqual([]);
+  });
+
+  it("removes a window when its only child is moved elsewhere", () => {
+    const state = bootstrapFromWindows([
+      {
+        id: 10,
+        incognito: false,
+        focused: true,
+        tabs: [
+          {
+            id: 1,
+            windowId: 10,
+            index: 0,
+            active: true,
+            url: "https://solo.example/",
+            title: "Solo"
+          }
+        ]
+      },
+      {
+        id: 20,
+        incognito: false,
+        focused: false,
+        tabs: [
+          {
+            id: 2,
+            windowId: 20,
+            index: 0,
+            active: true,
+            url: "https://target.example/",
+            title: "Target"
+          }
+        ]
+      }
+    ], { now: 1000 });
+
+    const moved = moveNode(state, "tab:1", { parentId: "window:20", index: 1 });
+
+    expect(moved.nodes["window:10"]).toBeUndefined();
+    expect(moved.rootIds).toEqual(["window:20"]);
+    expect(moved.nodes["window:20"]?.childIds).toEqual(["tab:2", "tab:1"]);
+    expect(moved.nodes["tab:1"]?.parentId).toBe("window:20");
+  });
+
   it("repairs cyclic and duplicate child links in stored state", () => {
     const state = bootstrapFromWindows(windows, { now: 1000 });
     state.nodes["tab:1"]!.childIds = ["tab:2", "tab:2", "tab:1", "missing"];
@@ -342,6 +410,40 @@ describe("outline model", () => {
     expect(repaired.rootIds).toEqual(["window:10"]);
     expect(repaired.nodes["tab:1"]?.childIds).toEqual(["tab:2"]);
     expect(repaired.nodes["tab:2"]?.childIds).toEqual([]);
+  });
+
+  it("repairs stored state by pruning empty windows", () => {
+    const state = bootstrapFromWindows(windows, { now: 1000 });
+    state.nodes["window:empty-parent"] = {
+      id: "window:empty-parent",
+      kind: "window",
+      status: "closed",
+      childIds: ["window:empty-child"],
+      title: "Saved window",
+      collapsed: false,
+      createdAt: 1000,
+      updatedAt: 1000,
+      closedAt: 1000
+    };
+    state.nodes["window:empty-child"] = {
+      id: "window:empty-child",
+      kind: "window",
+      status: "closed",
+      parentId: "window:empty-parent",
+      childIds: [],
+      title: "Saved window",
+      collapsed: false,
+      createdAt: 1000,
+      updatedAt: 1000,
+      closedAt: 1000
+    };
+    state.rootIds.push("window:empty-parent");
+
+    const repaired = repairState(state);
+
+    expect(repaired.nodes["window:empty-child"]).toBeUndefined();
+    expect(repaired.nodes["window:empty-parent"]).toBeUndefined();
+    expect(repaired.rootIds).toEqual(["window:10"]);
   });
 
   it("reconciles stored closed nodes with currently open browser state", () => {
