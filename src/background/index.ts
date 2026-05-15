@@ -109,7 +109,9 @@ async function refreshFromRuntime(eventTabs: Parameters<typeof getNormalWindowsI
     eventTabs.length > 0
       ? await getNormalWindowsIncludingTabs(api, eventTabs)
       : await getNormalWindows(api);
-  state = reconcileWithWindows(current, windows, { now: Date.now() });
+  state = reconcileWithWindows(current, windows, { now: Date.now() }, {
+    closeMissing: eventTabs.length === 0
+  });
   stateCache.replace(state);
   await persistAndBroadcast();
 }

@@ -265,6 +265,33 @@ describe("outline model", () => {
     expect(reconciled.nodes["tab:5"]?.parentId).toBe("tab:1");
   });
 
+  it("does not close absent live tabs during partial event reconciliation", () => {
+    const state = bootstrapFromWindows(windows, { now: 1000 });
+
+    const reconciled = reconcileWithWindows(state, [
+      {
+        id: 10,
+        incognito: false,
+        focused: true,
+        tabs: [
+          {
+            id: 5,
+            windowId: 10,
+            index: 3,
+            active: true,
+            url: "about:newtab",
+            title: "New Tab"
+          }
+        ]
+      }
+    ], { now: 2000 }, { closeMissing: false });
+
+    expect(reconciled.nodes["tab:1"]?.status).toBe("live");
+    expect(reconciled.nodes["tab:2"]?.status).toBe("live");
+    expect(reconciled.nodes["tab:3"]?.status).toBe("live");
+    expect(reconciled.nodes["tab:5"]?.status).toBe("live");
+  });
+
   it("reattaches a natively restored closed tab in place", () => {
     const stored = closeTab(bootstrapFromWindows(windows, { now: 1000 }), 2, {
       now: 2000,

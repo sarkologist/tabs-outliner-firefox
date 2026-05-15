@@ -8,6 +8,7 @@ import type {
   OutlineState,
   RestorePlan,
   RestoredNode,
+  ReconcileOptions,
   RuntimeTab,
   RuntimeWindow
 } from "./types.js";
@@ -78,9 +79,11 @@ export function bootstrapFromWindows(windows: RuntimeWindow[], clock: Clock): Ou
 export function reconcileWithWindows(
   state: OutlineState,
   windows: RuntimeWindow[],
-  clock: Clock
+  clock: Clock,
+  options: ReconcileOptions = {}
 ): OutlineState {
   const next = cloneState(state);
+  const closeMissing = options.closeMissing ?? true;
   const openWindowIds = new Set<number>();
   const openTabIds = new Set<number>();
 
@@ -163,11 +166,13 @@ export function reconcileWithWindows(
     }
   }
 
-  for (const node of Object.values(next.nodes)) {
-    if (isNodeLiveWindow(node) && !openWindowIds.has(node.live.windowId)) {
-      markClosedSubtree(next, node.id, { now: clock.now });
-    } else if (isNodeLiveTab(node) && !openTabIds.has(node.live.tabId)) {
-      markClosedSubtree(next, node.id, { now: clock.now });
+  if (closeMissing) {
+    for (const node of Object.values(next.nodes)) {
+      if (isNodeLiveWindow(node) && !openWindowIds.has(node.live.windowId)) {
+        markClosedSubtree(next, node.id, { now: clock.now });
+      } else if (isNodeLiveTab(node) && !openTabIds.has(node.live.tabId)) {
+        markClosedSubtree(next, node.id, { now: clock.now });
+      }
     }
   }
 

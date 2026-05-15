@@ -108,3 +108,7 @@ export type RestoredNode = {
   title?: string;
   favIconUrl?: string;
 };
+
+export type ReconcileOptions = {
+  closeMissing?: boolean;
+};
