@@ -161,6 +161,20 @@ describe("outline model", () => {
     expect(next.nodes["tab:2"]?.restore?.url).toBe("https://example.com/child");
   });
 
+  it("captures only the closed tab and promotes its children", () => {
+    const state = bootstrapFromWindows(windows, { now: 1000 });
+    const next = closeTab(state, 1, {
+      now: 2000,
+      sessionId: "session-tab-1"
+    });
+
+    expect(next.nodes["tab:1"]?.status).toBe("closed");
+    expect(next.nodes["tab:1"]?.childIds).toEqual([]);
+    expect(next.nodes["tab:2"]?.status).toBe("live");
+    expect(next.nodes["tab:2"]?.parentId).toBe("window:10");
+    expect(next.nodes["window:10"]?.childIds).toEqual(["tab:1", "tab:2", "tab:3"]);
+  });
+
   it("captures closed windows and descendants in place", () => {
     const state = bootstrapFromWindows(windows, { now: 1000 });
     const next = closeWindow(state, 10, {
@@ -309,7 +323,7 @@ describe("outline model", () => {
     expect(moved.nodes["window:42"]?.childIds).toEqual(["tab:1"]);
   });
 
-  it("wraps a closed tab subtree in a closed window placeholder", () => {
+  it("wraps a closed tab in a closed window placeholder", () => {
     const state = closeTab(bootstrapFromWindows(windows, { now: 1000 }), 1, {
       now: 2000,
       sessionId: "session-tab-1"
@@ -318,7 +332,7 @@ describe("outline model", () => {
     const placeholderId = moved.rootIds[1]!;
 
     expect(placeholderId).toBe("window:placeholder:3000");
-    expect(moved.nodes["window:10"]?.childIds).toEqual(["tab:3"]);
+    expect(moved.nodes["window:10"]?.childIds).toEqual(["tab:2", "tab:3"]);
     expect(moved.nodes[placeholderId]).toMatchObject({
       kind: "window",
       status: "closed",
@@ -339,12 +353,6 @@ describe("outline model", () => {
         kind: "session",
         sessionId: "session-tab-1",
         fallbackUrl: "https://example.com/",
-        windowNodeId: placeholderId
-      },
-      {
-        nodeId: "tab:2",
-        kind: "url",
-        url: "https://example.com/child",
         windowNodeId: placeholderId
       }
     ]);
@@ -453,7 +461,7 @@ describe("outline model", () => {
     expect(Object.keys(restored.nodes).filter((id) => id === "tab:2")).toHaveLength(1);
   });
 
-  it("deletes closed subtrees but keeps live nodes", () => {
+  it("deletes closed nodes but keeps promoted live children", () => {
     const state = closeTab(bootstrapFromWindows(windows, { now: 1000 }), 1, {
       now: 2000,
       sessionId: "session-tab-1"
@@ -462,8 +470,9 @@ describe("outline model", () => {
     const deleted = deleteNode(state, "tab:1");
 
     expect(deleted.nodes["tab:1"]).toBeUndefined();
-    expect(deleted.nodes["tab:2"]).toBeUndefined();
-    expect(deleted.nodes["window:10"]?.childIds).toEqual(["tab:3"]);
+    expect(deleted.nodes["tab:2"]?.status).toBe("live");
+    expect(deleted.nodes["tab:2"]?.parentId).toBe("window:10");
+    expect(deleted.nodes["window:10"]?.childIds).toEqual(["tab:2", "tab:3"]);
   });
 
   it("refuses to delete live nodes", () => {
@@ -649,6 +658,41 @@ describe("outline model", () => {
     expect(reconciled.nodes["tab:1"]?.title).toBe("Example updated");
     expect(reconciled.nodes["tab:1"]?.childIds).toEqual(["tab:2", "tab:5"]);
     expect(reconciled.nodes["tab:5"]?.parentId).toBe("tab:1");
+  });
+
+  it("deletes missing live tabs in open windows during full reconciliation", () => {
+    const state = bootstrapFromWindows(windows, { now: 1000 });
+
+    const reconciled = reconcileWithWindows(state, [
+      {
+        id: 10,
+        incognito: false,
+        focused: true,
+        tabs: [
+          {
+            id: 2,
+            windowId: 10,
+            index: 0,
+            active: true,
+            url: "https://example.com/child",
+            title: "Child"
+          },
+          {
+            id: 3,
+            windowId: 10,
+            index: 1,
+            active: false,
+            url: "about:blank",
+            title: "Blank"
+          }
+        ]
+      }
+    ], { now: 4000 });
+
+    expect(reconciled.nodes["tab:1"]).toBeUndefined();
+    expect(reconciled.nodes["tab:2"]?.status).toBe("live");
+    expect(reconciled.nodes["tab:2"]?.parentId).toBe("window:10");
+    expect(reconciled.nodes["window:10"]?.childIds).toEqual(["tab:2", "tab:3"]);
   });
 
   it("does not close absent live tabs during partial event reconciliation", () => {

@@ -96,7 +96,7 @@ describe("background commands", () => {
     expect(adapter.closeWindow).toHaveBeenCalledWith(10);
   });
 
-  it("deletes closed nodes without closing browser items", async () => {
+  it("deletes closed nodes without closing promoted live children", async () => {
     const state = closeTab(bootstrapFromWindows(runtimeWindows, { now: 1000 }), 1, {
       now: 2000,
       sessionId: "session-tab-1"
@@ -108,8 +108,9 @@ describe("background commands", () => {
     expect(adapter.closeTab).not.toHaveBeenCalled();
     expect(adapter.closeWindow).not.toHaveBeenCalled();
     expect(result.state.nodes["tab:1"]).toBeUndefined();
-    expect(result.state.nodes["tab:2"]).toBeUndefined();
-    expect(result.state.nodes["window:10"]?.childIds).toEqual(["tab:3"]);
+    expect(result.state.nodes["tab:2"]?.status).toBe("live");
+    expect(result.state.nodes["tab:2"]?.parentId).toBe("window:10");
+    expect(result.state.nodes["window:10"]?.childIds).toEqual(["tab:2", "tab:3"]);
   });
 
   it("closes live tab subtrees before deleting them", async () => {
@@ -675,15 +676,11 @@ describe("background commands", () => {
 
     expect(adapter.restoreSession).toHaveBeenCalledWith("session-tab-1");
     expect(adapter.createWindow).toHaveBeenCalledWith({ tabId: 21 });
-    expect(adapter.createTab).toHaveBeenCalledWith({
-      url: "https://example.com/child",
-      windowId: 42,
-      active: false
-    });
+    expect(adapter.createTab).not.toHaveBeenCalled();
     expect(restored.state.nodes[placeholderId]?.status).toBe("live");
     expect(restored.state.nodes[placeholderId]?.live).toEqual({ windowId: 42 });
     expect(restored.state.nodes["tab:1"]?.live).toEqual({ tabId: 21, windowId: 42 });
-    expect(restored.state.nodes["tab:2"]?.live).toEqual({ tabId: 99, windowId: 42 });
+    expect(restored.state.nodes["tab:2"]?.live).toEqual({ tabId: 2, windowId: 10 });
   });
 
   it("falls back to urls when restoring a closed placeholder window without a session match", async () => {
@@ -705,15 +702,11 @@ describe("background commands", () => {
 
     expect(adapter.restoreSession).toHaveBeenCalledWith("session-tab-1");
     expect(adapter.createWindow).toHaveBeenCalledWith({ url: "https://example.com/" });
-    expect(adapter.createTab).toHaveBeenCalledWith({
-      url: "https://example.com/child",
-      windowId: 42,
-      active: false
-    });
+    expect(adapter.createTab).not.toHaveBeenCalled();
     expect(restored.state.nodes[placeholderId]?.status).toBe("live");
     expect(restored.state.nodes[placeholderId]?.live).toEqual({ windowId: 42 });
     expect(restored.state.nodes["tab:1"]?.live).toEqual({ tabId: 200, windowId: 42 });
-    expect(restored.state.nodes["tab:2"]?.live).toEqual({ tabId: 99, windowId: 42 });
+    expect(restored.state.nodes["tab:2"]?.live).toEqual({ tabId: 2, windowId: 10 });
   });
 
   it("toggles collapsed state locally", async () => {

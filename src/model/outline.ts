@@ -86,7 +86,7 @@ export function reconcileWithWindows(
   clock: Clock,
   options: ReconcileOptions = {}
 ): OutlineState {
-  const next = cloneState(state);
+  let next = cloneState(state);
   const closeMissing = options.closeMissing ?? true;
   const openWindowIds = new Set<number>();
   const openTabIds = new Set<number>();
@@ -183,10 +183,27 @@ export function reconcileWithWindows(
   }
 
   if (closeMissing) {
+    const missingWindowNodeIds = Object.values(next.nodes)
+      .filter((node) => isNodeLiveWindow(node) && !openWindowIds.has(node.live.windowId))
+      .map((node) => node.id);
+    for (const nodeId of missingWindowNodeIds) {
+      if (next.nodes[nodeId]) {
+        markClosedSubtree(next, nodeId, { now: clock.now });
+      }
+    }
+
+    const missingTabIdsInOpenWindows = Object.values(next.nodes).flatMap((node) => {
+      if (!isNodeLiveTab(node) || openTabIds.has(node.live.tabId) || !openWindowIds.has(node.live.windowId)) {
+        return [];
+      }
+      return [node.live.tabId];
+    });
+    for (const tabId of missingTabIdsInOpenWindows) {
+      next = deleteLiveTabNodeByTabId(next, tabId);
+    }
+
     for (const node of Object.values(next.nodes)) {
-      if (isNodeLiveWindow(node) && !openWindowIds.has(node.live.windowId)) {
-        markClosedSubtree(next, node.id, { now: clock.now });
-      } else if (isNodeLiveTab(node) && !openTabIds.has(node.live.tabId)) {
+      if (isNodeLiveTab(node) && !openTabIds.has(node.live.tabId)) {
         markClosedSubtree(next, node.id, { now: clock.now });
       }
     }
@@ -264,7 +281,8 @@ export function closeTab(state: OutlineState, tabId: number, context: CloseConte
   }
 
   const next = cloneState(state);
-  markClosedSubtree(next, nodeId, context);
+  markClosedNode(next, nodeId, context);
+  promoteChildrenAfterNode(next, nodeId);
   return removeEmptyWindowNodes(next);
 }
 
@@ -760,20 +778,53 @@ function reattachLiveTabsToOwningWindows(state: OutlineState): void {
 
 function markClosedSubtree(state: OutlineState, nodeId: NodeId, context: CloseContext): void {
   for (const id of collectSubtreeIds(state, nodeId)) {
-    const node = requireNode(state, id);
-    const restore = {
-      ...(id === nodeId && context.sessionId ? { sessionId: context.sessionId } : {}),
-      ...(node.url ? { url: node.url } : {}),
-      ...(node.title ? { title: node.title } : {}),
-      ...(node.favIconUrl ? { favIconUrl: node.favIconUrl } : {})
-    };
+    markClosedNode(state, id, {
+      now: context.now,
+      ...(id === nodeId && context.sessionId ? { sessionId: context.sessionId } : {})
+    });
+  }
+}
 
-    node.status = "closed";
-    node.updatedAt = context.now;
-    node.closedAt = context.now;
-    node.restore = restore;
-    delete node.live;
-    delete node.active;
+function markClosedNode(state: OutlineState, nodeId: NodeId, context: CloseContext): void {
+  const node = requireNode(state, nodeId);
+  const restore = {
+    ...(context.sessionId ? { sessionId: context.sessionId } : {}),
+    ...(node.url ? { url: node.url } : {}),
+    ...(node.title ? { title: node.title } : {}),
+    ...(node.favIconUrl ? { favIconUrl: node.favIconUrl } : {})
+  };
+
+  node.status = "closed";
+  node.updatedAt = context.now;
+  node.closedAt = context.now;
+  node.restore = restore;
+  delete node.live;
+  delete node.active;
+}
+
+function promoteChildrenAfterNode(state: OutlineState, nodeId: NodeId): void {
+  const node = requireNode(state, nodeId);
+  const promotedChildIds = [...node.childIds];
+  if (promotedChildIds.length === 0) {
+    return;
+  }
+
+  const siblings = node.parentId ? requireNode(state, node.parentId).childIds : state.rootIds;
+  const index = siblings.indexOf(nodeId);
+  const insertionIndex = index >= 0 ? index + 1 : siblings.length;
+  siblings.splice(insertionIndex, 0, ...promotedChildIds);
+  node.childIds = [];
+
+  for (const childId of promotedChildIds) {
+    const child = state.nodes[childId];
+    if (!child) {
+      continue;
+    }
+    if (node.parentId) {
+      child.parentId = node.parentId;
+    } else {
+      delete child.parentId;
+    }
   }
 }
 

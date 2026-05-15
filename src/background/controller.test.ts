@@ -928,7 +928,74 @@ describe("background controller lifecycle", () => {
     runtime.tabs = [];
     const state = (await controller.handleMessage({ type: "refresh" })) as OutlineState;
 
-    expect(state.nodes["tab:1"]?.status).toBe("closed");
+    expect(state.nodes["tab:1"]).toBeUndefined();
+    expect(state.nodes["window:10"]).toBeUndefined();
+  });
+
+  it("manual refresh deletes stale parent tab nodes without closing their children", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        },
+        {
+          id: 2,
+          windowId: 10,
+          index: 1,
+          active: false,
+          openerTabId: 1,
+          url: "https://two.example/",
+          title: "Two"
+        },
+        {
+          id: 3,
+          windowId: 10,
+          index: 2,
+          active: false,
+          url: "https://three.example/",
+          title: "Three"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+
+    runtime.tabs = [
+      {
+        id: 2,
+        windowId: 10,
+        index: 0,
+        active: true,
+        url: "https://two.example/",
+        title: "Two"
+      },
+      {
+        id: 3,
+        windowId: 10,
+        index: 1,
+        active: false,
+        url: "https://three.example/",
+        title: "Three"
+      }
+    ];
+    const state = (await controller.handleMessage({ type: "refresh" })) as OutlineState;
+
+    expect(state.nodes["tab:1"]).toBeUndefined();
+    expect(state.nodes["tab:2"]?.status).toBe("live");
+    expect(state.nodes["tab:2"]?.parentId).toBe("window:10");
+    expect(state.nodes["window:10"]?.childIds).toEqual(["tab:2", "tab:3"]);
   });
 
   it("reattaches delayed tabs after restoring a closed single-tab window node", async () => {
