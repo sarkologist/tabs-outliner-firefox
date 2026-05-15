@@ -65,6 +65,32 @@ const windows: RuntimeWindow[] = [
   }
 ];
 
+function reachableNodeIds(state: OutlineState): string[] {
+  const ids: string[] = [];
+  const seen = new Set<string>();
+
+  function visit(nodeId: string): void {
+    if (seen.has(nodeId)) {
+      return;
+    }
+    seen.add(nodeId);
+    const node = state.nodes[nodeId];
+    if (!node) {
+      return;
+    }
+    ids.push(nodeId);
+    for (const childId of node.childIds) {
+      visit(childId);
+    }
+  }
+
+  for (const rootId of state.rootIds) {
+    visit(rootId);
+  }
+
+  return ids.sort();
+}
+
 describe("outline model", () => {
   it("bootstraps normal windows and places opener tabs as children", () => {
     const state = bootstrapFromWindows(windows, { now: 1000 });
@@ -290,6 +316,71 @@ describe("outline model", () => {
     expect(reconciled.nodes["tab:2"]?.status).toBe("live");
     expect(reconciled.nodes["tab:3"]?.status).toBe("live");
     expect(reconciled.nodes["tab:5"]?.status).toBe("live");
+  });
+
+  it("keeps existing outline placement authoritative during reconciliation", () => {
+    const state = moveNode(bootstrapFromWindows(windows, { now: 1000 }), "tab:3", {
+      parentId: "tab:1",
+      index: 0
+    });
+
+    const reconciled = reconcileWithWindows(state, windows, { now: 2000 });
+
+    expect(reconciled.nodes["tab:1"]?.childIds).toEqual(["tab:3", "tab:2"]);
+    expect(reconciled.nodes["tab:3"]?.parentId).toBe("tab:1");
+    expect(reconciled.nodes["window:10"]?.childIds).toEqual(["tab:1"]);
+  });
+
+  it("keeps existing parent links during partial event reconciliation", () => {
+    const state = bootstrapFromWindows(windows, { now: 1000 });
+
+    const reconciled = reconcileWithWindows(state, [
+      {
+        id: 10,
+        incognito: false,
+        focused: true,
+        tabs: [
+          {
+            id: 2,
+            windowId: 10,
+            index: 1,
+            active: true,
+            openerTabId: 1,
+            url: "https://example.com/child",
+            title: "Child"
+          }
+        ]
+      }
+    ], { now: 2000 }, { closeMissing: false });
+
+    expect(reconciled.nodes["tab:1"]?.childIds).toEqual(["tab:2"]);
+    expect(reconciled.nodes["tab:2"]?.parentId).toBe("tab:1");
+    expect(reconciled.nodes["window:10"]?.childIds).toEqual(["tab:1", "tab:3"]);
+  });
+
+  it("repairs nodes whose parent link exists but whose parent omits them", () => {
+    const state = bootstrapFromWindows(windows, { now: 1000 });
+    state.nodes["tab:1"]!.childIds = [];
+    state.nodes["tab:2"]!.parentId = "tab:1";
+
+    const repaired = repairState(state);
+
+    expect(repaired.nodes["tab:1"]?.childIds).toEqual(["tab:2"]);
+    expect(repaired.nodes["tab:2"]?.parentId).toBe("tab:1");
+  });
+
+  it("repairs orphaned parent cycles into reachable roots", () => {
+    const state = bootstrapFromWindows(windows, { now: 1000 });
+    state.rootIds = ["window:10"];
+    state.nodes["window:10"]!.childIds = ["tab:3"];
+    state.nodes["tab:1"]!.parentId = "tab:2";
+    state.nodes["tab:1"]!.childIds = ["tab:2"];
+    state.nodes["tab:2"]!.parentId = "tab:1";
+    state.nodes["tab:2"]!.childIds = ["tab:1"];
+
+    const repaired = repairState(state);
+
+    expect(reachableNodeIds(repaired)).toEqual(Object.keys(repaired.nodes).sort());
   });
 
   it("reattaches a natively restored closed tab in place", () => {

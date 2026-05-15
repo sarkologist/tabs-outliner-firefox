@@ -122,6 +122,7 @@ export function reconcileWithWindows(
 
     const runtimeToNode = new Map<number, NodeId>();
     const reattachedNodeIds = new Set<NodeId>();
+    const newlyPlacedNodeIds = new Set<NodeId>();
     for (const tab of tabs) {
       openTabIds.add(tab.id);
       const existingTabId = findLiveTabNode(next, tab.id);
@@ -148,6 +149,7 @@ export function reconcileWithWindows(
         reattachedNodeIds.add(reattachedNodeId);
       } else {
         next.nodes[nodeId] = tabToNode(tab, nodeId, winId, clock.now);
+        newlyPlacedNodeIds.add(nodeId);
       }
       runtimeToNode.set(tab.id, nodeId);
     }
@@ -160,9 +162,13 @@ export function reconcileWithWindows(
       if (reattachedNodeIds.has(nodeId)) {
         continue;
       }
-      const openerId = typeof tab.openerTabId === "number" ? runtimeToNode.get(tab.openerTabId) : undefined;
-      const parentId = openerId ?? winId;
-      ensureParent(next, nodeId, parentId);
+      if (newlyPlacedNodeIds.has(nodeId)) {
+        ensureParent(next, nodeId, parentForNewRuntimeTab(next, tab, winId));
+        continue;
+      }
+      if (!isUnderRuntimeWindow(next, nodeId, tab.windowId)) {
+        ensureParent(next, nodeId, winId);
+      }
     }
   }
 
@@ -176,33 +182,63 @@ export function reconcileWithWindows(
     }
   }
 
-  return next;
+  return repairState(next);
 }
 
 export function repairState(state: OutlineState): OutlineState {
   const next = cloneState(state);
-  next.rootIds = uniqueIds(next.rootIds).filter((id) => Boolean(next.nodes[id]));
-
-  const globallyVisited = new Set<NodeId>();
-  for (const rootId of next.rootIds) {
-    repairSubtree(next, rootId, globallyVisited, new Set());
-  }
+  const originalRootIds = uniqueIds(next.rootIds).filter((id) => Boolean(next.nodes[id]));
+  const originalChildIds = new Map(
+    Object.entries(next.nodes).map(([nodeId, node]) => [
+      nodeId,
+      uniqueIds(node.childIds).filter((childId) => childId !== nodeId && Boolean(next.nodes[childId]))
+    ])
+  );
 
   for (const [nodeId, node] of Object.entries(next.nodes)) {
-    node.childIds = uniqueIds(node.childIds).filter((childId) => {
-      const child = next.nodes[childId];
-      return Boolean(child && childId !== nodeId && child.parentId === nodeId);
-    });
-    if (!node.parentId && !next.rootIds.includes(nodeId)) {
-      next.rootIds.push(nodeId);
-    }
-    if (node.parentId && !next.nodes[node.parentId]) {
+    node.childIds = [];
+    if (
+      node.parentId &&
+      (!next.nodes[node.parentId] ||
+        node.parentId === nodeId ||
+        createsParentCycle(next, nodeId, node.parentId))
+    ) {
       delete node.parentId;
-      next.rootIds.push(nodeId);
     }
   }
 
-  next.rootIds = uniqueIds(next.rootIds).filter((id) => Boolean(next.nodes[id]));
+  const childrenByParent = new Map<NodeId, NodeId[]>();
+  for (const [nodeId, node] of Object.entries(next.nodes)) {
+    if (!node.parentId) {
+      continue;
+    }
+    const siblings = childrenByParent.get(node.parentId) ?? [];
+    siblings.push(nodeId);
+    childrenByParent.set(node.parentId, siblings);
+  }
+
+  for (const [parentId, childIds] of childrenByParent) {
+    const parent = next.nodes[parentId];
+    if (!parent) {
+      continue;
+    }
+    const remaining = new Set(childIds);
+    const ordered = (originalChildIds.get(parentId) ?? []).filter((childId) => {
+      if (!remaining.has(childId)) {
+        return false;
+      }
+      remaining.delete(childId);
+      return true;
+    });
+    parent.childIds = [...ordered, ...remaining];
+  }
+
+  next.rootIds = uniqueIds([
+    ...originalRootIds.filter((id) => !next.nodes[id]?.parentId),
+    ...Object.entries(next.nodes)
+      .filter(([, node]) => !node.parentId)
+      .map(([nodeId]) => nodeId)
+  ]).filter((id) => Boolean(next.nodes[id]));
   return next;
 }
 
@@ -508,6 +544,10 @@ function replaceProvisionalNode(state: OutlineState, provisionalNodeId: NodeId, 
 function ensureParent(state: OutlineState, nodeId: NodeId, parentId: NodeId): void {
   const node = requireNode(state, nodeId);
   if (node.parentId === parentId) {
+    const siblings = requireNode(state, parentId).childIds;
+    if (!siblings.includes(nodeId)) {
+      siblings.push(nodeId);
+    }
     return;
   }
 
@@ -522,6 +562,24 @@ function ensureParent(state: OutlineState, nodeId: NodeId, parentId: NodeId): vo
   if (!siblings.includes(nodeId)) {
     siblings.push(nodeId);
   }
+}
+
+function parentForNewRuntimeTab(state: OutlineState, tab: RuntimeTab, fallbackWindowNodeId: NodeId): NodeId {
+  if (typeof tab.openerTabId !== "number") {
+    return fallbackWindowNodeId;
+  }
+
+  const openerNodeId = findLiveTabNode(state, tab.openerTabId);
+  if (!openerNodeId) {
+    return fallbackWindowNodeId;
+  }
+
+  return isUnderRuntimeWindow(state, openerNodeId, tab.windowId) ? openerNodeId : fallbackWindowNodeId;
+}
+
+function isUnderRuntimeWindow(state: OutlineState, nodeId: NodeId, runtimeWindowId: number): boolean {
+  const owner = nearestWindow(state, nodeId);
+  return Boolean(owner?.live && "windowId" in owner.live && owner.live.windowId === runtimeWindowId);
 }
 
 function markClosedSubtree(state: OutlineState, nodeId: NodeId, context: CloseContext): void {
@@ -679,34 +737,21 @@ function removeId(ids: NodeId[], id: NodeId): void {
   }
 }
 
-function repairSubtree(
-  state: OutlineState,
-  nodeId: NodeId,
-  globallyVisited: Set<NodeId>,
-  path: Set<NodeId>
-): void {
-  const node = state.nodes[nodeId];
-  if (!node || globallyVisited.has(nodeId)) {
-    return;
-  }
-
-  globallyVisited.add(nodeId);
-  path.add(nodeId);
-
-  const repairedChildren: NodeId[] = [];
-  for (const childId of uniqueIds(node.childIds)) {
-    const child = state.nodes[childId];
-    if (!child || childId === nodeId || path.has(childId)) {
-      continue;
-    }
-
-    child.parentId = nodeId;
-    repairedChildren.push(childId);
-    repairSubtree(state, childId, globallyVisited, new Set(path));
-  }
-  node.childIds = repairedChildren;
-}
-
 function uniqueIds(ids: NodeId[]): NodeId[] {
   return [...new Set(ids)];
+}
+
+function createsParentCycle(state: OutlineState, nodeId: NodeId, parentId: NodeId): boolean {
+  const seen = new Set<NodeId>();
+  let currentId: NodeId | undefined = parentId;
+
+  while (currentId) {
+    if (currentId === nodeId || seen.has(currentId)) {
+      return true;
+    }
+    seen.add(currentId);
+    currentId = state.nodes[currentId]?.parentId;
+  }
+
+  return false;
 }

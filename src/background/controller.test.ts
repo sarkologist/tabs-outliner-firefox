@@ -130,6 +130,32 @@ function liveTabIds(state: OutlineState): number[] {
     .sort((a, b) => a - b);
 }
 
+function reachableNodeIds(state: OutlineState): string[] {
+  const ids: string[] = [];
+  const seen = new Set<string>();
+
+  function visit(nodeId: string): void {
+    if (seen.has(nodeId)) {
+      return;
+    }
+    seen.add(nodeId);
+    const node = state.nodes[nodeId];
+    if (!node) {
+      return;
+    }
+    ids.push(nodeId);
+    for (const childId of node.childIds) {
+      visit(childId);
+    }
+  }
+
+  for (const rootId of state.rootIds) {
+    visit(rootId);
+  }
+
+  return ids.sort();
+}
+
 describe("background controller lifecycle", () => {
   it("adds new tab events without closing existing tabs when query is stale", async () => {
     const runtime = fakeRuntime(
@@ -369,6 +395,122 @@ describe("background controller lifecycle", () => {
     expect(state.nodes["tab:22"]?.status).toBe("live");
     expect(state.nodes["tab:22"]?.live).toEqual({ tabId: 22, windowId: 10 });
     expect(liveTabIds(state)).toEqual([1, 22]);
+  });
+
+  it("keeps all nodes reachable across stale updates, new tabs, and native restores", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        },
+        {
+          id: 2,
+          windowId: 10,
+          index: 1,
+          active: false,
+          openerTabId: 1,
+          url: "https://two.example/",
+          title: "Two"
+        },
+        {
+          id: 3,
+          windowId: 10,
+          index: 2,
+          active: false,
+          url: "https://three.example/",
+          title: "Three"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+
+    runtime.tabs = [runtime.tabs[1]!];
+    await runtime.events.tabUpdated.emit(2, { active: true }, runtime.tabs[0]!);
+
+    await runtime.events.tabCreated.emit({
+      id: 4,
+      windowId: 10,
+      index: 3,
+      active: true,
+      url: "about:newtab",
+      title: "New Tab"
+    });
+
+    runtime.tabs = [
+      {
+        id: 1,
+        windowId: 10,
+        index: 0,
+        active: false,
+        url: "https://one.example/",
+        title: "One"
+      },
+      {
+        id: 3,
+        windowId: 10,
+        index: 1,
+        active: false,
+        url: "https://three.example/",
+        title: "Three"
+      },
+      {
+        id: 4,
+        windowId: 10,
+        index: 2,
+        active: true,
+        url: "about:newtab",
+        title: "New Tab"
+      }
+    ];
+    await runtime.events.tabRemoved.emit(2, { windowId: 10, isWindowClosing: false });
+
+    await runtime.events.tabCreated.emit({
+      id: 22,
+      windowId: 10,
+      index: 1,
+      active: true,
+      url: "about:blank",
+      title: "New Tab"
+    });
+    runtime.tabs = [
+      runtime.tabs[0]!,
+      {
+        id: 22,
+        windowId: 10,
+        index: 1,
+        active: true,
+        url: "https://two.example/",
+        title: "Two"
+      },
+      {
+        ...runtime.tabs[1]!,
+        index: 2
+      },
+      {
+        ...runtime.tabs[2]!,
+        index: 3
+      }
+    ];
+    await runtime.events.tabUpdated.emit(22, { url: "https://two.example/", title: "Two" }, runtime.tabs[1]!);
+
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(reachableNodeIds(state)).toEqual(Object.keys(state.nodes).sort());
+    expect(liveTabIds(state)).toEqual([1, 3, 4, 22]);
+    expect(state.nodes["tab:2"]?.status).toBe("live");
+    expect(state.nodes["tab:2"]?.live).toEqual({ tabId: 22, windowId: 10 });
   });
 
   it("manual refresh performs a full snapshot reconciliation", async () => {
