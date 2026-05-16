@@ -92,6 +92,82 @@ describe("portable tree files", () => {
     );
   });
 
+  it("omits the outliner sidebar page from exports", () => {
+    const state = bootstrapFromWindows([
+      {
+        id: 10,
+        focused: true,
+        incognito: false,
+        tabs: [
+          {
+            id: 1,
+            windowId: 10,
+            index: 0,
+            active: true,
+            url: "moz-extension://extension-id/sidebar/sidebar.html",
+            title: "Tab Session Outliner"
+          },
+          {
+            id: 2,
+            windowId: 10,
+            index: 1,
+            active: false,
+            openerTabId: 1,
+            url: "https://example.com/kept-child",
+            title: "Kept Child"
+          },
+          {
+            id: 3,
+            windowId: 10,
+            index: 2,
+            active: false,
+            url: "https://example.com/sibling",
+            title: "Kept Sibling"
+          }
+        ]
+      },
+      {
+        id: 20,
+        focused: false,
+        incognito: false,
+        tabs: [
+          {
+            id: 4,
+            windowId: 20,
+            index: 0,
+            active: true,
+            url: "file:///Users/sark/code/tabs-outliner/public/sidebar/sidebar.html",
+            title: "tabs-outliner/public/sidebar/sidebar.html"
+          }
+        ]
+      }
+    ], { now: 1000 });
+
+    const exported = exportPortableTree(state, { now: 3000 });
+
+    expect(exported.roots).toEqual([
+      {
+        kind: "window",
+        title: "Window",
+        children: [
+          {
+            kind: "tab",
+            title: "Kept Child",
+            url: "https://example.com/kept-child",
+            children: []
+          },
+          {
+            kind: "tab",
+            title: "Kept Sibling",
+            url: "https://example.com/sibling",
+            children: []
+          }
+        ]
+      }
+    ]);
+    expect(JSON.stringify(exported)).not.toContain("sidebar/sidebar.html");
+  });
+
   it("appends imported trees as closed restorable nodes", () => {
     const state = bootstrapFromWindows(runtimeWindows, { now: 1000 });
     const payload = {

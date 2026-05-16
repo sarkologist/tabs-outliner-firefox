@@ -38,7 +38,7 @@ export function exportPortableTree(
     exportedAt: new Date(clock.now).toISOString(),
     roots: state.rootIds.flatMap((rootId) => {
       const root = state.nodes[rootId];
-      return root ? [portableNodeFromOutline(state, root)] : [];
+      return root ? portableNodesFromOutline(state, root) : [];
     })
   };
 }
@@ -64,16 +64,24 @@ export function appendPortableTree(
   return next;
 }
 
-function portableNodeFromOutline(state: OutlineState, node: OutlineNode): PortableTreeNode {
+function portableNodesFromOutline(state: OutlineState, node: OutlineNode): PortableTreeNode[] {
+  const children = node.childIds.flatMap((childId) => {
+    const child = state.nodes[childId];
+    return child ? portableNodesFromOutline(state, child) : [];
+  });
+  if (isOutlinerSidebarNode(node)) {
+    return children;
+  }
+  if (node.kind === "window" && children.length === 0) {
+    return [];
+  }
+
   const url = node.url ?? node.restore?.url;
   const favIconUrl = node.favIconUrl ?? node.restore?.favIconUrl;
   const portable: PortableTreeNode = {
     kind: node.kind,
     title: node.title || node.restore?.title || "Untitled",
-    children: node.childIds.flatMap((childId) => {
-      const child = state.nodes[childId];
-      return child ? [portableNodeFromOutline(state, child)] : [];
-    })
+    children
   };
 
   if (url) {
@@ -83,7 +91,24 @@ function portableNodeFromOutline(state: OutlineState, node: OutlineNode): Portab
     portable.favIconUrl = favIconUrl;
   }
 
-  return portable;
+  return [portable];
+}
+
+function isOutlinerSidebarNode(node: OutlineNode): boolean {
+  const url = node.url ?? node.restore?.url;
+  if (!url) {
+    return false;
+  }
+
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol === "moz-extension:" && parsed.pathname === "/sidebar/sidebar.html") {
+      return true;
+    }
+    return parsed.protocol === "file:" && parsed.pathname.endsWith("/public/sidebar/sidebar.html");
+  } catch {
+    return false;
+  }
 }
 
 function appendPortableNode(
