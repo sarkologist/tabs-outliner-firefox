@@ -41,9 +41,15 @@ let wheelZoomDelta = 0;
 let currentSearchQuery = "";
 let diagnosticsNoticeUntil = 0;
 let diagnosticsNoticeTimer: number | undefined;
+let activeRename: RenameSession | undefined;
 
 const WHEEL_ZOOM_THRESHOLD_PX = 80;
 const DIAGNOSTICS_NOTICE_MS = 4000;
+
+type RenameSession = {
+  nodeId: NodeId;
+  draft: string;
+};
 
 const dropMarker = document.createElement("li");
 dropMarker.className = "drop-marker";
@@ -379,6 +385,12 @@ function render(): void {
     stateCount.textContent = "Loading";
     return;
   }
+  if (activeRename) {
+    const renamedNode = state.nodes[activeRename.nodeId];
+    if (!renamedNode || renamedNode.kind !== "window") {
+      activeRename = undefined;
+    }
+  }
 
   const nodes = Object.values(state.nodes);
   const closedCount = nodes.filter((node) => node.status === "closed").length;
@@ -434,6 +446,7 @@ function renderNode(
   const isActiveTab = node.kind === "tab" && Boolean(node.active) && insideActiveWindow;
   const isSearchMatch = search.isActive && search.matchingNodeIds.has(node.id);
   const isSearchPath = search.isActive && !isSearchMatch;
+  const isRenaming = activeRename?.nodeId === node.id && node.kind === "window";
   const item = document.createElement("li");
   item.className = `node node-${node.kind} is-${node.status}${isActiveWindow || isActiveTab ? " is-active" : ""}${
     isSearchMatch ? " is-search-match" : ""
@@ -442,9 +455,13 @@ function renderNode(
 
   const row = document.createElement("div");
   row.className = "node-row";
-  row.draggable = true;
+  row.draggable = !isRenaming;
   row.style.setProperty("--depth", String(depth));
   row.addEventListener("dragstart", (event) => {
+    if (isRenaming) {
+      event.preventDefault();
+      return;
+    }
     draggedNodeId = node.id;
     event.dataTransfer?.setData("text/plain", node.id);
     event.dataTransfer?.setDragImage(row, 12, 12);
@@ -500,26 +517,30 @@ function renderNode(
   });
   row.append(twisty);
 
-  const label = document.createElement("button");
-  label.className = "node-label";
-  label.type = "button";
   const titleText = node.title || "Untitled";
-  label.title = node.url ?? titleText;
-  label.ariaLabel = node.url ? `${titleText} - ${node.url}` : titleText;
-  label.addEventListener("click", () => {
-    if (node.status === "live") {
-      void sendCommand({ type: "focusNode", nodeId: node.id });
-    } else {
-      void runAndRender({ type: "restoreNode", nodeId: node.id });
-    }
-  });
+  if (isRenaming) {
+    row.append(renderRenameInput(node, titleText));
+  } else {
+    const label = document.createElement("button");
+    label.className = "node-label";
+    label.type = "button";
+    label.title = node.url ?? titleText;
+    label.ariaLabel = node.url ? `${titleText} - ${node.url}` : titleText;
+    label.addEventListener("click", () => {
+      if (node.status === "live") {
+        void sendCommand({ type: "focusNode", nodeId: node.id });
+      } else {
+        void runAndRender({ type: "restoreNode", nodeId: node.id });
+      }
+    });
 
-  const title = document.createElement("span");
-  title.className = "node-title";
-  title.textContent = titleText;
-  label.append(title);
+    const title = document.createElement("span");
+    title.className = "node-title";
+    title.textContent = titleText;
+    label.append(title);
 
-  row.append(label);
+    row.append(label);
+  }
 
   const actions = document.createElement("span");
   actions.className = "node-actions";
@@ -535,6 +556,12 @@ function renderNode(
     actions.append(actionButton("Flatten", () => {
       void runAndRender({ type: "flattenSubtree", nodeId: node.id });
     }));
+  }
+
+  if (node.kind === "window") {
+    actions.append(actionButton("Rename", () => {
+      startRenameGroup(node);
+    }, "N"));
   }
 
   actions.append(actionButton("Delete", () => {
@@ -560,6 +587,94 @@ function renderNode(
   return item;
 }
 
+function renderRenameInput(node: OutlineNode, titleText: string): HTMLInputElement {
+  const input = document.createElement("input");
+  input.className = "node-rename-input";
+  input.type = "text";
+  input.value = activeRename?.nodeId === node.id ? activeRename.draft : node.customTitle ?? titleText;
+  input.dataset.nodeId = node.id;
+  input.draggable = false;
+  input.title = "Rename group";
+  input.ariaLabel = `Rename ${titleText}`;
+  input.addEventListener("click", (event) => {
+    event.stopPropagation();
+  });
+  input.addEventListener("input", () => {
+    updateRenameDraft(node.id, input.value);
+  });
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      event.stopPropagation();
+      void commitRenameGroup(node.id, input.value);
+      return;
+    }
+
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      cancelRenameGroup(node.id);
+    }
+  });
+  input.addEventListener("blur", () => {
+    if (activeRename?.nodeId === node.id) {
+      void commitRenameGroup(node.id, input.value);
+    }
+  });
+  return input;
+}
+
+function startRenameGroup(node: OutlineNode): void {
+  if (node.kind !== "window") {
+    return;
+  }
+
+  activeRename = {
+    nodeId: node.id,
+    draft: node.customTitle ?? node.title ?? "Group"
+  };
+  render();
+  focusRenameInput(node.id);
+}
+
+function updateRenameDraft(nodeId: NodeId, draft: string): void {
+  if (activeRename?.nodeId === nodeId) {
+    activeRename.draft = draft;
+  }
+}
+
+async function commitRenameGroup(nodeId: NodeId, title: string): Promise<void> {
+  if (activeRename?.nodeId !== nodeId) {
+    return;
+  }
+
+  activeRename = undefined;
+  await runAndRender({ type: "renameGroup", nodeId, title });
+}
+
+function cancelRenameGroup(nodeId: NodeId): void {
+  if (activeRename?.nodeId !== nodeId) {
+    return;
+  }
+
+  activeRename = undefined;
+  render();
+}
+
+function focusRenameInput(nodeId: NodeId): void {
+  window.requestAnimationFrame(() => {
+    const input = renameInputForId(nodeId);
+    input?.focus();
+    input?.select();
+  });
+}
+
+function renameInputForId(nodeId: NodeId): HTMLInputElement | undefined {
+  return Array.from(tree?.querySelectorAll<HTMLInputElement>(".node-rename-input") ?? []).find(
+    (input) => input.dataset.nodeId === nodeId
+  );
+}
+
 function dropPlacementForRowEvent(
   state: OutlineState,
   targetId: NodeId,
@@ -575,12 +690,12 @@ function dropPlacementForRowEvent(
   return dropPlacementForNode(state, draggedNodeId, targetId, dropModeForPointer(relativeY, rect.height));
 }
 
-function actionButton(label: string, onClick: () => void): HTMLButtonElement {
+function actionButton(label: string, onClick: () => void, glyph?: string): HTMLButtonElement {
   const button = document.createElement("button");
   button.className = "icon-button action";
   button.type = "button";
   button.title = label;
-  button.textContent = label === "Delete" ? "x" : label[0] ?? "?";
+  button.textContent = glyph ?? (label === "Delete" ? "x" : label[0] ?? "?");
   button.addEventListener("click", (event) => {
     event.stopPropagation();
     onClick();

@@ -21,8 +21,25 @@ export function windowNodeId(windowId: number): NodeId {
   return `window:${windowId}`;
 }
 
-function windowTitle(): string {
-  return "Group";
+function windowTitle(customTitle?: string): string {
+  return normalizeCustomGroupTitle(customTitle) ?? "Group";
+}
+
+function normalizeCustomGroupTitle(title: string | undefined): string | undefined {
+  const trimmed = title?.trim();
+  return trimmed ? trimmed : undefined;
+}
+
+function normalizeGroupTitle(node: OutlineNode): void {
+  const customTitle = normalizeCustomGroupTitle(node.customTitle);
+  if (customTitle) {
+    node.customTitle = customTitle;
+    node.title = customTitle;
+    return;
+  }
+
+  delete node.customTitle;
+  node.title = windowTitle();
 }
 
 export function bootstrapFromWindows(windows: RuntimeWindow[], clock: Clock): OutlineState {
@@ -98,7 +115,7 @@ export function reconcileWithWindows(
 
     if (existingWindow) {
       existingWindow.status = "live";
-      existingWindow.title = windowTitle();
+      normalizeGroupTitle(existingWindow);
       existingWindow.active = win.focused;
       existingWindow.live = { windowId: win.id };
       existingWindow.updatedAt = clock.now;
@@ -226,7 +243,7 @@ export function repairState(state: OutlineState): OutlineState {
 
   for (const [nodeId, node] of Object.entries(next.nodes)) {
     if (node.kind === "window") {
-      node.title = windowTitle();
+      normalizeGroupTitle(node);
     }
     node.childIds = [];
     if (
@@ -275,6 +292,25 @@ export function repairState(state: OutlineState): OutlineState {
       .map(([nodeId]) => nodeId)
   ]).filter((id) => Boolean(next.nodes[id]));
   return removeEmptyWindowNodes(next);
+}
+
+export function renameGroup(state: OutlineState, nodeId: NodeId, title: string, clock: Clock): OutlineState {
+  const node = state.nodes[nodeId];
+  if (!node || node.kind !== "window") {
+    return state;
+  }
+
+  const next = cloneState(state);
+  const group = requireNode(next, nodeId);
+  const customTitle = normalizeCustomGroupTitle(title);
+  if (customTitle) {
+    group.customTitle = customTitle;
+  } else {
+    delete group.customTitle;
+  }
+  normalizeGroupTitle(group);
+  group.updatedAt = clock.now;
+  return next;
 }
 
 export function closeTab(state: OutlineState, tabId: number, context: CloseContext): OutlineState {
@@ -440,7 +476,7 @@ export function moveTabToNewLiveWindow(
     for (const existing of Object.values(next.nodes)) {
       if (existing.id !== newWindowNodeId && isNodeLiveWindow(existing)) {
         existing.active = false;
-        existing.title = windowTitle();
+        normalizeGroupTitle(existing);
       }
     }
   }
@@ -563,6 +599,7 @@ export function restoreNodes(state: OutlineState, restoredNodes: RestoredNode[])
 
     if (node.kind === "window") {
       node.live = { windowId: restored.windowId };
+      normalizeGroupTitle(node);
       continue;
     }
 

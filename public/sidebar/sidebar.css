@@ -303,6 +303,26 @@ main.root-drop-target {
   text-align: left;
 }
 
+.node-rename-input {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  height: calc(var(--node-row-height) - 2px);
+  padding: 0 var(--node-label-padding-x);
+  border: 1px solid Highlight;
+  border-radius: 3px;
+  color: inherit;
+  background: Canvas;
+  font: inherit;
+  font-weight: 600;
+  line-height: 1.15;
+}
+
+.node-rename-input:focus {
+  outline: 1px solid color-mix(in srgb, Highlight 72%, transparent);
+  outline-offset: 0;
+}
+
 .node-label:focus-visible,
 .icon-button:focus-visible {
   outline: 2px solid Highlight;

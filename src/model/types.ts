@@ -50,6 +50,7 @@ export type OutlineNode = {
   parentId?: NodeId;
   childIds: NodeId[];
   title: string;
+  customTitle?: string;
   url?: string;
   favIconUrl?: string;
   active?: boolean;

@@ -14,6 +14,7 @@ import {
   projectLiveTabs,
   reconcileWithWindows,
   repairState,
+  renameGroup,
   restoreNodes
 } from "./outline.js";
 import type { OutlineState, RuntimeWindow } from "./types.js";
@@ -106,6 +107,38 @@ describe("outline model", () => {
     expect(state.nodes["tab:1"]?.childIds).toEqual(["tab:2"]);
     expect(state.nodes["tab:2"]?.parentId).toBe("tab:1");
     expect(state.nodes["tab:4"]).toBeUndefined();
+  });
+
+  it("renames groups with trimmed custom titles", () => {
+    const state = bootstrapFromWindows(windows, { now: 1000 });
+
+    const renamed = renameGroup(state, "window:10", "  Research  ", { now: 2000 });
+
+    expect(state.nodes["window:10"]?.title).toBe("Group");
+    expect(renamed.nodes["window:10"]?.title).toBe("Research");
+    expect(renamed.nodes["window:10"]?.customTitle).toBe("Research");
+    expect(renamed.nodes["window:10"]?.updatedAt).toBe(2000);
+  });
+
+  it("clears blank group names back to the generic label", () => {
+    const renamed = renameGroup(bootstrapFromWindows(windows, { now: 1000 }), "window:10", "Research", {
+      now: 2000
+    });
+
+    const cleared = renameGroup(renamed, "window:10", "   ", { now: 3000 });
+
+    expect(cleared.nodes["window:10"]?.title).toBe("Group");
+    expect(cleared.nodes["window:10"]?.customTitle).toBeUndefined();
+    expect(cleared.nodes["window:10"]?.updatedAt).toBe(3000);
+  });
+
+  it("does not rename tab nodes", () => {
+    const state = bootstrapFromWindows(windows, { now: 1000 });
+
+    const renamed = renameGroup(state, "tab:1", "Research", { now: 2000 });
+
+    expect(renamed).toBe(state);
+    expect(renamed.nodes["tab:1"]?.title).toBe("Example");
   });
 
   it("keeps tabs under their owning window when opener metadata crosses windows", () => {
@@ -687,7 +720,7 @@ describe("outline model", () => {
     expect(repaired.nodes["tab:2"]?.childIds).toEqual([]);
   });
 
-  it("repairs stored group titles to the generic label", () => {
+  it("repairs legacy stored group titles to the generic label", () => {
     const state = closeWindow(bootstrapFromWindows(windows, { now: 1000 }), 10, {
       now: 2000,
       sessionId: "session-window-10"
@@ -697,6 +730,17 @@ describe("outline model", () => {
     const repaired = repairState(state);
 
     expect(repaired.nodes["window:10"]?.title).toBe("Group");
+  });
+
+  it("preserves custom group titles during repair", () => {
+    const state = renameGroup(bootstrapFromWindows(windows, { now: 1000 }), "window:10", "Research", {
+      now: 2000
+    });
+
+    const repaired = repairState(state);
+
+    expect(repaired.nodes["window:10"]?.title).toBe("Research");
+    expect(repaired.nodes["window:10"]?.customTitle).toBe("Research");
   });
 
   it("repairs closed tab children in live windows by promoting them", () => {
@@ -808,6 +852,33 @@ describe("outline model", () => {
     expect(reconciled.nodes["tab:1"]?.title).toBe("Example updated");
     expect(reconciled.nodes["tab:1"]?.childIds).toEqual(["tab:2", "tab:5"]);
     expect(reconciled.nodes["tab:5"]?.parentId).toBe("tab:1");
+  });
+
+  it("preserves custom group titles during reconciliation", () => {
+    const stored = renameGroup(bootstrapFromWindows(windows, { now: 1000 }), "window:10", "Research", {
+      now: 2000
+    });
+
+    const reconciled = reconcileWithWindows(stored, [
+      {
+        id: 10,
+        incognito: false,
+        focused: true,
+        tabs: [
+          {
+            id: 1,
+            windowId: 10,
+            index: 0,
+            active: true,
+            url: "https://example.com/",
+            title: "Example updated"
+          }
+        ]
+      }
+    ], { now: 4000 });
+
+    expect(reconciled.nodes["window:10"]?.title).toBe("Research");
+    expect(reconciled.nodes["window:10"]?.customTitle).toBe("Research");
   });
 
   it("deletes missing live tabs in open windows during full reconciliation", () => {

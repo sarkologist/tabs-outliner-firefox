@@ -137,13 +137,15 @@ function appendPortableNode(
   context: AppendContext
 ): NodeId {
   const nodeId = nextPortableNodeId(portable.kind, context);
+  const importedGroupTitle = portable.kind === "window" ? normalizeImportedGroupTitle(portable.title) : undefined;
   const node: OutlineNode = {
     id: nodeId,
     kind: portable.kind,
     status: "closed",
     ...(parentId ? { parentId } : {}),
     childIds: [],
-    title: portable.title,
+    title: portable.kind === "window" ? importedGroupTitle ?? IMPORT_GROUP_TITLE : portable.title,
+    ...(importedGroupTitle ? { customTitle: importedGroupTitle } : {}),
     ...(portable.url ? { url: portable.url } : {}),
     ...(portable.favIconUrl ? { favIconUrl: portable.favIconUrl } : {}),
     collapsed: false,
@@ -167,6 +169,11 @@ function appendPortableNode(
   }
 
   return nodeId;
+}
+
+function normalizeImportedGroupTitle(title: string): string | undefined {
+  const trimmed = title.trim();
+  return trimmed ? trimmed : undefined;
 }
 
 function parsePortableTree(payload: unknown): PortableTreeFile {

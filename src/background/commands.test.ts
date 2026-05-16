@@ -89,6 +89,7 @@ describe("background commands", () => {
       { type: "moveNodeToNewWindow", nodeId: "tab:1", index: 0 },
       { type: "flattenSubtree", nodeId: "window:10" },
       { type: "toggleCollapsed", nodeId: "tab:1" },
+      { type: "renameGroup", nodeId: "window:10", title: "Research" },
       {
         type: "importTree",
         tree: {
@@ -442,6 +443,27 @@ describe("background commands", () => {
       url: "https://imported.example/",
       title: "Imported Tab"
     });
+  });
+
+  it("renames groups locally without touching browser tabs or windows", async () => {
+    const state: OutlineState = bootstrapFromWindows(runtimeWindows, { now: 1000 });
+    const adapter = fakeAdapter();
+
+    const result = await runCommand(state, adapter, {
+      type: "renameGroup",
+      nodeId: "window:10",
+      title: "  Research  "
+    });
+
+    expect(result.state.nodes["window:10"]?.title).toBe("Research");
+    expect(result.state.nodes["window:10"]?.customTitle).toBe("Research");
+    expect(adapter.focusTab).not.toHaveBeenCalled();
+    expect(adapter.closeTab).not.toHaveBeenCalled();
+    expect(adapter.closeWindow).not.toHaveBeenCalled();
+    expect(adapter.restoreSession).not.toHaveBeenCalled();
+    expect(adapter.createTab).not.toHaveBeenCalled();
+    expect(adapter.createWindow).not.toHaveBeenCalled();
+    expect(adapter.moveTabs).not.toHaveBeenCalled();
   });
 
   it("skips imported internal Firefox urls that WebExtensions cannot reopen", async () => {

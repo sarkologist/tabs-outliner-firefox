@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { bootstrapFromWindows, closeTab } from "./outline.js";
+import { bootstrapFromWindows, closeTab, renameGroup } from "./outline.js";
 import {
   PORTABLE_TREE_SCHEMA,
   appendPortableTree,
@@ -90,6 +90,16 @@ describe("portable tree files", () => {
     expect(JSON.stringify(exported)).not.toMatch(
       /"status"|"live"|"active"|"collapsed"|"closedAt"|"createdAt"|"updatedAt"|"sessionId"/
     );
+  });
+
+  it("exports renamed group titles", () => {
+    const state = renameGroup(bootstrapFromWindows(runtimeWindows, { now: 1000 }), "window:10", "Research", {
+      now: 2000
+    });
+
+    const exported = exportPortableTree(state, { now: 3000 });
+
+    expect(exported.roots[0]?.title).toBe("Research");
   });
 
   it("omits the outliner sidebar page from exports", () => {
@@ -232,13 +242,16 @@ describe("portable tree files", () => {
     const looseTab = nodeByTitle(appended, "Loose Tab");
 
     expect(importGroup.title).toBe("Group");
+    expect(importGroup.customTitle).toBeUndefined();
     expect(importGroup.parentId).toBeUndefined();
     expect(importGroup.childIds).toEqual([importedWindow.id, looseTab.id]);
+    expect(importedWindow.customTitle).toBe("Imported Window");
     expect(importedWindow.parentId).toBe(importGroup.id);
     expect(importedWindow.childIds).toEqual([importedParent.id, nestedWindow.id]);
     expect(importedParent.parentId).toBe(importedWindow.id);
     expect(importedParent.childIds).toEqual([importedChild.id]);
     expect(importedChild.parentId).toBe(importedParent.id);
+    expect(nestedWindow.customTitle).toBe("Nested Imported Window");
     expect(nestedWindow.parentId).toBe(importedWindow.id);
     expect(nestedWindow.childIds).toEqual([nestedTab.id]);
     expect(nestedTab.parentId).toBe(nestedWindow.id);

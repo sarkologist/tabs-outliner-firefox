@@ -7,6 +7,7 @@ import {
   moveTabToNewLiveWindow,
   planRestore,
   projectLiveTabs,
+  renameGroup,
   restoreNodes
 } from "../model/outline.js";
 import { appendPortableTree } from "../model/portable-tree.js";
@@ -52,6 +53,11 @@ export type BackgroundCommand =
       nodeId: NodeId;
     }
   | {
+      type: "renameGroup";
+      nodeId: NodeId;
+      title: string;
+    }
+  | {
       type: "importTree";
       tree: unknown;
     }
@@ -69,6 +75,7 @@ export const BACKGROUND_COMMAND_TYPES = [
   "moveNodeToNewWindow",
   "flattenSubtree",
   "toggleCollapsed",
+  "renameGroup",
   "importTree",
   "refresh"
 ] as const satisfies readonly BackgroundCommand["type"][];
@@ -149,6 +156,9 @@ export async function runCommand(
 
     case "toggleCollapsed":
       return { state: toggleCollapsed(state, command.nodeId) };
+
+    case "renameGroup":
+      return { state: renameGroup(state, command.nodeId, command.title, { now: Date.now() }) };
 
     case "importTree":
       return { state: appendPortableTree(state, command.tree, { now: Date.now() }) };
