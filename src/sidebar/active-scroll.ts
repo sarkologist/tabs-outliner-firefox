@@ -46,7 +46,14 @@ export function observeActiveTabScrollTarget(
   state: OutlineState,
   options: { hasRenderedNode?: (nodeId: NodeId) => boolean } = {}
 ): NodeId | undefined {
-  const activeNodeId = findActiveTabNodeId(state);
+  return observeActiveTabNodeId(tracker, findActiveTabNodeId(state), options);
+}
+
+export function observeActiveTabNodeId(
+  tracker: ActiveTabScrollTracker,
+  activeNodeId: NodeId | undefined,
+  options: { hasRenderedNode?: (nodeId: NodeId) => boolean } = {}
+): NodeId | undefined {
   if (tracker.observedActiveNodeId === activeNodeId) {
     return undefined;
   }

@@ -4,7 +4,7 @@ import type { OutlineDiagnostics } from "../background/diagnostics.js";
 import { analyzeRestoreScope, type RestoreScope } from "../model/outline.js";
 import { exportPortableTree } from "../model/portable-tree.js";
 import type { NodeId, OutlineNode, OutlineState } from "../model/types.js";
-import { createActiveTabScrollTracker, observeActiveTabScrollTarget } from "./active-scroll.js";
+import { createActiveTabScrollTracker, observeActiveTabNodeId } from "./active-scroll.js";
 import {
   commandForDropPlacement,
   dropModeForPointer,
@@ -450,8 +450,8 @@ function render(): void {
   const projection = visibleProjectionFor(state, currentSearchQuery);
   currentProjection = projection;
   updateProjectionChrome(projection);
+  scrollToObservedActiveTab(projection);
   renderVirtualRows();
-  scrollToObservedActiveTab(state, projection);
 }
 
 function updateProjectionChrome(projection: VisibleTreeProjection): void {
@@ -486,6 +486,9 @@ function applyActiveStateUpdate(updates: ActiveStateUpdate[]): void {
   if (windowActiveChanged && currentProjection) {
     refreshProjectionActiveWindowFlags(state, currentProjection);
   }
+  if (currentProjection) {
+    refreshProjectionActiveTabTarget(state, currentProjection);
+  }
   scheduleVirtualRender();
 }
 
@@ -514,6 +517,7 @@ function applyNodeStateUpdate(update: NodeStateUpdate): void {
   if (windowActiveChanged) {
     refreshProjectionActiveWindowFlags(state, currentProjection);
   }
+  refreshProjectionActiveTabTarget(state, currentProjection);
   currentProjection.closedCount = Math.max(0, currentProjection.closedCount + update.closedCountDelta);
 
   for (const row of currentProjection.rows) {
@@ -599,6 +603,20 @@ function refreshProjectionActiveWindowFlags(state: OutlineState, projection: Vis
     const node = state.nodes[row.nodeId];
     row.insideActiveWindow = parentInsideActiveWindow;
     activeByDepth[row.depth] = parentInsideActiveWindow || Boolean(node?.kind === "window" && node.active);
+  }
+}
+
+function refreshProjectionActiveTabTarget(state: OutlineState, projection: VisibleTreeProjection): void {
+  delete projection.activeTabNodeId;
+  delete projection.activeTabRowIndex;
+
+  for (const row of projection.rows) {
+    const node = state.nodes[row.nodeId];
+    if (node?.kind === "tab" && node.active && row.insideActiveWindow) {
+      projection.activeTabNodeId = node.id;
+      projection.activeTabRowIndex = row.index;
+      return;
+    }
   }
 }
 
@@ -1090,32 +1108,31 @@ function cssEscape(value: string): string {
   return typeof CSS !== "undefined" && CSS.escape ? CSS.escape(value) : value.replaceAll('"', '\\"');
 }
 
-function scrollToObservedActiveTab(state: OutlineState, projection: VisibleTreeProjection): void {
-  const nodeId = observeActiveTabScrollTarget(activeTabScrollTracker, state);
+function scrollToObservedActiveTab(projection: VisibleTreeProjection): void {
+  const nodeId = observeActiveTabNodeId(activeTabScrollTracker, projection.activeTabNodeId, {
+    hasRenderedNode: (candidate) => projection.visibleNodeIdSet.has(candidate)
+  });
   if (!nodeId) {
     return;
   }
 
-  const row = projection.rows.find((candidate) => candidate.nodeId === nodeId);
-  if (!row || !rootDropSurface) {
+  if (typeof projection.activeTabRowIndex !== "number" || !rootDropSurface) {
     return;
   }
 
   const rowHeight = currentRowHeight();
-  const rowTop = row.index * rowHeight;
+  const rowTop = projection.activeTabRowIndex * rowHeight;
   const rowBottom = rowTop + rowHeight;
   const viewportTop = rootDropSurface.scrollTop;
   const viewportBottom = viewportTop + rootDropSurface.clientHeight;
 
   if (rowTop < viewportTop) {
     rootDropSurface.scrollTop = rowTop;
-    renderVirtualRows();
     return;
   }
 
   if (rowBottom > viewportBottom) {
     rootDropSurface.scrollTop = Math.max(0, rowBottom - rootDropSurface.clientHeight);
-    renderVirtualRows();
   }
 }
 

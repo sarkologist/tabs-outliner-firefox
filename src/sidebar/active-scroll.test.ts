@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { NodeId, OutlineNode, OutlineState } from "../model/types.js";
-import { createActiveTabScrollTracker, findActiveTabNodeId, observeActiveTabScrollTarget } from "./active-scroll.js";
+import {
+  createActiveTabScrollTracker,
+  findActiveTabNodeId,
+  observeActiveTabNodeId,
+  observeActiveTabScrollTarget
+} from "./active-scroll.js";
 
 describe("findActiveTabNodeId", () => {
   it("finds the active tab inside the active window in outline order", () => {
@@ -59,6 +64,15 @@ describe("observeActiveTabScrollTarget", () => {
 
     expect(observeActiveTabScrollTarget(tracker, state, { hasRenderedNode: () => false })).toBeUndefined();
     expect(observeActiveTabScrollTarget(tracker, state, { hasRenderedNode: () => true })).toBeUndefined();
+  });
+
+  it("can observe a precomputed active node without rescanning state", () => {
+    const tracker = createActiveTabScrollTracker();
+
+    expect(observeActiveTabNodeId(tracker, "tab:1")).toBe("tab:1");
+    expect(observeActiveTabNodeId(tracker, "tab:1")).toBeUndefined();
+    expect(observeActiveTabNodeId(tracker, "tab:2", { hasRenderedNode: () => false })).toBeUndefined();
+    expect(observeActiveTabNodeId(tracker, "tab:2", { hasRenderedNode: () => true })).toBeUndefined();
   });
 });
 

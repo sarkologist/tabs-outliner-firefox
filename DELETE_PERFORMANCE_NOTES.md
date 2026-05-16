@@ -270,3 +270,14 @@ Use these as starting targets, not hard promises:
   - `pnpm profile:restore -- --scenario controller-event-echo --tabs 50000 --target last --echo transient-separated`: 119ms total, first patch at 13ms, 0ms projection.
   - `pnpm profile:focus -- --tabs 50000 --target last`: 46ms total, 0 saves, 0 full-state broadcasts.
   - `pnpm profile:close -- --tabs 50000 --target last --order tabRemovedThenSessionChanged`: 103ms total, first patch at 55ms, 0ms projection.
+
+### 2026-05-16: Active-Tab Highlight Scroll Diagnosis
+
+- Investigated whether the highlight/auto-scroll-to-active-tab feature could explain lingering restore lag.
+- Diagnosis: the optimized restore patch path does not call full `render()` or `scrollToObservedActiveTab()`, so active-scroll is unlikely to be the main restore-patch delay. It did still contain duplicate work on full renders: build the projection, render virtual rows, scan the whole tree again to find the active tab, linearly find the row, then render virtual rows again after scrolling.
+- Baseline 50k-node full-render helper measurement after `pnpm run build`: projection 30ms, active-tab scan 9ms, row lookup 1ms. Browser DOM cost for the extra virtual render is not captured by this Node-only measurement.
+- Folded active tab node/row tracking into `buildVisibleTreeProjection()` and changed sidebar full render to scroll before rendering rows. This removes the extra whole-tree active scan, row lookup, and immediate second synchronous virtual render.
+- After helper measurement: projection 25ms, active observation 0ms, active row index available directly.
+- Restore cross-checks after the change:
+  - `pnpm profile:restore -- --scenario controller-event-echo --tabs 28000 --target last --echo transient-separated`: 56ms total, first patch at 8ms, 0ms projection.
+  - `pnpm profile:restore -- --scenario controller-event-echo --tabs 50000 --target last --echo transient-separated`: 95ms total, first patch at 12ms, 0ms projection.
