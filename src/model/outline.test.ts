@@ -6,6 +6,7 @@ import {
   closeWindow,
   deleteLiveTabNodeByTabId,
   deleteNode,
+  flattenSubtreeOneLevel,
   moveNode,
   moveTabToNewClosedWindow,
   moveTabToNewLiveWindow,
@@ -265,6 +266,94 @@ describe("outline model", () => {
       { tabId: 3, windowId: 10 },
       { tabId: 2, windowId: 10 }
     ]);
+  });
+
+  it("flattens one subtree level below a node while preserving preorder", () => {
+    const state = bootstrapFromWindows([
+      {
+        id: 10,
+        incognito: false,
+        focused: true,
+        tabs: [
+          {
+            id: 1,
+            windowId: 10,
+            index: 0,
+            active: true,
+            url: "https://parent.example/",
+            title: "Parent"
+          },
+          {
+            id: 2,
+            windowId: 10,
+            index: 1,
+            active: false,
+            openerTabId: 1,
+            url: "https://child-a.example/",
+            title: "Child A"
+          },
+          {
+            id: 3,
+            windowId: 10,
+            index: 2,
+            active: false,
+            openerTabId: 2,
+            url: "https://grandchild-a.example/",
+            title: "Grandchild A"
+          },
+          {
+            id: 4,
+            windowId: 10,
+            index: 3,
+            active: false,
+            openerTabId: 1,
+            url: "https://child-b.example/",
+            title: "Child B"
+          },
+          {
+            id: 5,
+            windowId: 10,
+            index: 4,
+            active: false,
+            openerTabId: 4,
+            url: "https://grandchild-b.example/",
+            title: "Grandchild B"
+          }
+        ]
+      }
+    ], { now: 1000 });
+
+    const flattened = flattenSubtreeOneLevel(state, "tab:1");
+
+    expect(flattened.nodes["tab:1"]?.childIds).toEqual(["tab:2", "tab:3", "tab:4", "tab:5"]);
+    expect(flattened.nodes["tab:2"]?.childIds).toEqual([]);
+    expect(flattened.nodes["tab:4"]?.childIds).toEqual([]);
+    expect(flattened.nodes["tab:3"]?.parentId).toBe("tab:1");
+    expect(flattened.nodes["tab:5"]?.parentId).toBe("tab:1");
+    expect(projectLiveTabs(flattened, "window:10")).toEqual([
+      { tabId: 1, windowId: 10 },
+      { tabId: 2, windowId: 10 },
+      { tabId: 3, windowId: 10 },
+      { tabId: 4, windowId: 10 },
+      { tabId: 5, windowId: 10 }
+    ]);
+  });
+
+  it("repeatedly flattens deeper child subtrees at the same node", () => {
+    const nested = moveNode(bootstrapFromWindows(windows, { now: 1000 }), "tab:3", {
+      parentId: "tab:2",
+      index: 0
+    });
+
+    const once = flattenSubtreeOneLevel(nested, "window:10");
+    const twice = flattenSubtreeOneLevel(once, "window:10");
+
+    expect(once.nodes["window:10"]?.childIds).toEqual(["tab:1", "tab:2"]);
+    expect(once.nodes["tab:1"]?.childIds).toEqual([]);
+    expect(once.nodes["tab:2"]?.childIds).toEqual(["tab:3"]);
+    expect(twice.nodes["window:10"]?.childIds).toEqual(["tab:1", "tab:2", "tab:3"]);
+    expect(twice.nodes["tab:2"]?.childIds).toEqual([]);
+    expect(twice.nodes["tab:3"]?.parentId).toBe("window:10");
   });
 
   it("wraps a live tab subtree in a new live window", () => {
