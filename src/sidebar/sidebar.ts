@@ -333,6 +333,10 @@ function shouldRenderNode(search: RenderSearchState, nodeId: NodeId): boolean {
   return !search.isActive || search.visibleNodeIdSet.has(nodeId);
 }
 
+function canFlattenSubtree(state: OutlineState, node: OutlineNode): boolean {
+  return node.childIds.some((childId) => (state.nodes[childId]?.childIds.length ?? 0) > 0);
+}
+
 function pluralize(count: number, noun: string): string {
   return count === 1 ? noun : `${noun}s`;
 }
@@ -435,16 +439,26 @@ function renderNode(
 
   row.append(label);
 
-  row.append(actionButton(node.status === "live" ? "Close" : "Restore", () => {
+  const actions = document.createElement("span");
+  actions.className = "node-actions";
+
+  actions.append(actionButton(node.status === "live" ? "Close" : "Restore", () => {
     void runAndRender({
       type: node.status === "live" ? "closeNode" : "restoreNode",
       nodeId: node.id
     });
   }));
 
-  row.append(actionButton("Delete", () => {
+  if (canFlattenSubtree(state, node)) {
+    actions.append(actionButton("Flatten", () => {
+      void runAndRender({ type: "flattenSubtree", nodeId: node.id });
+    }));
+  }
+
+  actions.append(actionButton("Delete", () => {
     void runAndRender({ type: "deleteNode", nodeId: node.id });
   }));
+  row.append(actions);
 
   item.append(row);
 

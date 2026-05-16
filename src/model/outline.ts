@@ -365,6 +365,43 @@ export function moveNode(state: OutlineState, nodeId: NodeId, target: MoveTarget
   return removeEmptyWindowNodes(next);
 }
 
+export function flattenSubtreeOneLevel(state: OutlineState, nodeId: NodeId): OutlineState {
+  const node = state.nodes[nodeId];
+  if (!node) {
+    return state;
+  }
+
+  if (!node.childIds.some((childId) => (state.nodes[childId]?.childIds.length ?? 0) > 0)) {
+    return state;
+  }
+
+  const next = cloneState(state);
+  const flattening = requireNode(next, nodeId);
+  const flattenedChildIds: NodeId[] = [];
+
+  for (const childId of flattening.childIds) {
+    const child = next.nodes[childId];
+    if (!child) {
+      flattenedChildIds.push(childId);
+      continue;
+    }
+
+    const promotedChildIds = [...child.childIds];
+    flattenedChildIds.push(childId, ...promotedChildIds);
+    child.childIds = [];
+
+    for (const promotedChildId of promotedChildIds) {
+      const promotedChild = next.nodes[promotedChildId];
+      if (promotedChild) {
+        promotedChild.parentId = nodeId;
+      }
+    }
+  }
+
+  flattening.childIds = flattenedChildIds;
+  return removeEmptyWindowNodes(next);
+}
+
 export function moveTabToNewLiveWindow(
   state: OutlineState,
   nodeId: NodeId,

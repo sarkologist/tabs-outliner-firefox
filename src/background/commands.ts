@@ -1,6 +1,7 @@
 import type { BrowserAdapter, RestoredSession } from "./adapter.js";
 import {
   deleteNode,
+  flattenSubtreeOneLevel,
   moveNode,
   moveTabToNewClosedWindow,
   moveTabToNewLiveWindow,
@@ -40,6 +41,10 @@ export type BackgroundCommand =
       type: "moveNodeToNewWindow";
       nodeId: NodeId;
       index?: number;
+    }
+  | {
+      type: "flattenSubtree";
+      nodeId: NodeId;
     }
   | {
       type: "toggleCollapsed";
@@ -102,6 +107,9 @@ export async function runCommand(
 
     case "moveNodeToNewWindow":
       return { state: await moveNodeToNewWindow(state, adapter, command.nodeId, command.index) };
+
+    case "flattenSubtree":
+      return { state: flattenSubtreeOneLevel(state, command.nodeId) };
 
     case "toggleCollapsed":
       return { state: toggleCollapsed(state, command.nodeId) };

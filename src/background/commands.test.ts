@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { BrowserAdapter } from "./adapter.js";
 import { runCommand } from "./commands.js";
-import { bootstrapFromWindows, closeTab, closeWindow, moveNode } from "../model/outline.js";
+import { bootstrapFromWindows, closeTab, closeWindow, flattenSubtreeOneLevel, moveNode } from "../model/outline.js";
 import type { OutlineState, RuntimeWindow } from "../model/types.js";
 
 const runtimeWindows: RuntimeWindow[] = [
@@ -344,6 +344,22 @@ describe("background commands", () => {
 
     expect(result.state).toEqual(moveNode(state, "tab:3", { parentId: "tab:1", index: 0 }));
     expect(adapter.moveTabs).toHaveBeenCalledWith([1, 3, 2], { windowId: 10, index: 0 });
+  });
+
+  it("flattens outline subtrees without asking Firefox to reorder tabs", async () => {
+    const state: OutlineState = moveNode(bootstrapFromWindows(runtimeWindows, { now: 1000 }), "tab:3", {
+      parentId: "tab:2",
+      index: 0
+    });
+    const adapter = fakeAdapter();
+
+    const result = await runCommand(state, adapter, {
+      type: "flattenSubtree",
+      nodeId: "window:10"
+    });
+
+    expect(result.state).toEqual(flattenSubtreeOneLevel(state, "window:10"));
+    expect(adapter.moveTabs).not.toHaveBeenCalled();
   });
 
   it("moves a live tab subtree into a newly created browser window", async () => {

@@ -2461,6 +2461,62 @@ describe("background controller lifecycle", () => {
     expect(afterRemoveEvent.nodes["window:10"]?.childIds).toEqual(["tab:1"]);
   });
 
+  it("accepts flatten subtree commands through the extension message path", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        },
+        {
+          id: 2,
+          windowId: 10,
+          index: 1,
+          active: false,
+          openerTabId: 1,
+          url: "https://two.example/",
+          title: "Two"
+        },
+        {
+          id: 3,
+          windowId: 10,
+          index: 2,
+          active: false,
+          openerTabId: 2,
+          url: "https://three.example/",
+          title: "Three"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+
+    const flattened = (await controller.handleMessage({
+      type: "flattenSubtree",
+      nodeId: "window:10"
+    })) as OutlineState;
+
+    expect(flattened.rootIds).toEqual(["window:10"]);
+    expect(flattened.nodes["window:10"]?.childIds).toEqual(["tab:1", "tab:2"]);
+    expect(flattened.nodes["tab:1"]?.childIds).toEqual([]);
+    expect(flattened.nodes["tab:2"]?.childIds).toEqual(["tab:3"]);
+
+    const lastBroadcast = runtime.broadcasts.at(-1) as { type?: string; state?: OutlineState } | undefined;
+    expect(lastBroadcast?.type).toBe("stateUpdated");
+    expect(lastBroadcast?.state?.nodes["window:10"]?.childIds).toEqual(["tab:1", "tab:2"]);
+  });
+
   it("deletes the window node when its only live tab is deleted by command", async () => {
     const runtime = fakeRuntime(
       [
