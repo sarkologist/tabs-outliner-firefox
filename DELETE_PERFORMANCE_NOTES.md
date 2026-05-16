@@ -133,3 +133,16 @@ Use these as starting targets, not hard promises:
   - Result before restore model optimization: 186ms total measured, 0ms sidebar scope, 60ms command, 46ms save stringify, 48ms broadcast stringify, 32ms projection, 30 MB stringified.
 - Cross-check command: `pnpm profile:restore -- --tabs 50000 --target first`.
   - Result before restore model optimization: 192ms total measured, 0ms sidebar scope, 63ms command, 46ms save stringify, 48ms broadcast stringify, 35ms projection, 30 MB stringified.
+
+### 2026-05-16: Targeted Restore Node Copying
+
+- Optimized `restoreNodes()` for small restores: it now shallow-copies the `nodes` record and clones only restored node records instead of deep-cloning every node and child array.
+- Added a 50k-node regression test proving a single restored tab gets a new node object while unrelated tabs and the parent window preserve object identity.
+- Before/after using `pnpm profile:restore -- --tabs 50000 --target last` after `pnpm run build`:
+  - Before: 186ms total measured, 60ms command, 46ms save stringify, 48ms broadcast stringify, 32ms projection.
+  - After: 144ms total measured, 13ms command, 57ms save stringify, 39ms broadcast stringify, 34ms projection.
+- Cross-check using `pnpm profile:restore -- --tabs 50000 --target first`:
+  - Before: 192ms total measured, 63ms command, 46ms save stringify, 48ms broadcast stringify, 35ms projection.
+  - After: 150ms total measured, 16ms command, 53ms save stringify, 41ms broadcast stringify, 40ms projection.
+- Remaining measured restore cost is dominated by full-state save/broadcast serialization and full visible-tree projection rebuild.
+- Verification: `pnpm test -- src/model/outline.test.ts src/background/commands.test.ts src/background/controller.test.ts`, `pnpm test`, `pnpm run build`, and both restore profile commands above passed.

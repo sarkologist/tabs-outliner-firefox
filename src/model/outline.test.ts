@@ -141,6 +141,52 @@ function largeFlatLiveState(tabCount: number): OutlineState {
   return state;
 }
 
+function largeFlatClosedState(tabCount: number): OutlineState {
+  const windowNode = {
+    id: "window:10",
+    kind: "window" as const,
+    status: "live" as const,
+    childIds: [] as string[],
+    title: "Group",
+    active: true,
+    collapsed: false,
+    createdAt: 1000,
+    updatedAt: 1000,
+    live: { windowId: 10 }
+  };
+  const state: OutlineState = {
+    version: 1,
+    rootIds: [windowNode.id],
+    nodes: {
+      [windowNode.id]: windowNode
+    }
+  };
+
+  for (let index = 1; index <= tabCount; index += 1) {
+    const id = `tab:${index}`;
+    windowNode.childIds.push(id);
+    state.nodes[id] = {
+      id,
+      kind: "tab",
+      status: "closed",
+      parentId: windowNode.id,
+      childIds: [],
+      title: `Saved ${index}`,
+      url: `https://saved.example/${index}`,
+      collapsed: false,
+      createdAt: 1000,
+      updatedAt: 1000,
+      closedAt: 2000 + index,
+      restore: {
+        url: `https://saved.example/${index}`,
+        title: `Saved ${index}`
+      }
+    };
+  }
+
+  return state;
+}
+
 describe("outline model", () => {
   it("bootstraps normal windows and places opener tabs as children", () => {
     const state = bootstrapFromWindows(windows, { now: 1000 });
@@ -721,6 +767,26 @@ describe("outline model", () => {
     expect(restored.nodes["window:10"]?.restoredFromClosed).toBe(true);
     expect(restored.nodes["tab:1"]?.status).toBe("live");
     expect(restored.nodes["tab:1"]?.restoredFromClosed).toBe(true);
+  });
+
+  it("preserves unchanged node identities when restoring a single node", () => {
+    const state = largeFlatClosedState(50_000);
+
+    const restored = restoreNodes(state, [
+      {
+        nodeId: "tab:50000",
+        tabId: 100000,
+        windowId: 10,
+        url: "https://saved.example/50000",
+        title: "Saved 50000"
+      }
+    ]);
+
+    expect(restored.nodes["tab:50000"]).not.toBe(state.nodes["tab:50000"]);
+    expect(restored.nodes["tab:50000"]?.status).toBe("live");
+    expect(restored.nodes["tab:1"]).toBe(state.nodes["tab:1"]);
+    expect(restored.nodes["tab:25000"]).toBe(state.nodes["tab:25000"]);
+    expect(restored.nodes["window:10"]).toBe(state.nodes["window:10"]);
   });
 
   it("deletes closed nodes but keeps promoted live children", () => {

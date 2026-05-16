@@ -650,14 +650,23 @@ export function analyzeRestoreScope(
 }
 
 export function restoreNodes(state: OutlineState, restoredNodes: RestoredNode[]): OutlineState {
-  const next = cloneState(state);
+  if (restoredNodes.length === 0) {
+    return state;
+  }
+
+  const next: OutlineState = {
+    version: state.version,
+    rootIds: state.rootIds,
+    nodes: { ...state.nodes }
+  };
 
   for (const restored of restoredNodes) {
-    const node = next.nodes[restored.nodeId];
-    if (!node) {
+    const existing = next.nodes[restored.nodeId];
+    if (!existing) {
       continue;
     }
 
+    const node = cloneNodeForMutation(next, restored.nodeId);
     const wasClosed = node.status === "closed";
     node.status = "live";
     node.updatedAt = Date.now();
@@ -689,7 +698,7 @@ export function restoreNodes(state: OutlineState, restoredNodes: RestoredNode[])
     }
   }
 
-  return removeEmptyWindowNodes(next);
+  return next;
 }
 
 export function deleteNode(
