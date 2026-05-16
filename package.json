@@ -13,6 +13,7 @@
     "profile:delete": "node scripts/profile-delete.mjs",
     "profile:focus": "node scripts/profile-focus.mjs",
     "profile:restore": "node scripts/profile-restore.mjs",
+    "profile:diagnostics": "node scripts/profile-diagnostics.mjs",
     "profile:command": "node scripts/profile-command.mjs"
   },
   "devDependencies": {

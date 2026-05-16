@@ -5,6 +5,7 @@ import { analyzeRestoreScope, type RestoreScope } from "../model/outline.js";
 import { exportPortableTree } from "../model/portable-tree.js";
 import type { NodeId, OutlineNode, OutlineState } from "../model/types.js";
 import { createActiveTabScrollTracker, observeActiveTabNodeId } from "./active-scroll.js";
+import { createDiagnosticsScheduler } from "./diagnostics-scheduler.js";
 import {
   commandForDropPlacement,
   dropModeForPointer,
@@ -58,6 +59,7 @@ const activeTabScrollTracker = createActiveTabScrollTracker();
 
 const WHEEL_ZOOM_THRESHOLD_PX = 80;
 const DIAGNOSTICS_NOTICE_MS = 4000;
+const DIAGNOSTICS_REFRESH_DELAY_MS = 250;
 const VIRTUAL_OVERSCAN_ROWS = 32;
 
 type RenameSession = {
@@ -68,6 +70,14 @@ type RenameSession = {
 const dropMarker = document.createElement("li");
 dropMarker.className = "drop-marker";
 dropMarker.setAttribute("aria-hidden", "true");
+
+const diagnosticsScheduler = createDiagnosticsScheduler(loadDiagnostics, {
+  clock: {
+    setTimeout: (callback, delayMs) => window.setTimeout(callback, delayMs),
+    clearTimeout: (timerId) => window.clearTimeout(timerId)
+  },
+  delayMs: DIAGNOSTICS_REFRESH_DELAY_MS
+});
 
 applyZoom(currentZoom);
 registerZoomShortcuts();
@@ -129,7 +139,7 @@ browser.runtime.onMessage.addListener((message) => {
   if (isStateUpdated(message)) {
     currentState = message.state;
     render();
-    void loadDiagnostics();
+    scheduleDiagnosticsLoad();
     return;
   }
   if (isActiveStateUpdated(message)) {
@@ -138,12 +148,12 @@ browser.runtime.onMessage.addListener((message) => {
   }
   if (isNodeStateUpdated(message)) {
     applyNodeStateUpdate(message);
-    void loadDiagnostics();
+    scheduleDiagnosticsLoad();
     return;
   }
   if (isTreeStructureUpdated(message)) {
     applyTreeStructureUpdate(message);
-    void loadDiagnostics();
+    scheduleDiagnosticsLoad();
   }
 });
 
@@ -151,7 +161,7 @@ async function loadState(): Promise<void> {
   try {
     currentState = (await sendCommand({ type: "getState" })) as OutlineState;
     render();
-    void loadDiagnostics();
+    scheduleDiagnosticsLoad();
   } catch (error) {
     showLoadError(error);
   }
@@ -1205,7 +1215,7 @@ async function runAndRender(command: BackgroundCommand): Promise<void> {
     if (isOutlineState(response)) {
       currentState = response;
       render();
-      void loadDiagnostics();
+      scheduleDiagnosticsLoad();
     }
   } catch (error) {
     showDiagnosticsNotice(commandErrorText(error), { error: true });
@@ -1248,8 +1258,12 @@ function showDiagnosticsNotice(message: string, options: { error?: boolean } = {
     diagnosticsNoticeTimer = undefined;
     diagnosticsNoticeUntil = 0;
     diagnostics.classList.remove("is-error");
-    void loadDiagnostics();
+    scheduleDiagnosticsLoad();
   }, DIAGNOSTICS_NOTICE_MS);
+}
+
+function scheduleDiagnosticsLoad(): void {
+  diagnosticsScheduler.request();
 }
 
 async function loadDiagnostics(): Promise<void> {

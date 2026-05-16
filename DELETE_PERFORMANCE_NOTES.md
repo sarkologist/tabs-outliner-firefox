@@ -281,3 +281,19 @@ Use these as starting targets, not hard promises:
 - Restore cross-checks after the change:
   - `pnpm profile:restore -- --scenario controller-event-echo --tabs 28000 --target last --echo transient-separated`: 56ms total, first patch at 8ms, 0ms projection.
   - `pnpm profile:restore -- --scenario controller-event-echo --tabs 50000 --target last --echo transient-separated`: 95ms total, first patch at 12ms, 0ms projection.
+
+### 2026-05-16: Coalesced Sidebar Diagnostics Refreshes
+
+- Investigated the next manual-QA symptom: the tree can keep doing background work after visible patch updates, especially across successive operations.
+- Found that every full `stateUpdated`, `nodeStateUpdated`, and `treeStructureUpdated` sidebar message immediately called `getDiagnostics`. Diagnostics are advisory, but the request can contend with later operations because the background waits for queued mutations, queries runtime windows/tabs, and scans the outline.
+- Added `pnpm profile:diagnostics` to keep this cost explicit before accepting the change. It compares the old immediate shape with the new coalesced shape against built `dist/` code.
+- Added a small diagnostics scheduler with deterministic tests: burst requests collapse to one delayed load, and requests made while a diagnostics load is in flight schedule one follow-up rather than many overlapping loads.
+- Updated the sidebar to schedule diagnostics after state/patch updates and after diagnostics notices expire, instead of calling `loadDiagnostics()` immediately on the update hot path.
+- Profile results after `pnpm run build`:
+  - `pnpm profile:diagnostics -- --tabs 28000 --requests 10 --mode immediate`: 10 diagnostics loads, 97ms total, 96ms diagnostics compute.
+  - `pnpm profile:diagnostics -- --tabs 28000 --requests 10 --mode coalesced`: 1 diagnostics load, 12ms total, 12ms diagnostics compute.
+  - `pnpm profile:diagnostics -- --tabs 50000 --requests 10 --mode immediate`: 10 diagnostics loads, 236ms total, 236ms diagnostics compute.
+  - `pnpm profile:diagnostics -- --tabs 50000 --requests 10 --mode coalesced`: 1 diagnostics load, 22ms total, 22ms diagnostics compute.
+- Restore cross-checks still use the fast visible patch path:
+  - `pnpm profile:restore -- --scenario controller-event-echo --tabs 28000 --target last --echo transient-separated`: 59ms total, first patch at 8ms, 0ms projection.
+  - `pnpm profile:restore -- --scenario controller-event-echo --tabs 50000 --target last --echo transient-separated`: 124ms total, first patch at 15ms, 0ms projection.
