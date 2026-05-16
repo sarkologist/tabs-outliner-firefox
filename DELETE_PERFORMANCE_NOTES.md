@@ -163,3 +163,12 @@ Use these as starting targets, not hard promises:
 - Implemented a command-owned focus fast path: the controller now absorbs the focus command's `tabs.onActivated`, `tabs.onUpdated(active)`, and `windows.onFocusChanged` echoes, updates active tab/window flags directly when safe, and leaves native activation events on the existing full-snapshot path for stale Firefox cleanup.
 - After using `pnpm profile:focus -- --tabs 50000 --target last`: 152ms total, 13ms command, 139ms event echo, 1 save, 1 broadcast, 36ms projection, 26 MB stringified.
 - Cross-check after using `pnpm profile:focus -- --tabs 50000 --target middle`: 147ms total, 14ms command, 134ms event echo, 1 save, 1 broadcast, 33ms projection, 26 MB stringified.
+
+### 2026-05-16: Close Command Session Echo Absorption
+
+- Added `pnpm profile:close` to measure sidebar close-button behavior: `closeNode` command time plus `tabs.onRemoved` and `sessions.onChanged` echoes, with both observed Firefox event orders.
+- Baseline using `pnpm profile:close -- --tabs 50000 --target last --order tabRemovedThenSessionChanged`: 209ms total, 2ms command, 207ms event echo, 1 save, 1 broadcast, 29ms projection, 26 MB stringified, and a redundant session snapshot.
+- Baseline using `pnpm profile:close -- --tabs 50000 --target last --order sessionChangedThenTabRemoved`: 322ms total, 2ms command, 320ms event echo, 2 saves, 2 broadcasts, 53ms projection, 51 MB stringified.
+- Implemented a command-owned close fast path: when `tabRemoved` handles an outliner close, the following session echo is skipped; when sessions arrive first, the later no-op `tabRemoved` pass no longer saves or broadcasts unchanged state.
+- After using `pnpm profile:close -- --tabs 50000 --target last --order tabRemovedThenSessionChanged`: 190ms total, 3ms command, 187ms event echo, 1 save, 1 broadcast, 34ms projection, 26 MB stringified, 0ms tab-query snapshot work.
+- After using `pnpm profile:close -- --tabs 50000 --target last --order sessionChangedThenTabRemoved`: 246ms total, 3ms command, 243ms event echo, 1 save, 1 broadcast, 29ms projection, 26 MB stringified.

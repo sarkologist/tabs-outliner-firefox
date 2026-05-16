@@ -1783,6 +1783,94 @@ describe("background controller lifecycle", () => {
     expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
   });
 
+  it("does not broadcast twice when outliner closeNode sessions arrive before tabRemoved", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        },
+        {
+          id: 2,
+          windowId: 10,
+          index: 1,
+          active: false,
+          url: "https://two.example/",
+          title: "Two"
+        }
+      ],
+      { browserLikeTabRemove: "sessionChangedThenTabRemoved" }
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    runtime.broadcasts.length = 0;
+    vi.mocked(runtime.api.storage.local.set).mockClear();
+
+    await controller.handleMessage({ type: "closeNode", nodeId: "tab:2" });
+    await runtime.events.sessionChanged.flush();
+    await runtime.events.tabRemoved.flush();
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+
+    expect(state.nodes["tab:2"]?.status).toBe("closed");
+    expect(runtime.broadcasts).toHaveLength(1);
+    expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
+  });
+
+  it("skips the session-changed snapshot after an outliner closeNode tabRemoved update", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        },
+        {
+          id: 2,
+          windowId: 10,
+          index: 1,
+          active: false,
+          url: "https://two.example/",
+          title: "Two"
+        }
+      ],
+      { browserLikeTabRemove: "tabRemovedThenSessionChanged" }
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    vi.mocked(runtime.api.tabs.query).mockClear();
+    vi.mocked(runtime.api.windows.getAll).mockClear();
+
+    await controller.handleMessage({ type: "closeNode", nodeId: "tab:2" });
+    await runtime.events.tabRemoved.flush();
+    await runtime.events.sessionChanged.flush();
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+
+    expect(state.nodes["tab:2"]?.status).toBe("closed");
+    expect(runtime.api.tabs.query).not.toHaveBeenCalled();
+    expect(runtime.api.windows.getAll).not.toHaveBeenCalled();
+  });
+
   it("preserves outliner closeNode windows with one live tab as restorable closed nodes", async () => {
     const runtime = fakeRuntime(
       [

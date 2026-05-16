@@ -59,6 +59,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   const commandFocusedWindowIds = new Set<number>();
   const stateCache = createStateCache(initializeState);
   let sessionChangedQueued = false;
+  let commandCloseSessionEchoesToSkip = 0;
   let queuedRuntimeRefresh: QueuedRuntimeRefresh | undefined;
 
   api.runtime.onInstalled.addListener(() => {
@@ -108,21 +109,27 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
     await enqueueMutation(async () => {
       const current = await ensureState();
+      let next: OutlineState;
       if (outlinerClosingTabIds.delete(tabId)) {
         const recent = await mostRecentClosedSession();
-        state = closeTab(current, tabId, {
+        next = closeTab(current, tabId, {
           now: now(),
           ...(recent?.tab?.sessionId ? { sessionId: recent.tab.sessionId } : {})
         });
+        commandCloseSessionEchoesToSkip += 1;
       } else if (isRestoredLiveTabId(current, tabId)) {
         const recent = await mostRecentClosedSession();
-        state = closeTab(current, tabId, {
+        next = closeTab(current, tabId, {
           now: now(),
           ...(recent?.tab?.sessionId ? { sessionId: recent.tab.sessionId } : {})
         });
       } else {
-        state = deleteLiveTabNodeByTabId(current, tabId);
+        next = deleteLiveTabNodeByTabId(current, tabId);
       }
+      if (next === current) {
+        return;
+      }
+      state = next;
       stateCache.replace(state);
       await persistAndBroadcast();
     });
@@ -187,6 +194,10 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     sessionChangedQueued = true;
     await enqueueMutation(async () => {
       try {
+        if (commandCloseSessionEchoesToSkip > 0) {
+          commandCloseSessionEchoesToSkip -= 1;
+          return;
+        }
         if (await reconcileMissingLiveTabsInOpenWindows()) {
           await persistAndBroadcast();
         }
