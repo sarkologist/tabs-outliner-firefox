@@ -181,3 +181,16 @@ Use these as starting targets, not hard promises:
 - Updated the sidebar to apply active flag patches to `currentState`, refresh active-window flags in the existing projection only when a window active flag changes, and schedule a virtual-row rerender instead of rebuilding the full visible-tree projection.
 - After using `pnpm profile:focus -- --scenario successive-command-event-echo --tabs 50000 --count 10`: 414ms total, 41ms average, 0 saves, 0 full-state broadcasts, 0ms projection, 0 MB stringified.
 - Single-click cross-check using `pnpm profile:focus -- --tabs 50000 --target last`: 42ms total, 0 saves, 0 full-state broadcasts, 0ms projection, 0 MB stringified.
+
+### 2026-05-16: Lightweight Delete Tree Patches
+
+- Added `pnpm profile:delete` to measure sidebar delete-button behavior, including command time, ignored remove-event echo, save serialization, broadcast serialization, and sidebar projection.
+- Baseline using `pnpm profile:delete -- --tabs 50000 --target last`: 132ms total, 38ms save stringify, 38ms full broadcast stringify, 34ms projection, 26 MB stringified.
+- Baseline using `pnpm profile:delete -- --tabs 50000 --target middle`: 129ms total, 38ms save stringify, 37ms full broadcast stringify, 31ms projection, 26 MB stringified.
+- Baseline using `pnpm profile:delete -- --tabs 50000 --target last --count 10`: 1060ms total, 106ms average, 10 saves, 10 full broadcasts, 204ms projection, 256 MB stringified.
+- Implemented a lightweight `treeStructureUpdated` broadcast for `deleteNode`: the background sends deleted node ids, updated parent/root data, and deleted closed count to the sidebar before persisting the full outline state.
+- Updated the sidebar to apply delete patches to `currentState`, filter deleted rows from the current visible projection, reindex rows, refresh changed parent row metadata, and schedule a virtual-row rerender instead of rebuilding the full projection.
+- After using `pnpm profile:delete -- --tabs 50000 --target last`: 108ms total, first patch broadcast at 52ms, 49ms save stringify, 1ms patch broadcast stringify, 7ms tree patch, 0ms projection, 13 MB stringified.
+- Cross-check after using `pnpm profile:delete -- --tabs 50000 --target middle`: 111ms total, first patch broadcast at 54ms, 45ms save stringify, 1ms patch broadcast stringify, 11ms tree patch, 0ms projection, 13 MB stringified.
+- Repeated-delete after using `pnpm profile:delete -- --tabs 50000 --target last --count 10`: 884ms total, 88ms average, first patch broadcast at 49ms, 10 saves, 10 patch broadcasts, 61ms tree patch, 0ms projection, 134 MB stringified.
+- Remaining measured total is dominated by full-state storage persistence after the sidebar patch is already sent.

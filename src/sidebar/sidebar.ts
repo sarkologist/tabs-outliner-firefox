@@ -134,6 +134,11 @@ browser.runtime.onMessage.addListener((message) => {
   }
   if (isActiveStateUpdated(message)) {
     applyActiveStateUpdate(message.updates);
+    return;
+  }
+  if (isTreeStructureUpdated(message)) {
+    applyTreeStructureUpdate(message);
+    void loadDiagnostics();
   }
 });
 
@@ -439,17 +444,22 @@ function render(): void {
 
   const projection = visibleProjectionFor(state, currentSearchQuery);
   currentProjection = projection;
-  stateCount.textContent = projection.isSearchActive
-    ? `${projection.matchCount} ${pluralize(projection.matchCount, "match")} / ${projection.nodeCount} items`
-    : `${projection.nodeCount} items / ${projection.closedCount} saved`;
+  updateProjectionChrome(projection);
+  renderVirtualRows();
+  scrollToObservedActiveTab(state, projection);
+}
+
+function updateProjectionChrome(projection: VisibleTreeProjection): void {
+  if (stateCount) {
+    stateCount.textContent = projection.isSearchActive
+      ? `${projection.matchCount} ${pluralize(projection.matchCount, "match")} / ${projection.nodeCount} items`
+      : `${projection.nodeCount} items / ${projection.closedCount} saved`;
+  }
 
   if (empty) {
     empty.textContent = projection.isSearchActive ? "No matching tabs." : "No tabs captured yet.";
     empty.hidden = projection.isSearchActive ? projection.rows.length > 0 : projection.nodeCount > 0;
   }
-
-  renderVirtualRows();
-  scrollToObservedActiveTab(state, projection);
 }
 
 function applyActiveStateUpdate(updates: ActiveStateUpdate[]): void {
@@ -471,6 +481,54 @@ function applyActiveStateUpdate(updates: ActiveStateUpdate[]): void {
   if (windowActiveChanged && currentProjection) {
     refreshProjectionActiveWindowFlags(state, currentProjection);
   }
+  scheduleVirtualRender();
+}
+
+function applyTreeStructureUpdate(update: TreeStructureUpdate): void {
+  const state = currentState;
+  if (!state || update.deletedNodeIds.length === 0) {
+    return;
+  }
+
+  const deletedNodeIds = new Set(update.deletedNodeIds);
+  for (const nodeId of deletedNodeIds) {
+    delete state.nodes[nodeId];
+  }
+  for (const node of update.updatedNodes) {
+    state.nodes[node.id] = node;
+  }
+  state.rootIds = [...update.rootIds];
+  if (activeRename && deletedNodeIds.has(activeRename.nodeId)) {
+    activeRename = undefined;
+  }
+
+  if (!currentProjection || currentProjection.isSearchActive) {
+    render();
+    return;
+  }
+
+  const updatedNodes = new Map(update.updatedNodes.map((node) => [node.id, node]));
+  currentProjection.rows = currentProjection.rows.filter((row) => !deletedNodeIds.has(row.nodeId));
+  for (let index = 0; index < currentProjection.rows.length; index += 1) {
+    const row = currentProjection.rows[index]!;
+    row.index = index;
+  }
+  currentProjection.visibleNodeIds = currentProjection.rows.map((row) => row.nodeId);
+  currentProjection.visibleNodeIdSet = new Set(currentProjection.visibleNodeIds);
+  currentProjection.nodeCount = Math.max(0, currentProjection.nodeCount - update.deletedNodeIds.length);
+  currentProjection.closedCount = Math.max(0, currentProjection.closedCount - update.deletedClosedCount);
+
+  for (const row of currentProjection.rows) {
+    const node = updatedNodes.get(row.nodeId);
+    if (!node) {
+      continue;
+    }
+    row.childCount = node.childIds.length;
+    row.visibleChildCount = node.childIds.length;
+    row.expanded = !node.collapsed;
+  }
+
+  updateProjectionChrome(currentProjection);
   scheduleVirtualRender();
 }
 
@@ -1167,6 +1225,14 @@ type ActiveStateUpdate = {
   active: boolean;
 };
 
+type TreeStructureUpdate = {
+  type: "treeStructureUpdated";
+  deletedNodeIds: NodeId[];
+  updatedNodes: OutlineNode[];
+  rootIds: NodeId[];
+  deletedClosedCount: number;
+};
+
 function isActiveStateUpdated(message: unknown): message is { type: "activeStateUpdated"; updates: ActiveStateUpdate[] } {
   return Boolean(
     message &&
@@ -1181,6 +1247,28 @@ function isActiveStateUpdated(message: unknown): message is { type: "activeState
             typeof (update as { active?: unknown }).active === "boolean"
         )
       )
+  );
+}
+
+function isTreeStructureUpdated(message: unknown): message is TreeStructureUpdate {
+  return Boolean(
+    message &&
+      typeof message === "object" &&
+      (message as { type?: unknown }).type === "treeStructureUpdated" &&
+      Array.isArray((message as { deletedNodeIds?: unknown }).deletedNodeIds) &&
+      (message as { deletedNodeIds: unknown[] }).deletedNodeIds.every((nodeId) => typeof nodeId === "string") &&
+      Array.isArray((message as { updatedNodes?: unknown }).updatedNodes) &&
+      (message as { updatedNodes: unknown[] }).updatedNodes.every((node) =>
+        Boolean(
+          node &&
+            typeof node === "object" &&
+            typeof (node as { id?: unknown }).id === "string" &&
+            Array.isArray((node as { childIds?: unknown }).childIds)
+        )
+      ) &&
+      Array.isArray((message as { rootIds?: unknown }).rootIds) &&
+      (message as { rootIds: unknown[] }).rootIds.every((nodeId) => typeof nodeId === "string") &&
+      typeof (message as { deletedClosedCount?: unknown }).deletedClosedCount === "number"
   );
 }
 

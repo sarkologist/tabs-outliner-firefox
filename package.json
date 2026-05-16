@@ -10,6 +10,7 @@
     "check": "npm run test && npm run build",
     "profile:tab-open": "node scripts/profile-tab-open.mjs",
     "profile:close": "node scripts/profile-close.mjs",
+    "profile:delete": "node scripts/profile-delete.mjs",
     "profile:focus": "node scripts/profile-focus.mjs",
     "profile:restore": "node scripts/profile-restore.mjs"
   },

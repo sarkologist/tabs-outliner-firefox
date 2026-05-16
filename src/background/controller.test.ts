@@ -2991,10 +2991,20 @@ describe("background controller lifecycle", () => {
       | undefined;
     expect(lastSave?.[STATE_KEY]?.nodes["tab:2"]).toBeUndefined();
 
-    const lastBroadcast = runtime.broadcasts.at(-1) as { type?: string; state?: OutlineState } | undefined;
+    const lastBroadcast = runtime.broadcasts.at(-1) as
+      | {
+          type?: string;
+          deletedNodeIds?: string[];
+          updatedNodes?: OutlineState["nodes"][string][];
+          rootIds?: string[];
+        }
+      | undefined;
     expect(runtime.broadcasts).toHaveLength(1);
-    expect(lastBroadcast?.type).toBe("stateUpdated");
-    expect(lastBroadcast?.state?.nodes["tab:2"]).toBeUndefined();
+    expect(lastBroadcast?.type).toBe("treeStructureUpdated");
+    expect(lastBroadcast?.deletedNodeIds).toEqual(["tab:2"]);
+    expect(lastBroadcast?.updatedNodes?.map((node) => node.id)).toEqual(["window:10"]);
+    expect(lastBroadcast?.updatedNodes?.[0]?.childIds).toEqual(["tab:1"]);
+    expect(lastBroadcast?.rootIds).toEqual(["window:10"]);
 
     const afterRemoveEvent = (await controller.handleMessage({ type: "getState" })) as OutlineState;
     expect(afterRemoveEvent.nodes["tab:2"]).toBeUndefined();
@@ -3269,9 +3279,12 @@ describe("background controller lifecycle", () => {
       | undefined;
     expect(lastSave?.[STATE_KEY]?.nodes["window:10"]).toBeUndefined();
 
-    const lastBroadcast = runtime.broadcasts.at(-1) as { type?: string; state?: OutlineState } | undefined;
-    expect(lastBroadcast?.type).toBe("stateUpdated");
-    expect(lastBroadcast?.state?.nodes["window:10"]).toBeUndefined();
+    const lastBroadcast = runtime.broadcasts.at(-1) as
+      | { type?: string; deletedNodeIds?: string[]; rootIds?: string[] }
+      | undefined;
+    expect(lastBroadcast?.type).toBe("treeStructureUpdated");
+    expect(lastBroadcast?.deletedNodeIds?.sort()).toEqual(["tab:1", "window:10"]);
+    expect(lastBroadcast?.rootIds).toEqual([]);
 
     const afterRemoveEvent = (await controller.handleMessage({ type: "getState" })) as OutlineState;
     expect(afterRemoveEvent.nodes["tab:1"]).toBeUndefined();

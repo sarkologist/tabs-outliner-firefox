@@ -39,6 +39,14 @@ type ActiveStateUpdate = {
   active: boolean;
 };
 
+type TreeStructureUpdate = {
+  type: "treeStructureUpdated";
+  deletedNodeIds: NodeId[];
+  updatedNodes: OutlineNode[];
+  rootIds: NodeId[];
+  deletedClosedCount: number;
+};
+
 export type BackgroundControllerOptions = {
   api: WebExtensionBrowser;
   adapter?: BrowserAdapter;
@@ -299,6 +307,11 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       }
       state = result.state;
       stateCache.replace(result.state);
+      if (message.type === "deleteNode") {
+        await broadcastTreeStructureUpdate(treeStructureUpdateFromStateChange(current, result.state));
+        await saveState(result.state, api);
+        return commandAck(true);
+      }
       await persistAndBroadcast();
       return commandAck(true);
     });
@@ -460,6 +473,10 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     await api.runtime.sendMessage({ type: "activeStateUpdated", updates }).catch(() => undefined);
   }
 
+  async function broadcastTreeStructureUpdate(update: TreeStructureUpdate): Promise<void> {
+    await api.runtime.sendMessage(update).catch(() => undefined);
+  }
+
   async function reconcileMissingLiveTabsInOpenWindows(): Promise<boolean> {
     const current = await ensureState();
     const windows = filterRemovedTabsFromWindows(await getNormalWindows(api), removedTabIds);
@@ -532,6 +549,22 @@ function focusTargetForNode(
     windowId: node.live.windowId,
     tabActive: node.active === true,
     windowActive: liveWindowNodeByRuntimeId(state, node.live.windowId)?.active === true
+  };
+}
+
+function treeStructureUpdateFromStateChange(previous: OutlineState, next: OutlineState): TreeStructureUpdate {
+  const deletedNodeIds = Object.keys(previous.nodes).filter((nodeId) => !next.nodes[nodeId]);
+  const updatedNodes = Object.entries(next.nodes).flatMap(([nodeId, node]) => {
+    return previous.nodes[nodeId] !== node ? [node] : [];
+  });
+  const deletedClosedCount = deletedNodeIds.filter((nodeId) => previous.nodes[nodeId]?.status === "closed").length;
+
+  return {
+    type: "treeStructureUpdated",
+    deletedNodeIds,
+    updatedNodes,
+    rootIds: next.rootIds,
+    deletedClosedCount
   };
 }
 
