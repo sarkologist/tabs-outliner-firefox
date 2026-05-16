@@ -154,3 +154,12 @@ Use these as starting targets, not hard promises:
 - Implemented one-shot absorption for restored tab created-event echoes when the restore command already incorporated the same runtime tab. Restored tab nodes now also copy the runtime `active` flag, which lets the controller safely recognize the created event as redundant.
 - After: the same controller-event-echo profile measured 187ms total, 172ms command, 15ms event echo, 1 save, 1 broadcast, 25ms projection, 30 MB stringified.
 - Cross-check command profile after the change: `pnpm profile:restore -- --scenario single-closed-tab --tabs 50000 --target last` measured 146ms total with one save/broadcast path.
+
+### 2026-05-16: Focus Command Activation Echo Absorption
+
+- Added `pnpm profile:focus` to measure sidebar tab switching: `focusNode` command time plus the browser focus/activation event echo and sidebar projection.
+- Baseline using `pnpm profile:focus -- --tabs 50000 --target last` after `pnpm run build`: 538ms total, 4ms command, 534ms event echo, 1 save, 1 broadcast, 29ms projection, 26 MB stringified.
+- Cross-check baseline using `pnpm profile:focus -- --tabs 50000 --target middle`: 546ms total, 4ms command, 543ms event echo, 1 save, 1 broadcast, 26ms projection, 26 MB stringified.
+- Implemented a command-owned focus fast path: the controller now absorbs the focus command's `tabs.onActivated`, `tabs.onUpdated(active)`, and `windows.onFocusChanged` echoes, updates active tab/window flags directly when safe, and leaves native activation events on the existing full-snapshot path for stale Firefox cleanup.
+- After using `pnpm profile:focus -- --tabs 50000 --target last`: 152ms total, 13ms command, 139ms event echo, 1 save, 1 broadcast, 36ms projection, 26 MB stringified.
+- Cross-check after using `pnpm profile:focus -- --tabs 50000 --target middle`: 147ms total, 14ms command, 134ms event echo, 1 save, 1 broadcast, 33ms projection, 26 MB stringified.

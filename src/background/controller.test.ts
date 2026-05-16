@@ -1203,6 +1203,56 @@ describe("background controller lifecycle", () => {
     expect(state.nodes["tab:2"]?.active).toBe(true);
   });
 
+  it("absorbs focus command activation echoes without a full runtime snapshot", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        },
+        {
+          id: 2,
+          windowId: 10,
+          index: 1,
+          active: false,
+          url: "https://two.example/",
+          title: "Two"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    vi.mocked(runtime.api.tabs.query).mockClear();
+    vi.mocked(runtime.api.windows.getAll).mockClear();
+    vi.mocked(runtime.api.storage.local.set).mockClear();
+    runtime.broadcasts.length = 0;
+
+    const result = await controller.handleMessage({ type: "focusNode", nodeId: "tab:2" });
+    await runtime.events.tabUpdated.flush();
+    await runtime.events.windowFocusChanged.flush();
+    await runtime.events.tabActivated.emit({ tabId: 2, windowId: 10, previousTabId: 1 });
+
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expectCommandAck(result, false);
+    expect(state.nodes["tab:1"]?.active).toBe(false);
+    expect(state.nodes["tab:2"]?.active).toBe(true);
+    expect(runtime.api.tabs.query).not.toHaveBeenCalled();
+    expect(runtime.api.windows.getAll).not.toHaveBeenCalled();
+    expect(runtime.broadcasts).toHaveLength(1);
+    expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
+  });
+
   it("uses activation snapshots to remove tabs Firefox no longer reports", async () => {
     const runtime = fakeRuntime(
       [

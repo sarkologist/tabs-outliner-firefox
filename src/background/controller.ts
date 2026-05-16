@@ -54,6 +54,9 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   const deleteOwnedClosingWindowIds = new Set<number>();
   const removedTabIds = new Set<number>();
   const commandRestoredTabIds = new Set<number>();
+  const commandFocusedTabIds = new Set<number>();
+  const commandFocusedActivationWindowIds = new Set<number>();
+  const commandFocusedWindowIds = new Set<number>();
   const stateCache = createStateCache(initializeState);
   let sessionChangedQueued = false;
   let queuedRuntimeRefresh: QueuedRuntimeRefresh | undefined;
@@ -80,10 +83,17 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     if (!hasOutlineRelevantTabUpdate(changeInfo)) {
       return;
     }
+    if (isCommandFocusActiveUpdateEcho(commandFocusedActivationWindowIds, changeInfo, tab)) {
+      return;
+    }
     await queueRuntimeRefresh([tab]);
   });
 
-  api.tabs.onActivated.addListener(async () => {
+  api.tabs.onActivated.addListener(async (activeInfo) => {
+    if (commandFocusedTabIds.has(activeInfo.tabId)) {
+      await handleCommandTabActivated(activeInfo);
+      return;
+    }
     await queueRuntimeRefresh();
   });
 
@@ -162,7 +172,11 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     });
   });
 
-  api.windows.onFocusChanged.addListener(async () => {
+  api.windows.onFocusChanged.addListener(async (windowId) => {
+    if (commandFocusedWindowIds.has(windowId)) {
+      await handleCommandWindowFocusChanged(windowId);
+      return;
+    }
     await queueRuntimeRefresh([], { closeMissing: false });
   });
 
@@ -209,6 +223,9 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       const outlinerClosingWindowId = message.type === "closeNode"
         ? liveWindowIdForNode(current, message.nodeId)
         : undefined;
+      const focusTarget = message.type === "focusNode"
+        ? focusTargetForNode(current, message.nodeId)
+        : undefined;
       const deleteClosePlan = message.type === "deleteNode"
         ? planLiveSubtreeClose(current, message.nodeId)
         : undefined;
@@ -217,6 +234,13 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       }
       if (typeof outlinerClosingWindowId === "number") {
         outlinerClosingWindowIds.add(outlinerClosingWindowId);
+      }
+      if (focusTarget && !focusTarget.tabActive) {
+        commandFocusedTabIds.add(focusTarget.tabId);
+        commandFocusedActivationWindowIds.add(focusTarget.windowId);
+      }
+      if (focusTarget) {
+        commandFocusedWindowIds.add(focusTarget.windowId);
       }
       for (const tabId of deleteClosePlan?.tabIds ?? []) {
         deleteOwnedClosingTabIds.add(tabId);
@@ -240,6 +264,11 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         }
         for (const windowId of deleteClosePlan?.windowIds ?? []) {
           deleteOwnedClosingWindowIds.delete(windowId);
+        }
+        if (focusTarget) {
+          commandFocusedTabIds.delete(focusTarget.tabId);
+          commandFocusedActivationWindowIds.delete(focusTarget.windowId);
+          commandFocusedWindowIds.delete(focusTarget.windowId);
         }
         throw error;
       }
@@ -345,6 +374,49 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     return state !== current;
   }
 
+  async function handleCommandTabActivated(activeInfo: { tabId: number; windowId: number; previousTabId?: number }): Promise<boolean> {
+    commandFocusedTabIds.delete(activeInfo.tabId);
+    commandFocusedActivationWindowIds.delete(activeInfo.windowId);
+    return enqueueMutation(async () => {
+      const current = await ensureState();
+      const activation = activateRuntimeTabInPlace(current, activeInfo.tabId, activeInfo.windowId);
+      if (!activation.found) {
+        return refreshFromRuntimeNow([], { closeMissing: true });
+      }
+      if (!activation.changed) {
+        return false;
+      }
+
+      state = current;
+      stateCache.replace(current);
+      await persistAndBroadcast();
+      return true;
+    });
+  }
+
+  async function handleCommandWindowFocusChanged(windowId: number): Promise<boolean> {
+    commandFocusedWindowIds.delete(windowId);
+    return enqueueMutation(async () => {
+      const current = await ensureState();
+      if (windowId === api.windows.WINDOW_ID_NONE) {
+        return refreshFromRuntimeNow([], { closeMissing: false });
+      }
+
+      const focus = focusRuntimeWindowInPlace(current, windowId);
+      if (!focus.found) {
+        return refreshFromRuntimeNow([], { closeMissing: false });
+      }
+      if (!focus.changed) {
+        return false;
+      }
+
+      state = current;
+      stateCache.replace(current);
+      await persistAndBroadcast();
+      return true;
+    });
+  }
+
   function enqueueMutation<T>(operation: () => Promise<T>): Promise<T> {
     const queued = mutationQueue.then(
       () => operation(),
@@ -423,6 +495,23 @@ function commandAck(stateChanged: boolean): CommandAck {
   };
 }
 
+function focusTargetForNode(
+  state: OutlineState,
+  nodeId: NodeId
+): { tabId: number; windowId: number; tabActive: boolean; windowActive: boolean } | undefined {
+  const node = state.nodes[nodeId];
+  if (!node || !isLiveTabNode(node)) {
+    return undefined;
+  }
+
+  return {
+    tabId: node.live.tabId,
+    windowId: node.live.windowId,
+    tabActive: node.active === true,
+    windowActive: liveWindowNodeByRuntimeId(state, node.live.windowId)?.active === true
+  };
+}
+
 function restoredLiveTabIdsChangedByCommand(previous: OutlineState, next: OutlineState): number[] {
   return Object.values(next.nodes).flatMap((node) => {
     if (!isLiveTabNode(node) || !node.restoredFromClosed || previous.nodes[node.id]?.status !== "closed") {
@@ -454,6 +543,63 @@ function tabEventMatchesLiveNode(
     (tab.url === undefined || node.url === tab.url) &&
     (tab.title === undefined || node.title === tab.title) &&
     (tab.favIconUrl === undefined || node.favIconUrl === tab.favIconUrl);
+}
+
+function isCommandFocusActiveUpdateEcho(
+  commandFocusedActivationWindowIds: Set<number>,
+  changeInfo: Partial<RuntimeTab>,
+  tab: RuntimeTab
+): boolean {
+  return tab.active === true &&
+    commandFocusedActivationWindowIds.has(tab.windowId) &&
+    Object.keys(changeInfo).every((key) => key === "active");
+}
+
+function activateRuntimeTabInPlace(
+  state: OutlineState,
+  tabId: number,
+  windowId: number
+): { found: boolean; changed: boolean } {
+  let found = false;
+  let changed = false;
+
+  for (const node of Object.values(state.nodes)) {
+    if (!isLiveTabNode(node) || node.live.windowId !== windowId) {
+      continue;
+    }
+
+    const active = node.live.tabId === tabId;
+    found ||= active;
+    if (node.active !== active) {
+      node.active = active;
+      changed = true;
+    }
+  }
+
+  return { found, changed };
+}
+
+function focusRuntimeWindowInPlace(
+  state: OutlineState,
+  windowId: number
+): { found: boolean; changed: boolean } {
+  let found = false;
+  let changed = false;
+
+  for (const node of Object.values(state.nodes)) {
+    if (node.kind !== "window" || node.status !== "live" || !node.live || !("windowId" in node.live)) {
+      continue;
+    }
+
+    const active = node.live.windowId === windowId;
+    found ||= active;
+    if (node.active !== active) {
+      node.active = active;
+      changed = true;
+    }
+  }
+
+  return { found, changed };
 }
 
 function liveTabIdForNode(state: OutlineState, nodeId: NodeId): number | undefined {
