@@ -33,8 +33,11 @@
         <span id="state-count" class="count">Loading</span>
         <span id="diagnostics" class="diagnostics"></span>
       </div>
+      <button id="export-tree" class="toolbar-button" type="button" title="Export tree" aria-label="Export tree">E</button>
+      <button id="import-tree" class="toolbar-button" type="button" title="Import tree" aria-label="Import tree">I</button>
       <button id="refresh" class="toolbar-button" type="button" title="Refresh outline">R</button>
     </header>
+    <input id="import-tree-file" type="file" accept="application/json,.json" hidden />
     <main>
       <p id="empty" class="empty" hidden>No tabs captured yet.</p>
       <ol id="tree" class="tree" aria-label="Tab outline"></ol>

@@ -1,5 +1,6 @@
 import type { BackgroundCommand } from "../background/commands.js";
 import type { OutlineDiagnostics } from "../background/diagnostics.js";
+import { exportPortableTree } from "../model/portable-tree.js";
 import type { NodeId, OutlineNode, OutlineState } from "../model/types.js";
 import {
   commandForDropPlacement,
@@ -23,6 +24,9 @@ import {
 const stateCount = document.querySelector<HTMLSpanElement>("#state-count");
 const diagnostics = document.querySelector<HTMLSpanElement>("#diagnostics");
 const refresh = document.querySelector<HTMLButtonElement>("#refresh");
+const exportTree = document.querySelector<HTMLButtonElement>("#export-tree");
+const importTree = document.querySelector<HTMLButtonElement>("#import-tree");
+const importTreeFile = document.querySelector<HTMLInputElement>("#import-tree-file");
 const rootDropSurface = document.querySelector<HTMLElement>("main");
 const tree = document.querySelector<HTMLElement>("#tree");
 const empty = document.querySelector<HTMLElement>("#empty");
@@ -35,8 +39,11 @@ let activeDropPlacement: DropPlacement | undefined;
 let currentZoom = DEFAULT_ZOOM;
 let wheelZoomDelta = 0;
 let currentSearchQuery = "";
+let diagnosticsNoticeUntil = 0;
+let diagnosticsNoticeTimer: number | undefined;
 
 const WHEEL_ZOOM_THRESHOLD_PX = 80;
+const DIAGNOSTICS_NOTICE_MS = 4000;
 
 const dropMarker = document.createElement("li");
 dropMarker.className = "drop-marker";
@@ -48,6 +55,7 @@ dropPreviewChildren.className = "children drop-preview-children";
 applyZoom(currentZoom);
 registerZoomShortcuts();
 registerSearchControls();
+registerPortableTreeControls();
 void loadZoomPreference();
 void loadState();
 
@@ -204,6 +212,80 @@ function registerSearchControls(): void {
   });
 
   updateSearchControls();
+}
+
+function registerPortableTreeControls(): void {
+  exportTree?.addEventListener("click", () => {
+    exportCurrentTree();
+  });
+
+  importTree?.addEventListener("click", () => {
+    importTreeFile?.click();
+  });
+
+  importTreeFile?.addEventListener("change", () => {
+    void importSelectedTreeFile();
+  });
+}
+
+function exportCurrentTree(): void {
+  if (!currentState) {
+    showDiagnosticsNotice("Export unavailable until loaded", { error: true });
+    return;
+  }
+
+  const payload = exportPortableTree(currentState);
+  const blob = new Blob([`${JSON.stringify(payload, null, 2)}\n`], {
+    type: "application/json"
+  });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `tabs-outliner-tree-${localDateSlug(new Date())}.json`;
+  link.style.display = "none";
+  document.body.append(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 0);
+  showDiagnosticsNotice("Exported tree");
+}
+
+async function importSelectedTreeFile(): Promise<void> {
+  const file = importTreeFile?.files?.[0];
+  if (!file) {
+    return;
+  }
+
+  try {
+    const payload = JSON.parse(await file.text()) as unknown;
+    currentState = (await sendCommand({ type: "importTree", tree: payload })) as OutlineState;
+    render();
+    showDiagnosticsNotice("Imported tree");
+    void loadDiagnostics();
+  } catch (error) {
+    showDiagnosticsNotice(importErrorText(error), { error: true });
+  } finally {
+    if (importTreeFile) {
+      importTreeFile.value = "";
+    }
+  }
+}
+
+function localDateSlug(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function importErrorText(error: unknown): string {
+  if (error instanceof SyntaxError) {
+    return "Import failed: invalid JSON";
+  }
+  if (error instanceof Error) {
+    return `Import failed: ${error.message}`;
+  }
+  return "Import failed";
 }
 
 function isSearchFocusEvent(event: KeyboardEvent): boolean {
@@ -645,10 +727,37 @@ function showLoadError(error: unknown): void {
   }
 }
 
+function showDiagnosticsNotice(message: string, options: { error?: boolean } = {}): void {
+  if (!diagnostics) {
+    return;
+  }
+
+  diagnosticsNoticeUntil = Date.now() + DIAGNOSTICS_NOTICE_MS;
+  diagnostics.textContent = message;
+  diagnostics.title = message;
+  diagnostics.classList.toggle("is-error", Boolean(options.error));
+
+  if (diagnosticsNoticeTimer) {
+    window.clearTimeout(diagnosticsNoticeTimer);
+  }
+
+  diagnosticsNoticeTimer = window.setTimeout(() => {
+    diagnosticsNoticeTimer = undefined;
+    diagnosticsNoticeUntil = 0;
+    diagnostics.classList.remove("is-error");
+    void loadDiagnostics();
+  }, DIAGNOSTICS_NOTICE_MS);
+}
+
 async function loadDiagnostics(): Promise<void> {
   if (!diagnostics) {
     return;
   }
+  if (Date.now() < diagnosticsNoticeUntil) {
+    return;
+  }
+
+  diagnostics.classList.remove("is-error");
 
   const result = (await browser.runtime.sendMessage({ type: "getDiagnostics" }).catch(() => undefined)) as
     | OutlineDiagnostics

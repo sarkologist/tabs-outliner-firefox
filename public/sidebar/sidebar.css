@@ -32,7 +32,7 @@ body {
   top: 0;
   z-index: 1;
   display: grid;
-  grid-template-columns: auto minmax(72px, 1fr) minmax(54px, auto) auto;
+  grid-template-columns: auto minmax(52px, 1fr) minmax(0, auto) repeat(3, auto);
   align-items: center;
   gap: 6px;
   padding: 8px 10px;
@@ -115,6 +115,10 @@ h1 {
 
 .diagnostics {
   color: color-mix(in srgb, CanvasText 48%, transparent);
+}
+
+.diagnostics.is-error {
+  color: color-mix(in srgb, #c92525 86%, CanvasText 14%);
 }
 
 main {
