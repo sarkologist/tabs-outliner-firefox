@@ -286,6 +286,20 @@ describe("outline model", () => {
     expect(next.nodes["tab:2"]?.restore?.url).toBe("https://example.com/child");
   });
 
+  it("closes a single tab without cloning unrelated nodes", () => {
+    const state = largeFlatLiveState(50_000);
+    const next = closeTab(state, 50_000, {
+      now: 2000,
+      sessionId: "session-tab-50000"
+    });
+
+    expect(next.nodes["tab:50000"]).not.toBe(state.nodes["tab:50000"]);
+    expect(next.nodes["tab:50000"]?.status).toBe("closed");
+    expect(next.nodes["tab:1"]).toBe(state.nodes["tab:1"]);
+    expect(next.nodes["tab:25000"]).toBe(state.nodes["tab:25000"]);
+    expect(next.nodes["window:10"]).toBe(state.nodes["window:10"]);
+  });
+
   it("captures only the closed tab and promotes its children", () => {
     const state = bootstrapFromWindows(windows, { now: 1000 });
     const next = closeTab(state, 1, {

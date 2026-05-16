@@ -34,6 +34,11 @@ type QueuedRuntimeRefresh = {
   promise: Promise<boolean>;
 };
 
+type ReconciledStateChange = {
+  previous: OutlineState;
+  next: OutlineState;
+};
+
 type ActiveStateUpdate = {
   nodeId: NodeId;
   active: boolean;
@@ -150,7 +155,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       }
       state = next;
       stateCache.replace(state);
-      await persistAndBroadcast();
+      await persistWithNodeStateUpdate(current, next);
     });
   });
 
@@ -181,7 +186,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
           state = closeWindow(deleteLiveTabNodeByTabId(current, singleNativeRemovedTabId), windowId, { now: now() });
         }
         stateCache.replace(state);
-        await persistAndBroadcast();
+        await persistWithNodeStateUpdate(current, state);
         return;
       }
 
@@ -194,7 +199,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         ...(recent?.window?.sessionId ? { sessionId: recent.window.sessionId } : {})
       });
       stateCache.replace(state);
-      await persistAndBroadcast();
+      await persistWithNodeStateUpdate(current, state);
     });
   });
 
@@ -217,8 +222,9 @@ export function createBackgroundController(options: BackgroundControllerOptions)
           commandCloseSessionEchoesToSkip -= 1;
           return;
         }
-        if (await reconcileMissingLiveTabsInOpenWindows()) {
-          await persistAndBroadcast();
+        const reconciled = await reconcileMissingLiveTabsInOpenWindows();
+        if (reconciled) {
+          await persistWithNodeStateUpdate(reconciled.previous, reconciled.next);
         }
       } finally {
         sessionChangedQueued = false;
@@ -314,8 +320,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       state = result.state;
       stateCache.replace(result.state);
       if (message.type === "restoreNode") {
-        await broadcastNodeStateUpdate(nodeStateUpdateFromStateChange(current, result.state));
-        await saveState(result.state, api);
+        await persistWithNodeStateUpdate(current, result.state);
         return commandAck(true);
       }
       if (message.type === "deleteNode") {
@@ -477,6 +482,17 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     await api.runtime.sendMessage({ type: "stateUpdated", state }).catch(() => undefined);
   }
 
+  async function persistWithNodeStateUpdate(previous: OutlineState, next: OutlineState): Promise<void> {
+    const update = nodeStateUpdateFromStateChange(previous, next);
+    if (!update || update.updatedNodes.length === 0) {
+      await persistAndBroadcast();
+      return;
+    }
+
+    await broadcastNodeStateUpdate(update);
+    await saveState(next, api);
+  }
+
   async function broadcastActiveStateUpdate(updates: ActiveStateUpdate[]): Promise<void> {
     if (updates.length === 0) {
       return;
@@ -495,7 +511,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     await api.runtime.sendMessage(update).catch(() => undefined);
   }
 
-  async function reconcileMissingLiveTabsInOpenWindows(): Promise<boolean> {
+  async function reconcileMissingLiveTabsInOpenWindows(): Promise<ReconciledStateChange | undefined> {
     const current = await ensureState();
     const windows = filterRemovedTabsFromWindows(await getNormalWindows(api), removedTabIds);
     const openWindowIds = new Set(windows.map((windowInfo) => windowInfo.id));
@@ -506,7 +522,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       .filter(isLiveTabInOpenWindow(openWindowIds, openTabIds))
       .map((node) => node.live.tabId);
     if (missingLiveTabIds.length === 0) {
-      return false;
+      return undefined;
     }
 
     let next = current;
@@ -531,7 +547,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
     state = next;
     stateCache.replace(next);
-    return next !== current;
+    return next !== current ? { previous: current, next } : undefined;
   }
 
   async function mostRecentClosedSession(): Promise<{ tab?: { sessionId?: string }; window?: { sessionId?: string } } | undefined> {
@@ -586,21 +602,40 @@ function treeStructureUpdateFromStateChange(previous: OutlineState, next: Outlin
   };
 }
 
-function nodeStateUpdateFromStateChange(previous: OutlineState, next: OutlineState): NodeStateUpdate {
-  const updatedNodes = Object.entries(next.nodes).flatMap(([nodeId, node]) => {
-    return previous.nodes[nodeId] !== node ? [node] : [];
-  });
-  const closedCountDelta = updatedNodes.reduce((delta, node) => {
-    const wasClosed = previous.nodes[node.id]?.status === "closed" ? 1 : 0;
+function nodeStateUpdateFromStateChange(previous: OutlineState, next: OutlineState): NodeStateUpdate | undefined {
+  const nextEntries = Object.entries(next.nodes);
+  if (!sameNodeIdList(previous.rootIds, next.rootIds) || Object.keys(previous.nodes).length !== nextEntries.length) {
+    return undefined;
+  }
+
+  const updatedNodes: OutlineNode[] = [];
+  let closedCountDelta = 0;
+  for (const [nodeId, node] of nextEntries) {
+    const previousNode = previous.nodes[nodeId];
+    if (!previousNode) {
+      return undefined;
+    }
+    if (previousNode === node) {
+      continue;
+    }
+    if (previousNode.parentId !== node.parentId || !sameNodeIdList(previousNode.childIds, node.childIds)) {
+      return undefined;
+    }
+    updatedNodes.push(node);
+    const wasClosed = previousNode.status === "closed" ? 1 : 0;
     const isClosed = node.status === "closed" ? 1 : 0;
-    return delta + isClosed - wasClosed;
-  }, 0);
+    closedCountDelta += isClosed - wasClosed;
+  }
 
   return {
     type: "nodeStateUpdated",
     updatedNodes,
     closedCountDelta
   };
+}
+
+function sameNodeIdList(previous: NodeId[], next: NodeId[]): boolean {
+  return previous.length === next.length && previous.every((nodeId, index) => nodeId === next[index]);
 }
 
 function restoredLiveTabIdsChangedByCommand(previous: OutlineState, next: OutlineState): number[] {

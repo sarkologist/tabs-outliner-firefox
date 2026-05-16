@@ -201,6 +201,16 @@ Use these as starting targets, not hard promises:
 - Baseline using `pnpm profile:restore -- --scenario controller-event-echo --tabs 50000 --target last`: 193ms total, 179ms command, 14ms event echo, 53ms save stringify, 54ms full broadcast stringify, 25ms projection, 30 MB stringified.
 - Implemented a lightweight `nodeStateUpdated` broadcast for `restoreNode`: the background sends changed node records and a closed-count delta to the sidebar before persisting the full outline state.
 - Updated the sidebar to apply restore patches to `currentState`, adjust the existing projection's closed count and row metadata, and schedule a virtual-row rerender instead of rebuilding the full visible-tree projection. Search projections still rebuild from state for correctness.
-- After using `pnpm profile:restore -- --scenario controller-event-echo --tabs 50000 --target last`: 142ms total, first patch broadcast at 69ms, 57ms save stringify, 0ms patch broadcast stringify, 2ms node patch, 0ms projection, 15 MB stringified.
-- Cross-check using `pnpm profile:restore -- --scenario single-closed-tab --tabs 50000 --target last`: 69ms total, 15ms command, 51ms save stringify, 0ms patch broadcast stringify, 2ms node patch, 0ms projection, 15 MB stringified.
+- After using `pnpm profile:restore -- --scenario controller-event-echo --tabs 50000 --target last`: 145ms total, first patch broadcast at 73ms, 57ms save stringify, 0ms patch broadcast stringify, 2ms node patch, 0ms projection, 15 MB stringified.
+- Cross-check using `pnpm profile:restore -- --scenario single-closed-tab --tabs 50000 --target last`: 82ms total, 17ms command, 63ms save stringify, 0ms patch broadcast stringify, 2ms node patch, 0ms projection, 15 MB stringified.
 - Remaining measured total is dominated by full-state storage persistence after the sidebar patch is already sent.
+
+### 2026-05-16: Lightweight Close Node Patches
+
+- Re-profiled close after the delete/restore patch work. Baseline still used one full `stateUpdated` broadcast and full sidebar projection:
+  - `pnpm profile:close -- --tabs 50000 --target last --order tabRemovedThenSessionChanged`: 204ms total, 50ms save stringify, 40ms full broadcast stringify, 39ms projection, 26 MB stringified.
+  - `pnpm profile:close -- --tabs 50000 --target last --order sessionChangedThenTabRemoved`: 255ms total, 36ms save stringify, 39ms full broadcast stringify, 31ms projection, 26 MB stringified.
+- Implemented lightweight `nodeStateUpdated` close patches for close operations that only change node state. Structural closes, such as closing a tab whose children must be promoted, fall back to full `stateUpdated`.
+- Optimized `closeTab()` and `closeWindow()` copying so a leaf tab close clones only the closed node, and a window close clones only the closed subtree. This keeps the patch detector on the fast identity path.
+- After using `pnpm profile:close -- --tabs 50000 --target last --order tabRemovedThenSessionChanged`: 97ms total, first patch broadcast at 50ms, 45ms save stringify, 0ms patch broadcast stringify, 2ms node patch, 0ms projection, 13 MB stringified.
+- After using `pnpm profile:close -- --tabs 50000 --target last --order sessionChangedThenTabRemoved`: 156ms total, first patch broadcast at 94ms, 36ms save stringify, 0ms patch broadcast stringify, 2ms node patch, 0ms projection, 13 MB stringified.

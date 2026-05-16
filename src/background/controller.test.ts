@@ -1798,16 +1798,20 @@ describe("background controller lifecycle", () => {
     await controller.handleMessage({ type: "closeNode", nodeId: "tab:2" });
     await controller.handleMessage({ type: "getState" });
 
-    const stateUpdates = runtime.broadcasts.filter((message): message is { type: string; state: OutlineState } => {
-      return Boolean(
-        message &&
-          typeof message === "object" &&
-          (message as { type?: unknown }).type === "stateUpdated" &&
-          (message as { state?: unknown }).state
-      );
-    });
-    expect(stateUpdates).toHaveLength(1);
-    expect(stateUpdates[0]?.state.nodes["tab:2"]?.status).toBe("closed");
+    expect(runtime.broadcasts).toHaveLength(1);
+    const closeBroadcast = runtime.broadcasts[0] as
+      | {
+          type?: string;
+          updatedNodes?: OutlineState["nodes"][string][];
+          closedCountDelta?: number;
+          state?: OutlineState;
+        }
+      | undefined;
+    expect(closeBroadcast?.type).toBe("nodeStateUpdated");
+    expect(closeBroadcast?.updatedNodes?.map((node) => node.id)).toEqual(["tab:2"]);
+    expect(closeBroadcast?.updatedNodes?.[0]?.status).toBe("closed");
+    expect(closeBroadcast?.closedCountDelta).toBe(1);
+    expect(closeBroadcast?.state).toBeUndefined();
     expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
   });
 
@@ -1852,6 +1856,9 @@ describe("background controller lifecycle", () => {
 
     expect(state.nodes["tab:2"]?.status).toBe("closed");
     expect(runtime.broadcasts).toHaveLength(1);
+    const closeBroadcast = runtime.broadcasts[0] as { type?: string; closedCountDelta?: number } | undefined;
+    expect(closeBroadcast?.type).toBe("nodeStateUpdated");
+    expect(closeBroadcast?.closedCountDelta).toBe(1);
     expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
   });
 
@@ -1950,6 +1957,13 @@ describe("background controller lifecycle", () => {
     expect(state.nodes["tab:2"]?.live).toBeUndefined();
     expect(state.nodes["window:10"]?.status).toBe("live");
     expect(state.nodes["tab:1"]?.status).toBe("live");
+    const closeBroadcast = runtime.broadcasts.at(-1) as
+      | { type?: string; updatedNodes?: OutlineState["nodes"][string][]; closedCountDelta?: number; state?: OutlineState }
+      | undefined;
+    expect(closeBroadcast?.type).toBe("nodeStateUpdated");
+    expect(closeBroadcast?.updatedNodes?.map((node) => node.id).sort()).toEqual(["tab:2", "window:20"]);
+    expect(closeBroadcast?.closedCountDelta).toBe(2);
+    expect(closeBroadcast?.state).toBeUndefined();
   });
 
   it("handles outliner closeNode when Firefox fires tabRemoved during tabs.remove", async () => {
@@ -2002,6 +2016,9 @@ describe("background controller lifecycle", () => {
     expect(state.nodes["tab:2"]?.status).toBe("live");
     expect(state.nodes["tab:2"]?.parentId).toBe("window:10");
     expect(state.nodes["window:10"]?.childIds).toEqual(["tab:1", "tab:2", "tab:3"]);
+    const closeBroadcast = runtime.broadcasts.at(-1) as { type?: string; state?: OutlineState } | undefined;
+    expect(closeBroadcast?.type).toBe("stateUpdated");
+    expect(closeBroadcast?.state?.nodes["tab:2"]?.parentId).toBe("window:10");
   });
 
   it("handles outliner closeNode when Firefox reports sessions before tabRemoved", async () => {

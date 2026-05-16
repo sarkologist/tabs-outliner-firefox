@@ -108,7 +108,12 @@ function makeRuntime(tabCount, order) {
     saveStringifyMs: 0,
     broadcastStringifyMs: 0,
     projectionMs: 0,
+    nodePatchMs: 0,
     bytes: 0,
+    operationStart: 0,
+    firstBroadcastMs: undefined,
+    sidebarState: undefined,
+    sidebarProjection: undefined,
     tabsQueryMs: 0,
     windowsGetAllMs: 0,
     recentClosedCalls: 0,
@@ -129,10 +134,16 @@ function makeRuntime(tabCount, order) {
       onStartup: new FakeEvent(),
       onMessage: new FakeEvent(),
       sendMessage: async (message) => {
+        runtime.firstBroadcastMs ??= performance.now() - runtime.operationStart;
         measureRuntimeJson(runtime, "broadcast", message);
         if (message?.type === "stateUpdated" && message.state) {
+          runtime.sidebarState = message.state;
           const projection = measure(() => buildVisibleTreeProjection(message.state, ""));
+          runtime.sidebarProjection = projection.value;
           runtime.projectionMs += projection.ms;
+        } else if (message?.type === "nodeStateUpdated") {
+          const patch = measure(() => applyNodeStateUpdate(runtime, message));
+          runtime.nodePatchMs += patch.ms;
         }
         runtime.broadcasts += 1;
       }
@@ -254,6 +265,28 @@ function measureRuntimeJson(runtime, bucket, value) {
   runtime.bytes += measured.value.length;
 }
 
+function applyNodeStateUpdate(runtime, update) {
+  if (!runtime.sidebarState || !runtime.sidebarProjection) {
+    return;
+  }
+
+  const updatedNodes = new Map(update.updatedNodes.map((node) => [node.id, node]));
+  for (const node of update.updatedNodes) {
+    runtime.sidebarState.nodes[node.id] = node;
+  }
+  runtime.sidebarProjection.closedCount = Math.max(0, runtime.sidebarProjection.closedCount + update.closedCountDelta);
+
+  for (const row of runtime.sidebarProjection.rows) {
+    const node = updatedNodes.get(row.nodeId);
+    if (!node) {
+      continue;
+    }
+    row.childCount = node.childIds.length;
+    row.visibleChildCount = node.childIds.length;
+    row.expanded = !node.collapsed;
+  }
+}
+
 async function flushAll(runtime) {
   await Promise.all([
     runtime.events.tabRemoved.flush(),
@@ -268,6 +301,8 @@ async function profile(options) {
   const runtime = makeRuntime(options.tabs, options.order);
   const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
   const init = await measureAsync(() => controller.ensureState());
+  runtime.sidebarState = await controller.handleMessage({ type: "getState" });
+  runtime.sidebarProjection = buildVisibleTreeProjection(runtime.sidebarState, "");
   const tabId = targetTabId(options.tabs, options.target);
   const nodeId = `tab:${tabId}`;
 
@@ -276,7 +311,10 @@ async function profile(options) {
   runtime.saveStringifyMs = 0;
   runtime.broadcastStringifyMs = 0;
   runtime.projectionMs = 0;
+  runtime.nodePatchMs = 0;
   runtime.bytes = 0;
+  runtime.operationStart = performance.now();
+  runtime.firstBroadcastMs = undefined;
   runtime.tabsQueryMs = 0;
   runtime.windowsGetAllMs = 0;
   runtime.recentClosedCalls = 0;
@@ -295,9 +333,11 @@ async function profile(options) {
     commandMs: Math.round(command.ms),
     eventEchoMs: Math.round(eventEcho.ms),
     totalMeasuredMs: Math.round(command.ms + eventEcho.ms),
+    firstBroadcastMs: Math.round(runtime.firstBroadcastMs ?? 0),
     saveStringifyMs: Math.round(runtime.saveStringifyMs),
     broadcastStringifyMs: Math.round(runtime.broadcastStringifyMs),
     projectionMs: Math.round(runtime.projectionMs),
+    nodePatchMs: Math.round(runtime.nodePatchMs),
     tabsQueryMs: Math.round(runtime.tabsQueryMs),
     windowsGetAllMs: Math.round(runtime.windowsGetAllMs),
     mbStringified: Math.round(runtime.bytes / 1024 / 1024),

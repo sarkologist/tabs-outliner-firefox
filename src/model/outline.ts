@@ -339,10 +339,26 @@ export function closeTab(state: OutlineState, tabId: number, context: CloseConte
     return state;
   }
 
-  const next = cloneState(state);
+  const originalNode = requireNode(state, nodeId);
+  const next: OutlineState = {
+    version: state.version,
+    rootIds: state.rootIds,
+    nodes: { ...state.nodes }
+  };
+  cloneNodeForMutation(next, nodeId);
   markClosedNode(next, nodeId, context);
-  promoteChildrenAfterNode(next, nodeId);
-  return removeEmptyWindowNodes(next);
+  if (originalNode.childIds.length > 0) {
+    if (originalNode.parentId) {
+      cloneNodeForMutation(next, originalNode.parentId);
+    } else {
+      next.rootIds = [...state.rootIds];
+    }
+    for (const childId of originalNode.childIds) {
+      cloneNodeForMutation(next, childId);
+    }
+    promoteChildrenAfterNode(next, nodeId);
+  }
+  return next;
 }
 
 export function closeWindow(state: OutlineState, windowId: number, context: CloseContext): OutlineState {
@@ -351,9 +367,22 @@ export function closeWindow(state: OutlineState, windowId: number, context: Clos
     return state;
   }
 
-  const next = cloneState(state);
-  markClosedSubtree(next, nodeId, context);
-  return removeEmptyWindowNodes(next);
+  const next: OutlineState = {
+    version: state.version,
+    rootIds: state.rootIds,
+    nodes: { ...state.nodes }
+  };
+  const subtreeIds = collectSubtreeIds(state, nodeId);
+  for (const id of subtreeIds) {
+    cloneNodeForMutation(next, id);
+  }
+  for (const id of subtreeIds) {
+    markClosedNode(next, id, {
+      now: context.now,
+      ...(id === nodeId && context.sessionId ? { sessionId: context.sessionId } : {})
+    });
+  }
+  return next;
 }
 
 export function deleteLiveTabNodeByTabId(state: OutlineState, tabId: number): OutlineState {
