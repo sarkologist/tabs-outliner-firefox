@@ -1244,13 +1244,23 @@ describe("background controller lifecycle", () => {
     await runtime.events.tabActivated.emit({ tabId: 2, windowId: 10, previousTabId: 1 });
 
     const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    const lastBroadcast = runtime.broadcasts.at(-1) as
+      | { type?: string; updates?: Array<{ nodeId: string; active: boolean }> }
+      | undefined;
     expectCommandAck(result, false);
     expect(state.nodes["tab:1"]?.active).toBe(false);
     expect(state.nodes["tab:2"]?.active).toBe(true);
     expect(runtime.api.tabs.query).not.toHaveBeenCalled();
     expect(runtime.api.windows.getAll).not.toHaveBeenCalled();
     expect(runtime.broadcasts).toHaveLength(1);
-    expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
+    expect(lastBroadcast).toEqual({
+      type: "activeStateUpdated",
+      updates: [
+        { nodeId: "tab:1", active: false },
+        { nodeId: "tab:2", active: true }
+      ]
+    });
+    expect(vi.mocked(runtime.api.storage.local.set)).not.toHaveBeenCalled();
   });
 
   it("uses activation snapshots to remove tabs Firefox no longer reports", async () => {

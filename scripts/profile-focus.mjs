@@ -41,7 +41,8 @@ function parseArgs(argv) {
   const options = {
     tabs: 50_000,
     target: "last",
-    scenario: "command-event-echo"
+    scenario: "command-event-echo",
+    count: 1
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -56,6 +57,9 @@ function parseArgs(argv) {
     } else if (arg === "--scenario" && next) {
       options.scenario = next;
       index += 1;
+    } else if (arg === "--count" && next) {
+      options.count = Number.parseInt(next, 10);
+      index += 1;
     }
   }
 
@@ -68,8 +72,11 @@ function parseArgs(argv) {
   if (options.target === "first") {
     throw new Error("--target first is already active; choose middle or last");
   }
-  if (!["command-event-echo"].includes(options.scenario)) {
-    throw new Error("--scenario must be command-event-echo");
+  if (!Number.isFinite(options.count) || options.count < 1) {
+    throw new Error("--count must be a positive integer");
+  }
+  if (!["command-event-echo", "successive-command-event-echo"].includes(options.scenario)) {
+    throw new Error("--scenario must be command-event-echo or successive-command-event-echo");
   }
 
   return options;
@@ -80,6 +87,14 @@ function targetTabId(tabCount, target) {
     return Math.ceil(tabCount / 2);
   }
   return tabCount;
+}
+
+function successiveTabIds(tabCount, count) {
+  const ids = [];
+  for (let index = 0; index < count; index += 1) {
+    ids.push(2 + (index % (tabCount - 1)));
+  }
+  return ids;
 }
 
 function makeRuntime(tabCount) {
@@ -107,7 +122,10 @@ function makeRuntime(tabCount) {
     saveStringifyMs: 0,
     broadcastStringifyMs: 0,
     projectionMs: 0,
+    activePatchMs: 0,
     bytes: 0,
+    sidebarState: undefined,
+    sidebarProjection: undefined,
     events,
     api: undefined
   };
@@ -127,8 +145,13 @@ function makeRuntime(tabCount) {
       sendMessage: async (message) => {
         measureRuntimeJson(runtime, "broadcast", message);
         if (message?.type === "stateUpdated" && message.state) {
+          runtime.sidebarState = message.state;
           const projection = measure(() => buildVisibleTreeProjection(message.state, ""));
+          runtime.sidebarProjection = projection.value;
           runtime.projectionMs += projection.ms;
+        } else if (message?.type === "activeStateUpdated" && Array.isArray(message.updates)) {
+          const activePatch = measure(() => applyActiveStateUpdate(runtime, message.updates));
+          runtime.activePatchMs += activePatch.ms;
         }
         runtime.broadcasts += 1;
       }
@@ -228,6 +251,37 @@ function measureRuntimeJson(runtime, bucket, value) {
   runtime.bytes += measured.value.length;
 }
 
+function applyActiveStateUpdate(runtime, updates) {
+  if (!runtime.sidebarState || !runtime.sidebarProjection) {
+    return;
+  }
+
+  let windowActiveChanged = false;
+  for (const update of updates) {
+    const node = runtime.sidebarState.nodes[update.nodeId];
+    if (!node) {
+      continue;
+    }
+    node.active = update.active;
+    windowActiveChanged ||= node.kind === "window";
+  }
+
+  if (windowActiveChanged) {
+    refreshProjectionActiveWindowFlags(runtime.sidebarState, runtime.sidebarProjection);
+  }
+}
+
+function refreshProjectionActiveWindowFlags(state, projection) {
+  const activeByDepth = [];
+  for (const row of projection.rows) {
+    activeByDepth.length = row.depth;
+    const parentInsideActiveWindow = row.depth > 0 ? activeByDepth[row.depth - 1] === true : false;
+    const node = state.nodes[row.nodeId];
+    row.insideActiveWindow = parentInsideActiveWindow;
+    activeByDepth[row.depth] = parentInsideActiveWindow || Boolean(node?.kind === "window" && node.active);
+  }
+}
+
 async function flushAll(runtime) {
   await Promise.all([
     runtime.events.windowFocusChanged.flush(),
@@ -242,37 +296,54 @@ async function profile(options) {
   const runtime = makeRuntime(options.tabs);
   const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
   const init = await measureAsync(() => controller.ensureState());
-  const tabId = targetTabId(options.tabs, options.target);
-  const nodeId = `tab:${tabId}`;
+  runtime.sidebarState = await controller.handleMessage({ type: "getState" });
+  runtime.sidebarProjection = buildVisibleTreeProjection(runtime.sidebarState, "");
+  const tabIds = options.scenario === "successive-command-event-echo"
+    ? successiveTabIds(options.tabs, options.count)
+    : [targetTabId(options.tabs, options.target)];
+  const nodeIds = tabIds.map((tabId) => `tab:${tabId}`);
 
   runtime.saves = 0;
   runtime.broadcasts = 0;
   runtime.saveStringifyMs = 0;
   runtime.broadcastStringifyMs = 0;
   runtime.projectionMs = 0;
+  runtime.activePatchMs = 0;
   runtime.bytes = 0;
 
-  const command = await measureAsync(() => controller.handleMessage({ type: "focusNode", nodeId }));
-  const eventEcho = await measureAsync(() => flushAll(runtime));
+  let commandMs = 0;
+  let eventEchoMs = 0;
+  let lastAck;
+  for (const nodeId of nodeIds) {
+    const command = await measureAsync(() => controller.handleMessage({ type: "focusNode", nodeId }));
+    const eventEcho = await measureAsync(() => flushAll(runtime));
+    commandMs += command.ms;
+    eventEchoMs += eventEcho.ms;
+    lastAck = command.value;
+  }
   const current = await controller.handleMessage({ type: "getState" });
+  const finalNodeId = nodeIds.at(-1);
 
   return {
     scenario: options.scenario,
     tabs: options.tabs,
     target: options.target,
-    nodeId,
+    count: nodeIds.length,
+    nodeId: finalNodeId,
     initMs: Math.round(init.ms),
-    commandMs: Math.round(command.ms),
-    eventEchoMs: Math.round(eventEcho.ms),
-    totalMeasuredMs: Math.round(command.ms + eventEcho.ms),
+    commandMs: Math.round(commandMs),
+    eventEchoMs: Math.round(eventEchoMs),
+    totalMeasuredMs: Math.round(commandMs + eventEchoMs),
+    averageMeasuredMs: Math.round((commandMs + eventEchoMs) / nodeIds.length),
     saveStringifyMs: Math.round(runtime.saveStringifyMs),
     broadcastStringifyMs: Math.round(runtime.broadcastStringifyMs),
     projectionMs: Math.round(runtime.projectionMs),
+    activePatchMs: Math.round(runtime.activePatchMs),
     mbStringified: Math.round(runtime.bytes / 1024 / 1024),
     saves: runtime.saves,
     broadcasts: runtime.broadcasts,
-    ack: command.value,
-    activeNodeStatus: current.nodes[nodeId]?.active,
+    ack: lastAck,
+    activeNodeStatus: finalNodeId ? current.nodes[finalNodeId]?.active : undefined,
     previousActiveNodeStatus: current.nodes["tab:1"]?.active,
     nodes: Object.keys(current.nodes).length
   };

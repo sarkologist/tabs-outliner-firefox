@@ -130,6 +130,10 @@ browser.runtime.onMessage.addListener((message) => {
     currentState = message.state;
     render();
     void loadDiagnostics();
+    return;
+  }
+  if (isActiveStateUpdated(message)) {
+    applyActiveStateUpdate(message.updates);
   }
 });
 
@@ -446,6 +450,40 @@ function render(): void {
 
   renderVirtualRows();
   scrollToObservedActiveTab(state, projection);
+}
+
+function applyActiveStateUpdate(updates: ActiveStateUpdate[]): void {
+  const state = currentState;
+  if (!state || updates.length === 0) {
+    return;
+  }
+
+  let windowActiveChanged = false;
+  for (const update of updates) {
+    const node = state.nodes[update.nodeId];
+    if (!node) {
+      continue;
+    }
+    node.active = update.active;
+    windowActiveChanged ||= node.kind === "window";
+  }
+
+  if (windowActiveChanged && currentProjection) {
+    refreshProjectionActiveWindowFlags(state, currentProjection);
+  }
+  scheduleVirtualRender();
+}
+
+function refreshProjectionActiveWindowFlags(state: OutlineState, projection: VisibleTreeProjection): void {
+  const activeByDepth: boolean[] = [];
+
+  for (const row of projection.rows) {
+    activeByDepth.length = row.depth;
+    const parentInsideActiveWindow = row.depth > 0 ? activeByDepth[row.depth - 1] === true : false;
+    const node = state.nodes[row.nodeId];
+    row.insideActiveWindow = parentInsideActiveWindow;
+    activeByDepth[row.depth] = parentInsideActiveWindow || Boolean(node?.kind === "window" && node.active);
+  }
 }
 
 function canFlattenSubtree(state: OutlineState, node: OutlineNode): boolean {
@@ -1121,6 +1159,28 @@ function isStateUpdated(message: unknown): message is { type: "stateUpdated"; st
       typeof message === "object" &&
       (message as { type?: unknown }).type === "stateUpdated" &&
       (message as { state?: unknown }).state
+  );
+}
+
+type ActiveStateUpdate = {
+  nodeId: NodeId;
+  active: boolean;
+};
+
+function isActiveStateUpdated(message: unknown): message is { type: "activeStateUpdated"; updates: ActiveStateUpdate[] } {
+  return Boolean(
+    message &&
+      typeof message === "object" &&
+      (message as { type?: unknown }).type === "activeStateUpdated" &&
+      Array.isArray((message as { updates?: unknown }).updates) &&
+      (message as { updates: unknown[] }).updates.every((update) =>
+        Boolean(
+          update &&
+            typeof update === "object" &&
+            typeof (update as { nodeId?: unknown }).nodeId === "string" &&
+            typeof (update as { active?: unknown }).active === "boolean"
+        )
+      )
   );
 }
 

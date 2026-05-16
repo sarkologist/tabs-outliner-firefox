@@ -172,3 +172,12 @@ Use these as starting targets, not hard promises:
 - Implemented a command-owned close fast path: when `tabRemoved` handles an outliner close, the following session echo is skipped; when sessions arrive first, the later no-op `tabRemoved` pass no longer saves or broadcasts unchanged state.
 - After using `pnpm profile:close -- --tabs 50000 --target last --order tabRemovedThenSessionChanged`: 190ms total, 3ms command, 187ms event echo, 1 save, 1 broadcast, 34ms projection, 26 MB stringified, 0ms tab-query snapshot work.
 - After using `pnpm profile:close -- --tabs 50000 --target last --order sessionChangedThenTabRemoved`: 246ms total, 3ms command, 243ms event echo, 1 save, 1 broadcast, 29ms projection, 26 MB stringified.
+
+### 2026-05-16: Lightweight Focus Active Updates
+
+- Extended `pnpm profile:focus` with `--scenario successive-command-event-echo --count N` to measure repeated sidebar focus clicks.
+- Baseline using `pnpm profile:focus -- --scenario successive-command-event-echo --tabs 50000 --count 10`: 1374ms total, 137ms average, 10 saves, 10 full broadcasts, 213ms projection, 255 MB stringified.
+- Implemented a lightweight `activeStateUpdated` broadcast for command-owned focus activation/window-focus echoes. The background updates in-memory active flags but skips storage writes and full `stateUpdated` transport for volatile active-only changes.
+- Updated the sidebar to apply active flag patches to `currentState`, refresh active-window flags in the existing projection only when a window active flag changes, and schedule a virtual-row rerender instead of rebuilding the full visible-tree projection.
+- After using `pnpm profile:focus -- --scenario successive-command-event-echo --tabs 50000 --count 10`: 414ms total, 41ms average, 0 saves, 0 full-state broadcasts, 0ms projection, 0 MB stringified.
+- Single-click cross-check using `pnpm profile:focus -- --tabs 50000 --target last`: 42ms total, 0 saves, 0 full-state broadcasts, 0ms projection, 0 MB stringified.

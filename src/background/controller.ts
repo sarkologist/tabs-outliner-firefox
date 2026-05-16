@@ -34,6 +34,11 @@ type QueuedRuntimeRefresh = {
   promise: Promise<boolean>;
 };
 
+type ActiveStateUpdate = {
+  nodeId: NodeId;
+  active: boolean;
+};
+
 export type BackgroundControllerOptions = {
   api: WebExtensionBrowser;
   adapter?: BrowserAdapter;
@@ -400,7 +405,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
       state = current;
       stateCache.replace(current);
-      await persistAndBroadcast();
+      await broadcastActiveStateUpdate(activation.updates);
       return true;
     });
   }
@@ -423,7 +428,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
       state = current;
       stateCache.replace(current);
-      await persistAndBroadcast();
+      await broadcastActiveStateUpdate(focus.updates);
       return true;
     });
   }
@@ -446,6 +451,13 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     }
     await saveState(state, api);
     await api.runtime.sendMessage({ type: "stateUpdated", state }).catch(() => undefined);
+  }
+
+  async function broadcastActiveStateUpdate(updates: ActiveStateUpdate[]): Promise<void> {
+    if (updates.length === 0) {
+      return;
+    }
+    await api.runtime.sendMessage({ type: "activeStateUpdated", updates }).catch(() => undefined);
   }
 
   async function reconcileMissingLiveTabsInOpenWindows(): Promise<boolean> {
@@ -570,9 +582,10 @@ function activateRuntimeTabInPlace(
   state: OutlineState,
   tabId: number,
   windowId: number
-): { found: boolean; changed: boolean } {
+): { found: boolean; changed: boolean; updates: ActiveStateUpdate[] } {
   let found = false;
   let changed = false;
+  const updates: ActiveStateUpdate[] = [];
 
   for (const node of Object.values(state.nodes)) {
     if (!isLiveTabNode(node) || node.live.windowId !== windowId) {
@@ -584,18 +597,20 @@ function activateRuntimeTabInPlace(
     if (node.active !== active) {
       node.active = active;
       changed = true;
+      updates.push({ nodeId: node.id, active });
     }
   }
 
-  return { found, changed };
+  return { found, changed, updates };
 }
 
 function focusRuntimeWindowInPlace(
   state: OutlineState,
   windowId: number
-): { found: boolean; changed: boolean } {
+): { found: boolean; changed: boolean; updates: ActiveStateUpdate[] } {
   let found = false;
   let changed = false;
+  const updates: ActiveStateUpdate[] = [];
 
   for (const node of Object.values(state.nodes)) {
     if (node.kind !== "window" || node.status !== "live" || !node.live || !("windowId" in node.live)) {
@@ -607,10 +622,11 @@ function focusRuntimeWindowInPlace(
     if (node.active !== active) {
       node.active = active;
       changed = true;
+      updates.push({ nodeId: node.id, active });
     }
   }
 
-  return { found, changed };
+  return { found, changed, updates };
 }
 
 function liveTabIdForNode(state: OutlineState, nodeId: NodeId): number | undefined {
