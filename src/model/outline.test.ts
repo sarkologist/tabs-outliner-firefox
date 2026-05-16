@@ -733,6 +733,7 @@ describe("outline model", () => {
         nodeId: "tab:2",
         tabId: 22,
         windowId: 10,
+        active: false,
         url: "https://example.com/child",
         title: "Child"
       }
@@ -740,6 +741,7 @@ describe("outline model", () => {
 
     expect(restored.nodes["tab:2"]?.status).toBe("live");
     expect(restored.nodes["tab:2"]?.live).toEqual({ tabId: 22, windowId: 10 });
+    expect(restored.nodes["tab:2"]?.active).toBe(false);
     expect(restored.nodes["tab:2"]?.restoredFromClosed).toBe(true);
     expect(Object.keys(restored.nodes).filter((id) => id === "tab:2")).toHaveLength(1);
   });

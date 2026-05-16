@@ -1578,6 +1578,66 @@ describe("background controller lifecycle", () => {
     expect(state.nodes["window:10"]?.childIds).toEqual(["tab:1", "tab:2"]);
   });
 
+  it("absorbs the created-tab echo after a command restore", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        },
+        {
+          id: 2,
+          windowId: 10,
+          index: 1,
+          active: false,
+          url: "https://two.example/",
+          title: "Two"
+        }
+      ]
+    );
+    const restoredTab: RuntimeTab = {
+      id: 22,
+      windowId: 10,
+      index: 1,
+      active: false,
+      url: "https://two.example/",
+      title: "Two"
+    };
+    vi.mocked(runtime.api.sessions.restore).mockImplementation(async () => {
+      createTabFromBrowser(runtime, restoredTab, { awaitListeners: false });
+      return { tab: copyTab(restoredTab) } as never;
+    });
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    await controller.handleMessage({ type: "closeNode", nodeId: "tab:2" });
+    await runtime.events.tabRemoved.flush();
+    await runtime.events.sessionChanged.flush();
+
+    runtime.broadcasts.length = 0;
+    vi.mocked(runtime.api.storage.local.set).mockClear();
+
+    const result = await controller.handleMessage({ type: "restoreNode", nodeId: "tab:2" });
+    await runtime.events.tabCreated.flush();
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+
+    expectCommandAck(result, true);
+    expect(state.nodes["tab:2"]?.live).toEqual({ tabId: 22, windowId: 10 });
+    expect(state.nodes["tab:2"]?.active).toBe(false);
+    expect(runtime.broadcasts).toHaveLength(1);
+    expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
+  });
+
   it("preserves outliner closeNode tab removals as restorable closed nodes", async () => {
     const runtime = fakeRuntime(
       [

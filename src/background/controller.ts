@@ -53,6 +53,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   const deleteOwnedClosingTabIds = new Set<number>();
   const deleteOwnedClosingWindowIds = new Set<number>();
   const removedTabIds = new Set<number>();
+  const commandRestoredTabIds = new Set<number>();
   const stateCache = createStateCache(initializeState);
   let sessionChangedQueued = false;
   let queuedRuntimeRefresh: QueuedRuntimeRefresh | undefined;
@@ -246,6 +247,11 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         return commandAck(false);
       }
 
+      if (message.type === "restoreNode") {
+        for (const tabId of restoredLiveTabIdsChangedByCommand(current, result.state)) {
+          commandRestoredTabIds.add(tabId);
+        }
+      }
       state = result.state;
       stateCache.replace(result.state);
       await persistAndBroadcast();
@@ -319,14 +325,20 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
   async function refreshFromRuntimeNow(eventTabs: RuntimeTab[] = [], options: RefreshOptions = {}): Promise<boolean> {
     const current = await ensureState();
-    const currentEventTabs = eventTabs.filter((tab) => !removedTabIds.has(tab.id));
+    const closeMissing = options.closeMissing ?? eventTabs.length === 0;
+    const currentEventTabs = eventTabs
+      .filter((tab) => !removedTabIds.has(tab.id))
+      .filter((tab) => !consumeCommandRestoredTabEvent(current, commandRestoredTabIds, tab));
+    if (eventTabs.length > 0 && currentEventTabs.length === 0 && !closeMissing) {
+      return false;
+    }
     const windowsSnapshot =
       currentEventTabs.length > 0
         ? await getNormalWindowsIncludingTabs(api, currentEventTabs)
         : await getNormalWindows(api);
     const windows = filterRemovedTabsFromWindows(windowsSnapshot, removedTabIds);
     state = reconcileWithWindows(current, windows, { now: now() }, {
-      closeMissing: options.closeMissing ?? eventTabs.length === 0
+      closeMissing
     });
     stateCache.replace(state);
     await persistAndBroadcast();
@@ -409,6 +421,39 @@ function commandAck(stateChanged: boolean): CommandAck {
     type: "commandAck",
     stateChanged
   };
+}
+
+function restoredLiveTabIdsChangedByCommand(previous: OutlineState, next: OutlineState): number[] {
+  return Object.values(next.nodes).flatMap((node) => {
+    if (!isLiveTabNode(node) || !node.restoredFromClosed || previous.nodes[node.id]?.status !== "closed") {
+      return [];
+    }
+    return [node.live.tabId];
+  });
+}
+
+function consumeCommandRestoredTabEvent(
+  state: OutlineState,
+  commandRestoredTabIds: Set<number>,
+  tab: RuntimeTab
+): boolean {
+  if (!commandRestoredTabIds.delete(tab.id)) {
+    return false;
+  }
+
+  const node = liveTabNodeByRuntimeId(state, tab.id);
+  return Boolean(node?.restoredFromClosed && tabEventMatchesLiveNode(node, tab));
+}
+
+function tabEventMatchesLiveNode(
+  node: OutlineNode & { live: { tabId: number; windowId: number } },
+  tab: RuntimeTab
+): boolean {
+  return node.live.windowId === tab.windowId &&
+    node.active === tab.active &&
+    (tab.url === undefined || node.url === tab.url) &&
+    (tab.title === undefined || node.title === tab.title) &&
+    (tab.favIconUrl === undefined || node.favIconUrl === tab.favIconUrl);
 }
 
 function liveTabIdForNode(state: OutlineState, nodeId: NodeId): number | undefined {

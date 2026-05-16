@@ -146,3 +146,11 @@ Use these as starting targets, not hard promises:
   - After: 150ms total measured, 16ms command, 53ms save stringify, 41ms broadcast stringify, 40ms projection.
 - Remaining measured restore cost is dominated by full-state save/broadcast serialization and full visible-tree projection rebuild.
 - Verification: `pnpm test -- src/model/outline.test.ts src/background/commands.test.ts src/background/controller.test.ts`, `pnpm test`, `pnpm run build`, and both restore profile commands above passed.
+
+### 2026-05-16: Restore Event Echo Absorption
+
+- Extended `pnpm profile:restore` with `--scenario controller-event-echo` to measure the restore command plus the browser `tabs.onCreated` echo that follows command-created restored tabs.
+- Baseline after targeted restore node copying: `pnpm profile:restore -- --scenario controller-event-echo --tabs 50000 --target last` measured 617ms total, 159ms command, 459ms event echo, 2 saves, 2 broadcasts, 76ms projection, 59 MB stringified.
+- Implemented one-shot absorption for restored tab created-event echoes when the restore command already incorporated the same runtime tab. Restored tab nodes now also copy the runtime `active` flag, which lets the controller safely recognize the created event as redundant.
+- After: the same controller-event-echo profile measured 187ms total, 172ms command, 15ms event echo, 1 save, 1 broadcast, 25ms projection, 30 MB stringified.
+- Cross-check command profile after the change: `pnpm profile:restore -- --scenario single-closed-tab --tabs 50000 --target last` measured 146ms total with one save/broadcast path.

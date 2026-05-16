@@ -1,8 +1,43 @@
 import { performance } from "node:perf_hooks";
 
+import { createBackgroundController } from "../dist/background/controller.js";
 import { runCommand } from "../dist/background/commands.js";
 import { analyzeRestoreScope } from "../dist/model/outline.js";
 import { buildVisibleTreeProjection } from "../dist/sidebar/visible-tree.js";
+
+class FakeEvent {
+  listeners = [];
+  pending = [];
+
+  addListener(listener) {
+    this.listeners.push(listener);
+  }
+
+  dispatch(...args) {
+    for (const listener of this.listeners) {
+      try {
+        const result = listener(...args);
+        if (result && typeof result.then === "function") {
+          this.pending.push(result);
+        }
+      } catch (error) {
+        this.pending.push(Promise.reject(error));
+      }
+    }
+  }
+
+  async flush() {
+    while (this.pending.length > 0) {
+      const pending = this.pending;
+      this.pending = [];
+      const results = await Promise.allSettled(pending);
+      const rejected = results.find((result) => result.status === "rejected");
+      if (rejected) {
+        throw rejected.reason;
+      }
+    }
+  }
+}
 
 function parseArgs(argv) {
   const options = {
@@ -29,8 +64,8 @@ function parseArgs(argv) {
   if (!Number.isFinite(options.tabs) || options.tabs < 1) {
     throw new Error("--tabs must be a positive integer");
   }
-  if (!["single-closed-tab"].includes(options.scenario)) {
-    throw new Error("--scenario must be single-closed-tab");
+  if (!["single-closed-tab", "controller-event-echo"].includes(options.scenario)) {
+    throw new Error("--scenario must be single-closed-tab or controller-event-echo");
   }
   if (!["first", "middle", "last"].includes(options.target)) {
     throw new Error("--target must be first, middle, or last");
@@ -171,7 +206,175 @@ function measureJson(value) {
   return measure(() => JSON.stringify(value));
 }
 
-async function profile(options) {
+function measureRuntimeJson(runtime, bucket, value) {
+  const measured = measureJson(value);
+  runtime[`${bucket}StringifyMs`] += measured.ms;
+  runtime.bytes += measured.value.length;
+}
+
+function makeControllerRuntime(initialState) {
+  const events = {
+    tabCreated: new FakeEvent(),
+    tabUpdated: new FakeEvent(),
+    tabActivated: new FakeEvent(),
+    tabRemoved: new FakeEvent(),
+    windowRemoved: new FakeEvent(),
+    windowFocusChanged: new FakeEvent(),
+    sessionChanged: new FakeEvent()
+  };
+  const runtime = {
+    windows: [{ id: 10, focused: true, incognito: false }],
+    tabs: [],
+    storedState: initialState,
+    saves: 0,
+    broadcasts: 0,
+    saveStringifyMs: 0,
+    broadcastStringifyMs: 0,
+    projectionMs: 0,
+    bytes: 0,
+    events,
+    api: undefined
+  };
+
+  runtime.api = {
+    action: {
+      onClicked: new FakeEvent()
+    },
+    sidebarAction: {
+      open: async () => undefined,
+      toggle: async () => undefined
+    },
+    runtime: {
+      onInstalled: new FakeEvent(),
+      onStartup: new FakeEvent(),
+      onMessage: new FakeEvent(),
+      sendMessage: async (message) => {
+        measureRuntimeJson(runtime, "broadcast", message);
+        if (message?.type === "stateUpdated" && message.state) {
+          const projection = measure(() => buildVisibleTreeProjection(message.state, ""));
+          runtime.projectionMs += projection.ms;
+        }
+        runtime.broadcasts += 1;
+      }
+    },
+    storage: {
+      local: {
+        get: async (key) => typeof key === "string" ? { [key]: runtime.storedState } : {},
+        set: async (items) => {
+          measureRuntimeJson(runtime, "save", items);
+          if (items.outlineState) {
+            runtime.storedState = items.outlineState;
+          }
+          runtime.saves += 1;
+        },
+        remove: async () => undefined,
+        onChanged: new FakeEvent()
+      }
+    },
+    windows: {
+      WINDOW_ID_NONE: -1,
+      getAll: async () => runtime.windows.map((windowInfo) => ({ ...windowInfo })),
+      update: async () => ({}),
+      remove: async () => undefined,
+      create: async () => {
+        throw new Error("not implemented");
+      },
+      onFocusChanged: events.windowFocusChanged,
+      onRemoved: events.windowRemoved
+    },
+    tabs: {
+      query: async () => runtime.tabs.map((tab) => ({ ...tab })),
+      update: async () => ({}),
+      remove: async () => undefined,
+      create: async () => {
+        throw new Error("not implemented");
+      },
+      move: async () => [],
+      onCreated: events.tabCreated,
+      onUpdated: events.tabUpdated,
+      onActivated: events.tabActivated,
+      onRemoved: events.tabRemoved
+    },
+    sessions: {
+      getRecentlyClosed: async () => [],
+      restore: async () => ({}),
+      onChanged: events.sessionChanged
+    }
+  };
+
+  return runtime;
+}
+
+function fakeControllerAdapter(runtime) {
+  const calls = {
+    createTab: 0,
+    createWindow: 0,
+    restoreSession: 0
+  };
+  return {
+    calls,
+    adapter: {
+      focusTab: async () => undefined,
+      closeTab: async () => undefined,
+      closeTabs: async () => undefined,
+      closeWindow: async () => undefined,
+      restoreSession: async () => {
+        calls.restoreSession += 1;
+        return {};
+      },
+      createTab: async ({ url, windowId = 10, active = false }) => {
+        calls.createTab += 1;
+        if (active) {
+          runtime.tabs = runtime.tabs.map((tab) => ({ ...tab, active: false }));
+        }
+        const tab = {
+          id: 100_000 + calls.createTab,
+          windowId,
+          index: runtime.tabs.length,
+          active,
+          url,
+          title: url
+        };
+        runtime.tabs.push(tab);
+        runtime.events.tabCreated.dispatch({ ...tab });
+        return { ...tab };
+      },
+      createWindow: async ({ url }) => {
+        calls.createWindow += 1;
+        const windowId = 200_000 + calls.createWindow;
+        const urls = Array.isArray(url) ? url : url ? [url] : [];
+        const windowInfo = { id: windowId, focused: true, incognito: false };
+        const tabs = urls.map((tabUrl, index) => ({
+          id: 300_000 + index,
+          windowId,
+          index,
+          active: index === 0,
+          url: tabUrl,
+          title: tabUrl
+        }));
+        runtime.windows.push(windowInfo);
+        runtime.tabs.push(...tabs);
+        for (const tab of tabs) {
+          runtime.events.tabCreated.dispatch({ ...tab });
+        }
+        return { ...windowInfo, tabs: tabs.map((tab) => ({ ...tab })) };
+      },
+      moveTabs: async () => undefined
+    }
+  };
+}
+
+async function flushAll(runtime) {
+  await Promise.all([
+    runtime.events.tabCreated.flush(),
+    runtime.events.tabUpdated.flush(),
+    runtime.events.tabActivated.flush(),
+    runtime.events.windowFocusChanged.flush(),
+    runtime.events.sessionChanged.flush()
+  ]);
+}
+
+async function profileCommand(options) {
   const { state, nodeId } = largeClosedTabState(options.tabs, options.target);
   const { adapter, calls } = fakeAdapter();
 
@@ -200,6 +403,54 @@ async function profile(options) {
     nodes: Object.keys(command.value.state.nodes).length,
     rows: projection.value.rows.length
   };
+}
+
+async function profileControllerEventEcho(options) {
+  const { state, nodeId } = largeClosedTabState(options.tabs, options.target);
+  const runtime = makeControllerRuntime(state);
+  const { adapter, calls } = fakeControllerAdapter(runtime);
+  const controller = createBackgroundController({ api: runtime.api, adapter, now: () => 1000 });
+  const init = await measureAsync(() => controller.ensureState());
+
+  runtime.saves = 0;
+  runtime.broadcasts = 0;
+  runtime.saveStringifyMs = 0;
+  runtime.broadcastStringifyMs = 0;
+  runtime.projectionMs = 0;
+  runtime.bytes = 0;
+
+  const command = await measureAsync(() => controller.handleMessage({ type: "restoreNode", nodeId }));
+  const eventEcho = await measureAsync(() => flushAll(runtime));
+  const current = await controller.handleMessage({ type: "getState" });
+
+  return {
+    scenario: options.scenario,
+    tabs: options.tabs,
+    target: options.target,
+    nodeId,
+    initMs: Math.round(init.ms),
+    commandMs: Math.round(command.ms),
+    eventEchoMs: Math.round(eventEcho.ms),
+    totalMeasuredMs: Math.round(command.ms + eventEcho.ms),
+    saveStringifyMs: Math.round(runtime.saveStringifyMs),
+    broadcastStringifyMs: Math.round(runtime.broadcastStringifyMs),
+    projectionMs: Math.round(runtime.projectionMs),
+    mbStringified: Math.round(runtime.bytes / 1024 / 1024),
+    saves: runtime.saves,
+    broadcasts: runtime.broadcasts,
+    ack: command.value,
+    createTabCalls: calls.createTab,
+    createWindowCalls: calls.createWindow,
+    restoreSessionCalls: calls.restoreSession,
+    nodes: Object.keys(current.nodes).length
+  };
+}
+
+async function profile(options) {
+  if (options.scenario === "controller-event-echo") {
+    return profileControllerEventEcho(options);
+  }
+  return profileCommand(options);
 }
 
 const result = await profile(parseArgs(process.argv.slice(2)));

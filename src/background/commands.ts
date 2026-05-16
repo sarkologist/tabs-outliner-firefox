@@ -656,6 +656,7 @@ function restoredTabFromRuntime(nodeId: NodeId, tab: RuntimeTab): RestoredNode {
     nodeId,
     tabId: tab.id,
     windowId: tab.windowId,
+    active: tab.active,
     ...(tab.url ? { url: tab.url } : {}),
     ...(tab.title ? { title: tab.title } : {}),
     ...(tab.favIconUrl ? { favIconUrl: tab.favIconUrl } : {})

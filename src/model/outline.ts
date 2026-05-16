@@ -687,6 +687,9 @@ export function restoreNodes(state: OutlineState, restoredNodes: RestoredNode[])
     }
 
     node.live = { tabId: restored.tabId, windowId: restored.windowId };
+    if (typeof restored.active === "boolean") {
+      node.active = restored.active;
+    }
     if (restored.url) {
       node.url = restored.url;
     }

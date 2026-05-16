@@ -107,6 +107,7 @@ export type RestoredNode = {
   nodeId: NodeId;
   windowId: number;
   tabId?: number;
+  active?: boolean;
   url?: string;
   title?: string;
   favIconUrl?: string;
