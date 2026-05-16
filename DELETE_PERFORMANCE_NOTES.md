@@ -231,3 +231,10 @@ Use these as starting targets, not hard promises:
 - Fixed restored-tab echo absorption so command-owned restored tab create events are consumed by tab id/window id even when title/url are transient. Also filter runtime tab events that would not change the current live node, preventing later no-op final updates from forcing full reconciliation and `stateUpdated`.
 - After using `pnpm profile:restore -- --scenario controller-event-echo --tabs 28000 --target last --echo transient-separated`: 64ms total, first patch broadcast at 9ms, 1 save, 1 patch broadcast, 0ms full broadcast stringify, 0ms projection, 8 MB stringified.
 - Cross-check using `pnpm profile:restore -- --scenario controller-event-echo --tabs 50000 --target last --echo transient-separated`: 135ms total, first patch broadcast at 16ms, 1 save, 1 patch broadcast, 0ms projection, 15 MB stringified.
+
+### 2026-05-16: General Runtime No-op Echo Coverage
+
+- Generalized the restore lesson into explicit coverage for any `tabs.onUpdated` event whose metadata looks outline-relevant but already matches the current live node.
+- Added `pnpm profile:tab-open -- --tabs 50000 --scenario metadata-noop-update` to keep this path measurable outside restore-specific profiles.
+- Result after `pnpm run build`: 10ms total, 0 saves, 0 broadcasts, 0ms stringify, 0 MB stringified, 50,001 nodes.
+- Current echo coverage: focus activation/window-focus echoes use active-state patches or no-op acks, close/delete remove-session echoes are command-owned, restore created-tab echoes are command-owned, and generic no-op tab metadata echoes are filtered before full reconciliation.

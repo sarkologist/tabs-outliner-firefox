@@ -69,8 +69,8 @@ function parseArgs(argv) {
   if (!Number.isFinite(options.updates) || options.updates < 0) {
     throw new Error("--updates must be a non-negative integer");
   }
-  if (!["open-tab-storm", "noop-update"].includes(options.scenario)) {
-    throw new Error("--scenario must be open-tab-storm or noop-update");
+  if (!["open-tab-storm", "noop-update", "metadata-noop-update"].includes(options.scenario)) {
+    throw new Error("--scenario must be open-tab-storm, noop-update, or metadata-noop-update");
   }
 
   return options;
@@ -207,6 +207,16 @@ async function runNoopUpdate(runtime) {
   await flushAll(runtime);
 }
 
+async function runMetadataNoopUpdate(runtime) {
+  const tab = { ...runtime.tabs[0] };
+  runtime.events.tabUpdated.dispatch(tab.id, {
+    title: tab.title,
+    url: tab.url,
+    favIconUrl: tab.favIconUrl
+  }, tab);
+  await flushAll(runtime);
+}
+
 async function flushAll(runtime) {
   await Promise.all([
     runtime.events.tabCreated.flush(),
@@ -232,6 +242,8 @@ async function profile({ tabs, updates, scenario }) {
   const start = performance.now();
   if (scenario === "open-tab-storm") {
     await runOpenTabStorm(runtime, updates);
+  } else if (scenario === "metadata-noop-update") {
+    await runMetadataNoopUpdate(runtime);
   } else {
     await runNoopUpdate(runtime);
   }
