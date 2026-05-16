@@ -1070,6 +1070,55 @@ describe("background controller lifecycle", () => {
     expect(state.nodes["tab:1"]?.active).toBe(false);
   });
 
+  it("ignores tab update events without outline-relevant changes", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    runtime.broadcasts.length = 0;
+    vi.mocked(runtime.api.storage.local.set).mockClear();
+
+    await runtime.events.tabUpdated.emit(1, {}, {
+      id: 1,
+      windowId: 10,
+      index: 0,
+      active: true,
+      url: "https://one.example/",
+      title: "One"
+    });
+    await runtime.events.tabUpdated.emit(1, { status: "loading" } as Partial<RuntimeTab>, {
+      id: 1,
+      windowId: 10,
+      index: 0,
+      active: true,
+      url: "https://one.example/",
+      title: "One"
+    });
+
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+
+    expect(runtime.broadcasts).toHaveLength(0);
+    expect(vi.mocked(runtime.api.storage.local.set)).not.toHaveBeenCalled();
+    expect(state.nodes["tab:1"]?.title).toBe("One");
+  });
+
   it("serializes concurrent tab create events against the freshest state", async () => {
     const runtime = fakeRuntime(
       [

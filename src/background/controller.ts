@@ -75,7 +75,10 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     await queueRuntimeRefresh([tab]);
   });
 
-  api.tabs.onUpdated.addListener(async (_tabId, _changeInfo, tab) => {
+  api.tabs.onUpdated.addListener(async (_tabId, changeInfo, tab) => {
+    if (!hasOutlineRelevantTabUpdate(changeInfo)) {
+      return;
+    }
     await queueRuntimeRefresh([tab]);
   });
 
@@ -503,5 +506,14 @@ function isDiagnosticsRequest(message: unknown): message is { type: "getDiagnost
     message &&
       typeof message === "object" &&
       (message as { type?: unknown }).type === "getDiagnostics"
+  );
+}
+
+function hasOutlineRelevantTabUpdate(changeInfo: Partial<RuntimeTab>): boolean {
+  return Boolean(
+    "active" in changeInfo ||
+      "favIconUrl" in changeInfo ||
+      "title" in changeInfo ||
+      "url" in changeInfo
   );
 }
