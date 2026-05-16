@@ -2,6 +2,7 @@ import type { BackgroundCommand } from "../background/commands.js";
 import type { OutlineDiagnostics } from "../background/diagnostics.js";
 import { exportPortableTree } from "../model/portable-tree.js";
 import type { NodeId, OutlineNode, OutlineState } from "../model/types.js";
+import { createActiveTabScrollTracker, observeActiveTabScrollTarget } from "./active-scroll.js";
 import {
   commandForDropPlacement,
   dropModeForPointer,
@@ -42,6 +43,7 @@ let currentSearchQuery = "";
 let diagnosticsNoticeUntil = 0;
 let diagnosticsNoticeTimer: number | undefined;
 let activeRename: RenameSession | undefined;
+const activeTabScrollTracker = createActiveTabScrollTracker();
 
 const WHEEL_ZOOM_THRESHOLD_PX = 80;
 const DIAGNOSTICS_NOTICE_MS = 4000;
@@ -410,6 +412,8 @@ function render(): void {
       tree.append(renderNode(state, root, 0, false, search));
     }
   }
+
+  scrollToObservedActiveTab(state);
 }
 
 type RenderSearchState = OutlineSearchResult & {
@@ -784,6 +788,19 @@ function nodeItemForId(nodeId: NodeId): HTMLElement | undefined {
   }
 
   return Array.from(tree.querySelectorAll<HTMLElement>(".node")).find((item) => item.dataset.nodeId === nodeId);
+}
+
+function scrollToObservedActiveTab(state: OutlineState): void {
+  const nodeId = observeActiveTabScrollTarget(activeTabScrollTracker, state, {
+    hasRenderedNode: (candidateId) => Boolean(nodeItemForId(candidateId))
+  });
+  if (!nodeId) {
+    return;
+  }
+
+  window.requestAnimationFrame(() => {
+    nodeItemForId(nodeId)?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  });
 }
 
 function rowForItem(item: HTMLElement): HTMLElement | undefined {
