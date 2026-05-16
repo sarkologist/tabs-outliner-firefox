@@ -287,6 +287,336 @@ describe("portable tree files", () => {
     });
   });
 
+  it("imports Chrome Tab Outliner tree exports as closed restorable nodes", () => {
+    const state = bootstrapFromWindows(runtimeWindows, { now: 1000 });
+    const payload = [
+      {
+        type: 2000,
+        node: {
+          type: "session",
+          data: {
+            treeId: "1483340179831.8303"
+          }
+        }
+      },
+      [
+        2001,
+        {
+          type: "savedwin",
+          marks: {
+            customTitle: "Research",
+            customFavicon: "img/chrome-window-icon-gold.png"
+          },
+          data: {
+            type: "normal",
+            rect: "22_720_720_874"
+          }
+        },
+        [0]
+      ],
+      [
+        2001,
+        {
+          data: {
+            title: "Parent",
+            url: "https://chrome-import.example/parent",
+            favIconUrl: "https://chrome-import.example/favicon.ico",
+            active: true,
+            pinned: true
+          }
+        },
+        [0, 0]
+      ],
+      [
+        2001,
+        {
+          type: "tab",
+          data: {
+            title: "Imported Child",
+            url: "https://chrome-import.example/child"
+          }
+        },
+        [0, 0, 0]
+      ],
+      [
+        2001,
+        {
+          type: "group",
+          marks: {
+            customTitle: "Reading"
+          },
+          data: {
+            rect: "undefined_undefined_undefined_undefined"
+          }
+        },
+        [0, 1]
+      ],
+      [
+        2001,
+        {
+          data: {
+            title: "Nested",
+            url: "https://chrome-import.example/nested"
+          }
+        },
+        [0, 1, 0]
+      ],
+      [
+        2001,
+        {
+          type: "win",
+          data: {
+            id: 99,
+            type: "normal",
+            focused: true
+          }
+        },
+        [1]
+      ],
+      [
+        2001,
+        {
+          type: "tab",
+          data: {
+            id: 100,
+            title: "Live Tab",
+            url: "https://chrome-import.example/live",
+            favIconUrl: "https://chrome-import.example/live.ico",
+            windowId: 99
+          }
+        },
+        [1, 0]
+      ],
+      [
+        2001,
+        {
+          data: {
+            title: "Root Tab",
+            url: "https://chrome-import.example/root"
+          }
+        },
+        [2]
+      ],
+      {
+        type: 11111,
+        time: 1778944526534
+      }
+    ];
+
+    const appended = appendPortableTree(state, payload, { now: 5000 });
+
+    expect(appended.rootIds.slice(0, state.rootIds.length)).toEqual(state.rootIds);
+    expect(appended.rootIds).toHaveLength(state.rootIds.length + 1);
+    expect(Object.keys(appended.nodes)).toHaveLength(Object.keys(state.nodes).length + 9);
+
+    const importGroup = appended.nodes[appended.rootIds.at(-1)!]!;
+    const research = nodeByTitle(appended, "Research");
+    const parent = nodeByTitle(appended, "Parent");
+    const child = nodeByTitle(appended, "Imported Child");
+    const reading = nodeByTitle(appended, "Reading");
+    const nested = nodeByTitle(appended, "Nested");
+    const liveWindow = appended.nodes[importGroup.childIds[1]!]!;
+    const liveTab = nodeByTitle(appended, "Live Tab");
+    const rootTab = nodeByTitle(appended, "Root Tab");
+
+    expect(importGroup.title).toBe("Chrome Tab Outliner import");
+    expect(importGroup.parentId).toBeUndefined();
+    expect(importGroup.childIds).toEqual([research.id, liveWindow.id, rootTab.id]);
+    expect(research.kind).toBe("window");
+    expect(research.customTitle).toBe("Research");
+    expect(research.parentId).toBe(importGroup.id);
+    expect(research.childIds).toEqual([parent.id, reading.id]);
+    expect(parent.parentId).toBe(research.id);
+    expect(parent.childIds).toEqual([child.id]);
+    expect(reading.kind).toBe("window");
+    expect(reading.customTitle).toBe("Reading");
+    expect(reading.childIds).toEqual([nested.id]);
+    expect(liveWindow.kind).toBe("window");
+    expect(liveWindow.title).toBe("Group");
+    expect(liveWindow.childIds).toEqual([liveTab.id]);
+    expect(rootTab.parentId).toBe(importGroup.id);
+
+    for (const node of [importGroup, research, parent, child, reading, nested, liveWindow, liveTab, rootTab]) {
+      expect(node.status).toBe("closed");
+      expect(node.collapsed).toBe(false);
+      expect(node.createdAt).toBe(5000);
+      expect(node.updatedAt).toBe(5000);
+      expect(node.closedAt).toBe(5000);
+      expect(node.live).toBeUndefined();
+      expect(node.active).toBeUndefined();
+      expect(node.restore?.sessionId).toBeUndefined();
+    }
+
+    expect(parent.restore).toEqual({
+      url: "https://chrome-import.example/parent",
+      title: "Parent",
+      favIconUrl: "https://chrome-import.example/favicon.ico"
+    });
+    expect(child.restore).toEqual({
+      url: "https://chrome-import.example/child",
+      title: "Imported Child"
+    });
+    expect(liveTab.restore).toEqual({
+      url: "https://chrome-import.example/live",
+      title: "Live Tab",
+      favIconUrl: "https://chrome-import.example/live.ico"
+    });
+    expect(rootTab.restore).toEqual({
+      url: "https://chrome-import.example/root",
+      title: "Root Tab"
+    });
+  });
+
+  it("skips Chrome Tab Outliner extension pages while promoting useful descendants", () => {
+    const state = bootstrapFromWindows(runtimeWindows, { now: 1000 });
+    const payload = [
+      [
+        2001,
+        {
+          type: "win",
+          data: {
+            type: "popup"
+          }
+        },
+        [0]
+      ],
+      [
+        2001,
+        {
+          type: "tab",
+          data: {
+            title: "Tabs Outliner",
+            url: "chrome-extension://eggkanocgddhmamlbiijnphhppkpkmkl/activesessionview.html",
+            favIconUrl: "chrome-extension://eggkanocgddhmamlbiijnphhppkpkmkl/img/favicon.png"
+          }
+        },
+        [0, 0]
+      ],
+      [
+        2001,
+        {
+          data: {
+            title: "Promoted Child",
+            url: "https://chrome-import.example/promoted"
+          }
+        },
+        [0, 0, 0]
+      ],
+      [
+        2001,
+        {
+          type: "tab",
+          data: {
+            title: "Tabs Outliner Options",
+            url: "chrome-extension://eggkanocgddhmamlbiijnphhppkpkmkl/options.html"
+          }
+        },
+        [1]
+      ]
+    ];
+
+    const appended = appendPortableTree(state, payload, { now: 5000 });
+
+    expect(JSON.stringify(appended)).not.toContain("chrome-extension://eggkanocgddhmamlbiijnphhppkpkmkl");
+    const importGroup = appended.nodes[appended.rootIds.at(-1)!]!;
+    const popup = appended.nodes[importGroup.childIds[0]!]!;
+    const promoted = nodeByTitle(appended, "Promoted Child");
+    expect(importGroup.childIds).toEqual([popup.id]);
+    expect(popup.childIds).toEqual([promoted.id]);
+    expect(promoted.parentId).toBe(popup.id);
+  });
+
+  it("rejects malformed Chrome Tab Outliner tree exports without mutating the original state", () => {
+    const state = bootstrapFromWindows(runtimeWindows, { now: 1000 });
+    const before = structuredClone(state);
+
+    expect(() =>
+      appendPortableTree(state, [
+        [
+          2001,
+          {
+            data: {
+              title: "Broken",
+              url: "https://broken.example/"
+            }
+          },
+          [0, "not a number"]
+        ]
+      ], { now: 5000 })
+    ).toThrow(/Invalid Chrome Tab Outliner tree/);
+
+    expect(state).toEqual(before);
+  });
+
+  it("reconstructs Chrome Tab Outliner paths by numeric order", () => {
+    const state = bootstrapFromWindows(runtimeWindows, { now: 1000 });
+    const payload = [
+      [
+        2001,
+        {
+          data: {
+            title: "Second",
+            url: "https://chrome-import.example/second"
+          }
+        },
+        [0, 1]
+      ],
+      [
+        2001,
+        {
+          data: {
+            title: "First child",
+            url: "https://chrome-import.example/first-child"
+          }
+        },
+        [0, 0, 0]
+      ],
+      [
+        2001,
+        {
+          data: {
+            title: "Root",
+            url: "https://chrome-import.example/root"
+          }
+        },
+        [0]
+      ],
+      [
+        2001,
+        {
+          data: {
+            title: "First",
+            url: "https://chrome-import.example/first"
+          }
+        },
+        [0, 0]
+      ],
+      [
+        2001,
+        {
+          data: {
+            title: "After root",
+            url: "https://chrome-import.example/after-root"
+          }
+        },
+        [1]
+      ]
+    ];
+
+    const appended = appendPortableTree(state, payload, { now: 5000 });
+
+    const importGroup = appended.nodes[appended.rootIds.at(-1)!]!;
+    const root = nodeByTitle(appended, "Root");
+    const first = nodeByTitle(appended, "First");
+    const firstChild = nodeByTitle(appended, "First child");
+    const second = nodeByTitle(appended, "Second");
+    const afterRoot = nodeByTitle(appended, "After root");
+    expect(importGroup.childIds).toEqual([root.id, afterRoot.id]);
+    expect(root.childIds).toEqual([first.id, second.id]);
+    expect(first.childIds).toEqual([firstChild.id]);
+    expect([root, first, firstChild, second, afterRoot].every((node) => node.status === "closed")).toBe(true);
+  });
+
   it("does not create an empty import group for empty imports", () => {
     const state = bootstrapFromWindows(runtimeWindows, { now: 1000 });
     const appended = appendPortableTree(state, {

@@ -8,6 +8,8 @@ import type {
 
 export const PORTABLE_TREE_SCHEMA = "tabs-outliner-tree";
 const IMPORT_GROUP_TITLE = "Group";
+const CHROME_TAB_OUTLINER_IMPORT_GROUP_TITLE = "Chrome Tab Outliner import";
+const CHROME_TAB_OUTLINER_NODE_RECORD_TYPE = 2001;
 
 export type PortableTreeNode = {
   kind: OutlineNodeKind;
@@ -27,6 +29,17 @@ export type PortableTreeFile = {
 type AppendContext = Clock & {
   nextIdIndex: number;
   usedIds: Set<NodeId>;
+};
+
+type ImportTree = {
+  roots: PortableTreeNode[];
+  importGroupTitle?: string;
+};
+
+type ChromeTabOutlinerRecord = {
+  payload: Record<string, unknown>;
+  path: number[];
+  children: ChromeTabOutlinerRecord[];
 };
 
 export function exportPortableTree(
@@ -49,7 +62,7 @@ export function appendPortableTree(
   payload: unknown,
   clock: Clock
 ): OutlineState {
-  const tree = parsePortableTree(payload);
+  const tree = parseImportTree(payload);
   const next = cloneState(state);
   const context: AppendContext = {
     now: clock.now,
@@ -67,7 +80,8 @@ export function appendPortableTree(
     kind: "window",
     status: "closed",
     childIds: [],
-    title: IMPORT_GROUP_TITLE,
+    title: tree.importGroupTitle ?? IMPORT_GROUP_TITLE,
+    ...(tree.importGroupTitle ? { customTitle: tree.importGroupTitle } : {}),
     collapsed: false,
     createdAt: clock.now,
     updatedAt: clock.now,
@@ -176,6 +190,13 @@ function normalizeImportedGroupTitle(title: string): string | undefined {
   return trimmed ? trimmed : undefined;
 }
 
+function parseImportTree(payload: unknown): ImportTree {
+  if (Array.isArray(payload)) {
+    return parseChromeTabOutlinerTree(payload);
+  }
+  return parsePortableTree(payload);
+}
+
 function parsePortableTree(payload: unknown): PortableTreeFile {
   const value = requireRecord(payload, "root");
   if (value.schema !== PORTABLE_TREE_SCHEMA) {
@@ -197,6 +218,198 @@ function parsePortableTree(payload: unknown): PortableTreeFile {
     exportedAt: value.exportedAt,
     roots: value.roots.map((node, index) => parsePortableNode(node, `roots[${index}]`))
   };
+}
+
+function parseChromeTabOutlinerTree(payload: unknown[]): ImportTree {
+  const records = payload.flatMap((entry, index) => parseChromeTabOutlinerRecord(entry, index));
+  records.sort((left, right) => comparePaths(left.path, right.path));
+
+  const recordsByPath = new Map<string, ChromeTabOutlinerRecord>();
+  for (const record of records) {
+    const key = chromePathKey(record.path);
+    if (recordsByPath.has(key)) {
+      throw invalidChromeTabOutlinerTree(`duplicate path ${formatChromePath(record.path)}`);
+    }
+    recordsByPath.set(key, record);
+  }
+
+  const roots: ChromeTabOutlinerRecord[] = [];
+  for (const record of records) {
+    const parent = nearestChromeTabOutlinerParent(recordsByPath, record.path);
+    if (parent) {
+      parent.children.push(record);
+    } else {
+      roots.push(record);
+    }
+  }
+
+  return {
+    roots: roots.flatMap((root) => portableNodesFromChromeTabOutlinerRecord(root)),
+    importGroupTitle: CHROME_TAB_OUTLINER_IMPORT_GROUP_TITLE
+  };
+}
+
+function parseChromeTabOutlinerRecord(
+  entry: unknown,
+  index: number
+): ChromeTabOutlinerRecord[] {
+  if (!Array.isArray(entry)) {
+    if (isRecord(entry)) {
+      return [];
+    }
+    throw invalidChromeTabOutlinerTree(`entry[${index}] must be an object marker or node record`);
+  }
+
+  if (entry[0] !== CHROME_TAB_OUTLINER_NODE_RECORD_TYPE) {
+    throw invalidChromeTabOutlinerTree(`entry[${index}] has unsupported record type`);
+  }
+
+  return [
+    {
+      payload: requireChromeRecord(entry[1], `entry[${index}][1]`),
+      path: parseChromePath(entry[2], `entry[${index}][2]`),
+      children: []
+    }
+  ];
+}
+
+function parseChromePath(payload: unknown, path: string): number[] {
+  if (!Array.isArray(payload)) {
+    throw invalidChromeTabOutlinerTree(`${path} must be an array path`);
+  }
+  if (payload.length === 0) {
+    throw invalidChromeTabOutlinerTree(`${path} must not be empty`);
+  }
+
+  return payload.map((part, index) => {
+    if (!Number.isInteger(part) || part < 0) {
+      throw invalidChromeTabOutlinerTree(`${path}[${index}] must be a non-negative integer`);
+    }
+    return part;
+  });
+}
+
+function nearestChromeTabOutlinerParent(
+  recordsByPath: Map<string, ChromeTabOutlinerRecord>,
+  path: number[]
+): ChromeTabOutlinerRecord | undefined {
+  for (let length = path.length - 1; length > 0; length -= 1) {
+    const parent = recordsByPath.get(chromePathKey(path.slice(0, length)));
+    if (parent) {
+      return parent;
+    }
+  }
+  return undefined;
+}
+
+function portableNodesFromChromeTabOutlinerRecord(record: ChromeTabOutlinerRecord): PortableTreeNode[] {
+  const payload = record.payload;
+  const data = chromeData(payload);
+  const marks = chromeMarks(payload);
+  const children = record.children.flatMap((child) => portableNodesFromChromeTabOutlinerRecord(child));
+  const url = optionalString(data.url);
+  const favIconUrl = optionalString(data.favIconUrl);
+  const title = chromeNodeTitle(payload, data, marks, url);
+
+  if (url) {
+    if (isChromeTabOutlinerPage(url, title)) {
+      return children;
+    }
+
+    const node: PortableTreeNode = {
+      kind: "tab",
+      title,
+      url,
+      children
+    };
+    if (favIconUrl) {
+      node.favIconUrl = favIconUrl;
+    }
+    return [node];
+  }
+
+  if (isChromeContainerRecord(payload) || children.length > 0) {
+    return [
+      {
+        kind: "window",
+        title,
+        children
+      }
+    ];
+  }
+
+  return children;
+}
+
+function chromeNodeTitle(
+  payload: Record<string, unknown>,
+  data: Record<string, unknown>,
+  marks: Record<string, unknown>,
+  url: string | undefined
+): string {
+  return (
+    normalizeImportedGroupTitle(optionalString(marks.customTitle) ?? "") ??
+    normalizeImportedGroupTitle(optionalString(data.title) ?? "") ??
+    normalizeImportedGroupTitle(optionalString(payload.title) ?? "") ??
+    url ??
+    IMPORT_GROUP_TITLE
+  );
+}
+
+function isChromeContainerRecord(payload: Record<string, unknown>): boolean {
+  return payload.type === "savedwin" || payload.type === "win" || payload.type === "group";
+}
+
+function isChromeTabOutlinerPage(url: string, title: string): boolean {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "chrome-extension:") {
+      return false;
+    }
+
+    const normalizedTitle = title.toLocaleLowerCase();
+    return (
+      normalizedTitle.includes("tabs outliner") ||
+      parsed.pathname.endsWith("/activesessionview.html") ||
+      parsed.pathname.endsWith("/options.html")
+    );
+  } catch {
+    return false;
+  }
+}
+
+function chromeData(payload: Record<string, unknown>): Record<string, unknown> {
+  if (!("data" in payload)) {
+    return {};
+  }
+  return requireChromeRecord(payload.data, "node.data");
+}
+
+function chromeMarks(payload: Record<string, unknown>): Record<string, unknown> {
+  if (!("marks" in payload)) {
+    return {};
+  }
+  return requireChromeRecord(payload.marks, "node.marks");
+}
+
+function comparePaths(left: number[], right: number[]): number {
+  const sharedLength = Math.min(left.length, right.length);
+  for (let index = 0; index < sharedLength; index += 1) {
+    const leftPart = left[index]!;
+    const rightPart = right[index]!;
+    if (leftPart !== rightPart) {
+      return leftPart - rightPart;
+    }
+  }
+  return left.length - right.length;
+}
+
+function chromePathKey(path: number[]): string {
+  return path.join("/");
+}
+
+function formatChromePath(path: number[]): string {
+  return `[${path.join(",")}]`;
 }
 
 function parsePortableNode(payload: unknown, path: string): PortableTreeNode {
@@ -234,15 +447,34 @@ function parsePortableNode(payload: unknown, path: string): PortableTreeNode {
   return node;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
 function requireRecord(value: unknown, path: string): Record<string, unknown> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
+  if (!isRecord(value)) {
     throw invalidPortableTree(`${path} must be an object`);
   }
-  return value as Record<string, unknown>;
+  return value;
+}
+
+function requireChromeRecord(value: unknown, path: string): Record<string, unknown> {
+  if (!isRecord(value)) {
+    throw invalidChromeTabOutlinerTree(`${path} must be an object`);
+  }
+  return value;
+}
+
+function optionalString(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
 }
 
 function invalidPortableTree(message: string): Error {
   return new Error(`Invalid portable tree: ${message}`);
+}
+
+function invalidChromeTabOutlinerTree(message: string): Error {
+  return new Error(`Invalid Chrome Tab Outliner tree: ${message}`);
 }
 
 function nextPortableNodeId(kind: OutlineNodeKind, context: AppendContext): NodeId {
