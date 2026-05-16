@@ -102,6 +102,18 @@ describe("portable tree files", () => {
     expect(exported.roots[0]?.title).toBe("Research");
   });
 
+  it("exports a 50k-node deep tree without recursive stack overflow", () => {
+    const state = deepOutlineState(50_000);
+
+    const exported = exportPortableTree(state, { now: 3000 });
+
+    let current = exported.roots[0];
+    for (let index = 1; index <= 50_000; index += 1) {
+      current = current?.children[0];
+    }
+    expect(current?.title).toBe("Leaf");
+  });
+
   it("omits the outliner sidebar page from exports", () => {
     const state = bootstrapFromWindows([
       {
@@ -658,4 +670,48 @@ function nodeByTitle(state: OutlineState, title: string): OutlineNode {
     throw new Error(`Missing node with title: ${title}`);
   }
   return node;
+}
+
+function deepOutlineState(depth: number): OutlineState {
+  const root: OutlineNode = {
+    id: "window:deep",
+    kind: "window",
+    status: "closed",
+    childIds: ["tab:1"],
+    title: "Deep",
+    collapsed: false,
+    createdAt: 1,
+    updatedAt: 1,
+    closedAt: 1
+  };
+  const nodes: Record<string, OutlineNode> = {
+    [root.id]: root
+  };
+
+  for (let index = 1; index <= depth; index += 1) {
+    const id = `tab:${index}`;
+    nodes[id] = {
+      id,
+      kind: "tab",
+      status: "closed",
+      parentId: index === 1 ? root.id : `tab:${index - 1}`,
+      childIds: index === depth ? [] : [`tab:${index + 1}`],
+      title: index === depth ? "Leaf" : `Node ${index}`,
+      url: `https://deep.example/${index}`,
+      collapsed: false,
+      createdAt: 1,
+      updatedAt: 1,
+      closedAt: 1,
+      restore: {
+        url: `https://deep.example/${index}`,
+        title: index === depth ? "Leaf" : `Node ${index}`
+      }
+    };
+  }
+
+  return {
+    version: 1,
+    rootIds: [root.id],
+    nodes
+  };
 }

@@ -32,6 +32,10 @@ describe("findActiveTabNodeId", () => {
 
     expect(findActiveTabNodeId(state)).toBe("tab:child");
   });
+
+  it("finds an active tab in a 50k-node deep tree without recursive stack overflow", () => {
+    expect(findActiveTabNodeId(deepActiveState(50_000))).toBe("tab:50000");
+  });
 });
 
 describe("observeActiveTabScrollTarget", () => {
@@ -102,5 +106,26 @@ function tabNode(
     createdAt: 1,
     updatedAt: 1,
     live: { tabId: Number(id.replace(/\D/g, "")) || 1, windowId: 1 }
+  };
+}
+
+function deepActiveState(depth: number): OutlineState {
+  const root = windowNode("window:1", ["tab:1"], { active: true });
+  const nodes: Record<NodeId, OutlineNode> = {
+    [root.id]: root
+  };
+
+  for (let index = 1; index <= depth; index += 1) {
+    const id = `tab:${index}`;
+    nodes[id] = tabNode(id, index === 1 ? root.id : `tab:${index - 1}`, {
+      active: index === depth,
+      childIds: index === depth ? [] : [`tab:${index + 1}`]
+    });
+  }
+
+  return {
+    version: 1,
+    rootIds: [root.id],
+    nodes
   };
 }

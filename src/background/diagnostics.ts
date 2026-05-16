@@ -47,26 +47,33 @@ export function computeDiagnostics(state: OutlineState, runtimeWindows: RuntimeW
 
 function countVisibleLiveTabs(state: OutlineState): number {
   let count = 0;
-  for (const rootId of state.rootIds) {
-    count += countVisibleLiveTabsFromNode(state, rootId);
-  }
-  return count;
-}
+  const visited = new Set<NodeId>();
+  const stack = [...state.rootIds].reverse();
 
-function countVisibleLiveTabsFromNode(state: OutlineState, nodeId: NodeId): number {
-  const node = state.nodes[nodeId];
-  if (!node) {
-    return 0;
+  while (stack.length > 0) {
+    const nodeId = stack.pop()!;
+    if (visited.has(nodeId)) {
+      continue;
+    }
+    visited.add(nodeId);
+
+    const node = state.nodes[nodeId];
+    if (!node) {
+      continue;
+    }
+
+    if (isLiveTab(node)) {
+      count += 1;
+    }
+    if (node.collapsed) {
+      continue;
+    }
+
+    for (let index = node.childIds.length - 1; index >= 0; index -= 1) {
+      stack.push(node.childIds[index]!);
+    }
   }
 
-  let count = isLiveTab(node) ? 1 : 0;
-  if (node.collapsed) {
-    return count;
-  }
-
-  for (const childId of node.childIds) {
-    count += countVisibleLiveTabsFromNode(state, childId);
-  }
   return count;
 }
 

@@ -9,10 +9,32 @@ export function createActiveTabScrollTracker(): ActiveTabScrollTracker {
 }
 
 export function findActiveTabNodeId(state: OutlineState): NodeId | undefined {
-  for (const rootId of state.rootIds) {
-    const activeNodeId = findActiveTabInSubtree(state, rootId, false);
-    if (activeNodeId) {
-      return activeNodeId;
+  const visited = new Set<NodeId>();
+  const stack: Array<{ nodeId: NodeId; insideActiveWindow: boolean }> = [];
+
+  for (let index = state.rootIds.length - 1; index >= 0; index -= 1) {
+    stack.push({ nodeId: state.rootIds[index]!, insideActiveWindow: false });
+  }
+
+  while (stack.length > 0) {
+    const entry = stack.pop()!;
+    if (visited.has(entry.nodeId)) {
+      continue;
+    }
+    visited.add(entry.nodeId);
+
+    const node = state.nodes[entry.nodeId];
+    if (!node) {
+      continue;
+    }
+
+    if (isRenderedActiveTab(node, entry.insideActiveWindow)) {
+      return node.id;
+    }
+
+    const childInsideActiveWindow = entry.insideActiveWindow || isActiveWindow(node);
+    for (let index = node.childIds.length - 1; index >= 0; index -= 1) {
+      stack.push({ nodeId: node.childIds[index]!, insideActiveWindow: childInsideActiveWindow });
     }
   }
 
@@ -44,31 +66,6 @@ export function observeActiveTabScrollTarget(
   }
 
   return activeNodeId;
-}
-
-function findActiveTabInSubtree(
-  state: OutlineState,
-  nodeId: NodeId,
-  insideActiveWindow: boolean
-): NodeId | undefined {
-  const node = state.nodes[nodeId];
-  if (!node) {
-    return undefined;
-  }
-
-  if (isRenderedActiveTab(node, insideActiveWindow)) {
-    return node.id;
-  }
-
-  const childInsideActiveWindow = insideActiveWindow || isActiveWindow(node);
-  for (const childId of node.childIds) {
-    const activeNodeId = findActiveTabInSubtree(state, childId, childInsideActiveWindow);
-    if (activeNodeId) {
-      return activeNodeId;
-    }
-  }
-
-  return undefined;
 }
 
 function isActiveWindow(node: OutlineNode): boolean {

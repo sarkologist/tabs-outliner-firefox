@@ -21,6 +21,10 @@
 }
 
 body {
+  display: flex;
+  height: 100vh;
+  overflow: hidden;
+  flex-direction: column;
   min-width: 240px;
   margin: 0;
   color: CanvasText;
@@ -122,6 +126,9 @@ h1 {
 }
 
 main {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
   padding: 3px 0 10px;
 }
 
@@ -143,7 +150,15 @@ main.root-drop-target {
 }
 
 .tree {
+  position: relative;
   font-size: var(--outline-font-size);
+}
+
+.node {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
 }
 
 .node-row {
@@ -207,7 +222,10 @@ main.root-drop-target {
 .drop-marker {
   --drop-color: color-mix(in srgb, Highlight 78%, CanvasText 12%);
 
-  position: relative;
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
   height: var(--drop-marker-height);
   margin: 0;
   padding: 0 var(--node-row-padding-x) 0

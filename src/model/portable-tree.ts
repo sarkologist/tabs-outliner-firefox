@@ -98,10 +98,37 @@ export function appendPortableTree(
 }
 
 function portableNodesFromOutline(state: OutlineState, node: OutlineNode): PortableTreeNode[] {
-  const children = node.childIds.flatMap((childId) => {
-    const child = state.nodes[childId];
-    return child ? portableNodesFromOutline(state, child) : [];
-  });
+  const output = new Map<NodeId, PortableTreeNode[]>();
+  const expanded = new Set<NodeId>();
+  const stack: Array<{ nodeId: NodeId; exiting: boolean }> = [{ nodeId: node.id, exiting: false }];
+
+  while (stack.length > 0) {
+    const frame = stack.pop()!;
+    const current = state.nodes[frame.nodeId];
+    if (!current) {
+      continue;
+    }
+
+    if (frame.exiting) {
+      const children = current.childIds.flatMap((childId) => output.get(childId) ?? []);
+      output.set(current.id, portableNodesFromNode(current, children));
+      continue;
+    }
+
+    if (expanded.has(current.id)) {
+      continue;
+    }
+    expanded.add(current.id);
+    stack.push({ nodeId: current.id, exiting: true });
+    for (let index = current.childIds.length - 1; index >= 0; index -= 1) {
+      stack.push({ nodeId: current.childIds[index]!, exiting: false });
+    }
+  }
+
+  return output.get(node.id) ?? [];
+}
+
+function portableNodesFromNode(node: OutlineNode, children: PortableTreeNode[]): PortableTreeNode[] {
   if (isOutlinerSidebarNode(node)) {
     return children;
   }
@@ -150,6 +177,34 @@ function appendPortableNode(
   parentId: NodeId | undefined,
   context: AppendContext
 ): NodeId {
+  const nodeId = createPortableOutlineNode(state, portable, parentId, context);
+  const stack: Array<{ portable: PortableTreeNode; nodeId: NodeId; nextChildIndex: number }> = [
+    { portable, nodeId, nextChildIndex: 0 }
+  ];
+
+  while (stack.length > 0) {
+    const frame = stack[stack.length - 1]!;
+    if (frame.nextChildIndex >= frame.portable.children.length) {
+      stack.pop();
+      continue;
+    }
+
+    const child = frame.portable.children[frame.nextChildIndex]!;
+    frame.nextChildIndex += 1;
+    const childId = createPortableOutlineNode(state, child, frame.nodeId, context);
+    state.nodes[frame.nodeId]?.childIds.push(childId);
+    stack.push({ portable: child, nodeId: childId, nextChildIndex: 0 });
+  }
+
+  return nodeId;
+}
+
+function createPortableOutlineNode(
+  state: OutlineState,
+  portable: PortableTreeNode,
+  parentId: NodeId | undefined,
+  context: AppendContext
+): NodeId {
   const nodeId = nextPortableNodeId(portable.kind, context);
   const importedGroupTitle = portable.kind === "window" ? normalizeImportedGroupTitle(portable.title) : undefined;
   const node: OutlineNode = {
@@ -177,10 +232,6 @@ function appendPortableNode(
       : {})
   };
   state.nodes[nodeId] = node;
-
-  for (const child of portable.children) {
-    node.childIds.push(appendPortableNode(state, child, nodeId, context));
-  }
 
   return nodeId;
 }

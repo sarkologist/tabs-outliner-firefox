@@ -10,7 +10,12 @@ import {
   dropPlacementForRoot,
   type DropPlacement
 } from "./drop-target.js";
-import { computeOutlineSearch, type OutlineSearchResult } from "./search.js";
+import {
+  buildVisibleTreeProjection,
+  calculateVirtualRange,
+  type VisibleTreeProjection,
+  type VisibleTreeRow
+} from "./visible-tree.js";
 import {
   DEFAULT_ZOOM,
   ZOOM_STORAGE_KEY,
@@ -43,10 +48,15 @@ let currentSearchQuery = "";
 let diagnosticsNoticeUntil = 0;
 let diagnosticsNoticeTimer: number | undefined;
 let activeRename: RenameSession | undefined;
+let currentProjection: VisibleTreeProjection | undefined;
+let projectionState: OutlineState | undefined;
+let projectionQuery: string | undefined;
+let scheduledVirtualRender = false;
 const activeTabScrollTracker = createActiveTabScrollTracker();
 
 const WHEEL_ZOOM_THRESHOLD_PX = 80;
 const DIAGNOSTICS_NOTICE_MS = 4000;
+const VIRTUAL_OVERSCAN_ROWS = 32;
 
 type RenameSession = {
   nodeId: NodeId;
@@ -57,13 +67,12 @@ const dropMarker = document.createElement("li");
 dropMarker.className = "drop-marker";
 dropMarker.setAttribute("aria-hidden", "true");
 
-const dropPreviewChildren = document.createElement("ol");
-dropPreviewChildren.className = "children drop-preview-children";
-
 applyZoom(currentZoom);
 registerZoomShortcuts();
 registerSearchControls();
 registerPortableTreeControls();
+registerTreeControls();
+registerVirtualViewport();
 void loadZoomPreference();
 void loadState();
 
@@ -236,6 +245,33 @@ function registerPortableTreeControls(): void {
   });
 }
 
+function registerTreeControls(): void {
+  tree?.setAttribute("role", "tree");
+  tree?.addEventListener("click", handleTreeClick);
+  tree?.addEventListener("dragstart", handleTreeDragStart);
+  tree?.addEventListener("dragover", handleTreeDragOver);
+  tree?.addEventListener("drop", handleTreeDrop);
+  tree?.addEventListener("dragend", () => {
+    clearDragState();
+  });
+  tree?.addEventListener("input", handleTreeInput);
+  tree?.addEventListener("keydown", handleTreeKeydown);
+  tree?.addEventListener("focusout", handleTreeFocusOut);
+}
+
+function registerVirtualViewport(): void {
+  rootDropSurface?.addEventListener(
+    "scroll",
+    () => {
+      scheduleVirtualRender();
+    },
+    { passive: true }
+  );
+  window.addEventListener("resize", () => {
+    scheduleVirtualRender();
+  });
+}
+
 function exportCurrentTree(): void {
   if (!currentState) {
     showDiagnosticsNotice("Export unavailable until loaded", { error: true });
@@ -358,6 +394,7 @@ function setZoom(zoom: number, options: { persist?: boolean } = {}): void {
 
   currentZoom = nextZoom;
   applyZoom(currentZoom);
+  renderVirtualRows();
 
   if (options.persist ?? true) {
     void saveZoomPreference(currentZoom);
@@ -381,9 +418,11 @@ function render(): void {
   }
 
   clearDropPreview();
-  tree.textContent = "";
   const state = currentState;
   if (!state) {
+    currentProjection = undefined;
+    tree.textContent = "";
+    tree.style.height = "0px";
     stateCount.textContent = "Loading";
     return;
   }
@@ -394,41 +433,19 @@ function render(): void {
     }
   }
 
-  const nodes = Object.values(state.nodes);
-  const closedCount = nodes.filter((node) => node.status === "closed").length;
-  const search = renderSearchState(computeOutlineSearch(state, currentSearchQuery));
-  stateCount.textContent = search.isActive
-    ? `${search.matchCount} ${pluralize(search.matchCount, "match")} / ${nodes.length} items`
-    : `${nodes.length} items / ${closedCount} saved`;
+  const projection = visibleProjectionFor(state, currentSearchQuery);
+  currentProjection = projection;
+  stateCount.textContent = projection.isSearchActive
+    ? `${projection.matchCount} ${pluralize(projection.matchCount, "match")} / ${projection.nodeCount} items`
+    : `${projection.nodeCount} items / ${projection.closedCount} saved`;
 
   if (empty) {
-    empty.textContent = search.isActive ? "No matching tabs." : "No tabs captured yet.";
-    empty.hidden = search.isActive ? search.visibleNodeIds.length > 0 : nodes.length > 0;
+    empty.textContent = projection.isSearchActive ? "No matching tabs." : "No tabs captured yet.";
+    empty.hidden = projection.isSearchActive ? projection.rows.length > 0 : projection.nodeCount > 0;
   }
 
-  for (const rootId of state.rootIds) {
-    const root = state.nodes[rootId];
-    if (root && shouldRenderNode(search, root.id)) {
-      tree.append(renderNode(state, root, 0, false, search));
-    }
-  }
-
-  scrollToObservedActiveTab(state);
-}
-
-type RenderSearchState = OutlineSearchResult & {
-  visibleNodeIdSet: Set<NodeId>;
-};
-
-function renderSearchState(search: OutlineSearchResult): RenderSearchState {
-  return {
-    ...search,
-    visibleNodeIdSet: new Set(search.visibleNodeIds)
-  };
-}
-
-function shouldRenderNode(search: RenderSearchState, nodeId: NodeId): boolean {
-  return !search.isActive || search.visibleNodeIdSet.has(nodeId);
+  renderVirtualRows();
+  scrollToObservedActiveTab(state, projection);
 }
 
 function canFlattenSubtree(state: OutlineState, node: OutlineNode): boolean {
@@ -439,86 +456,102 @@ function pluralize(count: number, noun: string): string {
   return count === 1 ? noun : `${noun}s`;
 }
 
-function renderNode(
-  state: OutlineState,
-  node: OutlineNode,
-  depth: number,
-  insideActiveWindow: boolean,
-  search: RenderSearchState
-): HTMLElement {
+function visibleProjectionFor(state: OutlineState, query: string): VisibleTreeProjection {
+  if (projectionState === state && projectionQuery === query && currentProjection) {
+    return currentProjection;
+  }
+
+  projectionState = state;
+  projectionQuery = query;
+  currentProjection = buildVisibleTreeProjection(state, query);
+  return currentProjection;
+}
+
+function scheduleVirtualRender(): void {
+  if (scheduledVirtualRender) {
+    return;
+  }
+
+  scheduledVirtualRender = true;
+  window.requestAnimationFrame(() => {
+    scheduledVirtualRender = false;
+    renderVirtualRows();
+  });
+}
+
+function renderVirtualRows(): void {
+  if (!tree || !currentProjection || !currentState) {
+    return;
+  }
+
+  const rowHeight = currentRowHeight();
+  const range = calculateVirtualRange(
+    currentProjection.rows.length,
+    rootDropSurface?.scrollTop ?? 0,
+    rootDropSurface?.clientHeight ?? window.innerHeight,
+    rowHeight,
+    VIRTUAL_OVERSCAN_ROWS
+  );
+
+  activeDropPlacement = undefined;
+  removeDropPreviewElements();
+  tree.style.height = `${range.totalHeight}px`;
+  tree.textContent = "";
+
+  const fragment = document.createDocumentFragment();
+  for (let index = range.start; index < range.end; index += 1) {
+    const row = currentProjection.rows[index];
+    if (row) {
+      fragment.append(renderRow(currentState, row, rowHeight));
+    }
+  }
+  tree.append(fragment);
+}
+
+function currentRowHeight(): number {
+  const value = window.getComputedStyle(document.documentElement).getPropertyValue("--node-row-height");
+  const parsed = Number.parseFloat(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 18;
+}
+
+function renderRow(state: OutlineState, rowInfo: VisibleTreeRow, rowHeight: number): HTMLElement {
+  const node = state.nodes[rowInfo.nodeId];
+  if (!node) {
+    return document.createElement("li");
+  }
+
   const isActiveWindow = node.kind === "window" && Boolean(node.active);
-  const isActiveTab = node.kind === "tab" && Boolean(node.active) && insideActiveWindow;
-  const isSearchMatch = search.isActive && search.matchingNodeIds.has(node.id);
-  const isSearchPath = search.isActive && !isSearchMatch;
+  const isActiveTab = node.kind === "tab" && Boolean(node.active) && rowInfo.insideActiveWindow;
   const isRenaming = activeRename?.nodeId === node.id && node.kind === "window";
   const item = document.createElement("li");
   item.className = `node node-${node.kind} is-${node.status}${isActiveWindow || isActiveTab ? " is-active" : ""}${
-    isSearchMatch ? " is-search-match" : ""
-  }${isSearchPath ? " is-search-path" : ""}`;
+    rowInfo.isSearchMatch ? " is-search-match" : ""
+  }${rowInfo.isSearchPath ? " is-search-path" : ""}`;
   item.dataset.nodeId = node.id;
+  item.dataset.rowIndex = String(rowInfo.index);
+  item.setAttribute("role", "treeitem");
+  item.setAttribute("aria-level", String(rowInfo.depth + 1));
+  if (rowInfo.childCount > 0) {
+    item.setAttribute("aria-expanded", String(rowInfo.expanded));
+  }
+  item.style.transform = `translateY(${rowInfo.index * rowHeight}px)`;
 
   const row = document.createElement("div");
   row.className = "node-row";
   row.draggable = !isRenaming;
-  row.style.setProperty("--depth", String(depth));
-  row.addEventListener("dragstart", (event) => {
-    if (isRenaming) {
-      event.preventDefault();
-      return;
-    }
-    draggedNodeId = node.id;
-    event.dataTransfer?.setData("text/plain", node.id);
-    event.dataTransfer?.setDragImage(row, 12, 12);
-  });
-  row.addEventListener("dragover", (event) => {
-    const placement = dropPlacementForRowEvent(state, node.id, event.clientY, row);
-    if (!placement) {
-      clearDropPreview();
-      return;
-    }
-
-    event.preventDefault();
-    event.stopPropagation();
-    showDropPlacement(placement);
-  });
-  row.addEventListener("drop", (event) => {
-    const sourceId = draggedNodeId;
-    const placement =
-      sourceId &&
-      activeDropPlacement?.kind === "node" &&
-      activeDropPlacement.sourceId === sourceId &&
-      activeDropPlacement.targetId === node.id
-        ? activeDropPlacement
-        : dropPlacementForRowEvent(state, node.id, event.clientY, row);
-    if (!placement) {
-      clearDragState();
-      return;
-    }
-
-    event.preventDefault();
-    event.stopPropagation();
-    performDrop(placement);
-  });
-  row.addEventListener("dragend", () => {
-    clearDragState();
-  });
+  row.style.setProperty("--depth", String(rowInfo.depth));
 
   const twisty = document.createElement("button");
-  const childIds = search.isActive ? node.childIds.filter((childId) => shouldRenderNode(search, childId)) : node.childIds;
-  const searchRevealsCollapsedChildren = search.isActive && node.collapsed && childIds.length > 0;
   twisty.className = "icon-button twisty";
   twisty.type = "button";
-  twisty.title = searchRevealsCollapsedChildren
+  twisty.dataset.action = "toggle";
+  twisty.title = rowInfo.searchRevealsCollapsedChildren
     ? "Collapsed; search is revealing matches"
     : node.collapsed
       ? "Expand"
       : "Collapse";
-  twisty.textContent = node.childIds.length ? (node.collapsed ? "+" : "-") : "";
-  twisty.disabled = node.childIds.length === 0;
-  twisty.addEventListener("click", (event) => {
-    event.stopPropagation();
-    void runAndRender({ type: "toggleCollapsed", nodeId: node.id });
-  });
+  twisty.textContent = rowInfo.childCount ? (node.collapsed ? "+" : "-") : "";
+  twisty.disabled = rowInfo.childCount === 0;
   row.append(twisty);
 
   const titleText = node.title || "Untitled";
@@ -530,13 +563,7 @@ function renderNode(
     label.type = "button";
     label.title = node.url ?? titleText;
     label.ariaLabel = node.url ? `${titleText} - ${node.url}` : titleText;
-    label.addEventListener("click", () => {
-      if (node.status === "live") {
-        void sendCommand({ type: "focusNode", nodeId: node.id });
-      } else {
-        void runAndRender({ type: "restoreNode", nodeId: node.id });
-      }
-    });
+    label.dataset.action = "focus-or-restore";
 
     const title = document.createElement("span");
     title.className = "node-title";
@@ -549,46 +576,175 @@ function renderNode(
   const actions = document.createElement("span");
   actions.className = "node-actions";
 
-  actions.append(actionButton(node.status === "live" ? "Close" : "Restore", () => {
-    void runAndRender({
-      type: node.status === "live" ? "closeNode" : "restoreNode",
-      nodeId: node.id
-    });
-  }));
+  actions.append(actionButton(node.status === "live" ? "Close" : "Restore", "close-or-restore"));
 
   if (canFlattenSubtree(state, node)) {
-    actions.append(actionButton("Flatten", () => {
-      void runAndRender({ type: "flattenSubtree", nodeId: node.id });
-    }));
+    actions.append(actionButton("Flatten", "flatten"));
   }
 
   if (node.kind === "window") {
-    actions.append(actionButton("Rename", () => {
-      startRenameGroup(node);
-    }, "N"));
+    actions.append(actionButton("Rename", "rename", "N"));
   }
 
-  actions.append(actionButton("Delete", () => {
-    void runAndRender({ type: "deleteNode", nodeId: node.id });
-  }));
+  actions.append(actionButton("Delete", "delete"));
   row.append(actions);
 
   item.append(row);
 
-  if ((search.isActive || !node.collapsed) && childIds.length > 0) {
-    const children = document.createElement("ol");
-    children.className = "children";
-    const childInsideActiveWindow = insideActiveWindow || isActiveWindow;
-    for (const childId of childIds) {
-      const child = state.nodes[childId];
-      if (child) {
-        children.append(renderNode(state, child, depth + 1, childInsideActiveWindow, search));
-      }
-    }
-    item.append(children);
+  return item;
+}
+
+function handleTreeClick(event: MouseEvent): void {
+  const button = event.target instanceof Element ? event.target.closest<HTMLButtonElement>("button[data-action]") : null;
+  if (!button) {
+    return;
   }
 
-  return item;
+  const state = currentState;
+  const item = nodeItemForTarget(button);
+  const nodeId = item?.dataset.nodeId;
+  const node = nodeId ? state?.nodes[nodeId] : undefined;
+  if (!state || !node) {
+    return;
+  }
+
+  event.stopPropagation();
+  const action = button.dataset.action;
+  if (action === "toggle") {
+    void runAndRender({ type: "toggleCollapsed", nodeId: node.id });
+    return;
+  }
+
+  if (action === "focus-or-restore") {
+    if (node.status === "live") {
+      void sendCommand({ type: "focusNode", nodeId: node.id });
+    } else {
+      void runAndRender({ type: "restoreNode", nodeId: node.id });
+    }
+    return;
+  }
+
+  if (action === "close-or-restore") {
+    void runAndRender({
+      type: node.status === "live" ? "closeNode" : "restoreNode",
+      nodeId: node.id
+    });
+    return;
+  }
+
+  if (action === "flatten") {
+    void runAndRender({ type: "flattenSubtree", nodeId: node.id });
+    return;
+  }
+
+  if (action === "rename") {
+    startRenameGroup(node);
+    return;
+  }
+
+  if (action === "delete") {
+    void runAndRender({ type: "deleteNode", nodeId: node.id });
+  }
+}
+
+function handleTreeDragStart(event: DragEvent): void {
+  const state = currentState;
+  const row = rowForEventTarget(event.target);
+  const item = row ? nodeItemForTarget(row) : undefined;
+  const nodeId = item?.dataset.nodeId;
+  if (!state || !row || !nodeId || activeRename?.nodeId === nodeId) {
+    event.preventDefault();
+    return;
+  }
+
+  draggedNodeId = nodeId;
+  event.dataTransfer?.setData("text/plain", nodeId);
+  event.dataTransfer?.setDragImage(row, 12, 12);
+}
+
+function handleTreeDragOver(event: DragEvent): void {
+  const state = currentState;
+  const row = rowForEventTarget(event.target);
+  const item = row ? nodeItemForTarget(row) : undefined;
+  const targetId = item?.dataset.nodeId;
+  if (!state || !row || !targetId) {
+    return;
+  }
+
+  const placement = dropPlacementForRowEvent(state, targetId, event.clientY, row);
+  if (!placement) {
+    clearDropPreview();
+    return;
+  }
+
+  event.preventDefault();
+  event.stopPropagation();
+  showDropPlacement(placement);
+}
+
+function handleTreeDrop(event: DragEvent): void {
+  const state = currentState;
+  const row = rowForEventTarget(event.target);
+  const item = row ? nodeItemForTarget(row) : undefined;
+  const targetId = item?.dataset.nodeId;
+  const sourceId = draggedNodeId;
+  if (!state || !row || !targetId || !sourceId) {
+    clearDragState();
+    return;
+  }
+
+  const placement =
+    activeDropPlacement?.kind === "node" &&
+    activeDropPlacement.sourceId === sourceId &&
+    activeDropPlacement.targetId === targetId
+      ? activeDropPlacement
+      : dropPlacementForRowEvent(state, targetId, event.clientY, row);
+  if (!placement) {
+    clearDragState();
+    return;
+  }
+
+  event.preventDefault();
+  event.stopPropagation();
+  performDrop(placement);
+}
+
+function handleTreeInput(event: Event): void {
+  const input = event.target instanceof HTMLInputElement ? event.target : undefined;
+  if (input?.classList.contains("node-rename-input") && input.dataset.nodeId) {
+    updateRenameDraft(input.dataset.nodeId, input.value);
+  }
+}
+
+function handleTreeKeydown(event: KeyboardEvent): void {
+  const input = event.target instanceof HTMLInputElement ? event.target : undefined;
+  if (!input?.classList.contains("node-rename-input") || !input.dataset.nodeId) {
+    return;
+  }
+
+  if (event.key === "Enter") {
+    event.preventDefault();
+    event.stopPropagation();
+    void commitRenameGroup(input.dataset.nodeId, input.value);
+    return;
+  }
+
+  if (event.key === "Escape") {
+    event.preventDefault();
+    event.stopPropagation();
+    cancelRenameGroup(input.dataset.nodeId);
+  }
+}
+
+function handleTreeFocusOut(event: FocusEvent): void {
+  const input = event.target instanceof HTMLInputElement ? event.target : undefined;
+  if (
+    input?.classList.contains("node-rename-input") &&
+    input.dataset.nodeId &&
+    activeRename?.nodeId === input.dataset.nodeId
+  ) {
+    void commitRenameGroup(input.dataset.nodeId, input.value);
+  }
 }
 
 function renderRenameInput(node: OutlineNode, titleText: string): HTMLInputElement {
@@ -600,31 +756,6 @@ function renderRenameInput(node: OutlineNode, titleText: string): HTMLInputEleme
   input.draggable = false;
   input.title = "Rename group";
   input.ariaLabel = `Rename ${titleText}`;
-  input.addEventListener("click", (event) => {
-    event.stopPropagation();
-  });
-  input.addEventListener("input", () => {
-    updateRenameDraft(node.id, input.value);
-  });
-  input.addEventListener("keydown", (event) => {
-    if (event.key === "Enter") {
-      event.preventDefault();
-      event.stopPropagation();
-      void commitRenameGroup(node.id, input.value);
-      return;
-    }
-
-    if (event.key === "Escape") {
-      event.preventDefault();
-      event.stopPropagation();
-      cancelRenameGroup(node.id);
-    }
-  });
-  input.addEventListener("blur", () => {
-    if (activeRename?.nodeId === node.id) {
-      void commitRenameGroup(node.id, input.value);
-    }
-  });
   return input;
 }
 
@@ -694,16 +825,13 @@ function dropPlacementForRowEvent(
   return dropPlacementForNode(state, draggedNodeId, targetId, dropModeForPointer(relativeY, rect.height));
 }
 
-function actionButton(label: string, onClick: () => void, glyph?: string): HTMLButtonElement {
+function actionButton(label: string, action: string, glyph?: string): HTMLButtonElement {
   const button = document.createElement("button");
   button.className = "icon-button action";
   button.type = "button";
   button.title = label;
   button.textContent = glyph ?? (label === "Delete" ? "x" : label[0] ?? "?");
-  button.addEventListener("click", (event) => {
-    event.stopPropagation();
-    onClick();
-  });
+  button.dataset.action = action;
   return button;
 }
 
@@ -728,26 +856,26 @@ function showDropPlacement(placement: DropPlacement): void {
     prepareDropMarker(placement.mode ? `drop-${placement.mode}` : "drop-root", 0);
     if (placement.targetId && placement.mode) {
       const targetItem = nodeItemForId(placement.targetId);
-      if (!targetItem) {
+      const targetRowIndex = targetItem ? rowIndexForItem(targetItem) : undefined;
+      if (!targetItem || typeof targetRowIndex !== "number") {
         clearDropPreview();
         return;
       }
 
-      if (placement.mode === "before") {
-        targetItem.before(dropMarker);
-      } else {
-        targetItem.after(dropMarker);
-      }
+      positionDropMarker(targetRowIndex + (placement.mode === "after" ? 1 : 0));
+      tree.append(dropMarker);
       return;
     }
 
+    positionDropMarker(currentProjection?.rows.length ?? 0);
     tree.append(dropMarker);
     return;
   }
 
   const targetItem = nodeItemForId(placement.targetId);
   const targetRow = targetItem ? rowForItem(targetItem) : undefined;
-  if (!targetItem || !targetRow) {
+  const targetRowIndex = targetItem ? rowIndexForItem(targetItem) : undefined;
+  if (!targetItem || !targetRow || typeof targetRowIndex !== "number") {
     clearDropPreview();
     return;
   }
@@ -755,26 +883,11 @@ function showDropPlacement(placement: DropPlacement): void {
   const targetDepth = Number(targetRow.style.getPropertyValue("--depth")) || 0;
   const markerDepth = placement.mode === "inside" ? targetDepth + 1 : targetDepth;
   prepareDropMarker(`drop-${placement.mode}`, markerDepth);
-
-  if (placement.mode === "before") {
-    targetItem.before(dropMarker);
-    return;
+  positionDropMarker(targetRowIndex + (placement.mode === "before" ? 0 : 1));
+  if (placement.mode === "inside") {
+    targetRow.classList.add("drop-inside-target");
   }
-
-  if (placement.mode === "after") {
-    targetItem.after(dropMarker);
-    return;
-  }
-
-  targetRow.classList.add("drop-inside-target");
-  const children = childrenForItem(targetItem);
-  if (children) {
-    children.append(dropMarker);
-    return;
-  }
-
-  dropPreviewChildren.append(dropMarker);
-  targetRow.after(dropPreviewChildren);
+  tree.append(dropMarker);
 }
 
 function prepareDropMarker(className: string, depth: number): void {
@@ -782,36 +895,78 @@ function prepareDropMarker(className: string, depth: number): void {
   dropMarker.style.setProperty("--depth", String(depth));
 }
 
+function positionDropMarker(rowIndex: number): void {
+  dropMarker.style.transform = `translateY(${Math.max(0, rowIndex) * currentRowHeight()}px)`;
+}
+
+function rowIndexForItem(item: HTMLElement): number | undefined {
+  const parsed = Number.parseInt(item.dataset.rowIndex ?? "", 10);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
 function nodeItemForId(nodeId: NodeId): HTMLElement | undefined {
   if (!tree) {
     return undefined;
   }
 
-  return Array.from(tree.querySelectorAll<HTMLElement>(".node")).find((item) => item.dataset.nodeId === nodeId);
+  const item = tree.querySelector<HTMLElement>(`.node[data-node-id="${cssEscape(nodeId)}"]`);
+  return item ?? undefined;
 }
 
-function scrollToObservedActiveTab(state: OutlineState): void {
-  const nodeId = observeActiveTabScrollTarget(activeTabScrollTracker, state, {
-    hasRenderedNode: (candidateId) => Boolean(nodeItemForId(candidateId))
-  });
+function nodeItemForTarget(target: EventTarget | null): HTMLElement | undefined {
+  if (!(target instanceof Element)) {
+    return undefined;
+  }
+
+  const item = target.closest<HTMLElement>(".node");
+  return item && tree?.contains(item) ? item : undefined;
+}
+
+function rowForEventTarget(target: EventTarget | null): HTMLElement | undefined {
+  if (!(target instanceof Element)) {
+    return undefined;
+  }
+
+  const row = target.closest<HTMLElement>(".node-row");
+  return row && tree?.contains(row) ? row : undefined;
+}
+
+function cssEscape(value: string): string {
+  return typeof CSS !== "undefined" && CSS.escape ? CSS.escape(value) : value.replaceAll('"', '\\"');
+}
+
+function scrollToObservedActiveTab(state: OutlineState, projection: VisibleTreeProjection): void {
+  const nodeId = observeActiveTabScrollTarget(activeTabScrollTracker, state);
   if (!nodeId) {
     return;
   }
 
-  window.requestAnimationFrame(() => {
-    nodeItemForId(nodeId)?.scrollIntoView({ block: "nearest", inline: "nearest" });
-  });
+  const row = projection.rows.find((candidate) => candidate.nodeId === nodeId);
+  if (!row || !rootDropSurface) {
+    return;
+  }
+
+  const rowHeight = currentRowHeight();
+  const rowTop = row.index * rowHeight;
+  const rowBottom = rowTop + rowHeight;
+  const viewportTop = rootDropSurface.scrollTop;
+  const viewportBottom = viewportTop + rootDropSurface.clientHeight;
+
+  if (rowTop < viewportTop) {
+    rootDropSurface.scrollTop = rowTop;
+    renderVirtualRows();
+    return;
+  }
+
+  if (rowBottom > viewportBottom) {
+    rootDropSurface.scrollTop = Math.max(0, rowBottom - rootDropSurface.clientHeight);
+    renderVirtualRows();
+  }
 }
 
 function rowForItem(item: HTMLElement): HTMLElement | undefined {
   const firstChild = item.firstElementChild;
   return firstChild instanceof HTMLElement && firstChild.classList.contains("node-row") ? firstChild : undefined;
-}
-
-function childrenForItem(item: HTMLElement): HTMLOListElement | undefined {
-  return Array.from(item.children).find(
-    (child): child is HTMLOListElement => child instanceof HTMLOListElement && child.classList.contains("children")
-  );
 }
 
 function performDrop(placement: DropPlacement): void {
@@ -832,7 +987,6 @@ function clearDropPreview(): void {
 
 function removeDropPreviewElements(): void {
   dropMarker.remove();
-  dropPreviewChildren.remove();
   rootDropSurface?.classList.remove("root-drop-target");
   tree
     ?.querySelectorAll<HTMLElement>(".drop-inside-target")
