@@ -238,3 +238,35 @@ Use these as starting targets, not hard promises:
 - Added `pnpm profile:tab-open -- --tabs 50000 --scenario metadata-noop-update` to keep this path measurable outside restore-specific profiles.
 - Result after `pnpm run build`: 10ms total, 0 saves, 0 broadcasts, 0ms stringify, 0 MB stringified, 50,001 nodes.
 - Current echo coverage: focus activation/window-focus echoes use active-state patches or no-op acks, close/delete remove-session echoes are command-owned, restore created-tab echoes are command-owned, and generic no-op tab metadata echoes are filtered before full reconciliation.
+
+### 2026-05-16: Generalized Command Patch Pass
+
+- Re-read the accumulated performance notes and applied the reusable rules to the remaining command paths:
+  - preserve node identity for unchanged model nodes so command patches stay small;
+  - send compact sidebar patches before full storage persistence when the changed surface is smaller than the tree;
+  - treat unchanged commands and refreshes as no-ops instead of saving/broadcasting timestamp-only churn;
+  - keep full-state broadcasts for genuinely whole-tree changes where a compact patch would be as large as the state.
+- Added `pnpm profile:command` with 50k-node scenarios for `rename-window`, `toggle-window`, `move-leaf`, `flatten-window`, `import-small`, and `refresh-noop`.
+- Targeted model-copying now covers `renameGroup`, ordinary `moveNode`, `flattenSubtreeOneLevel`, and `appendPortableTree`; empty imports now return the original state.
+- Controller/sidebar patch routing now covers:
+  - `renameGroup` and `toggleCollapsed` as `nodeStateUpdated`;
+  - smaller structural `moveNode`, `moveNodeToNewWindow`, `flattenSubtree`, and `importTree` changes as `treeStructureUpdated`;
+  - unchanged manual refresh snapshots as no-save/no-broadcast acks.
+- Baselines using `pnpm profile:command -- --tabs 50000` before this pass:
+  - `rename-window`: 165ms total, first broadcast at 94ms, 39ms full broadcast stringify, 32ms projection, 26 MB stringified.
+  - `toggle-window`: 119ms total, first broadcast at 49ms, 44ms full broadcast stringify, 26ms projection, 26 MB stringified.
+  - `move-leaf`: 240ms total, first broadcast at 169ms, 38ms full broadcast stringify, 32ms projection, 26 MB stringified.
+  - `refresh-noop`: 521ms total, first broadcast at 450ms, 1 save, 1 full broadcast, 30ms projection, 26 MB stringified.
+  - `flatten-window`: 176ms total, first broadcast at 103ms, 39ms full broadcast stringify, 34ms projection, 26 MB stringified.
+- After using `pnpm profile:command -- --tabs 50000` after `pnpm run build`:
+  - `rename-window`: 68ms total, first patch at 18ms, 1ms patch stringify, 0ms projection, 13 MB stringified.
+  - `toggle-window`: 48ms total, first patch at 0ms, 1ms patch stringify, 0ms projection after collapsing the root, 13 MB stringified.
+  - `move-leaf`: 221ms total, first patch at 139ms, 1ms patch stringify, 38ms projection rebuild, 13 MB stringified.
+  - `import-small`: 138ms total, first patch at 66ms, 0ms patch stringify, 32ms projection rebuild, 13 MB stringified.
+  - `refresh-noop`: 123ms total, 0 saves, 0 broadcasts, 0 MB stringified.
+  - `flatten-window`: 195ms total, still full-state; this 50k shape changes nearly every visible row, so the compact patch would not be smaller than the state.
+- Regression cross-checks after this pass:
+  - `pnpm profile:delete -- --tabs 50000 --target last`: 113ms total, first patch at 55ms, 0ms projection.
+  - `pnpm profile:restore -- --scenario controller-event-echo --tabs 50000 --target last --echo transient-separated`: 119ms total, first patch at 13ms, 0ms projection.
+  - `pnpm profile:focus -- --tabs 50000 --target last`: 46ms total, 0 saves, 0 full-state broadcasts.
+  - `pnpm profile:close -- --tabs 50000 --target last --order tabRemovedThenSessionChanged`: 103ms total, first patch at 55ms, 0ms projection.

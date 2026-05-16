@@ -496,12 +496,15 @@ function applyNodeStateUpdate(update: NodeStateUpdate): void {
   }
 
   let windowActiveChanged = false;
+  let collapsedChanged = false;
   for (const node of update.updatedNodes) {
+    const previous = state.nodes[node.id];
+    collapsedChanged ||= previous?.collapsed !== node.collapsed;
     state.nodes[node.id] = node;
     windowActiveChanged ||= node.kind === "window";
   }
 
-  if (!currentProjection || currentProjection.isSearchActive) {
+  if (!currentProjection || currentProjection.isSearchActive || collapsedChanged) {
     invalidateProjectionCache();
     render();
     return;
@@ -529,7 +532,7 @@ function applyNodeStateUpdate(update: NodeStateUpdate): void {
 
 function applyTreeStructureUpdate(update: TreeStructureUpdate): void {
   const state = currentState;
-  if (!state || update.deletedNodeIds.length === 0) {
+  if (!state) {
     return;
   }
 
@@ -546,6 +549,11 @@ function applyTreeStructureUpdate(update: TreeStructureUpdate): void {
   }
 
   if (!currentProjection || currentProjection.isSearchActive) {
+    invalidateProjectionCache();
+    render();
+    return;
+  }
+  if (deletedNodeIds.size === 0) {
     invalidateProjectionCache();
     render();
     return;

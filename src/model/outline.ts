@@ -320,9 +320,14 @@ export function renameGroup(state: OutlineState, nodeId: NodeId, title: string, 
     return state;
   }
 
-  const next = cloneState(state);
-  const group = requireNode(next, nodeId);
   const customTitle = normalizeCustomGroupTitle(title);
+  const nextTitle = customTitle ?? windowTitle();
+  if (node.customTitle === customTitle && node.title === nextTitle) {
+    return state;
+  }
+
+  const next = copyStateForNodeTableMutation(state);
+  const group = cloneNodeForMutation(next, nodeId);
   if (customTitle) {
     group.customTitle = customTitle;
   } else {
@@ -431,20 +436,29 @@ export function moveNode(state: OutlineState, nodeId: NodeId, target: MoveTarget
     throw new Error(`Cannot move missing node: ${nodeId}`);
   }
 
-  if (target.parentId && isDescendant(state, target.parentId, nodeId)) {
+  if (target.parentId && (target.parentId === nodeId || isDescendant(state, target.parentId, nodeId))) {
     throw new Error("Cannot move a node into its own descendant");
   }
 
-  const next = cloneState(state);
-  const moving = requireNode(next, nodeId);
-  const oldSiblings = moving.parentId
-    ? requireNode(next, moving.parentId).childIds
-    : next.rootIds;
+  const currentSiblings = node.parentId ? requireNode(state, node.parentId).childIds : state.rootIds;
+  const currentIndex = currentSiblings.indexOf(nodeId);
+  const sameParent = node.parentId === target.parentId;
+  const sameParentBoundedIndex = Math.max(0, Math.min(target.index, sameParent ? currentSiblings.length - 1 : 0));
+  if (sameParent && currentIndex === sameParentBoundedIndex && typeof target.now !== "number") {
+    return state;
+  }
+
+  const next = copyStateForNodeTableMutation(state);
+  const moving = cloneNodeForMutation(next, nodeId);
+  const oldParentId = moving.parentId;
+  const oldSiblings = oldParentId
+    ? cloneNodeForMutation(next, oldParentId).childIds
+    : mutableRootIds(next, state);
   removeId(oldSiblings, nodeId);
 
   const newSiblings = target.parentId
-    ? requireNode(next, target.parentId).childIds
-    : next.rootIds;
+    ? cloneNodeForMutation(next, target.parentId).childIds
+    : mutableRootIds(next, state);
   const boundedIndex = Math.max(0, Math.min(target.index, newSiblings.length));
   newSiblings.splice(boundedIndex, 0, nodeId);
 
@@ -457,7 +471,10 @@ export function moveNode(state: OutlineState, nodeId: NodeId, target: MoveTarget
     moving.updatedAt = target.now;
   }
 
-  return removeEmptyWindowNodes(next);
+  if (oldParentId) {
+    mutableRootIds(next, state);
+  }
+  return removeEmptyWindowNodesFrom(next, oldParentId);
 }
 
 export function flattenSubtreeOneLevel(state: OutlineState, nodeId: NodeId): OutlineState {
@@ -470,23 +487,28 @@ export function flattenSubtreeOneLevel(state: OutlineState, nodeId: NodeId): Out
     return state;
   }
 
-  const next = cloneState(state);
-  const flattening = requireNode(next, nodeId);
+  const next = copyStateForNodeTableMutation(state);
+  const flattening = cloneNodeForMutation(next, nodeId);
   const flattenedChildIds: NodeId[] = [];
+  const emptiedWindowIds: NodeId[] = [];
 
-  for (const childId of flattening.childIds) {
-    const child = next.nodes[childId];
+  for (const childId of node.childIds) {
+    const originalChild = state.nodes[childId];
+    const child = originalChild ? cloneNodeForMutation(next, childId) : undefined;
     if (!child) {
       flattenedChildIds.push(childId);
       continue;
     }
 
-    const promotedChildIds = [...child.childIds];
+    const promotedChildIds = [...originalChild!.childIds];
     flattenedChildIds.push(childId, ...promotedChildIds);
     child.childIds = [];
+    if (child.kind === "window" && promotedChildIds.length > 0) {
+      emptiedWindowIds.push(child.id);
+    }
 
     for (const promotedChildId of promotedChildIds) {
-      const promotedChild = next.nodes[promotedChildId];
+      const promotedChild = next.nodes[promotedChildId] ? cloneNodeForMutation(next, promotedChildId) : undefined;
       if (promotedChild) {
         promotedChild.parentId = nodeId;
       }
@@ -494,7 +516,10 @@ export function flattenSubtreeOneLevel(state: OutlineState, nodeId: NodeId): Out
   }
 
   flattening.childIds = flattenedChildIds;
-  return removeEmptyWindowNodes(next);
+  for (const emptiedWindowId of emptiedWindowIds) {
+    removeEmptyWindowNodesFrom(next, emptiedWindowId);
+  }
+  return next;
 }
 
 export function moveTabToNewLiveWindow(
@@ -1203,6 +1228,21 @@ function cloneNodeForMutation(state: OutlineState, nodeId: NodeId): OutlineNode 
   }
   state.nodes[nodeId] = cloned;
   return cloned;
+}
+
+function mutableRootIds(state: OutlineState, original: OutlineState): NodeId[] {
+  if (state.rootIds === original.rootIds) {
+    state.rootIds = [...original.rootIds];
+  }
+  return state.rootIds;
+}
+
+function copyStateForNodeTableMutation(state: OutlineState): OutlineState {
+  return {
+    version: state.version,
+    rootIds: state.rootIds,
+    nodes: { ...state.nodes }
+  };
 }
 
 function walk(

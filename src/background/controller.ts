@@ -12,9 +12,11 @@ import {
   closeWindow,
   deleteLiveTabNodeByTabId,
   planRestore,
+  projectLiveTabs,
   reconcileWithWindows,
   repairState
 } from "../model/outline.js";
+import { buildOutlineLookup } from "../model/outline-lookup.js";
 import type { NodeId, OutlineNode, OutlineState, RuntimeTab, RuntimeWindow } from "../model/types.js";
 
 export type BackgroundController = {
@@ -332,7 +334,15 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         await saveState(result.state, api);
         return commandAck(true);
       }
-      await persistAndBroadcast();
+      if (message.type === "renameGroup") {
+        await persistKnownNodeStateUpdate(result.state, message.nodeId);
+        return commandAck(true);
+      }
+      if (message.type === "toggleCollapsed") {
+        await persistKnownNodeStateUpdate(result.state, message.nodeId);
+        return commandAck(true);
+      }
+      await persistWithBestEffortCommandPatch(current, result.state);
       return commandAck(true);
     });
   }
@@ -416,9 +426,16 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         ? await getNormalWindowsIncludingTabs(api, currentEventTabs)
         : await getNormalWindows(api);
     const windows = filterRemovedTabsFromWindows(windowsSnapshot, removedTabIds);
-    state = reconcileWithWindows(current, windows, { now: now() }, {
+    if (runtimeSnapshotMateriallyMatchesState(current, windows)) {
+      return false;
+    }
+    const next = reconcileWithWindows(current, windows, { now: now() }, {
       closeMissing
     });
+    if (statesMateriallyEqual(current, next)) {
+      return false;
+    }
+    state = next;
     stateCache.replace(state);
     await persistAndBroadcast();
     return state !== current;
@@ -502,6 +519,39 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
     await broadcastNodeStateUpdate(update);
     await saveState(next, api);
+  }
+
+  async function persistKnownNodeStateUpdate(next: OutlineState, nodeId: NodeId): Promise<void> {
+    const node = next.nodes[nodeId];
+    if (!node) {
+      await persistAndBroadcast();
+      return;
+    }
+
+    await broadcastNodeStateUpdate({
+      type: "nodeStateUpdated",
+      updatedNodes: [node],
+      closedCountDelta: 0
+    });
+    await saveState(next, api);
+  }
+
+  async function persistWithBestEffortCommandPatch(previous: OutlineState, next: OutlineState): Promise<void> {
+    const nodeUpdate = nodeStateUpdateFromStateChange(previous, next);
+    if (nodeUpdate && nodeUpdate.updatedNodes.length > 0) {
+      await broadcastNodeStateUpdate(nodeUpdate);
+      await saveState(next, api);
+      return;
+    }
+
+    const treeUpdate = treeStructureUpdateFromStateChange(previous, next);
+    if (isUsefulTreeStructureUpdate(treeUpdate, next)) {
+      await broadcastTreeStructureUpdate(treeUpdate);
+      await saveState(next, api);
+      return;
+    }
+
+    await persistAndBroadcast();
   }
 
   async function broadcastActiveStateUpdate(updates: ActiveStateUpdate[]): Promise<void> {
@@ -613,6 +663,67 @@ function treeStructureUpdateFromStateChange(previous: OutlineState, next: Outlin
   };
 }
 
+function isUsefulTreeStructureUpdate(update: TreeStructureUpdate, next: OutlineState): boolean {
+  const changedNodeCount = update.deletedNodeIds.length + update.updatedNodes.length;
+  if (changedNodeCount === 0) {
+    return false;
+  }
+
+  return changedNodeCount < Object.keys(next.nodes).length;
+}
+
+function runtimeSnapshotMateriallyMatchesState(state: OutlineState, windows: RuntimeWindow[]): boolean {
+  const lookup = buildOutlineLookup(state);
+  const normalWindows = windows.filter((windowInfo) => !windowInfo.incognito);
+  if (lookup.liveWindowNodeIdsByRuntimeId.size !== normalWindows.length) {
+    return false;
+  }
+
+  let runtimeTabCount = 0;
+  for (const windowInfo of normalWindows) {
+    const windowNodeId = lookup.liveWindowNodeIdsByRuntimeId.get(windowInfo.id);
+    const windowNode = windowNodeId ? state.nodes[windowNodeId] : undefined;
+    if (!windowNodeId || !windowNode || windowNode.active !== windowInfo.focused) {
+      return false;
+    }
+
+    const tabs = [...(windowInfo.tabs ?? [])]
+      .filter((tab) => !tab.incognito)
+      .sort((left, right) => left.index - right.index);
+    runtimeTabCount += tabs.length;
+
+    const projectedTabs = projectLiveTabs(state, windowNodeId).filter((tab) => tab.windowId === windowInfo.id);
+    if (projectedTabs.length !== tabs.length) {
+      return false;
+    }
+
+    for (let index = 0; index < tabs.length; index += 1) {
+      const tab = tabs[index]!;
+      const nodeId = lookup.liveTabNodeIdsByRuntimeId.get(tab.id);
+      const node = nodeId ? state.nodes[nodeId] : undefined;
+      if (
+        !node ||
+        !isLiveTabNode(node) ||
+        node.live.windowId !== tab.windowId ||
+        projectedTabs[index]?.tabId !== tab.id ||
+        liveTabNodeWouldChange(node, tab)
+      ) {
+        return false;
+      }
+    }
+  }
+
+  return lookup.liveTabNodeIdsByRuntimeId.size === runtimeTabCount;
+}
+
+function liveTabNodeWouldChange(node: OutlineNode & { live: { tabId: number; windowId: number } }, tab: RuntimeTab): boolean {
+  const nextTitle = tab.title || tab.url || node.title || "Untitled tab";
+  return node.active !== tab.active ||
+    (tab.url !== undefined && node.url !== tab.url) ||
+    node.title !== nextTitle ||
+    (tab.favIconUrl !== undefined && node.favIconUrl !== tab.favIconUrl);
+}
+
 function nodeStateUpdateFromStateChange(previous: OutlineState, next: OutlineState): NodeStateUpdate | undefined {
   const nextEntries = Object.entries(next.nodes);
   if (!sameNodeIdList(previous.rootIds, next.rootIds) || Object.keys(previous.nodes).length !== nextEntries.length) {
@@ -685,6 +796,53 @@ function sameNodeIdList(previous: NodeId[], next: NodeId[]): boolean {
   return previous.length === next.length && previous.every((nodeId, index) => nodeId === next[index]);
 }
 
+function statesMateriallyEqual(previous: OutlineState, next: OutlineState): boolean {
+  if (!sameNodeIdList(previous.rootIds, next.rootIds)) {
+    return false;
+  }
+
+  const previousNodeIds = Object.keys(previous.nodes);
+  if (previousNodeIds.length !== Object.keys(next.nodes).length) {
+    return false;
+  }
+
+  return previousNodeIds.every((nodeId) => {
+    const previousNode = previous.nodes[nodeId];
+    const nextNode = next.nodes[nodeId];
+    return Boolean(previousNode && nextNode && nodesMateriallyEqual(previousNode, nextNode));
+  });
+}
+
+function nodesMateriallyEqual(previous: OutlineNode, next: OutlineNode): boolean {
+  return previous.id === next.id &&
+    previous.kind === next.kind &&
+    previous.status === next.status &&
+    previous.parentId === next.parentId &&
+    sameNodeIdList(previous.childIds, next.childIds) &&
+    previous.title === next.title &&
+    previous.customTitle === next.customTitle &&
+    previous.url === next.url &&
+    previous.favIconUrl === next.favIconUrl &&
+    previous.active === next.active &&
+    previous.collapsed === next.collapsed &&
+    previous.createdAt === next.createdAt &&
+    previous.closedAt === next.closedAt &&
+    previous.restoredFromClosed === next.restoredFromClosed &&
+    liveRefsEqual(previous.live, next.live) &&
+    restoreRefsEqual(previous.restore, next.restore);
+}
+
+function liveRefsEqual(previous: OutlineNode["live"], next: OutlineNode["live"]): boolean {
+  return previous?.tabId === next?.tabId && previous?.windowId === next?.windowId;
+}
+
+function restoreRefsEqual(previous: OutlineNode["restore"], next: OutlineNode["restore"]): boolean {
+  return previous?.sessionId === next?.sessionId &&
+    previous?.url === next?.url &&
+    previous?.title === next?.title &&
+    previous?.favIconUrl === next?.favIconUrl;
+}
+
 function restorePatchCandidateNodeIds(state: OutlineState, nodeId: NodeId): NodeId[] {
   const nodeIds = new Set<NodeId>();
   for (const plan of planRestore(state, nodeId)) {
@@ -741,11 +899,7 @@ function tabEventMayChangeState(state: OutlineState, tab: RuntimeTab): boolean {
     return true;
   }
 
-  const nextTitle = tab.title || tab.url || node.title || "Untitled tab";
-  return node.active !== tab.active ||
-    (tab.url !== undefined && node.url !== tab.url) ||
-    node.title !== nextTitle ||
-    (tab.favIconUrl !== undefined && node.favIconUrl !== tab.favIconUrl);
+  return liveTabNodeWouldChange(node, tab);
 }
 
 function isCommandFocusActiveUpdateEcho(

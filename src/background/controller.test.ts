@@ -2947,6 +2947,38 @@ describe("background controller lifecycle", () => {
     expect(state.nodes["window:10"]).toBeUndefined();
   });
 
+  it("acknowledges unchanged manual refresh without saving or broadcasting", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    runtime.broadcasts.length = 0;
+    vi.mocked(runtime.api.storage.local.set).mockClear();
+
+    const result = await controller.handleMessage({ type: "refresh" });
+
+    expectCommandAck(result, false);
+    expect(runtime.broadcasts).toHaveLength(0);
+    expect(vi.mocked(runtime.api.storage.local.set)).not.toHaveBeenCalled();
+  });
+
   it("manual refresh deletes stale parent tab nodes without closing their children", async () => {
     const runtime = fakeRuntime(
       [
@@ -3283,9 +3315,84 @@ describe("background controller lifecycle", () => {
     expect(flattened.nodes["tab:1"]?.childIds).toEqual([]);
     expect(flattened.nodes["tab:2"]?.childIds).toEqual(["tab:3"]);
 
-    const lastBroadcast = runtime.broadcasts.at(-1) as { type?: string; state?: OutlineState } | undefined;
-    expect(lastBroadcast?.type).toBe("stateUpdated");
-    expect(lastBroadcast?.state?.nodes["window:10"]?.childIds).toEqual(["tab:1", "tab:2"]);
+    const lastBroadcast = runtime.broadcasts.at(-1) as
+      | {
+          type?: string;
+          updatedNodes?: OutlineState["nodes"][string][];
+          rootIds?: string[];
+          state?: OutlineState;
+        }
+      | undefined;
+    expect(lastBroadcast?.type).toBe("treeStructureUpdated");
+    expect(lastBroadcast?.updatedNodes?.map((node) => node.id).sort()).toEqual(["tab:1", "tab:2", "window:10"]);
+    expect(lastBroadcast?.rootIds).toEqual(["window:10"]);
+    expect(lastBroadcast?.state).toBeUndefined();
+  });
+
+  it("broadcasts move commands as tree structure patches", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        },
+        {
+          id: 2,
+          windowId: 10,
+          index: 1,
+          active: false,
+          url: "https://two.example/",
+          title: "Two"
+        },
+        {
+          id: 3,
+          windowId: 10,
+          index: 2,
+          active: false,
+          url: "https://three.example/",
+          title: "Three"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    runtime.broadcasts.length = 0;
+    vi.mocked(runtime.api.storage.local.set).mockClear();
+
+    const result = await controller.handleMessage({
+      type: "moveNode",
+      nodeId: "tab:3",
+      parentId: "window:10",
+      index: 0
+    });
+    const moved = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    const lastBroadcast = runtime.broadcasts.at(-1) as
+      | {
+          type?: string;
+          updatedNodes?: OutlineState["nodes"][string][];
+          rootIds?: string[];
+          state?: OutlineState;
+        }
+      | undefined;
+
+    expectCommandAck(result, true);
+    expect(moved.nodes["window:10"]?.childIds).toEqual(["tab:3", "tab:1", "tab:2"]);
+    expect(lastBroadcast?.type).toBe("treeStructureUpdated");
+    expect(lastBroadcast?.updatedNodes?.map((node) => node.id).sort()).toEqual(["tab:3", "window:10"]);
+    expect(lastBroadcast?.rootIds).toEqual(["window:10"]);
+    expect(lastBroadcast?.state).toBeUndefined();
+    expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
   });
 
   it("ignores unknown extension message command types", async () => {
@@ -3394,13 +3501,64 @@ describe("background controller lifecycle", () => {
 
     const result = await controller.handleMessage({ type: "toggleCollapsed", nodeId: "tab:1" });
     const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
-    const lastBroadcast = runtime.broadcasts.at(-1) as { type?: string; state?: OutlineState } | undefined;
+    const lastBroadcast = runtime.broadcasts.at(-1) as
+      | { type?: string; updatedNodes?: OutlineState["nodes"][string][]; state?: OutlineState }
+      | undefined;
 
     expectCommandAck(result, true);
     expect(state.nodes["tab:1"]?.collapsed).toBe(true);
     expect(runtime.broadcasts).toHaveLength(1);
-    expect(lastBroadcast?.type).toBe("stateUpdated");
-    expect(lastBroadcast?.state?.nodes["tab:1"]?.collapsed).toBe(true);
+    expect(lastBroadcast?.type).toBe("nodeStateUpdated");
+    expect(lastBroadcast?.updatedNodes?.[0]).toMatchObject({ id: "tab:1", collapsed: true });
+    expect(lastBroadcast?.state).toBeUndefined();
+    expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
+  });
+
+  it("broadcasts group renames as node state patches", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    runtime.broadcasts.length = 0;
+    vi.mocked(runtime.api.storage.local.set).mockClear();
+
+    const result = await controller.handleMessage({
+      type: "renameGroup",
+      nodeId: "window:10",
+      title: "Research"
+    });
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    const lastBroadcast = runtime.broadcasts.at(-1) as
+      | { type?: string; updatedNodes?: OutlineState["nodes"][string][]; state?: OutlineState }
+      | undefined;
+
+    expectCommandAck(result, true);
+    expect(state.nodes["window:10"]?.title).toBe("Research");
+    expect(runtime.broadcasts).toHaveLength(1);
+    expect(lastBroadcast?.type).toBe("nodeStateUpdated");
+    expect(lastBroadcast?.updatedNodes?.[0]).toMatchObject({
+      id: "window:10",
+      title: "Research",
+      customTitle: "Research"
+    });
+    expect(lastBroadcast?.state).toBeUndefined();
     expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
   });
 
