@@ -439,7 +439,10 @@ function renderNode(
 
   row.append(label);
 
-  row.append(actionButton(node.status === "live" ? "Close" : "Restore", () => {
+  const actions = document.createElement("span");
+  actions.className = "node-actions";
+
+  actions.append(actionButton(node.status === "live" ? "Close" : "Restore", () => {
     void runAndRender({
       type: node.status === "live" ? "closeNode" : "restoreNode",
       nodeId: node.id
@@ -447,14 +450,15 @@ function renderNode(
   }));
 
   if (canFlattenSubtree(state, node)) {
-    row.append(actionButton("Flatten", () => {
+    actions.append(actionButton("Flatten", () => {
       void runAndRender({ type: "flattenSubtree", nodeId: node.id });
     }));
   }
 
-  row.append(actionButton("Delete", () => {
+  actions.append(actionButton("Delete", () => {
     void runAndRender({ type: "deleteNode", nodeId: node.id });
   }));
+  row.append(actions);
 
   item.append(row);
 

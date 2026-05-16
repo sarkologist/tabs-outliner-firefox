@@ -144,7 +144,7 @@ main.root-drop-target {
 
 .node-row {
   display: grid;
-  grid-template-columns: var(--node-icon-size) minmax(0, 1fr) var(--node-icon-size) var(--node-icon-size);
+  grid-template-columns: var(--node-icon-size) minmax(0, 1fr) auto;
   gap: var(--node-row-gap);
   align-items: center;
   min-height: var(--node-row-height);
@@ -313,6 +313,13 @@ main.root-drop-target {
   line-height: 1.15;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.node-actions {
+  display: inline-flex;
+  gap: var(--node-row-gap);
+  align-items: center;
+  justify-self: end;
 }
 
 .icon-button {
