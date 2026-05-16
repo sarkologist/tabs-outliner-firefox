@@ -297,3 +297,19 @@ Use these as starting targets, not hard promises:
 - Restore cross-checks still use the fast visible patch path:
   - `pnpm profile:restore -- --scenario controller-event-echo --tabs 28000 --target last --echo transient-separated`: 59ms total, first patch at 8ms, 0ms projection.
   - `pnpm profile:restore -- --scenario controller-event-echo --tabs 50000 --target last --echo transient-separated`: 124ms total, first patch at 15ms, 0ms projection.
+
+### 2026-05-16: Representative In-Browser Trace Harness
+
+- Manual QA no longer shows one obvious hotspot, but the overall extension still feels sluggish. Before attempting an architectural rewrite, added opt-in tracing in the real extension contexts so we can capture actual sidebar/background timing instead of relying only on Node profiles.
+- Added a bounded shared trace utility with tests. It records marks, sync durations, async durations, and summary rows while staying disabled by default.
+- Added background trace coverage for runtime messages, command execution, mutation queue wait/run, runtime window snapshots, diagnostics, patch building, storage saves, broadcasts, and relevant browser events.
+- Added sidebar trace coverage for command sends/responses, incoming runtime messages, full renders, projection builds/cache hits, active/node/tree patches, virtual row rendering, requestAnimationFrame delay, restore-scope analysis, diagnostics, and click actions.
+- Manual QA usage from the sidebar console:
+  - `await tabsOutlinerProfile.enable()`
+  - perform the sluggish operation sequence
+  - `await tabsOutlinerProfile.summary()` for grouped durations
+  - `await tabsOutlinerProfile.snapshot()` for ordered sidebar/background trace entries
+  - `await tabsOutlinerProfile.clear()` before a new run
+  - `await tabsOutlinerProfile.disable()` when done
+- This does not yet provide new numbers by itself; it is the more representative measurement surface needed before choosing an architectural direction.
+- Verification: `pnpm test -- src/perf/trace.test.ts src/background/controller.test.ts` and `pnpm run build` passed.

@@ -18,6 +18,7 @@ import {
 } from "../model/outline.js";
 import { buildOutlineLookup } from "../model/outline-lookup.js";
 import type { NodeId, OutlineNode, OutlineState, RuntimeTab, RuntimeWindow } from "../model/types.js";
+import { createPerformanceTracer, type TraceDetail, type TraceSnapshot } from "../perf/trace.js";
 
 export type BackgroundController = {
   ensureState(): Promise<OutlineState>;
@@ -61,6 +62,18 @@ type NodeStateUpdate = {
   closedCountDelta: number;
 };
 
+type PerformanceTraceMessage =
+  | {
+      type: "setPerformanceTraceEnabled";
+      enabled: boolean;
+    }
+  | {
+      type: "clearPerformanceTrace";
+    }
+  | {
+      type: "getPerformanceTrace";
+    };
+
 export type BackgroundControllerOptions = {
   api: WebExtensionBrowser;
   adapter?: BrowserAdapter;
@@ -72,6 +85,7 @@ const RUNTIME_REFRESH_BATCH_DELAY_MS = 0;
 export function createBackgroundController(options: BackgroundControllerOptions): BackgroundController {
   const { api, now = Date.now } = options;
   const adapter = options.adapter ?? createBrowserAdapter(api);
+  const perfTrace = createPerformanceTracer("background");
 
   let state: OutlineState | undefined;
   let mutationQueue: Promise<void> = Promise.resolve();
@@ -98,147 +112,171 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   });
 
   api.action.onClicked.addListener(async () => {
-    await api.sidebarAction.open();
+    await perfTrace.measureAsync("background.action.openSidebar", () => api.sidebarAction.open());
   });
 
   api.runtime.onMessage.addListener((message) => handleMessage(message));
 
   api.tabs.onCreated.addListener(async (tab) => {
-    await queueRuntimeRefresh([tab]);
+    await perfTrace.measureAsync("background.event.tabs.onCreated", { tabId: tab.id }, () => queueRuntimeRefresh([tab]));
   });
 
   api.tabs.onUpdated.addListener(async (_tabId, changeInfo, tab) => {
-    if (!hasOutlineRelevantTabUpdate(changeInfo)) {
-      return;
-    }
-    if (isCommandFocusActiveUpdateEcho(commandFocusedActivationWindowIds, changeInfo, tab)) {
-      return;
-    }
-    await queueRuntimeRefresh([tab]);
+    await perfTrace.measureAsync("background.event.tabs.onUpdated", { tabId: tab.id }, async () => {
+      if (!hasOutlineRelevantTabUpdate(changeInfo)) {
+        return;
+      }
+      if (isCommandFocusActiveUpdateEcho(commandFocusedActivationWindowIds, changeInfo, tab)) {
+        return;
+      }
+      await queueRuntimeRefresh([tab]);
+    });
   });
 
   api.tabs.onActivated.addListener(async (activeInfo) => {
-    if (commandFocusedTabIds.has(activeInfo.tabId)) {
-      await handleCommandTabActivated(activeInfo);
-      return;
-    }
-    await queueRuntimeRefresh();
+    await perfTrace.measureAsync("background.event.tabs.onActivated", { tabId: activeInfo.tabId }, async () => {
+      if (commandFocusedTabIds.has(activeInfo.tabId)) {
+        await handleCommandTabActivated(activeInfo);
+        return;
+      }
+      await queueRuntimeRefresh();
+    });
   });
 
   api.tabs.onRemoved.addListener(async (tabId, removeInfo) => {
-    removedTabIds.add(tabId);
-    if (deleteOwnedClosingTabIds.delete(tabId)) {
-      return;
-    }
-    if (removeInfo.isWindowClosing) {
-      return;
-    }
-
-    await enqueueMutation(async () => {
-      const current = await ensureState();
-      let next: OutlineState;
-      if (outlinerClosingTabIds.delete(tabId)) {
-        const recent = await mostRecentClosedSession();
-        next = closeTab(current, tabId, {
-          now: now(),
-          ...(recent?.tab?.sessionId ? { sessionId: recent.tab.sessionId } : {})
-        });
-        commandCloseSessionEchoesToSkip += 1;
-      } else if (isRestoredLiveTabId(current, tabId)) {
-        const recent = await mostRecentClosedSession();
-        next = closeTab(current, tabId, {
-          now: now(),
-          ...(recent?.tab?.sessionId ? { sessionId: recent.tab.sessionId } : {})
-        });
-      } else {
-        next = deleteLiveTabNodeByTabId(current, tabId);
-      }
-      if (next === current) {
+    await perfTrace.measureAsync("background.event.tabs.onRemoved", { tabId }, async () => {
+      removedTabIds.add(tabId);
+      if (deleteOwnedClosingTabIds.delete(tabId)) {
         return;
       }
-      state = next;
-      stateCache.replace(state);
-      await persistWithNodeStateUpdate(current, next);
+      if (removeInfo.isWindowClosing) {
+        return;
+      }
+
+      await enqueueMutation(async () => {
+        const current = await ensureState();
+        let next: OutlineState;
+        if (outlinerClosingTabIds.delete(tabId)) {
+          const recent = await mostRecentClosedSession();
+          next = closeTab(current, tabId, {
+            now: now(),
+            ...(recent?.tab?.sessionId ? { sessionId: recent.tab.sessionId } : {})
+          });
+          commandCloseSessionEchoesToSkip += 1;
+        } else if (isRestoredLiveTabId(current, tabId)) {
+          const recent = await mostRecentClosedSession();
+          next = closeTab(current, tabId, {
+            now: now(),
+            ...(recent?.tab?.sessionId ? { sessionId: recent.tab.sessionId } : {})
+          });
+        } else {
+          next = deleteLiveTabNodeByTabId(current, tabId);
+        }
+        if (next === current) {
+          return;
+        }
+        state = next;
+        stateCache.replace(state);
+        await persistWithNodeStateUpdate(current, next);
+      }, { reason: "tabs.onRemoved" });
     });
   });
 
   api.windows.onRemoved.addListener(async (windowId) => {
-    if (deleteOwnedClosingWindowIds.delete(windowId)) {
-      return;
-    }
-
-    await enqueueMutation(async () => {
-      const current = await ensureState();
-      const liveTabIds = liveTabIdsInWindow(current, windowId);
-      const outlinerClosingWindow = outlinerClosingWindowIds.delete(windowId);
-      const singleNativeRemovedTabId = !outlinerClosingWindow &&
-        liveTabIds.length === 1 &&
-        removedTabIds.has(liveTabIds[0]!) &&
-        !outlinerClosingTabIds.has(liveTabIds[0]!)
-        ? liveTabIds[0]
-        : undefined;
-
-      if (typeof singleNativeRemovedTabId === "number") {
-        if (shouldPreserveRestoredSingleTabWindowClose(current, windowId, singleNativeRemovedTabId)) {
-          const recent = await mostRecentClosedSession();
-          state = closeWindow(current, windowId, {
-            now: now(),
-            ...(recent?.window?.sessionId ? { sessionId: recent.window.sessionId } : {})
-          });
-        } else {
-          state = closeWindow(deleteLiveTabNodeByTabId(current, singleNativeRemovedTabId), windowId, { now: now() });
-        }
-        stateCache.replace(state);
-        await persistWithNodeStateUpdate(current, state);
+    await perfTrace.measureAsync("background.event.windows.onRemoved", { windowId }, async () => {
+      if (deleteOwnedClosingWindowIds.delete(windowId)) {
         return;
       }
 
-      for (const tabId of liveTabIds) {
-        outlinerClosingTabIds.delete(tabId);
-      }
-      const recent = await mostRecentClosedSession();
-      state = closeWindow(current, windowId, {
-        now: now(),
-        ...(recent?.window?.sessionId ? { sessionId: recent.window.sessionId } : {})
-      });
-      stateCache.replace(state);
-      await persistWithNodeStateUpdate(current, state);
+      await enqueueMutation(async () => {
+        const current = await ensureState();
+        const liveTabIds = liveTabIdsInWindow(current, windowId);
+        const outlinerClosingWindow = outlinerClosingWindowIds.delete(windowId);
+        const singleNativeRemovedTabId = !outlinerClosingWindow &&
+          liveTabIds.length === 1 &&
+          removedTabIds.has(liveTabIds[0]!) &&
+          !outlinerClosingTabIds.has(liveTabIds[0]!)
+          ? liveTabIds[0]
+          : undefined;
+
+        if (typeof singleNativeRemovedTabId === "number") {
+          if (shouldPreserveRestoredSingleTabWindowClose(current, windowId, singleNativeRemovedTabId)) {
+            const recent = await mostRecentClosedSession();
+            state = closeWindow(current, windowId, {
+              now: now(),
+              ...(recent?.window?.sessionId ? { sessionId: recent.window.sessionId } : {})
+            });
+          } else {
+            state = closeWindow(deleteLiveTabNodeByTabId(current, singleNativeRemovedTabId), windowId, { now: now() });
+          }
+          stateCache.replace(state);
+          await persistWithNodeStateUpdate(current, state);
+          return;
+        }
+
+        for (const tabId of liveTabIds) {
+          outlinerClosingTabIds.delete(tabId);
+        }
+        const recent = await mostRecentClosedSession();
+        state = closeWindow(current, windowId, {
+          now: now(),
+          ...(recent?.window?.sessionId ? { sessionId: recent.window.sessionId } : {})
+        });
+        stateCache.replace(state);
+        await persistWithNodeStateUpdate(current, state);
+      }, { reason: "windows.onRemoved" });
     });
   });
 
   api.windows.onFocusChanged.addListener(async (windowId) => {
-    if (commandFocusedWindowIds.has(windowId)) {
-      await handleCommandWindowFocusChanged(windowId);
-      return;
-    }
-    await queueRuntimeRefresh([], { closeMissing: false });
+    await perfTrace.measureAsync("background.event.windows.onFocusChanged", { windowId }, async () => {
+      if (commandFocusedWindowIds.has(windowId)) {
+        await handleCommandWindowFocusChanged(windowId);
+        return;
+      }
+      await queueRuntimeRefresh([], { closeMissing: false });
+    });
   });
 
   api.sessions.onChanged.addListener(async () => {
-    if (sessionChangedQueued) {
-      return;
-    }
-    sessionChangedQueued = true;
-    await enqueueMutation(async () => {
-      try {
-        if (commandCloseSessionEchoesToSkip > 0) {
-          commandCloseSessionEchoesToSkip -= 1;
-          return;
-        }
-        const reconciled = await reconcileMissingLiveTabsInOpenWindows();
-        if (reconciled) {
-          await persistWithNodeStateUpdate(reconciled.previous, reconciled.next);
-        }
-      } finally {
-        sessionChangedQueued = false;
+    await perfTrace.measureAsync("background.event.sessions.onChanged", async () => {
+      if (sessionChangedQueued) {
+        return;
       }
+      sessionChangedQueued = true;
+      await enqueueMutation(async () => {
+        try {
+          if (commandCloseSessionEchoesToSkip > 0) {
+            commandCloseSessionEchoesToSkip -= 1;
+            return;
+          }
+          const reconciled = await reconcileMissingLiveTabsInOpenWindows();
+          if (reconciled) {
+            await persistWithNodeStateUpdate(reconciled.previous, reconciled.next);
+          }
+        } finally {
+          sessionChangedQueued = false;
+        }
+      }, { reason: "sessions.onChanged" });
     });
   });
 
   async function handleMessage(message: unknown): Promise<unknown> {
+    if (isPerformanceTraceMessage(message)) {
+      return handlePerformanceTraceMessage(message);
+    }
+
+    return perfTrace.measureAsync("background.runtime.message", { type: messageType(message) }, () =>
+      handleNonTraceMessage(message)
+    );
+  }
+
+  async function handleNonTraceMessage(message: unknown): Promise<unknown> {
     if (isDiagnosticsRequest(message)) {
       await mutationQueue;
-      return computeDiagnostics(await ensureState(), await getNormalWindows(api));
+      return perfTrace.measureAsync("background.diagnostics", async () =>
+        computeDiagnostics(await ensureState(), await getNormalWindows(api))
+      );
     }
 
     if (!isBackgroundCommand(message)) {
@@ -293,7 +331,9 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
       let result: Awaited<ReturnType<typeof runCommand>>;
       try {
-        result = await runCommand(current, adapter, message);
+        result = await perfTrace.measureAsync("background.command.run", { command: message.type }, () =>
+          runCommand(current, adapter, message)
+        );
       } catch (error) {
         if (typeof outlinerClosingTabId === "number") {
           outlinerClosingTabIds.delete(outlinerClosingTabId);
@@ -330,8 +370,11 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         return commandAck(true);
       }
       if (message.type === "deleteNode") {
-        await broadcastTreeStructureUpdate(treeStructureUpdateFromStateChange(current, result.state));
-        await saveState(result.state, api);
+        const update = perfTrace.measure("background.patch.build.treeStructure", { command: message.type }, () =>
+          treeStructureUpdateFromStateChange(current, result.state)
+        );
+        await broadcastTreeStructureUpdate(update);
+        await saveStateWithTrace(result.state);
         return commandAck(true);
       }
       if (message.type === "renameGroup") {
@@ -344,7 +387,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       }
       await persistWithBestEffortCommandPatch(current, result.state);
       return commandAck(true);
-    });
+    }, { reason: "command", command: message.type });
   }
 
   async function ensureState(): Promise<OutlineState> {
@@ -352,17 +395,17 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   }
 
   async function initializeState(): Promise<OutlineState> {
-    const windows = await getNormalWindows(api);
-    const stored = await loadState(api);
+    const windows = await perfTrace.measureAsync("background.runtime.getWindows", () => getNormalWindows(api));
+    const stored = await perfTrace.measureAsync("background.state.load", () => loadState(api));
     state = stored
       ? reconcileWithWindows(repairState(stored), windows, { now: now() })
       : bootstrapFromWindows(windows, { now: now() });
-    await saveState(state, api);
+    await saveStateWithTrace(state);
     return state;
   }
 
   async function refreshFromRuntime(eventTabs: RuntimeTab[] = [], options: RefreshOptions = {}): Promise<boolean> {
-    return enqueueMutation(async () => refreshFromRuntimeNow(eventTabs, options));
+    return enqueueMutation(async () => refreshFromRuntimeNow(eventTabs, options), { reason: "refreshFromRuntime" });
   }
 
   function queueRuntimeRefresh(eventTabs: RuntimeTab[] = [], options: RefreshOptions = {}): Promise<boolean> {
@@ -421,10 +464,11 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     if (eventTabs.length > 0 && currentEventTabs.length === 0 && !closeMissing) {
       return false;
     }
-    const windowsSnapshot =
-      currentEventTabs.length > 0
-        ? await getNormalWindowsIncludingTabs(api, currentEventTabs)
-        : await getNormalWindows(api);
+    const windowsSnapshot = await perfTrace.measureAsync("background.runtime.getWindows", {
+      eventTabCount: currentEventTabs.length
+    }, () => currentEventTabs.length > 0
+      ? getNormalWindowsIncludingTabs(api, currentEventTabs)
+      : getNormalWindows(api));
     const windows = filterRemovedTabsFromWindows(windowsSnapshot, removedTabIds);
     if (runtimeSnapshotMateriallyMatchesState(current, windows)) {
       return false;
@@ -458,7 +502,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       stateCache.replace(current);
       await broadcastActiveStateUpdate(activation.updates);
       return true;
-    });
+    }, { reason: "commandFocusActivation" });
   }
 
   async function handleCommandWindowFocusChanged(windowId: number): Promise<boolean> {
@@ -481,13 +525,22 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       stateCache.replace(current);
       await broadcastActiveStateUpdate(focus.updates);
       return true;
-    });
+    }, { reason: "commandWindowFocus" });
   }
 
-  function enqueueMutation<T>(operation: () => Promise<T>): Promise<T> {
+  function enqueueMutation<T>(operation: () => Promise<T>, detail?: TraceDetail): Promise<T> {
+    const queuedAt = performance.now();
+    const mutationDetail = detail ? { ...detail } : undefined;
+    const runOperation = async (): Promise<T> => {
+      perfTrace.mark("background.mutation.start", {
+        ...mutationDetail,
+        waitMs: Math.round(performance.now() - queuedAt)
+      });
+      return perfTrace.measureAsync("background.mutation.run", mutationDetail, operation);
+    };
     const queued = mutationQueue.then(
-      () => operation(),
-      () => operation()
+      () => runOperation(),
+      () => runOperation()
     );
     mutationQueue = queued.then(
       () => undefined,
@@ -500,8 +553,8 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     if (!state) {
       return;
     }
-    await saveState(state, api);
-    await api.runtime.sendMessage({ type: "stateUpdated", state }).catch(() => undefined);
+    await saveStateWithTrace(state);
+    await broadcastWithTrace({ type: "stateUpdated", state });
   }
 
   async function persistWithNodeStateUpdate(
@@ -509,16 +562,18 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     next: OutlineState,
     candidateNodeIds?: readonly NodeId[]
   ): Promise<void> {
-    const update = candidateNodeIds
+    const update = perfTrace.measure("background.patch.build.nodeState", {
+      candidateNodeCount: candidateNodeIds?.length ?? 0
+    }, () => candidateNodeIds
       ? nodeStateUpdateForNodeIds(previous, next, candidateNodeIds)
-      : nodeStateUpdateFromStateChange(previous, next);
+      : nodeStateUpdateFromStateChange(previous, next));
     if (!update || update.updatedNodes.length === 0) {
       await persistAndBroadcast();
       return;
     }
 
     await broadcastNodeStateUpdate(update);
-    await saveState(next, api);
+    await saveStateWithTrace(next);
   }
 
   async function persistKnownNodeStateUpdate(next: OutlineState, nodeId: NodeId): Promise<void> {
@@ -533,21 +588,25 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       updatedNodes: [node],
       closedCountDelta: 0
     });
-    await saveState(next, api);
+    await saveStateWithTrace(next);
   }
 
   async function persistWithBestEffortCommandPatch(previous: OutlineState, next: OutlineState): Promise<void> {
-    const nodeUpdate = nodeStateUpdateFromStateChange(previous, next);
+    const nodeUpdate = perfTrace.measure("background.patch.build.nodeState", { candidateNodeCount: 0 }, () =>
+      nodeStateUpdateFromStateChange(previous, next)
+    );
     if (nodeUpdate && nodeUpdate.updatedNodes.length > 0) {
       await broadcastNodeStateUpdate(nodeUpdate);
-      await saveState(next, api);
+      await saveStateWithTrace(next);
       return;
     }
 
-    const treeUpdate = treeStructureUpdateFromStateChange(previous, next);
+    const treeUpdate = perfTrace.measure("background.patch.build.treeStructure", () =>
+      treeStructureUpdateFromStateChange(previous, next)
+    );
     if (isUsefulTreeStructureUpdate(treeUpdate, next)) {
       await broadcastTreeStructureUpdate(treeUpdate);
-      await saveState(next, api);
+      await saveStateWithTrace(next);
       return;
     }
 
@@ -558,18 +617,46 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     if (updates.length === 0) {
       return;
     }
-    await api.runtime.sendMessage({ type: "activeStateUpdated", updates }).catch(() => undefined);
+    await broadcastWithTrace({ type: "activeStateUpdated", updates });
   }
 
   async function broadcastTreeStructureUpdate(update: TreeStructureUpdate): Promise<void> {
-    await api.runtime.sendMessage(update).catch(() => undefined);
+    await broadcastWithTrace(update);
   }
 
   async function broadcastNodeStateUpdate(update: NodeStateUpdate): Promise<void> {
     if (update.updatedNodes.length === 0) {
       return;
     }
-    await api.runtime.sendMessage(update).catch(() => undefined);
+    await broadcastWithTrace(update);
+  }
+
+  async function saveStateWithTrace(next: OutlineState): Promise<void> {
+    await perfTrace.measureAsync("background.state.save", () => saveState(next, api));
+  }
+
+  async function broadcastWithTrace(message: { type: string } & Record<string, unknown>): Promise<void> {
+    await perfTrace.measureAsync("background.runtime.broadcast", { type: message.type }, async () => {
+      await api.runtime.sendMessage(message).catch(() => undefined);
+    });
+  }
+
+  function handlePerformanceTraceMessage(message: PerformanceTraceMessage): TraceSnapshot | { ok: true } {
+    if (message.type === "setPerformanceTraceEnabled") {
+      if (message.enabled) {
+        perfTrace.setEnabled(true);
+        perfTrace.mark("background.profile.enabled");
+      } else {
+        perfTrace.mark("background.profile.disabled");
+        perfTrace.setEnabled(false);
+      }
+      return { ok: true };
+    }
+    if (message.type === "clearPerformanceTrace") {
+      perfTrace.clear();
+      return { ok: true };
+    }
+    return perfTrace.snapshot();
   }
 
   async function reconcileMissingLiveTabsInOpenWindows(): Promise<ReconciledStateChange | undefined> {
@@ -1059,6 +1146,23 @@ function isDiagnosticsRequest(message: unknown): message is { type: "getDiagnost
       typeof message === "object" &&
       (message as { type?: unknown }).type === "getDiagnostics"
   );
+}
+
+function isPerformanceTraceMessage(message: unknown): message is PerformanceTraceMessage {
+  if (!message || typeof message !== "object") {
+    return false;
+  }
+
+  const type = (message as { type?: unknown }).type;
+  return type === "getPerformanceTrace" ||
+    type === "clearPerformanceTrace" ||
+    (type === "setPerformanceTraceEnabled" && typeof (message as { enabled?: unknown }).enabled === "boolean");
+}
+
+function messageType(message: unknown): string {
+  return message && typeof message === "object" && typeof (message as { type?: unknown }).type === "string"
+    ? (message as { type: string }).type
+    : "unknown";
 }
 
 function hasOutlineRelevantTabUpdate(changeInfo: Partial<RuntimeTab>): boolean {

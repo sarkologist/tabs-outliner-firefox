@@ -458,6 +458,14 @@ function expectCommandAck(result: unknown, stateChanged: boolean): asserts resul
   });
 }
 
+function traceEntryNames(snapshot: unknown): string[] {
+  return Array.isArray((snapshot as { entries?: unknown }).entries)
+    ? (snapshot as { entries: Array<{ name?: unknown }> }).entries.flatMap((entry) =>
+        typeof entry.name === "string" ? [entry.name] : []
+      )
+    : [];
+}
+
 function liveWindowIds(state: OutlineState): number[] {
   return Object.values(state.nodes)
     .filter((node) => node.kind === "window" && node.status === "live" && node.live && "windowId" in node.live)
@@ -975,6 +983,44 @@ function invariantEqual<T>(actual: T, expected: T, message: string, history: str
 }
 
 describe("background controller lifecycle", () => {
+  it("records opt-in performance trace entries", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+
+    expect(await controller.handleMessage({ type: "setPerformanceTraceEnabled", enabled: true })).toEqual({ ok: true });
+    await controller.handleMessage({ type: "getState" });
+
+    const snapshot = await controller.handleMessage({ type: "getPerformanceTrace" });
+    expect(snapshot).toMatchObject({
+      enabled: true
+    });
+    expect(traceEntryNames(snapshot)).toContain("background.runtime.message");
+    expect(traceEntryNames(snapshot)).toContain("background.state.save");
+
+    await controller.handleMessage({ type: "clearPerformanceTrace" });
+    expect(await controller.handleMessage({ type: "getPerformanceTrace" })).toMatchObject({
+      entries: []
+    });
+  });
+
   it("adds new tab events without closing existing tabs when query is stale", async () => {
     const runtime = fakeRuntime(
       [
