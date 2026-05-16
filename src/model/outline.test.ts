@@ -753,6 +753,19 @@ describe("outline model", () => {
     expect(deleted.nodes["window:10"]?.childIds).toEqual(["tab:3"]);
   });
 
+  it("preserves unchanged node identities when deleting a single live leaf", () => {
+    const state = largeFlatLiveState(50_000);
+
+    const deleted = deleteNode(state, "tab:50000", { allowLive: true });
+
+    expect(deleted.nodes["tab:50000"]).toBeUndefined();
+    expect(deleted.nodes["tab:1"]).toBe(state.nodes["tab:1"]);
+    expect(deleted.nodes["tab:25000"]).toBe(state.nodes["tab:25000"]);
+    expect(deleted.nodes["window:10"]).not.toBe(state.nodes["window:10"]);
+    expect(deleted.nodes["window:10"]?.childIds).toHaveLength(49_999);
+    expect(state.nodes["window:10"]?.childIds).toHaveLength(50_000);
+  });
+
   it("removes a window when its only child is deleted", () => {
     const state = bootstrapFromWindows([
       {

@@ -714,14 +714,18 @@ export function deleteNode(
     }
   }
 
-  const next = cloneState(state);
-  const parentSiblings = node.parentId ? requireNode(next, node.parentId).childIds : next.rootIds;
+  const next: OutlineState = {
+    version: state.version,
+    rootIds: [...state.rootIds],
+    nodes: { ...state.nodes }
+  };
+  const parentSiblings = node.parentId ? cloneNodeForMutation(next, node.parentId).childIds : next.rootIds;
   removeId(parentSiblings, nodeId);
   for (const id of subtreeIds) {
     delete next.nodes[id];
   }
 
-  return removeEmptyWindowNodes(next);
+  return removeEmptyWindowNodesFrom(next, node.parentId);
 }
 
 function tabToNode(tab: RuntimeTab, nodeId: NodeId, parentId: NodeId, now: number): OutlineNode {
@@ -1110,6 +1114,54 @@ function removeEmptyWindowNodes(state: OutlineState): OutlineState {
   }
 
   return state;
+}
+
+function removeEmptyWindowNodesFrom(state: OutlineState, startNodeId: NodeId | undefined): OutlineState {
+  let currentId = startNodeId;
+
+  while (currentId) {
+    const current = state.nodes[currentId];
+    if (!current || current.kind !== "window" || current.childIds.length > 0) {
+      break;
+    }
+
+    const parentId = current.parentId;
+    delete state.nodes[currentId];
+
+    if (parentId) {
+      const parent = state.nodes[parentId];
+      if (!parent) {
+        break;
+      }
+      removeId(cloneNodeForMutation(state, parentId).childIds, currentId);
+      currentId = parentId;
+    } else {
+      removeId(state.rootIds, currentId);
+      break;
+    }
+  }
+
+  return state;
+}
+
+function cloneNodeForMutation(state: OutlineState, nodeId: NodeId): OutlineNode {
+  const node = requireNode(state, nodeId);
+  const cloned: OutlineNode = {
+    ...node,
+    childIds: [...node.childIds]
+  };
+  if (node.live) {
+    cloned.live = { ...node.live };
+  } else {
+    delete cloned.live;
+  }
+  if (node.restore) {
+    cloned.restore = { ...node.restore };
+  } else {
+    delete cloned.restore;
+  }
+  state.nodes[nodeId] = cloned;
+  return cloned;
 }
 
 function walk(
