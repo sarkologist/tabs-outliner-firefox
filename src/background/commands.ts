@@ -299,12 +299,12 @@ async function runRestorePlan(
     }
 
     if (plan.fallbackUrl) {
-      return createFallbackTab(state, adapter, plan.nodeId, plan.fallbackUrl, plan.windowNodeId);
+      return tryCreateFallbackTab(state, adapter, plan.nodeId, plan.fallbackUrl, plan.windowNodeId);
     }
     return [];
   }
 
-  return createFallbackTab(state, adapter, plan.nodeId, plan.url, plan.windowNodeId);
+  return tryCreateFallbackTab(state, adapter, plan.nodeId, plan.url, plan.windowNodeId);
 }
 
 async function restoreSessionIntoClosedWindowDestination(
@@ -341,7 +341,7 @@ async function restoreSessionIntoClosedWindowDestination(
     // Fall through to URL fallback below.
   }
 
-  return plan.fallbackUrl ? createFallbackTab(state, adapter, plan.nodeId, plan.fallbackUrl, plan.windowNodeId) : [];
+  return plan.fallbackUrl ? tryCreateFallbackTab(state, adapter, plan.nodeId, plan.fallbackUrl, plan.windowNodeId) : [];
 }
 
 function shouldCreateClosedWindowDestination(state: OutlineState, plan: RestorePlan): boolean {
@@ -412,6 +412,28 @@ async function createFallbackTab(
   });
 
   return [restoredTabFromRuntime(nodeId, created)];
+}
+
+async function tryCreateFallbackTab(
+  state: OutlineState,
+  adapter: BrowserAdapter,
+  nodeId: NodeId,
+  url: string,
+  windowNodeId?: NodeId
+): Promise<RestoredNode[]> {
+  try {
+    return await createFallbackTab(state, adapter, nodeId, url, windowNodeId);
+  } catch (error) {
+    if (isPrivilegedAboutUrl(url)) {
+      return [];
+    }
+    throw error;
+  }
+}
+
+function isPrivilegedAboutUrl(url: string): boolean {
+  const lowerUrl = url.toLocaleLowerCase();
+  return lowerUrl.startsWith("about:") && lowerUrl !== "about:blank" && lowerUrl !== "about:newtab";
 }
 
 async function moveNodeToNewWindow(

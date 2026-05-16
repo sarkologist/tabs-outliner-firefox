@@ -439,6 +439,75 @@ describe("background commands", () => {
     });
   });
 
+  it("skips imported internal Firefox urls that WebExtensions cannot reopen", async () => {
+    const state = bootstrapFromWindows(runtimeWindows, { now: 1000 });
+    const adapter = fakeAdapter({
+      createWindow: vi.fn(async ({ url }) => {
+        if (url === "about:debugging#/runtime/this-firefox") {
+          throw new Error("Illegal URL");
+        }
+        return {
+          id: 42,
+          focused: true,
+          incognito: false,
+          tabs: [
+            {
+              id: 200,
+              windowId: 42,
+              index: 0,
+              active: true,
+              url: String(url),
+              title: String(url)
+            }
+          ]
+        };
+      })
+    });
+    const imported = await runCommand(state, adapter, {
+      type: "importTree",
+      tree: {
+        schema: PORTABLE_TREE_SCHEMA,
+        version: 1,
+        exportedAt: "2026-05-16T12:00:00.000Z",
+        roots: [
+          {
+            kind: "window",
+            title: "Imported Window",
+            children: [
+              {
+                kind: "tab",
+                title: "Debugging",
+                url: "about:debugging#/runtime/this-firefox",
+                children: []
+              },
+              {
+                kind: "tab",
+                title: "Restorable",
+                url: "https://restorable.example/",
+                children: []
+              }
+            ]
+          }
+        ]
+      }
+    });
+    const importedWindow = Object.values(imported.state.nodes).find((node) => node.title === "Imported Window")!;
+
+    const restored = await runCommand(imported.state, adapter, {
+      type: "restoreNode",
+      nodeId: importedWindow.id
+    });
+
+    const debugging = Object.values(restored.state.nodes).find((node) => node.title === "Debugging");
+    const restorable = Object.values(restored.state.nodes).find((node) => node.title === "https://restorable.example/");
+    expect(adapter.createWindow).toHaveBeenCalledWith({ url: "about:debugging#/runtime/this-firefox" });
+    expect(adapter.createWindow).toHaveBeenCalledWith({ url: "https://restorable.example/" });
+    expect(debugging?.status).toBe("closed");
+    expect(debugging?.restore?.url).toBe("about:debugging#/runtime/this-firefox");
+    expect(restorable?.status).toBe("live");
+    expect(restorable?.live).toEqual({ tabId: 200, windowId: 42 });
+  });
+
   it("moves a live tab subtree into a newly created browser window", async () => {
     const state: OutlineState = bootstrapFromWindows(runtimeWindows, { now: 1000 });
     const adapter = fakeAdapter({
