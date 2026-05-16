@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 
+import type { BrowserAdapter } from "./adapter.js";
 import { createBackgroundController } from "./controller.js";
+import type { CommandAck } from "./commands.js";
 import { STATE_KEY } from "./storage.js";
 import type { OutlineState, RuntimeTab, RuntimeWindow } from "../model/types.js";
 
@@ -447,6 +449,13 @@ function liveTabIds(state: OutlineState): number[] {
     .filter((node) => node.kind === "tab" && node.status === "live" && node.live && "tabId" in node.live)
     .map((node) => node.live!.tabId!)
     .sort((a, b) => a - b);
+}
+
+function expectCommandAck(result: unknown, stateChanged: boolean): asserts result is CommandAck {
+  expect(result).toEqual({
+    type: "commandAck",
+    stateChanged
+  });
 }
 
 function liveWindowIds(state: OutlineState): number[] {
@@ -2462,8 +2471,10 @@ describe("background controller lifecycle", () => {
     await controller.ensureState();
 
     runtime.tabs = [];
-    const state = (await controller.handleMessage({ type: "refresh" })) as OutlineState;
+    const result = await controller.handleMessage({ type: "refresh" });
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
 
+    expectCommandAck(result, true);
     expect(state.nodes["tab:1"]).toBeUndefined();
     expect(state.nodes["window:10"]).toBeUndefined();
   });
@@ -2526,8 +2537,10 @@ describe("background controller lifecycle", () => {
         title: "Three"
       }
     ];
-    const state = (await controller.handleMessage({ type: "refresh" })) as OutlineState;
+    const result = await controller.handleMessage({ type: "refresh" });
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
 
+    expectCommandAck(result, true);
     expect(state.nodes["tab:1"]).toBeUndefined();
     expect(state.nodes["tab:2"]?.status).toBe("live");
     expect(state.nodes["tab:2"]?.parentId).toBe("window:10");
@@ -2586,7 +2599,9 @@ describe("background controller lifecycle", () => {
     runtime.tabs = runtime.tabs.filter((tab) => tab.windowId !== 20);
     await runtime.events.windowRemoved.emit(20);
 
-    const restored = (await controller.handleMessage({ type: "restoreNode", nodeId: "window:20" })) as OutlineState;
+    const restoreResult = await controller.handleMessage({ type: "restoreNode", nodeId: "window:20" });
+    const restored = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expectCommandAck(restoreResult, true);
     expect(restored.nodes["window:20"]?.live).toEqual({ windowId: 42 });
     expect(restored.nodes["tab:5"]?.status).toBe("closed");
     expect(restored.nodes["window:42"]).toBeUndefined();
@@ -2647,9 +2662,13 @@ describe("background controller lifecycle", () => {
     const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
     await controller.ensureState();
 
-    const deleted = (await controller.handleMessage({ type: "deleteNode", nodeId: "tab:2" })) as OutlineState;
+    runtime.broadcasts.length = 0;
+
+    const deleteResult = await controller.handleMessage({ type: "deleteNode", nodeId: "tab:2" });
+    const deleted = (await controller.handleMessage({ type: "getState" })) as OutlineState;
 
     expect(runtime.api.tabs.remove).toHaveBeenCalledWith([2]);
+    expectCommandAck(deleteResult, true);
     expect(deleted.nodes["tab:2"]).toBeUndefined();
     expect(deleted.nodes["window:10"]?.childIds).toEqual(["tab:1"]);
 
@@ -2659,6 +2678,7 @@ describe("background controller lifecycle", () => {
     expect(lastSave?.[STATE_KEY]?.nodes["tab:2"]).toBeUndefined();
 
     const lastBroadcast = runtime.broadcasts.at(-1) as { type?: string; state?: OutlineState } | undefined;
+    expect(runtime.broadcasts).toHaveLength(1);
     expect(lastBroadcast?.type).toBe("stateUpdated");
     expect(lastBroadcast?.state?.nodes["tab:2"]).toBeUndefined();
 
@@ -2710,10 +2730,12 @@ describe("background controller lifecycle", () => {
     runtime.broadcasts.length = 0;
     vi.mocked(runtime.api.storage.local.set).mockClear();
 
-    const deleted = (await controller.handleMessage({ type: "deleteNode", nodeId: "tab:1" })) as OutlineState;
+    const deleteResult = await controller.handleMessage({ type: "deleteNode", nodeId: "tab:1" });
+    const deleted = (await controller.handleMessage({ type: "getState" })) as OutlineState;
     const afterRemoveEvents = (await controller.handleMessage({ type: "getState" })) as OutlineState;
 
     expect(runtime.api.tabs.remove).toHaveBeenCalledWith([2, 1]);
+    expectCommandAck(deleteResult, true);
     expect(deleted.nodes["tab:1"]).toBeUndefined();
     expect(deleted.nodes["tab:2"]).toBeUndefined();
     expect(deleted.nodes["tab:3"]?.status).toBe("live");
@@ -2763,11 +2785,13 @@ describe("background controller lifecycle", () => {
     const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
     await controller.ensureState();
 
-    const flattened = (await controller.handleMessage({
+    const flattenResult = await controller.handleMessage({
       type: "flattenSubtree",
       nodeId: "window:10"
-    })) as OutlineState;
+    });
+    const flattened = (await controller.handleMessage({ type: "getState" })) as OutlineState;
 
+    expectCommandAck(flattenResult, true);
     expect(flattened.rootIds).toEqual(["window:10"]);
     expect(flattened.nodes["window:10"]?.childIds).toEqual(["tab:1", "tab:2"]);
     expect(flattened.nodes["tab:1"]?.childIds).toEqual([]);
@@ -2810,6 +2834,53 @@ describe("background controller lifecycle", () => {
     expect(vi.mocked(runtime.api.storage.local.set).mock.calls).toHaveLength(savesBefore);
   });
 
+  it("acknowledges state-unchanged focus commands without saving or broadcasting", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        }
+      ]
+    );
+    const adapter: BrowserAdapter = {
+      focusTab: vi.fn(async () => undefined),
+      closeTab: vi.fn(async () => undefined),
+      closeTabs: vi.fn(async () => undefined),
+      closeWindow: vi.fn(async () => undefined),
+      restoreSession: vi.fn(async () => ({})),
+      createTab: vi.fn(async () => {
+        throw new Error("not implemented");
+      }),
+      createWindow: vi.fn(async () => {
+        throw new Error("not implemented");
+      }),
+      moveTabs: vi.fn(async () => undefined)
+    };
+    const controller = createBackgroundController({ api: runtime.api, adapter, now: () => 1000 });
+    await controller.ensureState();
+    runtime.broadcasts.length = 0;
+    vi.mocked(runtime.api.storage.local.set).mockClear();
+
+    const result = await controller.handleMessage({ type: "focusNode", nodeId: "tab:1" });
+
+    expect(adapter.focusTab).toHaveBeenCalledWith(1, 10);
+    expectCommandAck(result, false);
+    expect(runtime.broadcasts).toHaveLength(0);
+    expect(vi.mocked(runtime.api.storage.local.set)).not.toHaveBeenCalled();
+  });
+
   it("deletes the window node when its only live tab is deleted by command", async () => {
     const runtime = fakeRuntime(
       [
@@ -2833,9 +2904,11 @@ describe("background controller lifecycle", () => {
     const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
     await controller.ensureState();
 
-    const deleted = (await controller.handleMessage({ type: "deleteNode", nodeId: "tab:1" })) as OutlineState;
+    const deleteResult = await controller.handleMessage({ type: "deleteNode", nodeId: "tab:1" });
+    const deleted = (await controller.handleMessage({ type: "getState" })) as OutlineState;
 
     expect(runtime.api.tabs.remove).toHaveBeenCalledWith([1]);
+    expectCommandAck(deleteResult, true);
     expect(deleted.nodes["tab:1"]).toBeUndefined();
     expect(deleted.nodes["window:10"]).toBeUndefined();
     expect(deleted.rootIds).toEqual([]);

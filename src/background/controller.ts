@@ -2,6 +2,7 @@ import type { BrowserAdapter } from "./adapter.js";
 import { createBrowserAdapter } from "./browser-adapter.js";
 import { computeDiagnostics } from "./diagnostics.js";
 import { isBackgroundCommand, planLiveSubtreeClose, runCommand } from "./commands.js";
+import type { CommandAck } from "./commands.js";
 import { getNormalWindows, getNormalWindowsIncludingTabs } from "./runtime-snapshot.js";
 import { createStateCache } from "./state-cache.js";
 import { loadState, saveState } from "./storage.js";
@@ -18,7 +19,7 @@ import type { NodeId, OutlineNode, OutlineState, RuntimeTab, RuntimeWindow } fro
 export type BackgroundController = {
   ensureState(): Promise<OutlineState>;
   handleMessage(message: unknown): Promise<unknown>;
-  refreshFromRuntime(eventTabs?: RuntimeTab[], options?: RefreshOptions): Promise<void>;
+  refreshFromRuntime(eventTabs?: RuntimeTab[], options?: RefreshOptions): Promise<boolean>;
 };
 
 type RefreshOptions = {
@@ -177,8 +178,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     }
 
     if (message.type === "refresh") {
-      await refreshFromRuntime();
-      return state;
+      return commandAck(await refreshFromRuntime());
     }
 
     if (message.type === "getState") {
@@ -228,13 +228,15 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         }
         throw error;
       }
-      if (message.type === "closeNode") {
-        return result.state;
+      const stateChanged = result.state !== current;
+      if (!stateChanged) {
+        return commandAck(false);
       }
+
       state = result.state;
       stateCache.replace(result.state);
       await persistAndBroadcast();
-      return result.state;
+      return commandAck(true);
     });
   }
 
@@ -252,13 +254,11 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     return state;
   }
 
-  async function refreshFromRuntime(eventTabs: RuntimeTab[] = [], options: RefreshOptions = {}): Promise<void> {
-    await enqueueMutation(async () => {
-      await refreshFromRuntimeNow(eventTabs, options);
-    });
+  async function refreshFromRuntime(eventTabs: RuntimeTab[] = [], options: RefreshOptions = {}): Promise<boolean> {
+    return enqueueMutation(async () => refreshFromRuntimeNow(eventTabs, options));
   }
 
-  async function refreshFromRuntimeNow(eventTabs: RuntimeTab[] = [], options: RefreshOptions = {}): Promise<void> {
+  async function refreshFromRuntimeNow(eventTabs: RuntimeTab[] = [], options: RefreshOptions = {}): Promise<boolean> {
     const current = await ensureState();
     const currentEventTabs = eventTabs.filter((tab) => !removedTabIds.has(tab.id));
     const windowsSnapshot =
@@ -271,6 +271,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     });
     stateCache.replace(state);
     await persistAndBroadcast();
+    return state !== current;
   }
 
   function enqueueMutation<T>(operation: () => Promise<T>): Promise<T> {
@@ -341,6 +342,13 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     ensureState,
     handleMessage,
     refreshFromRuntime
+  };
+}
+
+function commandAck(stateChanged: boolean): CommandAck {
+  return {
+    type: "commandAck",
+    stateChanged
   };
 }
 

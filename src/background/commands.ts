@@ -93,6 +93,11 @@ export type CommandResult = {
   state: OutlineState;
 };
 
+export type CommandAck = {
+  type: "commandAck";
+  stateChanged: boolean;
+};
+
 export type RuntimeClosePlan = {
   windowIds: number[];
   tabIds: number[];

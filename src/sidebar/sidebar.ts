@@ -1,4 +1,5 @@
 import type { BackgroundCommand } from "../background/commands.js";
+import type { CommandAck } from "../background/commands.js";
 import type { OutlineDiagnostics } from "../background/diagnostics.js";
 import { analyzeRestoreScope, type RestoreScope } from "../model/outline.js";
 import { exportPortableTree } from "../model/portable-tree.js";
@@ -303,10 +304,8 @@ async function importSelectedTreeFile(): Promise<void> {
 
   try {
     const payload = JSON.parse(await file.text()) as unknown;
-    currentState = (await sendCommand({ type: "importTree", tree: payload })) as OutlineState;
-    render();
+    await runAndRender({ type: "importTree", tree: payload });
     showDiagnosticsNotice("Imported tree");
-    void loadDiagnostics();
   } catch (error) {
     showDiagnosticsNotice(importErrorText(error), { error: true });
   } finally {
@@ -1028,9 +1027,15 @@ function removeDropPreviewElements(): void {
 
 async function runAndRender(command: BackgroundCommand): Promise<void> {
   try {
-    currentState = (await sendCommand(command)) as OutlineState;
-    render();
-    void loadDiagnostics();
+    const response = await sendCommand(command);
+    if (isCommandAck(response)) {
+      return;
+    }
+    if (isOutlineState(response)) {
+      currentState = response;
+      render();
+      void loadDiagnostics();
+    }
   } catch (error) {
     showDiagnosticsNotice(commandErrorText(error), { error: true });
   }
@@ -1116,5 +1121,25 @@ function isStateUpdated(message: unknown): message is { type: "stateUpdated"; st
       typeof message === "object" &&
       (message as { type?: unknown }).type === "stateUpdated" &&
       (message as { state?: unknown }).state
+  );
+}
+
+function isCommandAck(message: unknown): message is CommandAck {
+  return Boolean(
+    message &&
+      typeof message === "object" &&
+      (message as { type?: unknown }).type === "commandAck" &&
+      typeof (message as { stateChanged?: unknown }).stateChanged === "boolean"
+  );
+}
+
+function isOutlineState(message: unknown): message is OutlineState {
+  return Boolean(
+    message &&
+      typeof message === "object" &&
+      (message as { version?: unknown }).version === 1 &&
+      Array.isArray((message as { rootIds?: unknown }).rootIds) &&
+      typeof (message as { nodes?: unknown }).nodes === "object" &&
+      (message as { nodes?: unknown }).nodes !== null
   );
 }
