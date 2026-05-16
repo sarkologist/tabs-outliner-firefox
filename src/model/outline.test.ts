@@ -96,6 +96,49 @@ function reachableNodeIds(state: OutlineState): string[] {
   return ids.sort();
 }
 
+function largeFlatLiveState(tabCount: number): OutlineState {
+  const windowNode = {
+    id: "window:10",
+    kind: "window" as const,
+    status: "live" as const,
+    childIds: [] as string[],
+    title: "Group",
+    active: true,
+    collapsed: false,
+    createdAt: 1000,
+    updatedAt: 1000,
+    live: { windowId: 10 }
+  };
+  const state: OutlineState = {
+    version: 1,
+    rootIds: [windowNode.id],
+    nodes: {
+      [windowNode.id]: windowNode
+    }
+  };
+
+  for (let index = 1; index <= tabCount; index += 1) {
+    const id = `tab:${index}`;
+    windowNode.childIds.push(id);
+    state.nodes[id] = {
+      id,
+      kind: "tab",
+      status: "live",
+      parentId: windowNode.id,
+      childIds: [],
+      title: `Tab ${index}`,
+      url: `https://large.example/${index}`,
+      active: index === 1,
+      collapsed: false,
+      createdAt: 1000,
+      updatedAt: 1000,
+      live: { tabId: index, windowId: 10 }
+    };
+  }
+
+  return state;
+}
+
 describe("outline model", () => {
   it("bootstraps normal windows and places opener tabs as children", () => {
     const state = bootstrapFromWindows(windows, { now: 1000 });
@@ -914,6 +957,35 @@ describe("outline model", () => {
     expect(reconciled.nodes["tab:2"]?.status).toBe("live");
     expect(reconciled.nodes["tab:2"]?.parentId).toBe("window:10");
     expect(reconciled.nodes["window:10"]?.childIds).toEqual(["tab:2", "tab:3"]);
+  });
+
+  it("reconciles a 50k-node live window with a small runtime deletion", () => {
+    const state = largeFlatLiveState(50_000);
+    const tabs = Array.from({ length: 49_999 }, (_, index) => {
+      const tabId = index + 2;
+      return {
+        id: tabId,
+        windowId: 10,
+        index,
+        active: tabId === 2,
+        url: `https://large.example/${tabId}`,
+        title: `Tab ${tabId}`
+      };
+    });
+
+    const reconciled = reconcileWithWindows(state, [
+      {
+        id: 10,
+        incognito: false,
+        focused: true,
+        tabs
+      }
+    ], { now: 4000 });
+
+    expect(reconciled.nodes["tab:1"]).toBeUndefined();
+    expect(reconciled.nodes["window:10"]?.childIds).toHaveLength(49_999);
+    expect(reconciled.nodes["window:10"]?.childIds[0]).toBe("tab:2");
+    expect(reconciled.nodes["tab:2"]?.active).toBe(true);
   });
 
   it("does not close absent live tabs during partial event reconciliation", () => {

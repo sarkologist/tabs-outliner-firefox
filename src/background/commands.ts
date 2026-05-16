@@ -210,24 +210,31 @@ type SubtreeEntry = {
 
 function collectSubtreeEntries(
   state: OutlineState,
-  nodeId: NodeId,
-  depth = 0,
-  visited = new Set<NodeId>()
+  nodeId: NodeId
 ): SubtreeEntry[] {
-  if (visited.has(nodeId)) {
-    return [];
-  }
-  visited.add(nodeId);
+  const entries: SubtreeEntry[] = [];
+  const visited = new Set<NodeId>();
+  const stack: Array<{ nodeId: NodeId; depth: number }> = [{ nodeId, depth: 0 }];
 
-  const node = state.nodes[nodeId];
-  if (!node) {
-    return [];
+  while (stack.length > 0) {
+    const current = stack.pop()!;
+    if (visited.has(current.nodeId)) {
+      continue;
+    }
+    visited.add(current.nodeId);
+
+    const node = state.nodes[current.nodeId];
+    if (!node) {
+      continue;
+    }
+
+    entries.push({ node, depth: current.depth });
+    for (let index = node.childIds.length - 1; index >= 0; index -= 1) {
+      stack.push({ nodeId: node.childIds[index]!, depth: current.depth + 1 });
+    }
   }
 
-  return [
-    { node, depth },
-    ...node.childIds.flatMap((childId) => collectSubtreeEntries(state, childId, depth + 1, visited))
-  ];
+  return entries;
 }
 
 function hasLiveWindowAncestor(

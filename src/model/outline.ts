@@ -12,6 +12,7 @@ import type {
   RuntimeTab,
   RuntimeWindow
 } from "./types.js";
+import { buildOutlineLookup, type OutlineLookup } from "./outline-lookup.js";
 
 export function tabNodeId(tabId: number): NodeId {
   return `tab:${tabId}`;
@@ -104,13 +105,14 @@ export function reconcileWithWindows(
   options: ReconcileOptions = {}
 ): OutlineState {
   let next = cloneState(state);
+  let lookup = buildOutlineLookup(next);
   const closeMissing = options.closeMissing ?? true;
   const openWindowIds = new Set<number>();
   const openTabIds = new Set<number>();
 
   for (const win of windows.filter((windowInfo) => !windowInfo.incognito)) {
     openWindowIds.add(win.id);
-    const winId = findLiveWindowNode(next, win.id) ?? windowNodeId(win.id);
+    const winId = lookup.liveWindowNodeIdsByRuntimeId.get(win.id) ?? windowNodeId(win.id);
     const existingWindow = next.nodes[winId];
 
     if (existingWindow) {
@@ -135,6 +137,8 @@ export function reconcileWithWindows(
         live: { windowId: win.id }
       };
       next.rootIds.push(winId);
+      lookup.liveWindowNodeIdsByRuntimeId.set(win.id, winId);
+      lookup.nodes.push(next.nodes[winId]!);
     }
 
     const tabs = [...(win.tabs ?? [])]
@@ -146,15 +150,17 @@ export function reconcileWithWindows(
     const newlyPlacedNodeIds = new Set<NodeId>();
     for (const tab of tabs) {
       openTabIds.add(tab.id);
-      const existingTabId = findLiveTabNode(next, tab.id);
+      const existingTabId = lookup.liveTabNodeIdsByRuntimeId.get(tab.id);
       if (existingTabId) {
         const node = requireNode(next, existingTabId);
-        const reattachedNodeId = findRestorableClosedTabNode(next, tab, winId, reattachedNodeIds);
+        const reattachedNodeId = findRestorableClosedTabNode(next, lookup, tab, winId, reattachedNodeIds);
         if (reattachedNodeId && isProvisionalLiveTabNode(node)) {
           replaceProvisionalNode(next, node.id, reattachedNodeId);
           updateLiveTabNode(requireNode(next, reattachedNodeId), tab, clock.now);
           requireNode(next, reattachedNodeId).restoredFromClosed = true;
           reattachedNodeIds.add(reattachedNodeId);
+          lookup.liveTabNodeIdsByRuntimeId.delete(tab.id);
+          lookup.liveTabNodeIdsByRuntimeId.set(tab.id, reattachedNodeId);
           runtimeToNode.set(tab.id, reattachedNodeId);
           continue;
         }
@@ -164,7 +170,7 @@ export function reconcileWithWindows(
         continue;
       }
 
-      const reattachedNodeId = findRestorableClosedTabNode(next, tab, winId, reattachedNodeIds);
+      const reattachedNodeId = findRestorableClosedTabNode(next, lookup, tab, winId, reattachedNodeIds);
       const nodeId = reattachedNodeId ?? uniqueNodeId(next, tabNodeId(tab.id), clock.now);
       if (reattachedNodeId) {
         updateLiveTabNode(requireNode(next, reattachedNodeId), tab, clock.now);
@@ -173,7 +179,9 @@ export function reconcileWithWindows(
       } else {
         next.nodes[nodeId] = tabToNode(tab, nodeId, winId, clock.now);
         newlyPlacedNodeIds.add(nodeId);
+        lookup.nodes.push(next.nodes[nodeId]!);
       }
+      lookup.liveTabNodeIdsByRuntimeId.set(tab.id, nodeId);
       runtimeToNode.set(tab.id, nodeId);
     }
 
@@ -186,7 +194,7 @@ export function reconcileWithWindows(
         continue;
       }
       if (newlyPlacedNodeIds.has(nodeId)) {
-        ensureParent(next, nodeId, parentForNewRuntimeTab(next, tab, winId));
+        ensureParent(next, nodeId, parentForNewRuntimeTab(next, lookup, tab, winId));
         continue;
       }
       if (!isUnderRuntimeWindow(next, nodeId, tab.windowId)) {
@@ -202,7 +210,8 @@ export function reconcileWithWindows(
   }
 
   if (closeMissing) {
-    const missingWindowNodeIds = Object.values(next.nodes)
+    lookup = buildOutlineLookup(next);
+    const missingWindowNodeIds = lookup.nodes
       .filter((node) => isNodeLiveWindow(node) && !openWindowIds.has(node.live.windowId))
       .map((node) => node.id);
     for (const nodeId of missingWindowNodeIds) {
@@ -211,14 +220,14 @@ export function reconcileWithWindows(
       }
     }
 
-    const missingTabIdsInOpenWindows = Object.values(next.nodes).flatMap((node) => {
+    const missingTabNodeIdsInOpenWindows = lookup.nodes.flatMap((node) => {
       if (!isNodeLiveTab(node) || openTabIds.has(node.live.tabId) || !openWindowIds.has(node.live.windowId)) {
         return [];
       }
-      return [node.live.tabId];
+      return [node.id];
     });
-    for (const tabId of missingTabIdsInOpenWindows) {
-      next = deleteLiveTabNodeByTabId(next, tabId);
+    for (const nodeId of missingTabNodeIdsInOpenWindows) {
+      deleteLiveTabNodeByNodeIdInPlace(next, nodeId);
     }
 
     for (const node of Object.values(next.nodes)) {
@@ -343,9 +352,18 @@ export function deleteLiveTabNodeByTabId(state: OutlineState, tabId: number): Ou
   }
 
   const next = cloneState(state);
-  const deleting = requireNode(next, nodeId);
+  deleteLiveTabNodeByNodeIdInPlace(next, nodeId);
+  return removeEmptyWindowNodes(next);
+}
+
+function deleteLiveTabNodeByNodeIdInPlace(state: OutlineState, nodeId: NodeId): void {
+  const deleting = state.nodes[nodeId];
+  if (!deleting) {
+    return;
+  }
+
   const promotedChildIds = [...deleting.childIds];
-  const siblings = deleting.parentId ? requireNode(next, deleting.parentId).childIds : next.rootIds;
+  const siblings = deleting.parentId ? requireNode(state, deleting.parentId).childIds : state.rootIds;
   const index = siblings.indexOf(nodeId);
 
   if (index >= 0) {
@@ -353,7 +371,7 @@ export function deleteLiveTabNodeByTabId(state: OutlineState, tabId: number): Ou
   }
 
   for (const childId of promotedChildIds) {
-    const child = next.nodes[childId];
+    const child = state.nodes[childId];
     if (!child) {
       continue;
     }
@@ -364,8 +382,7 @@ export function deleteLiveTabNodeByTabId(state: OutlineState, tabId: number): Ou
     }
   }
 
-  delete next.nodes[nodeId];
-  return removeEmptyWindowNodes(next);
+  delete state.nodes[nodeId];
 }
 
 export function moveNode(state: OutlineState, nodeId: NodeId, target: MoveTarget): OutlineState {
@@ -529,10 +546,12 @@ export function projectLiveTabs(state: OutlineState, windowIdOrNodeId: number | 
     return [];
   }
 
+  const lookup = buildOutlineLookup(state);
   const projection: LiveTabProjection[] = [];
   walk(state, root.id, (node) => {
     if (node.kind === "tab" && node.status === "live" && node.live && "tabId" in node.live) {
-      const owningWindow = nearestWindow(state, node.id);
+      const owningWindowId = lookup.ownerWindowNodeIdsByNodeId.get(node.id);
+      const owningWindow = owningWindowId ? state.nodes[owningWindowId] : undefined;
       const targetWindowId =
         owningWindow?.live && "windowId" in owningWindow.live ? owningWindow.live.windowId : node.live.windowId;
       projection.push({ tabId: node.live.tabId, windowId: targetWindowId });
@@ -709,6 +728,7 @@ function setActiveTabInRuntimeWindow(
 
 function findRestorableClosedTabNode(
   state: OutlineState,
+  lookup: OutlineLookup,
   tab: RuntimeTab,
   windowNodeIdForTab: NodeId,
   alreadyMatched: Set<NodeId>
@@ -717,32 +737,37 @@ function findRestorableClosedTabNode(
     return undefined;
   }
 
-  if (isLikelyDuplicateOfLiveTab(state, tab)) {
+  if (isLikelyDuplicateOfLiveTab(state, lookup, tab)) {
     return undefined;
   }
 
-  const candidates = Object.values(state.nodes)
-    .filter((node) => {
-      return (
-        node.kind === "tab" &&
-        node.status === "closed" &&
-        !alreadyMatched.has(node.id) &&
-        node.restore?.url === tab.url &&
-        isInCompatibleWindow(state, node, tab.windowId, windowNodeIdForTab)
-      );
-    })
-    .sort((a, b) => (b.closedAt ?? 0) - (a.closedAt ?? 0));
+  const candidates = lookup.closedTabNodeIdsByUrl.get(tab.url) ?? [];
+  for (const nodeId of candidates) {
+    const node = state.nodes[nodeId];
+    if (
+      node &&
+      node.kind === "tab" &&
+      node.status === "closed" &&
+      node.restore?.url === tab.url &&
+      !alreadyMatched.has(node.id) &&
+      isInCompatibleWindow(state, lookup, node, tab.windowId, windowNodeIdForTab)
+    ) {
+      return node.id;
+    }
+  }
 
-  return candidates[0]?.id;
+  return undefined;
 }
 
 function isInCompatibleWindow(
   state: OutlineState,
+  lookup: OutlineLookup,
   node: OutlineNode,
   runtimeWindowId: number,
   windowNodeIdForTab: NodeId
 ): boolean {
-  const owner = nearestWindow(state, node.id);
+  const ownerId = lookup.ownerWindowNodeIdsByNodeId.get(node.id);
+  const owner = ownerId ? state.nodes[ownerId] : undefined;
   if (!owner) {
     return true;
   }
@@ -752,12 +777,12 @@ function isInCompatibleWindow(
   return Boolean(owner.live && "windowId" in owner.live && owner.live.windowId === runtimeWindowId);
 }
 
-function isLikelyDuplicateOfLiveTab(state: OutlineState, tab: RuntimeTab): boolean {
+function isLikelyDuplicateOfLiveTab(state: OutlineState, lookup: OutlineLookup, tab: RuntimeTab): boolean {
   if (typeof tab.openerTabId !== "number" || !tab.url) {
     return false;
   }
 
-  const openerNodeId = findLiveTabNode(state, tab.openerTabId);
+  const openerNodeId = lookup.liveTabNodeIdsByRuntimeId.get(tab.openerTabId);
   const opener = openerNodeId ? state.nodes[openerNodeId] : undefined;
   return Boolean(opener?.kind === "tab" && opener.status === "live" && opener.url === tab.url);
 }
@@ -812,12 +837,17 @@ function ensureParent(state: OutlineState, nodeId: NodeId, parentId: NodeId): vo
   }
 }
 
-function parentForNewRuntimeTab(state: OutlineState, tab: RuntimeTab, fallbackWindowNodeId: NodeId): NodeId {
+function parentForNewRuntimeTab(
+  state: OutlineState,
+  lookup: OutlineLookup,
+  tab: RuntimeTab,
+  fallbackWindowNodeId: NodeId
+): NodeId {
   if (typeof tab.openerTabId !== "number") {
     return fallbackWindowNodeId;
   }
 
-  const openerNodeId = findLiveTabNode(state, tab.openerTabId);
+  const openerNodeId = lookup.liveTabNodeIdsByRuntimeId.get(tab.openerTabId);
   if (!openerNodeId) {
     return fallbackWindowNodeId;
   }
@@ -994,21 +1024,38 @@ function collectSubtreeIds(state: OutlineState, nodeId: NodeId): NodeId[] {
 }
 
 function removeEmptyWindowNodes(state: OutlineState): OutlineState {
-  let removed = true;
-  while (removed) {
-    removed = false;
-    for (const node of Object.values(state.nodes)) {
-      if (node.kind !== "window" || node.childIds.length > 0) {
-        continue;
-      }
+  const queued = new Set<NodeId>();
+  const queue: NodeId[] = [];
 
-      removeId(state.rootIds, node.id);
-      for (const candidateParent of Object.values(state.nodes)) {
-        removeId(candidateParent.childIds, node.id);
-      }
-      delete state.nodes[node.id];
-      removed = true;
+  for (const node of Object.values(state.nodes)) {
+    if (node.kind === "window" && node.childIds.length === 0) {
+      queued.add(node.id);
+      queue.push(node.id);
     }
+  }
+
+  while (queue.length > 0) {
+    const nodeId = queue.pop()!;
+    const node = state.nodes[nodeId];
+    if (!node || node.kind !== "window" || node.childIds.length > 0) {
+      continue;
+    }
+
+    const parentId = node.parentId;
+    if (parentId) {
+      const parent = state.nodes[parentId];
+      if (parent) {
+        removeId(parent.childIds, nodeId);
+        if (parent.kind === "window" && parent.childIds.length === 0 && !queued.has(parent.id)) {
+          queued.add(parent.id);
+          queue.push(parent.id);
+        }
+      }
+    } else {
+      removeId(state.rootIds, nodeId);
+    }
+
+    delete state.nodes[nodeId];
   }
 
   return state;
@@ -1017,22 +1064,27 @@ function removeEmptyWindowNodes(state: OutlineState): OutlineState {
 function walk(
   state: OutlineState,
   nodeId: NodeId,
-  visitor: (node: OutlineNode) => void,
-  visited = new Set<NodeId>()
+  visitor: (node: OutlineNode) => void
 ): void {
-  if (visited.has(nodeId)) {
-    return;
-  }
-  visited.add(nodeId);
+  const visited = new Set<NodeId>();
+  const stack = [nodeId];
 
-  const node = state.nodes[nodeId];
-  if (!node) {
-    return;
-  }
+  while (stack.length > 0) {
+    const currentId = stack.pop()!;
+    if (visited.has(currentId)) {
+      continue;
+    }
+    visited.add(currentId);
 
-  visitor(node);
-  for (const childId of node.childIds) {
-    walk(state, childId, visitor, visited);
+    const node = state.nodes[currentId];
+    if (!node) {
+      continue;
+    }
+
+    visitor(node);
+    for (let index = node.childIds.length - 1; index >= 0; index -= 1) {
+      stack.push(node.childIds[index]!);
+    }
   }
 }
 
