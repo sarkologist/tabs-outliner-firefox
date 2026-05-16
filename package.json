@@ -8,7 +8,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "check": "npm run test && npm run build",
-    "profile:tab-open": "node scripts/profile-tab-open.mjs"
+    "profile:tab-open": "node scripts/profile-tab-open.mjs",
+    "profile:restore": "node scripts/profile-restore.mjs"
   },
   "devDependencies": {
     "@types/node": "^20.19.0",
