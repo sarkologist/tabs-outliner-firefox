@@ -2947,6 +2947,7 @@ describe("background controller lifecycle", () => {
     runtime.windows = runtime.windows.filter((windowInfo) => windowInfo.id !== 20);
     runtime.tabs = runtime.tabs.filter((tab) => tab.windowId !== 20);
     await runtime.events.windowRemoved.emit(20);
+    runtime.broadcasts.length = 0;
 
     const restoreResult = await controller.handleMessage({ type: "restoreNode", nodeId: "window:20" });
     const restored = (await controller.handleMessage({ type: "getState" })) as OutlineState;
@@ -2954,6 +2955,13 @@ describe("background controller lifecycle", () => {
     expect(restored.nodes["window:20"]?.live).toEqual({ windowId: 42 });
     expect(restored.nodes["tab:5"]?.status).toBe("closed");
     expect(restored.nodes["window:42"]).toBeUndefined();
+    const restoreBroadcast = runtime.broadcasts.at(-1) as
+      | { type?: string; updatedNodes?: OutlineState["nodes"][string][]; closedCountDelta?: number; state?: OutlineState }
+      | undefined;
+    expect(restoreBroadcast?.type).toBe("nodeStateUpdated");
+    expect(restoreBroadcast?.updatedNodes?.map((node) => node.id)).toEqual(["window:20"]);
+    expect(restoreBroadcast?.closedCountDelta).toBe(-1);
+    expect(restoreBroadcast?.state).toBeUndefined();
 
     runtime.windows = [
       ...runtime.windows,

@@ -214,3 +214,11 @@ Use these as starting targets, not hard promises:
 - Optimized `closeTab()` and `closeWindow()` copying so a leaf tab close clones only the closed node, and a window close clones only the closed subtree. This keeps the patch detector on the fast identity path.
 - After using `pnpm profile:close -- --tabs 50000 --target last --order tabRemovedThenSessionChanged`: 97ms total, first patch broadcast at 50ms, 45ms save stringify, 0ms patch broadcast stringify, 2ms node patch, 0ms projection, 13 MB stringified.
 - After using `pnpm profile:close -- --tabs 50000 --target last --order sessionChangedThenTabRemoved`: 156ms total, first patch broadcast at 94ms, 36ms save stringify, 0ms patch broadcast stringify, 2ms node patch, 0ms projection, 13 MB stringified.
+
+### 2026-05-16: Targeted Restore Patch Detection
+
+- Manual QA still showed delayed restore tree updates after lightweight restore patches. Re-profiled `pnpm profile:restore -- --scenario controller-event-echo --tabs 50000 --target last`: 148ms total, first patch broadcast at 70ms, 52ms save stringify, 0ms projection.
+- Found two whole-tree scans before the restore patch: event-echo restored-tab detection and generic node-patch detection both walked the full outline.
+- Restore now builds its patch from the command's restore-plan candidate node IDs, including any planned window destination. The same candidate set is used to arm created-tab echo absorption.
+- After using `pnpm profile:restore -- --scenario controller-event-echo --tabs 50000 --target last`: 110ms total, first patch broadcast at 13ms, 52ms save stringify, 0ms patch broadcast stringify, 2ms node patch, 0ms projection, 15 MB stringified.
+- Cross-check using `pnpm profile:restore -- --scenario single-closed-tab --tabs 50000 --target last`: 69ms total, 21ms command, 0ms node patch build, 46ms save stringify, 2ms node patch.

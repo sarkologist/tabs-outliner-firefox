@@ -11,6 +11,7 @@ import {
   closeTab,
   closeWindow,
   deleteLiveTabNodeByTabId,
+  planRestore,
   reconcileWithWindows,
   repairState
 } from "../model/outline.js";
@@ -265,6 +266,9 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       const deleteClosePlan = message.type === "deleteNode"
         ? planLiveSubtreeClose(current, message.nodeId)
         : undefined;
+      const restorePatchNodeIds = message.type === "restoreNode"
+        ? restorePatchCandidateNodeIds(current, message.nodeId)
+        : undefined;
       if (typeof outlinerClosingTabId === "number") {
         outlinerClosingTabIds.add(outlinerClosingTabId);
       }
@@ -313,14 +317,14 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       }
 
       if (message.type === "restoreNode") {
-        for (const tabId of restoredLiveTabIdsChangedByCommand(current, result.state)) {
+        for (const tabId of restoredLiveTabIdsChangedByCommand(current, result.state, restorePatchNodeIds)) {
           commandRestoredTabIds.add(tabId);
         }
       }
       state = result.state;
       stateCache.replace(result.state);
       if (message.type === "restoreNode") {
-        await persistWithNodeStateUpdate(current, result.state);
+        await persistWithNodeStateUpdate(current, result.state, restorePatchNodeIds);
         return commandAck(true);
       }
       if (message.type === "deleteNode") {
@@ -482,8 +486,14 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     await api.runtime.sendMessage({ type: "stateUpdated", state }).catch(() => undefined);
   }
 
-  async function persistWithNodeStateUpdate(previous: OutlineState, next: OutlineState): Promise<void> {
-    const update = nodeStateUpdateFromStateChange(previous, next);
+  async function persistWithNodeStateUpdate(
+    previous: OutlineState,
+    next: OutlineState,
+    candidateNodeIds?: readonly NodeId[]
+  ): Promise<void> {
+    const update = candidateNodeIds
+      ? nodeStateUpdateForNodeIds(previous, next, candidateNodeIds)
+      : nodeStateUpdateFromStateChange(previous, next);
     if (!update || update.updatedNodes.length === 0) {
       await persistAndBroadcast();
       return;
@@ -634,12 +644,70 @@ function nodeStateUpdateFromStateChange(previous: OutlineState, next: OutlineSta
   };
 }
 
+function nodeStateUpdateForNodeIds(
+  previous: OutlineState,
+  next: OutlineState,
+  nodeIds: readonly NodeId[]
+): NodeStateUpdate | undefined {
+  if (!sameNodeIdList(previous.rootIds, next.rootIds)) {
+    return undefined;
+  }
+
+  const updatedNodes: OutlineNode[] = [];
+  let closedCountDelta = 0;
+  for (const nodeId of nodeIds) {
+    const previousNode = previous.nodes[nodeId];
+    const node = next.nodes[nodeId];
+    if (!previousNode || !node) {
+      return undefined;
+    }
+    if (previousNode === node) {
+      continue;
+    }
+    if (previousNode.parentId !== node.parentId || !sameNodeIdList(previousNode.childIds, node.childIds)) {
+      return undefined;
+    }
+    updatedNodes.push(node);
+    const wasClosed = previousNode.status === "closed" ? 1 : 0;
+    const isClosed = node.status === "closed" ? 1 : 0;
+    closedCountDelta += isClosed - wasClosed;
+  }
+
+  return {
+    type: "nodeStateUpdated",
+    updatedNodes,
+    closedCountDelta
+  };
+}
+
 function sameNodeIdList(previous: NodeId[], next: NodeId[]): boolean {
   return previous.length === next.length && previous.every((nodeId, index) => nodeId === next[index]);
 }
 
-function restoredLiveTabIdsChangedByCommand(previous: OutlineState, next: OutlineState): number[] {
-  return Object.values(next.nodes).flatMap((node) => {
+function restorePatchCandidateNodeIds(state: OutlineState, nodeId: NodeId): NodeId[] {
+  const nodeIds = new Set<NodeId>();
+  for (const plan of planRestore(state, nodeId)) {
+    nodeIds.add(plan.nodeId);
+    if (plan.windowNodeId) {
+      nodeIds.add(plan.windowNodeId);
+    }
+  }
+  return [...nodeIds];
+}
+
+function restoredLiveTabIdsChangedByCommand(
+  previous: OutlineState,
+  next: OutlineState,
+  candidateNodeIds?: readonly NodeId[]
+): number[] {
+  const nodes = candidateNodeIds
+    ? candidateNodeIds.flatMap((nodeId) => {
+        const node = next.nodes[nodeId];
+        return node ? [node] : [];
+      })
+    : Object.values(next.nodes);
+
+  return nodes.flatMap((node) => {
     if (!isLiveTabNode(node) || !node.restoredFromClosed || previous.nodes[node.id]?.status !== "closed") {
       return [];
     }

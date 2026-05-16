@@ -2,7 +2,7 @@ import { performance } from "node:perf_hooks";
 
 import { createBackgroundController } from "../dist/background/controller.js";
 import { runCommand } from "../dist/background/commands.js";
-import { analyzeRestoreScope } from "../dist/model/outline.js";
+import { analyzeRestoreScope, planRestore } from "../dist/model/outline.js";
 import { buildVisibleTreeProjection } from "../dist/sidebar/visible-tree.js";
 
 class FakeEvent {
@@ -212,15 +212,31 @@ function measureRuntimeJson(runtime, bucket, value) {
   runtime.bytes += measured.value.length;
 }
 
-function nodeStateUpdateFromStateChange(previous, next) {
-  const updatedNodes = Object.entries(next.nodes).flatMap(([nodeId, node]) => {
-    return previous.nodes[nodeId] !== node ? [node] : [];
-  });
-  const closedCountDelta = updatedNodes.reduce((delta, node) => {
-    const wasClosed = previous.nodes[node.id]?.status === "closed" ? 1 : 0;
+function restorePatchCandidateNodeIds(state, nodeId) {
+  const nodeIds = new Set();
+  for (const plan of planRestore(state, nodeId)) {
+    nodeIds.add(plan.nodeId);
+    if (plan.windowNodeId) {
+      nodeIds.add(plan.windowNodeId);
+    }
+  }
+  return [...nodeIds];
+}
+
+function nodeStateUpdateForNodeIds(previous, next, nodeIds) {
+  let closedCountDelta = 0;
+  const updatedNodes = [];
+  for (const nodeId of nodeIds) {
+    const previousNode = previous.nodes[nodeId];
+    const node = next.nodes[nodeId];
+    if (!previousNode || !node || previousNode === node) {
+      continue;
+    }
+    updatedNodes.push(node);
+    const wasClosed = previousNode.status === "closed" ? 1 : 0;
     const isClosed = node.status === "closed" ? 1 : 0;
-    return delta + isClosed - wasClosed;
-  }, 0);
+    closedCountDelta += isClosed - wasClosed;
+  }
 
   return {
     type: "nodeStateUpdated",
@@ -431,11 +447,12 @@ async function profileCommand(options) {
   const sidebarScope = measure(() => analyzeRestoreScope(state, nodeId));
   const command = await measureAsync(() => runCommand(state, adapter, { type: "restoreNode", nodeId }));
   const saved = measureJson({ outlineState: command.value.state });
-  const nodeUpdate = nodeStateUpdateFromStateChange(state, command.value.state);
-  const broadcast = measureJson(nodeUpdate);
+  const candidateNodeIds = restorePatchCandidateNodeIds(state, nodeId);
+  const nodeUpdate = measure(() => nodeStateUpdateForNodeIds(state, command.value.state, candidateNodeIds));
+  const broadcast = measureJson(nodeUpdate.value);
   const sidebarState = state;
   const sidebarProjection = buildVisibleTreeProjection(sidebarState, "");
-  const patch = measure(() => applyNodeStateUpdate({ sidebarState, sidebarProjection }, nodeUpdate));
+  const patch = measure(() => applyNodeStateUpdate({ sidebarState, sidebarProjection }, nodeUpdate.value));
 
   return {
     scenario: options.scenario,
@@ -444,11 +461,12 @@ async function profileCommand(options) {
     nodeId,
     sidebarScopeMs: Math.round(sidebarScope.ms),
     commandMs: Math.round(command.ms),
+    nodePatchBuildMs: Math.round(nodeUpdate.ms),
     saveStringifyMs: Math.round(saved.ms),
     broadcastStringifyMs: Math.round(broadcast.ms),
     projectionMs: 0,
     nodePatchMs: Math.round(patch.ms),
-    totalMeasuredMs: Math.round(sidebarScope.ms + command.ms + saved.ms + broadcast.ms + patch.ms),
+    totalMeasuredMs: Math.round(sidebarScope.ms + command.ms + nodeUpdate.ms + saved.ms + broadcast.ms + patch.ms),
     mbStringified: Math.round((saved.value.length + broadcast.value.length) / 1024 / 1024),
     changed: command.value.changed,
     createTabCalls: calls.createTab,
