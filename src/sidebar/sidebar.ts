@@ -1,5 +1,6 @@
 import type { BackgroundCommand } from "../background/commands.js";
 import type { OutlineDiagnostics } from "../background/diagnostics.js";
+import { analyzeRestoreScope, type RestoreScope } from "../model/outline.js";
 import { exportPortableTree } from "../model/portable-tree.js";
 import type { NodeId, OutlineNode, OutlineState } from "../model/types.js";
 import { createActiveTabScrollTracker, observeActiveTabScrollTarget } from "./active-scroll.js";
@@ -619,16 +620,17 @@ function handleTreeClick(event: MouseEvent): void {
     if (node.status === "live") {
       void sendCommand({ type: "focusNode", nodeId: node.id });
     } else {
-      void runAndRender({ type: "restoreNode", nodeId: node.id });
+      restoreNodeWithConfirmation(node.id);
     }
     return;
   }
 
   if (action === "close-or-restore") {
-    void runAndRender({
-      type: node.status === "live" ? "closeNode" : "restoreNode",
-      nodeId: node.id
-    });
+    if (node.status === "live") {
+      void runAndRender({ type: "closeNode", nodeId: node.id });
+    } else {
+      restoreNodeWithConfirmation(node.id);
+    }
     return;
   }
 
@@ -975,6 +977,37 @@ function performDrop(placement: DropPlacement): void {
   void runAndRender(command);
 }
 
+function restoreNodeWithConfirmation(nodeId: NodeId): void {
+  const state = currentState;
+  if (!state) {
+    return;
+  }
+
+  const scope = analyzeRestoreScope(state, nodeId);
+  if (scope.requiresConfirmation && !window.confirm(largeRestoreConfirmationPrompt(scope))) {
+    return;
+  }
+
+  void runAndRender({
+    type: "restoreNode",
+    nodeId,
+    ...(scope.requiresConfirmation ? { confirmedLargeRestore: true } : {})
+  });
+}
+
+function largeRestoreConfirmationPrompt(scope: RestoreScope): string {
+  return `Restore ${restoreScopeSummary(scope)}?\n\nThis may open many tabs or windows at once.`;
+}
+
+function restoreScopeSummary(scope: RestoreScope): string {
+  const parts = [
+    scope.tabCount > 0 ? `${scope.tabCount} ${pluralize(scope.tabCount, "tab")}` : undefined,
+    scope.windowCount > 0 ? `${scope.windowCount} ${pluralize(scope.windowCount, "window")}` : undefined
+  ].filter((part): part is string => Boolean(part));
+
+  return `${scope.totalCount} ${pluralize(scope.totalCount, "restorable closed node")}${parts.length ? ` (${parts.join(", ")})` : ""}`;
+}
+
 function clearDragState(): void {
   draggedNodeId = undefined;
   clearDropPreview();
@@ -994,13 +1027,21 @@ function removeDropPreviewElements(): void {
 }
 
 async function runAndRender(command: BackgroundCommand): Promise<void> {
-  currentState = (await sendCommand(command)) as OutlineState;
-  render();
-  void loadDiagnostics();
+  try {
+    currentState = (await sendCommand(command)) as OutlineState;
+    render();
+    void loadDiagnostics();
+  } catch (error) {
+    showDiagnosticsNotice(commandErrorText(error), { error: true });
+  }
 }
 
 async function sendCommand(command: BackgroundCommand): Promise<unknown> {
   return browser.runtime.sendMessage(command);
+}
+
+function commandErrorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function showLoadError(error: unknown): void {
