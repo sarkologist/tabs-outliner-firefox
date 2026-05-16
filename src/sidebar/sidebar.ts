@@ -2,6 +2,7 @@ import type { BackgroundCommand } from "../background/commands.js";
 import type { OutlineDiagnostics } from "../background/diagnostics.js";
 import { exportPortableTree } from "../model/portable-tree.js";
 import type { NodeId, OutlineNode, OutlineState } from "../model/types.js";
+import { createActiveTabScrollTracker, observeActiveTabScrollTarget } from "./active-scroll.js";
 import {
   commandForDropPlacement,
   dropModeForPointer,
@@ -51,6 +52,7 @@ let currentProjection: VisibleTreeProjection | undefined;
 let projectionState: OutlineState | undefined;
 let projectionQuery: string | undefined;
 let scheduledVirtualRender = false;
+const activeTabScrollTracker = createActiveTabScrollTracker();
 
 const WHEEL_ZOOM_THRESHOLD_PX = 80;
 const DIAGNOSTICS_NOTICE_MS = 4000;
@@ -443,6 +445,7 @@ function render(): void {
   }
 
   renderVirtualRows();
+  scrollToObservedActiveTab(state, projection);
 }
 
 function canFlattenSubtree(state: OutlineState, node: OutlineNode): boolean {
@@ -930,6 +933,35 @@ function rowForEventTarget(target: EventTarget | null): HTMLElement | undefined 
 
 function cssEscape(value: string): string {
   return typeof CSS !== "undefined" && CSS.escape ? CSS.escape(value) : value.replaceAll('"', '\\"');
+}
+
+function scrollToObservedActiveTab(state: OutlineState, projection: VisibleTreeProjection): void {
+  const nodeId = observeActiveTabScrollTarget(activeTabScrollTracker, state);
+  if (!nodeId) {
+    return;
+  }
+
+  const row = projection.rows.find((candidate) => candidate.nodeId === nodeId);
+  if (!row || !rootDropSurface) {
+    return;
+  }
+
+  const rowHeight = currentRowHeight();
+  const rowTop = row.index * rowHeight;
+  const rowBottom = rowTop + rowHeight;
+  const viewportTop = rootDropSurface.scrollTop;
+  const viewportBottom = viewportTop + rootDropSurface.clientHeight;
+
+  if (rowTop < viewportTop) {
+    rootDropSurface.scrollTop = rowTop;
+    renderVirtualRows();
+    return;
+  }
+
+  if (rowBottom > viewportBottom) {
+    rootDropSurface.scrollTop = Math.max(0, rowBottom - rootDropSurface.clientHeight);
+    renderVirtualRows();
+  }
 }
 
 function rowForItem(item: HTMLElement): HTMLElement | undefined {
