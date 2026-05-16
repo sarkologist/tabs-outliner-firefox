@@ -1495,7 +1495,7 @@ describe("background controller lifecycle", () => {
     await controller.ensureState();
 
     await controller.handleMessage({ type: "closeNode", nodeId: "tab:2" });
-    expect(runtime.api.tabs.remove).toHaveBeenCalledWith(2);
+    expect(runtime.api.tabs.remove).toHaveBeenCalledWith([2]);
 
     const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
     expect(state.nodes["tab:1"]?.status).toBe("live");
@@ -1507,6 +1507,55 @@ describe("background controller lifecycle", () => {
       title: "Two"
     });
     expect(state.nodes["window:10"]?.childIds).toEqual(["tab:1", "tab:2"]);
+  });
+
+  it("does not broadcast stale unchanged state for outliner closeNode tabs", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        },
+        {
+          id: 2,
+          windowId: 10,
+          index: 1,
+          active: false,
+          url: "https://two.example/",
+          title: "Two"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    runtime.broadcasts.length = 0;
+    vi.mocked(runtime.api.storage.local.set).mockClear();
+
+    await controller.handleMessage({ type: "closeNode", nodeId: "tab:2" });
+    await controller.handleMessage({ type: "getState" });
+
+    const stateUpdates = runtime.broadcasts.filter((message): message is { type: string; state: OutlineState } => {
+      return Boolean(
+        message &&
+          typeof message === "object" &&
+          (message as { type?: unknown }).type === "stateUpdated" &&
+          (message as { state?: unknown }).state
+      );
+    });
+    expect(stateUpdates).toHaveLength(1);
+    expect(stateUpdates[0]?.state.nodes["tab:2"]?.status).toBe("closed");
+    expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
   });
 
   it("preserves outliner closeNode windows with one live tab as restorable closed nodes", async () => {
@@ -2600,7 +2649,7 @@ describe("background controller lifecycle", () => {
 
     const deleted = (await controller.handleMessage({ type: "deleteNode", nodeId: "tab:2" })) as OutlineState;
 
-    expect(runtime.api.tabs.remove).toHaveBeenCalledWith(2);
+    expect(runtime.api.tabs.remove).toHaveBeenCalledWith([2]);
     expect(deleted.nodes["tab:2"]).toBeUndefined();
     expect(deleted.nodes["window:10"]?.childIds).toEqual(["tab:1"]);
 
@@ -2617,6 +2666,60 @@ describe("background controller lifecycle", () => {
     expect(afterRemoveEvent.nodes["tab:2"]).toBeUndefined();
     expect(afterRemoveEvent.nodes["tab:1"]?.status).toBe("live");
     expect(afterRemoveEvent.nodes["window:10"]?.childIds).toEqual(["tab:1"]);
+  });
+
+  it("batches delete-owned live subtree removals without redundant event persistence", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        },
+        {
+          id: 2,
+          windowId: 10,
+          index: 1,
+          active: false,
+          openerTabId: 1,
+          url: "https://two.example/",
+          title: "Two"
+        },
+        {
+          id: 3,
+          windowId: 10,
+          index: 2,
+          active: false,
+          url: "https://three.example/",
+          title: "Three"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    runtime.broadcasts.length = 0;
+    vi.mocked(runtime.api.storage.local.set).mockClear();
+
+    const deleted = (await controller.handleMessage({ type: "deleteNode", nodeId: "tab:1" })) as OutlineState;
+    const afterRemoveEvents = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+
+    expect(runtime.api.tabs.remove).toHaveBeenCalledWith([2, 1]);
+    expect(deleted.nodes["tab:1"]).toBeUndefined();
+    expect(deleted.nodes["tab:2"]).toBeUndefined();
+    expect(deleted.nodes["tab:3"]?.status).toBe("live");
+    expect(afterRemoveEvents).toEqual(deleted);
+    expect(runtime.broadcasts).toHaveLength(1);
+    expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
   });
 
   it("accepts flatten subtree commands through the extension message path", async () => {
@@ -2732,7 +2835,7 @@ describe("background controller lifecycle", () => {
 
     const deleted = (await controller.handleMessage({ type: "deleteNode", nodeId: "tab:1" })) as OutlineState;
 
-    expect(runtime.api.tabs.remove).toHaveBeenCalledWith(1);
+    expect(runtime.api.tabs.remove).toHaveBeenCalledWith([1]);
     expect(deleted.nodes["tab:1"]).toBeUndefined();
     expect(deleted.nodes["window:10"]).toBeUndefined();
     expect(deleted.rootIds).toEqual([]);

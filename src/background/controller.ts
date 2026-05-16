@@ -1,7 +1,7 @@
 import type { BrowserAdapter } from "./adapter.js";
 import { createBrowserAdapter } from "./browser-adapter.js";
 import { computeDiagnostics } from "./diagnostics.js";
-import { isBackgroundCommand, runCommand } from "./commands.js";
+import { isBackgroundCommand, planLiveSubtreeClose, runCommand } from "./commands.js";
 import { getNormalWindows, getNormalWindowsIncludingTabs } from "./runtime-snapshot.js";
 import { createStateCache } from "./state-cache.js";
 import { loadState, saveState } from "./storage.js";
@@ -39,8 +39,11 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   let mutationQueue: Promise<void> = Promise.resolve();
   const outlinerClosingTabIds = new Set<number>();
   const outlinerClosingWindowIds = new Set<number>();
+  const deleteOwnedClosingTabIds = new Set<number>();
+  const deleteOwnedClosingWindowIds = new Set<number>();
   const removedTabIds = new Set<number>();
   const stateCache = createStateCache(initializeState);
+  let sessionChangedQueued = false;
 
   api.runtime.onInstalled.addListener(() => {
     void ensureState();
@@ -70,6 +73,9 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
   api.tabs.onRemoved.addListener(async (tabId, removeInfo) => {
     removedTabIds.add(tabId);
+    if (deleteOwnedClosingTabIds.delete(tabId)) {
+      return;
+    }
     if (removeInfo.isWindowClosing) {
       return;
     }
@@ -97,6 +103,10 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   });
 
   api.windows.onRemoved.addListener(async (windowId) => {
+    if (deleteOwnedClosingWindowIds.delete(windowId)) {
+      return;
+    }
+
     await enqueueMutation(async () => {
       const current = await ensureState();
       const liveTabIds = liveTabIdsInWindow(current, windowId);
@@ -141,9 +151,18 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   });
 
   api.sessions.onChanged.addListener(async () => {
+    if (sessionChangedQueued) {
+      return;
+    }
+    sessionChangedQueued = true;
     await enqueueMutation(async () => {
-      await reconcileMissingLiveTabsInOpenWindows();
-      await persistAndBroadcast();
+      try {
+        if (await reconcileMissingLiveTabsInOpenWindows()) {
+          await persistAndBroadcast();
+        }
+      } finally {
+        sessionChangedQueued = false;
+      }
     });
   });
 
@@ -175,11 +194,20 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       const outlinerClosingWindowId = message.type === "closeNode"
         ? liveWindowIdForNode(current, message.nodeId)
         : undefined;
+      const deleteClosePlan = message.type === "deleteNode"
+        ? planLiveSubtreeClose(current, message.nodeId)
+        : undefined;
       if (typeof outlinerClosingTabId === "number") {
         outlinerClosingTabIds.add(outlinerClosingTabId);
       }
       if (typeof outlinerClosingWindowId === "number") {
         outlinerClosingWindowIds.add(outlinerClosingWindowId);
+      }
+      for (const tabId of deleteClosePlan?.tabIds ?? []) {
+        deleteOwnedClosingTabIds.add(tabId);
+      }
+      for (const windowId of deleteClosePlan?.windowIds ?? []) {
+        deleteOwnedClosingWindowIds.add(windowId);
       }
 
       let result: Awaited<ReturnType<typeof runCommand>>;
@@ -192,7 +220,16 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         if (typeof outlinerClosingWindowId === "number") {
           outlinerClosingWindowIds.delete(outlinerClosingWindowId);
         }
+        for (const tabId of deleteClosePlan?.tabIds ?? []) {
+          deleteOwnedClosingTabIds.delete(tabId);
+        }
+        for (const windowId of deleteClosePlan?.windowIds ?? []) {
+          deleteOwnedClosingWindowIds.delete(windowId);
+        }
         throw error;
+      }
+      if (message.type === "closeNode") {
+        return result.state;
       }
       state = result.state;
       stateCache.replace(result.state);
@@ -256,7 +293,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     await api.runtime.sendMessage({ type: "stateUpdated", state }).catch(() => undefined);
   }
 
-  async function reconcileMissingLiveTabsInOpenWindows(): Promise<void> {
+  async function reconcileMissingLiveTabsInOpenWindows(): Promise<boolean> {
     const current = await ensureState();
     const windows = filterRemovedTabsFromWindows(await getNormalWindows(api), removedTabIds);
     const openWindowIds = new Set(windows.map((windowInfo) => windowInfo.id));
@@ -266,6 +303,9 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     const missingLiveTabIds = Object.values(current.nodes)
       .filter(isLiveTabInOpenWindow(openWindowIds, openTabIds))
       .map((node) => node.live.tabId);
+    if (missingLiveTabIds.length === 0) {
+      return false;
+    }
 
     let next = current;
     for (const tabId of missingLiveTabIds) {
@@ -289,6 +329,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
     state = next;
     stateCache.replace(next);
+    return next !== current;
   }
 
   async function mostRecentClosedSession(): Promise<{ tab?: { sessionId?: string }; window?: { sessionId?: string } } | undefined> {

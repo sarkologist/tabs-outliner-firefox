@@ -8,6 +8,7 @@ export type RestoredSession = {
 export type BrowserAdapter = {
   focusTab(tabId: number, windowId: number): Promise<void>;
   closeTab(tabId: number): Promise<void>;
+  closeTabs(tabIds: number[]): Promise<void>;
   closeWindow(windowId: number): Promise<void>;
   restoreSession(sessionId: string): Promise<RestoredSession>;
   createTab(createProperties: { url: string; windowId?: number; active?: boolean }): Promise<RuntimeTab>;
