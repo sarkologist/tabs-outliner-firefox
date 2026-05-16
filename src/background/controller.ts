@@ -26,11 +26,21 @@ type RefreshOptions = {
   closeMissing?: boolean;
 };
 
+type QueuedRuntimeRefresh = {
+  eventTabsById: Map<number, RuntimeTab>;
+  closeMissing: boolean;
+  resolve: (changed: boolean) => void;
+  reject: (error: unknown) => void;
+  promise: Promise<boolean>;
+};
+
 export type BackgroundControllerOptions = {
   api: WebExtensionBrowser;
   adapter?: BrowserAdapter;
   now?: () => number;
 };
+
+const RUNTIME_REFRESH_BATCH_DELAY_MS = 0;
 
 export function createBackgroundController(options: BackgroundControllerOptions): BackgroundController {
   const { api, now = Date.now } = options;
@@ -45,6 +55,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   const removedTabIds = new Set<number>();
   const stateCache = createStateCache(initializeState);
   let sessionChangedQueued = false;
+  let queuedRuntimeRefresh: QueuedRuntimeRefresh | undefined;
 
   api.runtime.onInstalled.addListener(() => {
     void ensureState();
@@ -61,15 +72,15 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   api.runtime.onMessage.addListener((message) => handleMessage(message));
 
   api.tabs.onCreated.addListener(async (tab) => {
-    await refreshFromRuntime([tab]);
+    await queueRuntimeRefresh([tab]);
   });
 
   api.tabs.onUpdated.addListener(async (_tabId, _changeInfo, tab) => {
-    await refreshFromRuntime([tab]);
+    await queueRuntimeRefresh([tab]);
   });
 
   api.tabs.onActivated.addListener(async () => {
-    await refreshFromRuntime();
+    await queueRuntimeRefresh();
   });
 
   api.tabs.onRemoved.addListener(async (tabId, removeInfo) => {
@@ -148,7 +159,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   });
 
   api.windows.onFocusChanged.addListener(async () => {
-    await refreshFromRuntime([], { closeMissing: false });
+    await queueRuntimeRefresh([], { closeMissing: false });
   });
 
   api.sessions.onChanged.addListener(async () => {
@@ -255,6 +266,52 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
   async function refreshFromRuntime(eventTabs: RuntimeTab[] = [], options: RefreshOptions = {}): Promise<boolean> {
     return enqueueMutation(async () => refreshFromRuntimeNow(eventTabs, options));
+  }
+
+  function queueRuntimeRefresh(eventTabs: RuntimeTab[] = [], options: RefreshOptions = {}): Promise<boolean> {
+    const requestedCloseMissing = options.closeMissing ?? eventTabs.length === 0;
+    if (!queuedRuntimeRefresh) {
+      let resolveRefresh!: (changed: boolean) => void;
+      let rejectRefresh!: (error: unknown) => void;
+      const promise = new Promise<boolean>((resolve, reject) => {
+        resolveRefresh = resolve;
+        rejectRefresh = reject;
+      });
+      queuedRuntimeRefresh = {
+        eventTabsById: new Map(),
+        closeMissing: requestedCloseMissing,
+        resolve: resolveRefresh,
+        reject: rejectRefresh,
+        promise
+      };
+      globalThis.setTimeout(() => {
+        void flushQueuedRuntimeRefresh();
+      }, RUNTIME_REFRESH_BATCH_DELAY_MS);
+    } else {
+      queuedRuntimeRefresh.closeMissing ||= requestedCloseMissing;
+    }
+
+    for (const tab of eventTabs) {
+      queuedRuntimeRefresh.eventTabsById.set(tab.id, tab);
+    }
+
+    return queuedRuntimeRefresh.promise;
+  }
+
+  async function flushQueuedRuntimeRefresh(): Promise<void> {
+    const queued = queuedRuntimeRefresh;
+    if (!queued) {
+      return;
+    }
+    queuedRuntimeRefresh = undefined;
+
+    try {
+      queued.resolve(await refreshFromRuntime([...queued.eventTabsById.values()], {
+        closeMissing: queued.closeMissing
+      }));
+    } catch (error) {
+      queued.reject(error);
+    }
   }
 
   async function refreshFromRuntimeNow(eventTabs: RuntimeTab[] = [], options: RefreshOptions = {}): Promise<boolean> {

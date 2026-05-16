@@ -1013,6 +1013,63 @@ describe("background controller lifecycle", () => {
     expect(state.nodes["tab:2"]?.status).toBe("live");
   });
 
+  it("coalesces noisy new-tab event bursts into one runtime refresh", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    runtime.broadcasts.length = 0;
+    vi.mocked(runtime.api.storage.local.set).mockClear();
+
+    const newTab: RuntimeTab = {
+      id: 2,
+      windowId: 10,
+      index: 1,
+      active: true,
+      url: "about:newtab",
+      title: "New Tab"
+    };
+    await createTabFromBrowser(runtime, newTab, { awaitListeners: false });
+    await updateTabFromBrowser(runtime, 2, { title: "Loading" }, { awaitListeners: false });
+    await updateTabFromBrowser(runtime, 2, {
+      title: "Opened",
+      url: "https://opened.example/"
+    }, { awaitListeners: false });
+    runtime.events.tabActivated.dispatch({ tabId: 2, windowId: 10, previousTabId: 1 });
+
+    await Promise.all([
+      runtime.events.tabCreated.flush(),
+      runtime.events.tabUpdated.flush(),
+      runtime.events.tabActivated.flush()
+    ]);
+
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+
+    expect(runtime.broadcasts).toHaveLength(1);
+    expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
+    expect(state.nodes["tab:2"]?.title).toBe("Opened");
+    expect(state.nodes["tab:2"]?.url).toBe("https://opened.example/");
+    expect(state.nodes["tab:2"]?.active).toBe(true);
+    expect(state.nodes["tab:1"]?.active).toBe(false);
+  });
+
   it("serializes concurrent tab create events against the freshest state", async () => {
     const runtime = fakeRuntime(
       [
