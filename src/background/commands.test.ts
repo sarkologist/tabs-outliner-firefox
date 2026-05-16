@@ -430,8 +430,13 @@ describe("background commands", () => {
     expect(adapter.moveTabs).not.toHaveBeenCalled();
 
     const importedWindow = Object.values(result.state.nodes).find((node) => node.title === "Imported Window");
+    const importGroup = importedWindow?.parentId ? result.state.nodes[importedWindow.parentId] : undefined;
     const importedTab = Object.values(result.state.nodes).find((node) => node.title === "Imported Tab");
+    expect(importGroup?.title).toBe("Group");
+    expect(importGroup?.parentId).toBeUndefined();
+    expect(importGroup?.status).toBe("closed");
     expect(importedWindow?.status).toBe("closed");
+    expect(importedWindow?.parentId).toBe(importGroup?.id);
     expect(importedTab?.status).toBe("closed");
     expect(importedTab?.restore).toEqual({
       url: "https://imported.example/",
@@ -492,10 +497,11 @@ describe("background commands", () => {
       }
     });
     const importedWindow = Object.values(imported.state.nodes).find((node) => node.title === "Imported Window")!;
+    const importGroup = imported.state.nodes[importedWindow.parentId!]!;
 
     const restored = await runCommand(imported.state, adapter, {
       type: "restoreNode",
-      nodeId: importedWindow.id
+      nodeId: importGroup.id
     });
 
     const debugging = Object.values(restored.state.nodes).find((node) => node.title === "Debugging");

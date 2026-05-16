@@ -22,7 +22,7 @@ export function windowNodeId(windowId: number): NodeId {
 }
 
 function windowTitle(): string {
-  return "Window";
+  return "Group";
 }
 
 export function bootstrapFromWindows(windows: RuntimeWindow[], clock: Clock): OutlineState {

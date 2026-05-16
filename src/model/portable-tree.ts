@@ -7,6 +7,7 @@ import type {
 } from "./types.js";
 
 export const PORTABLE_TREE_SCHEMA = "tabs-outliner-tree";
+const IMPORT_GROUP_TITLE = "Group";
 
 export type PortableTreeNode = {
   kind: OutlineNodeKind;
@@ -56,9 +57,27 @@ export function appendPortableTree(
     usedIds: new Set([...Object.keys(next.nodes), ...next.rootIds])
   };
 
+  if (tree.roots.length === 0) {
+    return next;
+  }
+
+  const importGroupId = nextPortableNodeId("window", context);
+  const importGroup: OutlineNode = {
+    id: importGroupId,
+    kind: "window",
+    status: "closed",
+    childIds: [],
+    title: IMPORT_GROUP_TITLE,
+    collapsed: false,
+    createdAt: clock.now,
+    updatedAt: clock.now,
+    closedAt: clock.now
+  };
+  next.nodes[importGroupId] = importGroup;
+  next.rootIds.push(importGroupId);
+
   for (const root of tree.roots) {
-    const rootId = appendPortableNode(next, root, undefined, context);
-    next.rootIds.push(rootId);
+    importGroup.childIds.push(appendPortableNode(next, root, importGroupId, context));
   }
 
   return next;

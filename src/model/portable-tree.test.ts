@@ -61,7 +61,7 @@ describe("portable tree files", () => {
       roots: [
         {
           kind: "window",
-          title: "Window",
+          title: "Group",
           children: [
             {
               kind: "tab",
@@ -148,7 +148,7 @@ describe("portable tree files", () => {
     expect(exported.roots).toEqual([
       {
         kind: "window",
-        title: "Window",
+        title: "Group",
         children: [
           {
             kind: "tab",
@@ -192,6 +192,18 @@ describe("portable tree files", () => {
                   children: []
                 }
               ]
+            },
+            {
+              kind: "window",
+              title: "Nested Imported Window",
+              children: [
+                {
+                  kind: "tab",
+                  title: "Nested Tab",
+                  url: "https://nested.example/",
+                  children: []
+                }
+              ]
             }
           ]
         },
@@ -207,22 +219,32 @@ describe("portable tree files", () => {
     const appended = appendPortableTree(state, payload, { now: 5000 });
 
     expect(appended.rootIds.slice(0, state.rootIds.length)).toEqual(state.rootIds);
-    expect(appended.rootIds).toHaveLength(state.rootIds.length + 2);
-    expect(Object.keys(appended.nodes)).toHaveLength(Object.keys(state.nodes).length + 4);
+    expect(appended.rootIds).toHaveLength(state.rootIds.length + 1);
+    expect(Object.keys(appended.nodes)).toHaveLength(Object.keys(state.nodes).length + 7);
 
+    const importGroupId = appended.rootIds.at(-1)!;
+    const importGroup = appended.nodes[importGroupId]!;
     const importedWindow = nodeByTitle(appended, "Imported Window");
     const importedParent = nodeByTitle(appended, "Imported Parent");
     const importedChild = nodeByTitle(appended, "Imported Child");
+    const nestedWindow = nodeByTitle(appended, "Nested Imported Window");
+    const nestedTab = nodeByTitle(appended, "Nested Tab");
     const looseTab = nodeByTitle(appended, "Loose Tab");
 
-    expect(importedWindow.parentId).toBeUndefined();
-    expect(importedWindow.childIds).toEqual([importedParent.id]);
+    expect(importGroup.title).toBe("Group");
+    expect(importGroup.parentId).toBeUndefined();
+    expect(importGroup.childIds).toEqual([importedWindow.id, looseTab.id]);
+    expect(importedWindow.parentId).toBe(importGroup.id);
+    expect(importedWindow.childIds).toEqual([importedParent.id, nestedWindow.id]);
     expect(importedParent.parentId).toBe(importedWindow.id);
     expect(importedParent.childIds).toEqual([importedChild.id]);
     expect(importedChild.parentId).toBe(importedParent.id);
-    expect(looseTab.parentId).toBeUndefined();
+    expect(nestedWindow.parentId).toBe(importedWindow.id);
+    expect(nestedWindow.childIds).toEqual([nestedTab.id]);
+    expect(nestedTab.parentId).toBe(nestedWindow.id);
+    expect(looseTab.parentId).toBe(importGroup.id);
 
-    for (const node of [importedWindow, importedParent, importedChild, looseTab]) {
+    for (const node of [importGroup, importedWindow, importedParent, importedChild, nestedWindow, nestedTab, looseTab]) {
       expect(node.status).toBe("closed");
       expect(node.collapsed).toBe(false);
       expect(node.createdAt).toBe(5000);
@@ -242,10 +264,26 @@ describe("portable tree files", () => {
       url: "https://imported.example/child",
       title: "Imported Child"
     });
+    expect(nestedTab.restore).toEqual({
+      url: "https://nested.example/",
+      title: "Nested Tab"
+    });
     expect(looseTab.restore).toEqual({
       url: "https://loose.example/",
       title: "Loose Tab"
     });
+  });
+
+  it("does not create an empty import group for empty imports", () => {
+    const state = bootstrapFromWindows(runtimeWindows, { now: 1000 });
+    const appended = appendPortableTree(state, {
+      schema: PORTABLE_TREE_SCHEMA,
+      version: 1,
+      exportedAt: "2026-05-16T12:00:00.000Z",
+      roots: []
+    }, { now: 5000 });
+
+    expect(appended).toEqual(state);
   });
 
   it("rejects invalid imports without mutating the original state", () => {

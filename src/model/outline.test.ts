@@ -100,7 +100,7 @@ describe("outline model", () => {
     const state = bootstrapFromWindows(windows, { now: 1000 });
 
     expect(state.rootIds).toEqual(["window:10"]);
-    expect(state.nodes["window:10"]?.title).toBe("Window");
+    expect(state.nodes["window:10"]?.title).toBe("Group");
     expect(state.nodes["window:10"]?.active).toBe(true);
     expect(state.nodes["window:10"]?.childIds).toEqual(["tab:1", "tab:3"]);
     expect(state.nodes["tab:1"]?.childIds).toEqual(["tab:2"]);
@@ -368,8 +368,8 @@ describe("outline model", () => {
     expect(moved.nodes["window:10"]?.childIds).toEqual(["tab:3"]);
     expect(moved.nodes["window:42"]?.childIds).toEqual(["tab:1"]);
     expect(moved.nodes["window:42"]?.status).toBe("live");
-    expect(moved.nodes["window:42"]?.title).toBe("Window");
-    expect(moved.nodes["window:10"]?.title).toBe("Window");
+    expect(moved.nodes["window:42"]?.title).toBe("Group");
+    expect(moved.nodes["window:10"]?.title).toBe("Group");
     expect(moved.nodes["window:42"]?.active).toBe(true);
     expect(moved.nodes["window:10"]?.active).toBe(false);
     expect(moved.nodes["window:42"]?.live).toEqual({ windowId: 42 });
@@ -426,7 +426,7 @@ describe("outline model", () => {
       kind: "window",
       status: "closed",
       childIds: ["tab:1"],
-      title: "Window",
+      title: "Group",
       closedAt: 3000
     });
     expect(moved.nodes[placeholderId]?.live).toBeUndefined();
@@ -661,7 +661,7 @@ describe("outline model", () => {
     expect(repaired.nodes["tab:2"]?.childIds).toEqual([]);
   });
 
-  it("repairs stored window titles to the generic label", () => {
+  it("repairs stored group titles to the generic label", () => {
     const state = closeWindow(bootstrapFromWindows(windows, { now: 1000 }), 10, {
       now: 2000,
       sessionId: "session-window-10"
@@ -670,7 +670,7 @@ describe("outline model", () => {
 
     const repaired = repairState(state);
 
-    expect(repaired.nodes["window:10"]?.title).toBe("Window");
+    expect(repaired.nodes["window:10"]?.title).toBe("Group");
   });
 
   it("repairs closed tab children in live windows by promoting them", () => {
@@ -777,7 +777,7 @@ describe("outline model", () => {
     ], { now: 4000 });
 
     expect(reconciled.nodes["tab:2"]?.status).toBe("closed");
-    expect(reconciled.nodes["window:10"]?.title).toBe("Window");
+    expect(reconciled.nodes["window:10"]?.title).toBe("Group");
     expect(reconciled.nodes["window:10"]?.active).toBe(true);
     expect(reconciled.nodes["tab:1"]?.title).toBe("Example updated");
     expect(reconciled.nodes["tab:1"]?.childIds).toEqual(["tab:2", "tab:5"]);
