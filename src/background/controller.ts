@@ -406,7 +406,8 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     const closeMissing = options.closeMissing ?? eventTabs.length === 0;
     const currentEventTabs = eventTabs
       .filter((tab) => !removedTabIds.has(tab.id))
-      .filter((tab) => !consumeCommandRestoredTabEvent(current, commandRestoredTabIds, tab));
+      .filter((tab) => !consumeCommandRestoredTabEvent(current, commandRestoredTabIds, tab))
+      .filter((tab) => tabEventMayChangeState(current, tab));
     if (eventTabs.length > 0 && currentEventTabs.length === 0 && !closeMissing) {
       return false;
     }
@@ -720,23 +721,31 @@ function consumeCommandRestoredTabEvent(
   commandRestoredTabIds: Set<number>,
   tab: RuntimeTab
 ): boolean {
-  if (!commandRestoredTabIds.delete(tab.id)) {
+  if (!commandRestoredTabIds.has(tab.id)) {
     return false;
   }
 
   const node = liveTabNodeByRuntimeId(state, tab.id);
-  return Boolean(node?.restoredFromClosed && tabEventMatchesLiveNode(node, tab));
+  if (!node?.restoredFromClosed || node.live.windowId !== tab.windowId) {
+    commandRestoredTabIds.delete(tab.id);
+    return false;
+  }
+
+  commandRestoredTabIds.delete(tab.id);
+  return true;
 }
 
-function tabEventMatchesLiveNode(
-  node: OutlineNode & { live: { tabId: number; windowId: number } },
-  tab: RuntimeTab
-): boolean {
-  return node.live.windowId === tab.windowId &&
-    node.active === tab.active &&
-    (tab.url === undefined || node.url === tab.url) &&
-    (tab.title === undefined || node.title === tab.title) &&
-    (tab.favIconUrl === undefined || node.favIconUrl === tab.favIconUrl);
+function tabEventMayChangeState(state: OutlineState, tab: RuntimeTab): boolean {
+  const node = liveTabNodeByRuntimeId(state, tab.id);
+  if (!node || node.live.windowId !== tab.windowId) {
+    return true;
+  }
+
+  const nextTitle = tab.title || tab.url || node.title || "Untitled tab";
+  return node.active !== tab.active ||
+    (tab.url !== undefined && node.url !== tab.url) ||
+    node.title !== nextTitle ||
+    (tab.favIconUrl !== undefined && node.favIconUrl !== tab.favIconUrl);
 }
 
 function isCommandFocusActiveUpdateEcho(

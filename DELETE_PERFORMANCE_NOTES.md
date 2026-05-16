@@ -222,3 +222,12 @@ Use these as starting targets, not hard promises:
 - Restore now builds its patch from the command's restore-plan candidate node IDs, including any planned window destination. The same candidate set is used to arm created-tab echo absorption.
 - After using `pnpm profile:restore -- --scenario controller-event-echo --tabs 50000 --target last`: 110ms total, first patch broadcast at 13ms, 52ms save stringify, 0ms patch broadcast stringify, 2ms node patch, 0ms projection, 15 MB stringified.
 - Cross-check using `pnpm profile:restore -- --scenario single-closed-tab --tabs 50000 --target last`: 69ms total, 21ms command, 0ms node patch build, 46ms save stringify, 2ms node patch.
+
+### 2026-05-16: Restore Transient Echo Absorption
+
+- Manual QA on a ~28k-node tree still reported >1s restore tree updates, which did not match the earlier synthetic profile.
+- Added `--echo transient-separated` to `pnpm profile:restore` to model a more Firefox-like restore: a transient `tabs.onCreated` echo arrives with placeholder title/url, then a later no-op final `tabs.onUpdated` echo arrives after the command patch.
+- Baseline using `pnpm profile:restore -- --scenario controller-event-echo --tabs 28000 --target last --echo transient-separated`: 447ms total, 3 saves, 3 broadcasts, 43ms full broadcast stringify, 27ms projection, 41 MB stringified.
+- Fixed restored-tab echo absorption so command-owned restored tab create events are consumed by tab id/window id even when title/url are transient. Also filter runtime tab events that would not change the current live node, preventing later no-op final updates from forcing full reconciliation and `stateUpdated`.
+- After using `pnpm profile:restore -- --scenario controller-event-echo --tabs 28000 --target last --echo transient-separated`: 64ms total, first patch broadcast at 9ms, 1 save, 1 patch broadcast, 0ms full broadcast stringify, 0ms projection, 8 MB stringified.
+- Cross-check using `pnpm profile:restore -- --scenario controller-event-echo --tabs 50000 --target last --echo transient-separated`: 135ms total, first patch broadcast at 16ms, 1 save, 1 patch broadcast, 0ms projection, 15 MB stringified.

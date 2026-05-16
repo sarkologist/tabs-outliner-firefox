@@ -43,7 +43,8 @@ function parseArgs(argv) {
   const options = {
     tabs: 50_000,
     scenario: "single-closed-tab",
-    target: "last"
+    target: "last",
+    echo: "final"
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -58,6 +59,9 @@ function parseArgs(argv) {
     } else if (arg === "--target" && next) {
       options.target = next;
       index += 1;
+    } else if (arg === "--echo" && next) {
+      options.echo = next;
+      index += 1;
     }
   }
 
@@ -69,6 +73,9 @@ function parseArgs(argv) {
   }
   if (!["first", "middle", "last"].includes(options.target)) {
     throw new Error("--target must be first, middle, or last");
+  }
+  if (!["final", "transient", "transient-separated"].includes(options.echo)) {
+    throw new Error("--echo must be final, transient, or transient-separated");
   }
 
   return options;
@@ -281,6 +288,7 @@ function makeControllerRuntime(initialState) {
     windows: [{ id: 10, focused: true, incognito: false }],
     tabs: [],
     storedState: initialState,
+    restoreEcho: "final",
     saves: 0,
     broadcasts: 0,
     saveStringifyMs: 0,
@@ -402,7 +410,21 @@ function fakeControllerAdapter(runtime) {
           title: url
         };
         runtime.tabs.push(tab);
-        runtime.events.tabCreated.dispatch({ ...tab });
+        if (runtime.restoreEcho === "transient" || runtime.restoreEcho === "transient-separated") {
+          runtime.events.tabCreated.dispatch({
+            ...tab,
+            url: "about:blank",
+            title: "New Tab"
+          });
+          if (runtime.restoreEcho === "transient") {
+            runtime.events.tabUpdated.dispatch(tab.id, {
+              url: tab.url,
+              title: tab.title
+            }, { ...tab });
+          }
+        } else {
+          runtime.events.tabCreated.dispatch({ ...tab });
+        }
         return { ...tab };
       },
       createWindow: async ({ url }) => {
@@ -480,6 +502,7 @@ async function profileCommand(options) {
 async function profileControllerEventEcho(options) {
   const { state, nodeId } = largeClosedTabState(options.tabs, options.target);
   const runtime = makeControllerRuntime(state);
+  runtime.restoreEcho = options.echo;
   const { adapter, calls } = fakeControllerAdapter(runtime);
   const controller = createBackgroundController({ api: runtime.api, adapter, now: () => 1000 });
   const init = await measureAsync(() => controller.ensureState());
@@ -498,17 +521,29 @@ async function profileControllerEventEcho(options) {
 
   const command = await measureAsync(() => controller.handleMessage({ type: "restoreNode", nodeId }));
   const eventEcho = await measureAsync(() => flushAll(runtime));
+  if (options.echo === "transient-separated") {
+    const restoredTab = runtime.tabs.at(-1);
+    if (restoredTab) {
+      runtime.events.tabUpdated.dispatch(restoredTab.id, {
+        url: restoredTab.url,
+        title: restoredTab.title
+      }, { ...restoredTab });
+    }
+  }
+  const updateEcho = await measureAsync(() => flushAll(runtime));
   const current = await controller.handleMessage({ type: "getState" });
 
   return {
     scenario: options.scenario,
     tabs: options.tabs,
     target: options.target,
+    echo: options.echo,
     nodeId,
     initMs: Math.round(init.ms),
     commandMs: Math.round(command.ms),
     eventEchoMs: Math.round(eventEcho.ms),
-    totalMeasuredMs: Math.round(command.ms + eventEcho.ms),
+    updateEchoMs: Math.round(updateEcho.ms),
+    totalMeasuredMs: Math.round(command.ms + eventEcho.ms + updateEcho.ms),
     firstBroadcastMs: Math.round(runtime.firstBroadcastMs ?? 0),
     saveStringifyMs: Math.round(runtime.saveStringifyMs),
     broadcastStringifyMs: Math.round(runtime.broadcastStringifyMs),

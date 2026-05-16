@@ -226,7 +226,7 @@ function fakeRuntime(windows: RuntimeWindow[], tabs: RuntimeTab[], options: Fake
 function createTabFromBrowser(
   runtime: FakeRuntime,
   tab: RuntimeTab,
-  options: { awaitListeners?: boolean; queryLag?: boolean } = {}
+  options: { awaitListeners?: boolean; queryLag?: boolean; eventTab?: RuntimeTab } = {}
 ): Promise<void> | void {
   runtime.tabs = runtime.tabs.map((candidate) => candidate.windowId === tab.windowId && candidate.index >= tab.index
     ? {
@@ -244,7 +244,7 @@ function createTabFromBrowser(
     runtime.setNextTabQueryResult(runtime.tabs.filter((candidate) => candidate.id !== tab.id));
   }
 
-  const eventTab = copyTab(tab);
+  const eventTab = copyTab(options.eventTab ?? tab);
   if (options.awaitListeners === false) {
     runtime.events.tabCreated.dispatch(eventTab);
     return;
@@ -1712,6 +1712,78 @@ describe("background controller lifecycle", () => {
       restoredFromClosed: true
     });
     expect(restoreBroadcast?.closedCountDelta).toBe(-1);
+    expect(restoreBroadcast?.state).toBeUndefined();
+    expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
+  });
+
+  it("absorbs transient restored-tab create and no-op update echoes", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        },
+        {
+          id: 2,
+          windowId: 10,
+          index: 1,
+          active: false,
+          url: "https://two.example/",
+          title: "Two"
+        }
+      ]
+    );
+    const restoredTab: RuntimeTab = {
+      id: 22,
+      windowId: 10,
+      index: 1,
+      active: false,
+      url: "https://two.example/",
+      title: "Two"
+    };
+    vi.mocked(runtime.api.sessions.restore).mockImplementation(async () => {
+      createTabFromBrowser(runtime, restoredTab, {
+        awaitListeners: false,
+        eventTab: {
+          ...restoredTab,
+          url: "about:blank",
+          title: "New Tab"
+        }
+      });
+      return { tab: copyTab(restoredTab) } as never;
+    });
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    await controller.handleMessage({ type: "closeNode", nodeId: "tab:2" });
+    await runtime.events.tabRemoved.flush();
+    await runtime.events.sessionChanged.flush();
+
+    runtime.broadcasts.length = 0;
+    vi.mocked(runtime.api.storage.local.set).mockClear();
+
+    await controller.handleMessage({ type: "restoreNode", nodeId: "tab:2" });
+    await runtime.events.tabCreated.flush();
+    await updateTabFromBrowser(runtime, 22, {
+      url: restoredTab.url,
+      title: restoredTab.title
+    });
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+
+    expect(state.nodes["tab:2"]?.live).toEqual({ tabId: 22, windowId: 10 });
+    expect(runtime.broadcasts).toHaveLength(1);
+    const restoreBroadcast = runtime.broadcasts[0] as { type?: string; state?: OutlineState } | undefined;
+    expect(restoreBroadcast?.type).toBe("nodeStateUpdated");
     expect(restoreBroadcast?.state).toBeUndefined();
     expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
   });
