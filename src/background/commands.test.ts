@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { BrowserAdapter } from "./adapter.js";
-import { runCommand } from "./commands.js";
+import { isBackgroundCommand, runCommand } from "./commands.js";
+import type { BackgroundCommand } from "./commands.js";
 import { bootstrapFromWindows, closeTab, closeWindow, flattenSubtreeOneLevel, moveNode } from "../model/outline.js";
 import type { OutlineState, RuntimeWindow } from "../model/types.js";
 
@@ -76,6 +77,27 @@ function fakeAdapter(overrides: Partial<BrowserAdapter> = {}): BrowserAdapter {
 }
 
 describe("background commands", () => {
+  it("recognizes every supported background command variant", () => {
+    const supportedCommands = [
+      { type: "getState" },
+      { type: "focusNode", nodeId: "tab:1" },
+      { type: "closeNode", nodeId: "tab:1" },
+      { type: "restoreNode", nodeId: "tab:1" },
+      { type: "deleteNode", nodeId: "tab:1" },
+      { type: "moveNode", nodeId: "tab:1", parentId: "window:10", index: 0 },
+      { type: "moveNodeToNewWindow", nodeId: "tab:1", index: 0 },
+      { type: "flattenSubtree", nodeId: "window:10" },
+      { type: "toggleCollapsed", nodeId: "tab:1" },
+      { type: "refresh" }
+    ] satisfies BackgroundCommand[];
+
+    expect(supportedCommands.every(isBackgroundCommand)).toBe(true);
+  });
+
+  it("rejects unknown background command types", () => {
+    expect(isBackgroundCommand({ type: "notACommand" })).toBe(false);
+  });
+
   it("focuses a live tab node", async () => {
     const state = bootstrapFromWindows(runtimeWindows, { now: 1000 });
     const adapter = fakeAdapter();

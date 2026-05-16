@@ -1,7 +1,7 @@
 import type { BrowserAdapter } from "./adapter.js";
 import { createBrowserAdapter } from "./browser-adapter.js";
 import { computeDiagnostics } from "./diagnostics.js";
-import { runCommand } from "./commands.js";
+import { isBackgroundCommand, runCommand } from "./commands.js";
 import { getNormalWindows, getNormalWindowsIncludingTabs } from "./runtime-snapshot.js";
 import { createStateCache } from "./state-cache.js";
 import { loadState, saveState } from "./storage.js";
@@ -139,7 +139,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       return computeDiagnostics(await ensureState(), await getNormalWindows(api));
     }
 
-    if (!isCommand(message)) {
+    if (!isBackgroundCommand(message)) {
       return undefined;
     }
 
@@ -332,25 +332,6 @@ function filterRemovedTabsFromWindows(windows: RuntimeWindow[], removedTabIds: S
     ...windowInfo,
     tabs: (windowInfo.tabs ?? []).filter((tab) => !removedTabIds.has(tab.id))
   }));
-}
-
-function isCommand(message: unknown): message is Parameters<typeof runCommand>[2] {
-  if (!message || typeof message !== "object" || !("type" in message)) {
-    return false;
-  }
-
-  return [
-    "getState",
-    "focusNode",
-    "closeNode",
-    "restoreNode",
-    "deleteNode",
-    "moveNode",
-    "moveNodeToNewWindow",
-    "flattenSubtree",
-    "toggleCollapsed",
-    "refresh"
-  ].includes(String((message as { type: unknown }).type));
 }
 
 function isDiagnosticsRequest(message: unknown): message is { type: "getDiagnostics" } {

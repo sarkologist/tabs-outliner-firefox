@@ -2517,6 +2517,38 @@ describe("background controller lifecycle", () => {
     expect(lastBroadcast?.state?.nodes["window:10"]?.childIds).toEqual(["tab:1", "tab:2"]);
   });
 
+  it("ignores unknown extension message command types", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    const broadcastsBefore = runtime.broadcasts.length;
+    const savesBefore = vi.mocked(runtime.api.storage.local.set).mock.calls.length;
+
+    const result = await controller.handleMessage({ type: "notACommand" });
+
+    expect(result).toBeUndefined();
+    expect(runtime.broadcasts).toHaveLength(broadcastsBefore);
+    expect(vi.mocked(runtime.api.storage.local.set).mock.calls).toHaveLength(savesBefore);
+  });
+
   it("deletes the window node when its only live tab is deleted by command", async () => {
     const runtime = fakeRuntime(
       [

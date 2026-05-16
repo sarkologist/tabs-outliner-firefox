@@ -54,9 +54,39 @@ export type BackgroundCommand =
       type: "refresh";
     };
 
+export const BACKGROUND_COMMAND_TYPES = [
+  "getState",
+  "focusNode",
+  "closeNode",
+  "restoreNode",
+  "deleteNode",
+  "moveNode",
+  "moveNodeToNewWindow",
+  "flattenSubtree",
+  "toggleCollapsed",
+  "refresh"
+] as const satisfies readonly BackgroundCommand["type"][];
+
+type MissingBackgroundCommandTypes = Exclude<BackgroundCommand["type"], (typeof BACKGROUND_COMMAND_TYPES)[number]>;
+const backgroundCommandTypesAreExhaustive: Record<MissingBackgroundCommandTypes, never> = {};
+void backgroundCommandTypesAreExhaustive;
+
+const BACKGROUND_COMMAND_TYPE_SET: ReadonlySet<string> = new Set(BACKGROUND_COMMAND_TYPES);
+
 export type CommandResult = {
   state: OutlineState;
 };
+
+// Runtime boundary for extension messages. It intentionally validates command type only,
+// preserving the existing sidebar payload contract.
+export function isBackgroundCommand(message: unknown): message is BackgroundCommand {
+  if (!message || typeof message !== "object" || !("type" in message)) {
+    return false;
+  }
+
+  const type = (message as { type: unknown }).type;
+  return typeof type === "string" && BACKGROUND_COMMAND_TYPE_SET.has(type);
+}
 
 export async function runCommand(
   state: OutlineState,
