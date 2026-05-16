@@ -59,6 +59,7 @@ export type OutlineNode = {
   closedAt?: number;
   live?: LiveRef;
   restore?: RestoreRef;
+  restoredFromClosed?: boolean;
 };
 
 export type OutlineState = {

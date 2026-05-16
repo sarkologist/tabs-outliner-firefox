@@ -136,6 +136,7 @@ export function reconcileWithWindows(
         if (reattachedNodeId && isProvisionalLiveTabNode(node)) {
           replaceProvisionalNode(next, node.id, reattachedNodeId);
           updateLiveTabNode(requireNode(next, reattachedNodeId), tab, clock.now);
+          requireNode(next, reattachedNodeId).restoredFromClosed = true;
           reattachedNodeIds.add(reattachedNodeId);
           runtimeToNode.set(tab.id, reattachedNodeId);
           continue;
@@ -150,6 +151,7 @@ export function reconcileWithWindows(
       const nodeId = reattachedNodeId ?? uniqueNodeId(next, tabNodeId(tab.id), clock.now);
       if (reattachedNodeId) {
         updateLiveTabNode(requireNode(next, reattachedNodeId), tab, clock.now);
+        requireNode(next, reattachedNodeId).restoredFromClosed = true;
         reattachedNodeIds.add(reattachedNodeId);
       } else {
         next.nodes[nodeId] = tabToNode(tab, nodeId, winId, clock.now);
@@ -550,10 +552,14 @@ export function restoreNodes(state: OutlineState, restoredNodes: RestoredNode[])
       continue;
     }
 
+    const wasClosed = node.status === "closed";
     node.status = "live";
     node.updatedAt = Date.now();
     delete node.closedAt;
     delete node.restore;
+    if (wasClosed) {
+      node.restoredFromClosed = true;
+    }
 
     if (node.kind === "window") {
       node.live = { windowId: restored.windowId };
@@ -858,6 +864,7 @@ function markClosedNode(state: OutlineState, nodeId: NodeId, context: CloseConte
   node.restore = restore;
   delete node.live;
   delete node.active;
+  delete node.restoredFromClosed;
 }
 
 function promoteChildrenAfterNode(state: OutlineState, nodeId: NodeId): void {

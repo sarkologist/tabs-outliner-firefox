@@ -547,7 +547,33 @@ describe("outline model", () => {
 
     expect(restored.nodes["tab:2"]?.status).toBe("live");
     expect(restored.nodes["tab:2"]?.live).toEqual({ tabId: 22, windowId: 10 });
+    expect(restored.nodes["tab:2"]?.restoredFromClosed).toBe(true);
     expect(Object.keys(restored.nodes).filter((id) => id === "tab:2")).toHaveLength(1);
+  });
+
+  it("marks restored closed window nodes that become live", () => {
+    const state = closeWindow(bootstrapFromWindows(windows, { now: 1000 }), 10, {
+      now: 2000,
+      sessionId: "session-window-10"
+    });
+    const restored = restoreNodes(state, [
+      {
+        nodeId: "window:10",
+        windowId: 20
+      },
+      {
+        nodeId: "tab:1",
+        tabId: 11,
+        windowId: 20,
+        url: "https://example.com/",
+        title: "Example"
+      }
+    ]);
+
+    expect(restored.nodes["window:10"]?.status).toBe("live");
+    expect(restored.nodes["window:10"]?.restoredFromClosed).toBe(true);
+    expect(restored.nodes["tab:1"]?.status).toBe("live");
+    expect(restored.nodes["tab:1"]?.restoredFromClosed).toBe(true);
   });
 
   it("deletes closed nodes but keeps promoted live children", () => {
@@ -988,6 +1014,7 @@ describe("outline model", () => {
 
     expect(reconciled.nodes["tab:2"]?.status).toBe("live");
     expect(reconciled.nodes["tab:2"]?.live).toEqual({ tabId: 22, windowId: 10 });
+    expect(reconciled.nodes["tab:2"]?.restoredFromClosed).toBe(true);
     expect(reconciled.nodes["tab:2"]?.parentId).toBe("tab:1");
     expect(reconciled.nodes["tab:22"]).toBeUndefined();
     expect(reconciled.nodes["tab:1"]?.childIds).toEqual(["tab:2"]);
