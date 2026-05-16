@@ -9,6 +9,7 @@ import {
   projectLiveTabs,
   restoreNodes
 } from "../model/outline.js";
+import { appendPortableTree } from "../model/portable-tree.js";
 import type { NodeId, OutlineNode, OutlineState, RestoredNode, RestorePlan, RuntimeTab } from "../model/types.js";
 
 export type BackgroundCommand =
@@ -51,6 +52,10 @@ export type BackgroundCommand =
       nodeId: NodeId;
     }
   | {
+      type: "importTree";
+      tree: unknown;
+    }
+  | {
       type: "refresh";
     };
 
@@ -64,6 +69,7 @@ export const BACKGROUND_COMMAND_TYPES = [
   "moveNodeToNewWindow",
   "flattenSubtree",
   "toggleCollapsed",
+  "importTree",
   "refresh"
 ] as const satisfies readonly BackgroundCommand["type"][];
 
@@ -143,6 +149,9 @@ export async function runCommand(
 
     case "toggleCollapsed":
       return { state: toggleCollapsed(state, command.nodeId) };
+
+    case "importTree":
+      return { state: appendPortableTree(state, command.tree, { now: Date.now() }) };
 
     case "deleteNode": {
       if (!state.nodes[command.nodeId]) {

@@ -4,6 +4,7 @@ import type { BrowserAdapter } from "./adapter.js";
 import { isBackgroundCommand, runCommand } from "./commands.js";
 import type { BackgroundCommand } from "./commands.js";
 import { bootstrapFromWindows, closeTab, closeWindow, flattenSubtreeOneLevel, moveNode } from "../model/outline.js";
+import { PORTABLE_TREE_SCHEMA } from "../model/portable-tree.js";
 import type { OutlineState, RuntimeWindow } from "../model/types.js";
 
 const runtimeWindows: RuntimeWindow[] = [
@@ -88,6 +89,15 @@ describe("background commands", () => {
       { type: "moveNodeToNewWindow", nodeId: "tab:1", index: 0 },
       { type: "flattenSubtree", nodeId: "window:10" },
       { type: "toggleCollapsed", nodeId: "tab:1" },
+      {
+        type: "importTree",
+        tree: {
+          schema: PORTABLE_TREE_SCHEMA,
+          version: 1,
+          exportedAt: "2026-05-16T12:00:00.000Z",
+          roots: []
+        }
+      },
       { type: "refresh" }
     ] satisfies BackgroundCommand[];
 
@@ -382,6 +392,51 @@ describe("background commands", () => {
 
     expect(result.state).toEqual(flattenSubtreeOneLevel(state, "window:10"));
     expect(adapter.moveTabs).not.toHaveBeenCalled();
+  });
+
+  it("imports portable trees without touching browser tabs or windows", async () => {
+    const state: OutlineState = bootstrapFromWindows(runtimeWindows, { now: 1000 });
+    const adapter = fakeAdapter();
+
+    const result = await runCommand(state, adapter, {
+      type: "importTree",
+      tree: {
+        schema: PORTABLE_TREE_SCHEMA,
+        version: 1,
+        exportedAt: "2026-05-16T12:00:00.000Z",
+        roots: [
+          {
+            kind: "window",
+            title: "Imported Window",
+            children: [
+              {
+                kind: "tab",
+                title: "Imported Tab",
+                url: "https://imported.example/",
+                children: []
+              }
+            ]
+          }
+        ]
+      }
+    });
+
+    expect(adapter.focusTab).not.toHaveBeenCalled();
+    expect(adapter.closeTab).not.toHaveBeenCalled();
+    expect(adapter.closeWindow).not.toHaveBeenCalled();
+    expect(adapter.restoreSession).not.toHaveBeenCalled();
+    expect(adapter.createTab).not.toHaveBeenCalled();
+    expect(adapter.createWindow).not.toHaveBeenCalled();
+    expect(adapter.moveTabs).not.toHaveBeenCalled();
+
+    const importedWindow = Object.values(result.state.nodes).find((node) => node.title === "Imported Window");
+    const importedTab = Object.values(result.state.nodes).find((node) => node.title === "Imported Tab");
+    expect(importedWindow?.status).toBe("closed");
+    expect(importedTab?.status).toBe("closed");
+    expect(importedTab?.restore).toEqual({
+      url: "https://imported.example/",
+      title: "Imported Tab"
+    });
   });
 
   it("moves a live tab subtree into a newly created browser window", async () => {
