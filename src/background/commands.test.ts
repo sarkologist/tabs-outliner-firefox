@@ -3,7 +3,14 @@ import { describe, expect, it, vi } from "vitest";
 import type { BrowserAdapter } from "./adapter.js";
 import { isBackgroundCommand, runCommand } from "./commands.js";
 import type { BackgroundCommand } from "./commands.js";
-import { bootstrapFromWindows, closeTab, closeWindow, flattenSubtreeOneLevel, moveNode } from "../model/outline.js";
+import {
+  LARGE_RESTORE_NODE_THRESHOLD,
+  bootstrapFromWindows,
+  closeTab,
+  closeWindow,
+  flattenSubtreeOneLevel,
+  moveNode
+} from "../model/outline.js";
 import { PORTABLE_TREE_SCHEMA } from "../model/portable-tree.js";
 import type { OutlineState, RuntimeWindow } from "../model/types.js";
 
@@ -74,6 +81,30 @@ function fakeAdapter(overrides: Partial<BrowserAdapter> = {}): BrowserAdapter {
     }),
     moveTabs: vi.fn(async () => undefined),
     ...overrides
+  };
+}
+
+function stateWithClosedTabs(tabCount: number): OutlineState {
+  let state = bootstrapFromWindows([windowWithTabs(10, tabCount)], { now: 1000 });
+  for (let tabId = 1; tabId <= tabCount; tabId += 1) {
+    state = closeTab(state, tabId, { now: 2000 + tabId });
+  }
+  return state;
+}
+
+function windowWithTabs(windowId: number, tabCount: number): RuntimeWindow {
+  return {
+    id: windowId,
+    focused: true,
+    incognito: false,
+    tabs: Array.from({ length: tabCount }, (_value, index) => ({
+      id: index + 1,
+      windowId,
+      index,
+      active: index === 0,
+      url: `https://example.com/${index + 1}`,
+      title: `Tab ${index + 1}`
+    }))
   };
 }
 
@@ -224,6 +255,49 @@ describe("background commands", () => {
       active: false
     });
     expect(result.state.nodes["tab:2"]?.live).toEqual({ tabId: 23, windowId: 10 });
+  });
+
+  it("refuses large restores that have not been confirmed", async () => {
+    const state = stateWithClosedTabs(LARGE_RESTORE_NODE_THRESHOLD + 1);
+    const adapter = fakeAdapter();
+
+    await expect(runCommand(state, adapter, {
+      type: "restoreNode",
+      nodeId: "window:10"
+    })).rejects.toThrow(/26 restorable closed nodes/);
+
+    expect(adapter.restoreSession).not.toHaveBeenCalled();
+    expect(adapter.createTab).not.toHaveBeenCalled();
+    expect(adapter.createWindow).not.toHaveBeenCalled();
+  });
+
+  it("restores large scopes after explicit confirmation", async () => {
+    const state = stateWithClosedTabs(LARGE_RESTORE_NODE_THRESHOLD + 1);
+    const adapter = fakeAdapter();
+
+    const result = await runCommand(state, adapter, {
+      type: "restoreNode",
+      nodeId: "window:10",
+      confirmedLargeRestore: true
+    });
+
+    expect(adapter.createTab).toHaveBeenCalledTimes(LARGE_RESTORE_NODE_THRESHOLD + 1);
+    expect(result.state.nodes["tab:1"]?.status).toBe("live");
+    expect(result.state.nodes[`tab:${LARGE_RESTORE_NODE_THRESHOLD + 1}`]?.status).toBe("live");
+  });
+
+  it("restores threshold-sized scopes without confirmation", async () => {
+    const state = stateWithClosedTabs(LARGE_RESTORE_NODE_THRESHOLD);
+    const adapter = fakeAdapter();
+
+    const result = await runCommand(state, adapter, {
+      type: "restoreNode",
+      nodeId: "window:10"
+    });
+
+    expect(adapter.createTab).toHaveBeenCalledTimes(LARGE_RESTORE_NODE_THRESHOLD);
+    expect(result.state.nodes["tab:1"]?.status).toBe("live");
+    expect(result.state.nodes[`tab:${LARGE_RESTORE_NODE_THRESHOLD}`]?.status).toBe("live");
   });
 
   it("uses the owning closed window session when restoring its only tab", async () => {

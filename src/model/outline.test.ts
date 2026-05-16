@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  LARGE_RESTORE_NODE_THRESHOLD,
+  analyzeRestoreScope,
   bootstrapFromWindows,
   closeTab,
   closeWindow,
@@ -604,6 +606,75 @@ describe("outline model", () => {
         windowNodeId: "window:10"
       }
     ]);
+  });
+
+  it("counts unique restorable closed nodes in a restore subtree", () => {
+    const tabCount = LARGE_RESTORE_NODE_THRESHOLD + 1;
+    const state = closeWindow(bootstrapFromWindows([windowWithTabs(10, tabCount)], { now: 1000 }), 10, {
+      now: 2000,
+      sessionId: "session-window-10"
+    });
+
+    const scope = analyzeRestoreScope(state, "window:10");
+
+    expect(scope).toEqual({
+      nodeIds: ["window:10", ...Array.from({ length: tabCount }, (_value, index) => `tab:${index + 1}`)],
+      totalCount: tabCount + 1,
+      tabCount,
+      windowCount: 1,
+      threshold: LARGE_RESTORE_NODE_THRESHOLD,
+      requiresConfirmation: true
+    });
+  });
+
+  it("ignores live nodes and closed nodes without restore plans when counting restore scope", () => {
+    let state = closeTab(bootstrapFromWindows(windows, { now: 1000 }), 2, {
+      now: 2000,
+      sessionId: "session-tab-2"
+    });
+    const closedWithoutRestore = {
+      ...state.nodes["tab:3"]!,
+      status: "closed" as const
+    };
+    delete closedWithoutRestore.live;
+    delete closedWithoutRestore.restore;
+    state = {
+      ...state,
+      nodes: {
+        ...state.nodes,
+        "tab:3": closedWithoutRestore
+      }
+    };
+
+    expect(analyzeRestoreScope(state, "window:10")).toMatchObject({
+      nodeIds: ["tab:2"],
+      totalCount: 1,
+      tabCount: 1,
+      windowCount: 0,
+      requiresConfirmation: false
+    });
+  });
+
+  it("requires large restore confirmation only above the threshold", () => {
+    const atThreshold = closeWindow(
+      bootstrapFromWindows([windowWithTabs(10, LARGE_RESTORE_NODE_THRESHOLD)], { now: 1000 }),
+      10,
+      { now: 2000 }
+    );
+    const aboveThreshold = closeWindow(
+      bootstrapFromWindows([windowWithTabs(10, LARGE_RESTORE_NODE_THRESHOLD + 1)], { now: 1000 }),
+      10,
+      { now: 2000 }
+    );
+
+    expect(analyzeRestoreScope(atThreshold, "window:10")).toMatchObject({
+      totalCount: LARGE_RESTORE_NODE_THRESHOLD,
+      requiresConfirmation: false
+    });
+    expect(analyzeRestoreScope(aboveThreshold, "window:10")).toMatchObject({
+      totalCount: LARGE_RESTORE_NODE_THRESHOLD + 1,
+      requiresConfirmation: true
+    });
   });
 
   it("reattaches restored live ids without duplicating nodes", () => {
@@ -1296,3 +1367,19 @@ describe("outline model", () => {
     expect(reconciled.nodes["tab:5"]?.parentId).toBe("window:20");
   });
 });
+
+function windowWithTabs(windowId: number, tabCount: number): RuntimeWindow {
+  return {
+    id: windowId,
+    incognito: false,
+    focused: true,
+    tabs: Array.from({ length: tabCount }, (_value, index) => ({
+      id: index + 1,
+      windowId,
+      index,
+      active: index === 0,
+      url: `https://example.com/${index + 1}`,
+      title: `Tab ${index + 1}`
+    }))
+  };
+}

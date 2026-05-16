@@ -14,6 +14,17 @@ import type {
 } from "./types.js";
 import { buildOutlineLookup, type OutlineLookup } from "./outline-lookup.js";
 
+export const LARGE_RESTORE_NODE_THRESHOLD = 25;
+
+export type RestoreScope = {
+  nodeIds: NodeId[];
+  totalCount: number;
+  tabCount: number;
+  windowCount: number;
+  threshold: number;
+  requiresConfirmation: boolean;
+};
+
 export function tabNodeId(tabId: number): NodeId {
   return `tab:${tabId}`;
 }
@@ -596,6 +607,46 @@ export function planRestore(state: OutlineState, nodeId: NodeId): RestorePlan[] 
   });
 
   return plans;
+}
+
+export function analyzeRestoreScope(
+  state: OutlineState,
+  nodeId: NodeId,
+  threshold = LARGE_RESTORE_NODE_THRESHOLD
+): RestoreScope {
+  const seenNodeIds = new Set<NodeId>();
+  const nodeIds: NodeId[] = [];
+  let tabCount = 0;
+  let windowCount = 0;
+
+  for (const plan of planRestore(state, nodeId)) {
+    if (seenNodeIds.has(plan.nodeId)) {
+      continue;
+    }
+
+    const plannedNode = state.nodes[plan.nodeId];
+    if (!plannedNode || plannedNode.status !== "closed") {
+      continue;
+    }
+
+    seenNodeIds.add(plan.nodeId);
+    nodeIds.push(plan.nodeId);
+    if (plannedNode.kind === "tab") {
+      tabCount += 1;
+    } else {
+      windowCount += 1;
+    }
+  }
+
+  const totalCount = nodeIds.length;
+  return {
+    nodeIds,
+    totalCount,
+    tabCount,
+    windowCount,
+    threshold,
+    requiresConfirmation: totalCount > threshold
+  };
 }
 
 export function restoreNodes(state: OutlineState, restoredNodes: RestoredNode[]): OutlineState {

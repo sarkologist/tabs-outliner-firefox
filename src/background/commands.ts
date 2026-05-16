@@ -1,5 +1,6 @@
 import type { BrowserAdapter, RestoredSession } from "./adapter.js";
 import {
+  analyzeRestoreScope,
   deleteNode,
   flattenSubtreeOneLevel,
   moveNode,
@@ -11,6 +12,7 @@ import {
   restoreNodes
 } from "../model/outline.js";
 import { appendPortableTree } from "../model/portable-tree.js";
+import type { RestoreScope } from "../model/outline.js";
 import type { NodeId, OutlineNode, OutlineState, RestoredNode, RestorePlan, RuntimeTab } from "../model/types.js";
 
 export type BackgroundCommand =
@@ -28,6 +30,7 @@ export type BackgroundCommand =
   | {
       type: "restoreNode";
       nodeId: NodeId;
+      confirmedLargeRestore?: boolean;
     }
   | {
       type: "deleteNode";
@@ -131,8 +134,13 @@ export async function runCommand(
       return { state };
     }
 
-    case "restoreNode":
+    case "restoreNode": {
+      const scope = analyzeRestoreScope(state, command.nodeId);
+      if (scope.requiresConfirmation && !command.confirmedLargeRestore) {
+        throw new Error(largeRestoreConfirmationError(scope));
+      }
       return { state: await restoreNode(state, adapter, command.nodeId) };
+    }
 
     case "moveNode": {
       const node = state.nodes[command.nodeId];
@@ -172,6 +180,10 @@ export async function runCommand(
       return { state: deleteNode(state, command.nodeId, { allowLive: true }) };
     }
   }
+}
+
+function largeRestoreConfirmationError(scope: RestoreScope): string {
+  return `Restoring ${scope.totalCount} restorable closed nodes requires confirmation before opening more than ${scope.threshold} nodes at once.`;
 }
 
 async function closeLiveSubtree(
