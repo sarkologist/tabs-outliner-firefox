@@ -228,8 +228,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         }
         throw error;
       }
-      const stateChanged = result.state !== current;
-      if (!stateChanged) {
+      if (!result.changed) {
         return commandAck(false);
       }
 

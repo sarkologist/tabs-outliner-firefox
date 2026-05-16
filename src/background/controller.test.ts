@@ -2881,6 +2881,43 @@ describe("background controller lifecycle", () => {
     expect(vi.mocked(runtime.api.storage.local.set)).not.toHaveBeenCalled();
   });
 
+  it("broadcasts command mutations even when the state object is reused", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    runtime.broadcasts.length = 0;
+    vi.mocked(runtime.api.storage.local.set).mockClear();
+
+    const result = await controller.handleMessage({ type: "toggleCollapsed", nodeId: "tab:1" });
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    const lastBroadcast = runtime.broadcasts.at(-1) as { type?: string; state?: OutlineState } | undefined;
+
+    expectCommandAck(result, true);
+    expect(state.nodes["tab:1"]?.collapsed).toBe(true);
+    expect(runtime.broadcasts).toHaveLength(1);
+    expect(lastBroadcast?.type).toBe("stateUpdated");
+    expect(lastBroadcast?.state?.nodes["tab:1"]?.collapsed).toBe(true);
+    expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
+  });
+
   it("deletes the window node when its only live tab is deleted by command", async () => {
     const runtime = fakeRuntime(
       [

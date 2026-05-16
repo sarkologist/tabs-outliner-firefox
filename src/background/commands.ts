@@ -91,6 +91,7 @@ const BACKGROUND_COMMAND_TYPE_SET: ReadonlySet<string> = new Set(BACKGROUND_COMM
 
 export type CommandResult = {
   state: OutlineState;
+  changed: boolean;
 };
 
 export type CommandAck = {
@@ -121,17 +122,17 @@ export async function runCommand(
 ): Promise<CommandResult> {
   switch (command.type) {
     case "getState":
-      return { state };
+      return unchangedCommandResult(state);
 
     case "refresh":
-      return { state };
+      return unchangedCommandResult(state);
 
     case "focusNode": {
       const node = state.nodes[command.nodeId];
       if (isLiveTab(node)) {
         await adapter.focusTab(node.live.tabId, node.live.windowId);
       }
-      return { state };
+      return unchangedCommandResult(state);
     }
 
     case "closeNode": {
@@ -141,7 +142,7 @@ export async function runCommand(
       } else if (isLiveWindow(node)) {
         await adapter.closeWindow(node.live.windowId);
       }
-      return { state };
+      return unchangedCommandResult(state);
     }
 
     case "restoreNode": {
@@ -149,13 +150,13 @@ export async function runCommand(
       if (scope.requiresConfirmation && !command.confirmedLargeRestore) {
         throw new Error(largeRestoreConfirmationError(scope));
       }
-      return { state: await restoreNode(state, adapter, command.nodeId) };
+      return commandResultFromNextState(state, await restoreNode(state, adapter, command.nodeId));
     }
 
     case "moveNode": {
       const node = state.nodes[command.nodeId];
       if (node?.kind === "tab" && !command.parentId) {
-        return { state: await moveNodeToNewWindow(state, adapter, command.nodeId, command.index) };
+        return commandResultFromNextState(state, await moveNodeToNewWindow(state, adapter, command.nodeId, command.index));
       }
 
       const next = moveNode(state, command.nodeId, {
@@ -163,33 +164,56 @@ export async function runCommand(
         index: command.index
       });
       await syncBrowserOrder(next, adapter);
-      return { state: next };
+      return commandResultFromNextState(state, next);
     }
 
     case "moveNodeToNewWindow":
-      return { state: await moveNodeToNewWindow(state, adapter, command.nodeId, command.index) };
+      return commandResultFromNextState(state, await moveNodeToNewWindow(state, adapter, command.nodeId, command.index));
 
     case "flattenSubtree":
-      return { state: flattenSubtreeOneLevel(state, command.nodeId) };
+      return commandResultFromNextState(state, flattenSubtreeOneLevel(state, command.nodeId));
 
     case "toggleCollapsed":
-      return { state: toggleCollapsed(state, command.nodeId) };
+      return toggleCollapsedInPlace(state, command.nodeId)
+        ? changedCommandResult(state)
+        : unchangedCommandResult(state);
 
     case "renameGroup":
-      return { state: renameGroup(state, command.nodeId, command.title, { now: Date.now() }) };
+      return commandResultFromNextState(state, renameGroup(state, command.nodeId, command.title, { now: Date.now() }));
 
     case "importTree":
-      return { state: appendPortableTree(state, command.tree, { now: Date.now() }) };
+      return commandResultFromNextState(state, appendPortableTree(state, command.tree, { now: Date.now() }));
 
     case "deleteNode": {
       if (!state.nodes[command.nodeId]) {
-        return { state };
+        return unchangedCommandResult(state);
       }
 
       await closeLiveSubtree(state, adapter, command.nodeId);
-      return { state: deleteNode(state, command.nodeId, { allowLive: true }) };
+      return commandResultFromNextState(state, deleteNode(state, command.nodeId, { allowLive: true }));
     }
   }
+}
+
+function unchangedCommandResult(state: OutlineState): CommandResult {
+  return {
+    state,
+    changed: false
+  };
+}
+
+function changedCommandResult(state: OutlineState): CommandResult {
+  return {
+    state,
+    changed: true
+  };
+}
+
+function commandResultFromNextState(previous: OutlineState, next: OutlineState): CommandResult {
+  return {
+    state: next,
+    changed: next !== previous
+  };
 }
 
 function largeRestoreConfirmationError(scope: RestoreScope): string {
@@ -796,24 +820,14 @@ async function syncBrowserOrder(state: OutlineState, adapter: BrowserAdapter): P
   }
 }
 
-function toggleCollapsed(state: OutlineState, nodeId: NodeId): OutlineState {
+function toggleCollapsedInPlace(state: OutlineState, nodeId: NodeId): boolean {
   const node = state.nodes[nodeId];
   if (!node) {
-    return state;
+    return false;
   }
 
-  return {
-    ...state,
-    rootIds: [...state.rootIds],
-    nodes: {
-      ...state.nodes,
-      [nodeId]: {
-        ...node,
-        childIds: [...node.childIds],
-        collapsed: !node.collapsed
-      }
-    }
-  };
+  node.collapsed = !node.collapsed;
+  return true;
 }
 
 type LiveWindowNode = OutlineNode & { live: { windowId: number } };

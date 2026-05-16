@@ -1065,6 +1065,9 @@ describe("background commands", () => {
 
     const result = await runCommand(state, adapter, { type: "toggleCollapsed", nodeId: "tab:1" });
 
+    expect(result.changed).toBe(true);
+    expect(result.state).toBe(state);
+    expect(state.nodes["tab:1"]?.collapsed).toBe(true);
     expect(result.state.nodes["tab:1"]?.collapsed).toBe(true);
   });
 });
