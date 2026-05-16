@@ -128,7 +128,7 @@ Use these as starting targets, not hard promises:
 ### 2026-05-16: Repeatable Restore Profiling Harness
 
 - Added `pnpm profile:restore` to profile a user-facing restore path against built `dist/` code. Run `pnpm run build` before profiling.
-- The current scenario is `single-closed-tab`: sidebar restore-scope analysis, background `restoreNode`, full-state save/broadcast JSON proxy, and one sidebar visible-tree projection.
+- The initial scenario was `single-closed-tab`: sidebar restore-scope analysis, background `restoreNode`, full-state save/broadcast JSON proxy, and one sidebar visible-tree projection.
 - Baseline command: `pnpm profile:restore -- --tabs 50000 --target last`.
   - Result before restore model optimization: 186ms total measured, 0ms sidebar scope, 60ms command, 46ms save stringify, 48ms broadcast stringify, 32ms projection, 30 MB stringified.
 - Cross-check command: `pnpm profile:restore -- --tabs 50000 --target first`.
@@ -193,4 +193,14 @@ Use these as starting targets, not hard promises:
 - After using `pnpm profile:delete -- --tabs 50000 --target last`: 108ms total, first patch broadcast at 52ms, 49ms save stringify, 1ms patch broadcast stringify, 7ms tree patch, 0ms projection, 13 MB stringified.
 - Cross-check after using `pnpm profile:delete -- --tabs 50000 --target middle`: 111ms total, first patch broadcast at 54ms, 45ms save stringify, 1ms patch broadcast stringify, 11ms tree patch, 0ms projection, 13 MB stringified.
 - Repeated-delete after using `pnpm profile:delete -- --tabs 50000 --target last --count 10`: 884ms total, 88ms average, first patch broadcast at 49ms, 10 saves, 10 patch broadcasts, 61ms tree patch, 0ms projection, 134 MB stringified.
+- Remaining measured total is dominated by full-state storage persistence after the sidebar patch is already sent.
+
+### 2026-05-16: Lightweight Restore Node Patches
+
+- Manual QA showed the same perceived-latency shape on restore as delete: the browser tab opens promptly, then the sidebar tree visibly catches up later.
+- Baseline using `pnpm profile:restore -- --scenario controller-event-echo --tabs 50000 --target last`: 193ms total, 179ms command, 14ms event echo, 53ms save stringify, 54ms full broadcast stringify, 25ms projection, 30 MB stringified.
+- Implemented a lightweight `nodeStateUpdated` broadcast for `restoreNode`: the background sends changed node records and a closed-count delta to the sidebar before persisting the full outline state.
+- Updated the sidebar to apply restore patches to `currentState`, adjust the existing projection's closed count and row metadata, and schedule a virtual-row rerender instead of rebuilding the full visible-tree projection. Search projections still rebuild from state for correctness.
+- After using `pnpm profile:restore -- --scenario controller-event-echo --tabs 50000 --target last`: 142ms total, first patch broadcast at 69ms, 57ms save stringify, 0ms patch broadcast stringify, 2ms node patch, 0ms projection, 15 MB stringified.
+- Cross-check using `pnpm profile:restore -- --scenario single-closed-tab --tabs 50000 --target last`: 69ms total, 15ms command, 51ms save stringify, 0ms patch broadcast stringify, 2ms node patch, 0ms projection, 15 MB stringified.
 - Remaining measured total is dominated by full-state storage persistence after the sidebar patch is already sent.

@@ -47,6 +47,12 @@ type TreeStructureUpdate = {
   deletedClosedCount: number;
 };
 
+type NodeStateUpdate = {
+  type: "nodeStateUpdated";
+  updatedNodes: OutlineNode[];
+  closedCountDelta: number;
+};
+
 export type BackgroundControllerOptions = {
   api: WebExtensionBrowser;
   adapter?: BrowserAdapter;
@@ -307,6 +313,11 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       }
       state = result.state;
       stateCache.replace(result.state);
+      if (message.type === "restoreNode") {
+        await broadcastNodeStateUpdate(nodeStateUpdateFromStateChange(current, result.state));
+        await saveState(result.state, api);
+        return commandAck(true);
+      }
       if (message.type === "deleteNode") {
         await broadcastTreeStructureUpdate(treeStructureUpdateFromStateChange(current, result.state));
         await saveState(result.state, api);
@@ -477,6 +488,13 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     await api.runtime.sendMessage(update).catch(() => undefined);
   }
 
+  async function broadcastNodeStateUpdate(update: NodeStateUpdate): Promise<void> {
+    if (update.updatedNodes.length === 0) {
+      return;
+    }
+    await api.runtime.sendMessage(update).catch(() => undefined);
+  }
+
   async function reconcileMissingLiveTabsInOpenWindows(): Promise<boolean> {
     const current = await ensureState();
     const windows = filterRemovedTabsFromWindows(await getNormalWindows(api), removedTabIds);
@@ -565,6 +583,23 @@ function treeStructureUpdateFromStateChange(previous: OutlineState, next: Outlin
     updatedNodes,
     rootIds: next.rootIds,
     deletedClosedCount
+  };
+}
+
+function nodeStateUpdateFromStateChange(previous: OutlineState, next: OutlineState): NodeStateUpdate {
+  const updatedNodes = Object.entries(next.nodes).flatMap(([nodeId, node]) => {
+    return previous.nodes[nodeId] !== node ? [node] : [];
+  });
+  const closedCountDelta = updatedNodes.reduce((delta, node) => {
+    const wasClosed = previous.nodes[node.id]?.status === "closed" ? 1 : 0;
+    const isClosed = node.status === "closed" ? 1 : 0;
+    return delta + isClosed - wasClosed;
+  }, 0);
+
+  return {
+    type: "nodeStateUpdated",
+    updatedNodes,
+    closedCountDelta
   };
 }
 

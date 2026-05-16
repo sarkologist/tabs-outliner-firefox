@@ -212,6 +212,45 @@ function measureRuntimeJson(runtime, bucket, value) {
   runtime.bytes += measured.value.length;
 }
 
+function nodeStateUpdateFromStateChange(previous, next) {
+  const updatedNodes = Object.entries(next.nodes).flatMap(([nodeId, node]) => {
+    return previous.nodes[nodeId] !== node ? [node] : [];
+  });
+  const closedCountDelta = updatedNodes.reduce((delta, node) => {
+    const wasClosed = previous.nodes[node.id]?.status === "closed" ? 1 : 0;
+    const isClosed = node.status === "closed" ? 1 : 0;
+    return delta + isClosed - wasClosed;
+  }, 0);
+
+  return {
+    type: "nodeStateUpdated",
+    updatedNodes,
+    closedCountDelta
+  };
+}
+
+function applyNodeStateUpdate(runtime, update) {
+  if (!runtime.sidebarState || !runtime.sidebarProjection) {
+    return;
+  }
+
+  const updatedNodes = new Map(update.updatedNodes.map((node) => [node.id, node]));
+  for (const node of update.updatedNodes) {
+    runtime.sidebarState.nodes[node.id] = node;
+  }
+  runtime.sidebarProjection.closedCount = Math.max(0, runtime.sidebarProjection.closedCount + update.closedCountDelta);
+
+  for (const row of runtime.sidebarProjection.rows) {
+    const node = updatedNodes.get(row.nodeId);
+    if (!node) {
+      continue;
+    }
+    row.childCount = node.childIds.length;
+    row.visibleChildCount = node.childIds.length;
+    row.expanded = !node.collapsed;
+  }
+}
+
 function makeControllerRuntime(initialState) {
   const events = {
     tabCreated: new FakeEvent(),
@@ -231,7 +270,12 @@ function makeControllerRuntime(initialState) {
     saveStringifyMs: 0,
     broadcastStringifyMs: 0,
     projectionMs: 0,
+    nodePatchMs: 0,
     bytes: 0,
+    operationStart: 0,
+    firstBroadcastMs: undefined,
+    sidebarState: undefined,
+    sidebarProjection: undefined,
     events,
     api: undefined
   };
@@ -249,10 +293,16 @@ function makeControllerRuntime(initialState) {
       onStartup: new FakeEvent(),
       onMessage: new FakeEvent(),
       sendMessage: async (message) => {
+        runtime.firstBroadcastMs ??= performance.now() - runtime.operationStart;
         measureRuntimeJson(runtime, "broadcast", message);
         if (message?.type === "stateUpdated" && message.state) {
+          runtime.sidebarState = message.state;
           const projection = measure(() => buildVisibleTreeProjection(message.state, ""));
+          runtime.sidebarProjection = projection.value;
           runtime.projectionMs += projection.ms;
+        } else if (message?.type === "nodeStateUpdated") {
+          const patch = measure(() => applyNodeStateUpdate(runtime, message));
+          runtime.nodePatchMs += patch.ms;
         }
         runtime.broadcasts += 1;
       }
@@ -381,8 +431,11 @@ async function profileCommand(options) {
   const sidebarScope = measure(() => analyzeRestoreScope(state, nodeId));
   const command = await measureAsync(() => runCommand(state, adapter, { type: "restoreNode", nodeId }));
   const saved = measureJson({ outlineState: command.value.state });
-  const broadcast = measureJson({ type: "stateUpdated", state: command.value.state });
-  const projection = measure(() => buildVisibleTreeProjection(command.value.state, ""));
+  const nodeUpdate = nodeStateUpdateFromStateChange(state, command.value.state);
+  const broadcast = measureJson(nodeUpdate);
+  const sidebarState = state;
+  const sidebarProjection = buildVisibleTreeProjection(sidebarState, "");
+  const patch = measure(() => applyNodeStateUpdate({ sidebarState, sidebarProjection }, nodeUpdate));
 
   return {
     scenario: options.scenario,
@@ -393,15 +446,16 @@ async function profileCommand(options) {
     commandMs: Math.round(command.ms),
     saveStringifyMs: Math.round(saved.ms),
     broadcastStringifyMs: Math.round(broadcast.ms),
-    projectionMs: Math.round(projection.ms),
-    totalMeasuredMs: Math.round(sidebarScope.ms + command.ms + saved.ms + broadcast.ms + projection.ms),
+    projectionMs: 0,
+    nodePatchMs: Math.round(patch.ms),
+    totalMeasuredMs: Math.round(sidebarScope.ms + command.ms + saved.ms + broadcast.ms + patch.ms),
     mbStringified: Math.round((saved.value.length + broadcast.value.length) / 1024 / 1024),
     changed: command.value.changed,
     createTabCalls: calls.createTab,
     createWindowCalls: calls.createWindow,
     restoreSessionCalls: calls.restoreSession,
     nodes: Object.keys(command.value.state.nodes).length,
-    rows: projection.value.rows.length
+    rows: sidebarProjection.rows.length
   };
 }
 
@@ -411,13 +465,18 @@ async function profileControllerEventEcho(options) {
   const { adapter, calls } = fakeControllerAdapter(runtime);
   const controller = createBackgroundController({ api: runtime.api, adapter, now: () => 1000 });
   const init = await measureAsync(() => controller.ensureState());
+  runtime.sidebarState = await controller.handleMessage({ type: "getState" });
+  runtime.sidebarProjection = buildVisibleTreeProjection(runtime.sidebarState, "");
 
   runtime.saves = 0;
   runtime.broadcasts = 0;
   runtime.saveStringifyMs = 0;
   runtime.broadcastStringifyMs = 0;
   runtime.projectionMs = 0;
+  runtime.nodePatchMs = 0;
   runtime.bytes = 0;
+  runtime.operationStart = performance.now();
+  runtime.firstBroadcastMs = undefined;
 
   const command = await measureAsync(() => controller.handleMessage({ type: "restoreNode", nodeId }));
   const eventEcho = await measureAsync(() => flushAll(runtime));
@@ -432,9 +491,11 @@ async function profileControllerEventEcho(options) {
     commandMs: Math.round(command.ms),
     eventEchoMs: Math.round(eventEcho.ms),
     totalMeasuredMs: Math.round(command.ms + eventEcho.ms),
+    firstBroadcastMs: Math.round(runtime.firstBroadcastMs ?? 0),
     saveStringifyMs: Math.round(runtime.saveStringifyMs),
     broadcastStringifyMs: Math.round(runtime.broadcastStringifyMs),
     projectionMs: Math.round(runtime.projectionMs),
+    nodePatchMs: Math.round(runtime.nodePatchMs),
     mbStringified: Math.round(runtime.bytes / 1024 / 1024),
     saves: runtime.saves,
     broadcasts: runtime.broadcasts,

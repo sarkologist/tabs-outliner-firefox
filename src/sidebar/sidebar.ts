@@ -136,6 +136,11 @@ browser.runtime.onMessage.addListener((message) => {
     applyActiveStateUpdate(message.updates);
     return;
   }
+  if (isNodeStateUpdated(message)) {
+    applyNodeStateUpdate(message);
+    void loadDiagnostics();
+    return;
+  }
   if (isTreeStructureUpdated(message)) {
     applyTreeStructureUpdate(message);
     void loadDiagnostics();
@@ -484,6 +489,44 @@ function applyActiveStateUpdate(updates: ActiveStateUpdate[]): void {
   scheduleVirtualRender();
 }
 
+function applyNodeStateUpdate(update: NodeStateUpdate): void {
+  const state = currentState;
+  if (!state || update.updatedNodes.length === 0) {
+    return;
+  }
+
+  let windowActiveChanged = false;
+  for (const node of update.updatedNodes) {
+    state.nodes[node.id] = node;
+    windowActiveChanged ||= node.kind === "window";
+  }
+
+  if (!currentProjection || currentProjection.isSearchActive) {
+    invalidateProjectionCache();
+    render();
+    return;
+  }
+
+  const updatedNodes = new Map(update.updatedNodes.map((node) => [node.id, node]));
+  if (windowActiveChanged) {
+    refreshProjectionActiveWindowFlags(state, currentProjection);
+  }
+  currentProjection.closedCount = Math.max(0, currentProjection.closedCount + update.closedCountDelta);
+
+  for (const row of currentProjection.rows) {
+    const node = updatedNodes.get(row.nodeId);
+    if (!node) {
+      continue;
+    }
+    row.childCount = node.childIds.length;
+    row.visibleChildCount = node.childIds.length;
+    row.expanded = !node.collapsed;
+  }
+
+  updateProjectionChrome(currentProjection);
+  scheduleVirtualRender();
+}
+
 function applyTreeStructureUpdate(update: TreeStructureUpdate): void {
   const state = currentState;
   if (!state || update.deletedNodeIds.length === 0) {
@@ -503,6 +546,7 @@ function applyTreeStructureUpdate(update: TreeStructureUpdate): void {
   }
 
   if (!currentProjection || currentProjection.isSearchActive) {
+    invalidateProjectionCache();
     render();
     return;
   }
@@ -530,6 +574,12 @@ function applyTreeStructureUpdate(update: TreeStructureUpdate): void {
 
   updateProjectionChrome(currentProjection);
   scheduleVirtualRender();
+}
+
+function invalidateProjectionCache(): void {
+  projectionState = undefined;
+  projectionQuery = undefined;
+  currentProjection = undefined;
 }
 
 function refreshProjectionActiveWindowFlags(state: OutlineState, projection: VisibleTreeProjection): void {
@@ -1233,6 +1283,12 @@ type TreeStructureUpdate = {
   deletedClosedCount: number;
 };
 
+type NodeStateUpdate = {
+  type: "nodeStateUpdated";
+  updatedNodes: OutlineNode[];
+  closedCountDelta: number;
+};
+
 function isActiveStateUpdated(message: unknown): message is { type: "activeStateUpdated"; updates: ActiveStateUpdate[] } {
   return Boolean(
     message &&
@@ -1247,6 +1303,24 @@ function isActiveStateUpdated(message: unknown): message is { type: "activeState
             typeof (update as { active?: unknown }).active === "boolean"
         )
       )
+  );
+}
+
+function isNodeStateUpdated(message: unknown): message is NodeStateUpdate {
+  return Boolean(
+    message &&
+      typeof message === "object" &&
+      (message as { type?: unknown }).type === "nodeStateUpdated" &&
+      Array.isArray((message as { updatedNodes?: unknown }).updatedNodes) &&
+      (message as { updatedNodes: unknown[] }).updatedNodes.every((node) =>
+        Boolean(
+          node &&
+            typeof node === "object" &&
+            typeof (node as { id?: unknown }).id === "string" &&
+            Array.isArray((node as { childIds?: unknown }).childIds)
+        )
+      ) &&
+      typeof (message as { closedCountDelta?: unknown }).closedCountDelta === "number"
   );
 }
 

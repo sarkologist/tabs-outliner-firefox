@@ -1695,6 +1695,24 @@ describe("background controller lifecycle", () => {
     expect(state.nodes["tab:2"]?.live).toEqual({ tabId: 22, windowId: 10 });
     expect(state.nodes["tab:2"]?.active).toBe(false);
     expect(runtime.broadcasts).toHaveLength(1);
+    const restoreBroadcast = runtime.broadcasts.at(-1) as
+      | {
+          type?: string;
+          updatedNodes?: OutlineState["nodes"][string][];
+          closedCountDelta?: number;
+          state?: OutlineState;
+        }
+      | undefined;
+    expect(restoreBroadcast?.type).toBe("nodeStateUpdated");
+    expect(restoreBroadcast?.updatedNodes?.map((node) => node.id)).toEqual(["tab:2"]);
+    expect(restoreBroadcast?.updatedNodes?.[0]).toMatchObject({
+      id: "tab:2",
+      status: "live",
+      live: { tabId: 22, windowId: 10 },
+      restoredFromClosed: true
+    });
+    expect(restoreBroadcast?.closedCountDelta).toBe(-1);
+    expect(restoreBroadcast?.state).toBeUndefined();
     expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
   });
 
