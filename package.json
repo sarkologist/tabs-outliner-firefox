@@ -7,7 +7,8 @@
     "build": "tsc -p tsconfig.json && node scripts/copy-static.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
-    "check": "npm run test && npm run build"
+    "check": "npm run test && npm run build",
+    "profile:tab-open": "node scripts/profile-tab-open.mjs"
   },
   "devDependencies": {
     "@types/node": "^20.19.0",
