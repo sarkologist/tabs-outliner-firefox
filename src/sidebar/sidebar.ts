@@ -8,6 +8,7 @@ import {
   dropPlacementForRoot,
   type DropPlacement
 } from "./drop-target.js";
+import { computeOutlineSearch, type OutlineSearchResult } from "./search.js";
 import {
   DEFAULT_ZOOM,
   ZOOM_STORAGE_KEY,
@@ -25,12 +26,15 @@ const refresh = document.querySelector<HTMLButtonElement>("#refresh");
 const rootDropSurface = document.querySelector<HTMLElement>("main");
 const tree = document.querySelector<HTMLElement>("#tree");
 const empty = document.querySelector<HTMLElement>("#empty");
+const searchInput = document.querySelector<HTMLInputElement>("#search");
+const clearSearch = document.querySelector<HTMLButtonElement>("#clear-search");
 
 let currentState: OutlineState | undefined;
 let draggedNodeId: NodeId | undefined;
 let activeDropPlacement: DropPlacement | undefined;
 let currentZoom = DEFAULT_ZOOM;
 let wheelZoomDelta = 0;
+let currentSearchQuery = "";
 
 const WHEEL_ZOOM_THRESHOLD_PX = 80;
 
@@ -43,6 +47,7 @@ dropPreviewChildren.className = "children drop-preview-children";
 
 applyZoom(currentZoom);
 registerZoomShortcuts();
+registerSearchControls();
 void loadZoomPreference();
 void loadState();
 
@@ -171,6 +176,58 @@ function registerZoomShortcuts(): void {
   );
 }
 
+function registerSearchControls(): void {
+  searchInput?.addEventListener("input", () => {
+    currentSearchQuery = searchInput.value;
+    updateSearchControls();
+    render();
+  });
+
+  clearSearch?.addEventListener("click", () => {
+    clearSearchQuery({ focus: true });
+  });
+
+  document.addEventListener("keydown", (event) => {
+    if (isSearchFocusEvent(event)) {
+      event.preventDefault();
+      event.stopPropagation();
+      searchInput?.focus();
+      searchInput?.select();
+      return;
+    }
+
+    if (event.key === "Escape" && currentSearchQuery.trim()) {
+      event.preventDefault();
+      event.stopPropagation();
+      clearSearchQuery({ focus: event.target === searchInput });
+    }
+  });
+
+  updateSearchControls();
+}
+
+function isSearchFocusEvent(event: KeyboardEvent): boolean {
+  return (event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLocaleLowerCase() === "f";
+}
+
+function clearSearchQuery(options: { focus?: boolean } = {}): void {
+  currentSearchQuery = "";
+  if (searchInput) {
+    searchInput.value = "";
+  }
+  updateSearchControls();
+  render();
+  if (options.focus) {
+    searchInput?.focus();
+  }
+}
+
+function updateSearchControls(): void {
+  if (clearSearch) {
+    clearSearch.hidden = !currentSearchQuery.trim();
+  }
+}
+
 function isZoomModifierEvent(event: KeyboardEvent | WheelEvent): boolean {
   return (event.ctrlKey || event.metaKey) && !event.altKey;
 }
@@ -243,25 +300,58 @@ function render(): void {
 
   const nodes = Object.values(state.nodes);
   const closedCount = nodes.filter((node) => node.status === "closed").length;
-  stateCount.textContent = `${nodes.length} items / ${closedCount} saved`;
+  const search = renderSearchState(computeOutlineSearch(state, currentSearchQuery));
+  stateCount.textContent = search.isActive
+    ? `${search.matchCount} ${pluralize(search.matchCount, "match")} / ${nodes.length} items`
+    : `${nodes.length} items / ${closedCount} saved`;
 
   if (empty) {
-    empty.hidden = nodes.length > 0;
+    empty.textContent = search.isActive ? "No matching tabs." : "No tabs captured yet.";
+    empty.hidden = search.isActive ? search.visibleNodeIds.length > 0 : nodes.length > 0;
   }
 
   for (const rootId of state.rootIds) {
     const root = state.nodes[rootId];
-    if (root) {
-      tree.append(renderNode(state, root, 0, false));
+    if (root && shouldRenderNode(search, root.id)) {
+      tree.append(renderNode(state, root, 0, false, search));
     }
   }
 }
 
-function renderNode(state: OutlineState, node: OutlineNode, depth: number, insideActiveWindow: boolean): HTMLElement {
+type RenderSearchState = OutlineSearchResult & {
+  visibleNodeIdSet: Set<NodeId>;
+};
+
+function renderSearchState(search: OutlineSearchResult): RenderSearchState {
+  return {
+    ...search,
+    visibleNodeIdSet: new Set(search.visibleNodeIds)
+  };
+}
+
+function shouldRenderNode(search: RenderSearchState, nodeId: NodeId): boolean {
+  return !search.isActive || search.visibleNodeIdSet.has(nodeId);
+}
+
+function pluralize(count: number, noun: string): string {
+  return count === 1 ? noun : `${noun}s`;
+}
+
+function renderNode(
+  state: OutlineState,
+  node: OutlineNode,
+  depth: number,
+  insideActiveWindow: boolean,
+  search: RenderSearchState
+): HTMLElement {
   const isActiveWindow = node.kind === "window" && Boolean(node.active);
   const isActiveTab = node.kind === "tab" && Boolean(node.active) && insideActiveWindow;
+  const isSearchMatch = search.isActive && search.matchingNodeIds.has(node.id);
+  const isSearchPath = search.isActive && !isSearchMatch;
   const item = document.createElement("li");
-  item.className = `node node-${node.kind} is-${node.status}${isActiveWindow || isActiveTab ? " is-active" : ""}`;
+  item.className = `node node-${node.kind} is-${node.status}${isActiveWindow || isActiveTab ? " is-active" : ""}${
+    isSearchMatch ? " is-search-match" : ""
+  }${isSearchPath ? " is-search-path" : ""}`;
   item.dataset.nodeId = node.id;
 
   const row = document.createElement("div");
@@ -307,9 +397,15 @@ function renderNode(state: OutlineState, node: OutlineNode, depth: number, insid
   });
 
   const twisty = document.createElement("button");
+  const childIds = search.isActive ? node.childIds.filter((childId) => shouldRenderNode(search, childId)) : node.childIds;
+  const searchRevealsCollapsedChildren = search.isActive && node.collapsed && childIds.length > 0;
   twisty.className = "icon-button twisty";
   twisty.type = "button";
-  twisty.title = node.collapsed ? "Expand" : "Collapse";
+  twisty.title = searchRevealsCollapsedChildren
+    ? "Collapsed; search is revealing matches"
+    : node.collapsed
+      ? "Expand"
+      : "Collapse";
   twisty.textContent = node.childIds.length ? (node.collapsed ? "+" : "-") : "";
   twisty.disabled = node.childIds.length === 0;
   twisty.addEventListener("click", (event) => {
@@ -352,14 +448,14 @@ function renderNode(state: OutlineState, node: OutlineNode, depth: number, insid
 
   item.append(row);
 
-  if (!node.collapsed && node.childIds.length > 0) {
+  if ((search.isActive || !node.collapsed) && childIds.length > 0) {
     const children = document.createElement("ol");
     children.className = "children";
     const childInsideActiveWindow = insideActiveWindow || isActiveWindow;
-    for (const childId of node.childIds) {
+    for (const childId of childIds) {
       const child = state.nodes[childId];
       if (child) {
-        children.append(renderNode(state, child, depth + 1, childInsideActiveWindow));
+        children.append(renderNode(state, child, depth + 1, childInsideActiveWindow, search));
       }
     }
     item.append(children);

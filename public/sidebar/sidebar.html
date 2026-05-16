@@ -9,6 +9,26 @@
   <body>
     <header class="toolbar">
       <h1>Tabs</h1>
+      <div class="search">
+        <input
+          id="search"
+          class="search-input"
+          type="search"
+          aria-label="Search tabs"
+          autocomplete="off"
+          spellcheck="false"
+        />
+        <button
+          id="clear-search"
+          class="toolbar-button search-clear"
+          type="button"
+          title="Clear search"
+          aria-label="Clear search"
+          hidden
+        >
+          x
+        </button>
+      </div>
       <div class="status">
         <span id="state-count" class="count">Loading</span>
         <span id="diagnostics" class="diagnostics"></span>
