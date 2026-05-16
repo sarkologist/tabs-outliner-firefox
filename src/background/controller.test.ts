@@ -1398,6 +1398,71 @@ describe("background controller lifecycle", () => {
     expect(runtime.api.sessions.getRecentlyClosed).not.toHaveBeenCalled();
   });
 
+  it("preserves restored tabs when they are closed through browser chrome", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        },
+        {
+          id: 2,
+          windowId: 10,
+          index: 1,
+          active: false,
+          url: "https://two.example/",
+          title: "Two"
+        }
+      ]
+    );
+    const restoredTab: RuntimeTab = {
+      id: 22,
+      windowId: 10,
+      index: 1,
+      active: false,
+      url: "https://two.example/",
+      title: "Two"
+    };
+    vi.mocked(runtime.api.sessions.restore).mockImplementation(async () => {
+      runtime.tabs = [...runtime.tabs.filter((tab) => tab.id !== restoredTab.id), copyTab(restoredTab)];
+      reindexWindowTabs(runtime, restoredTab.windowId);
+      return { tab: copyTab(restoredTab) } as never;
+    });
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+
+    await controller.handleMessage({ type: "closeNode", nodeId: "tab:2" });
+    await controller.handleMessage({ type: "restoreNode", nodeId: "tab:2" });
+
+    let state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(state.nodes["tab:2"]?.status).toBe("live");
+    expect(state.nodes["tab:2"]?.live).toEqual({ tabId: 22, windowId: 10 });
+    expect(state.nodes["tab:2"]?.restoredFromClosed).toBe(true);
+
+    await closeTabFromBrowser(runtime, 22);
+
+    state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(state.nodes["tab:2"]?.status).toBe("closed");
+    expect(state.nodes["tab:2"]?.live).toBeUndefined();
+    expect(state.nodes["tab:2"]?.restore).toEqual({
+      sessionId: "recent-session",
+      url: "https://two.example/",
+      title: "Two"
+    });
+    expect(state.nodes["window:10"]?.childIds).toEqual(["tab:1", "tab:2"]);
+  });
+
   it("preserves outliner closeNode tab removals as restorable closed nodes", async () => {
     const runtime = fakeRuntime(
       [
@@ -2185,6 +2250,99 @@ describe("background controller lifecycle", () => {
     const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
     expect(state.nodes["window:20"]).toBeUndefined();
     expect(state.nodes["tab:2"]).toBeUndefined();
+    expect(state.nodes["window:10"]?.status).toBe("live");
+    expect(state.nodes["tab:1"]?.status).toBe("live");
+  });
+
+  it("preserves restored single-tab windows when they are closed through browser chrome", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        },
+        {
+          id: 20,
+          focused: false,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        },
+        {
+          id: 2,
+          windowId: 20,
+          index: 0,
+          active: true,
+          url: "https://two.example/",
+          title: "Two"
+        }
+      ]
+    );
+    const restoredTab: RuntimeTab = {
+      id: 22,
+      windowId: 42,
+      index: 0,
+      active: true,
+      url: "https://two.example/",
+      title: "Two"
+    };
+    vi.mocked(runtime.api.sessions.getRecentlyClosed)
+      .mockResolvedValueOnce([{ window: { sessionId: "session-window-20" } } as never])
+      .mockResolvedValueOnce([{ window: { sessionId: "session-window-42" } } as never]);
+    vi.mocked(runtime.api.sessions.restore).mockImplementation(async () => {
+      runtime.windows = [
+        ...runtime.windows.filter((windowInfo) => windowInfo.id !== 42),
+        {
+          id: 42,
+          focused: false,
+          incognito: false
+        }
+      ];
+      runtime.tabs = [
+        ...runtime.tabs.filter((tab) => tab.id !== restoredTab.id),
+        copyTab(restoredTab)
+      ];
+      return {
+        window: {
+          id: 42,
+          focused: false,
+          incognito: false,
+          tabs: [copyTab(restoredTab)]
+        }
+      } as never;
+    });
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+
+    await controller.handleMessage({ type: "closeNode", nodeId: "window:20" });
+    await controller.handleMessage({ type: "restoreNode", nodeId: "window:20" });
+
+    let state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(state.nodes["window:20"]?.status).toBe("live");
+    expect(state.nodes["window:20"]?.live).toEqual({ windowId: 42 });
+    expect(state.nodes["window:20"]?.restoredFromClosed).toBe(true);
+    expect(state.nodes["tab:2"]?.status).toBe("live");
+    expect(state.nodes["tab:2"]?.live).toEqual({ tabId: 22, windowId: 42 });
+    expect(state.nodes["tab:2"]?.restoredFromClosed).toBe(true);
+
+    await closeRuntimeWindow(runtime, 42, { awaitListeners: true });
+
+    state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(state.nodes["window:20"]?.status).toBe("closed");
+    expect(state.nodes["window:20"]?.restore?.sessionId).toBe("session-window-42");
+    expect(state.nodes["tab:2"]?.status).toBe("closed");
+    expect(state.nodes["tab:2"]?.live).toBeUndefined();
+    expect(state.nodes["window:42"]).toBeUndefined();
+    expect(state.nodes["tab:22"]).toBeUndefined();
     expect(state.nodes["window:10"]?.status).toBe("live");
     expect(state.nodes["tab:1"]?.status).toBe("live");
   });

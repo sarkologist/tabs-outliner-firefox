@@ -82,6 +82,12 @@ export function createBackgroundController(options: BackgroundControllerOptions)
           now: now(),
           ...(recent?.tab?.sessionId ? { sessionId: recent.tab.sessionId } : {})
         });
+      } else if (isRestoredLiveTabId(current, tabId)) {
+        const recent = await mostRecentClosedSession();
+        state = closeTab(current, tabId, {
+          now: now(),
+          ...(recent?.tab?.sessionId ? { sessionId: recent.tab.sessionId } : {})
+        });
       } else {
         state = deleteLiveTabNodeByTabId(current, tabId);
       }
@@ -103,7 +109,15 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         : undefined;
 
       if (typeof singleNativeRemovedTabId === "number") {
-        state = closeWindow(deleteLiveTabNodeByTabId(current, singleNativeRemovedTabId), windowId, { now: now() });
+        if (shouldPreserveRestoredSingleTabWindowClose(current, windowId, singleNativeRemovedTabId)) {
+          const recent = await mostRecentClosedSession();
+          state = closeWindow(current, windowId, {
+            now: now(),
+            ...(recent?.window?.sessionId ? { sessionId: recent.window.sessionId } : {})
+          });
+        } else {
+          state = closeWindow(deleteLiveTabNodeByTabId(current, singleNativeRemovedTabId), windowId, { now: now() });
+        }
         stateCache.replace(state);
         await persistAndBroadcast();
         return;
@@ -262,6 +276,12 @@ export function createBackgroundController(options: BackgroundControllerOptions)
           now: now(),
           ...(recent?.tab?.sessionId ? { sessionId: recent.tab.sessionId } : {})
         });
+      } else if (isRestoredLiveTabId(next, tabId)) {
+        const recent = await mostRecentClosedSession();
+        next = closeTab(next, tabId, {
+          now: now(),
+          ...(recent?.tab?.sessionId ? { sessionId: recent.tab.sessionId } : {})
+        });
       } else {
         next = deleteLiveTabNodeByTabId(next, tabId);
       }
@@ -295,6 +315,45 @@ function liveWindowIdForNode(state: OutlineState, nodeId: NodeId): number | unde
   return node?.kind === "window" && node.status === "live" && node.live && "windowId" in node.live
     ? node.live.windowId
     : undefined;
+}
+
+function isRestoredLiveTabId(state: OutlineState, tabId: number): boolean {
+  return Boolean(liveTabNodeByRuntimeId(state, tabId)?.restoredFromClosed);
+}
+
+function shouldPreserveRestoredSingleTabWindowClose(
+  state: OutlineState,
+  windowId: number,
+  tabId: number
+): boolean {
+  return Boolean(
+    liveWindowNodeByRuntimeId(state, windowId)?.restoredFromClosed ||
+      liveTabNodeByRuntimeId(state, tabId)?.restoredFromClosed
+  );
+}
+
+function liveTabNodeByRuntimeId(
+  state: OutlineState,
+  tabId: number
+): (OutlineNode & { live: { tabId: number; windowId: number } }) | undefined {
+  return Object.values(state.nodes).find((node): node is OutlineNode & { live: { tabId: number; windowId: number } } => {
+    return isLiveTabNode(node) && node.live.tabId === tabId;
+  });
+}
+
+function liveWindowNodeByRuntimeId(
+  state: OutlineState,
+  windowId: number
+): (OutlineNode & { live: { windowId: number } }) | undefined {
+  return Object.values(state.nodes).find((node): node is OutlineNode & { live: { windowId: number } } => {
+    return Boolean(
+      node.kind === "window" &&
+        node.status === "live" &&
+        node.live &&
+        "windowId" in node.live &&
+        node.live.windowId === windowId
+    );
+  });
 }
 
 function liveTabIdsInWindow(state: OutlineState, windowId: number): number[] {
