@@ -199,6 +199,15 @@ main.root-drop-target {
   width: 1px;
 }
 
+.has-hover-tree-bridge-line > .node-row::before {
+  top: 0;
+  bottom: 0;
+  left: calc(
+    var(--node-row-padding-x) + var(--hover-line-depth) * var(--node-indent) - var(--node-indent) / 2
+  );
+  width: 1px;
+}
+
 .has-hover-tree-line > .node-row::after {
   top: 0;
   left: calc(
