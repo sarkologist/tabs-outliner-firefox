@@ -389,3 +389,15 @@ Use these as starting targets, not hard promises:
 - Regression coverage: `src/sidebar/active-scroll.test.ts` now asserts that a newly observed active projection row scrolls into view once and does not retrigger for the same active node.
 - Profile check after `pnpm run build`: `pnpm profile:focus -- --tabs 50000 --target last` reports 27ms perceived, 0ms active patch work, 0 saves, 0 MB stringified.
 - Verification: `pnpm test`, `pnpm run build`, and the focus profile above passed.
+
+### 2026-05-17: Active-Search Delete Burst Patches
+
+- Analyzed manual QA traces saved as `dist/delete-nodes.summary.log` and `dist/delete-nodes.snapshot.log`.
+- Main finding: the delete sequence was search-active. Each successful delete used a compact `treeStructureUpdated` patch, but the sidebar treated all search-active structural patches as full renders, rebuilding the search projection on every delete. Background saves also started during the burst: 15 `background.state.save` entries averaged about 830ms.
+- Added `pnpm profile:delete -- --shape one-child-pairs --query needle` so a 50k-tab run creates 25k parent/child pairs and deletes parent nodes whose only child matches the active search.
+- Added an incremental delete projection helper for search-active patches. It removes deleted rows, prunes now-empty path-only search ancestors, adjusts row indexes/subtree bounds from removed row positions, and keeps match/count/active-row metadata current without rebuilding the full projection.
+- Changed deferred persistence to a trailing quiet debounce: saves run after 1000ms of no state changes, with a 5000ms max wait during continuous activity. Sidebar diagnostics now use the same trailing behavior with a 750ms delay.
+- Profile results after `pnpm run build`:
+  - `pnpm profile:delete -- --shape one-child-pairs --tabs 50000 --query needle --target last --count 20`: 795ms perceived for 20 deletes, 40ms average, first patch at 30ms, `projectionMs` 0, one deferred save flush of 34ms.
+  - `pnpm profile:delete -- --tabs 50000 --target last --count 10`: 344ms perceived for 10 deletes, 34ms average, `projectionMs` 0, one deferred save flush of 30ms.
+- Verification: `pnpm test`, `pnpm run build`, and the profile commands above passed.

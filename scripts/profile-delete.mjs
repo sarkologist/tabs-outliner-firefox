@@ -1,7 +1,10 @@
 import { performance } from "node:perf_hooks";
 
 import { createBackgroundController } from "../dist/background/controller.js";
-import { buildVisibleTreeProjection } from "../dist/sidebar/visible-tree.js";
+import {
+  applyDeleteTreeStructurePatchToProjection,
+  buildVisibleTreeProjection
+} from "../dist/sidebar/visible-tree.js";
 
 class FakeEvent {
   listeners = [];
@@ -41,7 +44,9 @@ function parseArgs(argv) {
   const options = {
     tabs: 50_000,
     target: "last",
-    count: 1
+    count: 1,
+    shape: "wide",
+    query: ""
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -56,14 +61,27 @@ function parseArgs(argv) {
     } else if (arg === "--count" && next) {
       options.count = Number.parseInt(next, 10);
       index += 1;
+    } else if (arg === "--shape" && next) {
+      options.shape = next;
+      index += 1;
+    } else if (arg === "--query" && next !== undefined) {
+      options.query = next;
+      index += 1;
     }
   }
 
   if (!Number.isFinite(options.tabs) || options.tabs < 2) {
     throw new Error("--tabs must be an integer >= 2");
   }
-  if (!Number.isFinite(options.count) || options.count < 1 || options.count >= options.tabs) {
-    throw new Error("--count must be an integer between 1 and tabs - 1");
+  if (!["wide", "one-child-pairs"].includes(options.shape)) {
+    throw new Error("--shape must be wide or one-child-pairs");
+  }
+  if (options.shape === "one-child-pairs" && options.tabs % 2 !== 0) {
+    throw new Error("--tabs must be even for --shape one-child-pairs");
+  }
+  const targetCount = options.shape === "one-child-pairs" ? options.tabs / 2 : options.tabs;
+  if (!Number.isFinite(options.count) || options.count < 1 || options.count > targetCount) {
+    throw new Error(`--count must be an integer between 1 and ${targetCount}`);
   }
   if (!["first", "middle", "last"].includes(options.target)) {
     throw new Error("--target must be first, middle, or last");
@@ -72,18 +90,31 @@ function parseArgs(argv) {
   return options;
 }
 
-function targetTabIds(tabCount, target, count) {
+function targetNodeIds(options) {
+  const candidates = deleteCandidateTabIds(options);
+  const { target, count } = options;
   if (target === "first") {
-    return Array.from({ length: count }, (_value, index) => index + 1);
+    return candidates.slice(0, count).map(tabNodeId);
   }
   if (target === "middle") {
-    const start = Math.max(1, Math.ceil(tabCount / 2) - Math.floor(count / 2));
-    return Array.from({ length: count }, (_value, index) => start + index);
+    const start = Math.max(0, Math.ceil(candidates.length / 2) - Math.floor(count / 2) - 1);
+    return candidates.slice(start, start + count).map(tabNodeId);
   }
-  return Array.from({ length: count }, (_value, index) => tabCount - index);
+  return candidates.slice(-count).reverse().map(tabNodeId);
 }
 
-function makeRuntime(tabCount) {
+function deleteCandidateTabIds(options) {
+  if (options.shape === "one-child-pairs") {
+    return Array.from({ length: options.tabs / 2 }, (_value, index) => index * 2 + 1);
+  }
+  return Array.from({ length: options.tabs }, (_value, index) => index + 1);
+}
+
+function tabNodeId(tabId) {
+  return `tab:${tabId}`;
+}
+
+function makeRuntime(options) {
   const events = {
     tabCreated: new FakeEvent(),
     tabUpdated: new FakeEvent(),
@@ -95,14 +126,8 @@ function makeRuntime(tabCount) {
   };
   const runtime = {
     windows: [{ id: 10, focused: true, incognito: false }],
-    tabs: Array.from({ length: tabCount }, (_value, index) => ({
-      id: index + 1,
-      windowId: 10,
-      index,
-      active: index === 0,
-      url: `https://delete.example/${index + 1}`,
-      title: `Tab ${index + 1}`
-    })),
+    tabs: makeRuntimeTabs(options),
+    query: options.query,
     saves: 0,
     broadcasts: 0,
     saveStringifyMs: 0,
@@ -135,7 +160,7 @@ function makeRuntime(tabCount) {
         measureRuntimeJson(runtime, "broadcast", message);
         if (message?.type === "stateUpdated" && message.state) {
           runtime.sidebarState = message.state;
-          const projection = measure(() => buildVisibleTreeProjection(message.state, ""));
+          const projection = measure(() => buildVisibleTreeProjection(message.state, runtime.query));
           runtime.sidebarProjection = projection.value;
           runtime.projectionMs += projection.ms;
         } else if (message?.type === "treeStructureUpdated") {
@@ -195,6 +220,43 @@ function makeRuntime(tabCount) {
   return runtime;
 }
 
+function makeRuntimeTabs(options) {
+  if (options.shape === "one-child-pairs") {
+    return Array.from({ length: options.tabs / 2 }, (_value, pairIndex) => {
+      const parentId = pairIndex * 2 + 1;
+      const childId = parentId + 1;
+      return [
+        {
+          id: parentId,
+          windowId: 10,
+          index: pairIndex * 2,
+          active: pairIndex === 0,
+          url: `https://delete.example/parent/${pairIndex + 1}`,
+          title: `Parent ${pairIndex + 1}`
+        },
+        {
+          id: childId,
+          windowId: 10,
+          index: pairIndex * 2 + 1,
+          active: false,
+          openerTabId: parentId,
+          url: `https://delete.example/needle/${pairIndex + 1}`,
+          title: `Needle child ${pairIndex + 1}`
+        }
+      ];
+    }).flat();
+  }
+
+  return Array.from({ length: options.tabs }, (_value, index) => ({
+    id: index + 1,
+    windowId: 10,
+    index,
+    active: index === 0,
+    url: `https://delete.example/${index + 1}`,
+    title: `Tab ${index + 1}`
+  }));
+}
+
 function closeRuntimeTab(runtime, tabId) {
   const tab = runtime.tabs.find((candidate) => candidate.id === tabId);
   if (!tab) {
@@ -250,25 +312,10 @@ function applyTreeStructureUpdate(runtime, update) {
   }
   runtime.sidebarState.rootIds = [...update.rootIds];
 
-  const updatedNodes = new Map(update.updatedNodes.map((node) => [node.id, node]));
-  runtime.sidebarProjection.rows = runtime.sidebarProjection.rows.filter((row) => !deletedNodeIds.has(row.nodeId));
-  for (let index = 0; index < runtime.sidebarProjection.rows.length; index += 1) {
-    const row = runtime.sidebarProjection.rows[index];
-    row.index = index;
-  }
-  runtime.sidebarProjection.visibleNodeIds = runtime.sidebarProjection.rows.map((row) => row.nodeId);
-  runtime.sidebarProjection.visibleNodeIdSet = new Set(runtime.sidebarProjection.visibleNodeIds);
-  runtime.sidebarProjection.nodeCount = Math.max(0, runtime.sidebarProjection.nodeCount - update.deletedNodeIds.length);
-  runtime.sidebarProjection.closedCount = Math.max(0, runtime.sidebarProjection.closedCount - update.deletedClosedCount);
-
-  for (const row of runtime.sidebarProjection.rows) {
-    const node = updatedNodes.get(row.nodeId);
-    if (!node) {
-      continue;
-    }
-    row.childCount = node.childIds.length;
-    row.visibleChildCount = node.childIds.length;
-    row.expanded = !node.collapsed;
+  if (!applyDeleteTreeStructurePatchToProjection(runtime.sidebarState, runtime.sidebarProjection, update)) {
+    const projection = measure(() => buildVisibleTreeProjection(runtime.sidebarState, runtime.query));
+    runtime.sidebarProjection = projection.value;
+    runtime.projectionMs += projection.ms;
   }
 }
 
@@ -283,12 +330,12 @@ async function flushAll(runtime) {
 }
 
 async function profile(options) {
-  const runtime = makeRuntime(options.tabs);
+  const runtime = makeRuntime(options);
   const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
   const init = await measureAsync(() => controller.ensureState());
   runtime.sidebarState = await controller.handleMessage({ type: "getState" });
-  runtime.sidebarProjection = buildVisibleTreeProjection(runtime.sidebarState, "");
-  const nodeIds = targetTabIds(options.tabs, options.target, options.count).map((tabId) => `tab:${tabId}`);
+  runtime.sidebarProjection = buildVisibleTreeProjection(runtime.sidebarState, options.query);
+  const nodeIds = targetNodeIds(options);
 
   runtime.saves = 0;
   runtime.broadcasts = 0;
@@ -316,6 +363,8 @@ async function profile(options) {
   return {
     scenario: "command-event-echo",
     tabs: options.tabs,
+    shape: options.shape,
+    query: options.query,
     target: options.target,
     count: nodeIds.length,
     firstNodeId: nodeIds[0],
