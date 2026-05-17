@@ -331,3 +331,22 @@ Use these as starting targets, not hard promises:
   - `pnpm profile:command -- --tabs 50000 --scenario move-leaf`: 156ms perceived, deferred save flush 36ms.
   - `pnpm profile:tab-open -- --tabs 50000 --updates 5 --scenario open-tab-storm`: 429ms perceived, deferred save flush 28ms.
 - Verification: `pnpm test`, `pnpm run build`, and the profile commands above passed.
+
+### 2026-05-17: Runtime Refreshes Prefer Compact Patches
+
+- Analyzed follow-up manual traces saved as `dist/summary2.log` and `dist/snapshot2.log`.
+- Main finding: the sidebar was still not the dominant cost (`sidebar.render` max 56ms, projection max 53ms), while full background `stateUpdated` broadcasts were still expensive (`background.runtime.broadcast:stateUpdated` count 14, total 17,916ms, max 1,783ms). Mutation queue waits were mostly behind `refreshFromRuntime` and `sessions.onChanged`.
+- Generalized the patch routing lesson to runtime reconciliation:
+  - command-owned model changes still use cheap identity-based diffs when possible;
+  - runtime refreshes use material/semantic diffs because `reconcileWithWindows()` clones the whole tree;
+  - small runtime title/url/active changes now broadcast `nodeStateUpdated`;
+  - small runtime structural changes, including new-tab refreshes and structural close fallback, now broadcast `treeStructureUpdated`;
+  - full `stateUpdated` remains the fallback when the compact patch would be whole-tree-sized or unsafe.
+- Added controller coverage for runtime metadata refreshes producing `nodeStateUpdated`, new-tab bursts producing `treeStructureUpdated`, and structural close fallback avoiding full state.
+- Profile results after `pnpm run build`:
+  - `pnpm profile:tab-open -- --tabs 50000 --updates 5 --scenario open-tab-storm`: 520ms perceived, 1 broadcast, 1 deferred save, 39ms stringify, 13 MB stringified. This halves the full-state transport/save JSON volume from the previous 26 MB shape, though runtime reconciliation still dominates elapsed time in the Node profile.
+  - `pnpm profile:restore -- --scenario controller-event-echo --tabs 50000 --target last --echo transient-separated`: 68ms perceived, first patch at 20ms, deferred save flush 56ms.
+  - `pnpm profile:close -- --tabs 50000 --target last --order tabRemovedThenSessionChanged`: 51ms perceived, first patch at 49ms, deferred save flush 40ms.
+  - `pnpm profile:command -- --tabs 50000 --scenario move-leaf`: 144ms perceived, first patch at 108ms, deferred save flush 41ms.
+  - `pnpm profile:delete -- --tabs 50000 --target last --count 10`: 390ms perceived for 10 deletes, 39ms average, one coalesced deferred save flush of 40ms.
+- Verification: `pnpm test`, `pnpm run build`, and the profile commands above passed.

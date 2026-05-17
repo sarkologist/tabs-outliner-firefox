@@ -1155,6 +1155,22 @@ describe("background controller lifecycle", () => {
           active: true,
           url: "https://one.example/",
           title: "One"
+        },
+        {
+          id: 2,
+          windowId: 10,
+          index: 1,
+          active: false,
+          url: "https://two.example/",
+          title: "Two"
+        },
+        {
+          id: 3,
+          windowId: 10,
+          index: 2,
+          active: false,
+          url: "https://three.example/",
+          title: "Three"
         }
       ]
     );
@@ -1164,20 +1180,20 @@ describe("background controller lifecycle", () => {
     vi.mocked(runtime.api.storage.local.set).mockClear();
 
     const newTab: RuntimeTab = {
-      id: 2,
+      id: 4,
       windowId: 10,
-      index: 1,
+      index: 3,
       active: true,
       url: "about:newtab",
       title: "New Tab"
     };
     await createTabFromBrowser(runtime, newTab, { awaitListeners: false });
-    await updateTabFromBrowser(runtime, 2, { title: "Loading" }, { awaitListeners: false });
-    await updateTabFromBrowser(runtime, 2, {
+    await updateTabFromBrowser(runtime, 4, { title: "Loading" }, { awaitListeners: false });
+    await updateTabFromBrowser(runtime, 4, {
       title: "Opened",
       url: "https://opened.example/"
     }, { awaitListeners: false });
-    runtime.events.tabActivated.dispatch({ tabId: 2, windowId: 10, previousTabId: 1 });
+    runtime.events.tabActivated.dispatch({ tabId: 4, windowId: 10, previousTabId: 1 });
 
     await Promise.all([
       runtime.events.tabCreated.flush(),
@@ -1188,12 +1204,84 @@ describe("background controller lifecycle", () => {
     const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
 
     expect(runtime.broadcasts).toHaveLength(1);
+    expect(runtime.broadcasts.at(-1)).toMatchObject({
+      type: "treeStructureUpdated"
+    });
     await controller.flushPendingSaves();
     expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
-    expect(state.nodes["tab:2"]?.title).toBe("Opened");
-    expect(state.nodes["tab:2"]?.url).toBe("https://opened.example/");
-    expect(state.nodes["tab:2"]?.active).toBe(true);
+    expect(state.nodes["tab:4"]?.title).toBe("Opened");
+    expect(state.nodes["tab:4"]?.url).toBe("https://opened.example/");
+    expect(state.nodes["tab:4"]?.active).toBe(true);
     expect(state.nodes["tab:1"]?.active).toBe(false);
+  });
+
+  it("broadcasts runtime tab metadata refreshes as node state patches", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        },
+        {
+          id: 2,
+          windowId: 10,
+          index: 1,
+          active: false,
+          url: "https://two.example/",
+          title: "Two"
+        },
+        {
+          id: 3,
+          windowId: 10,
+          index: 2,
+          active: false,
+          url: "https://three.example/",
+          title: "Three"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    runtime.broadcasts.length = 0;
+    vi.mocked(runtime.api.storage.local.set).mockClear();
+
+    await updateTabFromBrowser(runtime, 2, {
+      title: "Two updated",
+      url: "https://two.example/updated"
+    });
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+
+    expect(state.nodes["tab:2"]?.title).toBe("Two updated");
+    expect(state.nodes["tab:2"]?.url).toBe("https://two.example/updated");
+    expect(runtime.broadcasts).toHaveLength(1);
+    const lastBroadcast = runtime.broadcasts.at(-1) as
+      | {
+          type?: string;
+          updatedNodes?: OutlineState["nodes"][string][];
+          state?: OutlineState;
+        }
+      | undefined;
+    expect(lastBroadcast?.type).toBe("nodeStateUpdated");
+    expect(lastBroadcast?.updatedNodes?.map((node) => node.id)).toEqual(["tab:2"]);
+    expect(lastBroadcast?.updatedNodes?.[0]).toMatchObject({
+      id: "tab:2",
+      title: "Two updated",
+      url: "https://two.example/updated"
+    });
+    expect(lastBroadcast?.state).toBeUndefined();
+    await controller.flushPendingSaves();
+    expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
   });
 
   it("ignores tab update events without outline-relevant changes", async () => {
@@ -2266,9 +2354,19 @@ describe("background controller lifecycle", () => {
     expect(state.nodes["tab:2"]?.status).toBe("live");
     expect(state.nodes["tab:2"]?.parentId).toBe("window:10");
     expect(state.nodes["window:10"]?.childIds).toEqual(["tab:1", "tab:2", "tab:3"]);
-    const closeBroadcast = runtime.broadcasts.at(-1) as { type?: string; state?: OutlineState } | undefined;
-    expect(closeBroadcast?.type).toBe("stateUpdated");
-    expect(closeBroadcast?.state?.nodes["tab:2"]?.parentId).toBe("window:10");
+    const closeBroadcast = runtime.broadcasts.at(-1) as
+      | { type?: string; updatedNodes?: OutlineState["nodes"][string][]; state?: OutlineState }
+      | undefined;
+    expect(closeBroadcast?.type).toBe("treeStructureUpdated");
+    expect(closeBroadcast?.state).toBeUndefined();
+    const updatedNodes = new Map(closeBroadcast?.updatedNodes?.map((node) => [node.id, node]));
+    expect(updatedNodes.get("tab:2")?.parentId).toBe("window:10");
+    expect(updatedNodes.get("tab:1")).toMatchObject({
+      id: "tab:1",
+      status: "closed",
+      childIds: []
+    });
+    expect(updatedNodes.get("window:10")?.childIds).toEqual(["tab:1", "tab:2", "tab:3"]);
   });
 
   it("handles outliner closeNode when Firefox reports sessions before tabRemoved", async () => {

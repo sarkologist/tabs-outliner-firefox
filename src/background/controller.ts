@@ -75,6 +75,13 @@ type PerformanceTraceMessage =
       type: "getPerformanceTrace";
     };
 
+type StateDiffMode = "identity" | "material";
+
+type BestEffortPatchOptions = {
+  diffMode?: StateDiffMode;
+  skipNodeState?: boolean;
+};
+
 export type BackgroundControllerOptions = {
   api: WebExtensionBrowser;
   adapter?: BrowserAdapter;
@@ -381,14 +388,14 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         return commandAck(true);
       }
       if (message.type === "renameGroup") {
-        await persistKnownNodeStateUpdate(result.state, message.nodeId);
+        await persistKnownNodeStateUpdate(current, result.state, message.nodeId);
         return commandAck(true);
       }
       if (message.type === "toggleCollapsed") {
-        await persistKnownNodeStateUpdate(result.state, message.nodeId);
+        await persistKnownNodeStateUpdate(current, result.state, message.nodeId);
         return commandAck(true);
       }
-      await persistWithBestEffortCommandPatch(current, result.state);
+      await persistWithBestEffortPatch(current, result.state);
       return commandAck(true);
     }, { reason: "command", command: message.type });
   }
@@ -484,7 +491,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     }
     state = next;
     stateCache.replace(state);
-    await persistAndBroadcast();
+    await persistWithBestEffortPatch(current, next, { diffMode: "material" });
     return state !== current;
   }
 
@@ -570,19 +577,19 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     }, () => candidateNodeIds
       ? nodeStateUpdateForNodeIds(previous, next, candidateNodeIds)
       : nodeStateUpdateFromStateChange(previous, next));
-    if (!update || update.updatedNodes.length === 0) {
-      await persistAndBroadcast();
+    if (isUsefulNodeStateUpdate(update, next)) {
+      await broadcastNodeStateUpdate(update);
+      scheduleStateSave(next);
       return;
     }
 
-    await broadcastNodeStateUpdate(update);
-    scheduleStateSave(next);
+    await persistWithBestEffortPatch(previous, next, { diffMode: "material", skipNodeState: true });
   }
 
-  async function persistKnownNodeStateUpdate(next: OutlineState, nodeId: NodeId): Promise<void> {
+  async function persistKnownNodeStateUpdate(previous: OutlineState, next: OutlineState, nodeId: NodeId): Promise<void> {
     const node = next.nodes[nodeId];
     if (!node) {
-      await persistAndBroadcast();
+      await persistWithBestEffortPatch(previous, next, { diffMode: "material", skipNodeState: true });
       return;
     }
 
@@ -594,18 +601,26 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     scheduleStateSave(next);
   }
 
-  async function persistWithBestEffortCommandPatch(previous: OutlineState, next: OutlineState): Promise<void> {
-    const nodeUpdate = perfTrace.measure("background.patch.build.nodeState", { candidateNodeCount: 0 }, () =>
-      nodeStateUpdateFromStateChange(previous, next)
-    );
-    if (nodeUpdate && nodeUpdate.updatedNodes.length > 0) {
-      await broadcastNodeStateUpdate(nodeUpdate);
-      scheduleStateSave(next);
-      return;
+  async function persistWithBestEffortPatch(
+    previous: OutlineState,
+    next: OutlineState,
+    options: BestEffortPatchOptions = {}
+  ): Promise<void> {
+    const diffMode = options.diffMode ?? "identity";
+    if (!options.skipNodeState) {
+      const nodeUpdate = perfTrace.measure("background.patch.build.nodeState", {
+        candidateNodeCount: 0,
+        diffMode
+      }, () => nodeStateUpdateFromStateChange(previous, next, { diffMode }));
+      if (isUsefulNodeStateUpdate(nodeUpdate, next)) {
+        await broadcastNodeStateUpdate(nodeUpdate);
+        scheduleStateSave(next);
+        return;
+      }
     }
 
-    const treeUpdate = perfTrace.measure("background.patch.build.treeStructure", () =>
-      treeStructureUpdateFromStateChange(previous, next)
+    const treeUpdate = perfTrace.measure("background.patch.build.treeStructure", { diffMode }, () =>
+      treeStructureUpdateFromStateChange(previous, next, { diffMode })
     );
     if (isUsefulTreeStructureUpdate(treeUpdate, next)) {
       await broadcastTreeStructureUpdate(treeUpdate);
@@ -613,7 +628,38 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       return;
     }
 
+    if (!options.skipNodeState && diffMode !== "material") {
+      const nodeUpdate = perfTrace.measure("background.patch.build.nodeState", {
+        candidateNodeCount: 0,
+        diffMode: "material"
+      }, () => nodeStateUpdateFromStateChange(previous, next, { diffMode: "material" }));
+      if (isUsefulNodeStateUpdate(nodeUpdate, next)) {
+        await broadcastNodeStateUpdate(nodeUpdate);
+        scheduleStateSave(next);
+        return;
+      }
+    }
+
+    const semanticTreeUpdate = diffMode === "material"
+      ? treeUpdate
+      : perfTrace.measure("background.patch.build.treeStructure", { diffMode: "material" }, () =>
+        treeStructureUpdateFromStateChange(previous, next, { diffMode: "material" })
+      );
+    if (diffMode !== "material" && isUsefulTreeStructureUpdate(semanticTreeUpdate, next)) {
+      await broadcastTreeStructureUpdate(semanticTreeUpdate);
+      scheduleStateSave(next);
+      return;
+    }
+
     await persistAndBroadcast();
+  }
+
+  function isUsefulNodeStateUpdate(update: NodeStateUpdate | undefined, next: OutlineState): update is NodeStateUpdate {
+    if (!update || update.updatedNodes.length === 0) {
+      return false;
+    }
+
+    return update.updatedNodes.length < Object.keys(next.nodes).length;
   }
 
   async function broadcastActiveStateUpdate(updates: ActiveStateUpdate[]): Promise<void> {
@@ -790,11 +836,21 @@ function focusTargetForNode(
   };
 }
 
-function treeStructureUpdateFromStateChange(previous: OutlineState, next: OutlineState): TreeStructureUpdate {
+function treeStructureUpdateFromStateChange(
+  previous: OutlineState,
+  next: OutlineState,
+  options: { diffMode?: StateDiffMode } = {}
+): TreeStructureUpdate {
+  const diffMode = options.diffMode ?? "identity";
   const deletedNodeIds = Object.keys(previous.nodes).filter((nodeId) => !next.nodes[nodeId]);
-  const updatedNodes = Object.entries(next.nodes).flatMap(([nodeId, node]) => {
-    return previous.nodes[nodeId] !== node ? [node] : [];
-  });
+  const updatedNodes: OutlineNode[] = [];
+  for (const nodeId of Object.keys(next.nodes)) {
+    const node = next.nodes[nodeId]!;
+    const previousNode = previous.nodes[nodeId];
+    if (!previousNode || nodeChangedForPatch(previousNode, node, diffMode)) {
+      updatedNodes.push(node);
+    }
+  }
   const deletedClosedCount = deletedNodeIds.filter((nodeId) => previous.nodes[nodeId]?.status === "closed").length;
 
   return {
@@ -867,20 +923,26 @@ function liveTabNodeWouldChange(node: OutlineNode & { live: { tabId: number; win
     (tab.favIconUrl !== undefined && node.favIconUrl !== tab.favIconUrl);
 }
 
-function nodeStateUpdateFromStateChange(previous: OutlineState, next: OutlineState): NodeStateUpdate | undefined {
-  const nextEntries = Object.entries(next.nodes);
-  if (!sameNodeIdList(previous.rootIds, next.rootIds) || Object.keys(previous.nodes).length !== nextEntries.length) {
+function nodeStateUpdateFromStateChange(
+  previous: OutlineState,
+  next: OutlineState,
+  options: { diffMode?: StateDiffMode } = {}
+): NodeStateUpdate | undefined {
+  const diffMode = options.diffMode ?? "identity";
+  const nextNodeIds = Object.keys(next.nodes);
+  if (!sameNodeIdList(previous.rootIds, next.rootIds) || Object.keys(previous.nodes).length !== nextNodeIds.length) {
     return undefined;
   }
 
   const updatedNodes: OutlineNode[] = [];
   let closedCountDelta = 0;
-  for (const [nodeId, node] of nextEntries) {
+  for (const nodeId of nextNodeIds) {
     const previousNode = previous.nodes[nodeId];
+    const node = next.nodes[nodeId]!;
     if (!previousNode) {
       return undefined;
     }
-    if (previousNode === node) {
+    if (!nodeChangedForPatch(previousNode, node, diffMode)) {
       continue;
     }
     if (previousNode.parentId !== node.parentId || !sameNodeIdList(previousNode.childIds, node.childIds)) {
@@ -902,8 +964,10 @@ function nodeStateUpdateFromStateChange(previous: OutlineState, next: OutlineSta
 function nodeStateUpdateForNodeIds(
   previous: OutlineState,
   next: OutlineState,
-  nodeIds: readonly NodeId[]
+  nodeIds: readonly NodeId[],
+  options: { diffMode?: StateDiffMode } = {}
 ): NodeStateUpdate | undefined {
+  const diffMode = options.diffMode ?? "identity";
   if (!sameNodeIdList(previous.rootIds, next.rootIds)) {
     return undefined;
   }
@@ -916,7 +980,7 @@ function nodeStateUpdateForNodeIds(
     if (!previousNode || !node) {
       return undefined;
     }
-    if (previousNode === node) {
+    if (!nodeChangedForPatch(previousNode, node, diffMode)) {
       continue;
     }
     if (previousNode.parentId !== node.parentId || !sameNodeIdList(previousNode.childIds, node.childIds)) {
@@ -933,6 +997,10 @@ function nodeStateUpdateForNodeIds(
     updatedNodes,
     closedCountDelta
   };
+}
+
+function nodeChangedForPatch(previous: OutlineNode, next: OutlineNode, diffMode: StateDiffMode): boolean {
+  return diffMode === "material" ? !nodesMateriallyEqual(previous, next) : previous !== next;
 }
 
 function sameNodeIdList(previous: NodeId[], next: NodeId[]): boolean {
