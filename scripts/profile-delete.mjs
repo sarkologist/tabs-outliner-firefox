@@ -311,6 +311,7 @@ async function profile(options) {
     lastAck = command.value;
   }
   const current = await controller.handleMessage({ type: "getState" });
+  const saveFlush = await measureAsync(() => controller.flushPendingSaves());
 
   return {
     scenario: "command-event-echo",
@@ -324,6 +325,8 @@ async function profile(options) {
     eventEchoMs: Math.round(eventEchoMs),
     totalMeasuredMs: Math.round(commandMs + eventEchoMs),
     averageMeasuredMs: Math.round((commandMs + eventEchoMs) / nodeIds.length),
+    saveFlushMs: Math.round(saveFlush.ms),
+    totalWithSaveFlushMs: Math.round(commandMs + eventEchoMs + saveFlush.ms),
     firstBroadcastMs: Math.round(runtime.firstBroadcastMs ?? 0),
     saveStringifyMs: Math.round(runtime.saveStringifyMs),
     broadcastStringifyMs: Math.round(runtime.broadcastStringifyMs),

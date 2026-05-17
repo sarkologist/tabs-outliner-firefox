@@ -1,6 +1,6 @@
 import type { BrowserAdapter } from "./adapter.js";
 import { createBrowserAdapter } from "./browser-adapter.js";
-import { computeDiagnostics } from "./diagnostics.js";
+import { computeDiagnostics, type OutlineDiagnostics } from "./diagnostics.js";
 import { isBackgroundCommand, planLiveSubtreeClose, runCommand } from "./commands.js";
 import type { CommandAck } from "./commands.js";
 import { getNormalWindows, getNormalWindowsIncludingTabs } from "./runtime-snapshot.js";
@@ -24,6 +24,7 @@ export type BackgroundController = {
   ensureState(): Promise<OutlineState>;
   handleMessage(message: unknown): Promise<unknown>;
   refreshFromRuntime(eventTabs?: RuntimeTab[], options?: RefreshOptions): Promise<boolean>;
+  flushPendingSaves(): Promise<void>;
 };
 
 type RefreshOptions = {
@@ -81,6 +82,7 @@ export type BackgroundControllerOptions = {
 };
 
 const RUNTIME_REFRESH_BATCH_DELAY_MS = 0;
+const STATE_SAVE_BATCH_DELAY_MS = 250;
 
 export function createBackgroundController(options: BackgroundControllerOptions): BackgroundController {
   const { api, now = Date.now } = options;
@@ -102,6 +104,10 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   let sessionChangedQueued = false;
   let commandCloseSessionEchoesToSkip = 0;
   let queuedRuntimeRefresh: QueuedRuntimeRefresh | undefined;
+  let pendingSaveState: OutlineState | undefined;
+  let saveTimer: number | undefined;
+  let saveInFlight: Promise<void> | undefined;
+  let diagnosticsInFlight: Promise<OutlineDiagnostics> | undefined;
 
   api.runtime.onInstalled.addListener(() => {
     void ensureState();
@@ -273,10 +279,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
   async function handleNonTraceMessage(message: unknown): Promise<unknown> {
     if (isDiagnosticsRequest(message)) {
-      await mutationQueue;
-      return perfTrace.measureAsync("background.diagnostics", async () =>
-        computeDiagnostics(await ensureState(), await getNormalWindows(api))
-      );
+      return getDiagnosticsCoalesced();
     }
 
     if (!isBackgroundCommand(message)) {
@@ -374,7 +377,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
           treeStructureUpdateFromStateChange(current, result.state)
         );
         await broadcastTreeStructureUpdate(update);
-        await saveStateWithTrace(result.state);
+        scheduleStateSave(result.state);
         return commandAck(true);
       }
       if (message.type === "renameGroup") {
@@ -400,7 +403,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     state = stored
       ? reconcileWithWindows(repairState(stored), windows, { now: now() })
       : bootstrapFromWindows(windows, { now: now() });
-    await saveStateWithTrace(state);
+    await saveStateNowWithTrace(state);
     return state;
   }
 
@@ -553,8 +556,8 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     if (!state) {
       return;
     }
-    await saveStateWithTrace(state);
     await broadcastWithTrace({ type: "stateUpdated", state });
+    scheduleStateSave(state);
   }
 
   async function persistWithNodeStateUpdate(
@@ -573,7 +576,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     }
 
     await broadcastNodeStateUpdate(update);
-    await saveStateWithTrace(next);
+    scheduleStateSave(next);
   }
 
   async function persistKnownNodeStateUpdate(next: OutlineState, nodeId: NodeId): Promise<void> {
@@ -588,7 +591,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       updatedNodes: [node],
       closedCountDelta: 0
     });
-    await saveStateWithTrace(next);
+    scheduleStateSave(next);
   }
 
   async function persistWithBestEffortCommandPatch(previous: OutlineState, next: OutlineState): Promise<void> {
@@ -597,7 +600,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     );
     if (nodeUpdate && nodeUpdate.updatedNodes.length > 0) {
       await broadcastNodeStateUpdate(nodeUpdate);
-      await saveStateWithTrace(next);
+      scheduleStateSave(next);
       return;
     }
 
@@ -606,7 +609,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     );
     if (isUsefulTreeStructureUpdate(treeUpdate, next)) {
       await broadcastTreeStructureUpdate(treeUpdate);
-      await saveStateWithTrace(next);
+      scheduleStateSave(next);
       return;
     }
 
@@ -631,7 +634,45 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     await broadcastWithTrace(update);
   }
 
-  async function saveStateWithTrace(next: OutlineState): Promise<void> {
+  function scheduleStateSave(next: OutlineState): void {
+    pendingSaveState = next;
+    if (saveTimer !== undefined || saveInFlight) {
+      return;
+    }
+
+    saveTimer = globalThis.setTimeout(() => {
+      saveTimer = undefined;
+      void flushPendingSaves().catch((error) => {
+        perfTrace.mark("background.state.save.error", { message: errorText(error) });
+      });
+    }, STATE_SAVE_BATCH_DELAY_MS);
+  }
+
+  async function flushPendingSaves(): Promise<void> {
+    if (saveTimer !== undefined) {
+      globalThis.clearTimeout(saveTimer);
+      saveTimer = undefined;
+    }
+
+    while (pendingSaveState || saveInFlight) {
+      if (saveInFlight) {
+        await saveInFlight;
+        continue;
+      }
+
+      const next = pendingSaveState;
+      if (!next) {
+        return;
+      }
+      pendingSaveState = undefined;
+      saveInFlight = saveStateNowWithTrace(next).finally(() => {
+        saveInFlight = undefined;
+      });
+      await saveInFlight;
+    }
+  }
+
+  async function saveStateNowWithTrace(next: OutlineState): Promise<void> {
     await perfTrace.measureAsync("background.state.save", () => saveState(next, api));
   }
 
@@ -639,6 +680,16 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     await perfTrace.measureAsync("background.runtime.broadcast", { type: message.type }, async () => {
       await api.runtime.sendMessage(message).catch(() => undefined);
     });
+  }
+
+  function getDiagnosticsCoalesced(): Promise<OutlineDiagnostics> {
+    diagnosticsInFlight ??= perfTrace.measureAsync("background.diagnostics", async () => {
+      await mutationQueue;
+      return computeDiagnostics(await ensureState(), await getNormalWindows(api));
+    }).finally(() => {
+      diagnosticsInFlight = undefined;
+    });
+    return diagnosticsInFlight;
   }
 
   function handlePerformanceTraceMessage(message: PerformanceTraceMessage): TraceSnapshot | { ok: true } {
@@ -706,7 +757,8 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   return {
     ensureState,
     handleMessage,
-    refreshFromRuntime
+    refreshFromRuntime,
+    flushPendingSaves
   };
 }
 
@@ -715,6 +767,10 @@ function commandAck(stateChanged: boolean): CommandAck {
     type: "commandAck",
     stateChanged
   };
+}
+
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function focusTargetForNode(

@@ -249,6 +249,9 @@ async function profile({ tabs, updates, scenario }) {
   }
   const totalMs = performance.now() - start;
   const state = await controller.handleMessage({ type: "getState" });
+  const saveFlushStart = performance.now();
+  await controller.flushPendingSaves();
+  const saveFlushMs = performance.now() - saveFlushStart;
 
   return {
     scenario,
@@ -256,6 +259,8 @@ async function profile({ tabs, updates, scenario }) {
     updates: scenario === "open-tab-storm" ? updates : 0,
     initMs: Math.round(initMs),
     totalMs: Math.round(totalMs),
+    saveFlushMs: Math.round(saveFlushMs),
+    totalWithSaveFlushMs: Math.round(totalMs + saveFlushMs),
     saves: runtime.saves,
     broadcasts: runtime.broadcasts,
     stringifyMs: Math.round(runtime.stringifyMs),

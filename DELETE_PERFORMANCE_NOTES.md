@@ -313,3 +313,21 @@ Use these as starting targets, not hard promises:
   - `await tabsOutlinerProfile.disable()` when done
 - This does not yet provide new numbers by itself; it is the more representative measurement surface needed before choosing an architectural direction.
 - Verification: `pnpm test -- src/perf/trace.test.ts src/background/controller.test.ts` and `pnpm run build` passed.
+
+### 2026-05-17: Deferred Full-State Persistence and Diagnostics Coalescing
+
+- Analyzed manual QA traces saved as `dist/summary.log` and `dist/snapshot.log`.
+- Main finding: sidebar work was no longer the bottleneck. In the trace, `sidebar.render` maxed at 19ms, `sidebar.projection.build` at 17ms, `sidebar.virtualRows` at 12ms, and patch application at 14ms or less.
+- Background persistence dominated the sluggish feel: `background.state.save` ran 20 times at 823ms average / 866ms max, and `stateUpdated` broadcasts often took 600-900ms. These awaited operations kept later mutations and diagnostics stuck behind the queue.
+- Diagnostics were also amplified by multiple sidebar contexts: bursts of roughly seven `getDiagnostics` messages arrived together, each doing its own background diagnostics request.
+- Changed state-changing paths so visible broadcasts still happen immediately, but full `storage.local.set` persistence is scheduled through a coalesced background save. A new `flushPendingSaves()` controller method lets tests/profiles explicitly wait for eventual persistence.
+- Full-state fallback broadcasts now happen before the deferred storage save, so full-state paths no longer wait for storage before updating sidebars.
+- Added background diagnostics request coalescing so concurrent `getDiagnostics` requests share one runtime-window query and diagnostics scan.
+- Updated profile harnesses to report perceived operation time separately from eventual `saveFlushMs`.
+- Profile results after `pnpm run build`:
+  - `pnpm profile:restore -- --scenario controller-event-echo --tabs 50000 --target last --echo transient-separated`: 60ms perceived, first patch at 13ms, deferred save flush 48ms.
+  - `pnpm profile:close -- --tabs 50000 --target last --order tabRemovedThenSessionChanged`: 46ms perceived, first patch at 44ms, deferred save flush 36ms.
+  - `pnpm profile:delete -- --tabs 50000 --target last --count 10`: 449ms perceived for 10 deletes, 45ms average, one coalesced deferred save flush of 34ms.
+  - `pnpm profile:command -- --tabs 50000 --scenario move-leaf`: 156ms perceived, deferred save flush 36ms.
+  - `pnpm profile:tab-open -- --tabs 50000 --updates 5 --scenario open-tab-storm`: 429ms perceived, deferred save flush 28ms.
+- Verification: `pnpm test`, `pnpm run build`, and the profile commands above passed.

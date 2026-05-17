@@ -1021,6 +1021,85 @@ describe("background controller lifecycle", () => {
     });
   });
 
+  it("does not wait for storage persistence before acknowledging a patched command", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    await controller.flushPendingSaves();
+    vi.mocked(runtime.api.storage.local.set).mockClear();
+    runtime.broadcasts.length = 0;
+
+    let finishSave: () => void = () => undefined;
+    vi.mocked(runtime.api.storage.local.set).mockImplementationOnce(
+      () => new Promise<void>((resolve) => {
+        finishSave = resolve;
+      })
+    );
+
+    const response = await controller.handleMessage({ type: "toggleCollapsed", nodeId: "window:10" });
+
+    expectCommandAck(response, true);
+    expect(runtime.broadcasts.at(-1)).toMatchObject({
+      type: "nodeStateUpdated"
+    });
+    expect(vi.mocked(runtime.api.storage.local.set)).not.toHaveBeenCalled();
+
+    const flush = controller.flushPendingSaves();
+    expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
+    finishSave();
+    await flush;
+  });
+
+  it("coalesces concurrent diagnostics requests across sidebar contexts", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    vi.mocked(runtime.api.windows.getAll).mockClear();
+
+    const diagnostics = await Promise.all(
+      Array.from({ length: 7 }, () => controller.handleMessage({ type: "getDiagnostics" }))
+    );
+
+    expect(diagnostics).toHaveLength(7);
+    expect(runtime.api.windows.getAll).toHaveBeenCalledTimes(1);
+  });
+
   it("adds new tab events without closing existing tabs when query is stale", async () => {
     const runtime = fakeRuntime(
       [
@@ -1109,6 +1188,7 @@ describe("background controller lifecycle", () => {
     const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
 
     expect(runtime.broadcasts).toHaveLength(1);
+    await controller.flushPendingSaves();
     expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
     expect(state.nodes["tab:2"]?.title).toBe("Opened");
     expect(state.nodes["tab:2"]?.url).toBe("https://opened.example/");
@@ -1655,6 +1735,7 @@ describe("background controller lifecycle", () => {
     expect(state.nodes["tab:2"]).toBeUndefined();
     expect(state.nodes["window:10"]?.childIds).toEqual(["tab:1"]);
 
+    await controller.flushPendingSaves();
     const lastSave = vi.mocked(runtime.api.storage.local.set).mock.calls.at(-1)?.[0] as
       | Record<string, OutlineState>
       | undefined;
@@ -1806,6 +1887,7 @@ describe("background controller lifecycle", () => {
     });
     expect(restoreBroadcast?.closedCountDelta).toBe(-1);
     expect(restoreBroadcast?.state).toBeUndefined();
+    await controller.flushPendingSaves();
     expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
   });
 
@@ -1878,6 +1960,7 @@ describe("background controller lifecycle", () => {
     const restoreBroadcast = runtime.broadcasts[0] as { type?: string; state?: OutlineState } | undefined;
     expect(restoreBroadcast?.type).toBe("nodeStateUpdated");
     expect(restoreBroadcast?.state).toBeUndefined();
+    await controller.flushPendingSaves();
     expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
   });
 
@@ -1977,6 +2060,7 @@ describe("background controller lifecycle", () => {
     expect(closeBroadcast?.updatedNodes?.[0]?.status).toBe("closed");
     expect(closeBroadcast?.closedCountDelta).toBe(1);
     expect(closeBroadcast?.state).toBeUndefined();
+    await controller.flushPendingSaves();
     expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
   });
 
@@ -2024,6 +2108,7 @@ describe("background controller lifecycle", () => {
     const closeBroadcast = runtime.broadcasts[0] as { type?: string; closedCountDelta?: number } | undefined;
     expect(closeBroadcast?.type).toBe("nodeStateUpdated");
     expect(closeBroadcast?.closedCountDelta).toBe(1);
+    await controller.flushPendingSaves();
     expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
   });
 
@@ -3226,6 +3311,7 @@ describe("background controller lifecycle", () => {
     expect(deleted.nodes["tab:2"]).toBeUndefined();
     expect(deleted.nodes["window:10"]?.childIds).toEqual(["tab:1"]);
 
+    await controller.flushPendingSaves();
     const lastSave = vi.mocked(runtime.api.storage.local.set).mock.calls.at(-1)?.[0] as
       | Record<string, OutlineState>
       | undefined;
@@ -3305,6 +3391,7 @@ describe("background controller lifecycle", () => {
     expect(deleted.nodes["tab:3"]?.status).toBe("live");
     expect(afterRemoveEvents).toEqual(deleted);
     expect(runtime.broadcasts).toHaveLength(1);
+    await controller.flushPendingSaves();
     expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
   });
 
@@ -3438,6 +3525,7 @@ describe("background controller lifecycle", () => {
     expect(lastBroadcast?.updatedNodes?.map((node) => node.id).sort()).toEqual(["tab:3", "window:10"]);
     expect(lastBroadcast?.rootIds).toEqual(["window:10"]);
     expect(lastBroadcast?.state).toBeUndefined();
+    await controller.flushPendingSaves();
     expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
   });
 
@@ -3557,6 +3645,7 @@ describe("background controller lifecycle", () => {
     expect(lastBroadcast?.type).toBe("nodeStateUpdated");
     expect(lastBroadcast?.updatedNodes?.[0]).toMatchObject({ id: "tab:1", collapsed: true });
     expect(lastBroadcast?.state).toBeUndefined();
+    await controller.flushPendingSaves();
     expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
   });
 
@@ -3605,6 +3694,7 @@ describe("background controller lifecycle", () => {
       customTitle: "Research"
     });
     expect(lastBroadcast?.state).toBeUndefined();
+    await controller.flushPendingSaves();
     expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
   });
 
@@ -3640,6 +3730,7 @@ describe("background controller lifecycle", () => {
     expect(deleted.nodes["window:10"]).toBeUndefined();
     expect(deleted.rootIds).toEqual([]);
 
+    await controller.flushPendingSaves();
     const lastSave = vi.mocked(runtime.api.storage.local.set).mock.calls.at(-1)?.[0] as
       | Record<string, OutlineState>
       | undefined;
