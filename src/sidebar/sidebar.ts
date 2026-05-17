@@ -13,6 +13,16 @@ import {
 import { createActiveTabScrollTracker, scrollActiveTabIntoView } from "./active-scroll.js";
 import { createDiagnosticsScheduler } from "./diagnostics-scheduler.js";
 import {
+  cutSubtreeRowRange,
+  isRowInCutSubtree,
+  keyboardCutPasteAction,
+  nextPendingCutNodeId,
+  nodeIdForCutPasteTarget,
+  pasteAfterCommand,
+  type CutPasteShortcutTarget,
+  type CutSubtreeRowRange
+} from "./cut-paste.js";
+import {
   commandForDropPlacement,
   dropModeForPointer,
   dropPlacementForNode,
@@ -64,6 +74,8 @@ let projectionState: OutlineState | undefined;
 let projectionQuery: string | undefined;
 let scheduledVirtualRender = false;
 let hoverLineScope: HoverLineScope | undefined;
+let pendingCutNodeId: NodeId | undefined;
+let currentCutRowRange: CutSubtreeRowRange | undefined;
 const activeTabScrollTracker = createActiveTabScrollTracker();
 
 const WHEEL_ZOOM_THRESHOLD_PX = 80;
@@ -560,6 +572,7 @@ function render(): void {
     const state = currentState;
     if (!state) {
       currentProjection = undefined;
+      currentCutRowRange = undefined;
       hoverLineScope = undefined;
       tree.textContent = "";
       tree.style.height = "0px";
@@ -572,9 +585,11 @@ function render(): void {
         activeRename = undefined;
       }
     }
+    pendingCutNodeId = nextPendingCutNodeId(state, pendingCutNodeId);
 
     const projection = visibleProjectionFor(state, currentSearchQuery);
     currentProjection = projection;
+    currentCutRowRange = cutSubtreeRowRange(projection.rows, pendingCutNodeId);
     hoverLineScope = undefined;
     updateProjectionChrome(projection);
     scrollToObservedActiveTab(projection);
@@ -638,6 +653,7 @@ function applyNodeStateUpdate(update: NodeStateUpdate): void {
       state.nodes[node.id] = node;
       windowActiveChanged ||= node.kind === "window";
     }
+    pendingCutNodeId = nextPendingCutNodeId(state, pendingCutNodeId);
 
     if (!currentProjection || currentProjection.isSearchActive || collapsedChanged) {
       invalidateProjectionCache();
@@ -689,6 +705,7 @@ function applyTreeStructureUpdate(update: TreeStructureUpdate): void {
     if (activeRename && deletedNodeIds.has(activeRename.nodeId)) {
       activeRename = undefined;
     }
+    pendingCutNodeId = nextPendingCutNodeId(state, pendingCutNodeId);
 
     if (!currentProjection) {
       invalidateProjectionCache();
@@ -708,6 +725,7 @@ function applyTreeStructureUpdate(update: TreeStructureUpdate): void {
     }
 
     refreshProjectionActiveTabTarget(state, currentProjection);
+    currentCutRowRange = cutSubtreeRowRange(currentProjection.rows, pendingCutNodeId);
     updateProjectionChrome(currentProjection);
     scrollToObservedActiveTab(currentProjection);
     clearHoverLineScope();
@@ -839,7 +857,9 @@ function renderRow(state: OutlineState, rowInfo: VisibleTreeRow, rowHeight: numb
   const item = document.createElement("li");
   item.className = `node node-${node.kind} is-${node.status}${isActiveWindow || isActiveTab ? " is-active" : ""}${
     rowInfo.isSearchMatch ? " is-search-match" : ""
-  }${rowInfo.isSearchPath ? " is-search-path" : ""}`;
+  }${rowInfo.isSearchPath ? " is-search-path" : ""}${
+    isRowInCutSubtree(rowInfo, currentCutRowRange) ? " is-cut" : ""
+  }`;
   item.dataset.nodeId = node.id;
   item.dataset.rowIndex = String(rowInfo.index);
   item.setAttribute("role", "treeitem");
@@ -890,6 +910,8 @@ function renderRow(state: OutlineState, rowInfo: VisibleTreeRow, rowHeight: numb
   const actions = document.createElement("span");
   actions.className = "node-actions";
 
+  actions.append(actionButton("Cut", "cut", "X"));
+  actions.append(actionButton("Paste", "paste", "P", !pasteAfterCommand(state, pendingCutNodeId, node.id)));
   actions.append(actionButton(node.status === "live" ? "Close" : "Restore", "close-or-restore"));
 
   if (canFlattenSubtree(state, node)) {
@@ -1132,6 +1154,16 @@ function handleTreeClick(event: MouseEvent): void {
     return;
   }
 
+  if (action === "cut") {
+    cutNodeForPaste(node.id);
+    return;
+  }
+
+  if (action === "paste") {
+    void pasteCutAfter(node.id);
+    return;
+  }
+
   if (action === "rename") {
     startRenameGroup(node);
     return;
@@ -1212,6 +1244,20 @@ function handleTreeInput(event: Event): void {
 }
 
 function handleTreeKeydown(event: KeyboardEvent): void {
+  const shortcutTarget = cutPasteShortcutTargetForEventTarget(event.target);
+  const shortcutAction = keyboardCutPasteAction(event, shortcutTarget);
+  const shortcutNodeId = nodeIdForCutPasteTarget(shortcutTarget);
+  if (shortcutAction && shortcutNodeId) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (shortcutAction === "cut") {
+      cutNodeForPaste(shortcutNodeId);
+    } else {
+      void pasteCutAfter(shortcutNodeId);
+    }
+    return;
+  }
+
   const input = event.target instanceof HTMLInputElement ? event.target : undefined;
   if (!input?.classList.contains("node-rename-input") || !input.dataset.nodeId) {
     return;
@@ -1320,14 +1366,60 @@ function dropPlacementForRowEvent(
   return dropPlacementForNode(state, draggedNodeId, targetId, dropModeForPointer(relativeY, rect.height));
 }
 
-function actionButton(label: string, action: string, glyph?: string): HTMLButtonElement {
+function actionButton(label: string, action: string, glyph?: string, disabled = false): HTMLButtonElement {
   const button = document.createElement("button");
   button.className = "icon-button action";
   button.type = "button";
   button.title = label;
   button.textContent = glyph ?? (label === "Delete" ? "x" : label[0] ?? "?");
   button.dataset.action = action;
+  button.disabled = disabled;
   return button;
+}
+
+function cutNodeForPaste(nodeId: NodeId): void {
+  if (!currentState?.nodes[nodeId]) {
+    return;
+  }
+
+  pendingCutNodeId = nodeId;
+  showDiagnosticsNotice("Cut subtree");
+  render();
+}
+
+async function pasteCutAfter(targetNodeId: NodeId): Promise<void> {
+  const state = currentState;
+  const command = state ? pasteAfterCommand(state, pendingCutNodeId, targetNodeId) : undefined;
+  if (!command) {
+    showDiagnosticsNotice("Cannot paste there", { error: true });
+    return;
+  }
+
+  const accepted = await runAndRender(command);
+  if (!accepted) {
+    return;
+  }
+
+  pendingCutNodeId = undefined;
+  showDiagnosticsNotice("Pasted subtree");
+  render();
+}
+
+function cutPasteShortcutTargetForEventTarget(target: EventTarget | null): CutPasteShortcutTarget {
+  const element = target instanceof Element ? target : undefined;
+  const item = nodeItemForTarget(target);
+  return {
+    ...(item?.dataset.nodeId ? { nodeId: item.dataset.nodeId } : {}),
+    ...(element ? { tagName: element.tagName } : {}),
+    ...(element ? { isContentEditable: isEditableElement(element) } : {})
+  };
+}
+
+function isEditableElement(element: Element): boolean {
+  if (element instanceof HTMLElement && element.isContentEditable) {
+    return true;
+  }
+  return Boolean(element.closest("[contenteditable='true']"));
 }
 
 function isNodeRowEvent(event: DragEvent): boolean {
@@ -1494,19 +1586,22 @@ function removeDropPreviewElements(): void {
     .forEach((element) => element.classList.remove("drop-inside-target"));
 }
 
-async function runAndRender(command: BackgroundCommand): Promise<void> {
+async function runAndRender(command: BackgroundCommand): Promise<boolean> {
   try {
     const response = await sendCommand(command);
     if (isCommandAck(response)) {
-      return;
+      return true;
     }
     if (isOutlineState(response)) {
       currentState = response;
       render();
       scheduleDiagnosticsLoad();
+      return true;
     }
+    return true;
   } catch (error) {
     showDiagnosticsNotice(commandErrorText(error), { error: true });
+    return false;
   }
 }
 

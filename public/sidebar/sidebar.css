@@ -238,6 +238,10 @@ main.root-drop-target {
   background: color-mix(in srgb, Highlight 18%, transparent);
 }
 
+.is-cut > .node-row {
+  opacity: 0.48;
+}
+
 .node-title-search-match {
   color: color-mix(in srgb, Highlight 82%, CanvasText 18%);
 }

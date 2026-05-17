@@ -537,6 +537,9 @@ describe("background commands", () => {
 
     expect(result.state).toEqual(moveNode(state, "tab:3", { parentId: "tab:1", index: 0 }));
     expect(adapter.moveTabs).toHaveBeenCalledWith([1, 3, 2], { windowId: 10, index: 0 });
+    expect(adapter.createTab).not.toHaveBeenCalled();
+    expect(adapter.createWindow).not.toHaveBeenCalled();
+    expect(result.state.nodes["tab:3"]?.live).toEqual({ tabId: 3, windowId: 10 });
   });
 
   it("flattens outline subtrees without asking Firefox to reorder tabs", async () => {
@@ -724,6 +727,8 @@ describe("background commands", () => {
     });
 
     expect(adapter.createWindow).toHaveBeenCalledWith({ tabId: 1 });
+    expect(adapter.createTab).not.toHaveBeenCalled();
+    expect(adapter.restoreSession).not.toHaveBeenCalled();
     expect(result.state.rootIds).toEqual(["window:10", "window:42"]);
     expect(result.state.nodes["window:10"]?.childIds).toEqual(["tab:3"]);
     expect(result.state.nodes["window:42"]?.childIds).toEqual(["tab:1"]);
@@ -764,6 +769,9 @@ describe("background commands", () => {
     expect(result.state.rootIds).toEqual(["window:42", "window:10"]);
     expect(result.state.nodes["window:42"]?.childIds).toEqual(["tab:1"]);
     expect(result.state.nodes["tab:1"]?.parentId).toBe("window:42");
+    expect(result.state.nodes["tab:1"]?.live).toEqual({ tabId: 1, windowId: 42 });
+    expect(adapter.createWindow).toHaveBeenCalledWith({ tabId: 1 });
+    expect(adapter.createTab).not.toHaveBeenCalled();
     expect(result.state.rootIds).not.toContain("tab:1");
   });
 
