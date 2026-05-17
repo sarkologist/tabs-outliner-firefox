@@ -10,7 +10,7 @@ import {
   type TraceSnapshot,
   type TraceSummaryRow
 } from "../perf/trace.js";
-import { createActiveTabScrollTracker, scrollActiveTabIntoView } from "./active-scroll.js";
+import { createActiveTabScrollTracker, resetActiveTabScrollTracker, scrollActiveTabIntoView } from "./active-scroll.js";
 import { createDiagnosticsScheduler } from "./diagnostics-scheduler.js";
 import {
   cutSubtreeRowRange,
@@ -694,6 +694,9 @@ function applyTreeStructureUpdate(update: TreeStructureUpdate): void {
       return;
     }
 
+    const shouldRescrollActiveTab = currentProjection?.activeTabNodeId
+      ? treeStructureUpdateTouchesNodeOrAncestor(state, update, currentProjection.activeTabNodeId)
+      : false;
     const deletedNodeIds = new Set(update.deletedNodeIds);
     for (const nodeId of deletedNodeIds) {
       delete state.nodes[nodeId];
@@ -706,6 +709,9 @@ function applyTreeStructureUpdate(update: TreeStructureUpdate): void {
       activeRename = undefined;
     }
     pendingCutNodeId = nextPendingCutNodeId(state, pendingCutNodeId);
+    if (shouldRescrollActiveTab) {
+      resetActiveTabScrollTracker(activeTabScrollTracker);
+    }
 
     if (!currentProjection) {
       invalidateProjectionCache();
@@ -763,6 +769,27 @@ function refreshProjectionActiveTabTarget(state: OutlineState, projection: Visib
       return;
     }
   }
+}
+
+function treeStructureUpdateTouchesNodeOrAncestor(
+  state: OutlineState,
+  update: TreeStructureUpdate,
+  nodeId: NodeId
+): boolean {
+  const updatedNodeIds = new Set(update.updatedNodes.map((node) => node.id));
+  const visited = new Set<NodeId>();
+  let currentId: NodeId | undefined = nodeId;
+
+  while (currentId && !visited.has(currentId)) {
+    if (updatedNodeIds.has(currentId)) {
+      return true;
+    }
+
+    visited.add(currentId);
+    currentId = state.nodes[currentId]?.parentId;
+  }
+
+  return false;
 }
 
 function canFlattenSubtree(state: OutlineState, node: OutlineNode): boolean {
@@ -1538,7 +1565,18 @@ function cssEscape(value: string): string {
 }
 
 function scrollToObservedActiveTab(projection: VisibleTreeProjection): void {
-  scrollActiveTabIntoView(activeTabScrollTracker, projection, rootDropSurface ?? undefined, currentRowHeight());
+  const rowHeight = currentRowHeight();
+  prepareVirtualScrollSurface(projection, rowHeight);
+  scrollActiveTabIntoView(activeTabScrollTracker, projection, rootDropSurface ?? undefined, rowHeight);
+}
+
+function prepareVirtualScrollSurface(projection: VisibleTreeProjection, rowHeight: number): void {
+  if (!tree) {
+    return;
+  }
+
+  const effectiveRowHeight = Number.isFinite(rowHeight) && rowHeight > 0 ? rowHeight : 1;
+  tree.style.height = `${projection.rows.length * effectiveRowHeight}px`;
 }
 
 function rowForItem(item: HTMLElement): HTMLElement | undefined {

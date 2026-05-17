@@ -19,6 +19,10 @@ export function createActiveTabScrollTracker(): ActiveTabScrollTracker {
   return {};
 }
 
+export function resetActiveTabScrollTracker(tracker: ActiveTabScrollTracker): void {
+  delete tracker.observedActiveNodeId;
+}
+
 export function findActiveTabNodeId(state: OutlineState): NodeId | undefined {
   const visited = new Set<NodeId>();
   const stack: Array<{ nodeId: NodeId; insideActiveWindow: boolean }> = [];
@@ -92,10 +96,25 @@ export function scrollActiveTabIntoView(
   viewport: ActiveTabScrollViewport | undefined,
   rowHeight: number
 ): boolean {
-  const nodeId = observeActiveTabNodeId(tracker, projection.activeTabNodeId, {
-    hasRenderedNode: (candidate) => projection.visibleNodeIdSet.has(candidate)
-  });
-  if (!nodeId || typeof projection.activeTabRowIndex !== "number" || !viewport) {
+  const activeNodeId = projection.activeTabNodeId;
+  if (!activeNodeId) {
+    resetActiveTabScrollTracker(tracker);
+    return false;
+  }
+
+  if (!projection.visibleNodeIdSet.has(activeNodeId) || typeof projection.activeTabRowIndex !== "number") {
+    observeActiveTabNodeId(tracker, activeNodeId, {
+      hasRenderedNode: () => false
+    });
+    return false;
+  }
+
+  if (
+    tracker.observedActiveNodeId === activeNodeId ||
+    !viewport ||
+    !Number.isFinite(viewport.clientHeight) ||
+    viewport.clientHeight <= 0
+  ) {
     return false;
   }
 
@@ -113,10 +132,16 @@ export function scrollActiveTabIntoView(
   }
 
   if (nextScrollTop === viewportTop) {
+    tracker.observedActiveNodeId = activeNodeId;
     return false;
   }
 
   viewport.scrollTop = nextScrollTop;
+  if (viewport.scrollTop === viewportTop) {
+    return false;
+  }
+
+  tracker.observedActiveNodeId = activeNodeId;
   return true;
 }
 
