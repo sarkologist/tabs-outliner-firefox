@@ -165,7 +165,7 @@ main.root-drop-target {
 .node-row {
   position: relative;
   display: grid;
-  grid-template-columns: var(--node-icon-size) minmax(0, 1fr) auto;
+  grid-template-columns: var(--node-icon-size) minmax(0, 1fr);
   gap: var(--node-row-gap);
   align-items: center;
   min-height: var(--node-row-height);
@@ -396,10 +396,29 @@ main.root-drop-target {
 }
 
 .node-actions {
+  position: absolute;
+  top: 50%;
+  right: var(--node-row-padding-x);
   display: inline-flex;
   gap: var(--node-row-gap);
   align-items: center;
-  justify-self: end;
+  padding-left: 6px;
+  border-radius: 3px;
+  background: Canvas;
+  box-shadow: -8px 0 8px Canvas;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-50%);
+  transition: opacity 80ms ease;
+  visibility: hidden;
+  z-index: 2;
+}
+
+.node-row:hover .node-actions,
+.node-row:focus-within .node-actions {
+  opacity: 1;
+  pointer-events: auto;
+  visibility: visible;
 }
 
 .icon-button {
