@@ -19,6 +19,7 @@ import {
   dropPlacementForRoot,
   type DropPlacement
 } from "./drop-target.js";
+import { segmentSearchText } from "./search.js";
 import {
   buildVisibleTreeProjection,
   calculateVirtualRange,
@@ -825,7 +826,7 @@ function renderVirtualRows(): void {
     for (let index = range.start; index < range.end; index += 1) {
       const row = currentProjection.rows[index];
       if (row) {
-        fragment.append(renderRow(currentState, row, rowHeight));
+        fragment.append(renderRow(currentState, row, rowHeight, currentProjection.query));
       }
     }
     tree.append(fragment);
@@ -838,7 +839,7 @@ function currentRowHeight(): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 18;
 }
 
-function renderRow(state: OutlineState, rowInfo: VisibleTreeRow, rowHeight: number): HTMLElement {
+function renderRow(state: OutlineState, rowInfo: VisibleTreeRow, rowHeight: number, searchQuery: string): HTMLElement {
   const node = state.nodes[rowInfo.nodeId];
   if (!node) {
     return document.createElement("li");
@@ -892,7 +893,7 @@ function renderRow(state: OutlineState, rowInfo: VisibleTreeRow, rowHeight: numb
 
     const title = document.createElement("span");
     title.className = "node-title";
-    title.textContent = titleText;
+    appendTitleText(title, titleText, rowInfo.isSearchMatch ? searchQuery : "");
     label.append(title);
 
     row.append(label);
@@ -917,6 +918,20 @@ function renderRow(state: OutlineState, rowInfo: VisibleTreeRow, rowHeight: numb
   item.append(row);
 
   return item;
+}
+
+function appendTitleText(element: HTMLElement, titleText: string, searchQuery: string): void {
+  for (const segment of segmentSearchText(titleText, searchQuery)) {
+    if (!segment.isMatch) {
+      element.append(document.createTextNode(segment.text));
+      continue;
+    }
+
+    const highlight = document.createElement("span");
+    highlight.className = "node-title-search-match";
+    highlight.textContent = segment.text;
+    element.append(highlight);
+  }
 }
 
 function handleTreePointerOver(event: PointerEvent): void {

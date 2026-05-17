@@ -238,11 +238,8 @@ main.root-drop-target {
   background: color-mix(in srgb, Highlight 18%, transparent);
 }
 
-.is-search-match > .node-row .node-title {
-  border-radius: 3px;
-  background: color-mix(in srgb, Mark 56%, transparent);
-  box-shadow: 0 0 0 1px color-mix(in srgb, CanvasText 8%, transparent);
-  color: MarkText;
+.node-title-search-match {
+  color: color-mix(in srgb, Highlight 82%, CanvasText 18%);
 }
 
 .node-row.drop-inside-target {
