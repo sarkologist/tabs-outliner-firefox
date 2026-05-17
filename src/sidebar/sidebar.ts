@@ -581,7 +581,7 @@ function render(): void {
     }
     if (activeRename) {
       const renamedNode = state.nodes[activeRename.nodeId];
-      if (!renamedNode || renamedNode.kind !== "window") {
+      if (!renamedNode || !isRenamableGroup(renamedNode)) {
         activeRename = undefined;
       }
     }
@@ -769,6 +769,10 @@ function canFlattenSubtree(state: OutlineState, node: OutlineNode): boolean {
   return node.childIds.some((childId) => (state.nodes[childId]?.childIds.length ?? 0) > 0);
 }
 
+function isRenamableGroup(node: OutlineNode): boolean {
+  return node.kind === "window" || node.kind === "group";
+}
+
 function pluralize(count: number, noun: string): string {
   return count === 1 ? noun : `${noun}s`;
 }
@@ -853,7 +857,7 @@ function renderRow(state: OutlineState, rowInfo: VisibleTreeRow, rowHeight: numb
 
   const isActiveWindow = node.kind === "window" && Boolean(node.active);
   const isActiveTab = node.kind === "tab" && Boolean(node.active) && rowInfo.insideActiveWindow;
-  const isRenaming = activeRename?.nodeId === node.id && node.kind === "window";
+  const isRenaming = activeRename?.nodeId === node.id && isRenamableGroup(node);
   const item = document.createElement("li");
   item.className = `node node-${node.kind} is-${node.status}${isActiveWindow || isActiveTab ? " is-active" : ""}${
     rowInfo.isSearchMatch ? " is-search-match" : ""
@@ -914,13 +918,16 @@ function renderRow(state: OutlineState, rowInfo: VisibleTreeRow, rowHeight: numb
   if (pendingCutNodeId) {
     actions.append(actionButton("Paste", "paste", "P", !pasteAfterCommand(state, pendingCutNodeId, node.id)));
   }
-  actions.append(actionButton(node.status === "live" ? "Close" : "Restore", "close-or-restore"));
+  actions.append(actionButton("Group", "group", "G"));
+  if (node.status !== "neutral") {
+    actions.append(actionButton(node.status === "live" ? "Close" : "Restore", "close-or-restore"));
+  }
 
   if (canFlattenSubtree(state, node)) {
     actions.append(actionButton("Flatten", "flatten"));
   }
 
-  if (node.kind === "window") {
+  if (isRenamableGroup(node)) {
     actions.append(actionButton("Rename", "rename", "N"));
   }
 
@@ -1136,7 +1143,7 @@ function handleTreeClick(event: MouseEvent): void {
   if (action === "focus-or-restore") {
     if (node.status === "live") {
       void sendCommand({ type: "focusNode", nodeId: node.id });
-    } else {
+    } else if (node.status === "closed") {
       restoreNodeWithConfirmation(node.id);
     }
     return;
@@ -1153,6 +1160,11 @@ function handleTreeClick(event: MouseEvent): void {
 
   if (action === "flatten") {
     void runAndRender({ type: "flattenSubtree", nodeId: node.id });
+    return;
+  }
+
+  if (action === "group") {
+    void runAndRender({ type: "wrapNodeInGroup", nodeId: node.id });
     return;
   }
 
@@ -1303,7 +1315,7 @@ function renderRenameInput(node: OutlineNode, titleText: string): HTMLInputEleme
 }
 
 function startRenameGroup(node: OutlineNode): void {
-  if (node.kind !== "window") {
+  if (!isRenamableGroup(node)) {
     return;
   }
 
@@ -1373,6 +1385,7 @@ function actionButton(label: string, action: string, glyph?: string, disabled = 
   button.className = "icon-button action";
   button.type = "button";
   button.title = label;
+  button.ariaLabel = label;
   button.textContent = glyph ?? (label === "Delete" ? "x" : label[0] ?? "?");
   button.dataset.action = action;
   button.disabled = disabled;
