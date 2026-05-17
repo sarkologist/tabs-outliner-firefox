@@ -86,6 +86,25 @@ describe("dropPlacementForRoot", () => {
     });
   });
 
+  it("creates a new-window command when a tab is pasted after a root window", () => {
+    const state = outlineState(["tab:a"]);
+    state.rootIds.push("window:2");
+    state.nodes["window:2"] = {
+      ...windowNode([]),
+      id: "window:2",
+      title: "Window",
+      live: { windowId: 2 }
+    };
+
+    const placement = dropPlacementForNode(state, "tab:a", "window:2", "after");
+
+    expect(placement && commandForDropPlacement(placement)).toEqual({
+      type: "moveNodeToNewWindow",
+      nodeId: "tab:a",
+      index: 2
+    });
+  });
+
   it("creates a root move command for window nodes", () => {
     const state = outlineState(["tab:a"]);
     state.rootIds.push("window:2");
@@ -97,6 +116,25 @@ describe("dropPlacementForRoot", () => {
     };
 
     const placement = dropPlacementForRoot(state, "window:1");
+
+    expect(placement && commandForDropPlacement(placement)).toEqual({
+      type: "moveNode",
+      nodeId: "window:1",
+      index: 1
+    });
+  });
+
+  it("creates a root move command when a window is pasted after another root window", () => {
+    const state = outlineState(["tab:a"]);
+    state.rootIds.push("window:2");
+    state.nodes["window:2"] = {
+      ...windowNode([]),
+      id: "window:2",
+      title: "Window",
+      live: { windowId: 2 }
+    };
+
+    const placement = dropPlacementForNode(state, "window:1", "window:2", "after");
 
     expect(placement && commandForDropPlacement(placement)).toEqual({
       type: "moveNode",
