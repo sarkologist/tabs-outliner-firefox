@@ -173,6 +173,7 @@ main.root-drop-target {
     calc(var(--node-row-padding-x) + var(--depth) * var(--node-indent));
   border-left: var(--node-border-width) solid transparent;
   line-height: 1.15;
+  overflow: hidden;
 }
 
 .tree-guide-layer {
@@ -395,13 +396,16 @@ main.root-drop-target {
   white-space: nowrap;
 }
 
-.node-actions {
+.node-row > .node-actions {
   position: absolute;
   top: 50%;
   right: var(--node-row-padding-x);
   display: inline-flex;
+  flex-wrap: nowrap;
   gap: var(--node-row-gap);
   align-items: center;
+  max-width: calc(100% - var(--node-row-padding-x) * 2);
+  overflow: hidden;
   padding-left: 6px;
   border-radius: 3px;
   background: Canvas;
@@ -411,6 +415,7 @@ main.root-drop-target {
   transform: translateY(-50%);
   transition: opacity 80ms ease;
   visibility: hidden;
+  white-space: nowrap;
   z-index: 2;
 }
 
@@ -422,6 +427,9 @@ main.root-drop-target {
 }
 
 .icon-button {
+  box-sizing: border-box;
+  display: block;
+  flex: 0 0 var(--node-icon-size);
   width: var(--node-icon-size);
   height: var(--node-icon-size);
   padding: 0;
