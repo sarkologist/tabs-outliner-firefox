@@ -189,7 +189,8 @@ main.root-drop-target {
 
 .tree-guide-vertical {
   left: calc(
-    var(--node-row-padding-x) + var(--tree-guide-depth) * var(--node-indent) - var(--node-indent) / 2
+    var(--node-row-padding-x) + var(--tree-guide-depth) * var(--node-indent) - var(--node-indent) +
+      var(--node-icon-size) / 2
   );
   width: 1px;
 }
@@ -197,9 +198,10 @@ main.root-drop-target {
 .tree-guide-horizontal {
   top: calc(50% - 0.5px);
   left: calc(
-    var(--node-row-padding-x) + var(--tree-guide-depth) * var(--node-indent) - var(--node-indent) / 2
+    var(--node-row-padding-x) + var(--tree-guide-depth) * var(--node-indent) - var(--node-indent) +
+      var(--node-icon-size) / 2
   );
-  width: calc(var(--node-indent) / 2 + var(--node-icon-size) / 2);
+  width: var(--node-indent);
   height: 1px;
 }
 
