@@ -22,6 +22,7 @@ import {
 import {
   buildVisibleTreeProjection,
   calculateVirtualRange,
+  refreshVisibleRowStructure,
   type VisibleTreeProjection,
   type VisibleTreeRow
 } from "./visible-tree.js";
@@ -681,10 +682,7 @@ function applyTreeStructureUpdate(update: TreeStructureUpdate): void {
 
     const updatedNodes = new Map(update.updatedNodes.map((node) => [node.id, node]));
     currentProjection.rows = currentProjection.rows.filter((row) => !deletedNodeIds.has(row.nodeId));
-    for (let index = 0; index < currentProjection.rows.length; index += 1) {
-      const row = currentProjection.rows[index]!;
-      row.index = index;
-    }
+    refreshVisibleRowStructure(currentProjection.rows);
     currentProjection.visibleNodeIds = currentProjection.rows.map((row) => row.nodeId);
     currentProjection.visibleNodeIdSet = new Set(currentProjection.visibleNodeIds);
     currentProjection.nodeCount = Math.max(0, currentProjection.nodeCount - update.deletedNodeIds.length);
@@ -700,6 +698,7 @@ function applyTreeStructureUpdate(update: TreeStructureUpdate): void {
       row.expanded = !node.collapsed;
     }
 
+    refreshProjectionActiveTabTarget(state, currentProjection);
     updateProjectionChrome(currentProjection);
     scrollToObservedActiveTab(currentProjection);
     scheduleVirtualRender();

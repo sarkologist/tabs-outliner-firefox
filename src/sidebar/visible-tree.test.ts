@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { NodeId, OutlineNode, OutlineState } from "../model/types.js";
-import { buildVisibleTreeProjection, calculateVirtualRange } from "./visible-tree.js";
+import { buildVisibleTreeProjection, calculateVirtualRange, refreshVisibleRowStructure } from "./visible-tree.js";
 
 const LARGE_NODE_COUNT = 50_000;
 
@@ -46,6 +46,74 @@ describe("visible tree projection", () => {
       nodeId: "tab:1",
       depth: 1
     });
+  });
+
+  it("tracks parent row indexes and exclusive subtree boundaries for visible rows", () => {
+    const state = outlineState([
+      windowNode("window:1", ["tab:a", "tab:d"], { active: true }),
+      tabNode("tab:a", "window:1", "A", ["tab:b", "tab:c"]),
+      tabNode("tab:b", "tab:a", "B"),
+      tabNode("tab:c", "tab:a", "C"),
+      tabNode("tab:d", "window:1", "D"),
+      windowNode("window:2", ["tab:e"]),
+      tabNode("tab:e", "window:2", "E")
+    ]);
+
+    const projection = buildVisibleTreeProjection(state, "");
+
+    expect(rowStructure(projection)).toEqual([
+      { nodeId: "window:1", index: 0, parentRowIndex: undefined, subtreeEndIndex: 5 },
+      { nodeId: "tab:a", index: 1, parentRowIndex: 0, subtreeEndIndex: 4 },
+      { nodeId: "tab:b", index: 2, parentRowIndex: 1, subtreeEndIndex: 3 },
+      { nodeId: "tab:c", index: 3, parentRowIndex: 1, subtreeEndIndex: 4 },
+      { nodeId: "tab:d", index: 4, parentRowIndex: 0, subtreeEndIndex: 5 },
+      { nodeId: "window:2", index: 5, parentRowIndex: undefined, subtreeEndIndex: 7 },
+      { nodeId: "tab:e", index: 6, parentRowIndex: 5, subtreeEndIndex: 7 }
+    ]);
+  });
+
+  it("bounds subtrees to descendants revealed by collapsed and search-visible projections", () => {
+    const state = outlineState([
+      windowNode("window:1", ["tab:parent"], { active: true }),
+      tabNode("tab:parent", "window:1", "Parent", ["tab:hidden", "tab:match"], { collapsed: true }),
+      tabNode("tab:hidden", "tab:parent", "Hidden", ["tab:hidden-child"]),
+      tabNode("tab:hidden-child", "tab:hidden", "Hidden child"),
+      tabNode("tab:match", "tab:parent", "Needle")
+    ]);
+
+    const collapsedProjection = buildVisibleTreeProjection(state, "");
+    expect(rowStructure(collapsedProjection)).toEqual([
+      { nodeId: "window:1", index: 0, parentRowIndex: undefined, subtreeEndIndex: 2 },
+      { nodeId: "tab:parent", index: 1, parentRowIndex: 0, subtreeEndIndex: 2 }
+    ]);
+
+    const searchProjection = buildVisibleTreeProjection(state, "needle");
+    expect(rowStructure(searchProjection)).toEqual([
+      { nodeId: "window:1", index: 0, parentRowIndex: undefined, subtreeEndIndex: 3 },
+      { nodeId: "tab:parent", index: 1, parentRowIndex: 0, subtreeEndIndex: 3 },
+      { nodeId: "tab:match", index: 2, parentRowIndex: 1, subtreeEndIndex: 3 }
+    ]);
+  });
+
+  it("recomputes row metadata after virtual projection rows are filtered", () => {
+    const state = outlineState([
+      windowNode("window:1", ["tab:a", "tab:d"], { active: true }),
+      tabNode("tab:a", "window:1", "A", ["tab:b", "tab:c"]),
+      tabNode("tab:b", "tab:a", "B"),
+      tabNode("tab:c", "tab:a", "C"),
+      tabNode("tab:d", "window:1", "D")
+    ]);
+    const projection = buildVisibleTreeProjection(state, "");
+
+    projection.rows = projection.rows.filter((row) => row.nodeId !== "tab:b");
+    refreshVisibleRowStructure(projection.rows);
+
+    expect(rowStructure(projection)).toEqual([
+      { nodeId: "window:1", index: 0, parentRowIndex: undefined, subtreeEndIndex: 4 },
+      { nodeId: "tab:a", index: 1, parentRowIndex: 0, subtreeEndIndex: 3 },
+      { nodeId: "tab:c", index: 2, parentRowIndex: 1, subtreeEndIndex: 3 },
+      { nodeId: "tab:d", index: 3, parentRowIndex: 0, subtreeEndIndex: 4 }
+    ]);
   });
 
   it("tracks the active tab while building the projection", () => {
@@ -124,6 +192,23 @@ function deepState(depth: number): OutlineState {
   };
 }
 
+function outlineState(nodes: OutlineNode[]): OutlineState {
+  return {
+    version: 1,
+    rootIds: nodes.filter((node) => !node.parentId).map((node) => node.id),
+    nodes: Object.fromEntries(nodes.map((node) => [node.id, node]))
+  };
+}
+
+function rowStructure(projection: ReturnType<typeof buildVisibleTreeProjection>) {
+  return projection.rows.map((row) => ({
+    nodeId: row.nodeId,
+    index: row.index,
+    parentRowIndex: row.parentRowIndex,
+    subtreeEndIndex: row.subtreeEndIndex
+  }));
+}
+
 function windowNode(
   id: NodeId,
   childIds: NodeId[],
@@ -148,7 +233,7 @@ function tabNode(
   parentId: NodeId,
   title: string,
   childIds: NodeId[] = [],
-  options: Partial<Pick<OutlineNode, "active">> = {}
+  options: Partial<Pick<OutlineNode, "active" | "collapsed">> = {}
 ): OutlineNode {
   return {
     id,
@@ -158,7 +243,7 @@ function tabNode(
     childIds,
     title,
     active: options.active ?? false,
-    collapsed: false,
+    collapsed: options.collapsed ?? false,
     createdAt: 1,
     updatedAt: 1,
     live: { tabId: Number(id.replace(/\D/g, "")) || 1, windowId: 1 }

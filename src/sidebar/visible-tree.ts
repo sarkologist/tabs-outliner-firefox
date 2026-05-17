@@ -4,6 +4,8 @@ export type VisibleTreeRow = {
   nodeId: NodeId;
   depth: number;
   index: number;
+  parentRowIndex?: number;
+  subtreeEndIndex: number;
   childCount: number;
   visibleChildCount: number;
   expanded: boolean;
@@ -112,6 +114,7 @@ export function buildVisibleTreeProjection(state: OutlineState, rawQuery: string
       nodeId: node.id,
       depth: entry.depth,
       index: rowIndex,
+      subtreeEndIndex: rowIndex + 1,
       childCount: node.childIds.length,
       visibleChildCount,
       expanded: query ? visibleChildCount > 0 : !node.collapsed,
@@ -121,6 +124,7 @@ export function buildVisibleTreeProjection(state: OutlineState, rawQuery: string
       insideActiveWindow: entry.insideActiveWindow
     });
   }
+  refreshVisibleRowStructure(rows);
 
   return {
     query,
@@ -135,6 +139,41 @@ export function buildVisibleTreeProjection(state: OutlineState, rawQuery: string
     closedCount,
     matchCount: matchingNodeIds.size
   };
+}
+
+export function refreshVisibleRowStructure(rows: VisibleTreeRow[]): void {
+  const openRowIndexesByDepth: number[] = [];
+
+  for (let index = 0; index < rows.length; index += 1) {
+    const row = rows[index]!;
+    const depth = Math.max(0, Math.floor(row.depth));
+
+    for (let closeDepth = openRowIndexesByDepth.length - 1; closeDepth >= depth; closeDepth -= 1) {
+      const openRowIndex = openRowIndexesByDepth[closeDepth];
+      if (typeof openRowIndex === "number") {
+        rows[openRowIndex]!.subtreeEndIndex = index;
+      }
+    }
+
+    openRowIndexesByDepth.length = depth;
+    row.index = index;
+    row.subtreeEndIndex = rows.length;
+
+    const parentRowIndex = depth > 0 ? openRowIndexesByDepth[depth - 1] : undefined;
+    if (typeof parentRowIndex === "number") {
+      row.parentRowIndex = parentRowIndex;
+    } else {
+      delete row.parentRowIndex;
+    }
+
+    openRowIndexesByDepth[depth] = index;
+  }
+
+  for (const openRowIndex of openRowIndexesByDepth) {
+    if (typeof openRowIndex === "number") {
+      rows[openRowIndex]!.subtreeEndIndex = rows.length;
+    }
+  }
 }
 
 export function calculateVirtualRange(
