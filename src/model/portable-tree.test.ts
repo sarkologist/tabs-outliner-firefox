@@ -297,6 +297,22 @@ describe("portable tree files", () => {
       url: "https://loose.example/",
       title: "Loose Tab"
     });
+    expect(appended.nodes["window:10"]).toBe(state.nodes["window:10"]);
+    expect(appended.nodes["tab:1"]).toBe(state.nodes["tab:1"]);
+  });
+
+  it("leaves state unchanged for empty portable tree imports", () => {
+    const state = bootstrapFromWindows(runtimeWindows, { now: 1000 });
+    const payload = {
+      schema: PORTABLE_TREE_SCHEMA,
+      version: 1,
+      exportedAt: "2026-05-16T12:00:00.000Z",
+      roots: []
+    };
+
+    const appended = appendPortableTree(state, payload, { now: 5000 });
+
+    expect(appended).toBe(state);
   });
 
   it("imports Chrome Tab Outliner tree exports as closed restorable nodes", () => {

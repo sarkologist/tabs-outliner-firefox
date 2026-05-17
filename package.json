@@ -7,7 +7,14 @@
     "build": "tsc -p tsconfig.json && node scripts/copy-static.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
-    "check": "npm run test && npm run build"
+    "check": "npm run test && npm run build",
+    "profile:tab-open": "node scripts/profile-tab-open.mjs",
+    "profile:close": "node scripts/profile-close.mjs",
+    "profile:delete": "node scripts/profile-delete.mjs",
+    "profile:focus": "node scripts/profile-focus.mjs",
+    "profile:restore": "node scripts/profile-restore.mjs",
+    "profile:diagnostics": "node scripts/profile-diagnostics.mjs",
+    "profile:command": "node scripts/profile-command.mjs"
   },
   "devDependencies": {
     "@types/node": "^20.19.0",

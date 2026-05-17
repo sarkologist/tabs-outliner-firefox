@@ -3,7 +3,14 @@ import { describe, expect, it, vi } from "vitest";
 import type { BrowserAdapter } from "./adapter.js";
 import { isBackgroundCommand, runCommand } from "./commands.js";
 import type { BackgroundCommand } from "./commands.js";
-import { bootstrapFromWindows, closeTab, closeWindow, flattenSubtreeOneLevel, moveNode } from "../model/outline.js";
+import {
+  LARGE_RESTORE_NODE_THRESHOLD,
+  bootstrapFromWindows,
+  closeTab,
+  closeWindow,
+  flattenSubtreeOneLevel,
+  moveNode
+} from "../model/outline.js";
 import { PORTABLE_TREE_SCHEMA } from "../model/portable-tree.js";
 import type { OutlineState, RuntimeWindow } from "../model/types.js";
 
@@ -46,6 +53,7 @@ function fakeAdapter(overrides: Partial<BrowserAdapter> = {}): BrowserAdapter {
   return {
     focusTab: vi.fn(async () => undefined),
     closeTab: vi.fn(async () => undefined),
+    closeTabs: vi.fn(async () => undefined),
     closeWindow: vi.fn(async () => undefined),
     restoreSession: vi.fn(async () => ({})),
     createTab: vi.fn(async ({ url, windowId = 10 }) => ({
@@ -74,6 +82,30 @@ function fakeAdapter(overrides: Partial<BrowserAdapter> = {}): BrowserAdapter {
     }),
     moveTabs: vi.fn(async () => undefined),
     ...overrides
+  };
+}
+
+function stateWithClosedTabs(tabCount: number): OutlineState {
+  let state = bootstrapFromWindows([windowWithTabs(10, tabCount)], { now: 1000 });
+  for (let tabId = 1; tabId <= tabCount; tabId += 1) {
+    state = closeTab(state, tabId, { now: 2000 + tabId });
+  }
+  return state;
+}
+
+function windowWithTabs(windowId: number, tabCount: number): RuntimeWindow {
+  return {
+    id: windowId,
+    focused: true,
+    incognito: false,
+    tabs: Array.from({ length: tabCount }, (_value, index) => ({
+      id: index + 1,
+      windowId,
+      index,
+      active: index === 0,
+      url: `https://example.com/${index + 1}`,
+      title: `Tab ${index + 1}`
+    }))
   };
 }
 
@@ -125,7 +157,8 @@ describe("background commands", () => {
     await runCommand(state, adapter, { type: "closeNode", nodeId: "tab:2" });
     await runCommand(state, adapter, { type: "closeNode", nodeId: "window:10" });
 
-    expect(adapter.closeTab).toHaveBeenCalledWith(2);
+    expect(adapter.closeTabs).toHaveBeenCalledWith([2]);
+    expect(adapter.closeTab).not.toHaveBeenCalled();
     expect(adapter.closeWindow).toHaveBeenCalledWith(10);
   });
 
@@ -152,12 +185,43 @@ describe("background commands", () => {
 
     const result = await runCommand(state, adapter, { type: "deleteNode", nodeId: "tab:1" });
 
-    expect(adapter.closeTab).toHaveBeenNthCalledWith(1, 2);
-    expect(adapter.closeTab).toHaveBeenNthCalledWith(2, 1);
+    expect(adapter.closeTabs).toHaveBeenCalledWith([2, 1]);
+    expect(adapter.closeTabs).toHaveBeenCalledTimes(1);
+    expect(adapter.closeTab).not.toHaveBeenCalled();
     expect(adapter.closeWindow).not.toHaveBeenCalled();
     expect(result.state.nodes["tab:1"]).toBeUndefined();
     expect(result.state.nodes["tab:2"]).toBeUndefined();
     expect(result.state.nodes["window:10"]?.childIds).toEqual(["tab:3"]);
+  });
+
+  it("batches large live tab subtree deletes into one runtime close", async () => {
+    const tabCount = 100;
+    const state = bootstrapFromWindows([
+      {
+        id: 10,
+        focused: true,
+        incognito: false,
+        tabs: Array.from({ length: tabCount }, (_value, index) => ({
+          id: index + 1,
+          windowId: 10,
+          index,
+          active: index === 0,
+          ...(index > 0 ? { openerTabId: index } : {}),
+          url: `https://example.com/${index + 1}`,
+          title: `Tab ${index + 1}`
+        }))
+      }
+    ], { now: 1000 });
+    const adapter = fakeAdapter();
+
+    const result = await runCommand(state, adapter, { type: "deleteNode", nodeId: "tab:1" });
+
+    expect(adapter.closeTabs).toHaveBeenCalledTimes(1);
+    expect(adapter.closeTabs).toHaveBeenCalledWith(
+      Array.from({ length: tabCount }, (_value, index) => tabCount - index)
+    );
+    expect(adapter.closeTab).not.toHaveBeenCalled();
+    expect(Object.keys(result.state.nodes)).toHaveLength(0);
   });
 
   it("closes live windows before deleting them", async () => {
@@ -224,6 +288,102 @@ describe("background commands", () => {
       active: false
     });
     expect(result.state.nodes["tab:2"]?.live).toEqual({ tabId: 23, windowId: 10 });
+  });
+
+  it("refuses large restores that have not been confirmed", async () => {
+    const state = stateWithClosedTabs(LARGE_RESTORE_NODE_THRESHOLD + 1);
+    const adapter = fakeAdapter();
+
+    await expect(runCommand(state, adapter, {
+      type: "restoreNode",
+      nodeId: "window:10"
+    })).rejects.toThrow(/26 restorable closed nodes/);
+
+    expect(adapter.restoreSession).not.toHaveBeenCalled();
+    expect(adapter.createTab).not.toHaveBeenCalled();
+    expect(adapter.createWindow).not.toHaveBeenCalled();
+  });
+
+  it("restores large scopes after explicit confirmation", async () => {
+    const state = stateWithClosedTabs(LARGE_RESTORE_NODE_THRESHOLD + 1);
+    const adapter = fakeAdapter();
+
+    const result = await runCommand(state, adapter, {
+      type: "restoreNode",
+      nodeId: "window:10",
+      confirmedLargeRestore: true
+    });
+
+    expect(adapter.createTab).toHaveBeenCalledTimes(LARGE_RESTORE_NODE_THRESHOLD + 1);
+    expect(result.state.nodes["tab:1"]?.status).toBe("live");
+    expect(result.state.nodes[`tab:${LARGE_RESTORE_NODE_THRESHOLD + 1}`]?.status).toBe("live");
+  });
+
+  it("restores threshold-sized scopes without confirmation", async () => {
+    const state = stateWithClosedTabs(LARGE_RESTORE_NODE_THRESHOLD);
+    const adapter = fakeAdapter();
+
+    const result = await runCommand(state, adapter, {
+      type: "restoreNode",
+      nodeId: "window:10"
+    });
+
+    expect(adapter.createTab).toHaveBeenCalledTimes(LARGE_RESTORE_NODE_THRESHOLD);
+    expect(result.state.nodes["tab:1"]?.status).toBe("live");
+    expect(result.state.nodes[`tab:${LARGE_RESTORE_NODE_THRESHOLD}`]?.status).toBe("live");
+  });
+
+  it("restores closed window URL fallbacks with one multi-url window create", async () => {
+    const state = closeWindow(bootstrapFromWindows([
+      {
+        id: 20,
+        focused: true,
+        incognito: false,
+        tabs: [
+          {
+            id: 1,
+            windowId: 20,
+            index: 0,
+            active: true,
+            url: "https://example.com/one",
+            title: "One"
+          },
+          {
+            id: 2,
+            windowId: 20,
+            index: 1,
+            active: false,
+            url: "https://example.com/two",
+            title: "Two"
+          },
+          {
+            id: 3,
+            windowId: 20,
+            index: 2,
+            active: false,
+            url: "https://example.com/three",
+            title: "Three"
+          }
+        ]
+      }
+    ], { now: 1000 }), 20, { now: 2000 });
+    const adapter = fakeAdapter();
+
+    const result = await runCommand(state, adapter, { type: "restoreNode", nodeId: "window:20" });
+
+    expect(adapter.createWindow).toHaveBeenCalledTimes(1);
+    expect(adapter.createWindow).toHaveBeenCalledWith({
+      url: [
+        "https://example.com/one",
+        "https://example.com/two",
+        "https://example.com/three"
+      ]
+    });
+    expect(adapter.createTab).not.toHaveBeenCalled();
+    expect(result.state.nodes["window:20"]?.live).toEqual({ windowId: 42 });
+    expect(result.state.nodes["tab:1"]?.live).toEqual({ tabId: 200, windowId: 42 });
+    expect(result.state.nodes["tab:2"]?.live).toEqual({ tabId: 201, windowId: 42 });
+    expect(result.state.nodes["tab:3"]?.live).toEqual({ tabId: 202, windowId: 42 });
   });
 
   it("uses the owning closed window session when restoring its only tab", async () => {
@@ -905,6 +1065,9 @@ describe("background commands", () => {
 
     const result = await runCommand(state, adapter, { type: "toggleCollapsed", nodeId: "tab:1" });
 
+    expect(result.changed).toBe(true);
+    expect(result.state).toBe(state);
+    expect(state.nodes["tab:1"]?.collapsed).toBe(true);
     expect(result.state.nodes["tab:1"]?.collapsed).toBe(true);
   });
 });

@@ -48,6 +48,25 @@ describe("visible tree projection", () => {
     });
   });
 
+  it("tracks the active tab while building the projection", () => {
+    const state = wideState(10, { activeTabIndex: 7 });
+
+    const projection = buildVisibleTreeProjection(state, "");
+
+    expect(projection.activeTabNodeId).toBe("tab:7");
+    expect(projection.activeTabRowIndex).toBe(7);
+  });
+
+  it("remembers a hidden active tab without assigning it a visible row", () => {
+    const state = wideState(10, { activeTabIndex: 7, collapsedRoot: true });
+
+    const projection = buildVisibleTreeProjection(state, "");
+
+    expect(projection.activeTabNodeId).toBe("tab:7");
+    expect(projection.activeTabRowIndex).toBeUndefined();
+    expect(projection.visibleNodeIdSet.has("tab:7")).toBe(false);
+  });
+
   it("searches a 50k-node deep tree without recursive stack overflow", () => {
     const state = deepState(LARGE_NODE_COUNT);
 
@@ -59,8 +78,11 @@ describe("visible tree projection", () => {
   });
 });
 
-function wideState(tabCount: number): OutlineState {
-  const root = windowNode("window:1", []);
+function wideState(
+  tabCount: number,
+  options: { activeTabIndex?: number; collapsedRoot?: boolean } = {}
+): OutlineState {
+  const root = windowNode("window:1", [], { active: true, collapsed: options.collapsedRoot });
   const nodes: Record<NodeId, OutlineNode> = {
     [root.id]: root
   };
@@ -68,7 +90,7 @@ function wideState(tabCount: number): OutlineState {
   for (let index = 1; index <= tabCount; index += 1) {
     const id = `tab:${index}`;
     root.childIds.push(id);
-    nodes[id] = tabNode(id, "window:1", `Tab ${index}`);
+    nodes[id] = tabNode(id, "window:1", `Tab ${index}`, [], { active: index === options.activeTabIndex });
   }
 
   return {
@@ -79,7 +101,7 @@ function wideState(tabCount: number): OutlineState {
 }
 
 function deepState(depth: number): OutlineState {
-  const root = windowNode("window:1", ["tab:1"]);
+  const root = windowNode("window:1", ["tab:1"], { active: true });
   const nodes: Record<NodeId, OutlineNode> = {
     [root.id]: root
   };
@@ -102,14 +124,19 @@ function deepState(depth: number): OutlineState {
   };
 }
 
-function windowNode(id: NodeId, childIds: NodeId[]): OutlineNode {
+function windowNode(
+  id: NodeId,
+  childIds: NodeId[],
+  options: Partial<Pick<OutlineNode, "active" | "collapsed">> = {}
+): OutlineNode {
   return {
     id,
     kind: "window",
     status: "live",
     childIds,
     title: "Window",
-    collapsed: false,
+    active: options.active ?? false,
+    collapsed: options.collapsed ?? false,
     createdAt: 1,
     updatedAt: 1,
     live: { windowId: 1 }
@@ -120,7 +147,8 @@ function tabNode(
   id: NodeId,
   parentId: NodeId,
   title: string,
-  childIds: NodeId[] = []
+  childIds: NodeId[] = [],
+  options: Partial<Pick<OutlineNode, "active">> = {}
 ): OutlineNode {
   return {
     id,
@@ -129,6 +157,7 @@ function tabNode(
     parentId,
     childIds,
     title,
+    active: options.active ?? false,
     collapsed: false,
     createdAt: 1,
     updatedAt: 1,

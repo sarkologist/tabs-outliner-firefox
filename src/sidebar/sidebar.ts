@@ -1,8 +1,17 @@
 import type { BackgroundCommand } from "../background/commands.js";
+import type { CommandAck } from "../background/commands.js";
 import type { OutlineDiagnostics } from "../background/diagnostics.js";
+import { analyzeRestoreScope, type RestoreScope } from "../model/outline.js";
 import { exportPortableTree } from "../model/portable-tree.js";
 import type { NodeId, OutlineNode, OutlineState } from "../model/types.js";
-import { createActiveTabScrollTracker, observeActiveTabScrollTarget } from "./active-scroll.js";
+import {
+  createPerformanceTracer,
+  summarizeTraceEvents,
+  type TraceSnapshot,
+  type TraceSummaryRow
+} from "../perf/trace.js";
+import { createActiveTabScrollTracker, scrollActiveTabIntoView } from "./active-scroll.js";
+import { createDiagnosticsScheduler } from "./diagnostics-scheduler.js";
 import {
   commandForDropPlacement,
   dropModeForPointer,
@@ -56,7 +65,28 @@ const activeTabScrollTracker = createActiveTabScrollTracker();
 
 const WHEEL_ZOOM_THRESHOLD_PX = 80;
 const DIAGNOSTICS_NOTICE_MS = 4000;
+const DIAGNOSTICS_REFRESH_DELAY_MS = 250;
+const PROFILE_STORAGE_KEY = "tabsOutlinerProfileEnabled";
 const VIRTUAL_OVERSCAN_ROWS = 32;
+
+type ProfileSnapshot = {
+  sidebar: TraceSnapshot;
+  background?: TraceSnapshot;
+};
+
+type SidebarProfileConsole = {
+  enable(): Promise<ProfileSnapshot>;
+  disable(): Promise<ProfileSnapshot>;
+  clear(): Promise<void>;
+  snapshot(): Promise<ProfileSnapshot>;
+  summary(): Promise<TraceSummaryRow[]>;
+};
+
+declare global {
+  interface Window {
+    tabsOutlinerProfile?: SidebarProfileConsole;
+  }
+}
 
 type RenameSession = {
   nodeId: NodeId;
@@ -67,6 +97,18 @@ const dropMarker = document.createElement("li");
 dropMarker.className = "drop-marker";
 dropMarker.setAttribute("aria-hidden", "true");
 
+const diagnosticsScheduler = createDiagnosticsScheduler(loadDiagnostics, {
+  clock: {
+    setTimeout: (callback, delayMs) => window.setTimeout(callback, delayMs),
+    clearTimeout: (timerId) => window.clearTimeout(timerId)
+  },
+  delayMs: DIAGNOSTICS_REFRESH_DELAY_MS
+});
+const perfTrace = createPerformanceTracer("sidebar", {
+  enabled: storedProfileEnabled()
+});
+
+installProfileConsole();
 applyZoom(currentZoom);
 registerZoomShortcuts();
 registerSearchControls();
@@ -124,18 +166,34 @@ rootDropSurface?.addEventListener("drop", (event) => {
 });
 
 browser.runtime.onMessage.addListener((message) => {
-  if (isStateUpdated(message)) {
-    currentState = message.state;
-    render();
-    void loadDiagnostics();
-  }
+  perfTrace.measure("sidebar.runtime.message", { type: messageType(message) }, () => {
+    if (isStateUpdated(message)) {
+      currentState = message.state;
+      render();
+      scheduleDiagnosticsLoad();
+      return;
+    }
+    if (isActiveStateUpdated(message)) {
+      applyActiveStateUpdate(message.updates);
+      return;
+    }
+    if (isNodeStateUpdated(message)) {
+      applyNodeStateUpdate(message);
+      scheduleDiagnosticsLoad();
+      return;
+    }
+    if (isTreeStructureUpdated(message)) {
+      applyTreeStructureUpdate(message);
+      scheduleDiagnosticsLoad();
+    }
+  });
 });
 
 async function loadState(): Promise<void> {
   try {
     currentState = (await sendCommand({ type: "getState" })) as OutlineState;
     render();
-    void loadDiagnostics();
+    scheduleDiagnosticsLoad();
   } catch (error) {
     showLoadError(error);
   }
@@ -148,6 +206,68 @@ async function loadZoomPreference(): Promise<void> {
   }
 
   setZoom(normalizeStoredZoom(stored[ZOOM_STORAGE_KEY]), { persist: false });
+}
+
+function installProfileConsole(): void {
+  if (perfTrace.isEnabled()) {
+    void setBackgroundTraceEnabled(true);
+  }
+
+  window.tabsOutlinerProfile = {
+    enable: async () => {
+      storeProfileEnabled(true);
+      perfTrace.setEnabled(true);
+      perfTrace.mark("sidebar.profile.enabled");
+      await setBackgroundTraceEnabled(true);
+      return profileSnapshot();
+    },
+    disable: async () => {
+      storeProfileEnabled(false);
+      perfTrace.mark("sidebar.profile.disabled");
+      perfTrace.setEnabled(false);
+      await setBackgroundTraceEnabled(false);
+      return profileSnapshot();
+    },
+    clear: async () => {
+      perfTrace.clear();
+      await browser.runtime.sendMessage({ type: "clearPerformanceTrace" }).catch(() => undefined);
+    },
+    snapshot: profileSnapshot,
+    summary: async () => {
+      const snapshot = await profileSnapshot();
+      return summarizeTraceEvents([
+        ...snapshot.sidebar.entries,
+        ...(snapshot.background?.entries ?? [])
+      ]);
+    }
+  };
+}
+
+async function profileSnapshot(): Promise<ProfileSnapshot> {
+  const background = (await browser.runtime.sendMessage({ type: "getPerformanceTrace" }).catch(() => undefined)) as
+    | TraceSnapshot
+    | undefined;
+
+  return {
+    sidebar: perfTrace.snapshot(),
+    ...(background ? { background } : {})
+  };
+}
+
+async function setBackgroundTraceEnabled(enabled: boolean): Promise<void> {
+  await browser.runtime.sendMessage({ type: "setPerformanceTraceEnabled", enabled }).catch(() => undefined);
+}
+
+function storedProfileEnabled(): boolean {
+  return window.localStorage.getItem(PROFILE_STORAGE_KEY) === "true";
+}
+
+function storeProfileEnabled(enabled: boolean): void {
+  if (enabled) {
+    window.localStorage.setItem(PROFILE_STORAGE_KEY, "true");
+  } else {
+    window.localStorage.removeItem(PROFILE_STORAGE_KEY);
+  }
 }
 
 function registerZoomShortcuts(): void {
@@ -302,10 +422,8 @@ async function importSelectedTreeFile(): Promise<void> {
 
   try {
     const payload = JSON.parse(await file.text()) as unknown;
-    currentState = (await sendCommand({ type: "importTree", tree: payload })) as OutlineState;
-    render();
+    await runAndRender({ type: "importTree", tree: payload });
     showDiagnosticsNotice("Imported tree");
-    void loadDiagnostics();
   } catch (error) {
     showDiagnosticsNotice(importErrorText(error), { error: true });
   } finally {
@@ -413,39 +531,211 @@ async function saveZoomPreference(zoom: number): Promise<void> {
 }
 
 function render(): void {
-  if (!tree || !stateCount) {
-    return;
-  }
-
-  clearDropPreview();
-  const state = currentState;
-  if (!state) {
-    currentProjection = undefined;
-    tree.textContent = "";
-    tree.style.height = "0px";
-    stateCount.textContent = "Loading";
-    return;
-  }
-  if (activeRename) {
-    const renamedNode = state.nodes[activeRename.nodeId];
-    if (!renamedNode || renamedNode.kind !== "window") {
-      activeRename = undefined;
+  perfTrace.measure("sidebar.render", { search: Boolean(currentSearchQuery.trim()) }, () => {
+    if (!tree || !stateCount) {
+      return;
     }
-  }
 
-  const projection = visibleProjectionFor(state, currentSearchQuery);
-  currentProjection = projection;
-  stateCount.textContent = projection.isSearchActive
-    ? `${projection.matchCount} ${pluralize(projection.matchCount, "match")} / ${projection.nodeCount} items`
-    : `${projection.nodeCount} items / ${projection.closedCount} saved`;
+    clearDropPreview();
+    const state = currentState;
+    if (!state) {
+      currentProjection = undefined;
+      tree.textContent = "";
+      tree.style.height = "0px";
+      stateCount.textContent = "Loading";
+      return;
+    }
+    if (activeRename) {
+      const renamedNode = state.nodes[activeRename.nodeId];
+      if (!renamedNode || renamedNode.kind !== "window") {
+        activeRename = undefined;
+      }
+    }
+
+    const projection = visibleProjectionFor(state, currentSearchQuery);
+    currentProjection = projection;
+    updateProjectionChrome(projection);
+    scrollToObservedActiveTab(projection);
+    renderVirtualRows();
+  });
+}
+
+function updateProjectionChrome(projection: VisibleTreeProjection): void {
+  if (stateCount) {
+    stateCount.textContent = projection.isSearchActive
+      ? `${projection.matchCount} ${pluralize(projection.matchCount, "match")} / ${projection.nodeCount} items`
+      : `${projection.nodeCount} items / ${projection.closedCount} saved`;
+  }
 
   if (empty) {
     empty.textContent = projection.isSearchActive ? "No matching tabs." : "No tabs captured yet.";
     empty.hidden = projection.isSearchActive ? projection.rows.length > 0 : projection.nodeCount > 0;
   }
+}
 
-  renderVirtualRows();
-  scrollToObservedActiveTab(state, projection);
+function applyActiveStateUpdate(updates: ActiveStateUpdate[]): void {
+  perfTrace.measure("sidebar.patch.activeState", { updates: updates.length }, () => {
+    const state = currentState;
+    if (!state || updates.length === 0) {
+      return;
+    }
+
+    let windowActiveChanged = false;
+    for (const update of updates) {
+      const node = state.nodes[update.nodeId];
+      if (!node) {
+        continue;
+      }
+      node.active = update.active;
+      windowActiveChanged ||= node.kind === "window";
+    }
+
+    if (windowActiveChanged && currentProjection) {
+      refreshProjectionActiveWindowFlags(state, currentProjection);
+    }
+    if (currentProjection) {
+      refreshProjectionActiveTabTarget(state, currentProjection);
+      scrollToObservedActiveTab(currentProjection);
+    }
+    scheduleVirtualRender();
+  });
+}
+
+function applyNodeStateUpdate(update: NodeStateUpdate): void {
+  perfTrace.measure("sidebar.patch.nodeState", { updatedNodes: update.updatedNodes.length }, () => {
+    const state = currentState;
+    if (!state || update.updatedNodes.length === 0) {
+      return;
+    }
+
+    let windowActiveChanged = false;
+    let collapsedChanged = false;
+    for (const node of update.updatedNodes) {
+      const previous = state.nodes[node.id];
+      collapsedChanged ||= previous?.collapsed !== node.collapsed;
+      state.nodes[node.id] = node;
+      windowActiveChanged ||= node.kind === "window";
+    }
+
+    if (!currentProjection || currentProjection.isSearchActive || collapsedChanged) {
+      invalidateProjectionCache();
+      render();
+      return;
+    }
+
+    const updatedNodes = new Map(update.updatedNodes.map((node) => [node.id, node]));
+    if (windowActiveChanged) {
+      refreshProjectionActiveWindowFlags(state, currentProjection);
+    }
+    refreshProjectionActiveTabTarget(state, currentProjection);
+    currentProjection.closedCount = Math.max(0, currentProjection.closedCount + update.closedCountDelta);
+
+    for (const row of currentProjection.rows) {
+      const node = updatedNodes.get(row.nodeId);
+      if (!node) {
+        continue;
+      }
+      row.childCount = node.childIds.length;
+      row.visibleChildCount = node.childIds.length;
+      row.expanded = !node.collapsed;
+    }
+
+    updateProjectionChrome(currentProjection);
+    scrollToObservedActiveTab(currentProjection);
+    scheduleVirtualRender();
+  });
+}
+
+function applyTreeStructureUpdate(update: TreeStructureUpdate): void {
+  perfTrace.measure("sidebar.patch.treeStructure", {
+    deletedNodes: update.deletedNodeIds.length,
+    updatedNodes: update.updatedNodes.length
+  }, () => {
+    const state = currentState;
+    if (!state) {
+      return;
+    }
+
+    const deletedNodeIds = new Set(update.deletedNodeIds);
+    for (const nodeId of deletedNodeIds) {
+      delete state.nodes[nodeId];
+    }
+    for (const node of update.updatedNodes) {
+      state.nodes[node.id] = node;
+    }
+    state.rootIds = [...update.rootIds];
+    if (activeRename && deletedNodeIds.has(activeRename.nodeId)) {
+      activeRename = undefined;
+    }
+
+    if (!currentProjection || currentProjection.isSearchActive) {
+      invalidateProjectionCache();
+      render();
+      return;
+    }
+    if (deletedNodeIds.size === 0) {
+      invalidateProjectionCache();
+      render();
+      return;
+    }
+
+    const updatedNodes = new Map(update.updatedNodes.map((node) => [node.id, node]));
+    currentProjection.rows = currentProjection.rows.filter((row) => !deletedNodeIds.has(row.nodeId));
+    for (let index = 0; index < currentProjection.rows.length; index += 1) {
+      const row = currentProjection.rows[index]!;
+      row.index = index;
+    }
+    currentProjection.visibleNodeIds = currentProjection.rows.map((row) => row.nodeId);
+    currentProjection.visibleNodeIdSet = new Set(currentProjection.visibleNodeIds);
+    currentProjection.nodeCount = Math.max(0, currentProjection.nodeCount - update.deletedNodeIds.length);
+    currentProjection.closedCount = Math.max(0, currentProjection.closedCount - update.deletedClosedCount);
+
+    for (const row of currentProjection.rows) {
+      const node = updatedNodes.get(row.nodeId);
+      if (!node) {
+        continue;
+      }
+      row.childCount = node.childIds.length;
+      row.visibleChildCount = node.childIds.length;
+      row.expanded = !node.collapsed;
+    }
+
+    updateProjectionChrome(currentProjection);
+    scrollToObservedActiveTab(currentProjection);
+    scheduleVirtualRender();
+  });
+}
+
+function invalidateProjectionCache(): void {
+  projectionState = undefined;
+  projectionQuery = undefined;
+  currentProjection = undefined;
+}
+
+function refreshProjectionActiveWindowFlags(state: OutlineState, projection: VisibleTreeProjection): void {
+  const activeByDepth: boolean[] = [];
+
+  for (const row of projection.rows) {
+    activeByDepth.length = row.depth;
+    const parentInsideActiveWindow = row.depth > 0 ? activeByDepth[row.depth - 1] === true : false;
+    const node = state.nodes[row.nodeId];
+    row.insideActiveWindow = parentInsideActiveWindow;
+    activeByDepth[row.depth] = parentInsideActiveWindow || Boolean(node?.kind === "window" && node.active);
+  }
+}
+
+function refreshProjectionActiveTabTarget(state: OutlineState, projection: VisibleTreeProjection): void {
+  delete projection.activeTabNodeId;
+  delete projection.activeTabRowIndex;
+
+  for (const row of projection.rows) {
+    const node = state.nodes[row.nodeId];
+    if (node?.kind === "tab" && node.active && row.insideActiveWindow) {
+      projection.activeTabNodeId = node.id;
+      projection.activeTabRowIndex = row.index;
+      return;
+    }
+  }
 }
 
 function canFlattenSubtree(state: OutlineState, node: OutlineNode): boolean {
@@ -458,12 +748,18 @@ function pluralize(count: number, noun: string): string {
 
 function visibleProjectionFor(state: OutlineState, query: string): VisibleTreeProjection {
   if (projectionState === state && projectionQuery === query && currentProjection) {
+    perfTrace.mark("sidebar.projection.cacheHit", {
+      rows: currentProjection.rows.length,
+      search: Boolean(query.trim())
+    });
     return currentProjection;
   }
 
   projectionState = state;
   projectionQuery = query;
-  currentProjection = buildVisibleTreeProjection(state, query);
+  currentProjection = perfTrace.measure("sidebar.projection.build", { search: Boolean(query.trim()) }, () =>
+    buildVisibleTreeProjection(state, query)
+  );
   return currentProjection;
 }
 
@@ -473,39 +769,47 @@ function scheduleVirtualRender(): void {
   }
 
   scheduledVirtualRender = true;
+  const requestedAt = performance.now();
   window.requestAnimationFrame(() => {
     scheduledVirtualRender = false;
+    perfTrace.mark("sidebar.raf.virtualRender", {
+      waitMs: Math.round(performance.now() - requestedAt)
+    });
     renderVirtualRows();
   });
 }
 
 function renderVirtualRows(): void {
-  if (!tree || !currentProjection || !currentState) {
-    return;
-  }
-
-  const rowHeight = currentRowHeight();
-  const range = calculateVirtualRange(
-    currentProjection.rows.length,
-    rootDropSurface?.scrollTop ?? 0,
-    rootDropSurface?.clientHeight ?? window.innerHeight,
-    rowHeight,
-    VIRTUAL_OVERSCAN_ROWS
-  );
-
-  activeDropPlacement = undefined;
-  removeDropPreviewElements();
-  tree.style.height = `${range.totalHeight}px`;
-  tree.textContent = "";
-
-  const fragment = document.createDocumentFragment();
-  for (let index = range.start; index < range.end; index += 1) {
-    const row = currentProjection.rows[index];
-    if (row) {
-      fragment.append(renderRow(currentState, row, rowHeight));
+  perfTrace.measure("sidebar.virtualRows", {
+    rows: currentProjection?.rows.length ?? 0
+  }, () => {
+    if (!tree || !currentProjection || !currentState) {
+      return;
     }
-  }
-  tree.append(fragment);
+
+    const rowHeight = currentRowHeight();
+    const range = calculateVirtualRange(
+      currentProjection.rows.length,
+      rootDropSurface?.scrollTop ?? 0,
+      rootDropSurface?.clientHeight ?? window.innerHeight,
+      rowHeight,
+      VIRTUAL_OVERSCAN_ROWS
+    );
+
+    activeDropPlacement = undefined;
+    removeDropPreviewElements();
+    tree.style.height = `${range.totalHeight}px`;
+    tree.textContent = "";
+
+    const fragment = document.createDocumentFragment();
+    for (let index = range.start; index < range.end; index += 1) {
+      const row = currentProjection.rows[index];
+      if (row) {
+        fragment.append(renderRow(currentState, row, rowHeight));
+      }
+    }
+    tree.append(fragment);
+  });
 }
 
 function currentRowHeight(): number {
@@ -610,6 +914,11 @@ function handleTreeClick(event: MouseEvent): void {
 
   event.stopPropagation();
   const action = button.dataset.action;
+  perfTrace.mark("sidebar.click", {
+    action: action ?? "unknown",
+    nodeKind: node.kind,
+    nodeStatus: node.status
+  });
   if (action === "toggle") {
     void runAndRender({ type: "toggleCollapsed", nodeId: node.id });
     return;
@@ -619,16 +928,17 @@ function handleTreeClick(event: MouseEvent): void {
     if (node.status === "live") {
       void sendCommand({ type: "focusNode", nodeId: node.id });
     } else {
-      void runAndRender({ type: "restoreNode", nodeId: node.id });
+      restoreNodeWithConfirmation(node.id);
     }
     return;
   }
 
   if (action === "close-or-restore") {
-    void runAndRender({
-      type: node.status === "live" ? "closeNode" : "restoreNode",
-      nodeId: node.id
-    });
+    if (node.status === "live") {
+      void runAndRender({ type: "closeNode", nodeId: node.id });
+    } else {
+      restoreNodeWithConfirmation(node.id);
+    }
     return;
   }
 
@@ -935,33 +1245,8 @@ function cssEscape(value: string): string {
   return typeof CSS !== "undefined" && CSS.escape ? CSS.escape(value) : value.replaceAll('"', '\\"');
 }
 
-function scrollToObservedActiveTab(state: OutlineState, projection: VisibleTreeProjection): void {
-  const nodeId = observeActiveTabScrollTarget(activeTabScrollTracker, state);
-  if (!nodeId) {
-    return;
-  }
-
-  const row = projection.rows.find((candidate) => candidate.nodeId === nodeId);
-  if (!row || !rootDropSurface) {
-    return;
-  }
-
-  const rowHeight = currentRowHeight();
-  const rowTop = row.index * rowHeight;
-  const rowBottom = rowTop + rowHeight;
-  const viewportTop = rootDropSurface.scrollTop;
-  const viewportBottom = viewportTop + rootDropSurface.clientHeight;
-
-  if (rowTop < viewportTop) {
-    rootDropSurface.scrollTop = rowTop;
-    renderVirtualRows();
-    return;
-  }
-
-  if (rowBottom > viewportBottom) {
-    rootDropSurface.scrollTop = Math.max(0, rowBottom - rootDropSurface.clientHeight);
-    renderVirtualRows();
-  }
+function scrollToObservedActiveTab(projection: VisibleTreeProjection): void {
+  scrollActiveTabIntoView(activeTabScrollTracker, projection, rootDropSurface ?? undefined, currentRowHeight());
 }
 
 function rowForItem(item: HTMLElement): HTMLElement | undefined {
@@ -973,6 +1258,37 @@ function performDrop(placement: DropPlacement): void {
   const command = commandForDropPlacement(placement);
   clearDragState();
   void runAndRender(command);
+}
+
+function restoreNodeWithConfirmation(nodeId: NodeId): void {
+  const state = currentState;
+  if (!state) {
+    return;
+  }
+
+  const scope = perfTrace.measure("sidebar.restore.scope", () => analyzeRestoreScope(state, nodeId));
+  if (scope.requiresConfirmation && !window.confirm(largeRestoreConfirmationPrompt(scope))) {
+    return;
+  }
+
+  void runAndRender({
+    type: "restoreNode",
+    nodeId,
+    ...(scope.requiresConfirmation ? { confirmedLargeRestore: true } : {})
+  });
+}
+
+function largeRestoreConfirmationPrompt(scope: RestoreScope): string {
+  return `Restore ${restoreScopeSummary(scope)}?\n\nThis may open many tabs or windows at once.`;
+}
+
+function restoreScopeSummary(scope: RestoreScope): string {
+  const parts = [
+    scope.tabCount > 0 ? `${scope.tabCount} ${pluralize(scope.tabCount, "tab")}` : undefined,
+    scope.windowCount > 0 ? `${scope.windowCount} ${pluralize(scope.windowCount, "window")}` : undefined
+  ].filter((part): part is string => Boolean(part));
+
+  return `${scope.totalCount} ${pluralize(scope.totalCount, "restorable closed node")}${parts.length ? ` (${parts.join(", ")})` : ""}`;
 }
 
 function clearDragState(): void {
@@ -994,13 +1310,34 @@ function removeDropPreviewElements(): void {
 }
 
 async function runAndRender(command: BackgroundCommand): Promise<void> {
-  currentState = (await sendCommand(command)) as OutlineState;
-  render();
-  void loadDiagnostics();
+  try {
+    const response = await sendCommand(command);
+    if (isCommandAck(response)) {
+      return;
+    }
+    if (isOutlineState(response)) {
+      currentState = response;
+      render();
+      scheduleDiagnosticsLoad();
+    }
+  } catch (error) {
+    showDiagnosticsNotice(commandErrorText(error), { error: true });
+  }
 }
 
 async function sendCommand(command: BackgroundCommand): Promise<unknown> {
-  return browser.runtime.sendMessage(command);
+  const response = await perfTrace.measureAsync("sidebar.command", { command: command.type }, () =>
+    browser.runtime.sendMessage(command)
+  );
+  perfTrace.mark("sidebar.command.response", {
+    command: command.type,
+    responseType: messageType(response)
+  });
+  return response;
+}
+
+function commandErrorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function showLoadError(error: unknown): void {
@@ -1031,32 +1368,38 @@ function showDiagnosticsNotice(message: string, options: { error?: boolean } = {
     diagnosticsNoticeTimer = undefined;
     diagnosticsNoticeUntil = 0;
     diagnostics.classList.remove("is-error");
-    void loadDiagnostics();
+    scheduleDiagnosticsLoad();
   }, DIAGNOSTICS_NOTICE_MS);
 }
 
+function scheduleDiagnosticsLoad(): void {
+  diagnosticsScheduler.request();
+}
+
 async function loadDiagnostics(): Promise<void> {
-  if (!diagnostics) {
-    return;
-  }
-  if (Date.now() < diagnosticsNoticeUntil) {
-    return;
-  }
+  await perfTrace.measureAsync("sidebar.diagnostics", async () => {
+    if (!diagnostics) {
+      return;
+    }
+    if (Date.now() < diagnosticsNoticeUntil) {
+      return;
+    }
 
-  diagnostics.classList.remove("is-error");
+    diagnostics.classList.remove("is-error");
 
-  const result = (await browser.runtime.sendMessage({ type: "getDiagnostics" }).catch(() => undefined)) as
-    | OutlineDiagnostics
-    | undefined;
-  if (!result) {
-    diagnostics.textContent = "";
-    return;
-  }
+    const result = (await browser.runtime.sendMessage({ type: "getDiagnostics" }).catch(() => undefined)) as
+      | OutlineDiagnostics
+      | undefined;
+    if (!result) {
+      diagnostics.textContent = "";
+      return;
+    }
 
-  diagnostics.textContent = diagnosticsText(result);
-  diagnostics.title = result.missingRuntimeTabIds.length
-    ? `Missing Firefox tab IDs: ${result.missingRuntimeTabIds.join(", ")}`
-    : "";
+    diagnostics.textContent = diagnosticsText(result);
+    diagnostics.title = result.missingRuntimeTabIds.length
+      ? `Missing Firefox tab IDs: ${result.missingRuntimeTabIds.join(", ")}`
+      : "";
+  });
 }
 
 function diagnosticsText(result: OutlineDiagnostics): string {
@@ -1069,11 +1412,115 @@ function diagnosticsText(result: OutlineDiagnostics): string {
   return `Firefox ${result.runtimeTabCount}`;
 }
 
+function messageType(message: unknown): string {
+  return message && typeof message === "object" && typeof (message as { type?: unknown }).type === "string"
+    ? (message as { type: string }).type
+    : isOutlineState(message)
+      ? "OutlineState"
+      : "unknown";
+}
+
 function isStateUpdated(message: unknown): message is { type: "stateUpdated"; state: OutlineState } {
   return Boolean(
     message &&
       typeof message === "object" &&
       (message as { type?: unknown }).type === "stateUpdated" &&
       (message as { state?: unknown }).state
+  );
+}
+
+type ActiveStateUpdate = {
+  nodeId: NodeId;
+  active: boolean;
+};
+
+type TreeStructureUpdate = {
+  type: "treeStructureUpdated";
+  deletedNodeIds: NodeId[];
+  updatedNodes: OutlineNode[];
+  rootIds: NodeId[];
+  deletedClosedCount: number;
+};
+
+type NodeStateUpdate = {
+  type: "nodeStateUpdated";
+  updatedNodes: OutlineNode[];
+  closedCountDelta: number;
+};
+
+function isActiveStateUpdated(message: unknown): message is { type: "activeStateUpdated"; updates: ActiveStateUpdate[] } {
+  return Boolean(
+    message &&
+      typeof message === "object" &&
+      (message as { type?: unknown }).type === "activeStateUpdated" &&
+      Array.isArray((message as { updates?: unknown }).updates) &&
+      (message as { updates: unknown[] }).updates.every((update) =>
+        Boolean(
+          update &&
+            typeof update === "object" &&
+            typeof (update as { nodeId?: unknown }).nodeId === "string" &&
+            typeof (update as { active?: unknown }).active === "boolean"
+        )
+      )
+  );
+}
+
+function isNodeStateUpdated(message: unknown): message is NodeStateUpdate {
+  return Boolean(
+    message &&
+      typeof message === "object" &&
+      (message as { type?: unknown }).type === "nodeStateUpdated" &&
+      Array.isArray((message as { updatedNodes?: unknown }).updatedNodes) &&
+      (message as { updatedNodes: unknown[] }).updatedNodes.every((node) =>
+        Boolean(
+          node &&
+            typeof node === "object" &&
+            typeof (node as { id?: unknown }).id === "string" &&
+            Array.isArray((node as { childIds?: unknown }).childIds)
+        )
+      ) &&
+      typeof (message as { closedCountDelta?: unknown }).closedCountDelta === "number"
+  );
+}
+
+function isTreeStructureUpdated(message: unknown): message is TreeStructureUpdate {
+  return Boolean(
+    message &&
+      typeof message === "object" &&
+      (message as { type?: unknown }).type === "treeStructureUpdated" &&
+      Array.isArray((message as { deletedNodeIds?: unknown }).deletedNodeIds) &&
+      (message as { deletedNodeIds: unknown[] }).deletedNodeIds.every((nodeId) => typeof nodeId === "string") &&
+      Array.isArray((message as { updatedNodes?: unknown }).updatedNodes) &&
+      (message as { updatedNodes: unknown[] }).updatedNodes.every((node) =>
+        Boolean(
+          node &&
+            typeof node === "object" &&
+            typeof (node as { id?: unknown }).id === "string" &&
+            Array.isArray((node as { childIds?: unknown }).childIds)
+        )
+      ) &&
+      Array.isArray((message as { rootIds?: unknown }).rootIds) &&
+      (message as { rootIds: unknown[] }).rootIds.every((nodeId) => typeof nodeId === "string") &&
+      typeof (message as { deletedClosedCount?: unknown }).deletedClosedCount === "number"
+  );
+}
+
+function isCommandAck(message: unknown): message is CommandAck {
+  return Boolean(
+    message &&
+      typeof message === "object" &&
+      (message as { type?: unknown }).type === "commandAck" &&
+      typeof (message as { stateChanged?: unknown }).stateChanged === "boolean"
+  );
+}
+
+function isOutlineState(message: unknown): message is OutlineState {
+  return Boolean(
+    message &&
+      typeof message === "object" &&
+      (message as { version?: unknown }).version === 1 &&
+      Array.isArray((message as { rootIds?: unknown }).rootIds) &&
+      typeof (message as { nodes?: unknown }).nodes === "object" &&
+      (message as { nodes?: unknown }).nodes !== null
   );
 }

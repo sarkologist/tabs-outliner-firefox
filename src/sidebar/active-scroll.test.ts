@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { NodeId, OutlineNode, OutlineState } from "../model/types.js";
-import { createActiveTabScrollTracker, findActiveTabNodeId, observeActiveTabScrollTarget } from "./active-scroll.js";
+import {
+  createActiveTabScrollTracker,
+  findActiveTabNodeId,
+  observeActiveTabNodeId,
+  observeActiveTabScrollTarget,
+  scrollActiveTabIntoView
+} from "./active-scroll.js";
 
 describe("findActiveTabNodeId", () => {
   it("finds the active tab inside the active window in outline order", () => {
@@ -59,6 +65,37 @@ describe("observeActiveTabScrollTarget", () => {
 
     expect(observeActiveTabScrollTarget(tracker, state, { hasRenderedNode: () => false })).toBeUndefined();
     expect(observeActiveTabScrollTarget(tracker, state, { hasRenderedNode: () => true })).toBeUndefined();
+  });
+
+  it("can observe a precomputed active node without rescanning state", () => {
+    const tracker = createActiveTabScrollTracker();
+
+    expect(observeActiveTabNodeId(tracker, "tab:1")).toBe("tab:1");
+    expect(observeActiveTabNodeId(tracker, "tab:1")).toBeUndefined();
+    expect(observeActiveTabNodeId(tracker, "tab:2", { hasRenderedNode: () => false })).toBeUndefined();
+    expect(observeActiveTabNodeId(tracker, "tab:2", { hasRenderedNode: () => true })).toBeUndefined();
+  });
+
+  it("scrolls a newly observed active projection row into view", () => {
+    const tracker = createActiveTabScrollTracker();
+    const viewport = {
+      scrollTop: 0,
+      clientHeight: 60
+    };
+
+    expect(scrollActiveTabIntoView(tracker, {
+      activeTabNodeId: "tab:20",
+      activeTabRowIndex: 20,
+      visibleNodeIdSet: new Set(["tab:20"])
+    }, viewport, 10)).toBe(true);
+
+    expect(viewport.scrollTop).toBe(150);
+    expect(scrollActiveTabIntoView(tracker, {
+      activeTabNodeId: "tab:20",
+      activeTabRowIndex: 20,
+      visibleNodeIdSet: new Set(["tab:20"])
+    }, viewport, 10)).toBe(false);
+    expect(viewport.scrollTop).toBe(150);
   });
 });
 

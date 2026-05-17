@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 
+import type { BrowserAdapter } from "./adapter.js";
 import { createBackgroundController } from "./controller.js";
+import type { CommandAck } from "./commands.js";
 import { STATE_KEY } from "./storage.js";
 import type { OutlineState, RuntimeTab, RuntimeWindow } from "../model/types.js";
 
@@ -224,7 +226,7 @@ function fakeRuntime(windows: RuntimeWindow[], tabs: RuntimeTab[], options: Fake
 function createTabFromBrowser(
   runtime: FakeRuntime,
   tab: RuntimeTab,
-  options: { awaitListeners?: boolean; queryLag?: boolean } = {}
+  options: { awaitListeners?: boolean; queryLag?: boolean; eventTab?: RuntimeTab } = {}
 ): Promise<void> | void {
   runtime.tabs = runtime.tabs.map((candidate) => candidate.windowId === tab.windowId && candidate.index >= tab.index
     ? {
@@ -242,7 +244,7 @@ function createTabFromBrowser(
     runtime.setNextTabQueryResult(runtime.tabs.filter((candidate) => candidate.id !== tab.id));
   }
 
-  const eventTab = copyTab(tab);
+  const eventTab = copyTab(options.eventTab ?? tab);
   if (options.awaitListeners === false) {
     runtime.events.tabCreated.dispatch(eventTab);
     return;
@@ -447,6 +449,21 @@ function liveTabIds(state: OutlineState): number[] {
     .filter((node) => node.kind === "tab" && node.status === "live" && node.live && "tabId" in node.live)
     .map((node) => node.live!.tabId!)
     .sort((a, b) => a - b);
+}
+
+function expectCommandAck(result: unknown, stateChanged: boolean): asserts result is CommandAck {
+  expect(result).toEqual({
+    type: "commandAck",
+    stateChanged
+  });
+}
+
+function traceEntryNames(snapshot: unknown): string[] {
+  return Array.isArray((snapshot as { entries?: unknown }).entries)
+    ? (snapshot as { entries: Array<{ name?: unknown }> }).entries.flatMap((entry) =>
+        typeof entry.name === "string" ? [entry.name] : []
+      )
+    : [];
 }
 
 function liveWindowIds(state: OutlineState): number[] {
@@ -966,6 +983,123 @@ function invariantEqual<T>(actual: T, expected: T, message: string, history: str
 }
 
 describe("background controller lifecycle", () => {
+  it("records opt-in performance trace entries", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+
+    expect(await controller.handleMessage({ type: "setPerformanceTraceEnabled", enabled: true })).toEqual({ ok: true });
+    await controller.handleMessage({ type: "getState" });
+
+    const snapshot = await controller.handleMessage({ type: "getPerformanceTrace" });
+    expect(snapshot).toMatchObject({
+      enabled: true
+    });
+    expect(traceEntryNames(snapshot)).toContain("background.runtime.message");
+    expect(traceEntryNames(snapshot)).toContain("background.state.save");
+
+    await controller.handleMessage({ type: "clearPerformanceTrace" });
+    expect(await controller.handleMessage({ type: "getPerformanceTrace" })).toMatchObject({
+      entries: []
+    });
+  });
+
+  it("does not wait for storage persistence before acknowledging a patched command", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    await controller.flushPendingSaves();
+    vi.mocked(runtime.api.storage.local.set).mockClear();
+    runtime.broadcasts.length = 0;
+
+    let finishSave: () => void = () => undefined;
+    vi.mocked(runtime.api.storage.local.set).mockImplementationOnce(
+      () => new Promise<void>((resolve) => {
+        finishSave = resolve;
+      })
+    );
+
+    const response = await controller.handleMessage({ type: "toggleCollapsed", nodeId: "window:10" });
+
+    expectCommandAck(response, true);
+    expect(runtime.broadcasts.at(-1)).toMatchObject({
+      type: "nodeStateUpdated"
+    });
+    expect(vi.mocked(runtime.api.storage.local.set)).not.toHaveBeenCalled();
+
+    const flush = controller.flushPendingSaves();
+    expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
+    finishSave();
+    await flush;
+  });
+
+  it("coalesces concurrent diagnostics requests across sidebar contexts", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    vi.mocked(runtime.api.windows.getAll).mockClear();
+
+    const diagnostics = await Promise.all(
+      Array.from({ length: 7 }, () => controller.handleMessage({ type: "getDiagnostics" }))
+    );
+
+    expect(diagnostics).toHaveLength(7);
+    expect(runtime.api.windows.getAll).toHaveBeenCalledTimes(1);
+  });
+
   it("adds new tab events without closing existing tabs when query is stale", async () => {
     const runtime = fakeRuntime(
       [
@@ -1002,6 +1136,248 @@ describe("background controller lifecycle", () => {
     expect(liveTabIds(state)).toEqual([1, 2]);
     expect(state.nodes["tab:1"]?.status).toBe("live");
     expect(state.nodes["tab:2"]?.status).toBe("live");
+  });
+
+  it("coalesces noisy new-tab event bursts into one runtime refresh", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        },
+        {
+          id: 2,
+          windowId: 10,
+          index: 1,
+          active: false,
+          url: "https://two.example/",
+          title: "Two"
+        },
+        {
+          id: 3,
+          windowId: 10,
+          index: 2,
+          active: false,
+          url: "https://three.example/",
+          title: "Three"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    runtime.broadcasts.length = 0;
+    vi.mocked(runtime.api.storage.local.set).mockClear();
+
+    const newTab: RuntimeTab = {
+      id: 4,
+      windowId: 10,
+      index: 3,
+      active: true,
+      url: "about:newtab",
+      title: "New Tab"
+    };
+    await createTabFromBrowser(runtime, newTab, { awaitListeners: false });
+    await updateTabFromBrowser(runtime, 4, { title: "Loading" }, { awaitListeners: false });
+    await updateTabFromBrowser(runtime, 4, {
+      title: "Opened",
+      url: "https://opened.example/"
+    }, { awaitListeners: false });
+    runtime.events.tabActivated.dispatch({ tabId: 4, windowId: 10, previousTabId: 1 });
+
+    await Promise.all([
+      runtime.events.tabCreated.flush(),
+      runtime.events.tabUpdated.flush(),
+      runtime.events.tabActivated.flush()
+    ]);
+
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+
+    expect(runtime.broadcasts).toHaveLength(1);
+    expect(runtime.broadcasts.at(-1)).toMatchObject({
+      type: "treeStructureUpdated"
+    });
+    await controller.flushPendingSaves();
+    expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
+    expect(state.nodes["tab:4"]?.title).toBe("Opened");
+    expect(state.nodes["tab:4"]?.url).toBe("https://opened.example/");
+    expect(state.nodes["tab:4"]?.active).toBe(true);
+    expect(state.nodes["tab:1"]?.active).toBe(false);
+  });
+
+  it("broadcasts runtime tab metadata refreshes as node state patches", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        },
+        {
+          id: 2,
+          windowId: 10,
+          index: 1,
+          active: false,
+          url: "https://two.example/",
+          title: "Two"
+        },
+        {
+          id: 3,
+          windowId: 10,
+          index: 2,
+          active: false,
+          url: "https://three.example/",
+          title: "Three"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    runtime.broadcasts.length = 0;
+    vi.mocked(runtime.api.storage.local.set).mockClear();
+
+    await updateTabFromBrowser(runtime, 2, {
+      title: "Two updated",
+      url: "https://two.example/updated"
+    });
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+
+    expect(state.nodes["tab:2"]?.title).toBe("Two updated");
+    expect(state.nodes["tab:2"]?.url).toBe("https://two.example/updated");
+    expect(runtime.broadcasts).toHaveLength(1);
+    const lastBroadcast = runtime.broadcasts.at(-1) as
+      | {
+          type?: string;
+          updatedNodes?: OutlineState["nodes"][string][];
+          state?: OutlineState;
+        }
+      | undefined;
+    expect(lastBroadcast?.type).toBe("nodeStateUpdated");
+    expect(lastBroadcast?.updatedNodes?.map((node) => node.id)).toEqual(["tab:2"]);
+    expect(lastBroadcast?.updatedNodes?.[0]).toMatchObject({
+      id: "tab:2",
+      title: "Two updated",
+      url: "https://two.example/updated"
+    });
+    expect(lastBroadcast?.state).toBeUndefined();
+    await controller.flushPendingSaves();
+    expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores tab update events without outline-relevant changes", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    runtime.broadcasts.length = 0;
+    vi.mocked(runtime.api.storage.local.set).mockClear();
+
+    await runtime.events.tabUpdated.emit(1, {}, {
+      id: 1,
+      windowId: 10,
+      index: 0,
+      active: true,
+      url: "https://one.example/",
+      title: "One"
+    });
+    await runtime.events.tabUpdated.emit(1, { status: "loading" } as Partial<RuntimeTab>, {
+      id: 1,
+      windowId: 10,
+      index: 0,
+      active: true,
+      url: "https://one.example/",
+      title: "One"
+    });
+
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+
+    expect(runtime.broadcasts).toHaveLength(0);
+    expect(vi.mocked(runtime.api.storage.local.set)).not.toHaveBeenCalled();
+    expect(state.nodes["tab:1"]?.title).toBe("One");
+  });
+
+  it("ignores outline-relevant tab update events that leave state unchanged", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One",
+          favIconUrl: "https://one.example/favicon.ico"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    runtime.broadcasts.length = 0;
+    vi.mocked(runtime.api.storage.local.set).mockClear();
+
+    await runtime.events.tabUpdated.emit(1, {
+      title: "One",
+      url: "https://one.example/",
+      favIconUrl: "https://one.example/favicon.ico"
+    }, {
+      id: 1,
+      windowId: 10,
+      index: 0,
+      active: true,
+      url: "https://one.example/",
+      title: "One",
+      favIconUrl: "https://one.example/favicon.ico"
+    });
+
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+
+    expect(runtime.broadcasts).toHaveLength(0);
+    expect(vi.mocked(runtime.api.storage.local.set)).not.toHaveBeenCalled();
+    expect(state.nodes["tab:1"]?.title).toBe("One");
   });
 
   it("serializes concurrent tab create events against the freshest state", async () => {
@@ -1086,6 +1462,66 @@ describe("background controller lifecycle", () => {
     const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
     expect(state.nodes["tab:1"]?.active).toBe(false);
     expect(state.nodes["tab:2"]?.active).toBe(true);
+  });
+
+  it("absorbs focus command activation echoes without a full runtime snapshot", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        },
+        {
+          id: 2,
+          windowId: 10,
+          index: 1,
+          active: false,
+          url: "https://two.example/",
+          title: "Two"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    vi.mocked(runtime.api.tabs.query).mockClear();
+    vi.mocked(runtime.api.windows.getAll).mockClear();
+    vi.mocked(runtime.api.storage.local.set).mockClear();
+    runtime.broadcasts.length = 0;
+
+    const result = await controller.handleMessage({ type: "focusNode", nodeId: "tab:2" });
+    await runtime.events.tabUpdated.flush();
+    await runtime.events.windowFocusChanged.flush();
+    await runtime.events.tabActivated.emit({ tabId: 2, windowId: 10, previousTabId: 1 });
+
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    const lastBroadcast = runtime.broadcasts.at(-1) as
+      | { type?: string; updates?: Array<{ nodeId: string; active: boolean }> }
+      | undefined;
+    expectCommandAck(result, false);
+    expect(state.nodes["tab:1"]?.active).toBe(false);
+    expect(state.nodes["tab:2"]?.active).toBe(true);
+    expect(runtime.api.tabs.query).not.toHaveBeenCalled();
+    expect(runtime.api.windows.getAll).not.toHaveBeenCalled();
+    expect(runtime.broadcasts).toHaveLength(1);
+    expect(lastBroadcast).toEqual({
+      type: "activeStateUpdated",
+      updates: [
+        { nodeId: "tab:1", active: false },
+        { nodeId: "tab:2", active: true }
+      ]
+    });
+    expect(vi.mocked(runtime.api.storage.local.set)).not.toHaveBeenCalled();
   });
 
   it("uses activation snapshots to remove tabs Firefox no longer reports", async () => {
@@ -1387,6 +1823,7 @@ describe("background controller lifecycle", () => {
     expect(state.nodes["tab:2"]).toBeUndefined();
     expect(state.nodes["window:10"]?.childIds).toEqual(["tab:1"]);
 
+    await controller.flushPendingSaves();
     const lastSave = vi.mocked(runtime.api.storage.local.set).mock.calls.at(-1)?.[0] as
       | Record<string, OutlineState>
       | undefined;
@@ -1463,6 +1900,158 @@ describe("background controller lifecycle", () => {
     expect(state.nodes["window:10"]?.childIds).toEqual(["tab:1", "tab:2"]);
   });
 
+  it("absorbs the created-tab echo after a command restore", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        },
+        {
+          id: 2,
+          windowId: 10,
+          index: 1,
+          active: false,
+          url: "https://two.example/",
+          title: "Two"
+        }
+      ]
+    );
+    const restoredTab: RuntimeTab = {
+      id: 22,
+      windowId: 10,
+      index: 1,
+      active: false,
+      url: "https://two.example/",
+      title: "Two"
+    };
+    vi.mocked(runtime.api.sessions.restore).mockImplementation(async () => {
+      createTabFromBrowser(runtime, restoredTab, { awaitListeners: false });
+      return { tab: copyTab(restoredTab) } as never;
+    });
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    await controller.handleMessage({ type: "closeNode", nodeId: "tab:2" });
+    await runtime.events.tabRemoved.flush();
+    await runtime.events.sessionChanged.flush();
+
+    runtime.broadcasts.length = 0;
+    vi.mocked(runtime.api.storage.local.set).mockClear();
+
+    const result = await controller.handleMessage({ type: "restoreNode", nodeId: "tab:2" });
+    await runtime.events.tabCreated.flush();
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+
+    expectCommandAck(result, true);
+    expect(state.nodes["tab:2"]?.live).toEqual({ tabId: 22, windowId: 10 });
+    expect(state.nodes["tab:2"]?.active).toBe(false);
+    expect(runtime.broadcasts).toHaveLength(1);
+    const restoreBroadcast = runtime.broadcasts.at(-1) as
+      | {
+          type?: string;
+          updatedNodes?: OutlineState["nodes"][string][];
+          closedCountDelta?: number;
+          state?: OutlineState;
+        }
+      | undefined;
+    expect(restoreBroadcast?.type).toBe("nodeStateUpdated");
+    expect(restoreBroadcast?.updatedNodes?.map((node) => node.id)).toEqual(["tab:2"]);
+    expect(restoreBroadcast?.updatedNodes?.[0]).toMatchObject({
+      id: "tab:2",
+      status: "live",
+      live: { tabId: 22, windowId: 10 },
+      restoredFromClosed: true
+    });
+    expect(restoreBroadcast?.closedCountDelta).toBe(-1);
+    expect(restoreBroadcast?.state).toBeUndefined();
+    await controller.flushPendingSaves();
+    expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
+  });
+
+  it("absorbs transient restored-tab create and no-op update echoes", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        },
+        {
+          id: 2,
+          windowId: 10,
+          index: 1,
+          active: false,
+          url: "https://two.example/",
+          title: "Two"
+        }
+      ]
+    );
+    const restoredTab: RuntimeTab = {
+      id: 22,
+      windowId: 10,
+      index: 1,
+      active: false,
+      url: "https://two.example/",
+      title: "Two"
+    };
+    vi.mocked(runtime.api.sessions.restore).mockImplementation(async () => {
+      createTabFromBrowser(runtime, restoredTab, {
+        awaitListeners: false,
+        eventTab: {
+          ...restoredTab,
+          url: "about:blank",
+          title: "New Tab"
+        }
+      });
+      return { tab: copyTab(restoredTab) } as never;
+    });
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    await controller.handleMessage({ type: "closeNode", nodeId: "tab:2" });
+    await runtime.events.tabRemoved.flush();
+    await runtime.events.sessionChanged.flush();
+
+    runtime.broadcasts.length = 0;
+    vi.mocked(runtime.api.storage.local.set).mockClear();
+
+    await controller.handleMessage({ type: "restoreNode", nodeId: "tab:2" });
+    await runtime.events.tabCreated.flush();
+    await updateTabFromBrowser(runtime, 22, {
+      url: restoredTab.url,
+      title: restoredTab.title
+    });
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+
+    expect(state.nodes["tab:2"]?.live).toEqual({ tabId: 22, windowId: 10 });
+    expect(runtime.broadcasts).toHaveLength(1);
+    const restoreBroadcast = runtime.broadcasts[0] as { type?: string; state?: OutlineState } | undefined;
+    expect(restoreBroadcast?.type).toBe("nodeStateUpdated");
+    expect(restoreBroadcast?.state).toBeUndefined();
+    await controller.flushPendingSaves();
+    expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
+  });
+
   it("preserves outliner closeNode tab removals as restorable closed nodes", async () => {
     const runtime = fakeRuntime(
       [
@@ -1495,7 +2084,7 @@ describe("background controller lifecycle", () => {
     await controller.ensureState();
 
     await controller.handleMessage({ type: "closeNode", nodeId: "tab:2" });
-    expect(runtime.api.tabs.remove).toHaveBeenCalledWith(2);
+    expect(runtime.api.tabs.remove).toHaveBeenCalledWith([2]);
 
     const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
     expect(state.nodes["tab:1"]?.status).toBe("live");
@@ -1507,6 +2096,152 @@ describe("background controller lifecycle", () => {
       title: "Two"
     });
     expect(state.nodes["window:10"]?.childIds).toEqual(["tab:1", "tab:2"]);
+  });
+
+  it("does not broadcast stale unchanged state for outliner closeNode tabs", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        },
+        {
+          id: 2,
+          windowId: 10,
+          index: 1,
+          active: false,
+          url: "https://two.example/",
+          title: "Two"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    runtime.broadcasts.length = 0;
+    vi.mocked(runtime.api.storage.local.set).mockClear();
+
+    await controller.handleMessage({ type: "closeNode", nodeId: "tab:2" });
+    await controller.handleMessage({ type: "getState" });
+
+    expect(runtime.broadcasts).toHaveLength(1);
+    const closeBroadcast = runtime.broadcasts[0] as
+      | {
+          type?: string;
+          updatedNodes?: OutlineState["nodes"][string][];
+          closedCountDelta?: number;
+          state?: OutlineState;
+        }
+      | undefined;
+    expect(closeBroadcast?.type).toBe("nodeStateUpdated");
+    expect(closeBroadcast?.updatedNodes?.map((node) => node.id)).toEqual(["tab:2"]);
+    expect(closeBroadcast?.updatedNodes?.[0]?.status).toBe("closed");
+    expect(closeBroadcast?.closedCountDelta).toBe(1);
+    expect(closeBroadcast?.state).toBeUndefined();
+    await controller.flushPendingSaves();
+    expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not broadcast twice when outliner closeNode sessions arrive before tabRemoved", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        },
+        {
+          id: 2,
+          windowId: 10,
+          index: 1,
+          active: false,
+          url: "https://two.example/",
+          title: "Two"
+        }
+      ],
+      { browserLikeTabRemove: "sessionChangedThenTabRemoved" }
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    runtime.broadcasts.length = 0;
+    vi.mocked(runtime.api.storage.local.set).mockClear();
+
+    await controller.handleMessage({ type: "closeNode", nodeId: "tab:2" });
+    await runtime.events.sessionChanged.flush();
+    await runtime.events.tabRemoved.flush();
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+
+    expect(state.nodes["tab:2"]?.status).toBe("closed");
+    expect(runtime.broadcasts).toHaveLength(1);
+    const closeBroadcast = runtime.broadcasts[0] as { type?: string; closedCountDelta?: number } | undefined;
+    expect(closeBroadcast?.type).toBe("nodeStateUpdated");
+    expect(closeBroadcast?.closedCountDelta).toBe(1);
+    await controller.flushPendingSaves();
+    expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
+  });
+
+  it("skips the session-changed snapshot after an outliner closeNode tabRemoved update", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        },
+        {
+          id: 2,
+          windowId: 10,
+          index: 1,
+          active: false,
+          url: "https://two.example/",
+          title: "Two"
+        }
+      ],
+      { browserLikeTabRemove: "tabRemovedThenSessionChanged" }
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    vi.mocked(runtime.api.tabs.query).mockClear();
+    vi.mocked(runtime.api.windows.getAll).mockClear();
+
+    await controller.handleMessage({ type: "closeNode", nodeId: "tab:2" });
+    await runtime.events.tabRemoved.flush();
+    await runtime.events.sessionChanged.flush();
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+
+    expect(state.nodes["tab:2"]?.status).toBe("closed");
+    expect(runtime.api.tabs.query).not.toHaveBeenCalled();
+    expect(runtime.api.windows.getAll).not.toHaveBeenCalled();
   });
 
   it("preserves outliner closeNode windows with one live tab as restorable closed nodes", async () => {
@@ -1560,6 +2295,13 @@ describe("background controller lifecycle", () => {
     expect(state.nodes["tab:2"]?.live).toBeUndefined();
     expect(state.nodes["window:10"]?.status).toBe("live");
     expect(state.nodes["tab:1"]?.status).toBe("live");
+    const closeBroadcast = runtime.broadcasts.at(-1) as
+      | { type?: string; updatedNodes?: OutlineState["nodes"][string][]; closedCountDelta?: number; state?: OutlineState }
+      | undefined;
+    expect(closeBroadcast?.type).toBe("nodeStateUpdated");
+    expect(closeBroadcast?.updatedNodes?.map((node) => node.id).sort()).toEqual(["tab:2", "window:20"]);
+    expect(closeBroadcast?.closedCountDelta).toBe(2);
+    expect(closeBroadcast?.state).toBeUndefined();
   });
 
   it("handles outliner closeNode when Firefox fires tabRemoved during tabs.remove", async () => {
@@ -1612,6 +2354,19 @@ describe("background controller lifecycle", () => {
     expect(state.nodes["tab:2"]?.status).toBe("live");
     expect(state.nodes["tab:2"]?.parentId).toBe("window:10");
     expect(state.nodes["window:10"]?.childIds).toEqual(["tab:1", "tab:2", "tab:3"]);
+    const closeBroadcast = runtime.broadcasts.at(-1) as
+      | { type?: string; updatedNodes?: OutlineState["nodes"][string][]; state?: OutlineState }
+      | undefined;
+    expect(closeBroadcast?.type).toBe("treeStructureUpdated");
+    expect(closeBroadcast?.state).toBeUndefined();
+    const updatedNodes = new Map(closeBroadcast?.updatedNodes?.map((node) => [node.id, node]));
+    expect(updatedNodes.get("tab:2")?.parentId).toBe("window:10");
+    expect(updatedNodes.get("tab:1")).toMatchObject({
+      id: "tab:1",
+      status: "closed",
+      childIds: []
+    });
+    expect(updatedNodes.get("window:10")?.childIds).toEqual(["tab:1", "tab:2", "tab:3"]);
   });
 
   it("handles outliner closeNode when Firefox reports sessions before tabRemoved", async () => {
@@ -2413,10 +3168,44 @@ describe("background controller lifecycle", () => {
     await controller.ensureState();
 
     runtime.tabs = [];
-    const state = (await controller.handleMessage({ type: "refresh" })) as OutlineState;
+    const result = await controller.handleMessage({ type: "refresh" });
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
 
+    expectCommandAck(result, true);
     expect(state.nodes["tab:1"]).toBeUndefined();
     expect(state.nodes["window:10"]).toBeUndefined();
+  });
+
+  it("acknowledges unchanged manual refresh without saving or broadcasting", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    runtime.broadcasts.length = 0;
+    vi.mocked(runtime.api.storage.local.set).mockClear();
+
+    const result = await controller.handleMessage({ type: "refresh" });
+
+    expectCommandAck(result, false);
+    expect(runtime.broadcasts).toHaveLength(0);
+    expect(vi.mocked(runtime.api.storage.local.set)).not.toHaveBeenCalled();
   });
 
   it("manual refresh deletes stale parent tab nodes without closing their children", async () => {
@@ -2477,8 +3266,10 @@ describe("background controller lifecycle", () => {
         title: "Three"
       }
     ];
-    const state = (await controller.handleMessage({ type: "refresh" })) as OutlineState;
+    const result = await controller.handleMessage({ type: "refresh" });
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
 
+    expectCommandAck(result, true);
     expect(state.nodes["tab:1"]).toBeUndefined();
     expect(state.nodes["tab:2"]?.status).toBe("live");
     expect(state.nodes["tab:2"]?.parentId).toBe("window:10");
@@ -2536,11 +3327,21 @@ describe("background controller lifecycle", () => {
     runtime.windows = runtime.windows.filter((windowInfo) => windowInfo.id !== 20);
     runtime.tabs = runtime.tabs.filter((tab) => tab.windowId !== 20);
     await runtime.events.windowRemoved.emit(20);
+    runtime.broadcasts.length = 0;
 
-    const restored = (await controller.handleMessage({ type: "restoreNode", nodeId: "window:20" })) as OutlineState;
+    const restoreResult = await controller.handleMessage({ type: "restoreNode", nodeId: "window:20" });
+    const restored = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expectCommandAck(restoreResult, true);
     expect(restored.nodes["window:20"]?.live).toEqual({ windowId: 42 });
     expect(restored.nodes["tab:5"]?.status).toBe("closed");
     expect(restored.nodes["window:42"]).toBeUndefined();
+    const restoreBroadcast = runtime.broadcasts.at(-1) as
+      | { type?: string; updatedNodes?: OutlineState["nodes"][string][]; closedCountDelta?: number; state?: OutlineState }
+      | undefined;
+    expect(restoreBroadcast?.type).toBe("nodeStateUpdated");
+    expect(restoreBroadcast?.updatedNodes?.map((node) => node.id)).toEqual(["window:20"]);
+    expect(restoreBroadcast?.closedCountDelta).toBe(-1);
+    expect(restoreBroadcast?.state).toBeUndefined();
 
     runtime.windows = [
       ...runtime.windows,
@@ -2598,25 +3399,98 @@ describe("background controller lifecycle", () => {
     const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
     await controller.ensureState();
 
-    const deleted = (await controller.handleMessage({ type: "deleteNode", nodeId: "tab:2" })) as OutlineState;
+    runtime.broadcasts.length = 0;
 
-    expect(runtime.api.tabs.remove).toHaveBeenCalledWith(2);
+    const deleteResult = await controller.handleMessage({ type: "deleteNode", nodeId: "tab:2" });
+    const deleted = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+
+    expect(runtime.api.tabs.remove).toHaveBeenCalledWith([2]);
+    expectCommandAck(deleteResult, true);
     expect(deleted.nodes["tab:2"]).toBeUndefined();
     expect(deleted.nodes["window:10"]?.childIds).toEqual(["tab:1"]);
 
+    await controller.flushPendingSaves();
     const lastSave = vi.mocked(runtime.api.storage.local.set).mock.calls.at(-1)?.[0] as
       | Record<string, OutlineState>
       | undefined;
     expect(lastSave?.[STATE_KEY]?.nodes["tab:2"]).toBeUndefined();
 
-    const lastBroadcast = runtime.broadcasts.at(-1) as { type?: string; state?: OutlineState } | undefined;
-    expect(lastBroadcast?.type).toBe("stateUpdated");
-    expect(lastBroadcast?.state?.nodes["tab:2"]).toBeUndefined();
+    const lastBroadcast = runtime.broadcasts.at(-1) as
+      | {
+          type?: string;
+          deletedNodeIds?: string[];
+          updatedNodes?: OutlineState["nodes"][string][];
+          rootIds?: string[];
+        }
+      | undefined;
+    expect(runtime.broadcasts).toHaveLength(1);
+    expect(lastBroadcast?.type).toBe("treeStructureUpdated");
+    expect(lastBroadcast?.deletedNodeIds).toEqual(["tab:2"]);
+    expect(lastBroadcast?.updatedNodes?.map((node) => node.id)).toEqual(["window:10"]);
+    expect(lastBroadcast?.updatedNodes?.[0]?.childIds).toEqual(["tab:1"]);
+    expect(lastBroadcast?.rootIds).toEqual(["window:10"]);
 
     const afterRemoveEvent = (await controller.handleMessage({ type: "getState" })) as OutlineState;
     expect(afterRemoveEvent.nodes["tab:2"]).toBeUndefined();
     expect(afterRemoveEvent.nodes["tab:1"]?.status).toBe("live");
     expect(afterRemoveEvent.nodes["window:10"]?.childIds).toEqual(["tab:1"]);
+  });
+
+  it("batches delete-owned live subtree removals without redundant event persistence", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        },
+        {
+          id: 2,
+          windowId: 10,
+          index: 1,
+          active: false,
+          openerTabId: 1,
+          url: "https://two.example/",
+          title: "Two"
+        },
+        {
+          id: 3,
+          windowId: 10,
+          index: 2,
+          active: false,
+          url: "https://three.example/",
+          title: "Three"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    runtime.broadcasts.length = 0;
+    vi.mocked(runtime.api.storage.local.set).mockClear();
+
+    const deleteResult = await controller.handleMessage({ type: "deleteNode", nodeId: "tab:1" });
+    const deleted = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    const afterRemoveEvents = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+
+    expect(runtime.api.tabs.remove).toHaveBeenCalledWith([2, 1]);
+    expectCommandAck(deleteResult, true);
+    expect(deleted.nodes["tab:1"]).toBeUndefined();
+    expect(deleted.nodes["tab:2"]).toBeUndefined();
+    expect(deleted.nodes["tab:3"]?.status).toBe("live");
+    expect(afterRemoveEvents).toEqual(deleted);
+    expect(runtime.broadcasts).toHaveLength(1);
+    await controller.flushPendingSaves();
+    expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
   });
 
   it("accepts flatten subtree commands through the extension message path", async () => {
@@ -2660,19 +3534,97 @@ describe("background controller lifecycle", () => {
     const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
     await controller.ensureState();
 
-    const flattened = (await controller.handleMessage({
+    const flattenResult = await controller.handleMessage({
       type: "flattenSubtree",
       nodeId: "window:10"
-    })) as OutlineState;
+    });
+    const flattened = (await controller.handleMessage({ type: "getState" })) as OutlineState;
 
+    expectCommandAck(flattenResult, true);
     expect(flattened.rootIds).toEqual(["window:10"]);
     expect(flattened.nodes["window:10"]?.childIds).toEqual(["tab:1", "tab:2"]);
     expect(flattened.nodes["tab:1"]?.childIds).toEqual([]);
     expect(flattened.nodes["tab:2"]?.childIds).toEqual(["tab:3"]);
 
-    const lastBroadcast = runtime.broadcasts.at(-1) as { type?: string; state?: OutlineState } | undefined;
-    expect(lastBroadcast?.type).toBe("stateUpdated");
-    expect(lastBroadcast?.state?.nodes["window:10"]?.childIds).toEqual(["tab:1", "tab:2"]);
+    const lastBroadcast = runtime.broadcasts.at(-1) as
+      | {
+          type?: string;
+          updatedNodes?: OutlineState["nodes"][string][];
+          rootIds?: string[];
+          state?: OutlineState;
+        }
+      | undefined;
+    expect(lastBroadcast?.type).toBe("treeStructureUpdated");
+    expect(lastBroadcast?.updatedNodes?.map((node) => node.id).sort()).toEqual(["tab:1", "tab:2", "window:10"]);
+    expect(lastBroadcast?.rootIds).toEqual(["window:10"]);
+    expect(lastBroadcast?.state).toBeUndefined();
+  });
+
+  it("broadcasts move commands as tree structure patches", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        },
+        {
+          id: 2,
+          windowId: 10,
+          index: 1,
+          active: false,
+          url: "https://two.example/",
+          title: "Two"
+        },
+        {
+          id: 3,
+          windowId: 10,
+          index: 2,
+          active: false,
+          url: "https://three.example/",
+          title: "Three"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    runtime.broadcasts.length = 0;
+    vi.mocked(runtime.api.storage.local.set).mockClear();
+
+    const result = await controller.handleMessage({
+      type: "moveNode",
+      nodeId: "tab:3",
+      parentId: "window:10",
+      index: 0
+    });
+    const moved = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    const lastBroadcast = runtime.broadcasts.at(-1) as
+      | {
+          type?: string;
+          updatedNodes?: OutlineState["nodes"][string][];
+          rootIds?: string[];
+          state?: OutlineState;
+        }
+      | undefined;
+
+    expectCommandAck(result, true);
+    expect(moved.nodes["window:10"]?.childIds).toEqual(["tab:3", "tab:1", "tab:2"]);
+    expect(lastBroadcast?.type).toBe("treeStructureUpdated");
+    expect(lastBroadcast?.updatedNodes?.map((node) => node.id).sort()).toEqual(["tab:3", "window:10"]);
+    expect(lastBroadcast?.rootIds).toEqual(["window:10"]);
+    expect(lastBroadcast?.state).toBeUndefined();
+    await controller.flushPendingSaves();
+    expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
   });
 
   it("ignores unknown extension message command types", async () => {
@@ -2707,6 +3659,143 @@ describe("background controller lifecycle", () => {
     expect(vi.mocked(runtime.api.storage.local.set).mock.calls).toHaveLength(savesBefore);
   });
 
+  it("acknowledges state-unchanged focus commands without saving or broadcasting", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        }
+      ]
+    );
+    const adapter: BrowserAdapter = {
+      focusTab: vi.fn(async () => undefined),
+      closeTab: vi.fn(async () => undefined),
+      closeTabs: vi.fn(async () => undefined),
+      closeWindow: vi.fn(async () => undefined),
+      restoreSession: vi.fn(async () => ({})),
+      createTab: vi.fn(async () => {
+        throw new Error("not implemented");
+      }),
+      createWindow: vi.fn(async () => {
+        throw new Error("not implemented");
+      }),
+      moveTabs: vi.fn(async () => undefined)
+    };
+    const controller = createBackgroundController({ api: runtime.api, adapter, now: () => 1000 });
+    await controller.ensureState();
+    runtime.broadcasts.length = 0;
+    vi.mocked(runtime.api.storage.local.set).mockClear();
+
+    const result = await controller.handleMessage({ type: "focusNode", nodeId: "tab:1" });
+
+    expect(adapter.focusTab).toHaveBeenCalledWith(1, 10);
+    expectCommandAck(result, false);
+    expect(runtime.broadcasts).toHaveLength(0);
+    expect(vi.mocked(runtime.api.storage.local.set)).not.toHaveBeenCalled();
+  });
+
+  it("broadcasts command mutations even when the state object is reused", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    runtime.broadcasts.length = 0;
+    vi.mocked(runtime.api.storage.local.set).mockClear();
+
+    const result = await controller.handleMessage({ type: "toggleCollapsed", nodeId: "tab:1" });
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    const lastBroadcast = runtime.broadcasts.at(-1) as
+      | { type?: string; updatedNodes?: OutlineState["nodes"][string][]; state?: OutlineState }
+      | undefined;
+
+    expectCommandAck(result, true);
+    expect(state.nodes["tab:1"]?.collapsed).toBe(true);
+    expect(runtime.broadcasts).toHaveLength(1);
+    expect(lastBroadcast?.type).toBe("nodeStateUpdated");
+    expect(lastBroadcast?.updatedNodes?.[0]).toMatchObject({ id: "tab:1", collapsed: true });
+    expect(lastBroadcast?.state).toBeUndefined();
+    await controller.flushPendingSaves();
+    expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
+  });
+
+  it("broadcasts group renames as node state patches", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    runtime.broadcasts.length = 0;
+    vi.mocked(runtime.api.storage.local.set).mockClear();
+
+    const result = await controller.handleMessage({
+      type: "renameGroup",
+      nodeId: "window:10",
+      title: "Research"
+    });
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    const lastBroadcast = runtime.broadcasts.at(-1) as
+      | { type?: string; updatedNodes?: OutlineState["nodes"][string][]; state?: OutlineState }
+      | undefined;
+
+    expectCommandAck(result, true);
+    expect(state.nodes["window:10"]?.title).toBe("Research");
+    expect(runtime.broadcasts).toHaveLength(1);
+    expect(lastBroadcast?.type).toBe("nodeStateUpdated");
+    expect(lastBroadcast?.updatedNodes?.[0]).toMatchObject({
+      id: "window:10",
+      title: "Research",
+      customTitle: "Research"
+    });
+    expect(lastBroadcast?.state).toBeUndefined();
+    await controller.flushPendingSaves();
+    expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
+  });
+
   it("deletes the window node when its only live tab is deleted by command", async () => {
     const runtime = fakeRuntime(
       [
@@ -2730,21 +3819,27 @@ describe("background controller lifecycle", () => {
     const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
     await controller.ensureState();
 
-    const deleted = (await controller.handleMessage({ type: "deleteNode", nodeId: "tab:1" })) as OutlineState;
+    const deleteResult = await controller.handleMessage({ type: "deleteNode", nodeId: "tab:1" });
+    const deleted = (await controller.handleMessage({ type: "getState" })) as OutlineState;
 
-    expect(runtime.api.tabs.remove).toHaveBeenCalledWith(1);
+    expect(runtime.api.tabs.remove).toHaveBeenCalledWith([1]);
+    expectCommandAck(deleteResult, true);
     expect(deleted.nodes["tab:1"]).toBeUndefined();
     expect(deleted.nodes["window:10"]).toBeUndefined();
     expect(deleted.rootIds).toEqual([]);
 
+    await controller.flushPendingSaves();
     const lastSave = vi.mocked(runtime.api.storage.local.set).mock.calls.at(-1)?.[0] as
       | Record<string, OutlineState>
       | undefined;
     expect(lastSave?.[STATE_KEY]?.nodes["window:10"]).toBeUndefined();
 
-    const lastBroadcast = runtime.broadcasts.at(-1) as { type?: string; state?: OutlineState } | undefined;
-    expect(lastBroadcast?.type).toBe("stateUpdated");
-    expect(lastBroadcast?.state?.nodes["window:10"]).toBeUndefined();
+    const lastBroadcast = runtime.broadcasts.at(-1) as
+      | { type?: string; deletedNodeIds?: string[]; rootIds?: string[] }
+      | undefined;
+    expect(lastBroadcast?.type).toBe("treeStructureUpdated");
+    expect(lastBroadcast?.deletedNodeIds?.sort()).toEqual(["tab:1", "window:10"]);
+    expect(lastBroadcast?.rootIds).toEqual([]);
 
     const afterRemoveEvent = (await controller.handleMessage({ type: "getState" })) as OutlineState;
     expect(afterRemoveEvent.nodes["tab:1"]).toBeUndefined();

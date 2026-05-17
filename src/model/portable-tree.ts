@@ -63,16 +63,16 @@ export function appendPortableTree(
   clock: Clock
 ): OutlineState {
   const tree = parseImportTree(payload);
-  const next = cloneState(state);
+  if (tree.roots.length === 0) {
+    return state;
+  }
+
+  const next = copyStateForAppend(state);
   const context: AppendContext = {
     now: clock.now,
     nextIdIndex: 0,
     usedIds: new Set([...Object.keys(next.nodes), ...next.rootIds])
   };
-
-  if (tree.roots.length === 0) {
-    return next;
-  }
 
   const importGroupId = nextPortableNodeId("window", context);
   const importGroup: OutlineNode = {
@@ -539,29 +539,10 @@ function nextPortableNodeId(kind: OutlineNodeKind, context: AppendContext): Node
   return nodeId;
 }
 
-function cloneState(state: OutlineState): OutlineState {
-  const nodes: Record<NodeId, OutlineNode> = {};
-  for (const [id, node] of Object.entries(state.nodes)) {
-    const cloned: OutlineNode = {
-      ...node,
-      childIds: [...node.childIds]
-    };
-    if (node.live) {
-      cloned.live = { ...node.live };
-    } else {
-      delete cloned.live;
-    }
-    if (node.restore) {
-      cloned.restore = { ...node.restore };
-    } else {
-      delete cloned.restore;
-    }
-    nodes[id] = cloned;
-  }
-
+function copyStateForAppend(state: OutlineState): OutlineState {
   return {
     version: state.version,
     rootIds: [...state.rootIds],
-    nodes
+    nodes: { ...state.nodes }
   };
 }

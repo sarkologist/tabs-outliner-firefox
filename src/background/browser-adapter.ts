@@ -12,6 +12,13 @@ export function createBrowserAdapter(api: WebExtensionBrowser = browser): Browse
       await api.tabs.remove(tabId);
     },
 
+    async closeTabs(tabIds) {
+      if (tabIds.length === 0) {
+        return;
+      }
+      await api.tabs.remove(tabIds);
+    },
+
     async closeWindow(windowId) {
       await api.windows.remove(windowId);
     },

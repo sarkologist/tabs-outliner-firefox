@@ -20,6 +20,8 @@ export type VisibleTreeProjection = {
   matchingNodeIds: Set<NodeId>;
   visibleNodeIds: NodeId[];
   visibleNodeIdSet: Set<NodeId>;
+  activeTabNodeId?: NodeId;
+  activeTabRowIndex?: number;
   nodeCount: number;
   closedCount: number;
   matchCount: number;
@@ -51,6 +53,8 @@ export function buildVisibleTreeProjection(state: OutlineState, rawQuery: string
   const entries = collectOutlineOrderEntries(state);
   const matchingNodeIds = new Set<NodeId>();
   const visibleNodeIdSet = new Set<NodeId>();
+  let activeTabNodeId: NodeId | undefined;
+  let activeTabRowIndex: number | undefined;
   let closedCount = 0;
 
   for (const entry of entries) {
@@ -60,6 +64,9 @@ export function buildVisibleTreeProjection(state: OutlineState, rawQuery: string
     }
     if (node.status === "closed") {
       closedCount += 1;
+    }
+    if (!activeTabNodeId && node.kind === "tab" && node.active && entry.insideActiveWindow) {
+      activeTabNodeId = node.id;
     }
     if (query && nodeMatchesQuery(node, query)) {
       matchingNodeIds.add(node.id);
@@ -97,10 +104,14 @@ export function buildVisibleTreeProjection(state: OutlineState, rawQuery: string
       ? node.childIds.filter((childId) => visibleNodeIdSet.has(childId)).length
       : node.childIds.length;
     const isSearchMatch = query ? matchingNodeIds.has(node.id) : false;
+    const rowIndex = rows.length;
+    if (node.id === activeTabNodeId) {
+      activeTabRowIndex = rowIndex;
+    }
     rows.push({
       nodeId: node.id,
       depth: entry.depth,
-      index: rows.length,
+      index: rowIndex,
       childCount: node.childIds.length,
       visibleChildCount,
       expanded: query ? visibleChildCount > 0 : !node.collapsed,
@@ -118,6 +129,8 @@ export function buildVisibleTreeProjection(state: OutlineState, rawQuery: string
     matchingNodeIds,
     visibleNodeIds: rows.map((row) => row.nodeId),
     visibleNodeIdSet: query ? visibleNodeIdSet : new Set(rows.map((row) => row.nodeId)),
+    ...(activeTabNodeId ? { activeTabNodeId } : {}),
+    ...(typeof activeTabRowIndex === "number" ? { activeTabRowIndex } : {}),
     nodeCount: entries.length,
     closedCount,
     matchCount: matchingNodeIds.size

@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  LARGE_RESTORE_NODE_THRESHOLD,
+  analyzeRestoreScope,
   bootstrapFromWindows,
   closeTab,
   closeWindow,
@@ -139,6 +141,52 @@ function largeFlatLiveState(tabCount: number): OutlineState {
   return state;
 }
 
+function largeFlatClosedState(tabCount: number): OutlineState {
+  const windowNode = {
+    id: "window:10",
+    kind: "window" as const,
+    status: "live" as const,
+    childIds: [] as string[],
+    title: "Group",
+    active: true,
+    collapsed: false,
+    createdAt: 1000,
+    updatedAt: 1000,
+    live: { windowId: 10 }
+  };
+  const state: OutlineState = {
+    version: 1,
+    rootIds: [windowNode.id],
+    nodes: {
+      [windowNode.id]: windowNode
+    }
+  };
+
+  for (let index = 1; index <= tabCount; index += 1) {
+    const id = `tab:${index}`;
+    windowNode.childIds.push(id);
+    state.nodes[id] = {
+      id,
+      kind: "tab",
+      status: "closed",
+      parentId: windowNode.id,
+      childIds: [],
+      title: `Saved ${index}`,
+      url: `https://saved.example/${index}`,
+      collapsed: false,
+      createdAt: 1000,
+      updatedAt: 1000,
+      closedAt: 2000 + index,
+      restore: {
+        url: `https://saved.example/${index}`,
+        title: `Saved ${index}`
+      }
+    };
+  }
+
+  return state;
+}
+
 describe("outline model", () => {
   it("bootstraps normal windows and places opener tabs as children", () => {
     const state = bootstrapFromWindows(windows, { now: 1000 });
@@ -161,6 +209,18 @@ describe("outline model", () => {
     expect(renamed.nodes["window:10"]?.title).toBe("Research");
     expect(renamed.nodes["window:10"]?.customTitle).toBe("Research");
     expect(renamed.nodes["window:10"]?.updatedAt).toBe(2000);
+  });
+
+  it("renames groups without copying unrelated nodes", () => {
+    const state = bootstrapFromWindows(windows, { now: 1000 });
+
+    const renamed = renameGroup(state, "window:10", "Research", { now: 2000 });
+    const unchanged = renameGroup(renamed, "window:10", " Research ", { now: 3000 });
+
+    expect(renamed.nodes["window:10"]).not.toBe(state.nodes["window:10"]);
+    expect(renamed.nodes["tab:1"]).toBe(state.nodes["tab:1"]);
+    expect(renamed.nodes["tab:2"]).toBe(state.nodes["tab:2"]);
+    expect(unchanged).toBe(renamed);
   });
 
   it("clears blank group names back to the generic label", () => {
@@ -236,6 +296,20 @@ describe("outline model", () => {
     expect(next.nodes["tab:2"]?.closedAt).toBe(2000);
     expect(next.nodes["tab:2"]?.restore?.sessionId).toBe("session-tab-2");
     expect(next.nodes["tab:2"]?.restore?.url).toBe("https://example.com/child");
+  });
+
+  it("closes a single tab without cloning unrelated nodes", () => {
+    const state = largeFlatLiveState(50_000);
+    const next = closeTab(state, 50_000, {
+      now: 2000,
+      sessionId: "session-tab-50000"
+    });
+
+    expect(next.nodes["tab:50000"]).not.toBe(state.nodes["tab:50000"]);
+    expect(next.nodes["tab:50000"]?.status).toBe("closed");
+    expect(next.nodes["tab:1"]).toBe(state.nodes["tab:1"]);
+    expect(next.nodes["tab:25000"]).toBe(state.nodes["tab:25000"]);
+    expect(next.nodes["window:10"]).toBe(state.nodes["window:10"]);
   });
 
   it("captures only the closed tab and promotes its children", () => {
@@ -344,6 +418,20 @@ describe("outline model", () => {
     ]);
   });
 
+  it("moves a subtree without copying unrelated nodes", () => {
+    const state = bootstrapFromWindows(windows, { now: 1000 });
+
+    const moved = moveNode(state, "tab:3", {
+      parentId: "tab:1",
+      index: 0
+    });
+
+    expect(moved.nodes["window:10"]).not.toBe(state.nodes["window:10"]);
+    expect(moved.nodes["tab:1"]).not.toBe(state.nodes["tab:1"]);
+    expect(moved.nodes["tab:3"]).not.toBe(state.nodes["tab:3"]);
+    expect(moved.nodes["tab:2"]).toBe(state.nodes["tab:2"]);
+  });
+
   it("flattens one subtree level below a node while preserving preorder", () => {
     const state = bootstrapFromWindows([
       {
@@ -413,6 +501,59 @@ describe("outline model", () => {
       { tabId: 4, windowId: 10 },
       { tabId: 5, windowId: 10 }
     ]);
+  });
+
+  it("flattens one subtree level without copying unrelated nodes", () => {
+    const state = bootstrapFromWindows([
+      {
+        id: 10,
+        incognito: false,
+        focused: true,
+        tabs: [
+          {
+            id: 1,
+            windowId: 10,
+            index: 0,
+            active: true,
+            url: "https://parent.example/",
+            title: "Parent"
+          },
+          {
+            id: 2,
+            windowId: 10,
+            index: 1,
+            active: false,
+            openerTabId: 1,
+            url: "https://child.example/",
+            title: "Child"
+          },
+          {
+            id: 3,
+            windowId: 10,
+            index: 2,
+            active: false,
+            openerTabId: 2,
+            url: "https://grandchild.example/",
+            title: "Grandchild"
+          },
+          {
+            id: 4,
+            windowId: 10,
+            index: 3,
+            active: false,
+            url: "https://sibling.example/",
+            title: "Sibling"
+          }
+        ]
+      }
+    ], { now: 1000 });
+
+    const flattened = flattenSubtreeOneLevel(state, "tab:1");
+
+    expect(flattened.nodes["tab:1"]).not.toBe(state.nodes["tab:1"]);
+    expect(flattened.nodes["tab:2"]).not.toBe(state.nodes["tab:2"]);
+    expect(flattened.nodes["tab:3"]).not.toBe(state.nodes["tab:3"]);
+    expect(flattened.nodes["tab:4"]).toBe(state.nodes["tab:4"]);
   });
 
   it("repeatedly flattens deeper child subtrees at the same node", () => {
@@ -606,6 +747,75 @@ describe("outline model", () => {
     ]);
   });
 
+  it("counts unique restorable closed nodes in a restore subtree", () => {
+    const tabCount = LARGE_RESTORE_NODE_THRESHOLD + 1;
+    const state = closeWindow(bootstrapFromWindows([windowWithTabs(10, tabCount)], { now: 1000 }), 10, {
+      now: 2000,
+      sessionId: "session-window-10"
+    });
+
+    const scope = analyzeRestoreScope(state, "window:10");
+
+    expect(scope).toEqual({
+      nodeIds: ["window:10", ...Array.from({ length: tabCount }, (_value, index) => `tab:${index + 1}`)],
+      totalCount: tabCount + 1,
+      tabCount,
+      windowCount: 1,
+      threshold: LARGE_RESTORE_NODE_THRESHOLD,
+      requiresConfirmation: true
+    });
+  });
+
+  it("ignores live nodes and closed nodes without restore plans when counting restore scope", () => {
+    let state = closeTab(bootstrapFromWindows(windows, { now: 1000 }), 2, {
+      now: 2000,
+      sessionId: "session-tab-2"
+    });
+    const closedWithoutRestore = {
+      ...state.nodes["tab:3"]!,
+      status: "closed" as const
+    };
+    delete closedWithoutRestore.live;
+    delete closedWithoutRestore.restore;
+    state = {
+      ...state,
+      nodes: {
+        ...state.nodes,
+        "tab:3": closedWithoutRestore
+      }
+    };
+
+    expect(analyzeRestoreScope(state, "window:10")).toMatchObject({
+      nodeIds: ["tab:2"],
+      totalCount: 1,
+      tabCount: 1,
+      windowCount: 0,
+      requiresConfirmation: false
+    });
+  });
+
+  it("requires large restore confirmation only above the threshold", () => {
+    const atThreshold = closeWindow(
+      bootstrapFromWindows([windowWithTabs(10, LARGE_RESTORE_NODE_THRESHOLD)], { now: 1000 }),
+      10,
+      { now: 2000 }
+    );
+    const aboveThreshold = closeWindow(
+      bootstrapFromWindows([windowWithTabs(10, LARGE_RESTORE_NODE_THRESHOLD + 1)], { now: 1000 }),
+      10,
+      { now: 2000 }
+    );
+
+    expect(analyzeRestoreScope(atThreshold, "window:10")).toMatchObject({
+      totalCount: LARGE_RESTORE_NODE_THRESHOLD,
+      requiresConfirmation: false
+    });
+    expect(analyzeRestoreScope(aboveThreshold, "window:10")).toMatchObject({
+      totalCount: LARGE_RESTORE_NODE_THRESHOLD + 1,
+      requiresConfirmation: true
+    });
+  });
+
   it("reattaches restored live ids without duplicating nodes", () => {
     const state = closeTab(bootstrapFromWindows(windows, { now: 1000 }), 2, {
       now: 2000,
@@ -616,6 +826,7 @@ describe("outline model", () => {
         nodeId: "tab:2",
         tabId: 22,
         windowId: 10,
+        active: false,
         url: "https://example.com/child",
         title: "Child"
       }
@@ -623,6 +834,7 @@ describe("outline model", () => {
 
     expect(restored.nodes["tab:2"]?.status).toBe("live");
     expect(restored.nodes["tab:2"]?.live).toEqual({ tabId: 22, windowId: 10 });
+    expect(restored.nodes["tab:2"]?.active).toBe(false);
     expect(restored.nodes["tab:2"]?.restoredFromClosed).toBe(true);
     expect(Object.keys(restored.nodes).filter((id) => id === "tab:2")).toHaveLength(1);
   });
@@ -650,6 +862,26 @@ describe("outline model", () => {
     expect(restored.nodes["window:10"]?.restoredFromClosed).toBe(true);
     expect(restored.nodes["tab:1"]?.status).toBe("live");
     expect(restored.nodes["tab:1"]?.restoredFromClosed).toBe(true);
+  });
+
+  it("preserves unchanged node identities when restoring a single node", () => {
+    const state = largeFlatClosedState(50_000);
+
+    const restored = restoreNodes(state, [
+      {
+        nodeId: "tab:50000",
+        tabId: 100000,
+        windowId: 10,
+        url: "https://saved.example/50000",
+        title: "Saved 50000"
+      }
+    ]);
+
+    expect(restored.nodes["tab:50000"]).not.toBe(state.nodes["tab:50000"]);
+    expect(restored.nodes["tab:50000"]?.status).toBe("live");
+    expect(restored.nodes["tab:1"]).toBe(state.nodes["tab:1"]);
+    expect(restored.nodes["tab:25000"]).toBe(state.nodes["tab:25000"]);
+    expect(restored.nodes["window:10"]).toBe(state.nodes["window:10"]);
   });
 
   it("deletes closed nodes but keeps promoted live children", () => {
@@ -680,6 +912,19 @@ describe("outline model", () => {
     expect(deleted.nodes["tab:1"]).toBeUndefined();
     expect(deleted.nodes["tab:2"]).toBeUndefined();
     expect(deleted.nodes["window:10"]?.childIds).toEqual(["tab:3"]);
+  });
+
+  it("preserves unchanged node identities when deleting a single live leaf", () => {
+    const state = largeFlatLiveState(50_000);
+
+    const deleted = deleteNode(state, "tab:50000", { allowLive: true });
+
+    expect(deleted.nodes["tab:50000"]).toBeUndefined();
+    expect(deleted.nodes["tab:1"]).toBe(state.nodes["tab:1"]);
+    expect(deleted.nodes["tab:25000"]).toBe(state.nodes["tab:25000"]);
+    expect(deleted.nodes["window:10"]).not.toBe(state.nodes["window:10"]);
+    expect(deleted.nodes["window:10"]?.childIds).toHaveLength(49_999);
+    expect(state.nodes["window:10"]?.childIds).toHaveLength(50_000);
   });
 
   it("removes a window when its only child is deleted", () => {
@@ -1296,3 +1541,19 @@ describe("outline model", () => {
     expect(reconciled.nodes["tab:5"]?.parentId).toBe("window:20");
   });
 });
+
+function windowWithTabs(windowId: number, tabCount: number): RuntimeWindow {
+  return {
+    id: windowId,
+    incognito: false,
+    focused: true,
+    tabs: Array.from({ length: tabCount }, (_value, index) => ({
+      id: index + 1,
+      windowId,
+      index,
+      active: index === 0,
+      url: `https://example.com/${index + 1}`,
+      title: `Tab ${index + 1}`
+    }))
+  };
+}
