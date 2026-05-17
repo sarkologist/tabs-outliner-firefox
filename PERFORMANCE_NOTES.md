@@ -1,10 +1,12 @@
-# Single-Node Delete Performance Notes
+# Tabs Outliner Performance Notes
 
 ## Context
 
-Manual QA still shows slow deletion when deleting just one node from a large tree, even after runtime tab removal was batched in `37e2cbc` (`Batch tree close and restore operations`). That batch change mainly helps deletes that need to close many live runtime tabs. It does not remove the dominant costs for deleting one saved/closed node in a large outline.
+This file started as `DELETE_PERFORMANCE_NOTES.md` while investigating slow single-node deletes. It now records the broader performance tuning work for deletes, restore, focus/tab switching, close, runtime refreshes, persistence, diagnostics, and sidebar rendering.
 
-Current likely bottlenecks:
+The original delete investigation found several costs that turned out to generalize across the extension.
+
+Original likely bottlenecks:
 
 - `deleteNode()` clones the entire `OutlineState` before deleting a small subtree.
 - `deleteNode()` calls `removeEmptyWindowNodes()`, which scans every node looking for empty windows.
@@ -21,9 +23,37 @@ Rough generated-state measurements from local investigation:
 
 These numbers are only directional; browser extension structured cloning, storage, and UI render timing may differ.
 
+## Current Status
+
+As of 2026-05-17, the broadly applicable lessons from the accepted performance work have been applied across the command/runtime paths we tuned:
+
+- Mutating commands acknowledge with `commandAck` and rely on broadcasts, avoiding duplicate sidebar renders from command responses.
+- Small visible changes use compact `nodeStateUpdated`, `treeStructureUpdated`, or `activeStateUpdated` patches instead of full `stateUpdated` transport.
+- Runtime refreshes use material/semantic diffs, because `reconcileWithWindows()` clones the tree and identity diffs would make every node look changed.
+- Unchanged commands, no-op runtime updates, stale Firefox events, and command-owned echoes are filtered or absorbed before they save/broadcast unchanged state.
+- Full storage persistence is deferred and coalesced off the visible interaction path; profiles report perceived time separately from eventual save flush time.
+- Sidebar diagnostics are advisory and coalesced so they do not multiply immediate background work after every patch.
+- Compact patch paths preserve important full-render side effects, especially active-tab auto-scroll.
+- Real extension traces are available through `tabsOutlinerProfile` and should be preferred when synthetic profiles do not match manual QA.
+
+Known follow-up, intentionally not tackled before longer naturalistic QA:
+
+- Fresh trace `dist/snapshot3.log` showed no full `stateUpdated` broadcasts and no sidebar hotspot, but it did show long trains of queued `tabs.onUpdated` runtime refreshes. If usability still feels sluggish, the next likely target is in-flight runtime-refresh coalescing and/or command priority so stale refresh work cannot sit in front of focus/close/restore commands.
+
+## General Lessons
+
+- Profile before accepting performance changes. Record the scenario, tree size, command/tool, before/after numbers, and whether the measurement is synthetic or in-browser.
+- Separate perceived latency from eventual durability. Visible broadcasts should not wait for full `storage.local.set` when a deferred, coalesced save is acceptable.
+- Avoid whole-state transport unless the change surface is genuinely whole-tree sized. Prefer compact patches and keep full `getState`/diagnostic paths available for compatibility.
+- Preserve node identity for unchanged model nodes. It makes patches smaller and keeps future cache/projection reuse possible.
+- Treat no-op and echo events as first-class performance work. A fast operation can still feel slow if stale browser events trigger later snapshots, saves, or broadcasts.
+- Coalesce advisory/background work such as diagnostics and persistence. Advisory work should not contend with user-visible mutations.
+- When replacing full renders with patches, audit side effects that used to live inside `render()`: scrolling, counters, empty states, active flags, rename/drop cleanup, and diagnostics scheduling.
+- Synthetic Node profiles are useful for repeatability, but browser-extension structured cloning, sidebar contexts, storage, and Firefox event ordering can dominate. Use in-browser traces before larger architectural changes.
+
 ## Agent Instructions
 
-Update this file as you investigate and implement delete performance improvements.
+Update this file as you investigate and implement performance improvements.
 
 - Keep the `Progress Log` section current. Add a new dated entry for each meaningful experiment, design decision, implementation step, or surprising finding.
 - Record commands, benchmark shapes, tree sizes, and before/after numbers when available.
@@ -32,7 +62,7 @@ Update this file as you investigate and implement delete performance improvement
 - For interleaving-heavy controller/sidebar changes, add deterministic tests that cover duplicate events, stale broadcasts, and repeated renders.
 - Do not treat a passing microbenchmark as sufficient; confirm the manual QA path or a realistic browser/sidebar simulation when possible.
 
-## Candidate Fixes
+## Historical Candidate Fixes
 
 1. Make small deletes avoid full-state cloning.
    - Consider a targeted copy-on-write delete path that clones only `rootIds`, removed ancestors/sibling arrays, the parent node, and affected nodes.
