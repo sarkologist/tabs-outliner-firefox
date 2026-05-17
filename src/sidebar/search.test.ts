@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { NodeId, OutlineNode, OutlineState } from "../model/types.js";
-import { computeOutlineSearch } from "./search.js";
+import { computeOutlineSearch, segmentSearchText } from "./search.js";
 
 describe("computeOutlineSearch", () => {
   it("matches titles case-insensitively and trims queries", () => {
@@ -83,6 +83,38 @@ describe("computeOutlineSearch", () => {
     expect(result.visibleNodeIds).toEqual(["window:1", "tab:parent", "tab:child"]);
     expect([...result.matchingNodeIds]).toEqual(["tab:child"]);
     expect(result.matchCount).toBe(1);
+  });
+});
+
+describe("segmentSearchText", () => {
+  it("splits title text around a trimmed case-insensitive query", () => {
+    expect(segmentSearchText("Project Docs", "  docs  ")).toEqual([
+      { text: "Project ", isMatch: false },
+      { text: "Docs", isMatch: true }
+    ]);
+  });
+
+  it("highlights non-overlapping occurrences", () => {
+    expect(segmentSearchText("Docs docs DOCS", "docs")).toEqual([
+      { text: "Docs", isMatch: true },
+      { text: " ", isMatch: false },
+      { text: "docs", isMatch: true },
+      { text: " ", isMatch: false },
+      { text: "DOCS", isMatch: true }
+    ]);
+  });
+
+  it("returns unhighlighted text for an empty query or title-only miss", () => {
+    expect(segmentSearchText("Project Docs", "   ")).toEqual([{ text: "Project Docs", isMatch: false }]);
+    expect(segmentSearchText("Docs", "spec")).toEqual([{ text: "Docs", isMatch: false }]);
+  });
+
+  it("keeps html-like title text as plain text segments", () => {
+    expect(segmentSearchText("One <b>Needle</b>", "needle")).toEqual([
+      { text: "One <b>", isMatch: false },
+      { text: "Needle", isMatch: true },
+      { text: "</b>", isMatch: false }
+    ]);
   });
 });
 
