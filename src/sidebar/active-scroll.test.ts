@@ -4,7 +4,8 @@ import {
   createActiveTabScrollTracker,
   findActiveTabNodeId,
   observeActiveTabNodeId,
-  observeActiveTabScrollTarget
+  observeActiveTabScrollTarget,
+  scrollActiveTabIntoView
 } from "./active-scroll.js";
 
 describe("findActiveTabNodeId", () => {
@@ -73,6 +74,28 @@ describe("observeActiveTabScrollTarget", () => {
     expect(observeActiveTabNodeId(tracker, "tab:1")).toBeUndefined();
     expect(observeActiveTabNodeId(tracker, "tab:2", { hasRenderedNode: () => false })).toBeUndefined();
     expect(observeActiveTabNodeId(tracker, "tab:2", { hasRenderedNode: () => true })).toBeUndefined();
+  });
+
+  it("scrolls a newly observed active projection row into view", () => {
+    const tracker = createActiveTabScrollTracker();
+    const viewport = {
+      scrollTop: 0,
+      clientHeight: 60
+    };
+
+    expect(scrollActiveTabIntoView(tracker, {
+      activeTabNodeId: "tab:20",
+      activeTabRowIndex: 20,
+      visibleNodeIdSet: new Set(["tab:20"])
+    }, viewport, 10)).toBe(true);
+
+    expect(viewport.scrollTop).toBe(150);
+    expect(scrollActiveTabIntoView(tracker, {
+      activeTabNodeId: "tab:20",
+      activeTabRowIndex: 20,
+      visibleNodeIdSet: new Set(["tab:20"])
+    }, viewport, 10)).toBe(false);
+    expect(viewport.scrollTop).toBe(150);
   });
 });
 

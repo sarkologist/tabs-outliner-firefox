@@ -350,3 +350,12 @@ Use these as starting targets, not hard promises:
   - `pnpm profile:command -- --tabs 50000 --scenario move-leaf`: 144ms perceived, first patch at 108ms, deferred save flush 41ms.
   - `pnpm profile:delete -- --tabs 50000 --target last --count 10`: 390ms perceived for 10 deletes, 39ms average, one coalesced deferred save flush of 40ms.
 - Verification: `pnpm test`, `pnpm run build`, and the profile commands above passed.
+
+### 2026-05-17: Active-Tab Scroll After Compact Patches
+
+- Manual QA found a regression after replacing more full renders with compact patches: the sidebar no longer reliably scrolled to the active tab.
+- Cause: full `render()` still observed and scrolled the active row, but `activeStateUpdated`, fast `nodeStateUpdated`, and fast `treeStructureUpdated` patch paths only updated the projection and scheduled virtual rows. They skipped the active-scroll side effect that full renders used to provide.
+- Moved the active-row scroll calculation into the shared active-scroll helper and call it from compact patch paths after refreshing the active target, before the virtual row render is scheduled.
+- Regression coverage: `src/sidebar/active-scroll.test.ts` now asserts that a newly observed active projection row scrolls into view once and does not retrigger for the same active node.
+- Profile check after `pnpm run build`: `pnpm profile:focus -- --tabs 50000 --target last` reports 27ms perceived, 0ms active patch work, 0 saves, 0 MB stringified.
+- Verification: `pnpm test`, `pnpm run build`, and the focus profile above passed.

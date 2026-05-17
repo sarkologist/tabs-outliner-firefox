@@ -4,6 +4,17 @@ export type ActiveTabScrollTracker = {
   observedActiveNodeId?: NodeId;
 };
 
+export type ActiveTabScrollProjection = {
+  activeTabNodeId?: NodeId;
+  activeTabRowIndex?: number;
+  visibleNodeIdSet: Set<NodeId>;
+};
+
+export type ActiveTabScrollViewport = {
+  scrollTop: number;
+  clientHeight: number;
+};
+
 export function createActiveTabScrollTracker(): ActiveTabScrollTracker {
   return {};
 }
@@ -73,6 +84,40 @@ export function observeActiveTabNodeId(
   }
 
   return activeNodeId;
+}
+
+export function scrollActiveTabIntoView(
+  tracker: ActiveTabScrollTracker,
+  projection: ActiveTabScrollProjection,
+  viewport: ActiveTabScrollViewport | undefined,
+  rowHeight: number
+): boolean {
+  const nodeId = observeActiveTabNodeId(tracker, projection.activeTabNodeId, {
+    hasRenderedNode: (candidate) => projection.visibleNodeIdSet.has(candidate)
+  });
+  if (!nodeId || typeof projection.activeTabRowIndex !== "number" || !viewport) {
+    return false;
+  }
+
+  const effectiveRowHeight = Number.isFinite(rowHeight) && rowHeight > 0 ? rowHeight : 1;
+  const rowTop = projection.activeTabRowIndex * effectiveRowHeight;
+  const rowBottom = rowTop + effectiveRowHeight;
+  const viewportTop = viewport.scrollTop;
+  const viewportBottom = viewportTop + viewport.clientHeight;
+  let nextScrollTop = viewportTop;
+
+  if (rowTop < viewportTop) {
+    nextScrollTop = rowTop;
+  } else if (rowBottom > viewportBottom) {
+    nextScrollTop = Math.max(0, rowBottom - viewport.clientHeight);
+  }
+
+  if (nextScrollTop === viewportTop) {
+    return false;
+  }
+
+  viewport.scrollTop = nextScrollTop;
+  return true;
 }
 
 function isActiveWindow(node: OutlineNode): boolean {

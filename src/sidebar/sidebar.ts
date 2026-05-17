@@ -10,7 +10,7 @@ import {
   type TraceSnapshot,
   type TraceSummaryRow
 } from "../perf/trace.js";
-import { createActiveTabScrollTracker, observeActiveTabNodeId } from "./active-scroll.js";
+import { createActiveTabScrollTracker, scrollActiveTabIntoView } from "./active-scroll.js";
 import { createDiagnosticsScheduler } from "./diagnostics-scheduler.js";
 import {
   commandForDropPlacement,
@@ -595,6 +595,7 @@ function applyActiveStateUpdate(updates: ActiveStateUpdate[]): void {
     }
     if (currentProjection) {
       refreshProjectionActiveTabTarget(state, currentProjection);
+      scrollToObservedActiveTab(currentProjection);
     }
     scheduleVirtualRender();
   });
@@ -640,6 +641,7 @@ function applyNodeStateUpdate(update: NodeStateUpdate): void {
     }
 
     updateProjectionChrome(currentProjection);
+    scrollToObservedActiveTab(currentProjection);
     scheduleVirtualRender();
   });
 }
@@ -699,6 +701,7 @@ function applyTreeStructureUpdate(update: TreeStructureUpdate): void {
     }
 
     updateProjectionChrome(currentProjection);
+    scrollToObservedActiveTab(currentProjection);
     scheduleVirtualRender();
   });
 }
@@ -1243,31 +1246,7 @@ function cssEscape(value: string): string {
 }
 
 function scrollToObservedActiveTab(projection: VisibleTreeProjection): void {
-  const nodeId = observeActiveTabNodeId(activeTabScrollTracker, projection.activeTabNodeId, {
-    hasRenderedNode: (candidate) => projection.visibleNodeIdSet.has(candidate)
-  });
-  if (!nodeId) {
-    return;
-  }
-
-  if (typeof projection.activeTabRowIndex !== "number" || !rootDropSurface) {
-    return;
-  }
-
-  const rowHeight = currentRowHeight();
-  const rowTop = projection.activeTabRowIndex * rowHeight;
-  const rowBottom = rowTop + rowHeight;
-  const viewportTop = rootDropSurface.scrollTop;
-  const viewportBottom = viewportTop + rootDropSurface.clientHeight;
-
-  if (rowTop < viewportTop) {
-    rootDropSurface.scrollTop = rowTop;
-    return;
-  }
-
-  if (rowBottom > viewportBottom) {
-    rootDropSurface.scrollTop = Math.max(0, rowBottom - rootDropSurface.clientHeight);
-  }
+  scrollActiveTabIntoView(activeTabScrollTracker, projection, rootDropSurface ?? undefined, currentRowHeight());
 }
 
 function rowForItem(item: HTMLElement): HTMLElement | undefined {
