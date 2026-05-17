@@ -911,7 +911,9 @@ function renderRow(state: OutlineState, rowInfo: VisibleTreeRow, rowHeight: numb
   actions.className = "node-actions";
 
   actions.append(actionButton("Cut", "cut", "X"));
-  actions.append(actionButton("Paste", "paste", "P", !pasteAfterCommand(state, pendingCutNodeId, node.id)));
+  if (pendingCutNodeId) {
+    actions.append(actionButton("Paste", "paste", "P", !pasteAfterCommand(state, pendingCutNodeId, node.id)));
+  }
   actions.append(actionButton(node.status === "live" ? "Close" : "Restore", "close-or-restore"));
 
   if (canFlattenSubtree(state, node)) {
