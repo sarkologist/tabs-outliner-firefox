@@ -19,6 +19,23 @@
   --drop-marker-height: 8px;
   --drop-marker-inside-height: 14px;
   --tree-hover-line-color: color-mix(in srgb, CanvasText 28%, transparent);
+  --active-window-border-color: color-mix(in srgb, Highlight 78%, CanvasText 10%);
+  --active-window-background: color-mix(in srgb, Highlight 12%, transparent);
+  --active-window-title-color: color-mix(in srgb, Highlight 68%, CanvasText 32%);
+  --active-tab-border-color: color-mix(in srgb, Highlight 64%, CanvasText 12%);
+  --active-tab-background: color-mix(in srgb, Highlight 8%, transparent);
+  --active-tab-title-color: color-mix(in srgb, Highlight 72%, CanvasText 28%);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --active-window-border-color: color-mix(in srgb, Highlight 86%, CanvasText 14%);
+    --active-window-background: color-mix(in srgb, Highlight 18%, transparent);
+    --active-window-title-color: color-mix(in srgb, Highlight 78%, CanvasText 22%);
+    --active-tab-border-color: color-mix(in srgb, Highlight 96%, CanvasText 18%);
+    --active-tab-background: color-mix(in srgb, Highlight 28%, transparent);
+    --active-tab-title-color: color-mix(in srgb, Highlight 88%, CanvasText 12%);
+  }
 }
 
 body {
@@ -216,19 +233,39 @@ main.root-drop-target {
 }
 
 .node-window.is-active > .node-row {
-  border-left-color: color-mix(in srgb, Highlight 78%, CanvasText 10%);
-  background: color-mix(in srgb, Highlight 12%, transparent);
+  border-left-color: var(--active-window-border-color);
+  background: var(--active-window-background);
 }
 
 .node-tab.is-active > .node-row {
-  border-left-color: color-mix(in srgb, Highlight 64%, CanvasText 12%);
-  background: color-mix(in srgb, Highlight 8%, transparent);
+  border-left-color: var(--active-tab-border-color);
+  background: var(--active-tab-background);
 }
 
-.node-window.is-active > .node-row .node-title,
-.node-tab.is-active > .node-row .node-title {
-  color: color-mix(in srgb, Highlight 72%, CanvasText 28%);
+.node-window.is-active > .node-row .node-title {
+  color: var(--active-window-title-color);
   font-weight: 700;
+}
+
+.node-tab.is-active > .node-row .node-title {
+  color: var(--active-tab-title-color);
+  font-weight: 700;
+}
+
+@media (forced-colors: active) {
+  .node-window.is-active > .node-row {
+    border-left-color: Highlight;
+  }
+
+  .node-tab.is-active > .node-row {
+    border-left-color: Highlight;
+    color: HighlightText;
+    background: Highlight;
+  }
+
+  .node-tab.is-active > .node-row .node-title {
+    color: HighlightText;
+  }
 }
 
 .is-search-path > .node-row {
