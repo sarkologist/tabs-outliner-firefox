@@ -130,6 +130,20 @@ describe("visible tree projection", () => {
     expect(projection.activeTabRowIndex).toBe(7);
   });
 
+  it("chooses the active tab under the newly active window", () => {
+    const state = outlineState([
+      windowNode("window:old", ["tab:old"], { active: false }),
+      tabNode("tab:old", "window:old", "Old active tab", [], { active: true }),
+      windowNode("window:restored", ["tab:restored"], { active: true }),
+      tabNode("tab:restored", "window:restored", "Restored active tab", [], { active: true })
+    ]);
+
+    const projection = buildVisibleTreeProjection(state, "");
+
+    expect(projection.activeTabNodeId).toBe("tab:restored");
+    expect(projection.activeTabRowIndex).toBe(3);
+  });
+
   it("remembers a hidden active tab without assigning it a visible row", () => {
     const state = wideState(10, { activeTabIndex: 7, collapsedRoot: true });
 

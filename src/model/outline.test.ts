@@ -979,6 +979,120 @@ describe("outline model", () => {
     expect(restored.nodes["tab:1"]?.restoredFromClosed).toBe(true);
   });
 
+  it("marks restored focused windows active and clears the previous active window", () => {
+    const state = closeWindow(bootstrapFromWindows([
+      {
+        id: 10,
+        incognito: false,
+        focused: true,
+        tabs: [
+          {
+            id: 1,
+            windowId: 10,
+            index: 0,
+            active: true,
+            url: "https://active.example/",
+            title: "Active"
+          }
+        ]
+      },
+      {
+        id: 20,
+        incognito: false,
+        focused: false,
+        tabs: [
+          {
+            id: 2,
+            windowId: 20,
+            index: 0,
+            active: true,
+            url: "https://restored.example/",
+            title: "Restored"
+          }
+        ]
+      }
+    ], { now: 1000 }), 20, {
+      now: 2000,
+      sessionId: "session-window-20"
+    });
+
+    const restored = restoreNodes(state, [
+      {
+        nodeId: "window:20",
+        windowId: 30,
+        active: true
+      },
+      {
+        nodeId: "tab:2",
+        tabId: 22,
+        windowId: 30,
+        active: true,
+        url: "https://restored.example/",
+        title: "Restored"
+      }
+    ]);
+
+    expect(restored.nodes["window:10"]?.active).toBe(false);
+    expect(restored.nodes["window:20"]?.active).toBe(true);
+  });
+
+  it("keeps the current active window when restoring an unfocused window", () => {
+    const state = closeWindow(bootstrapFromWindows([
+      {
+        id: 10,
+        incognito: false,
+        focused: true,
+        tabs: [
+          {
+            id: 1,
+            windowId: 10,
+            index: 0,
+            active: true,
+            url: "https://active.example/",
+            title: "Active"
+          }
+        ]
+      },
+      {
+        id: 20,
+        incognito: false,
+        focused: false,
+        tabs: [
+          {
+            id: 2,
+            windowId: 20,
+            index: 0,
+            active: true,
+            url: "https://restored.example/",
+            title: "Restored"
+          }
+        ]
+      }
+    ], { now: 1000 }), 20, {
+      now: 2000,
+      sessionId: "session-window-20"
+    });
+
+    const restored = restoreNodes(state, [
+      {
+        nodeId: "window:20",
+        windowId: 30,
+        active: false
+      },
+      {
+        nodeId: "tab:2",
+        tabId: 22,
+        windowId: 30,
+        active: true,
+        url: "https://restored.example/",
+        title: "Restored"
+      }
+    ]);
+
+    expect(restored.nodes["window:10"]?.active).toBe(true);
+    expect(restored.nodes["window:20"]?.active).toBe(false);
+  });
+
   it("preserves unchanged node identities when restoring a single node", () => {
     const state = largeFlatClosedState(50_000);
 

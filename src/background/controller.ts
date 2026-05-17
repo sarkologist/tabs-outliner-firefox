@@ -1092,6 +1092,11 @@ function restorePatchCandidateNodeIds(state: OutlineState, nodeId: NodeId): Node
       nodeIds.add(plan.windowNodeId);
     }
   }
+  for (const node of Object.values(state.nodes)) {
+    if (node.kind === "window" && node.status === "live" && node.live && "windowId" in node.live) {
+      nodeIds.add(node.id);
+    }
+  }
   return [...nodeIds];
 }
 

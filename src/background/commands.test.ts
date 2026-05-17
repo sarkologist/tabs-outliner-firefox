@@ -382,6 +382,7 @@ describe("background commands", () => {
     });
     expect(adapter.createTab).not.toHaveBeenCalled();
     expect(result.state.nodes["window:20"]?.live).toEqual({ windowId: 42 });
+    expect(result.state.nodes["window:20"]?.active).toBe(true);
     expect(result.state.nodes["tab:1"]?.live).toEqual({ tabId: 200, windowId: 42 });
     expect(result.state.nodes["tab:2"]?.live).toEqual({ tabId: 201, windowId: 42 });
     expect(result.state.nodes["tab:3"]?.live).toEqual({ tabId: 202, windowId: 42 });
@@ -439,6 +440,8 @@ describe("background commands", () => {
     expect(adapter.createWindow).not.toHaveBeenCalled();
     expect(result.state.nodes["window:20"]?.status).toBe("live");
     expect(result.state.nodes["window:20"]?.live).toEqual({ windowId: 42 });
+    expect(result.state.nodes["window:20"]?.active).toBe(true);
+    expect(result.state.nodes["window:10"]?.active).toBe(false);
     expect(result.state.nodes["tab:5"]?.status).toBe("live");
     expect(result.state.nodes["tab:5"]?.live).toEqual({ tabId: 200, windowId: 42 });
   });
@@ -473,6 +476,8 @@ describe("background commands", () => {
     expect(adapter.createTab).not.toHaveBeenCalled();
     expect(result.state.nodes["window:20"]?.status).toBe("live");
     expect(result.state.nodes["window:20"]?.live).toEqual({ windowId: 42 });
+    expect(result.state.nodes["window:20"]?.active).toBe(true);
+    expect(result.state.nodes["window:10"]?.active).toBe(false);
     expect(result.state.nodes["window:20"]?.childIds).toEqual(["tab:5"]);
     expect(result.state.nodes["tab:5"]?.parentId).toBe("window:20");
     expect(result.state.nodes["tab:5"]?.live).toEqual({ tabId: 200, windowId: 42 });

@@ -2181,6 +2181,86 @@ describe("background controller lifecycle", () => {
     expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
   });
 
+  it("broadcasts a restored focused new window and the cleared active window in one compact restore patch", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        },
+        {
+          id: 20,
+          focused: false,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        },
+        {
+          id: 5,
+          windowId: 20,
+          index: 0,
+          active: true,
+          url: "https://restored.example/",
+          title: "Restored"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    await controller.handleMessage({ type: "closeNode", nodeId: "window:20" });
+    await runtime.events.tabRemoved.flush();
+    await runtime.events.windowRemoved.flush();
+
+    runtime.broadcasts.length = 0;
+    vi.mocked(runtime.api.storage.local.set).mockClear();
+
+    const result = await controller.handleMessage({ type: "restoreNode", nodeId: "tab:5" });
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+
+    expectCommandAck(result, true);
+    expect(state.nodes["window:10"]?.active).toBe(false);
+    expect(state.nodes["window:20"]?.active).toBe(true);
+    expect(state.nodes["tab:5"]?.live).toEqual({
+      tabId: 2,
+      windowId: 11
+    });
+    expect(runtime.broadcasts).toHaveLength(1);
+    const restoreBroadcast = runtime.broadcasts.at(-1) as
+      | {
+          type?: string;
+          updatedNodes?: OutlineState["nodes"][string][];
+          closedCountDelta?: number;
+          state?: OutlineState;
+        }
+      | undefined;
+    expect(restoreBroadcast?.type).toBe("nodeStateUpdated");
+    expect(restoreBroadcast?.updatedNodes?.map((node) => node.id).sort()).toEqual([
+      "tab:5",
+      "window:10",
+      "window:20"
+    ]);
+    expect(restoreBroadcast?.updatedNodes?.find((node) => node.id === "window:10")?.active).toBe(false);
+    expect(restoreBroadcast?.updatedNodes?.find((node) => node.id === "window:20")?.active).toBe(true);
+    expect(restoreBroadcast?.updatedNodes?.find((node) => node.id === "tab:5")).toMatchObject({
+      status: "live",
+      active: true,
+      live: { tabId: 2, windowId: 11 }
+    });
+    expect(restoreBroadcast?.closedCountDelta).toBe(-2);
+    expect(restoreBroadcast?.state).toBeUndefined();
+    await controller.flushPendingSaves();
+    expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
+  });
+
   it("absorbs transient restored-tab create and no-op update echoes", async () => {
     const runtime = fakeRuntime(
       [
@@ -3541,7 +3621,9 @@ describe("background controller lifecycle", () => {
       | { type?: string; updatedNodes?: OutlineState["nodes"][string][]; closedCountDelta?: number; state?: OutlineState }
       | undefined;
     expect(restoreBroadcast?.type).toBe("nodeStateUpdated");
-    expect(restoreBroadcast?.updatedNodes?.map((node) => node.id)).toEqual(["window:20"]);
+    expect(restoreBroadcast?.updatedNodes?.map((node) => node.id)).toEqual(["window:20", "window:10"]);
+    expect(restoreBroadcast?.updatedNodes?.find((node) => node.id === "window:20")?.active).toBe(true);
+    expect(restoreBroadcast?.updatedNodes?.find((node) => node.id === "window:10")?.active).toBe(false);
     expect(restoreBroadcast?.closedCountDelta).toBe(-1);
     expect(restoreBroadcast?.state).toBeUndefined();
 

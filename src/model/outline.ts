@@ -813,6 +813,12 @@ export function restoreNodes(state: OutlineState, restoredNodes: RestoredNode[])
 
     if (node.kind === "window") {
       node.live = { windowId: restored.windowId };
+      if (typeof restored.active === "boolean") {
+        node.active = restored.active;
+        if (restored.active) {
+          clearOtherActiveLiveWindows(next, node.id);
+        }
+      }
       normalizeGroupTitle(node);
       continue;
     }
@@ -837,6 +843,18 @@ export function restoreNodes(state: OutlineState, restoredNodes: RestoredNode[])
   }
 
   return next;
+}
+
+function clearOtherActiveLiveWindows(state: OutlineState, activeWindowNodeId: NodeId): void {
+  for (const existing of Object.values(state.nodes)) {
+    if (existing.id === activeWindowNodeId || !isNodeLiveWindow(existing) || existing.active !== true) {
+      continue;
+    }
+
+    const liveWindow = cloneNodeForMutation(state, existing.id);
+    liveWindow.active = false;
+    normalizeGroupTitle(liveWindow);
+  }
 }
 
 export function deleteNode(

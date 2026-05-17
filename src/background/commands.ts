@@ -448,7 +448,8 @@ async function restoreClosedWindowUrlBatch(
     const restored: RestoredNode[] = [
       {
         nodeId: windowNodeId,
-        windowId: createdWindow.id
+        windowId: createdWindow.id,
+        active: createdWindow.focused
       }
     ];
 
@@ -520,7 +521,8 @@ async function restoreSessionIntoClosedWindowDestination(
       return [
         {
           nodeId: plan.windowNodeId,
-          windowId: createdWindow.id
+          windowId: createdWindow.id,
+          active: createdWindow.focused
         },
         restoredTabFromRuntime(plan.nodeId, movedTab)
       ];
@@ -583,7 +585,8 @@ async function createFallbackTab(
       return [
         {
           nodeId: windowNodeId,
-          windowId: createdWindow.id
+          windowId: createdWindow.id,
+          active: createdWindow.focused
         }
       ];
     }
@@ -591,7 +594,8 @@ async function createFallbackTab(
     return [
       {
         nodeId: windowNodeId,
-        windowId: createdWindow.id
+        windowId: createdWindow.id,
+        active: createdWindow.focused
       },
       restoredTabFromRuntime(nodeId, createdTab)
     ];
@@ -713,7 +717,8 @@ function restoredFromSession(
     return [
       {
         nodeId: windowNodeId,
-        windowId: session.window.id
+        windowId: session.window.id,
+        active: session.window.focused
       },
       ...restoredTabsFromWindowSession(state, plan, windowNodeId, session.window.tabs ?? [])
     ];
