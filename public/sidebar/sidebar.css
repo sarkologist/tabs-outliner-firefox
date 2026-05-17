@@ -200,12 +200,15 @@ main.root-drop-target {
 }
 
 .has-hover-tree-line > .node-row::after {
-  top: calc(50% - 0.5px);
+  top: 0;
   left: calc(
     var(--node-row-padding-x) + var(--depth) * var(--node-indent) - var(--node-indent) / 2
   );
   width: calc(var(--node-indent) / 2 + var(--node-icon-size) / 2);
-  height: 1px;
+  height: 50%;
+  border-bottom: 1px solid var(--tree-hover-line-color);
+  border-left: 1px solid var(--tree-hover-line-color);
+  background: transparent;
 }
 
 .node-row:hover {
