@@ -119,6 +119,7 @@ describe("background commands", () => {
       { type: "deleteNode", nodeId: "tab:1" },
       { type: "moveNode", nodeId: "tab:1", parentId: "window:10", index: 0 },
       { type: "moveNodeToNewWindow", nodeId: "tab:1", index: 0 },
+      { type: "wrapNodeInGroup", nodeId: "tab:1" },
       { type: "flattenSubtree", nodeId: "window:10" },
       { type: "toggleCollapsed", nodeId: "tab:1" },
       { type: "renameGroup", nodeId: "window:10", title: "Research" },
@@ -555,6 +556,83 @@ describe("background commands", () => {
     });
 
     expect(result.state).toEqual(flattenSubtreeOneLevel(state, "window:10"));
+    expect(adapter.moveTabs).not.toHaveBeenCalled();
+  });
+
+  it("wraps live tabs by creating a Firefox window group and syncing tab order", async () => {
+    const state: OutlineState = bootstrapFromWindows(runtimeWindows, { now: 1000 });
+    const adapter = fakeAdapter();
+
+    const result = await runCommand(state, adapter, {
+      type: "wrapNodeInGroup",
+      nodeId: "tab:1"
+    });
+
+    expect(adapter.createWindow).toHaveBeenCalledWith({ tabId: 1 });
+    expect(result.state.nodes["window:10"]?.childIds).toEqual(["window:42", "tab:3"]);
+    expect(result.state.nodes["window:42"]).toMatchObject({
+      kind: "window",
+      status: "live",
+      parentId: "window:10",
+      childIds: ["tab:1"],
+      live: { windowId: 42 }
+    });
+    expect(result.state.nodes["tab:1"]?.live).toEqual({ tabId: 1, windowId: 42 });
+    expect(result.state.nodes["tab:2"]?.live).toEqual({ tabId: 2, windowId: 42 });
+    expect(adapter.moveTabs).toHaveBeenCalledWith([1, 2], { windowId: 42, index: 0 });
+  });
+
+  it("wraps closed tabs in closed window groups without touching Firefox", async () => {
+    const state = closeTab(bootstrapFromWindows(runtimeWindows, { now: 1000 }), 1, {
+      now: 2000,
+      sessionId: "session-tab-1"
+    });
+    const adapter = fakeAdapter();
+
+    const result = await runCommand(state, adapter, {
+      type: "wrapNodeInGroup",
+      nodeId: "tab:1"
+    });
+    const wrapperId = result.state.nodes["tab:1"]?.parentId;
+
+    expect(wrapperId).toMatch(/^window:placeholder:/);
+    expect(result.state.nodes[wrapperId!]).toMatchObject({
+      kind: "window",
+      status: "closed",
+      childIds: ["tab:1"]
+    });
+    expect(adapter.focusTab).not.toHaveBeenCalled();
+    expect(adapter.closeTab).not.toHaveBeenCalled();
+    expect(adapter.closeWindow).not.toHaveBeenCalled();
+    expect(adapter.restoreSession).not.toHaveBeenCalled();
+    expect(adapter.createTab).not.toHaveBeenCalled();
+    expect(adapter.createWindow).not.toHaveBeenCalled();
+    expect(adapter.moveTabs).not.toHaveBeenCalled();
+  });
+
+  it("wraps existing window rows in neutral outline groups without touching Firefox", async () => {
+    const state: OutlineState = bootstrapFromWindows(runtimeWindows, { now: 1000 });
+    const adapter = fakeAdapter();
+
+    const result = await runCommand(state, adapter, {
+      type: "wrapNodeInGroup",
+      nodeId: "window:10"
+    });
+    const wrapperId = result.state.nodes["window:10"]?.parentId;
+
+    expect(wrapperId).toMatch(/^group:/);
+    expect(result.state.rootIds).toEqual([wrapperId]);
+    expect(result.state.nodes[wrapperId!]).toMatchObject({
+      kind: "group",
+      status: "neutral",
+      childIds: ["window:10"]
+    });
+    expect(adapter.focusTab).not.toHaveBeenCalled();
+    expect(adapter.closeTab).not.toHaveBeenCalled();
+    expect(adapter.closeWindow).not.toHaveBeenCalled();
+    expect(adapter.restoreSession).not.toHaveBeenCalled();
+    expect(adapter.createTab).not.toHaveBeenCalled();
+    expect(adapter.createWindow).not.toHaveBeenCalled();
     expect(adapter.moveTabs).not.toHaveBeenCalled();
   });
 

@@ -2,7 +2,6 @@ import type {
   Clock,
   NodeId,
   OutlineNode,
-  OutlineNodeKind,
   OutlineState
 } from "./types.js";
 
@@ -12,7 +11,7 @@ const CHROME_TAB_OUTLINER_IMPORT_GROUP_TITLE = "Chrome Tab Outliner import";
 const CHROME_TAB_OUTLINER_NODE_RECORD_TYPE = 2001;
 
 export type PortableTreeNode = {
-  kind: OutlineNodeKind;
+  kind: "window" | "tab";
   title: string;
   url?: string;
   favIconUrl?: string;
@@ -139,7 +138,7 @@ function portableNodesFromNode(node: OutlineNode, children: PortableTreeNode[]):
   const url = node.url ?? node.restore?.url;
   const favIconUrl = node.favIconUrl ?? node.restore?.favIconUrl;
   const portable: PortableTreeNode = {
-    kind: node.kind,
+    kind: node.kind === "group" ? "window" : node.kind,
     title: node.title || node.restore?.title || "Untitled",
     children
   };
@@ -528,7 +527,7 @@ function invalidChromeTabOutlinerTree(message: string): Error {
   return new Error(`Invalid Chrome Tab Outliner tree: ${message}`);
 }
 
-function nextPortableNodeId(kind: OutlineNodeKind, context: AppendContext): NodeId {
+function nextPortableNodeId(kind: PortableTreeNode["kind"], context: AppendContext): NodeId {
   let nodeId: NodeId;
   do {
     context.nextIdIndex += 1;

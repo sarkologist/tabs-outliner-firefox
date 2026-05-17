@@ -25,12 +25,20 @@ export type RestoreScope = {
   requiresConfirmation: boolean;
 };
 
+export type WrapNodeInGroupContext = Clock & {
+  liveWindow?: RuntimeWindow;
+};
+
 export function tabNodeId(tabId: number): NodeId {
   return `tab:${tabId}`;
 }
 
 export function windowNodeId(windowId: number): NodeId {
   return `window:${windowId}`;
+}
+
+export function groupNodeId(now: number): NodeId {
+  return `group:${now}`;
 }
 
 function windowTitle(customTitle?: string): string {
@@ -262,7 +270,7 @@ export function repairState(state: OutlineState): OutlineState {
   );
 
   for (const [nodeId, node] of Object.entries(next.nodes)) {
-    if (node.kind === "window") {
+    if (isGroupLikeNode(node)) {
       normalizeGroupTitle(node);
     }
     node.childIds = [];
@@ -316,7 +324,7 @@ export function repairState(state: OutlineState): OutlineState {
 
 export function renameGroup(state: OutlineState, nodeId: NodeId, title: string, clock: Clock): OutlineState {
   const node = state.nodes[nodeId];
-  if (!node || node.kind !== "window") {
+  if (!node || !isGroupLikeNode(node)) {
     return state;
   }
 
@@ -503,7 +511,7 @@ export function flattenSubtreeOneLevel(state: OutlineState, nodeId: NodeId): Out
     const promotedChildIds = [...originalChild!.childIds];
     flattenedChildIds.push(childId, ...promotedChildIds);
     child.childIds = [];
-    if (child.kind === "window" && promotedChildIds.length > 0) {
+    if (isContainerNode(child) && promotedChildIds.length > 0) {
       emptiedWindowIds.push(child.id);
     }
 
@@ -602,6 +610,79 @@ export function moveTabToNewClosedWindow(
 
   moveExistingNodeUnderNewWindow(next, nodeId, newWindowNodeId, clock.now, clock.rootIndex);
   return repairState(next);
+}
+
+export function wrapNodeInGroup(
+  state: OutlineState,
+  nodeId: NodeId,
+  context: WrapNodeInGroupContext
+): OutlineState {
+  const node = state.nodes[nodeId];
+  if (!node) {
+    return state;
+  }
+
+  if (isNodeLiveTab(node)) {
+    if (!context.liveWindow) {
+      throw new Error("Wrapping a live tab requires a live window destination");
+    }
+    const wrapperId = uniqueNodeId(state, windowNodeId(context.liveWindow.id), context.now);
+    const next = wrapExistingNodeWithContainer(state, nodeId, {
+      id: wrapperId,
+      kind: "window",
+      status: "live",
+      ...(node.parentId ? { parentId: node.parentId } : {}),
+      childIds: [nodeId],
+      title: windowTitle(),
+      active: context.liveWindow.focused,
+      collapsed: false,
+      createdAt: context.now,
+      updatedAt: context.now,
+      live: { windowId: context.liveWindow.id }
+    }, context.now);
+
+    if (next === state) {
+      return state;
+    }
+    if (context.liveWindow.focused) {
+      for (const existing of Object.values(state.nodes)) {
+        if (existing.id !== wrapperId && isNodeLiveWindow(existing)) {
+          const liveWindow = cloneNodeForMutation(next, existing.id);
+          liveWindow.active = false;
+          normalizeGroupTitle(liveWindow);
+        }
+      }
+    }
+    updateLiveTabWindowRefsForSubtree(next, state, nodeId, context.liveWindow.id, context.now);
+    return next;
+  }
+
+  if (node.kind === "tab" && node.status === "closed") {
+    return wrapExistingNodeWithContainer(state, nodeId, {
+      id: uniqueNodeId(state, `window:placeholder:${context.now}`, context.now),
+      kind: "window",
+      status: "closed",
+      ...(node.parentId ? { parentId: node.parentId } : {}),
+      childIds: [nodeId],
+      title: windowTitle(),
+      collapsed: false,
+      createdAt: context.now,
+      updatedAt: context.now,
+      closedAt: context.now
+    }, context.now);
+  }
+
+  return wrapExistingNodeWithContainer(state, nodeId, {
+    id: uniqueNodeId(state, groupNodeId(context.now), context.now),
+    kind: "group",
+    status: "neutral",
+    ...(node.parentId ? { parentId: node.parentId } : {}),
+    childIds: [nodeId],
+    title: windowTitle(),
+    collapsed: false,
+    createdAt: context.now,
+    updatedAt: context.now
+  }, context.now);
 }
 
 export function projectLiveTabs(state: OutlineState, windowIdOrNodeId: number | NodeId): LiveTabProjection[] {
@@ -1101,6 +1182,40 @@ function moveExistingNodeUnderNewWindow(
   requireNode(state, windowNodeId).childIds.push(nodeId);
 }
 
+function wrapExistingNodeWithContainer(
+  state: OutlineState,
+  nodeId: NodeId,
+  container: OutlineNode,
+  now: number
+): OutlineState {
+  const node = state.nodes[nodeId];
+  if (!node || state.nodes[container.id]) {
+    return state;
+  }
+
+  const next = copyStateForNodeTableMutation(state);
+  const siblings = node.parentId
+    ? cloneNodeForMutation(next, node.parentId).childIds
+    : mutableRootIds(next, state);
+  const index = siblings.indexOf(nodeId);
+  if (index < 0) {
+    return state;
+  }
+
+  next.nodes[container.id] = {
+    ...container,
+    childIds: [...container.childIds],
+    ...(container.live ? { live: { ...container.live } } : {}),
+    ...(container.restore ? { restore: { ...container.restore } } : {})
+  };
+  siblings.splice(index, 1, container.id);
+
+  const moving = cloneNodeForMutation(next, nodeId);
+  moving.parentId = container.id;
+  moving.updatedAt = now;
+  return next;
+}
+
 function updateLiveTabWindowRefs(
   state: OutlineState,
   nodeId: NodeId,
@@ -1116,6 +1231,29 @@ function updateLiveTabWindowRefs(
       node.updatedAt = now;
     }
   });
+}
+
+function updateLiveTabWindowRefsForSubtree(
+  state: OutlineState,
+  original: OutlineState,
+  nodeId: NodeId,
+  windowId: number,
+  now: number
+): void {
+  for (const id of collectSubtreeIds(original, nodeId)) {
+    const candidate = state.nodes[id];
+    if (!candidate || !isNodeLiveTab(candidate)) {
+      continue;
+    }
+
+    const tabId = candidate.live.tabId;
+    const liveTab = cloneNodeForMutation(state, id);
+    liveTab.live = {
+      tabId,
+      windowId
+    };
+    liveTab.updatedAt = now;
+  }
 }
 
 function closedSingleTabSourceWindow(state: OutlineState, nodeId: NodeId): OutlineNode | undefined {
@@ -1149,7 +1287,7 @@ function removeEmptyWindowNodes(state: OutlineState): OutlineState {
   const queue: NodeId[] = [];
 
   for (const node of Object.values(state.nodes)) {
-    if (node.kind === "window" && node.childIds.length === 0) {
+    if (isContainerNode(node) && node.childIds.length === 0) {
       queued.add(node.id);
       queue.push(node.id);
     }
@@ -1158,7 +1296,7 @@ function removeEmptyWindowNodes(state: OutlineState): OutlineState {
   while (queue.length > 0) {
     const nodeId = queue.pop()!;
     const node = state.nodes[nodeId];
-    if (!node || node.kind !== "window" || node.childIds.length > 0) {
+    if (!node || !isContainerNode(node) || node.childIds.length > 0) {
       continue;
     }
 
@@ -1167,7 +1305,7 @@ function removeEmptyWindowNodes(state: OutlineState): OutlineState {
       const parent = state.nodes[parentId];
       if (parent) {
         removeId(parent.childIds, nodeId);
-        if (parent.kind === "window" && parent.childIds.length === 0 && !queued.has(parent.id)) {
+        if (isContainerNode(parent) && parent.childIds.length === 0 && !queued.has(parent.id)) {
           queued.add(parent.id);
           queue.push(parent.id);
         }
@@ -1187,7 +1325,7 @@ function removeEmptyWindowNodesFrom(state: OutlineState, startNodeId: NodeId | u
 
   while (currentId) {
     const current = state.nodes[currentId];
-    if (!current || current.kind !== "window" || current.childIds.length > 0) {
+    if (!current || !isContainerNode(current) || current.childIds.length > 0) {
       break;
     }
 
@@ -1353,6 +1491,14 @@ function uniqueNodeId(state: OutlineState, preferredId: NodeId, now: number): No
     candidate = `${preferredId}:${now}:${index}`;
   }
   return candidate;
+}
+
+function isGroupLikeNode(node: OutlineNode): boolean {
+  return node.kind === "window" || node.kind === "group";
+}
+
+function isContainerNode(node: OutlineNode): boolean {
+  return node.kind === "window" || node.kind === "group";
 }
 
 function isNodeLiveTab(node: OutlineNode): node is OutlineNode & { live: { tabId: number; windowId: number } } {

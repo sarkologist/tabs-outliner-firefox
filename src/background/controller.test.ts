@@ -177,9 +177,9 @@ function fakeRuntime(windows: RuntimeWindow[], tabs: RuntimeTab[], options: Fake
         remove: vi.fn(async (windowId: number) => {
           await closeRuntimeWindow(runtime, windowId, { awaitListeners: false });
         }),
-        create: vi.fn(async () => {
-          throw new Error("not implemented");
-        }),
+        create: vi.fn(async (createData: { url?: string | string[]; tabId?: number } = {}) =>
+          createWindowFromBrowser(runtime, createData)
+        ),
         onFocusChanged: windowFocusChanged as never,
         onRemoved: windowRemoved as never
       },
@@ -206,7 +206,9 @@ function fakeRuntime(windows: RuntimeWindow[], tabs: RuntimeTab[], options: Fake
         create: vi.fn(async () => {
           throw new Error("not implemented");
         }),
-        move: vi.fn(async () => []),
+        move: vi.fn(async (tabIds: number | number[], moveProperties: { windowId?: number; index: number }) =>
+          moveTabsFromBrowser(runtime, tabIds, moveProperties)
+        ),
         onActivated: tabActivated as never,
         onCreated: tabCreated as never,
         onUpdated: tabUpdated as never,
@@ -250,6 +252,85 @@ function createTabFromBrowser(
     return;
   }
   return runtime.events.tabCreated.emit(eventTab);
+}
+
+function createWindowFromBrowser(
+  runtime: FakeRuntime,
+  createData: { url?: string | string[]; tabId?: number }
+): RuntimeWindow {
+  const windowId = nextRuntimeWindowId(runtime);
+  runtime.windows = runtime.windows
+    .map((windowInfo) => ({ ...windowInfo, focused: false }))
+    .concat({ id: windowId, focused: true, incognito: false });
+
+  if (typeof createData.tabId === "number") {
+    const movedTabs = moveTabsFromBrowser(runtime, [createData.tabId], { windowId, index: 0 });
+    return {
+      id: windowId,
+      focused: true,
+      incognito: false,
+      tabs: movedTabs.map(copyTab)
+    };
+  }
+
+  const urls = Array.isArray(createData.url) ? createData.url : createData.url ? [createData.url] : [];
+  const firstTabId = nextRuntimeTabId(runtime);
+  const createdTabs = urls.map((url, index) => ({
+    id: firstTabId + index,
+    windowId,
+    index,
+    active: index === 0,
+    url,
+    title: url
+  }));
+  runtime.tabs = [...runtime.tabs, ...createdTabs];
+
+  return {
+    id: windowId,
+    focused: true,
+    incognito: false,
+    tabs: createdTabs.map(copyTab)
+  };
+}
+
+function moveTabsFromBrowser(
+  runtime: FakeRuntime,
+  tabIds: number | number[],
+  moveProperties: { windowId?: number; index: number }
+): RuntimeTab[] {
+  const ids = Array.isArray(tabIds) ? tabIds : [tabIds];
+  const moving = ids.flatMap((tabId) => {
+    const tab = runtime.tabs.find((candidate) => candidate.id === tabId);
+    return tab ? [copyTab(tab)] : [];
+  });
+  if (moving.length === 0) {
+    return [];
+  }
+
+  const targetWindowId = moveProperties.windowId ?? moving[0]!.windowId;
+  const affectedWindowIds = new Set<number>([targetWindowId, ...moving.map((tab) => tab.windowId)]);
+  const movingIds = new Set(moving.map((tab) => tab.id));
+  const remainingTabs = runtime.tabs.filter((tab) => !movingIds.has(tab.id));
+  const targetTabs = remainingTabs
+    .filter((tab) => tab.windowId === targetWindowId)
+    .sort((left, right) => left.index - right.index)
+    .map(copyTab);
+  const boundedIndex = Math.max(0, Math.min(moveProperties.index, targetTabs.length));
+  const movedTabs = moving.map((tab) => ({
+    ...tab,
+    windowId: targetWindowId
+  }));
+  targetTabs.splice(boundedIndex, 0, ...movedTabs);
+
+  runtime.tabs = [
+    ...remainingTabs.filter((tab) => tab.windowId !== targetWindowId).map(copyTab),
+    ...targetTabs
+  ];
+  for (const windowId of affectedWindowIds) {
+    reindexWindowTabs(runtime, windowId);
+  }
+
+  return movedTabs.map((tab) => copyTab(runtime.tabs.find((candidate) => candidate.id === tab.id) ?? tab));
 }
 
 async function updateTabFromBrowser(
@@ -417,6 +498,14 @@ function reindexWindowTabs(runtime: FakeRuntime, windowId: number): void {
             .length
         }
       : tab);
+}
+
+function nextRuntimeWindowId(runtime: FakeRuntime): number {
+  return Math.max(0, ...runtime.windows.map((windowInfo) => windowInfo.id)) + 1;
+}
+
+function nextRuntimeTabId(runtime: FakeRuntime): number {
+  return Math.max(0, ...runtime.tabs.map((tab) => tab.id)) + 1;
 }
 
 function tabMatchesQuery(tab: RuntimeTab, queryInfo: Record<string, unknown>): boolean {
@@ -810,6 +899,71 @@ async function runGeneratedTrace(seed: number, steps: number): Promise<void> {
       break;
     }
   }
+}
+
+async function runGeneratedGroupingTrace(): Promise<void> {
+  const runtime = fakeRuntime(
+    [
+      {
+        id: 10,
+        focused: true,
+        incognito: false
+      },
+      {
+        id: 20,
+        focused: false,
+        incognito: false
+      }
+    ],
+    [
+      {
+        id: 1,
+        windowId: 10,
+        index: 0,
+        active: true,
+        url: "https://one.example/",
+        title: "One"
+      },
+      {
+        id: 2,
+        windowId: 10,
+        index: 1,
+        active: false,
+        openerTabId: 1,
+        url: "https://two.example/",
+        title: "Two"
+      },
+      {
+        id: 3,
+        windowId: 20,
+        index: 0,
+        active: true,
+        url: "https://three.example/",
+        title: "Three"
+      }
+    ]
+  );
+  const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+  const context: GeneratedTraceContext = {
+    runtime,
+    controller,
+    nextTabId: 100,
+    history: [],
+    nativeDeletedNodeIds: new Set(),
+    expectedClosedNodeIds: new Set(),
+    staleTabs: [],
+    rng: seededRandom(1001)
+  };
+
+  await controller.ensureState();
+  await assertGeneratedInvariants(context);
+
+  context.history.push("outliner group tab 1");
+  await controller.handleMessage({ type: "wrapNodeInGroup", nodeId: "tab:1" });
+  await assertGeneratedInvariants(context);
+
+  await activateGeneratedTab(context);
+  await assertGeneratedInvariants(context);
 }
 
 async function assertGeneratedInvariants(context: GeneratedTraceContext): Promise<void> {
@@ -1724,6 +1878,10 @@ describe("background controller lifecycle", () => {
     for (let seed = 1; seed <= 24; seed += 1) {
       await runGeneratedTrace(seed, 32);
     }
+  });
+
+  it("preserves lifecycle invariants across a generated live-tab grouping trace", async () => {
+    await runGeneratedGroupingTrace();
   });
 
   it("clears the previous active tab during partial active updates", async () => {
@@ -3665,6 +3823,96 @@ describe("background controller lifecycle", () => {
     expect(moved.nodes["window:10"]?.childIds).toEqual(["tab:3", "tab:1", "tab:2"]);
     expect(lastBroadcast?.type).toBe("treeStructureUpdated");
     expect(lastBroadcast?.updatedNodes?.map((node) => node.id).sort()).toEqual(["tab:3", "window:10"]);
+    expect(lastBroadcast?.rootIds).toEqual(["window:10"]);
+    expect(lastBroadcast?.state).toBeUndefined();
+    await controller.flushPendingSaves();
+    expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
+  });
+
+  it("broadcasts wrap-in-group commands as tree structure patches", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        },
+        {
+          id: 2,
+          windowId: 10,
+          index: 1,
+          active: false,
+          openerTabId: 1,
+          url: "https://two.example/",
+          title: "Two"
+        },
+        {
+          id: 3,
+          windowId: 10,
+          index: 2,
+          active: false,
+          url: "https://three.example/",
+          title: "Three"
+        }
+      ]
+    );
+    const adapter: BrowserAdapter = {
+      focusTab: vi.fn(async () => undefined),
+      closeTab: vi.fn(async () => undefined),
+      closeTabs: vi.fn(async () => undefined),
+      closeWindow: vi.fn(async () => undefined),
+      restoreSession: vi.fn(async () => ({})),
+      createTab: vi.fn(async () => {
+        throw new Error("not implemented");
+      }),
+      createWindow: vi.fn(async () => ({
+        id: 42,
+        focused: true,
+        incognito: false
+      })),
+      moveTabs: vi.fn(async () => undefined)
+    };
+    const controller = createBackgroundController({ api: runtime.api, adapter, now: () => 1000 });
+    await controller.ensureState();
+    runtime.broadcasts.length = 0;
+    vi.mocked(runtime.api.storage.local.set).mockClear();
+
+    const result = await controller.handleMessage({
+      type: "wrapNodeInGroup",
+      nodeId: "tab:1"
+    });
+    const wrapped = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    const lastBroadcast = runtime.broadcasts.at(-1) as
+      | {
+          type?: string;
+          updatedNodes?: OutlineState["nodes"][string][];
+          rootIds?: string[];
+          state?: OutlineState;
+        }
+      | undefined;
+
+    expect(adapter.createWindow).toHaveBeenCalledWith({ tabId: 1 });
+    expectCommandAck(result, true);
+    expect(wrapped.nodes["window:10"]?.childIds).toEqual(["window:42", "tab:3"]);
+    expect(wrapped.nodes["window:42"]?.childIds).toEqual(["tab:1"]);
+    expect(wrapped.nodes["tab:2"]?.live).toEqual({ tabId: 2, windowId: 42 });
+    expect(lastBroadcast?.type).toBe("treeStructureUpdated");
+    expect(lastBroadcast?.updatedNodes?.map((node) => node.id).sort()).toEqual([
+      "tab:1",
+      "tab:2",
+      "window:10",
+      "window:42"
+    ]);
     expect(lastBroadcast?.rootIds).toEqual(["window:10"]);
     expect(lastBroadcast?.state).toBeUndefined();
     await controller.flushPendingSaves();

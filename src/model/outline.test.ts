@@ -17,7 +17,8 @@ import {
   reconcileWithWindows,
   repairState,
   renameGroup,
-  restoreNodes
+  restoreNodes,
+  wrapNodeInGroup
 } from "./outline.js";
 import type { OutlineState, RuntimeWindow } from "./types.js";
 
@@ -662,6 +663,120 @@ describe("outline model", () => {
         windowNodeId: placeholderId
       }
     ]);
+  });
+
+  it("wraps a live tab in a new live window group at the same outline position", () => {
+    const state = bootstrapFromWindows(windows, { now: 1000 });
+
+    const wrapped = wrapNodeInGroup(state, "tab:1", {
+      now: 3000,
+      liveWindow: {
+        id: 42,
+        focused: true,
+        incognito: false
+      }
+    });
+
+    expect(state.nodes["window:10"]?.childIds).toEqual(["tab:1", "tab:3"]);
+    expect(wrapped.nodes["window:10"]?.childIds).toEqual(["window:42", "tab:3"]);
+    expect(wrapped.nodes["window:42"]).toMatchObject({
+      kind: "window",
+      status: "live",
+      parentId: "window:10",
+      childIds: ["tab:1"],
+      title: "Group",
+      collapsed: false,
+      active: true,
+      live: { windowId: 42 }
+    });
+    expect(wrapped.nodes["tab:1"]?.parentId).toBe("window:42");
+    expect(wrapped.nodes["tab:1"]?.live).toEqual({ tabId: 1, windowId: 42 });
+    expect(wrapped.nodes["tab:2"]?.live).toEqual({ tabId: 2, windowId: 42 });
+    expect(projectLiveTabs(wrapped, "window:42")).toEqual([
+      { tabId: 1, windowId: 42 },
+      { tabId: 2, windowId: 42 }
+    ]);
+  });
+
+  it("wraps a closed tab in a closed window group at the same outline position", () => {
+    const state = closeTab(bootstrapFromWindows(windows, { now: 1000 }), 1, {
+      now: 2000,
+      sessionId: "session-tab-1"
+    });
+
+    const wrapped = wrapNodeInGroup(state, "tab:1", { now: 3000 });
+    const placeholderId = "window:placeholder:3000";
+
+    expect(wrapped.nodes["window:10"]?.childIds).toEqual([placeholderId, "tab:2", "tab:3"]);
+    expect(wrapped.nodes[placeholderId]).toMatchObject({
+      kind: "window",
+      status: "closed",
+      parentId: "window:10",
+      childIds: ["tab:1"],
+      title: "Group",
+      collapsed: false,
+      closedAt: 3000
+    });
+    expect(wrapped.nodes["tab:1"]?.parentId).toBe(placeholderId);
+    expect(planRestore(wrapped, placeholderId)).toEqual([
+      {
+        nodeId: "tab:1",
+        kind: "session",
+        sessionId: "session-tab-1",
+        fallbackUrl: "https://example.com/",
+        windowNodeId: placeholderId
+      }
+    ]);
+  });
+
+  it("wraps a root group/window row in a neutral outline group", () => {
+    const state = bootstrapFromWindows(windows, { now: 1000 });
+
+    const wrapped = wrapNodeInGroup(state, "window:10", { now: 3000 });
+
+    expect(wrapped.rootIds).toEqual(["group:3000"]);
+    expect(wrapped.nodes["group:3000"]).toMatchObject({
+      kind: "group",
+      status: "neutral",
+      childIds: ["window:10"],
+      title: "Group",
+      collapsed: false
+    });
+    expect(wrapped.nodes["group:3000"]?.parentId).toBeUndefined();
+    expect(wrapped.nodes["window:10"]?.parentId).toBe("group:3000");
+  });
+
+  it("wraps existing neutral group rows in another neutral group", () => {
+    const state = wrapNodeInGroup(bootstrapFromWindows(windows, { now: 1000 }), "window:10", { now: 3000 });
+
+    const wrapped = wrapNodeInGroup(state, "group:3000", { now: 4000 });
+
+    expect(wrapped.rootIds).toEqual(["group:4000"]);
+    expect(wrapped.nodes["group:4000"]).toMatchObject({
+      kind: "group",
+      status: "neutral",
+      childIds: ["group:3000"],
+      title: "Group"
+    });
+    expect(wrapped.nodes["group:3000"]?.parentId).toBe("group:4000");
+  });
+
+  it("preserves unrelated node identities when wrapping a node in a group", () => {
+    const state = bootstrapFromWindows(windows, { now: 1000 });
+
+    const wrapped = wrapNodeInGroup(state, "tab:1", {
+      now: 3000,
+      liveWindow: {
+        id: 42,
+        focused: true,
+        incognito: false
+      }
+    });
+
+    expect(wrapped.nodes["window:10"]).not.toBe(state.nodes["window:10"]);
+    expect(wrapped.nodes["tab:1"]).not.toBe(state.nodes["tab:1"]);
+    expect(wrapped.nodes["tab:2"]).not.toBe(state.nodes["tab:2"]);
+    expect(wrapped.nodes["tab:3"]).toBe(state.nodes["tab:3"]);
   });
 
   it("preserves the source window session when wrapping its only closed tab", () => {

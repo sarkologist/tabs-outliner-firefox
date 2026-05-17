@@ -9,7 +9,8 @@ import {
   planRestore,
   projectLiveTabs,
   renameGroup,
-  restoreNodes
+  restoreNodes,
+  wrapNodeInGroup
 } from "../model/outline.js";
 import { appendPortableTree } from "../model/portable-tree.js";
 import type { RestoreScope } from "../model/outline.js";
@@ -48,6 +49,10 @@ export type BackgroundCommand =
       index?: number;
     }
   | {
+      type: "wrapNodeInGroup";
+      nodeId: NodeId;
+    }
+  | {
       type: "flattenSubtree";
       nodeId: NodeId;
     }
@@ -76,6 +81,7 @@ export const BACKGROUND_COMMAND_TYPES = [
   "deleteNode",
   "moveNode",
   "moveNodeToNewWindow",
+  "wrapNodeInGroup",
   "flattenSubtree",
   "toggleCollapsed",
   "renameGroup",
@@ -169,6 +175,9 @@ export async function runCommand(
 
     case "moveNodeToNewWindow":
       return commandResultFromNextState(state, await moveNodeToNewWindow(state, adapter, command.nodeId, command.index));
+
+    case "wrapNodeInGroup":
+      return commandResultFromNextState(state, await wrapNodeInGroupCommand(state, adapter, command.nodeId));
 
     case "flattenSubtree":
       return commandResultFromNextState(state, flattenSubtreeOneLevel(state, command.nodeId));
@@ -651,6 +660,29 @@ async function moveNodeToNewWindow(
   return state;
 }
 
+async function wrapNodeInGroupCommand(
+  state: OutlineState,
+  adapter: BrowserAdapter,
+  nodeId: NodeId
+): Promise<OutlineState> {
+  const node = state.nodes[nodeId];
+  if (!node) {
+    return state;
+  }
+
+  if (isLiveTab(node)) {
+    const createdWindow = await adapter.createWindow({ tabId: node.live.tabId });
+    const next = wrapNodeInGroup(state, nodeId, {
+      now: Date.now(),
+      liveWindow: createdWindow
+    });
+    await syncBrowserOrder(next, adapter);
+    return next;
+  }
+
+  return wrapNodeInGroup(state, nodeId, { now: Date.now() });
+}
+
 function restoredTabFromRuntime(nodeId: NodeId, tab: RuntimeTab): RestoredNode {
   return {
     nodeId,
@@ -804,13 +836,16 @@ function hasAncestor(nodeId: NodeId, ancestorIds: Set<NodeId>, state: OutlineSta
 }
 
 async function syncBrowserOrder(state: OutlineState, adapter: BrowserAdapter): Promise<void> {
-  for (const rootId of state.rootIds) {
-    const root = state.nodes[rootId];
+  const liveWindows = Object.values(state.nodes)
+    .filter((node): node is LiveWindowNode => isLiveWindow(node))
+    .sort((left, right) => firstVisibleIndex(state, left.id) - firstVisibleIndex(state, right.id));
+
+  for (const root of liveWindows) {
     if (!isLiveWindow(root)) {
       continue;
     }
 
-    const projection = projectLiveTabs(state, rootId);
+    const projection = projectLiveTabs(state, root.id);
     const tabIds = projection
       .filter((tab) => tab.windowId === root.live.windowId)
       .map((tab) => tab.tabId);
@@ -819,6 +854,34 @@ async function syncBrowserOrder(state: OutlineState, adapter: BrowserAdapter): P
       await adapter.moveTabs(tabIds, { windowId: root.live.windowId, index: 0 });
     }
   }
+}
+
+function firstVisibleIndex(state: OutlineState, nodeId: NodeId): number {
+  const visited = new Set<NodeId>();
+  const stack = [...state.rootIds].reverse();
+  let index = 0;
+
+  while (stack.length > 0) {
+    const currentId = stack.pop()!;
+    if (visited.has(currentId)) {
+      continue;
+    }
+    visited.add(currentId);
+    if (currentId === nodeId) {
+      return index;
+    }
+    index += 1;
+
+    const node = state.nodes[currentId];
+    if (!node) {
+      continue;
+    }
+    for (let childIndex = node.childIds.length - 1; childIndex >= 0; childIndex -= 1) {
+      stack.push(node.childIds[childIndex]!);
+    }
+  }
+
+  return Number.MAX_SAFE_INTEGER;
 }
 
 function toggleCollapsedInPlace(state: OutlineState, nodeId: NodeId): boolean {

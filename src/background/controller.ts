@@ -389,6 +389,14 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         scheduleStateSave(result.state);
         return commandAck(true);
       }
+      if (message.type === "wrapNodeInGroup") {
+        const update = perfTrace.measure("background.patch.build.treeStructure", { command: message.type }, () =>
+          treeStructureUpdateFromStateChange(current, result.state)
+        );
+        await broadcastTreeStructureUpdate(update);
+        scheduleStateSave(result.state);
+        return commandAck(true);
+      }
       if (message.type === "renameGroup") {
         await persistKnownNodeStateUpdate(current, result.state, message.nodeId);
         return commandAck(true);

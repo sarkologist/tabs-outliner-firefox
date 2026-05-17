@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { bootstrapFromWindows, closeTab, renameGroup } from "./outline.js";
+import { bootstrapFromWindows, closeTab, renameGroup, wrapNodeInGroup } from "./outline.js";
 import {
   PORTABLE_TREE_SCHEMA,
   appendPortableTree,
@@ -100,6 +100,23 @@ describe("portable tree files", () => {
     const exported = exportPortableTree(state, { now: 3000 });
 
     expect(exported.roots[0]?.title).toBe("Research");
+  });
+
+  it("exports neutral outline groups as portable window groups", () => {
+    const state = wrapNodeInGroup(bootstrapFromWindows(runtimeWindows, { now: 1000 }), "window:10", { now: 2000 });
+
+    const exported = exportPortableTree(state, { now: 3000 });
+
+    expect(exported.roots[0]).toMatchObject({
+      kind: "window",
+      title: "Group",
+      children: [
+        {
+          kind: "window",
+          title: "Group"
+        }
+      ]
+    });
   });
 
   it("exports a 50k-node deep tree without recursive stack overflow", () => {

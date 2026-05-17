@@ -23,8 +23,8 @@ export type RuntimeWindow = {
   sessionId?: string;
 };
 
-export type OutlineNodeKind = "window" | "tab";
-export type OutlineNodeStatus = "live" | "closed";
+export type OutlineNodeKind = "window" | "tab" | "group";
+export type OutlineNodeStatus = "live" | "closed" | "neutral";
 
 export type LiveRef =
   | {
