@@ -13,6 +13,7 @@ export type ActiveTabScrollProjection = {
 export type ActiveTabScrollViewport = {
   scrollTop: number;
   clientHeight: number;
+  scrollHeight?: number;
 };
 
 export function createActiveTabScrollTracker(): ActiveTabScrollTracker {
@@ -120,15 +121,16 @@ export function scrollActiveTabIntoView(
 
   const effectiveRowHeight = Number.isFinite(rowHeight) && rowHeight > 0 ? rowHeight : 1;
   const rowTop = projection.activeTabRowIndex * effectiveRowHeight;
-  const rowBottom = rowTop + effectiveRowHeight;
   const viewportTop = viewport.scrollTop;
-  const viewportBottom = viewportTop + viewport.clientHeight;
-  let nextScrollTop = viewportTop;
+  const centeredScrollTop = Math.max(0, rowTop + effectiveRowHeight / 2 - viewport.clientHeight / 2);
+  let nextScrollTop = centeredScrollTop;
+  const scrollHeight = viewport.scrollHeight;
 
-  if (rowTop < viewportTop) {
-    nextScrollTop = rowTop;
-  } else if (rowBottom > viewportBottom) {
-    nextScrollTop = Math.max(0, rowBottom - viewport.clientHeight);
+  if (typeof scrollHeight === "number" && Number.isFinite(scrollHeight)) {
+    if (scrollHeight <= viewport.clientHeight && centeredScrollTop > 0) {
+      return false;
+    }
+    nextScrollTop = Math.min(centeredScrollTop, Math.max(0, scrollHeight - viewport.clientHeight));
   }
 
   if (nextScrollTop === viewportTop) {

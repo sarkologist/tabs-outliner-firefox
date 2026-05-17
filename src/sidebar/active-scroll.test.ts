@@ -81,7 +81,8 @@ describe("observeActiveTabScrollTarget", () => {
     const tracker = createActiveTabScrollTracker();
     const viewport = {
       scrollTop: 0,
-      clientHeight: 60
+      clientHeight: 60,
+      scrollHeight: 500
     };
 
     expect(scrollActiveTabIntoView(tracker, {
@@ -90,20 +91,38 @@ describe("observeActiveTabScrollTarget", () => {
       visibleNodeIdSet: new Set(["tab:20"])
     }, viewport, 10)).toBe(true);
 
-    expect(viewport.scrollTop).toBe(150);
+    expect(viewport.scrollTop).toBe(175);
     expect(scrollActiveTabIntoView(tracker, {
       activeTabNodeId: "tab:20",
       activeTabRowIndex: 20,
       visibleNodeIdSet: new Set(["tab:20"])
     }, viewport, 10)).toBe(false);
-    expect(viewport.scrollTop).toBe(150);
+    expect(viewport.scrollTop).toBe(175);
+  });
+
+  it("clamps centered active-row scroll near the end of the tree", () => {
+    const tracker = createActiveTabScrollTracker();
+    const viewport = {
+      scrollTop: 0,
+      clientHeight: 60,
+      scrollHeight: 500
+    };
+
+    expect(scrollActiveTabIntoView(tracker, {
+      activeTabNodeId: "tab:47",
+      activeTabRowIndex: 47,
+      visibleNodeIdSet: new Set(["tab:47"])
+    }, viewport, 10)).toBe(true);
+
+    expect(viewport.scrollTop).toBe(440);
   });
 
   it("retries visible active rows when the viewport is not measurable yet", () => {
     const tracker = createActiveTabScrollTracker();
     const viewport = {
       scrollTop: 0,
-      clientHeight: 0
+      clientHeight: 0,
+      scrollHeight: 0
     };
 
     expect(scrollActiveTabIntoView(tracker, {
@@ -113,12 +132,13 @@ describe("observeActiveTabScrollTarget", () => {
     }, viewport, 10)).toBe(false);
 
     viewport.clientHeight = 60;
+    viewport.scrollHeight = 500;
     expect(scrollActiveTabIntoView(tracker, {
       activeTabNodeId: "tab:20",
       activeTabRowIndex: 20,
       visibleNodeIdSet: new Set(["tab:20"])
     }, viewport, 10)).toBe(true);
-    expect(viewport.scrollTop).toBe(150);
+    expect(viewport.scrollTop).toBe(175);
   });
 
   it("retries visible active rows when scrollTop is clamped before virtual height is ready", () => {
@@ -131,7 +151,8 @@ describe("observeActiveTabScrollTarget", () => {
       set scrollTop(value: number) {
         clampedScrollTop = Math.min(0, value);
       },
-      clientHeight: 60
+      clientHeight: 60,
+      scrollHeight: 0
     };
 
     expect(scrollActiveTabIntoView(tracker, {
@@ -143,21 +164,23 @@ describe("observeActiveTabScrollTarget", () => {
 
     const readyViewport = {
       scrollTop: 0,
-      clientHeight: 60
+      clientHeight: 60,
+      scrollHeight: 500
     };
     expect(scrollActiveTabIntoView(tracker, {
       activeTabNodeId: "tab:20",
       activeTabRowIndex: 20,
       visibleNodeIdSet: new Set(["tab:20"])
     }, readyViewport, 10)).toBe(true);
-    expect(readyViewport.scrollTop).toBe(150);
+    expect(readyViewport.scrollTop).toBe(175);
   });
 
   it("can be reset so a structurally moved active node scrolls again", () => {
     const tracker = createActiveTabScrollTracker();
     const viewport = {
       scrollTop: 0,
-      clientHeight: 60
+      clientHeight: 60,
+      scrollHeight: 500
     };
 
     expect(scrollActiveTabIntoView(tracker, {
@@ -179,7 +202,7 @@ describe("observeActiveTabScrollTarget", () => {
       activeTabRowIndex: 20,
       visibleNodeIdSet: new Set(["tab:20"])
     }, viewport, 10)).toBe(true);
-    expect(viewport.scrollTop).toBe(150);
+    expect(viewport.scrollTop).toBe(175);
   });
 });
 
