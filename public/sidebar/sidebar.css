@@ -190,7 +190,8 @@ main.root-drop-target {
 }
 
 .is-hover-tree-parent > .node-row::before,
-.has-hover-tree-child-line > .node-row::before {
+.has-hover-tree-child-line > .node-row::before,
+.has-hover-tree-descendant-bridge-line > .node-row::before {
   top: 50%;
   bottom: 0;
   left: calc(

@@ -107,6 +107,7 @@ type HoverLineRowState = {
   hasConnector: boolean;
   hasChildLine: boolean;
   hasBridgeLine: boolean;
+  hasDescendantBridgeLine: boolean;
   verticalLineDepth?: number;
 };
 
@@ -999,6 +1000,7 @@ function applyHoverLineClasses(item: HTMLElement, row: HTMLElement, rowInfo: Vis
   item.classList.toggle("has-hover-tree-line", lineState.hasConnector);
   item.classList.toggle("has-hover-tree-child-line", lineState.hasChildLine);
   item.classList.toggle("has-hover-tree-bridge-line", lineState.hasBridgeLine);
+  item.classList.toggle("has-hover-tree-descendant-bridge-line", lineState.hasDescendantBridgeLine);
 
   if (typeof lineState.verticalLineDepth === "number") {
     row.style.setProperty("--hover-line-depth", String(lineState.verticalLineDepth));
@@ -1014,7 +1016,8 @@ function hoverLineRowState(rowInfo: VisibleTreeRow): HoverLineRowState {
       isParentAnchor: false,
       hasConnector: false,
       hasChildLine: false,
-      hasBridgeLine: false
+      hasBridgeLine: false,
+      hasDescendantBridgeLine: false
     };
   }
 
@@ -1028,8 +1031,17 @@ function hoverLineRowState(rowInfo: VisibleTreeRow): HoverLineRowState {
   const hasConnector = isInHoveredSubtree && rowInfo.depth > 0;
   const scopedSubtreeEndIndex = Math.min(rowInfo.subtreeEndIndex, scope.subtreeEndIndex);
   const hasChildLine = isInHoveredSubtree && scopedSubtreeEndIndex > rowInfo.index + 1;
+  const nextPeerRow =
+    isInHoveredSubtree && rowInfo.subtreeEndIndex < scope.subtreeEndIndex
+      ? currentProjection?.rows[rowInfo.subtreeEndIndex]
+      : undefined;
+  const hasDescendantBridgeLine = Boolean(
+    nextPeerRow && rowInfo.index >= scope.rowIndex && nextPeerRow.depth === rowInfo.depth
+  );
   const verticalLineDepth = hasBridgeLine
     ? scope.targetDepth
+    : hasDescendantBridgeLine
+      ? rowInfo.depth
     : hasChildLine
       ? rowInfo.depth + 1
       : isParentAnchor && scope.targetDepth > 0
@@ -1041,6 +1053,7 @@ function hoverLineRowState(rowInfo: VisibleTreeRow): HoverLineRowState {
     hasConnector,
     hasChildLine,
     hasBridgeLine,
+    hasDescendantBridgeLine,
     ...(typeof verticalLineDepth === "number" ? { verticalLineDepth } : {})
   };
 }
