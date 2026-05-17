@@ -18,6 +18,7 @@
   --node-border-width: 3px;
   --drop-marker-height: 8px;
   --drop-marker-inside-height: 14px;
+  --tree-hover-line-color: color-mix(in srgb, CanvasText 28%, transparent);
 }
 
 body {
@@ -162,6 +163,7 @@ main.root-drop-target {
 }
 
 .node-row {
+  position: relative;
   display: grid;
   grid-template-columns: var(--node-icon-size) minmax(0, 1fr) auto;
   gap: var(--node-row-gap);
@@ -171,6 +173,39 @@ main.root-drop-target {
     calc(var(--node-row-padding-x) + var(--depth) * var(--node-indent));
   border-left: var(--node-border-width) solid transparent;
   line-height: 1.15;
+}
+
+.node-row::before,
+.node-row::after {
+  content: "";
+  position: absolute;
+  z-index: 0;
+  pointer-events: none;
+  background: var(--tree-hover-line-color);
+}
+
+.node-row > * {
+  position: relative;
+  z-index: 1;
+}
+
+.is-hover-tree-parent > .node-row::before,
+.has-hover-tree-child-line > .node-row::before {
+  top: 50%;
+  bottom: 0;
+  left: calc(
+    var(--node-row-padding-x) + var(--hover-line-depth) * var(--node-indent) - var(--node-indent) / 2
+  );
+  width: 1px;
+}
+
+.has-hover-tree-line > .node-row::after {
+  top: calc(50% - 0.5px);
+  left: calc(
+    var(--node-row-padding-x) + var(--depth) * var(--node-indent) - var(--node-indent) / 2
+  );
+  width: calc(var(--node-indent) / 2 + var(--node-icon-size) / 2);
+  height: 1px;
 }
 
 .node-row:hover {

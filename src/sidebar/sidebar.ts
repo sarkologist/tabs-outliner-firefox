@@ -62,6 +62,7 @@ let currentProjection: VisibleTreeProjection | undefined;
 let projectionState: OutlineState | undefined;
 let projectionQuery: string | undefined;
 let scheduledVirtualRender = false;
+let hoverLineScope: HoverLineScope | undefined;
 const activeTabScrollTracker = createActiveTabScrollTracker();
 
 const WHEEL_ZOOM_THRESHOLD_PX = 80;
@@ -92,6 +93,20 @@ declare global {
 type RenameSession = {
   nodeId: NodeId;
   draft: string;
+};
+
+type HoverLineScope = {
+  rowIndex: number;
+  parentRowIndex?: number;
+  subtreeEndIndex: number;
+  targetDepth: number;
+};
+
+type HoverLineRowState = {
+  isParentAnchor: boolean;
+  hasConnector: boolean;
+  hasChildLine: boolean;
+  verticalLineDepth?: number;
 };
 
 const dropMarker = document.createElement("li");
@@ -369,6 +384,8 @@ function registerPortableTreeControls(): void {
 function registerTreeControls(): void {
   tree?.setAttribute("role", "tree");
   tree?.addEventListener("click", handleTreeClick);
+  tree?.addEventListener("pointerover", handleTreePointerOver);
+  tree?.addEventListener("pointerleave", handleTreePointerLeave);
   tree?.addEventListener("dragstart", handleTreeDragStart);
   tree?.addEventListener("dragover", handleTreeDragOver);
   tree?.addEventListener("drop", handleTreeDrop);
@@ -541,6 +558,7 @@ function render(): void {
     const state = currentState;
     if (!state) {
       currentProjection = undefined;
+      hoverLineScope = undefined;
       tree.textContent = "";
       tree.style.height = "0px";
       stateCount.textContent = "Loading";
@@ -555,6 +573,7 @@ function render(): void {
 
     const projection = visibleProjectionFor(state, currentSearchQuery);
     currentProjection = projection;
+    hoverLineScope = undefined;
     updateProjectionChrome(projection);
     scrollToObservedActiveTab(projection);
     renderVirtualRows();
@@ -701,6 +720,7 @@ function applyTreeStructureUpdate(update: TreeStructureUpdate): void {
     refreshProjectionActiveTabTarget(state, currentProjection);
     updateProjectionChrome(currentProjection);
     scrollToObservedActiveTab(currentProjection);
+    clearHoverLineScope();
     scheduleVirtualRender();
   });
 }
@@ -843,6 +863,7 @@ function renderRow(state: OutlineState, rowInfo: VisibleTreeRow, rowHeight: numb
   row.className = "node-row";
   row.draggable = !isRenaming;
   row.style.setProperty("--depth", String(rowInfo.depth));
+  applyHoverLineClasses(item, row, rowInfo);
 
   const twisty = document.createElement("button");
   twisty.className = "icon-button twisty";
@@ -895,6 +916,122 @@ function renderRow(state: OutlineState, rowInfo: VisibleTreeRow, rowHeight: numb
   item.append(row);
 
   return item;
+}
+
+function handleTreePointerOver(event: PointerEvent): void {
+  if (event.pointerType === "touch") {
+    clearHoverLineScope();
+    return;
+  }
+
+  const item = nodeItemForTarget(event.target);
+  if (!item) {
+    clearHoverLineScope();
+    return;
+  }
+
+  const rowIndex = rowIndexForItem(item);
+  const rowInfo = typeof rowIndex === "number" ? currentProjection?.rows[rowIndex] : undefined;
+  if (!rowInfo) {
+    clearHoverLineScope();
+    return;
+  }
+
+  const nextScope: HoverLineScope = {
+    rowIndex: rowInfo.index,
+    subtreeEndIndex: rowInfo.subtreeEndIndex,
+    targetDepth: rowInfo.depth,
+    ...(typeof rowInfo.parentRowIndex === "number" ? { parentRowIndex: rowInfo.parentRowIndex } : {})
+  };
+  setHoverLineScope(nextScope);
+}
+
+function handleTreePointerLeave(event: PointerEvent): void {
+  clearHoverLineScope();
+}
+
+function setHoverLineScope(scope: HoverLineScope): void {
+  if (sameHoverLineScope(hoverLineScope, scope)) {
+    return;
+  }
+
+  hoverLineScope = scope;
+  applyHoverLineScopeToRenderedRows();
+}
+
+function clearHoverLineScope(): void {
+  if (!hoverLineScope) {
+    return;
+  }
+
+  hoverLineScope = undefined;
+  applyHoverLineScopeToRenderedRows();
+}
+
+function sameHoverLineScope(left: HoverLineScope | undefined, right: HoverLineScope): boolean {
+  return (
+    left?.rowIndex === right.rowIndex &&
+    left?.parentRowIndex === right.parentRowIndex &&
+    left?.subtreeEndIndex === right.subtreeEndIndex &&
+    left?.targetDepth === right.targetDepth
+  );
+}
+
+function applyHoverLineScopeToRenderedRows(): void {
+  if (!tree || !currentProjection) {
+    return;
+  }
+
+  for (const item of Array.from(tree.querySelectorAll<HTMLElement>(".node"))) {
+    const row = rowForItem(item);
+    const rowIndex = rowIndexForItem(item);
+    const rowInfo = typeof rowIndex === "number" ? currentProjection.rows[rowIndex] : undefined;
+    if (row && rowInfo) {
+      applyHoverLineClasses(item, row, rowInfo);
+    }
+  }
+}
+
+function applyHoverLineClasses(item: HTMLElement, row: HTMLElement, rowInfo: VisibleTreeRow): void {
+  const lineState = hoverLineRowState(rowInfo);
+  item.classList.toggle("is-hover-tree-parent", lineState.isParentAnchor);
+  item.classList.toggle("has-hover-tree-line", lineState.hasConnector);
+  item.classList.toggle("has-hover-tree-child-line", lineState.hasChildLine);
+
+  if (typeof lineState.verticalLineDepth === "number") {
+    row.style.setProperty("--hover-line-depth", String(lineState.verticalLineDepth));
+  } else {
+    row.style.removeProperty("--hover-line-depth");
+  }
+}
+
+function hoverLineRowState(rowInfo: VisibleTreeRow): HoverLineRowState {
+  const scope = hoverLineScope;
+  if (!scope) {
+    return {
+      isParentAnchor: false,
+      hasConnector: false,
+      hasChildLine: false
+    };
+  }
+
+  const isParentAnchor = scope.parentRowIndex === rowInfo.index;
+  const isInHoveredSubtree = rowInfo.index >= scope.rowIndex && rowInfo.index < scope.subtreeEndIndex;
+  const hasConnector = isInHoveredSubtree && rowInfo.depth > 0;
+  const scopedSubtreeEndIndex = Math.min(rowInfo.subtreeEndIndex, scope.subtreeEndIndex);
+  const hasChildLine = isInHoveredSubtree && scopedSubtreeEndIndex > rowInfo.index + 1;
+  const verticalLineDepth = hasChildLine
+    ? rowInfo.depth + 1
+    : isParentAnchor && scope.targetDepth > 0
+      ? scope.targetDepth
+      : undefined;
+
+  return {
+    isParentAnchor,
+    hasConnector,
+    hasChildLine,
+    ...(typeof verticalLineDepth === "number" ? { verticalLineDepth } : {})
+  };
 }
 
 function handleTreeClick(event: MouseEvent): void {
