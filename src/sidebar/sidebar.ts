@@ -70,6 +70,9 @@ const DIAGNOSTICS_NOTICE_MS = 4000;
 const DIAGNOSTICS_REFRESH_DELAY_MS = 250;
 const PROFILE_STORAGE_KEY = "tabsOutlinerProfileEnabled";
 const VIRTUAL_OVERSCAN_ROWS = 32;
+const GUIDE_TOP = 1;
+const GUIDE_BOTTOM = 2;
+const GUIDE_FULL = GUIDE_TOP | GUIDE_BOTTOM;
 
 type ProfileSnapshot = {
   sidebar: TraceSnapshot;
@@ -102,13 +105,9 @@ type HoverLineScope = {
   targetDepth: number;
 };
 
-type HoverLineRowState = {
-  isParentAnchor: boolean;
-  hasConnector: boolean;
-  hasChildLine: boolean;
-  hasBridgeLine: boolean;
-  hasDescendantBridgeLine: boolean;
-  verticalLineDepth?: number;
+type HoverGuideSegments = {
+  horizontalDepth?: number;
+  verticalSegments: Map<number, number>;
 };
 
 const dropMarker = document.createElement("li");
@@ -865,7 +864,7 @@ function renderRow(state: OutlineState, rowInfo: VisibleTreeRow, rowHeight: numb
   row.className = "node-row";
   row.draggable = !isRenaming;
   row.style.setProperty("--depth", String(rowInfo.depth));
-  applyHoverLineClasses(item, row, rowInfo);
+  applyHoverLineClasses(row, rowInfo);
 
   const twisty = document.createElement("button");
   twisty.className = "icon-button twisty";
@@ -989,73 +988,96 @@ function applyHoverLineScopeToRenderedRows(): void {
     const rowIndex = rowIndexForItem(item);
     const rowInfo = typeof rowIndex === "number" ? currentProjection.rows[rowIndex] : undefined;
     if (row && rowInfo) {
-      applyHoverLineClasses(item, row, rowInfo);
+      applyHoverLineClasses(row, rowInfo);
     }
   }
 }
 
-function applyHoverLineClasses(item: HTMLElement, row: HTMLElement, rowInfo: VisibleTreeRow): void {
-  const lineState = hoverLineRowState(rowInfo);
-  item.classList.toggle("is-hover-tree-parent", lineState.isParentAnchor);
-  item.classList.toggle("has-hover-tree-line", lineState.hasConnector);
-  item.classList.toggle("has-hover-tree-child-line", lineState.hasChildLine);
-  item.classList.toggle("has-hover-tree-bridge-line", lineState.hasBridgeLine);
-  item.classList.toggle("has-hover-tree-descendant-bridge-line", lineState.hasDescendantBridgeLine);
+function applyHoverLineClasses(row: HTMLElement, rowInfo: VisibleTreeRow): void {
+  row.querySelector<HTMLElement>(".tree-guide-layer")?.remove();
 
-  if (typeof lineState.verticalLineDepth === "number") {
-    row.style.setProperty("--hover-line-depth", String(lineState.verticalLineDepth));
-  } else {
-    row.style.removeProperty("--hover-line-depth");
+  const guideSegments = hoverGuideSegmentsForRow(rowInfo);
+  if (guideSegments.verticalSegments.size === 0 && typeof guideSegments.horizontalDepth !== "number") {
+    return;
   }
+
+  const layer = document.createElement("span");
+  layer.className = "tree-guide-layer";
+  layer.setAttribute("aria-hidden", "true");
+
+  for (const [depth, segment] of guideSegments.verticalSegments) {
+    layer.append(renderVerticalGuideLine(depth, segment));
+  }
+
+  if (typeof guideSegments.horizontalDepth === "number") {
+    layer.append(renderHorizontalGuideLine(guideSegments.horizontalDepth));
+  }
+
+  row.prepend(layer);
 }
 
-function hoverLineRowState(rowInfo: VisibleTreeRow): HoverLineRowState {
+function hoverGuideSegmentsForRow(rowInfo: VisibleTreeRow): HoverGuideSegments {
+  const verticalSegments = new Map<number, number>();
+  const projection = currentProjection;
   const scope = hoverLineScope;
-  if (!scope) {
-    return {
-      isParentAnchor: false,
-      hasConnector: false,
-      hasChildLine: false,
-      hasBridgeLine: false,
-      hasDescendantBridgeLine: false
-    };
+  if (!scope || !projection) {
+    return { verticalSegments };
   }
 
-  const isParentAnchor = scope.parentRowIndex === rowInfo.index;
-  const hasBridgeLine =
-    typeof scope.parentRowIndex === "number" &&
-    scope.targetDepth > 0 &&
-    rowInfo.index > scope.parentRowIndex &&
-    rowInfo.index < scope.rowIndex;
-  const isInHoveredSubtree = rowInfo.index >= scope.rowIndex && rowInfo.index < scope.subtreeEndIndex;
-  const hasConnector = isInHoveredSubtree && rowInfo.depth > 0;
-  const scopedSubtreeEndIndex = Math.min(rowInfo.subtreeEndIndex, scope.subtreeEndIndex);
-  const hasChildLine = isInHoveredSubtree && scopedSubtreeEndIndex > rowInfo.index + 1;
-  const nextPeerRow =
-    isInHoveredSubtree && rowInfo.subtreeEndIndex < scope.subtreeEndIndex
-      ? currentProjection?.rows[rowInfo.subtreeEndIndex]
-      : undefined;
-  const hasDescendantBridgeLine = Boolean(
-    nextPeerRow && rowInfo.index >= scope.rowIndex && nextPeerRow.depth === rowInfo.depth
-  );
-  const verticalLineDepth = hasBridgeLine
-    ? scope.targetDepth
-    : hasDescendantBridgeLine
-      ? rowInfo.depth
-    : hasChildLine
-      ? rowInfo.depth + 1
-      : isParentAnchor && scope.targetDepth > 0
-        ? scope.targetDepth
-      : undefined;
+  const firstGuideIndex = scope.parentRowIndex ?? scope.rowIndex;
+  if (rowInfo.index < firstGuideIndex || rowInfo.index >= scope.subtreeEndIndex) {
+    return { verticalSegments };
+  }
+
+  const isConnectorRow = rowInfo.index >= scope.rowIndex && rowInfo.index < scope.subtreeEndIndex && rowInfo.depth > 0;
+  for (let connectorIndex = scope.rowIndex; connectorIndex < scope.subtreeEndIndex; connectorIndex += 1) {
+    const connectorRow = projection.rows[connectorIndex];
+    if (!connectorRow || connectorRow.depth <= 0) {
+      continue;
+    }
+
+    const parentRowIndex = connectorIndex === scope.rowIndex ? scope.parentRowIndex : connectorRow.parentRowIndex;
+    if (typeof parentRowIndex !== "number" || rowInfo.index < parentRowIndex || rowInfo.index > connectorIndex) {
+      continue;
+    }
+
+    const segment =
+      rowInfo.index === parentRowIndex ? GUIDE_BOTTOM : rowInfo.index === connectorIndex ? GUIDE_TOP : GUIDE_FULL;
+    addVerticalGuideSegment(verticalSegments, connectorRow.depth, segment);
+  }
 
   return {
-    isParentAnchor,
-    hasConnector,
-    hasChildLine,
-    hasBridgeLine,
-    hasDescendantBridgeLine,
-    ...(typeof verticalLineDepth === "number" ? { verticalLineDepth } : {})
+    verticalSegments,
+    ...(isConnectorRow ? { horizontalDepth: rowInfo.depth } : {})
   };
+}
+
+function addVerticalGuideSegment(segments: Map<number, number>, depth: number, segment: number): void {
+  segments.set(depth, (segments.get(depth) ?? 0) | segment);
+}
+
+function renderVerticalGuideLine(depth: number, segment: number): HTMLSpanElement {
+  const line = document.createElement("span");
+  line.className = "tree-guide-line tree-guide-vertical";
+  line.style.setProperty("--tree-guide-depth", String(depth));
+  if ((segment & GUIDE_TOP) === GUIDE_TOP) {
+    line.style.top = "0";
+  } else {
+    line.style.top = "50%";
+  }
+  if ((segment & GUIDE_BOTTOM) === GUIDE_BOTTOM) {
+    line.style.bottom = "0";
+  } else {
+    line.style.bottom = "50%";
+  }
+  return line;
+}
+
+function renderHorizontalGuideLine(depth: number): HTMLSpanElement {
+  const line = document.createElement("span");
+  line.className = "tree-guide-line tree-guide-horizontal";
+  line.style.setProperty("--tree-guide-depth", String(depth));
+  return line;
 }
 
 function handleTreeClick(event: MouseEvent): void {

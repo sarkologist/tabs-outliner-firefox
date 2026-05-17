@@ -175,50 +175,37 @@ main.root-drop-target {
   line-height: 1.15;
 }
 
-.node-row::before,
-.node-row::after {
-  content: "";
+.tree-guide-layer {
   position: absolute;
+  inset: 0;
   z-index: 0;
   pointer-events: none;
+}
+
+.tree-guide-line {
+  position: absolute;
   background: var(--tree-hover-line-color);
 }
 
-.node-row > * {
-  position: relative;
-  z-index: 1;
-}
-
-.is-hover-tree-parent > .node-row::before,
-.has-hover-tree-child-line > .node-row::before,
-.has-hover-tree-descendant-bridge-line > .node-row::before {
-  top: 50%;
-  bottom: 0;
+.tree-guide-vertical {
   left: calc(
-    var(--node-row-padding-x) + var(--hover-line-depth) * var(--node-indent) - var(--node-indent) / 2
+    var(--node-row-padding-x) + var(--tree-guide-depth) * var(--node-indent) - var(--node-indent) / 2
   );
   width: 1px;
 }
 
-.has-hover-tree-bridge-line > .node-row::before {
-  top: 0;
-  bottom: 0;
+.tree-guide-horizontal {
+  top: calc(50% - 0.5px);
   left: calc(
-    var(--node-row-padding-x) + var(--hover-line-depth) * var(--node-indent) - var(--node-indent) / 2
-  );
-  width: 1px;
-}
-
-.has-hover-tree-line > .node-row::after {
-  top: 0;
-  left: calc(
-    var(--node-row-padding-x) + var(--depth) * var(--node-indent) - var(--node-indent) / 2
+    var(--node-row-padding-x) + var(--tree-guide-depth) * var(--node-indent) - var(--node-indent) / 2
   );
   width: calc(var(--node-indent) / 2 + var(--node-icon-size) / 2);
-  height: 50%;
-  border-bottom: 1px solid var(--tree-hover-line-color);
-  border-left: 1px solid var(--tree-hover-line-color);
-  background: transparent;
+  height: 1px;
+}
+
+.node-row > :not(.tree-guide-layer) {
+  position: relative;
+  z-index: 1;
 }
 
 .node-row:hover {
