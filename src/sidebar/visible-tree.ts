@@ -36,6 +36,13 @@ export type VirtualRange = {
   totalHeight: number;
 };
 
+export type DeleteTreeStructurePatch = {
+  deletedNodeIds: NodeId[];
+  updatedNodes: OutlineNode[];
+  rootIds: NodeId[];
+  deletedClosedCount: number;
+};
+
 type OutlineOrderEntry = {
   nodeId: NodeId;
   depth: number;
@@ -176,6 +183,54 @@ export function refreshVisibleRowStructure(rows: VisibleTreeRow[]): void {
   }
 }
 
+export function applyDeleteTreeStructurePatchToProjection(
+  state: OutlineState,
+  projection: VisibleTreeProjection,
+  patch: DeleteTreeStructurePatch
+): boolean {
+  if (patch.deletedNodeIds.length === 0) {
+    return false;
+  }
+
+  const deletedNodeIds = new Set(patch.deletedNodeIds);
+  let deletedMatches = 0;
+  for (const nodeId of deletedNodeIds) {
+    projection.visibleNodeIdSet.delete(nodeId);
+    if (projection.matchingNodeIds.delete(nodeId)) {
+      deletedMatches += 1;
+    }
+  }
+
+  projection.rows = projection.rows.filter((row) => !deletedNodeIds.has(row.nodeId) && Boolean(state.nodes[row.nodeId]));
+  projection.nodeCount = Math.max(0, projection.nodeCount - patch.deletedNodeIds.length);
+  projection.closedCount = Math.max(0, projection.closedCount - patch.deletedClosedCount);
+  projection.matchCount = Math.max(0, projection.matchCount - deletedMatches);
+
+  let prunedRows: NodeId[];
+  do {
+    refreshRowsFromState(state, projection);
+    prunedRows = projection.isSearchActive
+      ? projection.rows
+        .filter((row) => row.isSearchPath && row.visibleChildCount === 0)
+        .map((row) => row.nodeId)
+      : [];
+
+    if (prunedRows.length > 0) {
+      const prunedNodeIds = new Set(prunedRows);
+      for (const nodeId of prunedRows) {
+        projection.visibleNodeIdSet.delete(nodeId);
+      }
+      projection.rows = projection.rows.filter((row) => !prunedNodeIds.has(row.nodeId));
+    }
+  } while (prunedRows.length > 0);
+
+  refreshVisibleRowStructure(projection.rows);
+  projection.visibleNodeIds = projection.rows.map((row) => row.nodeId);
+  projection.visibleNodeIdSet = new Set(projection.visibleNodeIds);
+  refreshProjectionActiveTabTargetFromRows(state, projection);
+  return true;
+}
+
 export function calculateVirtualRange(
   rowCount: number,
   scrollTop: number,
@@ -252,4 +307,45 @@ function nodeMatchesQuery(node: OutlineNode, query: string): boolean {
 
 function textMatchesQuery(value: string | undefined, query: string): boolean {
   return Boolean(value?.toLocaleLowerCase().includes(query));
+}
+
+function refreshRowsFromState(state: OutlineState, projection: VisibleTreeProjection): void {
+  for (const row of projection.rows) {
+    const node = state.nodes[row.nodeId];
+    if (!node) {
+      continue;
+    }
+
+    row.childCount = node.childIds.length;
+    row.visibleChildCount = projection.isSearchActive
+      ? node.childIds.filter((childId) => projection.visibleNodeIdSet.has(childId)).length
+      : node.childIds.length;
+    row.expanded = projection.isSearchActive ? row.visibleChildCount > 0 : !node.collapsed;
+    row.searchRevealsCollapsedChildren = Boolean(
+      projection.isSearchActive &&
+        node.collapsed &&
+        row.visibleChildCount > 0
+    );
+    row.isSearchMatch = projection.isSearchActive && projection.matchingNodeIds.has(row.nodeId);
+    row.isSearchPath = projection.isSearchActive && !row.isSearchMatch;
+  }
+}
+
+function refreshProjectionActiveTabTargetFromRows(state: OutlineState, projection: VisibleTreeProjection): void {
+  const currentActiveNodeId = projection.activeTabNodeId;
+  delete projection.activeTabNodeId;
+  delete projection.activeTabRowIndex;
+
+  if (currentActiveNodeId && state.nodes[currentActiveNodeId]) {
+    projection.activeTabNodeId = currentActiveNodeId;
+  }
+
+  for (const row of projection.rows) {
+    const node = state.nodes[row.nodeId];
+    if (node?.kind === "tab" && node.active && row.insideActiveWindow) {
+      projection.activeTabNodeId = node.id;
+      projection.activeTabRowIndex = row.index;
+      return;
+    }
+  }
 }

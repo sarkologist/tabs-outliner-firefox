@@ -20,6 +20,24 @@ describe("createDiagnosticsScheduler", () => {
     expect(clock.timerCount).toBe(0);
   });
 
+  it("resets the pending diagnostics timer when more requests arrive before it runs", async () => {
+    const clock = new FakeClock();
+    const load = vi.fn().mockResolvedValue(undefined);
+    const scheduler = createDiagnosticsScheduler(load, { clock, delayMs: 250 });
+
+    scheduler.request();
+    scheduler.request();
+    scheduler.request();
+
+    expect(load).not.toHaveBeenCalled();
+    expect(clock.clearCount).toBe(2);
+    expect(clock.timerCount).toBe(1);
+
+    await clock.runNext();
+
+    expect(load).toHaveBeenCalledTimes(1);
+  });
+
   it("runs one follow-up load for requests made while diagnostics are in flight", async () => {
     const clock = new FakeClock();
     const firstLoad = deferred();
@@ -63,6 +81,7 @@ describe("createDiagnosticsScheduler", () => {
 class FakeClock implements DiagnosticsSchedulerClock {
   private nextId = 1;
   private readonly timers = new Map<number, () => void>();
+  clearCount = 0;
 
   get timerCount(): number {
     return this.timers.size;
@@ -76,6 +95,7 @@ class FakeClock implements DiagnosticsSchedulerClock {
   }
 
   clearTimeout(timerId: number): void {
+    this.clearCount += 1;
     this.timers.delete(timerId);
   }
 

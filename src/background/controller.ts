@@ -89,7 +89,8 @@ export type BackgroundControllerOptions = {
 };
 
 const RUNTIME_REFRESH_BATCH_DELAY_MS = 0;
-const STATE_SAVE_BATCH_DELAY_MS = 250;
+const STATE_SAVE_QUIET_DELAY_MS = 1000;
+const STATE_SAVE_MAX_DELAY_MS = 5000;
 
 export function createBackgroundController(options: BackgroundControllerOptions): BackgroundController {
   const { api, now = Date.now } = options;
@@ -113,6 +114,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   let queuedRuntimeRefresh: QueuedRuntimeRefresh | undefined;
   let pendingSaveState: OutlineState | undefined;
   let saveTimer: number | undefined;
+  let saveMaxTimer: number | undefined;
   let saveInFlight: Promise<void> | undefined;
   let diagnosticsInFlight: Promise<OutlineDiagnostics> | undefined;
 
@@ -682,23 +684,24 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
   function scheduleStateSave(next: OutlineState): void {
     pendingSaveState = next;
-    if (saveTimer !== undefined || saveInFlight) {
+    if (saveInFlight) {
       return;
     }
 
+    if (saveTimer !== undefined) {
+      globalThis.clearTimeout(saveTimer);
+    }
     saveTimer = globalThis.setTimeout(() => {
-      saveTimer = undefined;
-      void flushPendingSaves().catch((error) => {
-        perfTrace.mark("background.state.save.error", { message: errorText(error) });
-      });
-    }, STATE_SAVE_BATCH_DELAY_MS);
+      void flushScheduledSave();
+    }, STATE_SAVE_QUIET_DELAY_MS);
+
+    saveMaxTimer ??= globalThis.setTimeout(() => {
+      void flushScheduledSave();
+    }, STATE_SAVE_MAX_DELAY_MS);
   }
 
   async function flushPendingSaves(): Promise<void> {
-    if (saveTimer !== undefined) {
-      globalThis.clearTimeout(saveTimer);
-      saveTimer = undefined;
-    }
+    clearSaveTimers();
 
     while (pendingSaveState || saveInFlight) {
       if (saveInFlight) {
@@ -715,6 +718,25 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         saveInFlight = undefined;
       });
       await saveInFlight;
+    }
+  }
+
+  async function flushScheduledSave(): Promise<void> {
+    try {
+      await flushPendingSaves();
+    } catch (error) {
+      perfTrace.mark("background.state.save.error", { message: errorText(error) });
+    }
+  }
+
+  function clearSaveTimers(): void {
+    if (saveTimer !== undefined) {
+      globalThis.clearTimeout(saveTimer);
+      saveTimer = undefined;
+    }
+    if (saveMaxTimer !== undefined) {
+      globalThis.clearTimeout(saveMaxTimer);
+      saveMaxTimer = undefined;
     }
   }
 

@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import type { NodeId, OutlineNode, OutlineState } from "../model/types.js";
-import { buildVisibleTreeProjection, calculateVirtualRange, refreshVisibleRowStructure } from "./visible-tree.js";
+import {
+  applyDeleteTreeStructurePatchToProjection,
+  buildVisibleTreeProjection,
+  calculateVirtualRange,
+  refreshVisibleRowStructure
+} from "./visible-tree.js";
 
 const LARGE_NODE_COUNT = 50_000;
 
@@ -143,6 +148,72 @@ describe("visible tree projection", () => {
     expect(projection.matchCount).toBe(1);
     expect(projection.rows).toHaveLength(LARGE_NODE_COUNT + 1);
     expect(projection.rows.at(-1)?.nodeId).toBe(`tab:${LARGE_NODE_COUNT}`);
+  });
+
+  it("applies active-search delete patches without rebuilding the projection", () => {
+    const state = outlineState([
+      windowNode("window:1", ["tab:parent", "tab:other"], { active: true }),
+      tabNode("tab:parent", "window:1", "Parent", ["tab:child"]),
+      tabNode("tab:child", "tab:parent", "Needle child"),
+      tabNode("tab:other", "window:1", "Other")
+    ]);
+    const projection = buildVisibleTreeProjection(state, "needle");
+    const next = outlineState([
+      windowNode("window:1", ["tab:other"], { active: true }),
+      tabNode("tab:other", "window:1", "Other")
+    ]);
+
+    const applied = applyDeleteTreeStructurePatchToProjection(next, projection, {
+      deletedNodeIds: ["tab:parent", "tab:child"],
+      updatedNodes: [next.nodes["window:1"]!],
+      rootIds: ["window:1"],
+      deletedClosedCount: 0
+    });
+
+    expect(applied).toBe(true);
+    expect(projection.rows).toEqual([]);
+    expect(projection.visibleNodeIds).toEqual([]);
+    expect(projection.visibleNodeIdSet.size).toBe(0);
+    expect(projection.matchingNodeIds.size).toBe(0);
+    expect(projection.nodeCount).toBe(2);
+    expect(projection.closedCount).toBe(0);
+    expect(projection.matchCount).toBe(0);
+  });
+
+  it("keeps matching parents visible when an active-search delete removes their last child", () => {
+    const state = outlineState([
+      windowNode("window:1", ["tab:parent"], { active: true }),
+      tabNode("tab:parent", "window:1", "Needle parent", ["tab:child"]),
+      tabNode("tab:child", "tab:parent", "Needle child")
+    ]);
+    const projection = buildVisibleTreeProjection(state, "needle");
+    const next = outlineState([
+      windowNode("window:1", ["tab:parent"], { active: true }),
+      tabNode("tab:parent", "window:1", "Needle parent")
+    ]);
+
+    const applied = applyDeleteTreeStructurePatchToProjection(next, projection, {
+      deletedNodeIds: ["tab:child"],
+      updatedNodes: [next.nodes["tab:parent"]!],
+      rootIds: ["window:1"],
+      deletedClosedCount: 0
+    });
+
+    expect(applied).toBe(true);
+    expect(rowStructure(projection)).toEqual([
+      { nodeId: "window:1", index: 0, parentRowIndex: undefined, subtreeEndIndex: 2 },
+      { nodeId: "tab:parent", index: 1, parentRowIndex: 0, subtreeEndIndex: 2 }
+    ]);
+    expect(projection.matchingNodeIds).toEqual(new Set(["tab:parent"]));
+    expect(projection.visibleNodeIds).toEqual(["window:1", "tab:parent"]);
+    expect(projection.matchCount).toBe(1);
+    expect(projection.rows[1]).toMatchObject({
+      childCount: 0,
+      visibleChildCount: 0,
+      expanded: false,
+      isSearchMatch: true,
+      isSearchPath: false
+    });
   });
 });
 

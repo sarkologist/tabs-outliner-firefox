@@ -1068,6 +1068,50 @@ describe("background controller lifecycle", () => {
     await flush;
   });
 
+  it("waits for a quiet period before flushing deferred state saves", async () => {
+    vi.useFakeTimers();
+    try {
+      const runtime = fakeRuntime(
+        [
+          {
+            id: 10,
+            focused: true,
+            incognito: false
+          }
+        ],
+        [
+          {
+            id: 1,
+            windowId: 10,
+            index: 0,
+            active: true,
+            url: "https://one.example/",
+            title: "One"
+          }
+        ]
+      );
+      const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+      await controller.ensureState();
+      vi.mocked(runtime.api.storage.local.set).mockClear();
+
+      await controller.handleMessage({ type: "toggleCollapsed", nodeId: "window:10" });
+      await vi.advanceTimersByTimeAsync(999);
+
+      expect(vi.mocked(runtime.api.storage.local.set)).not.toHaveBeenCalled();
+
+      await controller.handleMessage({ type: "toggleCollapsed", nodeId: "window:10" });
+      await vi.advanceTimersByTimeAsync(999);
+
+      expect(vi.mocked(runtime.api.storage.local.set)).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(1);
+
+      expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("coalesces concurrent diagnostics requests across sidebar contexts", async () => {
     const runtime = fakeRuntime(
       [

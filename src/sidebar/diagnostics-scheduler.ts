@@ -47,7 +47,7 @@ export function createDiagnosticsScheduler(
       return;
     }
     if (timerId !== undefined) {
-      return;
+      options.clock.clearTimeout(timerId);
     }
 
     timerId = options.clock.setTimeout(() => {

@@ -21,9 +21,9 @@ import {
 } from "./drop-target.js";
 import { segmentSearchText } from "./search.js";
 import {
+  applyDeleteTreeStructurePatchToProjection,
   buildVisibleTreeProjection,
   calculateVirtualRange,
-  refreshVisibleRowStructure,
   type VisibleTreeProjection,
   type VisibleTreeRow
 } from "./visible-tree.js";
@@ -68,7 +68,7 @@ const activeTabScrollTracker = createActiveTabScrollTracker();
 
 const WHEEL_ZOOM_THRESHOLD_PX = 80;
 const DIAGNOSTICS_NOTICE_MS = 4000;
-const DIAGNOSTICS_REFRESH_DELAY_MS = 250;
+const DIAGNOSTICS_REFRESH_DELAY_MS = 750;
 const PROFILE_STORAGE_KEY = "tabsOutlinerProfileEnabled";
 const VIRTUAL_OVERSCAN_ROWS = 32;
 const GUIDE_TOP = 1;
@@ -690,7 +690,7 @@ function applyTreeStructureUpdate(update: TreeStructureUpdate): void {
       activeRename = undefined;
     }
 
-    if (!currentProjection || currentProjection.isSearchActive) {
+    if (!currentProjection) {
       invalidateProjectionCache();
       render();
       return;
@@ -701,22 +701,10 @@ function applyTreeStructureUpdate(update: TreeStructureUpdate): void {
       return;
     }
 
-    const updatedNodes = new Map(update.updatedNodes.map((node) => [node.id, node]));
-    currentProjection.rows = currentProjection.rows.filter((row) => !deletedNodeIds.has(row.nodeId));
-    refreshVisibleRowStructure(currentProjection.rows);
-    currentProjection.visibleNodeIds = currentProjection.rows.map((row) => row.nodeId);
-    currentProjection.visibleNodeIdSet = new Set(currentProjection.visibleNodeIds);
-    currentProjection.nodeCount = Math.max(0, currentProjection.nodeCount - update.deletedNodeIds.length);
-    currentProjection.closedCount = Math.max(0, currentProjection.closedCount - update.deletedClosedCount);
-
-    for (const row of currentProjection.rows) {
-      const node = updatedNodes.get(row.nodeId);
-      if (!node) {
-        continue;
-      }
-      row.childCount = node.childIds.length;
-      row.visibleChildCount = node.childIds.length;
-      row.expanded = !node.collapsed;
+    if (!applyDeleteTreeStructurePatchToProjection(state, currentProjection, update)) {
+      invalidateProjectionCache();
+      render();
+      return;
     }
 
     refreshProjectionActiveTabTarget(state, currentProjection);
