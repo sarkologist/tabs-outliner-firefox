@@ -72,12 +72,13 @@ function parseArgs(argv) {
   if (![
     "open-tab-storm",
     "new-window-storm",
+    "runtime-refresh-backlog",
     "startup-stored-unchanged",
     "noop-update",
     "metadata-noop-update"
   ].includes(options.scenario)) {
     throw new Error(
-      "--scenario must be open-tab-storm, new-window-storm, startup-stored-unchanged, noop-update, or metadata-noop-update"
+      "--scenario must be open-tab-storm, new-window-storm, runtime-refresh-backlog, startup-stored-unchanged, noop-update, or metadata-noop-update"
     );
   }
 
@@ -194,11 +195,47 @@ function makeRuntime(tabCount) {
   return runtime;
 }
 
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+  return { promise, resolve, reject };
+}
+
+function waitForMacrotask() {
+  return new Promise((resolve) => {
+    setTimeout(resolve, 0);
+  });
+}
+
 function measureJson(runtime, value) {
   const start = performance.now();
   const json = JSON.stringify(value);
   runtime.stringifyMs += performance.now() - start;
   runtime.bytes += json.length;
+}
+
+function makeProfileAdapter({ focusStarted, releaseFocus } = {}) {
+  return {
+    focusTab: async () => {
+      focusStarted?.resolve();
+      await releaseFocus?.promise;
+    },
+    closeTab: async () => undefined,
+    closeTabs: async () => undefined,
+    closeWindow: async () => undefined,
+    restoreSession: async () => ({}),
+    createTab: async () => {
+      throw new Error("not implemented");
+    },
+    createWindow: async () => {
+      throw new Error("not implemented");
+    },
+    moveTabs: async () => undefined
+  };
 }
 
 async function runOpenTabStorm(runtime, updateCount) {
@@ -276,6 +313,44 @@ async function runMetadataNoopUpdate(runtime) {
   await flushAll(runtime);
 }
 
+async function runRuntimeRefreshBacklog(runtime, controller, focusStarted, releaseFocus) {
+  const focusPromise = controller.handleMessage({ type: "focusNode", nodeId: "tab:1" });
+  await focusStarted.promise;
+  const targetTab = runtime.tabs[1] ?? runtime.tabs[0];
+  runtime.tabs = runtime.tabs.map((tab) => tab.windowId === targetTab.windowId
+    ? { ...tab, active: tab.id === targetTab.id }
+    : { ...tab });
+  runtime.events.tabActivated.dispatch({ tabId: targetTab.id, windowId: targetTab.windowId, previousTabId: 1 });
+  await waitForMacrotask();
+
+  const commandStart = performance.now();
+  const renamePromise = controller.handleMessage({
+    type: "renameGroup",
+    nodeId: "window:10",
+    title: "Backlog command"
+  });
+  releaseFocus.resolve();
+  await renamePromise;
+  const commandWaitMs = performance.now() - commandStart;
+  await focusPromise;
+  await runtime.events.tabActivated.flush();
+
+  const trace = await controller.handleMessage({ type: "getPerformanceTrace" });
+  const mutationStarts = Array.isArray(trace?.entries)
+    ? trace.entries.filter((entry) => entry.name === "background.mutation.start")
+    : [];
+  const runtimeRefreshJobs = mutationStarts.filter((entry) => entry.detail?.reason === "refreshFromRuntime").length;
+  const lowRuntimeRefreshJobs = mutationStarts.filter((entry) =>
+    entry.detail?.reason === "refreshFromRuntime" && entry.detail?.priority === "low"
+  ).length;
+
+  return {
+    commandWaitMs: Math.round(commandWaitMs),
+    runtimeRefreshJobs,
+    lowRuntimeRefreshJobs
+  };
+}
+
 async function flushAll(runtime) {
   await Promise.all([
     runtime.events.tabCreated.flush(),
@@ -292,7 +367,15 @@ async function profile({ tabs, updates, scenario }) {
   }
 
   const runtime = makeRuntime(tabs);
-  const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+  const focusStarted = deferred();
+  const releaseFocus = deferred();
+  const controller = createBackgroundController({
+    api: runtime.api,
+    now: () => 1000,
+    ...(scenario === "runtime-refresh-backlog"
+      ? { adapter: makeProfileAdapter({ focusStarted, releaseFocus }) }
+      : {})
+  });
   const initStart = performance.now();
   await controller.ensureState();
   const initMs = performance.now() - initStart;
@@ -302,11 +385,19 @@ async function profile({ tabs, updates, scenario }) {
   runtime.stringifyMs = 0;
   runtime.bytes = 0;
 
+  if (scenario === "runtime-refresh-backlog") {
+    await controller.handleMessage({ type: "setPerformanceTraceEnabled", enabled: true });
+    await controller.handleMessage({ type: "clearPerformanceTrace" });
+  }
+
   const start = performance.now();
+  let scenarioMetrics = {};
   if (scenario === "open-tab-storm") {
     await runOpenTabStorm(runtime, updates);
   } else if (scenario === "new-window-storm") {
     await runNewWindowStorm(runtime, updates);
+  } else if (scenario === "runtime-refresh-backlog") {
+    scenarioMetrics = await runRuntimeRefreshBacklog(runtime, controller, focusStarted, releaseFocus);
   } else if (scenario === "metadata-noop-update") {
     await runMetadataNoopUpdate(runtime);
   } else {
@@ -330,7 +421,8 @@ async function profile({ tabs, updates, scenario }) {
     broadcasts: runtime.broadcasts,
     stringifyMs: Math.round(runtime.stringifyMs),
     mbStringified: Math.round(runtime.bytes / 1024 / 1024),
-    nodes: Object.keys(state.nodes).length
+    nodes: Object.keys(state.nodes).length,
+    ...scenarioMetrics
   };
 }
 

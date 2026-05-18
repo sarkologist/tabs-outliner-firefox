@@ -84,6 +84,28 @@ type FakeRuntimeOptions = {
   browserLikeTabRemove?: TabCloseEventOrder;
 };
 
+type Deferred<T = void> = {
+  promise: Promise<T>;
+  resolve: (value: T | PromiseLike<T>) => void;
+  reject: (error: unknown) => void;
+};
+
+function deferred<T = void>(): Deferred<T> {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+  return { promise, resolve, reject };
+}
+
+function waitForMacrotask(): Promise<void> {
+  return new Promise((resolve) => {
+    globalThis.setTimeout(resolve, 0);
+  });
+}
+
 function fakeRuntime(windows: RuntimeWindow[], tabs: RuntimeTab[], options: FakeRuntimeOptions = {}): FakeRuntime {
   const tabCreated = new FakeEvent<[RuntimeTab]>();
   const tabActivated = new FakeEvent<[{ tabId: number; windowId: number; previousTabId?: number }]>();
@@ -571,6 +593,25 @@ function copyWindow(windowInfo: RuntimeWindow): RuntimeWindow {
 function copyWindowWithoutTabs(windowInfo: RuntimeWindow): RuntimeWindow {
   const { tabs: _tabs, ...rest } = windowInfo;
   return { ...rest };
+}
+
+function runtimeWindowSnapshot(
+  runtime: FakeRuntime,
+  getInfo: { populate?: boolean; windowTypes?: string[] } = {}
+): RuntimeWindow[] {
+  return runtime.windows.map((windowInfo) => {
+    const windowCopy = copyWindowWithoutTabs(windowInfo);
+    return {
+      ...windowCopy,
+      ...(getInfo.populate
+        ? {
+            tabs: runtime.tabs
+              .filter((tab) => tab.windowId === windowInfo.id)
+              .map(copyTab)
+          }
+        : {})
+    };
+  });
 }
 
 function isPromiseLike(value: unknown): value is Promise<unknown> {
@@ -1568,6 +1609,270 @@ describe("background controller lifecycle", () => {
     expect(state.nodes["tab:4"]?.url).toBe("https://opened.example/");
     expect(state.nodes["tab:4"]?.active).toBe(true);
     expect(state.nodes["tab:1"]?.active).toBe(false);
+  });
+
+  it("waits for pending runtime refreshes before returning state", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+
+    createTabFromBrowser(runtime, {
+      id: 2,
+      windowId: 10,
+      index: 1,
+      active: true,
+      url: "about:newtab",
+      title: "New Tab"
+    }, { awaitListeners: false });
+
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+
+    expect(state.nodes["tab:2"]?.status).toBe("live");
+    expect(state.nodes["tab:2"]?.active).toBe(true);
+  });
+
+  it("runs user commands before queued runtime refreshes", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        },
+        {
+          id: 2,
+          windowId: 10,
+          index: 1,
+          active: false,
+          url: "https://two.example/",
+          title: "Two"
+        }
+      ]
+    );
+    const focusStarted = deferred();
+    const releaseFocus = deferred();
+    const adapter: BrowserAdapter = {
+      focusTab: vi.fn(async () => {
+        focusStarted.resolve();
+        await releaseFocus.promise;
+      }),
+      closeTab: vi.fn(async () => undefined),
+      closeTabs: vi.fn(async () => undefined),
+      closeWindow: vi.fn(async () => undefined),
+      restoreSession: vi.fn(async () => ({})),
+      createTab: vi.fn(async () => {
+        throw new Error("not implemented");
+      }),
+      createWindow: vi.fn(async () => {
+        throw new Error("not implemented");
+      }),
+      moveTabs: vi.fn(async () => undefined)
+    };
+    const controller = createBackgroundController({ api: runtime.api, adapter, now: () => 1000 });
+    await controller.ensureState();
+    runtime.broadcasts.length = 0;
+
+    const focusPromise = controller.handleMessage({ type: "focusNode", nodeId: "tab:2" });
+    await focusStarted.promise;
+    await updateTabFromBrowser(runtime, 1, { title: "One from runtime" }, { awaitListeners: false });
+    await waitForMacrotask();
+    const renamePromise = controller.handleMessage({
+      type: "renameGroup",
+      nodeId: "window:10",
+      title: "Renamed"
+    });
+    await waitForMacrotask();
+
+    expect(runtime.broadcasts).toHaveLength(0);
+    releaseFocus.resolve();
+    await Promise.all([
+      focusPromise,
+      renamePromise,
+      runtime.events.tabUpdated.flush()
+    ]);
+
+    const broadcasts = stateBroadcasts(runtime.broadcasts) as Array<{
+      type?: string;
+      updatedNodes?: Array<{ id: string }>;
+    }>;
+    const windowRenameIndex = broadcasts.findIndex((message) =>
+      message.updatedNodes?.some((node) => node.id === "window:10")
+    );
+    const runtimeUpdateIndex = broadcasts.findIndex((message) =>
+      message.updatedNodes?.some((node) => node.id === "tab:1")
+    );
+    expect(windowRenameIndex).toBeGreaterThanOrEqual(0);
+    expect(runtimeUpdateIndex).toBeGreaterThanOrEqual(0);
+    expect(windowRenameIndex).toBeLessThan(runtimeUpdateIndex);
+  });
+
+  it("merges runtime events into one trailing refresh while a refresh is in flight", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        },
+        {
+          id: 2,
+          windowId: 10,
+          index: 1,
+          active: false,
+          url: "https://two.example/",
+          title: "Two"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    runtime.broadcasts.length = 0;
+
+    const firstSnapshotStarted = deferred();
+    const releaseFirstSnapshot = deferred();
+    const originalGetAll = vi.mocked(runtime.api.windows.getAll).getMockImplementation();
+    let getAllCalls = 0;
+    vi.mocked(runtime.api.windows.getAll).mockImplementation(async (getInfo = {}) => {
+      getAllCalls += 1;
+      if (getAllCalls === 1) {
+        const snapshot = runtimeWindowSnapshot(runtime, getInfo);
+        firstSnapshotStarted.resolve();
+        await releaseFirstSnapshot.promise;
+        return snapshot;
+      }
+      return originalGetAll?.(getInfo) ?? [];
+    });
+
+    runtime.tabs = runtime.tabs.map((tab) => tab.windowId === 10
+      ? { ...tab, active: tab.id === 2 }
+      : copyTab(tab));
+    runtime.events.tabActivated.dispatch({ tabId: 2, windowId: 10, previousTabId: 1 });
+    await firstSnapshotStarted.promise;
+    await updateTabFromBrowser(runtime, 2, { title: "Two loading" }, { awaitListeners: false });
+    await waitForMacrotask();
+    await updateTabFromBrowser(runtime, 2, {
+      title: "Two final",
+      url: "https://two.example/final"
+    }, { awaitListeners: false });
+
+    releaseFirstSnapshot.resolve();
+    await Promise.all([
+      runtime.events.tabActivated.flush(),
+      runtime.events.tabUpdated.flush()
+    ]);
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+
+    expect(state.nodes["tab:2"]?.title).toBe("Two final");
+    expect(state.nodes["tab:2"]?.url).toBe("https://two.example/final");
+    expect(stateBroadcasts(runtime.broadcasts).length).toBeLessThanOrEqual(2);
+  });
+
+  it("does not interrupt an in-flight runtime refresh with user commands", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        },
+        {
+          id: 2,
+          windowId: 10,
+          index: 1,
+          active: false,
+          url: "https://two.example/",
+          title: "Two"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    runtime.broadcasts.length = 0;
+
+    const firstSnapshotStarted = deferred();
+    const releaseFirstSnapshot = deferred();
+    const originalGetAll = vi.mocked(runtime.api.windows.getAll).getMockImplementation();
+    let getAllCalls = 0;
+    vi.mocked(runtime.api.windows.getAll).mockImplementation(async (getInfo = {}) => {
+      getAllCalls += 1;
+      if (getAllCalls === 1) {
+        const snapshot = runtimeWindowSnapshot(runtime, getInfo);
+        firstSnapshotStarted.resolve();
+        await releaseFirstSnapshot.promise;
+        return snapshot;
+      }
+      return originalGetAll?.(getInfo) ?? [];
+    });
+
+    runtime.tabs = runtime.tabs.map((tab) => tab.windowId === 10
+      ? { ...tab, active: tab.id === 2 }
+      : copyTab(tab));
+    runtime.events.tabActivated.dispatch({ tabId: 2, windowId: 10, previousTabId: 1 });
+    await firstSnapshotStarted.promise;
+    const renamePromise = controller.handleMessage({
+      type: "renameGroup",
+      nodeId: "window:10",
+      title: "Renamed while refresh runs"
+    });
+    await waitForMacrotask();
+
+    expect(runtime.broadcasts).toHaveLength(0);
+    releaseFirstSnapshot.resolve();
+    await Promise.all([
+      runtime.events.tabActivated.flush(),
+      renamePromise
+    ]);
+    expect(runtime.broadcasts.some((message) =>
+      (message as { type?: string; updatedNodes?: Array<{ id: string }> }).updatedNodes?.some((node) => node.id === "window:10")
+    )).toBe(true);
   });
 
   it("handles browser-created same-window tab bursts without a full runtime snapshot", async () => {

@@ -47,13 +47,28 @@ type RefreshOptions = {
   closeMissing?: boolean;
 };
 
-type QueuedRuntimeRefresh = {
+type RuntimeRefreshCaller = {
+  resolve: (changed: boolean) => void;
+  reject: (error: unknown) => void;
+};
+
+type PendingRuntimeRefresh = {
   eventTabsById: Map<number, RuntimeTab>;
   activationByWindowId: Map<number, number>;
   closeMissing: boolean;
-  resolve: (changed: boolean) => void;
+  callers: RuntimeRefreshCaller[];
+  scheduled: boolean;
+};
+
+type MutationPriority = "high" | "low";
+
+type ScheduledMutation<T = unknown> = {
+  operation: () => Promise<T>;
+  detail: TraceDetail | undefined;
+  priority: MutationPriority;
+  queuedAt: number;
+  resolve: (value: T) => void;
   reject: (error: unknown) => void;
-  promise: Promise<boolean>;
 };
 
 type ReconciledStateChange = {
@@ -143,7 +158,11 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   let state: OutlineState | undefined;
   let historyState: HistoryState | undefined;
   let runtimeIndex: RuntimeStateIndex | undefined;
-  let mutationQueue: Promise<void> = Promise.resolve();
+  const highPriorityMutations: ScheduledMutation[] = [];
+  const lowPriorityMutations: ScheduledMutation[] = [];
+  const schedulerIdleResolvers: Array<() => void> = [];
+  let schedulerRunning = false;
+  let schedulerDrainQueued = false;
   const outlinerClosingTabIds = new Set<number>();
   const outlinerClosingWindowIds = new Set<number>();
   const deleteOwnedClosingTabIds = new Set<number>();
@@ -156,7 +175,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   const stateCache = createStateCache(initializeState);
   let sessionChangedQueued = false;
   let commandCloseSessionEchoesToSkip = 0;
-  let queuedRuntimeRefresh: QueuedRuntimeRefresh | undefined;
+  let pendingRuntimeRefresh: PendingRuntimeRefresh | undefined;
   let pendingSaveState: OutlineState | undefined;
   let pendingSaveHistory: HistoryState | undefined;
   let saveTimer: number | undefined;
@@ -354,7 +373,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     }
 
     if (message.type === "getState") {
-      await mutationQueue;
+      await waitForSchedulerIdle();
       return ensureState();
     }
 
@@ -675,59 +694,77 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
   function queueRuntimeRefresh(eventTabs: RuntimeTab[] = [], options: RefreshOptions = {}): Promise<boolean> {
     const requestedCloseMissing = options.closeMissing ?? eventTabs.length === 0;
-    if (!queuedRuntimeRefresh) {
-      let resolveRefresh!: (changed: boolean) => void;
-      let rejectRefresh!: (error: unknown) => void;
-      const promise = new Promise<boolean>((resolve, reject) => {
-        resolveRefresh = resolve;
-        rejectRefresh = reject;
-      });
-      queuedRuntimeRefresh = {
-        eventTabsById: new Map(),
-        activationByWindowId: new Map(),
-        closeMissing: requestedCloseMissing,
-        resolve: resolveRefresh,
-        reject: rejectRefresh,
-        promise
-      };
-      globalThis.setTimeout(() => {
-        void flushQueuedRuntimeRefresh();
-      }, RUNTIME_REFRESH_BATCH_DELAY_MS);
-    } else {
-      queuedRuntimeRefresh.closeMissing ||= requestedCloseMissing;
-    }
+    const pending = pendingRuntimeRefresh ?? createPendingRuntimeRefresh();
+    pendingRuntimeRefresh = pending;
+    pending.closeMissing ||= requestedCloseMissing;
 
     for (const tab of eventTabs) {
-      queuedRuntimeRefresh.eventTabsById.set(tab.id, tab);
+      pending.eventTabsById.set(tab.id, tab);
     }
 
-    return queuedRuntimeRefresh.promise;
+    const promise = addRuntimeRefreshCaller(pending);
+    schedulePendingRuntimeRefresh(pending);
+    return promise;
   }
 
   function queueRuntimeActivation(activeInfo: { tabId: number; windowId: number }): Promise<boolean> {
-    const queuedTab = queuedRuntimeRefresh?.eventTabsById.get(activeInfo.tabId);
-    if (queuedRuntimeRefresh && queuedTab) {
-      queuedRuntimeRefresh.activationByWindowId.set(activeInfo.windowId, activeInfo.tabId);
-      queuedRuntimeRefresh.eventTabsById.set(activeInfo.tabId, {
-        ...queuedTab,
+    const pendingTab = pendingRuntimeRefresh?.eventTabsById.get(activeInfo.tabId);
+    if (pendingRuntimeRefresh && pendingTab) {
+      pendingRuntimeRefresh.activationByWindowId.set(activeInfo.windowId, activeInfo.tabId);
+      pendingRuntimeRefresh.eventTabsById.set(activeInfo.tabId, {
+        ...pendingTab,
         active: true
       });
-      return queuedRuntimeRefresh.promise;
+      const promise = addRuntimeRefreshCaller(pendingRuntimeRefresh);
+      schedulePendingRuntimeRefresh(pendingRuntimeRefresh);
+      return promise;
     }
 
     return queueRuntimeRefresh();
   }
 
-  async function flushQueuedRuntimeRefresh(): Promise<void> {
-    const queued = queuedRuntimeRefresh;
-    if (!queued) {
+  function createPendingRuntimeRefresh(): PendingRuntimeRefresh {
+    return {
+      eventTabsById: new Map(),
+      activationByWindowId: new Map(),
+      closeMissing: false,
+      callers: [],
+      scheduled: false
+    };
+  }
+
+  function addRuntimeRefreshCaller(pending: PendingRuntimeRefresh): Promise<boolean> {
+    return new Promise<boolean>((resolve, reject) => {
+      pending.callers.push({ resolve, reject });
+    });
+  }
+
+  function schedulePendingRuntimeRefresh(pending: PendingRuntimeRefresh): void {
+    if (pending.scheduled) {
       return;
     }
-    queuedRuntimeRefresh = undefined;
+    pending.scheduled = true;
+    globalThis.setTimeout(() => {
+      void enqueueMutation(() => runPendingRuntimeRefresh(pending), {
+        reason: "refreshFromRuntime",
+        source: "runtimeEvent"
+      }, { priority: "low" }).catch(() => undefined);
+    }, RUNTIME_REFRESH_BATCH_DELAY_MS);
+  }
+
+  async function runPendingRuntimeRefresh(pending: PendingRuntimeRefresh): Promise<boolean> {
+    if (pendingRuntimeRefresh !== pending) {
+      for (const caller of pending.callers) {
+        caller.resolve(false);
+      }
+      return false;
+    }
+
+    pendingRuntimeRefresh = undefined;
 
     try {
-      const eventTabs = [...queued.eventTabsById.values()].map((tab) => {
-        const activatedTabId = queued.activationByWindowId.get(tab.windowId);
+      const eventTabs = [...pending.eventTabsById.values()].map((tab) => {
+        const activatedTabId = pending.activationByWindowId.get(tab.windowId);
         return typeof activatedTabId === "number"
           ? {
               ...tab,
@@ -735,11 +772,18 @@ export function createBackgroundController(options: BackgroundControllerOptions)
             }
           : tab;
       });
-      queued.resolve(await refreshFromRuntime(eventTabs, {
-        closeMissing: queued.closeMissing
-      }));
+      const changed = await refreshFromRuntimeNow(eventTabs, {
+        closeMissing: pending.closeMissing
+      });
+      for (const caller of pending.callers) {
+        caller.resolve(changed);
+      }
+      return changed;
     } catch (error) {
-      queued.reject(error);
+      for (const caller of pending.callers) {
+        caller.reject(error);
+      }
+      throw error;
     }
   }
 
@@ -1056,25 +1100,111 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     }, { reason: "commandWindowFocus" });
   }
 
-  function enqueueMutation<T>(operation: () => Promise<T>, detail?: TraceDetail): Promise<T> {
+  function enqueueMutation<T>(
+    operation: () => Promise<T>,
+    detail?: TraceDetail,
+    options: { priority?: MutationPriority } = {}
+  ): Promise<T> {
+    const priority = options.priority ?? "high";
     const queuedAt = performance.now();
     const mutationDetail = detail ? { ...detail } : undefined;
-    const runOperation = async (): Promise<T> => {
-      perfTrace.mark("background.mutation.start", {
-        ...mutationDetail,
-        waitMs: Math.round(performance.now() - queuedAt)
-      });
-      return perfTrace.measureAsync("background.mutation.run", mutationDetail, operation);
+    const promise = new Promise<T>((resolve, reject) => {
+      const mutation: ScheduledMutation<T> = {
+        operation,
+        detail: mutationDetail,
+        priority,
+        queuedAt,
+        resolve,
+        reject
+      };
+      if (priority === "high") {
+        highPriorityMutations.push(mutation as ScheduledMutation);
+      } else {
+        lowPriorityMutations.push(mutation as ScheduledMutation);
+      }
+      scheduleMutationDrain();
+    });
+    return promise;
+  }
+
+  function scheduleMutationDrain(): void {
+    if (schedulerRunning || schedulerDrainQueued) {
+      return;
+    }
+    schedulerDrainQueued = true;
+    void Promise.resolve().then(runScheduledMutations);
+  }
+
+  async function runScheduledMutations(): Promise<void> {
+    if (schedulerRunning) {
+      schedulerDrainQueued = false;
+      return;
+    }
+
+    schedulerDrainQueued = false;
+    schedulerRunning = true;
+    try {
+      for (;;) {
+        const mutation = highPriorityMutations.shift() ?? lowPriorityMutations.shift();
+        if (!mutation) {
+          return;
+        }
+        await runScheduledMutation(mutation);
+      }
+    } finally {
+      schedulerRunning = false;
+      if (highPriorityMutations.length > 0 || lowPriorityMutations.length > 0) {
+        scheduleMutationDrain();
+      } else {
+        notifySchedulerIdleIfNeeded();
+      }
+    }
+  }
+
+  async function runScheduledMutation(mutation: ScheduledMutation): Promise<void> {
+    const mutationDetail = {
+      ...mutation.detail,
+      priority: mutation.priority
     };
-    const queued = mutationQueue.then(
-      () => runOperation(),
-      () => runOperation()
-    );
-    mutationQueue = queued.then(
-      () => undefined,
-      () => undefined
-    );
-    return queued;
+    perfTrace.mark("background.mutation.start", {
+      ...mutationDetail,
+      waitMs: Math.round(performance.now() - mutation.queuedAt)
+    });
+    try {
+      const result = await perfTrace.measureAsync("background.mutation.run", mutationDetail, mutation.operation);
+      mutation.resolve(result);
+    } catch (error) {
+      mutation.reject(error);
+    }
+  }
+
+  function waitForSchedulerIdle(): Promise<void> {
+    if (isSchedulerIdle()) {
+      return Promise.resolve();
+    }
+
+    return new Promise((resolve) => {
+      schedulerIdleResolvers.push(resolve);
+    });
+  }
+
+  function isSchedulerIdle(): boolean {
+    return !schedulerRunning &&
+      !schedulerDrainQueued &&
+      highPriorityMutations.length === 0 &&
+      lowPriorityMutations.length === 0 &&
+      !pendingRuntimeRefresh;
+  }
+
+  function notifySchedulerIdleIfNeeded(): void {
+    if (!isSchedulerIdle() || schedulerIdleResolvers.length === 0) {
+      return;
+    }
+
+    const resolvers = schedulerIdleResolvers.splice(0);
+    for (const resolve of resolvers) {
+      resolve();
+    }
   }
 
   async function persistAndBroadcast(): Promise<void> {
@@ -1304,7 +1434,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
   function getDiagnosticsCoalesced(): Promise<OutlineDiagnostics> {
     diagnosticsInFlight ??= perfTrace.measureAsync("background.diagnostics", async () => {
-      await mutationQueue;
+      await waitForSchedulerIdle();
       return computeDiagnostics(await ensureState(), await getNormalWindows(api));
     }).finally(() => {
       diagnosticsInFlight = undefined;

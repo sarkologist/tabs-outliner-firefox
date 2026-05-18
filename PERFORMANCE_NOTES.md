@@ -444,3 +444,17 @@ Use these as starting targets, not hard promises:
   - `open-tab-storm`: 55ms perceived / 102ms with save flush before; 27ms perceived / 70ms with save flush after.
   - `new-window-storm`: 51ms perceived / 96ms with save flush before; 27ms perceived / 66ms with save flush after.
 - Verification: `pnpm test -- src/background/controller.test.ts`, `pnpm run build`, and the profile commands above passed.
+
+### 2026-05-18: Priority Scheduler for Runtime Refresh Backlogs
+
+- Replaced the single FIFO background mutation chain with a small priority scheduler. Commands, undo/redo, removals, session cleanup, and command-owned focus echoes are high priority; browser-created runtime refreshes are low priority and merge into one pending accumulator.
+- Runtime events now continue merging while a refresh is queued or running. In-flight work is not interrupted; new events become one trailing low-priority refresh.
+- Added controller coverage for `getState` waiting on pending runtime work, commands overtaking queued runtime refreshes, no preemption of in-flight refreshes, and in-flight runtime event trains collapsing to one trailing refresh.
+- Added `runtime-refresh-backlog` to `pnpm profile:tab-open`; it measures a command issued behind a queued runtime refresh on a 50k-tab tree.
+  - Before scheduler rework, using the new profile script against commit `c3a2756`: `commandWaitMs` 553ms, `runtimeRefreshJobs` 1, `lowRuntimeRefreshJobs` 0.
+  - After scheduler rework: `commandWaitMs` 48ms, `runtimeRefreshJobs` 1, `lowRuntimeRefreshJobs` 1.
+- Cross-check profiles after `pnpm run build`:
+  - `pnpm profile:tab-open -- --tabs 50000 --updates 5 --scenario open-tab-storm`: 26ms perceived, 67ms with save flush.
+  - `pnpm profile:tab-open -- --tabs 50000 --updates 5 --scenario new-window-storm`: 26ms perceived, 63ms with save flush.
+  - `pnpm profile:tab-open -- --tabs 50000 --scenario startup-stored-unchanged`: 149ms startup, 0 saves, 0 broadcasts.
+- Verification: `pnpm test`, `pnpm run build`, and the profile commands above passed.
