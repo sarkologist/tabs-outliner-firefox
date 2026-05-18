@@ -5,7 +5,14 @@ import { isBackgroundCommand, planLiveSubtreeClose, runCommand, syncBrowserOrder
 import type { BackgroundCommand, CommandAck } from "./commands.js";
 import { getNormalWindow, getNormalWindows, getNormalWindowsIncludingTabs } from "./runtime-snapshot.js";
 import { createStateCache } from "./state-cache.js";
-import { loadHistory, loadState, saveStateAndHistory } from "./storage.js";
+import {
+  initialTreeSnapshotForState,
+  loadHistory,
+  loadInitialTreeSnapshot,
+  loadState,
+  saveStateAndHistory
+} from "./storage.js";
+import type { InitialTreeSnapshot } from "./storage.js";
 import {
   applyOutlineDelta,
   cloneOutlineNode,
@@ -106,6 +113,10 @@ type PerformanceTraceMessage =
   | {
       type: "getPerformanceTrace";
     };
+
+type InitialTreeSnapshotMessage = {
+  type: "getInitialTreeSnapshot";
+};
 
 type StateDiffMode = "identity" | "material";
 
@@ -356,6 +367,10 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       return getDiagnosticsCoalesced();
     }
 
+    if (isInitialTreeSnapshotMessage(message)) {
+      return initialTreeSnapshot();
+    }
+
     if (!isBackgroundCommand(message)) {
       return undefined;
     }
@@ -496,6 +511,33 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
   async function ensureState(): Promise<OutlineState> {
     return stateCache.get();
+  }
+
+  async function initialTreeSnapshot(): Promise<InitialTreeSnapshot | undefined> {
+    if (state) {
+      return initialTreeSnapshotFromFullState(state, false);
+    }
+
+    const snapshot = await perfTrace.measureAsync("background.state.initialSnapshot.load", () =>
+      loadInitialTreeSnapshot(api)
+    );
+    if (snapshot) {
+      globalThis.setTimeout(() => {
+        void ensureState().catch((error) => {
+          perfTrace.mark("background.state.hydration.error", { message: errorText(error) });
+        });
+      }, 0);
+      return snapshot;
+    }
+
+    return undefined;
+  }
+
+  function initialTreeSnapshotFromFullState(source: OutlineState, hydrating: boolean): InitialTreeSnapshot {
+    return initialTreeSnapshotForState(source, {
+      hydrating,
+      rowLimit: Object.keys(source.nodes).length
+    });
   }
 
   async function ensureHistory(): Promise<HistoryState> {
@@ -2351,6 +2393,14 @@ function isDiagnosticsRequest(message: unknown): message is { type: "getDiagnost
     message &&
       typeof message === "object" &&
       (message as { type?: unknown }).type === "getDiagnostics"
+  );
+}
+
+function isInitialTreeSnapshotMessage(message: unknown): message is InitialTreeSnapshotMessage {
+  return Boolean(
+    message &&
+      typeof message === "object" &&
+      (message as { type?: unknown }).type === "getInitialTreeSnapshot"
   );
 }
 

@@ -458,3 +458,17 @@ Use these as starting targets, not hard promises:
   - `pnpm profile:tab-open -- --tabs 50000 --updates 5 --scenario new-window-storm`: 26ms perceived, 63ms with save flush.
   - `pnpm profile:tab-open -- --tabs 50000 --scenario startup-stored-unchanged`: 149ms startup, 0 saves, 0 broadcasts.
 - Verification: `pnpm test`, `pnpm run build`, and the profile commands above passed.
+
+### 2026-05-18: Staged First Load Snapshot
+
+- Added a storage v2 read model alongside the existing v1 `outlineState`: a manifest, node chunks, order pages, and a bounded initial visible snapshot. V1 remains readable and is still written for compatibility; v2 is used for the first-paint snapshot and as a fallback full-state source.
+- Added `getInitialTreeSnapshot` so the sidebar can render an initial non-search visible slice without waiting for full state hydration. The sidebar then hydrates full `getState` in the background and gates search/export/import/drag/drop and mutating row actions until hydration completes; live-tab focus remains allowed.
+- The v2 manifest carries the first 256 visible rows and only the node records needed for those rows. A 50k-tab first snapshot therefore avoids reading/deserializing the full tree on the first sidebar paint.
+- Profile results after `pnpm run build`:
+  - `pnpm profile:tab-open -- --tabs 50000 --scenario startup-initial-snapshot`: 1ms initial snapshot, 256 rows/nodes, 152ms full hydration, 0 saves/broadcasts.
+  - `pnpm profile:tab-open -- --tabs 50000 --scenario startup-stored-unchanged`: 214ms full startup, 0 saves/broadcasts.
+  - `pnpm profile:tab-open -- --tabs 50000 --updates 5 --scenario open-tab-storm`: 23ms perceived, 164ms with save flush, 26 MB stringified.
+  - `pnpm profile:tab-open -- --tabs 50000 --updates 5 --scenario new-window-storm`: 23ms perceived, 196ms with save flush, 26 MB stringified.
+  - `pnpm profile:tab-open -- --tabs 50000 --scenario runtime-refresh-backlog`: `commandWaitMs` 43ms, 691ms with save flush.
+- Tradeoff: deferred save flush is heavier because this compatibility rollout writes v1 plus v2 read-model data. The visible path remains fast, but a follow-up should switch to dirty v2 chunk writes and eventually stop rewriting v1 on every save once rollback compatibility is settled.
+- Verification: `pnpm test`, `pnpm run build`, `pnpm exec playwright test --reporter=list`, and the profile commands above passed.

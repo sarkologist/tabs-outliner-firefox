@@ -2,6 +2,7 @@ import type { BackgroundCommand } from "../background/commands.js";
 import type { CommandAck } from "../background/commands.js";
 import type { OutlineDiagnostics } from "../background/diagnostics.js";
 import type { HistoryStatus } from "../background/history.js";
+import type { InitialTreeSnapshot } from "../background/storage.js";
 import { analyzeRestoreScope, type RestoreScope } from "../model/outline.js";
 import { exportPortableTree } from "../model/portable-tree.js";
 import type { NodeId, OutlineNode, OutlineState } from "../model/types.js";
@@ -71,6 +72,7 @@ const searchInput = document.querySelector<HTMLInputElement>("#search");
 const clearSearch = document.querySelector<HTMLButtonElement>("#clear-search");
 
 let currentState: OutlineState | undefined;
+let hydratingFullState = false;
 let draggedNodeId: NodeId | undefined;
 let activeDropPlacement: DropPlacement | undefined;
 let currentZoom = DEFAULT_ZOOM;
@@ -108,6 +110,10 @@ type SidebarProfileConsole = {
   clear(): Promise<void>;
   snapshot(): Promise<ProfileSnapshot>;
   summary(): Promise<TraceSummaryRow[]>;
+};
+
+type InitialTreeSnapshotRequest = {
+  type: "getInitialTreeSnapshot";
 };
 
 declare global {
@@ -162,6 +168,7 @@ registerPortableTreeControls();
 registerHistoryControls();
 registerTreeControls();
 registerVirtualViewport();
+updateHydrationControls();
 void loadZoomPreference();
 void loadState();
 void loadHistoryStatus();
@@ -171,6 +178,9 @@ refresh?.addEventListener("click", () => {
 });
 
 rootDropSurface?.addEventListener("dragover", (event) => {
+  if (hydratingFullState) {
+    return;
+  }
   if (isNodeRowEvent(event) || isNestedTreeEvent(event)) {
     if (activeDropPlacement) {
       event.preventDefault();
@@ -197,6 +207,10 @@ rootDropSurface?.addEventListener("dragleave", (event) => {
 });
 
 rootDropSurface?.addEventListener("drop", (event) => {
+  if (hydratingFullState) {
+    clearDragState();
+    return;
+  }
   if (isNodeRowEvent(event)) {
     return;
   }
@@ -243,12 +257,61 @@ browser.runtime.onMessage.addListener((message) => {
 
 async function loadState(): Promise<void> {
   try {
-    currentState = (await sendCommand({ type: "getState" })) as OutlineState;
-    render();
-    scheduleDiagnosticsLoad();
+    const initial = await sendCommand({ type: "getInitialTreeSnapshot" });
+    if (isInitialTreeSnapshot(initial)) {
+      applyInitialTreeSnapshot(initial);
+      if (initial.hydrating) {
+        void hydrateFullState();
+      } else {
+        scheduleDiagnosticsLoad();
+      }
+      return;
+    }
+
+    await hydrateFullState();
   } catch (error) {
     showLoadError(error);
   }
+}
+
+async function hydrateFullState(): Promise<void> {
+  try {
+    hydratingFullState = true;
+    updateHydrationControls();
+    currentState = (await sendCommand({ type: "getState" })) as OutlineState;
+    hydratingFullState = false;
+    updateHydrationControls();
+    render();
+    scheduleDiagnosticsLoad();
+  } catch (error) {
+    hydratingFullState = false;
+    updateHydrationControls();
+    showLoadError(error);
+  }
+}
+
+function applyInitialTreeSnapshot(snapshot: InitialTreeSnapshot): void {
+  currentState = snapshot.state;
+  hydratingFullState = snapshot.hydrating;
+  currentProjection = projectionFromInitialTreeSnapshot(snapshot);
+  projectionState = currentState;
+  projectionQuery = "";
+  currentCutRowRange = undefined;
+  hoverLineScope = undefined;
+  updateHydrationControls();
+  renderInitialTreeSnapshot();
+}
+
+function renderInitialTreeSnapshot(): void {
+  perfTrace.measure("sidebar.render.initialSnapshot", () => {
+    if (!tree || !stateCount || !currentProjection) {
+      return;
+    }
+    clearDropPreview();
+    updateProjectionChrome(currentProjection);
+    scrollToObservedActiveTab(currentProjection);
+    renderVirtualRows();
+  });
 }
 
 async function loadZoomPreference(): Promise<void> {
@@ -375,16 +438,25 @@ function registerZoomShortcuts(): void {
 
 function registerSearchControls(): void {
   searchInput?.addEventListener("input", () => {
+    if (hydratingFullState) {
+      return;
+    }
     currentSearchQuery = searchInput.value;
     updateSearchControls();
     render();
   });
 
   clearSearch?.addEventListener("click", () => {
+    if (hydratingFullState) {
+      return;
+    }
     clearSearchQuery({ focus: true });
   });
 
   document.addEventListener("keydown", (event) => {
+    if (hydratingFullState && (isSearchFocusEvent(event) || event.key === "Escape")) {
+      return;
+    }
     if (isSearchFocusEvent(event)) {
       event.preventDefault();
       event.stopPropagation();
@@ -405,10 +477,18 @@ function registerSearchControls(): void {
 
 function registerPortableTreeControls(): void {
   exportTree?.addEventListener("click", () => {
+    if (hydratingFullState) {
+      showDiagnosticsNotice("Export unavailable until the full tree loads", { error: true });
+      return;
+    }
     exportCurrentTree();
   });
 
   importTree?.addEventListener("click", () => {
+    if (hydratingFullState) {
+      showDiagnosticsNotice("Import unavailable until the full tree loads", { error: true });
+      return;
+    }
     importTreeFile?.click();
   });
 
@@ -708,11 +788,48 @@ function updateProjectionChrome(projection: VisibleTreeProjection): void {
     stateCount.textContent = projection.isSearchActive
       ? `${projection.matchCount} ${pluralize(projection.matchCount, "match")} / ${projection.nodeCount} items`
       : `${projection.nodeCount} items / ${projection.closedCount} saved`;
+    stateCount.title = hydratingFullState ? "Loading full tree..." : "";
   }
 
   if (empty) {
     empty.textContent = projection.isSearchActive ? "No matching tabs." : "No tabs captured yet.";
     empty.hidden = projection.isSearchActive ? projection.rows.length > 0 : projection.nodeCount > 0;
+  }
+}
+
+function projectionFromInitialTreeSnapshot(snapshot: InitialTreeSnapshot): VisibleTreeProjection {
+  return {
+    query: snapshot.projection.query,
+    isSearchActive: snapshot.projection.isSearchActive,
+    rows: snapshot.projection.rows.map((row) => ({ ...row })),
+    matchingNodeIds: new Set(snapshot.projection.matchingNodeIds),
+    visibleNodeIds: [...snapshot.projection.visibleNodeIds],
+    visibleNodeIdSet: new Set(snapshot.projection.visibleNodeIds),
+    ...(snapshot.projection.activeTabNodeId ? { activeTabNodeId: snapshot.projection.activeTabNodeId } : {}),
+    ...(typeof snapshot.projection.activeTabRowIndex === "number"
+      ? { activeTabRowIndex: snapshot.projection.activeTabRowIndex }
+      : {}),
+    nodeCount: snapshot.projection.nodeCount,
+    closedCount: snapshot.projection.closedCount,
+    matchCount: snapshot.projection.matchCount
+  };
+}
+
+function updateHydrationControls(): void {
+  if (searchInput) {
+    searchInput.disabled = hydratingFullState;
+    searchInput.title = hydratingFullState ? "Search is available after the full tree loads" : "";
+  }
+  if (clearSearch) {
+    clearSearch.disabled = hydratingFullState;
+  }
+  if (exportTree) {
+    exportTree.disabled = hydratingFullState;
+    exportTree.title = hydratingFullState ? "Export is available after the full tree loads" : "Export tree";
+  }
+  if (importTree) {
+    importTree.disabled = hydratingFullState;
+    importTree.title = hydratingFullState ? "Import is available after the full tree loads" : "Import tree";
   }
 }
 
@@ -1417,6 +1534,10 @@ function handleTreeClick(event: MouseEvent): void {
     nodeKind: node.kind,
     nodeStatus: node.status
   });
+  if (hydratingFullState && !(action === "focus-or-restore" && node.status === "live")) {
+    showDiagnosticsNotice("Tree is still loading", { error: true });
+    return;
+  }
   if (action === "toggle") {
     void runAndRender({ type: "toggleCollapsed", nodeId: node.id });
     return;
@@ -1475,7 +1596,7 @@ function handleTreeDragStart(event: DragEvent): void {
   const row = rowForEventTarget(event.target);
   const item = row ? nodeItemForTarget(row) : undefined;
   const nodeId = item?.dataset.nodeId;
-  if (!state || !row || !nodeId || activeRename?.nodeId === nodeId) {
+  if (hydratingFullState || !state || !row || !nodeId || activeRename?.nodeId === nodeId) {
     event.preventDefault();
     return;
   }
@@ -1491,7 +1612,7 @@ function handleTreeDragOver(event: DragEvent): void {
   const row = rowForEventTarget(event.target);
   const item = row ? nodeItemForTarget(row) : undefined;
   const targetId = item?.dataset.nodeId;
-  if (!state || !row || !targetId) {
+  if (hydratingFullState || !state || !row || !targetId) {
     return;
   }
 
@@ -1512,7 +1633,7 @@ function handleTreeDrop(event: DragEvent): void {
   const item = row ? nodeItemForTarget(row) : undefined;
   const targetId = item?.dataset.nodeId;
   const sourceId = draggedNodeId;
-  if (!state || !row || !targetId || !sourceId) {
+  if (hydratingFullState || !state || !row || !targetId || !sourceId) {
     clearDragState();
     return;
   }
@@ -1956,6 +2077,10 @@ function removeDropPreviewElements(): void {
 }
 
 async function runAndRender(command: BackgroundCommand): Promise<boolean> {
+  if (hydratingFullState && command.type !== "focusNode" && command.type !== "getState") {
+    showDiagnosticsNotice("Tree is still loading", { error: true });
+    return false;
+  }
   try {
     const response = await sendCommand(command);
     if (isCommandAck(response)) {
@@ -1974,7 +2099,7 @@ async function runAndRender(command: BackgroundCommand): Promise<boolean> {
   }
 }
 
-async function sendCommand(command: BackgroundCommand): Promise<unknown> {
+async function sendCommand(command: BackgroundCommand | InitialTreeSnapshotRequest): Promise<unknown> {
   const response = await perfTrace.measureAsync("sidebar.command", { command: command.type }, () =>
     browser.runtime.sendMessage(command)
   );
@@ -2075,6 +2200,23 @@ function isStateUpdated(message: unknown): message is { type: "stateUpdated"; st
       typeof message === "object" &&
       (message as { type?: unknown }).type === "stateUpdated" &&
       (message as { state?: unknown }).state
+  );
+}
+
+function isInitialTreeSnapshot(message: unknown): message is InitialTreeSnapshot {
+  return Boolean(
+    message &&
+      typeof message === "object" &&
+      (message as { type?: unknown }).type === "initialTreeSnapshot" &&
+      (message as { version?: unknown }).version === 1 &&
+      isOutlineState((message as { state?: unknown }).state) &&
+      typeof (message as { revision?: unknown }).revision === "number" &&
+      typeof (message as { hydrating?: unknown }).hydrating === "boolean" &&
+      (message as { projection?: unknown }).projection &&
+      typeof (message as { projection?: unknown }).projection === "object" &&
+      Array.isArray((message as { projection: { rows?: unknown } }).projection.rows) &&
+      Array.isArray((message as { projection: { visibleNodeIds?: unknown } }).projection.visibleNodeIds) &&
+      Array.isArray((message as { projection: { matchingNodeIds?: unknown } }).projection.matchingNodeIds)
   );
 }
 

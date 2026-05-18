@@ -73,12 +73,13 @@ function parseArgs(argv) {
     "open-tab-storm",
     "new-window-storm",
     "runtime-refresh-backlog",
+    "startup-initial-snapshot",
     "startup-stored-unchanged",
     "noop-update",
     "metadata-noop-update"
   ].includes(options.scenario)) {
     throw new Error(
-      "--scenario must be open-tab-storm, new-window-storm, runtime-refresh-backlog, startup-stored-unchanged, noop-update, or metadata-noop-update"
+      "--scenario must be open-tab-storm, new-window-storm, runtime-refresh-backlog, startup-initial-snapshot, startup-stored-unchanged, noop-update, or metadata-noop-update"
     );
   }
 
@@ -365,6 +366,9 @@ async function profile({ tabs, updates, scenario }) {
   if (scenario === "startup-stored-unchanged") {
     return profileStartupStoredUnchanged({ tabs });
   }
+  if (scenario === "startup-initial-snapshot") {
+    return profileStartupInitialSnapshot({ tabs });
+  }
 
   const runtime = makeRuntime(tabs);
   const focusStarted = deferred();
@@ -457,6 +461,46 @@ async function profileStartupStoredUnchanged({ tabs }) {
     broadcasts: runtime.broadcasts,
     stringifyMs: Math.round(runtime.stringifyMs),
     mbStringified: Math.round(runtime.bytes / 1024 / 1024),
+    nodes: Object.keys(state.nodes).length
+  };
+}
+
+async function profileStartupInitialSnapshot({ tabs }) {
+  const runtime = makeRuntime(tabs);
+  const firstController = createBackgroundController({ api: runtime.api, now: () => 1000 });
+  await firstController.ensureState();
+  await firstController.flushPendingSaves();
+
+  runtime.saves = 0;
+  runtime.broadcasts = 0;
+  runtime.stringifyMs = 0;
+  runtime.bytes = 0;
+
+  const secondController = createBackgroundController({ api: runtime.api, now: () => 2000 });
+  const initialStart = performance.now();
+  const snapshot = await secondController.handleMessage({ type: "getInitialTreeSnapshot" });
+  const initialMs = performance.now() - initialStart;
+  const fullStart = performance.now();
+  const state = await secondController.handleMessage({ type: "getState" });
+  const hydrateMs = performance.now() - fullStart;
+
+  return {
+    scenario: "startup-initial-snapshot",
+    tabs,
+    updates: 0,
+    initMs: Math.round(initialMs),
+    totalMs: Math.round(initialMs),
+    hydrateMs: Math.round(hydrateMs),
+    totalWithHydrationMs: Math.round(initialMs + hydrateMs),
+    saveFlushMs: 0,
+    totalWithSaveFlushMs: Math.round(initialMs),
+    saves: runtime.saves,
+    broadcasts: runtime.broadcasts,
+    stringifyMs: Math.round(runtime.stringifyMs),
+    mbStringified: Math.round(runtime.bytes / 1024 / 1024),
+    snapshotRows: Array.isArray(snapshot?.projection?.rows) ? snapshot.projection.rows.length : 0,
+    snapshotNodes: snapshot?.state?.nodes ? Object.keys(snapshot.state.nodes).length : 0,
+    hydrating: Boolean(snapshot?.hydrating),
     nodes: Object.keys(state.nodes).length
   };
 }

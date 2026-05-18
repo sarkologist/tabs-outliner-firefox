@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { BrowserAdapter } from "./adapter.js";
 import { createBackgroundController } from "./controller.js";
 import type { CommandAck } from "./commands.js";
-import { STATE_KEY } from "./storage.js";
+import { STATE_KEY, outlineStateV2Items } from "./storage.js";
 import { PORTABLE_TREE_SCHEMA } from "../model/portable-tree.js";
 import type { OutlineState, RuntimeTab, RuntimeWindow } from "../model/types.js";
 
@@ -1371,6 +1371,57 @@ describe("background controller lifecycle", () => {
     await secondController.flushPendingSaves();
 
     expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
+  });
+
+  it("serves an initial tree snapshot from v2 storage without full runtime startup", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      Array.from({ length: 300 }, (_value, index) => ({
+        id: index + 1,
+        windowId: 10,
+        index,
+        active: index === 0,
+        url: `https://example.test/${index + 1}`,
+        title: `Tab ${index + 1}`
+      }))
+    );
+    const seeded = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    const fullState = await seeded.ensureState();
+    await runtime.api.storage.local.set(outlineStateV2Items(fullState, { revision: 321 }));
+    vi.mocked(runtime.api.storage.local.get).mockClear();
+    vi.mocked(runtime.api.windows.getAll).mockClear();
+    vi.mocked(runtime.api.tabs.query).mockClear();
+
+    const controller = createBackgroundController({ api: runtime.api, now: () => 2000 });
+    const snapshot = await controller.handleMessage({ type: "getInitialTreeSnapshot" }) as
+      | {
+          type?: string;
+          revision?: number;
+          hydrating?: boolean;
+          state?: OutlineState;
+          projection?: { rows?: unknown[]; nodeCount?: number };
+        }
+      | undefined;
+
+    expect(snapshot?.type).toBe("initialTreeSnapshot");
+    expect(snapshot?.revision).toBe(321);
+    expect(snapshot?.hydrating).toBe(true);
+    expect(snapshot?.projection?.rows).toHaveLength(256);
+    expect(snapshot?.projection?.nodeCount).toBe(301);
+    expect(Object.keys(snapshot?.state?.nodes ?? {})).toHaveLength(256);
+    expect(runtime.api.storage.local.get).toHaveBeenCalledWith("outlineState:v2:manifest");
+    expect(runtime.api.windows.getAll).not.toHaveBeenCalled();
+    expect(runtime.api.tabs.query).not.toHaveBeenCalled();
+
+    const hydrated = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(Object.keys(hydrated.nodes)).toHaveLength(301);
+    expect(hydrated).toEqual(fullState);
   });
 
   it("does not wait for storage persistence before acknowledging a patched command", async () => {
