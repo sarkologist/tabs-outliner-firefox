@@ -43,6 +43,8 @@ export type DeleteTreeStructurePatch = {
   deletedClosedCount: number;
 };
 
+export type InsertTreeStructurePatch = DeleteTreeStructurePatch;
+
 type OutlineOrderEntry = {
   nodeId: NodeId;
   depth: number;
@@ -241,6 +243,277 @@ export function applyDeleteTreeStructurePatchToProjection(
   projection.visibleNodeIdSet = new Set(projection.visibleNodeIds);
   refreshProjectionActiveTabTargetAfterDelete(state, projection, rowsByNodeId);
   return true;
+}
+
+export function applyInsertTreeStructurePatchToProjection(
+  state: OutlineState,
+  projection: VisibleTreeProjection,
+  patch: InsertTreeStructurePatch
+): boolean {
+  if (projection.isSearchActive || patch.deletedNodeIds.length > 0 || patch.deletedClosedCount !== 0) {
+    return false;
+  }
+
+  const existingVisibleNodeIds = new Set(projection.visibleNodeIds);
+  const insertedNodeIds = new Set(
+    patch.updatedNodes
+      .map((node) => node.id)
+      .filter((nodeId) => !existingVisibleNodeIds.has(nodeId) && Boolean(state.nodes[nodeId]))
+  );
+  if (insertedNodeIds.size === 0) {
+    return false;
+  }
+
+  const insertedRowsByRoot = new Map<NodeId, VisibleTreeRow[]>();
+  const insertionRoots = [...insertedNodeIds].filter((nodeId) => {
+    const parentId = state.nodes[nodeId]?.parentId;
+    return !parentId || !insertedNodeIds.has(parentId);
+  });
+
+  for (const rootNodeId of insertionRoots) {
+    const insertionContext = insertionContextForNode(state, projection, rootNodeId, insertedNodeIds);
+    if (!insertionContext) {
+      return false;
+    }
+
+    const insertedRows = rowsForInsertedSubtree(
+      state,
+      rootNodeId,
+      insertedNodeIds,
+      insertionContext.depth,
+      insertionContext.insideActiveWindow
+    );
+    if (!insertedRows) {
+      return false;
+    }
+    insertedRowsByRoot.set(rootNodeId, insertedRows);
+  }
+
+  const orderedInsertions = insertionRoots
+    .map((nodeId) => {
+      const insertionContext = insertionContextForNode(state, projection, nodeId, insertedNodeIds);
+      const rows = insertedRowsByRoot.get(nodeId);
+      return insertionContext && rows
+        ? {
+            nodeId,
+            index: insertionContext.index,
+            rows
+          }
+        : undefined;
+    })
+    .filter((entry): entry is { nodeId: NodeId; index: number; rows: VisibleTreeRow[] } => Boolean(entry))
+    .sort((left, right) => left.index - right.index);
+
+  if (orderedInsertions.length !== insertionRoots.length) {
+    return false;
+  }
+
+  let insertedBefore = 0;
+  for (const insertion of orderedInsertions) {
+    const index = insertion.index + insertedBefore;
+    projection.rows.splice(index, 0, ...insertion.rows);
+    insertedBefore += insertion.rows.length;
+  }
+
+  projection.nodeCount += insertedNodeIds.size;
+  projection.closedCount += [...insertedNodeIds].filter((nodeId) => state.nodes[nodeId]?.status === "closed").length;
+  projection.matchCount = 0;
+  projection.matchingNodeIds.clear();
+  refreshVisibleRowStructure(projection.rows);
+  refreshRowsFromPatchNodes(state, projection, patch.updatedNodes);
+  refreshProjectionActiveWindowFlags(state, projection);
+  refreshProjectionActiveTabTarget(state, projection);
+  projection.visibleNodeIds = projection.rows.map((row) => row.nodeId);
+  projection.visibleNodeIdSet = new Set(projection.visibleNodeIds);
+  return true;
+}
+
+function insertionContextForNode(
+  state: OutlineState,
+  projection: VisibleTreeProjection,
+  nodeId: NodeId,
+  insertedNodeIds: Set<NodeId>
+): { index: number; depth: number; insideActiveWindow: boolean } | undefined {
+  const node = state.nodes[nodeId];
+  if (!node) {
+    return undefined;
+  }
+
+  if (!node.parentId) {
+    const rootIndex = state.rootIds.indexOf(nodeId);
+    if (rootIndex < 0) {
+      return undefined;
+    }
+    const previousRootId = previousExistingSiblingId(state.rootIds, rootIndex, insertedNodeIds);
+    if (!previousRootId) {
+      return {
+        index: 0,
+        depth: 0,
+        insideActiveWindow: false
+      };
+    }
+    const previousRootRow = projection.rows.find((row) => row.nodeId === previousRootId);
+    return previousRootRow
+      ? {
+          index: previousRootRow.subtreeEndIndex,
+          depth: 0,
+          insideActiveWindow: false
+        }
+      : undefined;
+  }
+
+  const parent = state.nodes[node.parentId];
+  const parentRow = projection.rows.find((row) => row.nodeId === node.parentId);
+  if (!parent || !parentRow || !parentRow.expanded) {
+    return undefined;
+  }
+
+  const childIndex = parent.childIds.indexOf(nodeId);
+  if (childIndex < 0) {
+    return undefined;
+  }
+  const previousSiblingId = previousExistingSiblingId(parent.childIds, childIndex, insertedNodeIds);
+  const insideActiveWindow = parentRow.insideActiveWindow || Boolean(parent.kind === "window" && parent.active);
+  if (!previousSiblingId) {
+    return {
+      index: parentRow.index + 1,
+      depth: parentRow.depth + 1,
+      insideActiveWindow
+    };
+  }
+
+  const previousSiblingRow = projection.rows.find((row) => row.nodeId === previousSiblingId);
+  return previousSiblingRow
+    ? {
+        index: previousSiblingRow.subtreeEndIndex,
+        depth: parentRow.depth + 1,
+        insideActiveWindow
+      }
+    : undefined;
+}
+
+function previousExistingSiblingId(
+  siblingIds: readonly NodeId[],
+  beforeIndex: number,
+  insertedNodeIds: Set<NodeId>
+): NodeId | undefined {
+  for (let index = beforeIndex - 1; index >= 0; index -= 1) {
+    const siblingId = siblingIds[index];
+    if (siblingId && !insertedNodeIds.has(siblingId)) {
+      return siblingId;
+    }
+  }
+  return undefined;
+}
+
+function rowsForInsertedSubtree(
+  state: OutlineState,
+  rootNodeId: NodeId,
+  insertedNodeIds: Set<NodeId>,
+  rootDepth: number,
+  rootInsideActiveWindow: boolean
+): VisibleTreeRow[] | undefined {
+  const rows: VisibleTreeRow[] = [];
+  const stack: StackEntry[] = [{
+    nodeId: rootNodeId,
+    depth: rootDepth,
+    hiddenByCollapse: false,
+    insideActiveWindow: rootInsideActiveWindow
+  }];
+
+  while (stack.length > 0) {
+    const entry = stack.pop()!;
+    const node = state.nodes[entry.nodeId];
+    if (!node || !insertedNodeIds.has(node.id) || entry.hiddenByCollapse) {
+      return undefined;
+    }
+
+    const childIds = node.childIds.filter((childId) => {
+      if (!insertedNodeIds.has(childId)) {
+        return false;
+      }
+      return Boolean(state.nodes[childId]);
+    });
+    if (childIds.length !== node.childIds.length) {
+      return undefined;
+    }
+
+    rows.push({
+      nodeId: node.id,
+      depth: entry.depth,
+      index: rows.length,
+      subtreeEndIndex: rows.length + 1,
+      childCount: node.childIds.length,
+      visibleChildCount: node.childIds.length,
+      expanded: !node.collapsed,
+      searchRevealsCollapsedChildren: false,
+      isSearchMatch: false,
+      isSearchPath: false,
+      insideActiveWindow: entry.insideActiveWindow
+    });
+
+    const childInsideActiveWindow = entry.insideActiveWindow || Boolean(node.kind === "window" && node.active);
+    for (let index = childIds.length - 1; index >= 0; index -= 1) {
+      stack.push({
+        nodeId: childIds[index]!,
+        depth: entry.depth + 1,
+        hiddenByCollapse: node.collapsed,
+        insideActiveWindow: childInsideActiveWindow
+      });
+    }
+  }
+
+  refreshVisibleRowStructure(rows);
+  return rows;
+}
+
+function refreshRowsFromPatchNodes(
+  state: OutlineState,
+  projection: VisibleTreeProjection,
+  updatedNodes: readonly OutlineNode[]
+): void {
+  const updatedNodeIds = new Set(updatedNodes.map((node) => node.id));
+  for (const row of projection.rows) {
+    if (!updatedNodeIds.has(row.nodeId)) {
+      continue;
+    }
+    const node = state.nodes[row.nodeId];
+    if (!node) {
+      continue;
+    }
+    row.childCount = node.childIds.length;
+    row.visibleChildCount = node.childIds.length;
+    row.expanded = !node.collapsed;
+    row.searchRevealsCollapsedChildren = false;
+    row.isSearchMatch = false;
+    row.isSearchPath = false;
+  }
+}
+
+function refreshProjectionActiveWindowFlags(state: OutlineState, projection: VisibleTreeProjection): void {
+  const activeByDepth: boolean[] = [];
+
+  for (const row of projection.rows) {
+    activeByDepth.length = row.depth;
+    const parentInsideActiveWindow = row.depth > 0 ? activeByDepth[row.depth - 1] === true : false;
+    const node = state.nodes[row.nodeId];
+    row.insideActiveWindow = parentInsideActiveWindow;
+    activeByDepth[row.depth] = parentInsideActiveWindow || Boolean(node?.kind === "window" && node.active);
+  }
+}
+
+function refreshProjectionActiveTabTarget(state: OutlineState, projection: VisibleTreeProjection): void {
+  delete projection.activeTabNodeId;
+  delete projection.activeTabRowIndex;
+
+  for (const row of projection.rows) {
+    const node = state.nodes[row.nodeId];
+    if (node?.kind === "tab" && node.active && row.insideActiveWindow) {
+      projection.activeTabNodeId = node.id;
+      projection.activeTabRowIndex = row.index;
+      return;
+    }
+  }
 }
 
 export function calculateVirtualRange(

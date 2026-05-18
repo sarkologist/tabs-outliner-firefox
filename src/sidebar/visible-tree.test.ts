@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { NodeId, OutlineNode, OutlineState } from "../model/types.js";
 import {
   applyDeleteTreeStructurePatchToProjection,
+  applyInsertTreeStructurePatchToProjection,
   buildVisibleTreeProjection,
   calculateVirtualRange,
   refreshVisibleRowStructure
@@ -228,6 +229,63 @@ describe("visible tree projection", () => {
       isSearchMatch: true,
       isSearchPath: false
     });
+  });
+
+  it("applies non-search insertion patches without rebuilding the projection", () => {
+    const state = outlineState([
+      windowNode("window:1", ["tab:1"], { active: true }),
+      tabNode("tab:1", "window:1", "One", [], { active: true })
+    ]);
+    const projection = buildVisibleTreeProjection(state, "");
+    const next = outlineState([
+      windowNode("window:1", ["tab:1", "tab:2"], { active: true }),
+      tabNode("tab:1", "window:1", "One"),
+      tabNode("tab:2", "window:1", "Two", [], { active: true })
+    ]);
+
+    const applied = applyInsertTreeStructurePatchToProjection(next, projection, {
+      deletedNodeIds: [],
+      updatedNodes: [next.nodes["window:1"]!, next.nodes["tab:1"]!, next.nodes["tab:2"]!],
+      rootIds: ["window:1"],
+      deletedClosedCount: 0
+    });
+
+    expect(applied).toBe(true);
+    expect(rowStructure(projection)).toEqual([
+      { nodeId: "window:1", index: 0, parentRowIndex: undefined, subtreeEndIndex: 3 },
+      { nodeId: "tab:1", index: 1, parentRowIndex: 0, subtreeEndIndex: 2 },
+      { nodeId: "tab:2", index: 2, parentRowIndex: 0, subtreeEndIndex: 3 }
+    ]);
+    expect(projection.nodeCount).toBe(3);
+    expect(projection.closedCount).toBe(0);
+    expect(projection.visibleNodeIds).toEqual(["window:1", "tab:1", "tab:2"]);
+    expect(projection.visibleNodeIdSet).toEqual(new Set(["window:1", "tab:1", "tab:2"]));
+    expect(projection.activeTabNodeId).toBe("tab:2");
+    expect(projection.activeTabRowIndex).toBe(2);
+    expect(projection.rows[2]?.insideActiveWindow).toBe(true);
+  });
+
+  it("falls back instead of applying insertion patches to active search projections", () => {
+    const state = outlineState([
+      windowNode("window:1", ["tab:1"], { active: true }),
+      tabNode("tab:1", "window:1", "Needle one")
+    ]);
+    const projection = buildVisibleTreeProjection(state, "needle");
+    const next = outlineState([
+      windowNode("window:1", ["tab:1", "tab:2"], { active: true }),
+      tabNode("tab:1", "window:1", "Needle one"),
+      tabNode("tab:2", "window:1", "Needle two")
+    ]);
+
+    const applied = applyInsertTreeStructurePatchToProjection(next, projection, {
+      deletedNodeIds: [],
+      updatedNodes: [next.nodes["window:1"]!, next.nodes["tab:2"]!],
+      rootIds: ["window:1"],
+      deletedClosedCount: 0
+    });
+
+    expect(applied).toBe(false);
+    expect(projection.visibleNodeIds).toEqual(["window:1", "tab:1"]);
   });
 });
 

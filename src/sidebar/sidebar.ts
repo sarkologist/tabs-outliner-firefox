@@ -37,6 +37,7 @@ import {
 } from "./drop-preview.js";
 import { segmentSearchText } from "./search.js";
 import {
+  applyInsertTreeStructurePatchToProjection,
   applyDeleteTreeStructurePatchToProjection,
   buildVisibleTreeProjection,
   calculateVirtualRange,
@@ -826,6 +827,15 @@ function applyTreeStructureUpdate(update: TreeStructureUpdate): void {
     if (deletedNodeIds.size === 0) {
       if (applySameParentReorderTreeStructurePatchToProjection(state, currentProjection, update)) {
         refreshProjectionActiveTabTarget(state, currentProjection);
+        currentCutRowRange = cutSubtreeRowRange(currentProjection.rows, pendingCutNodeId);
+        updateProjectionChrome(currentProjection);
+        scrollToObservedActiveTab(currentProjection);
+        clearHoverLineScope();
+        scheduleVirtualRender();
+        return;
+      }
+
+      if (applyInsertTreeStructurePatchToProjection(state, currentProjection, update)) {
         currentCutRowRange = cutSubtreeRowRange(currentProjection.rows, pendingCutNodeId);
         updateProjectionChrome(currentProjection);
         scrollToObservedActiveTab(currentProjection);
