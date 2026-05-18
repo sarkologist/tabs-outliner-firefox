@@ -2,10 +2,14 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   INITIAL_TREE_SNAPSHOT_ROW_LIMIT,
+  HISTORY_KEY,
+  STATE_KEY,
   STATE_V2_MANIFEST_KEY,
   loadInitialTreeSnapshot,
   loadStateV2,
-  outlineStateV2Items
+  outlineStateV2Items,
+  saveState,
+  saveStateAndHistory
 } from "./storage.js";
 import type { OutlineNode, OutlineState } from "../model/types.js";
 
@@ -123,5 +127,38 @@ describe("outline state v2 storage", () => {
     expect(loaded).toEqual(state);
     expect(api.storage.local.get).toHaveBeenCalledWith(STATE_V2_MANIFEST_KEY);
     expect(vi.mocked(api.storage.local.get).mock.calls.some((call) => Array.isArray(call[0]))).toBe(true);
+  });
+
+  it("saves state using v2 keys only", async () => {
+    const state = makeLargeState(20);
+    const api = fakeApi();
+
+    await saveState(state, api);
+
+    const saved = vi.mocked(api.storage.local.set).mock.calls.at(-1)?.[0];
+    expect(saved?.[STATE_KEY]).toBeUndefined();
+    expect(saved?.[STATE_V2_MANIFEST_KEY]).toBeDefined();
+    await expect(loadStateV2(api)).resolves.toEqual(state);
+  });
+
+  it("saves history without reintroducing the v1 state key", async () => {
+    const state = makeLargeState(20);
+    const api = fakeApi();
+
+    await saveStateAndHistory(
+      state,
+      {
+        version: 1,
+        undoStack: [],
+        redoStack: []
+      },
+      api
+    );
+
+    const saved = vi.mocked(api.storage.local.set).mock.calls.at(-1)?.[0];
+    expect(saved?.[STATE_KEY]).toBeUndefined();
+    expect(saved?.[STATE_V2_MANIFEST_KEY]).toBeDefined();
+    expect(saved?.[HISTORY_KEY]).toEqual({ version: 1, undoStack: [], redoStack: [] });
+    await expect(loadStateV2(api)).resolves.toEqual(state);
   });
 });

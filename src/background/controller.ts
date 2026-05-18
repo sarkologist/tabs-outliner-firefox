@@ -522,11 +522,6 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       loadInitialTreeSnapshot(api)
     );
     if (snapshot) {
-      globalThis.setTimeout(() => {
-        void ensureState().catch((error) => {
-          perfTrace.mark("background.state.hydration.error", { message: errorText(error) });
-        });
-      }, 0);
       return snapshot;
     }
 

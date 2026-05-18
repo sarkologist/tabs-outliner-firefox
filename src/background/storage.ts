@@ -76,11 +76,6 @@ type StateV2Manifest = {
 };
 
 export async function loadState(api: WebExtensionBrowser = browser): Promise<OutlineState | undefined> {
-  const stored = await api.storage.local.get(STATE_KEY);
-  const candidate = stored[STATE_KEY];
-  if (isOutlineState(candidate)) {
-    return candidate;
-  }
   return loadStateV2(api);
 }
 
@@ -90,10 +85,7 @@ export async function loadHistory(api: WebExtensionBrowser = browser): Promise<H
 }
 
 export async function saveState(state: OutlineState, api: WebExtensionBrowser = browser): Promise<void> {
-  await api.storage.local.set({
-    [STATE_KEY]: state,
-    ...outlineStateV2Items(state)
-  });
+  await api.storage.local.set(outlineStateV2Items(state));
 }
 
 export async function saveStateAndHistory(
@@ -103,7 +95,6 @@ export async function saveStateAndHistory(
 ): Promise<void> {
   const items: Record<string, unknown> = {};
   if (state) {
-    items[STATE_KEY] = state;
     Object.assign(items, outlineStateV2Items(state));
   }
   if (history) {

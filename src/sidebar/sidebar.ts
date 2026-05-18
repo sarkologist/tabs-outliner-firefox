@@ -73,6 +73,7 @@ const clearSearch = document.querySelector<HTMLButtonElement>("#clear-search");
 
 let currentState: OutlineState | undefined;
 let hydratingFullState = false;
+let pendingFullHydrationTimer: number | undefined;
 let draggedNodeId: NodeId | undefined;
 let activeDropPlacement: DropPlacement | undefined;
 let currentZoom = DEFAULT_ZOOM;
@@ -93,6 +94,7 @@ const activeTabScrollTracker = createActiveTabScrollTracker();
 const WHEEL_ZOOM_THRESHOLD_PX = 80;
 const DIAGNOSTICS_NOTICE_MS = 4000;
 const DIAGNOSTICS_REFRESH_DELAY_MS = 750;
+const FULL_STATE_HYDRATION_DELAY_MS = 750;
 const PROFILE_STORAGE_KEY = "tabsOutlinerProfileEnabled";
 const VIRTUAL_OVERSCAN_ROWS = 32;
 const GUIDE_TOP = 1;
@@ -261,7 +263,7 @@ async function loadState(): Promise<void> {
     if (isInitialTreeSnapshot(initial)) {
       applyInitialTreeSnapshot(initial);
       if (initial.hydrating) {
-        void hydrateFullState();
+        scheduleFullStateHydration();
       } else {
         scheduleDiagnosticsLoad();
       }
@@ -275,6 +277,10 @@ async function loadState(): Promise<void> {
 }
 
 async function hydrateFullState(): Promise<void> {
+  if (pendingFullHydrationTimer !== undefined) {
+    window.clearTimeout(pendingFullHydrationTimer);
+    pendingFullHydrationTimer = undefined;
+  }
   try {
     hydratingFullState = true;
     updateHydrationControls();
@@ -288,6 +294,16 @@ async function hydrateFullState(): Promise<void> {
     updateHydrationControls();
     showLoadError(error);
   }
+}
+
+function scheduleFullStateHydration(): void {
+  if (!hydratingFullState || pendingFullHydrationTimer !== undefined) {
+    return;
+  }
+  pendingFullHydrationTimer = window.setTimeout(() => {
+    pendingFullHydrationTimer = undefined;
+    void hydrateFullState();
+  }, FULL_STATE_HYDRATION_DELAY_MS);
 }
 
 function applyInitialTreeSnapshot(snapshot: InitialTreeSnapshot): void {

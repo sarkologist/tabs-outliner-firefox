@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { BrowserAdapter } from "./adapter.js";
 import { createBackgroundController } from "./controller.js";
 import type { CommandAck } from "./commands.js";
-import { STATE_KEY, outlineStateV2Items } from "./storage.js";
+import { STATE_KEY, loadStateV2, outlineStateV2Items } from "./storage.js";
 import { PORTABLE_TREE_SCHEMA } from "../model/portable-tree.js";
 import type { OutlineState, RuntimeTab, RuntimeWindow } from "../model/types.js";
 
@@ -1418,6 +1418,9 @@ describe("background controller lifecycle", () => {
     expect(runtime.api.storage.local.get).toHaveBeenCalledWith("outlineState:v2:manifest");
     expect(runtime.api.windows.getAll).not.toHaveBeenCalled();
     expect(runtime.api.tabs.query).not.toHaveBeenCalled();
+    await waitForMacrotask();
+    expect(runtime.api.windows.getAll).not.toHaveBeenCalled();
+    expect(runtime.api.tabs.query).not.toHaveBeenCalled();
 
     const hydrated = (await controller.handleMessage({ type: "getState" })) as OutlineState;
     expect(Object.keys(hydrated.nodes)).toHaveLength(301);
@@ -2675,9 +2678,11 @@ describe("background controller lifecycle", () => {
 
     await controller.flushPendingSaves();
     const lastSave = vi.mocked(runtime.api.storage.local.set).mock.calls.at(-1)?.[0] as
-      | Record<string, OutlineState>
+      | Record<string, unknown>
       | undefined;
-    expect(lastSave?.[STATE_KEY]?.nodes["tab:2"]).toBeUndefined();
+    expect(lastSave?.[STATE_KEY]).toBeUndefined();
+    const persisted = await loadStateV2(runtime.api);
+    expect(persisted?.nodes["tab:2"]).toBeUndefined();
 
     const lastBroadcast = runtime.broadcasts.at(-1) as { type?: string; state?: OutlineState } | undefined;
     expect(lastBroadcast?.type).toBe("stateUpdated");
@@ -4343,9 +4348,11 @@ describe("background controller lifecycle", () => {
 
     await controller.flushPendingSaves();
     const lastSave = vi.mocked(runtime.api.storage.local.set).mock.calls.at(-1)?.[0] as
-      | Record<string, OutlineState>
+      | Record<string, unknown>
       | undefined;
-    expect(lastSave?.[STATE_KEY]?.nodes["tab:2"]).toBeUndefined();
+    expect(lastSave?.[STATE_KEY]).toBeUndefined();
+    const persisted = await loadStateV2(runtime.api);
+    expect(persisted?.nodes["tab:2"]).toBeUndefined();
 
     const lastBroadcast = runtime.broadcasts.at(-1) as
       | {
@@ -4852,9 +4859,11 @@ describe("background controller lifecycle", () => {
 
     await controller.flushPendingSaves();
     const lastSave = vi.mocked(runtime.api.storage.local.set).mock.calls.at(-1)?.[0] as
-      | Record<string, OutlineState>
+      | Record<string, unknown>
       | undefined;
-    expect(lastSave?.[STATE_KEY]?.nodes["window:10"]).toBeUndefined();
+    expect(lastSave?.[STATE_KEY]).toBeUndefined();
+    const persisted = await loadStateV2(runtime.api);
+    expect(persisted?.nodes["window:10"]).toBeUndefined();
 
     const lastBroadcast = runtime.broadcasts.at(-1) as
       | { type?: string; deletedNodeIds?: string[]; rootIds?: string[] }
