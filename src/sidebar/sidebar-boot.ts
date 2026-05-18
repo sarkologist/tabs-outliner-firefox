@@ -42,7 +42,7 @@ function renderInitialSnapshot(snapshot: InitialTreeSnapshot): void {
 
   const rowHeight = currentRowHeight();
   tree.textContent = "";
-  tree.style.height = `${snapshot.projection.rows.length * rowHeight}px`;
+  tree.style.height = `${snapshot.projection.totalRowCount * rowHeight}px`;
   const fragment = document.createDocumentFragment();
   for (const row of snapshot.projection.rows) {
     const node = snapshot.state.nodes[row.nodeId];
@@ -168,6 +168,7 @@ function isInitialTreeSnapshot(value: unknown): value is InitialTreeSnapshot {
       (value as { projection?: unknown }).projection &&
       typeof (value as { projection?: unknown }).projection === "object" &&
       Array.isArray((value as { projection: { rows?: unknown } }).projection.rows) &&
+      typeof (value as { projection: { totalRowCount?: unknown } }).projection.totalRowCount === "number" &&
       Array.isArray((value as { projection: { visibleNodeIds?: unknown } }).projection.visibleNodeIds) &&
       Array.isArray((value as { projection: { matchingNodeIds?: unknown } }).projection.matchingNodeIds)
   );

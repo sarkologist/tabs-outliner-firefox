@@ -24,6 +24,7 @@ export type VisibleTreeProjection = {
   visibleNodeIdSet: Set<NodeId>;
   activeTabNodeId?: NodeId;
   activeTabRowIndex?: number;
+  totalRowCount?: number;
   nodeCount: number;
   closedCount: number;
   matchCount: number;

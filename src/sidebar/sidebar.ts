@@ -343,8 +343,7 @@ function renderInitialTreeSnapshot(): void {
     }
     clearDropPreview();
     updateProjectionChrome(currentProjection);
-    scrollToObservedActiveTab(currentProjection);
-    renderVirtualRows();
+    renderSnapshotRows(currentProjection);
     revealSidebar();
   });
 }
@@ -857,10 +856,31 @@ function projectionFromInitialTreeSnapshot(snapshot: InitialTreeSnapshot): Visib
     ...(typeof snapshot.projection.activeTabRowIndex === "number"
       ? { activeTabRowIndex: snapshot.projection.activeTabRowIndex }
       : {}),
+    totalRowCount: snapshot.projection.totalRowCount,
     nodeCount: snapshot.projection.nodeCount,
     closedCount: snapshot.projection.closedCount,
     matchCount: snapshot.projection.matchCount
   };
+}
+
+function renderSnapshotRows(projection: VisibleTreeProjection): void {
+  if (!tree || !currentState) {
+    return;
+  }
+
+  const rowHeight = currentRowHeight();
+  const totalRowCount = projection.totalRowCount ?? projection.rows.length;
+  activeDropPlacement = undefined;
+  removeDropPreviewElements();
+  tree.style.height = `${totalRowCount * rowHeight}px`;
+  tree.textContent = "";
+
+  const fragment = document.createDocumentFragment();
+  for (const row of projection.rows) {
+    fragment.append(renderRow(currentState, row, rowHeight, projection.query));
+  }
+  tree.append(fragment);
+  scrollToObservedActiveTab(projection);
 }
 
 function updateHydrationControls(): void {
@@ -1237,6 +1257,9 @@ function visibleProjectionFor(state: OutlineState, query: string): VisibleTreePr
 }
 
 function scheduleVirtualRender(): void {
+  if (currentProjection && isSparseInitialProjection(currentProjection)) {
+    return;
+  }
   if (scheduledVirtualRender) {
     return;
   }
@@ -1257,6 +1280,9 @@ function renderVirtualRows(): void {
     rows: currentProjection?.rows.length ?? 0
   }, () => {
     if (!tree || !currentProjection || !currentState) {
+      return;
+    }
+    if (isSparseInitialProjection(currentProjection)) {
       return;
     }
 
@@ -1283,6 +1309,10 @@ function renderVirtualRows(): void {
     }
     tree.append(fragment);
   });
+}
+
+function isSparseInitialProjection(projection: VisibleTreeProjection): boolean {
+  return typeof projection.totalRowCount === "number" && projection.totalRowCount !== projection.rows.length;
 }
 
 function currentRowHeight(): number {
@@ -2060,7 +2090,7 @@ function prepareVirtualScrollSurface(projection: VisibleTreeProjection, rowHeigh
   }
 
   const effectiveRowHeight = Number.isFinite(rowHeight) && rowHeight > 0 ? rowHeight : 1;
-  tree.style.height = `${projection.rows.length * effectiveRowHeight}px`;
+  tree.style.height = `${(projection.totalRowCount ?? projection.rows.length) * effectiveRowHeight}px`;
 }
 
 function rowForItem(item: HTMLElement): HTMLElement | undefined {
@@ -2264,6 +2294,7 @@ function isInitialTreeSnapshot(message: unknown): message is InitialTreeSnapshot
       (message as { projection?: unknown }).projection &&
       typeof (message as { projection?: unknown }).projection === "object" &&
       Array.isArray((message as { projection: { rows?: unknown } }).projection.rows) &&
+      typeof (message as { projection: { totalRowCount?: unknown } }).projection.totalRowCount === "number" &&
       Array.isArray((message as { projection: { visibleNodeIds?: unknown } }).projection.visibleNodeIds) &&
       Array.isArray((message as { projection: { matchingNodeIds?: unknown } }).projection.matchingNodeIds)
   );

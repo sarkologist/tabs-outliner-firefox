@@ -13,7 +13,8 @@ import {
 } from "./storage.js";
 import type { OutlineNode, OutlineState } from "../model/types.js";
 
-function makeLargeState(tabCount: number): OutlineState {
+function makeLargeState(tabCount: number, options: { activeTabIndex?: number } = {}): OutlineState {
+  const activeTabIndex = options.activeTabIndex ?? 0;
   const windowNode: OutlineNode = {
     id: "window:10",
     kind: "window",
@@ -39,7 +40,7 @@ function makeLargeState(tabCount: number): OutlineState {
       childIds: [],
       title: `Tab ${id}`,
       url: `https://example.test/${id}`,
-      active: id === 1,
+      active: index === activeTabIndex,
       collapsed: false,
       createdAt: 1000,
       updatedAt: 1000,
@@ -98,9 +99,36 @@ describe("outline state v2 storage", () => {
     expect(manifest?.initialSnapshot?.projection?.rows).toHaveLength(INITIAL_TREE_SNAPSHOT_ROW_LIMIT);
     expect(Object.keys(manifest?.initialSnapshot?.state?.nodes ?? {})).toHaveLength(INITIAL_TREE_SNAPSHOT_ROW_LIMIT);
     expect(manifest?.initialSnapshot?.projection?.nodeCount).toBe(INITIAL_TREE_SNAPSHOT_ROW_LIMIT + 21);
+    expect(manifest?.initialSnapshot?.projection?.totalRowCount).toBe(INITIAL_TREE_SNAPSHOT_ROW_LIMIT + 21);
     expect(manifest?.nodeChunkKeys?.length).toBeGreaterThan(0);
     expect(manifest?.orderPageKeys?.length).toBeGreaterThan(0);
     expect(JSON.stringify(manifest?.initialSnapshot)).not.toContain("tab:260");
+  });
+
+  it("centers the initial tree snapshot on the active tab when it is outside the first page", () => {
+    const state = makeLargeState(800, { activeTabIndex: 799 });
+    const items = outlineStateV2Items(state, { revision: 654 });
+    const manifest = items[STATE_V2_MANIFEST_KEY] as
+      | {
+          initialSnapshot?: {
+            state?: OutlineState;
+            projection?: {
+              rows?: Array<{ nodeId?: string; index?: number }>;
+              activeTabNodeId?: string;
+              activeTabRowIndex?: number;
+              totalRowCount?: number;
+            };
+          };
+        }
+      | undefined;
+
+    expect(manifest?.initialSnapshot?.projection?.activeTabNodeId).toBe("tab:800");
+    expect(manifest?.initialSnapshot?.projection?.activeTabRowIndex).toBe(800);
+    expect(manifest?.initialSnapshot?.projection?.rows).toHaveLength(INITIAL_TREE_SNAPSHOT_ROW_LIMIT);
+    expect(manifest?.initialSnapshot?.projection?.rows?.some((row) => row.nodeId === "tab:800")).toBe(true);
+    expect(manifest?.initialSnapshot?.projection?.rows?.[0]?.index).toBeGreaterThan(0);
+    expect(manifest?.initialSnapshot?.projection?.totalRowCount).toBe(801);
+    expect(manifest?.initialSnapshot?.state?.nodes["tab:800"]).toBeDefined();
   });
 
   it("loads the initial tree snapshot by reading only the manifest key", async () => {

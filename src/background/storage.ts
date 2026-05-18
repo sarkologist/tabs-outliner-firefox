@@ -55,6 +55,7 @@ export type InitialTreeSnapshot = {
     visibleNodeIds: NodeId[];
     activeTabNodeId?: NodeId;
     activeTabRowIndex?: number;
+    totalRowCount: number;
     nodeCount: number;
     closedCount: number;
     matchCount: 0;
@@ -223,7 +224,7 @@ export function initialTreeSnapshotForState(
 ): InitialTreeSnapshot {
   const revision = options.revision ?? Date.now();
   const rowLimit = options.rowLimit ?? INITIAL_TREE_SNAPSHOT_ROW_LIMIT;
-  const rows: InitialTreeRow[] = [];
+  const allRows: InitialTreeRow[] = [];
   const loadedNodeIds = new Set<NodeId>();
   const stack = state.rootIds
     .slice()
@@ -237,21 +238,20 @@ export function initialTreeSnapshotForState(
   let activeTabNodeId: NodeId | undefined;
   let activeTabRowIndex: number | undefined;
 
-  while (stack.length > 0 && rows.length < rowLimit) {
+  while (stack.length > 0) {
     const entry = stack.pop()!;
     const node = state.nodes[entry.nodeId];
     if (!node) {
       continue;
     }
 
-    const index = rows.length;
+    const index = allRows.length;
     const insideActiveWindow = entry.insideActiveWindow || Boolean(node.kind === "window" && node.active);
     if (!activeTabNodeId && node.kind === "tab" && node.active && insideActiveWindow) {
       activeTabNodeId = node.id;
       activeTabRowIndex = index;
     }
-    loadedNodeIds.add(node.id);
-    rows.push({
+    allRows.push({
       nodeId: node.id,
       depth: entry.depth,
       index,
@@ -279,7 +279,11 @@ export function initialTreeSnapshotForState(
     }
   }
 
-  refreshInitialRowStructure(rows);
+  refreshInitialRowStructure(allRows);
+  const rows = initialSnapshotRows(allRows, rowLimit, activeTabRowIndex);
+  for (const row of rows) {
+    loadedNodeIds.add(row.nodeId);
+  }
   const partialNodes: OutlineState["nodes"] = {};
   for (const nodeId of loadedNodeIds) {
     const node = state.nodes[nodeId];
@@ -310,12 +314,28 @@ export function initialTreeSnapshotForState(
       visibleNodeIds: rows.map((row) => row.nodeId),
       ...(activeTabNodeId ? { activeTabNodeId } : {}),
       ...(typeof activeTabRowIndex === "number" ? { activeTabRowIndex } : {}),
+      totalRowCount: allRows.length,
       nodeCount: nodeValues.length,
       closedCount: nodeValues.filter((node) => node.status === "closed").length,
       matchCount: 0
     },
     hydrating: options.hydrating ?? true
   };
+}
+
+function initialSnapshotRows(
+  rows: InitialTreeRow[],
+  rowLimit: number,
+  activeTabRowIndex: number | undefined
+): InitialTreeRow[] {
+  if (typeof activeTabRowIndex !== "number" || activeTabRowIndex < rowLimit) {
+    return rows.slice(0, rowLimit).map((row) => ({ ...row }));
+  }
+
+  const halfWindow = Math.floor(rowLimit / 2);
+  const end = Math.min(rows.length, activeTabRowIndex + halfWindow);
+  const start = Math.max(0, Math.min(activeTabRowIndex - halfWindow, end - rowLimit));
+  return rows.slice(start, Math.min(rows.length, start + rowLimit)).map((row) => ({ ...row }));
 }
 
 function refreshInitialRowStructure(rows: InitialTreeRow[]): void {

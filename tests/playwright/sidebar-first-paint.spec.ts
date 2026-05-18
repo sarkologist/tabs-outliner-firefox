@@ -140,6 +140,64 @@ test.describe("sidebar first paint", () => {
     await expect(page.locator("body")).not.toHaveAttribute("data-sidebar-booting", "");
     expect(issues).toEqual([]);
   });
+
+  test("paints an active-centered sparse snapshot before full hydration", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await page.addInitScript((snapshot) => {
+      const messages: Array<{ type: string; at: number }> = [];
+      (window as typeof window & { __sidebarBootMessages?: typeof messages }).__sidebarBootMessages = messages;
+      window.browser = {
+        runtime: {
+          sendMessage: async (message: unknown) => {
+            const type = typeof message === "object" && message ? String((message as { type?: unknown }).type) : "";
+            messages.push({ type, at: performance.now() });
+            if (type === "getInitialTreeSnapshot") {
+              return structuredClone(snapshot);
+            }
+            if (type === "getState") {
+              return new Promise(() => undefined);
+            }
+            if (
+              type === "getDiagnostics" ||
+              type === "getPerformanceTrace" ||
+              type === "setPerformanceTraceEnabled" ||
+              type === "clearPerformanceTrace"
+            ) {
+              return undefined;
+            }
+            return { ok: true };
+          },
+          onMessage: {
+            addListener: () => undefined
+          }
+        },
+        storage: {
+          local: {
+            get: async () => ({}),
+            set: async () => undefined
+          }
+        }
+      };
+    }, fixtureActiveCenteredSnapshot(500, 400));
+
+    await page.goto("/sidebar/sidebar.html");
+    await expect(page.locator(".node[data-node-id='tab:400'].is-active")).toBeVisible();
+
+    const metrics = await page.evaluate(() => {
+      const messages = (window as typeof window & { __sidebarBootMessages?: Array<{ type: string; at: number }> })
+        .__sidebarBootMessages ?? [];
+      return {
+        hydrationRequests: messages.filter((message) => message.type === "getState").length,
+        scrollTop: document.querySelector("main")?.scrollTop ?? 0,
+        treeHeight: Number.parseFloat((document.querySelector<HTMLElement>("#tree")?.style.height ?? "0").replace("px", ""))
+      };
+    });
+
+    expect(metrics.hydrationRequests).toBe(0);
+    expect(metrics.scrollTop).toBeGreaterThan(5000);
+    expect(metrics.treeHeight).toBeGreaterThan(9000);
+    expect(issues).toEqual([]);
+  });
 });
 
 function fixtureInitialSnapshot(tabCount: number, options: { activeTabInSnapshot?: boolean } = {}) {
@@ -225,6 +283,7 @@ function fixtureInitialSnapshot(tabCount: number, options: { activeTabInSnapshot
       matchingNodeIds: [],
       visibleNodeIds: rows.map((row) => row.nodeId),
       ...(activeTabInSnapshot ? { activeTabNodeId: "tab:1", activeTabRowIndex: 1 } : {}),
+      totalRowCount: tabCount + 1,
       nodeCount: tabCount + 1,
       closedCount: 0,
       matchCount: 0
@@ -270,6 +329,78 @@ function fixtureFullState(tabCount: number, activeTabId: number) {
           }
         ])
       )
+    }
+  };
+}
+
+function fixtureActiveCenteredSnapshot(tabCount: number, activeTabId: number) {
+  const now = 1_700_000_000_000;
+  const rowLimit = 256;
+  const startTabId = Math.max(1, activeTabId - Math.floor(rowLimit / 2));
+  const tabIds = Array.from(
+    { length: Math.min(rowLimit, tabCount - startTabId + 1) },
+    (_value, index) => `tab:${startTabId + index}`
+  );
+  const rows = tabIds.map((nodeId) => {
+    const tabId = Number.parseInt(nodeId.slice("tab:".length), 10);
+    return {
+      nodeId,
+      depth: 1,
+      index: tabId,
+      parentRowIndex: 0,
+      subtreeEndIndex: tabId + 1,
+      childCount: 0,
+      visibleChildCount: 0,
+      expanded: true,
+      searchRevealsCollapsedChildren: false,
+      isSearchMatch: false,
+      isSearchPath: false,
+      insideActiveWindow: true
+    };
+  });
+  return {
+    type: "initialTreeSnapshot",
+    version: 1,
+    revision: 124,
+    hydrating: true,
+    state: {
+      version: 1,
+      rootIds: [],
+      nodes: Object.fromEntries(
+        tabIds.map((id) => {
+          const tabId = Number.parseInt(id.slice("tab:".length), 10);
+          return [
+            id,
+            {
+              id,
+              kind: "tab",
+              status: "live",
+              parentId: "window:1",
+              childIds: [],
+              title: `Tab ${tabId}`,
+              url: `https://paint.example/${tabId}`,
+              active: tabId === activeTabId,
+              collapsed: false,
+              createdAt: now,
+              updatedAt: now,
+              live: { tabId, windowId: 1 }
+            }
+          ];
+        })
+      )
+    },
+    projection: {
+      query: "",
+      isSearchActive: false,
+      rows,
+      matchingNodeIds: [],
+      visibleNodeIds: rows.map((row) => row.nodeId),
+      activeTabNodeId: `tab:${activeTabId}`,
+      activeTabRowIndex: activeTabId,
+      totalRowCount: tabCount + 1,
+      nodeCount: tabCount + 1,
+      closedCount: 0,
+      matchCount: 0
     }
   };
 }
