@@ -2,14 +2,13 @@ import type { BrowserAdapter } from "./adapter.js";
 import { createBrowserAdapter } from "./browser-adapter.js";
 import { computeDiagnostics, type OutlineDiagnostics } from "./diagnostics.js";
 import { isBackgroundCommand, planLiveSubtreeClose, runCommand, syncBrowserOrder } from "./commands.js";
-import type { CommandAck } from "./commands.js";
+import type { BackgroundCommand, CommandAck } from "./commands.js";
 import { getNormalWindows, getNormalWindowsIncludingTabs } from "./runtime-snapshot.js";
 import { createStateCache } from "./state-cache.js";
 import { loadHistory, loadState, saveState, saveStateAndHistory } from "./storage.js";
 import {
   applyOutlineDelta,
   cloneOutlineNode,
-  cloneOutlineState,
   createHistoryEntry,
   historyStatus,
   normalizeHistoryState,
@@ -335,7 +334,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       const current = await ensureState();
       const historyPrevious = isTrackableHistoryCommandType(message.type)
         ? message.type === "toggleCollapsed"
-          ? cloneOutlineState(current)
+          ? stateWithClonedNode(current, message.nodeId)
           : current
         : undefined;
       const outlinerClosingTabId = message.type === "closeNode"
@@ -410,7 +409,10 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       state = result.state;
       stateCache.replace(result.state);
       if (historyPrevious && isTrackableHistoryCommandType(message.type)) {
-        await recordHistoryEntry(message.type, historyPrevious, result.state);
+        const candidateNodeIds = historyCandidateNodeIds(message, historyPrevious, result.state);
+        await recordHistoryEntry(message.type, historyPrevious, result.state, {
+          ...(candidateNodeIds ? { candidateNodeIds } : {})
+        });
       }
       if (message.type === "restoreNode") {
         await persistWithNodeStateUpdate(current, result.state, restorePatchNodeIds);
@@ -467,16 +469,17 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   async function recordHistoryEntry(
     commandType: TrackableHistoryCommandType,
     previous: OutlineState,
-    next: OutlineState
+    next: OutlineState,
+    options: { candidateNodeIds?: readonly NodeId[] } = {}
   ): Promise<void> {
-    const entry = createHistoryEntry(commandType, previous, next);
+    const entry = createHistoryEntry(commandType, previous, next, options);
     if (!entry) {
       return;
     }
 
     historyState = pushUndoEntry(await ensureHistory(), entry);
     scheduleHistorySave(historyState);
-    await broadcastHistoryStatus(historyState);
+    broadcastHistoryStatusSoon(historyState);
   }
 
   async function applyHistoryCommand(direction: "undo" | "redo"): Promise<CommandAck> {
@@ -491,7 +494,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     if (statesMateriallyEqual(current, next)) {
       historyState = popped.history;
       scheduleHistorySave(historyState);
-      await broadcastHistoryStatus(historyState);
+      broadcastHistoryStatusSoon(historyState);
       return commandAck(false);
     }
 
@@ -502,7 +505,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       : pushUndoEntryPreservingRedo(popped.history, popped.entry);
     await persistWithBestEffortPatch(current, next, { diffMode: "material" });
     scheduleHistorySave(historyState);
-    await broadcastHistoryStatus(historyState);
+    broadcastHistoryStatusSoon(historyState);
     return commandAck(true);
   }
 
@@ -894,6 +897,12 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     await broadcastWithTrace(historyStatusMessage(history));
   }
 
+  function broadcastHistoryStatusSoon(history: HistoryState): void {
+    void broadcastHistoryStatus(history).catch((error) => {
+      perfTrace.mark("background.runtime.broadcast.historyStatus.error", { message: errorText(error) });
+    });
+  }
+
   function scheduleStateSave(next: OutlineState): void {
     pendingSaveState = next;
     schedulePendingSave();
@@ -1083,6 +1092,45 @@ function isTrackableHistoryCommandType(value: string): value is TrackableHistory
     value === "renameGroup" ||
     value === "importTree" ||
     value === "deleteNode";
+}
+
+function stateWithClonedNode(state: OutlineState, nodeId: NodeId): OutlineState {
+  const node = state.nodes[nodeId];
+  if (!node) {
+    return state;
+  }
+
+  return {
+    version: state.version,
+    rootIds: state.rootIds,
+    nodes: {
+      ...state.nodes,
+      [nodeId]: cloneOutlineNode(node)
+    }
+  };
+}
+
+function historyCandidateNodeIds(
+  command: BackgroundCommand,
+  previous: OutlineState,
+  next: OutlineState
+): NodeId[] | undefined {
+  if (command.type !== "moveNode" || !command.parentId) {
+    return undefined;
+  }
+
+  const previousNode = previous.nodes[command.nodeId];
+  const nextNode = next.nodes[command.nodeId];
+  return uniqueDefinedNodeIds([
+    command.nodeId,
+    previousNode?.parentId,
+    nextNode?.parentId,
+    command.parentId
+  ]);
+}
+
+function uniqueDefinedNodeIds(nodeIds: Array<NodeId | undefined>): NodeId[] {
+  return [...new Set(nodeIds.filter((nodeId): nodeId is NodeId => Boolean(nodeId)))];
 }
 
 function errorText(error: unknown): string {

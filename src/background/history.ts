@@ -41,6 +41,8 @@ export type HistoryStatus = {
   redoLabel?: string;
 };
 
+type HistoryDiffMode = "identity" | "material";
+
 export function createEmptyHistoryState(): HistoryState {
   return {
     version: 1,
@@ -52,9 +54,11 @@ export function createEmptyHistoryState(): HistoryState {
 export function createHistoryEntry(
   commandType: TrackableHistoryCommandType,
   previous: OutlineState,
-  next: OutlineState
+  next: OutlineState,
+  options: { candidateNodeIds?: readonly NodeId[]; diffMode?: HistoryDiffMode } = {}
 ): HistoryEntry | undefined {
-  const redo = deltaBetween(previous, next);
+  const diffMode = options.diffMode ?? "identity";
+  const redo = deltaBetween(previous, next, diffMode, options.candidateNodeIds);
   if (!deltaHasChanges(redo, previous)) {
     return undefined;
   }
@@ -63,7 +67,7 @@ export function createHistoryEntry(
     version: 1,
     commandType,
     label: historyLabel(commandType),
-    undo: deltaBetween(next, previous),
+    undo: deltaBetween(next, previous, diffMode, options.candidateNodeIds),
     redo
   };
 }
@@ -175,14 +179,24 @@ export function cloneOutlineNode(node: OutlineNode): OutlineNode {
   };
 }
 
-function deltaBetween(previous: OutlineState, next: OutlineState): OutlineDelta {
-  const deletedNodeIds = Object.keys(previous.nodes).filter((nodeId) => !next.nodes[nodeId]);
+function deltaBetween(
+  previous: OutlineState,
+  next: OutlineState,
+  diffMode: HistoryDiffMode,
+  candidateNodeIds?: readonly NodeId[]
+): OutlineDelta {
+  const previousNodeIds = candidateNodeIds ? uniqueNodeIds(candidateNodeIds) : Object.keys(previous.nodes);
+  const nextNodeIds = candidateNodeIds ? uniqueNodeIds(candidateNodeIds) : Object.keys(next.nodes);
+  const deletedNodeIds = previousNodeIds.filter((nodeId) => previous.nodes[nodeId] && !next.nodes[nodeId]);
   const updatedNodes: OutlineNode[] = [];
 
-  for (const nodeId of Object.keys(next.nodes)) {
-    const nextNode = next.nodes[nodeId]!;
+  for (const nodeId of nextNodeIds) {
+    const nextNode = next.nodes[nodeId];
+    if (!nextNode) {
+      continue;
+    }
     const previousNode = previous.nodes[nodeId];
-    if (!previousNode || !nodesMateriallyEqual(previousNode, nextNode)) {
+    if (!previousNode || nodeChanged(previousNode, nextNode, diffMode)) {
       updatedNodes.push(cloneOutlineNode(nextNode));
     }
   }
@@ -192,6 +206,14 @@ function deltaBetween(previous: OutlineState, next: OutlineState): OutlineDelta 
     updatedNodes,
     deletedNodeIds
   };
+}
+
+function uniqueNodeIds(nodeIds: readonly NodeId[]): NodeId[] {
+  return [...new Set(nodeIds.filter((nodeId) => nodeId))];
+}
+
+function nodeChanged(previous: OutlineNode, next: OutlineNode, diffMode: HistoryDiffMode): boolean {
+  return diffMode === "material" ? !nodesMateriallyEqual(previous, next) : previous !== next;
 }
 
 function deltaHasChanges(delta: OutlineDelta, previous: OutlineState): boolean {

@@ -414,3 +414,11 @@ Use these as starting targets, not hard promises:
   - Playwright same-window leaf drop: 53-56ms elapsed, 7.7-7.8ms mocked command, 2.6-2.7ms `sidebar.patch.treeStructure`, 9.7-11.6ms `sidebar.virtualRows`, and no `sidebar.projection.build`.
   - `pnpm profile:command -- --tabs 50000 --scenario move-leaf`: perceived time was noisy but first patch broadcast improved from 84ms before this pass to 46ms after. This Node harness still models sidebar `treeStructureUpdated` by rebuilding the projection, so its `projectionMs` does not reflect the new browser-side reorder fast path.
 - Verification: `pnpm test -- src/background/commands.test.ts`, `pnpm run build`, `pnpm exec playwright test tests/playwright/sidebar-drag-drop-performance.spec.ts --reporter=list`, and the `profile:command` run above passed.
+
+### 2026-05-18: Undo/Redo History on Structural Commands
+
+- Added persisted undo/redo history for structural commands, with compact per-command deltas rather than full state snapshots.
+- Profiled the common same-window leaf move because it is a structural command on the hot drag/drop path.
+- Baseline from a temporary `main` worktree after `pnpm run build`: `pnpm profile:command -- --tabs 50000 --scenario move-leaf` measured 77ms perceived, 115ms with save flush, first broadcast at 44ms, 38ms save stringify, 32ms projection, 1 broadcast, and 13 MB stringified.
+- After optimizing history recording to use identity diffs and a candidate-node fast path for `moveNode`: the same command measured 69ms perceived, 104ms with save flush, first broadcast at 14ms, 35ms save stringify, 28ms projection, 2 broadcasts, and 15 MB stringified. The second broadcast is the small `historyStatus` update.
+- Verification: `pnpm test`, `pnpm run build`, `pnpm exec playwright test`, and the profile command above passed.
