@@ -121,6 +121,7 @@ type InitialTreeSnapshotRequest = {
 declare global {
   interface Window {
     tabsOutlinerProfile?: SidebarProfileConsole;
+    __tabsOutlinerBootSnapshot?: InitialTreeSnapshot;
   }
 }
 
@@ -259,6 +260,18 @@ browser.runtime.onMessage.addListener((message) => {
 
 async function loadState(): Promise<void> {
   try {
+    const bootSnapshot = window.__tabsOutlinerBootSnapshot;
+    if (isInitialTreeSnapshot(bootSnapshot)) {
+      delete window.__tabsOutlinerBootSnapshot;
+      applyInitialTreeSnapshot(bootSnapshot);
+      if (bootSnapshot.hydrating) {
+        scheduleFullStateHydration();
+      } else {
+        scheduleDiagnosticsLoad();
+      }
+      return;
+    }
+
     const initial = await sendCommand({ type: "getInitialTreeSnapshot" });
     if (isInitialTreeSnapshot(initial)) {
       applyInitialTreeSnapshot(initial);
