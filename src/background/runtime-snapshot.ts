@@ -66,6 +66,21 @@ export async function getNormalWindowsIncludingTabs(
   return [...windowsById.values()];
 }
 
+export async function getNormalWindow(api: RuntimeSnapshotApi, windowId: number): Promise<RuntimeWindow | undefined> {
+  const windowInfo = await api.windows.get(windowId, {
+    populate: false,
+    windowTypes: ["normal"]
+  }).catch(() => undefined);
+  if (!windowInfo || windowInfo.incognito) {
+    return undefined;
+  }
+
+  return {
+    ...windowInfo,
+    tabs: []
+  };
+}
+
 function sortTabs(tabs: RuntimeTab[]): RuntimeTab[] {
   return [...tabs].sort((a, b) => a.index - b.index);
 }

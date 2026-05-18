@@ -7,6 +7,13 @@ function snapshotApi(windows: RuntimeWindow[], tabs: RuntimeTab[]): Pick<WebExte
   return {
     windows: {
       WINDOW_ID_NONE: -1,
+      get: vi.fn(async (windowId: number) => {
+        const windowInfo = windows.find((candidate) => candidate.id === windowId);
+        if (!windowInfo) {
+          throw new Error(`Missing window: ${windowId}`);
+        }
+        return windowInfo;
+      }),
       getAll: vi.fn(async () => windows),
       update: vi.fn(),
       remove: vi.fn(),
