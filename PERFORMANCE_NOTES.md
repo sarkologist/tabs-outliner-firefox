@@ -422,3 +422,15 @@ Use these as starting targets, not hard promises:
 - Baseline from a temporary `main` worktree after `pnpm run build`: `pnpm profile:command -- --tabs 50000 --scenario move-leaf` measured 77ms perceived, 115ms with save flush, first broadcast at 44ms, 38ms save stringify, 32ms projection, 1 broadcast, and 13 MB stringified.
 - After optimizing history recording to use identity diffs and a candidate-node fast path for `moveNode`: the same command measured 69ms perceived, 104ms with save flush, first broadcast at 14ms, 35ms save stringify, 28ms projection, 2 broadcasts, and 15 MB stringified. The second broadcast is the small `historyStatus` update.
 - Verification: `pnpm test`, `pnpm run build`, `pnpm exec playwright test`, and the profile command above passed.
+
+### 2026-05-18: Initial Load and Browser-Created Window Fast Paths
+
+- Baseline before this pass: `pnpm profile:tab-open -- --tabs 50000 --updates 5 --scenario open-tab-storm` was about 488ms perceived, with startup init about 102ms in the Node harness.
+- Startup now loads runtime windows and stored state in parallel, skips persistence when the stored tree already matches Firefox, and defers bootstrap/repaired-state persistence until the normal save flush. A stored unchanged 50k-tab startup does not save or stringify.
+- Runtime-created tab/window events now try a narrow indexed fast path before full reconciliation. Same-window tab bursts update only the affected window/tab/active nodes, and previously unknown focused windows use `windows.get(windowId)` plus the event tab instead of `windows.getAll()` and broad `tabs.query({})`.
+- Sidebar `treeStructureUpdated` handling now has a pure-insert projection fast path for non-search visible insertions. Search-active, collapsed/hidden, restore-candidate, stale, or ambiguous cases still fall back to the existing full render/reconcile paths.
+- Profile results after `pnpm run build`:
+  - `pnpm profile:tab-open -- --tabs 50000 --updates 5 --scenario open-tab-storm`: 55ms perceived, 102ms with save flush, 1 broadcast, 1 save, 13 MB stringified.
+  - `pnpm profile:tab-open -- --tabs 50000 --updates 5 --scenario new-window-storm`: 51ms perceived, 96ms with save flush, 1 broadcast, 1 save, 13 MB stringified.
+  - `pnpm profile:tab-open -- --tabs 50000 --scenario startup-stored-unchanged`: 132ms startup, 0 saves, 0 broadcasts, 0 MB stringified.
+- Verification: `pnpm test -- src/background/controller.test.ts src/sidebar/visible-tree.test.ts`, `pnpm run build`, and the profile commands above passed.

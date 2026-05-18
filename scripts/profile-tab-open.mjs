@@ -69,8 +69,16 @@ function parseArgs(argv) {
   if (!Number.isFinite(options.updates) || options.updates < 0) {
     throw new Error("--updates must be a non-negative integer");
   }
-  if (!["open-tab-storm", "noop-update", "metadata-noop-update"].includes(options.scenario)) {
-    throw new Error("--scenario must be open-tab-storm, noop-update, or metadata-noop-update");
+  if (![
+    "open-tab-storm",
+    "new-window-storm",
+    "startup-stored-unchanged",
+    "noop-update",
+    "metadata-noop-update"
+  ].includes(options.scenario)) {
+    throw new Error(
+      "--scenario must be open-tab-storm, new-window-storm, startup-stored-unchanged, noop-update, or metadata-noop-update"
+    );
   }
 
   return options;
@@ -100,6 +108,7 @@ function makeRuntime(tabCount) {
     broadcasts: 0,
     stringifyMs: 0,
     bytes: 0,
+    storage: new Map(),
     events,
     api: undefined
   };
@@ -123,17 +132,36 @@ function makeRuntime(tabCount) {
     },
     storage: {
       local: {
-        get: async (key) => typeof key === "string" ? { [key]: undefined } : {},
+        get: async (key) => {
+          if (typeof key === "string") {
+            return { [key]: runtime.storage.get(key) };
+          }
+          return Object.fromEntries(runtime.storage);
+        },
         set: async (items) => {
           measureJson(runtime, items);
+          for (const [key, value] of Object.entries(items)) {
+            runtime.storage.set(key, value);
+          }
           runtime.saves += 1;
         },
-        remove: async () => undefined,
+        remove: async (keys) => {
+          for (const key of Array.isArray(keys) ? keys : [keys]) {
+            runtime.storage.delete(key);
+          }
+        },
         onChanged: new FakeEvent()
       }
     },
     windows: {
       WINDOW_ID_NONE: -1,
+      get: async (windowId) => {
+        const windowInfo = runtime.windows.find((candidate) => candidate.id === windowId);
+        if (!windowInfo) {
+          throw new Error(`Missing window: ${windowId}`);
+        }
+        return { ...windowInfo };
+      },
       getAll: async () => runtime.windows.map((windowInfo) => ({ ...windowInfo })),
       update: async () => ({}),
       remove: async () => undefined,
@@ -201,6 +229,37 @@ async function runOpenTabStorm(runtime, updateCount) {
   await flushAll(runtime);
 }
 
+async function runNewWindowStorm(runtime, updateCount) {
+  const newWindowId = Math.max(...runtime.windows.map((windowInfo) => windowInfo.id)) + 1;
+  const newTabId = runtime.tabs.length + 1;
+  const newTab = {
+    id: newTabId,
+    windowId: newWindowId,
+    index: 0,
+    active: true,
+    url: "about:newtab",
+    title: "New Tab"
+  };
+  runtime.windows = runtime.windows
+    .map((windowInfo) => ({ ...windowInfo, focused: false }))
+    .concat({ id: newWindowId, focused: true, incognito: false });
+  runtime.tabs = runtime.tabs.map((tab) => ({ ...tab, active: false })).concat(newTab);
+
+  runtime.events.tabCreated.dispatch({ ...newTab });
+  for (let index = 0; index < updateCount; index += 1) {
+    const updated = {
+      ...newTab,
+      title: `New Window Tab ${index + 1}`,
+      url: index === updateCount - 1 ? "https://new-window.example/" : newTab.url
+    };
+    runtime.tabs[runtime.tabs.length - 1] = updated;
+    runtime.events.tabUpdated.dispatch(updated.id, { title: updated.title, url: updated.url }, { ...updated });
+  }
+  runtime.events.tabActivated.dispatch({ tabId: newTabId, windowId: newWindowId, previousTabId: 1 });
+
+  await flushAll(runtime);
+}
+
 async function runNoopUpdate(runtime) {
   const tab = { ...runtime.tabs[0] };
   runtime.events.tabUpdated.dispatch(tab.id, {}, tab);
@@ -228,6 +287,10 @@ async function flushAll(runtime) {
 }
 
 async function profile({ tabs, updates, scenario }) {
+  if (scenario === "startup-stored-unchanged") {
+    return profileStartupStoredUnchanged({ tabs });
+  }
+
   const runtime = makeRuntime(tabs);
   const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
   const initStart = performance.now();
@@ -242,6 +305,8 @@ async function profile({ tabs, updates, scenario }) {
   const start = performance.now();
   if (scenario === "open-tab-storm") {
     await runOpenTabStorm(runtime, updates);
+  } else if (scenario === "new-window-storm") {
+    await runNewWindowStorm(runtime, updates);
   } else if (scenario === "metadata-noop-update") {
     await runMetadataNoopUpdate(runtime);
   } else {
@@ -256,8 +321,43 @@ async function profile({ tabs, updates, scenario }) {
   return {
     scenario,
     tabs,
-    updates: scenario === "open-tab-storm" ? updates : 0,
+    updates: scenario === "open-tab-storm" || scenario === "new-window-storm" ? updates : 0,
     initMs: Math.round(initMs),
+    totalMs: Math.round(totalMs),
+    saveFlushMs: Math.round(saveFlushMs),
+    totalWithSaveFlushMs: Math.round(totalMs + saveFlushMs),
+    saves: runtime.saves,
+    broadcasts: runtime.broadcasts,
+    stringifyMs: Math.round(runtime.stringifyMs),
+    mbStringified: Math.round(runtime.bytes / 1024 / 1024),
+    nodes: Object.keys(state.nodes).length
+  };
+}
+
+async function profileStartupStoredUnchanged({ tabs }) {
+  const runtime = makeRuntime(tabs);
+  const firstController = createBackgroundController({ api: runtime.api, now: () => 1000 });
+  await firstController.ensureState();
+  await firstController.flushPendingSaves();
+
+  runtime.saves = 0;
+  runtime.broadcasts = 0;
+  runtime.stringifyMs = 0;
+  runtime.bytes = 0;
+
+  const secondController = createBackgroundController({ api: runtime.api, now: () => 2000 });
+  const start = performance.now();
+  const state = await secondController.ensureState();
+  const totalMs = performance.now() - start;
+  const saveFlushStart = performance.now();
+  await secondController.flushPendingSaves();
+  const saveFlushMs = performance.now() - saveFlushStart;
+
+  return {
+    scenario: "startup-stored-unchanged",
+    tabs,
+    updates: 0,
+    initMs: Math.round(totalMs),
     totalMs: Math.round(totalMs),
     saveFlushMs: Math.round(saveFlushMs),
     totalWithSaveFlushMs: Math.round(totalMs + saveFlushMs),
