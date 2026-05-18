@@ -71,12 +71,82 @@ test.describe("sidebar first paint", () => {
     console.log("sidebar-first-paint", JSON.stringify(metrics));
     expect(issues).toEqual([]);
   });
+
+  test("does not reveal a top slice before hydration when the snapshot misses the active tab", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await page.addInitScript(({ snapshot, fullState }) => {
+      const messages: Array<{ type: string; at: number }> = [];
+      let resolveGetState: ((state: unknown) => void) | undefined;
+      Object.assign(window as typeof window & {
+        __sidebarBootMessages?: typeof messages;
+        __resolveSidebarGetState?: () => void;
+      }, {
+        __sidebarBootMessages: messages,
+        __resolveSidebarGetState: () => resolveGetState?.(structuredClone(fullState))
+      });
+      window.browser = {
+        runtime: {
+          sendMessage: async (message: unknown) => {
+            const type = typeof message === "object" && message ? String((message as { type?: unknown }).type) : "";
+            messages.push({ type, at: performance.now() });
+            if (type === "getInitialTreeSnapshot") {
+              return structuredClone(snapshot);
+            }
+            if (type === "getState") {
+              return new Promise((resolve) => {
+                resolveGetState = resolve;
+              });
+            }
+            if (
+              type === "getDiagnostics" ||
+              type === "getPerformanceTrace" ||
+              type === "setPerformanceTraceEnabled" ||
+              type === "clearPerformanceTrace"
+            ) {
+              return undefined;
+            }
+            return { ok: true };
+          },
+          onMessage: {
+            addListener: () => undefined
+          }
+        },
+        storage: {
+          local: {
+            get: async () => ({}),
+            set: async () => undefined
+          }
+        }
+      };
+    }, {
+      snapshot: fixtureInitialSnapshot(500, { activeTabInSnapshot: false }),
+      fullState: fixtureFullState(500, 400)
+    });
+
+    await page.goto("/sidebar/sidebar.html");
+    await page.waitForFunction(() => {
+      const messages = (window as typeof window & { __sidebarBootMessages?: Array<{ type: string }> })
+        .__sidebarBootMessages ?? [];
+      return messages.some((message) => message.type === "getState");
+    });
+    await expect(page.locator("body")).toHaveAttribute("data-sidebar-booting", "");
+    await expect(page.getByRole("treeitem")).toHaveCount(0);
+
+    await page.evaluate(() => {
+      (window as typeof window & { __resolveSidebarGetState?: () => void }).__resolveSidebarGetState?.();
+    });
+
+    await expect(page.locator(".node[data-node-id='tab:400'].is-active")).toBeVisible();
+    await expect(page.locator("body")).not.toHaveAttribute("data-sidebar-booting", "");
+    expect(issues).toEqual([]);
+  });
 });
 
-function fixtureInitialSnapshot(tabCount: number) {
+function fixtureInitialSnapshot(tabCount: number, options: { activeTabInSnapshot?: boolean } = {}) {
   const now = 1_700_000_000_000;
   const loadedTabCount = 255;
   const loadedTabIds = Array.from({ length: loadedTabCount }, (_value, index) => `tab:${index + 1}`);
+  const activeTabInSnapshot = options.activeTabInSnapshot ?? true;
   const rows = [
     {
       nodeId: "window:1",
@@ -138,7 +208,7 @@ function fixtureInitialSnapshot(tabCount: number) {
               childIds: [],
               title: `Tab ${index + 1}`,
               url: `https://paint.example/${index + 1}`,
-              active: index === 0,
+              active: activeTabInSnapshot && index === 0,
               collapsed: false,
               createdAt: now,
               updatedAt: now,
@@ -154,11 +224,52 @@ function fixtureInitialSnapshot(tabCount: number) {
       rows,
       matchingNodeIds: [],
       visibleNodeIds: rows.map((row) => row.nodeId),
-      activeTabNodeId: "tab:1",
-      activeTabRowIndex: 1,
+      ...(activeTabInSnapshot ? { activeTabNodeId: "tab:1", activeTabRowIndex: 1 } : {}),
       nodeCount: tabCount + 1,
       closedCount: 0,
       matchCount: 0
+    }
+  };
+}
+
+function fixtureFullState(tabCount: number, activeTabId: number) {
+  const now = 1_700_000_000_000;
+  const tabIds = Array.from({ length: tabCount }, (_value, index) => `tab:${index + 1}`);
+  return {
+    version: 1,
+    rootIds: ["window:1"],
+    nodes: {
+      "window:1": {
+        id: "window:1",
+        kind: "window",
+        status: "live",
+        childIds: tabIds,
+        title: "Window",
+        active: true,
+        collapsed: false,
+        createdAt: now,
+        updatedAt: now,
+        live: { windowId: 1 }
+      },
+      ...Object.fromEntries(
+        tabIds.map((id, index) => [
+          id,
+          {
+            id,
+            kind: "tab",
+            status: "live",
+            parentId: "window:1",
+            childIds: [],
+            title: `Tab ${index + 1}`,
+            url: `https://paint.example/${index + 1}`,
+            active: index + 1 === activeTabId,
+            collapsed: false,
+            createdAt: now,
+            updatedAt: now,
+            live: { tabId: index + 1, windowId: 1 }
+          }
+        ])
+      )
     }
   };
 }

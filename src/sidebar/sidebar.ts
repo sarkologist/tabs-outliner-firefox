@@ -263,6 +263,10 @@ async function loadState(): Promise<void> {
     const bootSnapshot = window.__tabsOutlinerBootSnapshot;
     if (isInitialTreeSnapshot(bootSnapshot)) {
       delete window.__tabsOutlinerBootSnapshot;
+      if (!shouldUseInitialTreeSnapshot(bootSnapshot)) {
+        await hydrateFullState();
+        return;
+      }
       applyInitialTreeSnapshot(bootSnapshot);
       if (bootSnapshot.hydrating) {
         scheduleFullStateHydration();
@@ -273,7 +277,7 @@ async function loadState(): Promise<void> {
     }
 
     const initial = await sendCommand({ type: "getInitialTreeSnapshot" });
-    if (isInitialTreeSnapshot(initial)) {
+    if (isInitialTreeSnapshot(initial) && shouldUseInitialTreeSnapshot(initial)) {
       applyInitialTreeSnapshot(initial);
       if (initial.hydrating) {
         scheduleFullStateHydration();
@@ -305,6 +309,7 @@ async function hydrateFullState(): Promise<void> {
   } catch (error) {
     hydratingFullState = false;
     updateHydrationControls();
+    revealSidebar();
     showLoadError(error);
   }
 }
@@ -340,7 +345,16 @@ function renderInitialTreeSnapshot(): void {
     updateProjectionChrome(currentProjection);
     scrollToObservedActiveTab(currentProjection);
     renderVirtualRows();
+    revealSidebar();
   });
+}
+
+function shouldUseInitialTreeSnapshot(snapshot: InitialTreeSnapshot): boolean {
+  return (
+    !snapshot.hydrating ||
+    snapshot.projection.nodeCount <= snapshot.projection.rows.length ||
+    typeof snapshot.projection.activeTabRowIndex === "number"
+  );
 }
 
 async function loadZoomPreference(): Promise<void> {
@@ -809,7 +823,12 @@ function render(): void {
     updateProjectionChrome(projection);
     scrollToObservedActiveTab(projection);
     renderVirtualRows();
+    revealSidebar();
   });
+}
+
+function revealSidebar(): void {
+  document.body.removeAttribute("data-sidebar-booting");
 }
 
 function updateProjectionChrome(projection: VisibleTreeProjection): void {
@@ -2144,6 +2163,7 @@ function commandErrorText(error: unknown): string {
 }
 
 function showLoadError(error: unknown): void {
+  revealSidebar();
   if (stateCount) {
     stateCount.textContent = "Load failed";
     stateCount.title = error instanceof Error ? error.message : String(error);

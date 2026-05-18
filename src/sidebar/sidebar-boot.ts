@@ -11,13 +11,19 @@ void bootSidebar();
 async function bootSidebar(): Promise<void> {
   performance.mark("tabs-outliner.boot.start");
   const snapshot = await loadInitialSnapshot();
-  if (snapshot) {
+  let revealedSnapshot = false;
+  if (snapshot && shouldRevealInitialSnapshot(snapshot)) {
     window.__tabsOutlinerBootSnapshot = snapshot;
     renderInitialSnapshot(snapshot);
+    scrollToSnapshotActiveTarget(snapshot);
+    revealSidebar();
     performance.mark("tabs-outliner.boot.firstRows");
+    revealedSnapshot = true;
   }
 
-  await afterPaint();
+  if (revealedSnapshot) {
+    await afterPaint();
+  }
   await import("./sidebar.js");
 }
 
@@ -54,6 +60,39 @@ function renderInitialSnapshot(snapshot: InitialTreeSnapshot): void {
   if (empty) {
     empty.hidden = snapshot.projection.rows.length > 0;
   }
+}
+
+function shouldRevealInitialSnapshot(snapshot: InitialTreeSnapshot): boolean {
+  return (
+    !snapshot.hydrating ||
+    snapshot.projection.nodeCount <= snapshot.projection.rows.length ||
+    typeof snapshot.projection.activeTabRowIndex === "number"
+  );
+}
+
+function scrollToSnapshotActiveTarget(snapshot: InitialTreeSnapshot): void {
+  const activeRowIndex = snapshot.projection.activeTabRowIndex;
+  if (typeof activeRowIndex !== "number") {
+    return;
+  }
+
+  const scrollContainer = document.querySelector<HTMLElement>("main");
+  if (!scrollContainer) {
+    return;
+  }
+
+  const rowHeight = currentRowHeight();
+  const targetTop = activeRowIndex * rowHeight;
+  const targetBottom = targetTop + rowHeight;
+  const viewportHeight = scrollContainer.clientHeight || window.innerHeight;
+  const desiredTop = Math.max(0, targetTop - Math.max(rowHeight * 2, (viewportHeight - rowHeight) / 2));
+  if (targetTop < scrollContainer.scrollTop || targetBottom > scrollContainer.scrollTop + viewportHeight) {
+    scrollContainer.scrollTop = desiredTop;
+  }
+}
+
+function revealSidebar(): void {
+  document.body.removeAttribute("data-sidebar-booting");
 }
 
 function renderBootRow(
