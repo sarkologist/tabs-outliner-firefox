@@ -169,7 +169,9 @@ export async function runCommand(
         ...(command.parentId ? { parentId: command.parentId } : {}),
         index: command.index
       });
-      await syncBrowserOrder(next, adapter);
+      if (next !== state && !(await syncMovedSubtreeBrowserOrder(next, command.nodeId, adapter))) {
+        await syncBrowserOrder(next, adapter);
+      }
       return commandResultFromNextState(state, next);
     }
 
@@ -859,6 +861,110 @@ async function syncBrowserOrder(state: OutlineState, adapter: BrowserAdapter): P
       await adapter.moveTabs(tabIds, { windowId: root.live.windowId, index: 0 });
     }
   }
+}
+
+async function syncMovedSubtreeBrowserOrder(
+  state: OutlineState,
+  nodeId: NodeId,
+  adapter: BrowserAdapter
+): Promise<boolean> {
+  const node = state.nodes[nodeId];
+  if (!node || subtreeContainsLiveWindow(state, nodeId)) {
+    return false;
+  }
+
+  if (isLiveTab(node) && node.childIds.length === 0 && node.parentId) {
+    const parent = state.nodes[node.parentId];
+    if (isLiveWindow(parent)) {
+      const tabIndex = parent.childIds.indexOf(node.id);
+      if (tabIndex < 0) {
+        return false;
+      }
+      await adapter.moveTabs([node.live.tabId], { windowId: parent.live.windowId, index: tabIndex });
+      return true;
+    }
+  }
+
+  const movedTabIds = liveTabIdsInSubtree(state, nodeId);
+  if (movedTabIds.length === 0) {
+    return true;
+  }
+
+  const targetWindow = nearestLiveWindow(state, nodeId);
+  if (!targetWindow) {
+    return false;
+  }
+
+  const movedTabIdSet = new Set(movedTabIds);
+  const targetWindowTabs = projectLiveTabs(state, targetWindow.id)
+    .filter((tab) => tab.windowId === targetWindow.live.windowId);
+  const targetIndex = targetWindowTabs.findIndex((tab) => movedTabIdSet.has(tab.tabId));
+  if (targetIndex < 0) {
+    return false;
+  }
+
+  const movedTabsInTargetOrder = targetWindowTabs
+    .filter((tab) => movedTabIdSet.has(tab.tabId))
+    .map((tab) => tab.tabId);
+  if (movedTabsInTargetOrder.length !== movedTabIds.length) {
+    return false;
+  }
+
+  await adapter.moveTabs(movedTabsInTargetOrder, { windowId: targetWindow.live.windowId, index: targetIndex });
+  return true;
+}
+
+function liveTabIdsInSubtree(state: OutlineState, nodeId: NodeId): number[] {
+  const tabIds: number[] = [];
+  const visited = new Set<NodeId>();
+  const stack = [nodeId];
+
+  while (stack.length > 0) {
+    const currentId = stack.pop()!;
+    if (visited.has(currentId)) {
+      continue;
+    }
+    visited.add(currentId);
+
+    const node = state.nodes[currentId];
+    if (!node) {
+      continue;
+    }
+    if (isLiveTab(node)) {
+      tabIds.push(node.live.tabId);
+    }
+    for (let index = node.childIds.length - 1; index >= 0; index -= 1) {
+      stack.push(node.childIds[index]!);
+    }
+  }
+
+  return tabIds;
+}
+
+function subtreeContainsLiveWindow(state: OutlineState, nodeId: NodeId): boolean {
+  const visited = new Set<NodeId>();
+  const stack = [nodeId];
+
+  while (stack.length > 0) {
+    const currentId = stack.pop()!;
+    if (visited.has(currentId)) {
+      continue;
+    }
+    visited.add(currentId);
+
+    const node = state.nodes[currentId];
+    if (!node) {
+      continue;
+    }
+    if (isLiveWindow(node)) {
+      return true;
+    }
+    for (let index = node.childIds.length - 1; index >= 0; index -= 1) {
+      stack.push(node.childIds[index]!);
+    }
+  }
+
+  return false;
 }
 
 function firstVisibleIndex(state: OutlineState, nodeId: NodeId): number {

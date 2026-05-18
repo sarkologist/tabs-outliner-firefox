@@ -530,7 +530,7 @@ describe("background commands", () => {
     expect(result.state.nodes["tab:5"]?.status).toBe("closed");
   });
 
-  it("moves outline nodes and asks Firefox to match preorder", async () => {
+  it("moves outline nodes and asks Firefox to move the changed preorder segment", async () => {
     const state: OutlineState = bootstrapFromWindows(runtimeWindows, { now: 1000 });
     const adapter = fakeAdapter();
 
@@ -542,10 +542,44 @@ describe("background commands", () => {
     });
 
     expect(result.state).toEqual(moveNode(state, "tab:3", { parentId: "tab:1", index: 0 }));
-    expect(adapter.moveTabs).toHaveBeenCalledWith([1, 3, 2], { windowId: 10, index: 0 });
+    expect(adapter.moveTabs).toHaveBeenCalledWith([3], { windowId: 10, index: 1 });
     expect(adapter.createTab).not.toHaveBeenCalled();
     expect(adapter.createWindow).not.toHaveBeenCalled();
     expect(result.state.nodes["tab:3"]?.live).toEqual({ tabId: 3, windowId: 10 });
+  });
+
+  it("moves one leaf tab instead of syncing a whole 50k-tab window after drag/drop", async () => {
+    const tabCount = 50_000;
+    const state: OutlineState = bootstrapFromWindows([
+      {
+        id: 10,
+        focused: true,
+        incognito: false,
+        tabs: Array.from({ length: tabCount }, (_value, index) => ({
+          id: index + 1,
+          windowId: 10,
+          index,
+          active: index === 0,
+          url: `https://large.example/${index + 1}`,
+          title: `Tab ${index + 1}`
+        }))
+      }
+    ], { now: 1000 });
+    const adapter = fakeAdapter();
+
+    const result = await runCommand(state, adapter, {
+      type: "moveNode",
+      nodeId: `tab:${tabCount}`,
+      parentId: "window:10",
+      index: 0
+    });
+    const firstMoveCall = vi.mocked(adapter.moveTabs).mock.calls[0];
+    const movedTabIds = firstMoveCall?.[0];
+
+    expect(result.state.nodes["window:10"]?.childIds[0]).toBe(`tab:${tabCount}`);
+    expect(adapter.moveTabs).toHaveBeenCalledTimes(1);
+    expect(Array.isArray(movedTabIds) ? movedTabIds.length : 1).toBe(1);
+    expect(adapter.moveTabs).toHaveBeenCalledWith([tabCount], { windowId: 10, index: 0 });
   });
 
   it("flattens outline subtrees without asking Firefox to reorder tabs", async () => {

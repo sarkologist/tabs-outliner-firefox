@@ -401,3 +401,16 @@ Use these as starting targets, not hard promises:
   - `pnpm profile:delete -- --shape one-child-pairs --tabs 50000 --query needle --target last --count 20`: 795ms perceived for 20 deletes, 40ms average, first patch at 30ms, `projectionMs` 0, one deferred save flush of 34ms.
   - `pnpm profile:delete -- --tabs 50000 --target last --count 10`: 344ms perceived for 10 deletes, 34ms average, `projectionMs` 0, one deferred save flush of 30ms.
 - Verification: `pnpm test`, `pnpm run build`, and the profile commands above passed.
+
+### 2026-05-18: Drag/Drop 50k-Tab Profiling and Reorder Fast Paths
+
+- Added Playwright browser profiling coverage for 50k-tab drag/drop in `tests/playwright/sidebar-drag-drop-performance.spec.ts`.
+- Initial Playwright finding: dragover preview was not the bottleneck. The 50k preview dispatch averaged about 2.4-2.7ms with p95 about 3.6-3.8ms.
+- The actual same-window leaf drop was slow: initial Playwright drop-to-visible-update timing was 71.5ms. The first traced reorder patch attempt removed the full projection rebuild but still spent 22.4ms in `sidebar.patch.treeStructure`.
+- Background fix: live `moveNode` now first syncs only the moved live-tab segment instead of asking Firefox to move the whole live window preorder. A 50k leaf move now sends one tab id to `moveTabs`, not 50k tab ids.
+- Sidebar fix: same-parent reorder `treeStructureUpdated` patches now splice the existing visible row segment and visible id segment in place. This keeps the full `sidebar.projection.build` path out of the common same-window drag/drop reorder.
+- Profile results after `pnpm run build`:
+  - Playwright dragover: avg 2.8ms, p95 4.5ms, max 6.1ms.
+  - Playwright same-window leaf drop: 53-56ms elapsed, 7.7-7.8ms mocked command, 2.6-2.7ms `sidebar.patch.treeStructure`, 9.7-11.6ms `sidebar.virtualRows`, and no `sidebar.projection.build`.
+  - `pnpm profile:command -- --tabs 50000 --scenario move-leaf`: perceived time was noisy but first patch broadcast improved from 84ms before this pass to 46ms after. This Node harness still models sidebar `treeStructureUpdated` by rebuilding the projection, so its `projectionMs` does not reflect the new browser-side reorder fast path.
+- Verification: `pnpm test -- src/background/commands.test.ts`, `pnpm run build`, `pnpm exec playwright test tests/playwright/sidebar-drag-drop-performance.spec.ts --reporter=list`, and the `profile:command` run above passed.
