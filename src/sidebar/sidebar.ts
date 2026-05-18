@@ -29,6 +29,11 @@ import {
   dropPlacementForRoot,
   type DropPlacement
 } from "./drop-target.js";
+import {
+  dropPreviewForPlacement,
+  type DropPreview,
+  type DropPreviewConnector
+} from "./drop-preview.js";
 import { segmentSearchText } from "./search.js";
 import {
   applyDeleteTreeStructurePatchToProjection,
@@ -125,7 +130,13 @@ type HoverGuideSegments = {
 
 const dropMarker = document.createElement("li");
 dropMarker.className = "drop-marker";
+dropMarker.dataset.testid = "drop-marker";
 dropMarker.setAttribute("aria-hidden", "true");
+
+const dropGuideLayer = document.createElement("li");
+dropGuideLayer.className = "drop-guide-layer";
+dropGuideLayer.dataset.testid = "drop-guide-layer";
+dropGuideLayer.setAttribute("aria-hidden", "true");
 
 const diagnosticsScheduler = createDiagnosticsScheduler(loadDiagnostics, {
   clock: {
@@ -981,6 +992,11 @@ function appendTitleText(element: HTMLElement, titleText: string, searchQuery: s
 }
 
 function handleTreePointerOver(event: PointerEvent): void {
+  if (draggedNodeId) {
+    clearHoverLineScope();
+    return;
+  }
+
   if (event.pointerType === "touch") {
     clearHoverLineScope();
     return;
@@ -1226,6 +1242,7 @@ function handleTreeDragStart(event: DragEvent): void {
   }
 
   draggedNodeId = nodeId;
+  clearHoverLineScope();
   event.dataTransfer?.setData("text/plain", nodeId);
   event.dataTransfer?.setDragImage(row, 12, 12);
 }
@@ -1473,7 +1490,13 @@ function isNestedTreeEvent(event: DragEvent): boolean {
 }
 
 function showDropPlacement(placement: DropPlacement): void {
-  if (!tree) {
+  if (!tree || !currentProjection) {
+    return;
+  }
+
+  const preview = dropPreviewForPlacement(placement, currentProjection.rows);
+  if (!preview) {
+    clearDropPreview();
     return;
   }
 
@@ -1482,40 +1505,44 @@ function showDropPlacement(placement: DropPlacement): void {
 
   if (placement.kind === "root") {
     rootDropSurface?.classList.add("root-drop-target");
-    prepareDropMarker(placement.mode ? `drop-${placement.mode}` : "drop-root", 0);
     if (placement.targetId && placement.mode) {
       const targetItem = nodeItemForId(placement.targetId);
-      const targetRowIndex = targetItem ? rowIndexForItem(targetItem) : undefined;
-      if (!targetItem || typeof targetRowIndex !== "number") {
+      if (!targetItem) {
         clearDropPreview();
         return;
       }
-
-      positionDropMarker(targetRowIndex + (placement.mode === "after" ? 1 : 0));
-      tree.append(dropMarker);
-      return;
     }
 
-    positionDropMarker(currentProjection?.rows.length ?? 0);
-    tree.append(dropMarker);
+    appendDropPreview(preview, placement.mode ? `drop-${placement.mode}` : "drop-root");
     return;
   }
 
   const targetItem = nodeItemForId(placement.targetId);
   const targetRow = targetItem ? rowForItem(targetItem) : undefined;
-  const targetRowIndex = targetItem ? rowIndexForItem(targetItem) : undefined;
-  if (!targetItem || !targetRow || typeof targetRowIndex !== "number") {
+  if (!targetItem || !targetRow) {
     clearDropPreview();
     return;
   }
 
   const targetDepth = Number(targetRow.style.getPropertyValue("--depth")) || 0;
-  const markerDepth = placement.mode === "inside" ? targetDepth + 1 : targetDepth;
-  prepareDropMarker(`drop-${placement.mode}`, markerDepth);
-  positionDropMarker(targetRowIndex + (placement.mode === "before" ? 0 : 1));
+  if (preview.markerDepth !== (placement.mode === "inside" ? targetDepth + 1 : targetDepth)) {
+    clearDropPreview();
+    return;
+  }
   if (placement.mode === "inside") {
     targetRow.classList.add("drop-inside-target");
   }
+  appendDropPreview(preview, `drop-${placement.mode}`);
+}
+
+function appendDropPreview(preview: DropPreview, className: string): void {
+  if (!tree) {
+    return;
+  }
+
+  prepareDropMarker(className, preview.markerDepth);
+  positionDropMarker(preview.markerRowIndex);
+  appendDropGuideLayer(preview.connector, className);
   tree.append(dropMarker);
 }
 
@@ -1526,6 +1553,48 @@ function prepareDropMarker(className: string, depth: number): void {
 
 function positionDropMarker(rowIndex: number): void {
   dropMarker.style.transform = `translateY(${Math.max(0, rowIndex) * currentRowHeight()}px)`;
+}
+
+function appendDropGuideLayer(connector: DropPreviewConnector | undefined, markerClassName: string): void {
+  if (!tree || !connector) {
+    return;
+  }
+
+  dropGuideLayer.textContent = "";
+  const rowHeight = currentRowHeight();
+  const markerCenterY = Math.max(0, connector.endRowIndex) * rowHeight + currentDropMarkerHeight(markerClassName) / 2;
+  const startY = (Math.max(0, connector.startRowIndex) + 0.5) * rowHeight;
+  const verticalTop = Math.min(startY, markerCenterY);
+  const verticalHeight = Math.max(2, Math.abs(markerCenterY - startY));
+
+  const vertical = document.createElement("span");
+  vertical.className = "drop-guide-line drop-guide-vertical";
+  vertical.style.setProperty("--drop-guide-depth", String(connector.depth));
+  vertical.style.top = `${verticalTop}px`;
+  vertical.style.height = `${verticalHeight}px`;
+  dropGuideLayer.append(vertical);
+
+  const horizontal = document.createElement("span");
+  horizontal.className = "drop-guide-line drop-guide-horizontal";
+  horizontal.style.setProperty("--drop-guide-depth", String(connector.depth));
+  horizontal.style.top = `${markerCenterY - 1}px`;
+  dropGuideLayer.append(horizontal);
+
+  tree.append(dropGuideLayer);
+}
+
+function currentDropMarkerHeight(markerClassName: string): number {
+  const variable =
+    markerClassName.includes("drop-inside") || markerClassName.includes("drop-root")
+      ? "--drop-marker-inside-height"
+      : "--drop-marker-height";
+  return currentCssPixelValue(variable, markerClassName.includes("drop-inside") ? 14 : 8);
+}
+
+function currentCssPixelValue(name: string, fallback: number): number {
+  const value = window.getComputedStyle(document.documentElement).getPropertyValue(name);
+  const parsed = Number.parseFloat(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
 function rowIndexForItem(item: HTMLElement): number | undefined {
@@ -1633,6 +1702,7 @@ function clearDropPreview(): void {
 
 function removeDropPreviewElements(): void {
   dropMarker.remove();
+  dropGuideLayer.remove();
   rootDropSurface?.classList.remove("root-drop-target");
   tree
     ?.querySelectorAll<HTMLElement>(".drop-inside-target")

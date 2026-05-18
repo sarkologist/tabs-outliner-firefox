@@ -3,6 +3,9 @@
 - Feel free to challenge assumptions and suggest a better way.
 - When working on a new feature, use a feature branch, make incremental commits, and merge to `main` only when the user is satisfied.
 - Use red-green TDD for behavior changes: write or update a failing test first, make it pass with the smallest change, then refactor if needed.
+- For browser UI behavior, prefer Playwright tests that drive the real built extension/UI with deterministic fixtures. Run them with `pnpm exec playwright test`.
+- In Playwright coverage, assert both visible behavior and app/runtime state where practical: DOM/accessibility state, console errors, failed network requests, tree invariants, persisted state, and `tabsOutlinerProfile` traces when relevant.
+- Keep browser automation stable and inspectable: use semantic roles or `data-testid` selectors for important controls, capture screenshots for layout-sensitive changes, and avoid timing-only waits when a state or event assertion is available.
 - For stateful, event-driven, or interleaving-heavy behavior, add deterministic property-style or generated trace tests that assert invariants across many operation sequences.
 - For performance-related changes, profile or otherwise measure the relevant path before accepting the change. Record the scenario, command/tooling, and before/after numbers or trace observations in the commit, PR notes, or `PERFORMANCE_NOTES.md`.
 - Use realistic measurements for performance work. Synthetic `pnpm profile:*` runs are good for repeatability, but if they disagree with manual QA, add or inspect an in-browser `tabsOutlinerProfile` trace before choosing the next target.

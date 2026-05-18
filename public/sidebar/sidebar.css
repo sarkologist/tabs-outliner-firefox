@@ -302,6 +302,7 @@ main.root-drop-target {
   top: 0;
   right: 0;
   left: 0;
+  z-index: 3;
   height: var(--drop-marker-height);
   margin: 0;
   padding: 0 var(--node-row-padding-x) 0
@@ -370,6 +371,42 @@ main.root-drop-target {
   left: var(--node-row-padding-x);
   width: 8px;
   height: 8px;
+}
+
+.drop-guide-layer {
+  --drop-guide-color: color-mix(in srgb, Highlight 68%, CanvasText 12%);
+
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  pointer-events: none;
+}
+
+.drop-guide-line {
+  position: absolute;
+  display: block;
+  border-radius: 999px;
+  background: var(--drop-guide-color);
+}
+
+.drop-guide-vertical {
+  left: calc(
+    var(--node-row-padding-x) + var(--drop-guide-depth) * var(--node-indent) - var(--node-indent) +
+      var(--node-icon-size) / 2
+  );
+  width: 2px;
+}
+
+.drop-guide-horizontal {
+  left: calc(
+    var(--node-row-padding-x) + var(--drop-guide-depth) * var(--node-indent) - var(--node-indent) +
+      var(--node-icon-size) / 2
+  );
+  width: var(--node-indent);
+  height: 2px;
 }
 
 .is-closed > .node-row {

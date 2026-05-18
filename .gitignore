@@ -2,4 +2,5 @@ node_modules/
 dist/
 web-ext-artifacts/
 coverage/
+test-results/
 .DS_Store
