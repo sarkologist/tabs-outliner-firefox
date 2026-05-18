@@ -74,13 +74,8 @@ export function observeActiveTabNodeId(
     return undefined;
   }
 
-  if (activeNodeId) {
-    tracker.observedActiveNodeId = activeNodeId;
-  } else {
-    delete tracker.observedActiveNodeId;
-  }
-
   if (!activeNodeId) {
+    delete tracker.observedActiveNodeId;
     return undefined;
   }
 
@@ -88,6 +83,7 @@ export function observeActiveTabNodeId(
     return undefined;
   }
 
+  tracker.observedActiveNodeId = activeNodeId;
   return activeNodeId;
 }
 
@@ -104,9 +100,6 @@ export function scrollActiveTabIntoView(
   }
 
   if (!projection.visibleNodeIdSet.has(activeNodeId) || typeof projection.activeTabRowIndex !== "number") {
-    observeActiveTabNodeId(tracker, activeNodeId, {
-      hasRenderedNode: () => false
-    });
     return false;
   }
 
