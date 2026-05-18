@@ -434,3 +434,13 @@ Use these as starting targets, not hard promises:
   - `pnpm profile:tab-open -- --tabs 50000 --updates 5 --scenario new-window-storm`: 51ms perceived, 96ms with save flush, 1 broadcast, 1 save, 13 MB stringified.
   - `pnpm profile:tab-open -- --tabs 50000 --scenario startup-stored-unchanged`: 132ms startup, 0 saves, 0 broadcasts, 0 MB stringified.
 - Verification: `pnpm test -- src/background/controller.test.ts src/sidebar/visible-tree.test.ts`, `pnpm run build`, and the profile commands above passed.
+
+### 2026-05-18: Known Runtime Fast-Path Patches
+
+- Follow-up target: the new runtime tab/window fast path still called the generic patch builders after making a known local mutation. That meant a 50k-tab same-window/new-window create still paid for global `background.patch.build.*` scans before broadcasting a small patch.
+- The runtime fast path now returns the exact `nodeStateUpdated` or `treeStructureUpdated` patch it created and schedules persistence directly. The controller clones the cached runtime index before attempting the fast path so a later fallback cannot inherit partial index mutations.
+- Added controller trace coverage proving a browser-created same-window tab/update/activation burst does not call `background.patch.build.treeStructure` or `background.patch.build.nodeState`.
+- Before/after using `pnpm profile:tab-open -- --tabs 50000 --updates 5` after `pnpm run build`:
+  - `open-tab-storm`: 55ms perceived / 102ms with save flush before; 27ms perceived / 70ms with save flush after.
+  - `new-window-storm`: 51ms perceived / 96ms with save flush before; 27ms perceived / 66ms with save flush after.
+- Verification: `pnpm test -- src/background/controller.test.ts`, `pnpm run build`, and the profile commands above passed.

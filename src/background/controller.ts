@@ -122,6 +122,7 @@ type RuntimeEventTabsFastPathResult =
       changed: true;
       state: OutlineState;
       index: RuntimeStateIndex;
+      update: TreeStructureUpdate | NodeStateUpdate;
     };
 
 export type BackgroundControllerOptions = {
@@ -762,7 +763,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         state = fastPath.state;
         stateCache.replace(state);
         runtimeIndex = fastPath.index;
-        await persistWithBestEffortPatch(current, state, { diffMode: "identity" });
+        await persistKnownRuntimeFastPathUpdate(fastPath.update, state);
         return true;
       }
     }
@@ -793,7 +794,9 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     index: RuntimeStateIndex
   ): Promise<RuntimeEventTabsFastPathResult> {
     let next = current;
-    const mutableIndex = index;
+    let structuralChanged = false;
+    const changedNodeIds = new Set<NodeId>();
+    const mutableIndex = cloneRuntimeStateIndex(index);
     const fetchedWindows = new Map<number, RuntimeWindow | undefined>();
 
     const ensureMutableState = (): OutlineState => {
@@ -819,6 +822,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       if (!node) {
         return undefined;
       }
+      changedNodeIds.add(nodeId);
       if (node === current.nodes[nodeId]) {
         stateForMutation.nodes[nodeId] = cloneOutlineNode(node);
       }
@@ -856,6 +860,8 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         updatedAt: now(),
         live: { windowId: windowInfo.id }
       };
+      changedNodeIds.add(windowNodeId);
+      structuralChanged = true;
       mutableRootIds().push(windowNodeId);
       mutableIndex.liveWindowNodeIdsByRuntimeId.set(windowInfo.id, windowNodeId);
       mutableIndex.liveTabNodeIdsByWindowId.set(windowInfo.id, new Set());
@@ -953,6 +959,8 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       }
       parentNode.childIds.push(tabNodeId);
       stateForMutation.nodes[tabNodeId] = runtimeTabNodeForFastPath(tab, tabNodeId, parentId, now());
+      changedNodeIds.add(tabNodeId);
+      structuralChanged = true;
       mutableIndex.liveTabNodeIdsByRuntimeId.set(tab.id, tabNodeId);
       const windowTabNodeIds = mutableIndex.liveTabNodeIdsByWindowId.get(tab.windowId) ?? new Set<NodeId>();
       windowTabNodeIds.add(tabNodeId);
@@ -970,11 +978,29 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     }
 
     mutableIndex.state = next;
+    const updatedNodes = [...changedNodeIds].flatMap((nodeId) => {
+      const node = next.nodes[nodeId];
+      return node ? [node] : [];
+    });
+    const update: TreeStructureUpdate | NodeStateUpdate = structuralChanged
+      ? {
+          type: "treeStructureUpdated",
+          deletedNodeIds: [],
+          updatedNodes,
+          rootIds: next.rootIds,
+          deletedClosedCount: 0
+        }
+      : {
+          type: "nodeStateUpdated",
+          updatedNodes,
+          closedCountDelta: 0
+        };
     return {
       handled: true,
       changed: true,
       state: next,
-      index: mutableIndex
+      index: mutableIndex,
+      update
     };
   }
 
@@ -1090,6 +1116,18 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       updatedNodes: [node],
       closedCountDelta: 0
     });
+    scheduleStateSave(next);
+  }
+
+  async function persistKnownRuntimeFastPathUpdate(
+    update: TreeStructureUpdate | NodeStateUpdate,
+    next: OutlineState
+  ): Promise<void> {
+    if (update.type === "treeStructureUpdated") {
+      await broadcastTreeStructureUpdate(update);
+    } else {
+      await broadcastNodeStateUpdate(update);
+    }
     scheduleStateSave(next);
   }
 
@@ -1416,6 +1454,20 @@ function buildRuntimeStateIndex(state: OutlineState): RuntimeStateIndex {
   }
 
   return index;
+}
+
+function cloneRuntimeStateIndex(index: RuntimeStateIndex): RuntimeStateIndex {
+  return {
+    state: index.state,
+    liveTabNodeIdsByRuntimeId: new Map(index.liveTabNodeIdsByRuntimeId),
+    liveWindowNodeIdsByRuntimeId: new Map(index.liveWindowNodeIdsByRuntimeId),
+    liveTabNodeIdsByWindowId: new Map(
+      [...index.liveTabNodeIdsByWindowId].map(([windowId, nodeIds]) => [windowId, new Set(nodeIds)])
+    ),
+    activeTabNodeIdsByWindowId: new Map(index.activeTabNodeIdsByWindowId),
+    windowNodeIdsWithClosedRestoreCandidates: new Set(index.windowNodeIdsWithClosedRestoreCandidates),
+    ...(index.activeWindowNodeId ? { activeWindowNodeId: index.activeWindowNodeId } : {})
+  };
 }
 
 function runtimeTabNodeForFastPath(tab: RuntimeTab, nodeId: NodeId, parentId: NodeId, now: number): OutlineNode {

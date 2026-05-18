@@ -1592,6 +1592,8 @@ describe("background controller lifecycle", () => {
     );
     const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
     await controller.ensureState();
+    expect(await controller.handleMessage({ type: "setPerformanceTraceEnabled", enabled: true })).toEqual({ ok: true });
+    await controller.handleMessage({ type: "clearPerformanceTrace" });
     runtime.broadcasts.length = 0;
     vi.mocked(runtime.api.windows.get).mockClear();
     vi.mocked(runtime.api.windows.getAll).mockClear();
@@ -1632,6 +1634,12 @@ describe("background controller lifecycle", () => {
     expect(state.nodes["tab:2"]?.url).toBe("https://opened.example/");
     expect(state.nodes["tab:2"]?.active).toBe(true);
     expect(state.nodes["tab:1"]?.active).toBe(false);
+    expect(traceEntryNames(await controller.handleMessage({ type: "getPerformanceTrace" }))).not.toContain(
+      "background.patch.build.treeStructure"
+    );
+    expect(traceEntryNames(await controller.handleMessage({ type: "getPerformanceTrace" }))).not.toContain(
+      "background.patch.build.nodeState"
+    );
   });
 
   it("handles browser-created focused windows with narrow window lookup and compact patch", async () => {
