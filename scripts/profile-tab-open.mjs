@@ -74,12 +74,13 @@ function parseArgs(argv) {
     "new-window-storm",
     "runtime-refresh-backlog",
     "startup-initial-snapshot",
+    "startup-warm-initial-snapshot",
     "startup-stored-unchanged",
     "noop-update",
     "metadata-noop-update"
   ].includes(options.scenario)) {
     throw new Error(
-      "--scenario must be open-tab-storm, new-window-storm, runtime-refresh-backlog, startup-initial-snapshot, startup-stored-unchanged, noop-update, or metadata-noop-update"
+      "--scenario must be open-tab-storm, new-window-storm, runtime-refresh-backlog, startup-initial-snapshot, startup-warm-initial-snapshot, startup-stored-unchanged, noop-update, or metadata-noop-update"
     );
   }
 
@@ -369,6 +370,9 @@ async function profile({ tabs, updates, scenario }) {
   if (scenario === "startup-initial-snapshot") {
     return profileStartupInitialSnapshot({ tabs });
   }
+  if (scenario === "startup-warm-initial-snapshot") {
+    return profileStartupWarmInitialSnapshot({ tabs });
+  }
 
   const runtime = makeRuntime(tabs);
   const focusStarted = deferred();
@@ -502,6 +506,44 @@ async function profileStartupInitialSnapshot({ tabs }) {
     snapshotNodes: snapshot?.state?.nodes ? Object.keys(snapshot.state.nodes).length : 0,
     hydrating: Boolean(snapshot?.hydrating),
     nodes: Object.keys(state.nodes).length
+  };
+}
+
+async function profileStartupWarmInitialSnapshot({ tabs }) {
+  const runtime = makeRuntime(tabs);
+  const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+  await controller.ensureState();
+
+  runtime.saves = 0;
+  runtime.broadcasts = 0;
+  runtime.stringifyMs = 0;
+  runtime.bytes = 0;
+
+  const start = performance.now();
+  const snapshot = await controller.handleMessage({ type: "getInitialTreeSnapshot" });
+  const totalMs = performance.now() - start;
+  const snapshotJsonStart = performance.now();
+  const snapshotJson = JSON.stringify(snapshot);
+  const snapshotStringifyMs = performance.now() - snapshotJsonStart;
+
+  return {
+    scenario: "startup-warm-initial-snapshot",
+    tabs,
+    updates: 0,
+    initMs: Math.round(totalMs),
+    totalMs: Math.round(totalMs),
+    saveFlushMs: 0,
+    totalWithSaveFlushMs: Math.round(totalMs),
+    saves: runtime.saves,
+    broadcasts: runtime.broadcasts,
+    stringifyMs: Math.round(runtime.stringifyMs),
+    mbStringified: Math.round(runtime.bytes / 1024 / 1024),
+    snapshotStringifyMs: Math.round(snapshotStringifyMs),
+    snapshotMb: Math.round(snapshotJson.length / 1024 / 1024),
+    snapshotRows: Array.isArray(snapshot?.projection?.rows) ? snapshot.projection.rows.length : 0,
+    snapshotNodes: snapshot?.state?.nodes ? Object.keys(snapshot.state.nodes).length : 0,
+    snapshotTotalRows: snapshot?.projection?.totalRowCount ?? 0,
+    hydrating: Boolean(snapshot?.hydrating)
   };
 }
 

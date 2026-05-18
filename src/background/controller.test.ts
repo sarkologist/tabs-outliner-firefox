@@ -1427,6 +1427,57 @@ describe("background controller lifecycle", () => {
     expect(hydrated).toEqual(fullState);
   });
 
+  it("serves a bounded initial tree snapshot when the background state is already warm", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      Array.from({ length: 800 }, (_value, index) => ({
+        id: index + 1,
+        windowId: 10,
+        index,
+        active: index === 799,
+        url: `https://example.test/${index + 1}`,
+        title: `Tab ${index + 1}`
+      }))
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    vi.mocked(runtime.api.storage.local.get).mockClear();
+    vi.mocked(runtime.api.windows.getAll).mockClear();
+    vi.mocked(runtime.api.tabs.query).mockClear();
+
+    const snapshot = await controller.handleMessage({ type: "getInitialTreeSnapshot" }) as
+      | {
+          type?: string;
+          hydrating?: boolean;
+          state?: OutlineState;
+          projection?: {
+            rows?: Array<{ nodeId?: string; index?: number }>;
+            activeTabNodeId?: string;
+            activeTabRowIndex?: number;
+            totalRowCount?: number;
+          };
+        }
+      | undefined;
+
+    expect(snapshot?.type).toBe("initialTreeSnapshot");
+    expect(snapshot?.hydrating).toBe(true);
+    expect(snapshot?.projection?.rows).toHaveLength(256);
+    expect(snapshot?.projection?.totalRowCount).toBe(801);
+    expect(snapshot?.projection?.activeTabNodeId).toBe("tab:800");
+    expect(snapshot?.projection?.activeTabRowIndex).toBe(800);
+    expect(snapshot?.projection?.rows?.some((row) => row.nodeId === "tab:800")).toBe(true);
+    expect(Object.keys(snapshot?.state?.nodes ?? {})).toHaveLength(256);
+    expect(runtime.api.storage.local.get).not.toHaveBeenCalled();
+    expect(runtime.api.windows.getAll).not.toHaveBeenCalled();
+    expect(runtime.api.tabs.query).not.toHaveBeenCalled();
+  });
+
   it("does not wait for storage persistence before acknowledging a patched command", async () => {
     const runtime = fakeRuntime(
       [

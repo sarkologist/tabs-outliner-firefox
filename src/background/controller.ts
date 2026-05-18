@@ -529,10 +529,9 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   }
 
   function initialTreeSnapshotFromFullState(source: OutlineState, hydrating: boolean): InitialTreeSnapshot {
-    return initialTreeSnapshotForState(source, {
-      hydrating,
-      rowLimit: Object.keys(source.nodes).length
-    });
+    const snapshot = initialTreeSnapshotForState(source, { hydrating });
+    snapshot.hydrating = snapshot.projection.totalRowCount > snapshot.projection.rows.length;
+    return snapshot;
   }
 
   async function ensureHistory(): Promise<HistoryState> {
