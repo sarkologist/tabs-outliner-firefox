@@ -1,4 +1,5 @@
 import type { OutlineState, RuntimeTab, RuntimeWindow } from "./model/types.js";
+import type { HistoryStatus } from "./background/history.js";
 
 type Listener<T extends (...args: never[]) => unknown> = {
   addListener(listener: T): void;
@@ -73,6 +74,9 @@ type OutlineMessage =
       type: "stateUpdated";
       state: OutlineState;
     }
+  | ({
+      type: "historyStatus";
+    } & HistoryStatus)
   | import("./background/commands.js").BackgroundCommand;
 
 declare global {

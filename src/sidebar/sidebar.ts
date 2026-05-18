@@ -1,6 +1,7 @@
 import type { BackgroundCommand } from "../background/commands.js";
 import type { CommandAck } from "../background/commands.js";
 import type { OutlineDiagnostics } from "../background/diagnostics.js";
+import type { HistoryStatus } from "../background/history.js";
 import { analyzeRestoreScope, type RestoreScope } from "../model/outline.js";
 import { exportPortableTree } from "../model/portable-tree.js";
 import type { NodeId, OutlineNode, OutlineState } from "../model/types.js";
@@ -56,6 +57,8 @@ import {
 
 const stateCount = document.querySelector<HTMLSpanElement>("#state-count");
 const diagnostics = document.querySelector<HTMLSpanElement>("#diagnostics");
+const undoHistory = document.querySelector<HTMLButtonElement>("#undo-history");
+const redoHistory = document.querySelector<HTMLButtonElement>("#redo-history");
 const refresh = document.querySelector<HTMLButtonElement>("#refresh");
 const exportTree = document.querySelector<HTMLButtonElement>("#export-tree");
 const importTree = document.querySelector<HTMLButtonElement>("#import-tree");
@@ -155,10 +158,12 @@ applyZoom(currentZoom);
 registerZoomShortcuts();
 registerSearchControls();
 registerPortableTreeControls();
+registerHistoryControls();
 registerTreeControls();
 registerVirtualViewport();
 void loadZoomPreference();
 void loadState();
+void loadHistoryStatus();
 
 refresh?.addEventListener("click", () => {
   void runAndRender({ type: "refresh" });
@@ -227,6 +232,10 @@ browser.runtime.onMessage.addListener((message) => {
     if (isTreeStructureUpdated(message)) {
       applyTreeStructureUpdate(message);
       scheduleDiagnosticsLoad();
+      return;
+    }
+    if (isHistoryStatus(message)) {
+      updateHistoryControls(message);
     }
   });
 });
@@ -407,6 +416,41 @@ function registerPortableTreeControls(): void {
   });
 }
 
+function registerHistoryControls(): void {
+  undoHistory?.addEventListener("click", () => {
+    void runHistoryCommand("undo");
+  });
+
+  redoHistory?.addEventListener("click", () => {
+    void runHistoryCommand("redo");
+  });
+
+  document.addEventListener("keydown", (event) => {
+    const action = historyKeyboardAction(event);
+    if (!action || isEditableHistoryShortcutTarget(event.target)) {
+      return;
+    }
+
+    if (action === "undo" && undoHistory?.disabled) {
+      return;
+    }
+    if (action === "redo" && redoHistory?.disabled) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    void runHistoryCommand(action);
+  });
+
+  updateHistoryControls({
+    canUndo: false,
+    canRedo: false,
+    undoDepth: 0,
+    redoDepth: 0
+  });
+}
+
 function registerTreeControls(): void {
   tree?.setAttribute("role", "tree");
   tree?.addEventListener("click", handleTreeClick);
@@ -434,6 +478,55 @@ function registerVirtualViewport(): void {
   window.addEventListener("resize", () => {
     scheduleVirtualRender();
   });
+}
+
+async function loadHistoryStatus(): Promise<void> {
+  const status = (await browser.runtime.sendMessage({ type: "getHistoryStatus" }).catch(() => undefined)) as
+    | ({ type: "historyStatus" } & HistoryStatus)
+    | undefined;
+  if (status) {
+    updateHistoryControls(status);
+  }
+}
+
+async function runHistoryCommand(command: "undo" | "redo"): Promise<void> {
+  const accepted = await runAndRender({ type: command });
+  if (!accepted) {
+    void loadHistoryStatus();
+  }
+}
+
+function updateHistoryControls(status: HistoryStatus): void {
+  if (undoHistory) {
+    undoHistory.disabled = !status.canUndo;
+    undoHistory.title = status.undoLabel ? `Undo ${status.undoLabel}` : "Undo";
+  }
+  if (redoHistory) {
+    redoHistory.disabled = !status.canRedo;
+    redoHistory.title = status.redoLabel ? `Redo ${status.redoLabel}` : "Redo";
+  }
+}
+
+function historyKeyboardAction(event: KeyboardEvent): "undo" | "redo" | undefined {
+  if (!(event.ctrlKey || event.metaKey) || event.altKey) {
+    return undefined;
+  }
+
+  const key = event.key.toLocaleLowerCase();
+  if (key === "z" && event.shiftKey) {
+    return "redo";
+  }
+  if (key === "z") {
+    return "undo";
+  }
+  if (key === "y" && !event.shiftKey) {
+    return "redo";
+  }
+  return undefined;
+}
+
+function isEditableHistoryShortcutTarget(target: EventTarget | null): boolean {
+  return target instanceof Element && isEditableElement(target);
 }
 
 function exportCurrentTree(): void {
@@ -1611,6 +1704,13 @@ function cutPasteShortcutTargetForEventTarget(target: EventTarget | null): CutPa
 }
 
 function isEditableElement(element: Element): boolean {
+  if (
+    element instanceof HTMLInputElement ||
+    element instanceof HTMLTextAreaElement ||
+    element instanceof HTMLSelectElement
+  ) {
+    return true;
+  }
   if (element instanceof HTMLElement && element.isContentEditable) {
     return true;
   }
@@ -2041,6 +2141,18 @@ function isTreeStructureUpdated(message: unknown): message is TreeStructureUpdat
       Array.isArray((message as { rootIds?: unknown }).rootIds) &&
       (message as { rootIds: unknown[] }).rootIds.every((nodeId) => typeof nodeId === "string") &&
       typeof (message as { deletedClosedCount?: unknown }).deletedClosedCount === "number"
+  );
+}
+
+function isHistoryStatus(message: unknown): message is { type: "historyStatus" } & HistoryStatus {
+  return Boolean(
+    message &&
+      typeof message === "object" &&
+      (message as { type?: unknown }).type === "historyStatus" &&
+      typeof (message as { canUndo?: unknown }).canUndo === "boolean" &&
+      typeof (message as { canRedo?: unknown }).canRedo === "boolean" &&
+      typeof (message as { undoDepth?: unknown }).undoDepth === "number" &&
+      typeof (message as { redoDepth?: unknown }).redoDepth === "number"
   );
 }
 

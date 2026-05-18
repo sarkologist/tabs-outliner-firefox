@@ -54,7 +54,7 @@ body {
   top: 0;
   z-index: 1;
   display: grid;
-  grid-template-columns: auto minmax(52px, 1fr) minmax(0, auto) repeat(3, auto);
+  grid-template-columns: auto minmax(52px, 1fr) minmax(0, auto) repeat(5, auto);
   align-items: center;
   gap: 6px;
   padding: 8px 10px;
@@ -117,6 +117,14 @@ h1 {
 
 .toolbar-button:hover {
   background: color-mix(in srgb, CanvasText 12%, transparent);
+}
+
+.toolbar-button:disabled {
+  opacity: 0.32;
+}
+
+.toolbar-button:disabled:hover {
+  background: transparent;
 }
 
 .status {
