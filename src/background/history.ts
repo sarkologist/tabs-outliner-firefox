@@ -1,0 +1,337 @@
+import type { NodeId, OutlineNode, OutlineState } from "../model/types.js";
+
+export const HISTORY_LIMIT = 20;
+
+export type TrackableHistoryCommandType =
+  | "moveNode"
+  | "moveNodeToNewWindow"
+  | "wrapNodeInGroup"
+  | "flattenSubtree"
+  | "toggleCollapsed"
+  | "renameGroup"
+  | "importTree"
+  | "deleteNode";
+
+export type OutlineDelta = {
+  rootIds: NodeId[];
+  updatedNodes: OutlineNode[];
+  deletedNodeIds: NodeId[];
+};
+
+export type HistoryEntry = {
+  version: 1;
+  commandType: TrackableHistoryCommandType;
+  label: string;
+  undo: OutlineDelta;
+  redo: OutlineDelta;
+};
+
+export type HistoryState = {
+  version: 1;
+  undoStack: HistoryEntry[];
+  redoStack: HistoryEntry[];
+};
+
+export type HistoryStatus = {
+  canUndo: boolean;
+  canRedo: boolean;
+  undoDepth: number;
+  redoDepth: number;
+  undoLabel?: string;
+  redoLabel?: string;
+};
+
+export function createEmptyHistoryState(): HistoryState {
+  return {
+    version: 1,
+    undoStack: [],
+    redoStack: []
+  };
+}
+
+export function createHistoryEntry(
+  commandType: TrackableHistoryCommandType,
+  previous: OutlineState,
+  next: OutlineState
+): HistoryEntry | undefined {
+  const redo = deltaBetween(previous, next);
+  if (!deltaHasChanges(redo, previous)) {
+    return undefined;
+  }
+
+  return {
+    version: 1,
+    commandType,
+    label: historyLabel(commandType),
+    undo: deltaBetween(next, previous),
+    redo
+  };
+}
+
+export function pushUndoEntry(history: HistoryState, entry: HistoryEntry): HistoryState {
+  return {
+    version: 1,
+    undoStack: [...history.undoStack, entry].slice(-HISTORY_LIMIT),
+    redoStack: []
+  };
+}
+
+export function pushRedoEntry(history: HistoryState, entry: HistoryEntry): HistoryState {
+  return {
+    version: 1,
+    undoStack: history.undoStack,
+    redoStack: [...history.redoStack, entry].slice(-HISTORY_LIMIT)
+  };
+}
+
+export function pushUndoEntryPreservingRedo(history: HistoryState, entry: HistoryEntry): HistoryState {
+  return {
+    version: 1,
+    undoStack: [...history.undoStack, entry].slice(-HISTORY_LIMIT),
+    redoStack: history.redoStack
+  };
+}
+
+export function popUndoEntry(history: HistoryState): { entry?: HistoryEntry; history: HistoryState } {
+  const entry = history.undoStack.at(-1);
+  return {
+    ...(entry ? { entry } : {}),
+    history: {
+      version: 1,
+      undoStack: history.undoStack.slice(0, -1),
+      redoStack: history.redoStack
+    }
+  };
+}
+
+export function popRedoEntry(history: HistoryState): { entry?: HistoryEntry; history: HistoryState } {
+  const entry = history.redoStack.at(-1);
+  return {
+    ...(entry ? { entry } : {}),
+    history: {
+      version: 1,
+      undoStack: history.undoStack,
+      redoStack: history.redoStack.slice(0, -1)
+    }
+  };
+}
+
+export function historyStatus(history: HistoryState): HistoryStatus {
+  const undoEntry = history.undoStack.at(-1);
+  const redoEntry = history.redoStack.at(-1);
+  return {
+    canUndo: Boolean(undoEntry),
+    canRedo: Boolean(redoEntry),
+    undoDepth: history.undoStack.length,
+    redoDepth: history.redoStack.length,
+    ...(undoEntry ? { undoLabel: undoEntry.label } : {}),
+    ...(redoEntry ? { redoLabel: redoEntry.label } : {})
+  };
+}
+
+export function normalizeHistoryState(value: unknown): HistoryState {
+  if (!isHistoryState(value)) {
+    return createEmptyHistoryState();
+  }
+
+  return {
+    version: 1,
+    undoStack: value.undoStack.slice(-HISTORY_LIMIT).map(cloneHistoryEntry),
+    redoStack: value.redoStack.slice(-HISTORY_LIMIT).map(cloneHistoryEntry)
+  };
+}
+
+export function applyOutlineDelta(state: OutlineState, delta: OutlineDelta): OutlineState {
+  const next: OutlineState = {
+    version: state.version,
+    rootIds: [...delta.rootIds],
+    nodes: { ...state.nodes }
+  };
+
+  for (const nodeId of delta.deletedNodeIds) {
+    delete next.nodes[nodeId];
+  }
+  for (const node of delta.updatedNodes) {
+    next.nodes[node.id] = cloneOutlineNode(node);
+  }
+
+  return next;
+}
+
+export function cloneOutlineState(state: OutlineState): OutlineState {
+  return {
+    version: state.version,
+    rootIds: [...state.rootIds],
+    nodes: Object.fromEntries(Object.entries(state.nodes).map(([nodeId, node]) => [nodeId, cloneOutlineNode(node)]))
+  };
+}
+
+export function cloneOutlineNode(node: OutlineNode): OutlineNode {
+  return {
+    ...node,
+    childIds: [...node.childIds],
+    ...(node.live ? { live: { ...node.live } } : {}),
+    ...(node.restore ? { restore: { ...node.restore } } : {})
+  };
+}
+
+function deltaBetween(previous: OutlineState, next: OutlineState): OutlineDelta {
+  const deletedNodeIds = Object.keys(previous.nodes).filter((nodeId) => !next.nodes[nodeId]);
+  const updatedNodes: OutlineNode[] = [];
+
+  for (const nodeId of Object.keys(next.nodes)) {
+    const nextNode = next.nodes[nodeId]!;
+    const previousNode = previous.nodes[nodeId];
+    if (!previousNode || !nodesMateriallyEqual(previousNode, nextNode)) {
+      updatedNodes.push(cloneOutlineNode(nextNode));
+    }
+  }
+
+  return {
+    rootIds: [...next.rootIds],
+    updatedNodes,
+    deletedNodeIds
+  };
+}
+
+function deltaHasChanges(delta: OutlineDelta, previous: OutlineState): boolean {
+  return delta.deletedNodeIds.length > 0 ||
+    delta.updatedNodes.length > 0 ||
+    !sameNodeIdList(delta.rootIds, previous.rootIds);
+}
+
+function historyLabel(commandType: TrackableHistoryCommandType): string {
+  switch (commandType) {
+    case "moveNode":
+    case "moveNodeToNewWindow":
+      return "Move";
+    case "wrapNodeInGroup":
+      return "Group";
+    case "flattenSubtree":
+      return "Flatten";
+    case "toggleCollapsed":
+      return "Collapse";
+    case "renameGroup":
+      return "Rename";
+    case "importTree":
+      return "Import";
+    case "deleteNode":
+      return "Delete";
+  }
+}
+
+function isHistoryState(value: unknown): value is HistoryState {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const candidate = value as Partial<HistoryState>;
+  return candidate.version === 1 &&
+    Array.isArray(candidate.undoStack) &&
+    Array.isArray(candidate.redoStack) &&
+    candidate.undoStack.every(isHistoryEntry) &&
+    candidate.redoStack.every(isHistoryEntry);
+}
+
+function isHistoryEntry(value: unknown): value is HistoryEntry {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const candidate = value as Partial<HistoryEntry>;
+  return candidate.version === 1 &&
+    isTrackableHistoryCommandType(candidate.commandType) &&
+    typeof candidate.label === "string" &&
+    isOutlineDelta(candidate.undo) &&
+    isOutlineDelta(candidate.redo);
+}
+
+function isTrackableHistoryCommandType(value: unknown): value is TrackableHistoryCommandType {
+  return value === "moveNode" ||
+    value === "moveNodeToNewWindow" ||
+    value === "wrapNodeInGroup" ||
+    value === "flattenSubtree" ||
+    value === "toggleCollapsed" ||
+    value === "renameGroup" ||
+    value === "importTree" ||
+    value === "deleteNode";
+}
+
+function isOutlineDelta(value: unknown): value is OutlineDelta {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const candidate = value as Partial<OutlineDelta>;
+  return Array.isArray(candidate.rootIds) &&
+    candidate.rootIds.every((nodeId) => typeof nodeId === "string") &&
+    Array.isArray(candidate.updatedNodes) &&
+    candidate.updatedNodes.every(isOutlineNode) &&
+    Array.isArray(candidate.deletedNodeIds) &&
+    candidate.deletedNodeIds.every((nodeId) => typeof nodeId === "string");
+}
+
+function isOutlineNode(value: unknown): value is OutlineNode {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      typeof (value as { id?: unknown }).id === "string" &&
+      typeof (value as { kind?: unknown }).kind === "string" &&
+      typeof (value as { status?: unknown }).status === "string" &&
+      Array.isArray((value as { childIds?: unknown }).childIds) &&
+      typeof (value as { title?: unknown }).title === "string" &&
+      typeof (value as { collapsed?: unknown }).collapsed === "boolean" &&
+      typeof (value as { createdAt?: unknown }).createdAt === "number" &&
+      typeof (value as { updatedAt?: unknown }).updatedAt === "number"
+  );
+}
+
+function cloneHistoryEntry(entry: HistoryEntry): HistoryEntry {
+  return {
+    version: 1,
+    commandType: entry.commandType,
+    label: entry.label,
+    undo: cloneDelta(entry.undo),
+    redo: cloneDelta(entry.redo)
+  };
+}
+
+function cloneDelta(delta: OutlineDelta): OutlineDelta {
+  return {
+    rootIds: [...delta.rootIds],
+    updatedNodes: delta.updatedNodes.map(cloneOutlineNode),
+    deletedNodeIds: [...delta.deletedNodeIds]
+  };
+}
+
+function nodesMateriallyEqual(previous: OutlineNode, next: OutlineNode): boolean {
+  return previous.id === next.id &&
+    previous.kind === next.kind &&
+    previous.status === next.status &&
+    previous.parentId === next.parentId &&
+    sameNodeIdList(previous.childIds, next.childIds) &&
+    previous.title === next.title &&
+    previous.customTitle === next.customTitle &&
+    previous.url === next.url &&
+    previous.favIconUrl === next.favIconUrl &&
+    previous.active === next.active &&
+    previous.collapsed === next.collapsed &&
+    previous.createdAt === next.createdAt &&
+    previous.updatedAt === next.updatedAt &&
+    previous.closedAt === next.closedAt &&
+    previous.restoredFromClosed === next.restoredFromClosed &&
+    liveRefsEqual(previous.live, next.live) &&
+    restoreRefsEqual(previous.restore, next.restore);
+}
+
+function liveRefsEqual(previous: OutlineNode["live"], next: OutlineNode["live"]): boolean {
+  return previous?.tabId === next?.tabId && previous?.windowId === next?.windowId;
+}
+
+function restoreRefsEqual(previous: OutlineNode["restore"], next: OutlineNode["restore"]): boolean {
+  return previous?.sessionId === next?.sessionId &&
+    previous?.url === next?.url &&
+    previous?.title === next?.title &&
+    previous?.favIconUrl === next?.favIconUrl;
+}
+
+function sameNodeIdList(previous: readonly NodeId[], next: readonly NodeId[]): boolean {
+  return previous.length === next.length && previous.every((nodeId, index) => nodeId === next[index]);
+}
