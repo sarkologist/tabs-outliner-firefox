@@ -1,11 +1,28 @@
 import type { BrowserAdapter } from "./adapter.js";
 import { createBrowserAdapter } from "./browser-adapter.js";
 import { computeDiagnostics, type OutlineDiagnostics } from "./diagnostics.js";
-import { isBackgroundCommand, planLiveSubtreeClose, runCommand } from "./commands.js";
+import { isBackgroundCommand, planLiveSubtreeClose, runCommand, syncBrowserOrder } from "./commands.js";
 import type { CommandAck } from "./commands.js";
 import { getNormalWindows, getNormalWindowsIncludingTabs } from "./runtime-snapshot.js";
 import { createStateCache } from "./state-cache.js";
-import { loadState, saveState } from "./storage.js";
+import { loadHistory, loadState, saveState, saveStateAndHistory } from "./storage.js";
+import {
+  applyOutlineDelta,
+  cloneOutlineNode,
+  cloneOutlineState,
+  createHistoryEntry,
+  historyStatus,
+  normalizeHistoryState,
+  popRedoEntry,
+  popUndoEntry,
+  pushRedoEntry,
+  pushUndoEntry,
+  pushUndoEntryPreservingRedo,
+  type HistoryState,
+  type HistoryStatus,
+  type OutlineDelta,
+  type TrackableHistoryCommandType
+} from "./history.js";
 import {
   bootstrapFromWindows,
   closeTab,
@@ -98,6 +115,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   const perfTrace = createPerformanceTracer("background");
 
   let state: OutlineState | undefined;
+  let historyState: HistoryState | undefined;
   let mutationQueue: Promise<void> = Promise.resolve();
   const outlinerClosingTabIds = new Set<number>();
   const outlinerClosingWindowIds = new Set<number>();
@@ -113,6 +131,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   let commandCloseSessionEchoesToSkip = 0;
   let queuedRuntimeRefresh: QueuedRuntimeRefresh | undefined;
   let pendingSaveState: OutlineState | undefined;
+  let pendingSaveHistory: HistoryState | undefined;
   let saveTimer: number | undefined;
   let saveMaxTimer: number | undefined;
   let saveInFlight: Promise<void> | undefined;
@@ -295,6 +314,14 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       return undefined;
     }
 
+    if (message.type === "getHistoryStatus") {
+      return historyStatusMessage(await ensureHistory());
+    }
+
+    if (message.type === "undo" || message.type === "redo") {
+      return enqueueMutation(() => applyHistoryCommand(message.type), { reason: "history", command: message.type });
+    }
+
     if (message.type === "refresh") {
       return commandAck(await refreshFromRuntime());
     }
@@ -306,6 +333,11 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
     return enqueueMutation(async () => {
       const current = await ensureState();
+      const historyPrevious = isTrackableHistoryCommandType(message.type)
+        ? message.type === "toggleCollapsed"
+          ? cloneOutlineState(current)
+          : current
+        : undefined;
       const outlinerClosingTabId = message.type === "closeNode"
         ? liveTabIdForNode(current, message.nodeId)
         : undefined;
@@ -377,6 +409,9 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       }
       state = result.state;
       stateCache.replace(result.state);
+      if (historyPrevious && isTrackableHistoryCommandType(message.type)) {
+        await recordHistoryEntry(message.type, historyPrevious, result.state);
+      }
       if (message.type === "restoreNode") {
         await persistWithNodeStateUpdate(current, result.state, restorePatchNodeIds);
         return commandAck(true);
@@ -414,6 +449,11 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     return stateCache.get();
   }
 
+  async function ensureHistory(): Promise<HistoryState> {
+    historyState ??= normalizeHistoryState(await loadHistory(api));
+    return historyState;
+  }
+
   async function initializeState(): Promise<OutlineState> {
     const windows = await perfTrace.measureAsync("background.runtime.getWindows", () => getNormalWindows(api));
     const stored = await perfTrace.measureAsync("background.state.load", () => loadState(api));
@@ -422,6 +462,166 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       : bootstrapFromWindows(windows, { now: now() });
     await saveStateNowWithTrace(state);
     return state;
+  }
+
+  async function recordHistoryEntry(
+    commandType: TrackableHistoryCommandType,
+    previous: OutlineState,
+    next: OutlineState
+  ): Promise<void> {
+    const entry = createHistoryEntry(commandType, previous, next);
+    if (!entry) {
+      return;
+    }
+
+    historyState = pushUndoEntry(await ensureHistory(), entry);
+    scheduleHistorySave(historyState);
+    await broadcastHistoryStatus(historyState);
+  }
+
+  async function applyHistoryCommand(direction: "undo" | "redo"): Promise<CommandAck> {
+    const history = await ensureHistory();
+    const popped = direction === "undo" ? popUndoEntry(history) : popRedoEntry(history);
+    if (!popped.entry) {
+      return commandAck(false);
+    }
+
+    const current = await ensureState();
+    const next = await applyHistoryDeltaWithRuntime(current, direction === "undo" ? popped.entry.undo : popped.entry.redo);
+    if (statesMateriallyEqual(current, next)) {
+      historyState = popped.history;
+      scheduleHistorySave(historyState);
+      await broadcastHistoryStatus(historyState);
+      return commandAck(false);
+    }
+
+    state = next;
+    stateCache.replace(next);
+    historyState = direction === "undo"
+      ? pushRedoEntry(popped.history, popped.entry)
+      : pushUndoEntryPreservingRedo(popped.history, popped.entry);
+    await persistWithBestEffortPatch(current, next, { diffMode: "material" });
+    scheduleHistorySave(historyState);
+    await broadcastHistoryStatus(historyState);
+    return commandAck(true);
+  }
+
+  async function applyHistoryDeltaWithRuntime(current: OutlineState, delta: OutlineDelta): Promise<OutlineState> {
+    const next = applyOutlineDelta(current, delta);
+    const closedRuntimeResources = await closeDeletedLiveRuntimeResources(current, next);
+    const materializedRuntimeResources = await materializeHistoryLiveResources(current, next);
+    if (closedRuntimeResources || materializedRuntimeResources || liveStructureChanged(current, next)) {
+      await syncBrowserOrder(next, adapter);
+    }
+    return next;
+  }
+
+  async function closeDeletedLiveRuntimeResources(current: OutlineState, next: OutlineState): Promise<boolean> {
+    const nextLiveTabIds = new Set(liveTabNodes(next).map((node) => node.live.tabId));
+    const deletedNodeIds = Object.keys(current.nodes).filter((nodeId) => !next.nodes[nodeId]);
+    const closedWindowIds = new Set<number>();
+    const tabIdsToClose: number[] = [];
+
+    for (const nodeId of deletedNodeIds) {
+      const node = current.nodes[nodeId];
+      if (!node || !isLiveWindowNode(node)) {
+        continue;
+      }
+
+      const windowLiveTabs = projectLiveTabs(current, node.id);
+      if (windowLiveTabs.length > 0 && windowLiveTabs.some((tab) => nextLiveTabIds.has(tab.tabId))) {
+        continue;
+      }
+
+      await adapter.closeWindow(node.live.windowId);
+      closedWindowIds.add(node.live.windowId);
+    }
+
+    for (const nodeId of deletedNodeIds) {
+      const node = current.nodes[nodeId];
+      if (!node || !isLiveTabNode(node) || nextLiveTabIds.has(node.live.tabId) || closedWindowIds.has(node.live.windowId)) {
+        continue;
+      }
+      tabIdsToClose.push(node.live.tabId);
+    }
+
+    if (tabIdsToClose.length > 0) {
+      await adapter.closeTabs(tabIdsToClose);
+    }
+
+    return closedWindowIds.size > 0 || tabIdsToClose.length > 0;
+  }
+
+  async function materializeHistoryLiveResources(current: OutlineState, next: OutlineState): Promise<boolean> {
+    let changed = false;
+    const tabNodesCreatedWithWindow = new Set<NodeId>();
+
+    for (const windowNode of liveWindowNodes(next)) {
+      const currentWindow = current.nodes[windowNode.id];
+      if (currentWindow && isLiveWindowNode(currentWindow)) {
+        if (windowNode.live.windowId !== currentWindow.live.windowId) {
+          replaceLiveWindowIdInSubtree(next, windowNode.id, currentWindow.live.windowId);
+          changed = true;
+        }
+        continue;
+      }
+
+      const existingTabNode = liveTabNodesInSubtree(next, windowNode.id)
+        .find((node) => {
+          const currentNode = current.nodes[node.id];
+          return Boolean(currentNode && isLiveTabNode(currentNode));
+        });
+      if (existingTabNode) {
+        const currentTab = current.nodes[existingTabNode.id];
+        if (!currentTab || !isLiveTabNode(currentTab)) {
+          continue;
+        }
+        const createdWindow = await adapter.createWindow({ tabId: currentTab.live.tabId });
+        replaceLiveWindowIdInSubtree(next, windowNode.id, createdWindow.id);
+        changed = true;
+        continue;
+      }
+
+      const missingTabNodes = liveTabNodesInSubtree(next, windowNode.id)
+        .filter((node) => !isLiveTabNode(current.nodes[node.id]));
+      const firstMissingTab = missingTabNodes[0];
+      const createdWindow = await adapter.createWindow({
+        url: firstMissingTab ? historyNodeUrl(firstMissingTab) : "about:blank"
+      });
+      replaceLiveWindowIdInSubtree(next, windowNode.id, createdWindow.id);
+      const createdTab = createdWindow.tabs?.[0];
+      if (firstMissingTab && createdTab) {
+        updateLiveTabRef(next, firstMissingTab.id, createdTab.id, createdWindow.id);
+        tabNodesCreatedWithWindow.add(firstMissingTab.id);
+      }
+      changed = true;
+    }
+
+    for (const node of liveTabNodes(next)) {
+      const currentNode = current.nodes[node.id];
+      const targetWindowId = nearestLiveWindowId(next, node.id) ?? node.live.windowId;
+      if (currentNode && isLiveTabNode(currentNode)) {
+        if (node.live.tabId !== currentNode.live.tabId || node.live.windowId !== targetWindowId) {
+          updateLiveTabRef(next, node.id, currentNode.live.tabId, targetWindowId);
+          changed = true;
+        }
+        continue;
+      }
+
+      if (tabNodesCreatedWithWindow.has(node.id)) {
+        continue;
+      }
+
+      const created = await adapter.createTab({
+        url: historyNodeUrl(node),
+        windowId: targetWindowId,
+        active: node.active === true
+      });
+      updateLiveTabRef(next, node.id, created.id, created.windowId);
+      changed = true;
+    }
+
+    return changed;
   }
 
   async function refreshFromRuntime(eventTabs: RuntimeTab[] = [], options: RefreshOptions = {}): Promise<boolean> {
@@ -690,8 +890,21 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     await broadcastWithTrace(update);
   }
 
+  async function broadcastHistoryStatus(history: HistoryState): Promise<void> {
+    await broadcastWithTrace(historyStatusMessage(history));
+  }
+
   function scheduleStateSave(next: OutlineState): void {
     pendingSaveState = next;
+    schedulePendingSave();
+  }
+
+  function scheduleHistorySave(next: HistoryState): void {
+    pendingSaveHistory = next;
+    schedulePendingSave();
+  }
+
+  function schedulePendingSave(): void {
     if (saveInFlight) {
       return;
     }
@@ -711,18 +924,20 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   async function flushPendingSaves(): Promise<void> {
     clearSaveTimers();
 
-    while (pendingSaveState || saveInFlight) {
+    while (pendingSaveState || pendingSaveHistory || saveInFlight) {
       if (saveInFlight) {
         await saveInFlight;
         continue;
       }
 
-      const next = pendingSaveState;
-      if (!next) {
+      const nextState = pendingSaveState;
+      const nextHistory = pendingSaveHistory;
+      if (!nextState && !nextHistory) {
         return;
       }
       pendingSaveState = undefined;
-      saveInFlight = saveStateNowWithTrace(next).finally(() => {
+      pendingSaveHistory = undefined;
+      saveInFlight = saveStateAndHistoryNowWithTrace(nextState, nextHistory).finally(() => {
         saveInFlight = undefined;
       });
       await saveInFlight;
@@ -750,6 +965,13 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
   async function saveStateNowWithTrace(next: OutlineState): Promise<void> {
     await perfTrace.measureAsync("background.state.save", () => saveState(next, api));
+  }
+
+  async function saveStateAndHistoryNowWithTrace(
+    nextState: OutlineState | undefined,
+    nextHistory: HistoryState | undefined
+  ): Promise<void> {
+    await perfTrace.measureAsync("background.state.save", () => saveStateAndHistory(nextState, nextHistory, api));
   }
 
   async function broadcastWithTrace(message: { type: string } & Record<string, unknown>): Promise<void> {
@@ -843,6 +1065,24 @@ function commandAck(stateChanged: boolean): CommandAck {
     type: "commandAck",
     stateChanged
   };
+}
+
+function historyStatusMessage(history: HistoryState): { type: "historyStatus" } & HistoryStatus {
+  return {
+    type: "historyStatus",
+    ...historyStatus(history)
+  };
+}
+
+function isTrackableHistoryCommandType(value: string): value is TrackableHistoryCommandType {
+  return value === "moveNode" ||
+    value === "moveNodeToNewWindow" ||
+    value === "wrapNodeInGroup" ||
+    value === "flattenSubtree" ||
+    value === "toggleCollapsed" ||
+    value === "renameGroup" ||
+    value === "importTree" ||
+    value === "deleteNode";
 }
 
 function errorText(error: unknown): string {
@@ -1284,8 +1524,117 @@ function isLiveTabInOpenWindow(
   };
 }
 
-function isLiveTabNode(node: OutlineNode): node is OutlineNode & { live: { tabId: number; windowId: number } } {
-  return Boolean(node.kind === "tab" && node.status === "live" && node.live && "tabId" in node.live);
+function liveStructureChanged(previous: OutlineState, next: OutlineState): boolean {
+  return liveStructureSignature(previous) !== liveStructureSignature(next);
+}
+
+function liveStructureSignature(state: OutlineState): string {
+  return [
+    ...liveWindowNodes(state).map((node) =>
+      `window:${node.id}:${node.live.windowId}:${node.parentId ?? ""}:${node.childIds.join(",")}`
+    ),
+    ...liveTabNodes(state).map((node) =>
+      `tab:${node.id}:${node.live.tabId}:${node.live.windowId}:${node.parentId ?? ""}`
+    )
+  ].sort().join("|");
+}
+
+function liveWindowNodes(state: OutlineState): Array<OutlineNode & { live: { windowId: number } }> {
+  return Object.values(state.nodes).filter(isLiveWindowNode);
+}
+
+function liveTabNodes(state: OutlineState): Array<OutlineNode & { live: { tabId: number; windowId: number } }> {
+  return Object.values(state.nodes).filter(isLiveTabNode);
+}
+
+function liveTabNodesInSubtree(
+  state: OutlineState,
+  nodeId: NodeId
+): Array<OutlineNode & { live: { tabId: number; windowId: number } }> {
+  const nodes: Array<OutlineNode & { live: { tabId: number; windowId: number } }> = [];
+  const visited = new Set<NodeId>();
+  const stack = [nodeId];
+
+  while (stack.length > 0) {
+    const currentId = stack.pop()!;
+    if (visited.has(currentId)) {
+      continue;
+    }
+    visited.add(currentId);
+
+    const node = state.nodes[currentId];
+    if (!node) {
+      continue;
+    }
+    if (isLiveTabNode(node)) {
+      nodes.push(node);
+    }
+    for (let index = node.childIds.length - 1; index >= 0; index -= 1) {
+      stack.push(node.childIds[index]!);
+    }
+  }
+
+  return nodes;
+}
+
+function replaceLiveWindowIdInSubtree(state: OutlineState, windowNodeId: NodeId, windowId: number): void {
+  const windowNode = cloneNodeForHistoryMutation(state, windowNodeId);
+  if (isLiveWindowNode(windowNode)) {
+    windowNode.live = { windowId };
+  }
+
+  for (const tabNode of liveTabNodesInSubtree(state, windowNodeId)) {
+    updateLiveTabRef(state, tabNode.id, tabNode.live.tabId, windowId);
+  }
+}
+
+function updateLiveTabRef(state: OutlineState, nodeId: NodeId, tabId: number, windowId: number): void {
+  const node = cloneNodeForHistoryMutation(state, nodeId);
+  if (!node || node.kind !== "tab") {
+    return;
+  }
+  node.status = "live";
+  node.live = { tabId, windowId };
+  node.updatedAt = Date.now();
+  delete node.closedAt;
+  delete node.restore;
+}
+
+function cloneNodeForHistoryMutation(state: OutlineState, nodeId: NodeId): OutlineNode | undefined {
+  const node = state.nodes[nodeId];
+  if (!node) {
+    return undefined;
+  }
+  const cloned = cloneOutlineNode(node);
+  state.nodes[nodeId] = cloned;
+  return cloned;
+}
+
+function nearestLiveWindowId(state: OutlineState, nodeId: NodeId): number | undefined {
+  const seen = new Set<NodeId>();
+  let current = state.nodes[nodeId];
+
+  while (current && !seen.has(current.id)) {
+    seen.add(current.id);
+    if (isLiveWindowNode(current)) {
+      return current.live.windowId;
+    }
+    current = current.parentId ? state.nodes[current.parentId] : undefined;
+  }
+
+  return liveWindowNodes(state)[0]?.live.windowId;
+}
+
+function historyNodeUrl(node: OutlineNode): string {
+  return node.url ?? node.restore?.url ?? "about:blank";
+}
+
+function isLiveWindowNode(node: OutlineNode | undefined): node is OutlineNode & { live: { windowId: number } } {
+  return Boolean(node?.kind === "window" && node.status === "live" && node.live && "windowId" in node.live);
+}
+
+function isLiveTabNode(node: OutlineNode | undefined): node is OutlineNode & { live: { tabId: number; windowId: number } } {
+  return Boolean(node?.kind === "tab" && node.status === "live" && node.live && "tabId" in node.live);
 }
 
 function filterRemovedTabsFromWindows(windows: RuntimeWindow[], removedTabIds: Set<number>): RuntimeWindow[] {

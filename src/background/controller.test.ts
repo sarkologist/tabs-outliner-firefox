@@ -4,6 +4,7 @@ import type { BrowserAdapter } from "./adapter.js";
 import { createBackgroundController } from "./controller.js";
 import type { CommandAck } from "./commands.js";
 import { STATE_KEY } from "./storage.js";
+import { PORTABLE_TREE_SCHEMA } from "../model/portable-tree.js";
 import type { OutlineState, RuntimeTab, RuntimeWindow } from "../model/types.js";
 
 type Listener<TArgs extends unknown[]> = (...args: TArgs) => unknown | Promise<unknown>;
@@ -203,8 +204,25 @@ function fakeRuntime(windows: RuntimeWindow[], tabs: RuntimeTab[], options: Fake
             });
           }
         }),
-        create: vi.fn(async () => {
-          throw new Error("not implemented");
+        create: vi.fn(async (createProperties: { url: string; windowId?: number; active?: boolean }) => {
+          const windowId =
+            createProperties.windowId ??
+            runtime.windows.find((windowInfo) => windowInfo.focused)?.id ??
+            runtime.windows[0]?.id;
+          if (typeof windowId !== "number") {
+            throw new Error("Cannot create a tab without a window");
+          }
+
+          const tab: RuntimeTab = {
+            id: nextRuntimeTabId(runtime),
+            windowId,
+            index: runtime.tabs.filter((candidate) => candidate.windowId === windowId).length,
+            active: createProperties.active ?? true,
+            url: createProperties.url,
+            title: createProperties.url
+          };
+          await createTabFromBrowser(runtime, tab, { awaitListeners: false });
+          return copyTab(runtime.tabs.find((candidate) => candidate.id === tab.id) ?? tab);
         }),
         move: vi.fn(async (tabIds: number | number[], moveProperties: { windowId?: number; index: number }) =>
           moveTabsFromBrowser(runtime, tabIds, moveProperties)
@@ -545,6 +563,10 @@ function expectCommandAck(result: unknown, stateChanged: boolean): asserts resul
     type: "commandAck",
     stateChanged
   });
+}
+
+function stateBroadcasts(messages: unknown[]): unknown[] {
+  return messages.filter((message) => (message as { type?: unknown }).type !== "historyStatus");
 }
 
 function traceEntryNames(snapshot: unknown): string[] {
@@ -1401,7 +1423,7 @@ describe("background controller lifecycle", () => {
 
     const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
 
-    expect(runtime.broadcasts).toHaveLength(1);
+    expect(stateBroadcasts(runtime.broadcasts)).toHaveLength(1);
     expect(runtime.broadcasts.at(-1)).toMatchObject({
       type: "treeStructureUpdated"
     });
@@ -1462,7 +1484,7 @@ describe("background controller lifecycle", () => {
 
     expect(state.nodes["tab:2"]?.title).toBe("Two updated");
     expect(state.nodes["tab:2"]?.url).toBe("https://two.example/updated");
-    expect(runtime.broadcasts).toHaveLength(1);
+    expect(stateBroadcasts(runtime.broadcasts)).toHaveLength(1);
     const lastBroadcast = runtime.broadcasts.at(-1) as
       | {
           type?: string;
@@ -1711,7 +1733,7 @@ describe("background controller lifecycle", () => {
     expect(state.nodes["tab:2"]?.active).toBe(true);
     expect(runtime.api.tabs.query).not.toHaveBeenCalled();
     expect(runtime.api.windows.getAll).not.toHaveBeenCalled();
-    expect(runtime.broadcasts).toHaveLength(1);
+    expect(stateBroadcasts(runtime.broadcasts)).toHaveLength(1);
     expect(lastBroadcast).toEqual({
       type: "activeStateUpdated",
       updates: [
@@ -2158,7 +2180,7 @@ describe("background controller lifecycle", () => {
     expectCommandAck(result, true);
     expect(state.nodes["tab:2"]?.live).toEqual({ tabId: 22, windowId: 10 });
     expect(state.nodes["tab:2"]?.active).toBe(false);
-    expect(runtime.broadcasts).toHaveLength(1);
+    expect(stateBroadcasts(runtime.broadcasts)).toHaveLength(1);
     const restoreBroadcast = runtime.broadcasts.at(-1) as
       | {
           type?: string;
@@ -2233,7 +2255,7 @@ describe("background controller lifecycle", () => {
       tabId: 2,
       windowId: 11
     });
-    expect(runtime.broadcasts).toHaveLength(1);
+    expect(stateBroadcasts(runtime.broadcasts)).toHaveLength(1);
     const restoreBroadcast = runtime.broadcasts.at(-1) as
       | {
           type?: string;
@@ -2326,7 +2348,7 @@ describe("background controller lifecycle", () => {
     const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
 
     expect(state.nodes["tab:2"]?.live).toEqual({ tabId: 22, windowId: 10 });
-    expect(runtime.broadcasts).toHaveLength(1);
+    expect(stateBroadcasts(runtime.broadcasts)).toHaveLength(1);
     const restoreBroadcast = runtime.broadcasts[0] as { type?: string; state?: OutlineState } | undefined;
     expect(restoreBroadcast?.type).toBe("nodeStateUpdated");
     expect(restoreBroadcast?.state).toBeUndefined();
@@ -2416,7 +2438,7 @@ describe("background controller lifecycle", () => {
     await controller.handleMessage({ type: "closeNode", nodeId: "tab:2" });
     await controller.handleMessage({ type: "getState" });
 
-    expect(runtime.broadcasts).toHaveLength(1);
+    expect(stateBroadcasts(runtime.broadcasts)).toHaveLength(1);
     const closeBroadcast = runtime.broadcasts[0] as
       | {
           type?: string;
@@ -2474,7 +2496,7 @@ describe("background controller lifecycle", () => {
     const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
 
     expect(state.nodes["tab:2"]?.status).toBe("closed");
-    expect(runtime.broadcasts).toHaveLength(1);
+    expect(stateBroadcasts(runtime.broadcasts)).toHaveLength(1);
     const closeBroadcast = runtime.broadcasts[0] as { type?: string; closedCountDelta?: number } | undefined;
     expect(closeBroadcast?.type).toBe("nodeStateUpdated");
     expect(closeBroadcast?.closedCountDelta).toBe(1);
@@ -3707,7 +3729,7 @@ describe("background controller lifecycle", () => {
           rootIds?: string[];
         }
       | undefined;
-    expect(runtime.broadcasts).toHaveLength(1);
+    expect(stateBroadcasts(runtime.broadcasts)).toHaveLength(1);
     expect(lastBroadcast?.type).toBe("treeStructureUpdated");
     expect(lastBroadcast?.deletedNodeIds).toEqual(["tab:2"]);
     expect(lastBroadcast?.updatedNodes?.map((node) => node.id)).toEqual(["window:10"]);
@@ -3772,7 +3794,7 @@ describe("background controller lifecycle", () => {
     expect(deleted.nodes["tab:2"]).toBeUndefined();
     expect(deleted.nodes["tab:3"]?.status).toBe("live");
     expect(afterRemoveEvents).toEqual(deleted);
-    expect(runtime.broadcasts).toHaveLength(1);
+    expect(stateBroadcasts(runtime.broadcasts)).toHaveLength(1);
     await controller.flushPendingSaves();
     expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
   });
@@ -4113,7 +4135,7 @@ describe("background controller lifecycle", () => {
 
     expectCommandAck(result, true);
     expect(state.nodes["tab:1"]?.collapsed).toBe(true);
-    expect(runtime.broadcasts).toHaveLength(1);
+    expect(stateBroadcasts(runtime.broadcasts)).toHaveLength(1);
     expect(lastBroadcast?.type).toBe("nodeStateUpdated");
     expect(lastBroadcast?.updatedNodes?.[0]).toMatchObject({ id: "tab:1", collapsed: true });
     expect(lastBroadcast?.state).toBeUndefined();
@@ -4158,7 +4180,7 @@ describe("background controller lifecycle", () => {
 
     expectCommandAck(result, true);
     expect(state.nodes["window:10"]?.title).toBe("Research");
-    expect(runtime.broadcasts).toHaveLength(1);
+    expect(stateBroadcasts(runtime.broadcasts)).toHaveLength(1);
     expect(lastBroadcast?.type).toBe("nodeStateUpdated");
     expect(lastBroadcast?.updatedNodes?.[0]).toMatchObject({
       id: "window:10",
@@ -4219,5 +4241,328 @@ describe("background controller lifecycle", () => {
     expect(afterRemoveEvent.nodes["tab:1"]).toBeUndefined();
     expect(afterRemoveEvent.nodes["window:10"]).toBeUndefined();
     expect(afterRemoveEvent.rootIds).toEqual([]);
+  });
+
+  it("tracks structural commands and undoes/redoes them through the controller", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    runtime.broadcasts.length = 0;
+
+    expect(await controller.handleMessage({ type: "getHistoryStatus" })).toMatchObject({
+      type: "historyStatus",
+      canUndo: false,
+      canRedo: false
+    });
+
+    expectCommandAck(await controller.handleMessage({
+      type: "renameGroup",
+      nodeId: "window:10",
+      title: "Research"
+    }), true);
+    expect(await controller.handleMessage({ type: "getHistoryStatus" })).toMatchObject({
+      type: "historyStatus",
+      canUndo: true,
+      canRedo: false,
+      undoLabel: "Rename"
+    });
+
+    expectCommandAck(await controller.handleMessage({ type: "undo" }), true);
+    let state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(state.nodes["window:10"]?.title).toBe("Group");
+    expect(await controller.handleMessage({ type: "getHistoryStatus" })).toMatchObject({
+      type: "historyStatus",
+      canUndo: false,
+      canRedo: true,
+      redoLabel: "Rename"
+    });
+
+    expectCommandAck(await controller.handleMessage({ type: "redo" }), true);
+    state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(state.nodes["window:10"]?.title).toBe("Research");
+    expect(runtime.broadcasts.map((message) => (message as { type?: string }).type)).toContain("historyStatus");
+  });
+
+  it("persists undo history across controller restarts", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        }
+      ]
+    );
+    const firstController = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await firstController.ensureState();
+    await firstController.handleMessage({
+      type: "renameGroup",
+      nodeId: "window:10",
+      title: "Research"
+    });
+    await firstController.flushPendingSaves();
+
+    const secondController = createBackgroundController({ api: runtime.api, now: () => 2000 });
+    await secondController.ensureState();
+
+    expect(await secondController.handleMessage({ type: "getHistoryStatus" })).toMatchObject({
+      type: "historyStatus",
+      canUndo: true,
+      undoLabel: "Rename"
+    });
+    expectCommandAck(await secondController.handleMessage({ type: "undo" }), true);
+    const undone = (await secondController.handleMessage({ type: "getState" })) as OutlineState;
+    expect(undone.nodes["window:10"]?.title).toBe("Group");
+  });
+
+  it("does not add runtime refreshes to undo history", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+
+    await updateTabFromBrowser(runtime, 1, {
+      title: "One updated",
+      url: "https://one.example/updated"
+    });
+
+    expect(await controller.handleMessage({ type: "getHistoryStatus" })).toMatchObject({
+      type: "historyStatus",
+      canUndo: false,
+      canRedo: false
+    });
+  });
+
+  it("undoes and redoes live delete commands by recreating and reclosing tabs", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        },
+        {
+          id: 2,
+          windowId: 10,
+          index: 1,
+          active: false,
+          url: "https://two.example/",
+          title: "Two"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+
+    expectCommandAck(await controller.handleMessage({ type: "deleteNode", nodeId: "tab:2" }), true);
+    let state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(state.nodes["tab:2"]).toBeUndefined();
+    expect(runtime.tabs.map((tab) => tab.id).sort((a, b) => a - b)).toEqual([1]);
+
+    expectCommandAck(await controller.handleMessage({ type: "undo" }), true);
+    state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    const recreatedTabId = state.nodes["tab:2"]?.live && "tabId" in state.nodes["tab:2"]!.live!
+      ? state.nodes["tab:2"]!.live!.tabId
+      : undefined;
+    expect(state.nodes["tab:2"]).toMatchObject({
+      id: "tab:2",
+      status: "live",
+      title: "Two",
+      live: {
+        windowId: 10
+      }
+    });
+    expect(runtime.api.tabs.create).toHaveBeenCalledWith({
+      url: "https://two.example/",
+      windowId: 10,
+      active: false
+    });
+    expect(recreatedTabId).toBeDefined();
+    expect(runtime.tabs.map((tab) => tab.id).sort((a, b) => a - b)).toEqual([1, recreatedTabId]);
+
+    expectCommandAck(await controller.handleMessage({ type: "redo" }), true);
+    state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(state.nodes["tab:2"]).toBeUndefined();
+    expect(runtime.tabs.map((tab) => tab.id).sort((a, b) => a - b)).toEqual([1]);
+  });
+
+  it("undoes and redoes collapse, move, flatten, and grouping commands", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        },
+        {
+          id: 2,
+          windowId: 10,
+          index: 1,
+          active: false,
+          openerTabId: 1,
+          url: "https://two.example/",
+          title: "Two"
+        },
+        {
+          id: 3,
+          windowId: 10,
+          index: 2,
+          active: false,
+          openerTabId: 2,
+          url: "https://three.example/",
+          title: "Three"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+
+    expectCommandAck(await controller.handleMessage({ type: "toggleCollapsed", nodeId: "window:10" }), true);
+    expect(((await controller.handleMessage({ type: "getState" })) as OutlineState).nodes["window:10"]?.collapsed).toBe(true);
+    expectCommandAck(await controller.handleMessage({ type: "undo" }), true);
+    expect(((await controller.handleMessage({ type: "getState" })) as OutlineState).nodes["window:10"]?.collapsed).toBe(false);
+    expectCommandAck(await controller.handleMessage({ type: "redo" }), true);
+    expect(((await controller.handleMessage({ type: "getState" })) as OutlineState).nodes["window:10"]?.collapsed).toBe(true);
+
+    expectCommandAck(await controller.handleMessage({
+      type: "moveNode",
+      nodeId: "tab:3",
+      parentId: "window:10",
+      index: 0
+    }), true);
+    expect(((await controller.handleMessage({ type: "getState" })) as OutlineState).nodes["window:10"]?.childIds[0]).toBe("tab:3");
+    expectCommandAck(await controller.handleMessage({ type: "undo" }), true);
+    expect(((await controller.handleMessage({ type: "getState" })) as OutlineState).nodes["tab:2"]?.childIds).toEqual(["tab:3"]);
+    expectCommandAck(await controller.handleMessage({ type: "redo" }), true);
+    expect(((await controller.handleMessage({ type: "getState" })) as OutlineState).nodes["window:10"]?.childIds[0]).toBe("tab:3");
+
+    expectCommandAck(await controller.handleMessage({ type: "flattenSubtree", nodeId: "window:10" }), true);
+    expect(((await controller.handleMessage({ type: "getState" })) as OutlineState).nodes["tab:1"]?.childIds).toEqual([]);
+    expectCommandAck(await controller.handleMessage({ type: "undo" }), true);
+    expect(((await controller.handleMessage({ type: "getState" })) as OutlineState).nodes["tab:1"]?.childIds).toEqual(["tab:2"]);
+    expectCommandAck(await controller.handleMessage({ type: "redo" }), true);
+    expect(((await controller.handleMessage({ type: "getState" })) as OutlineState).nodes["tab:1"]?.childIds).toEqual([]);
+
+    expectCommandAck(await controller.handleMessage({ type: "wrapNodeInGroup", nodeId: "tab:1" }), true);
+    let state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    const wrapperId = state.nodes["tab:1"]?.parentId;
+    expect(wrapperId).toBeDefined();
+    expect(state.nodes[wrapperId!]?.kind).toBe("window");
+    expectCommandAck(await controller.handleMessage({ type: "undo" }), true);
+    state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(state.nodes[wrapperId!]).toBeUndefined();
+    expect(state.nodes["tab:1"]?.parentId).toBe("window:10");
+    expectCommandAck(await controller.handleMessage({ type: "redo" }), true);
+    state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(state.nodes[wrapperId!]?.kind).toBe("window");
+    expect(state.nodes["tab:1"]?.parentId).toBe(wrapperId);
+  });
+
+  it("undoes and redoes imports and closed-node deletes", async () => {
+    const runtime = fakeRuntime([], []);
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+
+    expectCommandAck(await controller.handleMessage({
+      type: "importTree",
+      tree: {
+        schema: PORTABLE_TREE_SCHEMA,
+        version: 1,
+        exportedAt: "2026-05-18T12:00:00.000Z",
+        roots: [
+          {
+            kind: "tab",
+            title: "Imported",
+            url: "https://imported.example/",
+            children: []
+          }
+        ]
+      }
+    }), true);
+    let state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    const importedTabId = Object.values(state.nodes).find((node) => node.title === "Imported")?.id;
+    expect(importedTabId).toBeDefined();
+
+    expectCommandAck(await controller.handleMessage({ type: "undo" }), true);
+    state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(Object.values(state.nodes).some((node) => node.title === "Imported")).toBe(false);
+    expectCommandAck(await controller.handleMessage({ type: "redo" }), true);
+    state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(state.nodes[importedTabId!]?.title).toBe("Imported");
+
+    expectCommandAck(await controller.handleMessage({ type: "deleteNode", nodeId: importedTabId! }), true);
+    state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(state.nodes[importedTabId!]).toBeUndefined();
+    expectCommandAck(await controller.handleMessage({ type: "undo" }), true);
+    state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(state.nodes[importedTabId!]?.status).toBe("closed");
+    expectCommandAck(await controller.handleMessage({ type: "redo" }), true);
+    state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(state.nodes[importedTabId!]).toBeUndefined();
   });
 });

@@ -70,6 +70,15 @@ export type BackgroundCommand =
       tree: unknown;
     }
   | {
+      type: "undo";
+    }
+  | {
+      type: "redo";
+    }
+  | {
+      type: "getHistoryStatus";
+    }
+  | {
       type: "refresh";
     };
 
@@ -86,6 +95,9 @@ export const BACKGROUND_COMMAND_TYPES = [
   "toggleCollapsed",
   "renameGroup",
   "importTree",
+  "undo",
+  "redo",
+  "getHistoryStatus",
   "refresh"
 ] as const satisfies readonly BackgroundCommand["type"][];
 
@@ -131,6 +143,15 @@ export async function runCommand(
       return unchangedCommandResult(state);
 
     case "refresh":
+      return unchangedCommandResult(state);
+
+    case "undo":
+      return unchangedCommandResult(state);
+
+    case "redo":
+      return unchangedCommandResult(state);
+
+    case "getHistoryStatus":
       return unchangedCommandResult(state);
 
     case "focusNode": {
@@ -842,7 +863,7 @@ function hasAncestor(nodeId: NodeId, ancestorIds: Set<NodeId>, state: OutlineSta
   return false;
 }
 
-async function syncBrowserOrder(state: OutlineState, adapter: BrowserAdapter): Promise<void> {
+export async function syncBrowserOrder(state: OutlineState, adapter: BrowserAdapter): Promise<void> {
   const liveWindows = Object.values(state.nodes)
     .filter((node): node is LiveWindowNode => isLiveWindow(node))
     .sort((left, right) => firstVisibleIndex(state, left.id) - firstVisibleIndex(state, right.id));
