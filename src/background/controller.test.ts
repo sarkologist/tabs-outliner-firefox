@@ -3,9 +3,10 @@ import { describe, expect, it, vi } from "vitest";
 import type { BrowserAdapter } from "./adapter.js";
 import { createBackgroundController } from "./controller.js";
 import type { CommandAck } from "./commands.js";
-import { STATE_KEY, loadStateV2, outlineStateV2Items } from "./storage.js";
+import { HISTORY_KEY, STATE_KEY, loadStateV2, outlineStateV2Items } from "./storage.js";
 import { PORTABLE_TREE_SCHEMA } from "../model/portable-tree.js";
 import type { OutlineState, RuntimeTab, RuntimeWindow } from "../model/types.js";
+import { APP_PREFERENCES_STORAGE_KEY, DEFAULT_APP_PREFERENCES } from "../preferences.js";
 
 type Listener<TArgs extends unknown[]> = (...args: TArgs) => unknown | Promise<unknown>;
 
@@ -66,6 +67,8 @@ type FakeRuntime = {
     windowFocusChanged: FakeEvent<[number]>;
     windowRemoved: FakeEvent<[number]>;
     sessionChanged: FakeEvent<[]>;
+    command: FakeEvent<[string]>;
+    storageChanged: FakeEvent<[Record<string, { oldValue?: unknown; newValue?: unknown }>, string]>;
   };
   tabs: RuntimeTab[];
   windows: RuntimeWindow[];
@@ -114,6 +117,8 @@ function fakeRuntime(windows: RuntimeWindow[], tabs: RuntimeTab[], options: Fake
   const windowFocusChanged = new FakeEvent<[number]>();
   const windowRemoved = new FakeEvent<[number]>();
   const sessionChanged = new FakeEvent<[]>();
+  const command = new FakeEvent<[string]>();
+  const storageChanged = new FakeEvent<[Record<string, { oldValue?: unknown; newValue?: unknown }>, string]>();
   const storage = new Map<string, unknown>();
   const broadcasts: unknown[] = [];
   let nextTabQueryResult: RuntimeTab[] | undefined;
@@ -134,7 +139,9 @@ function fakeRuntime(windows: RuntimeWindow[], tabs: RuntimeTab[], options: Fake
       tabRemoved,
       windowFocusChanged,
       windowRemoved,
-      sessionChanged
+      sessionChanged,
+      command,
+      storageChanged
     },
     api: {
       action: {
@@ -143,6 +150,12 @@ function fakeRuntime(windows: RuntimeWindow[], tabs: RuntimeTab[], options: Fake
       sidebarAction: {
         open: vi.fn(async () => undefined),
         toggle: vi.fn(async () => undefined)
+      },
+      commands: {
+        onCommand: command as never,
+        getAll: vi.fn(async () => []),
+        update: vi.fn(async () => undefined),
+        reset: vi.fn(async () => undefined)
       },
       runtime: {
         onInstalled: new FakeEvent<[]>() as never,
@@ -162,17 +175,20 @@ function fakeRuntime(windows: RuntimeWindow[], tabs: RuntimeTab[], options: Fake
             return Object.fromEntries(storage);
           }),
           set: vi.fn(async (items: Record<string, unknown>) => {
+            const changes: Record<string, { oldValue?: unknown; newValue?: unknown }> = {};
             for (const [key, value] of Object.entries(items)) {
+              changes[key] = { oldValue: storage.get(key), newValue: value };
               storage.set(key, value);
             }
+            storageChanged.dispatch(changes, "local");
           }),
           remove: vi.fn(async (keys: string | string[]) => {
             for (const key of Array.isArray(keys) ? keys : [keys]) {
               storage.delete(key);
             }
           }),
-          onChanged: new FakeEvent<[Record<string, { oldValue?: unknown; newValue?: unknown }>, string]>() as never
-        }
+        },
+        onChanged: storageChanged as never
       },
       windows: {
         WINDOW_ID_NONE: -1,
@@ -1226,6 +1242,15 @@ function invariantEqual<T>(actual: T, expected: T, message: string, history: str
 }
 
 describe("background controller lifecycle", () => {
+  it("toggles the sidebar from the native extension command", async () => {
+    const runtime = fakeRuntime([], []);
+    createBackgroundController({ api: runtime.api, now: () => 1000 });
+
+    await runtime.events.command.emit("toggle-sidebar");
+
+    expect(runtime.api.sidebarAction.toggle).toHaveBeenCalledTimes(1);
+  });
+
   it("records opt-in performance trace entries", async () => {
     const runtime = fakeRuntime(
       [
@@ -5027,6 +5052,60 @@ describe("background controller lifecycle", () => {
     expectCommandAck(await secondController.handleMessage({ type: "undo" }), true);
     const undone = (await secondController.handleMessage({ type: "getState" })) as OutlineState;
     expect(undone.nodes["window:10"]?.title).toBe("Group");
+  });
+
+  it("trims loaded undo history when the history length preference changes", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+
+    for (let index = 0; index < 4; index += 1) {
+      expectCommandAck(await controller.handleMessage({
+        type: "renameGroup",
+        nodeId: "window:10",
+        title: `Research ${index}`
+      }), true);
+    }
+    expect(await controller.handleMessage({ type: "getHistoryStatus" })).toMatchObject({
+      type: "historyStatus",
+      undoDepth: 4
+    });
+
+    vi.mocked(runtime.api.storage.local.set).mockClear();
+    await runtime.api.storage.local.set({
+      [APP_PREFERENCES_STORAGE_KEY]: {
+        ...DEFAULT_APP_PREFERENCES,
+        undoHistoryLimit: 2
+      }
+    });
+    await runtime.events.storageChanged.flush();
+
+    expect(await controller.handleMessage({ type: "getHistoryStatus" })).toMatchObject({
+      type: "historyStatus",
+      undoDepth: 2
+    });
+
+    await controller.flushPendingSaves();
+    const lastSave = vi.mocked(runtime.api.storage.local.set).mock.calls.at(-1)?.[0] as Record<string, unknown>;
+    expect((lastSave[HISTORY_KEY] as { undoStack?: unknown[] }).undoStack).toHaveLength(2);
   });
 
   it("does not add runtime refreshes to undo history", async () => {

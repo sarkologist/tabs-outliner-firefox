@@ -20,6 +20,12 @@ type WebExtensionSession = {
   window?: RuntimeWindow;
 };
 
+type WebExtensionCommand = {
+  name?: string;
+  description?: string;
+  shortcut?: string;
+};
+
 type WebExtensionBrowserApi = {
   action: {
     onClicked: Listener<() => void | Promise<void>>;
@@ -28,6 +34,12 @@ type WebExtensionBrowserApi = {
     open(): Promise<void>;
     toggle(): Promise<void>;
   };
+  commands: {
+    onCommand: Listener<(command: string) => void | Promise<void>>;
+    getAll(): Promise<WebExtensionCommand[]>;
+    update(details: { name: string; shortcut?: string; description?: string }): Promise<void>;
+    reset(name: string): Promise<void>;
+  };
   runtime: {
     onInstalled: Listener<() => void | Promise<void>>;
     onStartup: Listener<() => void | Promise<void>>;
@@ -35,11 +47,11 @@ type WebExtensionBrowserApi = {
     sendMessage(message: unknown): Promise<unknown>;
   };
   storage: {
+    onChanged: Listener<(changes: Record<string, StorageChange>, areaName: string) => void | Promise<void>>;
     local: {
       get(key?: string | string[] | Record<string, unknown> | null): Promise<Record<string, unknown>>;
       set(items: Record<string, unknown>): Promise<void>;
       remove(keys: string | string[]): Promise<void>;
-      onChanged: Listener<(changes: Record<string, StorageChange>, areaName: string) => void>;
     };
   };
   windows: {

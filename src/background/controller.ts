@@ -30,6 +30,13 @@ import {
   type TrackableHistoryCommandType
 } from "./history.js";
 import {
+  APP_PREFERENCES_STORAGE_KEY,
+  DEFAULT_APP_PREFERENCES,
+  loadAppPreferences,
+  normalizeAppPreferences,
+  type AppPreferences
+} from "../preferences.js";
+import {
   bootstrapFromWindows,
   closeTab,
   closeWindow,
@@ -160,6 +167,7 @@ export type BackgroundControllerOptions = {
 const RUNTIME_REFRESH_BATCH_DELAY_MS = 0;
 const STATE_SAVE_QUIET_DELAY_MS = 1000;
 const STATE_SAVE_MAX_DELAY_MS = 5000;
+const TOGGLE_SIDEBAR_COMMAND = "toggle-sidebar";
 
 export function createBackgroundController(options: BackgroundControllerOptions): BackgroundController {
   const { api, now = Date.now } = options;
@@ -168,6 +176,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
   let state: OutlineState | undefined;
   let historyState: HistoryState | undefined;
+  let preferences: AppPreferences | undefined;
   let runtimeIndex: RuntimeStateIndex | undefined;
   const highPriorityMutations: ScheduledMutation[] = [];
   const lowPriorityMutations: ScheduledMutation[] = [];
@@ -206,7 +215,25 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     await perfTrace.measureAsync("background.action.openSidebar", () => api.sidebarAction.open());
   });
 
+  api.commands.onCommand.addListener((command) => {
+    if (command !== TOGGLE_SIDEBAR_COMMAND) {
+      return;
+    }
+    void perfTrace.measureAsync("background.command.toggleSidebar", () => api.sidebarAction.toggle()).catch((error) => {
+      perfTrace.mark("background.command.toggleSidebar.error", { message: errorText(error) });
+    });
+  });
+
   api.runtime.onMessage.addListener((message) => handleMessage(message));
+
+  api.storage.onChanged.addListener((changes, areaName) => {
+    if (areaName !== "local" || !changes[APP_PREFERENCES_STORAGE_KEY]) {
+      return;
+    }
+    void handlePreferencesChanged(changes[APP_PREFERENCES_STORAGE_KEY].newValue).catch((error) => {
+      perfTrace.mark("background.preferences.changed.error", { message: errorText(error) });
+    });
+  });
 
   api.tabs.onCreated.addListener(async (tab) => {
     await perfTrace.measureAsync("background.event.tabs.onCreated", { tabId: tab.id }, () => queueRuntimeRefresh([tab]));
@@ -535,8 +562,14 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   }
 
   async function ensureHistory(): Promise<HistoryState> {
-    historyState ??= normalizeHistoryState(await loadHistory(api));
+    const activePreferences = await ensurePreferences();
+    historyState ??= normalizeHistoryState(await loadHistory(api, activePreferences.undoHistoryLimit), activePreferences.undoHistoryLimit);
     return historyState;
+  }
+
+  async function ensurePreferences(): Promise<AppPreferences> {
+    preferences ??= await loadAppPreferences(api);
+    return preferences;
   }
 
   async function initializeState(): Promise<OutlineState> {
@@ -574,7 +607,8 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       return;
     }
 
-    historyState = pushUndoEntry(await ensureHistory(), entry);
+    const activePreferences = await ensurePreferences();
+    historyState = pushUndoEntry(await ensureHistory(), entry, activePreferences.undoHistoryLimit);
     scheduleHistorySave(historyState);
     broadcastHistoryStatusSoon(historyState);
   }
@@ -597,13 +631,35 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
     state = next;
     stateCache.replace(next);
+    const activePreferences = await ensurePreferences();
     historyState = direction === "undo"
-      ? pushRedoEntry(popped.history, popped.entry)
-      : pushUndoEntryPreservingRedo(popped.history, popped.entry);
+      ? pushRedoEntry(popped.history, popped.entry, activePreferences.undoHistoryLimit)
+      : pushUndoEntryPreservingRedo(popped.history, popped.entry, activePreferences.undoHistoryLimit);
     await persistWithBestEffortPatch(current, next, { diffMode: "material" });
     scheduleHistorySave(historyState);
     broadcastHistoryStatusSoon(historyState);
     return commandAck(true);
+  }
+
+  async function handlePreferencesChanged(value: unknown): Promise<void> {
+    const nextPreferences = normalizeAppPreferences(value);
+    const previousLimit = (preferences ?? DEFAULT_APP_PREFERENCES).undoHistoryLimit;
+    preferences = nextPreferences;
+    if (!historyState || previousLimit === nextPreferences.undoHistoryLimit) {
+      return;
+    }
+
+    const trimmed = normalizeHistoryState(historyState, nextPreferences.undoHistoryLimit);
+    if (
+      trimmed.undoStack.length === historyState.undoStack.length &&
+      trimmed.redoStack.length === historyState.redoStack.length
+    ) {
+      return;
+    }
+
+    historyState = trimmed;
+    scheduleHistorySave(historyState);
+    broadcastHistoryStatusSoon(historyState);
   }
 
   async function applyHistoryDeltaWithRuntime(current: OutlineState, delta: OutlineDelta): Promise<OutlineState> {

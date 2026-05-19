@@ -12,6 +12,15 @@
       "32": "icons/icon.svg"
     }
   },
+  "commands": {
+    "toggle-sidebar": {
+      "description": "Open or close the Tab Session Outliner sidebar"
+    }
+  },
+  "options_ui": {
+    "page": "options/options.html",
+    "open_in_tab": true
+  },
   "sidebar_action": {
     "default_title": "Tab Session Outliner",
     "default_panel": "sidebar/sidebar.html",

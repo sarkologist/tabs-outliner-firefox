@@ -1,6 +1,6 @@
 import type { OutlineState } from "../model/types.js";
 import type { NodeId, OutlineNode } from "../model/types.js";
-import { normalizeHistoryState, type HistoryState } from "./history.js";
+import { DEFAULT_HISTORY_LIMIT, normalizeHistoryState, type HistoryState } from "./history.js";
 
 export const STATE_KEY = "outlineState";
 export const HISTORY_KEY = "outlineHistory";
@@ -80,9 +80,12 @@ export async function loadState(api: WebExtensionBrowser = browser): Promise<Out
   return loadStateV2(api);
 }
 
-export async function loadHistory(api: WebExtensionBrowser = browser): Promise<HistoryState> {
+export async function loadHistory(
+  api: WebExtensionBrowser = browser,
+  limit = DEFAULT_HISTORY_LIMIT
+): Promise<HistoryState> {
   const stored = await api.storage.local.get(HISTORY_KEY);
-  return normalizeHistoryState(stored[HISTORY_KEY]);
+  return normalizeHistoryState(stored[HISTORY_KEY], limit);
 }
 
 export async function saveState(state: OutlineState, api: WebExtensionBrowser = browser): Promise<void> {
