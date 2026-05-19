@@ -15,21 +15,10 @@ test.describe("sidebar restore title stability", () => {
       type: "nodeStateUpdated",
       updatedNodes: [
         restoredLocalNode({
-          title: "Saved Local"
-        })
-      ],
-      closedCountDelta: -1
-    });
-    await expect(nodeTitle(page, "tab:local")).toHaveText("Saved Local");
-
-    await dispatchSidebarMessage(page, {
-      type: "nodeStateUpdated",
-      updatedNodes: [
-        restoredLocalNode({
           title: "http://localhost:8089/"
         })
       ],
-      closedCountDelta: 0
+      closedCountDelta: -1
     });
     await nextAnimationFrame(page);
     await expect(nodeTitle(page, "tab:local")).toHaveText("Saved Local");

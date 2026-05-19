@@ -1003,7 +1003,7 @@ function nodeWithStableRestoredTitle(previous: OutlineNode | undefined, next: Ou
     !previous ||
     previous.kind !== "tab" ||
     next.kind !== "tab" ||
-    previous.restoredFromClosed !== true ||
+    (previous.status !== "closed" && previous.restoredFromClosed !== true) ||
     next.restoredFromClosed !== true
   ) {
     return next;
@@ -1012,6 +1012,8 @@ function nodeWithStableRestoredTitle(previous: OutlineNode | undefined, next: Ou
   const title = runtimeTitleForOutlineTab(previous, {
     title: next.title,
     ...(next.url ? { url: next.url } : {})
+  }, {
+    restoredFromClosed: true
   });
   return title === next.title ? next : { ...next, title };
 }
