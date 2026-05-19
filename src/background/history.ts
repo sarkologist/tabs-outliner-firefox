@@ -1,6 +1,8 @@
 import type { NodeId, OutlineNode, OutlineState } from "../model/types.js";
+import { DEFAULT_UNDO_HISTORY_LIMIT, normalizeUndoHistoryLimit } from "../preferences.js";
 
-export const HISTORY_LIMIT = 20;
+export const DEFAULT_HISTORY_LIMIT = DEFAULT_UNDO_HISTORY_LIMIT;
+export const HISTORY_LIMIT = DEFAULT_HISTORY_LIMIT;
 
 export type TrackableHistoryCommandType =
   | "moveNode"
@@ -72,26 +74,41 @@ export function createHistoryEntry(
   };
 }
 
-export function pushUndoEntry(history: HistoryState, entry: HistoryEntry): HistoryState {
+export function pushUndoEntry(
+  history: HistoryState,
+  entry: HistoryEntry,
+  limit = DEFAULT_HISTORY_LIMIT
+): HistoryState {
+  const historyLimit = normalizeUndoHistoryLimit(limit);
   return {
     version: 1,
-    undoStack: [...history.undoStack, entry].slice(-HISTORY_LIMIT),
+    undoStack: [...history.undoStack, entry].slice(-historyLimit),
     redoStack: []
   };
 }
 
-export function pushRedoEntry(history: HistoryState, entry: HistoryEntry): HistoryState {
+export function pushRedoEntry(
+  history: HistoryState,
+  entry: HistoryEntry,
+  limit = DEFAULT_HISTORY_LIMIT
+): HistoryState {
+  const historyLimit = normalizeUndoHistoryLimit(limit);
   return {
     version: 1,
     undoStack: history.undoStack,
-    redoStack: [...history.redoStack, entry].slice(-HISTORY_LIMIT)
+    redoStack: [...history.redoStack, entry].slice(-historyLimit)
   };
 }
 
-export function pushUndoEntryPreservingRedo(history: HistoryState, entry: HistoryEntry): HistoryState {
+export function pushUndoEntryPreservingRedo(
+  history: HistoryState,
+  entry: HistoryEntry,
+  limit = DEFAULT_HISTORY_LIMIT
+): HistoryState {
+  const historyLimit = normalizeUndoHistoryLimit(limit);
   return {
     version: 1,
-    undoStack: [...history.undoStack, entry].slice(-HISTORY_LIMIT),
+    undoStack: [...history.undoStack, entry].slice(-historyLimit),
     redoStack: history.redoStack
   };
 }
@@ -133,15 +150,16 @@ export function historyStatus(history: HistoryState): HistoryStatus {
   };
 }
 
-export function normalizeHistoryState(value: unknown): HistoryState {
+export function normalizeHistoryState(value: unknown, limit = DEFAULT_HISTORY_LIMIT): HistoryState {
   if (!isHistoryState(value)) {
     return createEmptyHistoryState();
   }
 
+  const historyLimit = normalizeUndoHistoryLimit(limit);
   return {
     version: 1,
-    undoStack: value.undoStack.slice(-HISTORY_LIMIT).map(cloneHistoryEntry),
-    redoStack: value.redoStack.slice(-HISTORY_LIMIT).map(cloneHistoryEntry)
+    undoStack: value.undoStack.slice(-historyLimit).map(cloneHistoryEntry),
+    redoStack: value.redoStack.slice(-historyLimit).map(cloneHistoryEntry)
   };
 }
 

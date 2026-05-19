@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  HISTORY_LIMIT,
+  DEFAULT_HISTORY_LIMIT,
   applyOutlineDelta,
   createEmptyHistoryState,
   createHistoryEntry,
   historyStatus,
+  normalizeHistoryState,
+  pushRedoEntry,
   pushUndoEntry
 } from "./history.js";
 import { bootstrapFromWindows, deleteNode, moveNode, renameGroup } from "../model/outline.js";
@@ -90,22 +92,67 @@ describe("outline history", () => {
       ]
     };
 
-    for (let index = 0; index < HISTORY_LIMIT + 3; index += 1) {
+    for (let index = 0; index < DEFAULT_HISTORY_LIMIT + 3; index += 1) {
       history = pushUndoEntry(
         history,
         createHistoryEntry("renameGroup", emptyStateWithWindowTitle(`Before ${index}`), emptyStateWithWindowTitle(`After ${index}`))!
       );
     }
 
-    expect(history.undoStack).toHaveLength(HISTORY_LIMIT);
+    expect(history.undoStack).toHaveLength(DEFAULT_HISTORY_LIMIT);
     expect(history.redoStack).toEqual([]);
     expect(history.undoStack[0]?.undo.updatedNodes[0]?.title).toBe("Before 3");
     expect(historyStatus(history)).toMatchObject({
       canUndo: true,
       canRedo: false,
-      undoDepth: HISTORY_LIMIT,
+      undoDepth: DEFAULT_HISTORY_LIMIT,
       redoDepth: 0
     });
+  });
+
+  it("uses caller-provided undo and redo limits when trimming history", () => {
+    let history = createEmptyHistoryState();
+    for (let index = 0; index < 5; index += 1) {
+      history = pushUndoEntry(
+        history,
+        createHistoryEntry("renameGroup", emptyStateWithWindowTitle(`Before ${index}`), emptyStateWithWindowTitle(`After ${index}`))!,
+        2
+      );
+    }
+
+    let redoHistory = createEmptyHistoryState();
+    for (let index = 0; index < 5; index += 1) {
+      redoHistory = pushRedoEntry(
+        redoHistory,
+        createHistoryEntry("renameGroup", emptyStateWithWindowTitle(`Redo before ${index}`), emptyStateWithWindowTitle(`Redo after ${index}`))!,
+        3
+      );
+    }
+
+    expect(history.undoStack.map((entry) => entry.undo.updatedNodes[0]?.title)).toEqual(["Before 3", "Before 4"]);
+    expect(redoHistory.redoStack.map((entry) => entry.undo.updatedNodes[0]?.title)).toEqual([
+      "Redo before 2",
+      "Redo before 3",
+      "Redo before 4"
+    ]);
+  });
+
+  it("normalizes persisted history with the active history limit", () => {
+    let history = createEmptyHistoryState();
+    for (let index = 0; index < 6; index += 1) {
+      history = pushUndoEntry(
+        history,
+        createHistoryEntry("renameGroup", emptyStateWithWindowTitle(`Before ${index}`), emptyStateWithWindowTitle(`After ${index}`))!
+      );
+    }
+
+    const normalized = normalizeHistoryState(history, 3);
+
+    expect(normalized.undoStack.map((entry) => entry.undo.updatedNodes[0]?.title)).toEqual([
+      "Before 3",
+      "Before 4",
+      "Before 5"
+    ]);
   });
 });
 
