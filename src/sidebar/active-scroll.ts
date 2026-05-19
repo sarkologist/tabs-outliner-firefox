@@ -1,4 +1,5 @@
 import type { NodeId, OutlineNode, OutlineState } from "../model/types.js";
+import { isOutlinerSidebarNode } from "../model/outliner-page.js";
 
 export type ActiveTabScrollTracker = {
   observedActiveNodeId?: NodeId;
@@ -145,5 +146,10 @@ function isActiveWindow(node: OutlineNode): boolean {
 }
 
 function isRenderedActiveTab(node: OutlineNode, insideActiveWindow: boolean): boolean {
-  return node.kind === "tab" && Boolean(node.active) && insideActiveWindow;
+  return (
+    node.kind === "tab" &&
+    Boolean(node.active) &&
+    insideActiveWindow &&
+    !isOutlinerSidebarNode(node)
+  );
 }

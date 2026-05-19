@@ -44,6 +44,17 @@ test.describe("sidebar undo/redo controls", () => {
     expect(issues).toEqual([]);
   });
 
+  test("opens the full-size sidebar window from the toolbar", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadSidebar(page, { canUndo: false, canRedo: false });
+    await clearSentCommands(page);
+
+    await page.getByRole("button", { name: "Open full-size sidebar" }).click();
+
+    await expect(sentCommands(page)).resolves.toEqual(["openSidebarWindow"]);
+    expect(issues).toEqual([]);
+  });
+
   test("supports keyboard shortcuts outside editable fields", async ({ page }) => {
     const issues = collectPageIssues(page);
     await loadSidebar(page, { canUndo: true, canRedo: true, undoLabel: "Move", redoLabel: "Move" });

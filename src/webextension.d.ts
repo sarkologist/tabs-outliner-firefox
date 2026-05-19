@@ -26,6 +26,20 @@ type WebExtensionCommand = {
   shortcut?: string;
 };
 
+type WebExtensionWindowType = "normal" | "popup" | "panel";
+type WebExtensionWindowState = "normal" | "minimized" | "maximized" | "fullscreen";
+type WebExtensionWindowCreateData = {
+  url?: string | string[];
+  tabId?: number;
+  type?: WebExtensionWindowType;
+  state?: WebExtensionWindowState;
+  focused?: boolean;
+  width?: number;
+  height?: number;
+  left?: number;
+  top?: number;
+};
+
 type WebExtensionBrowserApi = {
   action: {
     onClicked: Listener<() => void | Promise<void>>;
@@ -45,6 +59,7 @@ type WebExtensionBrowserApi = {
     onStartup: Listener<() => void | Promise<void>>;
     onMessage: Listener<(message: unknown, sender: MessageSender) => unknown | Promise<unknown>>;
     sendMessage(message: unknown): Promise<unknown>;
+    getURL(path: string): string;
     openOptionsPage(): Promise<void>;
   };
   storage: {
@@ -62,7 +77,7 @@ type WebExtensionBrowserApi = {
     getAll(getInfo?: { populate?: boolean; windowTypes?: string[] }): Promise<RuntimeWindow[]>;
     update(windowId: number, updateInfo: { focused?: boolean }): Promise<RuntimeWindow>;
     remove(windowId: number): Promise<void>;
-    create(createData: { url?: string | string[]; tabId?: number }): Promise<RuntimeWindow>;
+    create(createData: WebExtensionWindowCreateData): Promise<RuntimeWindow>;
     onFocusChanged: Listener<(windowId: number) => void | Promise<void>>;
     onRemoved: Listener<(windowId: number) => void | Promise<void>>;
   };
