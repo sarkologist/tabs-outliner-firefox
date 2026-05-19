@@ -70,6 +70,7 @@ const diagnostics = document.querySelector<HTMLSpanElement>("#diagnostics");
 const undoHistory = document.querySelector<HTMLButtonElement>("#undo-history");
 const redoHistory = document.querySelector<HTMLButtonElement>("#redo-history");
 const refresh = document.querySelector<HTMLButtonElement>("#refresh");
+const openOptions = document.querySelector<HTMLButtonElement>("#open-options");
 const exportTree = document.querySelector<HTMLButtonElement>("#export-tree");
 const importTree = document.querySelector<HTMLButtonElement>("#import-tree");
 const importTreeFile = document.querySelector<HTMLInputElement>("#import-tree-file");
@@ -189,6 +190,12 @@ void loadHistoryStatus();
 
 refresh?.addEventListener("click", () => {
   void runAndRender({ type: "refresh" });
+});
+
+openOptions?.addEventListener("click", () => {
+  void browser.runtime.openOptionsPage().catch(() => {
+    showDiagnosticsNotice("Options unavailable", { error: true });
+  });
 });
 
 rootDropSurface?.addEventListener("dragover", (event) => {

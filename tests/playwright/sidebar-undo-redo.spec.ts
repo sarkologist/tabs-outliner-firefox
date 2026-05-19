@@ -34,6 +34,16 @@ test.describe("sidebar undo/redo controls", () => {
     expect(issues).toEqual([]);
   });
 
+  test("opens the options page from the toolbar", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadSidebar(page, { canUndo: false, canRedo: false });
+
+    await page.getByRole("button", { name: "Open options" }).click();
+
+    await expect(optionsOpenCount(page)).resolves.toBe(1);
+    expect(issues).toEqual([]);
+  });
+
   test("supports keyboard shortcuts outside editable fields", async ({ page }) => {
     const issues = collectPageIssues(page);
     await loadSidebar(page, { canUndo: true, canRedo: true, undoLabel: "Move", redoLabel: "Move" });
@@ -115,6 +125,7 @@ async function loadSidebar(
       __dispatchSidebarMessage?: (message: unknown) => void;
       __dispatchStorageChange?: (preferences: unknown) => void;
       __sentSidebarCommands?: string[];
+      __optionsOpenCount?: number;
     }).__dispatchSidebarMessage = (message) => {
       for (const listener of listeners) {
         listener(structuredClone(message));
@@ -127,6 +138,7 @@ async function loadSidebar(
         }
       };
     (window as typeof window & { __sentSidebarCommands?: string[] }).__sentSidebarCommands = sent;
+    (window as typeof window & { __optionsOpenCount?: number }).__optionsOpenCount = 0;
 
     window.browser = {
       runtime: {
@@ -162,6 +174,10 @@ async function loadSidebar(
             return undefined;
           }
           return { type: "commandAck", stateChanged: true };
+        },
+        openOptionsPage: async () => {
+          const testWindow = window as typeof window & { __optionsOpenCount?: number };
+          testWindow.__optionsOpenCount = (testWindow.__optionsOpenCount ?? 0) + 1;
         },
         onMessage: {
           addListener: (listener: (message: unknown) => void) => {
@@ -207,6 +223,10 @@ async function sentCommands(page: Page): Promise<string[]> {
   return page.evaluate(() => [
     ...((window as typeof window & { __sentSidebarCommands?: string[] }).__sentSidebarCommands ?? [])
   ]);
+}
+
+async function optionsOpenCount(page: Page): Promise<number> {
+  return page.evaluate(() => (window as typeof window & { __optionsOpenCount?: number }).__optionsOpenCount ?? 0);
 }
 
 async function clearSentCommands(page: Page): Promise<void> {

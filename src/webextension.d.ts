@@ -45,6 +45,7 @@ type WebExtensionBrowserApi = {
     onStartup: Listener<() => void | Promise<void>>;
     onMessage: Listener<(message: unknown, sender: MessageSender) => unknown | Promise<unknown>>;
     sendMessage(message: unknown): Promise<unknown>;
+    openOptionsPage(): Promise<void>;
   };
   storage: {
     onChanged: Listener<(changes: Record<string, StorageChange>, areaName: string) => void | Promise<void>>;

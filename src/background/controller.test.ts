@@ -161,6 +161,7 @@ function fakeRuntime(windows: RuntimeWindow[], tabs: RuntimeTab[], options: Fake
         onInstalled: new FakeEvent<[]>() as never,
         onStartup: new FakeEvent<[]>() as never,
         onMessage: new FakeEvent<[unknown, { tab?: RuntimeTab }]>() as never,
+        openOptionsPage: vi.fn(async () => undefined),
         sendMessage: vi.fn(async (message: unknown) => {
           broadcasts.push(message);
           return undefined;

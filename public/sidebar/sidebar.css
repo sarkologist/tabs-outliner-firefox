@@ -58,7 +58,7 @@ body[data-sidebar-booting] {
   top: 0;
   z-index: 1;
   display: grid;
-  grid-template-columns: auto minmax(52px, 1fr) minmax(0, auto) repeat(5, auto);
+  grid-template-columns: auto minmax(52px, 1fr) minmax(0, auto) repeat(6, auto);
   align-items: center;
   gap: 6px;
   padding: 8px 10px;
@@ -129,6 +129,13 @@ h1 {
 
 .toolbar-button:disabled:hover {
   background: transparent;
+}
+
+.toolbar-icon {
+  width: 15px;
+  height: 15px;
+  fill: currentcolor;
+  vertical-align: -2px;
 }
 
 .status {
