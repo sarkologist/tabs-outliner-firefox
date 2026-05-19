@@ -138,6 +138,12 @@ function makeRuntime(tabCount) {
       open: async () => undefined,
       toggle: async () => undefined
     },
+    commands: {
+      onCommand: new FakeEvent(),
+      getAll: async () => [],
+      update: async () => undefined,
+      reset: async () => undefined
+    },
     runtime: {
       onInstalled: new FakeEvent(),
       onStartup: new FakeEvent(),
@@ -165,7 +171,8 @@ function makeRuntime(tabCount) {
         },
         remove: async () => undefined,
         onChanged: new FakeEvent()
-      }
+      },
+      onChanged: new FakeEvent()
     },
     windows: {
       WINDOW_ID_NONE: -1,
@@ -296,6 +303,7 @@ async function profile(options) {
   const runtime = makeRuntime(options.tabs);
   const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
   const init = await measureAsync(() => controller.ensureState());
+  await controller.flushPendingSaves();
   runtime.sidebarState = await controller.handleMessage({ type: "getState" });
   runtime.sidebarProjection = buildVisibleTreeProjection(runtime.sidebarState, "");
   const tabIds = options.scenario === "successive-command-event-echo"

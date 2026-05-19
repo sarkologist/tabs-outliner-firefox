@@ -124,6 +124,12 @@ function makeRuntime(tabCount) {
       open: async () => undefined,
       toggle: async () => undefined
     },
+    commands: {
+      onCommand: new FakeEvent(),
+      getAll: async () => [],
+      update: async () => undefined,
+      reset: async () => undefined
+    },
     runtime: {
       onInstalled: new FakeEvent(),
       onStartup: new FakeEvent(),
@@ -154,7 +160,8 @@ function makeRuntime(tabCount) {
           }
         },
         onChanged: new FakeEvent()
-      }
+      },
+      onChanged: new FakeEvent()
     },
     windows: {
       WINDOW_ID_NONE: -1,

@@ -3,6 +3,7 @@ import { performance } from "node:perf_hooks";
 import { createBackgroundController } from "../dist/background/controller.js";
 import { runCommand } from "../dist/background/commands.js";
 import { analyzeRestoreScope, planRestore } from "../dist/model/outline.js";
+import { outlineStateV3Changes } from "../dist/background/storage.js";
 import { buildVisibleTreeProjection } from "../dist/sidebar/visible-tree.js";
 
 class FakeEvent {
@@ -287,7 +288,7 @@ function makeControllerRuntime(initialState) {
   const runtime = {
     windows: [{ id: 10, focused: true, incognito: false }],
     tabs: [],
-    storedState: initialState,
+    storage: new Map(Object.entries(outlineStateV3Changes(initialState).setItems)),
     restoreEcho: "final",
     saves: 0,
     broadcasts: 0,
@@ -312,6 +313,12 @@ function makeControllerRuntime(initialState) {
       open: async () => undefined,
       toggle: async () => undefined
     },
+    commands: {
+      onCommand: new FakeEvent(),
+      getAll: async () => [],
+      update: async () => undefined,
+      reset: async () => undefined
+    },
     runtime: {
       onInstalled: new FakeEvent(),
       onStartup: new FakeEvent(),
@@ -333,17 +340,30 @@ function makeControllerRuntime(initialState) {
     },
     storage: {
       local: {
-        get: async (key) => typeof key === "string" ? { [key]: runtime.storedState } : {},
+        get: async (key) => {
+          if (typeof key === "string") {
+            return { [key]: runtime.storage.get(key) };
+          }
+          if (Array.isArray(key)) {
+            return Object.fromEntries(key.map((entry) => [entry, runtime.storage.get(entry)]));
+          }
+          return Object.fromEntries(runtime.storage);
+        },
         set: async (items) => {
           measureRuntimeJson(runtime, "save", items);
-          if (items.outlineState) {
-            runtime.storedState = items.outlineState;
+          for (const [key, value] of Object.entries(items)) {
+            runtime.storage.set(key, value);
           }
           runtime.saves += 1;
         },
-        remove: async () => undefined,
+        remove: async (keys) => {
+          for (const key of Array.isArray(keys) ? keys : [keys]) {
+            runtime.storage.delete(key);
+          }
+        },
         onChanged: new FakeEvent()
-      }
+      },
+      onChanged: new FakeEvent()
     },
     windows: {
       WINDOW_ID_NONE: -1,
