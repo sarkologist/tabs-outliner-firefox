@@ -9,13 +9,14 @@ import {
   initialTreeSnapshotForState,
   loadHistory,
   loadInitialTreeSnapshot,
-  loadState,
+  loadStateWithMetadata,
   saveStateAndHistory
 } from "./storage.js";
 import type { InitialTreeSnapshot } from "./storage.js";
 import {
   applyOutlineDelta,
   cloneOutlineNode,
+  cloneOutlineState,
   createHistoryEntry,
   historyStatus,
   normalizeHistoryState,
@@ -196,6 +197,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   const perfTrace = createPerformanceTracer("background");
 
   let state: OutlineState | undefined;
+  let lastPersistedState: OutlineState | undefined;
   let historyState: HistoryState | undefined;
   let preferences: AppPreferences | undefined;
   let runtimeIndex: RuntimeStateIndex | undefined;
@@ -597,11 +599,13 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   }
 
   async function initializeState(): Promise<OutlineState> {
-    const [windows, stored] = await Promise.all([
+    const [windows, loaded] = await Promise.all([
       perfTrace.measureAsync("background.runtime.getWindows", () => getNormalWindows(api)),
-      perfTrace.measureAsync("background.state.load", () => loadState(api))
+      perfTrace.measureAsync("background.state.load", () => loadStateWithMetadata(api))
     ]);
+    const stored = loaded?.state;
     if (stored) {
+      lastPersistedState = loaded.format === "v3" ? cloneOutlineState(stored) : undefined;
       if (runtimeSnapshotMateriallyMatchesState(stored, windows)) {
         state = stored;
       } else {
@@ -1539,7 +1543,14 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     nextState: OutlineState | undefined,
     nextHistory: HistoryState | undefined
   ): Promise<void> {
-    await perfTrace.measureAsync("background.state.save", () => saveStateAndHistory(nextState, nextHistory, api));
+    await perfTrace.measureAsync("background.state.save", () =>
+      saveStateAndHistory(nextState, nextHistory, api, {
+        ...(nextState && lastPersistedState ? { previousState: lastPersistedState } : {})
+      })
+    );
+    if (nextState) {
+      lastPersistedState = cloneOutlineState(nextState);
+    }
   }
 
   async function broadcastWithTrace(message: { type: string } & Record<string, unknown>): Promise<void> {

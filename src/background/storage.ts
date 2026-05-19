@@ -5,10 +5,15 @@ import { DEFAULT_HISTORY_LIMIT, normalizeHistoryState, type HistoryState } from 
 export const STATE_KEY = "outlineState";
 export const HISTORY_KEY = "outlineHistory";
 export const STATE_V2_MANIFEST_KEY = "outlineState:v2:manifest";
+export const STATE_V3_MANIFEST_KEY = "outlineState:v3:manifest";
 const STATE_V2_NODE_CHUNK_PREFIX = "outlineState:v2:nodes:";
 const STATE_V2_ORDER_PAGE_PREFIX = "outlineState:v2:order:";
 const STATE_V2_NODE_CHUNK_SIZE = 512;
 const STATE_V2_ORDER_PAGE_SIZE = 1024;
+const STATE_V3_NODE_SHARD_PREFIX = "outlineState:v3:nodes:";
+const STATE_V3_ORDER_PAGE_PREFIX = "outlineState:v3:order:";
+const STATE_V3_NODE_SHARD_COUNT = 256;
+const STATE_V3_ORDER_PAGE_SIZE = 1024;
 export const INITIAL_TREE_SNAPSHOT_ROW_LIMIT = 256;
 
 type StoredOutlineNode = Omit<OutlineNode, "childIds"> & {
@@ -22,6 +27,19 @@ type StateV2NodeChunk = {
 
 type StateV2OrderPage = {
   version: 2;
+  parentId: NodeId;
+  pageIndex: number;
+  childIds: NodeId[];
+};
+
+type StateV3NodeShard = {
+  version: 3;
+  shardIndex: number;
+  nodes: StoredOutlineNode[];
+};
+
+type StateV3OrderPage = {
+  version: 3;
   parentId: NodeId;
   pageIndex: number;
   childIds: NodeId[];
@@ -76,8 +94,51 @@ type StateV2Manifest = {
   initialSnapshot: InitialTreeSnapshot;
 };
 
+type StateV3Manifest = {
+  version: 3;
+  revision: number;
+  rootIds: NodeId[];
+  nodeCount: number;
+  closedCount: number;
+  nodeShardCount: number;
+  nodeShardKeys: string[];
+  orderPageSize: number;
+  initialSnapshot: InitialTreeSnapshot;
+};
+
+export type LoadedOutlineState = {
+  state: OutlineState;
+  format: "v2" | "v3";
+};
+
+export type OutlineStateV3Changes = {
+  setItems: Record<string, unknown>;
+  removeKeys: string[];
+};
+
 export async function loadState(api: WebExtensionBrowser = browser): Promise<OutlineState | undefined> {
-  return loadStateV2(api);
+  return (await loadStateWithMetadata(api))?.state;
+}
+
+export async function loadStateWithMetadata(api: WebExtensionBrowser = browser): Promise<LoadedOutlineState | undefined> {
+  const stored = await api.storage.local.get([STATE_V3_MANIFEST_KEY, STATE_V2_MANIFEST_KEY]);
+  const v3Manifest = stored[STATE_V3_MANIFEST_KEY];
+  if (isStateV3Manifest(v3Manifest)) {
+    const state = await loadStateV3FromManifest(v3Manifest, api);
+    if (state) {
+      return { state, format: "v3" };
+    }
+  }
+
+  const v2Manifest = stored[STATE_V2_MANIFEST_KEY];
+  if (isStateV2Manifest(v2Manifest)) {
+    const state = await loadStateV2FromManifest(v2Manifest, api);
+    if (state) {
+      return { state, format: "v2" };
+    }
+  }
+
+  return undefined;
 }
 
 export async function loadHistory(
@@ -89,23 +150,32 @@ export async function loadHistory(
 }
 
 export async function saveState(state: OutlineState, api: WebExtensionBrowser = browser): Promise<void> {
-  await api.storage.local.set(outlineStateV2Items(state));
+  await saveStateAndHistory(state, undefined, api);
 }
 
 export async function saveStateAndHistory(
   state: OutlineState | undefined,
   history: HistoryState | undefined,
-  api: WebExtensionBrowser = browser
+  api: WebExtensionBrowser = browser,
+  options: { previousState?: OutlineState } = {}
 ): Promise<void> {
-  const items: Record<string, unknown> = {};
+  const setItems: Record<string, unknown> = {};
+  const removeKeys: string[] = [];
   if (state) {
-    Object.assign(items, outlineStateV2Items(state));
+    const changes = outlineStateV3Changes(state, {
+      ...(options.previousState ? { previousState: options.previousState } : {})
+    });
+    Object.assign(setItems, changes.setItems);
+    removeKeys.push(...changes.removeKeys);
   }
   if (history) {
-    items[HISTORY_KEY] = history;
+    setItems[HISTORY_KEY] = history;
   }
-  if (Object.keys(items).length > 0) {
-    await api.storage.local.set(items);
+  if (Object.keys(setItems).length > 0) {
+    await api.storage.local.set(setItems);
+  }
+  if (removeKeys.length > 0) {
+    await api.storage.local.remove(removeKeys);
   }
 }
 
@@ -168,9 +238,14 @@ export function outlineStateV2Items(
 export async function loadInitialTreeSnapshot(
   api: WebExtensionBrowser = browser
 ): Promise<InitialTreeSnapshot | undefined> {
-  const stored = await api.storage.local.get(STATE_V2_MANIFEST_KEY);
-  const manifest = stored[STATE_V2_MANIFEST_KEY];
-  return isStateV2Manifest(manifest) ? cloneInitialTreeSnapshot(manifest.initialSnapshot, true) : undefined;
+  const stored = await api.storage.local.get([STATE_V3_MANIFEST_KEY, STATE_V2_MANIFEST_KEY]);
+  const v3Manifest = stored[STATE_V3_MANIFEST_KEY];
+  if (isStateV3Manifest(v3Manifest)) {
+    return cloneInitialTreeSnapshot(v3Manifest.initialSnapshot, true);
+  }
+
+  const v2Manifest = stored[STATE_V2_MANIFEST_KEY];
+  return isStateV2Manifest(v2Manifest) ? cloneInitialTreeSnapshot(v2Manifest.initialSnapshot, true) : undefined;
 }
 
 export async function loadStateV2(api: WebExtensionBrowser = browser): Promise<OutlineState | undefined> {
@@ -180,7 +255,15 @@ export async function loadStateV2(api: WebExtensionBrowser = browser): Promise<O
     return undefined;
   }
 
-  const chunkItems = await api.storage.local.get([...manifest.nodeChunkKeys, ...manifest.orderPageKeys]);
+  return loadStateV2FromManifest(manifest, api);
+}
+
+async function loadStateV2FromManifest(
+  manifest: StateV2Manifest,
+  api: WebExtensionBrowser
+): Promise<OutlineState | undefined> {
+  const keys = [...manifest.nodeChunkKeys, ...manifest.orderPageKeys];
+  const chunkItems = keys.length > 0 ? await api.storage.local.get(keys) : {};
   const nodes: OutlineState["nodes"] = {};
   for (const key of manifest.nodeChunkKeys) {
     const chunk = chunkItems[key];
@@ -219,6 +302,108 @@ export async function loadStateV2(api: WebExtensionBrowser = browser): Promise<O
     nodes
   };
   return isOutlineState(state) ? state : undefined;
+}
+
+export async function loadStateV3(api: WebExtensionBrowser = browser): Promise<OutlineState | undefined> {
+  const stored = await api.storage.local.get(STATE_V3_MANIFEST_KEY);
+  const manifest = stored[STATE_V3_MANIFEST_KEY];
+  if (!isStateV3Manifest(manifest)) {
+    return undefined;
+  }
+
+  return loadStateV3FromManifest(manifest, api);
+}
+
+async function loadStateV3FromManifest(
+  manifest: StateV3Manifest,
+  api: WebExtensionBrowser
+): Promise<OutlineState | undefined> {
+  const shardItems = manifest.nodeShardKeys.length > 0
+    ? await api.storage.local.get(manifest.nodeShardKeys)
+    : {};
+  const nodes: OutlineState["nodes"] = {};
+  const storedNodes: StoredOutlineNode[] = [];
+  for (const key of manifest.nodeShardKeys) {
+    const shard = shardItems[key];
+    if (!isStateV3NodeShard(shard)) {
+      return undefined;
+    }
+    for (const storedNode of shard.nodes) {
+      storedNodes.push(storedNode);
+      nodes[storedNode.id] = storedNodeToNode(storedNode);
+    }
+  }
+
+  const orderPageKeys = storedNodes.flatMap((node) => orderPageKeysForStoredNode(node, manifest.orderPageSize));
+  const orderPageItems = orderPageKeys.length > 0 ? await api.storage.local.get(orderPageKeys) : {};
+  for (const storedNode of storedNodes) {
+    const node = nodes[storedNode.id];
+    if (!node || storedNode.childCount === 0) {
+      continue;
+    }
+    const childIds: NodeId[] = [];
+    const pageCount = Math.ceil(storedNode.childCount / manifest.orderPageSize);
+    for (let pageIndex = 0; pageIndex < pageCount; pageIndex += 1) {
+      const page = orderPageItems[stateV3OrderPageKey(storedNode.id, pageIndex)];
+      if (!isStateV3OrderPage(page) || page.parentId !== storedNode.id || page.pageIndex !== pageIndex) {
+        return undefined;
+      }
+      childIds.push(...page.childIds);
+    }
+    if (childIds.length !== storedNode.childCount) {
+      return undefined;
+    }
+    node.childIds = childIds;
+  }
+
+  const state: OutlineState = {
+    version: 1,
+    rootIds: [...manifest.rootIds],
+    nodes
+  };
+  return isOutlineState(state) ? state : undefined;
+}
+
+export function outlineStateV3Changes(
+  state: OutlineState,
+  options: { previousState?: OutlineState; revision?: number } = {}
+): OutlineStateV3Changes {
+  const revision = options.revision ?? Date.now();
+  const manifest = stateV3ManifestForState(state, revision);
+  const setItems: Record<string, unknown> = {
+    [STATE_V3_MANIFEST_KEY]: manifest
+  };
+  const removeKeys: string[] = [];
+
+  if (!options.previousState) {
+    for (const [key, shard] of stateV3NodeShardItems(state)) {
+      setItems[key] = shard;
+    }
+    for (const [key, page] of stateV3OrderPageItems(state)) {
+      setItems[key] = page;
+    }
+    return { setItems, removeKeys };
+  }
+
+  for (const shardIndex of changedNodeShardIndexes(options.previousState, state)) {
+    const key = stateV3NodeShardKey(shardIndex);
+    const shard = stateV3NodeShard(state, shardIndex);
+    if (shard.nodes.length === 0) {
+      removeKeys.push(key);
+    } else {
+      setItems[key] = shard;
+    }
+  }
+
+  for (const change of changedOrderPages(options.previousState, state)) {
+    if (change.page) {
+      setItems[change.key] = change.page;
+    } else {
+      removeKeys.push(change.key);
+    }
+  }
+
+  return { setItems, removeKeys };
 }
 
 export function initialTreeSnapshotForState(
@@ -381,6 +566,187 @@ function storedNodeToNode(node: StoredOutlineNode): OutlineNode {
   };
 }
 
+function stateV3ManifestForState(state: OutlineState, revision: number): StateV3Manifest {
+  const nodes = Object.values(state.nodes);
+  return {
+    version: 3,
+    revision,
+    rootIds: [...state.rootIds],
+    nodeCount: nodes.length,
+    closedCount: nodes.filter((node) => node.status === "closed").length,
+    nodeShardCount: STATE_V3_NODE_SHARD_COUNT,
+    nodeShardKeys: [...stateV3NodeShardItems(state).keys()],
+    orderPageSize: STATE_V3_ORDER_PAGE_SIZE,
+    initialSnapshot: initialTreeSnapshotForState(state, { revision, hydrating: true })
+  };
+}
+
+function stateV3NodeShardItems(state: OutlineState): Map<string, StateV3NodeShard> {
+  const nodesByShard = new Map<number, StoredOutlineNode[]>();
+  for (const node of Object.values(state.nodes)) {
+    const shardIndex = stateV3NodeShardIndex(node.id);
+    const nodes = nodesByShard.get(shardIndex) ?? [];
+    nodes.push(nodeToStoredNode(node));
+    nodesByShard.set(shardIndex, nodes);
+  }
+
+  const items = new Map<string, StateV3NodeShard>();
+  for (const shardIndex of [...nodesByShard.keys()].sort((left, right) => left - right)) {
+    items.set(stateV3NodeShardKey(shardIndex), {
+      version: 3,
+      shardIndex,
+      nodes: nodesByShard.get(shardIndex)!.sort((left, right) => left.id.localeCompare(right.id))
+    });
+  }
+  return items;
+}
+
+function stateV3NodeShard(state: OutlineState, shardIndex: number): StateV3NodeShard {
+  return {
+    version: 3,
+    shardIndex,
+    nodes: Object.values(state.nodes)
+      .filter((node) => stateV3NodeShardIndex(node.id) === shardIndex)
+      .map(nodeToStoredNode)
+      .sort((left, right) => left.id.localeCompare(right.id))
+  };
+}
+
+function stateV3OrderPageItems(state: OutlineState): Map<string, StateV3OrderPage> {
+  const items = new Map<string, StateV3OrderPage>();
+  for (const node of Object.values(state.nodes).sort((left, right) => left.id.localeCompare(right.id))) {
+    for (const page of stateV3OrderPagesForNode(node)) {
+      items.set(stateV3OrderPageKey(node.id, page.pageIndex), page);
+    }
+  }
+  return items;
+}
+
+function stateV3OrderPagesForNode(node: OutlineNode): StateV3OrderPage[] {
+  const pages: StateV3OrderPage[] = [];
+  for (let index = 0; index < node.childIds.length; index += STATE_V3_ORDER_PAGE_SIZE) {
+    const pageIndex = index / STATE_V3_ORDER_PAGE_SIZE;
+    pages.push({
+      version: 3,
+      parentId: node.id,
+      pageIndex,
+      childIds: node.childIds.slice(index, index + STATE_V3_ORDER_PAGE_SIZE)
+    });
+  }
+  return pages;
+}
+
+function changedNodeShardIndexes(previous: OutlineState, next: OutlineState): number[] {
+  const shardIndexes = new Set<number>();
+  for (const nodeId of unionNodeIds(previous, next)) {
+    const previousNode = previous.nodes[nodeId];
+    const nextNode = next.nodes[nodeId];
+    if (!previousNode && nextNode) {
+      shardIndexes.add(stateV3NodeShardIndex(nextNode.id));
+    } else if (previousNode && !nextNode) {
+      shardIndexes.add(stateV3NodeShardIndex(previousNode.id));
+    } else if (previousNode && nextNode && !storedOutlineNodesEqual(previousNode, nextNode)) {
+      shardIndexes.add(stateV3NodeShardIndex(nextNode.id));
+    }
+  }
+  return [...shardIndexes].sort((left, right) => left - right);
+}
+
+function changedOrderPages(
+  previous: OutlineState,
+  next: OutlineState
+): Array<{ key: string; page?: StateV3OrderPage }> {
+  const changes: Array<{ key: string; page?: StateV3OrderPage }> = [];
+  for (const nodeId of unionNodeIds(previous, next)) {
+    const previousChildIds = previous.nodes[nodeId]?.childIds ?? [];
+    const nextNode = next.nodes[nodeId];
+    const nextChildIds = nextNode?.childIds ?? [];
+    if (sameNodeIdList(previousChildIds, nextChildIds)) {
+      continue;
+    }
+
+    const previousPageCount = Math.ceil(previousChildIds.length / STATE_V3_ORDER_PAGE_SIZE);
+    const nextPages = nextNode ? stateV3OrderPagesForNode(nextNode) : [];
+    const nextPagesByIndex = new Map(nextPages.map((page) => [page.pageIndex, page]));
+    const pageCount = Math.max(previousPageCount, nextPages.length);
+    for (let pageIndex = 0; pageIndex < pageCount; pageIndex += 1) {
+      const previousPageIds = previousChildIds.slice(
+        pageIndex * STATE_V3_ORDER_PAGE_SIZE,
+        (pageIndex + 1) * STATE_V3_ORDER_PAGE_SIZE
+      );
+      const nextPage = nextPagesByIndex.get(pageIndex);
+      const nextPageIds = nextPage?.childIds ?? [];
+      if (sameNodeIdList(previousPageIds, nextPageIds)) {
+        continue;
+      }
+      const key = stateV3OrderPageKey(nodeId, pageIndex);
+      changes.push(nextPage ? { key, page: nextPage } : { key });
+    }
+  }
+  return changes;
+}
+
+function unionNodeIds(left: OutlineState, right: OutlineState): NodeId[] {
+  return [...new Set([...Object.keys(left.nodes), ...Object.keys(right.nodes)])];
+}
+
+function orderPageKeysForStoredNode(node: StoredOutlineNode, orderPageSize: number): string[] {
+  const keys: string[] = [];
+  const pageCount = Math.ceil(node.childCount / orderPageSize);
+  for (let pageIndex = 0; pageIndex < pageCount; pageIndex += 1) {
+    keys.push(stateV3OrderPageKey(node.id, pageIndex));
+  }
+  return keys;
+}
+
+function stateV3NodeShardIndex(nodeId: NodeId): number {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < nodeId.length; index += 1) {
+    hash ^= nodeId.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0) % STATE_V3_NODE_SHARD_COUNT;
+}
+
+function stateV3NodeShardKey(shardIndex: number): string {
+  return `${STATE_V3_NODE_SHARD_PREFIX}${shardIndex.toString(16).padStart(2, "0")}`;
+}
+
+function stateV3OrderPageKey(parentId: NodeId, pageIndex: number): string {
+  return `${STATE_V3_ORDER_PAGE_PREFIX}${encodeURIComponent(parentId)}:${pageIndex}`;
+}
+
+function storedOutlineNodesEqual(previous: OutlineNode, next: OutlineNode): boolean {
+  return previous.id === next.id &&
+    previous.kind === next.kind &&
+    previous.status === next.status &&
+    previous.parentId === next.parentId &&
+    previous.childIds.length === next.childIds.length &&
+    previous.title === next.title &&
+    previous.customTitle === next.customTitle &&
+    previous.url === next.url &&
+    previous.favIconUrl === next.favIconUrl &&
+    previous.active === next.active &&
+    previous.collapsed === next.collapsed &&
+    previous.createdAt === next.createdAt &&
+    previous.updatedAt === next.updatedAt &&
+    previous.closedAt === next.closedAt &&
+    previous.restoredFromClosed === next.restoredFromClosed &&
+    liveRefsEqual(previous.live, next.live) &&
+    restoreRefsEqual(previous.restore, next.restore);
+}
+
+function liveRefsEqual(previous: OutlineNode["live"], next: OutlineNode["live"]): boolean {
+  return previous?.tabId === next?.tabId && previous?.windowId === next?.windowId;
+}
+
+function restoreRefsEqual(previous: OutlineNode["restore"], next: OutlineNode["restore"]): boolean {
+  return previous?.sessionId === next?.sessionId &&
+    previous?.url === next?.url &&
+    previous?.title === next?.title &&
+    previous?.favIconUrl === next?.favIconUrl;
+}
+
 function cloneInitialTreeSnapshot(snapshot: InitialTreeSnapshot, hydrating: boolean): InitialTreeSnapshot {
   return {
     ...snapshot,
@@ -424,6 +790,22 @@ function isStateV2Manifest(value: unknown): value is StateV2Manifest {
   );
 }
 
+function isStateV3Manifest(value: unknown): value is StateV3Manifest {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      (value as StateV3Manifest).version === 3 &&
+      typeof (value as StateV3Manifest).revision === "number" &&
+      Array.isArray((value as StateV3Manifest).rootIds) &&
+      typeof (value as StateV3Manifest).nodeCount === "number" &&
+      typeof (value as StateV3Manifest).closedCount === "number" &&
+      typeof (value as StateV3Manifest).nodeShardCount === "number" &&
+      Array.isArray((value as StateV3Manifest).nodeShardKeys) &&
+      typeof (value as StateV3Manifest).orderPageSize === "number" &&
+      isInitialTreeSnapshot((value as StateV3Manifest).initialSnapshot)
+  );
+}
+
 function isStateV2NodeChunk(value: unknown): value is StateV2NodeChunk {
   return Boolean(
     value &&
@@ -444,6 +826,27 @@ function isStateV2OrderPage(value: unknown): value is StateV2OrderPage {
   );
 }
 
+function isStateV3NodeShard(value: unknown): value is StateV3NodeShard {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      (value as StateV3NodeShard).version === 3 &&
+      typeof (value as StateV3NodeShard).shardIndex === "number" &&
+      Array.isArray((value as StateV3NodeShard).nodes)
+  );
+}
+
+function isStateV3OrderPage(value: unknown): value is StateV3OrderPage {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      (value as StateV3OrderPage).version === 3 &&
+      typeof (value as StateV3OrderPage).parentId === "string" &&
+      typeof (value as StateV3OrderPage).pageIndex === "number" &&
+      Array.isArray((value as StateV3OrderPage).childIds)
+  );
+}
+
 function isInitialTreeSnapshot(value: unknown): value is InitialTreeSnapshot {
   return Boolean(
     value &&
@@ -456,4 +859,8 @@ function isInitialTreeSnapshot(value: unknown): value is InitialTreeSnapshot {
       typeof (value as InitialTreeSnapshot).projection === "object" &&
       Array.isArray((value as InitialTreeSnapshot).projection.rows)
   );
+}
+
+function sameNodeIdList(previous: readonly NodeId[], next: readonly NodeId[]): boolean {
+  return previous.length === next.length && previous.every((nodeId, index) => nodeId === next[index]);
 }

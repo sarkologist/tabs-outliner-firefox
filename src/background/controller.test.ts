@@ -1590,7 +1590,7 @@ describe("background controller lifecycle", () => {
     expect(snapshot?.projection?.rows).toHaveLength(256);
     expect(snapshot?.projection?.nodeCount).toBe(301);
     expect(Object.keys(snapshot?.state?.nodes ?? {})).toHaveLength(256);
-    expect(runtime.api.storage.local.get).toHaveBeenCalledWith("outlineState:v2:manifest");
+    expect(runtime.api.storage.local.get).toHaveBeenCalledWith(["outlineState:v3:manifest", "outlineState:v2:manifest"]);
     expect(runtime.api.windows.getAll).not.toHaveBeenCalled();
     expect(runtime.api.tabs.query).not.toHaveBeenCalled();
     await waitForMacrotask();
@@ -1698,6 +1698,48 @@ describe("background controller lifecycle", () => {
     expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
     finishSave();
     await flush;
+  });
+
+  it("flushes repeated structural command saves against the persisted v3 baseline", async () => {
+    const tabCount = 1500;
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      Array.from({ length: tabCount }, (_value, index) => ({
+        id: index + 1,
+        windowId: 10,
+        index,
+        active: index === 0,
+        url: `https://baseline.example/${index + 1}`,
+        title: `Tab ${index + 1}`
+      }))
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    await controller.flushPendingSaves();
+    vi.mocked(runtime.api.storage.local.set).mockClear();
+
+    await controller.handleMessage({
+      type: "moveNode",
+      nodeId: `tab:${tabCount}`,
+      parentId: "window:10",
+      index: 0
+    });
+    await controller.flushPendingSaves();
+
+    const saved = vi.mocked(runtime.api.storage.local.set).mock.calls.at(-1)?.[0] as
+      | Record<string, unknown>
+      | undefined;
+    const savedKeys = Object.keys(saved ?? {});
+    expect(savedKeys).toContain("outlineState:v3:manifest");
+    expect(savedKeys.filter((key) => key.includes(":nodes:"))).toHaveLength(0);
+    expect(savedKeys.filter((key) => key.includes(":order:")).length).toBeGreaterThan(0);
+    expect(savedKeys.length).toBeLessThan(10);
   });
 
   it("waits for a quiet period before flushing deferred state saves", async () => {
