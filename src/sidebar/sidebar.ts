@@ -108,12 +108,15 @@ let hoverLineScope: HoverLineScope | undefined;
 let pendingCutNodeId: NodeId | undefined;
 let currentCutRowRange: CutSubtreeRowRange | undefined;
 let pendingShowInTreeNodeId: NodeId | undefined;
+let revealHighlightNodeId: NodeId | undefined;
+let revealHighlightTimer: number | undefined;
 const activeTabScrollTracker = createActiveTabScrollTracker();
 
 const WHEEL_ZOOM_THRESHOLD_PX = 80;
 const DIAGNOSTICS_NOTICE_MS = 4000;
 const DIAGNOSTICS_REFRESH_DELAY_MS = 750;
 const FULL_STATE_HYDRATION_DELAY_MS = 750;
+const SHOW_IN_TREE_HIGHLIGHT_MS = 1200;
 const VIRTUAL_OVERSCAN_ROWS = 32;
 const GUIDE_TOP = 1;
 const GUIDE_BOTTOM = 2;
@@ -1500,6 +1503,7 @@ function renderRow(
     rowInfo.isSearchMatch ? " is-search-match" : ""
   }${rowInfo.isSearchPath ? " is-search-path" : ""}${
     isRowInCutSubtree(rowInfo, currentCutRowRange) ? " is-cut" : ""
+  }${isRevealHighlighted(node.id) ? " is-reveal-highlight" : ""
   }`;
   item.dataset.nodeId = node.id;
   item.dataset.rowIndex = String(rowInfo.index);
@@ -2318,7 +2322,27 @@ function scrollToPendingShowInTreeRow(projection: VisibleTreeProjection): boolea
   const rowHeight = currentRowHeight();
   prepareVirtualScrollSurface(projection, rowHeight);
   centerRowInViewport(row.index, rootDropSurface ?? undefined, rowHeight);
+  startRevealHighlight(targetNodeId);
   return true;
+}
+
+function startRevealHighlight(nodeId: NodeId): void {
+  revealHighlightNodeId = nodeId;
+  if (revealHighlightTimer !== undefined) {
+    window.clearTimeout(revealHighlightTimer);
+  }
+
+  revealHighlightTimer = window.setTimeout(() => {
+    revealHighlightTimer = undefined;
+    if (revealHighlightNodeId === nodeId) {
+      revealHighlightNodeId = undefined;
+      scheduleVirtualRender();
+    }
+  }, SHOW_IN_TREE_HIGHLIGHT_MS);
+}
+
+function isRevealHighlighted(nodeId: NodeId): boolean {
+  return revealHighlightNodeId === nodeId;
 }
 
 function centerRowInViewport(rowIndex: number, viewport: HTMLElement | undefined, rowHeight: number): void {

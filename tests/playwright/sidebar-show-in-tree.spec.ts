@@ -24,12 +24,14 @@ test.describe("sidebar search result show in tree", () => {
     await expect(page.getByRole("searchbox", { name: "Search tabs" })).toHaveValue("");
     await expect(page.getByRole("button", { name: "Clear search" })).toBeHidden();
     await expect(page.locator(nodeSelector("tab:target"))).toBeVisible();
+    await expect(page.locator(`${nodeSelector("tab:target")}.is-reveal-highlight`)).toBeVisible();
     await expect(page.locator(nodeSelector("tab:target"))).toHaveAttribute("data-row-index", "82");
     await expect(outlineCollapseState(page)).resolves.toEqual({
       windowCollapsed: false,
       parentCollapsed: false
     });
     expect(await scrollTop(page)).toBeGreaterThan(500);
+    await expect(page.locator(`${nodeSelector("tab:target")}.is-reveal-highlight`)).toHaveCount(0, { timeout: 2500 });
     expect(issues).toEqual([]);
   });
 });
