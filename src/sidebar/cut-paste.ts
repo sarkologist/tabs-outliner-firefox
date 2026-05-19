@@ -1,5 +1,6 @@
 import type { BackgroundCommand } from "../background/commands.js";
 import type { NodeId, OutlineState } from "../model/types.js";
+import { DEFAULT_APP_PREFERENCES, shortcutMatchesEvent, type SidebarShortcutAction, type ShortcutPreference } from "../preferences.js";
 import { commandForDropPlacement, dropPlacementForNode } from "./drop-target.js";
 
 export type CutPasteShortcutAction = "cut" | "paste";
@@ -31,17 +32,17 @@ export type CutSubtreeRowRange = {
 
 export function keyboardCutPasteAction(
   event: CutPasteKeyboardEvent,
-  target: CutPasteShortcutTarget
+  target: CutPasteShortcutTarget,
+  shortcuts: Pick<Record<SidebarShortcutAction, ShortcutPreference>, "cut" | "paste"> = DEFAULT_APP_PREFERENCES.shortcuts
 ): CutPasteShortcutAction | undefined {
-  if (!isCutPasteShortcutEligibleTarget(target) || event.altKey || event.shiftKey || !(event.ctrlKey || event.metaKey)) {
+  if (!isCutPasteShortcutEligibleTarget(target)) {
     return undefined;
   }
 
-  const key = event.key.toLocaleLowerCase();
-  if (key === "x") {
+  if (shortcutMatchesEvent(shortcuts.cut, event)) {
     return "cut";
   }
-  if (key === "v") {
+  if (shortcutMatchesEvent(shortcuts.paste, event)) {
     return "paste";
   }
   return undefined;

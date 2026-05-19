@@ -56,6 +56,14 @@ import {
   type ZoomDirection,
   zoomCssMetrics
 } from "./zoom.js";
+import {
+  APP_PREFERENCES_STORAGE_KEY,
+  DEFAULT_APP_PREFERENCES,
+  loadAppPreferences,
+  normalizeAppPreferences,
+  shortcutMatchesEvent,
+  type AppPreferences
+} from "../preferences.js";
 
 const stateCount = document.querySelector<HTMLSpanElement>("#state-count");
 const diagnostics = document.querySelector<HTMLSpanElement>("#diagnostics");
@@ -77,6 +85,7 @@ let pendingFullHydrationTimer: number | undefined;
 let draggedNodeId: NodeId | undefined;
 let activeDropPlacement: DropPlacement | undefined;
 let currentZoom = DEFAULT_ZOOM;
+let appPreferences: AppPreferences = DEFAULT_APP_PREFERENCES;
 let wheelZoomDelta = 0;
 let currentSearchQuery = "";
 let diagnosticsNoticeUntil = 0;
@@ -165,6 +174,7 @@ const perfTrace = createPerformanceTracer("sidebar", {
 
 installProfileConsole();
 applyZoom(currentZoom);
+registerPreferenceListener();
 registerZoomShortcuts();
 registerSearchControls();
 registerPortableTreeControls();
@@ -173,6 +183,7 @@ registerTreeControls();
 registerVirtualViewport();
 updateHydrationControls();
 void loadZoomPreference();
+void loadSidebarPreferences();
 void loadState();
 void loadHistoryStatus();
 
@@ -365,6 +376,19 @@ async function loadZoomPreference(): Promise<void> {
   setZoom(normalizeStoredZoom(stored[ZOOM_STORAGE_KEY]), { persist: false });
 }
 
+async function loadSidebarPreferences(): Promise<void> {
+  appPreferences = await loadAppPreferences().catch(() => DEFAULT_APP_PREFERENCES);
+}
+
+function registerPreferenceListener(): void {
+  browser.storage.onChanged?.addListener((changes, areaName) => {
+    if (areaName !== "local" || !changes[APP_PREFERENCES_STORAGE_KEY]) {
+      return;
+    }
+    appPreferences = normalizeAppPreferences(changes[APP_PREFERENCES_STORAGE_KEY].newValue);
+  });
+}
+
 function installProfileConsole(): void {
   if (perfTrace.isEnabled()) {
     void setBackgroundTraceEnabled(true);
@@ -429,11 +453,7 @@ function storeProfileEnabled(enabled: boolean): void {
 
 function registerZoomShortcuts(): void {
   document.addEventListener("keydown", (event) => {
-    if (!isZoomModifierEvent(event)) {
-      return;
-    }
-
-    const action = zoomKeyboardAction(event.key);
+    const action = zoomKeyboardAction(event);
     if (!action) {
       return;
     }
@@ -631,19 +651,14 @@ function updateHistoryControls(status: HistoryStatus): void {
 }
 
 function historyKeyboardAction(event: KeyboardEvent): "undo" | "redo" | undefined {
-  if (!(event.ctrlKey || event.metaKey) || event.altKey) {
-    return undefined;
-  }
-
-  const key = event.key.toLocaleLowerCase();
-  if (key === "z" && event.shiftKey) {
+  if (shortcutMatchesEvent(appPreferences.shortcuts.redo, event)) {
     return "redo";
   }
-  if (key === "z") {
+  if (shortcutMatchesEvent(appPreferences.shortcuts.redoAlternate, event)) {
+    return "redo";
+  }
+  if (shortcutMatchesEvent(appPreferences.shortcuts.undo, event)) {
     return "undo";
-  }
-  if (key === "y" && !event.shiftKey) {
-    return "redo";
   }
   return undefined;
 }
@@ -711,7 +726,7 @@ function importErrorText(error: unknown): string {
 }
 
 function isSearchFocusEvent(event: KeyboardEvent): boolean {
-  return (event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLocaleLowerCase() === "f";
+  return shortcutMatchesEvent(appPreferences.shortcuts.search, event);
 }
 
 function clearSearchQuery(options: { focus?: boolean } = {}): void {
@@ -736,16 +751,16 @@ function isZoomModifierEvent(event: KeyboardEvent | WheelEvent): boolean {
   return (event.ctrlKey || event.metaKey) && !event.altKey;
 }
 
-function zoomKeyboardAction(key: string): ZoomDirection | "reset" | undefined {
-  if (key === "+" || key === "=") {
+function zoomKeyboardAction(event: KeyboardEvent): ZoomDirection | "reset" | undefined {
+  if (shortcutMatchesEvent(appPreferences.shortcuts.zoomIn, event)) {
     return "in";
   }
 
-  if (key === "-" || key === "_") {
+  if (shortcutMatchesEvent(appPreferences.shortcuts.zoomOut, event)) {
     return "out";
   }
 
-  if (key === "0" || key === ")") {
+  if (shortcutMatchesEvent(appPreferences.shortcuts.zoomReset, event)) {
     return "reset";
   }
 
@@ -1741,7 +1756,7 @@ function handleTreeInput(event: Event): void {
 
 function handleTreeKeydown(event: KeyboardEvent): void {
   const shortcutTarget = cutPasteShortcutTargetForEventTarget(event.target);
-  const shortcutAction = keyboardCutPasteAction(event, shortcutTarget);
+  const shortcutAction = keyboardCutPasteAction(event, shortcutTarget, appPreferences.shortcuts);
   const shortcutNodeId = nodeIdForCutPasteTarget(shortcutTarget);
   if (shortcutAction && shortcutNodeId) {
     event.preventDefault();

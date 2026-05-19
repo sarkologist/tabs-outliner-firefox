@@ -1,5 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
+import { APP_PREFERENCES_STORAGE_KEY, DEFAULT_APP_PREFERENCES, type AppPreferences } from "../../src/preferences";
+
 type ConsoleIssue = {
   kind: "console" | "pageerror" | "requestfailed";
   text: string;
@@ -44,6 +46,46 @@ test.describe("sidebar undo/redo controls", () => {
     expect(issues).toEqual([]);
   });
 
+  test("uses stored shortcut preferences for undo and redo", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadSidebar(page, { canUndo: true, canRedo: true, undoLabel: "Move", redoLabel: "Move" }, {
+      ...DEFAULT_APP_PREFERENCES,
+      shortcuts: {
+        ...DEFAULT_APP_PREFERENCES.shortcuts,
+        undo: { enabled: true, combo: "Accel+Alt+U" },
+        redo: { enabled: false, combo: "Accel+Shift+Z" },
+        redoAlternate: { enabled: false, combo: "Accel+Y" }
+      }
+    });
+    await clearSentCommands(page);
+
+    await page.keyboard.press("Control+Z");
+    await page.keyboard.press("Control+Shift+Z");
+    await page.keyboard.press("Control+Alt+U");
+
+    await expect(sentCommands(page)).resolves.toEqual(["undo"]);
+    expect(issues).toEqual([]);
+  });
+
+  test("updates shortcut preferences when extension storage changes", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadSidebar(page, { canUndo: true, canRedo: true, undoLabel: "Move", redoLabel: "Move" });
+    await clearSentCommands(page);
+
+    await dispatchStorageChange(page, {
+      ...DEFAULT_APP_PREFERENCES,
+      shortcuts: {
+        ...DEFAULT_APP_PREFERENCES.shortcuts,
+        undo: { enabled: true, combo: "Accel+Alt+U" }
+      }
+    });
+    await page.keyboard.press("Control+Z");
+    await page.keyboard.press("Control+Alt+U");
+
+    await expect(sentCommands(page)).resolves.toEqual(["undo"]);
+    expect(issues).toEqual([]);
+  });
+
   test("does not consume undo/redo shortcuts from rename inputs", async ({ page }) => {
     const issues = collectPageIssues(page);
     await loadSidebar(page, { canUndo: true, canRedo: true, undoLabel: "Move", redoLabel: "Move" });
@@ -62,19 +104,28 @@ test.describe("sidebar undo/redo controls", () => {
 
 async function loadSidebar(
   page: Page,
-  historyStatus: { canUndo: boolean; canRedo: boolean; undoLabel?: string; redoLabel?: string }
+  historyStatus: { canUndo: boolean; canRedo: boolean; undoLabel?: string; redoLabel?: string },
+  preferences?: AppPreferences
 ): Promise<void> {
-  await page.addInitScript(({ state, initialHistoryStatus }) => {
+  await page.addInitScript(({ state, initialHistoryStatus, initialPreferences, preferencesKey }) => {
     const listeners: Array<(message: unknown) => void> = [];
+    const storageListeners: Array<(changes: Record<string, { newValue?: unknown }>, areaName: string) => void> = [];
     const sent: string[] = [];
     (window as typeof window & {
       __dispatchSidebarMessage?: (message: unknown) => void;
+      __dispatchStorageChange?: (preferences: unknown) => void;
       __sentSidebarCommands?: string[];
     }).__dispatchSidebarMessage = (message) => {
       for (const listener of listeners) {
         listener(structuredClone(message));
       }
     };
+    (window as typeof window & { __dispatchStorageChange?: (preferences: unknown) => void }).__dispatchStorageChange =
+      (nextPreferences) => {
+        for (const listener of storageListeners) {
+          listener({ [preferencesKey]: { newValue: structuredClone(nextPreferences) } }, "local");
+        }
+      };
     (window as typeof window & { __sentSidebarCommands?: string[] }).__sentSidebarCommands = sent;
 
     window.browser = {
@@ -119,13 +170,23 @@ async function loadSidebar(
         }
       },
       storage: {
+        onChanged: {
+          addListener: (listener: (changes: Record<string, { newValue?: unknown }>, areaName: string) => void) => {
+            storageListeners.push(listener);
+          }
+        },
         local: {
-          get: async () => ({}),
+          get: async (key?: string) => {
+            if (key === preferencesKey) {
+              return { [preferencesKey]: structuredClone(initialPreferences) };
+            }
+            return {};
+          },
           set: async () => undefined
         }
       }
     };
-  }, { state: fixtureState(), initialHistoryStatus: historyStatus });
+  }, { state: fixtureState(), initialHistoryStatus: historyStatus, initialPreferences: preferences, preferencesKey: APP_PREFERENCES_STORAGE_KEY });
 
   await page.goto("/sidebar/sidebar.html");
   await expect(page.getByRole("treeitem")).toHaveCount(2);
@@ -146,6 +207,24 @@ async function sentCommands(page: Page): Promise<string[]> {
   return page.evaluate(() => [
     ...((window as typeof window & { __sentSidebarCommands?: string[] }).__sentSidebarCommands ?? [])
   ]);
+}
+
+async function clearSentCommands(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const sent = (window as typeof window & { __sentSidebarCommands?: string[] }).__sentSidebarCommands;
+    sent?.splice(0, sent.length);
+  });
+}
+
+async function dispatchStorageChange(page: Page, preferences: AppPreferences): Promise<void> {
+  await page.evaluate((payload) => {
+    const dispatch = (window as typeof window & { __dispatchStorageChange?: (preferences: unknown) => void })
+      .__dispatchStorageChange;
+    if (!dispatch) {
+      throw new Error("Missing storage change dispatcher");
+    }
+    dispatch(payload);
+  }, preferences);
 }
 
 function collectPageIssues(page: Page): ConsoleIssue[] {

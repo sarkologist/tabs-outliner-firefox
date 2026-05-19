@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { moveNode } from "../model/outline.js";
 import type { BackgroundCommand } from "../background/commands.js";
 import type { NodeId, OutlineNode, OutlineState } from "../model/types.js";
+import { DEFAULT_APP_PREFERENCES } from "../preferences.js";
 import {
   cutSubtreeRowRange,
   isCutPasteShortcutEligibleTarget,
@@ -38,6 +39,28 @@ describe("cut/paste shortcut helpers", () => {
         nodeId: "tab:a",
         tagName: "INPUT"
       })
+    ).toBeUndefined();
+  });
+
+  it("honors remapped and disabled cut/paste shortcuts", () => {
+    const target = {
+      nodeId: "tab:a",
+      tagName: "BUTTON"
+    };
+    const shortcuts = {
+      ...DEFAULT_APP_PREFERENCES.shortcuts,
+      cut: { enabled: true, combo: "Accel+Alt+K" },
+      paste: { enabled: false, combo: "Accel+V" }
+    };
+
+    expect(
+      keyboardCutPasteAction({ key: "k", metaKey: true, ctrlKey: false, altKey: true, shiftKey: false }, target, shortcuts)
+    ).toBe("cut");
+    expect(
+      keyboardCutPasteAction({ key: "x", metaKey: true, ctrlKey: false, altKey: false, shiftKey: false }, target, shortcuts)
+    ).toBeUndefined();
+    expect(
+      keyboardCutPasteAction({ key: "v", metaKey: true, ctrlKey: false, altKey: false, shiftKey: false }, target, shortcuts)
     ).toBeUndefined();
   });
 });
