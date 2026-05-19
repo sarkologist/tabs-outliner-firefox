@@ -71,10 +71,22 @@ type FakeRuntime = {
     storageChanged: FakeEvent<[Record<string, { oldValue?: unknown; newValue?: unknown }>, string]>;
   };
   tabs: RuntimeTab[];
-  windows: RuntimeWindow[];
+  windows: FakeRuntimeWindow[];
   broadcasts: unknown[];
   setNextTabQueryResult(tabs: RuntimeTab[]): void;
   clearNextTabQueryResult(): void;
+};
+
+type FakeWindowType = "normal" | "popup";
+type FakeRuntimeWindow = RuntimeWindow & {
+  type?: FakeWindowType;
+};
+type FakeWindowCreateData = {
+  url?: string | string[];
+  tabId?: number;
+  type?: FakeWindowType;
+  state?: "normal" | "minimized" | "maximized" | "fullscreen";
+  focused?: boolean;
 };
 
 type TabCloseEventOrder =
@@ -161,6 +173,7 @@ function fakeRuntime(windows: RuntimeWindow[], tabs: RuntimeTab[], options: Fake
         onInstalled: new FakeEvent<[]>() as never,
         onStartup: new FakeEvent<[]>() as never,
         onMessage: new FakeEvent<[unknown, { tab?: RuntimeTab }]>() as never,
+        getURL: vi.fn((path: string) => `moz-extension://extension-id/${path}`),
         openOptionsPage: vi.fn(async () => undefined),
         sendMessage: vi.fn(async (message: unknown) => {
           broadcasts.push(message);
@@ -194,7 +207,9 @@ function fakeRuntime(windows: RuntimeWindow[], tabs: RuntimeTab[], options: Fake
       windows: {
         WINDOW_ID_NONE: -1,
         getCurrent: vi.fn(async (getInfo: { populate?: boolean; windowTypes?: string[] } = {}) => {
-          const windowInfo = runtime.windows.find((candidate) => candidate.focused) ?? runtime.windows[0];
+          const allowedTypes = new Set(getInfo.windowTypes ?? ["normal", "popup"]);
+          const matchingWindows = runtime.windows.filter((candidate) => allowedTypes.has(candidate.type ?? "normal"));
+          const windowInfo = matchingWindows.find((candidate) => candidate.focused) ?? matchingWindows[0];
           if (!windowInfo) {
             throw new Error("Missing current window");
           }
@@ -215,6 +230,9 @@ function fakeRuntime(windows: RuntimeWindow[], tabs: RuntimeTab[], options: Fake
           if (!windowInfo) {
             throw new Error(`Missing window: ${windowId}`);
           }
+          if (getInfo.windowTypes && !getInfo.windowTypes.includes(windowInfo.type ?? "normal")) {
+            throw new Error(`Missing window: ${windowId}`);
+          }
           const windowCopy = copyWindowWithoutTabs(windowInfo);
           return {
             ...windowCopy,
@@ -228,19 +246,7 @@ function fakeRuntime(windows: RuntimeWindow[], tabs: RuntimeTab[], options: Fake
           };
         }),
         getAll: vi.fn(async (getInfo: { populate?: boolean; windowTypes?: string[] } = {}) =>
-          runtime.windows.map((windowInfo) => {
-            const windowCopy = copyWindowWithoutTabs(windowInfo);
-            return {
-              ...windowCopy,
-              ...(getInfo.populate
-                ? {
-                    tabs: runtime.tabs
-                      .filter((tab) => tab.windowId === windowInfo.id)
-                      .map(copyTab)
-                  }
-                : {})
-            };
-          })
+          runtimeWindowSnapshot(runtime, getInfo)
         ),
         update: vi.fn(async (windowId: number, updateInfo: { focused?: boolean } = {}) => {
           if (updateInfo.focused) {
@@ -255,7 +261,7 @@ function fakeRuntime(windows: RuntimeWindow[], tabs: RuntimeTab[], options: Fake
         remove: vi.fn(async (windowId: number) => {
           await closeRuntimeWindow(runtime, windowId, { awaitListeners: false });
         }),
-        create: vi.fn(async (createData: { url?: string | string[]; tabId?: number } = {}) =>
+        create: vi.fn(async (createData: FakeWindowCreateData = {}) =>
           createWindowFromBrowser(runtime, createData)
         ),
         onFocusChanged: windowFocusChanged as never,
@@ -354,12 +360,13 @@ function createTabFromBrowser(
 
 function createWindowFromBrowser(
   runtime: FakeRuntime,
-  createData: { url?: string | string[]; tabId?: number }
+  createData: FakeWindowCreateData
 ): RuntimeWindow {
   const windowId = nextRuntimeWindowId(runtime);
+  const type = createData.type ?? "normal";
   runtime.windows = runtime.windows
     .map((windowInfo) => ({ ...windowInfo, focused: false }))
-    .concat({ id: windowId, focused: true, incognito: false });
+    .concat({ id: windowId, focused: createData.focused ?? true, incognito: false, type });
 
   if (typeof createData.tabId === "number") {
     const movedTabs = moveTabsFromBrowser(runtime, [createData.tabId], { windowId, index: 0 });
@@ -625,7 +632,7 @@ function copyWindow(windowInfo: RuntimeWindow): RuntimeWindow {
 }
 
 function copyWindowWithoutTabs(windowInfo: RuntimeWindow): RuntimeWindow {
-  const { tabs: _tabs, ...rest } = windowInfo;
+  const { tabs: _tabs, type: _type, ...rest } = windowInfo as FakeRuntimeWindow;
   return { ...rest };
 }
 
@@ -633,19 +640,22 @@ function runtimeWindowSnapshot(
   runtime: FakeRuntime,
   getInfo: { populate?: boolean; windowTypes?: string[] } = {}
 ): RuntimeWindow[] {
-  return runtime.windows.map((windowInfo) => {
-    const windowCopy = copyWindowWithoutTabs(windowInfo);
-    return {
-      ...windowCopy,
-      ...(getInfo.populate
-        ? {
-            tabs: runtime.tabs
-              .filter((tab) => tab.windowId === windowInfo.id)
-              .map(copyTab)
-          }
-        : {})
-    };
-  });
+  const allowedTypes = new Set(getInfo.windowTypes ?? ["normal", "popup"]);
+  return runtime.windows
+    .filter((windowInfo) => allowedTypes.has(windowInfo.type ?? "normal"))
+    .map((windowInfo) => {
+      const windowCopy = copyWindowWithoutTabs(windowInfo);
+      return {
+        ...windowCopy,
+        ...(getInfo.populate
+          ? {
+              tabs: runtime.tabs
+                .filter((tab) => tab.windowId === windowInfo.id)
+                .map(copyTab)
+            }
+          : {})
+      };
+    });
 }
 
 function isPromiseLike(value: unknown): value is Promise<unknown> {
@@ -1267,6 +1277,82 @@ describe("background controller lifecycle", () => {
     await runtime.events.command.emit("toggle-sidebar");
 
     expect(runtime.api.sidebarAction.toggle).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens the full-size sidebar in a focused maximized popup without saving or broadcasting state", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    runtime.broadcasts.length = 0;
+    vi.mocked(runtime.api.storage.local.set).mockClear();
+
+    const result = await controller.handleMessage({ type: "openSidebarWindow" });
+
+    expect(result).toEqual({ ok: true });
+    expect(runtime.api.windows.create).toHaveBeenCalledWith({
+      url: "moz-extension://extension-id/sidebar/sidebar.html",
+      type: "popup",
+      state: "maximized",
+      focused: true
+    });
+    expect(stateBroadcasts(runtime.broadcasts)).toHaveLength(0);
+    expect(vi.mocked(runtime.api.storage.local.set)).not.toHaveBeenCalled();
+  });
+
+  it("ignores focus changes from the tracked full-size sidebar popup", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    await controller.handleMessage({ type: "openSidebarWindow" });
+    const popupWindowId = runtime.windows.find((windowInfo) => windowInfo.type === "popup")?.id;
+    if (typeof popupWindowId !== "number") {
+      throw new Error("Expected popup window to be created");
+    }
+    runtime.broadcasts.length = 0;
+    vi.mocked(runtime.api.storage.local.set).mockClear();
+
+    await runtime.events.windowFocusChanged.emit(popupWindowId);
+    const state = await controller.handleMessage({ type: "getState" }) as OutlineState;
+
+    expect(state.nodes["window:10"]?.active).toBe(true);
+    expect(stateBroadcasts(runtime.broadcasts)).toHaveLength(0);
+    expect(vi.mocked(runtime.api.storage.local.set)).not.toHaveBeenCalled();
   });
 
   it("records opt-in performance trace entries", async () => {

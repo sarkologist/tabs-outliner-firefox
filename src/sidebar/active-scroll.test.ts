@@ -41,6 +41,23 @@ describe("findActiveTabNodeId", () => {
     expect(findActiveTabNodeId(state)).toBe("tab:child");
   });
 
+  it("skips outliner sidebar pages as active-scroll targets", () => {
+    const state = outlineState([
+      windowNode("window:1", ["tab:outliner"], { active: true }),
+      tabNode("tab:outliner", "window:1", {
+        active: true,
+        url: "moz-extension://extension-id/sidebar/sidebar.html"
+      }),
+      windowNode("window:2", ["tab:external"], { active: true }),
+      tabNode("tab:external", "window:2", {
+        active: true,
+        url: "https://external.example/"
+      })
+    ]);
+
+    expect(findActiveTabNodeId(state)).toBe("tab:external");
+  });
+
   it("finds an active tab in a 50k-node deep tree without recursive stack overflow", () => {
     expect(findActiveTabNodeId(deepActiveState(50_000))).toBe("tab:50000");
   });
@@ -272,7 +289,7 @@ function windowNode(
 function tabNode(
   id: NodeId,
   parentId: NodeId,
-  options: Partial<Pick<OutlineNode, "active" | "childIds" | "collapsed">> = {}
+  options: Partial<Pick<OutlineNode, "active" | "childIds" | "collapsed" | "url">> = {}
 ): OutlineNode {
   return {
     id,
@@ -281,6 +298,7 @@ function tabNode(
     parentId,
     childIds: options.childIds ?? [],
     title: id,
+    ...(options.url ? { url: options.url } : {}),
     active: options.active ?? false,
     collapsed: options.collapsed ?? false,
     createdAt: 1,

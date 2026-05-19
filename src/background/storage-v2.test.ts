@@ -175,6 +175,35 @@ describe("outline state v2 storage", () => {
     expect(manifest?.initialSnapshot?.state?.nodes["tab:800"]).toBeDefined();
   });
 
+  it("skips outliner sidebar pages when choosing the initial snapshot active-scroll target", () => {
+    const state = makeLargeState(10);
+    state.nodes["tab:1"] = {
+      ...state.nodes["tab:1"]!,
+      active: true,
+      url: "moz-extension://extension-id/sidebar/sidebar.html"
+    };
+    state.nodes["tab:2"] = {
+      ...state.nodes["tab:2"]!,
+      active: true
+    };
+    const items = outlineStateV2Items(state, { revision: 654 });
+    const manifest = items[STATE_V2_MANIFEST_KEY] as
+      | {
+          initialSnapshot?: {
+            projection?: {
+              rows?: Array<{ nodeId?: string; index?: number }>;
+              activeTabNodeId?: string;
+              activeTabRowIndex?: number;
+            };
+          };
+        }
+      | undefined;
+
+    expect(manifest?.initialSnapshot?.projection?.rows?.some((row) => row.nodeId === "tab:1")).toBe(true);
+    expect(manifest?.initialSnapshot?.projection?.activeTabNodeId).toBe("tab:2");
+    expect(manifest?.initialSnapshot?.projection?.activeTabRowIndex).toBe(2);
+  });
+
   it("loads the initial tree snapshot by reading only manifest keys", async () => {
     const state = makeLargeState(800);
     const items = outlineStateV2Items(state, { revision: 456 });

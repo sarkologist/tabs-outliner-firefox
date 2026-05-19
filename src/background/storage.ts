@@ -1,5 +1,6 @@
 import type { OutlineState } from "../model/types.js";
 import type { NodeId, OutlineNode } from "../model/types.js";
+import { isOutlinerSidebarNode } from "../model/outliner-page.js";
 import { DEFAULT_HISTORY_LIMIT, normalizeHistoryState, type HistoryState } from "./history.js";
 
 export const STATE_KEY = "outlineState";
@@ -435,7 +436,13 @@ export function initialTreeSnapshotForState(
 
     const index = allRows.length;
     const insideActiveWindow = entry.insideActiveWindow || Boolean(node.kind === "window" && node.active);
-    if (!activeTabNodeId && node.kind === "tab" && node.active && insideActiveWindow) {
+    if (
+      !activeTabNodeId &&
+      node.kind === "tab" &&
+      node.active &&
+      insideActiveWindow &&
+      !isOutlinerSidebarNode(node)
+    ) {
       activeTabNodeId = node.id;
       activeTabRowIndex = index;
     }

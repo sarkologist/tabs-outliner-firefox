@@ -131,6 +131,27 @@ describe("visible tree projection", () => {
     expect(projection.activeTabRowIndex).toBe(7);
   });
 
+  it("keeps outliner sidebar pages visible without using them as active-scroll targets", () => {
+    const state = outlineState([
+      windowNode("window:outliner", ["tab:outliner"], { active: true }),
+      tabNode("tab:outliner", "window:outliner", "Tab Session Outliner", [], {
+        active: true,
+        url: "moz-extension://extension-id/sidebar/sidebar.html"
+      }),
+      windowNode("window:external", ["tab:external"], { active: true }),
+      tabNode("tab:external", "window:external", "External", [], {
+        active: true,
+        url: "https://external.example/"
+      })
+    ]);
+
+    const projection = buildVisibleTreeProjection(state, "");
+
+    expect(projection.visibleNodeIds).toContain("tab:outliner");
+    expect(projection.activeTabNodeId).toBe("tab:external");
+    expect(projection.activeTabRowIndex).toBe(3);
+  });
+
   it("chooses the active tab under the newly active window", () => {
     const state = outlineState([
       windowNode("window:old", ["tab:old"], { active: false }),
@@ -424,7 +445,7 @@ function tabNode(
   parentId: NodeId,
   title: string,
   childIds: NodeId[] = [],
-  options: Partial<Pick<OutlineNode, "active" | "collapsed">> = {}
+  options: Partial<Pick<OutlineNode, "active" | "collapsed" | "url">> = {}
 ): OutlineNode {
   return {
     id,
@@ -433,6 +454,7 @@ function tabNode(
     parentId,
     childIds,
     title,
+    ...(options.url ? { url: options.url } : {}),
     active: options.active ?? false,
     collapsed: options.collapsed ?? false,
     createdAt: 1,

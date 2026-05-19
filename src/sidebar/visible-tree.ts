@@ -1,4 +1,5 @@
 import type { NodeId, OutlineNode, OutlineState } from "../model/types.js";
+import { isOutlinerSidebarNode } from "../model/outliner-page.js";
 
 export type VisibleTreeRow = {
   nodeId: NodeId;
@@ -77,7 +78,13 @@ export function buildVisibleTreeProjection(state: OutlineState, rawQuery: string
     if (node.status === "closed") {
       closedCount += 1;
     }
-    if (!activeTabNodeId && node.kind === "tab" && node.active && entry.insideActiveWindow) {
+    if (
+      !activeTabNodeId &&
+      node.kind === "tab" &&
+      node.active &&
+      entry.insideActiveWindow &&
+      !isOutlinerSidebarNode(node)
+    ) {
       activeTabNodeId = node.id;
     }
     if (query && nodeMatchesQuery(node, query)) {
@@ -535,7 +542,12 @@ function refreshProjectionActiveTabTarget(state: OutlineState, projection: Visib
 
   for (const row of projection.rows) {
     const node = state.nodes[row.nodeId];
-    if (node?.kind === "tab" && node.active && row.insideActiveWindow) {
+    if (
+      node?.kind === "tab" &&
+      node.active &&
+      row.insideActiveWindow &&
+      !isOutlinerSidebarNode(node)
+    ) {
       projection.activeTabNodeId = node.id;
       projection.activeTabRowIndex = row.index;
       return;

@@ -141,6 +141,10 @@ type InitialTreeSnapshotMessage = {
   type: "getInitialTreeSnapshot";
 };
 
+type OpenSidebarWindowMessage = {
+  type: "openSidebarWindow";
+};
+
 type PendingSidebarProfileCollection = {
   sidebars: LabeledTraceSnapshot[];
   seenSidebarIds: Set<string>;
@@ -190,6 +194,7 @@ const STATE_SAVE_QUIET_DELAY_MS = 1000;
 const STATE_SAVE_MAX_DELAY_MS = 5000;
 const SIDEBAR_PROFILE_COLLECTION_DELAY_MS = 50;
 const TOGGLE_SIDEBAR_COMMAND = "toggle-sidebar";
+const SIDEBAR_WINDOW_PATH = "sidebar/sidebar.html";
 
 export function createBackgroundController(options: BackgroundControllerOptions): BackgroundController {
   const { api, now = Date.now } = options;
@@ -226,6 +231,8 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   let saveInFlight: Promise<void> | undefined;
   let diagnosticsInFlight: Promise<OutlineDiagnostics> | undefined;
   let sidebarProfileRequestSequence = 0;
+  let sidebarWindowCreationInFlight = 0;
+  const fullSizeOutlinerWindowIds = new Set<number>();
   const pendingSidebarProfileCollections = new Map<string, PendingSidebarProfileCollection>();
 
   api.runtime.onInstalled.addListener(() => {
@@ -327,6 +334,9 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
   api.windows.onRemoved.addListener(async (windowId) => {
     await perfTrace.measureAsync("background.event.windows.onRemoved", { windowId }, async () => {
+      if (fullSizeOutlinerWindowIds.delete(windowId)) {
+        return;
+      }
       if (deleteOwnedClosingWindowIds.delete(windowId)) {
         return;
       }
@@ -373,6 +383,9 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
   api.windows.onFocusChanged.addListener(async (windowId) => {
     await perfTrace.measureAsync("background.event.windows.onFocusChanged", { windowId }, async () => {
+      if (await shouldIgnoreSidebarWindowFocus(windowId)) {
+        return;
+      }
       if (commandFocusedWindowIds.has(windowId)) {
         await handleCommandWindowFocusChanged(windowId);
         return;
@@ -425,6 +438,10 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
     if (isInitialTreeSnapshotMessage(message)) {
       return initialTreeSnapshot();
+    }
+
+    if (isOpenSidebarWindowMessage(message)) {
+      return openSidebarWindow();
     }
 
     if (!isBackgroundCommand(message)) {
@@ -564,6 +581,34 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
   async function ensureState(): Promise<OutlineState> {
     return stateCache.get();
+  }
+
+  async function openSidebarWindow(): Promise<{ ok: true }> {
+    sidebarWindowCreationInFlight += 1;
+    try {
+      const windowInfo = await perfTrace.measureAsync("background.sidebarWindow.open", () =>
+        api.windows.create({
+          url: api.runtime.getURL(SIDEBAR_WINDOW_PATH),
+          type: "popup",
+          state: "maximized",
+          focused: true
+        })
+      );
+      fullSizeOutlinerWindowIds.add(windowInfo.id);
+      return { ok: true };
+    } finally {
+      sidebarWindowCreationInFlight = Math.max(0, sidebarWindowCreationInFlight - 1);
+    }
+  }
+
+  async function shouldIgnoreSidebarWindowFocus(windowId: number): Promise<boolean> {
+    if (fullSizeOutlinerWindowIds.has(windowId)) {
+      return true;
+    }
+    if (sidebarWindowCreationInFlight === 0 || windowId === api.windows.WINDOW_ID_NONE) {
+      return false;
+    }
+    return !(await getNormalWindow(api, windowId));
   }
 
   async function initialTreeSnapshot(): Promise<InitialTreeSnapshot | undefined> {
@@ -2554,6 +2599,14 @@ function isInitialTreeSnapshotMessage(message: unknown): message is InitialTreeS
     message &&
       typeof message === "object" &&
       (message as { type?: unknown }).type === "getInitialTreeSnapshot"
+  );
+}
+
+function isOpenSidebarWindowMessage(message: unknown): message is OpenSidebarWindowMessage {
+  return Boolean(
+    message &&
+      typeof message === "object" &&
+      (message as { type?: unknown }).type === "openSidebarWindow"
   );
 }
 

@@ -5,6 +5,7 @@ import type { HistoryStatus } from "../background/history.js";
 import type { InitialTreeSnapshot } from "../background/storage.js";
 import { analyzeRestoreScope, runtimeTitleForOutlineTab, type RestoreScope } from "../model/outline.js";
 import { exportPortableTree } from "../model/portable-tree.js";
+import { isOutlinerSidebarNode } from "../model/outliner-page.js";
 import type { NodeId, OutlineNode, OutlineState } from "../model/types.js";
 import {
   createPerformanceTracer,
@@ -80,6 +81,7 @@ const openOptions = document.querySelector<HTMLButtonElement>("#open-options");
 const exportTree = document.querySelector<HTMLButtonElement>("#export-tree");
 const importTree = document.querySelector<HTMLButtonElement>("#import-tree");
 const importTreeFile = document.querySelector<HTMLInputElement>("#import-tree-file");
+const openSidebarWindow = document.querySelector<HTMLButtonElement>("#open-sidebar-window");
 const rootDropSurface = document.querySelector<HTMLElement>("main");
 const tree = document.querySelector<HTMLElement>("#tree");
 const empty = document.querySelector<HTMLElement>("#empty");
@@ -129,6 +131,10 @@ type SidebarProfileConsole = {
 
 type InitialTreeSnapshotRequest = {
   type: "getInitialTreeSnapshot";
+};
+
+type OpenSidebarWindowRequest = {
+  type: "openSidebarWindow";
 };
 
 type SidebarPerformanceTraceMessage =
@@ -215,6 +221,10 @@ openOptions?.addEventListener("click", () => {
   void browser.runtime.openOptionsPage().catch(() => {
     showDiagnosticsNotice("Options unavailable", { error: true });
   });
+});
+
+openSidebarWindow?.addEventListener("click", () => {
+  void openFullSizeSidebarWindow();
 });
 
 rootDropSurface?.addEventListener("dragover", (event) => {
@@ -1338,7 +1348,12 @@ function refreshProjectionActiveTabTarget(state: OutlineState, projection: Visib
 
   for (const row of projection.rows) {
     const node = state.nodes[row.nodeId];
-    if (node?.kind === "tab" && node.active && row.insideActiveWindow) {
+    if (
+      node?.kind === "tab" &&
+      node.active &&
+      row.insideActiveWindow &&
+      !isOutlinerSidebarNode(node)
+    ) {
       projection.activeTabNodeId = node.id;
       projection.activeTabRowIndex = row.index;
       return;
@@ -2353,7 +2368,17 @@ async function runAndRender(command: BackgroundCommand): Promise<boolean> {
   }
 }
 
-async function sendCommand(command: BackgroundCommand | InitialTreeSnapshotRequest): Promise<unknown> {
+async function openFullSizeSidebarWindow(): Promise<void> {
+  try {
+    await sendCommand({ type: "openSidebarWindow" });
+  } catch (error) {
+    showDiagnosticsNotice(commandErrorText(error), { error: true });
+  }
+}
+
+async function sendCommand(
+  command: BackgroundCommand | InitialTreeSnapshotRequest | OpenSidebarWindowRequest
+): Promise<unknown> {
   const response = await perfTrace.measureAsync("sidebar.command", { command: command.type }, () =>
     browser.runtime.sendMessage(command)
   );
