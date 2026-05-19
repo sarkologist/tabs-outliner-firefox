@@ -1022,7 +1022,7 @@ describe("outline model", () => {
         windowId: 20,
         active: true,
         url: "http://localhost:8089/restored",
-        title: "http://localhost:8089/"
+        title: "localhost:8089/"
       }
     ]);
 

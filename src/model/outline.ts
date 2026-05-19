@@ -89,8 +89,28 @@ function isTransientRestoredRuntimeTitle(title: string, url: string | undefined)
   if (normalizedUrlString(trimmedTitle)) {
     return true;
   }
+  if (isSchemelessUrlTitle(trimmedTitle)) {
+    return true;
+  }
 
   return Boolean(url && urlsMatch(trimmedTitle, url.trim()));
+}
+
+function isSchemelessUrlTitle(title: string): boolean {
+  if (/\s/.test(title)) {
+    return false;
+  }
+
+  const withoutTrailingPath = title.split(/[/?#]/, 1)[0] ?? "";
+  const withoutCredentials = withoutTrailingPath.split("@").at(-1) ?? "";
+  const host = withoutCredentials.replace(/:\d+$/, "");
+  if (!host) {
+    return false;
+  }
+
+  return host === "localhost" ||
+    /^\d{1,3}(?:\.\d{1,3}){3}$/.test(host) ||
+    host.includes(".");
 }
 
 function urlsMatch(left: string, right: string): boolean {

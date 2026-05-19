@@ -15,7 +15,7 @@ test.describe("sidebar restore title stability", () => {
       type: "nodeStateUpdated",
       updatedNodes: [
         restoredLocalNode({
-          title: "http://localhost:8089/"
+          title: "localhost:8089/"
         })
       ],
       closedCountDelta: -1
@@ -34,7 +34,7 @@ test.describe("sidebar restore title stability", () => {
     });
 
     await expect(nodeTitle(page, "tab:local")).toHaveText("Loaded Local");
-    await expect(titleSamples(page)).resolves.not.toContain("http://localhost:8089/");
+    await expect(titleSamples(page)).resolves.not.toContain("localhost:8089/");
     expect(issues).toEqual([]);
   });
 });
