@@ -5,9 +5,13 @@ import {
   HISTORY_KEY,
   STATE_KEY,
   STATE_V2_MANIFEST_KEY,
+  STATE_V3_MANIFEST_KEY,
   loadInitialTreeSnapshot,
+  loadState,
   loadStateV2,
+  loadStateV3,
   outlineStateV2Items,
+  outlineStateV3Changes,
   saveState,
   saveStateAndHistory
 } from "./storage.js";
@@ -73,11 +77,51 @@ function fakeApi(items: Record<string, unknown> = {}): WebExtensionBrowser {
             storage.set(key, value);
           }
         }),
-        remove: vi.fn(async () => undefined),
+        remove: vi.fn(async (keys: string | string[]) => {
+          for (const key of Array.isArray(keys) ? keys : [keys]) {
+            storage.delete(key);
+          }
+        }),
         onChanged: { addListener: vi.fn() }
       }
     }
   } as never;
+}
+
+function moveLastTabToFront(state: OutlineState): OutlineState {
+  const windowNode = state.nodes["window:10"]!;
+  const movedId = windowNode.childIds.at(-1)!;
+  return {
+    version: state.version,
+    rootIds: state.rootIds,
+    nodes: {
+      ...state.nodes,
+      "window:10": {
+        ...windowNode,
+        childIds: [movedId, ...windowNode.childIds.slice(0, -1)]
+      }
+    }
+  };
+}
+
+function removeLastOrderPage(state: OutlineState): OutlineState {
+  const windowNode = state.nodes["window:10"]!;
+  const removedChildIds = windowNode.childIds.slice(-100);
+  const nodes = { ...state.nodes };
+  for (const nodeId of removedChildIds) {
+    delete nodes[nodeId];
+  }
+  return {
+    version: state.version,
+    rootIds: state.rootIds,
+    nodes: {
+      ...nodes,
+      "window:10": {
+        ...windowNode,
+        childIds: windowNode.childIds.slice(0, -100)
+      }
+    }
+  };
 }
 
 describe("outline state v2 storage", () => {
@@ -131,7 +175,7 @@ describe("outline state v2 storage", () => {
     expect(manifest?.initialSnapshot?.state?.nodes["tab:800"]).toBeDefined();
   });
 
-  it("loads the initial tree snapshot by reading only the manifest key", async () => {
+  it("loads the initial tree snapshot by reading only manifest keys", async () => {
     const state = makeLargeState(800);
     const items = outlineStateV2Items(state, { revision: 456 });
     const api = fakeApi(items);
@@ -143,7 +187,7 @@ describe("outline state v2 storage", () => {
     expect(snapshot?.projection.nodeCount).toBe(801);
     expect(Object.keys(snapshot?.state.nodes ?? {})).toHaveLength(INITIAL_TREE_SNAPSHOT_ROW_LIMIT);
     expect(api.storage.local.get).toHaveBeenCalledTimes(1);
-    expect(api.storage.local.get).toHaveBeenCalledWith(STATE_V2_MANIFEST_KEY);
+    expect(api.storage.local.get).toHaveBeenCalledWith([STATE_V3_MANIFEST_KEY, STATE_V2_MANIFEST_KEY]);
   });
 
   it("hydrates the full state from v2 chunks and order pages", async () => {
@@ -157,7 +201,7 @@ describe("outline state v2 storage", () => {
     expect(vi.mocked(api.storage.local.get).mock.calls.some((call) => Array.isArray(call[0]))).toBe(true);
   });
 
-  it("saves state using v2 keys only", async () => {
+  it("saves state using v3 keys by default", async () => {
     const state = makeLargeState(20);
     const api = fakeApi();
 
@@ -165,8 +209,9 @@ describe("outline state v2 storage", () => {
 
     const saved = vi.mocked(api.storage.local.set).mock.calls.at(-1)?.[0];
     expect(saved?.[STATE_KEY]).toBeUndefined();
-    expect(saved?.[STATE_V2_MANIFEST_KEY]).toBeDefined();
-    await expect(loadStateV2(api)).resolves.toEqual(state);
+    expect(saved?.[STATE_V2_MANIFEST_KEY]).toBeUndefined();
+    expect(saved?.[STATE_V3_MANIFEST_KEY]).toBeDefined();
+    await expect(loadStateV3(api)).resolves.toEqual(state);
   });
 
   it("saves history without reintroducing the v1 state key", async () => {
@@ -185,8 +230,77 @@ describe("outline state v2 storage", () => {
 
     const saved = vi.mocked(api.storage.local.set).mock.calls.at(-1)?.[0];
     expect(saved?.[STATE_KEY]).toBeUndefined();
-    expect(saved?.[STATE_V2_MANIFEST_KEY]).toBeDefined();
+    expect(saved?.[STATE_V2_MANIFEST_KEY]).toBeUndefined();
+    expect(saved?.[STATE_V3_MANIFEST_KEY]).toBeDefined();
     expect(saved?.[HISTORY_KEY]).toEqual({ version: 1, undoStack: [], redoStack: [] });
-    await expect(loadStateV2(api)).resolves.toEqual(state);
+    await expect(loadStateV3(api)).resolves.toEqual(state);
+  });
+});
+
+describe("outline state v3 storage", () => {
+  it("round-trips a full v3 save/load for a large state", async () => {
+    const state = makeLargeState(1200, { activeTabIndex: 1199 });
+    const api = fakeApi();
+
+    await saveState(state, api);
+
+    const saved = vi.mocked(api.storage.local.set).mock.calls.at(-1)?.[0];
+    expect(saved?.[STATE_KEY]).toBeUndefined();
+    expect(saved?.[STATE_V2_MANIFEST_KEY]).toBeUndefined();
+    expect(saved?.[STATE_V3_MANIFEST_KEY]).toBeDefined();
+    await expect(loadStateV3(api)).resolves.toEqual(state);
+    await expect(loadState(api)).resolves.toEqual(state);
+  });
+
+  it("loads v3 before falling back to v2", async () => {
+    const v2State = makeLargeState(5);
+    const v3State = makeLargeState(7, { activeTabIndex: 6 });
+    const api = fakeApi(outlineStateV2Items(v2State, { revision: 10 }));
+    await saveState(v3State, api);
+
+    await expect(loadState(api)).resolves.toEqual(v3State);
+  });
+
+  it("writes bounded incremental v3 shards and order pages for a large same-parent move", () => {
+    const previous = makeLargeState(50_000);
+    const next = moveLastTabToFront(previous);
+
+    const changes = outlineStateV3Changes(next, { previousState: previous, revision: 123 });
+    const setKeys = Object.keys(changes.setItems);
+
+    expect(changes.setItems[STATE_V3_MANIFEST_KEY]).toBeDefined();
+    expect(setKeys.filter((key) => key.includes(":nodes:"))).toHaveLength(0);
+    expect(setKeys.filter((key) => key.includes(":order:")).length).toBeGreaterThan(0);
+    expect(setKeys.filter((key) => key.includes(":order:")).length).toBeLessThan(60);
+    expect(setKeys.length).toBeLessThan(70);
+  });
+
+  it("removes stale v3 order pages when a parent child list shrinks", async () => {
+    const previous = makeLargeState(1100);
+    const next = removeLastOrderPage(previous);
+    const api = fakeApi();
+    await saveState(previous, api);
+    vi.mocked(api.storage.local.set).mockClear();
+    vi.mocked(api.storage.local.remove).mockClear();
+
+    await saveStateAndHistory(next, undefined, api, { previousState: previous });
+
+    expect(vi.mocked(api.storage.local.remove)).toHaveBeenCalled();
+    await expect(loadStateV3(api)).resolves.toEqual(next);
+  });
+
+  it("loads initial snapshots from the v3 manifest before v2", async () => {
+    const v2State = makeLargeState(20);
+    const v3State = makeLargeState(800, { activeTabIndex: 799 });
+    const api = fakeApi(outlineStateV2Items(v2State, { revision: 111 }));
+    await saveState(v3State, api);
+    vi.mocked(api.storage.local.get).mockClear();
+
+    const snapshot = await loadInitialTreeSnapshot(api);
+
+    expect(snapshot?.revision).toBeDefined();
+    expect(snapshot?.projection.nodeCount).toBe(801);
+    expect(snapshot?.projection.activeTabNodeId).toBe("tab:800");
+    expect(api.storage.local.get).toHaveBeenCalledTimes(1);
   });
 });
