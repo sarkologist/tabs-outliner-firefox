@@ -15,8 +15,10 @@ test.describe("extension options page", () => {
     await loadOptions(page);
 
     await expect(page.getByLabel("Undo history length")).toHaveValue("20");
+    await expect(page.getByLabel("Enable automatic backups")).not.toBeChecked();
 
     await page.getByLabel("Undo history length").fill("37");
+    await page.getByLabel("Enable automatic backups").check();
     await page.getByRole("button", { name: "Record Undo shortcut" }).click();
     await page.keyboard.press("Control+Alt+U");
     await expect(page.getByTestId("shortcut-combo-undo")).toHaveText("Accel+Alt+U");
@@ -35,6 +37,9 @@ test.describe("extension options page", () => {
     await expect(page.getByRole("status")).toContainText("Saved");
     await expect(savedPreferences(page)).resolves.toMatchObject({
       undoHistoryLimit: 37,
+      automaticBackups: {
+        enabled: true
+      },
       shortcuts: {
         undo: {
           enabled: true,
@@ -49,6 +54,9 @@ test.describe("extension options page", () => {
 
     await expect(savedPreferences(page)).resolves.toMatchObject({
       undoHistoryLimit: 20,
+      automaticBackups: {
+        enabled: false
+      },
       shortcuts: {
         undo: {
           enabled: true,

@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "description": "A durable Firefox sidebar outline for live and recently closed tabs.",
   "incognito": "not_allowed",
-  "permissions": ["tabs", "sessions", "storage", "unlimitedStorage"],
+  "permissions": ["tabs", "sessions", "storage", "unlimitedStorage", "alarms", "downloads"],
   "action": {
     "default_title": "Open Tab Session Outliner",
     "default_icon": {

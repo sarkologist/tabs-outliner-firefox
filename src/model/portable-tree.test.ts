@@ -4,7 +4,10 @@ import { bootstrapFromWindows, closeTab, renameGroup, wrapNodeInGroup } from "./
 import {
   PORTABLE_TREE_SCHEMA,
   appendPortableTree,
-  exportPortableTree
+  exportPortableTree,
+  portableTreeBackupFilename,
+  portableTreeFilename,
+  serializePortableTreeFile
 } from "./portable-tree.js";
 import type { OutlineNode, OutlineState, RuntimeWindow } from "./types.js";
 
@@ -90,6 +93,16 @@ describe("portable tree files", () => {
     expect(JSON.stringify(exported)).not.toMatch(
       /"status"|"live"|"active"|"collapsed"|"closedAt"|"createdAt"|"updatedAt"|"sessionId"/
     );
+  });
+
+  it("creates stable export filenames and serialized JSON files", () => {
+    const exported = exportPortableTree(bootstrapFromWindows(runtimeWindows, { now: 1000 }), { now: 3000 });
+
+    expect(portableTreeFilename(new Date("2026-05-19T13:20:00.000Z"))).toBe("tabs-outliner-tree-2026-05-19.json");
+    expect(portableTreeBackupFilename(new Date("2026-05-19T13:20:00.000Z"))).toBe(
+      "tabs-outliner-backups/tabs-outliner-tree-2026-05-19.json"
+    );
+    expect(serializePortableTreeFile(exported)).toBe(`${JSON.stringify(exported, null, 2)}\n`);
   });
 
   it("exports renamed group titles", () => {

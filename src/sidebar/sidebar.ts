@@ -4,7 +4,7 @@ import type { OutlineDiagnostics } from "../background/diagnostics.js";
 import type { HistoryStatus } from "../background/history.js";
 import type { InitialTreeSnapshot } from "../background/storage.js";
 import { analyzeRestoreScope, runtimeTitleForOutlineTab, type RestoreScope } from "../model/outline.js";
-import { exportPortableTree } from "../model/portable-tree.js";
+import { exportPortableTree, portableTreeFilename, serializePortableTreeFile } from "../model/portable-tree.js";
 import { isOutlinerSidebarNode } from "../model/outliner-page.js";
 import type { NodeId, OutlineNode, OutlineState } from "../model/types.js";
 import {
@@ -791,13 +791,13 @@ function exportCurrentTree(): void {
   }
 
   const payload = exportPortableTree(currentState);
-  const blob = new Blob([`${JSON.stringify(payload, null, 2)}\n`], {
+  const blob = new Blob([serializePortableTreeFile(payload)], {
     type: "application/json"
   });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = `tabs-outliner-tree-${localDateSlug(new Date())}.json`;
+  link.download = portableTreeFilename(new Date());
   link.style.display = "none";
   document.body.append(link);
   link.click();
@@ -823,13 +823,6 @@ async function importSelectedTreeFile(): Promise<void> {
       importTreeFile.value = "";
     }
   }
-}
-
-function localDateSlug(date: Date): string {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
 }
 
 function importErrorText(error: unknown): string {

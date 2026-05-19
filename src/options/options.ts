@@ -13,6 +13,13 @@ import {
   type SidebarShortcutAction
 } from "../preferences.js";
 import {
+  AUTOMATIC_BACKUP_STATUS_STORAGE_KEY,
+  automaticBackupStatusText,
+  loadAutomaticBackupStatus,
+  normalizeAutomaticBackupStatus,
+  type AutomaticBackupStatus
+} from "../background/backups.js";
+import {
   PROFILE_STORAGE_KEY,
   createPerformanceProfileExport,
   downloadPerformanceProfileExport,
@@ -26,6 +33,8 @@ const TOGGLE_SIDEBAR_COMMAND = "toggle-sidebar";
 
 const form = document.querySelector<HTMLFormElement>("#options-form");
 const undoHistoryLimit = document.querySelector<HTMLInputElement>("#undo-history-limit");
+const automaticBackupsEnabled = document.querySelector<HTMLInputElement>("#automatic-backups-enabled");
+const backupStatus = document.querySelector<HTMLElement>("#backup-status");
 const shortcutList = document.querySelector<HTMLOListElement>("#shortcut-list");
 const globalShortcut = document.querySelector<HTMLButtonElement>("#global-shortcut");
 const clearGlobalShortcut = document.querySelector<HTMLButtonElement>("#clear-global-shortcut");
@@ -48,13 +57,17 @@ type RecordingTarget =
     };
 
 let preferences: AppPreferences = DEFAULT_APP_PREFERENCES;
+let automaticBackupStatus: AutomaticBackupStatus = {};
 let nativeSidebarShortcut = "";
 let recordingTarget: RecordingTarget | undefined;
 
 void initializeOptions();
 
 async function initializeOptions(): Promise<void> {
-  preferences = await loadAppPreferences().catch(() => DEFAULT_APP_PREFERENCES);
+  [preferences, automaticBackupStatus] = await Promise.all([
+    loadAppPreferences().catch(() => DEFAULT_APP_PREFERENCES),
+    loadAutomaticBackupStatus().catch(() => ({}))
+  ]);
   nativeSidebarShortcut = await loadNativeSidebarShortcut();
   renderOptions();
   registerEvents();
@@ -72,6 +85,18 @@ function registerEvents(): void {
       ...preferences,
       undoHistoryLimit: undoHistoryLimit.valueAsNumber
     });
+    showStatus("");
+  });
+
+  automaticBackupsEnabled?.addEventListener("change", () => {
+    preferences = normalizeAppPreferences({
+      ...preferences,
+      automaticBackups: {
+        ...preferences.automaticBackups,
+        enabled: automaticBackupsEnabled.checked
+      }
+    });
+    renderBackupStatus();
     showStatus("");
   });
 
@@ -192,6 +217,14 @@ function registerEvents(): void {
     renderOptions();
     showStatus("");
   }, { capture: true });
+
+  browser.storage.onChanged.addListener((changes, areaName) => {
+    if (areaName !== "local" || !changes[AUTOMATIC_BACKUP_STATUS_STORAGE_KEY]) {
+      return;
+    }
+    automaticBackupStatus = normalizeAutomaticBackupStatus(changes[AUTOMATIC_BACKUP_STATUS_STORAGE_KEY].newValue);
+    renderBackupStatus();
+  });
 }
 
 function renderOptions(): void {
@@ -203,6 +236,20 @@ function renderOptions(): void {
 
   renderShortcutRows();
   renderGlobalShortcut();
+  renderBackups();
+}
+
+function renderBackups(): void {
+  if (automaticBackupsEnabled) {
+    automaticBackupsEnabled.checked = preferences.automaticBackups.enabled;
+  }
+  renderBackupStatus();
+}
+
+function renderBackupStatus(): void {
+  if (backupStatus) {
+    backupStatus.textContent = automaticBackupStatusText(automaticBackupStatus, preferences.automaticBackups.enabled);
+  }
 }
 
 function renderShortcutRows(): void {
@@ -264,7 +311,11 @@ function renderGlobalShortcut(): void {
 async function saveOptions(): Promise<void> {
   const nextPreferences = normalizeAppPreferences({
     ...preferences,
-    undoHistoryLimit: undoHistoryLimit?.valueAsNumber
+    undoHistoryLimit: undoHistoryLimit?.valueAsNumber,
+    automaticBackups: {
+      ...preferences.automaticBackups,
+      enabled: automaticBackupsEnabled?.checked ?? preferences.automaticBackups.enabled
+    }
   });
   const validationErrors = validateAppPreferences(nextPreferences);
   if (validationErrors.length > 0) {

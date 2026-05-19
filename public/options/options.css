@@ -63,6 +63,7 @@ main {
 }
 
 .field-row,
+.backup-row,
 .shortcut-row {
   display: grid;
   grid-template-columns: minmax(150px, 1fr) minmax(96px, auto) auto;
@@ -97,6 +98,18 @@ main {
 
 .global-shortcut-row {
   grid-template-columns: minmax(150px, 1fr) minmax(122px, auto) auto;
+}
+
+.backup-row {
+  grid-template-columns: minmax(150px, 1fr) auto;
+  justify-content: start;
+}
+
+.backup-help,
+.backup-status {
+  margin-top: 8px;
+  color: color-mix(in srgb, CanvasText 62%, transparent);
+  font-size: 12px;
 }
 
 .profile-controls {
@@ -197,6 +210,7 @@ input:focus-visible {
   }
 
   .field-row,
+  .backup-row,
   .shortcut-row,
   .global-shortcut-row {
     grid-template-columns: 1fr;

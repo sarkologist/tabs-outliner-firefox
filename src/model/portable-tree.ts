@@ -6,6 +6,7 @@ import type {
 } from "./types.js";
 
 export const PORTABLE_TREE_SCHEMA = "tabs-outliner-tree";
+export const PORTABLE_TREE_BACKUP_DIRECTORY = "tabs-outliner-backups";
 const IMPORT_GROUP_TITLE = "Group";
 const CHROME_TAB_OUTLINER_IMPORT_GROUP_TITLE = "Chrome Tab Outliner import";
 const CHROME_TAB_OUTLINER_NODE_RECORD_TYPE = 2001;
@@ -54,6 +55,18 @@ export function exportPortableTree(
       return root ? portableNodesFromOutline(state, root) : [];
     })
   };
+}
+
+export function serializePortableTreeFile(payload: PortableTreeFile): string {
+  return `${JSON.stringify(payload, null, 2)}\n`;
+}
+
+export function portableTreeFilename(date = new Date()): string {
+  return `tabs-outliner-tree-${localDateSlug(date)}.json`;
+}
+
+export function portableTreeBackupFilename(date = new Date()): string {
+  return `${PORTABLE_TREE_BACKUP_DIRECTORY}/${portableTreeFilename(date)}`;
 }
 
 export function appendPortableTree(
@@ -168,6 +181,13 @@ function isOutlinerSidebarNode(node: OutlineNode): boolean {
   } catch {
     return false;
   }
+}
+
+function localDateSlug(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 function appendPortableNode(

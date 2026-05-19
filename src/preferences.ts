@@ -19,9 +19,14 @@ export type ShortcutPreference = {
   combo: string;
 };
 
+export type AutomaticBackupPreferences = {
+  enabled: boolean;
+};
+
 export type AppPreferences = {
   version: 1;
   undoHistoryLimit: number;
+  automaticBackups: AutomaticBackupPreferences;
   shortcuts: Record<SidebarShortcutAction, ShortcutPreference>;
 };
 
@@ -65,9 +70,14 @@ export const DEFAULT_SIDEBAR_SHORTCUTS = Object.freeze(
   ) as Record<SidebarShortcutAction, ShortcutPreference>
 );
 
+export const DEFAULT_AUTOMATIC_BACKUPS: AutomaticBackupPreferences = Object.freeze({
+  enabled: false
+});
+
 export const DEFAULT_APP_PREFERENCES: AppPreferences = Object.freeze({
   version: 1,
   undoHistoryLimit: DEFAULT_UNDO_HISTORY_LIMIT,
+  automaticBackups: DEFAULT_AUTOMATIC_BACKUPS,
   shortcuts: DEFAULT_SIDEBAR_SHORTCUTS
 });
 
@@ -98,6 +108,7 @@ export function normalizeAppPreferences(value: unknown): AppPreferences {
   return {
     version: 1,
     undoHistoryLimit: normalizeUndoHistoryLimit(value.undoHistoryLimit),
+    automaticBackups: normalizeAutomaticBackups(value.automaticBackups),
     shortcuts: normalizeSidebarShortcuts(value.shortcuts)
   };
 }
@@ -127,6 +138,13 @@ export function normalizeSidebarShortcuts(value: unknown): Record<SidebarShortcu
       ];
     })
   ) as Record<SidebarShortcutAction, ShortcutPreference>;
+}
+
+export function normalizeAutomaticBackups(value: unknown): AutomaticBackupPreferences {
+  const source = isRecord(value) ? value : {};
+  return {
+    enabled: typeof source.enabled === "boolean" ? source.enabled : DEFAULT_AUTOMATIC_BACKUPS.enabled
+  };
 }
 
 export function normalizeShortcutCombo(value: unknown): string {
@@ -236,6 +254,7 @@ function cloneAppPreferences(preferences: AppPreferences): AppPreferences {
   return {
     version: 1,
     undoHistoryLimit: preferences.undoHistoryLimit,
+    automaticBackups: { ...preferences.automaticBackups },
     shortcuts: Object.fromEntries(
       SIDEBAR_SHORTCUT_ACTIONS.map((action) => [action, { ...preferences.shortcuts[action] }])
     ) as Record<SidebarShortcutAction, ShortcutPreference>

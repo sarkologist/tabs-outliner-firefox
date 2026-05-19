@@ -17,6 +17,23 @@ describe("app preferences", () => {
     expect(normalizeAppPreferences({ version: 1, undoHistoryLimit: "lots", shortcuts: {} })).toEqual(
       DEFAULT_APP_PREFERENCES
     );
+    expect(normalizeAppPreferences({
+      version: 1,
+      undoHistoryLimit: 30,
+      shortcuts: DEFAULT_APP_PREFERENCES.shortcuts
+    }).automaticBackups).toEqual({ enabled: false });
+    expect(normalizeAppPreferences({
+      version: 1,
+      undoHistoryLimit: 30,
+      shortcuts: DEFAULT_APP_PREFERENCES.shortcuts,
+      automaticBackups: { enabled: true }
+    }).automaticBackups).toEqual({ enabled: true });
+    expect(normalizeAppPreferences({
+      version: 1,
+      undoHistoryLimit: 30,
+      shortcuts: DEFAULT_APP_PREFERENCES.shortcuts,
+      automaticBackups: { enabled: "yes" }
+    }).automaticBackups).toEqual({ enabled: false });
   });
 
   it("clamps undo history length to the supported range", () => {

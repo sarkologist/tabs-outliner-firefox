@@ -26,6 +26,25 @@ type WebExtensionCommand = {
   shortcut?: string;
 };
 
+type WebExtensionAlarm = {
+  name: string;
+  scheduledTime: number;
+  periodInMinutes?: number;
+};
+
+type WebExtensionAlarmCreateInfo = {
+  when?: number;
+  delayInMinutes?: number;
+  periodInMinutes?: number;
+};
+
+type WebExtensionDownloadOptions = {
+  url: string;
+  filename?: string;
+  saveAs?: boolean;
+  conflictAction?: "uniquify" | "overwrite" | "prompt";
+};
+
 type WebExtensionWindowType = "normal" | "popup" | "panel";
 type WebExtensionWindowState = "normal" | "minimized" | "maximized" | "fullscreen";
 type WebExtensionWindowCreateData = {
@@ -44,6 +63,12 @@ type WebExtensionBrowserApi = {
   action: {
     onClicked: Listener<() => void | Promise<void>>;
   };
+  alarms: {
+    create(name: string, alarmInfo?: WebExtensionAlarmCreateInfo): void;
+    clear(name: string): Promise<boolean>;
+    get(name: string): Promise<WebExtensionAlarm | undefined>;
+    onAlarm: Listener<(alarm: WebExtensionAlarm) => void | Promise<void>>;
+  };
   sidebarAction: {
     open(): Promise<void>;
     toggle(): Promise<void>;
@@ -61,6 +86,9 @@ type WebExtensionBrowserApi = {
     sendMessage(message: unknown): Promise<unknown>;
     getURL(path: string): string;
     openOptionsPage(): Promise<void>;
+  };
+  downloads: {
+    download(options: WebExtensionDownloadOptions): Promise<number>;
   };
   storage: {
     onChanged: Listener<(changes: Record<string, StorageChange>, areaName: string) => void | Promise<void>>;
