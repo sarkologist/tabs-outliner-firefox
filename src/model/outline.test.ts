@@ -954,6 +954,76 @@ describe("outline model", () => {
     expect(Object.keys(restored.nodes).filter((id) => id === "tab:2")).toHaveLength(1);
   });
 
+  it("keeps a restored tab's saved title while runtime reports transient titles", () => {
+    const state = closeTab(bootstrapFromWindows(windows, { now: 1000 }), 2, {
+      now: 2000,
+      sessionId: "session-tab-2"
+    });
+
+    for (const transientTitle of ["New Tab", "new tab", "https://example.com/child"]) {
+      const restored = restoreNodes(state, [
+        {
+          nodeId: "tab:2",
+          tabId: 22,
+          windowId: 10,
+          active: false,
+          url: "https://example.com/child",
+          title: transientTitle
+        }
+      ]);
+
+      expect(restored.nodes["tab:2"]?.title).toBe("Child");
+      expect(restored.nodes["tab:2"]?.url).toBe("https://example.com/child");
+      expect(restored.nodes["tab:2"]?.restoredFromClosed).toBe(true);
+    }
+  });
+
+  it("updates a restored tab once runtime reports a meaningful title", () => {
+    const state = closeTab(bootstrapFromWindows(windows, { now: 1000 }), 2, {
+      now: 2000,
+      sessionId: "session-tab-2"
+    });
+    const restored = restoreNodes(state, [
+      {
+        nodeId: "tab:2",
+        tabId: 22,
+        windowId: 10,
+        active: false,
+        url: "https://example.com/child",
+        title: "New Tab"
+      }
+    ]);
+
+    const reconciled = reconcileWithWindows(restored, [
+      {
+        id: 10,
+        incognito: false,
+        focused: true,
+        tabs: [
+          {
+            id: 1,
+            windowId: 10,
+            index: 0,
+            active: true,
+            url: "https://example.com/",
+            title: "Example"
+          },
+          {
+            id: 22,
+            windowId: 10,
+            index: 1,
+            active: false,
+            url: "https://example.com/child",
+            title: "Loaded child"
+          }
+        ]
+      }
+    ], { now: 5000 });
+
+    expect(restored.nodes["tab:2"]?.title).toBe("Child");
+    expect(reconciled.nodes["tab:2"]?.title).toBe("Loaded child");
+  });
+
   it("marks restored closed window nodes that become live", () => {
     const state = closeWindow(bootstrapFromWindows(windows, { now: 1000 }), 10, {
       now: 2000,

@@ -1663,6 +1663,7 @@ describe("background controller lifecycle", () => {
     expect(liveTabIds(state)).toEqual([1, 2]);
     expect(state.nodes["tab:1"]?.status).toBe("live");
     expect(state.nodes["tab:2"]?.status).toBe("live");
+    expect(state.nodes["tab:2"]?.title).toBe("New Tab");
   });
 
   it("coalesces noisy new-tab event bursts into one runtime refresh", async () => {
@@ -3062,6 +3063,105 @@ describe("background controller lifecycle", () => {
     expect(restoreBroadcast?.state).toBeUndefined();
     await controller.flushPendingSaves();
     expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps a command-restored tab's saved title until runtime reports the final page title", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        },
+        {
+          id: 2,
+          windowId: 10,
+          index: 1,
+          active: false,
+          url: "https://two.example/",
+          title: "Saved Two"
+        }
+      ]
+    );
+    const restoredTab: RuntimeTab = {
+      id: 22,
+      windowId: 10,
+      index: 1,
+      active: false,
+      url: "https://two.example/",
+      title: "New Tab"
+    };
+    vi.mocked(runtime.api.sessions.restore).mockImplementation(async () => {
+      createTabFromBrowser(runtime, restoredTab, {
+        awaitListeners: false,
+        eventTab: {
+          ...restoredTab,
+          title: "New Tab"
+        }
+      });
+      return { tab: copyTab(restoredTab) } as never;
+    });
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    await controller.handleMessage({ type: "closeNode", nodeId: "tab:2" });
+    await runtime.events.tabRemoved.flush();
+    await runtime.events.sessionChanged.flush();
+
+    runtime.broadcasts.length = 0;
+    vi.mocked(runtime.api.storage.local.set).mockClear();
+
+    await controller.handleMessage({ type: "restoreNode", nodeId: "tab:2" });
+    await runtime.events.tabCreated.flush();
+
+    let state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(state.nodes["tab:2"]?.title).toBe("Saved Two");
+    expect(stateBroadcasts(runtime.broadcasts)).toHaveLength(1);
+    expect(runtime.broadcasts[0]).toMatchObject({
+      type: "nodeStateUpdated",
+      updatedNodes: [
+        expect.objectContaining({
+          id: "tab:2",
+          title: "Saved Two",
+          url: "https://two.example/"
+        })
+      ]
+    });
+
+    await updateTabFromBrowser(runtime, 22, {
+      title: "https://two.example/",
+      url: "https://two.example/"
+    });
+
+    state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(state.nodes["tab:2"]?.title).toBe("Saved Two");
+    expect(stateBroadcasts(runtime.broadcasts)).toHaveLength(1);
+
+    await updateTabFromBrowser(runtime, 22, {
+      title: "Loaded Two"
+    });
+
+    state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(state.nodes["tab:2"]?.title).toBe("Loaded Two");
+    expect(stateBroadcasts(runtime.broadcasts)).toHaveLength(2);
+    expect(runtime.broadcasts.at(-1)).toMatchObject({
+      type: "nodeStateUpdated",
+      updatedNodes: [
+        expect.objectContaining({
+          id: "tab:2",
+          title: "Loaded Two"
+        })
+      ]
+    });
   });
 
   it("preserves outliner closeNode tab removals as restorable closed nodes", async () => {

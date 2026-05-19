@@ -41,6 +41,25 @@ export function groupNodeId(now: number): NodeId {
   return `group:${now}`;
 }
 
+export function runtimeTitleForOutlineTab(
+  node: Pick<OutlineNode, "title" | "restoredFromClosed">,
+  tab: Pick<RuntimeTab, "title" | "url">,
+  options: { restoredFromClosed?: boolean } = {}
+): string {
+  const fallbackTitle = node.title || "Untitled tab";
+  const runtimeTitle = tab.title || tab.url;
+  if (!runtimeTitle) {
+    return fallbackTitle;
+  }
+
+  const restoredFromClosed = options.restoredFromClosed ?? node.restoredFromClosed === true;
+  if (restoredFromClosed && isTransientRestoredRuntimeTitle(runtimeTitle, tab.url)) {
+    return fallbackTitle;
+  }
+
+  return runtimeTitle;
+}
+
 function windowTitle(customTitle?: string): string {
   return normalizeCustomGroupTitle(customTitle) ?? "Group";
 }
@@ -60,6 +79,15 @@ function normalizeGroupTitle(node: OutlineNode): void {
 
   delete node.customTitle;
   node.title = windowTitle();
+}
+
+function isTransientRestoredRuntimeTitle(title: string, url: string | undefined): boolean {
+  const trimmedTitle = title.trim();
+  if (trimmedTitle.toLocaleLowerCase() === "new tab") {
+    return true;
+  }
+
+  return Boolean(url && trimmedTitle === url.trim());
 }
 
 export function bootstrapFromWindows(windows: RuntimeWindow[], clock: Clock): OutlineState {
@@ -835,7 +863,9 @@ export function restoreNodes(state: OutlineState, restoredNodes: RestoredNode[])
       node.url = restored.url;
     }
     if (restored.title) {
-      node.title = restored.title;
+      node.title = runtimeTitleForOutlineTab(node, restored, {
+        restoredFromClosed: wasClosed || node.restoredFromClosed === true
+      });
     }
     if (restored.favIconUrl) {
       node.favIconUrl = restored.favIconUrl;
@@ -919,8 +949,9 @@ function tabToNode(tab: RuntimeTab, nodeId: NodeId, parentId: NodeId, now: numbe
 }
 
 function updateLiveTabNode(node: OutlineNode, tab: RuntimeTab, now: number): void {
+  const restoredFromClosed = node.status === "closed" || node.restoredFromClosed === true;
   node.status = "live";
-  node.title = tab.title || tab.url || node.title || "Untitled tab";
+  node.title = runtimeTitleForOutlineTab(node, tab, { restoredFromClosed });
   node.active = tab.active;
   node.updatedAt = now;
   node.live = { tabId: tab.id, windowId: tab.windowId };

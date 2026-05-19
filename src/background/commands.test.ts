@@ -807,7 +807,7 @@ describe("background commands", () => {
     });
 
     const debugging = Object.values(restored.state.nodes).find((node) => node.title === "Debugging");
-    const restorable = Object.values(restored.state.nodes).find((node) => node.title === "https://restorable.example/");
+    const restorable = Object.values(restored.state.nodes).find((node) => node.title === "Restorable");
     expect(adapter.createWindow).toHaveBeenCalledWith({ url: "about:debugging#/runtime/this-firefox" });
     expect(adapter.createWindow).toHaveBeenCalledWith({ url: "https://restorable.example/" });
     expect(debugging?.status).toBe("closed");

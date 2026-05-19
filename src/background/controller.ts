@@ -44,7 +44,8 @@ import {
   planRestore,
   projectLiveTabs,
   reconcileWithWindows,
-  repairState
+  repairState,
+  runtimeTitleForOutlineTab
 } from "../model/outline.js";
 import { buildOutlineLookup } from "../model/outline-lookup.js";
 import type { NodeId, OutlineNode, OutlineState, RuntimeTab, RuntimeWindow } from "../model/types.js";
@@ -1719,7 +1720,7 @@ function runtimeTabNodeForFastPath(tab: RuntimeTab, nodeId: NodeId, parentId: No
 
 function updateRuntimeTabNodeForFastPath(node: OutlineNode, tab: RuntimeTab, now: number): void {
   node.status = "live";
-  node.title = tab.title || tab.url || node.title || "Untitled tab";
+  node.title = runtimeTitleForOutlineTab(node, tab);
   node.active = tab.active;
   node.updatedAt = now;
   node.live = { tabId: tab.id, windowId: tab.windowId };
@@ -1939,7 +1940,7 @@ function runtimeSnapshotMateriallyMatchesState(state: OutlineState, windows: Run
 }
 
 function liveTabNodeWouldChange(node: OutlineNode & { live: { tabId: number; windowId: number } }, tab: RuntimeTab): boolean {
-  const nextTitle = tab.title || tab.url || node.title || "Untitled tab";
+  const nextTitle = runtimeTitleForOutlineTab(node, tab);
   return node.active !== tab.active ||
     (tab.url !== undefined && node.url !== tab.url) ||
     node.title !== nextTitle ||
