@@ -86,6 +86,9 @@ function isTransientRestoredRuntimeTitle(title: string, url: string | undefined)
   if (trimmedTitle.toLocaleLowerCase() === "new tab") {
     return true;
   }
+  if (normalizedUrlString(trimmedTitle)) {
+    return true;
+  }
 
   return Boolean(url && urlsMatch(trimmedTitle, url.trim()));
 }
@@ -102,10 +105,20 @@ function urlsMatch(left: string, right: string): boolean {
 
 function normalizedUrlString(value: string): string | undefined {
   try {
-    return new URL(value).href;
+    const parsed = new URL(value);
+    return isDisplayUrlProtocol(parsed.protocol) ? parsed.href : undefined;
   } catch {
     return undefined;
   }
+}
+
+function isDisplayUrlProtocol(protocol: string): boolean {
+  return protocol === "http:" ||
+    protocol === "https:" ||
+    protocol === "file:" ||
+    protocol === "about:" ||
+    protocol === "chrome:" ||
+    protocol === "moz-extension:";
 }
 
 export function bootstrapFromWindows(windows: RuntimeWindow[], clock: Clock): OutlineState {

@@ -3,7 +3,7 @@ import type { CommandAck } from "../background/commands.js";
 import type { OutlineDiagnostics } from "../background/diagnostics.js";
 import type { HistoryStatus } from "../background/history.js";
 import type { InitialTreeSnapshot } from "../background/storage.js";
-import { analyzeRestoreScope, type RestoreScope } from "../model/outline.js";
+import { analyzeRestoreScope, runtimeTitleForOutlineTab, type RestoreScope } from "../model/outline.js";
 import { exportPortableTree } from "../model/portable-tree.js";
 import type { NodeId, OutlineNode, OutlineState } from "../model/types.js";
 import {
@@ -962,9 +962,10 @@ function applyNodeStateUpdate(update: NodeStateUpdate): void {
     let collapsedChanged = false;
     for (const node of update.updatedNodes) {
       const previous = state.nodes[node.id];
-      collapsedChanged ||= previous?.collapsed !== node.collapsed;
-      state.nodes[node.id] = node;
-      windowActiveChanged ||= node.kind === "window";
+      const nextNode = nodeWithStableRestoredTitle(previous, node);
+      collapsedChanged ||= previous?.collapsed !== nextNode.collapsed;
+      state.nodes[nextNode.id] = nextNode;
+      windowActiveChanged ||= nextNode.kind === "window";
     }
     pendingCutNodeId = nextPendingCutNodeId(state, pendingCutNodeId);
 
@@ -995,6 +996,24 @@ function applyNodeStateUpdate(update: NodeStateUpdate): void {
     scrollToObservedActiveTab(currentProjection);
     scheduleVirtualRender();
   });
+}
+
+function nodeWithStableRestoredTitle(previous: OutlineNode | undefined, next: OutlineNode): OutlineNode {
+  if (
+    !previous ||
+    previous.kind !== "tab" ||
+    next.kind !== "tab" ||
+    previous.restoredFromClosed !== true ||
+    next.restoredFromClosed !== true
+  ) {
+    return next;
+  }
+
+  const title = runtimeTitleForOutlineTab(previous, {
+    title: next.title,
+    ...(next.url ? { url: next.url } : {})
+  });
+  return title === next.title ? next : { ...next, title };
 }
 
 function applyTreeStructureUpdate(update: TreeStructureUpdate): void {

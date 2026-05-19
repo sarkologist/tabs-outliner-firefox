@@ -994,6 +994,40 @@ describe("outline model", () => {
 
     expect(restoredRootUrl.nodes["tab:1"]?.title).toBe("Example");
     expect(restoredRootUrl.nodes["tab:1"]?.url).toBe("https://example.com/");
+
+    const localState = closeTab(bootstrapFromWindows([
+      {
+        id: 20,
+        incognito: false,
+        focused: true,
+        tabs: [
+          {
+            id: 20,
+            windowId: 20,
+            index: 0,
+            active: true,
+            url: "http://localhost:8089/restored",
+            title: "Saved Local"
+          }
+        ]
+      }
+    ], { now: 1000 }), 20, {
+      now: 2000,
+      sessionId: "session-local"
+    });
+    const restoredLocal = restoreNodes(localState, [
+      {
+        nodeId: "tab:20",
+        tabId: 21,
+        windowId: 20,
+        active: true,
+        url: "http://localhost:8089/restored",
+        title: "http://localhost:8089/"
+      }
+    ]);
+
+    expect(restoredLocal.nodes["tab:20"]?.title).toBe("Saved Local");
+    expect(restoredLocal.nodes["tab:20"]?.url).toBe("http://localhost:8089/restored");
   });
 
   it("updates a restored tab once runtime reports a meaningful title", () => {

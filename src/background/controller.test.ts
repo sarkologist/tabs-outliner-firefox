@@ -3156,6 +3156,14 @@ describe("background controller lifecycle", () => {
     expect(stateBroadcasts(runtime.broadcasts)).toHaveLength(1);
 
     await updateTabFromBrowser(runtime, 22, {
+      title: "http://localhost:8089/"
+    });
+
+    state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(state.nodes["tab:2"]?.title).toBe("Saved Two");
+    expect(stateBroadcasts(runtime.broadcasts)).toHaveLength(1);
+
+    await updateTabFromBrowser(runtime, 22, {
       title: "Loaded Two"
     });
 
