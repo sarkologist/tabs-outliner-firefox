@@ -8,10 +8,15 @@ import { exportPortableTree } from "../model/portable-tree.js";
 import type { NodeId, OutlineNode, OutlineState } from "../model/types.js";
 import {
   createPerformanceTracer,
-  summarizeTraceEvents,
   type TraceSnapshot,
   type TraceSummaryRow
 } from "../perf/trace.js";
+import {
+  PROFILE_STORAGE_KEY,
+  isTraceSnapshot,
+  summarizePerformanceProfile,
+  type SidebarProfileSnapshot
+} from "../perf/profile.js";
 import { createActiveTabScrollTracker, resetActiveTabScrollTracker, scrollActiveTabIntoView } from "./active-scroll.js";
 import { createDiagnosticsScheduler } from "./diagnostics-scheduler.js";
 import {
@@ -105,16 +110,12 @@ const WHEEL_ZOOM_THRESHOLD_PX = 80;
 const DIAGNOSTICS_NOTICE_MS = 4000;
 const DIAGNOSTICS_REFRESH_DELAY_MS = 750;
 const FULL_STATE_HYDRATION_DELAY_MS = 750;
-const PROFILE_STORAGE_KEY = "tabsOutlinerProfileEnabled";
 const VIRTUAL_OVERSCAN_ROWS = 32;
 const GUIDE_TOP = 1;
 const GUIDE_BOTTOM = 2;
 const GUIDE_FULL = GUIDE_TOP | GUIDE_BOTTOM;
 
-type ProfileSnapshot = {
-  sidebar: TraceSnapshot;
-  background?: TraceSnapshot;
-};
+type ProfileSnapshot = SidebarProfileSnapshot;
 
 type SidebarProfileConsole = {
   enable(): Promise<ProfileSnapshot>;
@@ -127,6 +128,18 @@ type SidebarProfileConsole = {
 type InitialTreeSnapshotRequest = {
   type: "getInitialTreeSnapshot";
 };
+
+type SidebarPerformanceTraceMessage =
+  | {
+      type: "setSidebarPerformanceTraceEnabled";
+      enabled: boolean;
+    }
+  | {
+      type: "clearSidebarPerformanceTrace";
+    }
+  | {
+      type: "getSidebarPerformanceTrace";
+    };
 
 declare global {
   interface Window {
@@ -249,6 +262,10 @@ rootDropSurface?.addEventListener("drop", (event) => {
 });
 
 browser.runtime.onMessage.addListener((message) => {
+  if (isSidebarPerformanceTraceMessage(message)) {
+    return handleSidebarPerformanceTraceMessage(message);
+  }
+
   perfTrace.measure("sidebar.runtime.message", { type: messageType(message) }, () => {
     if (isStateUpdated(message)) {
       currentState = message.state;
@@ -274,6 +291,7 @@ browser.runtime.onMessage.addListener((message) => {
       updateHistoryControls(message);
     }
   });
+  return undefined;
 });
 
 async function loadState(): Promise<void> {
@@ -403,43 +421,79 @@ function installProfileConsole(): void {
 
   window.tabsOutlinerProfile = {
     enable: async () => {
-      storeProfileEnabled(true);
-      perfTrace.setEnabled(true);
-      perfTrace.mark("sidebar.profile.enabled");
+      setSidebarPerformanceTraceEnabled(true);
       await setBackgroundTraceEnabled(true);
       return profileSnapshot();
     },
     disable: async () => {
-      storeProfileEnabled(false);
-      perfTrace.mark("sidebar.profile.disabled");
-      perfTrace.setEnabled(false);
+      setSidebarPerformanceTraceEnabled(false);
       await setBackgroundTraceEnabled(false);
       return profileSnapshot();
     },
     clear: async () => {
-      perfTrace.clear();
+      clearSidebarPerformanceTrace();
       await browser.runtime.sendMessage({ type: "clearPerformanceTrace" }).catch(() => undefined);
     },
     snapshot: profileSnapshot,
     summary: async () => {
       const snapshot = await profileSnapshot();
-      return summarizeTraceEvents([
-        ...snapshot.sidebar.entries,
-        ...(snapshot.background?.entries ?? [])
-      ]);
+      return summarizePerformanceProfile(snapshot);
     }
   };
 }
 
 async function profileSnapshot(): Promise<ProfileSnapshot> {
   const background = (await browser.runtime.sendMessage({ type: "getPerformanceTrace" }).catch(() => undefined)) as
-    | TraceSnapshot
-    | undefined;
+    | unknown;
 
   return {
     sidebar: perfTrace.snapshot(),
-    ...(background ? { background } : {})
+    ...(isTraceSnapshot(background) ? { background } : {})
   };
+}
+
+function handleSidebarPerformanceTraceMessage(message: SidebarPerformanceTraceMessage): TraceSnapshot | { ok: true } {
+  if (message.type === "setSidebarPerformanceTraceEnabled") {
+    setSidebarPerformanceTraceEnabled(message.enabled);
+    return { ok: true };
+  }
+  if (message.type === "clearSidebarPerformanceTrace") {
+    clearSidebarPerformanceTrace();
+    return { ok: true };
+  }
+  return perfTrace.snapshot();
+}
+
+function isSidebarPerformanceTraceMessage(message: unknown): message is SidebarPerformanceTraceMessage {
+  if (!message || typeof message !== "object") {
+    return false;
+  }
+  const type = (message as { type?: unknown }).type;
+  return type === "getSidebarPerformanceTrace" ||
+    type === "clearSidebarPerformanceTrace" ||
+    (type === "setSidebarPerformanceTraceEnabled" &&
+      typeof (message as { enabled?: unknown }).enabled === "boolean");
+}
+
+function setSidebarPerformanceTraceEnabled(enabled: boolean): void {
+  const wasEnabled = perfTrace.isEnabled();
+  storeProfileEnabled(enabled);
+  if (enabled) {
+    perfTrace.setEnabled(true);
+    if (!wasEnabled) {
+      perfTrace.mark("sidebar.profile.enabled");
+    }
+    return;
+  }
+
+  if (wasEnabled) {
+    perfTrace.mark("sidebar.profile.disabled");
+  }
+  perfTrace.setEnabled(false);
+}
+
+function clearSidebarPerformanceTrace(): void {
+  perfTrace.clear();
 }
 
 async function setBackgroundTraceEnabled(enabled: boolean): Promise<void> {

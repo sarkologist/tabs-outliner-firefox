@@ -1291,6 +1291,94 @@ describe("background controller lifecycle", () => {
     });
   });
 
+  it("broadcasts profile start, stop, and reset controls to live sidebars", async () => {
+    const runtime = fakeRuntime([], []);
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+
+    expect(await controller.handleMessage({ type: "setPerformanceTraceEnabled", enabled: true })).toEqual({ ok: true });
+    expect(await controller.handleMessage({ type: "getPerformanceTrace" })).toMatchObject({
+      enabled: true
+    });
+    expect(runtime.broadcasts).toContainEqual({
+      type: "setSidebarPerformanceTraceEnabled",
+      enabled: true
+    });
+
+    runtime.broadcasts.length = 0;
+    await controller.handleMessage({ type: "clearPerformanceTrace" });
+    expect(runtime.broadcasts).toContainEqual({
+      type: "clearSidebarPerformanceTrace"
+    });
+    expect(await controller.handleMessage({ type: "getPerformanceTrace" })).toMatchObject({
+      enabled: true,
+      entries: []
+    });
+
+    runtime.broadcasts.length = 0;
+    expect(await controller.handleMessage({ type: "setPerformanceTraceEnabled", enabled: false })).toEqual({ ok: true });
+    expect(await controller.handleMessage({ type: "getPerformanceTrace" })).toMatchObject({
+      enabled: false
+    });
+    expect(runtime.broadcasts).toContainEqual({
+      type: "setSidebarPerformanceTraceEnabled",
+      enabled: false
+    });
+  });
+
+  it("returns a combined performance profile with a best-effort sidebar snapshot", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        }
+      ]
+    );
+    const sidebarTrace = {
+      enabled: true,
+      maxEntries: 500,
+      entries: [
+        {
+          source: "sidebar",
+          name: "sidebar.render",
+          atMs: 2000,
+          durationMs: 6
+        }
+      ]
+    };
+    vi.mocked(runtime.api.runtime.sendMessage).mockImplementation(async (message: unknown) => {
+      runtime.broadcasts.push(message);
+      const type = typeof message === "object" && message ? (message as { type?: unknown }).type : undefined;
+      return type === "getSidebarPerformanceTrace" ? structuredClone(sidebarTrace) : undefined;
+    });
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+
+    await controller.handleMessage({ type: "setPerformanceTraceEnabled", enabled: true });
+    await controller.handleMessage({ type: "getState" });
+    await controller.flushPendingSaves();
+
+    expect(await controller.handleMessage({ type: "getPerformanceProfile" })).toMatchObject({
+      background: {
+        enabled: true
+      },
+      sidebar: sidebarTrace
+    });
+    expect(runtime.broadcasts).toContainEqual({
+      type: "getSidebarPerformanceTrace"
+    });
+  });
+
   it("does not save during startup when stored state already matches runtime", async () => {
     const runtime = fakeRuntime(
       [

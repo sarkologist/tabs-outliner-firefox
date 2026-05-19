@@ -50,6 +50,7 @@ import {
 import { buildOutlineLookup } from "../model/outline-lookup.js";
 import type { NodeId, OutlineNode, OutlineState, RuntimeTab, RuntimeWindow } from "../model/types.js";
 import { createPerformanceTracer, type TraceDetail, type TraceSnapshot } from "../perf/trace.js";
+import { isTraceSnapshot, type PerformanceProfileSnapshot } from "../perf/profile.js";
 
 export type BackgroundController = {
   ensureState(): Promise<OutlineState>;
@@ -120,6 +121,9 @@ type PerformanceTraceMessage =
     }
   | {
       type: "getPerformanceTrace";
+    }
+  | {
+      type: "getPerformanceProfile";
     };
 
 type InitialTreeSnapshotMessage = {
@@ -1532,7 +1536,9 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     return diagnosticsInFlight;
   }
 
-  function handlePerformanceTraceMessage(message: PerformanceTraceMessage): TraceSnapshot | { ok: true } {
+  async function handlePerformanceTraceMessage(
+    message: PerformanceTraceMessage
+  ): Promise<TraceSnapshot | PerformanceProfileSnapshot | { ok: true }> {
     if (message.type === "setPerformanceTraceEnabled") {
       if (message.enabled) {
         perfTrace.setEnabled(true);
@@ -1541,13 +1547,35 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         perfTrace.mark("background.profile.disabled");
         perfTrace.setEnabled(false);
       }
+      await sendSidebarPerformanceTraceEnabled(message.enabled);
       return { ok: true };
     }
     if (message.type === "clearPerformanceTrace") {
       perfTrace.clear();
+      await clearSidebarPerformanceTrace();
       return { ok: true };
     }
+    if (message.type === "getPerformanceProfile") {
+      return performanceProfileSnapshot();
+    }
     return perfTrace.snapshot();
+  }
+
+  async function performanceProfileSnapshot(): Promise<PerformanceProfileSnapshot> {
+    const background = perfTrace.snapshot();
+    const sidebar = await api.runtime.sendMessage({ type: "getSidebarPerformanceTrace" }).catch(() => undefined);
+    return {
+      background,
+      ...(isTraceSnapshot(sidebar) ? { sidebar } : {})
+    };
+  }
+
+  async function sendSidebarPerformanceTraceEnabled(enabled: boolean): Promise<void> {
+    await api.runtime.sendMessage({ type: "setSidebarPerformanceTraceEnabled", enabled }).catch(() => undefined);
+  }
+
+  async function clearSidebarPerformanceTrace(): Promise<void> {
+    await api.runtime.sendMessage({ type: "clearSidebarPerformanceTrace" }).catch(() => undefined);
   }
 
   async function reconcileMissingLiveTabsInOpenWindows(): Promise<ReconciledStateChange | undefined> {
@@ -2473,6 +2501,7 @@ function isPerformanceTraceMessage(message: unknown): message is PerformanceTrac
 
   const type = (message as { type?: unknown }).type;
   return type === "getPerformanceTrace" ||
+    type === "getPerformanceProfile" ||
     type === "clearPerformanceTrace" ||
     (type === "setPerformanceTraceEnabled" && typeof (message as { enabled?: unknown }).enabled === "boolean");
 }
