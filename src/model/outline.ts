@@ -87,7 +87,25 @@ function isTransientRestoredRuntimeTitle(title: string, url: string | undefined)
     return true;
   }
 
-  return Boolean(url && trimmedTitle === url.trim());
+  return Boolean(url && urlsMatch(trimmedTitle, url.trim()));
+}
+
+function urlsMatch(left: string, right: string): boolean {
+  if (left === right) {
+    return true;
+  }
+
+  const normalizedLeft = normalizedUrlString(left);
+  const normalizedRight = normalizedUrlString(right);
+  return Boolean(normalizedLeft && normalizedRight && normalizedLeft === normalizedRight);
+}
+
+function normalizedUrlString(value: string): string | undefined {
+  try {
+    return new URL(value).href;
+  } catch {
+    return undefined;
+  }
 }
 
 export function bootstrapFromWindows(windows: RuntimeWindow[], clock: Clock): OutlineState {

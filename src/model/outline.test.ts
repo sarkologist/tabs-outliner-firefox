@@ -976,6 +976,24 @@ describe("outline model", () => {
       expect(restored.nodes["tab:2"]?.url).toBe("https://example.com/child");
       expect(restored.nodes["tab:2"]?.restoredFromClosed).toBe(true);
     }
+
+    const rootUrlState = closeTab(bootstrapFromWindows(windows, { now: 1000 }), 1, {
+      now: 2000,
+      sessionId: "session-tab-1"
+    });
+    const restoredRootUrl = restoreNodes(rootUrlState, [
+      {
+        nodeId: "tab:1",
+        tabId: 21,
+        windowId: 10,
+        active: false,
+        url: "https://example.com/",
+        title: "https://example.com"
+      }
+    ]);
+
+    expect(restoredRootUrl.nodes["tab:1"]?.title).toBe("Example");
+    expect(restoredRootUrl.nodes["tab:1"]?.url).toBe("https://example.com/");
   });
 
   it("updates a restored tab once runtime reports a meaningful title", () => {
