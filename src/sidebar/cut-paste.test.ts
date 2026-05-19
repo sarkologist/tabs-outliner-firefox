@@ -86,6 +86,44 @@ describe("pasteAfterCommand", () => {
     expect(pasteAfterCommand(state, "tab:a", "tab:a-child")).toBeUndefined();
   });
 
+  it("generates moves that let empty wrapper groups be pruned after paste-after", () => {
+    const state: OutlineState = {
+      version: 1,
+      rootIds: ["group:wrapper", "window:2"],
+      nodes: {
+        "group:wrapper": groupNode(["window:1"]),
+        "window:1": windowNode(["tab:a"], "group:wrapper"),
+        "tab:a": tabNode("tab:a", "window:1", 1),
+        "window:2": {
+          ...windowNode(["tab:b"]),
+          id: "window:2",
+          live: { windowId: 2 }
+        },
+        "tab:b": {
+          ...tabNode("tab:b", "window:2", 2),
+          live: { tabId: 2, windowId: 2 }
+        }
+      }
+    };
+
+    const command = pasteAfterCommand(state, "window:1", "window:2");
+    const moved = isMoveNodeCommand(command)
+      ? moveNode(state, command.nodeId, {
+          ...(command.parentId ? { parentId: command.parentId } : {}),
+          index: command.index
+        })
+      : state;
+
+    expect(command).toEqual({
+      type: "moveNode",
+      nodeId: "window:1",
+      index: 2
+    });
+    expect(moved.nodes["group:wrapper"]).toBeUndefined();
+    expect(moved.rootIds).toEqual(["window:2", "window:1"]);
+    expect(moved.nodes["window:1"]?.parentId).toBeUndefined();
+  });
+
   it("clears stale pending cuts when the source disappears", () => {
     const state = outlineState(["tab:a"]);
 
@@ -157,17 +195,32 @@ function outlineState(tabIds: NodeId[]): OutlineState {
   };
 }
 
-function windowNode(childIds: NodeId[]): OutlineNode {
+function windowNode(childIds: NodeId[], parentId?: NodeId): OutlineNode {
   return {
     id: "window:1",
     kind: "window",
     status: "live",
+    ...(parentId ? { parentId } : {}),
     childIds,
     title: "Window",
     collapsed: false,
     createdAt: 1,
     updatedAt: 1,
     live: { windowId: 1 }
+  };
+}
+
+function groupNode(childIds: NodeId[], parentId?: NodeId): OutlineNode {
+  return {
+    id: "group:wrapper",
+    kind: "group",
+    status: "neutral",
+    ...(parentId ? { parentId } : {}),
+    childIds,
+    title: "Group",
+    collapsed: false,
+    createdAt: 1,
+    updatedAt: 1
   };
 }
 

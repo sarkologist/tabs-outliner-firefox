@@ -1346,6 +1346,49 @@ describe("outline model", () => {
     expect(moved.nodes["tab:1"]?.parentId).toBe("window:20");
   });
 
+  it("removes a neutral group when its only child is moved elsewhere", () => {
+    const state = wrapNodeInGroup(bootstrapFromWindows([
+      {
+        id: 10,
+        incognito: false,
+        focused: true,
+        tabs: [
+          {
+            id: 1,
+            windowId: 10,
+            index: 0,
+            active: true,
+            url: "https://one.example/",
+            title: "One"
+          }
+        ]
+      },
+      {
+        id: 20,
+        incognito: false,
+        focused: false,
+        tabs: [
+          {
+            id: 2,
+            windowId: 20,
+            index: 0,
+            active: true,
+            url: "https://two.example/",
+            title: "Two"
+          }
+        ]
+      }
+    ], { now: 1000 }), "window:10", { now: 3000 });
+    const wrapperId = state.nodes["window:10"]?.parentId;
+
+    const moved = moveNode(state, "window:10", { index: 2 });
+
+    expect(wrapperId).toMatch(/^group:/);
+    expect(moved.nodes[wrapperId!]).toBeUndefined();
+    expect(moved.rootIds).toEqual(["window:20", "window:10"]);
+    expect(moved.nodes["window:10"]?.parentId).toBeUndefined();
+  });
+
   it("repairs cyclic and duplicate child links in stored state", () => {
     const state = bootstrapFromWindows(windows, { now: 1000 });
     state.nodes["tab:1"]!.childIds = ["tab:2", "tab:2", "tab:1", "missing"];

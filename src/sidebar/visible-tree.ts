@@ -198,6 +198,11 @@ export function applyDeleteTreeStructurePatchToProjection(
   const deletedNodeIds = new Set(patch.deletedNodeIds);
   const affectedNodeIds = new Set(patch.updatedNodes.map((node) => node.id));
   const deletedRows: VisibleTreeRow[] = [];
+  const rowsByNodeIdBeforeDelete = new Map(projection.rows.map((row) => [row.nodeId, row]));
+  if (deletePatchRelocatesVisibleRows(projection, patch, rowsByNodeIdBeforeDelete)) {
+    return false;
+  }
+
   let deletedMatches = 0;
   for (const row of projection.rows) {
     if (!deletedNodeIds.has(row.nodeId)) {
@@ -244,6 +249,27 @@ export function applyDeleteTreeStructurePatchToProjection(
   projection.visibleNodeIdSet = new Set(projection.visibleNodeIds);
   refreshProjectionActiveTabTargetAfterDelete(state, projection, rowsByNodeId);
   return true;
+}
+
+function deletePatchRelocatesVisibleRows(
+  projection: VisibleTreeProjection,
+  patch: DeleteTreeStructurePatch,
+  rowsByNodeId: ReadonlyMap<NodeId, VisibleTreeRow>
+): boolean {
+  for (const node of patch.updatedNodes) {
+    const row = rowsByNodeId.get(node.id);
+    if (!row) {
+      continue;
+    }
+
+    const previousParentId = typeof row.parentRowIndex === "number"
+      ? projection.rows[row.parentRowIndex]?.nodeId
+      : undefined;
+    if (previousParentId !== node.parentId) {
+      return true;
+    }
+  }
+  return false;
 }
 
 export function applyInsertTreeStructurePatchToProjection(

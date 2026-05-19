@@ -231,6 +231,39 @@ describe("visible tree projection", () => {
     });
   });
 
+  it("falls back when a delete patch also moves a row out of a removed group", () => {
+    const state = outlineState([
+      groupNode("group:wrapper", ["window:1"]),
+      windowNode("window:1", ["tab:1"], { active: true, parentId: "group:wrapper" }),
+      tabNode("tab:1", "window:1", "One", [], { active: true }),
+      windowNode("window:2", ["tab:2"]),
+      tabNode("tab:2", "window:2", "Two")
+    ]);
+    const projection = buildVisibleTreeProjection(state, "");
+    const next = outlineState([
+      windowNode("window:2", ["tab:2"]),
+      tabNode("tab:2", "window:2", "Two"),
+      windowNode("window:1", ["tab:1"], { active: true }),
+      tabNode("tab:1", "window:1", "One", [], { active: true })
+    ]);
+
+    const applied = applyDeleteTreeStructurePatchToProjection(next, projection, {
+      deletedNodeIds: ["group:wrapper"],
+      updatedNodes: [next.nodes["window:1"]!],
+      rootIds: ["window:2", "window:1"],
+      deletedClosedCount: 0
+    });
+
+    expect(applied).toBe(false);
+    expect(rowStructure(projection)).toEqual([
+      { nodeId: "group:wrapper", index: 0, parentRowIndex: undefined, subtreeEndIndex: 3 },
+      { nodeId: "window:1", index: 1, parentRowIndex: 0, subtreeEndIndex: 3 },
+      { nodeId: "tab:1", index: 2, parentRowIndex: 1, subtreeEndIndex: 3 },
+      { nodeId: "window:2", index: 3, parentRowIndex: undefined, subtreeEndIndex: 5 },
+      { nodeId: "tab:2", index: 4, parentRowIndex: 3, subtreeEndIndex: 5 }
+    ]);
+  });
+
   it("applies non-search insertion patches without rebuilding the projection", () => {
     const state = outlineState([
       windowNode("window:1", ["tab:1"], { active: true }),
@@ -355,12 +388,13 @@ function rowStructure(projection: ReturnType<typeof buildVisibleTreeProjection>)
 function windowNode(
   id: NodeId,
   childIds: NodeId[],
-  options: Partial<Pick<OutlineNode, "active" | "collapsed">> = {}
+  options: Partial<Pick<OutlineNode, "active" | "collapsed" | "parentId">> = {}
 ): OutlineNode {
   return {
     id,
     kind: "window",
     status: "live",
+    ...(options.parentId ? { parentId: options.parentId } : {}),
     childIds,
     title: "Window",
     active: options.active ?? false,
@@ -368,6 +402,20 @@ function windowNode(
     createdAt: 1,
     updatedAt: 1,
     live: { windowId: 1 }
+  };
+}
+
+function groupNode(id: NodeId, childIds: NodeId[], parentId?: NodeId): OutlineNode {
+  return {
+    id,
+    kind: "group",
+    status: "neutral",
+    ...(parentId ? { parentId } : {}),
+    childIds,
+    title: "Group",
+    collapsed: false,
+    createdAt: 1,
+    updatedAt: 1
   };
 }
 
