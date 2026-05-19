@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { BrowserAdapter } from "./adapter.js";
+import {
+  AUTOMATIC_BACKUP_ALARM_NAME,
+  AUTOMATIC_BACKUP_STATUS_STORAGE_KEY
+} from "./backups.js";
 import { createBackgroundController } from "./controller.js";
 import type { CommandAck } from "./commands.js";
 import { HISTORY_KEY, STATE_KEY, loadStateV2, outlineStateV2Items } from "./storage.js";
@@ -60,6 +64,9 @@ class FakeEvent<TArgs extends unknown[]> {
 type FakeRuntime = {
   api: WebExtensionBrowser;
   events: {
+    installed: FakeEvent<[]>;
+    startup: FakeEvent<[]>;
+    alarm: FakeEvent<[FakeAlarm]>;
     tabCreated: FakeEvent<[RuntimeTab]>;
     tabActivated: FakeEvent<[{ tabId: number; windowId: number; previousTabId?: number }]>;
     tabUpdated: FakeEvent<[number, Partial<RuntimeTab>, RuntimeTab]>;
@@ -73,8 +80,25 @@ type FakeRuntime = {
   tabs: RuntimeTab[];
   windows: FakeRuntimeWindow[];
   broadcasts: unknown[];
+  downloads: FakeDownloadOptions[];
+  alarms: Map<string, FakeAlarm>;
+  failNextDownload(error: Error): void;
   setNextTabQueryResult(tabs: RuntimeTab[]): void;
   clearNextTabQueryResult(): void;
+};
+
+type FakeAlarm = {
+  name: string;
+  scheduledTime: number;
+  periodInMinutes?: number;
+};
+
+type FakeDownloadOptions = {
+  url: string;
+  filename?: string;
+  saveAs?: boolean;
+  conflictAction?: "uniquify" | "overwrite" | "prompt";
+  body?: string;
 };
 
 type FakeWindowType = "normal" | "popup";
@@ -97,6 +121,7 @@ type TabCloseEventOrder =
 
 type FakeRuntimeOptions = {
   browserLikeTabRemove?: TabCloseEventOrder;
+  initialStorage?: Record<string, unknown>;
 };
 
 type Deferred<T = void> = {
@@ -122,6 +147,9 @@ function waitForMacrotask(): Promise<void> {
 }
 
 function fakeRuntime(windows: RuntimeWindow[], tabs: RuntimeTab[], options: FakeRuntimeOptions = {}): FakeRuntime {
+  const alarm = new FakeEvent<[FakeAlarm]>();
+  const installed = new FakeEvent<[]>();
+  const startup = new FakeEvent<[]>();
   const tabCreated = new FakeEvent<[RuntimeTab]>();
   const tabActivated = new FakeEvent<[{ tabId: number; windowId: number; previousTabId?: number }]>();
   const tabUpdated = new FakeEvent<[number, Partial<RuntimeTab>, RuntimeTab]>();
@@ -131,13 +159,21 @@ function fakeRuntime(windows: RuntimeWindow[], tabs: RuntimeTab[], options: Fake
   const sessionChanged = new FakeEvent<[]>();
   const command = new FakeEvent<[string]>();
   const storageChanged = new FakeEvent<[Record<string, { oldValue?: unknown; newValue?: unknown }>, string]>();
-  const storage = new Map<string, unknown>();
+  const storage = new Map<string, unknown>(Object.entries(options.initialStorage ?? {}));
   const broadcasts: unknown[] = [];
+  const alarms = new Map<string, FakeAlarm>();
+  const downloads: FakeDownloadOptions[] = [];
+  let nextDownloadError: Error | undefined;
   let nextTabQueryResult: RuntimeTab[] | undefined;
   const runtime: FakeRuntime = {
     windows: windows.map(copyWindow),
     tabs: tabs.map(copyTab),
     broadcasts,
+    alarms,
+    downloads,
+    failNextDownload(error) {
+      nextDownloadError = error;
+    },
     setNextTabQueryResult(tabs) {
       nextTabQueryResult = tabs.map(copyTab);
     },
@@ -145,6 +181,9 @@ function fakeRuntime(windows: RuntimeWindow[], tabs: RuntimeTab[], options: Fake
       nextTabQueryResult = undefined;
     },
     events: {
+      installed,
+      startup,
+      alarm,
       tabCreated,
       tabActivated,
       tabUpdated,
@@ -163,6 +202,22 @@ function fakeRuntime(windows: RuntimeWindow[], tabs: RuntimeTab[], options: Fake
         open: vi.fn(async () => undefined),
         toggle: vi.fn(async () => undefined)
       },
+      alarms: {
+        create: vi.fn((name: string, alarmInfo: { when?: number; delayInMinutes?: number; periodInMinutes?: number } = {}) => {
+          const scheduledTime = alarmInfo.when ??
+            Date.now() + Math.max(0, alarmInfo.delayInMinutes ?? alarmInfo.periodInMinutes ?? 0) * 60 * 1000;
+          alarms.set(name, {
+            name,
+            scheduledTime,
+            ...(typeof alarmInfo.periodInMinutes === "number"
+              ? { periodInMinutes: alarmInfo.periodInMinutes }
+              : {})
+          });
+        }),
+        clear: vi.fn(async (name: string) => alarms.delete(name)),
+        get: vi.fn(async (name: string) => alarms.get(name)),
+        onAlarm: alarm as never
+      },
       commands: {
         onCommand: command as never,
         getAll: vi.fn(async () => []),
@@ -170,14 +225,26 @@ function fakeRuntime(windows: RuntimeWindow[], tabs: RuntimeTab[], options: Fake
         reset: vi.fn(async () => undefined)
       },
       runtime: {
-        onInstalled: new FakeEvent<[]>() as never,
-        onStartup: new FakeEvent<[]>() as never,
+        onInstalled: installed as never,
+        onStartup: startup as never,
         onMessage: new FakeEvent<[unknown, { tab?: RuntimeTab }]>() as never,
         getURL: vi.fn((path: string) => `moz-extension://extension-id/${path}`),
         openOptionsPage: vi.fn(async () => undefined),
         sendMessage: vi.fn(async (message: unknown) => {
           broadcasts.push(message);
           return undefined;
+        })
+      },
+      downloads: {
+        download: vi.fn(async (options: FakeDownloadOptions) => {
+          if (nextDownloadError) {
+            const error = nextDownloadError;
+            nextDownloadError = undefined;
+            throw error;
+          }
+          const body = await fetch(options.url).then((response) => response.text()).catch(() => undefined);
+          downloads.push({ ...options, ...(body ? { body } : {}) });
+          return downloads.length;
         })
       },
       storage: {
@@ -324,6 +391,11 @@ function fakeRuntime(windows: RuntimeWindow[], tabs: RuntimeTab[], options: Fake
   };
 
   return runtime;
+}
+
+async function storedAutomaticBackupStatus(runtime: FakeRuntime): Promise<Record<string, unknown> | undefined> {
+  const stored = await runtime.api.storage.local.get(AUTOMATIC_BACKUP_STATUS_STORAGE_KEY);
+  return stored[AUTOMATIC_BACKUP_STATUS_STORAGE_KEY] as Record<string, unknown> | undefined;
 }
 
 function createTabFromBrowser(
@@ -1277,6 +1349,197 @@ describe("background controller lifecycle", () => {
     await runtime.events.command.emit("toggle-sidebar");
 
     expect(runtime.api.sidebarAction.toggle).toHaveBeenCalledTimes(1);
+  });
+
+  it("enabling automatic backups schedules an alarm and immediately downloads an export", async () => {
+    const now = Date.parse("2026-05-19T13:20:00.000Z");
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => now });
+    await controller.ensureState();
+
+    await runtime.api.storage.local.set({
+      [APP_PREFERENCES_STORAGE_KEY]: {
+        ...DEFAULT_APP_PREFERENCES,
+        automaticBackups: { enabled: true }
+      }
+    });
+    await runtime.events.storageChanged.flush();
+
+    expect(runtime.alarms.get(AUTOMATIC_BACKUP_ALARM_NAME)).toMatchObject({
+      name: AUTOMATIC_BACKUP_ALARM_NAME,
+      periodInMinutes: 1440
+    });
+    expect(runtime.downloads).toHaveLength(1);
+    expect(runtime.downloads[0]).toMatchObject({
+      filename: "tabs-outliner-backups/tabs-outliner-tree-2026-05-19.json",
+      saveAs: false
+    });
+    const payload = JSON.parse(runtime.downloads[0]!.body ?? "{}") as { schema?: string; roots?: unknown[] };
+    expect(payload).toMatchObject({
+      schema: PORTABLE_TREE_SCHEMA,
+      roots: [
+        {
+          kind: "window",
+          children: [
+            {
+              kind: "tab",
+              title: "One",
+              url: "https://one.example/"
+            }
+          ]
+        }
+      ]
+    });
+    expect(await storedAutomaticBackupStatus(runtime)).toMatchObject({
+      lastAttemptedBackupAt: "2026-05-19T13:20:00.000Z",
+      lastSuccessfulBackupAt: "2026-05-19T13:20:00.000Z"
+    });
+  });
+
+  it("disabling automatic backups clears the scheduled alarm", async () => {
+    const runtime = fakeRuntime([], []);
+    createBackgroundController({ api: runtime.api, now: () => Date.parse("2026-05-19T13:20:00.000Z") });
+
+    await runtime.api.storage.local.set({
+      [APP_PREFERENCES_STORAGE_KEY]: {
+        ...DEFAULT_APP_PREFERENCES,
+        automaticBackups: { enabled: true }
+      }
+    });
+    await runtime.events.storageChanged.flush();
+    runtime.downloads.length = 0;
+
+    await runtime.api.storage.local.set({
+      [APP_PREFERENCES_STORAGE_KEY]: {
+        ...DEFAULT_APP_PREFERENCES,
+        automaticBackups: { enabled: false }
+      }
+    });
+    await runtime.events.storageChanged.flush();
+
+    expect(runtime.alarms.has(AUTOMATIC_BACKUP_ALARM_NAME)).toBe(false);
+    expect(runtime.downloads).toHaveLength(0);
+    expect(runtime.api.alarms.clear).toHaveBeenCalledWith(AUTOMATIC_BACKUP_ALARM_NAME);
+  });
+
+  it("recreates automatic backup alarms on startup", async () => {
+    const runtime = fakeRuntime([], [], {
+      initialStorage: {
+        [APP_PREFERENCES_STORAGE_KEY]: {
+          ...DEFAULT_APP_PREFERENCES,
+          automaticBackups: { enabled: true }
+        },
+        [AUTOMATIC_BACKUP_STATUS_STORAGE_KEY]: {
+          lastSuccessfulBackupAt: "2026-05-19T12:30:00.000Z"
+        }
+      }
+    });
+    createBackgroundController({ api: runtime.api, now: () => Date.parse("2026-05-19T13:20:00.000Z") });
+
+    await runtime.events.startup.emit();
+
+    expect(runtime.alarms.get(AUTOMATIC_BACKUP_ALARM_NAME)).toMatchObject({
+      name: AUTOMATIC_BACKUP_ALARM_NAME,
+      periodInMinutes: 1440
+    });
+    expect(runtime.downloads).toHaveLength(0);
+  });
+
+  it("runs one catch-up automatic backup on startup when the last success is stale", async () => {
+    const runtime = fakeRuntime([], [], {
+      initialStorage: {
+        [APP_PREFERENCES_STORAGE_KEY]: {
+          ...DEFAULT_APP_PREFERENCES,
+          automaticBackups: { enabled: true }
+        },
+        [AUTOMATIC_BACKUP_STATUS_STORAGE_KEY]: {
+          lastSuccessfulBackupAt: "2026-05-18T13:19:59.000Z"
+        }
+      }
+    });
+    createBackgroundController({ api: runtime.api, now: () => Date.parse("2026-05-19T13:20:00.000Z") });
+
+    await runtime.events.startup.emit();
+
+    expect(runtime.downloads).toHaveLength(1);
+    expect(await storedAutomaticBackupStatus(runtime)).toMatchObject({
+      lastSuccessfulBackupAt: "2026-05-19T13:20:00.000Z"
+    });
+  });
+
+  it("exports on automatic backup alarm fires and records download failures", async () => {
+    const now = Date.parse("2026-05-19T13:20:00.000Z");
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        }
+      ],
+      {
+        initialStorage: {
+          [APP_PREFERENCES_STORAGE_KEY]: {
+            ...DEFAULT_APP_PREFERENCES,
+            automaticBackups: { enabled: true }
+          }
+        }
+      }
+    );
+    createBackgroundController({ api: runtime.api, now: () => now });
+    await runtime.events.startup.emit();
+    runtime.downloads.length = 0;
+
+    await runtime.events.alarm.emit({
+      name: AUTOMATIC_BACKUP_ALARM_NAME,
+      scheduledTime: now,
+      periodInMinutes: 1440
+    });
+
+    expect(runtime.downloads).toHaveLength(1);
+    expect(JSON.parse(runtime.downloads[0]!.body ?? "{}")).toMatchObject({
+      schema: PORTABLE_TREE_SCHEMA
+    });
+
+    runtime.failNextDownload(new Error("download denied"));
+    await runtime.events.alarm.emit({
+      name: AUTOMATIC_BACKUP_ALARM_NAME,
+      scheduledTime: now,
+      periodInMinutes: 1440
+    });
+
+    expect(await storedAutomaticBackupStatus(runtime)).toMatchObject({
+      lastAttemptedBackupAt: "2026-05-19T13:20:00.000Z",
+      lastError: "download denied"
+    });
   });
 
   it("opens the full-size sidebar in a focused maximized popup without saving or broadcasting state", async () => {

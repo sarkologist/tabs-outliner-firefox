@@ -1,4 +1,15 @@
 import type { BrowserAdapter } from "./adapter.js";
+import {
+  AUTOMATIC_BACKUP_ALARM_NAME,
+  AUTOMATIC_BACKUP_INTERVAL_MINUTES,
+  automaticBackupDue,
+  downloadAutomaticBackup,
+  errorText as backupErrorText,
+  loadAutomaticBackupStatus,
+  nextAutomaticBackupTime,
+  saveAutomaticBackupStatus,
+  type AutomaticBackupStatus
+} from "./backups.js";
 import { createBrowserAdapter } from "./browser-adapter.js";
 import { computeDiagnostics, type OutlineDiagnostics } from "./diagnostics.js";
 import { isBackgroundCommand, planLiveSubtreeClose, runCommand, syncBrowserOrder } from "./commands.js";
@@ -230,17 +241,22 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   let saveMaxTimer: number | undefined;
   let saveInFlight: Promise<void> | undefined;
   let diagnosticsInFlight: Promise<OutlineDiagnostics> | undefined;
+  let automaticBackupInFlight: Promise<AutomaticBackupStatus> | undefined;
   let sidebarProfileRequestSequence = 0;
   let sidebarWindowCreationInFlight = 0;
   const fullSizeOutlinerWindowIds = new Set<number>();
   const pendingSidebarProfileCollections = new Map<string, PendingSidebarProfileCollection>();
 
   api.runtime.onInstalled.addListener(() => {
-    void ensureState();
+    return initializeExtensionLifecycle().catch((error) => {
+      perfTrace.mark("background.lifecycle.installed.error", { message: errorText(error) });
+    });
   });
 
   api.runtime.onStartup.addListener(() => {
-    void ensureState();
+    return initializeExtensionLifecycle().catch((error) => {
+      perfTrace.mark("background.lifecycle.startup.error", { message: errorText(error) });
+    });
   });
 
   api.action.onClicked.addListener(async () => {
@@ -256,13 +272,22 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     });
   });
 
+  api.alarms.onAlarm.addListener((alarm) => {
+    if (alarm.name !== AUTOMATIC_BACKUP_ALARM_NAME) {
+      return;
+    }
+    return handleAutomaticBackupAlarm().catch((error) => {
+      perfTrace.mark("background.backup.alarm.error", { message: errorText(error) });
+    });
+  });
+
   api.runtime.onMessage.addListener((message) => handleMessage(message));
 
   api.storage.onChanged.addListener((changes, areaName) => {
     if (areaName !== "local" || !changes[APP_PREFERENCES_STORAGE_KEY]) {
       return;
     }
-    void handlePreferencesChanged(changes[APP_PREFERENCES_STORAGE_KEY].newValue).catch((error) => {
+    return handlePreferencesChanged(changes[APP_PREFERENCES_STORAGE_KEY].newValue).catch((error) => {
       perfTrace.mark("background.preferences.changed.error", { message: errorText(error) });
     });
   });
@@ -594,6 +619,74 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     return stateCache.get();
   }
 
+  async function initializeExtensionLifecycle(): Promise<void> {
+    await ensureState();
+    await configureAutomaticBackups({ runIfDue: true });
+  }
+
+  async function configureAutomaticBackups(options: { runIfDue?: boolean; runImmediately?: boolean } = {}): Promise<void> {
+    const activePreferences = await ensurePreferences();
+    if (!activePreferences.automaticBackups.enabled) {
+      await api.alarms.clear(AUTOMATIC_BACKUP_ALARM_NAME).catch(() => false);
+      return;
+    }
+
+    let status = await loadAutomaticBackupStatus(api).catch(() => ({}));
+    if (options.runImmediately || (options.runIfDue && automaticBackupDue(status, now()))) {
+      status = await runAutomaticBackup();
+    }
+    scheduleAutomaticBackupAlarm(status);
+  }
+
+  function scheduleAutomaticBackupAlarm(status: AutomaticBackupStatus): void {
+    api.alarms.create(AUTOMATIC_BACKUP_ALARM_NAME, {
+      when: nextAutomaticBackupTime(status, now()),
+      periodInMinutes: AUTOMATIC_BACKUP_INTERVAL_MINUTES
+    });
+  }
+
+  async function handleAutomaticBackupAlarm(): Promise<void> {
+    const activePreferences = await ensurePreferences();
+    if (!activePreferences.automaticBackups.enabled) {
+      await api.alarms.clear(AUTOMATIC_BACKUP_ALARM_NAME).catch(() => false);
+      return;
+    }
+
+    const status = await runAutomaticBackup();
+    scheduleAutomaticBackupAlarm(status);
+  }
+
+  async function runAutomaticBackup(): Promise<AutomaticBackupStatus> {
+    automaticBackupInFlight ??= perfTrace.measureAsync("background.backup.export", async () => {
+      const attemptedAtMs = now();
+      const attemptedAt = new Date(attemptedAtMs).toISOString();
+      const previousStatus = await loadAutomaticBackupStatus(api).catch(() => ({}));
+      try {
+        await waitForSchedulerIdle();
+        await downloadAutomaticBackup(await ensureState(), api, attemptedAtMs);
+        const nextStatus: AutomaticBackupStatus = {
+          ...previousStatus,
+          lastAttemptedBackupAt: attemptedAt,
+          lastSuccessfulBackupAt: attemptedAt
+        };
+        delete nextStatus.lastError;
+        await saveAutomaticBackupStatus(nextStatus, api);
+        return nextStatus;
+      } catch (error) {
+        const nextStatus: AutomaticBackupStatus = {
+          ...previousStatus,
+          lastAttemptedBackupAt: attemptedAt,
+          lastError: backupErrorText(error)
+        };
+        await saveAutomaticBackupStatus(nextStatus, api);
+        return nextStatus;
+      }
+    }).finally(() => {
+      automaticBackupInFlight = undefined;
+    });
+    return automaticBackupInFlight;
+  }
+
   async function openSidebarWindow(): Promise<{ ok: true }> {
     sidebarWindowCreationInFlight += 1;
     try {
@@ -727,8 +820,16 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
   async function handlePreferencesChanged(value: unknown): Promise<void> {
     const nextPreferences = normalizeAppPreferences(value);
-    const previousLimit = (preferences ?? DEFAULT_APP_PREFERENCES).undoHistoryLimit;
+    const previousPreferences = preferences ?? DEFAULT_APP_PREFERENCES;
+    const previousLimit = previousPreferences.undoHistoryLimit;
+    const previousAutomaticBackupsEnabled = previousPreferences.automaticBackups.enabled;
     preferences = nextPreferences;
+    if (nextPreferences.automaticBackups.enabled) {
+      await configureAutomaticBackups({ runImmediately: !previousAutomaticBackupsEnabled });
+    } else if (previousAutomaticBackupsEnabled) {
+      await api.alarms.clear(AUTOMATIC_BACKUP_ALARM_NAME).catch(() => false);
+    }
+
     if (!historyState || previousLimit === nextPreferences.undoHistoryLimit) {
       return;
     }
