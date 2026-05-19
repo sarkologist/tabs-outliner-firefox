@@ -99,6 +99,19 @@ main {
   grid-template-columns: minmax(150px, 1fr) minmax(122px, auto) auto;
 }
 
+.profile-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.profile-status {
+  min-width: 160px;
+  color: color-mix(in srgb, CanvasText 62%, transparent);
+  font-size: 12px;
+}
+
 .shortcut-enabled {
   width: 18px;
   height: 18px;

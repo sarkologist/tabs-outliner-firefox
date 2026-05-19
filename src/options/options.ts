@@ -12,6 +12,15 @@ import {
   type AppPreferences,
   type SidebarShortcutAction
 } from "../preferences.js";
+import {
+  PROFILE_STORAGE_KEY,
+  createPerformanceProfileExport,
+  downloadPerformanceProfileExport,
+  isPerformanceProfileSnapshot,
+  performanceProfileEnabled,
+  performanceProfileEntryCount,
+  type PerformanceProfileSnapshot
+} from "../perf/profile.js";
 
 const TOGGLE_SIDEBAR_COMMAND = "toggle-sidebar";
 
@@ -23,6 +32,11 @@ const clearGlobalShortcut = document.querySelector<HTMLButtonElement>("#clear-gl
 const resetDefaults = document.querySelector<HTMLButtonElement>("#reset-defaults");
 const errors = document.querySelector<HTMLElement>("#errors");
 const saveStatus = document.querySelector<HTMLElement>("#save-status");
+const profileStart = document.querySelector<HTMLButtonElement>("#profile-start");
+const profileStop = document.querySelector<HTMLButtonElement>("#profile-stop");
+const profileReset = document.querySelector<HTMLButtonElement>("#profile-reset");
+const profileExport = document.querySelector<HTMLButtonElement>("#profile-export");
+const profileStatus = document.querySelector<HTMLElement>("#profile-status");
 
 type RecordingTarget =
   | {
@@ -44,6 +58,7 @@ async function initializeOptions(): Promise<void> {
   nativeSidebarShortcut = await loadNativeSidebarShortcut();
   renderOptions();
   registerEvents();
+  void refreshPerformanceProfileStatus();
 }
 
 function registerEvents(): void {
@@ -116,6 +131,22 @@ function registerEvents(): void {
     recordingTarget = undefined;
     renderOptions();
     showStatus("Defaults restored");
+  });
+
+  profileStart?.addEventListener("click", () => {
+    void startPerformanceProfile();
+  });
+
+  profileStop?.addEventListener("click", () => {
+    void stopPerformanceProfile();
+  });
+
+  profileReset?.addEventListener("click", () => {
+    void resetPerformanceProfile();
+  });
+
+  profileExport?.addEventListener("click", () => {
+    void exportPerformanceProfile();
   });
 
   document.addEventListener("keydown", (event) => {
@@ -314,6 +345,90 @@ function nativeCommandKey(key: string): string {
 
 function comboLabel(combo: string): string {
   return combo.trim() || "(unset)";
+}
+
+async function startPerformanceProfile(): Promise<void> {
+  try {
+    clearErrors();
+    storeProfileEnabled(true);
+    await browser.runtime.sendMessage({ type: "setPerformanceTraceEnabled", enabled: true });
+    await refreshPerformanceProfileStatus();
+  } catch {
+    showProfileStatus("Profile unavailable");
+  }
+}
+
+async function stopPerformanceProfile(): Promise<void> {
+  try {
+    clearErrors();
+    storeProfileEnabled(false);
+    await browser.runtime.sendMessage({ type: "setPerformanceTraceEnabled", enabled: false });
+    await refreshPerformanceProfileStatus();
+  } catch {
+    showProfileStatus("Profile unavailable");
+  }
+}
+
+async function resetPerformanceProfile(): Promise<void> {
+  try {
+    clearErrors();
+    await browser.runtime.sendMessage({ type: "clearPerformanceTrace" });
+    showProfileStatus("Profile reset");
+  } catch {
+    showProfileStatus("Profile unavailable");
+  }
+}
+
+async function exportPerformanceProfile(): Promise<void> {
+  try {
+    clearErrors();
+    const snapshot = await loadPerformanceProfile();
+    downloadPerformanceProfileExport(createPerformanceProfileExport(snapshot));
+    showProfileStatus("Profile exported");
+  } catch {
+    showProfileStatus("Profile unavailable");
+  }
+}
+
+async function refreshPerformanceProfileStatus(): Promise<void> {
+  const snapshot = await loadPerformanceProfile().catch(() => undefined);
+  if (snapshot) {
+    showProfileStatus(performanceProfileStatusText(snapshot));
+    return;
+  }
+  showProfileStatus(`${storedProfileEnabled() ? "Running" : "Stopped"} · 0 entries`);
+}
+
+async function loadPerformanceProfile(): Promise<PerformanceProfileSnapshot> {
+  const response = await browser.runtime.sendMessage({ type: "getPerformanceProfile" }).catch(() => undefined);
+  if (!isPerformanceProfileSnapshot(response)) {
+    throw new Error("Profile unavailable");
+  }
+  return response;
+}
+
+function performanceProfileStatusText(snapshot: PerformanceProfileSnapshot): string {
+  const label = performanceProfileEnabled(snapshot) ? "Running" : "Stopped";
+  const count = performanceProfileEntryCount(snapshot);
+  return `${label} · ${count} ${count === 1 ? "entry" : "entries"}`;
+}
+
+function storedProfileEnabled(): boolean {
+  return window.localStorage.getItem(PROFILE_STORAGE_KEY) === "true";
+}
+
+function storeProfileEnabled(enabled: boolean): void {
+  if (enabled) {
+    window.localStorage.setItem(PROFILE_STORAGE_KEY, "true");
+  } else {
+    window.localStorage.removeItem(PROFILE_STORAGE_KEY);
+  }
+}
+
+function showProfileStatus(message: string): void {
+  if (profileStatus) {
+    profileStatus.textContent = message;
+  }
 }
 
 function showErrors(messages: string[]): void {
