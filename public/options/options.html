@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Tab Session Outliner Options</title>
+    <link rel="stylesheet" href="./options.css" />
+  </head>
+  <body>
+    <header class="page-header">
+      <h1>Options</h1>
+      <p id="save-status" class="save-status" role="status"></p>
+    </header>
+    <main>
+      <form id="options-form">
+        <section class="settings-section" aria-labelledby="history-heading">
+          <div class="section-heading">
+            <h2 id="history-heading">History</h2>
+          </div>
+          <label class="field-row" for="undo-history-limit">
+            <span>Undo history length</span>
+            <input id="undo-history-limit" type="number" min="1" max="200" step="1" inputmode="numeric" />
+          </label>
+        </section>
+
+        <section class="settings-section" aria-labelledby="sidebar-shortcuts-heading">
+          <div class="section-heading">
+            <h2 id="sidebar-shortcuts-heading">Sidebar Shortcuts</h2>
+          </div>
+          <ol id="shortcut-list" class="shortcut-list"></ol>
+        </section>
+
+        <section class="settings-section" aria-labelledby="global-shortcut-heading">
+          <div class="section-heading">
+            <h2 id="global-shortcut-heading">Extension Shortcut</h2>
+          </div>
+          <div class="shortcut-row global-shortcut-row">
+            <span class="shortcut-label">Open or close sidebar</span>
+            <button
+              id="global-shortcut"
+              class="combo-button"
+              type="button"
+              aria-label="Record open or close sidebar shortcut"
+              data-testid="native-shortcut"
+            ></button>
+            <button id="clear-global-shortcut" class="secondary-button" type="button">Clear</button>
+          </div>
+        </section>
+
+        <div id="errors" class="errors" role="alert" hidden></div>
+
+        <div class="form-actions">
+          <button id="save-options" class="primary-button" type="submit" aria-label="Save options">Save</button>
+          <button id="reset-defaults" class="secondary-button" type="button">Reset defaults</button>
+        </div>
+      </form>
+    </main>
+    <script type="module" src="./options.js"></script>
+  </body>
+</html>
