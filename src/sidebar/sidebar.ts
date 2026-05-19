@@ -107,6 +107,7 @@ let scheduledVirtualRender = false;
 let hoverLineScope: HoverLineScope | undefined;
 let pendingCutNodeId: NodeId | undefined;
 let currentCutRowRange: CutSubtreeRowRange | undefined;
+let pendingShowInTreeNodeId: NodeId | undefined;
 const activeTabScrollTracker = createActiveTabScrollTracker();
 
 const WHEEL_ZOOM_THRESHOLD_PX = 80;
@@ -948,7 +949,9 @@ function render(): void {
     currentCutRowRange = cutSubtreeRowRange(projection.rows, pendingCutNodeId);
     hoverLineScope = undefined;
     updateProjectionChrome(projection);
-    scrollToObservedActiveTab(projection);
+    if (!scrollToPendingShowInTreeRow(projection)) {
+      scrollToObservedActiveTab(projection);
+    }
     renderVirtualRows();
     revealSidebar();
   });
@@ -1549,6 +1552,9 @@ function renderRow(
   const actions = document.createElement("span");
   actions.className = "node-actions";
 
+  if (rowInfo.isSearchMatch) {
+    actions.append(actionButton("Show in tree", "show-in-tree", "T"));
+  }
   actions.append(actionButton("Cut", "cut", "X"));
   if (pendingCutNodeId) {
     actions.append(actionButton("Paste", "paste", "P", !pasteAfterCommand(state, pendingCutNodeId, node.id)));
@@ -1825,6 +1831,11 @@ function handleTreeClick(event: MouseEvent): void {
     return;
   }
 
+  if (action === "show-in-tree") {
+    void showSearchResultInTree(node.id);
+    return;
+  }
+
   if (action === "close-node") {
     void runAndRender({ type: "closeNode", nodeId: node.id });
     return;
@@ -2065,6 +2076,23 @@ function actionButton(label: string, action: string, glyph?: string, disabled = 
   return button;
 }
 
+async function showSearchResultInTree(nodeId: NodeId): Promise<void> {
+  if (!currentProjection?.isSearchActive || !currentProjection.matchingNodeIds.has(nodeId)) {
+    return;
+  }
+
+  pendingShowInTreeNodeId = nodeId;
+  const accepted = await runAndRender({ type: "expandAncestors", nodeId });
+  if (!accepted) {
+    if (pendingShowInTreeNodeId === nodeId) {
+      pendingShowInTreeNodeId = undefined;
+    }
+    return;
+  }
+
+  clearSearchQuery();
+}
+
 function cutNodeForPaste(nodeId: NodeId): void {
   if (!currentState?.nodes[nodeId]) {
     return;
@@ -2273,6 +2301,43 @@ function scrollToObservedActiveTab(projection: VisibleTreeProjection): void {
   const rowHeight = currentRowHeight();
   prepareVirtualScrollSurface(projection, rowHeight);
   scrollActiveTabIntoView(activeTabScrollTracker, projection, rootDropSurface ?? undefined, rowHeight);
+}
+
+function scrollToPendingShowInTreeRow(projection: VisibleTreeProjection): boolean {
+  const targetNodeId = pendingShowInTreeNodeId;
+  if (!targetNodeId || projection.isSearchActive) {
+    return false;
+  }
+
+  const row = projection.rows.find((candidate) => candidate.nodeId === targetNodeId);
+  pendingShowInTreeNodeId = undefined;
+  if (!row) {
+    return false;
+  }
+
+  const rowHeight = currentRowHeight();
+  prepareVirtualScrollSurface(projection, rowHeight);
+  centerRowInViewport(row.index, rootDropSurface ?? undefined, rowHeight);
+  return true;
+}
+
+function centerRowInViewport(rowIndex: number, viewport: HTMLElement | undefined, rowHeight: number): void {
+  if (
+    !viewport ||
+    !Number.isFinite(viewport.clientHeight) ||
+    viewport.clientHeight <= 0 ||
+    !Number.isFinite(rowIndex)
+  ) {
+    return;
+  }
+
+  const effectiveRowHeight = Number.isFinite(rowHeight) && rowHeight > 0 ? rowHeight : 1;
+  const rowTop = Math.max(0, rowIndex) * effectiveRowHeight;
+  const centeredScrollTop = Math.max(0, rowTop + effectiveRowHeight / 2 - viewport.clientHeight / 2);
+  const maxScrollTop = Number.isFinite(viewport.scrollHeight)
+    ? Math.max(0, viewport.scrollHeight - viewport.clientHeight)
+    : centeredScrollTop;
+  viewport.scrollTop = Math.min(centeredScrollTop, maxScrollTop);
 }
 
 function prepareVirtualScrollSurface(projection: VisibleTreeProjection, rowHeight: number): void {

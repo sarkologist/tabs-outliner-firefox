@@ -61,6 +61,10 @@ export type BackgroundCommand =
       nodeId: NodeId;
     }
   | {
+      type: "expandAncestors";
+      nodeId: NodeId;
+    }
+  | {
       type: "renameGroup";
       nodeId: NodeId;
       title: string;
@@ -93,6 +97,7 @@ export const BACKGROUND_COMMAND_TYPES = [
   "wrapNodeInGroup",
   "flattenSubtree",
   "toggleCollapsed",
+  "expandAncestors",
   "renameGroup",
   "importTree",
   "undo",
@@ -209,6 +214,11 @@ export async function runCommand(
 
     case "toggleCollapsed":
       return toggleCollapsedInPlace(state, command.nodeId)
+        ? changedCommandResult(state)
+        : unchangedCommandResult(state);
+
+    case "expandAncestors":
+      return expandAncestorsInPlace(state, command.nodeId)
         ? changedCommandResult(state)
         : unchangedCommandResult(state);
 
@@ -1026,6 +1036,28 @@ function toggleCollapsedInPlace(state: OutlineState, nodeId: NodeId): boolean {
 
   node.collapsed = !node.collapsed;
   return true;
+}
+
+function expandAncestorsInPlace(state: OutlineState, nodeId: NodeId): boolean {
+  let changed = false;
+  const visited = new Set<NodeId>();
+  let parentId = state.nodes[nodeId]?.parentId;
+
+  while (parentId && !visited.has(parentId)) {
+    visited.add(parentId);
+    const parent = state.nodes[parentId];
+    if (!parent) {
+      break;
+    }
+
+    if (parent.collapsed) {
+      parent.collapsed = false;
+      changed = true;
+    }
+    parentId = parent.parentId;
+  }
+
+  return changed;
 }
 
 type LiveWindowNode = OutlineNode & { live: { windowId: number } };

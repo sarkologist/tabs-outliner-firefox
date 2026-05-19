@@ -10,6 +10,7 @@ export type TrackableHistoryCommandType =
   | "wrapNodeInGroup"
   | "flattenSubtree"
   | "toggleCollapsed"
+  | "expandAncestors"
   | "renameGroup"
   | "importTree"
   | "deleteNode";
@@ -251,6 +252,8 @@ function historyLabel(commandType: TrackableHistoryCommandType): string {
       return "Flatten";
     case "toggleCollapsed":
       return "Collapse";
+    case "expandAncestors":
+      return "Expand";
     case "renameGroup":
       return "Rename";
     case "importTree":
@@ -290,6 +293,7 @@ function isTrackableHistoryCommandType(value: unknown): value is TrackableHistor
     value === "wrapNodeInGroup" ||
     value === "flattenSubtree" ||
     value === "toggleCollapsed" ||
+    value === "expandAncestors" ||
     value === "renameGroup" ||
     value === "importTree" ||
     value === "deleteNode";

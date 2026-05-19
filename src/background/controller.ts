@@ -467,9 +467,14 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
     return enqueueMutation(async () => {
       const current = await ensureState();
+      const expandAncestorNodeIds = message.type === "expandAncestors"
+        ? collapsedAncestorNodeIds(current, message.nodeId)
+        : undefined;
       const historyPrevious = isTrackableHistoryCommandType(message.type)
         ? message.type === "toggleCollapsed"
           ? stateWithClonedNode(current, message.nodeId)
+          : message.type === "expandAncestors"
+            ? stateWithClonedNodes(current, expandAncestorNodeIds ?? [])
           : current
         : undefined;
       const outlinerClosePlan = message.type === "closeNode"
@@ -541,7 +546,9 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       state = result.state;
       stateCache.replace(result.state);
       if (historyPrevious && isTrackableHistoryCommandType(message.type)) {
-        const candidateNodeIds = historyCandidateNodeIds(message, historyPrevious, result.state);
+        const candidateNodeIds = message.type === "expandAncestors"
+          ? expandAncestorNodeIds
+          : historyCandidateNodeIds(message, historyPrevious, result.state);
         await recordHistoryEntry(message.type, historyPrevious, result.state, {
           ...(candidateNodeIds ? { candidateNodeIds } : {})
         });
@@ -572,6 +579,10 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       }
       if (message.type === "toggleCollapsed") {
         await persistKnownNodeStateUpdate(current, result.state, message.nodeId);
+        return commandAck(true);
+      }
+      if (message.type === "expandAncestors") {
+        await persistKnownNodeStateUpdates(current, result.state, expandAncestorNodeIds ?? []);
         return commandAck(true);
       }
       await persistWithBestEffortPatch(current, result.state);
@@ -1400,15 +1411,27 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   }
 
   async function persistKnownNodeStateUpdate(previous: OutlineState, next: OutlineState, nodeId: NodeId): Promise<void> {
-    const node = next.nodes[nodeId];
-    if (!node) {
+    await persistKnownNodeStateUpdates(previous, next, [nodeId]);
+  }
+
+  async function persistKnownNodeStateUpdates(
+    previous: OutlineState,
+    next: OutlineState,
+    nodeIds: readonly NodeId[]
+  ): Promise<void> {
+    const uniqueIds = uniqueDefinedNodeIds([...nodeIds]);
+    const updatedNodes = uniqueIds.flatMap((nodeId) => {
+      const node = next.nodes[nodeId];
+      return node ? [node] : [];
+    });
+    if (updatedNodes.length === 0 || updatedNodes.length !== uniqueIds.length) {
       await persistWithBestEffortPatch(previous, next, { diffMode: "material", skipNodeState: true });
       return;
     }
 
     await broadcastNodeStateUpdate({
       type: "nodeStateUpdated",
-      updatedNodes: [node],
+      updatedNodes,
       closedCountDelta: 0
     });
     scheduleStateSave(next);
@@ -1928,25 +1951,65 @@ function isTrackableHistoryCommandType(value: string): value is TrackableHistory
     value === "wrapNodeInGroup" ||
     value === "flattenSubtree" ||
     value === "toggleCollapsed" ||
+    value === "expandAncestors" ||
     value === "renameGroup" ||
     value === "importTree" ||
     value === "deleteNode";
 }
 
 function stateWithClonedNode(state: OutlineState, nodeId: NodeId): OutlineState {
-  const node = state.nodes[nodeId];
-  if (!node) {
+  return stateWithClonedNodes(state, [nodeId]);
+}
+
+function stateWithClonedNodes(state: OutlineState, nodeIds: readonly NodeId[]): OutlineState {
+  const clonedNodeIds = uniqueDefinedNodeIds([...nodeIds]);
+  if (clonedNodeIds.length === 0) {
+    return state;
+  }
+
+  const nodes = { ...state.nodes };
+  let cloned = false;
+  for (const nodeId of clonedNodeIds) {
+    const node = state.nodes[nodeId];
+    if (!node) {
+      continue;
+    }
+
+    nodes[nodeId] = cloneOutlineNode(node);
+    cloned = true;
+  }
+
+  if (!cloned) {
     return state;
   }
 
   return {
     version: state.version,
     rootIds: state.rootIds,
-    nodes: {
-      ...state.nodes,
-      [nodeId]: cloneOutlineNode(node)
-    }
+    nodes
   };
+}
+
+function collapsedAncestorNodeIds(state: OutlineState, nodeId: NodeId): NodeId[] {
+  const node = state.nodes[nodeId];
+  const result: NodeId[] = [];
+  const visited = new Set<NodeId>();
+  let parentId = node?.parentId;
+
+  while (parentId && !visited.has(parentId)) {
+    visited.add(parentId);
+    const parent = state.nodes[parentId];
+    if (!parent) {
+      break;
+    }
+
+    if (parent.collapsed) {
+      result.push(parent.id);
+    }
+    parentId = parent.parentId;
+  }
+
+  return result.reverse();
 }
 
 function historyCandidateNodeIds(

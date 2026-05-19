@@ -122,6 +122,7 @@ describe("background commands", () => {
       { type: "wrapNodeInGroup", nodeId: "tab:1" },
       { type: "flattenSubtree", nodeId: "window:10" },
       { type: "toggleCollapsed", nodeId: "tab:1" },
+      { type: "expandAncestors", nodeId: "tab:1" },
       { type: "renameGroup", nodeId: "window:10", title: "Research" },
       {
         type: "importTree",
@@ -1257,5 +1258,51 @@ describe("background commands", () => {
     expect(result.state).toBe(state);
     expect(state.nodes["tab:1"]?.collapsed).toBe(true);
     expect(result.state.nodes["tab:1"]?.collapsed).toBe(true);
+  });
+
+  it("expands collapsed ancestors without toggling the target itself", async () => {
+    const state = bootstrapFromWindows(runtimeWindows, { now: 1000 });
+    const adapter = fakeAdapter();
+    state.nodes["window:10"]!.collapsed = true;
+    state.nodes["tab:1"]!.collapsed = true;
+    state.nodes["tab:2"]!.collapsed = true;
+
+    const result = await runCommand(state, adapter, { type: "expandAncestors", nodeId: "tab:2" } as BackgroundCommand);
+
+    expect(result.changed).toBe(true);
+    expect(result.state).toBe(state);
+    expect(state.nodes["window:10"]?.collapsed).toBe(false);
+    expect(state.nodes["tab:1"]?.collapsed).toBe(false);
+    expect(state.nodes["tab:2"]?.collapsed).toBe(true);
+    expect(adapter.focusTab).not.toHaveBeenCalled();
+    expect(adapter.closeTabs).not.toHaveBeenCalled();
+    expect(adapter.closeWindow).not.toHaveBeenCalled();
+    expect(adapter.restoreSession).not.toHaveBeenCalled();
+    expect(adapter.createTab).not.toHaveBeenCalled();
+    expect(adapter.createWindow).not.toHaveBeenCalled();
+    expect(adapter.moveTabs).not.toHaveBeenCalled();
+  });
+
+  it("leaves already-visible and missing expand-ancestor targets unchanged", async () => {
+    const state = bootstrapFromWindows(runtimeWindows, { now: 1000 });
+    const adapter = fakeAdapter();
+
+    const visible = await runCommand(state, adapter, { type: "expandAncestors", nodeId: "tab:1" } as BackgroundCommand);
+    const missing = await runCommand(state, adapter, {
+      type: "expandAncestors",
+      nodeId: "tab:missing"
+    } as BackgroundCommand);
+
+    expect(visible.changed).toBe(false);
+    expect(missing.changed).toBe(false);
+    expect(visible.state).toBe(state);
+    expect(missing.state).toBe(state);
+    expect(adapter.focusTab).not.toHaveBeenCalled();
+    expect(adapter.closeTabs).not.toHaveBeenCalled();
+    expect(adapter.closeWindow).not.toHaveBeenCalled();
+    expect(adapter.restoreSession).not.toHaveBeenCalled();
+    expect(adapter.createTab).not.toHaveBeenCalled();
+    expect(adapter.createWindow).not.toHaveBeenCalled();
+    expect(adapter.moveTabs).not.toHaveBeenCalled();
   });
 });

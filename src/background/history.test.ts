@@ -55,6 +55,17 @@ describe("outline history", () => {
     expect(applyOutlineDelta(previous, entry!.redo).nodes["window:10"]?.title).toBe("Research");
   });
 
+  it("labels ancestor expansion history entries as Expand", () => {
+    const previous = bootstrapFromWindows(runtimeWindows, { now: 1000 });
+    const next = bootstrapFromWindows(runtimeWindows, { now: 1000 });
+    next.nodes["window:10"]!.collapsed = false;
+    previous.nodes["window:10"]!.collapsed = true;
+
+    const entry = createHistoryEntry("expandAncestors", previous, next);
+
+    expect(entry?.label).toBe("Expand");
+  });
+
   it("stores structural deltas without copying untouched nodes", () => {
     const previous = bootstrapFromWindows(runtimeWindows, { now: 1000 });
     const next = moveNode(previous, "tab:2", { parentId: "tab:1", index: 0 });

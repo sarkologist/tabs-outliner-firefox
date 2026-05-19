@@ -5316,6 +5316,84 @@ describe("background controller lifecycle", () => {
     expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
   });
 
+  it("broadcasts ancestor expansion as one node state patch and one undoable command", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        },
+        {
+          id: 2,
+          windowId: 10,
+          index: 1,
+          active: false,
+          url: "https://two.example/",
+          title: "Two"
+        },
+        {
+          id: 3,
+          windowId: 10,
+          index: 2,
+          active: false,
+          url: "https://three.example/",
+          title: "Three"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    const state = await controller.ensureState();
+    state.nodes["window:10"]!.childIds = ["tab:1"];
+    state.nodes["window:10"]!.collapsed = true;
+    state.nodes["tab:1"]!.parentId = "window:10";
+    state.nodes["tab:1"]!.childIds = ["tab:2"];
+    state.nodes["tab:1"]!.collapsed = true;
+    state.nodes["tab:2"]!.parentId = "tab:1";
+    state.nodes["tab:2"]!.childIds = ["tab:3"];
+    state.nodes["tab:2"]!.collapsed = true;
+    state.nodes["tab:3"]!.parentId = "tab:2";
+    state.nodes["tab:3"]!.childIds = [];
+    await controller.flushPendingSaves();
+    runtime.broadcasts.length = 0;
+    vi.mocked(runtime.api.storage.local.set).mockClear();
+
+    const result = await controller.handleMessage({ type: "expandAncestors", nodeId: "tab:3" });
+    const after = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    const patchBroadcasts = stateBroadcasts(runtime.broadcasts) as Array<{
+      type?: string;
+      updatedNodes?: OutlineState["nodes"][string][];
+      state?: OutlineState;
+    }>;
+
+    expectCommandAck(result, true);
+    expect(after.nodes["window:10"]?.collapsed).toBe(false);
+    expect(after.nodes["tab:1"]?.collapsed).toBe(false);
+    expect(after.nodes["tab:2"]?.collapsed).toBe(false);
+    expect(patchBroadcasts).toHaveLength(1);
+    expect(patchBroadcasts[0]?.type).toBe("nodeStateUpdated");
+    expect(patchBroadcasts[0]?.updatedNodes?.map((node) => node.id)).toEqual(["window:10", "tab:1", "tab:2"]);
+    expect(patchBroadcasts[0]?.state).toBeUndefined();
+    expect(await controller.handleMessage({ type: "getHistoryStatus" })).toMatchObject({
+      type: "historyStatus",
+      canUndo: true,
+      undoLabel: "Expand"
+    });
+
+    await controller.flushPendingSaves();
+    expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
+  });
+
   it("broadcasts group renames as node state patches", async () => {
     const runtime = fakeRuntime(
       [
