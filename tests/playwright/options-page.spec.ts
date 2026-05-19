@@ -82,13 +82,20 @@ test.describe("extension options page", () => {
           { source: "background", name: "background.save", atMs: 1, durationMs: 12 }
         ]
       },
-      sidebar: {
-        enabled: true,
-        maxEntries: 500,
-        entries: [
-          { source: "sidebar", name: "sidebar.render", atMs: 2, durationMs: 6 }
-        ]
-      }
+      sidebars: [
+        {
+          id: "sidebar-window-10",
+          label: "Sidebar window 10",
+          windowId: 10,
+          snapshot: {
+            enabled: true,
+            maxEntries: 500,
+            entries: [
+              { source: "sidebar", name: "sidebar.render", atMs: 2, durationMs: 6 }
+            ]
+          }
+        }
+      ]
     });
     await page.getByRole("button", { name: "Reset", exact: true }).click();
     await expect(page.locator("#profile-status")).toHaveText("Profile reset");
@@ -105,13 +112,32 @@ test.describe("extension options page", () => {
           { source: "background", name: "background.save", atMs: 3, durationMs: 8 }
         ]
       },
-      sidebar: {
-        enabled: true,
-        maxEntries: 500,
-        entries: [
-          { source: "sidebar", name: "sidebar.render", atMs: 4, durationMs: 4 }
-        ]
-      }
+      sidebars: [
+        {
+          id: "sidebar-window-10",
+          label: "Sidebar window 10",
+          windowId: 10,
+          snapshot: {
+            enabled: true,
+            maxEntries: 500,
+            entries: [
+              { source: "sidebar", name: "sidebar.render", atMs: 4, durationMs: 4 }
+            ]
+          }
+        },
+        {
+          id: "sidebar-window-20",
+          label: "Sidebar window 20",
+          windowId: 20,
+          snapshot: {
+            enabled: true,
+            maxEntries: 500,
+            entries: [
+              { source: "sidebar", name: "sidebar.virtualRows", atMs: 5, durationMs: 3 }
+            ]
+          }
+        }
+      ]
     });
     const downloadPromise = page.waitForEvent("download");
     await page.getByRole("button", { name: "Export profile" }).click();
@@ -124,22 +150,43 @@ test.describe("extension options page", () => {
       exportedAt?: string;
       snapshot?: {
         background?: { entries?: unknown[] };
-        sidebar?: { entries?: unknown[] };
+        sidebars?: Array<{
+          id?: string;
+          label?: string;
+          windowId?: number;
+          snapshot?: { entries?: unknown[] };
+        }>;
       };
       summary?: Array<{ name?: string; totalMs?: number }>;
     };
     expect(payload.schema).toBe("tabs-outliner-profile");
     expect(payload.exportedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     expect(payload.snapshot?.background?.entries).toHaveLength(1);
-    expect(payload.snapshot?.sidebar?.entries).toHaveLength(1);
+    expect(payload.snapshot?.sidebars).toEqual([
+      expect.objectContaining({
+        id: "sidebar-window-10",
+        label: "Sidebar window 10",
+        windowId: 10,
+        snapshot: expect.objectContaining({ entries: expect.any(Array) })
+      }),
+      expect.objectContaining({
+        id: "sidebar-window-20",
+        label: "Sidebar window 20",
+        windowId: 20,
+        snapshot: expect.objectContaining({ entries: expect.any(Array) })
+      })
+    ]);
+    expect(payload.snapshot?.sidebars?.[0]?.snapshot?.entries).toHaveLength(1);
+    expect(payload.snapshot?.sidebars?.[1]?.snapshot?.entries).toHaveLength(1);
     expect(payload.summary).toEqual([
       expect.objectContaining({ name: "background.save", totalMs: 8 }),
-      expect.objectContaining({ name: "sidebar.render", totalMs: 4 })
+      expect.objectContaining({ name: "sidebar.render", totalMs: 4 }),
+      expect.objectContaining({ name: "sidebar.virtualRows", totalMs: 3 })
     ]);
     await expect(page.locator("#profile-status")).toHaveText("Profile exported");
 
     await page.getByRole("button", { name: "Stop" }).click();
-    await expect(page.locator("#profile-status")).toHaveText("Stopped · 2 entries");
+    await expect(page.locator("#profile-status")).toHaveText("Stopped · 3 entries");
     await expect(profileEnabledFlag(page)).resolves.toBe(false);
     await expect(runtimeMessages(page)).resolves.toContainEqual({
       type: "setPerformanceTraceEnabled",
@@ -160,11 +207,7 @@ async function loadOptions(page: Page): Promise<void> {
         maxEntries: 500,
         entries: [] as unknown[]
       },
-      sidebar: {
-        enabled: false,
-        maxEntries: 500,
-        entries: [] as unknown[]
-      }
+      sidebars: [] as unknown[]
     };
     const runtimeMessages: unknown[] = [];
 
@@ -253,10 +296,17 @@ async function loadOptions(page: Page): Promise<void> {
                 ...profileSnapshot.background,
                 enabled
               },
-              sidebar: {
-                ...profileSnapshot.sidebar,
-                enabled
-              }
+              sidebars: profileSnapshot.sidebars.map((sidebar) =>
+                typeof sidebar === "object" && sidebar
+                  ? {
+                      ...sidebar,
+                      snapshot: {
+                        ...(sidebar as { snapshot?: Record<string, unknown> }).snapshot,
+                        enabled
+                      }
+                    }
+                  : sidebar
+              )
             };
             return { ok: true };
           }
@@ -266,10 +316,17 @@ async function loadOptions(page: Page): Promise<void> {
                 ...profileSnapshot.background,
                 entries: []
               },
-              sidebar: {
-                ...profileSnapshot.sidebar,
-                entries: []
-              }
+              sidebars: profileSnapshot.sidebars.map((sidebar) =>
+                typeof sidebar === "object" && sidebar
+                  ? {
+                      ...sidebar,
+                      snapshot: {
+                        ...(sidebar as { snapshot?: Record<string, unknown> }).snapshot,
+                        entries: []
+                      }
+                    }
+                  : sidebar
+              )
             };
             return { ok: true };
           }

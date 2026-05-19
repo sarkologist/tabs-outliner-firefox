@@ -57,6 +57,7 @@ type WebExtensionBrowserApi = {
   };
   windows: {
     WINDOW_ID_NONE: number;
+    getCurrent(getInfo?: { populate?: boolean; windowTypes?: string[] }): Promise<RuntimeWindow>;
     get(windowId: number, getInfo?: { populate?: boolean; windowTypes?: string[] }): Promise<RuntimeWindow>;
     getAll(getInfo?: { populate?: boolean; windowTypes?: string[] }): Promise<RuntimeWindow[]>;
     update(windowId: number, updateInfo: { focused?: boolean }): Promise<RuntimeWindow>;

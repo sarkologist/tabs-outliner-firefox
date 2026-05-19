@@ -193,6 +193,23 @@ function fakeRuntime(windows: RuntimeWindow[], tabs: RuntimeTab[], options: Fake
       },
       windows: {
         WINDOW_ID_NONE: -1,
+        getCurrent: vi.fn(async (getInfo: { populate?: boolean; windowTypes?: string[] } = {}) => {
+          const windowInfo = runtime.windows.find((candidate) => candidate.focused) ?? runtime.windows[0];
+          if (!windowInfo) {
+            throw new Error("Missing current window");
+          }
+          const windowCopy = copyWindowWithoutTabs(windowInfo);
+          return {
+            ...windowCopy,
+            ...(getInfo.populate
+              ? {
+                  tabs: runtime.tabs
+                    .filter((tab) => tab.windowId === windowInfo.id)
+                    .map(copyTab)
+                }
+              : {})
+          };
+        }),
         get: vi.fn(async (windowId: number, getInfo: { populate?: boolean; windowTypes?: string[] } = {}) => {
           const windowInfo = runtime.windows.find((candidate) => candidate.id === windowId);
           if (!windowInfo) {
@@ -1325,58 +1342,102 @@ describe("background controller lifecycle", () => {
     });
   });
 
-  it("returns a combined performance profile with a best-effort sidebar snapshot", async () => {
-    const runtime = fakeRuntime(
-      [
-        {
-          id: 10,
-          focused: true,
-          incognito: false
-        }
-      ],
-      [
-        {
-          id: 1,
-          windowId: 10,
-          index: 0,
-          active: true,
-          url: "https://one.example/",
-          title: "One"
-        }
-      ]
-    );
-    const sidebarTrace = {
-      enabled: true,
-      maxEntries: 500,
-      entries: [
-        {
-          source: "sidebar",
-          name: "sidebar.render",
-          atMs: 2000,
-          durationMs: 6
-        }
-      ]
-    };
-    vi.mocked(runtime.api.runtime.sendMessage).mockImplementation(async (message: unknown) => {
-      runtime.broadcasts.push(message);
-      const type = typeof message === "object" && message ? (message as { type?: unknown }).type : undefined;
-      return type === "getSidebarPerformanceTrace" ? structuredClone(sidebarTrace) : undefined;
-    });
-    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+  it("returns a combined performance profile with all labeled sidebar snapshots", async () => {
+    vi.useFakeTimers();
+    try {
+      const runtime = fakeRuntime(
+        [
+          {
+            id: 10,
+            focused: true,
+            incognito: false
+          }
+        ],
+        [
+          {
+            id: 1,
+            windowId: 10,
+            index: 0,
+            active: true,
+            url: "https://one.example/",
+            title: "One"
+          }
+        ]
+      );
+      const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
 
-    await controller.handleMessage({ type: "setPerformanceTraceEnabled", enabled: true });
-    await controller.handleMessage({ type: "getState" });
-    await controller.flushPendingSaves();
+      await controller.handleMessage({ type: "setPerformanceTraceEnabled", enabled: true });
+      await controller.handleMessage({ type: "getState" });
+      await controller.flushPendingSaves();
+      runtime.broadcasts.length = 0;
 
-    expect(await controller.handleMessage({ type: "getPerformanceProfile" })).toMatchObject({
-      background: {
-        enabled: true
-      },
-      sidebar: sidebarTrace
-    });
-    expect(runtime.broadcasts).toContainEqual({
-      type: "getSidebarPerformanceTrace"
-    });
+      const profilePromise = controller.handleMessage({ type: "getPerformanceProfile" });
+      const collectRequest = runtime.broadcasts.find((message) =>
+        typeof message === "object" &&
+          message &&
+          (message as { type?: unknown }).type === "collectSidebarPerformanceTrace"
+      ) as { requestId?: string } | undefined;
+      expect(collectRequest?.requestId).toEqual(expect.any(String));
+
+      const firstSidebar = {
+        id: "sidebar-window-10",
+        label: "Sidebar window 10",
+        windowId: 10,
+        snapshot: {
+          enabled: true,
+          maxEntries: 500,
+          entries: [
+            {
+              source: "sidebar",
+              name: "sidebar.render",
+              atMs: 2000,
+              durationMs: 6
+            }
+          ]
+        }
+      };
+      const secondSidebar = {
+        id: "sidebar-window-20",
+        label: "Sidebar window 20",
+        windowId: 20,
+        snapshot: {
+          enabled: true,
+          maxEntries: 500,
+          entries: [
+            {
+              source: "sidebar",
+              name: "sidebar.patch.treeStructure",
+              atMs: 2100,
+              durationMs: 4
+            }
+          ]
+        }
+      };
+
+      await controller.handleMessage({
+        type: "sidebarPerformanceTraceCollected",
+        requestId: collectRequest!.requestId,
+        sidebar: firstSidebar
+      });
+      await controller.handleMessage({
+        type: "sidebarPerformanceTraceCollected",
+        requestId: collectRequest!.requestId,
+        sidebar: secondSidebar
+      });
+      await vi.advanceTimersByTimeAsync(1000);
+
+      expect(await profilePromise).toMatchObject({
+        background: {
+          enabled: true
+        },
+        sidebars: [
+          firstSidebar,
+          secondSidebar
+        ]
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("does not save during startup when stored state already matches runtime", async () => {

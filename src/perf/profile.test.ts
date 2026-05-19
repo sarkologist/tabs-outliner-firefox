@@ -9,16 +9,31 @@ import {
 } from "./profile.js";
 
 describe("performance profile helpers", () => {
-  it("summarizes background and sidebar trace durations together", () => {
+  it("summarizes background and all labeled sidebar trace durations together", () => {
     expect(
       summarizePerformanceProfile({
         background: traceSnapshot([
           { source: "background", name: "background.save", atMs: 1, durationMs: 12 },
           { source: "background", name: "background.save", atMs: 2, durationMs: 8 }
         ]),
-        sidebar: traceSnapshot([
-          { source: "sidebar", name: "sidebar.render", atMs: 3, durationMs: 6 }
-        ])
+        sidebars: [
+          {
+            id: "sidebar-window-1",
+            label: "Sidebar window 1",
+            windowId: 1,
+            snapshot: traceSnapshot([
+              { source: "sidebar", name: "sidebar.render", atMs: 3, durationMs: 6 }
+            ])
+          },
+          {
+            id: "sidebar-window-2",
+            label: "Sidebar window 2",
+            windowId: 2,
+            snapshot: traceSnapshot([
+              { source: "sidebar", name: "sidebar.patch", atMs: 4, durationMs: 5 }
+            ])
+          }
+        ]
       })
     ).toEqual([
       {
@@ -34,6 +49,13 @@ describe("performance profile helpers", () => {
         totalMs: 6,
         avgMs: 6,
         maxMs: 6
+      },
+      {
+        name: "sidebar.patch",
+        count: 1,
+        totalMs: 5,
+        avgMs: 5,
+        maxMs: 5
       }
     ]);
   });
@@ -62,13 +84,35 @@ describe("performance profile helpers", () => {
     const background = traceSnapshot([
       { source: "background", name: "background.save", atMs: 1000, durationMs: 4 }
     ]);
-    const payload = createPerformanceProfileExport({ background }, { now: 3000 });
+    const payload = createPerformanceProfileExport({
+      background,
+      sidebars: [
+        {
+          id: "sidebar-window-7",
+          label: "Sidebar window 7",
+          windowId: 7,
+          snapshot: traceSnapshot([
+            { source: "sidebar", name: "sidebar.render", atMs: 1001, durationMs: 2 }
+          ])
+        }
+      ]
+    }, { now: 3000 });
 
     expect(payload).toEqual({
       schema: "tabs-outliner-profile",
       exportedAt: "1970-01-01T00:00:03.000Z",
       snapshot: {
-        background
+        background,
+        sidebars: [
+          {
+            id: "sidebar-window-7",
+            label: "Sidebar window 7",
+            windowId: 7,
+            snapshot: traceSnapshot([
+              { source: "sidebar", name: "sidebar.render", atMs: 1001, durationMs: 2 }
+            ])
+          }
+        ]
       },
       summary: [
         {
@@ -77,6 +121,13 @@ describe("performance profile helpers", () => {
           totalMs: 4,
           avgMs: 4,
           maxMs: 4
+        },
+        {
+          name: "sidebar.render",
+          count: 1,
+          totalMs: 2,
+          avgMs: 2,
+          maxMs: 2
         }
       ]
     });

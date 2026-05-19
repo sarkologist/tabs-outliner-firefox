@@ -3,9 +3,18 @@ import { summarizeTraceEvents, type TraceSnapshot, type TraceSummaryRow } from "
 export const PROFILE_STORAGE_KEY = "tabsOutlinerProfileEnabled";
 export const PERFORMANCE_PROFILE_SCHEMA = "tabs-outliner-profile";
 
+export type LabeledTraceSnapshot = {
+  id: string;
+  label: string;
+  snapshot: TraceSnapshot;
+  windowId?: number;
+  url?: string;
+};
+
 export type PerformanceProfileSources = {
   background?: TraceSnapshot;
   sidebar?: TraceSnapshot;
+  sidebars?: LabeledTraceSnapshot[];
 };
 
 export type PerformanceProfileSnapshot = PerformanceProfileSources & {
@@ -26,16 +35,17 @@ export type PerformanceProfileExport = {
 export function summarizePerformanceProfile(snapshot: PerformanceProfileSources): TraceSummaryRow[] {
   return summarizeTraceEvents([
     ...(snapshot.background?.entries ?? []),
-    ...(snapshot.sidebar?.entries ?? [])
+    ...sidebarTraceSnapshots(snapshot).flatMap((sidebar) => sidebar.entries)
   ]);
 }
 
 export function performanceProfileEntryCount(snapshot: PerformanceProfileSources): number {
-  return (snapshot.background?.entries.length ?? 0) + (snapshot.sidebar?.entries.length ?? 0);
+  return (snapshot.background?.entries.length ?? 0) +
+    sidebarTraceSnapshots(snapshot).reduce((sum, sidebar) => sum + sidebar.entries.length, 0);
 }
 
 export function performanceProfileEnabled(snapshot: PerformanceProfileSources): boolean {
-  return Boolean(snapshot.background?.enabled || snapshot.sidebar?.enabled);
+  return Boolean(snapshot.background?.enabled || sidebarTraceSnapshots(snapshot).some((sidebar) => sidebar.enabled));
 }
 
 export function createPerformanceProfileExport(
@@ -82,13 +92,40 @@ export function isTraceSnapshot(value: unknown): value is TraceSnapshot {
     Array.isArray(snapshot.entries);
 }
 
+export function isLabeledTraceSnapshot(value: unknown): value is LabeledTraceSnapshot {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const snapshot = value as {
+    id?: unknown;
+    label?: unknown;
+    snapshot?: unknown;
+    windowId?: unknown;
+    url?: unknown;
+  };
+  return typeof snapshot.id === "string" &&
+    typeof snapshot.label === "string" &&
+    isTraceSnapshot(snapshot.snapshot) &&
+    (snapshot.windowId === undefined || typeof snapshot.windowId === "number") &&
+    (snapshot.url === undefined || typeof snapshot.url === "string");
+}
+
 export function isPerformanceProfileSnapshot(value: unknown): value is PerformanceProfileSnapshot {
   if (!value || typeof value !== "object") {
     return false;
   }
-  const snapshot = value as { background?: unknown; sidebar?: unknown };
+  const snapshot = value as { background?: unknown; sidebar?: unknown; sidebars?: unknown };
   return isTraceSnapshot(snapshot.background) &&
-    (snapshot.sidebar === undefined || isTraceSnapshot(snapshot.sidebar));
+    (snapshot.sidebar === undefined || isTraceSnapshot(snapshot.sidebar)) &&
+    (snapshot.sidebars === undefined ||
+      (Array.isArray(snapshot.sidebars) && snapshot.sidebars.every(isLabeledTraceSnapshot)));
+}
+
+function sidebarTraceSnapshots(snapshot: PerformanceProfileSources): TraceSnapshot[] {
+  if (snapshot.sidebars) {
+    return snapshot.sidebars.map((sidebar) => sidebar.snapshot);
+  }
+  return snapshot.sidebar ? [snapshot.sidebar] : [];
 }
 
 function localDateSlug(date: Date): string {

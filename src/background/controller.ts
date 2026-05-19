@@ -50,7 +50,11 @@ import {
 import { buildOutlineLookup } from "../model/outline-lookup.js";
 import type { NodeId, OutlineNode, OutlineState, RuntimeTab, RuntimeWindow } from "../model/types.js";
 import { createPerformanceTracer, type TraceDetail, type TraceSnapshot } from "../perf/trace.js";
-import { isTraceSnapshot, type PerformanceProfileSnapshot } from "../perf/profile.js";
+import {
+  isLabeledTraceSnapshot,
+  type LabeledTraceSnapshot,
+  type PerformanceProfileSnapshot
+} from "../perf/profile.js";
 
 export type BackgroundController = {
   ensureState(): Promise<OutlineState>;
@@ -126,8 +130,19 @@ type PerformanceTraceMessage =
       type: "getPerformanceProfile";
     };
 
+type SidebarPerformanceTraceCollectedMessage = {
+  type: "sidebarPerformanceTraceCollected";
+  requestId: string;
+  sidebar: LabeledTraceSnapshot;
+};
+
 type InitialTreeSnapshotMessage = {
   type: "getInitialTreeSnapshot";
+};
+
+type PendingSidebarProfileCollection = {
+  sidebars: LabeledTraceSnapshot[];
+  seenSidebarIds: Set<string>;
 };
 
 type StateDiffMode = "identity" | "material";
@@ -172,6 +187,7 @@ export type BackgroundControllerOptions = {
 const RUNTIME_REFRESH_BATCH_DELAY_MS = 0;
 const STATE_SAVE_QUIET_DELAY_MS = 1000;
 const STATE_SAVE_MAX_DELAY_MS = 5000;
+const SIDEBAR_PROFILE_COLLECTION_DELAY_MS = 50;
 const TOGGLE_SIDEBAR_COMMAND = "toggle-sidebar";
 
 export function createBackgroundController(options: BackgroundControllerOptions): BackgroundController {
@@ -207,6 +223,8 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   let saveMaxTimer: number | undefined;
   let saveInFlight: Promise<void> | undefined;
   let diagnosticsInFlight: Promise<OutlineDiagnostics> | undefined;
+  let sidebarProfileRequestSequence = 0;
+  const pendingSidebarProfileCollections = new Map<string, PendingSidebarProfileCollection>();
 
   api.runtime.onInstalled.addListener(() => {
     void ensureState();
@@ -385,6 +403,10 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   });
 
   async function handleMessage(message: unknown): Promise<unknown> {
+    if (isSidebarPerformanceTraceCollectedMessage(message)) {
+      return handleSidebarPerformanceTraceCollected(message);
+    }
+
     if (isPerformanceTraceMessage(message)) {
       return handlePerformanceTraceMessage(message);
     }
@@ -1563,11 +1585,41 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
   async function performanceProfileSnapshot(): Promise<PerformanceProfileSnapshot> {
     const background = perfTrace.snapshot();
-    const sidebar = await api.runtime.sendMessage({ type: "getSidebarPerformanceTrace" }).catch(() => undefined);
     return {
       background,
-      ...(isTraceSnapshot(sidebar) ? { sidebar } : {})
+      sidebars: await collectSidebarPerformanceTraces()
     };
+  }
+
+  async function collectSidebarPerformanceTraces(): Promise<LabeledTraceSnapshot[]> {
+    const requestId = `sidebar-profile:${now()}:${sidebarProfileRequestSequence += 1}`;
+    const sidebars = await new Promise<LabeledTraceSnapshot[]>((resolve) => {
+      const collectedSidebars: LabeledTraceSnapshot[] = [];
+      globalThis.setTimeout(() => {
+        pendingSidebarProfileCollections.delete(requestId);
+        resolve([...collectedSidebars]);
+      }, SIDEBAR_PROFILE_COLLECTION_DELAY_MS);
+      const collection: PendingSidebarProfileCollection = {
+        sidebars: collectedSidebars,
+        seenSidebarIds: new Set()
+      };
+      pendingSidebarProfileCollections.set(requestId, collection);
+      void api.runtime.sendMessage({ type: "collectSidebarPerformanceTrace", requestId }).catch(() => undefined);
+    });
+    return sidebars;
+  }
+
+  function handleSidebarPerformanceTraceCollected(
+    message: SidebarPerformanceTraceCollectedMessage
+  ): { ok: true } {
+    const collection = pendingSidebarProfileCollections.get(message.requestId);
+    if (!collection || collection.seenSidebarIds.has(message.sidebar.id)) {
+      return { ok: true };
+    }
+
+    collection.seenSidebarIds.add(message.sidebar.id);
+    collection.sidebars.push(message.sidebar);
+    return { ok: true };
   }
 
   async function sendSidebarPerformanceTraceEnabled(enabled: boolean): Promise<void> {
@@ -2504,6 +2556,18 @@ function isPerformanceTraceMessage(message: unknown): message is PerformanceTrac
     type === "getPerformanceProfile" ||
     type === "clearPerformanceTrace" ||
     (type === "setPerformanceTraceEnabled" && typeof (message as { enabled?: unknown }).enabled === "boolean");
+}
+
+function isSidebarPerformanceTraceCollectedMessage(
+  message: unknown
+): message is SidebarPerformanceTraceCollectedMessage {
+  if (!message || typeof message !== "object") {
+    return false;
+  }
+  const candidate = message as { type?: unknown; requestId?: unknown; sidebar?: unknown };
+  return candidate.type === "sidebarPerformanceTraceCollected" &&
+    typeof candidate.requestId === "string" &&
+    isLabeledTraceSnapshot(candidate.sidebar);
 }
 
 function messageType(message: unknown): string {

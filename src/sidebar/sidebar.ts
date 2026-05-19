@@ -15,6 +15,7 @@ import {
   PROFILE_STORAGE_KEY,
   isTraceSnapshot,
   summarizePerformanceProfile,
+  type LabeledTraceSnapshot,
   type SidebarProfileSnapshot
 } from "../perf/profile.js";
 import { createActiveTabScrollTracker, resetActiveTabScrollTracker, scrollActiveTabIntoView } from "./active-scroll.js";
@@ -114,6 +115,7 @@ const VIRTUAL_OVERSCAN_ROWS = 32;
 const GUIDE_TOP = 1;
 const GUIDE_BOTTOM = 2;
 const GUIDE_FULL = GUIDE_TOP | GUIDE_BOTTOM;
+const sidebarProfileInstanceId = createSidebarProfileInstanceId();
 
 type ProfileSnapshot = SidebarProfileSnapshot;
 
@@ -139,6 +141,10 @@ type SidebarPerformanceTraceMessage =
     }
   | {
       type: "getSidebarPerformanceTrace";
+    }
+  | {
+      type: "collectSidebarPerformanceTrace";
+      requestId: string;
     };
 
 declare global {
@@ -452,13 +458,23 @@ async function profileSnapshot(): Promise<ProfileSnapshot> {
   };
 }
 
-function handleSidebarPerformanceTraceMessage(message: SidebarPerformanceTraceMessage): TraceSnapshot | { ok: true } {
+async function handleSidebarPerformanceTraceMessage(
+  message: SidebarPerformanceTraceMessage
+): Promise<TraceSnapshot | { ok: true }> {
   if (message.type === "setSidebarPerformanceTraceEnabled") {
     setSidebarPerformanceTraceEnabled(message.enabled);
     return { ok: true };
   }
   if (message.type === "clearSidebarPerformanceTrace") {
     clearSidebarPerformanceTrace();
+    return { ok: true };
+  }
+  if (message.type === "collectSidebarPerformanceTrace") {
+    await browser.runtime.sendMessage({
+      type: "sidebarPerformanceTraceCollected",
+      requestId: message.requestId,
+      sidebar: await labeledSidebarPerformanceTrace()
+    }).catch(() => undefined);
     return { ok: true };
   }
   return perfTrace.snapshot();
@@ -471,8 +487,34 @@ function isSidebarPerformanceTraceMessage(message: unknown): message is SidebarP
   const type = (message as { type?: unknown }).type;
   return type === "getSidebarPerformanceTrace" ||
     type === "clearSidebarPerformanceTrace" ||
+    (type === "collectSidebarPerformanceTrace" &&
+      typeof (message as { requestId?: unknown }).requestId === "string") ||
     (type === "setSidebarPerformanceTraceEnabled" &&
       typeof (message as { enabled?: unknown }).enabled === "boolean");
+}
+
+async function labeledSidebarPerformanceTrace(): Promise<LabeledTraceSnapshot> {
+  const windowId = await currentSidebarWindowId();
+  return {
+    id: windowId === undefined ? `sidebar-${sidebarProfileInstanceId}` : `sidebar-window-${windowId}`,
+    label: windowId === undefined ? `Sidebar ${sidebarProfileInstanceId.slice(0, 8)}` : `Sidebar window ${windowId}`,
+    ...(windowId === undefined ? {} : { windowId }),
+    url: window.location.href,
+    snapshot: perfTrace.snapshot()
+  };
+}
+
+async function currentSidebarWindowId(): Promise<number | undefined> {
+  const getCurrent = browser.windows?.getCurrent;
+  if (!getCurrent) {
+    return undefined;
+  }
+  const windowInfo = await getCurrent.call(browser.windows).catch(() => undefined);
+  return typeof windowInfo?.id === "number" ? windowInfo.id : undefined;
+}
+
+function createSidebarProfileInstanceId(): string {
+  return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
 function setSidebarPerformanceTraceEnabled(enabled: boolean): void {
