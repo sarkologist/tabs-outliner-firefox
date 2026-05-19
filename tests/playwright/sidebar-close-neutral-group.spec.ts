@@ -26,18 +26,24 @@ test.describe("sidebar neutral group close action", () => {
     expect(issues).toEqual([]);
   });
 
-  test("shows Close alongside Restore for closed groups with live descendants", async ({ page }) => {
+  test("uses the closed row title for restore while keeping Close for live descendants", async ({ page }) => {
     const issues = collectPageIssues(page);
     await loadSidebar(page);
 
     const closedParent = nodeRow(page, "window:closed-parent");
     await closedParent.hover();
     await expect(closedParent.getByRole("button", { name: "Close", exact: true })).toBeVisible();
-    await expect(closedParent.getByRole("button", { name: "Restore", exact: true })).toBeVisible();
+    await expect(closedParent.getByRole("button", { name: "Restore", exact: true })).toHaveCount(0);
+    await expect(closedParent.getByRole("button", { name: "Restore Closed parent", exact: true })).toBeVisible();
 
     await closedParent.getByRole("button", { name: "Close", exact: true }).click();
 
     await expect(sentSidebarCommands(page)).resolves.toEqual([{ type: "closeNode", nodeId: "window:closed-parent" }]);
+    await clearSentSidebarCommands(page);
+
+    await closedParent.getByRole("button", { name: "Restore Closed parent", exact: true }).click();
+
+    await expect(sentSidebarCommands(page)).resolves.toEqual([{ type: "restoreNode", nodeId: "window:closed-parent" }]);
     expect(issues).toEqual([]);
   });
 });
@@ -116,6 +122,13 @@ async function sentSidebarCommands(page: Page): Promise<unknown[]> {
   return page.evaluate(() => [
     ...((window as typeof window & { __sentSidebarCommands?: unknown[] }).__sentSidebarCommands ?? [])
   ]);
+}
+
+async function clearSentSidebarCommands(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const commands = (window as typeof window & { __sentSidebarCommands?: unknown[] }).__sentSidebarCommands;
+    commands?.splice(0, commands.length);
+  });
 }
 
 function collectPageIssues(page: Page): ConsoleIssue[] {

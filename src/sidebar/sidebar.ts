@@ -1422,8 +1422,9 @@ function renderRow(
     const label = document.createElement("button");
     label.className = "node-label";
     label.type = "button";
-    label.title = node.url ?? titleText;
-    label.ariaLabel = node.url ? `${titleText} - ${node.url}` : titleText;
+    const labelText = node.url ? `${titleText} - ${node.url}` : titleText;
+    label.title = node.status === "closed" ? `Restore ${labelText}` : node.url ?? titleText;
+    label.ariaLabel = node.status === "closed" ? `Restore ${labelText}` : labelText;
     label.dataset.action = "focus-or-restore";
 
     const title = document.createElement("span");
@@ -1444,9 +1445,6 @@ function renderRow(
   actions.append(actionButton("Group", "group", "G"));
   if (node.status === "live" || hasLiveDescendant(node.id)) {
     actions.append(actionButton("Close", "close-node"));
-  }
-  if (node.status === "closed") {
-    actions.append(actionButton("Restore", "restore-node"));
   }
 
   if (canFlattenSubtree(state, node)) {
@@ -1718,11 +1716,6 @@ function handleTreeClick(event: MouseEvent): void {
 
   if (action === "close-node") {
     void runAndRender({ type: "closeNode", nodeId: node.id });
-    return;
-  }
-
-  if (action === "restore-node") {
-    restoreNodeWithConfirmation(node.id);
     return;
   }
 

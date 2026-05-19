@@ -130,8 +130,9 @@ function renderBootRow(
   label.type = "button";
   label.disabled = true;
   const titleText = node.title || "Untitled";
-  label.title = node.url ?? titleText;
-  label.ariaLabel = node.url ? `${titleText} - ${node.url}` : titleText;
+  const labelText = node.url ? `${titleText} - ${node.url}` : titleText;
+  label.title = node.status === "closed" ? `Restore ${labelText}` : node.url ?? titleText;
+  label.ariaLabel = node.status === "closed" ? `Restore ${labelText}` : labelText;
   const title = document.createElement("span");
   title.className = "node-title";
   title.textContent = titleText;
