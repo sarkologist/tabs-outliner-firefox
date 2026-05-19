@@ -2,7 +2,7 @@ import type { BrowserAdapter } from "./adapter.js";
 import { createBrowserAdapter } from "./browser-adapter.js";
 import { computeDiagnostics, type OutlineDiagnostics } from "./diagnostics.js";
 import { isBackgroundCommand, planLiveSubtreeClose, runCommand, syncBrowserOrder } from "./commands.js";
-import type { BackgroundCommand, CommandAck } from "./commands.js";
+import type { BackgroundCommand, CommandAck, RuntimeClosePlan } from "./commands.js";
 import { getNormalWindow, getNormalWindows, getNormalWindowsIncludingTabs } from "./runtime-snapshot.js";
 import { createStateCache } from "./state-cache.js";
 import {
@@ -427,11 +427,8 @@ export function createBackgroundController(options: BackgroundControllerOptions)
           ? stateWithClonedNode(current, message.nodeId)
           : current
         : undefined;
-      const outlinerClosingTabId = message.type === "closeNode"
-        ? liveTabIdForNode(current, message.nodeId)
-        : undefined;
-      const outlinerClosingWindowId = message.type === "closeNode"
-        ? liveWindowIdForNode(current, message.nodeId)
+      const outlinerClosePlan = message.type === "closeNode"
+        ? closePlanForCloseNodeCommand(current, message.nodeId)
         : undefined;
       const focusTarget = message.type === "focusNode"
         ? focusTargetForNode(current, message.nodeId)
@@ -442,11 +439,11 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       const restorePatchNodeIds = message.type === "restoreNode"
         ? restorePatchCandidateNodeIds(current, message.nodeId)
         : undefined;
-      if (typeof outlinerClosingTabId === "number") {
-        outlinerClosingTabIds.add(outlinerClosingTabId);
+      for (const tabId of outlinerClosePlan?.tabIds ?? []) {
+        outlinerClosingTabIds.add(tabId);
       }
-      if (typeof outlinerClosingWindowId === "number") {
-        outlinerClosingWindowIds.add(outlinerClosingWindowId);
+      for (const windowId of outlinerClosePlan?.windowIds ?? []) {
+        outlinerClosingWindowIds.add(windowId);
       }
       if (focusTarget && !focusTarget.tabActive) {
         commandFocusedTabIds.add(focusTarget.tabId);
@@ -468,11 +465,11 @@ export function createBackgroundController(options: BackgroundControllerOptions)
           runCommand(current, adapter, message)
         );
       } catch (error) {
-        if (typeof outlinerClosingTabId === "number") {
-          outlinerClosingTabIds.delete(outlinerClosingTabId);
+        for (const tabId of outlinerClosePlan?.tabIds ?? []) {
+          outlinerClosingTabIds.delete(tabId);
         }
-        if (typeof outlinerClosingWindowId === "number") {
-          outlinerClosingWindowIds.delete(outlinerClosingWindowId);
+        for (const windowId of outlinerClosePlan?.windowIds ?? []) {
+          outlinerClosingWindowIds.delete(windowId);
         }
         for (const tabId of deleteClosePlan?.tabIds ?? []) {
           deleteOwnedClosingTabIds.delete(tabId);
@@ -2238,6 +2235,20 @@ function focusRuntimeWindowInPlace(
   }
 
   return { found, changed, updates };
+}
+
+function closePlanForCloseNodeCommand(state: OutlineState, nodeId: NodeId): RuntimeClosePlan {
+  const tabId = liveTabIdForNode(state, nodeId);
+  if (typeof tabId === "number") {
+    return { windowIds: [], tabIds: [tabId] };
+  }
+
+  const windowId = liveWindowIdForNode(state, nodeId);
+  if (typeof windowId === "number") {
+    return { windowIds: [windowId], tabIds: [] };
+  }
+
+  return planLiveSubtreeClose(state, nodeId);
 }
 
 function liveTabIdForNode(state: OutlineState, nodeId: NodeId): number | undefined {

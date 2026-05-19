@@ -163,6 +163,69 @@ describe("background commands", () => {
     expect(adapter.closeWindow).toHaveBeenCalledWith(10);
   });
 
+  it("closes live descendants for neutral outline groups without changing outline state immediately", async () => {
+    const state = bootstrapFromWindows(runtimeWindows, { now: 1000 });
+    const groupingAdapter = fakeAdapter();
+    const grouped = await runCommand(state, groupingAdapter, { type: "wrapNodeInGroup", nodeId: "window:10" });
+    const innerGroupId = grouped.state.nodes["window:10"]?.parentId;
+    const nested = await runCommand(grouped.state, groupingAdapter, {
+      type: "wrapNodeInGroup",
+      nodeId: innerGroupId!
+    });
+    const outerGroupId = nested.state.nodes[innerGroupId!]?.parentId;
+    const closeAdapter = fakeAdapter();
+
+    const result = await runCommand(nested.state, closeAdapter, {
+      type: "closeNode",
+      nodeId: outerGroupId!
+    });
+
+    expect(closeAdapter.closeWindow).toHaveBeenCalledWith(10);
+    expect(closeAdapter.closeTabs).not.toHaveBeenCalled();
+    expect(result.changed).toBe(false);
+    expect(result.state).toBe(nested.state);
+    expect(result.state.nodes[outerGroupId!]?.status).toBe("neutral");
+    expect(result.state.nodes["window:10"]?.status).toBe("live");
+  });
+
+  it("closes live descendants for closed parent groups without restoring the parent", async () => {
+    const base = bootstrapFromWindows(runtimeWindows, { now: 1000 });
+    const state: OutlineState = {
+      ...base,
+      rootIds: ["window:closed-parent"],
+      nodes: {
+        ...base.nodes,
+        "window:closed-parent": {
+          id: "window:closed-parent",
+          kind: "window",
+          status: "closed",
+          title: "Group",
+          childIds: ["window:10"],
+          collapsed: false,
+          createdAt: 1000,
+          updatedAt: 1000,
+          closedAt: 1000,
+          restore: { sessionId: "session-closed-parent" }
+        },
+        "window:10": {
+          ...base.nodes["window:10"]!,
+          parentId: "window:closed-parent"
+        }
+      }
+    };
+    const adapter = fakeAdapter();
+
+    const result = await runCommand(state, adapter, {
+      type: "closeNode",
+      nodeId: "window:closed-parent"
+    });
+
+    expect(adapter.closeWindow).toHaveBeenCalledWith(10);
+    expect(adapter.restoreSession).not.toHaveBeenCalled();
+    expect(result.changed).toBe(false);
+    expect(result.state).toBe(state);
+  });
+
   it("deletes closed nodes without closing promoted live children", async () => {
     const state = closeTab(bootstrapFromWindows(runtimeWindows, { now: 1000 }), 1, {
       now: 2000,

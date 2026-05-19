@@ -3433,6 +3433,75 @@ describe("background controller lifecycle", () => {
     expect(closeBroadcast?.state).toBeUndefined();
   });
 
+  it("preserves live descendants when closing a neutral outline group", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        },
+        {
+          id: 20,
+          focused: false,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        },
+        {
+          id: 2,
+          windowId: 20,
+          index: 0,
+          active: true,
+          url: "https://two.example/",
+          title: "Two"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    await controller.handleMessage({ type: "wrapNodeInGroup", nodeId: "window:20" });
+    let state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    const innerGroupId = state.nodes["window:20"]?.parentId;
+    await controller.handleMessage({ type: "wrapNodeInGroup", nodeId: innerGroupId! });
+    state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    const outerGroupId = state.nodes[innerGroupId!]?.parentId;
+    runtime.broadcasts.length = 0;
+    vi.mocked(runtime.api.sessions.getRecentlyClosed).mockResolvedValue([
+      { window: { sessionId: "session-window-20" } } as never
+    ]);
+
+    await controller.handleMessage({ type: "closeNode", nodeId: outerGroupId! });
+
+    state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(runtime.api.windows.remove).toHaveBeenCalledWith(20);
+    expect(runtime.windows.map((windowInfo) => windowInfo.id)).toEqual([10]);
+    expect(runtime.tabs.map((tab) => tab.id)).toEqual([1]);
+    expect(state.nodes[outerGroupId!]?.status).toBe("neutral");
+    expect(state.nodes[innerGroupId!]?.status).toBe("neutral");
+    expect(state.nodes["window:20"]?.status).toBe("closed");
+    expect(state.nodes["window:20"]?.restore?.sessionId).toBe("session-window-20");
+    expect(state.nodes["tab:2"]?.status).toBe("closed");
+    expect(state.nodes["tab:2"]?.live).toBeUndefined();
+    expect(state.nodes["window:10"]?.status).toBe("live");
+    expect(state.nodes["tab:1"]?.status).toBe("live");
+    const closeBroadcast = runtime.broadcasts.at(-1) as
+      | { type?: string; updatedNodes?: OutlineState["nodes"][string][]; closedCountDelta?: number; state?: OutlineState }
+      | undefined;
+    expect(closeBroadcast?.type).toBe("nodeStateUpdated");
+    expect(closeBroadcast?.updatedNodes?.map((node) => node.id).sort()).toEqual(["tab:2", "window:20"]);
+    expect(closeBroadcast?.closedCountDelta).toBe(2);
+    expect(closeBroadcast?.state).toBeUndefined();
+  });
+
   it("handles outliner closeNode when Firefox fires tabRemoved during tabs.remove", async () => {
     const runtime = fakeRuntime(
       [

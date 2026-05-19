@@ -897,9 +897,10 @@ function renderSnapshotRows(projection: VisibleTreeProjection): void {
   tree.style.height = `${totalRowCount * rowHeight}px`;
   tree.textContent = "";
 
+  const hasLiveDescendant = createLiveDescendantChecker(currentState);
   const fragment = document.createDocumentFragment();
   for (const row of projection.rows) {
-    fragment.append(renderRow(currentState, row, rowHeight, projection.query));
+    fragment.append(renderRow(currentState, row, rowHeight, projection.query, hasLiveDescendant));
   }
   tree.append(fragment);
   scrollToObservedActiveTab(projection);
@@ -1343,11 +1344,12 @@ function renderVirtualRows(): void {
     tree.style.height = `${range.totalHeight}px`;
     tree.textContent = "";
 
+    const hasLiveDescendant = createLiveDescendantChecker(currentState);
     const fragment = document.createDocumentFragment();
     for (let index = range.start; index < range.end; index += 1) {
       const row = currentProjection.rows[index];
       if (row) {
-        fragment.append(renderRow(currentState, row, rowHeight, currentProjection.query));
+        fragment.append(renderRow(currentState, row, rowHeight, currentProjection.query, hasLiveDescendant));
       }
     }
     tree.append(fragment);
@@ -1364,7 +1366,13 @@ function currentRowHeight(): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 18;
 }
 
-function renderRow(state: OutlineState, rowInfo: VisibleTreeRow, rowHeight: number, searchQuery: string): HTMLElement {
+function renderRow(
+  state: OutlineState,
+  rowInfo: VisibleTreeRow,
+  rowHeight: number,
+  searchQuery: string,
+  hasLiveDescendant: (nodeId: NodeId) => boolean
+): HTMLElement {
   const node = state.nodes[rowInfo.nodeId];
   if (!node) {
     return document.createElement("li");
@@ -1434,8 +1442,11 @@ function renderRow(state: OutlineState, rowInfo: VisibleTreeRow, rowHeight: numb
     actions.append(actionButton("Paste", "paste", "P", !pasteAfterCommand(state, pendingCutNodeId, node.id)));
   }
   actions.append(actionButton("Group", "group", "G"));
-  if (node.status !== "neutral") {
-    actions.append(actionButton(node.status === "live" ? "Close" : "Restore", "close-or-restore"));
+  if (node.status === "live" || hasLiveDescendant(node.id)) {
+    actions.append(actionButton("Close", "close-node"));
+  }
+  if (node.status === "closed") {
+    actions.append(actionButton("Restore", "restore-node"));
   }
 
   if (canFlattenSubtree(state, node)) {
@@ -1452,6 +1463,38 @@ function renderRow(state: OutlineState, rowInfo: VisibleTreeRow, rowHeight: numb
   item.append(row);
 
   return item;
+}
+
+function createLiveDescendantChecker(state: OutlineState): (nodeId: NodeId) => boolean {
+  const memo = new Map<NodeId, boolean>();
+  const visiting = new Set<NodeId>();
+
+  const check = (nodeId: NodeId): boolean => {
+    const cached = memo.get(nodeId);
+    if (cached !== undefined) {
+      return cached;
+    }
+    if (visiting.has(nodeId)) {
+      return false;
+    }
+
+    const node = state.nodes[nodeId];
+    if (!node) {
+      memo.set(nodeId, false);
+      return false;
+    }
+
+    visiting.add(nodeId);
+    const hasLiveChild = node.childIds.some((childId) => {
+      const child = state.nodes[childId];
+      return Boolean(child && (child.status === "live" || check(childId)));
+    });
+    visiting.delete(nodeId);
+    memo.set(nodeId, hasLiveChild);
+    return hasLiveChild;
+  };
+
+  return check;
 }
 
 function appendTitleText(element: HTMLElement, titleText: string, searchQuery: string): void {
@@ -1673,12 +1716,13 @@ function handleTreeClick(event: MouseEvent): void {
     return;
   }
 
-  if (action === "close-or-restore") {
-    if (node.status === "live") {
-      void runAndRender({ type: "closeNode", nodeId: node.id });
-    } else {
-      restoreNodeWithConfirmation(node.id);
-    }
+  if (action === "close-node") {
+    void runAndRender({ type: "closeNode", nodeId: node.id });
+    return;
+  }
+
+  if (action === "restore-node") {
+    restoreNodeWithConfirmation(node.id);
     return;
   }
 

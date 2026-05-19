@@ -168,6 +168,8 @@ export async function runCommand(
         await adapter.closeTabs([node.live.tabId]);
       } else if (isLiveWindow(node)) {
         await adapter.closeWindow(node.live.windowId);
+      } else {
+        await closeRuntimePlan(adapter, planLiveSubtreeClose(state, command.nodeId));
       }
       return unchangedCommandResult(state);
     }
