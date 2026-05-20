@@ -53,6 +53,11 @@ export async function getNormalWindowsIncludingTabs(
       continue;
     }
 
+    const queriedWindow = windowWithTabId(windows, tab.id);
+    if (queriedWindow && queriedWindow.id !== tab.windowId) {
+      continue;
+    }
+
     const tabs = windowInfo.tabs ?? [];
     const existingIndex = tabs.findIndex((candidate) => candidate.id === tab.id);
     if (existingIndex >= 0) {
@@ -64,6 +69,10 @@ export async function getNormalWindowsIncludingTabs(
   }
 
   return [...windowsById.values()];
+}
+
+function windowWithTabId(windows: RuntimeWindow[], tabId: number): RuntimeWindow | undefined {
+  return windows.find((windowInfo) => windowInfo.tabs?.some((candidate) => candidate.id === tabId));
 }
 
 export async function getNormalWindow(api: RuntimeSnapshotApi, windowId: number): Promise<RuntimeWindow | undefined> {

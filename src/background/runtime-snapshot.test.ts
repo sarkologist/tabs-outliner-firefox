@@ -195,4 +195,65 @@ describe("runtime snapshot", () => {
       }
     ]);
   });
+
+  it("ignores stale event tabs when a fresh query has the tab in another window", async () => {
+    const api = snapshotApi(
+      [
+        {
+          id: 10,
+          focused: false,
+          incognito: false,
+          tabs: []
+        },
+        {
+          id: 20,
+          focused: true,
+          incognito: false,
+          tabs: []
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 20,
+          index: 0,
+          active: true,
+          url: "https://fresh.example/",
+          title: "Fresh"
+        }
+      ]
+    );
+
+    await expect(
+      getNormalWindowsIncludingTabs(api, [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: false,
+          url: "https://stale.example/",
+          title: "Stale"
+        }
+      ])
+    ).resolves.toEqual([
+      {
+        id: 10,
+        focused: false,
+        incognito: false,
+        tabs: []
+      },
+      {
+        id: 20,
+        focused: true,
+        incognito: false,
+        tabs: [
+          expect.objectContaining({
+            id: 1,
+            windowId: 20,
+            url: "https://fresh.example/"
+          })
+        ]
+      }
+    ]);
+  });
 });

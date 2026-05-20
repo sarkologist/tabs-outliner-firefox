@@ -77,6 +77,7 @@ export type BackgroundController = {
 
 type RefreshOptions = {
   closeMissing?: boolean;
+  activationByWindowId?: ReadonlyMap<number, number>;
 };
 
 type RuntimeRefreshCaller = {
@@ -207,6 +208,11 @@ const SIDEBAR_PROFILE_COLLECTION_DELAY_MS = 50;
 const TOGGLE_SIDEBAR_COMMAND = "toggle-sidebar";
 const SIDEBAR_WINDOW_PATH = "sidebar/sidebar.html";
 
+type CommandRelocatedTabEcho = {
+  fromWindowId: number;
+  toWindowId: number;
+};
+
 export function createBackgroundController(options: BackgroundControllerOptions): BackgroundController {
   const { api, now = Date.now } = options;
   const adapter = options.adapter ?? createBrowserAdapter(api);
@@ -228,6 +234,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   const deleteOwnedClosingWindowIds = new Set<number>();
   const removedTabIds = new Set<number>();
   const commandRestoredTabIds = new Set<number>();
+  const commandRelocatedTabEchoes = new Map<number, CommandRelocatedTabEcho>();
   const commandFocusedTabIds = new Set<number>();
   const commandFocusedActivationWindowIds = new Set<number>();
   const commandFocusedWindowIds = new Set<number>();
@@ -321,6 +328,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   api.tabs.onRemoved.addListener(async (tabId, removeInfo) => {
     await perfTrace.measureAsync("background.event.tabs.onRemoved", { tabId }, async () => {
       removedTabIds.add(tabId);
+      commandRelocatedTabEchoes.delete(tabId);
       if (deleteOwnedClosingTabIds.delete(tabId)) {
         return;
       }
@@ -563,6 +571,9 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         return commandAck(false);
       }
 
+      if (commandMayRelocateLiveTabs(message.type)) {
+        trackCommandRelocatedTabEchoes(current, result.state, commandRelocatedTabEchoes);
+      }
       if (message.type === "restoreNode") {
         for (const tabId of restoredLiveTabIdsChangedByCommand(current, result.state, restorePatchNodeIds)) {
           commandRestoredTabIds.add(tabId);
@@ -997,7 +1008,13 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       return promise;
     }
 
-    return queueRuntimeRefresh();
+    const pending = pendingRuntimeRefresh ?? createPendingRuntimeRefresh();
+    pendingRuntimeRefresh = pending;
+    pending.closeMissing = true;
+    pending.activationByWindowId.set(activeInfo.windowId, activeInfo.tabId);
+    const promise = addRuntimeRefreshCaller(pending);
+    schedulePendingRuntimeRefresh(pending);
+    return promise;
   }
 
   function createPendingRuntimeRefresh(): PendingRuntimeRefresh {
@@ -1050,7 +1067,8 @@ export function createBackgroundController(options: BackgroundControllerOptions)
           : tab;
       });
       const changed = await refreshFromRuntimeNow(eventTabs, {
-        closeMissing: pending.closeMissing
+        closeMissing: pending.closeMissing,
+        activationByWindowId: pending.activationByWindowId
       });
       for (const caller of pending.callers) {
         caller.resolve(changed);
@@ -1071,6 +1089,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     const currentEventTabs = eventTabs
       .filter((tab) => !removedTabIds.has(tab.id))
       .filter((tab) => !consumeCommandRestoredTabEvent(current, commandRestoredTabIds, tab))
+      .filter((tab) => !consumeCommandRelocatedStaleTabEvent(current, commandRelocatedTabEchoes, tab))
       .filter((tab) => tabEventMayChangeState(current, tab, index));
     if (eventTabs.length > 0 && currentEventTabs.length === 0 && !closeMissing) {
       return false;
@@ -1093,7 +1112,15 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     }, () => currentEventTabs.length > 0
       ? getNormalWindowsIncludingTabs(api, currentEventTabs)
       : getNormalWindows(api));
-    const windows = filterRemovedTabsFromWindows(windowsSnapshot, removedTabIds);
+    const windows = applyActivationOverridesToWindows(
+      filterCommandRelocatedStaleTabsFromWindows(
+        filterRemovedTabsFromWindows(windowsSnapshot, removedTabIds),
+        current,
+        commandRelocatedTabEchoes
+      ),
+      current,
+      options.activationByWindowId
+    );
     if (runtimeSnapshotMateriallyMatchesState(current, windows)) {
       return false;
     }
@@ -2448,6 +2475,36 @@ function restoredLiveTabIdsChangedByCommand(
   });
 }
 
+function commandMayRelocateLiveTabs(type: BackgroundCommand["type"]): boolean {
+  return type === "moveNode" || type === "moveNodeToNewWindow" || type === "wrapNodeInGroup";
+}
+
+function trackCommandRelocatedTabEchoes(
+  previous: OutlineState,
+  next: OutlineState,
+  commandRelocatedTabEchoes: Map<number, CommandRelocatedTabEcho>
+): void {
+  for (const previousNode of Object.values(previous.nodes)) {
+    if (!isLiveTabNode(previousNode)) {
+      continue;
+    }
+
+    const nextNode = next.nodes[previousNode.id];
+    if (
+      !isLiveTabNode(nextNode) ||
+      nextNode.live.tabId !== previousNode.live.tabId ||
+      nextNode.live.windowId === previousNode.live.windowId
+    ) {
+      continue;
+    }
+
+    commandRelocatedTabEchoes.set(previousNode.live.tabId, {
+      fromWindowId: previousNode.live.windowId,
+      toWindowId: nextNode.live.windowId
+    });
+  }
+}
+
 function consumeCommandRestoredTabEvent(
   state: OutlineState,
   commandRestoredTabIds: Set<number>,
@@ -2465,6 +2522,35 @@ function consumeCommandRestoredTabEvent(
 
   commandRestoredTabIds.delete(tab.id);
   return true;
+}
+
+function consumeCommandRelocatedStaleTabEvent(
+  state: OutlineState,
+  commandRelocatedTabEchoes: Map<number, CommandRelocatedTabEcho>,
+  tab: RuntimeTab
+): boolean {
+  const echo = commandRelocatedTabEchoes.get(tab.id);
+  if (!echo) {
+    return false;
+  }
+
+  const node = liveTabNodeByRuntimeId(state, tab.id);
+  if (!node) {
+    commandRelocatedTabEchoes.delete(tab.id);
+    return false;
+  }
+
+  if (tab.windowId === node.live.windowId || tab.windowId === echo.toWindowId) {
+    commandRelocatedTabEchoes.delete(tab.id);
+    return false;
+  }
+
+  if (tab.windowId === echo.fromWindowId && node.live.windowId === echo.toWindowId) {
+    return true;
+  }
+
+  commandRelocatedTabEchoes.delete(tab.id);
+  return false;
 }
 
 function tabEventMayChangeState(state: OutlineState, tab: RuntimeTab, index: RuntimeStateIndex): boolean {
@@ -2749,6 +2835,163 @@ function filterRemovedTabsFromWindows(windows: RuntimeWindow[], removedTabIds: S
     ...windowInfo,
     tabs: (windowInfo.tabs ?? []).filter((tab) => !removedTabIds.has(tab.id))
   }));
+}
+
+function filterCommandRelocatedStaleTabsFromWindows(
+  windows: RuntimeWindow[],
+  state: OutlineState,
+  commandRelocatedTabEchoes: Map<number, CommandRelocatedTabEcho>
+): RuntimeWindow[] {
+  if (commandRelocatedTabEchoes.size === 0) {
+    return windows;
+  }
+
+  const freshEchoTabIds = new Set<number>();
+  for (const windowInfo of windows) {
+    for (const tab of windowInfo.tabs ?? []) {
+      const echo = commandRelocatedTabEchoes.get(tab.id);
+      if (!echo) {
+        continue;
+      }
+      const node = liveTabNodeByRuntimeId(state, tab.id);
+      if (!node) {
+        commandRelocatedTabEchoes.delete(tab.id);
+        continue;
+      }
+      if (tab.windowId === node.live.windowId || tab.windowId === echo.toWindowId) {
+        freshEchoTabIds.add(tab.id);
+      }
+    }
+  }
+
+  let changed = false;
+  const fallbackTabs: RuntimeTab[] = [];
+  const filtered = windows.map((windowInfo) => {
+    const tabs = windowInfo.tabs ?? [];
+    const nextTabs = tabs.filter((tab) => {
+      const echo = commandRelocatedTabEchoes.get(tab.id);
+      if (!echo) {
+        return true;
+      }
+
+      const node = liveTabNodeByRuntimeId(state, tab.id);
+      if (!node) {
+        commandRelocatedTabEchoes.delete(tab.id);
+        return true;
+      }
+
+      const staleOldWindowEcho = tab.windowId === echo.fromWindowId && node.live.windowId === echo.toWindowId;
+      if (staleOldWindowEcho) {
+        changed = true;
+        if (!freshEchoTabIds.has(tab.id)) {
+          const fallbackTab = commandRelocatedTabFromCurrentState(state, tab);
+          if (fallbackTab) {
+            fallbackTabs.push(fallbackTab);
+          }
+        }
+        return false;
+      }
+
+      if (tab.windowId === node.live.windowId || tab.windowId === echo.toWindowId) {
+        return true;
+      }
+
+      commandRelocatedTabEchoes.delete(tab.id);
+      return true;
+    });
+
+    return nextTabs.length === tabs.length
+      ? windowInfo
+      : {
+          ...windowInfo,
+          tabs: nextTabs
+        };
+  });
+
+  if (fallbackTabs.length === 0) {
+    return changed ? filtered : windows;
+  }
+
+  const missingFallbackTabs = fallbackTabs.filter((tab) =>
+    !filtered.some((windowInfo) => windowInfo.tabs?.some((candidate) => candidate.id === tab.id))
+  );
+  if (missingFallbackTabs.length === 0) {
+    return changed ? filtered : windows;
+  }
+
+  const withFallbackTabs = filtered.map((windowInfo) => {
+    const additions = missingFallbackTabs.filter((tab) => tab.windowId === windowInfo.id);
+    if (additions.length === 0) {
+      return windowInfo;
+    }
+
+    return {
+      ...windowInfo,
+      tabs: [...(windowInfo.tabs ?? []), ...additions].sort((left, right) => left.index - right.index)
+    };
+  });
+
+  return withFallbackTabs;
+}
+
+function applyActivationOverridesToWindows(
+  windows: RuntimeWindow[],
+  state: OutlineState,
+  activationByWindowId?: ReadonlyMap<number, number>
+): RuntimeWindow[] {
+  if (!activationByWindowId || activationByWindowId.size === 0) {
+    return windows;
+  }
+
+  let changed = false;
+  const nextWindows = windows.map((windowInfo) => {
+    const activeTabId = activationByWindowId.get(windowInfo.id);
+    const tabs = windowInfo.tabs ?? [];
+    const nextTabs = tabs.map((tab) => {
+      const currentNode = liveTabNodeByRuntimeId(state, tab.id);
+      const active = typeof activeTabId === "number"
+        ? tab.id === activeTabId
+        : currentNode?.active ?? tab.active;
+      if (tab.active === active) {
+        return tab;
+      }
+      changed = true;
+      return {
+        ...tab,
+        active
+      };
+    });
+
+    return changed
+      ? {
+          ...windowInfo,
+          tabs: nextTabs
+        }
+      : windowInfo;
+  });
+
+  return changed ? nextWindows : windows;
+}
+
+function commandRelocatedTabFromCurrentState(state: OutlineState, staleTab: RuntimeTab): RuntimeTab | undefined {
+  const node = liveTabNodeByRuntimeId(state, staleTab.id);
+  if (!node) {
+    return undefined;
+  }
+
+  const windowNode = liveWindowNodeByRuntimeId(state, node.live.windowId);
+  const projectedIndex = windowNode
+    ? projectLiveTabs(state, windowNode.id).findIndex((tab) => tab.tabId === staleTab.id)
+    : -1;
+  return {
+    ...staleTab,
+    windowId: node.live.windowId,
+    index: projectedIndex >= 0 ? projectedIndex : staleTab.index,
+    active: node.active === true,
+    ...(node.url ? { url: node.url } : {}),
+    ...(node.title ? { title: node.title } : {}),
+    ...(node.favIconUrl ? { favIconUrl: node.favIconUrl } : {})
+  };
 }
 
 function isDiagnosticsRequest(message: unknown): message is { type: "getDiagnostics" } {

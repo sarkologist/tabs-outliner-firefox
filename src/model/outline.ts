@@ -464,7 +464,8 @@ export function closeWindow(state: OutlineState, windowId: number, context: Clos
     rootIds: state.rootIds,
     nodes: { ...state.nodes }
   };
-  const subtreeIds = collectSubtreeIds(state, nodeId);
+  promoteForeignLiveWindowsAfterClosingWindow(next, state, nodeId, windowId);
+  const subtreeIds = collectSubtreeIds(next, nodeId);
   for (const id of subtreeIds) {
     cloneNodeForMutation(next, id);
   }
@@ -475,6 +476,76 @@ export function closeWindow(state: OutlineState, windowId: number, context: Clos
     });
   }
   return next;
+}
+
+function promoteForeignLiveWindowsAfterClosingWindow(
+  state: OutlineState,
+  original: OutlineState,
+  closingWindowNodeId: NodeId,
+  closingRuntimeWindowId: number
+): void {
+  const promotedWindowIds = foreignLiveWindowRootsInSubtree(original, closingWindowNodeId, closingRuntimeWindowId);
+  if (promotedWindowIds.length === 0) {
+    return;
+  }
+
+  const closingWindow = requireNode(state, closingWindowNodeId);
+  const targetParentId = closingWindow.parentId;
+  const targetSiblings = targetParentId
+    ? cloneNodeForMutation(state, targetParentId).childIds
+    : mutableRootIds(state, original);
+  const anchorIndex = targetSiblings.indexOf(closingWindowNodeId);
+  let insertionIndex = anchorIndex >= 0 ? anchorIndex + 1 : targetSiblings.length;
+
+  for (const promotedWindowId of promotedWindowIds) {
+    const promotedWindow = cloneNodeForMutation(state, promotedWindowId);
+    const oldParentId = promotedWindow.parentId;
+    const oldSiblings = oldParentId
+      ? cloneNodeForMutation(state, oldParentId).childIds
+      : mutableRootIds(state, original);
+    removeId(oldSiblings, promotedWindowId);
+
+    if (targetParentId) {
+      promotedWindow.parentId = targetParentId;
+    } else {
+      delete promotedWindow.parentId;
+    }
+    targetSiblings.splice(insertionIndex, 0, promotedWindowId);
+    insertionIndex += 1;
+  }
+}
+
+function foreignLiveWindowRootsInSubtree(
+  state: OutlineState,
+  nodeId: NodeId,
+  closingRuntimeWindowId: number
+): NodeId[] {
+  const windowIds: NodeId[] = [];
+  const visited = new Set<NodeId>();
+  const stack = [...(state.nodes[nodeId]?.childIds ?? [])].reverse();
+
+  while (stack.length > 0) {
+    const currentId = stack.pop()!;
+    if (visited.has(currentId)) {
+      continue;
+    }
+    visited.add(currentId);
+
+    const node = state.nodes[currentId];
+    if (!node) {
+      continue;
+    }
+    if (isNodeLiveWindow(node) && node.live.windowId !== closingRuntimeWindowId) {
+      windowIds.push(node.id);
+      continue;
+    }
+
+    for (let index = node.childIds.length - 1; index >= 0; index -= 1) {
+      stack.push(node.childIds[index]!);
+    }
+  }
+
+  return windowIds;
 }
 
 export function deleteLiveTabNodeByTabId(state: OutlineState, tabId: number): OutlineState {

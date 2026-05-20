@@ -341,6 +341,34 @@ describe("outline model", () => {
     expect(next.nodes["window:10"]?.restore?.sessionId).toBe("session-window-10");
   });
 
+  it("promotes nested foreign live windows when their outline parent window closes", () => {
+    const state = wrapNodeInGroup(bootstrapFromWindows(windows, { now: 1000 }), "tab:1", {
+      now: 2000,
+      liveWindow: {
+        id: 42,
+        focused: true,
+        incognito: false
+      }
+    });
+
+    const next = closeWindow(state, 10, {
+      now: 3000,
+      sessionId: "session-window-10"
+    });
+
+    expect(next.rootIds).toEqual(["window:10", "window:42"]);
+    expect(next.nodes["window:10"]?.status).toBe("closed");
+    expect(next.nodes["window:10"]?.childIds).toEqual(["tab:3"]);
+    expect(next.nodes["tab:3"]?.status).toBe("closed");
+    expect(next.nodes["window:42"]?.status).toBe("live");
+    expect(next.nodes["window:42"]?.parentId).toBeUndefined();
+    expect(next.nodes["window:42"]?.childIds).toEqual(["tab:1"]);
+    expect(next.nodes["tab:1"]?.status).toBe("live");
+    expect(next.nodes["tab:1"]?.parentId).toBe("window:42");
+    expect(next.nodes["tab:2"]?.status).toBe("live");
+    expect(next.nodes["tab:2"]?.parentId).toBe("tab:1");
+  });
+
   it("deletes a live tab node by runtime id and promotes its live children", () => {
     const state = bootstrapFromWindows(windows, { now: 1000 });
 
