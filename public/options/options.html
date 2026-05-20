@@ -7,6 +7,17 @@
     <link rel="stylesheet" href="./options.css" />
   </head>
   <body>
+    <svg class="icon-sprite" aria-hidden="true" focusable="false">
+      <symbol id="icon-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6" /><path d="m16 16 4 4" /></symbol>
+      <symbol id="icon-undo" viewBox="0 0 24 24"><path d="M9 14 4 9l5-5" /><path d="M4 9h10a6 6 0 0 1 0 12h-2" /></symbol>
+      <symbol id="icon-redo" viewBox="0 0 24 24"><path d="m15 14 5-5-5-5" /><path d="M20 9H10a6 6 0 0 0 0 12h2" /></symbol>
+      <symbol id="icon-scissors" viewBox="0 0 24 24"><circle cx="3.65" cy="7.93" r="2.45" /><circle cx="3.65" cy="16.07" r="2.45" /><path d="M5.86 9 12 12 19.82 15.81" /><path d="M5.86 15 12 12 19.82 8.19" /><circle cx="12" cy="12" r="0.85" fill="currentColor" stroke="none" /></symbol>
+      <symbol id="icon-clipboard" viewBox="0 0 24 24"><path d="M9 4h6l1 2h3v15H5V6h3l1-2Z" /><path d="M9 4v4h6V4" /></symbol>
+      <symbol id="icon-zoom-in" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6" /><path d="m15 15 5 5" /><path d="M10.5 7.5v6" /><path d="M7.5 10.5h6" /></symbol>
+      <symbol id="icon-zoom-out" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6" /><path d="m15 15 5 5" /><path d="M7.5 10.5h6" /></symbol>
+      <symbol id="icon-zoom-reset" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6" /><path d="m15 15 5 5" /><path d="M8.5 8.5h4v4h-4z" /></symbol>
+      <symbol id="icon-sidebar" viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="14" rx="2" /><path d="M9 5v14" /><path d="m14 9 3 3-3 3" /></symbol>
+    </svg>
     <header class="page-header">
       <h1>Options</h1>
       <p id="save-status" class="save-status" role="status"></p>
@@ -47,7 +58,7 @@
             <h2 id="global-shortcut-heading">Extension Shortcut</h2>
           </div>
           <div class="shortcut-row global-shortcut-row">
-            <span class="shortcut-label">Open or close sidebar</span>
+            <span class="shortcut-label"><svg class="label-icon" aria-hidden="true"><use href="#icon-sidebar"></use></svg><span>Open or close sidebar</span></span>
             <button
               id="global-shortcut"
               class="combo-button"

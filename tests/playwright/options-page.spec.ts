@@ -16,6 +16,8 @@ test.describe("extension options page", () => {
 
     await expect(page.getByLabel("Undo history length")).toHaveValue("20");
     await expect(page.getByLabel("Enable automatic backups")).not.toBeChecked();
+    await expect(page.locator("#shortcut-list .shortcut-label .label-icon")).toHaveCount(9);
+    await expect(page.locator(".global-shortcut-row .shortcut-label .label-icon")).toHaveCount(1);
 
     await page.getByLabel("Undo history length").fill("37");
     await page.getByLabel("Enable automatic backups").check();

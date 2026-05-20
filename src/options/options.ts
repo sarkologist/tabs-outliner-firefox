@@ -30,6 +30,19 @@ import {
 } from "../perf/profile.js";
 
 const TOGGLE_SIDEBAR_COMMAND = "toggle-sidebar";
+const SVG_NS = "http://www.w3.org/2000/svg";
+
+const SHORTCUT_ICON_BY_ACTION: Record<SidebarShortcutAction, string> = {
+  search: "search",
+  undo: "undo",
+  redo: "redo",
+  redoAlternate: "redo",
+  cut: "scissors",
+  paste: "clipboard",
+  zoomIn: "zoom-in",
+  zoomOut: "zoom-out",
+  zoomReset: "zoom-reset"
+};
 
 const form = document.querySelector<HTMLFormElement>("#options-form");
 const undoHistoryLimit = document.querySelector<HTMLInputElement>("#undo-history-limit");
@@ -264,7 +277,7 @@ function renderShortcutRows(): void {
 
       const labelText = document.createElement("span");
       labelText.className = "shortcut-label";
-      labelText.textContent = label;
+      labelText.append(iconElement(SHORTCUT_ICON_BY_ACTION[action]), textSpan(label));
 
       const enabled = document.createElement("input");
       enabled.className = "shortcut-enabled";
@@ -296,6 +309,24 @@ function renderShortcutRows(): void {
       return row;
     })
   );
+}
+
+function iconElement(icon: string): SVGSVGElement {
+  const svg = document.createElementNS(SVG_NS, "svg");
+  svg.classList.add("label-icon");
+  svg.setAttribute("aria-hidden", "true");
+  svg.setAttribute("focusable", "false");
+
+  const use = document.createElementNS(SVG_NS, "use");
+  use.setAttribute("href", `#icon-${icon}`);
+  svg.append(use);
+  return svg;
+}
+
+function textSpan(text: string): HTMLSpanElement {
+  const span = document.createElement("span");
+  span.textContent = text;
+  return span;
 }
 
 function renderGlobalShortcut(): void {

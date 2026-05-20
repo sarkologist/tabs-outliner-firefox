@@ -17,6 +17,10 @@ body {
   background: Canvas;
 }
 
+.icon-sprite {
+  display: none;
+}
+
 .page-header {
   display: flex;
   align-items: end;
@@ -132,8 +136,23 @@ main {
 }
 
 .shortcut-label {
+  display: inline-flex;
+  min-height: 22px;
+  align-items: center;
+  gap: 8px;
   min-width: 0;
   overflow-wrap: anywhere;
+}
+
+.label-icon {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
 }
 
 button {
