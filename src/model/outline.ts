@@ -609,6 +609,37 @@ export function flattenSubtreeOneLevel(state: OutlineState, nodeId: NodeId): Out
   return next;
 }
 
+export function promoteChildrenOneLevel(state: OutlineState, nodeId: NodeId): OutlineState {
+  const node = state.nodes[nodeId];
+  if (!node || !node.parentId || node.childIds.length === 0 || isNodeLiveWindow(node)) {
+    return state;
+  }
+
+  const parent = state.nodes[node.parentId];
+  if (!parent) {
+    return state;
+  }
+
+  const next = copyStateForNodeTableMutation(state);
+  const promoting = cloneNodeForMutation(next, nodeId);
+  const parentForMutation = cloneNodeForMutation(next, node.parentId);
+  const promotedChildIds = [...node.childIds];
+  const index = parentForMutation.childIds.indexOf(nodeId);
+  const insertionIndex = index >= 0 ? index + 1 : parentForMutation.childIds.length;
+
+  parentForMutation.childIds.splice(insertionIndex, 0, ...promotedChildIds);
+  promoting.childIds = [];
+
+  for (const promotedChildId of promotedChildIds) {
+    const promotedChild = next.nodes[promotedChildId] ? cloneNodeForMutation(next, promotedChildId) : undefined;
+    if (promotedChild) {
+      promotedChild.parentId = node.parentId;
+    }
+  }
+
+  return next;
+}
+
 export function moveTabToNewLiveWindow(
   state: OutlineState,
   nodeId: NodeId,

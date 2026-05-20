@@ -13,6 +13,7 @@ import {
   moveTabToNewClosedWindow,
   moveTabToNewLiveWindow,
   planRestore,
+  promoteChildrenOneLevel,
   projectLiveTabs,
   reconcileWithWindows,
   repairState,
@@ -572,6 +573,97 @@ describe("outline model", () => {
     expect(twice.nodes["window:10"]?.childIds).toEqual(["tab:1", "tab:2", "tab:3"]);
     expect(twice.nodes["tab:2"]?.childIds).toEqual([]);
     expect(twice.nodes["tab:3"]?.parentId).toBe("window:10");
+  });
+
+  it("promotes one node's children without flattening sibling subtrees", () => {
+    const state = bootstrapFromWindows([
+      {
+        id: 10,
+        incognito: false,
+        focused: true,
+        tabs: [
+          {
+            id: 1,
+            windowId: 10,
+            index: 0,
+            active: true,
+            url: "https://a.example/",
+            title: "A"
+          },
+          {
+            id: 2,
+            windowId: 10,
+            index: 1,
+            active: false,
+            openerTabId: 1,
+            url: "https://a-child.example/",
+            title: "a1"
+          },
+          {
+            id: 3,
+            windowId: 10,
+            index: 2,
+            active: false,
+            url: "https://b.example/",
+            title: "B"
+          },
+          {
+            id: 4,
+            windowId: 10,
+            index: 3,
+            active: false,
+            openerTabId: 3,
+            url: "https://b-child.example/",
+            title: "b1"
+          }
+        ]
+      }
+    ], { now: 1000 });
+
+    const promoted = promoteChildrenOneLevel(state, "tab:1");
+
+    expect(promoted.nodes["window:10"]?.childIds).toEqual(["tab:1", "tab:2", "tab:3"]);
+    expect(promoted.nodes["tab:1"]?.childIds).toEqual([]);
+    expect(promoted.nodes["tab:2"]?.parentId).toBe("window:10");
+    expect(promoted.nodes["tab:3"]?.childIds).toEqual(["tab:4"]);
+    expect(promoted.nodes["tab:4"]?.parentId).toBe("tab:3");
+    expect(projectLiveTabs(promoted, "window:10")).toEqual([
+      { tabId: 1, windowId: 10 },
+      { tabId: 2, windowId: 10 },
+      { tabId: 3, windowId: 10 },
+      { tabId: 4, windowId: 10 }
+    ]);
+  });
+
+  it("leaves promote children as a no-op for leaves, roots, missing nodes, and live window containers", () => {
+    const state = wrapNodeInGroup(bootstrapFromWindows(windows, { now: 1000 }), "tab:1", {
+      now: 2000,
+      liveWindow: {
+        id: 42,
+        focused: true,
+        incognito: false
+      }
+    });
+    const liveWindowWrapperId = state.nodes["tab:1"]?.parentId;
+    expect(liveWindowWrapperId).toBeDefined();
+
+    expect(promoteChildrenOneLevel(state, "tab:2")).toBe(state);
+    expect(promoteChildrenOneLevel(state, "window:10")).toBe(state);
+    expect(promoteChildrenOneLevel(state, "missing")).toBe(state);
+    expect(promoteChildrenOneLevel(state, liveWindowWrapperId!)).toBe(state);
+  });
+
+  it("promotes children without copying unrelated nodes", () => {
+    const state = bootstrapFromWindows(windows, { now: 1000 });
+
+    const promoted = promoteChildrenOneLevel(state, "tab:1");
+
+    expect(promoted.nodes["window:10"]).not.toBe(state.nodes["window:10"]);
+    expect(promoted.nodes["tab:1"]).not.toBe(state.nodes["tab:1"]);
+    expect(promoted.nodes["tab:2"]).not.toBe(state.nodes["tab:2"]);
+    expect(promoted.nodes["tab:3"]).toBe(state.nodes["tab:3"]);
+    expect(promoted.nodes["window:11"]).toBe(state.nodes["window:11"]);
+    expect(promoted.nodes["tab:4"]).toBe(state.nodes["tab:4"]);
   });
 
   it("wraps a live tab subtree in a new live window", () => {

@@ -5302,6 +5302,79 @@ describe("background controller lifecycle", () => {
     expect(lastBroadcast?.state).toBeUndefined();
   });
 
+  it("accepts promote children commands through the extension message path", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        },
+        {
+          id: 2,
+          windowId: 10,
+          index: 1,
+          active: false,
+          openerTabId: 1,
+          url: "https://two.example/",
+          title: "Two"
+        },
+        {
+          id: 3,
+          windowId: 10,
+          index: 2,
+          active: false,
+          url: "https://three.example/",
+          title: "Three"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+
+    const promoteResult = await controller.handleMessage({
+      type: "promoteChildren",
+      nodeId: "tab:1"
+    });
+    const promoted = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+
+    expectCommandAck(promoteResult, true);
+    expect(promoted.rootIds).toEqual(["window:10"]);
+    expect(promoted.nodes["window:10"]?.childIds).toEqual(["tab:1", "tab:2", "tab:3"]);
+    expect(promoted.nodes["tab:1"]?.childIds).toEqual([]);
+    expect(promoted.nodes["tab:2"]?.parentId).toBe("window:10");
+    expect(runtime.api.tabs.move).not.toHaveBeenCalled();
+
+    expect(await controller.handleMessage({ type: "getHistoryStatus" })).toMatchObject({
+      type: "historyStatus",
+      canUndo: true,
+      undoLabel: "Promote children"
+    });
+
+    const lastBroadcast = runtime.broadcasts.at(-1) as
+      | {
+          type?: string;
+          updatedNodes?: OutlineState["nodes"][string][];
+          rootIds?: string[];
+          state?: OutlineState;
+        }
+      | undefined;
+    expect(lastBroadcast?.type).toBe("treeStructureUpdated");
+    expect(lastBroadcast?.updatedNodes?.map((node) => node.id).sort()).toEqual(["tab:1", "tab:2", "window:10"]);
+    expect(lastBroadcast?.rootIds).toEqual(["window:10"]);
+    expect(lastBroadcast?.state).toBeUndefined();
+  });
+
   it("broadcasts move commands as tree structure patches", async () => {
     const runtime = fakeRuntime(
       [
@@ -6072,6 +6145,19 @@ describe("background controller lifecycle", () => {
     expect(((await controller.handleMessage({ type: "getState" })) as OutlineState).nodes["window:10"]?.childIds[0]).toBe("tab:3");
 
     expectCommandAck(await controller.handleMessage({ type: "flattenSubtree", nodeId: "window:10" }), true);
+    expect(((await controller.handleMessage({ type: "getState" })) as OutlineState).nodes["tab:1"]?.childIds).toEqual([]);
+    expectCommandAck(await controller.handleMessage({ type: "undo" }), true);
+    expect(((await controller.handleMessage({ type: "getState" })) as OutlineState).nodes["tab:1"]?.childIds).toEqual(["tab:2"]);
+    expectCommandAck(await controller.handleMessage({ type: "redo" }), true);
+    expect(((await controller.handleMessage({ type: "getState" })) as OutlineState).nodes["tab:1"]?.childIds).toEqual([]);
+    expectCommandAck(await controller.handleMessage({ type: "undo" }), true);
+    expect(((await controller.handleMessage({ type: "getState" })) as OutlineState).nodes["tab:1"]?.childIds).toEqual(["tab:2"]);
+
+    expectCommandAck(await controller.handleMessage({ type: "promoteChildren", nodeId: "tab:1" }), true);
+    expect(await controller.handleMessage({ type: "getHistoryStatus" })).toMatchObject({
+      type: "historyStatus",
+      undoLabel: "Promote children"
+    });
     expect(((await controller.handleMessage({ type: "getState" })) as OutlineState).nodes["tab:1"]?.childIds).toEqual([]);
     expectCommandAck(await controller.handleMessage({ type: "undo" }), true);
     expect(((await controller.handleMessage({ type: "getState" })) as OutlineState).nodes["tab:1"]?.childIds).toEqual(["tab:2"]);

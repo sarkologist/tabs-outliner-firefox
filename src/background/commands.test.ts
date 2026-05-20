@@ -9,7 +9,8 @@ import {
   closeTab,
   closeWindow,
   flattenSubtreeOneLevel,
-  moveNode
+  moveNode,
+  promoteChildrenOneLevel
 } from "../model/outline.js";
 import { PORTABLE_TREE_SCHEMA } from "../model/portable-tree.js";
 import type { OutlineState, RuntimeWindow } from "../model/types.js";
@@ -121,6 +122,7 @@ describe("background commands", () => {
       { type: "moveNodeToNewWindow", nodeId: "tab:1", index: 0 },
       { type: "wrapNodeInGroup", nodeId: "tab:1" },
       { type: "flattenSubtree", nodeId: "window:10" },
+      { type: "promoteChildren", nodeId: "tab:1" },
       { type: "toggleCollapsed", nodeId: "tab:1" },
       { type: "expandAncestors", nodeId: "tab:1" },
       { type: "renameGroup", nodeId: "window:10", title: "Research" },
@@ -659,6 +661,21 @@ describe("background commands", () => {
     });
 
     expect(result.state).toEqual(flattenSubtreeOneLevel(state, "window:10"));
+    expect(adapter.moveTabs).not.toHaveBeenCalled();
+  });
+
+  it("promotes children without asking Firefox to reorder tabs", async () => {
+    const state: OutlineState = bootstrapFromWindows(runtimeWindows, { now: 1000 });
+    const adapter = fakeAdapter();
+
+    const result = await runCommand(state, adapter, {
+      type: "promoteChildren",
+      nodeId: "tab:1"
+    });
+
+    expect(result.state).toEqual(promoteChildrenOneLevel(state, "tab:1"));
+    expect(result.state.nodes["window:10"]?.childIds).toEqual(["tab:1", "tab:2", "tab:3"]);
+    expect(result.state.nodes["tab:1"]?.childIds).toEqual([]);
     expect(adapter.moveTabs).not.toHaveBeenCalled();
   });
 

@@ -7,6 +7,7 @@ import {
   moveTabToNewClosedWindow,
   moveTabToNewLiveWindow,
   planRestore,
+  promoteChildrenOneLevel,
   projectLiveTabs,
   renameGroup,
   restoreNodes,
@@ -57,6 +58,10 @@ export type BackgroundCommand =
       nodeId: NodeId;
     }
   | {
+      type: "promoteChildren";
+      nodeId: NodeId;
+    }
+  | {
       type: "toggleCollapsed";
       nodeId: NodeId;
     }
@@ -96,6 +101,7 @@ export const BACKGROUND_COMMAND_TYPES = [
   "moveNodeToNewWindow",
   "wrapNodeInGroup",
   "flattenSubtree",
+  "promoteChildren",
   "toggleCollapsed",
   "expandAncestors",
   "renameGroup",
@@ -211,6 +217,9 @@ export async function runCommand(
 
     case "flattenSubtree":
       return commandResultFromNextState(state, flattenSubtreeOneLevel(state, command.nodeId));
+
+    case "promoteChildren":
+      return commandResultFromNextState(state, promoteChildrenOneLevel(state, command.nodeId));
 
     case "toggleCollapsed":
       return toggleCollapsedInPlace(state, command.nodeId)

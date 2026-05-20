@@ -590,7 +590,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         scheduleStateSave(result.state);
         return commandAck(true);
       }
-      if (message.type === "wrapNodeInGroup") {
+      if (message.type === "wrapNodeInGroup" || message.type === "promoteChildren") {
         const update = perfTrace.measure("background.patch.build.treeStructure", { command: message.type }, () =>
           treeStructureUpdateFromStateChange(current, result.state)
         );
@@ -2051,6 +2051,7 @@ function isTrackableHistoryCommandType(value: string): value is TrackableHistory
     value === "moveNodeToNewWindow" ||
     value === "wrapNodeInGroup" ||
     value === "flattenSubtree" ||
+    value === "promoteChildren" ||
     value === "toggleCollapsed" ||
     value === "expandAncestors" ||
     value === "renameGroup" ||
