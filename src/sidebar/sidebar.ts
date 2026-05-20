@@ -121,6 +121,7 @@ const VIRTUAL_OVERSCAN_ROWS = 32;
 const GUIDE_TOP = 1;
 const GUIDE_BOTTOM = 2;
 const GUIDE_FULL = GUIDE_TOP | GUIDE_BOTTOM;
+const SVG_NS = "http://www.w3.org/2000/svg";
 const sidebarProfileInstanceId = createSidebarProfileInstanceId();
 
 type ProfileSnapshot = SidebarProfileSnapshot;
@@ -180,6 +181,19 @@ type HoverGuideSegments = {
   horizontalDepth?: number;
   verticalSegments: Map<number, number>;
 };
+
+type IconName =
+  | "chevron-right"
+  | "chevron-down"
+  | "scissors"
+  | "clipboard"
+  | "group"
+  | "close-circle"
+  | "flatten"
+  | "outdent"
+  | "pencil"
+  | "trash"
+  | "locate";
 
 const dropMarker = document.createElement("li");
 dropMarker.className = "drop-marker";
@@ -1385,6 +1399,10 @@ function canFlattenSubtree(state: OutlineState, node: OutlineNode): boolean {
   return node.childIds.some((childId) => (state.nodes[childId]?.childIds.length ?? 0) > 0);
 }
 
+function canPromoteChildren(node: OutlineNode): boolean {
+  return Boolean(node.parentId && node.childIds.length > 0 && !(node.kind === "window" && node.status === "live"));
+}
+
 function isRenamableGroup(node: OutlineNode): boolean {
   return node.kind === "window" || node.kind === "group";
 }
@@ -1522,7 +1540,10 @@ function renderRow(
     : node.collapsed
       ? "Expand"
       : "Collapse";
-  twisty.textContent = rowInfo.childCount ? (node.collapsed ? "+" : "-") : "";
+  twisty.replaceChildren();
+  if (rowInfo.childCount) {
+    twisty.append(iconElement(node.collapsed ? "chevron-right" : "chevron-down"));
+  }
   twisty.disabled = rowInfo.childCount === 0;
   row.append(twisty);
 
@@ -1550,26 +1571,30 @@ function renderRow(
   actions.className = "node-actions";
 
   if (rowInfo.isSearchMatch) {
-    actions.append(actionButton("Show in tree", "show-in-tree", "T"));
+    actions.append(actionButton("Show in tree", "show-in-tree", "locate"));
   }
-  actions.append(actionButton("Cut", "cut", "X"));
+  actions.append(actionButton("Cut", "cut", "scissors"));
   if (pendingCutNodeId) {
-    actions.append(actionButton("Paste", "paste", "P", !pasteAfterCommand(state, pendingCutNodeId, node.id)));
+    actions.append(actionButton("Paste", "paste", "clipboard", !pasteAfterCommand(state, pendingCutNodeId, node.id)));
   }
-  actions.append(actionButton("Group", "group", "G"));
+  actions.append(actionButton("Group", "group", "group"));
   if (node.status === "live" || hasLiveDescendant(node.id)) {
-    actions.append(actionButton("Close", "close-node"));
+    actions.append(actionButton("Close", "close-node", "close-circle"));
   }
 
   if (canFlattenSubtree(state, node)) {
-    actions.append(actionButton("Flatten", "flatten"));
+    actions.append(actionButton("Flatten", "flatten", "flatten"));
+  }
+
+  if (canPromoteChildren(node)) {
+    actions.append(actionButton("Promote children", "promote-children", "outdent"));
   }
 
   if (isRenamableGroup(node)) {
-    actions.append(actionButton("Rename", "rename", "N"));
+    actions.append(actionButton("Rename", "rename", "pencil"));
   }
 
-  actions.append(actionButton("Delete", "delete"));
+  actions.append(actionButton("Delete", "delete", "trash"));
   row.append(actions);
 
   item.append(row);
@@ -1843,6 +1868,11 @@ function handleTreeClick(event: MouseEvent): void {
     return;
   }
 
+  if (action === "promote-children") {
+    void runAndRender({ type: "promoteChildren", nodeId: node.id });
+    return;
+  }
+
   if (action === "group") {
     void runAndRender({ type: "wrapNodeInGroup", nodeId: node.id });
     return;
@@ -2061,16 +2091,28 @@ function dropPlacementForRowEvent(
   return dropPlacementForNode(state, draggedNodeId, targetId, dropModeForPointer(relativeY, rect.height));
 }
 
-function actionButton(label: string, action: string, glyph?: string, disabled = false): HTMLButtonElement {
+function actionButton(label: string, action: string, icon: IconName, disabled = false): HTMLButtonElement {
   const button = document.createElement("button");
   button.className = "icon-button action";
   button.type = "button";
   button.title = label;
   button.ariaLabel = label;
-  button.textContent = glyph ?? (label === "Delete" ? "x" : label[0] ?? "?");
+  button.append(iconElement(icon));
   button.dataset.action = action;
   button.disabled = disabled;
   return button;
+}
+
+function iconElement(icon: IconName): SVGSVGElement {
+  const svg = document.createElementNS(SVG_NS, "svg");
+  svg.classList.add("button-icon");
+  svg.setAttribute("aria-hidden", "true");
+  svg.setAttribute("focusable", "false");
+
+  const use = document.createElementNS(SVG_NS, "use");
+  use.setAttribute("href", `#icon-${icon}`);
+  svg.append(use);
+  return svg;
 }
 
 async function showSearchResultInTree(nodeId: NodeId): Promise<void> {

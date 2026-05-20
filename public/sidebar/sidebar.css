@@ -53,6 +53,14 @@ body[data-sidebar-booting] {
   visibility: hidden;
 }
 
+[hidden] {
+  display: none !important;
+}
+
+.icon-sprite {
+  display: none;
+}
+
 .toolbar {
   position: sticky;
   top: 0;
@@ -107,16 +115,18 @@ h1 {
 }
 
 .toolbar-button {
+  display: inline-flex;
   flex: 0 0 auto;
   width: 24px;
   height: 24px;
+  align-items: center;
+  justify-content: center;
   padding: 0;
   border: 0;
   border-radius: 4px;
   color: inherit;
   background: transparent;
   font: inherit;
-  line-height: 24px;
 }
 
 .toolbar-button:hover {
@@ -131,11 +141,20 @@ h1 {
   background: transparent;
 }
 
+.button-icon {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
+  pointer-events: none;
+}
+
 .toolbar-icon {
   width: 15px;
   height: 15px;
-  fill: currentcolor;
-  vertical-align: -2px;
 }
 
 .status {
@@ -555,14 +574,19 @@ main.root-drop-target {
 
 .icon-button {
   box-sizing: border-box;
-  display: block;
+  display: inline-flex;
   flex: 0 0 var(--node-icon-size);
   width: var(--node-icon-size);
   height: var(--node-icon-size);
+  align-items: center;
+  justify-content: center;
   padding: 0;
   border-radius: 3px;
-  line-height: var(--node-icon-size);
-  text-align: center;
+}
+
+.icon-button .button-icon {
+  width: 13px;
+  height: 13px;
 }
 
 .icon-button:not(:disabled):hover {
