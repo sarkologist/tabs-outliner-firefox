@@ -133,6 +133,12 @@ export type RuntimeClosePlan = {
   tabIds: number[];
 };
 
+type WindowUrlBatchPlan = {
+  nodeId: NodeId;
+  url: string;
+  windowNodeId: NodeId;
+};
+
 // Runtime boundary for extension messages. It intentionally validates command type only,
 // preserving the existing sidebar payload contract.
 export function isBackgroundCommand(message: unknown): message is BackgroundCommand {
@@ -442,12 +448,10 @@ function closedWindowUrlBatchPlans(
   startIndex: number,
   pendingNodeIds: Set<NodeId>,
   restoredWindowNodeIds: Set<NodeId>
-): Array<Extract<RestorePlan, { kind: "url" }>> {
-  const firstPlan = plans[startIndex];
+): WindowUrlBatchPlan[] {
+  const firstPlan = tabUrlBatchPlanFromRestorePlan(state, plans[startIndex]);
   if (
     !firstPlan ||
-    firstPlan.kind !== "url" ||
-    !firstPlan.windowNodeId ||
     isPrivilegedAboutUrl(firstPlan.url)
   ) {
     return [];
@@ -456,17 +460,16 @@ function closedWindowUrlBatchPlans(
   const plannedWindow = state.nodes[firstPlan.windowNodeId];
   if (
     plannedWindow?.kind !== "window" ||
-    plannedWindow.status !== "closed" ||
-    plannedWindow.restore?.sessionId
+    plannedWindow.status !== "closed"
   ) {
     return [];
   }
 
-  const batch: Array<Extract<RestorePlan, { kind: "url" }>> = [];
+  const batch: WindowUrlBatchPlan[] = [];
   for (let index = startIndex; index < plans.length; index += 1) {
-    const candidate = plans[index];
+    const candidate = tabUrlBatchPlanFromRestorePlan(state, plans[index]);
     if (
-      candidate?.kind !== "url" ||
+      !candidate ||
       candidate.windowNodeId !== firstPlan.windowNodeId ||
       isPrivilegedAboutUrl(candidate.url) ||
       pendingNodeIds.has(candidate.nodeId) ||
@@ -481,10 +484,22 @@ function closedWindowUrlBatchPlans(
   return batch;
 }
 
+function tabUrlBatchPlanFromRestorePlan(
+  state: OutlineState,
+  plan: RestorePlan | undefined
+): WindowUrlBatchPlan | undefined {
+  if (!plan?.windowNodeId || state.nodes[plan.nodeId]?.kind !== "tab") {
+    return undefined;
+  }
+
+  const url = plan.kind === "url" ? plan.url : plan.fallbackUrl;
+  return url ? { nodeId: plan.nodeId, url, windowNodeId: plan.windowNodeId } : undefined;
+}
+
 async function restoreClosedWindowUrlBatch(
   adapter: BrowserAdapter,
   windowNodeId: NodeId,
-  plans: Array<Extract<RestorePlan, { kind: "url" }>>
+  plans: WindowUrlBatchPlan[]
 ): Promise<RestoredNode[]> {
   try {
     const createdWindow = await adapter.createWindow({ url: plans.map((plan) => plan.url) });

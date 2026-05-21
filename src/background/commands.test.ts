@@ -454,6 +454,59 @@ describe("background commands", () => {
     expect(result.state.nodes["tab:3"]?.live).toEqual({ tabId: 202, windowId: 42 });
   });
 
+  it("restores renamed closed tab groups with one multi-url window create", async () => {
+    let state: OutlineState = bootstrapFromWindows(runtimeWindows, { now: 1000 });
+    state = closeTab(state, 1, { now: 2001, sessionId: "session-tab-1" });
+    state = closeTab(state, 2, { now: 2002, sessionId: "session-tab-2" });
+    const groupId = "window:placeholder:3000";
+    state = {
+      ...state,
+      rootIds: [groupId, "window:10"],
+      nodes: {
+        ...state.nodes,
+        [groupId]: {
+          id: groupId,
+          kind: "window",
+          status: "closed",
+          title: "voyager trackpad",
+          customTitle: "voyager trackpad",
+          childIds: ["tab:1", "tab:2"],
+          collapsed: false,
+          createdAt: 3000,
+          updatedAt: 3000,
+          closedAt: 3000
+        },
+        "window:10": {
+          ...state.nodes["window:10"]!,
+          childIds: ["tab:3"]
+        },
+        "tab:1": {
+          ...state.nodes["tab:1"]!,
+          parentId: groupId
+        },
+        "tab:2": {
+          ...state.nodes["tab:2"]!,
+          parentId: groupId
+        }
+      }
+    };
+    const adapter = fakeAdapter();
+
+    const result = await runCommand(state, adapter, { type: "restoreNode", nodeId: groupId });
+
+    expect(adapter.restoreSession).not.toHaveBeenCalled();
+    expect(adapter.createWindow).toHaveBeenCalledTimes(1);
+    expect(adapter.createWindow).toHaveBeenCalledWith({
+      url: ["https://example.com/", "https://example.com/child"]
+    });
+    expect(adapter.createTab).not.toHaveBeenCalled();
+    expect(result.state.nodes[groupId]?.status).toBe("live");
+    expect(result.state.nodes[groupId]?.live).toEqual({ windowId: 42 });
+    expect(result.state.nodes[groupId]?.customTitle).toBe("voyager trackpad");
+    expect(result.state.nodes["tab:1"]?.live).toEqual({ tabId: 200, windowId: 42 });
+    expect(result.state.nodes["tab:2"]?.live).toEqual({ tabId: 201, windowId: 42 });
+  });
+
   it("uses the owning closed window session when restoring its only tab", async () => {
     const url = "moz-extension://one-sec/dashboard.html";
     const state = closeWindow(bootstrapFromWindows([
