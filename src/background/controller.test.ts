@@ -764,6 +764,40 @@ function traceEntryNames(snapshot: unknown): string[] {
     : [];
 }
 
+async function countNodeTableObjectValues<T>(callback: () => Promise<T>): Promise<{ calls: number; value: T }> {
+  const originalValues = Object.values;
+  let calls = 0;
+  const spy = vi.spyOn(Object, "values").mockImplementation(((value: object) => {
+    if (isNodeTableLike(value)) {
+      calls += 1;
+    }
+    return originalValues(value as never);
+  }) as typeof Object.values);
+  try {
+    const value = await callback();
+    return {
+      calls,
+      value
+    };
+  } finally {
+    spy.mockRestore();
+  }
+}
+
+function isNodeTableLike(value: unknown): boolean {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const tabOne = (value as Record<string, unknown>)["tab:1"];
+  return Boolean(
+    tabOne &&
+      typeof tabOne === "object" &&
+      (tabOne as { id?: unknown }).id === "tab:1" &&
+      Array.isArray((tabOne as { childIds?: unknown }).childIds)
+  );
+}
+
 function liveWindowIds(state: OutlineState): number[] {
   return Object.values(state.nodes)
     .filter((node) => node.kind === "window" && node.status === "live" && node.live && "windowId" in node.live)
@@ -3587,6 +3621,79 @@ describe("background controller lifecycle", () => {
     expect(state.nodes["tab:2"]?.live).toEqual({ tabId: 2, windowId: destinationRuntimeWindowId });
   });
 
+  it("filters coalesced command-relocated stale echoes without per-echo node table scans", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        },
+        {
+          id: 2,
+          windowId: 10,
+          index: 1,
+          active: false,
+          openerTabId: 1,
+          url: "https://two.example/",
+          title: "Two"
+        },
+        {
+          id: 3,
+          windowId: 10,
+          index: 2,
+          active: false,
+          openerTabId: 1,
+          url: "https://three.example/",
+          title: "Three"
+        },
+        {
+          id: 4,
+          windowId: 10,
+          index: 3,
+          active: false,
+          url: "https://four.example/",
+          title: "Four"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    const staleTabs = [1, 2, 3].map((tabId) => copyTab(runtime.tabs.find((tab) => tab.id === tabId)!));
+
+    await controller.handleMessage({
+      type: "moveNode",
+      nodeId: "tab:1",
+      index: 0
+    });
+
+    const { calls } = await countNodeTableObjectValues(async () => {
+      for (const staleTab of staleTabs) {
+        runtime.events.tabUpdated.dispatch(staleTab.id, { title: `Stale ${staleTab.id}` }, {
+          ...staleTab,
+          title: `Stale ${staleTab.id}`
+        });
+      }
+      await runtime.events.tabUpdated.flush();
+    });
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+
+    expect(calls).toBeLessThanOrEqual(1);
+    expect(state.nodes["tab:1"]?.title).toBe("One");
+    expect(state.nodes["tab:2"]?.title).toBe("Two");
+    expect(state.nodes["tab:3"]?.title).toBe("Three");
+  });
+
   it("accepts fresh command-relocated tab updates and clears stale echo tracking", async () => {
     const runtime = fakeRuntime(
       [
@@ -4007,6 +4114,60 @@ describe("background controller lifecycle", () => {
     expect(restoreBroadcast?.state).toBeUndefined();
     await controller.flushPendingSaves();
     expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
+  });
+
+  it("absorbs command-restored created-tab echoes without an extra node table scan", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        },
+        {
+          id: 2,
+          windowId: 10,
+          index: 1,
+          active: false,
+          url: "https://two.example/",
+          title: "Two"
+        }
+      ]
+    );
+    const restoredTab: RuntimeTab = {
+      id: 22,
+      windowId: 10,
+      index: 1,
+      active: false,
+      url: "https://two.example/",
+      title: "Two"
+    };
+    vi.mocked(runtime.api.sessions.restore).mockImplementation(async () => {
+      createTabFromBrowser(runtime, restoredTab, { awaitListeners: false });
+      return { tab: copyTab(restoredTab) } as never;
+    });
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    await controller.handleMessage({ type: "closeNode", nodeId: "tab:2" });
+    await runtime.events.tabRemoved.flush();
+    await runtime.events.sessionChanged.flush();
+
+    await controller.handleMessage({ type: "restoreNode", nodeId: "tab:2" });
+    const { calls } = await countNodeTableObjectValues(() => runtime.events.tabCreated.flush());
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+
+    expect(calls).toBeLessThanOrEqual(1);
+    expect(state.nodes["tab:2"]?.live).toEqual({ tabId: 22, windowId: 10 });
   });
 
   it("broadcasts a restored focused new window and the cleared active window in one compact restore patch", async () => {

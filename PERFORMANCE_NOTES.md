@@ -532,3 +532,12 @@ Use these as starting targets, not hard promises:
   - Fallback `refreshFromRuntimeNow()` still calls `getNormalWindows()` / `tabs.query()`, checks `runtimeSnapshotMateriallyMatchesState()`, and may run `reconcileWithWindows()`, so it is whole-tree and whole-runtime sized by design.
 - Best next fix: pass the cached `RuntimeStateIndex` into restored/relocated echo consumers and activation override helpers, replace scan-based `liveTabNodeByRuntimeId()` / `liveWindowNodeByRuntimeId()` calls on hot echo paths with map lookups, and update or invalidate the index whenever these consumers delete stale echo tracking. This should move restored and relocated echo filtering from `O(n)` or `O(u * n)` toward `O(u)` while preserving the current full-reconcile fallback.
 - Follow-up after that: consider indexed active-tab/window updates for command focus echoes. That would remove another common `O(n)` scan, but the relocated/restored echo filters are the sharper remaining asymptotic problem because they multiply by event/window loops.
+
+### 2026-05-21: Indexed Restored/Relocated Echo Filtering
+
+- Implemented the next audit target: `refreshFromRuntimeNow()` now passes its `RuntimeStateIndex` into command-restored echo consumption, command-relocated stale echo consumption, relocated stale snapshot filtering, activation overrides, and relocated fallback tab reconstruction. These paths now use runtime-id maps instead of `Object.values(state.nodes)` scans.
+- Added regression coverage that counts node-table `Object.values()` calls during echo handling:
+  - Before the fix, three coalesced command-relocated stale `tabs.onUpdated` echoes performed 4 node-table scans: one cold index build plus one full scan per echo.
+  - After the fix, the same scenario allows only the single cold index build and no per-echo node-table scan.
+  - Command-restored `tabs.onCreated` echo absorption has the same guard: at most the one cold index build, no extra full node-table scan.
+- Verification: `pnpm exec vitest run src/background/controller.test.ts -t "node table scan"`, `pnpm exec vitest run src/background/controller.test.ts`, `pnpm build`, and `pnpm test` passed.

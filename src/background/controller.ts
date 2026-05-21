@@ -1135,8 +1135,8 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     const index = runtimeIndexForState(current);
     const currentEventTabs = eventTabs
       .filter((tab) => !removedTabIds.has(tab.id))
-      .filter((tab) => !consumeCommandRestoredTabEvent(current, commandRestoredTabIds, tab))
-      .filter((tab) => !consumeCommandRelocatedStaleTabEvent(current, commandRelocatedTabEchoes, tab))
+      .filter((tab) => !consumeCommandRestoredTabEvent(current, index, commandRestoredTabIds, tab))
+      .filter((tab) => !consumeCommandRelocatedStaleTabEvent(current, index, commandRelocatedTabEchoes, tab))
       .filter((tab) => tabEventMayChangeState(current, tab, index));
     if (eventTabs.length > 0 && currentEventTabs.length === 0 && !closeMissing) {
       return false;
@@ -1163,9 +1163,11 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       filterCommandRelocatedStaleTabsFromWindows(
         filterRemovedTabsFromWindows(windowsSnapshot, removedTabIds),
         current,
+        index,
         commandRelocatedTabEchoes
       ),
       current,
+      index,
       options.activationByWindowId
     );
     if (runtimeSnapshotMateriallyMatchesState(current, windows)) {
@@ -2024,6 +2026,26 @@ function cloneRuntimeStateIndex(index: RuntimeStateIndex): RuntimeStateIndex {
   };
 }
 
+function indexedLiveTabNodeByRuntimeId(
+  state: OutlineState,
+  index: RuntimeStateIndex,
+  tabId: number
+): (OutlineNode & { live: { tabId: number; windowId: number } }) | undefined {
+  const nodeId = index.liveTabNodeIdsByRuntimeId.get(tabId);
+  const node = nodeId ? state.nodes[nodeId] : undefined;
+  return isLiveTabNode(node) && node.live.tabId === tabId ? node : undefined;
+}
+
+function indexedLiveWindowNodeByRuntimeId(
+  state: OutlineState,
+  index: RuntimeStateIndex,
+  windowId: number
+): (OutlineNode & { live: { windowId: number } }) | undefined {
+  const nodeId = index.liveWindowNodeIdsByRuntimeId.get(windowId);
+  const node = nodeId ? state.nodes[nodeId] : undefined;
+  return isLiveWindowNode(node) && node.live.windowId === windowId ? node : undefined;
+}
+
 function runtimeTabNodeForFastPath(tab: RuntimeTab, nodeId: NodeId, parentId: NodeId, now: number): OutlineNode {
   const node: OutlineNode = {
     id: nodeId,
@@ -2592,6 +2614,7 @@ function trackCommandRelocatedTabEchoes(
 
 function consumeCommandRestoredTabEvent(
   state: OutlineState,
+  index: RuntimeStateIndex,
   commandRestoredTabIds: Set<number>,
   tab: RuntimeTab
 ): boolean {
@@ -2599,7 +2622,7 @@ function consumeCommandRestoredTabEvent(
     return false;
   }
 
-  const node = liveTabNodeByRuntimeId(state, tab.id);
+  const node = indexedLiveTabNodeByRuntimeId(state, index, tab.id);
   if (!node?.restoredFromClosed || node.live.windowId !== tab.windowId) {
     commandRestoredTabIds.delete(tab.id);
     return false;
@@ -2611,6 +2634,7 @@ function consumeCommandRestoredTabEvent(
 
 function consumeCommandRelocatedStaleTabEvent(
   state: OutlineState,
+  index: RuntimeStateIndex,
   commandRelocatedTabEchoes: Map<number, CommandRelocatedTabEcho>,
   tab: RuntimeTab
 ): boolean {
@@ -2619,7 +2643,7 @@ function consumeCommandRelocatedStaleTabEvent(
     return false;
   }
 
-  const node = liveTabNodeByRuntimeId(state, tab.id);
+  const node = indexedLiveTabNodeByRuntimeId(state, index, tab.id);
   if (!node) {
     commandRelocatedTabEchoes.delete(tab.id);
     return false;
@@ -2639,8 +2663,7 @@ function consumeCommandRelocatedStaleTabEvent(
 }
 
 function tabEventMayChangeState(state: OutlineState, tab: RuntimeTab, index: RuntimeStateIndex): boolean {
-  const nodeId = index.liveTabNodeIdsByRuntimeId.get(tab.id);
-  const node = nodeId ? state.nodes[nodeId] : undefined;
+  const node = indexedLiveTabNodeByRuntimeId(state, index, tab.id);
   if (!isLiveTabNode(node) || node.live.windowId !== tab.windowId) {
     return true;
   }
@@ -2925,6 +2948,7 @@ function filterRemovedTabsFromWindows(windows: RuntimeWindow[], removedTabIds: S
 function filterCommandRelocatedStaleTabsFromWindows(
   windows: RuntimeWindow[],
   state: OutlineState,
+  index: RuntimeStateIndex,
   commandRelocatedTabEchoes: Map<number, CommandRelocatedTabEcho>
 ): RuntimeWindow[] {
   if (commandRelocatedTabEchoes.size === 0) {
@@ -2938,7 +2962,7 @@ function filterCommandRelocatedStaleTabsFromWindows(
       if (!echo) {
         continue;
       }
-      const node = liveTabNodeByRuntimeId(state, tab.id);
+      const node = indexedLiveTabNodeByRuntimeId(state, index, tab.id);
       if (!node) {
         commandRelocatedTabEchoes.delete(tab.id);
         continue;
@@ -2959,7 +2983,7 @@ function filterCommandRelocatedStaleTabsFromWindows(
         return true;
       }
 
-      const node = liveTabNodeByRuntimeId(state, tab.id);
+      const node = indexedLiveTabNodeByRuntimeId(state, index, tab.id);
       if (!node) {
         commandRelocatedTabEchoes.delete(tab.id);
         return true;
@@ -2969,7 +2993,7 @@ function filterCommandRelocatedStaleTabsFromWindows(
       if (staleOldWindowEcho) {
         changed = true;
         if (!freshEchoTabIds.has(tab.id)) {
-          const fallbackTab = commandRelocatedTabFromCurrentState(state, tab);
+          const fallbackTab = commandRelocatedTabFromCurrentState(state, index, tab);
           if (fallbackTab) {
             fallbackTabs.push(fallbackTab);
           }
@@ -3022,6 +3046,7 @@ function filterCommandRelocatedStaleTabsFromWindows(
 function applyActivationOverridesToWindows(
   windows: RuntimeWindow[],
   state: OutlineState,
+  index: RuntimeStateIndex,
   activationByWindowId?: ReadonlyMap<number, number>
 ): RuntimeWindow[] {
   if (!activationByWindowId || activationByWindowId.size === 0) {
@@ -3033,7 +3058,7 @@ function applyActivationOverridesToWindows(
     const activeTabId = activationByWindowId.get(windowInfo.id);
     const tabs = windowInfo.tabs ?? [];
     const nextTabs = tabs.map((tab) => {
-      const currentNode = liveTabNodeByRuntimeId(state, tab.id);
+      const currentNode = indexedLiveTabNodeByRuntimeId(state, index, tab.id);
       const active = typeof activeTabId === "number"
         ? tab.id === activeTabId
         : currentNode?.active ?? tab.active;
@@ -3058,13 +3083,17 @@ function applyActivationOverridesToWindows(
   return changed ? nextWindows : windows;
 }
 
-function commandRelocatedTabFromCurrentState(state: OutlineState, staleTab: RuntimeTab): RuntimeTab | undefined {
-  const node = liveTabNodeByRuntimeId(state, staleTab.id);
+function commandRelocatedTabFromCurrentState(
+  state: OutlineState,
+  index: RuntimeStateIndex,
+  staleTab: RuntimeTab
+): RuntimeTab | undefined {
+  const node = indexedLiveTabNodeByRuntimeId(state, index, staleTab.id);
   if (!node) {
     return undefined;
   }
 
-  const windowNode = liveWindowNodeByRuntimeId(state, node.live.windowId);
+  const windowNode = indexedLiveWindowNodeByRuntimeId(state, index, node.live.windowId);
   const projectedIndex = windowNode
     ? projectLiveTabs(state, windowNode.id).findIndex((tab) => tab.tabId === staleTab.id)
     : -1;
