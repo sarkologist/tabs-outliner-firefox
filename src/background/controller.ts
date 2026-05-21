@@ -211,6 +211,7 @@ const STATE_SAVE_MAX_DELAY_MS = 5000;
 const SIDEBAR_PROFILE_COLLECTION_DELAY_MS = 50;
 const TOGGLE_SIDEBAR_COMMAND = "toggle-sidebar";
 const SIDEBAR_WINDOW_PATH = "sidebar/sidebar.html";
+const SIDEBAR_PORT_NAME = "tabs-outliner-sidebar";
 
 type CommandRelocatedTabEcho = {
   fromWindowId: number;
@@ -251,12 +252,15 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   let saveTimer: number | undefined;
   let saveMaxTimer: number | undefined;
   let saveInFlight: Promise<void> | undefined;
+  let saveAfterInFlight = false;
+  let explicitSaveFlushInProgress = false;
   let diagnosticsInFlight: Promise<OutlineDiagnostics> | undefined;
   let automaticBackupInFlight: Promise<AutomaticBackupStatus> | undefined;
   let sidebarProfileRequestSequence = 0;
   let sidebarWindowCreationInFlight = 0;
   const fullSizeOutlinerWindowIds = new Set<number>();
   const pendingSidebarProfileCollections = new Map<string, PendingSidebarProfileCollection>();
+  const sidebarPorts = new Set<WebExtensionPort>();
 
   api.runtime.onInstalled.addListener(() => {
     return initializeExtensionLifecycle().catch((error) => {
@@ -293,6 +297,9 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   });
 
   api.runtime.onMessage.addListener((message) => handleMessage(message));
+  api.runtime.onConnect?.addListener((port) => {
+    handleSidebarPortConnected(port);
+  });
 
   api.storage.onChanged.addListener((changes, areaName) => {
     if (areaName !== "local" || !changes[APP_PREFERENCES_STORAGE_KEY]) {
@@ -472,6 +479,17 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     return perfTrace.measureAsync("background.runtime.message", { type: messageType(message) }, () =>
       handleNonTraceMessage(message)
     );
+  }
+
+  function handleSidebarPortConnected(port: WebExtensionPort): void {
+    if (port.name !== SIDEBAR_PORT_NAME) {
+      return;
+    }
+
+    sidebarPorts.add(port);
+    port.onDisconnect.addListener(() => {
+      sidebarPorts.delete(port);
+    });
   }
 
   async function handleNonTraceMessage(message: unknown): Promise<unknown> {
@@ -1872,6 +1890,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
   function schedulePendingSave(): void {
     if (saveInFlight) {
+      saveAfterInFlight = true;
       return;
     }
 
@@ -1890,10 +1909,42 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   async function flushPendingSaves(): Promise<void> {
     clearSaveTimers();
 
-    while (pendingSaveState || pendingSaveHistory || saveInFlight) {
+    const previousExplicitSaveFlushInProgress = explicitSaveFlushInProgress;
+    explicitSaveFlushInProgress = true;
+    try {
+      while (pendingSaveState || pendingSaveHistory || saveInFlight) {
+        if (saveInFlight) {
+          await saveInFlight;
+          continue;
+        }
+
+        const nextState = pendingSaveState;
+        const nextHistory = pendingSaveHistory;
+        if (!nextState && !nextHistory) {
+          return;
+        }
+        pendingSaveState = undefined;
+        pendingSaveHistory = undefined;
+        saveAfterInFlight = false;
+        await startSaveStateAndHistory(nextState, nextHistory);
+      }
+    } finally {
+      explicitSaveFlushInProgress = previousExplicitSaveFlushInProgress;
+      if (saveAfterInFlight) {
+        saveAfterInFlight = false;
+        if (!explicitSaveFlushInProgress && (pendingSaveState || pendingSaveHistory)) {
+          schedulePendingSave();
+        }
+      }
+    }
+  }
+
+  async function flushScheduledSave(): Promise<void> {
+    try {
+      clearSaveTimers();
       if (saveInFlight) {
-        await saveInFlight;
-        continue;
+        saveAfterInFlight = true;
+        return;
       }
 
       const nextState = pendingSaveState;
@@ -1901,18 +1952,10 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       if (!nextState && !nextHistory) {
         return;
       }
+
       pendingSaveState = undefined;
       pendingSaveHistory = undefined;
-      saveInFlight = saveStateAndHistoryNowWithTrace(nextState, nextHistory).finally(() => {
-        saveInFlight = undefined;
-      });
-      await saveInFlight;
-    }
-  }
-
-  async function flushScheduledSave(): Promise<void> {
-    try {
-      await flushPendingSaves();
+      await startSaveStateAndHistory(nextState, nextHistory);
     } catch (error) {
       perfTrace.mark("background.state.save.error", { message: errorText(error) });
     }
@@ -1943,10 +1986,65 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     }
   }
 
-  async function broadcastWithTrace(message: { type: string } & Record<string, unknown>): Promise<void> {
-    await perfTrace.measureAsync("background.runtime.broadcast", { type: message.type }, async () => {
-      await api.runtime.sendMessage(message).catch(() => undefined);
+  function startSaveStateAndHistory(
+    nextState: OutlineState | undefined,
+    nextHistory: HistoryState | undefined
+  ): Promise<void> {
+    saveInFlight = saveStateAndHistoryNowWithTrace(nextState, nextHistory).finally(() => {
+      saveInFlight = undefined;
+      if (saveAfterInFlight) {
+        saveAfterInFlight = false;
+        if (!explicitSaveFlushInProgress && (pendingSaveState || pendingSaveHistory)) {
+          schedulePendingSave();
+        }
+      }
     });
+    return saveInFlight;
+  }
+
+  function broadcastWithTrace(message: { type: string } & Record<string, unknown>): void {
+    perfTrace.measure("background.runtime.broadcast", { type: message.type }, () => {
+      postSidebarMessage(message);
+    });
+  }
+
+  function postSidebarMessage(message: { type: string } & Record<string, unknown>): void {
+    if (sidebarPorts.size > 0) {
+      postMessageToSidebarPorts(message);
+      return;
+    }
+
+    postFallbackRuntimeMessage(message);
+  }
+
+  function postMessageToSidebarPorts(message: { type: string } & Record<string, unknown>): void {
+    for (const port of [...sidebarPorts]) {
+      try {
+        port.postMessage(message);
+      } catch (error) {
+        sidebarPorts.delete(port);
+        perfTrace.mark("background.runtime.port.post.error", {
+          type: message.type,
+          message: errorText(error)
+        });
+      }
+    }
+  }
+
+  function postFallbackRuntimeMessage(message: { type: string } & Record<string, unknown>): void {
+    try {
+      void api.runtime.sendMessage(message).catch((error) => {
+        perfTrace.mark("background.runtime.broadcast.error", {
+          type: message.type,
+          message: errorText(error)
+        });
+      });
+    } catch (error) {
+      perfTrace.mark("background.runtime.broadcast.error", {
+        type: message.type,
+        message: errorText(error)
+      });
+    }
   }
 
   function getDiagnosticsCoalesced(): Promise<OutlineDiagnostics> {
@@ -1970,12 +2068,12 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         perfTrace.mark("background.profile.disabled");
         perfTrace.setEnabled(false);
       }
-      await sendSidebarPerformanceTraceEnabled(message.enabled);
+      sendSidebarPerformanceTraceEnabled(message.enabled);
       return { ok: true };
     }
     if (message.type === "clearPerformanceTrace") {
       perfTrace.clear();
-      await clearSidebarPerformanceTrace();
+      clearSidebarPerformanceTrace();
       return { ok: true };
     }
     if (message.type === "getPerformanceProfile") {
@@ -2005,7 +2103,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         seenSidebarIds: new Set()
       };
       pendingSidebarProfileCollections.set(requestId, collection);
-      void api.runtime.sendMessage({ type: "collectSidebarPerformanceTrace", requestId }).catch(() => undefined);
+      postSidebarMessage({ type: "collectSidebarPerformanceTrace", requestId });
     });
     return sidebars;
   }
@@ -2023,12 +2121,12 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     return { ok: true };
   }
 
-  async function sendSidebarPerformanceTraceEnabled(enabled: boolean): Promise<void> {
-    await api.runtime.sendMessage({ type: "setSidebarPerformanceTraceEnabled", enabled }).catch(() => undefined);
+  function sendSidebarPerformanceTraceEnabled(enabled: boolean): void {
+    postSidebarMessage({ type: "setSidebarPerformanceTraceEnabled", enabled });
   }
 
-  async function clearSidebarPerformanceTrace(): Promise<void> {
-    await api.runtime.sendMessage({ type: "clearSidebarPerformanceTrace" }).catch(() => undefined);
+  function clearSidebarPerformanceTrace(): void {
+    postSidebarMessage({ type: "clearSidebarPerformanceTrace" });
   }
 
   async function reconcileMissingLiveTabsInOpenWindows(): Promise<ReconciledStateChange | undefined> {

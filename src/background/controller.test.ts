@@ -2364,6 +2364,56 @@ describe("background controller lifecycle", () => {
     await flush;
   });
 
+  it("does not wait for sidebar broadcasts before acknowledging repeated structural commands", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    await controller.flushPendingSaves();
+    runtime.broadcasts.length = 0;
+
+    const blockedTreePatch = deferred<unknown>();
+    vi.mocked(runtime.api.runtime.sendMessage).mockImplementation(async (message: unknown) => {
+      runtime.broadcasts.push(message);
+      if ((message as { type?: unknown }).type === "treeStructureUpdated") {
+        return blockedTreePatch.promise;
+      }
+      return undefined;
+    });
+
+    const first = await Promise.race([
+      controller.handleMessage({ type: "wrapNodeInGroup", nodeId: "tab:1" }),
+      waitForMacrotask().then(() => "blocked")
+    ]);
+    const second = await Promise.race([
+      controller.handleMessage({ type: "wrapNodeInGroup", nodeId: "tab:1" }),
+      waitForMacrotask().then(() => "blocked")
+    ]);
+
+    expectCommandAck(first, true);
+    expectCommandAck(second, true);
+    expect(stateBroadcasts(runtime.broadcasts).filter((message) =>
+      (message as { type?: unknown }).type === "treeStructureUpdated"
+    )).toHaveLength(2);
+  });
+
   it("flushes repeated structural command saves against the persisted v3 baseline", async () => {
     const tabCount = 1500;
     const runtime = fakeRuntime(
@@ -2445,6 +2495,61 @@ describe("background controller lifecycle", () => {
       await vi.advanceTimersByTimeAsync(1);
 
       expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("restarts the quiet timer instead of immediately draining saves queued during an in-flight save", async () => {
+    vi.useFakeTimers();
+    try {
+      const runtime = fakeRuntime(
+        [
+          {
+            id: 10,
+            focused: true,
+            incognito: false
+          }
+        ],
+        [
+          {
+            id: 1,
+            windowId: 10,
+            index: 0,
+            active: true,
+            url: "https://one.example/",
+            title: "One"
+          }
+        ]
+      );
+      const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+      await controller.ensureState();
+      await controller.flushPendingSaves();
+      vi.mocked(runtime.api.storage.local.set).mockClear();
+
+      const firstSave = deferred<void>();
+      const saveImplementation = vi.mocked(runtime.api.storage.local.set).getMockImplementation();
+      vi.mocked(runtime.api.storage.local.set).mockImplementationOnce(async (items: Record<string, unknown>) => {
+        await firstSave.promise;
+        await saveImplementation?.(items);
+      });
+
+      await controller.handleMessage({ type: "toggleCollapsed", nodeId: "window:10" });
+      await vi.advanceTimersByTimeAsync(1000);
+
+      expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
+
+      await controller.handleMessage({ type: "toggleCollapsed", nodeId: "window:10" });
+      firstSave.resolve();
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
+
+      await vi.advanceTimersByTimeAsync(999);
+      expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
+
+      await vi.advanceTimersByTimeAsync(1);
+      expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(2);
     } finally {
       vi.useRealTimers();
     }

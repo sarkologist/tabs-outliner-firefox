@@ -10,6 +10,15 @@ type MessageSender = {
   tab?: RuntimeTab;
 };
 
+type WebExtensionPortApi = {
+  name?: string;
+  sender?: MessageSender;
+  onMessage: Listener<(message: unknown, port: WebExtensionPortApi) => void | Promise<void>>;
+  onDisconnect: Listener<(port: WebExtensionPortApi) => void | Promise<void>>;
+  postMessage(message: unknown): void;
+  disconnect(): void;
+};
+
 type StorageChange = {
   oldValue?: unknown;
   newValue?: unknown;
@@ -83,6 +92,8 @@ type WebExtensionBrowserApi = {
     onInstalled: Listener<() => void | Promise<void>>;
     onStartup: Listener<() => void | Promise<void>>;
     onMessage: Listener<(message: unknown, sender: MessageSender) => unknown | Promise<unknown>>;
+    onConnect?: Listener<(port: WebExtensionPortApi) => void | Promise<void>>;
+    connect?(connectInfo?: { name?: string }): WebExtensionPortApi;
     sendMessage(message: unknown): Promise<unknown>;
     getURL(path: string): string;
     openOptionsPage(): Promise<void>;
@@ -139,6 +150,7 @@ type OutlineMessage =
 
 declare global {
   type WebExtensionBrowser = WebExtensionBrowserApi;
+  type WebExtensionPort = WebExtensionPortApi;
   const browser: WebExtensionBrowser;
 }
 

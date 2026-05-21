@@ -132,6 +132,7 @@ const GUIDE_TOP = 1;
 const GUIDE_BOTTOM = 2;
 const GUIDE_FULL = GUIDE_TOP | GUIDE_BOTTOM;
 const SVG_NS = "http://www.w3.org/2000/svg";
+const SIDEBAR_PORT_NAME = "tabs-outliner-sidebar";
 const sidebarProfileInstanceId = createSidebarProfileInstanceId();
 
 type ProfileSnapshot = SidebarProfileSnapshot;
@@ -305,7 +306,27 @@ rootDropSurface?.addEventListener("drop", (event) => {
   performDrop(placement);
 });
 
-browser.runtime.onMessage.addListener((message) => {
+const backgroundPort = connectToBackgroundPort();
+backgroundPort?.onMessage.addListener((message) => {
+  void Promise.resolve(handleBackgroundMessage(message)).catch((error) => {
+    perfTrace.mark("sidebar.runtime.port.message.error", { message: commandErrorText(error) });
+  });
+});
+backgroundPort?.onDisconnect.addListener(() => {
+  perfTrace.mark("sidebar.runtime.port.disconnect");
+});
+
+browser.runtime.onMessage.addListener((message) => handleBackgroundMessage(message));
+
+function connectToBackgroundPort(): WebExtensionPort | undefined {
+  try {
+    return browser.runtime.connect?.({ name: SIDEBAR_PORT_NAME });
+  } catch {
+    return undefined;
+  }
+}
+
+function handleBackgroundMessage(message: unknown): unknown {
   if (isSidebarPerformanceTraceMessage(message)) {
     return handleSidebarPerformanceTraceMessage(message);
   }
@@ -337,7 +358,7 @@ browser.runtime.onMessage.addListener((message) => {
     }
   });
   return undefined;
-});
+}
 
 async function loadState(): Promise<void> {
   try {
