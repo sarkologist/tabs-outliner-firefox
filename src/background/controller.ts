@@ -52,6 +52,7 @@ import {
   bootstrapFromWindows,
   closeTab,
   closeWindow,
+  deleteNode as deleteOutlineNode,
   deleteLiveTabNodeByTabId,
   planRestore,
   projectLiveTabs,
@@ -243,6 +244,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   const deleteOwnedClosingTabIds = new Set<number>();
   const deleteOwnedClosingWindowIds = new Set<number>();
   const removedTabIds = new Set<number>();
+  const removedWindowIds = new Set<number>();
   const commandRestoredTabIds = new Set<number>();
   const commandRelocatedTabEchoes = new Map<number, CommandRelocatedTabEcho>();
   const commandFocusedTabIds = new Set<number>();
@@ -391,6 +393,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       if (fullSizeOutlinerWindowIds.delete(windowId)) {
         return;
       }
+      removedWindowIds.add(windowId);
       if (deleteOwnedClosingWindowIds.delete(windowId)) {
         return;
       }
@@ -585,6 +588,30 @@ export function createBackgroundController(options: BackgroundControllerOptions)
           runCommand(current, adapter, message)
         );
       } catch (error) {
+        if (
+          message.type === "deleteNode" &&
+          deleteClosePlan &&
+          await runtimeClosePlanCompleted(deleteClosePlan)
+        ) {
+          const recovered = deleteOutlineNode(current, message.nodeId, { allowLive: true });
+          if (recovered !== current) {
+            const runtimeIndexCandidateNodeIds = runtimeIndexCandidateNodeIdsForCommand(message, current, recovered);
+            const saveSchedule = saveScheduleForCommand(message.type);
+            installStateTransition(current, recovered, { candidateNodeIds: runtimeIndexCandidateNodeIds });
+            if (historyPrevious && isTrackableHistoryCommandType(message.type)) {
+              await recordHistoryEntry(message.type, historyPrevious, recovered, {
+                ...(runtimeIndexCandidateNodeIds ? { candidateNodeIds: runtimeIndexCandidateNodeIds } : {}),
+                saveSchedule
+              });
+            }
+            const update = perfTrace.measure("background.patch.build.treeStructure", { command: message.type }, () =>
+              treeStructureUpdateFromStateChange(current, recovered)
+            );
+            await broadcastTreeStructureUpdate(update);
+            scheduleStateSave(recovered, saveSchedule);
+            return commandAck(true);
+          }
+        }
         for (const tabId of outlinerClosePlan?.tabIds ?? []) {
           outlinerClosingTabIds.delete(tabId);
         }
@@ -674,6 +701,25 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       await persistWithBestEffortPatch(current, result.state, { saveSchedule });
       return commandAck(true);
     }, { reason: "command", command: message.type });
+  }
+
+  async function runtimeClosePlanCompleted(plan: RuntimeClosePlan): Promise<boolean> {
+    if (plan.windowIds.length === 0 && plan.tabIds.length === 0) {
+      return true;
+    }
+
+    const windows = await getNormalWindows(api).catch(() => undefined);
+    if (!windows) {
+      return false;
+    }
+
+    const openWindowIds = new Set(windows.map((windowInfo) => windowInfo.id));
+    if (plan.windowIds.some((windowId) => openWindowIds.has(windowId))) {
+      return false;
+    }
+
+    const openTabIds = new Set(windows.flatMap((windowInfo) => windowInfo.tabs ?? []).map((tab) => tab.id));
+    return plan.tabIds.every((tabId) => !openTabIds.has(tabId));
   }
 
   async function ensureState(): Promise<OutlineState> {
@@ -1182,8 +1228,11 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     const current = await ensureState();
     const closeMissing = options.closeMissing ?? eventTabs.length === 0;
     const index = runtimeIndexForState(current);
+    const ignoredTabIds = ignoredRuntimeTabIdsForRefresh(removedTabIds, deleteOwnedClosingTabIds);
+    const ignoredWindowIds = ignoredRuntimeWindowIdsForRefresh(removedWindowIds, deleteOwnedClosingWindowIds);
     const currentEventTabs = eventTabs
-      .filter((tab) => !removedTabIds.has(tab.id))
+      .filter((tab) => !ignoredTabIds.has(tab.id))
+      .filter((tab) => !ignoredWindowIds.has(tab.windowId))
       .filter((tab) => !consumeCommandRestoredTabEvent(current, index, commandRestoredTabIds, tab))
       .filter((tab) => !consumeCommandRelocatedStaleTabEvent(current, index, commandRelocatedTabEchoes, tab))
       .filter((tab) => tabEventMayChangeState(current, tab, index));
@@ -1210,7 +1259,10 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       : getNormalWindows(api));
     const windows = applyActivationOverridesToWindows(
       filterCommandRelocatedStaleTabsFromWindows(
-        filterRemovedTabsFromWindows(windowsSnapshot, removedTabIds),
+        filterRemovedWindowsFromWindows(
+          filterRemovedTabsFromWindows(windowsSnapshot, ignoredTabIds),
+          ignoredWindowIds
+        ),
         current,
         index,
         commandRelocatedTabEchoes
@@ -2181,7 +2233,13 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
   async function reconcileMissingLiveTabsInOpenWindows(): Promise<ReconciledStateChange | undefined> {
     const current = await ensureState();
-    const windows = filterRemovedTabsFromWindows(await getNormalWindows(api), removedTabIds);
+    const windows = filterRemovedWindowsFromWindows(
+      filterRemovedTabsFromWindows(
+        await getNormalWindows(api),
+        ignoredRuntimeTabIdsForRefresh(removedTabIds, deleteOwnedClosingTabIds)
+      ),
+      ignoredRuntimeWindowIdsForRefresh(removedWindowIds, deleteOwnedClosingWindowIds)
+    );
     const openWindowIds = new Set(windows.map((windowInfo) => windowInfo.id));
     const openTabIds = new Set(
       windows.flatMap((windowInfo) => windowInfo.tabs ?? []).map((tab) => tab.id)
@@ -3608,6 +3666,36 @@ function filterRemovedTabsFromWindows(windows: RuntimeWindow[], removedTabIds: S
     ...windowInfo,
     tabs: (windowInfo.tabs ?? []).filter((tab) => !removedTabIds.has(tab.id))
   }));
+}
+
+function filterRemovedWindowsFromWindows(windows: RuntimeWindow[], removedWindowIds: Set<number>): RuntimeWindow[] {
+  if (removedWindowIds.size === 0) {
+    return windows;
+  }
+
+  return windows.filter((windowInfo) => !removedWindowIds.has(windowInfo.id));
+}
+
+function ignoredRuntimeTabIdsForRefresh(
+  removedTabIds: Set<number>,
+  deleteOwnedClosingTabIds: Set<number>
+): Set<number> {
+  if (deleteOwnedClosingTabIds.size === 0) {
+    return removedTabIds;
+  }
+
+  return new Set([...removedTabIds, ...deleteOwnedClosingTabIds]);
+}
+
+function ignoredRuntimeWindowIdsForRefresh(
+  removedWindowIds: Set<number>,
+  deleteOwnedClosingWindowIds: Set<number>
+): Set<number> {
+  if (deleteOwnedClosingWindowIds.size === 0) {
+    return removedWindowIds;
+  }
+
+  return new Set([...removedWindowIds, ...deleteOwnedClosingWindowIds]);
 }
 
 function filterCommandRelocatedStaleTabsFromWindows(

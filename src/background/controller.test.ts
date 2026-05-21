@@ -6370,6 +6370,191 @@ describe("background controller lifecycle", () => {
     expect(state.rootIds).not.toContain("window:42");
   });
 
+  it("does not recreate nodes from delayed restored-tab events after deleting their restored group", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        },
+        {
+          id: 20,
+          focused: false,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        },
+        {
+          id: 5,
+          windowId: 20,
+          index: 0,
+          active: true,
+          url: "https://restored.example/",
+          title: "Restored"
+        }
+      ]
+    );
+    vi.mocked(runtime.api.sessions.getRecentlyClosed).mockResolvedValue([
+      { window: { sessionId: "session-window-20" } } as never
+    ]);
+    const adapter: BrowserAdapter = {
+      focusTab: vi.fn(async () => undefined),
+      closeTab: vi.fn(async () => undefined),
+      closeTabs: vi.fn(async () => undefined),
+      closeWindow: vi.fn(async (windowId) => {
+        if (windowId === 20) {
+          await closeRuntimeWindow(runtime, windowId, { awaitListeners: false });
+        }
+      }),
+      restoreSession: vi.fn(async () => {
+        runtime.windows = runtime.windows
+          .map((windowInfo) => ({ ...windowInfo, focused: false }))
+          .concat({ id: 42, focused: true, incognito: false });
+        return {
+          window: {
+            id: 42,
+            focused: true,
+            incognito: false,
+            tabs: []
+          }
+        };
+      }),
+      createTab: vi.fn(async () => {
+        throw new Error("not implemented");
+      }),
+      createWindow: vi.fn(async () => {
+        throw new Error("not implemented");
+      }),
+      moveTabs: vi.fn(async () => undefined)
+    };
+    const controller = createBackgroundController({ api: runtime.api, adapter, now: () => 1000 });
+    await controller.ensureState();
+    await controller.handleMessage({ type: "wrapNodeInGroup", nodeId: "window:20" });
+    let state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    const groupId = state.nodes["window:20"]?.parentId;
+    expect(groupId).toBeTruthy();
+
+    await controller.handleMessage({ type: "closeNode", nodeId: groupId! });
+    state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(state.nodes[groupId!]?.status).toBe("neutral");
+    expect(state.nodes["window:20"]?.status).toBe("closed");
+
+    expectCommandAck(await controller.handleMessage({ type: "restoreNode", nodeId: groupId! }), true);
+    state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(state.nodes["window:20"]?.live).toEqual({ windowId: 42 });
+    expect(state.nodes["tab:5"]?.status).toBe("closed");
+
+    const delayedRestoredTab: RuntimeTab = {
+      id: 50,
+      windowId: 42,
+      index: 0,
+      active: true,
+      url: "https://restored.example/",
+      title: "Restored"
+    };
+    createTabFromBrowser(runtime, delayedRestoredTab, { awaitListeners: false });
+
+    expectCommandAck(await controller.handleMessage({ type: "deleteNode", nodeId: groupId! }), true);
+    await runtime.events.tabCreated.flush();
+
+    runtime.tabs = runtime.tabs.filter((tab) => tab.windowId !== 42);
+    runtime.windows = runtime.windows.filter((windowInfo) => windowInfo.id !== 42);
+    runtime.events.tabRemoved.dispatch(50, { windowId: 42, isWindowClosing: true });
+    runtime.events.windowRemoved.dispatch(42);
+    await Promise.all([
+      runtime.events.tabRemoved.flush(),
+      runtime.events.windowRemoved.flush()
+    ]);
+
+    state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(state.nodes[groupId!]).toBeUndefined();
+    expect(state.nodes["window:20"]).toBeUndefined();
+    expect(state.nodes["tab:5"]).toBeUndefined();
+    expect(state.nodes["window:42"]).toBeUndefined();
+    expect(state.nodes["tab:50"]).toBeUndefined();
+    expect(state.rootIds).toEqual(["window:10"]);
+  });
+
+  it("deletes the outline subtree when a delete-owned window close completes but rejects", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        },
+        {
+          id: 20,
+          focused: false,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        },
+        {
+          id: 2,
+          windowId: 20,
+          index: 0,
+          active: true,
+          url: "https://two.example/",
+          title: "Two"
+        }
+      ]
+    );
+    const adapter: BrowserAdapter = {
+      focusTab: vi.fn(async () => undefined),
+      closeTab: vi.fn(async () => undefined),
+      closeTabs: vi.fn(async () => undefined),
+      closeWindow: vi.fn(async (windowId) => {
+        await closeRuntimeWindow(runtime, windowId, { awaitListeners: false });
+        throw new Error("Window close completed after rejecting");
+      }),
+      restoreSession: vi.fn(async () => ({})),
+      createTab: vi.fn(async () => {
+        throw new Error("not implemented");
+      }),
+      createWindow: vi.fn(async () => {
+        throw new Error("not implemented");
+      }),
+      moveTabs: vi.fn(async () => undefined)
+    };
+    const controller = createBackgroundController({ api: runtime.api, adapter, now: () => 1000 });
+    await controller.ensureState();
+    await controller.handleMessage({ type: "wrapNodeInGroup", nodeId: "window:20" });
+    let state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    const groupId = state.nodes["window:20"]?.parentId;
+    expect(groupId).toBeTruthy();
+
+    const deleteResult = await controller.handleMessage({ type: "deleteNode", nodeId: groupId! });
+    await Promise.all([
+      runtime.events.tabRemoved.flush(),
+      runtime.events.windowRemoved.flush()
+    ]);
+    state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+
+    expectCommandAck(deleteResult, true);
+    expect(state.nodes[groupId!]).toBeUndefined();
+    expect(state.nodes["window:20"]).toBeUndefined();
+    expect(state.nodes["tab:2"]).toBeUndefined();
+    expect(state.rootIds).toEqual(["window:10"]);
+  });
+
   it("deletes live nodes through commands and ignores later remove events", async () => {
     const runtime = fakeRuntime(
       [
