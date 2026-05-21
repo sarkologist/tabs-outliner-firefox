@@ -517,21 +517,24 @@ Use these as starting targets, not hard promises:
 
 ### 2026-05-21: Event Echo Asymptotics Audit
 
-- Code-path audit, not a fresh profile run. Let `n` be outline nodes, `u` be unique tab events in one coalesced runtime batch, `k` be changed nodes, and `v` be visible sidebar rows.
+- Living code-path audit, not a fresh profile run. Keep this table current as event-echo improvements land. Let `n` be outline nodes, `u` be unique tab events in one coalesced runtime batch, `k` be changed nodes, `w` be open browser windows/tabs returned by a runtime snapshot, and `v` be visible sidebar rows. "Cold" means the cached `RuntimeStateIndex` must be rebuilt; "warm" means it already matches the current state.
+
+| Path | Current Asymptotic | Theoretical Optimum | Gap / Next Work |
+| --- | --- | --- | --- |
+| Irrelevant `tabs.onUpdated`, command focus active-update drop, delete-owned close echo, sidebar focus noise | `O(1)` | `O(1)` | At optimum. |
+| Command focus activation/window-focus echoes | warm `O(1)`, cold `O(n)` | `O(1)` | Cold index rebuild remains if the runtime index is missing or stale. Maintain the index across all state swaps to avoid this. |
+| Command-restored `tabs.onCreated` echo | warm `O(u)`, cold `O(n + u)` | `O(u)` | Per-event scans are gone. Remaining cold cost is runtime-index rebuild. |
+| Command-relocated stale tab echoes | warm `O(u)`, cold `O(n + u)` | `O(u)` | The former `O(u * n)` path is fixed. Remaining cold cost is runtime-index rebuild. |
+| Generic no-op metadata echo | warm `O(u)`, cold `O(n + u)` | `O(u)` | Uses indexed no-op checks when warm. Remaining cold cost is runtime-index rebuild. |
+| Small runtime update/create fast path | `O(n + u + k)` CPU, `O(k)` transport | `O(u + k)` CPU, `O(k)` transport | Still clones the runtime index and shallow-copies the node table for small real changes. Next major target. |
+| Compact sidebar patch handling | often `O(v)` for active/row refresh side effects, sometimes fast-path splice/patch work | `O(k + visible-delta)` | Sidebar still rescans visible rows for some patch side effects such as active target and active-window flags. |
+| Full runtime reconciliation fallback | `O(w log w + n)` plus browser snapshot cost, then `O(n)` diff or full-state fallback | `O(w log w + n)` | This is the correctness fallback; optimize by avoiding entry into it for narrow events, not by weakening it. |
+
 - Current echo handling has three tiers:
   - Pure drops are `O(1)`: irrelevant `tabs.onUpdated` payloads, command focus active-update echoes, delete-owned close echoes, sidebar-window focus noise, and already-cancelled pending refreshes.
   - Compact visible updates are usually `O(k)` for transport and no full save on the interaction path, but still often `O(n)` background CPU because the controller scans or clones outline-level structures before it can produce the compact patch.
   - Guarded fallbacks remain `O(n)` plus runtime snapshot cost, then `O(n)` patch diff or full-state broadcast fallback.
 - Coalescing helps burst shape: runtime refreshes merge by tab id into one low-priority job, so event trains are no longer one full refresh per event. The remaining cost is the work inside the one merged refresh.
-- Current per-path shape:
-  - Generic no-op metadata echo: cold `O(n + u)` because `buildRuntimeStateIndex()` may run; warm `O(u)` after the index is cached.
-  - Legit small runtime update/create fast path: `O(n + u + k)` CPU today because it clones the runtime index and shallow-copies the node table before returning an exact `nodeStateUpdated` or `treeStructureUpdated` patch. Transport is `O(k)`.
-  - Command-owned focus activation/window-focus echoes: avoid snapshots/saves/full broadcasts, but `activateRuntimeTabInPlace()` and `focusRuntimeWindowInPlace()` still scan `Object.values(state.nodes)`, so they are `O(n)` CPU with small `activeStateUpdated` transport.
-  - Command restore `tabs.onCreated` echo: usually avoids full reconciliation, but `consumeCommandRestoredTabEvent()` calls `liveTabNodeByRuntimeId()`, which is a full node scan, so the echo filter is `O(n)` instead of indexed `O(1)`.
-  - Command-relocated stale tab echoes: the worst remaining echo asymptotic. `consumeCommandRelocatedStaleTabEvent()` and `filterCommandRelocatedStaleTabsFromWindows()` call `liveTabNodeByRuntimeId()` inside event/window loops, making the path up to `O(u * n)` before any fallback reconciliation.
-  - Fallback `refreshFromRuntimeNow()` still calls `getNormalWindows()` / `tabs.query()`, checks `runtimeSnapshotMateriallyMatchesState()`, and may run `reconcileWithWindows()`, so it is whole-tree and whole-runtime sized by design.
-- Best next fix: pass the cached `RuntimeStateIndex` into restored/relocated echo consumers and activation override helpers, replace scan-based `liveTabNodeByRuntimeId()` / `liveWindowNodeByRuntimeId()` calls on hot echo paths with map lookups, and update or invalidate the index whenever these consumers delete stale echo tracking. This should move restored and relocated echo filtering from `O(n)` or `O(u * n)` toward `O(u)` while preserving the current full-reconcile fallback.
-- Follow-up after that: consider indexed active-tab/window updates for command focus echoes. That would remove another common `O(n)` scan, but the relocated/restored echo filters are the sharper remaining asymptotic problem because they multiply by event/window loops.
 
 ### 2026-05-21: Indexed Restored/Relocated Echo Filtering
 
