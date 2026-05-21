@@ -541,3 +541,12 @@ Use these as starting targets, not hard promises:
   - After the fix, the same scenario allows only the single cold index build and no per-echo node-table scan.
   - Command-restored `tabs.onCreated` echo absorption has the same guard: at most the one cold index build, no extra full node-table scan.
 - Verification: `pnpm exec vitest run src/background/controller.test.ts -t "node table scan"`, `pnpm exec vitest run src/background/controller.test.ts`, `pnpm build`, and `pnpm test` passed.
+
+### 2026-05-21: Indexed Command Focus Echoes
+
+- Implemented the next audit follow-up: command-owned focus activation/window-focus echoes now update active tab/window flags through `RuntimeStateIndex` instead of scanning `Object.values(state.nodes)`.
+- The indexed path touches only the previous and next active tab/window records, updates `activeTabNodeIdsByWindowId` / `activeWindowNodeId`, and keeps the existing full `refreshFromRuntimeNow()` fallback when the runtime ids are not represented in the index.
+- Added scan-count coverage to the focus command echo tests:
+  - Same-window `focusNode` echo handling previously did 2 node-table scans: one no-change window focus scan and one tab activation scan.
+  - After the fix, same-window and cross-window focus command echoes both perform 0 node-table scans while still avoiding `windows.getAll()`, `tabs.query()`, storage saves, and full-state broadcasts.
+- Verification: `pnpm exec vitest run src/background/controller.test.ts -t "focus command"`, `pnpm exec vitest run src/background/controller.test.ts`, `pnpm build`, and `pnpm test` passed.

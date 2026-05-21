@@ -1415,7 +1415,8 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     commandFocusedActivationWindowIds.delete(activeInfo.windowId);
     return enqueueMutation(async () => {
       const current = await ensureState();
-      const activation = activateRuntimeTabInPlace(current, activeInfo.tabId, activeInfo.windowId);
+      const index = runtimeIndexForState(current);
+      const activation = activateRuntimeTabInPlace(current, index, activeInfo.tabId, activeInfo.windowId);
       if (!activation.found) {
         return refreshFromRuntimeNow([], { closeMissing: true });
       }
@@ -1425,6 +1426,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
       state = current;
       stateCache.replace(current);
+      runtimeIndex = index;
       await broadcastActiveStateUpdate(activation.updates);
       return true;
     }, { reason: "commandFocusActivation" });
@@ -1438,7 +1440,8 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         return refreshFromRuntimeNow([], { closeMissing: false });
       }
 
-      const focus = focusRuntimeWindowInPlace(current, windowId);
+      const index = runtimeIndexForState(current);
+      const focus = focusRuntimeWindowInPlace(current, index, windowId);
       if (!focus.found) {
         return refreshFromRuntimeNow([], { closeMissing: false });
       }
@@ -1448,6 +1451,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
       state = current;
       stateCache.replace(current);
+      runtimeIndex = index;
       await broadcastActiveStateUpdate(focus.updates);
       return true;
     }, { reason: "commandWindowFocus" });
@@ -2683,53 +2687,75 @@ function isCommandFocusActiveUpdateEcho(
 
 function activateRuntimeTabInPlace(
   state: OutlineState,
+  index: RuntimeStateIndex,
   tabId: number,
   windowId: number
 ): { found: boolean; changed: boolean; updates: ActiveStateUpdate[] } {
-  let found = false;
   let changed = false;
   const updates: ActiveStateUpdate[] = [];
+  const targetNodeId = index.liveTabNodeIdsByRuntimeId.get(tabId);
+  const targetNode = targetNodeId ? state.nodes[targetNodeId] : undefined;
+  if (!targetNodeId || !isLiveTabNode(targetNode) || targetNode.live.windowId !== windowId) {
+    return { found: false, changed, updates };
+  }
 
-  for (const node of Object.values(state.nodes)) {
-    if (!isLiveTabNode(node) || node.live.windowId !== windowId) {
-      continue;
+  const previousActiveNodeId = index.activeTabNodeIdsByWindowId.get(windowId);
+  if (previousActiveNodeId && previousActiveNodeId !== targetNodeId) {
+    const previousActiveNode = state.nodes[previousActiveNodeId];
+    if (!isLiveTabNode(previousActiveNode) || previousActiveNode.live.windowId !== windowId) {
+      return { found: false, changed: false, updates: [] };
     }
-
-    const active = node.live.tabId === tabId;
-    found ||= active;
-    if (node.active !== active) {
-      node.active = active;
+    if (previousActiveNode.active !== false) {
+      previousActiveNode.active = false;
       changed = true;
-      updates.push({ nodeId: node.id, active });
+      updates.push({ nodeId: previousActiveNode.id, active: false });
     }
   }
 
-  return { found, changed, updates };
+  if (targetNode.active !== true) {
+    targetNode.active = true;
+    changed = true;
+    updates.push({ nodeId: targetNode.id, active: true });
+  }
+  index.activeTabNodeIdsByWindowId.set(windowId, targetNodeId);
+
+  return { found: true, changed, updates };
 }
 
 function focusRuntimeWindowInPlace(
   state: OutlineState,
+  index: RuntimeStateIndex,
   windowId: number
 ): { found: boolean; changed: boolean; updates: ActiveStateUpdate[] } {
-  let found = false;
   let changed = false;
   const updates: ActiveStateUpdate[] = [];
+  const targetNodeId = index.liveWindowNodeIdsByRuntimeId.get(windowId);
+  const targetNode = targetNodeId ? state.nodes[targetNodeId] : undefined;
+  if (!targetNodeId || !isLiveWindowNode(targetNode)) {
+    return { found: false, changed, updates };
+  }
 
-  for (const node of Object.values(state.nodes)) {
-    if (node.kind !== "window" || node.status !== "live" || !node.live || !("windowId" in node.live)) {
-      continue;
+  const previousActiveNodeId = index.activeWindowNodeId;
+  if (previousActiveNodeId && previousActiveNodeId !== targetNodeId) {
+    const previousActiveNode = state.nodes[previousActiveNodeId];
+    if (!isLiveWindowNode(previousActiveNode)) {
+      return { found: false, changed: false, updates: [] };
     }
-
-    const active = node.live.windowId === windowId;
-    found ||= active;
-    if (node.active !== active) {
-      node.active = active;
+    if (previousActiveNode.active !== false) {
+      previousActiveNode.active = false;
       changed = true;
-      updates.push({ nodeId: node.id, active });
+      updates.push({ nodeId: previousActiveNode.id, active: false });
     }
   }
 
-  return { found, changed, updates };
+  if (targetNode.active !== true) {
+    targetNode.active = true;
+    changed = true;
+    updates.push({ nodeId: targetNode.id, active: true });
+  }
+  index.activeWindowNodeId = targetNodeId;
+
+  return { found: true, changed, updates };
 }
 
 function closePlanForCloseNodeCommand(state: OutlineState, nodeId: NodeId): RuntimeClosePlan {
