@@ -219,6 +219,15 @@ describe("outline state v2 storage", () => {
     expect(api.storage.local.get).toHaveBeenCalledWith([STATE_V3_MANIFEST_KEY, STATE_V2_MANIFEST_KEY]);
   });
 
+  it("round-trips generated nested states through v2 chunks and order pages", async () => {
+    for (let seed = 1; seed <= 8; seed += 1) {
+      const state = generatedStorageState(seed);
+      const api = fakeApi(outlineStateV2Items(state, { revision: seed }));
+
+      await expect(loadStateV2(api), `seed ${seed}`).resolves.toEqual(state);
+    }
+  });
+
   it("hydrates the full state from v2 chunks and order pages", async () => {
     const state = makeLargeState(1200);
     const api = fakeApi(outlineStateV2Items(state, { revision: 789 }));
@@ -302,6 +311,19 @@ describe("outline state v3 storage", () => {
     expect(setKeys.filter((key) => key.includes(":order:")).length).toBeGreaterThan(0);
     expect(setKeys.filter((key) => key.includes(":order:")).length).toBeLessThan(60);
     expect(setKeys.length).toBeLessThan(70);
+  }, 15_000);
+
+  it("keeps generated incremental v3 saves loadable as the exact next state", async () => {
+    for (let seed = 1; seed <= 8; seed += 1) {
+      const previous = generatedStorageState(seed);
+      const next = generatedNextStorageState(previous, seed);
+      const api = fakeApi();
+      await saveState(previous, api);
+
+      await saveStateAndHistory(next, undefined, api, { previousState: previous });
+
+      await expect(loadStateV3(api), `seed ${seed}`).resolves.toEqual(next);
+    }
   });
 
   it("removes stale v3 order pages when a parent child list shrinks", async () => {
@@ -333,3 +355,169 @@ describe("outline state v3 storage", () => {
     expect(api.storage.local.get).toHaveBeenCalledTimes(1);
   });
 });
+
+function generatedStorageState(seed: number): OutlineState {
+  const rng = seededRandom(seed);
+  const root: OutlineNode = {
+    id: "window:10",
+    kind: "window",
+    status: "live",
+    childIds: [],
+    title: "Group",
+    active: true,
+    collapsed: false,
+    createdAt: seed,
+    updatedAt: seed,
+    live: { windowId: 10 }
+  };
+  const nodes: Record<string, OutlineNode> = {
+    [root.id]: root
+  };
+  const parentIds = [root.id];
+  const depths = new Map<string, number>([[root.id, 0]]);
+  const activeTabOrdinal = 1 + Math.floor(rng() * 180);
+
+  for (let ordinal = 1; ordinal <= 180; ordinal += 1) {
+    const eligibleParents = parentIds.filter((parentId) => (depths.get(parentId) ?? 0) < 4);
+    const parentId = eligibleParents[Math.floor(rng() * eligibleParents.length)] ?? root.id;
+    const parent = nodes[parentId]!;
+    const depth = (depths.get(parentId) ?? 0) + 1;
+    const isGroup = ordinal % 17 === 0;
+    const nodeId = isGroup ? `group:${seed}:${ordinal}` : `tab:${seed}:${ordinal}`;
+    parent.childIds.push(nodeId);
+
+    if (isGroup) {
+      nodes[nodeId] = {
+        id: nodeId,
+        kind: "group",
+        status: "neutral",
+        parentId,
+        childIds: [],
+        title: `Group ${ordinal}`,
+        collapsed: ordinal % 34 === 0,
+        createdAt: seed + ordinal,
+        updatedAt: seed + ordinal
+      };
+      parentIds.push(nodeId);
+      depths.set(nodeId, depth);
+      continue;
+    }
+
+    nodes[nodeId] = {
+      id: nodeId,
+      kind: "tab",
+      status: "live",
+      parentId,
+      childIds: [],
+      title: `Tab ${ordinal}`,
+      url: `https://storage.example/${seed}/${ordinal}`,
+      active: ordinal === activeTabOrdinal,
+      collapsed: ordinal % 29 === 0,
+      createdAt: seed + ordinal,
+      updatedAt: seed + ordinal,
+      live: { tabId: seed * 1000 + ordinal, windowId: 10 }
+    };
+    if (ordinal % 3 === 0) {
+      parentIds.push(nodeId);
+      depths.set(nodeId, depth);
+    }
+  }
+
+  if (!Object.values(nodes).some((node) => node.kind === "tab" && node.active)) {
+    const firstTab = Object.values(nodes).find((node) => node.kind === "tab");
+    if (firstTab) {
+      firstTab.active = true;
+    }
+  }
+
+  return {
+    version: 1,
+    rootIds: [root.id],
+    nodes
+  };
+}
+
+function generatedNextStorageState(previous: OutlineState, seed: number): OutlineState {
+  const next = cloneStorageState(previous);
+  const rng = seededRandom(seed * 997);
+  const parentsWithMultipleChildren = Object.values(next.nodes)
+    .filter((node) => node.childIds.length > 1)
+    .map((node) => node.id);
+  const reorderParentId = parentsWithMultipleChildren[Math.floor(rng() * parentsWithMultipleChildren.length)];
+  if (reorderParentId) {
+    const parent = next.nodes[reorderParentId]!;
+    const movedId = parent.childIds.pop();
+    if (movedId) {
+      parent.childIds.splice(Math.floor(rng() * (parent.childIds.length + 1)), 0, movedId);
+      parent.updatedAt += 1;
+    }
+  }
+
+  const group = Object.values(next.nodes).find((node) => node.kind === "group");
+  if (group) {
+    group.title = `Generated ${seed}`;
+    group.customTitle = group.title;
+    group.updatedAt += 1;
+  }
+
+  const insertParent = Object.values(next.nodes).find((node) => node.childIds.length > 0) ?? next.nodes[next.rootIds[0]!];
+  if (insertParent) {
+    const nodeId = `tab:${seed}:inserted`;
+    insertParent.childIds.splice(Math.floor(rng() * (insertParent.childIds.length + 1)), 0, nodeId);
+    next.nodes[nodeId] = {
+      id: nodeId,
+      kind: "tab",
+      status: "live",
+      parentId: insertParent.id,
+      childIds: [],
+      title: `Inserted ${seed}`,
+      url: `https://storage.example/${seed}/inserted`,
+      active: false,
+      collapsed: false,
+      createdAt: seed * 10_000,
+      updatedAt: seed * 10_000,
+      live: { tabId: seed * 10_000, windowId: 10 }
+    };
+    insertParent.updatedAt += 1;
+  }
+
+  const deleteCandidates = Object.values(next.nodes)
+    .filter((node) => node.parentId && node.childIds.length === 0 && node.id.includes(":"))
+  const deleteTarget = deleteCandidates.at(Math.floor(rng() * deleteCandidates.length));
+  if (deleteTarget?.parentId) {
+    const parent = next.nodes[deleteTarget.parentId];
+    if (parent) {
+      parent.childIds = parent.childIds.filter((childId) => childId !== deleteTarget.id);
+      parent.updatedAt += 1;
+    }
+    delete next.nodes[deleteTarget.id];
+  }
+
+  return next;
+}
+
+function cloneStorageState(state: OutlineState): OutlineState {
+  return {
+    version: state.version,
+    rootIds: [...state.rootIds],
+    nodes: Object.fromEntries(
+      Object.entries(state.nodes).map(([nodeId, node]) => [
+        nodeId,
+        {
+          ...node,
+          childIds: [...node.childIds],
+          ...(node.live ? { live: { ...node.live } } : {}),
+          ...(node.restore ? { restore: { ...node.restore } } : {})
+        }
+      ])
+    )
+  };
+}
+
+function seededRandom(seed: number): () => number {
+  let state = seed >>> 0;
+  return () => {
+    state = (state * 1664525 + 1013904223) >>> 0;
+    return state / 0x100000000;
+  };
+}
