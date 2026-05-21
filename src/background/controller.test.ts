@@ -2610,6 +2610,138 @@ describe("background controller lifecycle", () => {
     }
   });
 
+  it("uses a longer quiet save delay for restore commands", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        },
+        {
+          id: 2,
+          windowId: 10,
+          index: 1,
+          active: false,
+          openerTabId: 1,
+          url: "https://two.example/",
+          title: "Two"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    await controller.handleMessage({ type: "closeNode", nodeId: "tab:2" });
+    await runtime.events.tabRemoved.flush();
+    await runtime.events.sessionChanged.flush();
+    await controller.flushPendingSaves();
+
+    const restoredTab: RuntimeTab = {
+      id: 22,
+      windowId: 10,
+      index: 1,
+      active: false,
+      url: "https://two.example/",
+      title: "Two"
+    };
+    vi.mocked(runtime.api.sessions.restore).mockResolvedValue({ tab: copyTab(restoredTab) } as never);
+
+    vi.useFakeTimers();
+    try {
+      vi.mocked(runtime.api.storage.local.set).mockClear();
+
+      expectCommandAck(await controller.handleMessage({ type: "restoreNode", nodeId: "tab:2" }), true);
+      await vi.advanceTimersByTimeAsync(1000);
+
+      expect(vi.mocked(runtime.api.storage.local.set)).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(4000);
+
+      expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("uses a longer quiet save delay for structural undo and redo", async () => {
+    vi.useFakeTimers();
+    try {
+      const runtime = fakeRuntime(
+        [
+          {
+            id: 10,
+            focused: true,
+            incognito: false
+          }
+        ],
+        [
+          {
+            id: 1,
+            windowId: 10,
+            index: 0,
+            active: true,
+            url: "https://one.example/",
+            title: "One"
+          },
+          {
+            id: 2,
+            windowId: 10,
+            index: 1,
+            active: false,
+            openerTabId: 1,
+            url: "https://two.example/",
+            title: "Two"
+          }
+        ]
+      );
+      const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+      await controller.ensureState();
+      await controller.flushPendingSaves();
+      vi.mocked(runtime.api.storage.local.set).mockClear();
+
+      expectCommandAck(await controller.handleMessage({
+        type: "moveNode",
+        nodeId: "tab:2",
+        parentId: "window:10",
+        index: 0
+      }), true);
+      await controller.flushPendingSaves();
+      vi.mocked(runtime.api.storage.local.set).mockClear();
+
+      expectCommandAck(await controller.handleMessage({ type: "undo" }), true);
+      await vi.advanceTimersByTimeAsync(1000);
+
+      expect(vi.mocked(runtime.api.storage.local.set)).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(4000);
+
+      expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
+
+      vi.mocked(runtime.api.storage.local.set).mockClear();
+
+      expectCommandAck(await controller.handleMessage({ type: "redo" }), true);
+      await vi.advanceTimersByTimeAsync(1000);
+
+      expect(vi.mocked(runtime.api.storage.local.set)).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(4000);
+
+      expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("restarts the quiet timer instead of immediately draining saves queued during an in-flight save", async () => {
     vi.useFakeTimers();
     try {

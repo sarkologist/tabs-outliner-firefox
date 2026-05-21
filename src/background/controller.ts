@@ -640,7 +640,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         });
       }
       if (message.type === "restoreNode") {
-        await persistWithNodeStateUpdate(current, result.state, restorePatchNodeIds);
+        await persistWithNodeStateUpdate(current, result.state, restorePatchNodeIds, { saveSchedule });
         return commandAck(true);
       }
       if (message.type === "deleteNode") {
@@ -859,10 +859,11 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     }
 
     const current = await ensureState();
+    const saveSchedule = saveScheduleForCommand(popped.entry.commandType);
     const next = await applyHistoryDeltaWithRuntime(current, direction === "undo" ? popped.entry.undo : popped.entry.redo);
     if (statesMateriallyEqual(current, next)) {
       historyState = popped.history;
-      scheduleHistorySave(historyState);
+      scheduleHistorySave(historyState, saveSchedule);
       broadcastHistoryStatusSoon(historyState);
       return commandAck(false);
     }
@@ -872,8 +873,8 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     historyState = direction === "undo"
       ? pushRedoEntry(popped.history, popped.entry, activePreferences.undoHistoryLimit)
       : pushUndoEntryPreservingRedo(popped.history, popped.entry, activePreferences.undoHistoryLimit);
-    await persistWithBestEffortPatch(current, next, { diffMode: "material" });
-    scheduleHistorySave(historyState);
+    await persistWithBestEffortPatch(current, next, { diffMode: "material", saveSchedule });
+    scheduleHistorySave(historyState, saveSchedule);
     broadcastHistoryStatusSoon(historyState);
     return commandAck(true);
   }
@@ -1745,7 +1746,8 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   async function persistWithNodeStateUpdate(
     previous: OutlineState,
     next: OutlineState,
-    candidateNodeIds?: readonly NodeId[]
+    candidateNodeIds?: readonly NodeId[],
+    options: { saveSchedule?: SaveSchedule } = {}
   ): Promise<void> {
     const update = perfTrace.measure("background.patch.build.nodeState", {
       candidateNodeCount: candidateNodeIds?.length ?? 0
@@ -1754,11 +1756,15 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       : nodeStateUpdateFromStateChange(previous, next));
     if (isUsefulNodeStateUpdate(update, next)) {
       await broadcastNodeStateUpdate(update);
-      scheduleStateSave(next);
+      scheduleStateSave(next, options.saveSchedule);
       return;
     }
 
-    await persistWithBestEffortPatch(previous, next, { diffMode: "material", skipNodeState: true });
+    await persistWithBestEffortPatch(previous, next, {
+      diffMode: "material",
+      skipNodeState: true,
+      ...(options.saveSchedule ? { saveSchedule: options.saveSchedule } : {})
+    });
   }
 
   async function persistKnownNodeStateUpdate(previous: OutlineState, next: OutlineState, nodeId: NodeId): Promise<void> {
@@ -3150,6 +3156,7 @@ function saveScheduleForCommand(type: BackgroundCommand["type"]): SaveSchedule {
 function isStructuralCommand(type: BackgroundCommand["type"]): boolean {
   return type === "moveNode" ||
     type === "moveNodeToNewWindow" ||
+    type === "restoreNode" ||
     type === "wrapNodeInGroup" ||
     type === "flattenSubtree" ||
     type === "promoteChildren" ||

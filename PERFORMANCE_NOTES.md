@@ -609,3 +609,13 @@ Use these as starting targets, not hard promises:
 - Synthetic profile cross-checks after `pnpm run build`:
   - `node scripts/profile-command.mjs --scenario flatten-window --tabs 26460`: 151ms command time, first broadcast at 74ms, 0ms echo flush, explicit save flush 1,366ms, 1 save, 2 broadcasts, 26 MB stringified.
   - `node scripts/profile-command.mjs --scenario group-live-leaf --tabs 26460`: 85ms command time, first broadcast at 60ms, 0ms echo flush, explicit save flush 150ms, 1 save, 2 broadcasts, 1 MB stringified.
+
+### 2026-05-21: Interaction Save Timing for Restore and History Playback
+
+- Follow-up audit after repeated flattening found two remaining user-repeatable paths that still used the normal 1s quiet save schedule: `restoreNode`, and `undo`/`redo` when replaying structural history entries.
+- Change: `restoreNode` now uses the interaction save profile. Structural history playback derives its save schedule from the original history entry command, so undo/redo of move, move-to-new-window, group, flatten, promote, delete, or import work also gets the 5s quiet / 30s max save window while non-structural history remains on the normal schedule.
+- Added red/green controller coverage proving restore and structural undo/redo do not start storage after only 1s, then flush at the 5s interaction quiet point.
+- Verification: `pnpm exec vitest run src/background/controller.test.ts -t "restore commands|structural undo and redo"`, `pnpm exec vitest run src/background/controller.test.ts`, `pnpm test`, and `pnpm run build` passed.
+- Synthetic restore cross-checks after `pnpm run build`:
+  - `node scripts/profile-restore.mjs --tabs 26460 --target last`: 31ms measured, 6ms command, 23ms save stringify, 8 MB stringified.
+  - `node scripts/profile-restore.mjs --scenario controller-event-echo --tabs 26460 --target last`: 85ms command, 0ms event echo, 221ms explicit save flush, 1 save, 1 broadcast.
