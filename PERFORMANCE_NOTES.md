@@ -514,3 +514,21 @@ Use these as starting targets, not hard promises:
 - Regression coverage simulates Firefox firing `tabs.onUpdated`, `tabs.onActivated`, and `windows.onFocusChanged` during live grouping and asserts the echoes do not call `windows.getAll()` or `tabs.query()`.
 - After `pnpm build`, `node scripts/profile-command.mjs --scenario group-live-leaf --tabs 10000` dropped from 16,126ms echo flush time to 0ms while still reporting the three echoes in `eventCounts`. The 50k run measured 231ms command time, 0ms echo flush time, first broadcast at 177ms, and 0 moved tab ids.
 - Verification: `pnpm exec vitest run src/background/controller.test.ts src/background/commands.test.ts`, `pnpm build`, and the profile commands above passed.
+
+### 2026-05-21: Event Echo Asymptotics Audit
+
+- Code-path audit, not a fresh profile run. Let `n` be outline nodes, `u` be unique tab events in one coalesced runtime batch, `k` be changed nodes, and `v` be visible sidebar rows.
+- Current echo handling has three tiers:
+  - Pure drops are `O(1)`: irrelevant `tabs.onUpdated` payloads, command focus active-update echoes, delete-owned close echoes, sidebar-window focus noise, and already-cancelled pending refreshes.
+  - Compact visible updates are usually `O(k)` for transport and no full save on the interaction path, but still often `O(n)` background CPU because the controller scans or clones outline-level structures before it can produce the compact patch.
+  - Guarded fallbacks remain `O(n)` plus runtime snapshot cost, then `O(n)` patch diff or full-state broadcast fallback.
+- Coalescing helps burst shape: runtime refreshes merge by tab id into one low-priority job, so event trains are no longer one full refresh per event. The remaining cost is the work inside the one merged refresh.
+- Current per-path shape:
+  - Generic no-op metadata echo: cold `O(n + u)` because `buildRuntimeStateIndex()` may run; warm `O(u)` after the index is cached.
+  - Legit small runtime update/create fast path: `O(n + u + k)` CPU today because it clones the runtime index and shallow-copies the node table before returning an exact `nodeStateUpdated` or `treeStructureUpdated` patch. Transport is `O(k)`.
+  - Command-owned focus activation/window-focus echoes: avoid snapshots/saves/full broadcasts, but `activateRuntimeTabInPlace()` and `focusRuntimeWindowInPlace()` still scan `Object.values(state.nodes)`, so they are `O(n)` CPU with small `activeStateUpdated` transport.
+  - Command restore `tabs.onCreated` echo: usually avoids full reconciliation, but `consumeCommandRestoredTabEvent()` calls `liveTabNodeByRuntimeId()`, which is a full node scan, so the echo filter is `O(n)` instead of indexed `O(1)`.
+  - Command-relocated stale tab echoes: the worst remaining echo asymptotic. `consumeCommandRelocatedStaleTabEvent()` and `filterCommandRelocatedStaleTabsFromWindows()` call `liveTabNodeByRuntimeId()` inside event/window loops, making the path up to `O(u * n)` before any fallback reconciliation.
+  - Fallback `refreshFromRuntimeNow()` still calls `getNormalWindows()` / `tabs.query()`, checks `runtimeSnapshotMateriallyMatchesState()`, and may run `reconcileWithWindows()`, so it is whole-tree and whole-runtime sized by design.
+- Best next fix: pass the cached `RuntimeStateIndex` into restored/relocated echo consumers and activation override helpers, replace scan-based `liveTabNodeByRuntimeId()` / `liveWindowNodeByRuntimeId()` calls on hot echo paths with map lookups, and update or invalidate the index whenever these consumers delete stale echo tracking. This should move restored and relocated echo filtering from `O(n)` or `O(u * n)` toward `O(u)` while preserving the current full-reconcile fallback.
+- Follow-up after that: consider indexed active-tab/window updates for command focus echoes. That would remove another common `O(n)` scan, but the relocated/restored echo filters are the sharper remaining asymptotic problem because they multiply by event/window loops.
