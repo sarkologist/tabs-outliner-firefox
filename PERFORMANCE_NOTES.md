@@ -572,3 +572,19 @@ Use these as starting targets, not hard promises:
 - Updated generated Firefox-like property traces to assert after every generated operation that the runtime index is warm and matches a rebuilt reference index. The debug comparison covers runtime tab/window maps, live-tab window sets, active maps, and closed-restore candidate counts.
 - Tightened the relocated/restored echo scan-count tests from "at most one cold scan" to exactly 0 node-table `Object.values()` calls.
 - Verification: `pnpm exec vitest run src/background/controller.test.ts -t "generated|adversarial runtime query skew|live-tab grouping trace|command-relocated stale echoes|command-restored created-tab echoes"`, `pnpm exec vitest run src/background/controller.test.ts`, `pnpm build`, and `pnpm test` passed.
+
+### 2026-05-21: Remaining Asymptotic Targets
+
+- Living code-path audit, not a fresh profile run. Keep this table current as the remaining non-echo bottlenecks move. Let `n` be outline nodes, `u` be unique runtime events, `k` be changed nodes, `d` be ancestor depth, `v` be visible sidebar rows, `r` be search result rows, `w` be browser windows/tabs in a runtime snapshot, and `c` be candidate nodes from a command/history delta.
+
+| Path | Current Asymptotic | Theoretical Optimum | Gap / Next Work |
+| --- | --- | --- | --- |
+| Opener-created runtime tab placement | `O(u * d + k)` | `O(u + k)` | Ancestor walking validates that an opener belongs under the same runtime window. Add/maintain an owner-window or nearest-window index so opener validation is `O(1)` per event. |
+| Sidebar active/row patch side effects | often `O(v + k)` | `O(k + visible-delta)` | Some patch handlers still scan visible rows for active target/window flags and row metadata. Maintain projection indexes by node id/window id/active row. |
+| Sidebar search-active patch handling | often rebuilds/searches from state, up to `O(n)` | `O(k + result-delta)` after an index exists | Search projections still favor correctness over incrementality. Needs a maintained search index plus patch rules for result insertion/removal/reorder. |
+| Non-local or ambiguous sidebar structure patches | `O(v)` fast-path side effects or full projection rebuild when splice safety is unclear | `O(k + visible-delta)` | Same-parent reorder and simple inserts have fast paths; broader moves need stronger projection metadata to prove splice boundaries without rebuilding. |
+| Full runtime reconciliation fallback | `O(w log w + n)` plus browser snapshot cost, then `O(n)` diff or full-state fallback | `O(w + n)` if full validation is required; effectively `O(0)` when avoided | This is the correctness fallback. Main win is preventing narrow events from entering it; secondary win is avoiding avoidable sorting/diff work inside it. |
+| Undo/redo/history state application | broad cases rebuild runtime index in `O(n)` | `O(c)` for delta-backed history entries, `O(n)` for true whole-state history | Thread command/history candidate ids into undo/redo so narrow history deltas can use `installStateTransition()` instead of explicit rebuilds. |
+| Import/full replacement/initial reconciliation | `O(n)` | `O(n)` | At the lower bound because every node must be ingested, validated, or reconciled. Keep it away from interaction echo paths rather than trying to make it sublinear. |
+
+- Verification: not run; documentation-only audit table.
