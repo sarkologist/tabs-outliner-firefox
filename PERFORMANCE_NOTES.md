@@ -507,3 +507,10 @@ Use these as starting targets, not hard promises:
 - The command profile now emits Firefox-like move/create echoes for `tabs.move` and `windows.create({ tabId })`, so relocation scenarios can expose command-owned update/activation/focus traffic instead of only counting direct adapter calls.
 - The richer harness immediately exposed the remaining live-grouping echo cost. `node scripts/profile-command.mjs --scenario group-live-leaf --tabs 10000` measured 38ms command time but 16,126ms echo flush time from one `tabs.onUpdated`, one `tabs.onActivated`, and one `windows.onFocusChanged` echo. That makes command-created focus/activation echo absorption the next target before trusting 50k synthetic totals.
 - Smoke verification covered the updated profile scripts with 1k fixtures: `profile-command`, `profile-focus`, `profile-close`, `profile-delete`, `profile-restore` in both modes, and `profile-tab-open` event/startup scenarios.
+
+### 2026-05-21: Absorbed Command-Created Grouping Focus Echoes
+
+- Live-tab grouping now marks command-created focused windows and active tabs after `windows.create({ tabId })` returns. If Firefox already queued matching `tabs.onActivated` / `windows.onFocusChanged` runtime refreshes, the controller downgrades or cancels that pending refresh instead of reconciling the full browser snapshot.
+- Regression coverage simulates Firefox firing `tabs.onUpdated`, `tabs.onActivated`, and `windows.onFocusChanged` during live grouping and asserts the echoes do not call `windows.getAll()` or `tabs.query()`.
+- After `pnpm build`, `node scripts/profile-command.mjs --scenario group-live-leaf --tabs 10000` dropped from 16,126ms echo flush time to 0ms while still reporting the three echoes in `eventCounts`. The 50k run measured 231ms command time, 0ms echo flush time, first broadcast at 177ms, and 0 moved tab ids.
+- Verification: `pnpm exec vitest run src/background/controller.test.ts src/background/commands.test.ts`, `pnpm build`, and the profile commands above passed.
