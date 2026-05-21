@@ -79,6 +79,7 @@ type FakeRuntime = {
   };
   tabs: RuntimeTab[];
   windows: FakeRuntimeWindow[];
+  nextWindowId: number;
   broadcasts: unknown[];
   downloads: FakeDownloadOptions[];
   alarms: Map<string, FakeAlarm>;
@@ -169,6 +170,7 @@ function fakeRuntime(windows: RuntimeWindow[], tabs: RuntimeTab[], options: Fake
   const runtime: FakeRuntime = {
     windows: windows.map(copyWindow),
     tabs: tabs.map(copyTab),
+    nextWindowId: Math.max(0, ...windows.map((windowInfo) => windowInfo.id)) + 1,
     broadcasts,
     alarms,
     downloads,
@@ -684,7 +686,9 @@ function reindexWindowTabs(runtime: FakeRuntime, windowId: number): void {
 }
 
 function nextRuntimeWindowId(runtime: FakeRuntime): number {
-  return Math.max(0, ...runtime.windows.map((windowInfo) => windowInfo.id)) + 1;
+  const windowId = runtime.nextWindowId;
+  runtime.nextWindowId += 1;
+  return windowId;
 }
 
 function nextRuntimeTabId(runtime: FakeRuntime): number {
@@ -1481,6 +1485,13 @@ async function assertGeneratedInvariants(context: GeneratedTraceContext): Promis
   assertRuntimeProjectionInvariants(state, context);
   assertLifecycleExpectationInvariants(state, context);
   assertClosedSubtreeInvariants(state, context.history);
+  assertRuntimeIndexWarmForGeneratedTrace(context);
+}
+
+function assertRuntimeIndexWarmForGeneratedTrace(context: GeneratedTraceContext): void {
+  const status = context.controller.__debugRuntimeIndexStatus();
+  invariant(status.warm, "runtime index was cold after generated operation", context.history);
+  invariant(status.matchesState, `runtime index diverged after generated operation: ${status.reason}`, context.history);
 }
 
 function assertStructureInvariants(state: OutlineState, history: string[]): void {
@@ -3872,7 +3883,7 @@ describe("background controller lifecycle", () => {
     }, moved.nodes);
     const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
 
-    expect(calls).toBeLessThanOrEqual(1);
+    expect(calls).toBe(0);
     expect(state.nodes["tab:1"]?.title).toBe("One");
     expect(state.nodes["tab:2"]?.title).toBe("Two");
     expect(state.nodes["tab:3"]?.title).toBe("Three");
@@ -4351,7 +4362,7 @@ describe("background controller lifecycle", () => {
     const { calls } = await countNodeTableObjectValues(() => runtime.events.tabCreated.flush(), restoredState.nodes);
     const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
 
-    expect(calls).toBeLessThanOrEqual(1);
+    expect(calls).toBe(0);
     expect(state.nodes["tab:2"]?.live).toEqual({ tabId: 22, windowId: 10 });
   });
 
@@ -4403,9 +4414,10 @@ describe("background controller lifecycle", () => {
     expectCommandAck(result, true);
     expect(state.nodes["window:10"]?.active).toBe(false);
     expect(state.nodes["window:20"]?.active).toBe(true);
+    const restoredRuntimeWindowId = state.nodes["window:20"]?.live?.windowId;
     expect(state.nodes["tab:5"]?.live).toEqual({
       tabId: 2,
-      windowId: 11
+      windowId: restoredRuntimeWindowId
     });
     expect(stateBroadcasts(runtime.broadcasts)).toHaveLength(1);
     const restoreBroadcast = runtime.broadcasts.at(-1) as
@@ -4427,7 +4439,7 @@ describe("background controller lifecycle", () => {
     expect(restoreBroadcast?.updatedNodes?.find((node) => node.id === "tab:5")).toMatchObject({
       status: "live",
       active: true,
-      live: { tabId: 2, windowId: 11 }
+      live: { tabId: 2, windowId: restoredRuntimeWindowId }
     });
     expect(restoreBroadcast?.closedCountDelta).toBe(-2);
     expect(restoreBroadcast?.state).toBeUndefined();

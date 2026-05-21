@@ -517,16 +517,17 @@ Use these as starting targets, not hard promises:
 
 ### 2026-05-21: Event Echo Asymptotics Audit
 
-- Living code-path audit, not a fresh profile run. Keep this table current as event-echo improvements land. Let `n` be outline nodes, `u` be unique tab events in one coalesced runtime batch, `k` be changed nodes, `d` be opener ancestor depth for a newly created tab, `w` be open browser windows/tabs returned by a runtime snapshot, and `v` be visible sidebar rows. "Cold" means the cached `RuntimeStateIndex` must be rebuilt; "warm" means it already matches the current state.
+- Living code-path audit, not a fresh profile run. Keep this table current as event-echo improvements land. Let `n` be outline nodes, `u` be unique tab events in one coalesced runtime batch, `k` be changed nodes, `c` be runtime-index candidate nodes for a narrow state transition, `d` be opener ancestor depth for a newly created tab, `w` be open browser windows/tabs returned by a runtime snapshot, and `v` be visible sidebar rows. "Warm" means the cached `RuntimeStateIndex` already matches the current state; broad fallback operations may still pay an explicit rebuild and leave the index warm afterward.
 
 | Path | Current Asymptotic | Theoretical Optimum | Gap / Next Work |
 | --- | --- | --- | --- |
 | Irrelevant `tabs.onUpdated`, command focus active-update drop, delete-owned close echo, sidebar focus noise | `O(1)` | `O(1)` | At optimum. |
-| Command focus activation/window-focus echoes | warm `O(1)`, cold `O(n)` | `O(1)` | Cold index rebuild remains if the runtime index is missing or stale. Maintain the index across all state swaps to avoid this. |
-| Command-restored `tabs.onCreated` echo | warm `O(u)`, cold `O(n + u)` | `O(u)` | Per-event scans are gone. Remaining cold cost is runtime-index rebuild. |
-| Command-relocated stale tab echoes | warm `O(u)`, cold `O(n + u)` | `O(u)` | The former `O(u * n)` path is fixed. Remaining cold cost is runtime-index rebuild. |
-| Generic no-op metadata echo | warm `O(u)`, cold `O(n + u)` | `O(u)` | Uses indexed no-op checks when warm. Remaining cold cost is runtime-index rebuild. |
-| Small runtime update/create fast path | warm `O(u + k)` for updates and non-opener creates, warm `O(u * d + k)` for opener creates, cold `O(n + u + k)`; `O(k)` transport | `O(u + k)` CPU, `O(k)` transport | Whole node-table/index copies are gone. Remaining gaps are cold index rebuilds and opener ancestor walks. |
+| Command focus activation/window-focus echoes | steady-state `O(1)` | `O(1)` | At optimum for the normal command-owned echo path. |
+| Command-restored `tabs.onCreated` echo | steady-state `O(u)` | `O(u)` | At optimum for command-created restore echoes. |
+| Command-relocated stale tab echoes | steady-state `O(u)` | `O(u)` | The former `O(u * n)` path and the later cold rebuild are gone on normal command transitions. |
+| Generic no-op metadata echo | steady-state `O(u)` | `O(u)` | Uses indexed no-op checks when warm; remaining work is entering this path only for relevant metadata events. |
+| Runtime-index maintenance for narrow state swaps | `O(c)` plus parent-chain walks for moved/closed candidates; no whole node-table or window-subtree scan | `O(c)` | Per-window closed-restore counts keep this local. Broad import/history/full-reconcile paths still rebuild intentionally. |
+| Small runtime update/create fast path | steady-state `O(u + k)` for updates and non-opener creates, `O(u * d + k)` for opener creates; `O(k)` transport | `O(u + k)` CPU, `O(k)` transport | Whole node-table/index copies and normal cold rebuilds are gone. Remaining gap is opener ancestor walking. |
 | Compact sidebar patch handling | often `O(v)` for active/row refresh side effects, sometimes fast-path splice/patch work | `O(k + visible-delta)` | Sidebar still rescans visible rows for some patch side effects such as active target and active-window flags. |
 | Full runtime reconciliation fallback | `O(w log w + n)` plus browser snapshot cost, then `O(n)` diff or full-state fallback | `O(w log w + n)` | This is the correctness fallback; optimize by avoiding entry into it for narrow events, not by weakening it. |
 
@@ -562,3 +563,12 @@ Use these as starting targets, not hard promises:
   - Same-window browser-created tab handling previously read 2 unrelated sibling tabs through the node-table copy; it now reads 0 unrelated node entries while preserving opener nesting and active-tab updates.
 - Remaining asymptotic gaps: cold runtime-index rebuilds are still `O(n)`, and opener-created tabs still validate the opener by walking ancestors up to the runtime window.
 - Verification: `pnpm exec vitest run src/background/controller.test.ts -t "node table scan|per-echo node table scans|runtime tab metadata refreshes|same-window tabs without reading unrelated"`, `pnpm exec vitest run src/background/controller.test.ts`, `pnpm build`, and `pnpm test` passed.
+
+### 2026-05-21: Runtime Index Kept Warm Across State Transitions
+
+- Removed the remaining cold runtime-index rebuild from normal command/native state transitions. State swaps now go through `installStateTransition()`, which updates the existing `RuntimeStateIndex` from command/removal candidate node ids instead of leaving the next echo to rebuild from all `n` nodes.
+- Added per-window closed-restore candidate counts so incremental index maintenance does not rescan affected window subtrees.
+- Reused the same candidate node set for command-owned restored, relocated, and focus echo bookkeeping, keeping those helpers off `Object.values(state.nodes)` in the hot path.
+- Updated generated Firefox-like property traces to assert after every generated operation that the runtime index is warm and matches a rebuilt reference index. The debug comparison covers runtime tab/window maps, live-tab window sets, active maps, and closed-restore candidate counts.
+- Tightened the relocated/restored echo scan-count tests from "at most one cold scan" to exactly 0 node-table `Object.values()` calls.
+- Verification: `pnpm exec vitest run src/background/controller.test.ts -t "generated|adversarial runtime query skew|live-tab grouping trace|command-relocated stale echoes|command-restored created-tab echoes"`, `pnpm exec vitest run src/background/controller.test.ts`, `pnpm build`, and `pnpm test` passed.
