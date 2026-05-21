@@ -62,12 +62,13 @@ function parseArgs(argv) {
     "rename-window",
     "toggle-window",
     "move-leaf",
+    "group-live-leaf",
     "flatten-window",
     "import-small",
     "refresh-noop"
   ].includes(options.scenario)) {
     throw new Error(
-      "--scenario must be rename-window, toggle-window, move-leaf, flatten-window, import-small, or refresh-noop"
+      "--scenario must be rename-window, toggle-window, move-leaf, group-live-leaf, flatten-window, import-small, or refresh-noop"
     );
   }
 
@@ -97,6 +98,10 @@ function makeRuntime(tabCount, scenario) {
     })),
     saves: 0,
     broadcasts: 0,
+    createdWindows: 0,
+    moveCalls: 0,
+    movedTabCount: 0,
+    maxMoveBatch: 0,
     saveStringifyMs: 0,
     broadcastStringifyMs: 0,
     projectionMs: 0,
@@ -124,6 +129,12 @@ function makeRuntime(tabCount, scenario) {
       getAll: async () => [],
       update: async () => undefined,
       reset: async () => undefined
+    },
+    alarms: {
+      create: async () => undefined,
+      clear: async () => true,
+      get: async () => undefined,
+      onAlarm: new FakeEvent()
     },
     runtime: {
       onInstalled: new FakeEvent(),
@@ -164,9 +175,7 @@ function makeRuntime(tabCount, scenario) {
       getAll: async () => runtime.windows.map((windowInfo) => ({ ...windowInfo })),
       update: async () => ({}),
       remove: async () => undefined,
-      create: async () => {
-        throw new Error("not implemented");
-      },
+      create: async (createData = {}) => createWindow(runtime, createData),
       onFocusChanged: events.windowFocusChanged,
       onRemoved: events.windowRemoved
     },
@@ -177,7 +186,7 @@ function makeRuntime(tabCount, scenario) {
       create: async () => {
         throw new Error("not implemented");
       },
-      move: async () => [],
+      move: async (tabIds, moveProperties) => moveTabs(runtime, tabIds, moveProperties, { count: true }),
       onCreated: events.tabCreated,
       onUpdated: events.tabUpdated,
       onActivated: events.tabActivated,
@@ -193,6 +202,95 @@ function makeRuntime(tabCount, scenario) {
   return runtime;
 }
 
+function createWindow(runtime, createData = {}) {
+  const windowId = Math.max(0, ...runtime.windows.map((windowInfo) => windowInfo.id)) + 1;
+  runtime.createdWindows += 1;
+  runtime.windows = runtime.windows
+    .map((windowInfo) => ({ ...windowInfo, focused: false }))
+    .concat({ id: windowId, focused: createData.focused ?? true, incognito: false });
+
+  if (typeof createData.tabId === "number") {
+    const tabs = moveTabs(runtime, [createData.tabId], { windowId, index: 0 }, { count: false });
+    return {
+      id: windowId,
+      focused: true,
+      incognito: false,
+      tabs
+    };
+  }
+
+  const urls = Array.isArray(createData.url) ? createData.url : createData.url ? [createData.url] : [];
+  const firstTabId = Math.max(0, ...runtime.tabs.map((tab) => tab.id)) + 1;
+  const tabs = urls.map((url, index) => ({
+    id: firstTabId + index,
+    windowId,
+    index,
+    active: index === 0,
+    url,
+    title: url
+  }));
+  runtime.tabs = [...runtime.tabs, ...tabs];
+
+  return {
+    id: windowId,
+    focused: true,
+    incognito: false,
+    tabs: tabs.map((tab) => ({ ...tab }))
+  };
+}
+
+function moveTabs(runtime, tabIds, moveProperties, options = {}) {
+  const ids = Array.isArray(tabIds) ? tabIds : [tabIds];
+  if (options.count) {
+    runtime.moveCalls += 1;
+    runtime.movedTabCount += ids.length;
+    runtime.maxMoveBatch = Math.max(runtime.maxMoveBatch, ids.length);
+  }
+
+  const tabById = new Map(runtime.tabs.map((tab) => [tab.id, tab]));
+  const movingIds = new Set(ids);
+  const moving = ids.flatMap((tabId) => {
+    const tab = tabById.get(tabId);
+    return tab ? [{ ...tab }] : [];
+  });
+  if (moving.length === 0) {
+    return [];
+  }
+
+  const targetWindowId = moveProperties.windowId ?? moving[0].windowId;
+  const affectedWindowIds = new Set([targetWindowId, ...moving.map((tab) => tab.windowId)]);
+  const remaining = runtime.tabs.filter((tab) => !movingIds.has(tab.id));
+  const targetTabs = remaining
+    .filter((tab) => tab.windowId === targetWindowId)
+    .sort((left, right) => left.index - right.index)
+    .map((tab) => ({ ...tab }));
+  const boundedIndex = Math.max(0, Math.min(moveProperties.index, targetTabs.length));
+  targetTabs.splice(boundedIndex, 0, ...moving.map((tab) => ({ ...tab, windowId: targetWindowId })));
+
+  runtime.tabs = [
+    ...remaining.filter((tab) => tab.windowId !== targetWindowId).map((tab) => ({ ...tab })),
+    ...targetTabs.map((tab, index) => ({
+      ...tab,
+      index
+    }))
+  ];
+  for (const windowId of affectedWindowIds) {
+    let index = 0;
+    runtime.tabs = runtime.tabs.map((tab) => tab.windowId === windowId
+      ? {
+          ...tab,
+          index: index++
+        }
+      : tab);
+  }
+
+  const movedById = new Map(runtime.tabs.map((tab) => [tab.id, tab]));
+  return ids.flatMap((tabId) => {
+    const tab = movedById.get(tabId);
+    return tab ? [{ ...tab }] : [];
+  });
+}
+
 function commandForScenario(scenario, tabCount) {
   if (scenario === "rename-window") {
     return { type: "renameGroup", nodeId: "window:10", title: "Profiled Group" };
@@ -202,6 +300,9 @@ function commandForScenario(scenario, tabCount) {
   }
   if (scenario === "move-leaf") {
     return { type: "moveNode", nodeId: `tab:${tabCount}`, parentId: "window:10", index: 0 };
+  }
+  if (scenario === "group-live-leaf") {
+    return { type: "wrapNodeInGroup", nodeId: "tab:1" };
   }
   if (scenario === "flatten-window") {
     return { type: "flattenSubtree", nodeId: "window:10" };
@@ -310,6 +411,10 @@ async function profile(options) {
 
   runtime.saves = 0;
   runtime.broadcasts = 0;
+  runtime.createdWindows = 0;
+  runtime.moveCalls = 0;
+  runtime.movedTabCount = 0;
+  runtime.maxMoveBatch = 0;
   runtime.saveStringifyMs = 0;
   runtime.broadcastStringifyMs = 0;
   runtime.projectionMs = 0;
@@ -342,6 +447,10 @@ async function profile(options) {
     mbStringified: Math.round(runtime.bytes / 1024 / 1024),
     saves: runtime.saves,
     broadcasts: runtime.broadcasts,
+    createdWindows: runtime.createdWindows,
+    moveCalls: runtime.moveCalls,
+    movedTabCount: runtime.movedTabCount,
+    maxMoveBatch: runtime.maxMoveBatch,
     ack: command.value,
     nodes: Object.keys(current.nodes).length
   };

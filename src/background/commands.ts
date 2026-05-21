@@ -738,7 +738,6 @@ async function wrapNodeInGroupCommand(
       now: Date.now(),
       liveWindow: createdWindow
     });
-    await syncBrowserOrder(next, adapter);
     return next;
   }
 
