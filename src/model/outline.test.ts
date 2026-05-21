@@ -22,6 +22,7 @@ import {
   wrapNodeInGroup
 } from "./outline.js";
 import type { NodeId, OutlineNode, OutlineState, RuntimeWindow } from "./types.js";
+import { generatedTraceConfig, generatedTraceTimeoutMs } from "../test/generated-traces.test-support.js";
 
 const windows: RuntimeWindow[] = [
   {
@@ -2056,10 +2057,16 @@ describe("outline model", () => {
   });
 
   it("preserves model invariants and previous states across generated structural traces", () => {
-    for (let seed = 1; seed <= 24; seed += 1) {
-      runGeneratedModelTrace(seed, 18);
+    const config = generatedTraceConfig({
+      defaultSeedCount: 24,
+      defaultSteps: 18,
+      soakSeedCount: 96,
+      soakSteps: 48
+    });
+    for (const seed of config.seeds) {
+      runGeneratedModelTrace(seed, config.steps);
     }
-  });
+  }, generatedTraceTimeoutMs(10_000, 120_000));
 });
 
 function runGeneratedModelTrace(seed: number, steps: number): void {

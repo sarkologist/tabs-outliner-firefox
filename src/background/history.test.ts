@@ -20,6 +20,7 @@ import {
   wrapNodeInGroup
 } from "../model/outline.js";
 import type { NodeId, OutlineNode, OutlineState, RuntimeWindow } from "../model/types.js";
+import { generatedTraceConfig, generatedTraceTimeoutMs } from "../test/generated-traces.test-support.js";
 
 const runtimeWindows: RuntimeWindow[] = [
   {
@@ -175,10 +176,16 @@ describe("outline history", () => {
   });
 
   it("round-trips undo and redo deltas across generated structural traces", () => {
-    for (let seed = 1; seed <= 24; seed += 1) {
-      runGeneratedHistoryTrace(seed, 18);
+    const config = generatedTraceConfig({
+      defaultSeedCount: 24,
+      defaultSteps: 18,
+      soakSeedCount: 96,
+      soakSteps: 48
+    });
+    for (const seed of config.seeds) {
+      runGeneratedHistoryTrace(seed, config.steps);
     }
-  });
+  }, generatedTraceTimeoutMs(10_000, 120_000));
 });
 
 function runGeneratedHistoryTrace(seed: number, steps: number): void {

@@ -16,6 +16,7 @@ import {
   saveStateAndHistory
 } from "./storage.js";
 import type { OutlineNode, OutlineState } from "../model/types.js";
+import { generatedTraceConfig, generatedTraceTimeoutMs } from "../test/generated-traces.test-support.js";
 
 function makeLargeState(tabCount: number, options: { activeTabIndex?: number } = {}): OutlineState {
   const activeTabIndex = options.activeTabIndex ?? 0;
@@ -220,13 +221,19 @@ describe("outline state v2 storage", () => {
   });
 
   it("round-trips generated nested states through v2 chunks and order pages", async () => {
-    for (let seed = 1; seed <= 8; seed += 1) {
+    const config = generatedTraceConfig({
+      defaultSeedCount: 8,
+      defaultSteps: 1,
+      soakSeedCount: 48,
+      soakSteps: 1
+    });
+    for (const seed of config.seeds) {
       const state = generatedStorageState(seed);
       const api = fakeApi(outlineStateV2Items(state, { revision: seed }));
 
       await expect(loadStateV2(api), `seed ${seed}`).resolves.toEqual(state);
     }
-  });
+  }, generatedTraceTimeoutMs(5_000, 60_000));
 
   it("hydrates the full state from v2 chunks and order pages", async () => {
     const state = makeLargeState(1200);
@@ -314,7 +321,13 @@ describe("outline state v3 storage", () => {
   }, 15_000);
 
   it("keeps generated incremental v3 saves loadable as the exact next state", async () => {
-    for (let seed = 1; seed <= 8; seed += 1) {
+    const config = generatedTraceConfig({
+      defaultSeedCount: 8,
+      defaultSteps: 1,
+      soakSeedCount: 48,
+      soakSteps: 1
+    });
+    for (const seed of config.seeds) {
       const previous = generatedStorageState(seed);
       const next = generatedNextStorageState(previous, seed);
       const api = fakeApi();
@@ -324,7 +337,7 @@ describe("outline state v3 storage", () => {
 
       await expect(loadStateV3(api), `seed ${seed}`).resolves.toEqual(next);
     }
-  });
+  }, generatedTraceTimeoutMs(5_000, 60_000));
 
   it("removes stale v3 order pages when a parent child list shrinks", async () => {
     const previous = makeLargeState(1100);

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { NodeId, OutlineNode, OutlineState } from "../model/types.js";
+import { generatedTraceConfig, generatedTraceTimeoutMs } from "../test/generated-traces.test-support.js";
 import {
   applyDeleteTreeStructurePatchToProjection,
   applyInsertTreeStructurePatchToProjection,
@@ -388,10 +389,16 @@ describe("visible tree projection", () => {
   });
 
   it("keeps incremental insert and delete patches equivalent to fresh projections across generated traces", () => {
-    for (let seed = 1; seed <= 24; seed += 1) {
-      runGeneratedPatchEquivalenceTrace(seed, 12);
+    const config = generatedTraceConfig({
+      defaultSeedCount: 24,
+      defaultSteps: 12,
+      soakSeedCount: 96,
+      soakSteps: 48
+    });
+    for (const seed of config.seeds) {
+      runGeneratedPatchEquivalenceTrace(seed, config.steps);
     }
-  });
+  }, generatedTraceTimeoutMs(10_000, 120_000));
 });
 
 type GeneratedPatchOperation = {
