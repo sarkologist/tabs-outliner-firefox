@@ -11,6 +11,7 @@ import { HISTORY_KEY, STATE_KEY, loadStateV2, outlineStateV2Items } from "./stor
 import { PORTABLE_TREE_SCHEMA } from "../model/portable-tree.js";
 import type { OutlineState, RuntimeTab, RuntimeWindow } from "../model/types.js";
 import { APP_PREFERENCES_STORAGE_KEY, DEFAULT_APP_PREFERENCES } from "../preferences.js";
+import { generatedTraceConfig, generatedTraceTimeoutMs } from "../test/generated-traces.test-support.js";
 
 type Listener<TArgs extends unknown[]> = (...args: TArgs) => unknown | Promise<unknown>;
 
@@ -895,8 +896,10 @@ type GeneratedTraceContext = {
   runtime: FakeRuntime;
   controller: ReturnType<typeof createBackgroundController>;
   nextTabId: number;
+  allocatedRuntimeTabIds: Set<number>;
   history: string[];
   nativeDeletedNodeIds: Set<string>;
+  commandDeletedNodeIds: Set<string>;
   expectedClosedNodeIds: Set<string>;
   staleTabs: RuntimeTab[];
   staleLiveEventTabs: RuntimeTab[];
@@ -983,6 +986,12 @@ function availableGeneratedOperations(context: GeneratedTraceContext): Generated
   if (context.runtime.windows.length > 1) {
     operations.push({ name: "outliner-close-window", run: outlinerCloseGeneratedWindow });
   }
+  if (context.runtime.windows.length > 1) {
+    operations.push(
+      { name: "outliner-restore-delete-window-delayed-event", run: outlinerRestoreDeleteGeneratedWindowWithDelayedEvent },
+      { name: "outliner-delete-window-rejecting-close", run: outlinerDeleteGeneratedWindowWithRejectingClose }
+    );
+  }
   if (multiTabWindows.length > 0) {
     operations.push({ name: "native-close-window", run: nativeCloseGeneratedWindow });
   }
@@ -1021,7 +1030,7 @@ async function openGeneratedTab(context: GeneratedTraceContext): Promise<void> {
   const openerTab = existingTabs.length > 0 && context.rng() < 0.75
     ? pickOne(context.rng, existingTabs)
     : undefined;
-  const tabId = context.nextTabId++;
+  const tabId = nextGeneratedTabId(context);
   const tab: RuntimeTab = {
     id: tabId,
     windowId: windowInfo.id,
@@ -1071,11 +1080,14 @@ async function nativeCloseGeneratedTab(context: GeneratedTraceContext): Promise<
     await closeRuntimeWindow(context.runtime, tab.windowId, { awaitListeners: true });
     const state = (await context.controller.handleMessage({ type: "getState" })) as OutlineState;
     const windowNodeId = windowNodeIdFor(tab.windowId);
-    if (state.nodes[windowNodeId]) {
+    const windowNode = state.nodes[windowNodeId];
+    if (windowNode?.status === "closed" && windowNode.childIds.length > 0) {
       context.expectedClosedNodeIds.add(windowNodeId);
       await pruneMissingExpectedClosedNodes(context, [windowNodeId]);
-    } else {
+    } else if (!windowNode) {
       context.nativeDeletedNodeIds.add(windowNodeId);
+      await pruneMissingExpectedClosedNodes(context, []);
+    } else {
       await pruneMissingExpectedClosedNodes(context, []);
     }
     return;
@@ -1163,6 +1175,77 @@ async function nativeCloseGeneratedWindow(context: GeneratedTraceContext): Promi
   context.history.push(`native close multi-tab window ${windowInfo.id}`);
   await closeRuntimeWindow(context.runtime, windowInfo.id, { awaitListeners: true });
   await pruneMissingExpectedClosedNodes(context, protectedExpectedNodeIds);
+}
+
+async function outlinerRestoreDeleteGeneratedWindowWithDelayedEvent(context: GeneratedTraceContext): Promise<void> {
+  const windowInfo = pickOne(context.rng, context.runtime.windows);
+  const originalWindowNodeId = windowNodeIdFor(windowInfo.id);
+  context.history.push(`outliner restore-delete window ${windowInfo.id} with delayed restored-tab event`);
+  await context.controller.handleMessage({ type: "wrapNodeInGroup", nodeId: originalWindowNodeId });
+  let state = (await context.controller.handleMessage({ type: "getState" })) as OutlineState;
+  const groupId = state.nodes[originalWindowNodeId]?.parentId;
+  if (!groupId) {
+    return;
+  }
+
+  await context.controller.handleMessage({ type: "closeNode", nodeId: groupId });
+  await flushGeneratedCloseEvents(context);
+  await context.controller.handleMessage({ type: "restoreNode", nodeId: groupId });
+  state = (await context.controller.handleMessage({ type: "getState" })) as OutlineState;
+  const restoredWindow = state.nodes[originalWindowNodeId];
+  const restoredWindowId =
+    restoredWindow?.kind === "window" && restoredWindow.status === "live" && restoredWindow.live && "windowId" in restoredWindow.live
+      ? restoredWindow.live.windowId
+      : undefined;
+  if (typeof restoredWindowId !== "number") {
+    return;
+  }
+
+  const restoredTabs = tabsInRuntimeWindow(context.runtime, restoredWindowId);
+  reserveGeneratedRuntimeTabIds(context, restoredTabs);
+  const delayedTab = restoredTabs[0];
+  if (delayedTab) {
+    await updateTabFromBrowser(context.runtime, delayedTab.id, {
+      title: `${delayedTab.title ?? "Generated"} delayed`
+    }, { awaitListeners: false });
+  }
+
+  const deletedNodeIds = generatedSubtreeNodeIds(state, groupId);
+  vi.mocked(context.runtime.api.windows.remove).mockImplementationOnce(async () => undefined);
+  const result = await context.controller.handleMessage({ type: "deleteNode", nodeId: groupId });
+  expectCommandAck(result, true);
+  markCommandDeletedNodes(context, deletedNodeIds);
+  await context.runtime.events.tabUpdated.flush();
+  await closeRuntimeWindow(context.runtime, restoredWindowId, { awaitListeners: true });
+  await pruneMissingExpectedClosedNodes(context, []);
+}
+
+async function outlinerDeleteGeneratedWindowWithRejectingClose(context: GeneratedTraceContext): Promise<void> {
+  const state = (await context.controller.handleMessage({ type: "getState" })) as OutlineState;
+  const candidates = context.runtime.windows.flatMap((windowInfo) => {
+    const stateWindow = liveWindowNodeForRuntimeWindow(state, windowInfo.id);
+    if (!stateWindow || generatedSubtreeLiveWindowIds(state, stateWindow.id).length !== 1) {
+      return [];
+    }
+    return [{ windowInfo, nodeId: stateWindow.id }];
+  });
+  if (candidates.length === 0) {
+    return;
+  }
+
+  const { windowInfo, nodeId } = pickOne(context.rng, candidates);
+  const deletedNodeIds = generatedSubtreeNodeIds(state, nodeId);
+  context.history.push(`outliner delete window ${windowInfo.id} with rejecting close`);
+  vi.mocked(context.runtime.api.windows.remove).mockImplementationOnce(async (windowId) => {
+    await closeRuntimeWindow(context.runtime, windowId, { awaitListeners: false });
+    throw new Error("generated window close rejected after completion");
+  });
+
+  const result = await context.controller.handleMessage({ type: "deleteNode", nodeId });
+  expectCommandAck(result, true);
+  markCommandDeletedNodes(context, deletedNodeIds);
+  await flushGeneratedCloseEvents(context);
+  await pruneMissingExpectedClosedNodes(context, []);
 }
 
 async function pruneMissingExpectedClosedNodes(
@@ -1282,6 +1365,71 @@ function staleLiveEventTabsInOpenWindows(context: GeneratedTraceContext): Runtim
   );
 }
 
+function generatedSubtreeNodeIds(state: OutlineState, nodeId: string): string[] {
+  const nodeIds: string[] = [];
+  const visited = new Set<string>();
+  const stack = [nodeId];
+  while (stack.length > 0) {
+    const currentId = stack.pop()!;
+    if (visited.has(currentId)) {
+      continue;
+    }
+    visited.add(currentId);
+    const node = state.nodes[currentId];
+    if (!node) {
+      continue;
+    }
+    nodeIds.push(currentId);
+    for (let index = node.childIds.length - 1; index >= 0; index -= 1) {
+      stack.push(node.childIds[index]!);
+    }
+  }
+  return nodeIds;
+}
+
+function generatedSubtreeLiveWindowIds(state: OutlineState, nodeId: string): number[] {
+  return generatedSubtreeNodeIds(state, nodeId).flatMap((subtreeNodeId) => {
+    const node = state.nodes[subtreeNodeId];
+    return node?.kind === "window" && node.status === "live" && node.live && "windowId" in node.live
+      ? [node.live.windowId]
+      : [];
+  });
+}
+
+function markCommandDeletedNodes(context: GeneratedTraceContext, nodeIds: string[]): void {
+  for (const nodeId of nodeIds) {
+    context.commandDeletedNodeIds.add(nodeId);
+    context.expectedClosedNodeIds.delete(nodeId);
+  }
+}
+
+function nextGeneratedTabId(context: GeneratedTraceContext): number {
+  while (context.allocatedRuntimeTabIds.has(context.nextTabId)) {
+    context.nextTabId += 1;
+  }
+  const tabId = context.nextTabId;
+  context.nextTabId += 1;
+  context.allocatedRuntimeTabIds.add(tabId);
+  return tabId;
+}
+
+function reserveGeneratedRuntimeTabIds(context: GeneratedTraceContext, tabs: RuntimeTab[]): void {
+  for (const tab of tabs) {
+    context.allocatedRuntimeTabIds.add(tab.id);
+    if (tab.id >= context.nextTabId) {
+      context.nextTabId = tab.id + 1;
+    }
+  }
+}
+
+async function flushGeneratedCloseEvents(context: GeneratedTraceContext): Promise<void> {
+  await Promise.all([
+    context.runtime.events.tabRemoved.flush(),
+    context.runtime.events.windowRemoved.flush(),
+    context.runtime.events.sessionChanged.flush()
+  ]);
+}
+
 type CommandMovableLiveTabCandidate = {
   nodeId: string;
   runtimeTab: RuntimeTab;
@@ -1383,8 +1531,10 @@ async function runGeneratedTrace(seed: number, steps: number, options: Generated
     runtime,
     controller,
     nextTabId: 100,
+    allocatedRuntimeTabIds: new Set(runtime.tabs.map((tab) => tab.id)),
     history: [`seed ${seed}`],
     nativeDeletedNodeIds: new Set(),
+    commandDeletedNodeIds: new Set(),
     expectedClosedNodeIds: new Set(),
     staleTabs: [],
     staleLiveEventTabs: [],
@@ -1403,7 +1553,11 @@ async function runGeneratedTrace(seed: number, steps: number, options: Generated
 
     const operation = pickOne(context.rng, operations);
     context.history.push(`step ${step + 1}: ${operation.name}`);
-    await operation.run(context);
+    try {
+      await operation.run(context);
+    } catch (error) {
+      throw new Error(`${generatedErrorText(error)}\nTrace:\n${context.history.join("\n")}`);
+    }
     await assertGeneratedInvariants(context);
 
     if (context.runtime.windows.length === 0) {
@@ -1459,8 +1613,10 @@ async function runGeneratedGroupingTrace(): Promise<void> {
     runtime,
     controller,
     nextTabId: 100,
+    allocatedRuntimeTabIds: new Set(runtime.tabs.map((tab) => tab.id)),
     history: [],
     nativeDeletedNodeIds: new Set(),
+    commandDeletedNodeIds: new Set(),
     expectedClosedNodeIds: new Set(),
     staleTabs: [],
     staleLiveEventTabs: [],
@@ -1563,9 +1719,12 @@ function assertLifecycleExpectationInvariants(state: OutlineState, context: Gene
   for (const nodeId of context.nativeDeletedNodeIds) {
     invariant(!state.nodes[nodeId], `native-deleted node ${nodeId} was resurrected`, context.history);
   }
+  for (const nodeId of context.commandDeletedNodeIds) {
+    invariant(!state.nodes[nodeId], `command-deleted node ${nodeId} was resurrected`, context.history);
+  }
 
   for (const nodeId of context.expectedClosedNodeIds) {
-    if (context.nativeDeletedNodeIds.has(nodeId)) {
+    if (context.nativeDeletedNodeIds.has(nodeId) || context.commandDeletedNodeIds.has(nodeId)) {
       continue;
     }
 
@@ -1654,6 +1813,10 @@ function invariantEqual<T>(actual: T, expected: T, message: string, history: str
     `${message}\nExpected: ${expectedJson}\nReceived: ${actualJson}`,
     history
   );
+}
+
+function generatedErrorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 describe("background controller lifecycle", () => {
@@ -3933,16 +4096,28 @@ describe("background controller lifecycle", () => {
   });
 
   it("preserves lifecycle invariants across generated Firefox-like traces", async () => {
-    for (let seed = 1; seed <= 24; seed += 1) {
-      await runGeneratedTrace(seed, 32);
+    const config = generatedTraceConfig({
+      defaultSeedCount: 24,
+      defaultSteps: 32,
+      soakSeedCount: 96,
+      soakSteps: 96
+    });
+    for (const seed of config.seeds) {
+      await runGeneratedTrace(seed, config.steps);
     }
-  });
+  }, generatedTraceTimeoutMs(10_000, 120_000));
 
   it("preserves invariants across adversarial runtime query skew traces", async () => {
-    for (let seed = 101; seed <= 112; seed += 1) {
-      await runGeneratedTrace(seed, 40, { adversarialRuntimeQueries: true });
+    const config = generatedTraceConfig({
+      defaultSeedCount: 12,
+      defaultSteps: 40,
+      soakSeedCount: 64,
+      soakSteps: 96
+    });
+    for (const seed of config.seeds) {
+      await runGeneratedTrace(seed + 100, config.steps, { adversarialRuntimeQueries: true });
     }
-  });
+  }, generatedTraceTimeoutMs(10_000, 120_000));
 
   it("preserves lifecycle invariants across a generated live-tab grouping trace", async () => {
     await runGeneratedGroupingTrace();

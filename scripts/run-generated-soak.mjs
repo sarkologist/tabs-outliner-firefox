@@ -4,6 +4,7 @@ import { spawn } from "node:child_process";
 import { randomInt } from "node:crypto";
 
 const files = [
+  "src/background/controller.test.ts",
   "src/sidebar/active-scroll.test.ts",
   "src/sidebar/visible-tree.test.ts",
   "src/background/history.test.ts",
