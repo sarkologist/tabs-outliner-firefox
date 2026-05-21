@@ -6,7 +6,8 @@ import {
   applyInsertTreeStructurePatchToProjection,
   buildVisibleTreeProjection,
   calculateVirtualRange,
-  refreshVisibleRowStructure
+  refreshVisibleRowStructure,
+  type VisibleTreeProjection
 } from "./visible-tree.js";
 
 const LARGE_NODE_COUNT = 50_000;
@@ -385,7 +386,88 @@ describe("visible tree projection", () => {
     expect(applied).toBe(false);
     expect(projection.visibleNodeIds).toEqual(["window:1", "tab:1"]);
   });
+
+  it("keeps incremental insert and delete patches equivalent to fresh projections across generated traces", () => {
+    for (let seed = 1; seed <= 24; seed += 1) {
+      runGeneratedPatchEquivalenceTrace(seed, 12);
+    }
+  });
 });
+
+type GeneratedPatchOperation = {
+  name: string;
+  kind: "insert" | "delete";
+  next: OutlineState;
+  deletedNodeIds: NodeId[];
+  updatedNodes: OutlineNode[];
+};
+
+function runGeneratedPatchEquivalenceTrace(seed: number, steps: number): void {
+  let state = generatedPatchState(seed);
+  let nextTabOrdinal = seed * 1000;
+  let nextGroupOrdinal = seed * 1000;
+  const rng = seededRandom(seed);
+  const history = [`seed ${seed}`];
+
+  for (let step = 0; step < steps; step += 1) {
+    const preferredOperation = step % 3;
+    const operation =
+      generatedPatchOperation(state, preferredOperation, rng, nextTabOrdinal, nextGroupOrdinal) ??
+      generatedPatchOperation(state, (preferredOperation + 1) % 3, rng, nextTabOrdinal, nextGroupOrdinal) ??
+      generatedPatchOperation(state, (preferredOperation + 2) % 3, rng, nextTabOrdinal, nextGroupOrdinal);
+    if (!operation) {
+      break;
+    }
+
+    if (operation.name.startsWith("insert")) {
+      nextTabOrdinal += 1;
+    } else if (operation.name.startsWith("wrap")) {
+      nextGroupOrdinal += 1;
+    }
+
+    const label = `step ${step + 1}: ${operation.name}`;
+    history.push(label);
+    const projection = buildVisibleTreeProjection(state, "");
+    const applied = applyGeneratedPatchOperation(operation, projection);
+
+    expect(applied, history.join("\n")).toBe(true);
+    expect(projectionSnapshot(projection), history.join("\n")).toEqual(
+      projectionSnapshot(buildVisibleTreeProjection(operation.next, ""))
+    );
+    state = operation.next;
+  }
+}
+
+function generatedPatchOperation(
+  state: OutlineState,
+  operationIndex: number,
+  rng: () => number,
+  nextTabOrdinal: number,
+  nextGroupOrdinal: number
+): GeneratedPatchOperation | undefined {
+  if (operationIndex === 0) {
+    return wrapVisibleNodeOperation(state, rng, nextGroupOrdinal);
+  }
+  if (operationIndex === 1) {
+    return insertVisibleLeafOperation(state, rng, nextTabOrdinal);
+  }
+  return deleteVisibleSubtreeOperation(state, rng);
+}
+
+function applyGeneratedPatchOperation(
+  operation: GeneratedPatchOperation,
+  projection: VisibleTreeProjection
+): boolean {
+  const patch = {
+    deletedNodeIds: operation.deletedNodeIds,
+    updatedNodes: operation.updatedNodes,
+    rootIds: operation.next.rootIds,
+    deletedClosedCount: 0
+  };
+  return operation.kind === "insert"
+    ? applyInsertTreeStructurePatchToProjection(operation.next, projection, patch)
+    : applyDeleteTreeStructurePatchToProjection(operation.next, projection, patch);
+}
 
 function wideState(
   tabCount: number,
@@ -448,6 +530,247 @@ function rowStructure(projection: ReturnType<typeof buildVisibleTreeProjection>)
     parentRowIndex: row.parentRowIndex,
     subtreeEndIndex: row.subtreeEndIndex
   }));
+}
+
+function projectionSnapshot(projection: VisibleTreeProjection) {
+  return {
+    rows: projection.rows.map((row) => ({
+      nodeId: row.nodeId,
+      depth: row.depth,
+      index: row.index,
+      parentRowIndex: row.parentRowIndex,
+      subtreeEndIndex: row.subtreeEndIndex,
+      childCount: row.childCount,
+      visibleChildCount: row.visibleChildCount,
+      expanded: row.expanded,
+      searchRevealsCollapsedChildren: row.searchRevealsCollapsedChildren,
+      isSearchMatch: row.isSearchMatch,
+      isSearchPath: row.isSearchPath,
+      insideActiveWindow: row.insideActiveWindow
+    })),
+    matchingNodeIds: [...projection.matchingNodeIds].sort(),
+    visibleNodeIds: [...projection.visibleNodeIds],
+    visibleNodeIdSet: [...projection.visibleNodeIdSet].sort(),
+    activeTabNodeId: projection.activeTabNodeId,
+    activeTabRowIndex: projection.activeTabRowIndex,
+    nodeCount: projection.nodeCount,
+    closedCount: projection.closedCount,
+    matchCount: projection.matchCount
+  };
+}
+
+function generatedPatchState(seed: number): OutlineState {
+  const baseTabId = seed * 100;
+  return outlineState([
+    windowNode("window:1", ["tab:a", "tab:b", "tab:c", "tab:d"], { active: true }),
+    tabNode("tab:a", "window:1", "A", ["tab:a1", "tab:a2"], { active: true }),
+    tabNode("tab:a1", "tab:a", "A1"),
+    tabNode("tab:a2", "tab:a", "A2", ["tab:a2i"]),
+    tabNode("tab:a2i", "tab:a2", "A2 inner"),
+    tabNode("tab:b", "window:1", "B", ["tab:b1"]),
+    tabNode("tab:b1", "tab:b", "B1"),
+    tabNode("tab:c", "window:1", "C"),
+    tabNode("tab:d", "window:1", "D", ["tab:d1", `tab:seed:${baseTabId}`]),
+    tabNode("tab:d1", "tab:d", "D1"),
+    tabNode(`tab:seed:${baseTabId}`, "tab:d", `Seed ${seed}`)
+  ]);
+}
+
+function wrapVisibleNodeOperation(
+  state: OutlineState,
+  rng: () => number,
+  nextGroupOrdinal: number
+): GeneratedPatchOperation | undefined {
+  const projection = buildVisibleTreeProjection(state, "");
+  const targetId = pickOne(
+    rng,
+    projection.rows
+      .map((row) => row.nodeId)
+      .filter((nodeId) => Boolean(state.nodes[nodeId]?.parentId))
+  );
+  const target = targetId ? state.nodes[targetId] : undefined;
+  if (!target?.parentId) {
+    return undefined;
+  }
+
+  const next = cloneOutlineStateForTest(state);
+  const parent = next.nodes[target.parentId];
+  const moving = next.nodes[target.id];
+  if (!parent || !moving) {
+    return undefined;
+  }
+
+  const wrapperId = `group:generated:${nextGroupOrdinal}`;
+  const targetIndex = parent.childIds.indexOf(target.id);
+  if (targetIndex < 0 || next.nodes[wrapperId]) {
+    return undefined;
+  }
+
+  parent.childIds.splice(targetIndex, 1, wrapperId);
+  moving.parentId = wrapperId;
+  const wrapper = groupNode(wrapperId, [moving.id], parent.id);
+  next.nodes[wrapper.id] = wrapper;
+
+  return {
+    name: `wrap ${target.id}`,
+    kind: "insert",
+    next,
+    deletedNodeIds: [],
+    updatedNodes: [parent, wrapper, moving]
+  };
+}
+
+function insertVisibleLeafOperation(
+  state: OutlineState,
+  rng: () => number,
+  nextTabOrdinal: number
+): GeneratedPatchOperation | undefined {
+  const projection = buildVisibleTreeProjection(state, "");
+  const parentId = pickOne(
+    rng,
+    projection.rows
+      .filter((row) => row.expanded)
+      .map((row) => row.nodeId)
+      .filter((nodeId) => Boolean(state.nodes[nodeId]))
+  );
+  const parent = parentId ? state.nodes[parentId] : undefined;
+  if (!parent) {
+    return undefined;
+  }
+
+  const next = cloneOutlineStateForTest(state);
+  const nextParent = next.nodes[parent.id];
+  if (!nextParent) {
+    return undefined;
+  }
+
+  const nodeId = `tab:generated:${nextTabOrdinal}`;
+  if (next.nodes[nodeId]) {
+    return undefined;
+  }
+
+  const insertionIndex = Math.floor(rng() * (nextParent.childIds.length + 1));
+  const tab = tabNode(nodeId, nextParent.id, `Generated ${nextTabOrdinal}`, [], {
+    url: `https://generated.example/${nextTabOrdinal}`
+  });
+  tab.live = {
+    tabId: nextTabOrdinal,
+    windowId: nearestRuntimeWindowId(next, nextParent.id)
+  };
+  nextParent.childIds.splice(insertionIndex, 0, tab.id);
+  next.nodes[tab.id] = tab;
+
+  return {
+    name: `insert ${tab.id} under ${nextParent.id}`,
+    kind: "insert",
+    next,
+    deletedNodeIds: [],
+    updatedNodes: [nextParent, tab]
+  };
+}
+
+function deleteVisibleSubtreeOperation(
+  state: OutlineState,
+  rng: () => number
+): GeneratedPatchOperation | undefined {
+  const projection = buildVisibleTreeProjection(state, "");
+  const targetId = pickOne(
+    rng,
+    projection.rows
+      .map((row) => row.nodeId)
+      .filter((nodeId) => Boolean(state.nodes[nodeId]?.parentId))
+  );
+  const target = targetId ? state.nodes[targetId] : undefined;
+  if (!target?.parentId) {
+    return undefined;
+  }
+
+  const next = cloneOutlineStateForTest(state);
+  const parent = next.nodes[target.parentId];
+  if (!parent) {
+    return undefined;
+  }
+  const deletedNodeIds = collectSubtreeIds(state, target.id);
+  parent.childIds = parent.childIds.filter((childId) => childId !== target.id);
+  for (const deletedNodeId of deletedNodeIds) {
+    delete next.nodes[deletedNodeId];
+  }
+
+  return {
+    name: `delete ${target.id}`,
+    kind: "delete",
+    next,
+    deletedNodeIds,
+    updatedNodes: [parent]
+  };
+}
+
+function cloneOutlineStateForTest(state: OutlineState): OutlineState {
+  return {
+    version: state.version,
+    rootIds: [...state.rootIds],
+    nodes: Object.fromEntries(
+      Object.entries(state.nodes).map(([nodeId, node]) => [
+        nodeId,
+        {
+          ...node,
+          childIds: [...node.childIds],
+          ...(node.live ? { live: { ...node.live } } : {}),
+          ...(node.restore ? { restore: { ...node.restore } } : {})
+        }
+      ])
+    )
+  };
+}
+
+function collectSubtreeIds(state: OutlineState, nodeId: NodeId): NodeId[] {
+  const ids: NodeId[] = [];
+  const stack = [nodeId];
+  const visited = new Set<NodeId>();
+  while (stack.length > 0) {
+    const currentId = stack.pop()!;
+    if (visited.has(currentId)) {
+      continue;
+    }
+    visited.add(currentId);
+    const node = state.nodes[currentId];
+    if (!node) {
+      continue;
+    }
+    ids.push(currentId);
+    for (let index = node.childIds.length - 1; index >= 0; index -= 1) {
+      stack.push(node.childIds[index]!);
+    }
+  }
+  return ids;
+}
+
+function nearestRuntimeWindowId(state: OutlineState, nodeId: NodeId): number {
+  let current = state.nodes[nodeId];
+  const visited = new Set<NodeId>();
+  while (current && !visited.has(current.id)) {
+    visited.add(current.id);
+    if (current.kind === "window" && current.live && "windowId" in current.live) {
+      return current.live.windowId;
+    }
+    current = current.parentId ? state.nodes[current.parentId] : undefined;
+  }
+  return 1;
+}
+
+function pickOne<T>(rng: () => number, values: readonly T[]): T | undefined {
+  if (values.length === 0) {
+    return undefined;
+  }
+  return values[Math.floor(rng() * values.length) % values.length];
+}
+
+function seededRandom(seed: number): () => number {
+  let state = seed >>> 0;
+  return () => {
+    state = (state * 1664525 + 1013904223) >>> 0;
+    return state / 0x100000000;
+  };
 }
 
 function windowNode(
