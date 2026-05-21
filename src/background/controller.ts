@@ -170,7 +170,10 @@ type StateDiffMode = "identity" | "material";
 type BestEffortPatchOptions = {
   diffMode?: StateDiffMode;
   skipNodeState?: boolean;
+  saveSchedule?: SaveSchedule;
 };
+
+type SaveSchedule = "normal" | "interaction";
 
 type RuntimeStateIndex = {
   state: OutlineState;
@@ -208,6 +211,8 @@ export type BackgroundControllerOptions = {
 const RUNTIME_REFRESH_BATCH_DELAY_MS = 0;
 const STATE_SAVE_QUIET_DELAY_MS = 1000;
 const STATE_SAVE_MAX_DELAY_MS = 5000;
+const INTERACTION_STATE_SAVE_QUIET_DELAY_MS = 5000;
+const INTERACTION_STATE_SAVE_MAX_DELAY_MS = 30000;
 const SIDEBAR_PROFILE_COLLECTION_DELAY_MS = 50;
 const TOGGLE_SIDEBAR_COMMAND = "toggle-sidebar";
 const SIDEBAR_WINDOW_PATH = "sidebar/sidebar.html";
@@ -253,7 +258,11 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   let saveMaxTimer: number | undefined;
   let saveInFlight: Promise<void> | undefined;
   let saveAfterInFlight = false;
+  let saveAfterInFlightSchedule: SaveSchedule = "normal";
   let explicitSaveFlushInProgress = false;
+  let pendingSaveBatchStartedAt: number | undefined;
+  let pendingSaveMaxDelayMs: number | undefined;
+  let pendingSaveSchedule: SaveSchedule | undefined;
   let diagnosticsInFlight: Promise<OutlineDiagnostics> | undefined;
   let automaticBackupInFlight: Promise<AutomaticBackupStatus> | undefined;
   let sidebarProfileRequestSequence = 0;
@@ -620,12 +629,14 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       if (commandMayRelocateLiveTabs(message.type)) {
         absorbCommandOwnedFocusRefresh(current, result.state, runtimeIndexCandidateNodeIds);
       }
+      const saveSchedule = saveScheduleForCommand(message.type);
       if (historyPrevious && isTrackableHistoryCommandType(message.type)) {
         const candidateNodeIds = message.type === "expandAncestors"
           ? expandAncestorNodeIds
           : historyCandidateNodeIds(message, historyPrevious, result.state);
         await recordHistoryEntry(message.type, historyPrevious, result.state, {
-          ...(candidateNodeIds ? { candidateNodeIds } : {})
+          ...(candidateNodeIds ? { candidateNodeIds } : {}),
+          saveSchedule
         });
       }
       if (message.type === "restoreNode") {
@@ -637,7 +648,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
           treeStructureUpdateFromStateChange(current, result.state)
         );
         await broadcastTreeStructureUpdate(update);
-        scheduleStateSave(result.state);
+        scheduleStateSave(result.state, saveSchedule);
         return commandAck(true);
       }
       if (message.type === "wrapNodeInGroup" || message.type === "promoteChildren") {
@@ -645,7 +656,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
           treeStructureUpdateFromStateChange(current, result.state)
         );
         await broadcastTreeStructureUpdate(update);
-        scheduleStateSave(result.state);
+        scheduleStateSave(result.state, saveSchedule);
         return commandAck(true);
       }
       if (message.type === "renameGroup") {
@@ -660,7 +671,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         await persistKnownNodeStateUpdates(current, result.state, expandAncestorNodeIds ?? []);
         return commandAck(true);
       }
-      await persistWithBestEffortPatch(current, result.state);
+      await persistWithBestEffortPatch(current, result.state, { saveSchedule });
       return commandAck(true);
     }, { reason: "command", command: message.type });
   }
@@ -827,7 +838,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     commandType: TrackableHistoryCommandType,
     previous: OutlineState,
     next: OutlineState,
-    options: { candidateNodeIds?: readonly NodeId[] } = {}
+    options: { candidateNodeIds?: readonly NodeId[]; saveSchedule?: SaveSchedule } = {}
   ): Promise<void> {
     const entry = createHistoryEntry(commandType, previous, next, options);
     if (!entry) {
@@ -836,7 +847,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
     const activePreferences = await ensurePreferences();
     historyState = pushUndoEntry(await ensureHistory(), entry, activePreferences.undoHistoryLimit);
-    scheduleHistorySave(historyState);
+    scheduleHistorySave(historyState, options.saveSchedule);
     broadcastHistoryStatusSoon(historyState);
   }
 
@@ -1723,12 +1734,12 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     }
   }
 
-  async function persistAndBroadcast(): Promise<void> {
+  async function persistAndBroadcast(saveSchedule: SaveSchedule = "normal"): Promise<void> {
     if (!state) {
       return;
     }
     await broadcastWithTrace({ type: "stateUpdated", state });
-    scheduleStateSave(state);
+    scheduleStateSave(state, saveSchedule);
   }
 
   async function persistWithNodeStateUpdate(
@@ -1802,7 +1813,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       }, () => nodeStateUpdateFromStateChange(previous, next, { diffMode }));
       if (isUsefulNodeStateUpdate(nodeUpdate, next)) {
         await broadcastNodeStateUpdate(nodeUpdate);
-        scheduleStateSave(next);
+        scheduleStateSave(next, options.saveSchedule);
         return;
       }
     }
@@ -1812,7 +1823,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     );
     if (isUsefulTreeStructureUpdate(treeUpdate, next)) {
       await broadcastTreeStructureUpdate(treeUpdate);
-      scheduleStateSave(next);
+      scheduleStateSave(next, options.saveSchedule);
       return;
     }
 
@@ -1823,7 +1834,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       }, () => nodeStateUpdateFromStateChange(previous, next, { diffMode: "material" }));
       if (isUsefulNodeStateUpdate(nodeUpdate, next)) {
         await broadcastNodeStateUpdate(nodeUpdate);
-        scheduleStateSave(next);
+        scheduleStateSave(next, options.saveSchedule);
         return;
       }
     }
@@ -1835,11 +1846,11 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       );
     if (diffMode !== "material" && isUsefulTreeStructureUpdate(semanticTreeUpdate, next)) {
       await broadcastTreeStructureUpdate(semanticTreeUpdate);
-      scheduleStateSave(next);
+      scheduleStateSave(next, options.saveSchedule);
       return;
     }
 
-    await persistAndBroadcast();
+    await persistAndBroadcast(options.saveSchedule);
   }
 
   function isUsefulNodeStateUpdate(update: NodeStateUpdate | undefined, next: OutlineState): update is NodeStateUpdate {
@@ -1878,32 +1889,42 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     });
   }
 
-  function scheduleStateSave(next: OutlineState): void {
+  function scheduleStateSave(next: OutlineState, schedule: SaveSchedule = "normal"): void {
     pendingSaveState = next;
-    schedulePendingSave();
+    schedulePendingSave(schedule);
   }
 
-  function scheduleHistorySave(next: HistoryState): void {
+  function scheduleHistorySave(next: HistoryState, schedule: SaveSchedule = "normal"): void {
     pendingSaveHistory = next;
-    schedulePendingSave();
+    schedulePendingSave(schedule);
   }
 
-  function schedulePendingSave(): void {
+  function schedulePendingSave(schedule: SaveSchedule = "normal"): void {
     if (saveInFlight) {
       saveAfterInFlight = true;
+      saveAfterInFlightSchedule = moreDeferredSaveSchedule(saveAfterInFlightSchedule, schedule);
       return;
     }
+
+    pendingSaveSchedule = moreDeferredSaveSchedule(pendingSaveSchedule ?? "normal", schedule);
+    const timing = saveScheduleTiming(pendingSaveSchedule);
+    const scheduledAt = performance.now();
+    pendingSaveBatchStartedAt ??= scheduledAt;
+    pendingSaveMaxDelayMs = Math.max(pendingSaveMaxDelayMs ?? 0, timing.maxDelayMs);
 
     if (saveTimer !== undefined) {
       globalThis.clearTimeout(saveTimer);
     }
     saveTimer = globalThis.setTimeout(() => {
       void flushScheduledSave();
-    }, STATE_SAVE_QUIET_DELAY_MS);
+    }, timing.quietDelayMs);
 
-    saveMaxTimer ??= globalThis.setTimeout(() => {
+    if (saveMaxTimer !== undefined) {
+      globalThis.clearTimeout(saveMaxTimer);
+    }
+    saveMaxTimer = globalThis.setTimeout(() => {
       void flushScheduledSave();
-    }, STATE_SAVE_MAX_DELAY_MS);
+    }, Math.max(0, pendingSaveBatchStartedAt + pendingSaveMaxDelayMs - scheduledAt));
   }
 
   async function flushPendingSaves(): Promise<void> {
@@ -1931,9 +1952,11 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     } finally {
       explicitSaveFlushInProgress = previousExplicitSaveFlushInProgress;
       if (saveAfterInFlight) {
+        const schedule = saveAfterInFlightSchedule;
         saveAfterInFlight = false;
+        saveAfterInFlightSchedule = "normal";
         if (!explicitSaveFlushInProgress && (pendingSaveState || pendingSaveHistory)) {
-          schedulePendingSave();
+          schedulePendingSave(schedule);
         }
       }
     }
@@ -1970,6 +1993,25 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       globalThis.clearTimeout(saveMaxTimer);
       saveMaxTimer = undefined;
     }
+    pendingSaveBatchStartedAt = undefined;
+    pendingSaveMaxDelayMs = undefined;
+    pendingSaveSchedule = undefined;
+  }
+
+  function saveScheduleTiming(schedule: SaveSchedule): { quietDelayMs: number; maxDelayMs: number } {
+    return schedule === "interaction"
+      ? {
+          quietDelayMs: INTERACTION_STATE_SAVE_QUIET_DELAY_MS,
+          maxDelayMs: INTERACTION_STATE_SAVE_MAX_DELAY_MS
+        }
+      : {
+          quietDelayMs: STATE_SAVE_QUIET_DELAY_MS,
+          maxDelayMs: STATE_SAVE_MAX_DELAY_MS
+        };
+  }
+
+  function moreDeferredSaveSchedule(left: SaveSchedule, right: SaveSchedule): SaveSchedule {
+    return left === "interaction" || right === "interaction" ? "interaction" : "normal";
   }
 
   async function saveStateAndHistoryNowWithTrace(
@@ -1993,9 +2035,11 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     saveInFlight = saveStateAndHistoryNowWithTrace(nextState, nextHistory).finally(() => {
       saveInFlight = undefined;
       if (saveAfterInFlight) {
+        const schedule = saveAfterInFlightSchedule;
         saveAfterInFlight = false;
+        saveAfterInFlightSchedule = "normal";
         if (!explicitSaveFlushInProgress && (pendingSaveState || pendingSaveHistory)) {
-          schedulePendingSave();
+          schedulePendingSave(schedule);
         }
       }
     });
@@ -3097,6 +3141,20 @@ function restoredLiveTabIdsChangedByCommand(
 
 function commandMayRelocateLiveTabs(type: BackgroundCommand["type"]): boolean {
   return type === "moveNode" || type === "moveNodeToNewWindow" || type === "wrapNodeInGroup";
+}
+
+function saveScheduleForCommand(type: BackgroundCommand["type"]): SaveSchedule {
+  return isStructuralCommand(type) ? "interaction" : "normal";
+}
+
+function isStructuralCommand(type: BackgroundCommand["type"]): boolean {
+  return type === "moveNode" ||
+    type === "moveNodeToNewWindow" ||
+    type === "wrapNodeInGroup" ||
+    type === "flattenSubtree" ||
+    type === "promoteChildren" ||
+    type === "deleteNode" ||
+    type === "importTree";
 }
 
 function commandOwnedActiveTabsByWindowId(
