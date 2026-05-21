@@ -500,3 +500,10 @@ Use these as starting targets, not hard promises:
   - Before, against the old built `dist`: 5,205ms command time, first broadcast at 5,153ms, 2 `tabs.move` calls, 50,000 moved tab ids, max move batch 49,999.
   - After `pnpm build`: 201ms command time, first broadcast at 144ms, 0 `tabs.move` calls, 0 moved tab ids.
 - Verification: targeted red/green coverage in `src/background/commands.test.ts`, `pnpm exec vitest run src/background/commands.test.ts`, `pnpm build`, and the profile command above passed.
+
+### 2026-05-21: Echo-Aware Synthetic Profile Harness
+
+- Added a shared `scripts/profile-harness.mjs` event model. The command, focus, close, delete, restore, and tab-open profile scripts now report `eventCounts` and `eventCount` for `tabs.onCreated`, `tabs.onUpdated`, `tabs.onActivated`, `tabs.onRemoved`, `windows.onFocusChanged`, `windows.onRemoved`, and `sessions.onChanged`.
+- The command profile now emits Firefox-like move/create echoes for `tabs.move` and `windows.create({ tabId })`, so relocation scenarios can expose command-owned update/activation/focus traffic instead of only counting direct adapter calls.
+- The richer harness immediately exposed the remaining live-grouping echo cost. `node scripts/profile-command.mjs --scenario group-live-leaf --tabs 10000` measured 38ms command time but 16,126ms echo flush time from one `tabs.onUpdated`, one `tabs.onActivated`, and one `windows.onFocusChanged` echo. That makes command-created focus/activation echo absorption the next target before trusting 50k synthetic totals.
+- Smoke verification covered the updated profile scripts with 1k fixtures: `profile-command`, `profile-focus`, `profile-close`, `profile-delete`, `profile-restore` in both modes, and `profile-tab-open` event/startup scenarios.

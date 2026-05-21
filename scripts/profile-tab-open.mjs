@@ -1,45 +1,15 @@
 import { performance } from "node:perf_hooks";
 
 import { createBackgroundController } from "../dist/background/controller.js";
-
-class FakeEvent {
-  listeners = [];
-  pending = [];
-
-  addListener(listener) {
-    this.listeners.push(listener);
-  }
-
-  dispatch(...args) {
-    for (const listener of this.listeners) {
-      try {
-        const result = listener(...args);
-        if (result && typeof result.then === "function") {
-          this.pending.push(result);
-        }
-      } catch (error) {
-        this.pending.push(Promise.reject(error));
-      }
-    }
-  }
-
-  async emit(...args) {
-    this.dispatch(...args);
-    await this.flush();
-  }
-
-  async flush() {
-    while (this.pending.length > 0) {
-      const pending = this.pending;
-      this.pending = [];
-      const results = await Promise.allSettled(pending);
-      const rejected = results.find((result) => result.status === "rejected");
-      if (rejected) {
-        throw rejected.reason;
-      }
-    }
-  }
-}
+import {
+  createAlarmApi,
+  createPassiveEvent,
+  createProfileEvents,
+  eventCountsSnapshot,
+  eventCountsTotal,
+  flushProfileEvents,
+  resetEventCounts
+} from "./profile-harness.mjs";
 
 function parseArgs(argv) {
   const options = {
@@ -88,15 +58,7 @@ function parseArgs(argv) {
 }
 
 function makeRuntime(tabCount) {
-  const events = {
-    tabCreated: new FakeEvent(),
-    tabUpdated: new FakeEvent(),
-    tabActivated: new FakeEvent(),
-    tabRemoved: new FakeEvent(),
-    windowRemoved: new FakeEvent(),
-    windowFocusChanged: new FakeEvent(),
-    sessionChanged: new FakeEvent()
-  };
+  const { events, eventCounts } = createProfileEvents();
   const runtime = {
     windows: [{ id: 10, focused: true, incognito: false }],
     tabs: Array.from({ length: tabCount }, (_value, index) => ({
@@ -112,28 +74,30 @@ function makeRuntime(tabCount) {
     stringifyMs: 0,
     bytes: 0,
     storage: new Map(),
+    eventCounts,
     events,
     api: undefined
   };
 
   runtime.api = {
     action: {
-      onClicked: new FakeEvent()
+      onClicked: createPassiveEvent()
     },
     sidebarAction: {
       open: async () => undefined,
       toggle: async () => undefined
     },
     commands: {
-      onCommand: new FakeEvent(),
+      onCommand: createPassiveEvent(),
       getAll: async () => [],
       update: async () => undefined,
       reset: async () => undefined
     },
+    alarms: createAlarmApi(),
     runtime: {
-      onInstalled: new FakeEvent(),
-      onStartup: new FakeEvent(),
-      onMessage: new FakeEvent(),
+      onInstalled: createPassiveEvent(),
+      onStartup: createPassiveEvent(),
+      onMessage: createPassiveEvent(),
       sendMessage: async (message) => {
         measureJson(runtime, message);
         runtime.broadcasts += 1;
@@ -159,9 +123,9 @@ function makeRuntime(tabCount) {
             runtime.storage.delete(key);
           }
         },
-        onChanged: new FakeEvent()
+        onChanged: createPassiveEvent()
       },
-      onChanged: new FakeEvent()
+      onChanged: createPassiveEvent()
     },
     windows: {
       WINDOW_ID_NONE: -1,
@@ -272,7 +236,7 @@ async function runOpenTabStorm(runtime, updateCount) {
   }
   runtime.events.tabActivated.dispatch({ tabId: newTabId, windowId: 10, previousTabId: 1 });
 
-  await flushAll(runtime);
+  await flushProfileEvents(runtime.events);
 }
 
 async function runNewWindowStorm(runtime, updateCount) {
@@ -292,6 +256,7 @@ async function runNewWindowStorm(runtime, updateCount) {
   runtime.tabs = runtime.tabs.map((tab) => ({ ...tab, active: false })).concat(newTab);
 
   runtime.events.tabCreated.dispatch({ ...newTab });
+  runtime.events.windowFocusChanged.dispatch(newWindowId);
   for (let index = 0; index < updateCount; index += 1) {
     const updated = {
       ...newTab,
@@ -303,13 +268,13 @@ async function runNewWindowStorm(runtime, updateCount) {
   }
   runtime.events.tabActivated.dispatch({ tabId: newTabId, windowId: newWindowId, previousTabId: 1 });
 
-  await flushAll(runtime);
+  await flushProfileEvents(runtime.events);
 }
 
 async function runNoopUpdate(runtime) {
   const tab = { ...runtime.tabs[0] };
   runtime.events.tabUpdated.dispatch(tab.id, {}, tab);
-  await flushAll(runtime);
+  await flushProfileEvents(runtime.events);
 }
 
 async function runMetadataNoopUpdate(runtime) {
@@ -319,7 +284,7 @@ async function runMetadataNoopUpdate(runtime) {
     url: tab.url,
     favIconUrl: tab.favIconUrl
   }, tab);
-  await flushAll(runtime);
+  await flushProfileEvents(runtime.events);
 }
 
 async function runRuntimeRefreshBacklog(runtime, controller, focusStarted, releaseFocus) {
@@ -360,16 +325,6 @@ async function runRuntimeRefreshBacklog(runtime, controller, focusStarted, relea
   };
 }
 
-async function flushAll(runtime) {
-  await Promise.all([
-    runtime.events.tabCreated.flush(),
-    runtime.events.tabUpdated.flush(),
-    runtime.events.tabActivated.flush(),
-    runtime.events.windowFocusChanged.flush(),
-    runtime.events.sessionChanged.flush()
-  ]);
-}
-
 async function profile({ tabs, updates, scenario }) {
   if (scenario === "startup-stored-unchanged") {
     return profileStartupStoredUnchanged({ tabs });
@@ -399,6 +354,7 @@ async function profile({ tabs, updates, scenario }) {
   runtime.broadcasts = 0;
   runtime.stringifyMs = 0;
   runtime.bytes = 0;
+  resetEventCounts(runtime.eventCounts);
 
   if (scenario === "runtime-refresh-backlog") {
     await controller.handleMessage({ type: "setPerformanceTraceEnabled", enabled: true });
@@ -436,6 +392,8 @@ async function profile({ tabs, updates, scenario }) {
     broadcasts: runtime.broadcasts,
     stringifyMs: Math.round(runtime.stringifyMs),
     mbStringified: Math.round(runtime.bytes / 1024 / 1024),
+    eventCounts: eventCountsSnapshot(runtime.eventCounts),
+    eventCount: eventCountsTotal(runtime.eventCounts),
     nodes: Object.keys(state.nodes).length,
     ...scenarioMetrics
   };
@@ -451,6 +409,7 @@ async function profileStartupStoredUnchanged({ tabs }) {
   runtime.broadcasts = 0;
   runtime.stringifyMs = 0;
   runtime.bytes = 0;
+  resetEventCounts(runtime.eventCounts);
 
   const secondController = createBackgroundController({ api: runtime.api, now: () => 2000 });
   const start = performance.now();
@@ -472,6 +431,8 @@ async function profileStartupStoredUnchanged({ tabs }) {
     broadcasts: runtime.broadcasts,
     stringifyMs: Math.round(runtime.stringifyMs),
     mbStringified: Math.round(runtime.bytes / 1024 / 1024),
+    eventCounts: eventCountsSnapshot(runtime.eventCounts),
+    eventCount: eventCountsTotal(runtime.eventCounts),
     nodes: Object.keys(state.nodes).length
   };
 }
@@ -486,6 +447,7 @@ async function profileStartupInitialSnapshot({ tabs }) {
   runtime.broadcasts = 0;
   runtime.stringifyMs = 0;
   runtime.bytes = 0;
+  resetEventCounts(runtime.eventCounts);
 
   const secondController = createBackgroundController({ api: runtime.api, now: () => 2000 });
   const initialStart = performance.now();
@@ -509,6 +471,8 @@ async function profileStartupInitialSnapshot({ tabs }) {
     broadcasts: runtime.broadcasts,
     stringifyMs: Math.round(runtime.stringifyMs),
     mbStringified: Math.round(runtime.bytes / 1024 / 1024),
+    eventCounts: eventCountsSnapshot(runtime.eventCounts),
+    eventCount: eventCountsTotal(runtime.eventCounts),
     snapshotRows: Array.isArray(snapshot?.projection?.rows) ? snapshot.projection.rows.length : 0,
     snapshotNodes: snapshot?.state?.nodes ? Object.keys(snapshot.state.nodes).length : 0,
     hydrating: Boolean(snapshot?.hydrating),
@@ -525,6 +489,7 @@ async function profileStartupWarmInitialSnapshot({ tabs }) {
   runtime.broadcasts = 0;
   runtime.stringifyMs = 0;
   runtime.bytes = 0;
+  resetEventCounts(runtime.eventCounts);
 
   const start = performance.now();
   const snapshot = await controller.handleMessage({ type: "getInitialTreeSnapshot" });
@@ -545,6 +510,8 @@ async function profileStartupWarmInitialSnapshot({ tabs }) {
     broadcasts: runtime.broadcasts,
     stringifyMs: Math.round(runtime.stringifyMs),
     mbStringified: Math.round(runtime.bytes / 1024 / 1024),
+    eventCounts: eventCountsSnapshot(runtime.eventCounts),
+    eventCount: eventCountsTotal(runtime.eventCounts),
     snapshotStringifyMs: Math.round(snapshotStringifyMs),
     snapshotMb: Math.round(snapshotJson.length / 1024 / 1024),
     snapshotRows: Array.isArray(snapshot?.projection?.rows) ? snapshot.projection.rows.length : 0,
