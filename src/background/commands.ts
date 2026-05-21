@@ -690,6 +690,13 @@ async function moveNodeToNewWindow(
 
   if (isLiveTab(node)) {
     const createdWindow = await adapter.createWindow({ tabId: node.live.tabId });
+    await moveRemainingLiveSubtreeTabsIntoCreatedWindow(
+      state,
+      adapter,
+      nodeId,
+      node.live.tabId,
+      createdWindow.id
+    );
     const next = moveTabToNewLiveWindow(state, nodeId, createdWindow, {
       now: Date.now(),
       ...(typeof rootIndex === "number" ? { rootIndex } : {})
@@ -720,6 +727,13 @@ async function wrapNodeInGroupCommand(
 
   if (isLiveTab(node)) {
     const createdWindow = await adapter.createWindow({ tabId: node.live.tabId });
+    await moveRemainingLiveSubtreeTabsIntoCreatedWindow(
+      state,
+      adapter,
+      nodeId,
+      node.live.tabId,
+      createdWindow.id
+    );
     const next = wrapNodeInGroup(state, nodeId, {
       now: Date.now(),
       liveWindow: createdWindow
@@ -729,6 +743,21 @@ async function wrapNodeInGroupCommand(
   }
 
   return wrapNodeInGroup(state, nodeId, { now: Date.now() });
+}
+
+async function moveRemainingLiveSubtreeTabsIntoCreatedWindow(
+  state: OutlineState,
+  adapter: BrowserAdapter,
+  nodeId: NodeId,
+  createdFromTabId: number,
+  windowId: number
+): Promise<void> {
+  const remainingTabIds = liveTabIdsInSubtree(state, nodeId)
+    .filter((tabId) => tabId !== createdFromTabId);
+
+  if (remainingTabIds.length > 0) {
+    await adapter.moveTabs(remainingTabIds, { windowId, index: 1 });
+  }
 }
 
 function restoredTabFromRuntime(nodeId: NodeId, tab: RuntimeTab): RestoredNode {
