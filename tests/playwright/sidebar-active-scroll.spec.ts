@@ -29,9 +29,42 @@ test.describe("sidebar active-tab scrolling", () => {
     expect(await scrollTop(page)).toBeGreaterThan(500);
     expect(issues).toEqual([]);
   });
+
+  test("does not scroll a sidebar away from its own window after a later focus echo", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    const state = groupedWindowFixtureState();
+    await loadSidebar(page, state, { currentWindowId: 42 });
+
+    await expect(page.locator(`${nodeSelector("tab:new-active")}.is-active`)).toBeVisible();
+    const groupedScrollTop = await scrollTop(page);
+    expect(groupedScrollTop).toBeGreaterThan(500);
+
+    await dispatchSidebarMessage(page, {
+      type: "nodeStateUpdated",
+      updatedNodes: [
+        {
+          ...state.nodes["window:10"],
+          active: true
+        },
+        {
+          ...state.nodes["window:42"],
+          active: false
+        }
+      ],
+      closedCountDelta: 0
+    });
+
+    await expect(page.locator(nodeSelector("tab:new-active"))).toBeVisible();
+    expect(await scrollTop(page)).toBe(groupedScrollTop);
+    expect(issues).toEqual([]);
+  });
 });
 
-async function loadSidebar(page: Page): Promise<void> {
+async function loadSidebar(
+  page: Page,
+  state: ReturnType<typeof fixtureState> = fixtureState(),
+  options: { currentWindowId?: number } = {}
+): Promise<void> {
   await page.addInitScript((state) => {
     const listeners: Array<(message: unknown) => void> = [];
     (window as typeof window & { __dispatchSidebarMessage?: (message: unknown) => void }).__dispatchSidebarMessage = (
@@ -72,6 +105,10 @@ async function loadSidebar(page: Page): Promise<void> {
           }
         }
       },
+      windows: {
+        getCurrent: async () =>
+          typeof state.currentWindowId === "number" ? { id: state.currentWindowId } : undefined
+      },
       storage: {
         local: {
           get: async () => ({}),
@@ -79,10 +116,10 @@ async function loadSidebar(page: Page): Promise<void> {
         }
       }
     };
-  }, fixtureState());
+  }, { ...state, currentWindowId: options.currentWindowId });
 
   await page.goto("/sidebar/sidebar.html");
-  await expect(page.locator("#state-count")).toHaveText("121 items / 0 saved");
+  await expect(page.locator("#state-count")).toHaveText(`${Object.keys(state.nodes).length} items / 0 saved`);
 }
 
 async function dispatchSidebarMessage(page: Page, message: unknown): Promise<void> {
@@ -162,6 +199,75 @@ function fixtureState() {
           }
         ])
       )
+    }
+  };
+}
+
+function groupedWindowFixtureState() {
+  const now = 1_700_000_000_000;
+  const oldTabIds = Array.from({ length: 80 }, (_value, index) => `tab:old-${index + 1}`);
+  return {
+    version: 1,
+    rootIds: ["window:10"],
+    nodes: {
+      "window:10": {
+        id: "window:10",
+        kind: "window",
+        status: "live",
+        title: "Original window",
+        childIds: [...oldTabIds, "window:42"],
+        active: false,
+        collapsed: false,
+        createdAt: now,
+        updatedAt: now,
+        live: { windowId: 10 }
+      },
+      ...Object.fromEntries(
+        oldTabIds.map((id, index) => [
+          id,
+          {
+            id,
+            kind: "tab",
+            status: "live",
+            parentId: "window:10",
+            title: `Old tab ${index + 1}`,
+            url: `https://old.example/${index + 1}`,
+            childIds: [],
+            active: index === 0,
+            collapsed: false,
+            createdAt: now,
+            updatedAt: now,
+            live: { tabId: index + 1, windowId: 10 }
+          }
+        ])
+      ),
+      "window:42": {
+        id: "window:42",
+        kind: "window",
+        status: "live",
+        parentId: "window:10",
+        title: "Grouped window",
+        childIds: ["tab:new-active"],
+        active: true,
+        collapsed: false,
+        createdAt: now,
+        updatedAt: now,
+        live: { windowId: 42 }
+      },
+      "tab:new-active": {
+        id: "tab:new-active",
+        kind: "tab",
+        status: "live",
+        parentId: "window:42",
+        title: "Grouped active tab",
+        url: "https://grouped.example/",
+        childIds: [],
+        active: true,
+        collapsed: false,
+        createdAt: now,
+        updatedAt: now,
+        live: { tabId: 420, windowId: 42 }
+      }
     }
   };
 }

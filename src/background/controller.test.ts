@@ -6089,6 +6089,81 @@ describe("background controller lifecycle", () => {
     expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
   });
 
+  it("absorbs focus and activation echoes from live-tab grouping without a full runtime refresh", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        },
+        {
+          id: 2,
+          windowId: 10,
+          index: 1,
+          active: false,
+          url: "https://two.example/",
+          title: "Two"
+        }
+      ]
+    );
+    const adapter: BrowserAdapter = {
+      focusTab: vi.fn(async () => undefined),
+      closeTab: vi.fn(async () => undefined),
+      closeTabs: vi.fn(async () => undefined),
+      closeWindow: vi.fn(async () => undefined),
+      restoreSession: vi.fn(async () => ({})),
+      createTab: vi.fn(async () => {
+        throw new Error("not implemented");
+      }),
+      createWindow: vi.fn(async ({ tabId }) => {
+        const createdWindow = createWindowFromBrowser(runtime, { tabId });
+        const movedTab = createdWindow.tabs?.[0];
+        runtime.events.windowFocusChanged.dispatch(createdWindow.id);
+        if (movedTab) {
+          runtime.events.tabUpdated.dispatch(movedTab.id, {
+            windowId: movedTab.windowId,
+            index: movedTab.index
+          }, movedTab);
+          runtime.events.tabActivated.dispatch({
+            tabId: movedTab.id,
+            windowId: movedTab.windowId,
+            previousTabId: 1
+          });
+        }
+        return createdWindow;
+      }),
+      moveTabs: vi.fn(async () => undefined)
+    };
+    const controller = createBackgroundController({ api: runtime.api, adapter, now: () => 1000 });
+    await controller.ensureState();
+    vi.mocked(runtime.api.windows.getAll).mockClear();
+    vi.mocked(runtime.api.tabs.query).mockClear();
+
+    expectCommandAck(await controller.handleMessage({ type: "wrapNodeInGroup", nodeId: "tab:1" }), true);
+    await Promise.all([
+      runtime.events.windowFocusChanged.flush(),
+      runtime.events.tabUpdated.flush(),
+      runtime.events.tabActivated.flush()
+    ]);
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+
+    expect(state.nodes["window:11"]?.active).toBe(true);
+    expect(state.nodes["tab:1"]?.active).toBe(true);
+    expect(runtime.api.windows.getAll).not.toHaveBeenCalled();
+    expect(runtime.api.tabs.query).not.toHaveBeenCalled();
+  });
+
   it("ignores unknown extension message command types", async () => {
     const runtime = fakeRuntime(
       [

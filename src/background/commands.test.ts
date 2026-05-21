@@ -679,7 +679,7 @@ describe("background commands", () => {
     expect(adapter.moveTabs).not.toHaveBeenCalled();
   });
 
-  it("wraps live tabs by creating a Firefox window group and syncing tab order", async () => {
+  it("wraps live tabs by creating a Firefox window group and moving subtree descendants", async () => {
     const state: OutlineState = bootstrapFromWindows(runtimeWindows, { now: 1000 });
     const adapter = fakeAdapter();
 
@@ -699,7 +699,24 @@ describe("background commands", () => {
     });
     expect(result.state.nodes["tab:1"]?.live).toEqual({ tabId: 1, windowId: 42 });
     expect(result.state.nodes["tab:2"]?.live).toEqual({ tabId: 2, windowId: 42 });
-    expect(adapter.moveTabs).toHaveBeenCalledWith([1, 2], { windowId: 42, index: 0 });
+    expect(adapter.moveTabs).toHaveBeenCalledTimes(1);
+    expect(adapter.moveTabs).toHaveBeenCalledWith([2], { windowId: 42, index: 1 });
+  });
+
+  it("wraps one live leaf tab without syncing a whole large source window", async () => {
+    const tabCount = 50_000;
+    const state: OutlineState = bootstrapFromWindows([windowWithTabs(10, tabCount)], { now: 1000 });
+    const adapter = fakeAdapter();
+
+    const result = await runCommand(state, adapter, {
+      type: "wrapNodeInGroup",
+      nodeId: "tab:1"
+    });
+
+    expect(result.state.nodes["window:10"]?.childIds[0]).toBe("window:42");
+    expect(result.state.nodes["window:42"]?.childIds).toEqual(["tab:1"]);
+    expect(adapter.createWindow).toHaveBeenCalledWith({ tabId: 1 });
+    expect(adapter.moveTabs).not.toHaveBeenCalled();
   });
 
   it("wraps closed tabs in closed window groups without touching Firefox", async () => {
@@ -932,8 +949,9 @@ describe("background commands", () => {
     expect(result.state.nodes["window:42"]?.childIds).toEqual(["tab:1"]);
     expect(result.state.nodes["tab:1"]?.live).toEqual({ tabId: 1, windowId: 42 });
     expect(result.state.nodes["tab:2"]?.live).toEqual({ tabId: 2, windowId: 42 });
-    expect(adapter.moveTabs).toHaveBeenNthCalledWith(1, [3], { windowId: 10, index: 0 });
-    expect(adapter.moveTabs).toHaveBeenNthCalledWith(2, [1, 2], { windowId: 42, index: 0 });
+    expect(adapter.moveTabs).toHaveBeenNthCalledWith(1, [2], { windowId: 42, index: 1 });
+    expect(adapter.moveTabs).toHaveBeenNthCalledWith(2, [3], { windowId: 10, index: 0 });
+    expect(adapter.moveTabs).toHaveBeenNthCalledWith(3, [1, 2], { windowId: 42, index: 0 });
   });
 
   it("keeps root-positioned tab drops inside a newly created window", async () => {

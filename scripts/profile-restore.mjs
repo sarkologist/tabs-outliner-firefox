@@ -5,40 +5,16 @@ import { runCommand } from "../dist/background/commands.js";
 import { analyzeRestoreScope, planRestore } from "../dist/model/outline.js";
 import { outlineStateV3Changes } from "../dist/background/storage.js";
 import { buildVisibleTreeProjection } from "../dist/sidebar/visible-tree.js";
-
-class FakeEvent {
-  listeners = [];
-  pending = [];
-
-  addListener(listener) {
-    this.listeners.push(listener);
-  }
-
-  dispatch(...args) {
-    for (const listener of this.listeners) {
-      try {
-        const result = listener(...args);
-        if (result && typeof result.then === "function") {
-          this.pending.push(result);
-        }
-      } catch (error) {
-        this.pending.push(Promise.reject(error));
-      }
-    }
-  }
-
-  async flush() {
-    while (this.pending.length > 0) {
-      const pending = this.pending;
-      this.pending = [];
-      const results = await Promise.allSettled(pending);
-      const rejected = results.find((result) => result.status === "rejected");
-      if (rejected) {
-        throw rejected.reason;
-      }
-    }
-  }
-}
+import {
+  PROFILE_EVENT_NAMES,
+  createAlarmApi,
+  createPassiveEvent,
+  createProfileEvents,
+  eventCountsSnapshot,
+  eventCountsTotal,
+  flushProfileEvents,
+  resetEventCounts
+} from "./profile-harness.mjs";
 
 function parseArgs(argv) {
   const options = {
@@ -276,15 +252,7 @@ function applyNodeStateUpdate(runtime, update) {
 }
 
 function makeControllerRuntime(initialState) {
-  const events = {
-    tabCreated: new FakeEvent(),
-    tabUpdated: new FakeEvent(),
-    tabActivated: new FakeEvent(),
-    tabRemoved: new FakeEvent(),
-    windowRemoved: new FakeEvent(),
-    windowFocusChanged: new FakeEvent(),
-    sessionChanged: new FakeEvent()
-  };
+  const { events, eventCounts } = createProfileEvents();
   const runtime = {
     windows: [{ id: 10, focused: true, incognito: false }],
     tabs: [],
@@ -301,28 +269,30 @@ function makeControllerRuntime(initialState) {
     firstBroadcastMs: undefined,
     sidebarState: undefined,
     sidebarProjection: undefined,
+    eventCounts,
     events,
     api: undefined
   };
 
   runtime.api = {
     action: {
-      onClicked: new FakeEvent()
+      onClicked: createPassiveEvent()
     },
     sidebarAction: {
       open: async () => undefined,
       toggle: async () => undefined
     },
     commands: {
-      onCommand: new FakeEvent(),
+      onCommand: createPassiveEvent(),
       getAll: async () => [],
       update: async () => undefined,
       reset: async () => undefined
     },
+    alarms: createAlarmApi(),
     runtime: {
-      onInstalled: new FakeEvent(),
-      onStartup: new FakeEvent(),
-      onMessage: new FakeEvent(),
+      onInstalled: createPassiveEvent(),
+      onStartup: createPassiveEvent(),
+      onMessage: createPassiveEvent(),
       sendMessage: async (message) => {
         runtime.firstBroadcastMs ??= performance.now() - runtime.operationStart;
         measureRuntimeJson(runtime, "broadcast", message);
@@ -361,9 +331,9 @@ function makeControllerRuntime(initialState) {
             runtime.storage.delete(key);
           }
         },
-        onChanged: new FakeEvent()
+        onChanged: createPassiveEvent()
       },
-      onChanged: new FakeEvent()
+      onChanged: createPassiveEvent()
     },
     windows: {
       WINDOW_ID_NONE: -1,
@@ -472,16 +442,6 @@ function fakeControllerAdapter(runtime) {
   };
 }
 
-async function flushAll(runtime) {
-  await Promise.all([
-    runtime.events.tabCreated.flush(),
-    runtime.events.tabUpdated.flush(),
-    runtime.events.tabActivated.flush(),
-    runtime.events.windowFocusChanged.flush(),
-    runtime.events.sessionChanged.flush()
-  ]);
-}
-
 async function profileCommand(options) {
   const { state, nodeId } = largeClosedTabState(options.tabs, options.target);
   const { adapter, calls } = fakeAdapter();
@@ -514,6 +474,8 @@ async function profileCommand(options) {
     createTabCalls: calls.createTab,
     createWindowCalls: calls.createWindow,
     restoreSessionCalls: calls.restoreSession,
+    eventCounts: Object.fromEntries(PROFILE_EVENT_NAMES.map((name) => [name, 0])),
+    eventCount: 0,
     nodes: Object.keys(command.value.state.nodes).length,
     rows: sidebarProjection.rows.length
   };
@@ -538,9 +500,10 @@ async function profileControllerEventEcho(options) {
   runtime.bytes = 0;
   runtime.operationStart = performance.now();
   runtime.firstBroadcastMs = undefined;
+  resetEventCounts(runtime.eventCounts);
 
   const command = await measureAsync(() => controller.handleMessage({ type: "restoreNode", nodeId }));
-  const eventEcho = await measureAsync(() => flushAll(runtime));
+  const eventEcho = await measureAsync(() => flushProfileEvents(runtime.events));
   if (options.echo === "transient-separated") {
     const restoredTab = runtime.tabs.at(-1);
     if (restoredTab) {
@@ -550,7 +513,7 @@ async function profileControllerEventEcho(options) {
       }, { ...restoredTab });
     }
   }
-  const updateEcho = await measureAsync(() => flushAll(runtime));
+  const updateEcho = await measureAsync(() => flushProfileEvents(runtime.events));
   const current = await controller.handleMessage({ type: "getState" });
   const saveFlush = await measureAsync(() => controller.flushPendingSaves());
 
@@ -579,6 +542,8 @@ async function profileControllerEventEcho(options) {
     createTabCalls: calls.createTab,
     createWindowCalls: calls.createWindow,
     restoreSessionCalls: calls.restoreSession,
+    eventCounts: eventCountsSnapshot(runtime.eventCounts),
+    eventCount: eventCountsTotal(runtime.eventCounts),
     nodes: Object.keys(current.nodes).length
   };
 }

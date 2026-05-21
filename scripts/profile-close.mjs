@@ -2,40 +2,15 @@ import { performance } from "node:perf_hooks";
 
 import { createBackgroundController } from "../dist/background/controller.js";
 import { buildVisibleTreeProjection } from "../dist/sidebar/visible-tree.js";
-
-class FakeEvent {
-  listeners = [];
-  pending = [];
-
-  addListener(listener) {
-    this.listeners.push(listener);
-  }
-
-  dispatch(...args) {
-    for (const listener of this.listeners) {
-      try {
-        const result = listener(...args);
-        if (result && typeof result.then === "function") {
-          this.pending.push(result);
-        }
-      } catch (error) {
-        this.pending.push(Promise.reject(error));
-      }
-    }
-  }
-
-  async flush() {
-    while (this.pending.length > 0) {
-      const pending = this.pending;
-      this.pending = [];
-      const results = await Promise.allSettled(pending);
-      const rejected = results.find((result) => result.status === "rejected");
-      if (rejected) {
-        throw rejected.reason;
-      }
-    }
-  }
-}
+import {
+  createAlarmApi,
+  createPassiveEvent,
+  createProfileEvents,
+  eventCountsSnapshot,
+  eventCountsTotal,
+  flushProfileEvents,
+  resetEventCounts
+} from "./profile-harness.mjs";
 
 function parseArgs(argv) {
   const options = {
@@ -83,15 +58,7 @@ function targetTabId(tabCount, target) {
 }
 
 function makeRuntime(tabCount, order) {
-  const events = {
-    tabCreated: new FakeEvent(),
-    tabUpdated: new FakeEvent(),
-    tabActivated: new FakeEvent(),
-    tabRemoved: new FakeEvent(),
-    windowRemoved: new FakeEvent(),
-    windowFocusChanged: new FakeEvent(),
-    sessionChanged: new FakeEvent()
-  };
+  const { events, eventCounts } = createProfileEvents();
   const runtime = {
     windows: [{ id: 10, focused: true, incognito: false }],
     tabs: Array.from({ length: tabCount }, (_value, index) => ({
@@ -117,28 +84,30 @@ function makeRuntime(tabCount, order) {
     tabsQueryMs: 0,
     windowsGetAllMs: 0,
     recentClosedCalls: 0,
+    eventCounts,
     events,
     api: undefined
   };
 
   runtime.api = {
     action: {
-      onClicked: new FakeEvent()
+      onClicked: createPassiveEvent()
     },
     sidebarAction: {
       open: async () => undefined,
       toggle: async () => undefined
     },
     commands: {
-      onCommand: new FakeEvent(),
+      onCommand: createPassiveEvent(),
       getAll: async () => [],
       update: async () => undefined,
       reset: async () => undefined
     },
+    alarms: createAlarmApi(),
     runtime: {
-      onInstalled: new FakeEvent(),
-      onStartup: new FakeEvent(),
-      onMessage: new FakeEvent(),
+      onInstalled: createPassiveEvent(),
+      onStartup: createPassiveEvent(),
+      onMessage: createPassiveEvent(),
       sendMessage: async (message) => {
         runtime.firstBroadcastMs ??= performance.now() - runtime.operationStart;
         measureRuntimeJson(runtime, "broadcast", message);
@@ -162,9 +131,9 @@ function makeRuntime(tabCount, order) {
           runtime.saves += 1;
         },
         remove: async () => undefined,
-        onChanged: new FakeEvent()
+        onChanged: createPassiveEvent()
       },
-      onChanged: new FakeEvent()
+      onChanged: createPassiveEvent()
     },
     windows: {
       WINDOW_ID_NONE: -1,
@@ -294,16 +263,6 @@ function applyNodeStateUpdate(runtime, update) {
   }
 }
 
-async function flushAll(runtime) {
-  await Promise.all([
-    runtime.events.tabRemoved.flush(),
-    runtime.events.sessionChanged.flush(),
-    runtime.events.tabUpdated.flush(),
-    runtime.events.tabActivated.flush(),
-    runtime.events.windowFocusChanged.flush()
-  ]);
-}
-
 async function profile(options) {
   const runtime = makeRuntime(options.tabs, options.order);
   const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
@@ -326,9 +285,10 @@ async function profile(options) {
   runtime.tabsQueryMs = 0;
   runtime.windowsGetAllMs = 0;
   runtime.recentClosedCalls = 0;
+  resetEventCounts(runtime.eventCounts);
 
   const command = await measureAsync(() => controller.handleMessage({ type: "closeNode", nodeId }));
-  const eventEcho = await measureAsync(() => flushAll(runtime));
+  const eventEcho = await measureAsync(() => flushProfileEvents(runtime.events));
   const current = await controller.handleMessage({ type: "getState" });
   const saveFlush = await measureAsync(() => controller.flushPendingSaves());
 
@@ -355,6 +315,8 @@ async function profile(options) {
     saves: runtime.saves,
     broadcasts: runtime.broadcasts,
     recentClosedCalls: runtime.recentClosedCalls,
+    eventCounts: eventCountsSnapshot(runtime.eventCounts),
+    eventCount: eventCountsTotal(runtime.eventCounts),
     ack: command.value,
     closedNodeStatus: current.nodes[nodeId]?.status,
     nodes: Object.keys(current.nodes).length

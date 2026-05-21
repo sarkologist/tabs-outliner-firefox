@@ -78,6 +78,7 @@ export type BackgroundController = {
 type RefreshOptions = {
   closeMissing?: boolean;
   activationByWindowId?: ReadonlyMap<number, number>;
+  focusWindowId?: number;
 };
 
 type RuntimeRefreshCaller = {
@@ -88,6 +89,7 @@ type RuntimeRefreshCaller = {
 type PendingRuntimeRefresh = {
   eventTabsById: Map<number, RuntimeTab>;
   activationByWindowId: Map<number, number>;
+  focusWindowIds: Set<number>;
   closeMissing: boolean;
   callers: RuntimeRefreshCaller[];
   scheduled: boolean;
@@ -423,7 +425,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         await handleCommandWindowFocusChanged(windowId);
         return;
       }
-      await queueRuntimeRefresh([], { closeMissing: false });
+      await queueRuntimeRefresh([], { closeMissing: false, focusWindowId: windowId });
     });
   });
 
@@ -581,6 +583,9 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       }
       state = result.state;
       stateCache.replace(result.state);
+      if (commandMayRelocateLiveTabs(message.type)) {
+        absorbCommandOwnedFocusRefresh(current, result.state);
+      }
       if (historyPrevious && isTrackableHistoryCommandType(message.type)) {
         const candidateNodeIds = message.type === "expandAncestors"
           ? expandAncestorNodeIds
@@ -985,6 +990,9 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     const pending = pendingRuntimeRefresh ?? createPendingRuntimeRefresh();
     pendingRuntimeRefresh = pending;
     pending.closeMissing ||= requestedCloseMissing;
+    if (typeof options.focusWindowId === "number") {
+      pending.focusWindowIds.add(options.focusWindowId);
+    }
 
     for (const tab of eventTabs) {
       pending.eventTabsById.set(tab.id, tab);
@@ -1021,6 +1029,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     return {
       eventTabsById: new Map(),
       activationByWindowId: new Map(),
+      focusWindowIds: new Set(),
       closeMissing: false,
       callers: [],
       scheduled: false
@@ -1031,6 +1040,44 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     return new Promise<boolean>((resolve, reject) => {
       pending.callers.push({ resolve, reject });
     });
+  }
+
+  function absorbCommandOwnedFocusRefresh(previous: OutlineState, next: OutlineState): void {
+    const pending = pendingRuntimeRefresh;
+    if (!pending) {
+      return;
+    }
+
+    const activeTabsByWindowId = commandOwnedActiveTabsByWindowId(previous, next);
+    const focusedWindowIds = commandOwnedFocusedWindowIds(previous, next);
+    let absorbed = false;
+
+    for (const [windowId, tabId] of pending.activationByWindowId) {
+      if (activeTabsByWindowId.get(windowId) === tabId) {
+        pending.activationByWindowId.delete(windowId);
+        absorbed = true;
+      }
+    }
+    for (const windowId of pending.focusWindowIds) {
+      if (focusedWindowIds.has(windowId)) {
+        pending.focusWindowIds.delete(windowId);
+        absorbed = true;
+      }
+    }
+    if (!absorbed || pending.activationByWindowId.size > 0 || pending.focusWindowIds.size > 0) {
+      return;
+    }
+
+    if (pending.eventTabsById.size > 0) {
+      pending.closeMissing = false;
+      return;
+    }
+
+    pendingRuntimeRefresh = undefined;
+    const callers = pending.callers.splice(0);
+    for (const caller of callers) {
+      caller.resolve(false);
+    }
   }
 
   function schedulePendingRuntimeRefresh(pending: PendingRuntimeRefresh): void {
@@ -2477,6 +2524,44 @@ function restoredLiveTabIdsChangedByCommand(
 
 function commandMayRelocateLiveTabs(type: BackgroundCommand["type"]): boolean {
   return type === "moveNode" || type === "moveNodeToNewWindow" || type === "wrapNodeInGroup";
+}
+
+function commandOwnedActiveTabsByWindowId(previous: OutlineState, next: OutlineState): Map<number, number> {
+  const activeTabsByWindowId = new Map<number, number>();
+  for (const node of Object.values(next.nodes)) {
+    if (!isLiveTabNode(node) || node.active !== true) {
+      continue;
+    }
+
+    const previousNode = previous.nodes[node.id];
+    if (
+      !isLiveTabNode(previousNode) ||
+      previousNode.live.windowId !== node.live.windowId ||
+      previousNode.active !== true
+    ) {
+      activeTabsByWindowId.set(node.live.windowId, node.live.tabId);
+    }
+  }
+  return activeTabsByWindowId;
+}
+
+function commandOwnedFocusedWindowIds(previous: OutlineState, next: OutlineState): Set<number> {
+  const focusedWindowIds = new Set<number>();
+  for (const node of Object.values(next.nodes)) {
+    if (!isLiveWindowNode(node) || node.active !== true) {
+      continue;
+    }
+
+    const previousNode = previous.nodes[node.id];
+    if (
+      !isLiveWindowNode(previousNode) ||
+      previousNode.live.windowId !== node.live.windowId ||
+      previousNode.active !== true
+    ) {
+      focusedWindowIds.add(node.live.windowId);
+    }
+  }
+  return focusedWindowIds;
 }
 
 function trackCommandRelocatedTabEchoes(

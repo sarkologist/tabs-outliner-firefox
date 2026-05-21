@@ -2,40 +2,15 @@ import { performance } from "node:perf_hooks";
 
 import { createBackgroundController } from "../dist/background/controller.js";
 import { buildVisibleTreeProjection } from "../dist/sidebar/visible-tree.js";
-
-class FakeEvent {
-  listeners = [];
-  pending = [];
-
-  addListener(listener) {
-    this.listeners.push(listener);
-  }
-
-  dispatch(...args) {
-    for (const listener of this.listeners) {
-      try {
-        const result = listener(...args);
-        if (result && typeof result.then === "function") {
-          this.pending.push(result);
-        }
-      } catch (error) {
-        this.pending.push(Promise.reject(error));
-      }
-    }
-  }
-
-  async flush() {
-    while (this.pending.length > 0) {
-      const pending = this.pending;
-      this.pending = [];
-      const results = await Promise.allSettled(pending);
-      const rejected = results.find((result) => result.status === "rejected");
-      if (rejected) {
-        throw rejected.reason;
-      }
-    }
-  }
-}
+import {
+  createAlarmApi,
+  createPassiveEvent,
+  createProfileEvents,
+  eventCountsSnapshot,
+  eventCountsTotal,
+  flushProfileEvents,
+  resetEventCounts
+} from "./profile-harness.mjs";
 
 function parseArgs(argv) {
   const options = {
@@ -62,12 +37,13 @@ function parseArgs(argv) {
     "rename-window",
     "toggle-window",
     "move-leaf",
+    "group-live-leaf",
     "flatten-window",
     "import-small",
     "refresh-noop"
   ].includes(options.scenario)) {
     throw new Error(
-      "--scenario must be rename-window, toggle-window, move-leaf, flatten-window, import-small, or refresh-noop"
+      "--scenario must be rename-window, toggle-window, move-leaf, group-live-leaf, flatten-window, import-small, or refresh-noop"
     );
   }
 
@@ -75,15 +51,7 @@ function parseArgs(argv) {
 }
 
 function makeRuntime(tabCount, scenario) {
-  const events = {
-    tabCreated: new FakeEvent(),
-    tabUpdated: new FakeEvent(),
-    tabActivated: new FakeEvent(),
-    tabRemoved: new FakeEvent(),
-    windowRemoved: new FakeEvent(),
-    windowFocusChanged: new FakeEvent(),
-    sessionChanged: new FakeEvent()
-  };
+  const { events, eventCounts } = createProfileEvents();
   const runtime = {
     windows: [{ id: 10, focused: true, incognito: false }],
     tabs: Array.from({ length: tabCount }, (_value, index) => ({
@@ -97,6 +65,10 @@ function makeRuntime(tabCount, scenario) {
     })),
     saves: 0,
     broadcasts: 0,
+    createdWindows: 0,
+    moveCalls: 0,
+    movedTabCount: 0,
+    maxMoveBatch: 0,
     saveStringifyMs: 0,
     broadcastStringifyMs: 0,
     projectionMs: 0,
@@ -107,28 +79,30 @@ function makeRuntime(tabCount, scenario) {
     firstBroadcastMs: undefined,
     sidebarState: undefined,
     sidebarProjection: undefined,
+    eventCounts,
     events,
     api: undefined
   };
 
   runtime.api = {
     action: {
-      onClicked: new FakeEvent()
+      onClicked: createPassiveEvent()
     },
     sidebarAction: {
       open: async () => undefined,
       toggle: async () => undefined
     },
     commands: {
-      onCommand: new FakeEvent(),
+      onCommand: createPassiveEvent(),
       getAll: async () => [],
       update: async () => undefined,
       reset: async () => undefined
     },
+    alarms: createAlarmApi(),
     runtime: {
-      onInstalled: new FakeEvent(),
-      onStartup: new FakeEvent(),
-      onMessage: new FakeEvent(),
+      onInstalled: createPassiveEvent(),
+      onStartup: createPassiveEvent(),
+      onMessage: createPassiveEvent(),
       sendMessage: async (message) => {
         runtime.firstBroadcastMs ??= performance.now() - runtime.operationStart;
         measureRuntimeJson(runtime, "broadcast", message);
@@ -155,18 +129,16 @@ function makeRuntime(tabCount, scenario) {
           runtime.saves += 1;
         },
         remove: async () => undefined,
-        onChanged: new FakeEvent()
+        onChanged: createPassiveEvent()
       },
-      onChanged: new FakeEvent()
+      onChanged: createPassiveEvent()
     },
     windows: {
       WINDOW_ID_NONE: -1,
       getAll: async () => runtime.windows.map((windowInfo) => ({ ...windowInfo })),
       update: async () => ({}),
       remove: async () => undefined,
-      create: async () => {
-        throw new Error("not implemented");
-      },
+      create: async (createData = {}) => createWindow(runtime, createData),
       onFocusChanged: events.windowFocusChanged,
       onRemoved: events.windowRemoved
     },
@@ -177,7 +149,7 @@ function makeRuntime(tabCount, scenario) {
       create: async () => {
         throw new Error("not implemented");
       },
-      move: async () => [],
+      move: async (tabIds, moveProperties) => moveTabs(runtime, tabIds, moveProperties, { count: true }),
       onCreated: events.tabCreated,
       onUpdated: events.tabUpdated,
       onActivated: events.tabActivated,
@@ -193,6 +165,130 @@ function makeRuntime(tabCount, scenario) {
   return runtime;
 }
 
+function createWindow(runtime, createData = {}) {
+  const windowId = Math.max(0, ...runtime.windows.map((windowInfo) => windowInfo.id)) + 1;
+  runtime.createdWindows += 1;
+  const focused = createData.focused ?? true;
+  runtime.windows = runtime.windows
+    .map((windowInfo) => ({ ...windowInfo, focused: false }))
+    .concat({ id: windowId, focused, incognito: false });
+
+  if (typeof createData.tabId === "number") {
+    const tabs = moveTabs(runtime, [createData.tabId], { windowId, index: 0 }, { count: false });
+    if (focused) {
+      runtime.events.windowFocusChanged.dispatch(windowId);
+    }
+    return {
+      id: windowId,
+      focused,
+      incognito: false,
+      tabs
+    };
+  }
+
+  const urls = Array.isArray(createData.url) ? createData.url : createData.url ? [createData.url] : [];
+  const firstTabId = Math.max(0, ...runtime.tabs.map((tab) => tab.id)) + 1;
+  const tabs = urls.map((url, index) => ({
+    id: firstTabId + index,
+    windowId,
+    index,
+    active: index === 0,
+    url,
+    title: url
+  }));
+  runtime.tabs = [...runtime.tabs, ...tabs];
+  if (focused) {
+    runtime.events.windowFocusChanged.dispatch(windowId);
+  }
+  for (const tab of tabs) {
+    runtime.events.tabCreated.dispatch({ ...tab });
+  }
+  const activeTab = tabs.find((tab) => tab.active);
+  if (activeTab) {
+    runtime.events.tabActivated.dispatch({ tabId: activeTab.id, windowId });
+  }
+
+  return {
+    id: windowId,
+    focused,
+    incognito: false,
+    tabs: tabs.map((tab) => ({ ...tab }))
+  };
+}
+
+function moveTabs(runtime, tabIds, moveProperties, options = {}) {
+  const ids = Array.isArray(tabIds) ? tabIds : [tabIds];
+  if (options.count) {
+    runtime.moveCalls += 1;
+    runtime.movedTabCount += ids.length;
+    runtime.maxMoveBatch = Math.max(runtime.maxMoveBatch, ids.length);
+  }
+
+  const tabById = new Map(runtime.tabs.map((tab) => [tab.id, tab]));
+  const movingIds = new Set(ids);
+  const moving = ids.flatMap((tabId) => {
+    const tab = tabById.get(tabId);
+    return tab ? [{ ...tab }] : [];
+  });
+  if (moving.length === 0) {
+    return [];
+  }
+
+  const targetWindowId = moveProperties.windowId ?? moving[0].windowId;
+  const affectedWindowIds = new Set([targetWindowId, ...moving.map((tab) => tab.windowId)]);
+  const remaining = runtime.tabs.filter((tab) => !movingIds.has(tab.id));
+  const targetTabs = remaining
+    .filter((tab) => tab.windowId === targetWindowId)
+    .sort((left, right) => left.index - right.index)
+    .map((tab) => ({ ...tab }));
+  const boundedIndex = Math.max(0, Math.min(moveProperties.index, targetTabs.length));
+  targetTabs.splice(boundedIndex, 0, ...moving.map((tab) => ({ ...tab, windowId: targetWindowId })));
+
+  const previousActiveByWindowId = new Map(
+    runtime.tabs.filter((tab) => tab.active).map((tab) => [tab.windowId, tab.id])
+  );
+  runtime.tabs = [
+    ...remaining.filter((tab) => tab.windowId !== targetWindowId).map((tab) => ({ ...tab })),
+    ...targetTabs.map((tab, index) => ({
+      ...tab,
+      index
+    }))
+  ];
+  for (const windowId of affectedWindowIds) {
+    let index = 0;
+    runtime.tabs = runtime.tabs.map((tab) => tab.windowId === windowId
+      ? {
+          ...tab,
+          index: index++
+        }
+      : tab);
+  }
+
+  const movedById = new Map(runtime.tabs.map((tab) => [tab.id, tab]));
+  const moved = ids.flatMap((tabId) => {
+    const tab = movedById.get(tabId);
+    return tab ? [{ ...tab }] : [];
+  });
+  if (options.dispatch !== false) {
+    for (const tab of moved) {
+      runtime.events.tabUpdated.dispatch(tab.id, {
+        index: tab.index,
+        windowId: tab.windowId
+      }, { ...tab });
+      if (tab.active) {
+        runtime.events.tabActivated.dispatch({
+          tabId: tab.id,
+          windowId: tab.windowId,
+          ...(previousActiveByWindowId.has(tab.windowId)
+            ? { previousTabId: previousActiveByWindowId.get(tab.windowId) }
+            : {})
+        });
+      }
+    }
+  }
+  return moved;
+}
+
 function commandForScenario(scenario, tabCount) {
   if (scenario === "rename-window") {
     return { type: "renameGroup", nodeId: "window:10", title: "Profiled Group" };
@@ -202,6 +298,9 @@ function commandForScenario(scenario, tabCount) {
   }
   if (scenario === "move-leaf") {
     return { type: "moveNode", nodeId: `tab:${tabCount}`, parentId: "window:10", index: 0 };
+  }
+  if (scenario === "group-live-leaf") {
+    return { type: "wrapNodeInGroup", nodeId: "tab:1" };
   }
   if (scenario === "flatten-window") {
     return { type: "flattenSubtree", nodeId: "window:10" };
@@ -288,18 +387,6 @@ function applyTreeStructureUpdate(runtime, update) {
   runtime.projectionMs += projection.ms;
 }
 
-async function flushAll(runtime) {
-  await Promise.all([
-    runtime.events.tabCreated.flush(),
-    runtime.events.tabUpdated.flush(),
-    runtime.events.tabActivated.flush(),
-    runtime.events.tabRemoved.flush(),
-    runtime.events.windowFocusChanged.flush(),
-    runtime.events.windowRemoved.flush(),
-    runtime.events.sessionChanged.flush()
-  ]);
-}
-
 async function profile(options) {
   const runtime = makeRuntime(options.tabs, options.scenario);
   const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
@@ -310,6 +397,11 @@ async function profile(options) {
 
   runtime.saves = 0;
   runtime.broadcasts = 0;
+  runtime.createdWindows = 0;
+  runtime.moveCalls = 0;
+  runtime.movedTabCount = 0;
+  runtime.maxMoveBatch = 0;
+  resetEventCounts(runtime.eventCounts);
   runtime.saveStringifyMs = 0;
   runtime.broadcastStringifyMs = 0;
   runtime.projectionMs = 0;
@@ -320,7 +412,7 @@ async function profile(options) {
   runtime.firstBroadcastMs = undefined;
 
   const command = await measureAsync(() => controller.handleMessage(commandForScenario(options.scenario, options.tabs)));
-  const eventEcho = await measureAsync(() => flushAll(runtime));
+  const eventEcho = await measureAsync(() => flushProfileEvents(runtime.events));
   const current = await controller.handleMessage({ type: "getState" });
   const saveFlush = await measureAsync(() => controller.flushPendingSaves());
 
@@ -342,6 +434,12 @@ async function profile(options) {
     mbStringified: Math.round(runtime.bytes / 1024 / 1024),
     saves: runtime.saves,
     broadcasts: runtime.broadcasts,
+    createdWindows: runtime.createdWindows,
+    moveCalls: runtime.moveCalls,
+    movedTabCount: runtime.movedTabCount,
+    maxMoveBatch: runtime.maxMoveBatch,
+    eventCounts: eventCountsSnapshot(runtime.eventCounts),
+    eventCount: eventCountsTotal(runtime.eventCounts),
     ack: command.value,
     nodes: Object.keys(current.nodes).length
   };

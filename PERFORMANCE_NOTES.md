@@ -490,3 +490,27 @@ Use these as starting targets, not hard promises:
 - In that post-change trace, `background.state.save` dropped to 9 calls / 6,196ms total / 688ms average / 1,343ms max. The previous trace was 10 calls / 69,219ms total / 6,922ms average / 13,254ms max, so real Firefox save time is now about 11x lower by total and 10x lower by average/max in this manual scenario.
 - Runtime broadcasts also improved from 29 calls / 8,803ms total / 304ms average / 1,294ms max to 44 calls / 2,570ms total / 58ms average / 144ms max. Mutation runs improved from 17 calls / 5,486ms total / 323ms average / 1,357ms max to 33 calls / 2,548ms total / 77ms average / 426ms max.
 - Verification: `pnpm test`, `pnpm run build`, the synthetic profile commands above, and the copied in-browser `tabsOutlinerProfile` trace all support the v3 persistence win.
+
+### 2026-05-21: Live Leaf Grouping Avoids Full Window Reorders
+
+- Analyzed the in-browser profile `dist/tabs-outliner-profile-2026-05-21.json`. The slow grouping run was dominated by background work after `wrapNodeInGroup`: the command mutation took 1,015ms, `background.command.run` for the grouping command took 686ms, and the browser emitted a burst of tab update echoes (`background.event.tabs.onUpdated`: 38 calls / 16,660ms total / 1,187ms max). Sidebar patch/render work stayed comparatively small (`sidebar.patch.treeStructure`: 8 calls / 237ms total).
+- Root cause: live-tab grouping created the destination Firefox window and moved subtree descendants, then called the broad `syncBrowserOrder()` path. For a leaf tab in a large source window, that asked Firefox to move the entire remaining source window plus the new single-tab window even though `windows.create({ tabId })` had already produced the desired browser order.
+- Change: `wrapNodeInGroupCommand` now relies on the targeted browser operations already required for grouping. It still moves non-root live subtree descendants into the created window, but it no longer performs the final full-window order sync.
+- Added `group-live-leaf` to `pnpm profile:command` so this path is measurable in the Node harness. Using `node scripts/profile-command.mjs --scenario group-live-leaf --tabs 50000`:
+  - Before, against the old built `dist`: 5,205ms command time, first broadcast at 5,153ms, 2 `tabs.move` calls, 50,000 moved tab ids, max move batch 49,999.
+  - After `pnpm build`: 201ms command time, first broadcast at 144ms, 0 `tabs.move` calls, 0 moved tab ids.
+- Verification: targeted red/green coverage in `src/background/commands.test.ts`, `pnpm exec vitest run src/background/commands.test.ts`, `pnpm build`, and the profile command above passed.
+
+### 2026-05-21: Echo-Aware Synthetic Profile Harness
+
+- Added a shared `scripts/profile-harness.mjs` event model. The command, focus, close, delete, restore, and tab-open profile scripts now report `eventCounts` and `eventCount` for `tabs.onCreated`, `tabs.onUpdated`, `tabs.onActivated`, `tabs.onRemoved`, `windows.onFocusChanged`, `windows.onRemoved`, and `sessions.onChanged`.
+- The command profile now emits Firefox-like move/create echoes for `tabs.move` and `windows.create({ tabId })`, so relocation scenarios can expose command-owned update/activation/focus traffic instead of only counting direct adapter calls.
+- The richer harness immediately exposed the remaining live-grouping echo cost. `node scripts/profile-command.mjs --scenario group-live-leaf --tabs 10000` measured 38ms command time but 16,126ms echo flush time from one `tabs.onUpdated`, one `tabs.onActivated`, and one `windows.onFocusChanged` echo. That makes command-created focus/activation echo absorption the next target before trusting 50k synthetic totals.
+- Smoke verification covered the updated profile scripts with 1k fixtures: `profile-command`, `profile-focus`, `profile-close`, `profile-delete`, `profile-restore` in both modes, and `profile-tab-open` event/startup scenarios.
+
+### 2026-05-21: Absorbed Command-Created Grouping Focus Echoes
+
+- Live-tab grouping now marks command-created focused windows and active tabs after `windows.create({ tabId })` returns. If Firefox already queued matching `tabs.onActivated` / `windows.onFocusChanged` runtime refreshes, the controller downgrades or cancels that pending refresh instead of reconciling the full browser snapshot.
+- Regression coverage simulates Firefox firing `tabs.onUpdated`, `tabs.onActivated`, and `windows.onFocusChanged` during live grouping and asserts the echoes do not call `windows.getAll()` or `tabs.query()`.
+- After `pnpm build`, `node scripts/profile-command.mjs --scenario group-live-leaf --tabs 10000` dropped from 16,126ms echo flush time to 0ms while still reporting the three echoes in `eventCounts`. The 50k run measured 231ms command time, 0ms echo flush time, first broadcast at 177ms, and 0 moved tab ids.
+- Verification: `pnpm exec vitest run src/background/controller.test.ts src/background/commands.test.ts`, `pnpm build`, and the profile commands above passed.

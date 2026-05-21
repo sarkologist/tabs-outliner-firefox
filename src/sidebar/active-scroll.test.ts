@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { NodeId, OutlineNode, OutlineState } from "../model/types.js";
+import { generatedTraceConfig, generatedTraceTimeoutMs } from "../test/generated-traces.test-support.js";
 import {
   createActiveTabScrollTracker,
   findActiveTabNodeId,
@@ -253,10 +254,16 @@ describe("observeActiveTabScrollTarget", () => {
 
 describe("active scroll generated search/collapse traces", () => {
   it("scrolls newly visible active tabs across deterministic search and collapse interleavings", () => {
-    for (let seed = 1; seed <= 32; seed += 1) {
-      runSearchCollapseTrace(seed, 6);
+    const config = generatedTraceConfig({
+      defaultSeedCount: 32,
+      defaultSteps: 6,
+      soakSeedCount: 96,
+      soakSteps: 24
+    });
+    for (const seed of config.seeds) {
+      runSearchCollapseTrace(seed, config.steps);
     }
-  });
+  }, generatedTraceTimeoutMs(10_000, 120_000));
 });
 
 function outlineState(nodes: OutlineNode[]): OutlineState {

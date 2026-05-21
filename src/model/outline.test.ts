@@ -21,7 +21,8 @@ import {
   restoreNodes,
   wrapNodeInGroup
 } from "./outline.js";
-import type { OutlineState, RuntimeWindow } from "./types.js";
+import type { NodeId, OutlineNode, OutlineState, RuntimeWindow } from "./types.js";
+import { generatedTraceConfig, generatedTraceTimeoutMs } from "../test/generated-traces.test-support.js";
 
 const windows: RuntimeWindow[] = [
   {
@@ -1745,7 +1746,7 @@ describe("outline model", () => {
     expect(reconciled.nodes["window:10"]?.childIds).toHaveLength(49_999);
     expect(reconciled.nodes["window:10"]?.childIds[0]).toBe("tab:2");
     expect(reconciled.nodes["tab:2"]?.active).toBe(true);
-  });
+  }, 15_000);
 
   it("does not close absent live tabs during partial event reconciliation", () => {
     const state = bootstrapFromWindows(windows, { now: 1000 });
@@ -2054,7 +2055,281 @@ describe("outline model", () => {
     expect(reconciled.nodes["tab:1"]?.childIds).toEqual([]);
     expect(reconciled.nodes["tab:5"]?.parentId).toBe("window:20");
   });
+
+  it("preserves model invariants and previous states across generated structural traces", () => {
+    const config = generatedTraceConfig({
+      defaultSeedCount: 24,
+      defaultSteps: 18,
+      soakSeedCount: 96,
+      soakSteps: 48
+    });
+    for (const seed of config.seeds) {
+      runGeneratedModelTrace(seed, config.steps);
+    }
+  }, generatedTraceTimeoutMs(10_000, 120_000));
 });
+
+function runGeneratedModelTrace(seed: number, steps: number): void {
+  let state = generatedModelState(seed);
+  let now = seed * 1000;
+  const rng = seededRandom(seed);
+  const history = [`seed ${seed}`];
+  expectValidGeneratedModelState(state, history);
+
+  for (let step = 0; step < steps; step += 1) {
+    const before = cloneGeneratedModelState(state);
+    const operation = generatedModelOperation(state, rng, now);
+    if (!operation) {
+      break;
+    }
+    now += 1;
+    history.push(`step ${step + 1}: ${operation.name}`);
+
+    expect(state, history.join("\n")).toEqual(before);
+    expectValidGeneratedModelState(operation.next, history);
+    state = operation.next;
+  }
+}
+
+type GeneratedModelOperation = {
+  name: string;
+  next: OutlineState;
+};
+
+function generatedModelOperation(
+  state: OutlineState,
+  rng: () => number,
+  now: number
+): GeneratedModelOperation | undefined {
+  const operationOrder = [0, 1, 2, 3, 4, 5]
+    .map((operation) => ({ operation, sort: rng() }))
+    .sort((left, right) => left.sort - right.sort)
+    .map((entry) => entry.operation);
+
+  for (const operation of operationOrder) {
+    const result =
+      operation === 0 ? generatedModelMove(state, rng, now) :
+      operation === 1 ? generatedModelWrap(state, rng, now) :
+      operation === 2 ? generatedModelFlatten(state, rng) :
+      operation === 3 ? generatedModelPromote(state, rng) :
+      operation === 4 ? generatedModelRename(state, rng, now) :
+      generatedModelDelete(state, rng);
+    if (result && result.next !== state) {
+      return result;
+    }
+  }
+  return undefined;
+}
+
+function generatedModelMove(state: OutlineState, rng: () => number, now: number): GeneratedModelOperation | undefined {
+  const nodeId = pickOne(rng, generatedMovableNodeIds(state));
+  if (!nodeId) {
+    return undefined;
+  }
+  const parentId = pickOne(rng, generatedValidMoveParentIds(state, nodeId));
+  const siblingCount = parentId ? state.nodes[parentId]?.childIds.length ?? 0 : state.rootIds.length;
+  return {
+    name: `move ${nodeId} under ${parentId ?? "root"}`,
+    next: moveNode(state, nodeId, {
+      ...(parentId ? { parentId } : {}),
+      index: Math.floor(rng() * (siblingCount + 1)),
+      now
+    })
+  };
+}
+
+function generatedModelWrap(state: OutlineState, rng: () => number, now: number): GeneratedModelOperation | undefined {
+  const nodeId = pickOne(rng, generatedMovableNodeIds(state));
+  return nodeId
+    ? { name: `wrap ${nodeId}`, next: wrapNodeInGroup(state, nodeId, { now }) }
+    : undefined;
+}
+
+function generatedModelFlatten(state: OutlineState, rng: () => number): GeneratedModelOperation | undefined {
+  const nodeId = pickOne(
+    rng,
+    Object.values(state.nodes)
+      .filter((node) => node.childIds.some((childId) => (state.nodes[childId]?.childIds.length ?? 0) > 0))
+      .map((node) => node.id)
+  );
+  return nodeId
+    ? { name: `flatten ${nodeId}`, next: flattenSubtreeOneLevel(state, nodeId) }
+    : undefined;
+}
+
+function generatedModelPromote(state: OutlineState, rng: () => number): GeneratedModelOperation | undefined {
+  const nodeId = pickOne(
+    rng,
+    Object.values(state.nodes)
+      .filter((node) => node.parentId && node.childIds.length > 0 && !(node.kind === "window" && node.status === "live"))
+      .map((node) => node.id)
+  );
+  return nodeId
+    ? { name: `promote ${nodeId}`, next: promoteChildrenOneLevel(state, nodeId) }
+    : undefined;
+}
+
+function generatedModelRename(state: OutlineState, rng: () => number, now: number): GeneratedModelOperation | undefined {
+  const nodeId = pickOne(
+    rng,
+    Object.values(state.nodes)
+      .filter((node) => node.kind === "window" || node.kind === "group")
+      .map((node) => node.id)
+  );
+  return nodeId
+    ? { name: `rename ${nodeId}`, next: renameGroup(state, nodeId, `Generated ${now}`, { now }) }
+    : undefined;
+}
+
+function generatedModelDelete(state: OutlineState, rng: () => number): GeneratedModelOperation | undefined {
+  const nodeId = pickOne(rng, generatedMovableNodeIds(state));
+  return nodeId
+    ? { name: `delete ${nodeId}`, next: deleteNode(state, nodeId) }
+    : undefined;
+}
+
+function generatedModelState(seed: number): OutlineState {
+  const now = seed * 1000;
+  return {
+    version: 1,
+    rootIds: ["window:generated"],
+    nodes: {
+      "window:generated": generatedClosedWindow("window:generated", ["tab:a", "tab:b", "group:g"], now),
+      "tab:a": generatedClosedTab("tab:a", "window:generated", ["tab:a1", "tab:a2"], now),
+      "tab:a1": generatedClosedTab("tab:a1", "tab:a", [], now),
+      "tab:a2": generatedClosedTab("tab:a2", "tab:a", ["tab:a2i"], now),
+      "tab:a2i": generatedClosedTab("tab:a2i", "tab:a2", [], now),
+      "tab:b": generatedClosedTab("tab:b", "window:generated", ["tab:b1"], now),
+      "tab:b1": generatedClosedTab("tab:b1", "tab:b", [], now),
+      "group:g": generatedNeutralGroup("group:g", "window:generated", ["tab:g1"]),
+      "tab:g1": generatedClosedTab("tab:g1", "group:g", [`tab:seed:${seed}`], now),
+      [`tab:seed:${seed}`]: generatedClosedTab(`tab:seed:${seed}`, "tab:g1", [], now)
+    }
+  };
+}
+
+function generatedClosedWindow(id: NodeId, childIds: NodeId[], now: number, parentId?: NodeId): OutlineNode {
+  return {
+    id,
+    kind: "window",
+    status: "closed",
+    ...(parentId ? { parentId } : {}),
+    childIds,
+    title: "Group",
+    collapsed: false,
+    createdAt: now,
+    updatedAt: now,
+    closedAt: now
+  };
+}
+
+function generatedClosedTab(id: NodeId, parentId: NodeId, childIds: NodeId[], now: number): OutlineNode {
+  return {
+    id,
+    kind: "tab",
+    status: "closed",
+    parentId,
+    childIds,
+    title: id,
+    url: `https://model.example/${id}`,
+    collapsed: false,
+    createdAt: now,
+    updatedAt: now,
+    closedAt: now,
+    restore: {
+      url: `https://model.example/${id}`,
+      title: id
+    }
+  };
+}
+
+function generatedNeutralGroup(id: NodeId, parentId: NodeId, childIds: NodeId[]): OutlineNode {
+  return {
+    id,
+    kind: "group",
+    status: "neutral",
+    parentId,
+    childIds,
+    title: "Group",
+    collapsed: false,
+    createdAt: 1,
+    updatedAt: 1
+  };
+}
+
+function generatedMovableNodeIds(state: OutlineState): NodeId[] {
+  return Object.values(state.nodes)
+    .filter((node) => Boolean(node.parentId))
+    .map((node) => node.id);
+}
+
+function generatedValidMoveParentIds(state: OutlineState, nodeId: NodeId): NodeId[] {
+  return Object.values(state.nodes)
+    .filter((node) => node.id !== nodeId && !generatedIsDescendant(state, node.id, nodeId))
+    .map((node) => node.id);
+}
+
+function generatedIsDescendant(state: OutlineState, candidateId: NodeId, ancestorId: NodeId): boolean {
+  let current = state.nodes[candidateId];
+  const visited = new Set<NodeId>();
+  while (current?.parentId && !visited.has(current.id)) {
+    visited.add(current.id);
+    if (current.parentId === ancestorId) {
+      return true;
+    }
+    current = state.nodes[current.parentId];
+  }
+  return false;
+}
+
+function expectValidGeneratedModelState(state: OutlineState, history: string[]): void {
+  expect(new Set(state.rootIds).size, history.join("\n")).toBe(state.rootIds.length);
+  expect(reachableNodeIds(state), history.join("\n")).toEqual(Object.keys(state.nodes).sort());
+  for (const rootId of state.rootIds) {
+    expect(state.nodes[rootId], history.join("\n")).toBeDefined();
+    expect(state.nodes[rootId]?.parentId, history.join("\n")).toBeUndefined();
+  }
+  for (const [nodeId, node] of Object.entries(state.nodes)) {
+    expect(new Set(node.childIds).size, history.join("\n")).toBe(node.childIds.length);
+    for (const childId of node.childIds) {
+      expect(state.nodes[childId], history.join("\n")).toBeDefined();
+      expect(state.nodes[childId]?.parentId, history.join("\n")).toBe(nodeId);
+    }
+  }
+}
+
+function cloneGeneratedModelState(state: OutlineState): OutlineState {
+  return {
+    version: state.version,
+    rootIds: [...state.rootIds],
+    nodes: Object.fromEntries(
+      Object.entries(state.nodes).map(([nodeId, node]) => [
+        nodeId,
+        {
+          ...node,
+          childIds: [...node.childIds],
+          ...(node.live ? { live: { ...node.live } } : {}),
+          ...(node.restore ? { restore: { ...node.restore } } : {})
+        }
+      ])
+    )
+  };
+}
+
+function pickOne<T>(rng: () => number, values: readonly T[]): T | undefined {
+  if (values.length === 0) {
+    return undefined;
+  }
+  return values[Math.floor(rng() * values.length) % values.length];
+}
+
+function seededRandom(seed: number): () => number {
+  let state = seed >>> 0;
+  return () => {
+    state = (state * 1664525 + 1013904223) >>> 0;
+    return state / 0x100000000;
+  };
+}
 
 function windowWithTabs(windowId: number, tabCount: number): RuntimeWindow {
   return {

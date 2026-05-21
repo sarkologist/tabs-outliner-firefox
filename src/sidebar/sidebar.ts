@@ -19,7 +19,12 @@ import {
   type LabeledTraceSnapshot,
   type SidebarProfileSnapshot
 } from "../perf/profile.js";
-import { createActiveTabScrollTracker, resetActiveTabScrollTracker, scrollActiveTabIntoView } from "./active-scroll.js";
+import {
+  createActiveTabScrollTracker,
+  resetActiveTabScrollTracker,
+  scrollActiveTabIntoView,
+  type ActiveTabScrollProjection
+} from "./active-scroll.js";
 import { createDiagnosticsScheduler } from "./diagnostics-scheduler.js";
 import {
   cutSubtreeRowRange,
@@ -110,6 +115,11 @@ let currentCutRowRange: CutSubtreeRowRange | undefined;
 let pendingShowInTreeNodeId: NodeId | undefined;
 let revealHighlightNodeId: NodeId | undefined;
 let revealHighlightTimer: number | undefined;
+let sidebarWindowId: number | undefined;
+let sidebarWindowIdLoaded = false;
+let sidebarActiveTabTargetsRevision = 0;
+let sidebarActiveTabTargetsCacheRevision = -1;
+let sidebarActiveTabTargetsByWindow = new Map<number, NodeId>();
 const activeTabScrollTracker = createActiveTabScrollTracker();
 
 const WHEEL_ZOOM_THRESHOLD_PX = 80;
@@ -303,6 +313,7 @@ browser.runtime.onMessage.addListener((message) => {
   perfTrace.measure("sidebar.runtime.message", { type: messageType(message) }, () => {
     if (isStateUpdated(message)) {
       currentState = message.state;
+      invalidateSidebarWindowActiveTabTargets();
       render();
       scheduleDiagnosticsLoad();
       return;
@@ -330,6 +341,7 @@ browser.runtime.onMessage.addListener((message) => {
 
 async function loadState(): Promise<void> {
   try {
+    await loadSidebarWindowId();
     const bootSnapshot = window.__tabsOutlinerBootSnapshot;
     if (isInitialTreeSnapshot(bootSnapshot)) {
       delete window.__tabsOutlinerBootSnapshot;
@@ -372,6 +384,7 @@ async function hydrateFullState(): Promise<void> {
     hydratingFullState = true;
     updateHydrationControls();
     currentState = (await sendCommand({ type: "getState" })) as OutlineState;
+    invalidateSidebarWindowActiveTabTargets();
     hydratingFullState = false;
     updateHydrationControls();
     render();
@@ -396,6 +409,7 @@ function scheduleFullStateHydration(): void {
 
 function applyInitialTreeSnapshot(snapshot: InitialTreeSnapshot): void {
   currentState = snapshot.state;
+  invalidateSidebarWindowActiveTabTargets();
   hydratingFullState = snapshot.hydrating;
   currentProjection = projectionFromInitialTreeSnapshot(snapshot);
   projectionState = currentState;
@@ -433,6 +447,15 @@ async function loadZoomPreference(): Promise<void> {
   }
 
   setZoom(normalizeStoredZoom(stored[ZOOM_STORAGE_KEY]), { persist: false });
+}
+
+async function loadSidebarWindowId(): Promise<void> {
+  if (sidebarWindowIdLoaded) {
+    return;
+  }
+
+  sidebarWindowIdLoaded = true;
+  sidebarWindowId = await currentSidebarWindowId();
 }
 
 async function loadSidebarPreferences(): Promise<void> {
@@ -1059,6 +1082,7 @@ function applyActiveStateUpdate(updates: ActiveStateUpdate[]): void {
       node.active = update.active;
       windowActiveChanged ||= node.kind === "window";
     }
+    invalidateSidebarWindowActiveTabTargets();
 
     if (windowActiveChanged && currentProjection) {
       refreshProjectionActiveWindowFlags(state, currentProjection);
@@ -1087,6 +1111,7 @@ function applyNodeStateUpdate(update: NodeStateUpdate): void {
       state.nodes[nextNode.id] = nextNode;
       windowActiveChanged ||= nextNode.kind === "window";
     }
+    invalidateSidebarWindowActiveTabTargets();
     pendingCutNodeId = nextPendingCutNodeId(state, pendingCutNodeId);
 
     if (!currentProjection || currentProjection.isSearchActive || collapsedChanged) {
@@ -1159,6 +1184,7 @@ function applyTreeStructureUpdate(update: TreeStructureUpdate): void {
       state.nodes[node.id] = node;
     }
     state.rootIds = [...update.rootIds];
+    invalidateSidebarWindowActiveTabTargets();
     if (activeRename && deletedNodeIds.has(activeRename.nodeId)) {
       activeRename = undefined;
     }
@@ -2339,7 +2365,85 @@ function cssEscape(value: string): string {
 function scrollToObservedActiveTab(projection: VisibleTreeProjection): void {
   const rowHeight = currentRowHeight();
   prepareVirtualScrollSurface(projection, rowHeight);
-  scrollActiveTabIntoView(activeTabScrollTracker, projection, rootDropSurface ?? undefined, rowHeight);
+  scrollActiveTabIntoView(
+    activeTabScrollTracker,
+    activeScrollProjectionForSidebarWindow(projection),
+    rootDropSurface ?? undefined,
+    rowHeight
+  );
+}
+
+function activeScrollProjectionForSidebarWindow(projection: VisibleTreeProjection): ActiveTabScrollProjection {
+  const scopedActiveTabNodeId = activeTabNodeIdForSidebarWindow(currentState, sidebarWindowId);
+  if (!scopedActiveTabNodeId) {
+    return projection;
+  }
+
+  if (scopedActiveTabNodeId === projection.activeTabNodeId) {
+    return projection;
+  }
+
+  const row = projection.rows.find((candidate) => candidate.nodeId === scopedActiveTabNodeId);
+  return {
+    activeTabNodeId: scopedActiveTabNodeId,
+    ...(row ? { activeTabRowIndex: row.index } : {}),
+    visibleNodeIdSet: projection.visibleNodeIdSet
+  };
+}
+
+function invalidateSidebarWindowActiveTabTargets(): void {
+  sidebarActiveTabTargetsRevision += 1;
+}
+
+function activeTabNodeIdForSidebarWindow(
+  state: OutlineState | undefined,
+  windowId: number | undefined
+): NodeId | undefined {
+  if (!state || typeof windowId !== "number") {
+    return undefined;
+  }
+
+  if (sidebarActiveTabTargetsCacheRevision !== sidebarActiveTabTargetsRevision) {
+    sidebarActiveTabTargetsByWindow = activeTabNodeIdsByWindow(state);
+    sidebarActiveTabTargetsCacheRevision = sidebarActiveTabTargetsRevision;
+  }
+
+  return sidebarActiveTabTargetsByWindow.get(windowId);
+}
+
+function activeTabNodeIdsByWindow(state: OutlineState): Map<number, NodeId> {
+  const result = new Map<number, NodeId>();
+  const visited = new Set<NodeId>();
+  const stack = [...state.rootIds].reverse();
+  while (stack.length > 0) {
+    const nodeId = stack.pop()!;
+    if (visited.has(nodeId)) {
+      continue;
+    }
+    visited.add(nodeId);
+
+    const node = state.nodes[nodeId];
+    if (!node) {
+      continue;
+    }
+    if (
+      node.kind === "tab" &&
+      node.status === "live" &&
+      node.active &&
+      typeof node.live?.windowId === "number" &&
+      !isOutlinerSidebarNode(node)
+    ) {
+      if (!result.has(node.live.windowId)) {
+        result.set(node.live.windowId, node.id);
+      }
+    }
+
+    for (let index = node.childIds.length - 1; index >= 0; index -= 1) {
+      stack.push(node.childIds[index]!);
+    }
+  }
+
+  return result;
 }
 
 function scrollToPendingShowInTreeRow(projection: VisibleTreeProjection): boolean {
@@ -2481,6 +2585,7 @@ async function runAndRender(command: BackgroundCommand): Promise<boolean> {
     }
     if (isOutlineState(response)) {
       currentState = response;
+      invalidateSidebarWindowActiveTabTargets();
       render();
       scheduleDiagnosticsLoad();
       return true;
