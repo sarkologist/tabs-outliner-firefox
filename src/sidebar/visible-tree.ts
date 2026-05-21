@@ -61,6 +61,16 @@ type StackEntry = {
   insideActiveWindow: boolean;
 };
 
+type RowRemovalRange = {
+  start: number;
+  end: number;
+};
+
+type InsertedRowsPlan = {
+  rows: VisibleTreeRow[];
+  removedRanges: RowRemovalRange[];
+};
+
 export function buildVisibleTreeProjection(state: OutlineState, rawQuery: string): VisibleTreeProjection {
   const query = normalizeSearchQuery(rawQuery);
   const entries = collectOutlineOrderEntries(state);
@@ -298,7 +308,7 @@ export function applyInsertTreeStructurePatchToProjection(
     return false;
   }
 
-  const insertedRowsByRoot = new Map<NodeId, VisibleTreeRow[]>();
+  const insertedRowsByRoot = new Map<NodeId, InsertedRowsPlan>();
   const insertionRoots = [...insertedNodeIds].filter((nodeId) => {
     const parentId = state.nodes[nodeId]?.parentId;
     return !parentId || !insertedNodeIds.has(parentId);
@@ -317,34 +327,69 @@ export function applyInsertTreeStructurePatchToProjection(
       insertionContext.depth,
       insertionContext.insideActiveWindow
     );
-    if (!insertedRows) {
+    if (insertedRows) {
+      insertedRowsByRoot.set(rootNodeId, { rows: insertedRows, removedRanges: [] });
+      continue;
+    }
+
+    const wrappedRows = rowsForInsertedExistingSubtreeWrapper(
+      state,
+      projection,
+      rootNodeId,
+      insertedNodeIds,
+      insertionContext.depth,
+      insertionContext.insideActiveWindow
+    );
+    if (!wrappedRows) {
       return false;
     }
-    insertedRowsByRoot.set(rootNodeId, insertedRows);
+    insertedRowsByRoot.set(rootNodeId, wrappedRows);
   }
 
   const orderedInsertions = insertionRoots
     .map((nodeId) => {
       const insertionContext = insertionContextForNode(state, projection, nodeId, insertedNodeIds);
-      const rows = insertedRowsByRoot.get(nodeId);
-      return insertionContext && rows
+      const plan = insertedRowsByRoot.get(nodeId);
+      return insertionContext && plan
         ? {
             nodeId,
             index: insertionContext.index,
-            rows
+            rows: plan.rows,
+            removedRanges: plan.removedRanges
           }
         : undefined;
     })
-    .filter((entry): entry is { nodeId: NodeId; index: number; rows: VisibleTreeRow[] } => Boolean(entry))
+    .filter((entry): entry is {
+      nodeId: NodeId;
+      index: number;
+      rows: VisibleTreeRow[];
+      removedRanges: RowRemovalRange[];
+    } => Boolean(entry))
     .sort((left, right) => left.index - right.index);
 
   if (orderedInsertions.length !== insertionRoots.length) {
     return false;
   }
 
+  const removalRanges = normalizedRemovalRanges(orderedInsertions.flatMap((insertion) => insertion.removedRanges));
+  if (!removalRanges) {
+    return false;
+  }
+
+  for (const insertion of orderedInsertions) {
+    if (insertionIndexSplitsRemovalRange(insertion.index, removalRanges)) {
+      return false;
+    }
+  }
+
+  for (let index = removalRanges.length - 1; index >= 0; index -= 1) {
+    const range = removalRanges[index]!;
+    projection.rows.splice(range.start, range.end - range.start);
+  }
+
   let insertedBefore = 0;
   for (const insertion of orderedInsertions) {
-    const index = insertion.index + insertedBefore;
+    const index = insertion.index - removedRowCountBeforeIndex(removalRanges, insertion.index) + insertedBefore;
     projection.rows.splice(index, 0, ...insertion.rows);
     insertedBefore += insertion.rows.length;
   }
@@ -360,6 +405,40 @@ export function applyInsertTreeStructurePatchToProjection(
   projection.visibleNodeIds = projection.rows.map((row) => row.nodeId);
   projection.visibleNodeIdSet = new Set(projection.visibleNodeIds);
   return true;
+}
+
+function normalizedRemovalRanges(ranges: RowRemovalRange[]): RowRemovalRange[] | undefined {
+  const sorted = ranges
+    .filter((range) => range.end > range.start)
+    .sort((left, right) => left.start - right.start);
+  const normalized: RowRemovalRange[] = [];
+
+  for (const range of sorted) {
+    if (range.start < 0 || range.end > Number.MAX_SAFE_INTEGER) {
+      return undefined;
+    }
+    const previous = normalized.at(-1);
+    if (previous && previous.end > range.start) {
+      return undefined;
+    }
+    normalized.push(range);
+  }
+
+  return normalized;
+}
+
+function insertionIndexSplitsRemovalRange(index: number, ranges: readonly RowRemovalRange[]): boolean {
+  return ranges.some((range) => range.start < index && index < range.end);
+}
+
+function removedRowCountBeforeIndex(ranges: readonly RowRemovalRange[], index: number): number {
+  let count = 0;
+  for (const range of ranges) {
+    if (range.end <= index) {
+      count += range.end - range.start;
+    }
+  }
+  return count;
 }
 
 function insertionContextForNode(
@@ -499,6 +578,85 @@ function rowsForInsertedSubtree(
 
   refreshVisibleRowStructure(rows);
   return rows;
+}
+
+function rowsForInsertedExistingSubtreeWrapper(
+  state: OutlineState,
+  projection: VisibleTreeProjection,
+  rootNodeId: NodeId,
+  insertedNodeIds: Set<NodeId>,
+  rootDepth: number,
+  rootInsideActiveWindow: boolean
+): InsertedRowsPlan | undefined {
+  const node = state.nodes[rootNodeId];
+  if (!node || !insertedNodeIds.has(node.id) || node.collapsed || node.childIds.length === 0) {
+    return undefined;
+  }
+
+  const rowsByNodeId = new Map(projection.rows.map((row) => [row.nodeId, row]));
+  const removedRanges: RowRemovalRange[] = [];
+  const movedRows: VisibleTreeRow[] = [];
+  let previousEndIndex: number | undefined;
+  let depthDelta: number | undefined;
+
+  for (const childId of node.childIds) {
+    if (insertedNodeIds.has(childId)) {
+      return undefined;
+    }
+
+    const childRow = rowsByNodeId.get(childId);
+    if (!childRow) {
+      return undefined;
+    }
+    if (typeof previousEndIndex === "number" && childRow.index !== previousEndIndex) {
+      return undefined;
+    }
+
+    const nextDepthDelta = rootDepth + 1 - childRow.depth;
+    if (typeof depthDelta === "number" && depthDelta !== nextDepthDelta) {
+      return undefined;
+    }
+    depthDelta = nextDepthDelta;
+
+    const range = {
+      start: childRow.index,
+      end: childRow.subtreeEndIndex
+    };
+    removedRanges.push(range);
+    previousEndIndex = range.end;
+
+    for (let index = range.start; index < range.end; index += 1) {
+      const row = projection.rows[index];
+      if (!row) {
+        return undefined;
+      }
+      const depth = row.depth + nextDepthDelta;
+      if (depth < 0) {
+        return undefined;
+      }
+      movedRows.push({
+        ...row,
+        depth
+      });
+    }
+  }
+
+  const wrapperRow: VisibleTreeRow = {
+    nodeId: node.id,
+    depth: rootDepth,
+    index: 0,
+    subtreeEndIndex: movedRows.length + 1,
+    childCount: node.childIds.length,
+    visibleChildCount: node.childIds.length,
+    expanded: true,
+    searchRevealsCollapsedChildren: false,
+    isSearchMatch: false,
+    isSearchPath: false,
+    insideActiveWindow: rootInsideActiveWindow
+  };
+  const rows = [wrapperRow, ...movedRows];
+  refreshVisibleRowStructure(rows);
+  return { rows, removedRanges };
 }
 
 function refreshRowsFromPatchNodes(

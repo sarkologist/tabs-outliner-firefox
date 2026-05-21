@@ -319,6 +319,50 @@ describe("visible tree projection", () => {
     expect(projection.rows[2]?.insideActiveWindow).toBe(true);
   });
 
+  it("wraps an existing visible subtree without flattening the previous sibling", () => {
+    const state = outlineState([
+      windowNode("window:1", ["tab:previous", "tab:target", "tab:after"], { active: true }),
+      tabNode("tab:previous", "window:1", "Previous", ["tab:previous-child"]),
+      tabNode("tab:previous-child", "tab:previous", "Previous child"),
+      tabNode("tab:target", "window:1", "Target", ["tab:target-child"]),
+      tabNode("tab:target-child", "tab:target", "Target child"),
+      tabNode("tab:after", "window:1", "After")
+    ]);
+    const projection = buildVisibleTreeProjection(state, "");
+    const next = outlineState([
+      windowNode("window:1", ["tab:previous", "group:wrapper", "tab:after"], { active: true }),
+      tabNode("tab:previous", "window:1", "Previous", ["tab:previous-child"]),
+      tabNode("tab:previous-child", "tab:previous", "Previous child"),
+      groupNode("group:wrapper", ["tab:target"], "window:1"),
+      tabNode("tab:target", "group:wrapper", "Target", ["tab:target-child"]),
+      tabNode("tab:target-child", "tab:target", "Target child"),
+      tabNode("tab:after", "window:1", "After")
+    ]);
+
+    const applied = applyInsertTreeStructurePatchToProjection(next, projection, {
+      deletedNodeIds: [],
+      updatedNodes: [next.nodes["window:1"]!, next.nodes["group:wrapper"]!, next.nodes["tab:target"]!],
+      rootIds: ["window:1"],
+      deletedClosedCount: 0
+    });
+
+    expect(applied).toBe(true);
+    expect(projection.rows.map(({ nodeId, depth, parentRowIndex, subtreeEndIndex }) => ({
+      nodeId,
+      depth,
+      parentRowIndex,
+      subtreeEndIndex
+    }))).toEqual([
+      { nodeId: "window:1", depth: 0, parentRowIndex: undefined, subtreeEndIndex: 7 },
+      { nodeId: "tab:previous", depth: 1, parentRowIndex: 0, subtreeEndIndex: 3 },
+      { nodeId: "tab:previous-child", depth: 2, parentRowIndex: 1, subtreeEndIndex: 3 },
+      { nodeId: "group:wrapper", depth: 1, parentRowIndex: 0, subtreeEndIndex: 6 },
+      { nodeId: "tab:target", depth: 2, parentRowIndex: 3, subtreeEndIndex: 6 },
+      { nodeId: "tab:target-child", depth: 3, parentRowIndex: 4, subtreeEndIndex: 6 },
+      { nodeId: "tab:after", depth: 1, parentRowIndex: 0, subtreeEndIndex: 7 }
+    ]);
+  });
+
   it("falls back instead of applying insertion patches to active search projections", () => {
     const state = outlineState([
       windowNode("window:1", ["tab:1"], { active: true }),
