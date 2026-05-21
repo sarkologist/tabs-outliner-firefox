@@ -1190,45 +1190,99 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     eventTabs: RuntimeTab[],
     index: RuntimeStateIndex
   ): Promise<RuntimeEventTabsFastPathResult> {
-    let next = current;
     let structuralChanged = false;
     const changedNodeIds = new Set<NodeId>();
-    const mutableIndex = cloneRuntimeStateIndex(index);
+    const plannedNodes = new Map<NodeId, OutlineNode>();
+    const liveTabNodeIdAdditions = new Map<number, NodeId>();
+    const liveWindowNodeIdAdditions = new Map<number, NodeId>();
+    const liveTabNodeIdsByWindowAdditions = new Map<number, Set<NodeId>>();
+    const activeTabNodeIdOverrides = new Map<number, NodeId | undefined>();
     const fetchedWindows = new Map<number, RuntimeWindow | undefined>();
+    let plannedRootIds: NodeId[] | undefined;
+    let activeWindowNodeId = index.activeWindowNodeId;
+    let activeWindowNodeIdChanged = false;
 
-    const ensureMutableState = (): OutlineState => {
-      if (next === current) {
-        next = {
-          version: current.version,
-          rootIds: current.rootIds,
-          nodes: { ...current.nodes }
-        };
-      }
-      return next;
+    const nodeForPlan = (nodeId: NodeId): OutlineNode | undefined =>
+      plannedNodes.get(nodeId) ?? current.nodes[nodeId];
+    const hasNodeForPlan = (nodeId: NodeId): boolean => plannedNodes.has(nodeId) || Boolean(current.nodes[nodeId]);
+    const rootIdsForPlan = (): NodeId[] => {
+      plannedRootIds ??= [...current.rootIds];
+      return plannedRootIds;
     };
-    const mutableRootIds = (): NodeId[] => {
-      const stateForMutation = ensureMutableState();
-      if (stateForMutation.rootIds === current.rootIds) {
-        stateForMutation.rootIds = [...current.rootIds];
+    const mutableNodeForPlan = (nodeId: NodeId): OutlineNode | undefined => {
+      const planned = plannedNodes.get(nodeId);
+      if (planned) {
+        return planned;
       }
-      return stateForMutation.rootIds;
-    };
-    const cloneNodeForMutation = (nodeId: NodeId): OutlineNode | undefined => {
-      const stateForMutation = ensureMutableState();
-      const node = stateForMutation.nodes[nodeId];
+      const node = current.nodes[nodeId];
       if (!node) {
         return undefined;
       }
       changedNodeIds.add(nodeId);
-      if (node === current.nodes[nodeId]) {
-        stateForMutation.nodes[nodeId] = cloneOutlineNode(node);
+      const cloned = cloneOutlineNode(node);
+      plannedNodes.set(nodeId, cloned);
+      return cloned;
+    };
+    const plannedLiveTabNodeId = (tabId: number): NodeId | undefined =>
+      liveTabNodeIdAdditions.get(tabId) ?? index.liveTabNodeIdsByRuntimeId.get(tabId);
+    const plannedLiveWindowNodeId = (windowId: number): NodeId | undefined =>
+      liveWindowNodeIdAdditions.get(windowId) ?? index.liveWindowNodeIdsByRuntimeId.get(windowId);
+    const plannedActiveTabNodeId = (windowId: number): NodeId | undefined =>
+      activeTabNodeIdOverrides.has(windowId)
+        ? activeTabNodeIdOverrides.get(windowId)
+        : index.activeTabNodeIdsByWindowId.get(windowId);
+    const addPlannedWindowTabNodeId = (windowId: number, nodeId: NodeId): void => {
+      const nodeIds = liveTabNodeIdsByWindowAdditions.get(windowId) ?? new Set<NodeId>();
+      nodeIds.add(nodeId);
+      liveTabNodeIdsByWindowAdditions.set(windowId, nodeIds);
+    };
+    const uniqueRuntimeNodeIdForPlan = (preferredId: NodeId): NodeId => {
+      if (!hasNodeForPlan(preferredId)) {
+        return preferredId;
       }
-      return stateForMutation.nodes[nodeId];
+
+      const timestamp = now();
+      let index = 1;
+      let candidate = `${preferredId}:${timestamp}`;
+      while (hasNodeForPlan(candidate)) {
+        index += 1;
+        candidate = `${preferredId}:${timestamp}:${index}`;
+      }
+      return candidate;
+    };
+    const isNodeUnderRuntimeWindowForPlan = (nodeId: NodeId, runtimeWindowId: number): boolean => {
+      const visited = new Set<NodeId>();
+      let currentNode = nodeForPlan(nodeId);
+
+      while (currentNode && !visited.has(currentNode.id)) {
+        visited.add(currentNode.id);
+        if (isLiveWindowNode(currentNode)) {
+          return currentNode.live.windowId === runtimeWindowId;
+        }
+        currentNode = currentNode.parentId ? nodeForPlan(currentNode.parentId) : undefined;
+      }
+
+      return false;
+    };
+    const parentNodeIdForRuntimeTabPlan = (
+      tab: RuntimeTab,
+      fallbackWindowNodeId: NodeId
+    ): NodeId => {
+      if (typeof tab.openerTabId !== "number") {
+        return fallbackWindowNodeId;
+      }
+
+      const openerNodeId = plannedLiveTabNodeId(tab.openerTabId);
+      if (!openerNodeId || !isNodeUnderRuntimeWindowForPlan(openerNodeId, tab.windowId)) {
+        return fallbackWindowNodeId;
+      }
+
+      return openerNodeId;
     };
 
     const ensureRuntimeWindowNode = async (windowId: number): Promise<NodeId | undefined> => {
-      const existingWindowNodeId = mutableIndex.liveWindowNodeIdsByRuntimeId.get(windowId);
-      if (existingWindowNodeId && next.nodes[existingWindowNodeId]) {
+      const existingWindowNodeId = plannedLiveWindowNodeId(windowId);
+      if (existingWindowNodeId && nodeForPlan(existingWindowNodeId)) {
         return existingWindowNodeId;
       }
 
@@ -1243,9 +1297,8 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         return undefined;
       }
 
-      const windowNodeId = uniqueRuntimeNodeId(next, windowNodeIdForRuntime(windowInfo.id), now());
-      const stateForMutation = ensureMutableState();
-      stateForMutation.nodes[windowNodeId] = {
+      const windowNodeId = uniqueRuntimeNodeIdForPlan(windowNodeIdForRuntime(windowInfo.id));
+      plannedNodes.set(windowNodeId, {
         id: windowNodeId,
         kind: "window",
         status: "live",
@@ -1256,55 +1309,112 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         createdAt: now(),
         updatedAt: now(),
         live: { windowId: windowInfo.id }
-      };
+      });
       changedNodeIds.add(windowNodeId);
       structuralChanged = true;
-      mutableRootIds().push(windowNodeId);
-      mutableIndex.liveWindowNodeIdsByRuntimeId.set(windowInfo.id, windowNodeId);
-      mutableIndex.liveTabNodeIdsByWindowId.set(windowInfo.id, new Set());
+      rootIdsForPlan().push(windowNodeId);
+      liveWindowNodeIdAdditions.set(windowInfo.id, windowNodeId);
+      liveTabNodeIdsByWindowAdditions.set(windowInfo.id, new Set());
       if (windowInfo.focused) {
         clearActiveWindowForRuntimeFastPath(windowNodeId);
       }
       return windowNodeId;
     };
 
-    const clearActiveWindowForRuntimeFastPath = (activeWindowNodeId: NodeId): void => {
-      const previousActiveWindowNodeId = mutableIndex.activeWindowNodeId;
-      if (previousActiveWindowNodeId && previousActiveWindowNodeId !== activeWindowNodeId) {
-        const previousActiveWindow = cloneNodeForMutation(previousActiveWindowNodeId);
-        if (previousActiveWindow) {
-          previousActiveWindow.active = false;
+    const clearActiveWindowForRuntimeFastPath = (nextActiveWindowNodeId: NodeId): void => {
+      const previousActiveWindowNodeId = activeWindowNodeId;
+      if (previousActiveWindowNodeId && previousActiveWindowNodeId !== nextActiveWindowNodeId) {
+        const previousActiveWindow = nodeForPlan(previousActiveWindowNodeId);
+        if (previousActiveWindow?.active !== false) {
+          const mutablePreviousActiveWindow = mutableNodeForPlan(previousActiveWindowNodeId);
+          if (mutablePreviousActiveWindow) {
+            mutablePreviousActiveWindow.active = false;
+          }
         }
       }
-      const activeWindow = cloneNodeForMutation(activeWindowNodeId);
-      if (activeWindow) {
-        activeWindow.active = true;
+      const activeWindow = nodeForPlan(nextActiveWindowNodeId);
+      if (activeWindow?.active !== true) {
+        const mutableActiveWindow = mutableNodeForPlan(nextActiveWindowNodeId);
+        if (mutableActiveWindow) {
+          mutableActiveWindow.active = true;
+        }
       }
-      mutableIndex.activeWindowNodeId = activeWindowNodeId;
+      activeWindowNodeIdChanged = true;
+      activeWindowNodeId = nextActiveWindowNodeId;
     };
 
     const activateTabForRuntimeFastPath = (windowId: number, activeTabNodeId: NodeId): void => {
-      const previousActiveTabNodeId = mutableIndex.activeTabNodeIdsByWindowId.get(windowId);
+      const previousActiveTabNodeId = plannedActiveTabNodeId(windowId);
       if (previousActiveTabNodeId && previousActiveTabNodeId !== activeTabNodeId) {
-        const previousActiveTab = cloneNodeForMutation(previousActiveTabNodeId);
-        if (previousActiveTab) {
-          previousActiveTab.active = false;
+        const previousActiveTab = nodeForPlan(previousActiveTabNodeId);
+        if (previousActiveTab?.active !== false) {
+          const mutablePreviousActiveTab = mutableNodeForPlan(previousActiveTabNodeId);
+          if (mutablePreviousActiveTab) {
+            mutablePreviousActiveTab.active = false;
+          }
         }
       }
-      const activeTab = cloneNodeForMutation(activeTabNodeId);
-      if (activeTab) {
-        activeTab.active = true;
+      const activeTab = nodeForPlan(activeTabNodeId);
+      if (activeTab?.active !== true) {
+        const mutableActiveTab = mutableNodeForPlan(activeTabNodeId);
+        if (mutableActiveTab) {
+          mutableActiveTab.active = true;
+        }
       }
-      mutableIndex.activeTabNodeIdsByWindowId.set(windowId, activeTabNodeId);
+      activeTabNodeIdOverrides.set(windowId, activeTabNodeId);
     };
 
     const deactivateTabForRuntimeFastPath = (windowId: number, tabNodeId: NodeId): void => {
-      const tabNode = cloneNodeForMutation(tabNodeId);
-      if (tabNode) {
-        tabNode.active = false;
+      const tabNode = nodeForPlan(tabNodeId);
+      if (tabNode?.active !== false) {
+        const mutableTabNode = mutableNodeForPlan(tabNodeId);
+        if (mutableTabNode) {
+          mutableTabNode.active = false;
+        }
       }
-      if (mutableIndex.activeTabNodeIdsByWindowId.get(windowId) === tabNodeId) {
-        mutableIndex.activeTabNodeIdsByWindowId.delete(windowId);
+      if (plannedActiveTabNodeId(windowId) === tabNodeId) {
+        activeTabNodeIdOverrides.set(windowId, undefined);
+      }
+    };
+
+    const applyPlannedIndexUpdates = (): void => {
+      for (const [windowId, nodeId] of liveWindowNodeIdAdditions) {
+        index.liveWindowNodeIdsByRuntimeId.set(windowId, nodeId);
+        index.liveTabNodeIdsByWindowId.set(windowId, index.liveTabNodeIdsByWindowId.get(windowId) ?? new Set());
+      }
+      for (const [tabId, nodeId] of liveTabNodeIdAdditions) {
+        index.liveTabNodeIdsByRuntimeId.set(tabId, nodeId);
+      }
+      for (const [windowId, nodeIds] of liveTabNodeIdsByWindowAdditions) {
+        const existingNodeIds = index.liveTabNodeIdsByWindowId.get(windowId) ?? new Set<NodeId>();
+        for (const nodeId of nodeIds) {
+          existingNodeIds.add(nodeId);
+        }
+        index.liveTabNodeIdsByWindowId.set(windowId, existingNodeIds);
+      }
+      for (const [windowId, nodeId] of activeTabNodeIdOverrides) {
+        if (nodeId) {
+          index.activeTabNodeIdsByWindowId.set(windowId, nodeId);
+        } else {
+          index.activeTabNodeIdsByWindowId.delete(windowId);
+        }
+      }
+      if (activeWindowNodeIdChanged) {
+        if (activeWindowNodeId) {
+          index.activeWindowNodeId = activeWindowNodeId;
+        } else {
+          delete index.activeWindowNodeId;
+        }
+      }
+      index.state = current;
+    };
+
+    const applyPlannedStateUpdates = (): void => {
+      if (plannedRootIds) {
+        current.rootIds = plannedRootIds;
+      }
+      for (const [nodeId, node] of plannedNodes) {
+        current.nodes[nodeId] = node;
       }
     };
 
@@ -1318,65 +1428,64 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         return { handled: false };
       }
 
-      const existingTabNodeId = mutableIndex.liveTabNodeIdsByRuntimeId.get(tab.id);
+      const existingTabNodeId = plannedLiveTabNodeId(tab.id);
       if (existingTabNodeId) {
-        const existingTab = next.nodes[existingTabNodeId];
+        const existingTab = nodeForPlan(existingTabNodeId);
         if (!isLiveTabNode(existingTab) || existingTab.live.windowId !== tab.windowId) {
           return { handled: false };
         }
+        const wasActive = existingTab.active === true;
         if (liveTabNodeWouldChange(existingTab, tab)) {
-          const tabNode = cloneNodeForMutation(existingTabNodeId);
+          const tabNode = mutableNodeForPlan(existingTabNodeId);
           if (tabNode) {
             updateRuntimeTabNodeForFastPath(tabNode, tab, now());
           }
         }
         if (tab.active) {
           activateTabForRuntimeFastPath(tab.windowId, existingTabNodeId);
-        } else if (existingTab.active) {
+        } else if (wasActive) {
           deactivateTabForRuntimeFastPath(tab.windowId, existingTabNodeId);
         }
         continue;
       }
 
-      if (mutableIndex.windowNodeIdsWithClosedRestoreCandidates.has(windowNodeId)) {
+      if (index.windowNodeIdsWithClosedRestoreCandidates.has(windowNodeId)) {
         return { handled: false };
       }
 
-      const parentId = parentNodeIdForRuntimeTabFastPath(next, mutableIndex, tab, windowNodeId);
-      const parent = next.nodes[parentId];
+      const parentId = parentNodeIdForRuntimeTabPlan(tab, windowNodeId);
+      const parent = nodeForPlan(parentId);
       if (!parent) {
         return { handled: false };
       }
 
-      const tabNodeId = uniqueRuntimeNodeId(next, tabNodeIdForRuntime(tab.id), now());
-      const stateForMutation = ensureMutableState();
-      const parentNode = cloneNodeForMutation(parentId);
+      const tabNodeId = uniqueRuntimeNodeIdForPlan(tabNodeIdForRuntime(tab.id));
+      const parentNode = mutableNodeForPlan(parentId);
       if (!parentNode) {
         return { handled: false };
       }
       parentNode.childIds.push(tabNodeId);
-      stateForMutation.nodes[tabNodeId] = runtimeTabNodeForFastPath(tab, tabNodeId, parentId, now());
+      plannedNodes.set(tabNodeId, runtimeTabNodeForFastPath(tab, tabNodeId, parentId, now()));
       changedNodeIds.add(tabNodeId);
       structuralChanged = true;
-      mutableIndex.liveTabNodeIdsByRuntimeId.set(tab.id, tabNodeId);
-      const windowTabNodeIds = mutableIndex.liveTabNodeIdsByWindowId.get(tab.windowId) ?? new Set<NodeId>();
-      windowTabNodeIds.add(tabNodeId);
-      mutableIndex.liveTabNodeIdsByWindowId.set(tab.windowId, windowTabNodeIds);
+      liveTabNodeIdAdditions.set(tab.id, tabNodeId);
+      addPlannedWindowTabNodeId(tab.windowId, tabNodeId);
       if (tab.active) {
         activateTabForRuntimeFastPath(tab.windowId, tabNodeId);
       }
     }
 
-    if (next === current) {
+    if (plannedNodes.size === 0 && !plannedRootIds) {
       return {
         handled: true,
         changed: false
       };
     }
 
-    mutableIndex.state = next;
+    applyPlannedStateUpdates();
+    applyPlannedIndexUpdates();
     const updatedNodes = [...changedNodeIds].flatMap((nodeId) => {
-      const node = next.nodes[nodeId];
+      const node = current.nodes[nodeId];
       return node ? [node] : [];
     });
     const update: TreeStructureUpdate | NodeStateUpdate = structuralChanged
@@ -1384,7 +1493,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
           type: "treeStructureUpdated",
           deletedNodeIds: [],
           updatedNodes,
-          rootIds: next.rootIds,
+          rootIds: current.rootIds,
           deletedClosedCount: 0
         }
       : {
@@ -1395,8 +1504,8 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     return {
       handled: true,
       changed: true,
-      state: next,
-      index: mutableIndex,
+      state: current,
+      index,
       update
     };
   }
@@ -2016,20 +2125,6 @@ function buildRuntimeStateIndex(state: OutlineState): RuntimeStateIndex {
   return index;
 }
 
-function cloneRuntimeStateIndex(index: RuntimeStateIndex): RuntimeStateIndex {
-  return {
-    state: index.state,
-    liveTabNodeIdsByRuntimeId: new Map(index.liveTabNodeIdsByRuntimeId),
-    liveWindowNodeIdsByRuntimeId: new Map(index.liveWindowNodeIdsByRuntimeId),
-    liveTabNodeIdsByWindowId: new Map(
-      [...index.liveTabNodeIdsByWindowId].map(([windowId, nodeIds]) => [windowId, new Set(nodeIds)])
-    ),
-    activeTabNodeIdsByWindowId: new Map(index.activeTabNodeIdsByWindowId),
-    windowNodeIdsWithClosedRestoreCandidates: new Set(index.windowNodeIdsWithClosedRestoreCandidates),
-    ...(index.activeWindowNodeId ? { activeWindowNodeId: index.activeWindowNodeId } : {})
-  };
-}
-
 function indexedLiveTabNodeByRuntimeId(
   state: OutlineState,
   index: RuntimeStateIndex,
@@ -2091,59 +2186,12 @@ function updateRuntimeTabNodeForFastPath(node: OutlineNode, tab: RuntimeTab, now
   delete node.restore;
 }
 
-function parentNodeIdForRuntimeTabFastPath(
-  state: OutlineState,
-  index: RuntimeStateIndex,
-  tab: RuntimeTab,
-  fallbackWindowNodeId: NodeId
-): NodeId {
-  if (typeof tab.openerTabId !== "number") {
-    return fallbackWindowNodeId;
-  }
-
-  const openerNodeId = index.liveTabNodeIdsByRuntimeId.get(tab.openerTabId);
-  if (!openerNodeId || !isNodeUnderRuntimeWindowFastPath(state, openerNodeId, tab.windowId)) {
-    return fallbackWindowNodeId;
-  }
-
-  return openerNodeId;
-}
-
-function isNodeUnderRuntimeWindowFastPath(state: OutlineState, nodeId: NodeId, runtimeWindowId: number): boolean {
-  const visited = new Set<NodeId>();
-  let current = state.nodes[nodeId];
-
-  while (current && !visited.has(current.id)) {
-    visited.add(current.id);
-    if (isLiveWindowNode(current)) {
-      return current.live.windowId === runtimeWindowId;
-    }
-    current = current.parentId ? state.nodes[current.parentId] : undefined;
-  }
-
-  return false;
-}
-
 function tabNodeIdForRuntime(tabId: number): NodeId {
   return `tab:${tabId}`;
 }
 
 function windowNodeIdForRuntime(windowId: number): NodeId {
   return `window:${windowId}`;
-}
-
-function uniqueRuntimeNodeId(state: OutlineState, preferredId: NodeId, now: number): NodeId {
-  if (!state.nodes[preferredId]) {
-    return preferredId;
-  }
-
-  let index = 1;
-  let candidate = `${preferredId}:${now}`;
-  while (state.nodes[candidate]) {
-    index += 1;
-    candidate = `${preferredId}:${now}:${index}`;
-  }
-  return candidate;
 }
 
 function isTrackableHistoryCommandType(value: string): value is TrackableHistoryCommandType {

@@ -517,7 +517,7 @@ Use these as starting targets, not hard promises:
 
 ### 2026-05-21: Event Echo Asymptotics Audit
 
-- Living code-path audit, not a fresh profile run. Keep this table current as event-echo improvements land. Let `n` be outline nodes, `u` be unique tab events in one coalesced runtime batch, `k` be changed nodes, `w` be open browser windows/tabs returned by a runtime snapshot, and `v` be visible sidebar rows. "Cold" means the cached `RuntimeStateIndex` must be rebuilt; "warm" means it already matches the current state.
+- Living code-path audit, not a fresh profile run. Keep this table current as event-echo improvements land. Let `n` be outline nodes, `u` be unique tab events in one coalesced runtime batch, `k` be changed nodes, `d` be opener ancestor depth for a newly created tab, `w` be open browser windows/tabs returned by a runtime snapshot, and `v` be visible sidebar rows. "Cold" means the cached `RuntimeStateIndex` must be rebuilt; "warm" means it already matches the current state.
 
 | Path | Current Asymptotic | Theoretical Optimum | Gap / Next Work |
 | --- | --- | --- | --- |
@@ -526,7 +526,7 @@ Use these as starting targets, not hard promises:
 | Command-restored `tabs.onCreated` echo | warm `O(u)`, cold `O(n + u)` | `O(u)` | Per-event scans are gone. Remaining cold cost is runtime-index rebuild. |
 | Command-relocated stale tab echoes | warm `O(u)`, cold `O(n + u)` | `O(u)` | The former `O(u * n)` path is fixed. Remaining cold cost is runtime-index rebuild. |
 | Generic no-op metadata echo | warm `O(u)`, cold `O(n + u)` | `O(u)` | Uses indexed no-op checks when warm. Remaining cold cost is runtime-index rebuild. |
-| Small runtime update/create fast path | `O(n + u + k)` CPU, `O(k)` transport | `O(u + k)` CPU, `O(k)` transport | Still clones the runtime index and shallow-copies the node table for small real changes. Next major target. |
+| Small runtime update/create fast path | warm `O(u + k)` for updates and non-opener creates, warm `O(u * d + k)` for opener creates, cold `O(n + u + k)`; `O(k)` transport | `O(u + k)` CPU, `O(k)` transport | Whole node-table/index copies are gone. Remaining gaps are cold index rebuilds and opener ancestor walks. |
 | Compact sidebar patch handling | often `O(v)` for active/row refresh side effects, sometimes fast-path splice/patch work | `O(k + visible-delta)` | Sidebar still rescans visible rows for some patch side effects such as active target and active-window flags. |
 | Full runtime reconciliation fallback | `O(w log w + n)` plus browser snapshot cost, then `O(n)` diff or full-state fallback | `O(w log w + n)` | This is the correctness fallback; optimize by avoiding entry into it for narrow events, not by weakening it. |
 
@@ -553,3 +553,12 @@ Use these as starting targets, not hard promises:
   - Same-window `focusNode` echo handling previously did 2 node-table scans: one no-change window focus scan and one tab activation scan.
   - After the fix, same-window and cross-window focus command echoes both perform 0 node-table scans while still avoiding `windows.getAll()`, `tabs.query()`, storage saves, and full-state broadcasts.
 - Verification: `pnpm exec vitest run src/background/controller.test.ts -t "focus command"`, `pnpm exec vitest run src/background/controller.test.ts`, `pnpm build`, and `pnpm test` passed.
+
+### 2026-05-21: Runtime Fast Path Avoids Whole-Node Copies
+
+- Implemented the next audit target in `applyRuntimeEventTabsFastPath()`: small runtime tab update/create batches now build a tiny mutation plan, then apply only changed nodes and index entries. The path no longer clones the full runtime index or shallow-copies `state.nodes`.
+- Added property-read regression coverage around the warm fast path:
+  - Metadata refresh for one tab previously read 2 unrelated tab entries through the node-table copy; it now reads 0 unrelated node entries.
+  - Same-window browser-created tab handling previously read 2 unrelated sibling tabs through the node-table copy; it now reads 0 unrelated node entries while preserving opener nesting and active-tab updates.
+- Remaining asymptotic gaps: cold runtime-index rebuilds are still `O(n)`, and opener-created tabs still validate the opener by walking ancestors up to the runtime window.
+- Verification: `pnpm exec vitest run src/background/controller.test.ts -t "node table scan|per-echo node table scans|runtime tab metadata refreshes|same-window tabs without reading unrelated"`, `pnpm exec vitest run src/background/controller.test.ts`, `pnpm build`, and `pnpm test` passed.

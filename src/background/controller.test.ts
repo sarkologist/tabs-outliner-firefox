@@ -764,11 +764,14 @@ function traceEntryNames(snapshot: unknown): string[] {
     : [];
 }
 
-async function countNodeTableObjectValues<T>(callback: () => Promise<T>): Promise<{ calls: number; value: T }> {
+async function countNodeTableObjectValues<T>(
+  callback: () => Promise<T>,
+  countedNodeTable?: OutlineState["nodes"]
+): Promise<{ calls: number; value: T }> {
   const originalValues = Object.values;
   let calls = 0;
   const spy = vi.spyOn(Object, "values").mockImplementation(((value: object) => {
-    if (isNodeTableLike(value)) {
+    if (value === countedNodeTable || (!countedNodeTable && isNodeTableLike(value))) {
       calls += 1;
     }
     return originalValues(value as never);
@@ -781,6 +784,59 @@ async function countNodeTableObjectValues<T>(callback: () => Promise<T>): Promis
     };
   } finally {
     spy.mockRestore();
+  }
+}
+
+async function countNodePropertyReads<T>(
+  state: OutlineState,
+  countedNodeIds: readonly string[],
+  callback: () => Promise<T>
+): Promise<{ reads: number; value: T }> {
+  const countedIds = new Set(countedNodeIds);
+  const nodes = state.nodes;
+  const originalDescriptors = Object.getOwnPropertyDescriptors(nodes);
+  const values = new Map(Object.entries(nodes));
+  let reads = 0;
+
+  try {
+    for (const nodeId of Object.keys(nodes)) {
+      Object.defineProperty(nodes, nodeId, {
+        enumerable: true,
+        configurable: true,
+        get() {
+          if (countedIds.has(nodeId)) {
+            reads += 1;
+          }
+          return values.get(nodeId);
+        },
+        set(value) {
+          values.set(nodeId, value);
+        }
+      });
+    }
+
+    const value = await callback();
+    return { reads, value };
+  } finally {
+    const addedDescriptors = Object.fromEntries(
+      Object.entries(Object.getOwnPropertyDescriptors(nodes))
+        .filter(([key]) => !originalDescriptors[key])
+    );
+    for (const key of Object.keys(nodes)) {
+      delete nodes[key];
+    }
+    for (const [key, descriptor] of Object.entries(originalDescriptors)) {
+      Object.defineProperty(nodes, key, {
+        ...descriptor,
+        value: values.get(key)
+      });
+    }
+    for (const [key, value] of values) {
+      if (!originalDescriptors[key]) {
+        nodes[key] = value;
+      }
+    }
+    Object.defineProperties(nodes, addedDescriptors);
   }
 }
 
@@ -2867,6 +2923,66 @@ describe("background controller lifecycle", () => {
     );
   });
 
+  it("handles browser-created same-window tabs without reading unrelated nodes", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        },
+        {
+          id: 2,
+          windowId: 10,
+          index: 1,
+          active: false,
+          url: "https://two.example/",
+          title: "Two"
+        },
+        {
+          id: 3,
+          windowId: 10,
+          index: 2,
+          active: false,
+          url: "https://three.example/",
+          title: "Three"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    const initialState = await controller.ensureState();
+    runtime.broadcasts.length = 0;
+
+    const { reads: unrelatedNodeReads } = await countNodePropertyReads(initialState, ["tab:2", "tab:3"], async () => {
+      await createTabFromBrowser(runtime, {
+        id: 4,
+        windowId: 10,
+        index: 3,
+        active: true,
+        openerTabId: 1,
+        url: "about:newtab",
+        title: "New Tab"
+      });
+    });
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+
+    expect(unrelatedNodeReads).toBe(0);
+    expect(stateBroadcasts(runtime.broadcasts)).toHaveLength(1);
+    expect(state.nodes["tab:4"]?.parentId).toBe("tab:1");
+    expect(state.nodes["tab:1"]?.active).toBe(false);
+    expect(state.nodes["tab:4"]?.active).toBe(true);
+  });
+
   it("handles browser-created focused windows with narrow window lookup and compact patch", async () => {
     const runtime = fakeRuntime(
       [
@@ -2967,16 +3083,19 @@ describe("background controller lifecycle", () => {
       ]
     );
     const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
-    await controller.ensureState();
+    const initialState = await controller.ensureState();
     runtime.broadcasts.length = 0;
     vi.mocked(runtime.api.storage.local.set).mockClear();
 
-    await updateTabFromBrowser(runtime, 2, {
-      title: "Two updated",
-      url: "https://two.example/updated"
+    const { reads: unrelatedNodeReads } = await countNodePropertyReads(initialState, ["tab:1", "tab:3"], async () => {
+      await updateTabFromBrowser(runtime, 2, {
+        title: "Two updated",
+        url: "https://two.example/updated"
+      });
     });
     const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
 
+    expect(unrelatedNodeReads).toBe(0);
     expect(state.nodes["tab:2"]?.title).toBe("Two updated");
     expect(state.nodes["tab:2"]?.url).toBe("https://two.example/updated");
     expect(stateBroadcasts(runtime.broadcasts)).toHaveLength(1);
@@ -3208,7 +3327,7 @@ describe("background controller lifecycle", () => {
       ]
     );
     const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
-    await controller.ensureState();
+    const initialState = await controller.ensureState();
     vi.mocked(runtime.api.tabs.query).mockClear();
     vi.mocked(runtime.api.windows.getAll).mockClear();
     vi.mocked(runtime.api.storage.local.set).mockClear();
@@ -3219,7 +3338,7 @@ describe("background controller lifecycle", () => {
       await runtime.events.tabUpdated.flush();
       await runtime.events.windowFocusChanged.flush();
       await runtime.events.tabActivated.emit({ tabId: 2, windowId: 10, previousTabId: 1 });
-    });
+    }, initialState.nodes);
 
     const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
     const lastBroadcast = runtime.broadcasts.at(-1) as
@@ -3276,7 +3395,7 @@ describe("background controller lifecycle", () => {
       ]
     );
     const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
-    await controller.ensureState();
+    const initialState = await controller.ensureState();
     vi.mocked(runtime.api.tabs.query).mockClear();
     vi.mocked(runtime.api.windows.getAll).mockClear();
     vi.mocked(runtime.api.storage.local.set).mockClear();
@@ -3287,7 +3406,7 @@ describe("background controller lifecycle", () => {
       await runtime.events.windowFocusChanged.flush();
       await runtime.events.tabUpdated.flush();
       await runtime.events.tabActivated.emit({ tabId: 2, windowId: 20, previousTabId: 1 });
-    });
+    }, initialState.nodes);
 
     const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
 
@@ -3740,6 +3859,7 @@ describe("background controller lifecycle", () => {
       nodeId: "tab:1",
       index: 0
     });
+    const moved = (await controller.handleMessage({ type: "getState" })) as OutlineState;
 
     const { calls } = await countNodeTableObjectValues(async () => {
       for (const staleTab of staleTabs) {
@@ -3749,7 +3869,7 @@ describe("background controller lifecycle", () => {
         });
       }
       await runtime.events.tabUpdated.flush();
-    });
+    }, moved.nodes);
     const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
 
     expect(calls).toBeLessThanOrEqual(1);
@@ -4227,7 +4347,8 @@ describe("background controller lifecycle", () => {
     await runtime.events.sessionChanged.flush();
 
     await controller.handleMessage({ type: "restoreNode", nodeId: "tab:2" });
-    const { calls } = await countNodeTableObjectValues(() => runtime.events.tabCreated.flush());
+    const restoredState = await controller.ensureState();
+    const { calls } = await countNodeTableObjectValues(() => runtime.events.tabCreated.flush(), restoredState.nodes);
     const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
 
     expect(calls).toBeLessThanOrEqual(1);
