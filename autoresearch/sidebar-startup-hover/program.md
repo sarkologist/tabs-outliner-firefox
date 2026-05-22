@@ -38,6 +38,12 @@ Second accepted experiment on 2026-05-22:
 - Change: record `sidebar.input.hoverFrameDelay`; delay sparse startup full hydration start by 1000ms after pointer/scroll input; when hydration has already resolved, wait for pending hover frames and 120ms of input idle before replacing the sparse projection.
 - Result from `pnpm profile:startup-hover`: the hydration-deferral guard reported `hydrationRequestsBeforeIdle: 0`, `hydrationRequestsAfterIdle: 1`, `sidebar.input.hoverFrameDelay.maxMs: 4.4`, and `sidebar.input.hoverFeedbackDelay.maxMs: 0.3`.
 
+Third accepted experiment on 2026-05-22:
+
+- Hypothesis: after hydration deferral, the remaining perceptible sparse-startup hover lag is the intentional rAF coalescing delay itself.
+- Change: apply hover-guide updates immediately while the sidebar is hydrating a sparse projection; keep rAF coalescing for the full projection.
+- Result from `pnpm profile:startup-hover`: sparse hover reported `sidebar.input.hoverFeedbackDelay.maxMs: 0.3` and `sidebar.input.hoverFrameDelay.maxMs: 1.7`; the hydration-deferral guard reported `sidebar.input.hoverFrameDelay.maxMs: 1.8`.
+
 Guard metrics:
 
 - `targetVisible` remains `true`.

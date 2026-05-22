@@ -1820,6 +1820,11 @@ function scheduleHoverLineScope(
   reason: HoverGuideApplyReason,
   feedbackTrace?: HoverFeedbackTrace
 ): void {
+  if (shouldApplyHoverLineScopeImmediately()) {
+    applyHoverLineScopeNow(scope, reason, feedbackTrace);
+    return;
+  }
+
   pendingHoverLineScope = scope;
   pendingHoverGuideReason = reason;
   pendingHoverFeedbackTrace = feedbackTrace;
@@ -1844,6 +1849,10 @@ function scheduleHoverLineScope(
     pendingHoverGuideApply = false;
     applyHoverLineScopeNow(nextScope, nextReason, nextFeedbackTrace);
   });
+}
+
+function shouldApplyHoverLineScopeImmediately(): boolean {
+  return Boolean(hydratingFullState && currentProjection && isSparseInitialProjection(currentProjection));
 }
 
 function applyHoverLineScopeNow(

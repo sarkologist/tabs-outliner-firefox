@@ -133,8 +133,8 @@ test.describe("sidebar startup interaction profile", () => {
     expect(result.hoverFeedbackCount).toBeGreaterThan(0);
     expect(result.hoverFrameCount).toBeGreaterThan(0);
     expect(result.hoverGuideCount).toBeGreaterThan(0);
-    expect(result.hoverFeedbackDelay?.maxMs).toBeLessThan(16);
-    expect(result.hoverFrameDelay?.maxMs).toBeLessThan(50);
+    expect(result.hoverFeedbackDelay?.maxMs).toBeLessThan(1);
+    expect(result.hoverFrameDelay?.maxMs).toBeLessThan(20);
     expect(issues).toEqual([]);
   });
 
