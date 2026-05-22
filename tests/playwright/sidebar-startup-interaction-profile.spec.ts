@@ -10,6 +10,105 @@ const ACTIVE_TAB_ID = 40_000;
 const TARGET_NODE_ID = `tab:${ACTIVE_TAB_ID}`;
 
 test.describe("sidebar startup interaction profile", () => {
+  test("profiles sparse first paint below the startup interaction budget", async ({ page }, testInfo) => {
+    const issues = collectPageIssues(page);
+
+    await page.addInitScript(({ snapshot }) => {
+      window.localStorage.setItem("tabsOutlinerProfileEnabled", "true");
+      const messages: Array<{ type: string; at: number }> = [];
+      (window as typeof window & { __sidebarBootMessages?: typeof messages }).__sidebarBootMessages = messages;
+      window.browser = {
+        runtime: {
+          sendMessage: async (message: unknown) => {
+            const type = typeof message === "object" && message ? String((message as { type?: unknown }).type) : "";
+            messages.push({ type, at: performance.now() });
+            if (type === "getInitialTreeSnapshot") {
+              return structuredClone(snapshot);
+            }
+            if (type === "getState") {
+              return new Promise(() => undefined);
+            }
+            if (
+              type === "getDiagnostics" ||
+              type === "getPerformanceTrace" ||
+              type === "setPerformanceTraceEnabled" ||
+              type === "clearPerformanceTrace"
+            ) {
+              return undefined;
+            }
+            return { ok: true };
+          },
+          onMessage: {
+            addListener: () => undefined
+          },
+          connect: () => ({
+            onMessage: { addListener: () => undefined },
+            onDisconnect: { addListener: () => undefined }
+          })
+        },
+        storage: {
+          local: {
+            get: async () => ({}),
+            set: async () => undefined
+          },
+          onChanged: {
+            addListener: () => undefined
+          }
+        },
+        windows: {
+          getCurrent: async () => ({ id: 1 })
+        }
+      };
+    }, {
+      snapshot: fixtureActiveCenteredSnapshot(TAB_COUNT, ACTIVE_TAB_ID)
+    });
+
+    await page.goto("/sidebar/sidebar.html");
+    await expect(page.locator(`.node[data-node-id='${TARGET_NODE_ID}'].is-active`)).toBeVisible();
+
+    const result = await page.evaluate(async (targetNodeId) => {
+      const snapshot = await window.tabsOutlinerProfile?.snapshot();
+      const summary = await window.tabsOutlinerProfile?.summary();
+      const entries = snapshot?.sidebar.entries ?? [];
+      const messages = (window as typeof window & { __sidebarBootMessages?: Array<{ type: string; at: number }> })
+        .__sidebarBootMessages ?? [];
+      const target = document.querySelector<HTMLElement>(`.node[data-node-id="${CSS.escape(targetNodeId)}"]`);
+      const tree = document.querySelector<HTMLElement>("#tree");
+      const viewport = document.querySelector<HTMLElement>("main");
+      const renderedRows = document.querySelectorAll(".node").length;
+      const actionButtons = document.querySelectorAll(".node-actions .icon-button").length;
+
+      return {
+        targetVisible: Boolean(target && target.offsetParent !== null),
+        targetRowIndex: target?.dataset.rowIndex,
+        treeHeight: tree?.style.height,
+        scrollTop: viewport?.scrollTop ?? 0,
+        renderedRows,
+        actionButtons,
+        initialSnapshotRequests: messages.filter((message) => message.type === "getInitialTreeSnapshot").length,
+        hydrationRequests: messages.filter((message) => message.type === "getState").length,
+        initialSnapshotRender: summary?.find((row) => row.name === "sidebar.render.initialSnapshot"),
+        initialSnapshotEntries: entries.filter((entry) => entry.name === "sidebar.render.initialSnapshot").map((entry) => ({
+          durationMs: entry.durationMs,
+          detail: entry.detail
+        }))
+      };
+    }, TARGET_NODE_ID);
+
+    await testInfo.attach("startup-sparse-first-paint-profile.json", {
+      body: JSON.stringify(result, null, 2),
+      contentType: "application/json"
+    });
+    console.log(`startup-sparse-first-paint ${JSON.stringify(result)}`);
+
+    expect(result.targetVisible).toBe(true);
+    expect(result.initialSnapshotRequests).toBe(1);
+    expect(result.hydrationRequests).toBe(0);
+    expect(result.renderedRows).toBeGreaterThan(0);
+    expect(result.initialSnapshotRender?.maxMs).toBeLessThan(16);
+    expect(issues).toEqual([]);
+  });
+
   test("profiles hover feedback against a sparse startup snapshot while hydration is pending", async ({ page }, testInfo) => {
     const issues = collectPageIssues(page);
 

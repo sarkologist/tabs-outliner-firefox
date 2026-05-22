@@ -8,13 +8,24 @@ This is the local autoresearch setup for the sparse-startup hover glitch: after 
 2. Work on a feature branch, for example `codex/autoresearch-sidebar-startup-hover-<tag>`.
 3. Run the deterministic baseline:
    `pnpm profile:startup-hover`
-4. Keep any ad hoc result logs untracked.
+4. Run the repeated loop when judging margin:
+   `pnpm profile:startup-hover-loop -- --runs 5 --tag <tag> --description "<short idea>" --append-results`
+5. Keep `autoresearch/sidebar-startup-hover/results.tsv` and any ad hoc result logs untracked.
 
 ## Metric
 
 Primary score: `clearMissingRowCount` from the `startup-sparse-hover` console JSON emitted by `pnpm profile:startup-hover`.
 
 Target: `clearMissingRowCount === 0` for the visible active sparse row before full hydration.
+
+For the post-fix margin loop, the primary budgets are:
+
+- `startup-sparse-first-paint.initialSnapshotRender.maxMs < 16`
+- `startup-sparse-first-paint.actionButtons === 0`
+- `startup-sparse-hover.hoverFrameDelay.maxMs < 8`
+- `startup-sparse-hover.hoverFeedbackDelay.maxMs < 4`
+- `startup-hover-hydration-defer.hydrationRequestsBeforeIdle === 0`
+- `startup-remote-interaction-hydration-defer.firstHydrationAt - remoteInteractionAt >= 950`
 
 Baseline on 2026-05-22 from `cf6df3a` plus this setup:
 
@@ -44,6 +55,12 @@ Third accepted experiment on 2026-05-22:
 - Change: apply hover-guide updates immediately while the sidebar is hydrating a sparse projection; keep rAF coalescing for the full projection.
 - Result from `pnpm profile:startup-hover`: sparse hover reported `sidebar.input.hoverFeedbackDelay.maxMs: 0.3` and `sidebar.input.hoverFrameDelay.maxMs: 1.7`; the hydration-deferral guard reported `sidebar.input.hoverFrameDelay.maxMs: 1.8`.
 
+Fourth accepted experiment on 2026-05-22:
+
+- Hypothesis: after cross-sidebar hydration and diagnostics are deferred, the remaining occasional sharp overlap is a late sibling sidebar's sparse first paint building the full inert row action surface.
+- Change: sparse hydrating first paint renders only the row label/twisty surface; edit/action buttons appear after full hydration, matching the existing command guards that already block those actions during hydration.
+- Single-run result from `pnpm exec playwright test tests/playwright/sidebar-startup-interaction-profile.spec.ts --grep "sparse first paint"`: `sidebar.render.initialSnapshot.maxMs` moved from 27.7ms with 1,280 action buttons to 6.8ms with 0 action buttons.
+
 Guard metrics:
 
 - `targetVisible` remains `true`.
@@ -63,8 +80,9 @@ Repeat one hypothesis at a time:
 4. Run:
    `pnpm run build`
    `pnpm profile:startup-hover`
+   `pnpm profile:startup-hover-loop -- --runs 5 --tag <tag> --description "<short idea>" --append-results`
    `pnpm exec playwright test tests/playwright/sidebar-first-paint.spec.ts --grep "paints an active-centered sparse snapshot"`
-5. Keep the experiment only if `clearMissingRowCount` reaches 0, hover feedback appears for the visible sparse row, and guards do not regress.
+5. Keep the experiment only if `clearMissingRowCount` reaches 0, hover feedback appears for the visible sparse row, the repeated loop status is `keep`, and guards do not regress.
 6. If the result is worse or ambiguous, revert only the experiment changes and try the next hypothesis.
 
 ## Safety

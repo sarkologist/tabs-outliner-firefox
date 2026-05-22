@@ -1149,15 +1149,16 @@ function renderSnapshotRows(projection: VisibleTreeProjection): void {
 
   const rowHeight = currentRowHeight();
   const totalRowCount = projection.totalRowCount ?? projection.rows.length;
+  const includeActions = !hydratingFullState || !isSparseInitialProjection(projection);
   activeDropPlacement = undefined;
   removeDropPreviewElements();
   tree.style.height = `${totalRowCount * rowHeight}px`;
   tree.textContent = "";
 
-  const hasLiveDescendant = createLiveDescendantChecker(currentState);
+  const hasLiveDescendant = includeActions ? createLiveDescendantChecker(currentState) : () => false;
   const fragment = document.createDocumentFragment();
   for (const row of projection.rows) {
-    fragment.append(renderRow(currentState, row, rowHeight, projection.query, hasLiveDescendant));
+    fragment.append(renderRow(currentState, row, rowHeight, projection.query, hasLiveDescendant, { includeActions }));
   }
   tree.append(fragment);
   scrollToObservedActiveTab(projection);
@@ -1520,7 +1521,8 @@ function renderRow(
   rowInfo: VisibleTreeRow,
   rowHeight: number,
   searchQuery: string,
-  hasLiveDescendant: (nodeId: NodeId) => boolean
+  hasLiveDescendant: (nodeId: NodeId) => boolean,
+  options: { includeActions?: boolean } = {}
 ): HTMLElement {
   const node = state.nodes[rowInfo.nodeId];
   if (!node) {
@@ -1588,38 +1590,40 @@ function renderRow(
     row.append(label);
   }
 
-  const actions = document.createElement("span");
-  actions.className = "node-actions";
+  if (options.includeActions ?? true) {
+    const actions = document.createElement("span");
+    actions.className = "node-actions";
 
-  if (rowInfo.isSearchMatch) {
-    actions.append(actionButton("Show in tree", "show-in-tree", "locate"));
-  }
-  actions.append(actionButton("Cut", "cut", "scissors"));
-  if (pendingCutNodeId) {
-    actions.append(actionButton("Paste", "paste", "clipboard", !pasteAfterCommand(state, pendingCutNodeId, node.id)));
-  }
-  actions.append(actionButton("Group", "group", "group"));
-  if (canMoveSubtreeToTopLevel(node)) {
-    actions.append(actionButton("Move to top level", "move-subtree-to-top-level", "root-outdent"));
-  }
-  if (node.status === "live" || hasLiveDescendant(node.id)) {
-    actions.append(actionButton("Close", "close-node", "close-circle"));
-  }
+    if (rowInfo.isSearchMatch) {
+      actions.append(actionButton("Show in tree", "show-in-tree", "locate"));
+    }
+    actions.append(actionButton("Cut", "cut", "scissors"));
+    if (pendingCutNodeId) {
+      actions.append(actionButton("Paste", "paste", "clipboard", !pasteAfterCommand(state, pendingCutNodeId, node.id)));
+    }
+    actions.append(actionButton("Group", "group", "group"));
+    if (canMoveSubtreeToTopLevel(node)) {
+      actions.append(actionButton("Move to top level", "move-subtree-to-top-level", "root-outdent"));
+    }
+    if (node.status === "live" || hasLiveDescendant(node.id)) {
+      actions.append(actionButton("Close", "close-node", "close-circle"));
+    }
 
-  if (canFlattenSubtree(state, node)) {
-    actions.append(actionButton("Flatten", "flatten", "flatten"));
-  }
+    if (canFlattenSubtree(state, node)) {
+      actions.append(actionButton("Flatten", "flatten", "flatten"));
+    }
 
-  if (canPromoteChildren(node)) {
-    actions.append(actionButton("Promote children", "promote-children", "outdent"));
-  }
+    if (canPromoteChildren(node)) {
+      actions.append(actionButton("Promote children", "promote-children", "outdent"));
+    }
 
-  if (isRenamableGroup(node)) {
-    actions.append(actionButton("Rename", "rename", "pencil"));
-  }
+    if (isRenamableGroup(node)) {
+      actions.append(actionButton("Rename", "rename", "pencil"));
+    }
 
-  actions.append(actionButton("Delete", "delete", "trash"));
-  row.append(actions);
+    actions.append(actionButton("Delete", "delete", "trash"));
+    row.append(actions);
+  }
 
   item.append(row);
 
