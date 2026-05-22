@@ -858,6 +858,29 @@ async function countNodeTableObjectKeys<T>(
   }
 }
 
+async function countNodeTableObjectEntries<T>(
+  callback: () => Promise<T>,
+  countedNodeTable?: OutlineState["nodes"]
+): Promise<{ calls: number; value: T }> {
+  const originalEntries = Object.entries;
+  let calls = 0;
+  const spy = vi.spyOn(Object, "entries").mockImplementation(((value: object) => {
+    if (value === countedNodeTable || (!countedNodeTable && isNodeTableLike(value))) {
+      calls += 1;
+    }
+    return originalEntries(value as never);
+  }) as typeof Object.entries);
+  try {
+    const value = await callback();
+    return {
+      calls,
+      value
+    };
+  } finally {
+    spy.mockRestore();
+  }
+}
+
 async function countNodePropertyReads<T>(
   state: OutlineState,
   countedNodeIds: readonly string[],
@@ -2362,6 +2385,26 @@ describe("background controller lifecycle", () => {
     await secondController.ensureState();
 
     expect(vi.mocked(runtime.api.storage.local.set)).not.toHaveBeenCalled();
+  });
+
+  it("does not clone the persisted v3 node table before returning a matching closed-heavy startup state", async () => {
+    const storedState = wideClosedTabState(300);
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [],
+      { initialStorage: outlineStateV3Changes(storedState).setItems }
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    const { calls, value: state } = await countNodeTableObjectEntries(() => controller.ensureState());
+
+    expect(state.nodes["tab:300"]?.title).toBe("Saved 300");
+    expect(calls).toBe(0);
   });
 
   it("defers fresh bootstrap persistence until an explicit save flush", async () => {

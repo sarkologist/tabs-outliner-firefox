@@ -231,6 +231,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
   let state: OutlineState | undefined;
   let lastPersistedState: OutlineState | undefined;
+  let deferredPersistedStateCloneTimer: ReturnType<typeof setTimeout> | undefined;
   let historyState: HistoryState | undefined;
   let preferences: AppPreferences | undefined;
   let runtimeIndex: RuntimeStateIndex | undefined;
@@ -599,6 +600,9 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
       let result: Awaited<ReturnType<typeof runCommand>>;
       try {
+        if (message.type === "toggleCollapsed" || message.type === "expandAncestors") {
+          detachPersistedStateBaselineForMutation();
+        }
         result = await perfTrace.measureAsync("background.command.run", { command: message.type }, () =>
           runCommand(current, adapter, message)
         );
@@ -889,10 +893,16 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     ]);
     const stored = loaded?.state;
     if (stored) {
-      lastPersistedState = loaded.format === "v3" ? cloneOutlineState(stored) : undefined;
-      if (runtimeSnapshotMateriallyMatchesState(stored, windows)) {
+      const storedMatchesRuntime = runtimeSnapshotMateriallyMatchesState(stored, windows);
+      if (storedMatchesRuntime) {
+        if (loaded.format === "v3") {
+          deferPersistedStateBaselineClone(stored);
+        } else {
+          lastPersistedState = undefined;
+        }
         state = stored;
       } else {
+        lastPersistedState = loaded.format === "v3" ? cloneOutlineState(stored) : undefined;
         const repaired = repairState(stored);
         const reconciled = reconcileWithWindows(repaired, windows, { now: now() });
         state = statesEqualIgnoringUpdatedAt(repaired, reconciled) ? repaired : reconciled;
@@ -1538,6 +1548,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     };
 
     const applyPlannedStateUpdates = (): void => {
+      detachPersistedStateBaselineForMutation();
       if (plannedRootIds) {
         current.rootIds = plannedRootIds;
       }
@@ -1647,6 +1658,31 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     return runtimeIndex;
   }
 
+  function deferPersistedStateBaselineClone(persisted: OutlineState): void {
+    if (deferredPersistedStateCloneTimer !== undefined) {
+      clearTimeout(deferredPersistedStateCloneTimer);
+      deferredPersistedStateCloneTimer = undefined;
+    }
+    lastPersistedState = persisted;
+    deferredPersistedStateCloneTimer = setTimeout(() => {
+      deferredPersistedStateCloneTimer = undefined;
+      if (lastPersistedState === persisted) {
+        lastPersistedState = cloneOutlineState(persisted);
+      }
+    }, 0);
+  }
+
+  function detachPersistedStateBaselineForMutation(): void {
+    const current = state;
+    if (current && lastPersistedState === current) {
+      if (deferredPersistedStateCloneTimer !== undefined) {
+        clearTimeout(deferredPersistedStateCloneTimer);
+        deferredPersistedStateCloneTimer = undefined;
+      }
+      lastPersistedState = cloneOutlineState(current);
+    }
+  }
+
   function installStateTransition(
     previous: OutlineState,
     next: OutlineState,
@@ -1667,6 +1703,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     return enqueueMutation(async () => {
       const current = await ensureState();
       const index = runtimeIndexForState(current);
+      detachPersistedStateBaselineForMutation();
       const activation = activateRuntimeTabInPlace(current, index, activeInfo.tabId, activeInfo.windowId);
       if (!activation.found) {
         return refreshFromRuntimeNow([], { closeMissing: true });
@@ -1692,6 +1729,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       }
 
       const index = runtimeIndexForState(current);
+      detachPersistedStateBaselineForMutation();
       const focus = focusRuntimeWindowInPlace(current, index, windowId);
       if (!focus.found) {
         return refreshFromRuntimeNow([], { closeMissing: false });
