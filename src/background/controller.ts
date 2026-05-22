@@ -3091,7 +3091,7 @@ function runtimeSnapshotMateriallyMatchesState(state: OutlineState, windows: Run
       .sort((left, right) => left.index - right.index);
     runtimeTabCount += tabs.length;
 
-    const projectedTabs = projectLiveTabs(state, windowNodeId).filter((tab) => tab.windowId === windowInfo.id);
+    const projectedTabs = projectLiveTabs(state, windowNodeId, lookup).filter((tab) => tab.windowId === windowInfo.id);
     if (projectedTabs.length !== tabs.length) {
       return false;
     }

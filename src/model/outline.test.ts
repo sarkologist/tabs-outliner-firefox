@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   LARGE_RESTORE_NODE_THRESHOLD,
@@ -22,6 +22,7 @@ import {
   restoreNodes,
   wrapNodeInGroup
 } from "./outline.js";
+import { buildOutlineLookup } from "./outline-lookup.js";
 import type { NodeId, OutlineNode, OutlineState, RuntimeWindow } from "./types.js";
 import { generatedTraceConfig, generatedTraceTimeoutMs } from "../test/generated-traces.test-support.js";
 
@@ -448,6 +449,34 @@ describe("outline model", () => {
       { tabId: 3, windowId: 10 },
       { tabId: 2, windowId: 10 }
     ]);
+  });
+
+  it("projects live tabs with a caller-provided lookup without rebuilding it", () => {
+    const state = bootstrapFromWindows(windows, { now: 1000 });
+    const moved = moveNode(state, "tab:3", {
+      parentId: "tab:1",
+      index: 0
+    });
+    const lookup = buildOutlineLookup(moved);
+    const originalValues = Object.values;
+    let nodeTableScans = 0;
+    const valuesSpy = vi.spyOn(Object, "values").mockImplementation(((value: object) => {
+      if (value === moved.nodes) {
+        nodeTableScans += 1;
+      }
+      return originalValues(value as never);
+    }) as typeof Object.values);
+
+    try {
+      expect(projectLiveTabs(moved, "window:10", lookup)).toEqual([
+        { tabId: 1, windowId: 10 },
+        { tabId: 3, windowId: 10 },
+        { tabId: 2, windowId: 10 }
+      ]);
+      expect(nodeTableScans).toBe(0);
+    } finally {
+      valuesSpy.mockRestore();
+    }
   });
 
   it("moves a subtree without copying unrelated nodes", () => {

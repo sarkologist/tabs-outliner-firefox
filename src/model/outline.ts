@@ -914,14 +914,17 @@ export function moveSubtreeToTopLevel(
   });
 }
 
-export function projectLiveTabs(state: OutlineState, windowIdOrNodeId: number | NodeId): LiveTabProjection[] {
+export function projectLiveTabs(
+  state: OutlineState,
+  windowIdOrNodeId: number | NodeId,
+  lookup = buildOutlineLookup(state)
+): LiveTabProjection[] {
   const windowId = typeof windowIdOrNodeId === "number" ? windowNodeId(windowIdOrNodeId) : windowIdOrNodeId;
   const root = state.nodes[windowId];
   if (!root) {
     return [];
   }
 
-  const lookup = buildOutlineLookup(state);
   const projection: LiveTabProjection[] = [];
   walk(state, root.id, (node) => {
     if (node.kind === "tab" && node.status === "live" && node.live && "tabId" in node.live) {
