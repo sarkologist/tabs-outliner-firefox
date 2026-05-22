@@ -719,3 +719,11 @@ Use these as starting targets, not hard promises:
 - Change: sidebar hover and hover-guide code now resolve rendered rows by `VisibleTreeRow.index`, keeping the dense array fast path and falling back to a small sparse-row scan only when the projection is not indexed densely.
 - After the fix, `pnpm profile:startup-hover` reported `pointerOutcomes: ["hover-row"]`, `clearMissingRowCount: 0`, `hoverFeedbackCount: 1`, `hoverGuideCount: 1`, `sidebar.input.pointerDelay` max 0.2ms, `sidebar.input.hoverFeedbackDelay` max 2.8ms, and `sidebar.hoverGuide` max 1ms.
 - Verification: `pnpm run build`, `pnpm profile:startup-hover`, `pnpm exec playwright test tests/playwright/sidebar-first-paint.spec.ts --grep "paints an active-centered sparse snapshot"`, and `pnpm exec playwright test tests/playwright/sidebar-drag-drop-performance.spec.ts --grep "hover feedback"` passed.
+
+### 2026-05-22: Sidebar Hover Row Frame Instrumentation
+
+- Follow-up profile `dist/tabs-outliner-profile-2026-05-22 copy 4.json` did not show queued JS input lag while hovering rows: `sidebar.input.pointerDelay` had 205 samples with max 3ms, `sidebar.input.hoverFeedbackDelay` had 134 samples with max 5ms, and `sidebar.hoverGuide` had 134 samples with max 2ms.
+- The hover trace was after hydration (`hydrating: false`) and covered repeated movement across 14 rendered row indexes (`26171` through `26184`). The remaining perceived lag is therefore not explained by the existing event-queue or hover-guide JS spans.
+- Added `sidebar.input.hoverFrameDelay`, measured from the original pointer event timestamp to the next animation frame after hover-guide DOM mutation. This gives future real profiles a signal for missed-frame visual feedback that `sidebar.input.hoverFeedbackDelay` cannot see.
+- Browser check: `pnpm exec playwright test tests/playwright/sidebar-drag-drop-performance.spec.ts --grep "queued pointer"` intentionally delayed a synthetic pointer by 30ms and reported `sidebar.input.hoverFrameDelay` max 36ms, alongside `sidebar.input.hoverFeedbackDelay` max 32ms.
+- Startup guard: `pnpm profile:startup-hover` still passed and now reports `sidebar.input.hoverFrameDelay` max 7.3ms for the sparse visible row before hydration completes.

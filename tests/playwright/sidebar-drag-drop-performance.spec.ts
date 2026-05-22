@@ -198,6 +198,7 @@ test.describe("sidebar drag/drop performance", () => {
 
     expect(result.summary?.find((row) => row.name === "sidebar.input.pointerDelay")?.maxMs).toBeGreaterThanOrEqual(15);
     expect(result.summary?.find((row) => row.name === "sidebar.input.hoverFeedbackDelay")?.maxMs).toBeGreaterThanOrEqual(15);
+    expect(result.summary?.find((row) => row.name === "sidebar.input.hoverFrameDelay")?.maxMs).toBeGreaterThanOrEqual(15);
     expect(result.summary?.find((row) => row.name === "sidebar.input.scrollDelay")?.maxMs).toBeGreaterThanOrEqual(15);
     expect(result.inputDelayEntries).toContainEqual(expect.objectContaining({
       name: "sidebar.input.pointerDelay",
@@ -208,6 +209,14 @@ test.describe("sidebar drag/drop performance", () => {
     }));
     expect(result.inputDelayEntries).toContainEqual(expect.objectContaining({
       name: "sidebar.input.hoverFeedbackDelay",
+      detail: expect.objectContaining({
+        event: "pointerover",
+        outcome: "hover-row",
+        reason: "pointer"
+      })
+    }));
+    expect(result.inputDelayEntries).toContainEqual(expect.objectContaining({
+      name: "sidebar.input.hoverFrameDelay",
       detail: expect.objectContaining({
         event: "pointerover",
         outcome: "hover-row",

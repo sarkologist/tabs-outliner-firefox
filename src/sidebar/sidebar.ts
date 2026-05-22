@@ -1809,6 +1809,7 @@ function applyHoverLineScopeNow(
   hoverLineScope = scope;
   recordHoverFeedbackDelay(reason, feedbackTrace);
   applyHoverLineScopeToRenderedRows(reason);
+  recordHoverFrameDelay(reason, feedbackTrace);
 }
 
 function recordHoverFeedbackDelay(reason: HoverGuideApplyReason, feedbackTrace: HoverFeedbackTrace | undefined): void {
@@ -1825,6 +1826,31 @@ function recordHoverFeedbackDelay(reason: HoverGuideApplyReason, feedbackTrace: 
     ...feedbackTrace.detail,
     reason,
     feedbackRows: currentProjection?.rows.length ?? 0
+  });
+}
+
+function recordHoverFrameDelay(reason: HoverGuideApplyReason, feedbackTrace: HoverFeedbackTrace | undefined): void {
+  if (!perfTrace.isEnabled() || !feedbackTrace) {
+    return;
+  }
+
+  const detail = {
+    ...feedbackTrace.detail,
+    reason,
+    feedbackRows: currentProjection?.rows.length ?? 0
+  };
+  const eventTimeStamp = feedbackTrace.eventTimeStamp;
+  window.requestAnimationFrame(() => {
+    if (!perfTrace.isEnabled()) {
+      return;
+    }
+
+    const delayMs = delaySinceEventTimeStampMs(eventTimeStamp);
+    if (typeof delayMs !== "number") {
+      return;
+    }
+
+    perfTrace.record("sidebar.input.hoverFrameDelay", delayMs, detail);
   });
 }
 

@@ -92,6 +92,7 @@ test.describe("sidebar startup interaction profile", () => {
       const entries = snapshot?.sidebar.entries ?? [];
       const pointerEntries = entries.filter((entry) => entry.name === "sidebar.input.pointerDelay");
       const hoverFeedbackEntries = entries.filter((entry) => entry.name === "sidebar.input.hoverFeedbackDelay");
+      const hoverFrameEntries = entries.filter((entry) => entry.name === "sidebar.input.hoverFrameDelay");
       const hoverGuideEntries = entries.filter((entry) => entry.name === "sidebar.hoverGuide");
       const messages = (window as typeof window & { __sidebarBootMessages?: Array<{ type: string; at: number }> })
         .__sidebarBootMessages ?? [];
@@ -109,9 +110,11 @@ test.describe("sidebar startup interaction profile", () => {
         pointerOutcomes: pointerEntries.map((entry) => entry.detail?.outcome ?? "none"),
         clearMissingRowCount: pointerEntries.filter((entry) => entry.detail?.outcome === "clear-missing-row").length,
         hoverFeedbackCount: hoverFeedbackEntries.length,
+        hoverFrameCount: hoverFrameEntries.length,
         hoverGuideCount: hoverGuideEntries.length,
         pointerDelay: summary?.find((row) => row.name === "sidebar.input.pointerDelay"),
         hoverFeedbackDelay: summary?.find((row) => row.name === "sidebar.input.hoverFeedbackDelay"),
+        hoverFrameDelay: summary?.find((row) => row.name === "sidebar.input.hoverFrameDelay"),
         hoverGuide: summary?.find((row) => row.name === "sidebar.hoverGuide")
       };
     }, TARGET_NODE_ID);
@@ -128,8 +131,10 @@ test.describe("sidebar startup interaction profile", () => {
     expect(result.pointerOutcomes.length).toBeGreaterThan(0);
     expect(result.clearMissingRowCount).toBe(0);
     expect(result.hoverFeedbackCount).toBeGreaterThan(0);
+    expect(result.hoverFrameCount).toBeGreaterThan(0);
     expect(result.hoverGuideCount).toBeGreaterThan(0);
     expect(result.hoverFeedbackDelay?.maxMs).toBeLessThan(16);
+    expect(result.hoverFrameDelay?.maxMs).toBeLessThan(50);
     expect(issues).toEqual([]);
   });
 });
