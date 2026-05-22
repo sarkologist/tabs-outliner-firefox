@@ -35,6 +35,7 @@ export type SidebarStartupProfileResult = {
   totalMs?: number;
   hydrateMs?: number;
   totalWithHydrationMs?: number;
+  phaseMs?: Record<string, number>;
   snapshotRows?: number;
   snapshotNodes?: number;
   saves: number;
@@ -55,6 +56,7 @@ export type SidebarStartupSummary = {
   saves: number;
   broadcasts: number;
   eventCount: number;
+  phaseMedianMs: Record<string, number>;
   baselinePrimaryMedianMs?: number;
   requiredImprovementMs?: number;
   improvementMs?: number;
@@ -90,6 +92,7 @@ export function summarizeSidebarStartupProfile(
   const saves = sum(results, "saves");
   const broadcasts = sum(results, "broadcasts");
   const eventCount = sum(results, "eventCount");
+  const phaseMedianMs = startupPhaseMedianMs(results);
   const guardFailures = startupGuardFailures({
     missingScenarios: SIDEBAR_STARTUP_SCENARIOS.filter((scenario) => resultsForScenario(results, scenario).length === 0),
     saves,
@@ -114,6 +117,7 @@ export function summarizeSidebarStartupProfile(
     saves,
     broadcasts,
     eventCount,
+    phaseMedianMs,
     ...(options.baselinePrimaryMedianMs !== undefined
       ? {
           baselinePrimaryMedianMs: options.baselinePrimaryMedianMs,
@@ -190,6 +194,26 @@ function sum<K extends keyof SidebarStartupProfileResult>(
   key: K
 ): number {
   return numberValues(results, key).reduce((total, value) => total + value, 0);
+}
+
+function startupPhaseMedianMs(results: readonly SidebarStartupProfileResult[]): Record<string, number> {
+  const valuesByPhase = new Map<string, number[]>();
+  for (const result of results) {
+    for (const [phase, value] of Object.entries(result.phaseMs ?? {})) {
+      if (!Number.isFinite(value)) {
+        continue;
+      }
+      const values = valuesByPhase.get(phase) ?? [];
+      values.push(value);
+      valuesByPhase.set(phase, values);
+    }
+  }
+
+  return Object.fromEntries(
+    [...valuesByPhase.entries()]
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([phase, values]) => [phase, median(values)])
+  );
 }
 
 function startupGuardFailures(metrics: {

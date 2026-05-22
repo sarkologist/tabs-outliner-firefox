@@ -23,7 +23,7 @@ import {
   loadStateWithMetadata,
   saveStateAndHistory
 } from "./storage.js";
-import type { InitialTreeSnapshot } from "./storage.js";
+import type { InitialTreeSnapshot, LoadStateOptions, StateLoadPhase } from "./storage.js";
 import {
   applyOutlineDelta,
   cloneOutlineNode,
@@ -894,7 +894,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   async function initializeState(): Promise<OutlineState> {
     const [windows, loaded] = await Promise.all([
       perfTrace.measureAsync("background.runtime.getWindows", () => getNormalWindows(api)),
-      perfTrace.measureAsync("background.state.load", () => loadStateWithMetadata(api))
+      perfTrace.measureAsync("background.state.load", () => loadStateWithMetadata(api, stateLoadTraceOptions()))
     ]);
     const stored = loaded?.state;
     let storedRuntimeMatch: RuntimeSnapshotMatch | undefined;
@@ -924,6 +924,25 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       ? buildRuntimeStateIndexFromLookup(state, storedRuntimeMatch.lookup)
       : buildRuntimeStateIndex(state);
     return state;
+  }
+
+  function stateLoadTraceOptions(): LoadStateOptions | undefined {
+    if (!perfTrace.isEnabled()) {
+      return undefined;
+    }
+
+    return {
+      onPhase: (phase) => {
+        perfTrace.mark(`background.state.load.${phase.name}`, stateLoadTraceDetail(phase));
+      }
+    };
+  }
+
+  function stateLoadTraceDetail(phase: StateLoadPhase): TraceDetail {
+    return {
+      durationMs: phase.durationMs,
+      ...(phase.detail ?? {})
+    };
   }
 
   async function recordHistoryEntry(

@@ -112,20 +112,57 @@ export type LoadedOutlineState = {
   format: "v2" | "v3";
 };
 
+export type StateLoadPhase = {
+  name: string;
+  durationMs: number;
+  detail?: Record<string, string | number | boolean>;
+};
+
+export type LoadStateOptions = {
+  onPhase?: (phase: StateLoadPhase) => void;
+};
+
 export type OutlineStateV3Changes = {
   setItems: Record<string, unknown>;
   removeKeys: string[];
 };
 
+async function measureLoadPhase<T>(
+  options: LoadStateOptions,
+  name: string,
+  fn: () => T | Promise<T>,
+  detail: StateLoadPhase["detail"] = {}
+): Promise<T> {
+  const startMs = currentMs();
+  try {
+    return await fn();
+  } finally {
+    options.onPhase?.({
+      name,
+      durationMs: currentMs() - startMs,
+      ...(Object.keys(detail).length > 0 ? { detail } : {})
+    });
+  }
+}
+
+function currentMs(): number {
+  return typeof performance !== "undefined" ? performance.now() : Date.now();
+}
+
 export async function loadState(api: WebExtensionBrowser = browser): Promise<OutlineState | undefined> {
   return (await loadStateWithMetadata(api))?.state;
 }
 
-export async function loadStateWithMetadata(api: WebExtensionBrowser = browser): Promise<LoadedOutlineState | undefined> {
-  const stored = await api.storage.local.get([STATE_V3_MANIFEST_KEY, STATE_V2_MANIFEST_KEY]);
+export async function loadStateWithMetadata(
+  api: WebExtensionBrowser = browser,
+  options: LoadStateOptions = {}
+): Promise<LoadedOutlineState | undefined> {
+  const stored = await measureLoadPhase(options, "manifestRead", () =>
+    api.storage.local.get([STATE_V3_MANIFEST_KEY, STATE_V2_MANIFEST_KEY])
+  );
   const v3Manifest = stored[STATE_V3_MANIFEST_KEY];
   if (isStateV3Manifest(v3Manifest)) {
-    const state = await loadStateV3FromManifest(v3Manifest, api);
+    const state = await loadStateV3FromManifest(v3Manifest, api, options);
     if (state) {
       return { state, format: "v3" };
     }
@@ -317,44 +354,86 @@ export async function loadStateV3(api: WebExtensionBrowser = browser): Promise<O
 
 async function loadStateV3FromManifest(
   manifest: StateV3Manifest,
-  api: WebExtensionBrowser
+  api: WebExtensionBrowser,
+  options: LoadStateOptions = {}
 ): Promise<OutlineState | undefined> {
-  const shardItems = manifest.nodeShardKeys.length > 0
-    ? await api.storage.local.get(manifest.nodeShardKeys)
-    : {};
+  const shardItems: Record<string, unknown> = await measureLoadPhase(
+    options,
+    "v3.nodeShardRead",
+    () => manifest.nodeShardKeys.length > 0
+      ? api.storage.local.get(manifest.nodeShardKeys)
+      : Promise.resolve({}),
+    { keys: manifest.nodeShardKeys.length }
+  );
   const nodes: OutlineState["nodes"] = {};
   const storedNodes: StoredOutlineNode[] = [];
-  for (const key of manifest.nodeShardKeys) {
-    const shard = shardItems[key];
-    if (!isStateV3NodeShard(shard)) {
-      return undefined;
-    }
-    for (const storedNode of shard.nodes) {
-      storedNodes.push(storedNode);
-      nodes[storedNode.id] = storedNodeToNode(storedNode);
-    }
+  const storedNodesWithChildren: StoredOutlineNode[] = [];
+  const materialized = await measureLoadPhase(
+    options,
+    "v3.nodeMaterialize",
+    () => {
+      for (const key of manifest.nodeShardKeys) {
+        const shard = shardItems[key];
+        if (!isStateV3NodeShard(shard)) {
+          return false;
+        }
+        for (const storedNode of shard.nodes) {
+          storedNodes.push(storedNode);
+          if (storedNode.childCount > 0) {
+            storedNodesWithChildren.push(storedNode);
+          }
+          nodes[storedNode.id] = storedNodeToNode(storedNode);
+        }
+      }
+      return true;
+    },
+    { shards: manifest.nodeShardKeys.length }
+  );
+  if (!materialized) {
+    return undefined;
   }
 
-  const orderPageKeys = storedNodes.flatMap((node) => orderPageKeysForStoredNode(node, manifest.orderPageSize));
-  const orderPageItems = orderPageKeys.length > 0 ? await api.storage.local.get(orderPageKeys) : {};
-  for (const storedNode of storedNodes) {
-    const node = nodes[storedNode.id];
-    if (!node || storedNode.childCount === 0) {
-      continue;
-    }
-    const childIds: NodeId[] = [];
-    const pageCount = Math.ceil(storedNode.childCount / manifest.orderPageSize);
-    for (let pageIndex = 0; pageIndex < pageCount; pageIndex += 1) {
-      const page = orderPageItems[stateV3OrderPageKey(storedNode.id, pageIndex)];
-      if (!isStateV3OrderPage(page) || page.parentId !== storedNode.id || page.pageIndex !== pageIndex) {
-        return undefined;
+  const orderPageKeys = await measureLoadPhase(
+    options,
+    "v3.orderPageKeys",
+    () => storedNodesWithChildren.flatMap((node) => orderPageKeysForStoredNode(node, manifest.orderPageSize)),
+    { parents: storedNodesWithChildren.length }
+  );
+  const orderPageItems: Record<string, unknown> = await measureLoadPhase(
+    options,
+    "v3.orderPageRead",
+    () => orderPageKeys.length > 0 ? api.storage.local.get(orderPageKeys) : Promise.resolve({}),
+    { keys: orderPageKeys.length }
+  );
+  const attached = await measureLoadPhase(
+    options,
+    "v3.orderAttach",
+    () => {
+      for (const storedNode of storedNodesWithChildren) {
+        const node = nodes[storedNode.id];
+        if (!node) {
+          return false;
+        }
+        const childIds: NodeId[] = [];
+        const pageCount = Math.ceil(storedNode.childCount / manifest.orderPageSize);
+        for (let pageIndex = 0; pageIndex < pageCount; pageIndex += 1) {
+          const page = orderPageItems[stateV3OrderPageKey(storedNode.id, pageIndex)];
+          if (!isStateV3OrderPage(page) || page.parentId !== storedNode.id || page.pageIndex !== pageIndex) {
+            return false;
+          }
+          childIds.push(...page.childIds);
+        }
+        if (childIds.length !== storedNode.childCount) {
+          return false;
+        }
+        node.childIds = childIds;
       }
-      childIds.push(...page.childIds);
-    }
-    if (childIds.length !== storedNode.childCount) {
-      return undefined;
-    }
-    node.childIds = childIds;
+      return true;
+    },
+    { pages: orderPageKeys.length }
+  );
+  if (!attached) {
+    return undefined;
   }
 
   const state: OutlineState = {
@@ -362,7 +441,9 @@ async function loadStateV3FromManifest(
     rootIds: [...manifest.rootIds],
     nodes
   };
-  return isOutlineState(state) ? state : undefined;
+  return await measureLoadPhase(options, "v3.validation", () => isOutlineState(state))
+    ? state
+    : undefined;
 }
 
 export function outlineStateV3Changes(

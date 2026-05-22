@@ -8,6 +8,7 @@ import {
   STATE_V3_MANIFEST_KEY,
   loadInitialTreeSnapshot,
   loadState,
+  loadStateWithMetadata,
   loadStateV2,
   loadStateV3,
   outlineStateV2Items,
@@ -244,6 +245,31 @@ describe("outline state v2 storage", () => {
     expect(loaded).toEqual(state);
     expect(api.storage.local.get).toHaveBeenCalledWith(STATE_V2_MANIFEST_KEY);
     expect(vi.mocked(api.storage.local.get).mock.calls.some((call) => Array.isArray(call[0]))).toBe(true);
+  });
+
+  it("reports v3 hydration phases while loading metadata", async () => {
+    const state = makeLargeState(1200);
+    const api = fakeApi(outlineStateV3Changes(state, { revision: 789 }).setItems);
+    const phases: Array<{ name: string; durationMs: number }> = [];
+
+    const loaded = await loadStateWithMetadata(api, {
+      onPhase: (phase) => {
+        phases.push(phase);
+      }
+    });
+
+    expect(loaded?.state).toEqual(state);
+    expect(loaded?.format).toBe("v3");
+    expect(phases.map((phase) => phase.name)).toEqual(expect.arrayContaining([
+      "manifestRead",
+      "v3.nodeShardRead",
+      "v3.nodeMaterialize",
+      "v3.orderPageKeys",
+      "v3.orderPageRead",
+      "v3.orderAttach",
+      "v3.validation"
+    ]));
+    expect(phases.every((phase) => phase.durationMs >= 0)).toBe(true);
   });
 
   it("saves state using v3 keys by default", async () => {

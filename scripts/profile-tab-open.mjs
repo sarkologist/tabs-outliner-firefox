@@ -498,16 +498,13 @@ async function profile({ tabs, liveTabs, updates, scenario }) {
 
 async function profileStartupStoredUnchanged({ tabs, liveTabs }) {
   const runtime = makeClosedHeavyStartupRuntime(tabs, liveTabs);
-  runtime.saves = 0;
-  runtime.broadcasts = 0;
-  runtime.stringifyMs = 0;
-  runtime.bytes = 0;
-  resetEventCounts(runtime.eventCounts);
 
   const secondController = createBackgroundController({ api: runtime.api, now: () => 2000 });
+  await prepareStartupTrace(secondController, runtime);
   const start = performance.now();
   const state = await secondController.ensureState();
   const totalMs = performance.now() - start;
+  const trace = await secondController.handleMessage({ type: "getPerformanceTrace" });
   const saveFlushStart = performance.now();
   await secondController.flushPendingSaves();
   const saveFlushMs = performance.now() - saveFlushStart;
@@ -527,25 +524,25 @@ async function profileStartupStoredUnchanged({ tabs, liveTabs }) {
     mbStringified: Math.round(runtime.bytes / 1024 / 1024),
     eventCounts: eventCountsSnapshot(runtime.eventCounts),
     eventCount: eventCountsTotal(runtime.eventCounts),
+    phaseMs: startupPhaseMsFromTrace(trace),
     nodes: Object.keys(state.nodes).length
   };
 }
 
 async function profileStartupInitialSnapshot({ tabs, liveTabs }) {
   const runtime = makeClosedHeavyStartupRuntime(tabs, liveTabs);
-  runtime.saves = 0;
-  runtime.broadcasts = 0;
-  runtime.stringifyMs = 0;
-  runtime.bytes = 0;
-  resetEventCounts(runtime.eventCounts);
 
   const secondController = createBackgroundController({ api: runtime.api, now: () => 2000 });
+  await prepareStartupTrace(secondController, runtime);
   const initialStart = performance.now();
   const snapshot = await secondController.handleMessage({ type: "getInitialTreeSnapshot" });
   const initialMs = performance.now() - initialStart;
+  await secondController.handleMessage({ type: "clearPerformanceTrace" });
+  resetRuntimeMeasurement(runtime);
   const fullStart = performance.now();
   const state = await secondController.handleMessage({ type: "getState" });
   const hydrateMs = performance.now() - fullStart;
+  const trace = await secondController.handleMessage({ type: "getPerformanceTrace" });
 
   return {
     scenario: "startup-initial-snapshot",
@@ -564,6 +561,7 @@ async function profileStartupInitialSnapshot({ tabs, liveTabs }) {
     mbStringified: Math.round(runtime.bytes / 1024 / 1024),
     eventCounts: eventCountsSnapshot(runtime.eventCounts),
     eventCount: eventCountsTotal(runtime.eventCounts),
+    phaseMs: startupPhaseMsFromTrace(trace),
     snapshotRows: Array.isArray(snapshot?.projection?.rows) ? snapshot.projection.rows.length : 0,
     snapshotNodes: snapshot?.state?.nodes ? Object.keys(snapshot.state.nodes).length : 0,
     hydrating: Boolean(snapshot?.hydrating),
@@ -611,6 +609,37 @@ async function profileStartupWarmInitialSnapshot({ tabs, liveTabs }) {
     snapshotTotalRows: snapshot?.projection?.totalRowCount ?? 0,
     hydrating: Boolean(snapshot?.hydrating)
   };
+}
+
+async function prepareStartupTrace(controller, runtime) {
+  await controller.handleMessage({ type: "setPerformanceTraceEnabled", enabled: true });
+  await controller.handleMessage({ type: "clearPerformanceTrace" });
+  resetRuntimeMeasurement(runtime);
+}
+
+function resetRuntimeMeasurement(runtime) {
+  runtime.saves = 0;
+  runtime.broadcasts = 0;
+  runtime.stringifyMs = 0;
+  runtime.bytes = 0;
+  resetEventCounts(runtime.eventCounts);
+}
+
+function startupPhaseMsFromTrace(trace) {
+  const prefix = "background.state.load.";
+  const phaseMs = {};
+  for (const entry of trace?.entries ?? []) {
+    if (typeof entry?.name !== "string" || !entry.name.startsWith(prefix)) {
+      continue;
+    }
+    const durationMs = entry.detail?.durationMs;
+    if (typeof durationMs !== "number" || !Number.isFinite(durationMs)) {
+      continue;
+    }
+    const phase = entry.name.slice(prefix.length);
+    phaseMs[phase] = (phaseMs[phase] ?? 0) + durationMs;
+  }
+  return phaseMs;
 }
 
 const result = await profile(parseArgs(process.argv.slice(2)));

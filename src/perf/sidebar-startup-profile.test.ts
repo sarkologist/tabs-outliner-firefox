@@ -16,19 +16,24 @@ describe("sidebar startup profile helpers", () => {
 
   it("summarizes startup medians and detects guard regressions", () => {
     const summary = summarizeSidebarStartupProfile([
-      startupInitial(620),
-      startupInitial(580),
-      startupInitial(600),
+      startupInitial(620, { phaseMs: { "v3.nodeShardRead": 20, "v3.nodeMaterialize": 80 } }),
+      startupInitial(580, { phaseMs: { "v3.nodeShardRead": 10, "v3.nodeMaterialize": 60 } }),
+      startupInitial(600, { phaseMs: { "v3.nodeShardRead": 15, "v3.nodeMaterialize": 70 } }),
       startupWarm(37),
       startupWarm(39),
       startupWarm(38),
-      startupStored(616),
-      startupStored(600),
-      startupStored(640)
+      startupStored(616, { phaseMs: { "v3.nodeShardRead": 30, "v3.orderPageRead": 40 } }),
+      startupStored(600, { phaseMs: { "v3.nodeShardRead": 20, "v3.orderPageRead": 30 } }),
+      startupStored(640, { phaseMs: { "v3.nodeShardRead": 40, "v3.orderPageRead": 50 } })
     ], { baselinePrimaryMedianMs: 650 });
 
     expect(summary.primaryMedianMs).toBe(600);
     expect(summary.hydrationMedianMs).toBe(598);
+    expect(summary.phaseMedianMs).toEqual({
+      "v3.nodeMaterialize": 70,
+      "v3.nodeShardRead": 20,
+      "v3.orderPageRead": 40
+    });
     expect(summary.requiredImprovementMs).toBe(50);
     expect(summary.improvementMs).toBe(50);
     expect(summary.status).toBe("keep");
