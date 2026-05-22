@@ -32,13 +32,19 @@ First accepted experiment on 2026-05-22:
 - Change: resolve hover rows by `VisibleTreeRow.index`, with a dense array fast path and sparse scan fallback.
 - Result from `pnpm profile:startup-hover`: `pointerOutcomes: ["hover-row"]`, `clearMissingRowCount: 0`, `hoverFeedbackCount: 1`, `hoverGuideCount: 1`, `sidebar.input.pointerDelay.maxMs: 0.2`, `sidebar.input.hoverFeedbackDelay.maxMs: 2.8`, and `sidebar.hoverGuide.maxMs: 1`.
 
+Second accepted experiment on 2026-05-22:
+
+- Hypothesis: remaining startup hover lag is full hydration competing with non-edit hover frames, not hover-guide JS work.
+- Change: record `sidebar.input.hoverFrameDelay`; delay sparse startup full hydration start by 1000ms after pointer/scroll input; when hydration has already resolved, wait for pending hover frames and 120ms of input idle before replacing the sparse projection.
+- Result from `pnpm profile:startup-hover`: the hydration-deferral guard reported `hydrationRequestsBeforeIdle: 0`, `hydrationRequestsAfterIdle: 1`, `sidebar.input.hoverFrameDelay.maxMs: 4.4`, and `sidebar.input.hoverFeedbackDelay.maxMs: 0.3`.
+
 Guard metrics:
 
 - `targetVisible` remains `true`.
 - `initialSnapshotRequests` remains `1`.
 - `treeHeight` remains roughly full-size for the 50k sparse snapshot.
 - `pointerDelay.maxMs` stays below 16ms.
-- After the fix, `hoverFeedbackDelay.maxMs` should stay below 16ms and `hoverGuideCount` should be at least 1.
+- After the fix, `hoverFeedbackDelay.maxMs` should stay below 16ms, `hoverFrameDelay.maxMs` should stay below 50ms for deterministic startup guards, and `hoverGuideCount` should be at least 1.
 - The broader startup guard still applies: `pnpm exec playwright test tests/playwright/sidebar-first-paint.spec.ts --grep "paints an active-centered sparse snapshot"` must pass.
 
 ## Experiment Loop

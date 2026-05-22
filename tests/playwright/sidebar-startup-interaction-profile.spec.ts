@@ -137,6 +137,128 @@ test.describe("sidebar startup interaction profile", () => {
     expect(result.hoverFrameDelay?.maxMs).toBeLessThan(50);
     expect(issues).toEqual([]);
   });
+
+  test("defers full hydration start during startup hover", async ({ page }, testInfo) => {
+    test.setTimeout(90_000);
+    const issues = collectPageIssues(page);
+
+    await page.addInitScript(({ snapshot, fullState }) => {
+      const messages: Array<{ type: string; at: number }> = [];
+      (window as typeof window & {
+        __sidebarBootMessages?: typeof messages;
+      }).__sidebarBootMessages = messages;
+      window.browser = {
+        runtime: {
+          sendMessage: async (message: unknown) => {
+            const type = typeof message === "object" && message ? String((message as { type?: unknown }).type) : "";
+            messages.push({ type, at: performance.now() });
+            if (type === "getInitialTreeSnapshot") {
+              return structuredClone(snapshot);
+            }
+            if (type === "getState") {
+              return structuredClone(fullState);
+            }
+            if (
+              type === "getDiagnostics" ||
+              type === "getPerformanceTrace" ||
+              type === "setPerformanceTraceEnabled" ||
+              type === "clearPerformanceTrace"
+            ) {
+              return undefined;
+            }
+            return { ok: true };
+          },
+          onMessage: {
+            addListener: () => undefined
+          },
+          connect: () => ({
+            onMessage: { addListener: () => undefined },
+            onDisconnect: { addListener: () => undefined }
+          })
+        },
+        storage: {
+          local: {
+            get: async () => ({}),
+            set: async () => undefined
+          },
+          onChanged: {
+            addListener: () => undefined
+          }
+        },
+        windows: {
+          getCurrent: async () => ({ id: 1 })
+        }
+      };
+    }, {
+      snapshot: fixtureActiveCenteredSnapshot(TAB_COUNT, ACTIVE_TAB_ID),
+      fullState: fixtureFullState(TAB_COUNT, ACTIVE_TAB_ID)
+    });
+
+    await page.goto("/sidebar/sidebar.html");
+    await expect(page.locator(`.node[data-node-id='${TARGET_NODE_ID}'].is-active`)).toBeVisible();
+    await page.waitForFunction(() => Boolean(window.tabsOutlinerProfile));
+    await page.evaluate(async () => {
+      await window.tabsOutlinerProfile?.enable();
+      await window.tabsOutlinerProfile?.clear();
+    });
+
+    const result = await page.evaluate(async (targetNodeId) => {
+      const row = document.querySelector(`.node[data-node-id="${CSS.escape(targetNodeId)}"] > .node-row`);
+      if (!(row instanceof HTMLElement)) {
+        throw new Error(`Missing target row for ${targetNodeId}`);
+      }
+
+      const rect = row.getBoundingClientRect();
+      row.dispatchEvent(new PointerEvent("pointerover", {
+        bubbles: true,
+        clientX: rect.left + 20,
+        clientY: rect.top + rect.height / 2,
+        pointerType: "mouse"
+      }));
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 900));
+
+      const messages = (window as typeof window & { __sidebarBootMessages?: Array<{ type: string; at: number }> })
+        .__sidebarBootMessages ?? [];
+      const hydrationRequestsBeforeIdle = messages.filter((message) => message.type === "getState").length;
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 600));
+      const messagesAfterIdle = (window as typeof window & { __sidebarBootMessages?: Array<{ type: string; at: number }> })
+        .__sidebarBootMessages ?? [];
+      const snapshot = await window.tabsOutlinerProfile?.snapshot();
+      const summary = await window.tabsOutlinerProfile?.summary();
+      const entries = snapshot?.sidebar.entries ?? [];
+
+      return {
+        hoverFrameDelay: summary?.find((row) => row.name === "sidebar.input.hoverFrameDelay"),
+        hoverFeedbackDelay: summary?.find((row) => row.name === "sidebar.input.hoverFeedbackDelay"),
+        hydration: summary?.find((row) => row.name === "sidebar.hydration"),
+        render: summary?.find((row) => row.name === "sidebar.render"),
+        hydrationRequestsBeforeIdle,
+        hydrationRequestsAfterIdle: messagesAfterIdle.filter((message) => message.type === "getState").length,
+        pointerEntries: entries.filter((entry) => entry.name === "sidebar.input.pointerDelay").map((entry) => entry.detail),
+        hoverFrameEntries: entries.filter((entry) => entry.name === "sidebar.input.hoverFrameDelay").map((entry) => ({
+          durationMs: entry.durationMs,
+          detail: entry.detail
+        }))
+      };
+    }, TARGET_NODE_ID);
+
+    await testInfo.attach("startup-hover-hydration-defer-profile.json", {
+      body: JSON.stringify(result, null, 2),
+      contentType: "application/json"
+    });
+    console.log(`startup-hover-hydration-defer ${JSON.stringify(result)}`);
+
+    expect(result.hoverFeedbackDelay?.maxMs).toBeLessThan(16);
+    expect(result.hoverFrameDelay?.maxMs).toBeLessThan(50);
+    expect(result.hydrationRequestsBeforeIdle).toBe(0);
+    expect(result.hydrationRequestsAfterIdle).toBe(1);
+    expect(result.hydration?.count).toBe(1);
+    expect(result.render?.count).toBe(1);
+    expect(issues).toEqual([]);
+  });
 });
 
 function fixtureActiveCenteredSnapshot(tabCount: number, activeTabId: number) {
@@ -207,6 +329,48 @@ function fixtureActiveCenteredSnapshot(tabCount: number, activeTabId: number) {
       nodeCount: tabCount + 1,
       closedCount: 0,
       matchCount: 0
+    }
+  };
+}
+
+function fixtureFullState(tabCount: number, activeTabId: number) {
+  const now = 1_700_000_000_000;
+  const tabIds = Array.from({ length: tabCount }, (_value, index) => `tab:${index + 1}`);
+  return {
+    version: 1,
+    rootIds: ["window:1"],
+    nodes: {
+      "window:1": {
+        id: "window:1",
+        kind: "window",
+        status: "live",
+        childIds: tabIds,
+        title: "Window",
+        active: true,
+        collapsed: false,
+        createdAt: now,
+        updatedAt: now,
+        live: { windowId: 1 }
+      },
+      ...Object.fromEntries(
+        tabIds.map((id, index) => [
+          id,
+          {
+            id,
+            kind: "tab",
+            status: "live",
+            parentId: "window:1",
+            childIds: [],
+            title: `Tab ${index + 1}`,
+            url: `https://paint.example/${index + 1}`,
+            active: index + 1 === activeTabId,
+            collapsed: false,
+            createdAt: now,
+            updatedAt: now,
+            live: { tabId: index + 1, windowId: 1 }
+          }
+        ])
+      )
     }
   };
 }

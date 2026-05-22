@@ -116,6 +116,7 @@ let pendingHoverGuideApply = false;
 let pendingHoverGuideReason: HoverGuideApplyReason = "pointer";
 let pendingHoverFeedbackTrace: HoverFeedbackTrace | undefined;
 let scheduledHoverGuideFrame: number | undefined;
+let lastNonEditInteractionAt = Number.NEGATIVE_INFINITY;
 let pendingCutNodeId: NodeId | undefined;
 let currentCutRowRange: CutSubtreeRowRange | undefined;
 let pendingShowInTreeNodeId: NodeId | undefined;
@@ -132,6 +133,9 @@ const WHEEL_ZOOM_THRESHOLD_PX = 80;
 const DIAGNOSTICS_NOTICE_MS = 4000;
 const DIAGNOSTICS_REFRESH_DELAY_MS = 750;
 const FULL_STATE_HYDRATION_DELAY_MS = 750;
+const HYDRATION_AFTER_NON_EDIT_INPUT_DELAY_MS = 1000;
+const HYDRATION_RENDER_INPUT_IDLE_MS = 120;
+const HYDRATION_RENDER_INPUT_MAX_DELAY_MS = 1500;
 const SHOW_IN_TREE_HIGHLIGHT_MS = 1200;
 const VIRTUAL_OVERSCAN_ROWS = 32;
 const HOVER_GUIDE_MAX_SUBTREE_ROWS = 1000;
@@ -421,7 +425,15 @@ async function hydrateFullState(): Promise<void> {
       hydratingFullState = true;
       performance.mark("tabs-outliner.sidebar.hydration.start");
       updateHydrationControls();
-      currentState = (await sendCommand({ type: "getState" })) as OutlineState;
+      const nextState = (await sendCommand({ type: "getState" })) as OutlineState;
+      const renderDelayMs = await waitForHydrationRenderIdle();
+      if (renderDelayMs > 0) {
+        perfTrace.record("sidebar.hydration.renderDelay", renderDelayMs, {
+          reason: "recent-input",
+          rows: currentProjection?.rows.length ?? 0
+        });
+      }
+      currentState = nextState;
       invalidateSidebarWindowActiveTabTargets();
       hydratingFullState = false;
       updateHydrationControls();
@@ -447,14 +459,40 @@ function hydrationTraceDetail(): TraceDetail {
   };
 }
 
-function scheduleFullStateHydration(): void {
+function scheduleFullStateHydration(delayMs = FULL_STATE_HYDRATION_DELAY_MS): void {
   if (!hydratingFullState || pendingFullHydrationTimer !== undefined) {
     return;
   }
   pendingFullHydrationTimer = window.setTimeout(() => {
     pendingFullHydrationTimer = undefined;
     void hydrateFullState();
-  }, FULL_STATE_HYDRATION_DELAY_MS);
+  }, delayMs);
+}
+
+async function waitForHydrationRenderIdle(): Promise<number> {
+  if (!currentProjection || !isSparseInitialProjection(currentProjection)) {
+    return 0;
+  }
+  if (!Number.isFinite(lastNonEditInteractionAt)) {
+    return 0;
+  }
+
+  const startedAt = performance.now();
+  while (true) {
+    if (pendingHoverGuideApply || scheduledHoverGuideFrame !== undefined) {
+      await nextAnimationFrame();
+      await nextAnimationFrame();
+    }
+
+    const now = performance.now();
+    const elapsedMs = now - startedAt;
+    const idleMs = now - lastNonEditInteractionAt;
+    if (idleMs >= HYDRATION_RENDER_INPUT_IDLE_MS || elapsedMs >= HYDRATION_RENDER_INPUT_MAX_DELAY_MS) {
+      return elapsedMs;
+    }
+
+    await delay(Math.min(HYDRATION_RENDER_INPUT_IDLE_MS - idleMs, HYDRATION_RENDER_INPUT_MAX_DELAY_MS - elapsedMs));
+  }
 }
 
 function applyInitialTreeSnapshot(snapshot: InitialTreeSnapshot): void {
@@ -818,6 +856,7 @@ function registerVirtualViewport(): void {
   rootDropSurface?.addEventListener(
     "scroll",
     (event) => {
+      noteNonEditInteraction();
       recordInputDelay("sidebar.input.scrollDelay", event, {
         event: event.type,
         hydrating: hydratingFullState,
@@ -1614,6 +1653,7 @@ function appendTitleText(element: HTMLElement, titleText: string, searchQuery: s
 }
 
 function handleTreePointerOver(event: PointerEvent): void {
+  noteNonEditInteraction();
   if (draggedNodeId) {
     const detail = pointerInputDetail(event, "clear-dragging");
     recordInputDelay("sidebar.input.pointerDelay", event, detail);
@@ -1658,8 +1698,18 @@ function handleTreePointerOver(event: PointerEvent): void {
 }
 
 function handleTreePointerLeave(event: PointerEvent): void {
+  noteNonEditInteraction();
   const detail = pointerInputDetail(event, "pointer-leave-clear");
   clearHoverLineScope({ feedbackTrace: hoverFeedbackTrace(event, detail) });
+}
+
+function noteNonEditInteraction(): void {
+  lastNonEditInteractionAt = performance.now();
+  if (hydratingFullState && pendingFullHydrationTimer !== undefined) {
+    window.clearTimeout(pendingFullHydrationTimer);
+    pendingFullHydrationTimer = undefined;
+    scheduleFullStateHydration(HYDRATION_AFTER_NON_EDIT_INPUT_DELAY_MS);
+  }
 }
 
 function recordInputDelay(name: string, event: Event, detail: TraceDetail): void {
@@ -1716,6 +1766,14 @@ function delaySinceEventTimeStampMs(eventTimeStamp: number): number | undefined 
     return undefined;
   }
   return Math.max(0, delayMs);
+}
+
+function nextAnimationFrame(): Promise<void> {
+  return new Promise((resolve) => window.requestAnimationFrame(() => resolve()));
+}
+
+function delay(delayMs: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, Math.max(0, delayMs)));
 }
 
 function setHoverLineScope(scope: HoverLineScope, feedbackTrace?: HoverFeedbackTrace): void {
