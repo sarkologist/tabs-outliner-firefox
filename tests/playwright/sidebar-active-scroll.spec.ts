@@ -5,6 +5,32 @@ type ConsoleIssue = {
   text: string;
 };
 
+type SidebarFixtureNode = {
+  id: string;
+  kind: "window" | "tab" | "group";
+  status: "live" | "closed" | "neutral";
+  parentId?: string;
+  title: string;
+  url?: string;
+  childIds: string[];
+  active?: boolean;
+  collapsed: boolean;
+  createdAt: number;
+  updatedAt: number;
+  live?: {
+    tabId?: number;
+    windowId: number;
+  };
+};
+
+type SidebarFixtureState = {
+  version: number;
+  rootIds: string[];
+  nodes: Record<string, SidebarFixtureNode>;
+};
+
+const MOVE_TO_TOP_SPACER_COUNT = 90;
+
 test.describe("sidebar active-tab scrolling", () => {
   test("scrolls to an active tab after search previously hid it", async ({ page }) => {
     const issues = collectPageIssues(page);
@@ -58,11 +84,38 @@ test.describe("sidebar active-tab scrolling", () => {
     expect(await scrollTop(page)).toBe(groupedScrollTop);
     expect(issues).toEqual([]);
   });
+
+  test("follows a scoped active tab after move to top level relocates its window", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    const state = moveToTopLevelFixtureState();
+    await loadSidebar(page, state, { currentWindowId: 42 });
+
+    await expect(page.locator(nodeSelector("tab:scoped-active"))).toBeVisible();
+    await expect(page.locator(nodeSelector("tab:scoped-active"))).toHaveAttribute("data-row-index", "4");
+    const initialScrollTop = await scrollTop(page);
+    expect(initialScrollTop).toBeLessThan(100);
+
+    await dispatchSidebarMessage(page, moveScopedWindowToTopLevelPatch(state));
+
+    const movedWindowRowIndex = 3 + MOVE_TO_TOP_SPACER_COUNT;
+    await expect(page.locator(nodeSelector("window:42"))).toHaveAttribute("aria-level", "1");
+    await expect(page.locator(nodeSelector("window:42"))).toHaveAttribute(
+      "data-row-index",
+      String(movedWindowRowIndex)
+    );
+    await expect(page.locator(nodeSelector("tab:scoped-active"))).toHaveAttribute(
+      "data-row-index",
+      String(movedWindowRowIndex + 1)
+    );
+    await expect(page.locator(nodeSelector("tab:scoped-active"))).toBeVisible();
+    expect(await scrollTop(page)).toBeGreaterThan(initialScrollTop + 500);
+    expect(issues).toEqual([]);
+  });
 });
 
 async function loadSidebar(
   page: Page,
-  state: ReturnType<typeof fixtureState> = fixtureState(),
+  state: SidebarFixtureState = fixtureState(),
   options: { currentWindowId?: number } = {}
 ): Promise<void> {
   await page.addInitScript((state) => {
@@ -82,7 +135,9 @@ async function loadSidebar(
             return structuredClone(state);
           }
           if (type === "getDiagnostics") {
-            const tabCount = state.nodes["window:1"].childIds.length;
+            const tabCount = Object.values(state.nodes).filter((node) =>
+              node.kind === "tab" && node.status === "live"
+            ).length;
             return {
               runtimeTabCount: tabCount,
               liveTabNodeCount: tabCount,
@@ -161,7 +216,7 @@ function collectPageIssues(page: Page): ConsoleIssue[] {
   return issues;
 }
 
-function fixtureState() {
+function fixtureState(): SidebarFixtureState {
   const now = 1_700_000_000_000;
   const tabIds = Array.from({ length: 120 }, (_value, index) => `tab:${index + 1}`);
   return {
@@ -203,7 +258,7 @@ function fixtureState() {
   };
 }
 
-function groupedWindowFixtureState() {
+function groupedWindowFixtureState(): SidebarFixtureState {
   const now = 1_700_000_000_000;
   const oldTabIds = Array.from({ length: 80 }, (_value, index) => `tab:old-${index + 1}`);
   return {
@@ -269,5 +324,114 @@ function groupedWindowFixtureState() {
         live: { tabId: 420, windowId: 42 }
       }
     }
+  };
+}
+
+function moveToTopLevelFixtureState(): SidebarFixtureState {
+  const now = 1_700_000_000_000;
+  const spacerIds = Array.from({ length: MOVE_TO_TOP_SPACER_COUNT }, (_value, index) => `group:spacer-${index + 1}`);
+  return {
+    version: 1,
+    rootIds: ["window:global", "group:container"],
+    nodes: {
+      "window:global": {
+        id: "window:global",
+        kind: "window",
+        status: "live",
+        title: "Global focused window",
+        childIds: ["tab:global-active"],
+        active: true,
+        collapsed: false,
+        createdAt: now,
+        updatedAt: now,
+        live: { windowId: 10 }
+      },
+      "tab:global-active": {
+        id: "tab:global-active",
+        kind: "tab",
+        status: "live",
+        parentId: "window:global",
+        title: "Global active tab",
+        url: "https://global.example/",
+        childIds: [],
+        active: true,
+        collapsed: false,
+        createdAt: now,
+        updatedAt: now,
+        live: { tabId: 10, windowId: 10 }
+      },
+      "group:container": {
+        id: "group:container",
+        kind: "group",
+        status: "neutral",
+        title: "Research group",
+        childIds: ["window:42", ...spacerIds],
+        collapsed: false,
+        createdAt: now,
+        updatedAt: now
+      },
+      "window:42": {
+        id: "window:42",
+        kind: "window",
+        status: "live",
+        parentId: "group:container",
+        title: "Sidebar scoped window",
+        childIds: ["tab:scoped-active"],
+        active: false,
+        collapsed: false,
+        createdAt: now,
+        updatedAt: now,
+        live: { windowId: 42 }
+      },
+      "tab:scoped-active": {
+        id: "tab:scoped-active",
+        kind: "tab",
+        status: "live",
+        parentId: "window:42",
+        title: "Scoped active tab",
+        url: "https://scoped.example/",
+        childIds: [],
+        active: true,
+        collapsed: false,
+        createdAt: now,
+        updatedAt: now,
+        live: { tabId: 420, windowId: 42 }
+      },
+      ...Object.fromEntries(
+        spacerIds.map((id, index) => [
+          id,
+          {
+            id,
+            kind: "group" as const,
+            status: "neutral" as const,
+            parentId: "group:container",
+            title: `Spacer ${index + 1}`,
+            childIds: [],
+            collapsed: false,
+            createdAt: now,
+            updatedAt: now
+          }
+        ])
+      )
+    }
+  };
+}
+
+function moveScopedWindowToTopLevelPatch(state: SidebarFixtureState) {
+  const group = state.nodes["group:container"]!;
+  const scopedWindow = state.nodes["window:42"]!;
+  const { parentId: _parentId, ...topLevelScopedWindow } = scopedWindow;
+  return {
+    type: "treeStructureUpdated",
+    deletedNodeIds: [],
+    updatedNodes: [
+      {
+        ...group,
+        childIds: group.childIds.filter((nodeId) => nodeId !== "window:42")
+      },
+      topLevelScopedWindow
+    ],
+    rootIds: ["window:global", "group:container", "window:42"],
+    deletedClosedCount: 0
   };
 }

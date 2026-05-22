@@ -1420,8 +1420,9 @@ function applyTreeStructureUpdate(update: TreeStructureUpdate): void {
       return;
     }
 
-    const shouldRescrollActiveTab = currentProjection?.activeTabNodeId
-      ? treeStructureUpdateTouchesNodeOrAncestor(state, update, currentProjection.activeTabNodeId)
+    const activeScrollNodeId = currentProjection ? activeScrollNodeIdForSidebarWindow(currentProjection) : undefined;
+    const shouldRescrollActiveTab = activeScrollNodeId
+      ? treeStructureUpdateTouchesNodeOrAncestor(state, update, activeScrollNodeId)
       : false;
     const deletedNodeIds = new Set(update.deletedNodeIds);
     for (const nodeId of deletedNodeIds) {
@@ -2797,6 +2798,10 @@ function scrollToObservedActiveTab(projection: VisibleTreeProjection): void {
     rootDropSurface ?? undefined,
     rowHeight
   );
+}
+
+function activeScrollNodeIdForSidebarWindow(projection: VisibleTreeProjection): NodeId | undefined {
+  return activeTabNodeIdForSidebarWindow(currentState, sidebarWindowId) ?? projection.activeTabNodeId;
 }
 
 function activeScrollProjectionForSidebarWindow(projection: VisibleTreeProjection): ActiveTabScrollProjection {
