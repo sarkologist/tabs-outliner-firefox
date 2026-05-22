@@ -10,7 +10,8 @@ export const SIDEBAR_STARTUP_RESULTS_TSV_HEADER = [
   "timestamp",
   "tag",
   "commit",
-  "tabs",
+  "tab_nodes",
+  "live_tabs",
   "runs",
   "primary_median_ms",
   "hydration_median_ms",
@@ -30,6 +31,7 @@ export type SidebarStartupScenario = typeof SIDEBAR_STARTUP_SCENARIOS[number];
 export type SidebarStartupProfileResult = {
   scenario: SidebarStartupScenario;
   tabs: number;
+  liveTabs?: number;
   totalMs?: number;
   hydrateMs?: number;
   totalWithHydrationMs?: number;
@@ -42,6 +44,7 @@ export type SidebarStartupProfileResult = {
 
 export type SidebarStartupSummary = {
   tabs: number;
+  liveTabs: number;
   runs: number;
   primaryMedianMs: number;
   hydrationMedianMs: number;
@@ -100,6 +103,7 @@ export function summarizeSidebarStartupProfile(
 
   return {
     tabs: median(requiredNumbers(results, "tabs")),
+    liveTabs: median(numberValues(results, "liveTabs")),
     runs: Math.min(initial.length, warm.length, stored.length),
     primaryMedianMs,
     hydrationMedianMs,
@@ -141,6 +145,7 @@ export function formatSidebarStartupTsvRow(summary: SidebarStartupSummary, field
     fields.tag,
     fields.commit,
     summary.tabs,
+    summary.liveTabs,
     summary.runs,
     summary.primaryMedianMs,
     summary.hydrationMedianMs,

@@ -20,6 +20,7 @@ const defaultResultsPath = join(rootDir, "autoresearch/sidebar-startup/results.t
 function parseArgs(argv) {
   const options = {
     tabs: 50_000,
+    liveTabs: undefined,
     runs: 3,
     tag: localDateTag(new Date()),
     description: "sidebar startup hydration",
@@ -34,6 +35,9 @@ function parseArgs(argv) {
     const next = argv[index + 1];
     if (arg === "--tabs" && next) {
       options.tabs = Number.parseInt(next, 10);
+      index += 1;
+    } else if (arg === "--live-tabs" && next) {
+      options.liveTabs = Number.parseInt(next, 10);
       index += 1;
     } else if (arg === "--runs" && next) {
       options.runs = Number.parseInt(next, 10);
@@ -61,6 +65,13 @@ function parseArgs(argv) {
   if (!Number.isFinite(options.tabs) || options.tabs < 1) {
     throw new Error("--tabs must be a positive integer");
   }
+  options.liveTabs = options.liveTabs ?? Math.min(50, options.tabs);
+  if (!Number.isFinite(options.liveTabs) || options.liveTabs < 1) {
+    throw new Error("--live-tabs must be a positive integer");
+  }
+  if (options.liveTabs > options.tabs) {
+    throw new Error("--live-tabs must be less than or equal to --tabs");
+  }
   if (!Number.isFinite(options.runs) || options.runs < 1) {
     throw new Error("--runs must be a positive integer");
   }
@@ -78,7 +89,12 @@ async function runStartupMatrix(options) {
   const results = [];
   for (let runIndex = 0; runIndex < options.runs; runIndex += 1) {
     for (const scenario of SIDEBAR_STARTUP_SCENARIOS) {
-      results.push(await runScenario({ tabs: options.tabs, scenario, runIndex: runIndex + 1 }));
+      results.push(await runScenario({
+        tabs: options.tabs,
+        liveTabs: options.liveTabs,
+        scenario,
+        runIndex: runIndex + 1
+      }));
     }
   }
 
@@ -102,6 +118,7 @@ async function runStartupMatrix(options) {
 
   return {
     tabs: options.tabs,
+    liveTabs: options.liveTabs,
     runs: options.runs,
     summary,
     guardFailures: summary.guardFailures,
@@ -112,11 +129,13 @@ async function runStartupMatrix(options) {
   };
 }
 
-async function runScenario({ tabs, scenario, runIndex }) {
+async function runScenario({ tabs, liveTabs, scenario, runIndex }) {
   const { stdout } = await execFileAsync(process.execPath, [
     profileTabOpenScript,
     "--tabs",
     String(tabs),
+    "--live-tabs",
+    String(liveTabs),
     "--scenario",
     scenario
   ], {

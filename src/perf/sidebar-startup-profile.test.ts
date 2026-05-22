@@ -35,6 +35,7 @@ describe("sidebar startup profile helpers", () => {
     expect(summary.guardFailures).toEqual([]);
     expect(summary.snapshotRows).toBe(256);
     expect(summary.snapshotNodes).toBe(256);
+    expect(summary.liveTabs).toBe(50);
 
     const regressed = summarizeSidebarStartupProfile([
       startupInitial(600, { saves: 1, broadcasts: 1 }),
@@ -60,7 +61,7 @@ describe("sidebar startup profile helpers", () => {
     ], { baselinePrimaryMedianMs: 650 });
 
     expect(SIDEBAR_STARTUP_RESULTS_TSV_HEADER).toBe(
-      "timestamp\ttag\tcommit\ttabs\truns\tprimary_median_ms\thydration_median_ms\tstored_startup_median_ms\twarm_snapshot_median_ms\tsnapshot_rows\tsnapshot_nodes\tsaves\tbroadcasts\tevent_count\tstatus\tdescription"
+      "timestamp\ttag\tcommit\ttab_nodes\tlive_tabs\truns\tprimary_median_ms\thydration_median_ms\tstored_startup_median_ms\twarm_snapshot_median_ms\tsnapshot_rows\tsnapshot_nodes\tsaves\tbroadcasts\tevent_count\tstatus\tdescription"
     );
     expect(formatSidebarStartupTsvRow(summary, {
       timestamp: "2026-05-22T13:00:00.000Z",
@@ -68,7 +69,7 @@ describe("sidebar startup profile helpers", () => {
       commit: "abcdef1",
       description: "baseline\twith newline\ntrimmed"
     })).toBe(
-      "2026-05-22T13:00:00.000Z\tmay22\tabcdef1\t50000\t1\t600\t598\t610\t38\t256\t256\t0\t0\t0\tkeep\tbaseline with newline trimmed"
+      "2026-05-22T13:00:00.000Z\tmay22\tabcdef1\t50000\t50\t1\t600\t598\t610\t38\t256\t256\t0\t0\t0\tkeep\tbaseline with newline trimmed"
     );
   });
 });
@@ -80,6 +81,7 @@ function startupInitial(
   return {
     scenario: "startup-initial-snapshot" as const,
     tabs: 50_000,
+    liveTabs: 50,
     totalMs: 2,
     hydrateMs: totalWithHydrationMs - 2,
     totalWithHydrationMs,
@@ -96,6 +98,7 @@ function startupWarm(totalMs: number, overrides: Partial<Parameters<typeof summa
   return {
     scenario: "startup-warm-initial-snapshot" as const,
     tabs: 50_000,
+    liveTabs: 50,
     totalMs,
     snapshotRows: 256,
     snapshotNodes: 256,
@@ -110,6 +113,7 @@ function startupStored(totalMs: number, overrides: Partial<Parameters<typeof sum
   return {
     scenario: "startup-stored-unchanged" as const,
     tabs: 50_000,
+    liveTabs: 50,
     totalMs,
     saves: 0,
     broadcasts: 0,

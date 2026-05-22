@@ -1,6 +1,7 @@
 import { performance } from "node:perf_hooks";
 
 import { createBackgroundController } from "../dist/background/controller.js";
+import { outlineStateV3Changes } from "../dist/background/storage.js";
 import {
   createAlarmApi,
   createPassiveEvent,
@@ -14,6 +15,7 @@ import {
 function parseArgs(argv) {
   const options = {
     tabs: 50_000,
+    liveTabs: undefined,
     updates: 5,
     scenario: "open-tab-storm"
   };
@@ -23,6 +25,9 @@ function parseArgs(argv) {
     const next = argv[index + 1];
     if (arg === "--tabs" && next) {
       options.tabs = Number.parseInt(next, 10);
+      index += 1;
+    } else if (arg === "--live-tabs" && next) {
+      options.liveTabs = Number.parseInt(next, 10);
       index += 1;
     } else if (arg === "--updates" && next) {
       options.updates = Number.parseInt(next, 10);
@@ -35,6 +40,13 @@ function parseArgs(argv) {
 
   if (!Number.isFinite(options.tabs) || options.tabs < 1) {
     throw new Error("--tabs must be a positive integer");
+  }
+  options.liveTabs = options.liveTabs ?? Math.min(50, options.tabs);
+  if (!Number.isFinite(options.liveTabs) || options.liveTabs < 1) {
+    throw new Error("--live-tabs must be a positive integer");
+  }
+  if (options.liveTabs > options.tabs) {
+    throw new Error("--live-tabs must be less than or equal to --tabs");
   }
   if (!Number.isFinite(options.updates) || options.updates < 0) {
     throw new Error("--updates must be a non-negative integer");
@@ -177,6 +189,80 @@ function makeRuntime(tabCount) {
   };
 
   return runtime;
+}
+
+function makeClosedHeavyStartupRuntime(tabCount, liveTabCount) {
+  const runtime = makeRuntime(liveTabCount);
+  const state = makeClosedHeavyStartupState(tabCount, liveTabCount);
+  runtime.storage = new Map(Object.entries(outlineStateV3Changes(state).setItems));
+  return runtime;
+}
+
+function makeClosedHeavyStartupState(tabCount, liveTabCount) {
+  const root = {
+    id: "window:10",
+    kind: "window",
+    status: "live",
+    childIds: [],
+    title: "Window 10",
+    active: true,
+    collapsed: false,
+    createdAt: 1000,
+    updatedAt: 1000,
+    live: { windowId: 10 }
+  };
+  const state = {
+    version: 1,
+    rootIds: [root.id],
+    nodes: {
+      [root.id]: root
+    }
+  };
+
+  for (let index = 1; index <= tabCount; index += 1) {
+    const id = `tab:${index}`;
+    root.childIds.push(id);
+    if (index <= liveTabCount) {
+      state.nodes[id] = {
+        id,
+        kind: "tab",
+        status: "live",
+        parentId: root.id,
+        childIds: [],
+        title: `Tab ${index}`,
+        url: `https://large.example/${index}`,
+        active: index === 1,
+        collapsed: false,
+        createdAt: 1000,
+        updatedAt: 1000,
+        live: {
+          tabId: index,
+          windowId: 10
+        }
+      };
+      continue;
+    }
+
+    state.nodes[id] = {
+      id,
+      kind: "tab",
+      status: "closed",
+      parentId: root.id,
+      childIds: [],
+      title: `Saved ${index}`,
+      url: `https://restore.example/${index}`,
+      collapsed: false,
+      createdAt: 1000,
+      updatedAt: 1000,
+      closedAt: 2000 + index,
+      restore: {
+        url: `https://restore.example/${index}`,
+        title: `Saved ${index}`
+      }
+    };
+  }
+
+  return state;
 }
 
 function deferred() {
@@ -336,15 +422,15 @@ async function runRuntimeRefreshBacklog(runtime, controller, focusStarted, relea
   };
 }
 
-async function profile({ tabs, updates, scenario }) {
+async function profile({ tabs, liveTabs, updates, scenario }) {
   if (scenario === "startup-stored-unchanged") {
-    return profileStartupStoredUnchanged({ tabs });
+    return profileStartupStoredUnchanged({ tabs, liveTabs });
   }
   if (scenario === "startup-initial-snapshot") {
-    return profileStartupInitialSnapshot({ tabs });
+    return profileStartupInitialSnapshot({ tabs, liveTabs });
   }
   if (scenario === "startup-warm-initial-snapshot") {
-    return profileStartupWarmInitialSnapshot({ tabs });
+    return profileStartupWarmInitialSnapshot({ tabs, liveTabs });
   }
 
   const runtime = makeRuntime(tabs);
@@ -410,12 +496,8 @@ async function profile({ tabs, updates, scenario }) {
   };
 }
 
-async function profileStartupStoredUnchanged({ tabs }) {
-  const runtime = makeRuntime(tabs);
-  const firstController = createBackgroundController({ api: runtime.api, now: () => 1000 });
-  await firstController.ensureState();
-  await firstController.flushPendingSaves();
-
+async function profileStartupStoredUnchanged({ tabs, liveTabs }) {
+  const runtime = makeClosedHeavyStartupRuntime(tabs, liveTabs);
   runtime.saves = 0;
   runtime.broadcasts = 0;
   runtime.stringifyMs = 0;
@@ -433,6 +515,7 @@ async function profileStartupStoredUnchanged({ tabs }) {
   return {
     scenario: "startup-stored-unchanged",
     tabs,
+    liveTabs,
     updates: 0,
     initMs: Math.round(totalMs),
     totalMs: Math.round(totalMs),
@@ -448,12 +531,8 @@ async function profileStartupStoredUnchanged({ tabs }) {
   };
 }
 
-async function profileStartupInitialSnapshot({ tabs }) {
-  const runtime = makeRuntime(tabs);
-  const firstController = createBackgroundController({ api: runtime.api, now: () => 1000 });
-  await firstController.ensureState();
-  await firstController.flushPendingSaves();
-
+async function profileStartupInitialSnapshot({ tabs, liveTabs }) {
+  const runtime = makeClosedHeavyStartupRuntime(tabs, liveTabs);
   runtime.saves = 0;
   runtime.broadcasts = 0;
   runtime.stringifyMs = 0;
@@ -471,6 +550,7 @@ async function profileStartupInitialSnapshot({ tabs }) {
   return {
     scenario: "startup-initial-snapshot",
     tabs,
+    liveTabs,
     updates: 0,
     initMs: Math.round(initialMs),
     totalMs: Math.round(initialMs),
@@ -491,8 +571,8 @@ async function profileStartupInitialSnapshot({ tabs }) {
   };
 }
 
-async function profileStartupWarmInitialSnapshot({ tabs }) {
-  const runtime = makeRuntime(tabs);
+async function profileStartupWarmInitialSnapshot({ tabs, liveTabs }) {
+  const runtime = makeClosedHeavyStartupRuntime(tabs, liveTabs);
   const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
   await controller.ensureState();
 
@@ -512,6 +592,7 @@ async function profileStartupWarmInitialSnapshot({ tabs }) {
   return {
     scenario: "startup-warm-initial-snapshot",
     tabs,
+    liveTabs,
     updates: 0,
     initMs: Math.round(totalMs),
     totalMs: Math.round(totalMs),

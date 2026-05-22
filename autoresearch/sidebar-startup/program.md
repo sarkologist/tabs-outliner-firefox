@@ -9,12 +9,14 @@ This is the local autoresearch setup for optimizing initial sidebar loading lag.
    `git switch -c codex/autoresearch-sidebar-startup-<tag>`.
 3. Run the baseline:
    `pnpm run build`
-   `pnpm profile:sidebar-startup -- --tabs 50000 --runs 3 --tag <tag> --description "baseline" --append-results`
+   `pnpm profile:sidebar-startup -- --tabs 50000 --live-tabs 50 --runs 3 --tag <tag> --description "closed-heavy baseline" --append-results`
 4. Keep `autoresearch/sidebar-startup/results.tsv` and any `*.log` files untracked. They are local experiment output.
 
 ## Metric
 
 Primary score: median `startup-initial-snapshot.totalWithHydrationMs` from `pnpm profile:sidebar-startup`.
+
+The startup matrix models a large saved outline, not a browser with 50k open tabs. `--tabs` is the total number of tab nodes in the stored outline; `--live-tabs` is the small live browser frontier that must match the stored live nodes. The default startup shape is closed-heavy: 50 live tabs and the remaining tab nodes closed under one live window.
 
 Guard metrics:
 
@@ -36,7 +38,7 @@ Repeat one hypothesis at a time:
 4. Run:
    `pnpm test -- src/perf/sidebar-startup-profile.test.ts`
    `pnpm run build`
-   `pnpm profile:sidebar-startup -- --tabs 50000 --runs 3 --tag <tag> --baseline-ms <baseline-primary-median> --description "<short idea>" --append-results`
+   `pnpm profile:sidebar-startup -- --tabs 50000 --live-tabs 50 --runs 3 --tag <tag> --baseline-ms <baseline-primary-median> --description "<short idea>" --append-results`
    `pnpm exec playwright test tests/playwright/sidebar-first-paint.spec.ts --reporter=list`
 5. If the result is `keep`, commit the code change with the metric summary in the commit message.
 6. If the result is `discard`, reset only your experiment changes, leave the TSV row, and try the next hypothesis.
