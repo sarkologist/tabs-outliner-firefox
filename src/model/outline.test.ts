@@ -479,6 +479,52 @@ describe("outline model", () => {
     }
   });
 
+  it("indexes live projections and closed restore counts while scanning window ownership", () => {
+    const state = bootstrapFromWindows(windows, { now: 1000 });
+    const moved = moveNode(state, "tab:3", {
+      parentId: "tab:1",
+      index: 0
+    });
+    const windowNode = moved.nodes["window:10"]!;
+    const withClosed: OutlineState = {
+      ...moved,
+      nodes: {
+        ...moved.nodes,
+        "window:10": {
+          ...windowNode,
+          childIds: [...windowNode.childIds, "tab:closed"]
+        },
+        "tab:closed": {
+          id: "tab:closed",
+          kind: "tab",
+          status: "closed",
+          parentId: "window:10",
+          childIds: [],
+          title: "Closed",
+          url: "https://closed.example/",
+          collapsed: false,
+          createdAt: 1000,
+          updatedAt: 1000,
+          closedAt: 2000,
+          restore: {
+            url: "https://closed.example/",
+            title: "Closed"
+          }
+        }
+      }
+    };
+
+    const lookup = buildOutlineLookup(withClosed);
+
+    expect(lookup.liveTabProjectionsByWindowNodeId.get("window:10")).toEqual([
+      { tabId: 1, windowId: 10 },
+      { tabId: 3, windowId: 10 },
+      { tabId: 2, windowId: 10 }
+    ]);
+    expect(lookup.closedRestoreCandidateCountsByWindowNodeId.get("window:10")).toBe(1);
+    expect(lookup.windowNodeIdsWithClosedRestoreCandidates.has("window:10")).toBe(true);
+  });
+
   it("moves a subtree without copying unrelated nodes", () => {
     const state = bootstrapFromWindows(windows, { now: 1000 });
 

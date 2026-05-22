@@ -924,6 +924,12 @@ export function projectLiveTabs(
   if (!root) {
     return [];
   }
+  if (root.kind === "window") {
+    const projectedTabs = lookup.liveTabProjectionsByWindowNodeId.get(root.id);
+    if (projectedTabs) {
+      return projectedTabs.map((tab) => ({ ...tab }));
+    }
+  }
 
   const projection: LiveTabProjection[] = [];
   walk(state, root.id, (node) => {

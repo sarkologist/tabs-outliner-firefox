@@ -2486,18 +2486,8 @@ function buildRuntimeStateIndexFromLookup(state: OutlineState, lookup: OutlineLo
     }
   }
 
-  for (const node of lookup.nodes) {
-    if (node.kind !== "tab" || node.status !== "closed") {
-      continue;
-    }
-    const ownerWindowNodeId = lookup.ownerWindowNodeIdsByNodeId.get(node.id);
-    if (!ownerWindowNodeId || node.id === ownerWindowNodeId) {
-      continue;
-    }
-    const count = index.closedRestoreCandidateCountsByWindowNodeId.get(ownerWindowNodeId) ?? 0;
-    index.closedRestoreCandidateCountsByWindowNodeId.set(ownerWindowNodeId, count + 1);
-    index.windowNodeIdsWithClosedRestoreCandidates.add(ownerWindowNodeId);
-  }
+  index.closedRestoreCandidateCountsByWindowNodeId = new Map(lookup.closedRestoreCandidateCountsByWindowNodeId);
+  index.windowNodeIdsWithClosedRestoreCandidates = new Set(lookup.windowNodeIdsWithClosedRestoreCandidates);
 
   return index;
 }

@@ -1,4 +1,4 @@
-import type { NodeId, OutlineNode, OutlineState } from "./types.js";
+import type { LiveTabProjection, NodeId, OutlineNode, OutlineState } from "./types.js";
 
 export type OutlineLookup = {
   nodes: OutlineNode[];
@@ -6,8 +6,18 @@ export type OutlineLookup = {
   closedCount: number;
   liveTabNodeIdsByRuntimeId: Map<number, NodeId>;
   liveWindowNodeIdsByRuntimeId: Map<number, NodeId>;
+  liveTabProjectionsByWindowNodeId: Map<NodeId, LiveTabProjection[]>;
   closedTabNodeIdsByUrl: Map<string, NodeId[]>;
+  closedRestoreCandidateCountsByWindowNodeId: Map<NodeId, number>;
+  windowNodeIdsWithClosedRestoreCandidates: Set<NodeId>;
   ownerWindowNodeIdsByNodeId: Map<NodeId, NodeId>;
+};
+
+type OwnerWindowScan = {
+  ownerWindowNodeIdsByNodeId: Map<NodeId, NodeId>;
+  liveTabProjectionsByWindowNodeId: Map<NodeId, LiveTabProjection[]>;
+  closedRestoreCandidateCountsByWindowNodeId: Map<NodeId, number>;
+  windowNodeIdsWithClosedRestoreCandidates: Set<NodeId>;
 };
 
 export function buildOutlineLookup(state: OutlineState): OutlineLookup {
@@ -15,7 +25,7 @@ export function buildOutlineLookup(state: OutlineState): OutlineLookup {
   const liveTabNodeIdsByRuntimeId = new Map<number, NodeId>();
   const liveWindowNodeIdsByRuntimeId = new Map<number, NodeId>();
   const closedTabNodeIdsByUrl = new Map<string, NodeId[]>();
-  const ownerWindowNodeIdsByNodeId = collectOwnerWindowNodeIds(state);
+  const ownerWindowScan = collectOwnerWindowScan(state);
   let closedCount = 0;
 
   for (const node of nodes) {
@@ -55,13 +65,19 @@ export function buildOutlineLookup(state: OutlineState): OutlineLookup {
     closedCount,
     liveTabNodeIdsByRuntimeId,
     liveWindowNodeIdsByRuntimeId,
+    liveTabProjectionsByWindowNodeId: ownerWindowScan.liveTabProjectionsByWindowNodeId,
     closedTabNodeIdsByUrl,
-    ownerWindowNodeIdsByNodeId
+    closedRestoreCandidateCountsByWindowNodeId: ownerWindowScan.closedRestoreCandidateCountsByWindowNodeId,
+    windowNodeIdsWithClosedRestoreCandidates: ownerWindowScan.windowNodeIdsWithClosedRestoreCandidates,
+    ownerWindowNodeIdsByNodeId: ownerWindowScan.ownerWindowNodeIdsByNodeId
   };
 }
 
-function collectOwnerWindowNodeIds(state: OutlineState): Map<NodeId, NodeId> {
-  const owners = new Map<NodeId, NodeId>();
+function collectOwnerWindowScan(state: OutlineState): OwnerWindowScan {
+  const ownerWindowNodeIdsByNodeId = new Map<NodeId, NodeId>();
+  const liveTabProjectionsByWindowNodeId = new Map<NodeId, LiveTabProjection[]>();
+  const closedRestoreCandidateCountsByWindowNodeId = new Map<NodeId, number>();
+  const windowNodeIdsWithClosedRestoreCandidates = new Set<NodeId>();
   const visited = new Set<NodeId>();
   const stack: Array<{ nodeId: NodeId; ownerWindowNodeId?: NodeId }> = [];
 
@@ -83,7 +99,25 @@ function collectOwnerWindowNodeIds(state: OutlineState): Map<NodeId, NodeId> {
 
     const ownerWindowNodeId = node.kind === "window" ? node.id : entry.ownerWindowNodeId;
     if (ownerWindowNodeId) {
-      owners.set(node.id, ownerWindowNodeId);
+      ownerWindowNodeIdsByNodeId.set(node.id, ownerWindowNodeId);
+      if (node.kind === "window" && !liveTabProjectionsByWindowNodeId.has(node.id)) {
+        liveTabProjectionsByWindowNodeId.set(node.id, []);
+      }
+      if (node.id !== ownerWindowNodeId && node.kind === "tab") {
+        if (node.status === "closed") {
+          const count = closedRestoreCandidateCountsByWindowNodeId.get(ownerWindowNodeId) ?? 0;
+          closedRestoreCandidateCountsByWindowNodeId.set(ownerWindowNodeId, count + 1);
+          windowNodeIdsWithClosedRestoreCandidates.add(ownerWindowNodeId);
+        } else if (isLiveTabNode(node)) {
+          const ownerWindow = state.nodes[ownerWindowNodeId];
+          const targetWindowId =
+            ownerWindow?.live && "windowId" in ownerWindow.live ? ownerWindow.live.windowId : node.live.windowId;
+          liveTabProjectionsByWindowNodeId.get(ownerWindowNodeId)?.push({
+            tabId: node.live.tabId,
+            windowId: targetWindowId
+          });
+        }
+      }
     }
 
     for (let index = node.childIds.length - 1; index >= 0; index -= 1) {
@@ -94,7 +128,12 @@ function collectOwnerWindowNodeIds(state: OutlineState): Map<NodeId, NodeId> {
     }
   }
 
-  return owners;
+  return {
+    ownerWindowNodeIdsByNodeId,
+    liveTabProjectionsByWindowNodeId,
+    closedRestoreCandidateCountsByWindowNodeId,
+    windowNodeIdsWithClosedRestoreCandidates
+  };
 }
 
 function isLiveTabNode(node: OutlineNode): node is OutlineNode & { live: { tabId: number; windowId: number } } {
