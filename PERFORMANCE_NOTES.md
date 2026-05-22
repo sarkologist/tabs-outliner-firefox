@@ -760,3 +760,11 @@ Use these as starting targets, not hard promises:
 - Change: sparse hydrating first paint now renders only the row label/twisty surface. Edit/action buttons are omitted until full hydration, matching the existing command guard that already blocks those actions during startup hydration.
 - Single-run result after the change: `sidebar.render.initialSnapshot` moved to 6.8ms with 0 action buttons. Five-run loop result: status `keep`, first-paint median 5.6ms / max 6.3ms, sparse hover frame max 6.7ms, hover feedback max 0.3ms, `hydrationBeforeIdleMax` 0, and remote sibling hydration delay minimum 1002ms.
 - Verification: `pnpm profile:startup-hover-loop -- --runs 5 --tag 20260522-hover --description "omit sparse startup action buttons" --append-results`, `pnpm run build`, and `pnpm exec playwright test tests/playwright/sidebar-first-paint.spec.ts --grep "paints an active-centered sparse snapshot"` passed.
+
+### 2026-05-22: Startup Scroll-Away Autoresearch Setup
+
+- Added the `pnpm profile:startup-scroll-away` autoresearch loop for scrolling away from the sparse startup projection before full hydration completes. The Playwright profile starts with an active-centered sparse snapshot around row 40000, keeps `getState` unresolved, scrolls to row 10000, waits two animation frames, and emits `startup-scroll-away`.
+- Stop conditions for a future accepted implementation are: no full hydration request, at least 80% viewport row coverage, zero missing viewport rows, rows visible within 32ms, and scroll input queue delay below 8ms.
+- Baseline after `pnpm run build`: `pnpm profile:startup-scroll-away -- --runs 5 --tag 20260522-scroll-away --description "baseline" --append-results` reported status `discard`. It confirmed the gap: expected viewport rows median 27, visible rows median/min 0, missing viewport rows max 27, hydration requests max 0, and scroll delay max 0.2ms. No row appeared within the two-frame window, so `rowsVisibleMsMax` was empty.
+- This is now a good red target for sparse row-window paging: the interaction itself is cheap, but viewport coverage outside the initial projection is absent until full hydration.
+- Verification: `pnpm profile:startup-scroll-away -- --runs 5 --tag 20260522-scroll-away --description "baseline" --append-results` and `pnpm run build` passed.
