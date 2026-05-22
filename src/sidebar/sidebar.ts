@@ -129,7 +129,12 @@ let sidebarActiveTabTargetsRevision = 0;
 let sidebarActiveTabTargetsCacheRevision = -1;
 let sidebarActiveTabTargetsByWindow = new Map<number, NodeId>();
 let sparseWindowRequestSequence = 0;
-let pendingSparseWindowCenterRowIndex: number | undefined;
+let pendingSparseWindowRequest:
+  | {
+      centerRowIndex: number;
+      rowLimit: number;
+    }
+  | undefined;
 const activeTabScrollTracker = createActiveTabScrollTracker();
 
 const WHEEL_ZOOM_THRESHOLD_PX = 80;
@@ -143,6 +148,7 @@ const HYDRATION_RENDER_INPUT_MAX_DELAY_MS = 1500;
 const NON_EDIT_INTERACTION_BROADCAST_MIN_INTERVAL_MS = 500;
 const SHOW_IN_TREE_HIGHLIGHT_MS = 1200;
 const VIRTUAL_OVERSCAN_ROWS = 32;
+const SPARSE_SCROLL_WINDOW_OVERSCAN_ROWS = VIRTUAL_OVERSCAN_ROWS;
 const HOVER_GUIDE_MAX_SUBTREE_ROWS = 1000;
 const GUIDE_TOP = 1;
 const GUIDE_BOTTOM = 2;
@@ -585,50 +591,55 @@ function requestSparseScrollWindowIfNeeded(): void {
     0,
     Math.min(totalRowCount - 1, Math.floor((viewportStartRow + viewportEndRow - 1) / 2))
   );
-  if (pendingSparseWindowCenterRowIndex === centerRowIndex) {
+  const rowLimit = sparseScrollWindowRowLimit(viewportEndRow - viewportStartRow);
+  if (
+    pendingSparseWindowRequest?.centerRowIndex === centerRowIndex &&
+    pendingSparseWindowRequest.rowLimit === rowLimit
+  ) {
     return;
   }
 
-  pendingSparseWindowCenterRowIndex = centerRowIndex;
+  pendingSparseWindowRequest = { centerRowIndex, rowLimit };
   const requestId = ++sparseWindowRequestSequence;
   perfTrace.mark("sidebar.sparseScrollWindow.request", {
     centerRowIndex,
+    rowLimit,
     viewportStartRow,
     viewportEndRow
   });
-  void loadSparseScrollWindow(centerRowIndex, requestId);
+  void loadSparseScrollWindow(centerRowIndex, rowLimit, requestId);
 }
 
-async function loadSparseScrollWindow(centerRowIndex: number, requestId: number): Promise<void> {
+async function loadSparseScrollWindow(centerRowIndex: number, rowLimit: number, requestId: number): Promise<void> {
   try {
     const response = await sendCommand({
       type: "getInitialTreeSnapshotWindow",
       centerRowIndex,
-      rowLimit: INITIAL_TREE_SNAPSHOT_ROW_LIMIT
+      rowLimit
     });
     if (requestId !== sparseWindowRequestSequence) {
       return;
     }
 
     if (!isInitialTreeSnapshot(response) || !currentProjection || !isSparseInitialProjection(currentProjection)) {
-      pendingSparseWindowCenterRowIndex = undefined;
-      return;
-    }
-
-    await nextAnimationFrame();
-    if (requestId !== sparseWindowRequestSequence) {
+      pendingSparseWindowRequest = undefined;
       return;
     }
 
     applySparseScrollWindowSnapshot(response);
-    pendingSparseWindowCenterRowIndex = undefined;
+    pendingSparseWindowRequest = undefined;
     requestSparseScrollWindowIfNeeded();
   } catch (error) {
     if (requestId === sparseWindowRequestSequence) {
-      pendingSparseWindowCenterRowIndex = undefined;
+      pendingSparseWindowRequest = undefined;
       perfTrace.mark("sidebar.sparseScrollWindow.error", { message: commandErrorText(error) });
     }
   }
+}
+
+function sparseScrollWindowRowLimit(viewportRows: number): number {
+  const requestedRows = Math.ceil(viewportRows + SPARSE_SCROLL_WINDOW_OVERSCAN_ROWS * 2 + 1);
+  return Math.max(1, Math.min(INITIAL_TREE_SNAPSHOT_ROW_LIMIT, requestedRows));
 }
 
 function sparseProjectionCoversViewport(

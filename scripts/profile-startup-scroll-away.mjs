@@ -21,6 +21,8 @@ const STARTUP_SCROLL_AWAY_RESULTS_TSV_HEADER = [
   "visible_rows_min",
   "missing_viewport_rows_max",
   "rows_visible_ms_max",
+  "follow_on_missing_viewport_rows_max",
+  "follow_on_sparse_window_requests_max",
   "hydration_requests_max",
   "scroll_delay_max_ms",
   "status",
@@ -130,6 +132,10 @@ function summarize(results) {
   const visibleRows = profiles.map((profile) => profile.visibleRowsAfterScroll).filter(isFiniteNumber);
   const missingRows = profiles.map((profile) => profile.missingViewportRows).filter(isFiniteNumber);
   const rowsVisibleMs = profiles.map((profile) => profile.rowsVisibleMs).filter(isFiniteNumber);
+  const followOnMissingRows = profiles.map((profile) => profile.followOnMissingViewportRows).filter(isFiniteNumber);
+  const followOnSparseWindowRequests = profiles
+    .map((profile) => profile.followOnSparseWindowRequests)
+    .filter(isFiniteNumber);
   const hydrationRequests = profiles.map((profile) => profile.hydrationRequests).filter(isFiniteNumber);
   const scrollDelayValues = profiles.map((profile) => profile.scrollDelay?.maxMs).filter(isFiniteNumber);
 
@@ -141,6 +147,8 @@ function summarize(results) {
     visibleRowsMin: min(visibleRows),
     missingViewportRowsMax: max(missingRows),
     rowsVisibleMsMax: rowsVisibleMs.length > 0 ? max(rowsVisibleMs) : undefined,
+    followOnMissingViewportRowsMax: max(followOnMissingRows),
+    followOnSparseWindowRequestsMax: max(followOnSparseWindowRequests),
     hydrationRequestsMax: max(hydrationRequests),
     scrollDelayMaxMs: max(scrollDelayValues),
     guardFailures: []
@@ -168,6 +176,12 @@ function startupScrollAwayGuardFailures(summary, profiles) {
   if (typeof summary.rowsVisibleMsMax !== "number" || summary.rowsVisibleMsMax >= 32) {
     failures.push("scroll-away rows must appear within 32ms");
   }
+  if (summary.followOnMissingViewportRowsMax > 0) {
+    failures.push("follow-on scroll within sparse overscan must not have missing visible rows");
+  }
+  if (summary.followOnSparseWindowRequestsMax > 0) {
+    failures.push("follow-on scroll within sparse overscan must not request another sparse window");
+  }
   if (summary.scrollDelayMaxMs >= 8) {
     failures.push("scroll input queue delay must stay below 8ms");
   }
@@ -186,6 +200,8 @@ function formatTsvRow(summary, fields) {
     summary.visibleRowsMin,
     summary.missingViewportRowsMax,
     summary.rowsVisibleMsMax ?? "",
+    summary.followOnMissingViewportRowsMax,
+    summary.followOnSparseWindowRequestsMax,
     summary.hydrationRequestsMax,
     summary.scrollDelayMaxMs,
     summary.status,

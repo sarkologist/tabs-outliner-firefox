@@ -14,7 +14,7 @@ This is the local autoresearch setup for the sparse-startup scroll-away gap. Aft
 
 Primary score: current viewport row coverage after scrolling away from the initial sparse projection while full hydration is unresolved.
 
-The deterministic profile starts with a sparse active-centered snapshot around row `40000`, keeps `getState` unresolved, scrolls to row `10000`, waits two animation frames, and emits `startup-scroll-away`.
+The deterministic profile starts with a sparse active-centered snapshot around row `40000`, keeps `getState` unresolved, scrolls to row `10000`, waits two animation frames, then scrolls another 32 rows inside the expected sparse overscan buffer. It emits `startup-scroll-away`.
 
 Target budgets:
 
@@ -22,6 +22,8 @@ Target budgets:
 - `visibleRowsMin >= floor(expectedViewportRowsMedian * 0.8)`
 - `missingViewportRowsMax === 0`
 - `rowsVisibleMsMax < 32`
+- `followOnMissingViewportRowsMax === 0`
+- `followOnSparseWindowRequestsMax === 0`
 - `scrollDelayMaxMs < 8`
 
 Baseline on 2026-05-22 before sparse row-window paging is expected to be `discard`: visible rows after scroll are `0`, missing viewport rows remain nonzero, and `rowsVisibleMsMax` is absent because no row appears within the two-frame window.
@@ -37,15 +39,18 @@ Repeat one hypothesis at a time:
    `pnpm run build`
    `pnpm profile:startup-scroll-away -- --runs 5 --tag <tag> --description "<short idea>" --append-results`
    `pnpm profile:startup-hover-loop -- --runs 5 --tag <tag>-hover-guard --description "<short idea> hover guard"`
-5. Keep the experiment only if scroll-away status is `keep` and the existing startup-hover loop stays `keep`.
-6. If the result is worse or ambiguous, revert only the experiment changes and try the next hypothesis.
+5. Treat `keep` as "candidate is viable", not as a terminal stop. Keep iterating while there are plausible hypotheses with a meaningful chance of improving perceived latency or reducing risk.
+6. Keep the experiment only if scroll-away status is `keep` and the existing startup-hover loop stays `keep`.
+7. If the result is worse or ambiguous, revert only the experiment changes and try the next hypothesis.
+8. Stop when the best kept candidate has comfortable margin and further plausible hypotheses either produce diminishing returns or a short discard streak. Record why the loop stopped.
 
 ## Likely Implementation Direction
 
 - Add a background command that returns a sparse tree window by row range or center row, without transporting full state.
 - On sparse startup scroll, calculate the visible row range from `scrollTop / rowHeight`.
 - If the viewport is outside the loaded sparse rows, request that row window and render it immediately.
-- Prefetch adjacent sparse windows in scroll-distance order after the visible window.
+- Size the sparse row window to the current viewport plus enough overscan to cover an immediate follow-on scroll without another request.
+- Consider adjacent-window prefetch only with a target that proves it improves real follow-on scrolling without increasing first-jump input delay.
 
 ## Safety
 
