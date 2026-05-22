@@ -5,6 +5,7 @@ import { generatedTraceConfig, generatedTraceTimeoutMs } from "../test/generated
 import {
   applyDeleteTreeStructurePatchToProjection,
   applyInsertTreeStructurePatchToProjection,
+  applySameParentReorderTreeStructurePatchToProjection,
   buildVisibleTreeProjection,
   calculateVirtualRange,
   refreshVisibleRowStructure,
@@ -228,6 +229,59 @@ describe("visible tree projection", () => {
     });
     expect(projection.activeTabNodeId).toBe("tab:1");
     expect(projection.activeTabRowIndex).toBe(1);
+  });
+
+  it("applies same-parent reorder patches without rebuilding projection arrays", () => {
+    const state = wideState(LARGE_NODE_COUNT, { activeTabIndex: 1 });
+    const projection = buildVisibleTreeProjection(state, "");
+    const rows = projection.rows;
+    const visibleNodeIds = projection.visibleNodeIds;
+    const visibleNodeIdSet = projection.visibleNodeIdSet;
+    const movedNodeId = `tab:${LARGE_NODE_COUNT}`;
+    const next = cloneOutlineStateForTest(state);
+    const root = next.nodes["window:1"]!;
+    root.childIds = root.childIds.filter((childId) => childId !== movedNodeId);
+    root.childIds.splice(0, 0, movedNodeId);
+    next.nodes[movedNodeId] = {
+      ...next.nodes[movedNodeId]!,
+      childIds: [...next.nodes[movedNodeId]!.childIds]
+    };
+
+    const applied = applySameParentReorderTreeStructurePatchToProjection(next, projection, {
+      deletedNodeIds: [],
+      updatedNodes: [root, next.nodes[movedNodeId]!],
+      rootIds: ["window:1"],
+      deletedClosedCount: 0
+    });
+
+    expect(applied).toBe(true);
+    expect(projection.rows).toBe(rows);
+    expect(projection.visibleNodeIds).toBe(visibleNodeIds);
+    expect(projection.visibleNodeIdSet).toBe(visibleNodeIdSet);
+    expect(projection.rows.slice(0, 4).map((row) => row.nodeId)).toEqual([
+      "window:1",
+      movedNodeId,
+      "tab:1",
+      "tab:2"
+    ]);
+    expect(projection.visibleNodeIds.slice(0, 4)).toEqual([
+      "window:1",
+      movedNodeId,
+      "tab:1",
+      "tab:2"
+    ]);
+    expect(projection.rows[1]).toMatchObject({
+      nodeId: movedNodeId,
+      index: 1,
+      parentRowIndex: 0,
+      subtreeEndIndex: 2
+    });
+    expect(projection.rows[2]).toMatchObject({
+      nodeId: "tab:1",
+      index: 2,
+      parentRowIndex: 0,
+      subtreeEndIndex: 3
+    });
   });
 
   it("applies active-search delete patches without rebuilding the projection", () => {

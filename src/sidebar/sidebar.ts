@@ -52,9 +52,9 @@ import { segmentSearchText } from "./search.js";
 import {
   applyInsertTreeStructurePatchToProjection,
   applyDeleteTreeStructurePatchToProjection,
+  applySameParentReorderTreeStructurePatchToProjection,
   buildVisibleTreeProjection,
   calculateVirtualRange,
-  refreshVisibleRowStructure,
   type VisibleTreeProjection,
   type VisibleTreeRow
 } from "./visible-tree.js";
@@ -1258,131 +1258,6 @@ function applyTreeStructureUpdate(update: TreeStructureUpdate): void {
     clearHoverLineScope();
     scheduleVirtualRender();
   });
-}
-
-function applySameParentReorderTreeStructurePatchToProjection(
-  state: OutlineState,
-  projection: VisibleTreeProjection,
-  update: TreeStructureUpdate
-): boolean {
-  if (projection.isSearchActive || update.deletedNodeIds.length > 0) {
-    return false;
-  }
-
-  const updatedNodeIds = new Set(update.updatedNodes.map((node) => node.id));
-  const movedNodes = update.updatedNodes.filter((node) => node.parentId && updatedNodeIds.has(node.parentId));
-  if (movedNodes.length !== 1) {
-    return false;
-  }
-
-  const movedNode = movedNodes[0];
-  const parentId = movedNode?.parentId;
-  const parentNode = parentId ? state.nodes[parentId] : undefined;
-  if (!movedNode || !parentId || !parentNode) {
-    return false;
-  }
-
-  const parentRow = projection.rows.find((row) => row.nodeId === parentId);
-  const movedRow = projection.rows.find((row) => row.nodeId === movedNode.id);
-  if (!parentRow || !movedRow || !parentRow.expanded || movedRow.parentRowIndex !== parentRow.index) {
-    return false;
-  }
-
-  const targetChildOffset = parentNode.childIds.indexOf(movedNode.id);
-  if (
-    targetChildOffset < 0 ||
-    directChildCountForRow(projection.rows, parentRow) !== parentNode.childIds.length
-  ) {
-    return false;
-  }
-
-  const movedStart = movedRow.index;
-  const movedEnd = movedRow.subtreeEndIndex;
-  const movedSize = movedEnd - movedStart;
-  let insertionIndex = parentRow.index + 1;
-  if (targetChildOffset > 0) {
-    const previousSiblingId = parentNode.childIds[targetChildOffset - 1];
-    const previousSiblingRow = previousSiblingId
-      ? projection.rows.find((row) => row.nodeId === previousSiblingId)
-      : undefined;
-    if (!previousSiblingRow || previousSiblingRow.parentRowIndex !== parentRow.index) {
-      return false;
-    }
-    insertionIndex = previousSiblingRow.subtreeEndIndex;
-  }
-  if (insertionIndex > movedStart) {
-    insertionIndex -= movedSize;
-  }
-
-  const movedRows = projection.rows.splice(movedStart, movedSize);
-  projection.rows.splice(insertionIndex, 0, ...movedRows);
-  const movedVisibleNodeIds = projection.visibleNodeIds.splice(movedStart, movedSize);
-  projection.visibleNodeIds.splice(insertionIndex, 0, ...movedVisibleNodeIds);
-  refreshVisibleRowStructure(projection.rows);
-  refreshRowsFromUpdatedNodes(state, projection, update.updatedNodes);
-  return true;
-}
-
-function directChildCountForRow(rows: readonly VisibleTreeRow[], parentRow: VisibleTreeRow): number {
-  const childDepth = parentRow.depth + 1;
-  let count = 0;
-  let index = parentRow.index + 1;
-
-  while (index < parentRow.subtreeEndIndex) {
-    const row = rows[index];
-    if (!row) {
-      break;
-    }
-    if (row.depth !== childDepth) {
-      index += 1;
-      continue;
-    }
-
-    count += 1;
-    index = row.subtreeEndIndex;
-  }
-
-  return count;
-}
-
-function refreshRowsFromUpdatedNodes(
-  state: OutlineState,
-  projection: VisibleTreeProjection,
-  updatedNodes: readonly OutlineNode[]
-): void {
-  for (const node of updatedNodes) {
-    const row = projection.rows.find((candidate) => candidate.nodeId === node.id);
-    if (!row) {
-      continue;
-    }
-
-    row.childCount = node.childIds.length;
-    row.visibleChildCount = node.collapsed ? 0 : node.childIds.length;
-    row.expanded = !node.collapsed;
-    row.insideActiveWindow = isRowInsideActiveWindow(state, projection.rows, row);
-  }
-}
-
-function isRowInsideActiveWindow(
-  state: OutlineState,
-  rows: readonly VisibleTreeRow[],
-  row: VisibleTreeRow
-): boolean {
-  if (row.depth === 0) {
-    return false;
-  }
-
-  let parentRowIndex = row.parentRowIndex;
-  while (typeof parentRowIndex === "number") {
-    const parentRow = rows[parentRowIndex];
-    const parentNode = parentRow ? state.nodes[parentRow.nodeId] : undefined;
-    if (parentNode?.kind === "window" && parentNode.active) {
-      return true;
-    }
-    parentRowIndex = parentRow?.parentRowIndex;
-  }
-
-  return false;
 }
 
 function invalidateProjectionCache(): void {

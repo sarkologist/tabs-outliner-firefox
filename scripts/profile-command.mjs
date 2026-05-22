@@ -1,7 +1,12 @@
 import { performance } from "node:perf_hooks";
 
 import { createBackgroundController } from "../dist/background/controller.js";
-import { buildVisibleTreeProjection } from "../dist/sidebar/visible-tree.js";
+import {
+  applyDeleteTreeStructurePatchToProjection,
+  applyInsertTreeStructurePatchToProjection,
+  applySameParentReorderTreeStructurePatchToProjection,
+  buildVisibleTreeProjection
+} from "../dist/sidebar/visible-tree.js";
 import {
   createAlarmApi,
   createPassiveEvent,
@@ -382,9 +387,20 @@ function applyTreeStructureUpdate(runtime, update) {
   }
   runtime.sidebarState.rootIds = [...update.rootIds];
 
-  const projection = measure(() => buildVisibleTreeProjection(runtime.sidebarState, ""));
-  runtime.sidebarProjection = projection.value;
-  runtime.projectionMs += projection.ms;
+  if (!runtime.sidebarProjection || !applyProjectionTreeStructureUpdate(runtime, update)) {
+    const projection = measure(() => buildVisibleTreeProjection(runtime.sidebarState, ""));
+    runtime.sidebarProjection = projection.value;
+    runtime.projectionMs += projection.ms;
+  }
+}
+
+function applyProjectionTreeStructureUpdate(runtime, update) {
+  if (update.deletedNodeIds.length === 0) {
+    return applySameParentReorderTreeStructurePatchToProjection(runtime.sidebarState, runtime.sidebarProjection, update) ||
+      applyInsertTreeStructurePatchToProjection(runtime.sidebarState, runtime.sidebarProjection, update);
+  }
+
+  return applyDeleteTreeStructurePatchToProjection(runtime.sidebarState, runtime.sidebarProjection, update);
 }
 
 async function profile(options) {
