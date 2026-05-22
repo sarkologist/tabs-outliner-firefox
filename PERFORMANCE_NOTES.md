@@ -678,3 +678,11 @@ Use these as starting targets, not hard promises:
 - Added red/green visible-tree coverage proving a 50k-row same-parent reorder preserves the existing projection arrays and updates row order in place.
 - After `pnpm run build`, `pnpm profile:command -- --tabs 50000 --scenario move-leaf` medians over three runs were 91ms total, 45ms first broadcast, 0ms projection, and 6ms `treePatchMs`. Before this harness fix, the same current-code scenario measured about 127ms total, 47ms first broadcast, 37ms projection, and 37ms `treePatchMs`.
 - Verification: `pnpm test -- src/sidebar/visible-tree.test.ts -t "same-parent reorder"`, `pnpm run build`, `pnpm profile:command -- --tabs 50000 --scenario move-leaf` repeated three times, `pnpm profile:command -- --tabs 50000 --scenario group-live-leaf`, `pnpm exec playwright test tests/playwright/sidebar-drag-drop-performance.spec.ts`, and `pnpm test` passed.
+
+### 2026-05-22: Sidebar Startup Autoresearch Setup
+
+- Added a dedicated autoresearch setup for initial sidebar hydration lag. The new `pnpm profile:sidebar-startup` matrix runs the existing startup scenarios repeatedly and summarizes the primary hydration score, stored-startup cross-check, warm snapshot timing, snapshot bounds, and zero-save/broadcast/event guardrails.
+- Fixed the startup synthetic harness fake `storage.local.get([...keys])` behavior so array-key reads return only requested keys, matching WebExtension storage semantics. This keeps full hydration measurements from accidentally seeing unrelated storage items.
+- Added cheap startup marks for initial snapshot load, first rows, full sidebar import, hydration start, and hydration completion. Playwright now verifies rows appear before hydration, controls re-enable after hydration, and the marks are ordered.
+- Baseline after `pnpm run build`: `pnpm profile:sidebar-startup -- --tabs 50000 --runs 3 --tag 20260522 --description baseline` reported 657ms primary hydration median, 655ms hydration-only median, 616ms stored-startup median, 34ms warm snapshot median, 256 snapshot rows/nodes, and 0 saves/broadcasts/runtime events.
+- Verification: `pnpm test -- src/perf`, `pnpm run build`, `pnpm profile:sidebar-startup -- --tabs 50000 --runs 3 --tag 20260522 --description baseline`, and `pnpm exec playwright test tests/playwright/sidebar-first-paint.spec.ts --reporter=list` passed.

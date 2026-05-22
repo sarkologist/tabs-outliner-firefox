@@ -10,7 +10,9 @@ void bootSidebar();
 
 async function bootSidebar(): Promise<void> {
   performance.mark("tabs-outliner.boot.start");
+  performance.mark("tabs-outliner.boot.initialSnapshot.start");
   const snapshot = await loadInitialSnapshot();
+  performance.mark("tabs-outliner.boot.initialSnapshot.end");
   let revealedSnapshot = false;
   if (snapshot && shouldRevealInitialSnapshot(snapshot)) {
     window.__tabsOutlinerBootSnapshot = snapshot;
@@ -24,7 +26,9 @@ async function bootSidebar(): Promise<void> {
   if (revealedSnapshot) {
     await afterPaint();
   }
+  performance.mark("tabs-outliner.boot.fullAppImport.start");
   await import("./sidebar.js");
+  performance.mark("tabs-outliner.boot.fullAppImport.end");
 }
 
 async function loadInitialSnapshot(): Promise<InitialTreeSnapshot | undefined> {

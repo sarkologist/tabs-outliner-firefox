@@ -198,6 +198,96 @@ test.describe("sidebar first paint", () => {
     expect(metrics.treeHeight).toBeGreaterThan(9000);
     expect(issues).toEqual([]);
   });
+
+  test("hydrates after first paint and exposes startup timing marks", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await page.addInitScript(({ snapshot, fullState }) => {
+      const messages: Array<{ type: string; at: number }> = [];
+      (window as typeof window & { __sidebarBootMessages?: typeof messages }).__sidebarBootMessages = messages;
+      window.browser = {
+        runtime: {
+          sendMessage: async (message: unknown) => {
+            const type = typeof message === "object" && message ? String((message as { type?: unknown }).type) : "";
+            messages.push({ type, at: performance.now() });
+            if (type === "getInitialTreeSnapshot") {
+              return structuredClone(snapshot);
+            }
+            if (type === "getState") {
+              return structuredClone(fullState);
+            }
+            if (
+              type === "getDiagnostics" ||
+              type === "getPerformanceTrace" ||
+              type === "setPerformanceTraceEnabled" ||
+              type === "clearPerformanceTrace"
+            ) {
+              return undefined;
+            }
+            return { ok: true };
+          },
+          onMessage: {
+            addListener: () => undefined
+          },
+          connect: () => ({
+            onMessage: { addListener: () => undefined },
+            onDisconnect: { addListener: () => undefined }
+          })
+        },
+        storage: {
+          local: {
+            get: async () => ({}),
+            set: async () => undefined
+          },
+          onChanged: {
+            addListener: () => undefined
+          }
+        },
+        windows: {
+          getCurrent: async () => ({ id: 1 })
+        }
+      };
+    }, {
+      snapshot: fixtureInitialSnapshot(500),
+      fullState: fixtureFullState(500, 1)
+    });
+
+    await page.goto("/sidebar/sidebar.html");
+    await expect(page.locator(".node[data-node-id='tab:1']")).toBeVisible();
+    await expect(page.locator("#search")).toBeDisabled();
+    await page.waitForFunction(() =>
+      performance.getEntriesByName("tabs-outliner.sidebar.hydration.complete").length > 0
+    );
+    await expect(page.locator("#search")).toBeEnabled();
+    await expect(page.locator("#state-count")).toHaveText("501 items / 0 saved");
+
+    const metrics = await page.evaluate(() => {
+      const mark = (name: string) => performance.getEntriesByName(name).at(-1)?.startTime;
+      const messages = (window as typeof window & { __sidebarBootMessages?: Array<{ type: string; at: number }> })
+        .__sidebarBootMessages ?? [];
+      return {
+        initialSnapshotStart: mark("tabs-outliner.boot.initialSnapshot.start"),
+        initialSnapshotEnd: mark("tabs-outliner.boot.initialSnapshot.end"),
+        firstRowsAt: mark("tabs-outliner.boot.firstRows"),
+        fullAppImportStart: mark("tabs-outliner.boot.fullAppImport.start"),
+        fullAppImportEnd: mark("tabs-outliner.boot.fullAppImport.end"),
+        hydrationStart: mark("tabs-outliner.sidebar.hydration.start"),
+        hydrationComplete: mark("tabs-outliner.sidebar.hydration.complete"),
+        initialSnapshotRequests: messages.filter((message) => message.type === "getInitialTreeSnapshot").length,
+        hydrationRequests: messages.filter((message) => message.type === "getState").length
+      };
+    });
+
+    expect(metrics.initialSnapshotRequests).toBe(1);
+    expect(metrics.hydrationRequests).toBe(1);
+    expect(metrics.firstRowsAt).toBeGreaterThan(0);
+    expect(metrics.initialSnapshotStart).toBeLessThanOrEqual(metrics.initialSnapshotEnd);
+    expect(metrics.initialSnapshotEnd).toBeLessThanOrEqual(metrics.firstRowsAt);
+    expect(metrics.firstRowsAt).toBeLessThan(metrics.fullAppImportStart);
+    expect(metrics.fullAppImportStart).toBeLessThanOrEqual(metrics.fullAppImportEnd);
+    expect(metrics.fullAppImportEnd).toBeLessThan(metrics.hydrationStart);
+    expect(metrics.hydrationStart).toBeLessThanOrEqual(metrics.hydrationComplete);
+    expect(issues).toEqual([]);
+  });
 });
 
 function fixtureInitialSnapshot(tabCount: number, options: { activeTabInSnapshot?: boolean } = {}) {

@@ -109,6 +109,17 @@ function makeRuntime(tabCount) {
           if (typeof key === "string") {
             return { [key]: runtime.storage.get(key) };
           }
+          if (Array.isArray(key)) {
+            return Object.fromEntries(key.map((entryKey) => [entryKey, runtime.storage.get(entryKey)]));
+          }
+          if (key && typeof key === "object") {
+            return Object.fromEntries(
+              Object.entries(key).map(([entryKey, defaultValue]) => [
+                entryKey,
+                runtime.storage.has(entryKey) ? runtime.storage.get(entryKey) : defaultValue
+              ])
+            );
+          }
           return Object.fromEntries(runtime.storage);
         },
         set: async (items) => {

@@ -411,12 +411,14 @@ async function hydrateFullState(): Promise<void> {
   }
   try {
     hydratingFullState = true;
+    performance.mark("tabs-outliner.sidebar.hydration.start");
     updateHydrationControls();
     currentState = (await sendCommand({ type: "getState" })) as OutlineState;
     invalidateSidebarWindowActiveTabTargets();
     hydratingFullState = false;
     updateHydrationControls();
     render();
+    performance.mark("tabs-outliner.sidebar.hydration.complete");
     scheduleDiagnosticsLoad();
   } catch (error) {
     hydratingFullState = false;

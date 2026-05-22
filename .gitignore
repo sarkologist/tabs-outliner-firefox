@@ -3,4 +3,6 @@ dist/
 web-ext-artifacts/
 coverage/
 test-results/
+autoresearch/sidebar-startup/results.tsv
+autoresearch/sidebar-startup/*.log
 .DS_Store
