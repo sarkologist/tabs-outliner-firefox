@@ -7,8 +7,143 @@ type ConsoleIssue = {
 
 const TAB_COUNT = 50_000;
 const DRAGOVER_SAMPLES = 80;
+const HOVER_SAMPLES = 80;
 
 test.describe("sidebar drag/drop performance", () => {
+  test("profiles large-subtree hover guides with 50,000 tabs", async ({ page }, testInfo) => {
+    test.setTimeout(90_000);
+    const issues = collectPageIssues(page);
+
+    await loadLargeSidebar(page, TAB_COUNT);
+    await page.evaluate(async () => {
+      await window.tabsOutlinerProfile?.enable();
+      await window.tabsOutlinerProfile?.clear();
+    });
+
+    const result = await page.evaluate(async ({ samples, targetId }) => {
+      const row = document.querySelector(`.node[data-node-id="${CSS.escape(targetId)}"] > .node-row`);
+      if (!(row instanceof HTMLElement)) {
+        throw new Error(`Missing target row for ${targetId}`);
+      }
+
+      const rect = row.getBoundingClientRect();
+      const durations: number[] = [];
+      for (let index = 0; index < samples; index += 1) {
+        const event = new PointerEvent("pointerover", {
+          bubbles: true,
+          clientX: rect.left + 20,
+          clientY: rect.top + rect.height / 2,
+          pointerType: "mouse"
+        });
+        const startedAt = performance.now();
+        row.dispatchEvent(event);
+        durations.push(performance.now() - startedAt);
+      }
+
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+
+      const sorted = [...durations].sort((left, right) => left - right);
+      const percentile = (ratio: number) => sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * ratio))] ?? 0;
+      const snapshot = await window.tabsOutlinerProfile?.snapshot();
+      const summary = await window.tabsOutlinerProfile?.summary();
+      const hoverEntries =
+        snapshot?.sidebar.entries.filter((entry) => entry.name === "sidebar.hoverGuide") ?? [];
+
+      return {
+        samples,
+        avgMs: durations.reduce((sum, value) => sum + value, 0) / durations.length,
+        p50Ms: percentile(0.5),
+        p95Ms: percentile(0.95),
+        maxMs: sorted.at(-1) ?? 0,
+        hoverGuide: summary?.find((row) => row.name === "sidebar.hoverGuide"),
+        hoverEntries: hoverEntries.map((entry) => entry.detail)
+      };
+    }, { samples: HOVER_SAMPLES, targetId: "window:1" });
+
+    await testInfo.attach("hover-guide-50k-profile.json", {
+      body: JSON.stringify(result, null, 2),
+      contentType: "application/json"
+    });
+    console.log(`hover-guide-50k ${JSON.stringify(result)}`);
+
+    expect(result.p95Ms).toBeLessThan(4);
+    expect(result.hoverGuide?.maxMs).toBeLessThan(8);
+    expect(result.hoverEntries).toContainEqual(expect.objectContaining({
+      skipped: true,
+      skipReason: "large-subtree",
+      subtreeRows: TAB_COUNT + 1
+    }));
+    expect(issues).toEqual([]);
+  });
+
+  test("clears large hover guides before scroll rendering", async ({ page }, testInfo) => {
+    test.setTimeout(90_000);
+    const issues = collectPageIssues(page);
+
+    await loadLargeSidebar(page, TAB_COUNT);
+    await page.evaluate(async () => {
+      await window.tabsOutlinerProfile?.enable();
+      await window.tabsOutlinerProfile?.clear();
+    });
+
+    const result = await page.evaluate(async () => {
+      const row = document.querySelector(`.node[data-node-id="${CSS.escape("window:1")}"] > .node-row`);
+      const viewport = document.querySelector("main");
+      if (!(row instanceof HTMLElement) || !(viewport instanceof HTMLElement)) {
+        throw new Error("Missing sidebar row or viewport");
+      }
+
+      const rect = row.getBoundingClientRect();
+      row.dispatchEvent(new PointerEvent("pointerover", {
+        bubbles: true,
+        clientX: rect.left + 20,
+        clientY: rect.top + rect.height / 2,
+        pointerType: "mouse"
+      }));
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+
+      viewport.scrollTop = 4000;
+      viewport.dispatchEvent(new Event("scroll"));
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+
+      const snapshot = await window.tabsOutlinerProfile?.snapshot();
+      const summary = await window.tabsOutlinerProfile?.summary();
+      const hoverEntries =
+        snapshot?.sidebar.entries.filter((entry) => entry.name === "sidebar.hoverGuide") ?? [];
+      const virtualRows =
+        snapshot?.sidebar.entries.filter((entry) => entry.name === "sidebar.virtualRows") ?? [];
+
+      return {
+        scrollTop: viewport.scrollTop,
+        hoverGuide: summary?.find((row) => row.name === "sidebar.hoverGuide"),
+        virtualRows: summary?.find((row) => row.name === "sidebar.virtualRows"),
+        hoverEntries: hoverEntries.map((entry) => entry.detail),
+        virtualRowsEntries: virtualRows.map((entry) => entry.detail)
+      };
+    });
+
+    await testInfo.attach("hover-scroll-50k-profile.json", {
+      body: JSON.stringify(result, null, 2),
+      contentType: "application/json"
+    });
+    console.log(`hover-scroll-50k ${JSON.stringify(result)}`);
+
+    expect(result.scrollTop).toBeGreaterThan(0);
+    expect(result.hoverGuide?.maxMs).toBeLessThan(8);
+    expect(result.virtualRows?.maxMs).toBeLessThan(16);
+    expect(result.hoverEntries).toContainEqual(expect.objectContaining({
+      reason: "scroll",
+      skipped: true,
+      skipReason: "clear"
+    }));
+    expect(result.virtualRowsEntries).toContainEqual(expect.objectContaining({
+      hoverGuideActive: false
+    }));
+    expect(issues).toEqual([]);
+  });
+
   test("profiles dragover previews with 50,000 tabs", async ({ page }, testInfo) => {
     test.setTimeout(90_000);
     const issues = collectPageIssues(page);

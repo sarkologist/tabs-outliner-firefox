@@ -110,6 +110,10 @@ let projectionState: OutlineState | undefined;
 let projectionQuery: string | undefined;
 let scheduledVirtualRender = false;
 let hoverLineScope: HoverLineScope | undefined;
+let pendingHoverLineScope: HoverLineScope | undefined;
+let pendingHoverGuideApply = false;
+let pendingHoverGuideReason: HoverGuideApplyReason = "pointer";
+let scheduledHoverGuideFrame: number | undefined;
 let pendingCutNodeId: NodeId | undefined;
 let currentCutRowRange: CutSubtreeRowRange | undefined;
 let pendingShowInTreeNodeId: NodeId | undefined;
@@ -128,6 +132,7 @@ const DIAGNOSTICS_REFRESH_DELAY_MS = 750;
 const FULL_STATE_HYDRATION_DELAY_MS = 750;
 const SHOW_IN_TREE_HIGHLIGHT_MS = 1200;
 const VIRTUAL_OVERSCAN_ROWS = 32;
+const HOVER_GUIDE_MAX_SUBTREE_ROWS = 1000;
 const GUIDE_TOP = 1;
 const GUIDE_BOTTOM = 2;
 const GUIDE_FULL = GUIDE_TOP | GUIDE_BOTTOM;
@@ -187,6 +192,8 @@ type HoverLineScope = {
   subtreeEndIndex: number;
   targetDepth: number;
 };
+
+type HoverGuideApplyReason = "pointer" | "pointer-clear" | "scroll";
 
 type HoverGuideSegments = {
   horizontalDepth?: number;
@@ -437,7 +444,7 @@ function applyInitialTreeSnapshot(snapshot: InitialTreeSnapshot): void {
   projectionState = currentState;
   projectionQuery = "";
   currentCutRowRange = undefined;
-  hoverLineScope = undefined;
+  resetHoverLineScope();
   updateHydrationControls();
   renderInitialTreeSnapshot();
 }
@@ -790,6 +797,7 @@ function registerVirtualViewport(): void {
   rootDropSurface?.addEventListener(
     "scroll",
     () => {
+      clearHoverLineScope({ immediate: true, reason: "scroll" });
       scheduleVirtualRender();
     },
     { passive: true }
@@ -985,7 +993,7 @@ function render(): void {
     if (!state) {
       currentProjection = undefined;
       currentCutRowRange = undefined;
-      hoverLineScope = undefined;
+      resetHoverLineScope();
       tree.textContent = "";
       tree.style.height = "0px";
       stateCount.textContent = "Loading";
@@ -1002,7 +1010,7 @@ function render(): void {
     const projection = visibleProjectionFor(state, currentSearchQuery);
     currentProjection = projection;
     currentCutRowRange = cutSubtreeRowRange(projection.rows, pendingCutNodeId);
-    hoverLineScope = undefined;
+    resetHoverLineScope();
     updateProjectionChrome(projection);
     if (!scrollToPendingShowInTreeRow(projection)) {
       scrollToObservedActiveTab(projection);
@@ -1376,7 +1384,8 @@ function scheduleVirtualRender(): void {
 
 function renderVirtualRows(): void {
   perfTrace.measure("sidebar.virtualRows", {
-    rows: currentProjection?.rows.length ?? 0
+    rows: currentProjection?.rows.length ?? 0,
+    hoverGuideActive: isRenderableHoverLineScope(hoverLineScope)
   }, () => {
     if (!tree || !currentProjection || !currentState) {
       return;
@@ -1616,21 +1625,76 @@ function handleTreePointerLeave(event: PointerEvent): void {
 }
 
 function setHoverLineScope(scope: HoverLineScope): void {
-  if (sameHoverLineScope(hoverLineScope, scope)) {
+  if (!pendingHoverGuideApply && sameHoverLineScope(hoverLineScope, scope)) {
+    return;
+  }
+
+  scheduleHoverLineScope(scope, "pointer");
+}
+
+function clearHoverLineScope(options: { immediate?: boolean; reason?: HoverGuideApplyReason } = {}): void {
+  if (!hoverLineScope && !pendingHoverGuideApply) {
+    return;
+  }
+
+  if (options.immediate) {
+    applyHoverLineScopeNow(undefined, options.reason ?? "pointer-clear");
+    return;
+  }
+
+  scheduleHoverLineScope(undefined, options.reason ?? "pointer-clear");
+}
+
+function resetHoverLineScope(): void {
+  if (scheduledHoverGuideFrame !== undefined) {
+    window.cancelAnimationFrame(scheduledHoverGuideFrame);
+    scheduledHoverGuideFrame = undefined;
+  }
+  hoverLineScope = undefined;
+  pendingHoverLineScope = undefined;
+  pendingHoverGuideReason = "pointer";
+  pendingHoverGuideApply = false;
+}
+
+function scheduleHoverLineScope(scope: HoverLineScope | undefined, reason: HoverGuideApplyReason): void {
+  pendingHoverLineScope = scope;
+  pendingHoverGuideReason = reason;
+  pendingHoverGuideApply = true;
+
+  if (scheduledHoverGuideFrame !== undefined) {
+    return;
+  }
+
+  scheduledHoverGuideFrame = window.requestAnimationFrame(() => {
+    scheduledHoverGuideFrame = undefined;
+    if (!pendingHoverGuideApply) {
+      return;
+    }
+
+    const nextScope = pendingHoverLineScope;
+    const nextReason = pendingHoverGuideReason;
+    pendingHoverLineScope = undefined;
+    pendingHoverGuideReason = "pointer";
+    pendingHoverGuideApply = false;
+    applyHoverLineScopeNow(nextScope, nextReason);
+  });
+}
+
+function applyHoverLineScopeNow(scope: HoverLineScope | undefined, reason: HoverGuideApplyReason): void {
+  if (scheduledHoverGuideFrame !== undefined) {
+    window.cancelAnimationFrame(scheduledHoverGuideFrame);
+    scheduledHoverGuideFrame = undefined;
+  }
+  pendingHoverLineScope = undefined;
+  pendingHoverGuideReason = "pointer";
+  pendingHoverGuideApply = false;
+
+  if (scope ? sameHoverLineScope(hoverLineScope, scope) : !hoverLineScope) {
     return;
   }
 
   hoverLineScope = scope;
-  applyHoverLineScopeToRenderedRows();
-}
-
-function clearHoverLineScope(): void {
-  if (!hoverLineScope) {
-    return;
-  }
-
-  hoverLineScope = undefined;
-  applyHoverLineScopeToRenderedRows();
+  applyHoverLineScopeToRenderedRows(reason);
 }
 
 function sameHoverLineScope(left: HoverLineScope | undefined, right: HoverLineScope): boolean {
@@ -1642,23 +1706,42 @@ function sameHoverLineScope(left: HoverLineScope | undefined, right: HoverLineSc
   );
 }
 
-function applyHoverLineScopeToRenderedRows(): void {
-  if (!tree || !currentProjection) {
-    return;
-  }
-
-  for (const item of Array.from(tree.querySelectorAll<HTMLElement>(".node"))) {
-    const row = rowForItem(item);
-    const rowIndex = rowIndexForItem(item);
-    const rowInfo = typeof rowIndex === "number" ? currentProjection.rows[rowIndex] : undefined;
-    if (row && rowInfo) {
-      applyHoverLineClasses(row, rowInfo);
+function applyHoverLineScopeToRenderedRows(reason: HoverGuideApplyReason): void {
+  const items = Array.from(tree?.querySelectorAll<HTMLElement>(".node") ?? []);
+  const subtreeRows = hoverLineScopeSubtreeRows(hoverLineScope);
+  const skipReason = hoverGuideSkipReason(hoverLineScope);
+  perfTrace.measure("sidebar.hoverGuide", {
+    reason,
+    renderedRows: items.length,
+    subtreeRows,
+    skipped: Boolean(skipReason),
+    ...(skipReason ? { skipReason } : {})
+  }, () => {
+    if (!tree || !currentProjection) {
+      return;
     }
-  }
+
+    if (skipReason) {
+      removeHoverGuideLayers(items);
+      return;
+    }
+
+    for (const item of items) {
+      const row = rowForItem(item);
+      const rowIndex = rowIndexForItem(item);
+      const rowInfo = typeof rowIndex === "number" ? currentProjection.rows[rowIndex] : undefined;
+      if (row && rowInfo) {
+        applyHoverLineClasses(row, rowInfo);
+      }
+    }
+  });
 }
 
 function applyHoverLineClasses(row: HTMLElement, rowInfo: VisibleTreeRow): void {
   row.querySelector<HTMLElement>(".tree-guide-layer")?.remove();
+  if (!isRenderableHoverLineScope(hoverLineScope)) {
+    return;
+  }
 
   const guideSegments = hoverGuideSegmentsForRow(rowInfo);
   if (guideSegments.verticalSegments.size === 0 && typeof guideSegments.horizontalDepth !== "number") {
@@ -1680,11 +1763,32 @@ function applyHoverLineClasses(row: HTMLElement, rowInfo: VisibleTreeRow): void 
   row.prepend(layer);
 }
 
+function removeHoverGuideLayers(items: HTMLElement[]): void {
+  for (const item of items) {
+    rowForItem(item)?.querySelector<HTMLElement>(".tree-guide-layer")?.remove();
+  }
+}
+
+function hoverLineScopeSubtreeRows(scope: HoverLineScope | undefined): number {
+  return scope ? Math.max(0, scope.subtreeEndIndex - scope.rowIndex) : 0;
+}
+
+function hoverGuideSkipReason(scope: HoverLineScope | undefined): "clear" | "large-subtree" | undefined {
+  if (!scope) {
+    return "clear";
+  }
+  return hoverLineScopeSubtreeRows(scope) > HOVER_GUIDE_MAX_SUBTREE_ROWS ? "large-subtree" : undefined;
+}
+
+function isRenderableHoverLineScope(scope: HoverLineScope | undefined): boolean {
+  return Boolean(scope && !hoverGuideSkipReason(scope));
+}
+
 function hoverGuideSegmentsForRow(rowInfo: VisibleTreeRow): HoverGuideSegments {
   const verticalSegments = new Map<number, number>();
   const projection = currentProjection;
   const scope = hoverLineScope;
-  if (!scope || !projection) {
+  if (!scope || hoverGuideSkipReason(scope) || !projection) {
     return { verticalSegments };
   }
 
