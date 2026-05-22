@@ -4,6 +4,7 @@ import {
   deleteNode,
   flattenSubtreeOneLevel,
   moveNode,
+  moveSubtreeToTopLevel,
   moveTabToNewClosedWindow,
   moveTabToNewLiveWindow,
   planRestore,
@@ -54,6 +55,10 @@ export type BackgroundCommand =
       nodeId: NodeId;
     }
   | {
+      type: "moveSubtreeToTopLevel";
+      nodeId: NodeId;
+    }
+  | {
       type: "flattenSubtree";
       nodeId: NodeId;
     }
@@ -100,6 +105,7 @@ export const BACKGROUND_COMMAND_TYPES = [
   "moveNode",
   "moveNodeToNewWindow",
   "wrapNodeInGroup",
+  "moveSubtreeToTopLevel",
   "flattenSubtree",
   "promoteChildren",
   "toggleCollapsed",
@@ -220,6 +226,9 @@ export async function runCommand(
 
     case "wrapNodeInGroup":
       return commandResultFromNextState(state, await wrapNodeInGroupCommand(state, adapter, command.nodeId));
+
+    case "moveSubtreeToTopLevel":
+      return commandResultFromNextState(state, await moveSubtreeToTopLevelCommand(state, adapter, command.nodeId));
 
     case "flattenSubtree":
       return commandResultFromNextState(state, flattenSubtreeOneLevel(state, command.nodeId));
@@ -757,6 +766,34 @@ async function wrapNodeInGroupCommand(
   }
 
   return wrapNodeInGroup(state, nodeId, { now: Date.now() });
+}
+
+async function moveSubtreeToTopLevelCommand(
+  state: OutlineState,
+  adapter: BrowserAdapter,
+  nodeId: NodeId
+): Promise<OutlineState> {
+  const node = state.nodes[nodeId];
+  if (!node?.parentId) {
+    return state;
+  }
+
+  if (isLiveTab(node)) {
+    const createdWindow = await adapter.createWindow({ tabId: node.live.tabId });
+    await moveRemainingLiveSubtreeTabsIntoCreatedWindow(
+      state,
+      adapter,
+      nodeId,
+      node.live.tabId,
+      createdWindow.id
+    );
+    return moveSubtreeToTopLevel(state, nodeId, {
+      now: Date.now(),
+      liveWindow: createdWindow
+    });
+  }
+
+  return moveSubtreeToTopLevel(state, nodeId, { now: Date.now() });
 }
 
 async function moveRemainingLiveSubtreeTabsIntoCreatedWindow(

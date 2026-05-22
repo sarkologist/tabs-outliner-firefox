@@ -7336,6 +7336,103 @@ describe("background controller lifecycle", () => {
     expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
   });
 
+  it("broadcasts move-to-top-level commands as tree structure patches", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        },
+        {
+          id: 2,
+          windowId: 10,
+          index: 1,
+          active: false,
+          openerTabId: 1,
+          url: "https://two.example/",
+          title: "Two"
+        },
+        {
+          id: 3,
+          windowId: 10,
+          index: 2,
+          active: false,
+          url: "https://three.example/",
+          title: "Three"
+        }
+      ]
+    );
+    const adapter: BrowserAdapter = {
+      focusTab: vi.fn(async () => undefined),
+      closeTab: vi.fn(async () => undefined),
+      closeTabs: vi.fn(async () => undefined),
+      closeWindow: vi.fn(async () => undefined),
+      restoreSession: vi.fn(async () => ({})),
+      createTab: vi.fn(async () => {
+        throw new Error("not implemented");
+      }),
+      createWindow: vi.fn(async () => ({
+        id: 42,
+        focused: true,
+        incognito: false
+      })),
+      moveTabs: vi.fn(async () => undefined)
+    };
+    const controller = createBackgroundController({ api: runtime.api, adapter, now: () => 1000 });
+    await controller.ensureState();
+    runtime.broadcasts.length = 0;
+    vi.mocked(runtime.api.storage.local.set).mockClear();
+
+    const result = await controller.handleMessage({
+      type: "moveSubtreeToTopLevel",
+      nodeId: "tab:1"
+    });
+    const moved = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    const lastBroadcast = runtime.broadcasts.at(-1) as
+      | {
+          type?: string;
+          updatedNodes?: OutlineState["nodes"][string][];
+          rootIds?: string[];
+          state?: OutlineState;
+        }
+      | undefined;
+
+    expect(adapter.createWindow).toHaveBeenCalledWith({ tabId: 1 });
+    expect(adapter.moveTabs).toHaveBeenCalledWith([2], { windowId: 42, index: 1 });
+    expectCommandAck(result, true);
+    expect(moved.rootIds).toEqual(["window:10", "window:42"]);
+    expect(moved.nodes["window:10"]?.childIds).toEqual(["tab:3"]);
+    expect(moved.nodes["window:42"]?.childIds).toEqual(["tab:1"]);
+    expect(moved.nodes["tab:2"]?.live).toEqual({ tabId: 2, windowId: 42 });
+    expect(lastBroadcast?.type).toBe("treeStructureUpdated");
+    expect(lastBroadcast?.updatedNodes?.map((node) => node.id).sort()).toEqual([
+      "tab:1",
+      "tab:2",
+      "window:10",
+      "window:42"
+    ]);
+    expect(lastBroadcast?.rootIds).toEqual(["window:10", "window:42"]);
+    expect(lastBroadcast?.state).toBeUndefined();
+    expect(await controller.handleMessage({ type: "getHistoryStatus" })).toMatchObject({
+      type: "historyStatus",
+      canUndo: true,
+      undoLabel: "Move to top level"
+    });
+    await controller.flushPendingSaves();
+    expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
+  });
+
   it("absorbs focus and activation echoes from live-tab grouping without a full runtime refresh", async () => {
     const runtime = fakeRuntime(
       [
@@ -8059,6 +8156,7 @@ describe("background controller lifecycle", () => {
     );
     const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
     await controller.ensureState();
+    let state: OutlineState;
 
     expectCommandAck(await controller.handleMessage({ type: "toggleCollapsed", nodeId: "window:10" }), true);
     expect(((await controller.handleMessage({ type: "getState" })) as OutlineState).nodes["window:10"]?.collapsed).toBe(true);
@@ -8099,8 +8197,30 @@ describe("background controller lifecycle", () => {
     expectCommandAck(await controller.handleMessage({ type: "redo" }), true);
     expect(((await controller.handleMessage({ type: "getState" })) as OutlineState).nodes["tab:1"]?.childIds).toEqual([]);
 
+    expectCommandAck(await controller.handleMessage({ type: "moveSubtreeToTopLevel", nodeId: "tab:1" }), true);
+    expect(await controller.handleMessage({ type: "getHistoryStatus" })).toMatchObject({
+      type: "historyStatus",
+      undoLabel: "Move to top level"
+    });
+    state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    const topLevelWrapperId = state.nodes["tab:1"]?.parentId;
+    expect(topLevelWrapperId).toBeDefined();
+    expect(state.nodes[topLevelWrapperId!]?.kind).toBe("window");
+    expect(state.nodes[topLevelWrapperId!]?.parentId).toBeUndefined();
+    expectCommandAck(await controller.handleMessage({ type: "undo" }), true);
+    state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(state.nodes[topLevelWrapperId!]).toBeUndefined();
+    expect(state.nodes["tab:1"]?.parentId).toBe("window:10");
+    expectCommandAck(await controller.handleMessage({ type: "redo" }), true);
+    state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(state.nodes[topLevelWrapperId!]?.parentId).toBeUndefined();
+    expect(state.nodes["tab:1"]?.parentId).toBe(topLevelWrapperId);
+    expectCommandAck(await controller.handleMessage({ type: "undo" }), true);
+    state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(state.nodes["tab:1"]?.parentId).toBe("window:10");
+
     expectCommandAck(await controller.handleMessage({ type: "wrapNodeInGroup", nodeId: "tab:1" }), true);
-    let state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
     const wrapperId = state.nodes["tab:1"]?.parentId;
     expect(wrapperId).toBeDefined();
     expect(state.nodes[wrapperId!]?.kind).toBe("window");

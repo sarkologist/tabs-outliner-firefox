@@ -653,7 +653,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       if (commandMayRelocateLiveTabs(message.type)) {
         trackCommandRelocatedTabEchoes(current, result.state, commandRelocatedTabEchoes, runtimeIndexCandidateNodeIds);
       }
-      if (message.type === "wrapNodeInGroup") {
+      if (message.type === "wrapNodeInGroup" || message.type === "moveSubtreeToTopLevel") {
         trackOutlineGroupedTabIds(current, result.state, outlineGroupedTabIdsByWindowId, runtimeIndexCandidateNodeIds);
       }
       if (message.type === "restoreNode") {
@@ -687,7 +687,11 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         scheduleStateSave(result.state, saveSchedule);
         return commandAck(true);
       }
-      if (message.type === "wrapNodeInGroup" || message.type === "promoteChildren") {
+      if (
+        message.type === "wrapNodeInGroup" ||
+        message.type === "moveSubtreeToTopLevel" ||
+        message.type === "promoteChildren"
+      ) {
         const update = perfTrace.measure("background.patch.build.treeStructure", { command: message.type }, () =>
           treeStructureUpdateFromStateChange(current, result.state)
         );
@@ -2633,6 +2637,7 @@ function runtimeIndexCandidateNodeIdsForCommand(
     case "moveNode":
     case "moveNodeToNewWindow":
     case "wrapNodeInGroup":
+    case "moveSubtreeToTopLevel":
     case "flattenSubtree":
     case "promoteChildren":
     case "deleteNode":
@@ -2814,6 +2819,7 @@ function isTrackableHistoryCommandType(value: string): value is TrackableHistory
   return value === "moveNode" ||
     value === "moveNodeToNewWindow" ||
     value === "wrapNodeInGroup" ||
+    value === "moveSubtreeToTopLevel" ||
     value === "flattenSubtree" ||
     value === "promoteChildren" ||
     value === "toggleCollapsed" ||
@@ -3213,7 +3219,10 @@ function restoredLiveTabIdsChangedByCommand(
 }
 
 function commandMayRelocateLiveTabs(type: BackgroundCommand["type"]): boolean {
-  return type === "moveNode" || type === "moveNodeToNewWindow" || type === "wrapNodeInGroup";
+  return type === "moveNode" ||
+    type === "moveNodeToNewWindow" ||
+    type === "wrapNodeInGroup" ||
+    type === "moveSubtreeToTopLevel";
 }
 
 function saveScheduleForCommand(type: BackgroundCommand["type"]): SaveSchedule {
@@ -3225,6 +3234,7 @@ function isStructuralCommand(type: BackgroundCommand["type"]): boolean {
     type === "moveNodeToNewWindow" ||
     type === "restoreNode" ||
     type === "wrapNodeInGroup" ||
+    type === "moveSubtreeToTopLevel" ||
     type === "flattenSubtree" ||
     type === "promoteChildren" ||
     type === "deleteNode" ||
