@@ -26,6 +26,12 @@ Baseline on 2026-05-22 from `cf6df3a` plus this setup:
 - `hoverFeedbackCount: 0`
 - `hoverGuideCount: 0`
 
+First accepted experiment on 2026-05-22:
+
+- Hypothesis: sparse startup hover fails because rendered rows store absolute `VisibleTreeRow.index` values, while hover code reads `projection.rows[rowIndex]` as though the projection were dense.
+- Change: resolve hover rows by `VisibleTreeRow.index`, with a dense array fast path and sparse scan fallback.
+- Result from `pnpm profile:startup-hover`: `pointerOutcomes: ["hover-row"]`, `clearMissingRowCount: 0`, `hoverFeedbackCount: 1`, `hoverGuideCount: 1`, `sidebar.input.pointerDelay.maxMs: 0.2`, `sidebar.input.hoverFeedbackDelay.maxMs: 2.8`, and `sidebar.hoverGuide.maxMs: 1`.
+
 Guard metrics:
 
 - `targetVisible` remains `true`.

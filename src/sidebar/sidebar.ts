@@ -1637,7 +1637,7 @@ function handleTreePointerOver(event: PointerEvent): void {
   }
 
   const rowIndex = rowIndexForItem(item);
-  const rowInfo = typeof rowIndex === "number" ? currentProjection?.rows[rowIndex] : undefined;
+  const rowInfo = projectionRowByIndex(currentProjection, rowIndex);
   if (!rowInfo) {
     const detail = pointerInputDetail(event, "clear-missing-row");
     recordInputDelay("sidebar.input.pointerDelay", event, detail);
@@ -1860,7 +1860,7 @@ function applyHoverLineScopeToRenderedRows(reason: HoverGuideApplyReason): void 
     for (const item of items) {
       const row = rowForItem(item);
       const rowIndex = rowIndexForItem(item);
-      const rowInfo = typeof rowIndex === "number" ? currentProjection.rows[rowIndex] : undefined;
+      const rowInfo = projectionRowByIndex(currentProjection, rowIndex);
       if (row && rowInfo) {
         applyHoverLineClasses(row, rowInfo);
       }
@@ -1930,7 +1930,7 @@ function hoverGuideSegmentsForRow(rowInfo: VisibleTreeRow): HoverGuideSegments {
 
   const isConnectorRow = rowInfo.index >= scope.rowIndex && rowInfo.index < scope.subtreeEndIndex && rowInfo.depth > 0;
   for (let connectorIndex = scope.rowIndex; connectorIndex < scope.subtreeEndIndex; connectorIndex += 1) {
-    const connectorRow = projection.rows[connectorIndex];
+    const connectorRow = projectionRowByIndex(projection, connectorIndex);
     if (!connectorRow || connectorRow.depth <= 0) {
       continue;
     }
@@ -2473,6 +2473,18 @@ function currentCssPixelValue(name: string, fallback: number): number {
 function rowIndexForItem(item: HTMLElement): number | undefined {
   const parsed = Number.parseInt(item.dataset.rowIndex ?? "", 10);
   return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function projectionRowByIndex(
+  projection: VisibleTreeProjection | undefined,
+  rowIndex: number | undefined
+): VisibleTreeRow | undefined {
+  if (!projection || typeof rowIndex !== "number") {
+    return undefined;
+  }
+
+  const denseRow = projection.rows[rowIndex];
+  return denseRow?.index === rowIndex ? denseRow : projection.rows.find((row) => row.index === rowIndex);
 }
 
 function nodeItemForId(nodeId: NodeId): HTMLElement | undefined {

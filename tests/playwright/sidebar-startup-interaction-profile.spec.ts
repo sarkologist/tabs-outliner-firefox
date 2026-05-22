@@ -126,6 +126,10 @@ test.describe("sidebar startup interaction profile", () => {
     expect(result.initialSnapshotRequests).toBe(1);
     expect(result.hydrationRequests).toBeGreaterThanOrEqual(0);
     expect(result.pointerOutcomes.length).toBeGreaterThan(0);
+    expect(result.clearMissingRowCount).toBe(0);
+    expect(result.hoverFeedbackCount).toBeGreaterThan(0);
+    expect(result.hoverGuideCount).toBeGreaterThan(0);
+    expect(result.hoverFeedbackDelay?.maxMs).toBeLessThan(16);
     expect(issues).toEqual([]);
   });
 });
