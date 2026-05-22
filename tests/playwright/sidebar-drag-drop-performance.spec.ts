@@ -144,7 +144,7 @@ test.describe("sidebar drag/drop performance", () => {
     expect(issues).toEqual([]);
   });
 
-  test("profiles queued pointer and scroll input delay", async ({ page }, testInfo) => {
+  test("profiles queued pointer, hover feedback, and scroll input delay", async ({ page }, testInfo) => {
     test.setTimeout(90_000);
     const issues = collectPageIssues(page);
 
@@ -197,11 +197,21 @@ test.describe("sidebar drag/drop performance", () => {
     console.log(`input-delay-profile ${JSON.stringify(result)}`);
 
     expect(result.summary?.find((row) => row.name === "sidebar.input.pointerDelay")?.maxMs).toBeGreaterThanOrEqual(15);
+    expect(result.summary?.find((row) => row.name === "sidebar.input.hoverFeedbackDelay")?.maxMs).toBeGreaterThanOrEqual(15);
     expect(result.summary?.find((row) => row.name === "sidebar.input.scrollDelay")?.maxMs).toBeGreaterThanOrEqual(15);
     expect(result.inputDelayEntries).toContainEqual(expect.objectContaining({
       name: "sidebar.input.pointerDelay",
       detail: expect.objectContaining({
-        event: "pointerover"
+        event: "pointerover",
+        outcome: "hover-row"
+      })
+    }));
+    expect(result.inputDelayEntries).toContainEqual(expect.objectContaining({
+      name: "sidebar.input.hoverFeedbackDelay",
+      detail: expect.objectContaining({
+        event: "pointerover",
+        outcome: "hover-row",
+        reason: "pointer"
       })
     }));
     expect(result.inputDelayEntries).toContainEqual(expect.objectContaining({

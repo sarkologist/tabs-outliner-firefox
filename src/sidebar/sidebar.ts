@@ -114,6 +114,7 @@ let hoverLineScope: HoverLineScope | undefined;
 let pendingHoverLineScope: HoverLineScope | undefined;
 let pendingHoverGuideApply = false;
 let pendingHoverGuideReason: HoverGuideApplyReason = "pointer";
+let pendingHoverFeedbackTrace: HoverFeedbackTrace | undefined;
 let scheduledHoverGuideFrame: number | undefined;
 let pendingCutNodeId: NodeId | undefined;
 let currentCutRowRange: CutSubtreeRowRange | undefined;
@@ -195,6 +196,11 @@ type HoverLineScope = {
 };
 
 type HoverGuideApplyReason = "pointer" | "pointer-clear" | "scroll";
+
+type HoverFeedbackTrace = {
+  eventTimeStamp: number;
+  detail: TraceDetail;
+};
 
 type HoverGuideSegments = {
   horizontalDepth?: number;
@@ -1608,32 +1614,34 @@ function appendTitleText(element: HTMLElement, titleText: string, searchQuery: s
 }
 
 function handleTreePointerOver(event: PointerEvent): void {
-  recordInputDelay("sidebar.input.pointerDelay", event, {
-    event: event.type,
-    hydrating: hydratingFullState,
-    pointerType: event.pointerType || "unknown"
-  });
-
   if (draggedNodeId) {
-    clearHoverLineScope();
+    const detail = pointerInputDetail(event, "clear-dragging");
+    recordInputDelay("sidebar.input.pointerDelay", event, detail);
+    clearHoverLineScope({ feedbackTrace: hoverFeedbackTrace(event, detail) });
     return;
   }
 
   if (event.pointerType === "touch") {
-    clearHoverLineScope();
+    const detail = pointerInputDetail(event, "clear-touch");
+    recordInputDelay("sidebar.input.pointerDelay", event, detail);
+    clearHoverLineScope({ feedbackTrace: hoverFeedbackTrace(event, detail) });
     return;
   }
 
   const item = nodeItemForTarget(event.target);
   if (!item) {
-    clearHoverLineScope();
+    const detail = pointerInputDetail(event, "clear-no-row-target");
+    recordInputDelay("sidebar.input.pointerDelay", event, detail);
+    clearHoverLineScope({ feedbackTrace: hoverFeedbackTrace(event, detail) });
     return;
   }
 
   const rowIndex = rowIndexForItem(item);
   const rowInfo = typeof rowIndex === "number" ? currentProjection?.rows[rowIndex] : undefined;
   if (!rowInfo) {
-    clearHoverLineScope();
+    const detail = pointerInputDetail(event, "clear-missing-row");
+    recordInputDelay("sidebar.input.pointerDelay", event, detail);
+    clearHoverLineScope({ feedbackTrace: hoverFeedbackTrace(event, detail) });
     return;
   }
 
@@ -1643,11 +1651,15 @@ function handleTreePointerOver(event: PointerEvent): void {
     targetDepth: rowInfo.depth,
     ...(typeof rowInfo.parentRowIndex === "number" ? { parentRowIndex: rowInfo.parentRowIndex } : {})
   };
-  setHoverLineScope(nextScope);
+  const outcome = !pendingHoverGuideApply && sameHoverLineScope(hoverLineScope, nextScope) ? "same-scope" : "hover-row";
+  const detail = pointerInputDetail(event, outcome, rowInfo);
+  recordInputDelay("sidebar.input.pointerDelay", event, detail);
+  setHoverLineScope(nextScope, hoverFeedbackTrace(event, detail));
 }
 
 function handleTreePointerLeave(event: PointerEvent): void {
-  clearHoverLineScope();
+  const detail = pointerInputDetail(event, "pointer-leave-clear");
+  clearHoverLineScope({ feedbackTrace: hoverFeedbackTrace(event, detail) });
 }
 
 function recordInputDelay(name: string, event: Event, detail: TraceDetail): void {
@@ -1663,12 +1675,39 @@ function recordInputDelay(name: string, event: Event, detail: TraceDetail): void
   perfTrace.record(name, delayMs, detail);
 }
 
+function pointerInputDetail(event: PointerEvent, outcome: string, rowInfo?: VisibleTreeRow): TraceDetail {
+  const rows = currentProjection?.rows.length ?? 0;
+  return {
+    event: event.type,
+    hydrating: hydratingFullState,
+    pointerType: event.pointerType || "unknown",
+    outcome,
+    rows,
+    ...(rowInfo ? { rowIndex: rowInfo.index, subtreeRows: rowInfo.subtreeEndIndex - rowInfo.index } : {})
+  };
+}
+
+function hoverFeedbackTrace(event: PointerEvent, detail: TraceDetail): HoverFeedbackTrace | undefined {
+  const eventTimeStamp = validEventTimeStamp(event.timeStamp);
+  return typeof eventTimeStamp === "number" ? { eventTimeStamp, detail } : undefined;
+}
+
 function eventQueueDelayMs(event: Event): number | undefined {
-  const eventTime = event.timeStamp;
-  if (!Number.isFinite(eventTime) || eventTime <= 0) {
+  return delaySinceEventTimeStampMs(event.timeStamp);
+}
+
+function validEventTimeStamp(eventTimeStamp: number): number | undefined {
+  if (!Number.isFinite(eventTimeStamp) || eventTimeStamp <= 0) {
     return undefined;
   }
+  return eventTimeStamp;
+}
 
+function delaySinceEventTimeStampMs(eventTimeStamp: number): number | undefined {
+  const eventTime = validEventTimeStamp(eventTimeStamp);
+  if (typeof eventTime !== "number") {
+    return undefined;
+  }
   const now = performance.now();
   const delayMs = eventTime > performance.timeOrigin
     ? performance.timeOrigin + now - eventTime
@@ -1679,25 +1718,31 @@ function eventQueueDelayMs(event: Event): number | undefined {
   return Math.max(0, delayMs);
 }
 
-function setHoverLineScope(scope: HoverLineScope): void {
+function setHoverLineScope(scope: HoverLineScope, feedbackTrace?: HoverFeedbackTrace): void {
   if (!pendingHoverGuideApply && sameHoverLineScope(hoverLineScope, scope)) {
     return;
   }
 
-  scheduleHoverLineScope(scope, "pointer");
+  scheduleHoverLineScope(scope, "pointer", feedbackTrace);
 }
 
-function clearHoverLineScope(options: { immediate?: boolean; reason?: HoverGuideApplyReason } = {}): void {
+function clearHoverLineScope(
+  options: {
+    immediate?: boolean;
+    reason?: HoverGuideApplyReason;
+    feedbackTrace?: HoverFeedbackTrace | undefined;
+  } = {}
+): void {
   if (!hoverLineScope && !pendingHoverGuideApply) {
     return;
   }
 
   if (options.immediate) {
-    applyHoverLineScopeNow(undefined, options.reason ?? "pointer-clear");
+    applyHoverLineScopeNow(undefined, options.reason ?? "pointer-clear", options.feedbackTrace);
     return;
   }
 
-  scheduleHoverLineScope(undefined, options.reason ?? "pointer-clear");
+  scheduleHoverLineScope(undefined, options.reason ?? "pointer-clear", options.feedbackTrace);
 }
 
 function resetHoverLineScope(): void {
@@ -1708,12 +1753,18 @@ function resetHoverLineScope(): void {
   hoverLineScope = undefined;
   pendingHoverLineScope = undefined;
   pendingHoverGuideReason = "pointer";
+  pendingHoverFeedbackTrace = undefined;
   pendingHoverGuideApply = false;
 }
 
-function scheduleHoverLineScope(scope: HoverLineScope | undefined, reason: HoverGuideApplyReason): void {
+function scheduleHoverLineScope(
+  scope: HoverLineScope | undefined,
+  reason: HoverGuideApplyReason,
+  feedbackTrace?: HoverFeedbackTrace
+): void {
   pendingHoverLineScope = scope;
   pendingHoverGuideReason = reason;
+  pendingHoverFeedbackTrace = feedbackTrace;
   pendingHoverGuideApply = true;
 
   if (scheduledHoverGuideFrame !== undefined) {
@@ -1728,20 +1779,27 @@ function scheduleHoverLineScope(scope: HoverLineScope | undefined, reason: Hover
 
     const nextScope = pendingHoverLineScope;
     const nextReason = pendingHoverGuideReason;
+    const nextFeedbackTrace = pendingHoverFeedbackTrace;
     pendingHoverLineScope = undefined;
     pendingHoverGuideReason = "pointer";
+    pendingHoverFeedbackTrace = undefined;
     pendingHoverGuideApply = false;
-    applyHoverLineScopeNow(nextScope, nextReason);
+    applyHoverLineScopeNow(nextScope, nextReason, nextFeedbackTrace);
   });
 }
 
-function applyHoverLineScopeNow(scope: HoverLineScope | undefined, reason: HoverGuideApplyReason): void {
+function applyHoverLineScopeNow(
+  scope: HoverLineScope | undefined,
+  reason: HoverGuideApplyReason,
+  feedbackTrace?: HoverFeedbackTrace
+): void {
   if (scheduledHoverGuideFrame !== undefined) {
     window.cancelAnimationFrame(scheduledHoverGuideFrame);
     scheduledHoverGuideFrame = undefined;
   }
   pendingHoverLineScope = undefined;
   pendingHoverGuideReason = "pointer";
+  pendingHoverFeedbackTrace = undefined;
   pendingHoverGuideApply = false;
 
   if (scope ? sameHoverLineScope(hoverLineScope, scope) : !hoverLineScope) {
@@ -1749,7 +1807,25 @@ function applyHoverLineScopeNow(scope: HoverLineScope | undefined, reason: Hover
   }
 
   hoverLineScope = scope;
+  recordHoverFeedbackDelay(reason, feedbackTrace);
   applyHoverLineScopeToRenderedRows(reason);
+}
+
+function recordHoverFeedbackDelay(reason: HoverGuideApplyReason, feedbackTrace: HoverFeedbackTrace | undefined): void {
+  if (!perfTrace.isEnabled() || !feedbackTrace) {
+    return;
+  }
+
+  const delayMs = delaySinceEventTimeStampMs(feedbackTrace.eventTimeStamp);
+  if (typeof delayMs !== "number") {
+    return;
+  }
+
+  perfTrace.record("sidebar.input.hoverFeedbackDelay", delayMs, {
+    ...feedbackTrace.detail,
+    reason,
+    feedbackRows: currentProjection?.rows.length ?? 0
+  });
 }
 
 function sameHoverLineScope(left: HoverLineScope | undefined, right: HoverLineScope): boolean {
