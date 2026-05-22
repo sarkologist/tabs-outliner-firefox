@@ -60,7 +60,7 @@ import {
   repairState,
   runtimeTitleForOutlineTab
 } from "../model/outline.js";
-import { buildOutlineLookup } from "../model/outline-lookup.js";
+import { buildOutlineLookup, type OutlineLookup } from "../model/outline-lookup.js";
 import type { NodeId, OutlineNode, OutlineState, RuntimeTab, RuntimeWindow } from "../model/types.js";
 import { createPerformanceTracer, type TraceDetail, type TraceSnapshot } from "../perf/trace.js";
 import {
@@ -185,6 +185,11 @@ type RuntimeStateIndex = {
   closedRestoreCandidateCountsByWindowNodeId: Map<NodeId, number>;
   windowNodeIdsWithClosedRestoreCandidates: Set<NodeId>;
   activeWindowNodeId?: NodeId;
+};
+
+type RuntimeSnapshotMatch = {
+  matches: boolean;
+  lookup: OutlineLookup;
 };
 
 type RuntimeEventTabsFastPathResult =
@@ -892,9 +897,10 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       perfTrace.measureAsync("background.state.load", () => loadStateWithMetadata(api))
     ]);
     const stored = loaded?.state;
+    let storedRuntimeMatch: RuntimeSnapshotMatch | undefined;
     if (stored) {
-      const storedMatchesRuntime = runtimeSnapshotMateriallyMatchesState(stored, windows);
-      if (storedMatchesRuntime) {
+      storedRuntimeMatch = runtimeSnapshotMateriallyMatchesState(stored, windows);
+      if (storedRuntimeMatch.matches) {
         if (loaded.format === "v3") {
           deferPersistedStateBaselineClone(stored);
         } else {
@@ -914,7 +920,9 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       state = bootstrapFromWindows(windows, { now: now() });
       scheduleStateSave(state);
     }
-    runtimeIndex = buildRuntimeStateIndex(state);
+    runtimeIndex = storedRuntimeMatch?.matches && state === stored
+      ? buildRuntimeStateIndexFromLookup(state, storedRuntimeMatch.lookup)
+      : buildRuntimeStateIndex(state);
     return state;
   }
 
@@ -1309,7 +1317,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       index,
       options.activationByWindowId
     );
-    if (runtimeSnapshotMateriallyMatchesState(current, windows)) {
+    if (runtimeSnapshotMateriallyMatchesState(current, windows).matches) {
       return false;
     }
     const next = reconcileWithWindows(current, windows, { now: now() }, {
@@ -2442,6 +2450,58 @@ function buildRuntimeStateIndex(state: OutlineState): RuntimeStateIndex {
   return index;
 }
 
+function buildRuntimeStateIndexFromLookup(state: OutlineState, lookup: OutlineLookup): RuntimeStateIndex {
+  const index: RuntimeStateIndex = {
+    state,
+    liveTabNodeIdsByRuntimeId: new Map(),
+    liveWindowNodeIdsByRuntimeId: new Map(),
+    liveTabNodeIdsByWindowId: new Map(),
+    activeTabNodeIdsByWindowId: new Map(),
+    closedRestoreCandidateCountsByWindowNodeId: new Map(),
+    windowNodeIdsWithClosedRestoreCandidates: new Set()
+  };
+
+  for (const [runtimeWindowId, nodeId] of lookup.liveWindowNodeIdsByRuntimeId) {
+    const node = state.nodes[nodeId];
+    if (!isLiveWindowNode(node)) {
+      continue;
+    }
+    index.liveWindowNodeIdsByRuntimeId.set(runtimeWindowId, nodeId);
+    if (node.active) {
+      index.activeWindowNodeId = nodeId;
+    }
+  }
+
+  for (const [runtimeTabId, nodeId] of lookup.liveTabNodeIdsByRuntimeId) {
+    const node = state.nodes[nodeId];
+    if (!isLiveTabNode(node)) {
+      continue;
+    }
+    index.liveTabNodeIdsByRuntimeId.set(runtimeTabId, nodeId);
+    const windowTabNodeIds = index.liveTabNodeIdsByWindowId.get(node.live.windowId) ?? new Set<NodeId>();
+    windowTabNodeIds.add(nodeId);
+    index.liveTabNodeIdsByWindowId.set(node.live.windowId, windowTabNodeIds);
+    if (node.active) {
+      index.activeTabNodeIdsByWindowId.set(node.live.windowId, nodeId);
+    }
+  }
+
+  for (const node of lookup.nodes) {
+    if (node.kind !== "tab" || node.status !== "closed") {
+      continue;
+    }
+    const ownerWindowNodeId = lookup.ownerWindowNodeIdsByNodeId.get(node.id);
+    if (!ownerWindowNodeId || node.id === ownerWindowNodeId) {
+      continue;
+    }
+    const count = index.closedRestoreCandidateCountsByWindowNodeId.get(ownerWindowNodeId) ?? 0;
+    index.closedRestoreCandidateCountsByWindowNodeId.set(ownerWindowNodeId, count + 1);
+    index.windowNodeIdsWithClosedRestoreCandidates.add(ownerWindowNodeId);
+  }
+
+  return index;
+}
+
 function runtimeIndexForStateTransition(
   previous: OutlineState,
   next: OutlineState,
@@ -3071,11 +3131,11 @@ function isUsefulTreeStructureUpdate(update: TreeStructureUpdate, next: OutlineS
   return changedNodeCount < Object.keys(next.nodes).length;
 }
 
-function runtimeSnapshotMateriallyMatchesState(state: OutlineState, windows: RuntimeWindow[]): boolean {
+function runtimeSnapshotMateriallyMatchesState(state: OutlineState, windows: RuntimeWindow[]): RuntimeSnapshotMatch {
   const lookup = buildOutlineLookup(state);
   const normalWindows = windows.filter((windowInfo) => !windowInfo.incognito);
   if (lookup.liveWindowNodeIdsByRuntimeId.size !== normalWindows.length) {
-    return false;
+    return { matches: false, lookup };
   }
 
   let runtimeTabCount = 0;
@@ -3083,7 +3143,7 @@ function runtimeSnapshotMateriallyMatchesState(state: OutlineState, windows: Run
     const windowNodeId = lookup.liveWindowNodeIdsByRuntimeId.get(windowInfo.id);
     const windowNode = windowNodeId ? state.nodes[windowNodeId] : undefined;
     if (!windowNodeId || !windowNode || windowNode.active !== windowInfo.focused) {
-      return false;
+      return { matches: false, lookup };
     }
 
     const tabs = [...(windowInfo.tabs ?? [])]
@@ -3093,7 +3153,7 @@ function runtimeSnapshotMateriallyMatchesState(state: OutlineState, windows: Run
 
     const projectedTabs = projectLiveTabs(state, windowNodeId, lookup).filter((tab) => tab.windowId === windowInfo.id);
     if (projectedTabs.length !== tabs.length) {
-      return false;
+      return { matches: false, lookup };
     }
 
     for (let index = 0; index < tabs.length; index += 1) {
@@ -3107,12 +3167,15 @@ function runtimeSnapshotMateriallyMatchesState(state: OutlineState, windows: Run
         projectedTabs[index]?.tabId !== tab.id ||
         liveTabNodeWouldChange(node, tab)
       ) {
-        return false;
+        return { matches: false, lookup };
       }
     }
   }
 
-  return lookup.liveTabNodeIdsByRuntimeId.size === runtimeTabCount;
+  return {
+    matches: lookup.liveTabNodeIdsByRuntimeId.size === runtimeTabCount,
+    lookup
+  };
 }
 
 function liveTabNodeWouldChange(node: OutlineNode & { live: { tabId: number; windowId: number } }, tab: RuntimeTab): boolean {

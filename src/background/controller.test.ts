@@ -2407,6 +2407,27 @@ describe("background controller lifecycle", () => {
     expect(calls).toBe(0);
   });
 
+  it("reuses the matching startup lookup while warming the runtime index", async () => {
+    const storedState = wideClosedTabState(300);
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [],
+      { initialStorage: outlineStateV3Changes(storedState).setItems }
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    const { calls, value: state } = await countNodeTableObjectValues(() => controller.ensureState());
+
+    expect(state.nodes["tab:300"]?.title).toBe("Saved 300");
+    expect(calls).toBeLessThanOrEqual(1);
+    expect(controller.__debugRuntimeIndexStatus()).toEqual({ warm: true, matchesState: true, reason: "" });
+  });
+
   it("defers fresh bootstrap persistence until an explicit save flush", async () => {
     const runtime = fakeRuntime(
       [
