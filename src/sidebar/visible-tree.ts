@@ -213,6 +213,10 @@ export function applyDeleteTreeStructurePatchToProjection(
   }
 
   const deletedNodeIds = new Set(patch.deletedNodeIds);
+  if (applyTrailingLeafDeletePatchToProjection(state, projection, patch, deletedNodeIds)) {
+    return true;
+  }
+
   const affectedNodeIds = new Set(patch.updatedNodes.map((node) => node.id));
   const deletedRows: VisibleTreeRow[] = [];
   const rowsByNodeIdBeforeDelete = new Map(projection.rows.map((row) => [row.nodeId, row]));
@@ -266,6 +270,120 @@ export function applyDeleteTreeStructurePatchToProjection(
   projection.visibleNodeIdSet = new Set(projection.visibleNodeIds);
   refreshProjectionActiveTabTargetAfterDelete(state, projection, rowsByNodeId);
   return true;
+}
+
+function applyTrailingLeafDeletePatchToProjection(
+  state: OutlineState,
+  projection: VisibleTreeProjection,
+  patch: DeleteTreeStructurePatch,
+  deletedNodeIds: ReadonlySet<NodeId>
+): boolean {
+  if (
+    projection.isSearchActive ||
+    deletedNodeIds.size !== patch.deletedNodeIds.length ||
+    projection.rows.length === 0 ||
+    projection.visibleNodeIds.length !== projection.rows.length ||
+    !sameNodeIdList(patch.rootIds, state.rootIds)
+  ) {
+    return false;
+  }
+
+  const deletedRows: VisibleTreeRow[] = [];
+  let startIndex = projection.rows.length;
+  for (let index = projection.rows.length - 1; index >= 0; index -= 1) {
+    const row = projection.rows[index]!;
+    if (!deletedNodeIds.has(row.nodeId)) {
+      break;
+    }
+    if (
+      projection.visibleNodeIds[index] !== row.nodeId ||
+      row.subtreeEndIndex !== row.index + 1 ||
+      typeof row.parentRowIndex !== "number" ||
+      Boolean(state.nodes[row.nodeId])
+    ) {
+      return false;
+    }
+    deletedRows.push(row);
+    startIndex = index;
+  }
+
+  if (deletedRows.length === 0 || deletedRows.length !== deletedNodeIds.size) {
+    return false;
+  }
+
+  if (
+    projection.activeTabNodeId &&
+    (deletedNodeIds.has(projection.activeTabNodeId) || !state.nodes[projection.activeTabNodeId])
+  ) {
+    return false;
+  }
+  if (typeof projection.activeTabRowIndex === "number" && projection.activeTabRowIndex >= startIndex) {
+    return false;
+  }
+
+  const removedCountByAncestorIndex = new Map<number, number>();
+  const refreshRowIndexes = new Set<number>();
+  for (const row of deletedRows) {
+    let parentRowIndex = row.parentRowIndex;
+    while (typeof parentRowIndex === "number") {
+      if (parentRowIndex >= startIndex) {
+        return false;
+      }
+      const parentRow = projection.rows[parentRowIndex];
+      if (!parentRow) {
+        return false;
+      }
+      removedCountByAncestorIndex.set(parentRowIndex, (removedCountByAncestorIndex.get(parentRowIndex) ?? 0) + 1);
+      refreshRowIndexes.add(parentRowIndex);
+      parentRowIndex = parentRow.parentRowIndex;
+    }
+  }
+
+  const refreshRowIndexByNodeId = new Map<NodeId, number>();
+  for (const rowIndex of refreshRowIndexes) {
+    const row = projection.rows[rowIndex];
+    if (row) {
+      refreshRowIndexByNodeId.set(row.nodeId, rowIndex);
+    }
+  }
+
+  for (const node of patch.updatedNodes) {
+    if (deletedNodeIds.has(node.id) || !state.nodes[node.id] || !refreshRowIndexByNodeId.has(node.id)) {
+      return false;
+    }
+  }
+
+  let deletedMatches = 0;
+  for (const nodeId of deletedNodeIds) {
+    projection.visibleNodeIdSet.delete(nodeId);
+    if (projection.matchingNodeIds.delete(nodeId)) {
+      deletedMatches += 1;
+    }
+  }
+
+  projection.rows.splice(startIndex);
+  projection.visibleNodeIds.splice(startIndex);
+  for (const [rowIndex, removedCount] of removedCountByAncestorIndex) {
+    const row = projection.rows[rowIndex];
+    if (row) {
+      row.subtreeEndIndex = Math.max(row.index + 1, row.subtreeEndIndex - removedCount);
+    }
+  }
+  for (const rowIndex of refreshRowIndexes) {
+    const row = projection.rows[rowIndex];
+    if (row) {
+      refreshRowFromState(state, projection, row);
+    }
+  }
+
+  projection.nodeCount = Math.max(0, projection.nodeCount - patch.deletedNodeIds.length);
+  projection.closedCount = Math.max(0, projection.closedCount - patch.deletedClosedCount);
+  projection.matchCount = Math.max(0, projection.matchCount - deletedMatches);
+  return true;
+}
+
+function sameNodeIdList(left: readonly NodeId[], right: readonly NodeId[]): boolean {
+  return left.length === right.length && left.every((nodeId, index) => nodeId === right[index]);
 }
 
 function deletePatchRelocatesVisibleRows(

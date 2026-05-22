@@ -188,6 +188,48 @@ describe("visible tree projection", () => {
     expect(projection.rows.at(-1)?.nodeId).toBe(`tab:${LARGE_NODE_COUNT}`);
   });
 
+  it("applies trailing leaf delete patches without rebuilding projection arrays", () => {
+    const state = wideState(LARGE_NODE_COUNT, { activeTabIndex: 1 });
+    const projection = buildVisibleTreeProjection(state, "");
+    const rows = projection.rows;
+    const visibleNodeIds = projection.visibleNodeIds;
+    const visibleNodeIdSet = projection.visibleNodeIdSet;
+    const deletedNodeId = `tab:${LARGE_NODE_COUNT}`;
+    const next = cloneOutlineStateForTest(state);
+    const root = next.nodes["window:1"]!;
+    root.childIds = root.childIds.filter((childId) => childId !== deletedNodeId);
+    delete next.nodes[deletedNodeId];
+
+    const applied = applyDeleteTreeStructurePatchToProjection(next, projection, {
+      deletedNodeIds: [deletedNodeId],
+      updatedNodes: [root],
+      rootIds: ["window:1"],
+      deletedClosedCount: 0
+    });
+
+    expect(applied).toBe(true);
+    expect(projection.rows).toBe(rows);
+    expect(projection.visibleNodeIds).toBe(visibleNodeIds);
+    expect(projection.visibleNodeIdSet).toBe(visibleNodeIdSet);
+    expect(projection.rows).toHaveLength(LARGE_NODE_COUNT);
+    expect(projection.visibleNodeIds).toHaveLength(LARGE_NODE_COUNT);
+    expect(projection.visibleNodeIdSet.has(deletedNodeId)).toBe(false);
+    expect(projection.rows.at(-1)).toMatchObject({
+      nodeId: `tab:${LARGE_NODE_COUNT - 1}`,
+      index: LARGE_NODE_COUNT - 1,
+      parentRowIndex: 0,
+      subtreeEndIndex: LARGE_NODE_COUNT
+    });
+    expect(projection.rows[0]).toMatchObject({
+      nodeId: "window:1",
+      childCount: LARGE_NODE_COUNT - 1,
+      visibleChildCount: LARGE_NODE_COUNT - 1,
+      subtreeEndIndex: LARGE_NODE_COUNT
+    });
+    expect(projection.activeTabNodeId).toBe("tab:1");
+    expect(projection.activeTabRowIndex).toBe(1);
+  });
+
   it("applies active-search delete patches without rebuilding the projection", () => {
     const state = outlineState([
       windowNode("window:1", ["tab:parent", "tab:other"], { active: true }),
