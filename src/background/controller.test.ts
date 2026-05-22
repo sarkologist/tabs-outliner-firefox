@@ -835,6 +835,29 @@ async function countNodeTableObjectValues<T>(
   }
 }
 
+async function countNodeTableObjectKeys<T>(
+  callback: () => Promise<T>,
+  countedNodeTable?: OutlineState["nodes"]
+): Promise<{ calls: number; value: T }> {
+  const originalKeys = Object.keys;
+  let calls = 0;
+  const spy = vi.spyOn(Object, "keys").mockImplementation(((value: object) => {
+    if (value === countedNodeTable || (!countedNodeTable && isNodeTableLike(value))) {
+      calls += 1;
+    }
+    return originalKeys(value as never);
+  }) as typeof Object.keys);
+  try {
+    const value = await callback();
+    return {
+      calls,
+      value
+    };
+  } finally {
+    spy.mockRestore();
+  }
+}
+
 async function countNodePropertyReads<T>(
   state: OutlineState,
   countedNodeIds: readonly string[],
@@ -7122,6 +7145,52 @@ describe("background controller lifecycle", () => {
     expect(afterRemoveEvent.nodes["tab:2"]).toBeUndefined();
     expect(afterRemoveEvent.nodes["tab:1"]?.status).toBe("live");
     expect(afterRemoveEvent.nodes["window:10"]?.childIds).toEqual(["tab:1"]);
+  });
+
+  it("deletes one live leaf without full node-table diff scans", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      Array.from({ length: 100 }, (_value, index) => ({
+        id: index + 1,
+        windowId: 10,
+        index,
+        active: index === 0,
+        url: `https://delete.example/${index + 1}`,
+        title: `Tab ${index + 1}`
+      }))
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    runtime.broadcasts.length = 0;
+    vi.mocked(runtime.api.storage.local.set).mockClear();
+
+    const { calls, value } = await countNodeTableObjectKeys(() =>
+      controller.handleMessage({ type: "deleteNode", nodeId: "tab:100" })
+    );
+    const deleted = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    const lastBroadcast = runtime.broadcasts.at(-1) as
+      | {
+          type?: string;
+          deletedNodeIds?: string[];
+          updatedNodes?: OutlineState["nodes"][string][];
+          state?: OutlineState;
+        }
+      | undefined;
+
+    expectCommandAck(value, true);
+    expect(calls).toBe(0);
+    expect(deleted.nodes["tab:100"]).toBeUndefined();
+    expect(deleted.nodes["window:10"]?.childIds.at(-1)).toBe("tab:99");
+    expect(lastBroadcast?.type).toBe("treeStructureUpdated");
+    expect(lastBroadcast?.deletedNodeIds).toEqual(["tab:100"]);
+    expect(lastBroadcast?.updatedNodes?.map((node) => node.id)).toEqual(["window:10"]);
+    expect(lastBroadcast?.state).toBeUndefined();
   });
 
   it("batches delete-owned live subtree removals without redundant event persistence", async () => {

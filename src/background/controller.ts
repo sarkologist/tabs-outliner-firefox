@@ -611,16 +611,17 @@ export function createBackgroundController(options: BackgroundControllerOptions)
           const recovered = deleteOutlineNode(current, message.nodeId, { allowLive: true });
           if (recovered !== current) {
             const runtimeIndexCandidateNodeIds = runtimeIndexCandidateNodeIdsForCommand(message, current, recovered);
+            const deletePatchNodeIds = deleteTreeStructureCandidateNodeIds(current, recovered, message.nodeId);
             const saveSchedule = saveScheduleForCommand(message.type);
             installStateTransition(current, recovered, { candidateNodeIds: runtimeIndexCandidateNodeIds });
             if (historyPrevious && isTrackableHistoryCommandType(message.type)) {
               await recordHistoryEntry(message.type, historyPrevious, recovered, {
-                ...(runtimeIndexCandidateNodeIds ? { candidateNodeIds: runtimeIndexCandidateNodeIds } : {}),
+                candidateNodeIds: deletePatchNodeIds,
                 saveSchedule
               });
             }
             const update = perfTrace.measure("background.patch.build.treeStructure", { command: message.type }, () =>
-              treeStructureUpdateFromStateChange(current, recovered)
+              treeStructureUpdateFromCandidateNodeIds(current, recovered, deletePatchNodeIds)
             );
             await broadcastTreeStructureUpdate(update);
             scheduleStateSave(recovered, saveSchedule);
@@ -675,9 +676,14 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         absorbCommandOwnedFocusRefresh(current, result.state, runtimeIndexCandidateNodeIds);
       }
       const saveSchedule = saveScheduleForCommand(message.type);
+      const deletePatchNodeIds = message.type === "deleteNode"
+        ? deleteTreeStructureCandidateNodeIds(current, result.state, message.nodeId)
+        : undefined;
       if (historyPrevious && isTrackableHistoryCommandType(message.type)) {
         const candidateNodeIds = message.type === "expandAncestors"
           ? expandAncestorNodeIds
+          : message.type === "deleteNode"
+            ? deletePatchNodeIds
           : historyCandidateNodeIds(message, historyPrevious, result.state);
         await recordHistoryEntry(message.type, historyPrevious, result.state, {
           ...(candidateNodeIds ? { candidateNodeIds } : {}),
@@ -690,7 +696,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       }
       if (message.type === "deleteNode") {
         const update = perfTrace.measure("background.patch.build.treeStructure", { command: message.type }, () =>
-          treeStructureUpdateFromStateChange(current, result.state)
+          treeStructureUpdateFromCandidateNodeIds(current, result.state, deletePatchNodeIds ?? [message.nodeId])
         );
         await broadcastTreeStructureUpdate(update);
         scheduleStateSave(result.state, saveSchedule);
@@ -2963,6 +2969,59 @@ function treeStructureUpdateFromStateChange(
     rootIds: next.rootIds,
     deletedClosedCount
   };
+}
+
+function treeStructureUpdateFromCandidateNodeIds(
+  previous: OutlineState,
+  next: OutlineState,
+  candidateNodeIds: readonly NodeId[],
+  options: { diffMode?: StateDiffMode } = {}
+): TreeStructureUpdate {
+  const diffMode = options.diffMode ?? "identity";
+  const uniqueCandidateNodeIds = uniqueDefinedNodeIds([...candidateNodeIds]);
+  const deletedNodeIds = uniqueCandidateNodeIds.filter((nodeId) => previous.nodes[nodeId] && !next.nodes[nodeId]);
+  const updatedNodes: OutlineNode[] = [];
+  for (const nodeId of uniqueCandidateNodeIds) {
+    const node = next.nodes[nodeId];
+    if (!node) {
+      continue;
+    }
+    const previousNode = previous.nodes[nodeId];
+    if (!previousNode || nodeChangedForPatch(previousNode, node, diffMode)) {
+      updatedNodes.push(node);
+    }
+  }
+  const deletedClosedCount = deletedNodeIds.filter((nodeId) => previous.nodes[nodeId]?.status === "closed").length;
+
+  return {
+    type: "treeStructureUpdated",
+    deletedNodeIds,
+    updatedNodes,
+    rootIds: next.rootIds,
+    deletedClosedCount
+  };
+}
+
+function deleteTreeStructureCandidateNodeIds(
+  previous: OutlineState,
+  next: OutlineState,
+  nodeId: NodeId
+): NodeId[] {
+  const candidateNodeIds = new Set<NodeId>();
+  addSubtreeNodeIds(previous, nodeId, candidateNodeIds);
+
+  let parentId = previous.nodes[nodeId]?.parentId;
+  while (parentId) {
+    candidateNodeIds.add(parentId);
+    const previousParent = previous.nodes[parentId];
+    const nextParent = next.nodes[parentId];
+    if (!previousParent && !nextParent) {
+      break;
+    }
+    parentId = previousParent?.parentId ?? nextParent?.parentId;
+  }
+
+  return [...candidateNodeIds];
 }
 
 function isUsefulTreeStructureUpdate(update: TreeStructureUpdate, next: OutlineState): boolean {
