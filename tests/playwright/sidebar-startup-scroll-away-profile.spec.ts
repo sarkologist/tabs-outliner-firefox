@@ -14,17 +14,27 @@ test.describe("sidebar startup scroll-away profile", () => {
   test("profiles scrolling outside the sparse startup projection before hydration", async ({ page }, testInfo) => {
     const issues = collectPageIssues(page);
 
-    await page.addInitScript(({ snapshot }) => {
+    await page.addInitScript(({ initialSnapshot, scrollAwaySnapshot }) => {
       window.localStorage.setItem("tabsOutlinerProfileEnabled", "true");
-      const messages: Array<{ type: string; at: number }> = [];
+      const messages: Array<{ type: string; at: number; centerRowIndex?: number }> = [];
       (window as typeof window & { __sidebarBootMessages?: typeof messages }).__sidebarBootMessages = messages;
       window.browser = {
         runtime: {
           sendMessage: async (message: unknown) => {
             const type = typeof message === "object" && message ? String((message as { type?: unknown }).type) : "";
-            messages.push({ type, at: performance.now() });
+            const centerRowIndex = typeof message === "object" && message
+              ? Number((message as { centerRowIndex?: unknown }).centerRowIndex)
+              : Number.NaN;
+            messages.push({
+              type,
+              at: performance.now(),
+              ...(Number.isFinite(centerRowIndex) ? { centerRowIndex } : {})
+            });
             if (type === "getInitialTreeSnapshot") {
-              return structuredClone(snapshot);
+              return structuredClone(initialSnapshot);
+            }
+            if (type === "getInitialTreeSnapshotWindow") {
+              return structuredClone(scrollAwaySnapshot);
             }
             if (type === "getState") {
               return new Promise(() => undefined);
@@ -61,7 +71,8 @@ test.describe("sidebar startup scroll-away profile", () => {
         }
       };
     }, {
-      snapshot: fixtureActiveCenteredSnapshot(TAB_COUNT, ACTIVE_TAB_ID)
+      initialSnapshot: fixtureSparseSnapshotWindow(TAB_COUNT, ACTIVE_TAB_ID, ACTIVE_TAB_ID),
+      scrollAwaySnapshot: fixtureSparseSnapshotWindow(TAB_COUNT, ACTIVE_TAB_ID, SCROLL_AWAY_ROW_INDEX)
     });
 
     await page.goto("/sidebar/sidebar.html");
@@ -118,8 +129,11 @@ test.describe("sidebar startup scroll-away profile", () => {
       const snapshot = await window.tabsOutlinerProfile?.snapshot();
       const summary = await window.tabsOutlinerProfile?.summary();
       const entries = snapshot?.sidebar.entries ?? [];
-      const messages = (window as typeof window & { __sidebarBootMessages?: Array<{ type: string; at: number }> })
+      const messages = (window as typeof window & {
+        __sidebarBootMessages?: Array<{ type: string; at: number; centerRowIndex?: number }>;
+      })
         .__sidebarBootMessages ?? [];
+      const sparseWindowMessages = messages.filter((message) => message.type === "getInitialTreeSnapshotWindow");
 
       return {
         targetRowIndex,
@@ -138,6 +152,10 @@ test.describe("sidebar startup scroll-away profile", () => {
         waitedMs: performance.now() - startedAt,
         hydrationRequests: messages.filter((message) => message.type === "getState").length,
         initialSnapshotRequests: messages.filter((message) => message.type === "getInitialTreeSnapshot").length,
+        sparseWindowRequests: sparseWindowMessages.length,
+        sparseWindowCenterRows: sparseWindowMessages
+          .map((message) => message.centerRowIndex)
+          .filter((index): index is number => typeof index === "number" && Number.isFinite(index)),
         treeHeight: tree.style.height,
         scrollDelay: summary?.find((row) => row.name === "sidebar.input.scrollDelay"),
         scrollDelayEntries: entries.filter((entry) => entry.name === "sidebar.input.scrollDelay").map((entry) => ({
@@ -154,18 +172,24 @@ test.describe("sidebar startup scroll-away profile", () => {
     console.log(`startup-scroll-away ${JSON.stringify(result)}`);
 
     expect(result.initialSnapshotRequests).toBe(1);
+    expect(result.sparseWindowRequests).toBeGreaterThanOrEqual(1);
     expect(result.hydrationRequests).toBe(0);
     expect(result.actualScrollTop).toBeGreaterThan(0);
     expect(result.initialRenderedMinRow).toBeLessThan(ACTIVE_TAB_ID);
     expect(result.initialRenderedMaxRow).toBeGreaterThan(ACTIVE_TAB_ID);
+    expect(result.visibleRowsAfterScroll).toBe(result.expectedViewportRows);
+    expect(result.rowsVisibleMs).toBeLessThan(32);
     expect(issues).toEqual([]);
   });
 });
 
-function fixtureActiveCenteredSnapshot(tabCount: number, activeTabId: number) {
+function fixtureSparseSnapshotWindow(tabCount: number, activeTabId: number, centerRowIndex: number) {
   const now = 1_700_000_000_000;
   const rowLimit = 256;
-  const startTabId = Math.max(1, activeTabId - Math.floor(rowLimit / 2));
+  const halfWindow = Math.floor(rowLimit / 2);
+  const center = Math.max(1, Math.min(tabCount, Math.floor(centerRowIndex)));
+  const endRowIndex = Math.min(tabCount + 1, center + halfWindow);
+  const startTabId = Math.max(1, Math.min(center - halfWindow, endRowIndex - rowLimit));
   const tabIds = Array.from(
     { length: Math.min(rowLimit, tabCount - startTabId + 1) },
     (_value, index) => `tab:${startTabId + index}`

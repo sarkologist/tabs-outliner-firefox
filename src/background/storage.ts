@@ -490,7 +490,7 @@ export function outlineStateV3Changes(
 
 export function initialTreeSnapshotForState(
   state: OutlineState,
-  options: { revision?: number; rowLimit?: number; hydrating?: boolean } = {}
+  options: { revision?: number; rowLimit?: number; hydrating?: boolean; centerRowIndex?: number } = {}
 ): InitialTreeSnapshot {
   const revision = options.revision ?? Date.now();
   const rowLimit = options.rowLimit ?? INITIAL_TREE_SNAPSHOT_ROW_LIMIT;
@@ -556,7 +556,7 @@ export function initialTreeSnapshotForState(
   }
 
   refreshInitialRowStructure(allRows);
-  const rows = initialSnapshotRows(allRows, rowLimit, activeTabRowIndex);
+  const rows = initialSnapshotRows(allRows, rowLimit, activeTabRowIndex, options.centerRowIndex);
   for (const row of rows) {
     loadedNodeIds.add(row.nodeId);
   }
@@ -602,15 +602,29 @@ export function initialTreeSnapshotForState(
 function initialSnapshotRows(
   rows: InitialTreeRow[],
   rowLimit: number,
-  activeTabRowIndex: number | undefined
+  activeTabRowIndex: number | undefined,
+  centerRowIndex?: number
 ): InitialTreeRow[] {
+  if (typeof centerRowIndex === "number" && Number.isFinite(centerRowIndex)) {
+    return centeredInitialSnapshotRows(rows, rowLimit, centerRowIndex);
+  }
+
   if (typeof activeTabRowIndex !== "number" || activeTabRowIndex < rowLimit) {
     return rows.slice(0, rowLimit).map((row) => ({ ...row }));
   }
 
+  return centeredInitialSnapshotRows(rows, rowLimit, activeTabRowIndex);
+}
+
+function centeredInitialSnapshotRows(
+  rows: InitialTreeRow[],
+  rowLimit: number,
+  centerRowIndex: number
+): InitialTreeRow[] {
   const halfWindow = Math.floor(rowLimit / 2);
-  const end = Math.min(rows.length, activeTabRowIndex + halfWindow);
-  const start = Math.max(0, Math.min(activeTabRowIndex - halfWindow, end - rowLimit));
+  const center = Math.max(0, Math.min(rows.length - 1, Math.floor(centerRowIndex)));
+  const end = Math.min(rows.length, center + halfWindow);
+  const start = Math.max(0, Math.min(center - halfWindow, end - rowLimit));
   return rows.slice(start, Math.min(rows.length, start + rowLimit)).map((row) => ({ ...row }));
 }
 

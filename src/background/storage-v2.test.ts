@@ -11,6 +11,7 @@ import {
   loadStateWithMetadata,
   loadStateV2,
   loadStateV3,
+  initialTreeSnapshotForState,
   outlineStateV2Items,
   outlineStateV3Changes,
   saveState,
@@ -175,6 +176,23 @@ describe("outline state v2 storage", () => {
     expect(manifest?.initialSnapshot?.projection?.rows?.[0]?.index).toBeGreaterThan(0);
     expect(manifest?.initialSnapshot?.projection?.totalRowCount).toBe(801);
     expect(manifest?.initialSnapshot?.state?.nodes["tab:800"]).toBeDefined();
+  });
+
+  it("can build an initial tree snapshot centered on an arbitrary visible row", () => {
+    const state = makeLargeState(1200, { activeTabIndex: 1199 });
+    const snapshot = initialTreeSnapshotForState(state, {
+      revision: 777,
+      centerRowIndex: 300,
+      hydrating: true
+    });
+
+    expect(snapshot.revision).toBe(777);
+    expect(snapshot.projection.activeTabNodeId).toBe("tab:1200");
+    expect(snapshot.projection.activeTabRowIndex).toBe(1200);
+    expect(snapshot.projection.rows).toHaveLength(INITIAL_TREE_SNAPSHOT_ROW_LIMIT);
+    expect(snapshot.projection.rows.some((row) => row.index === 300)).toBe(true);
+    expect(snapshot.projection.rows.some((row) => row.nodeId === "tab:1200")).toBe(false);
+    expect(Object.keys(snapshot.state.nodes)).toHaveLength(INITIAL_TREE_SNAPSHOT_ROW_LIMIT);
   });
 
   it("skips outliner sidebar pages when choosing the initial snapshot active-scroll target", () => {

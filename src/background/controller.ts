@@ -17,6 +17,7 @@ import type { BackgroundCommand, CommandAck, RuntimeClosePlan } from "./commands
 import { getNormalWindow, getNormalWindows, getNormalWindowsIncludingTabs } from "./runtime-snapshot.js";
 import { createStateCache } from "./state-cache.js";
 import {
+  INITIAL_TREE_SNAPSHOT_ROW_LIMIT,
   initialTreeSnapshotForState,
   loadHistory,
   loadInitialTreeSnapshot,
@@ -155,6 +156,12 @@ type SidebarPerformanceTraceCollectedMessage = {
 
 type InitialTreeSnapshotMessage = {
   type: "getInitialTreeSnapshot";
+};
+
+type InitialTreeSnapshotWindowMessage = {
+  type: "getInitialTreeSnapshotWindow";
+  centerRowIndex: number;
+  rowLimit?: number;
 };
 
 type OpenSidebarWindowMessage = {
@@ -543,6 +550,10 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       return initialTreeSnapshot();
     }
 
+    if (isInitialTreeSnapshotWindowMessage(message)) {
+      return initialTreeSnapshotWindow(message);
+    }
+
     if (isOpenSidebarWindowMessage(message)) {
       return openSidebarWindow();
     }
@@ -885,6 +896,23 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
   function initialTreeSnapshotFromFullState(source: OutlineState, hydrating: boolean): InitialTreeSnapshot {
     const snapshot = initialTreeSnapshotForState(source, { hydrating });
+    snapshot.hydrating = snapshot.projection.totalRowCount > snapshot.projection.rows.length;
+    return snapshot;
+  }
+
+  async function initialTreeSnapshotWindow(
+    message: InitialTreeSnapshotWindowMessage
+  ): Promise<InitialTreeSnapshot> {
+    const source = state ?? await ensureState();
+    const requestedRowLimit = typeof message.rowLimit === "number" && Number.isFinite(message.rowLimit)
+      ? Math.floor(message.rowLimit)
+      : INITIAL_TREE_SNAPSHOT_ROW_LIMIT;
+    const rowLimit = Math.max(1, Math.min(INITIAL_TREE_SNAPSHOT_ROW_LIMIT, requestedRowLimit));
+    const snapshot = initialTreeSnapshotForState(source, {
+      rowLimit,
+      centerRowIndex: message.centerRowIndex,
+      hydrating: true
+    });
     snapshot.hydrating = snapshot.projection.totalRowCount > snapshot.projection.rows.length;
     return snapshot;
   }
@@ -4114,6 +4142,16 @@ function isInitialTreeSnapshotMessage(message: unknown): message is InitialTreeS
     message &&
       typeof message === "object" &&
       (message as { type?: unknown }).type === "getInitialTreeSnapshot"
+  );
+}
+
+function isInitialTreeSnapshotWindowMessage(message: unknown): message is InitialTreeSnapshotWindowMessage {
+  return Boolean(
+    message &&
+      typeof message === "object" &&
+      (message as { type?: unknown }).type === "getInitialTreeSnapshotWindow" &&
+      typeof (message as { centerRowIndex?: unknown }).centerRowIndex === "number" &&
+      Number.isFinite((message as { centerRowIndex?: number }).centerRowIndex)
   );
 }
 

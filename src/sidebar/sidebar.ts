@@ -2,7 +2,7 @@ import type { BackgroundCommand } from "../background/commands.js";
 import type { CommandAck } from "../background/commands.js";
 import type { OutlineDiagnostics } from "../background/diagnostics.js";
 import type { HistoryStatus } from "../background/history.js";
-import type { InitialTreeSnapshot } from "../background/storage.js";
+import { INITIAL_TREE_SNAPSHOT_ROW_LIMIT, type InitialTreeSnapshot } from "../background/storage.js";
 import { analyzeRestoreScope, runtimeTitleForOutlineTab, type RestoreScope } from "../model/outline.js";
 import { exportPortableTree, portableTreeFilename, serializePortableTreeFile } from "../model/portable-tree.js";
 import { isOutlinerSidebarNode } from "../model/outliner-page.js";
@@ -128,6 +128,8 @@ let sidebarWindowIdLoaded = false;
 let sidebarActiveTabTargetsRevision = 0;
 let sidebarActiveTabTargetsCacheRevision = -1;
 let sidebarActiveTabTargetsByWindow = new Map<number, NodeId>();
+let sparseWindowRequestSequence = 0;
+let pendingSparseWindowCenterRowIndex: number | undefined;
 const activeTabScrollTracker = createActiveTabScrollTracker();
 
 const WHEEL_ZOOM_THRESHOLD_PX = 80;
@@ -161,6 +163,12 @@ type SidebarProfileConsole = {
 
 type InitialTreeSnapshotRequest = {
   type: "getInitialTreeSnapshot";
+};
+
+type InitialTreeSnapshotWindowRequest = {
+  type: "getInitialTreeSnapshotWindow";
+  centerRowIndex: number;
+  rowLimit?: number;
 };
 
 type OpenSidebarWindowRequest = {
@@ -532,6 +540,112 @@ function renderInitialTreeSnapshot(): void {
   });
 }
 
+function applySparseScrollWindowSnapshot(snapshot: InitialTreeSnapshot): void {
+  if (!currentProjection || !isSparseInitialProjection(currentProjection) || !snapshot.hydrating) {
+    return;
+  }
+
+  currentState = snapshot.state;
+  invalidateSidebarWindowActiveTabTargets();
+  hydratingFullState = snapshot.hydrating;
+  currentProjection = projectionFromInitialTreeSnapshot(snapshot);
+  projectionState = currentState;
+  projectionQuery = "";
+  currentCutRowRange = undefined;
+  updateHydrationControls();
+
+  perfTrace.measure("sidebar.render.sparseScrollWindow", {
+    rows: currentProjection.rows.length,
+    totalRows: currentProjection.totalRowCount ?? currentProjection.rows.length
+  }, () => {
+    if (!tree || !stateCount || !currentProjection) {
+      return;
+    }
+    clearDropPreview();
+    updateProjectionChrome(currentProjection);
+    renderSnapshotRows(currentProjection, { scrollToActive: false });
+    revealSidebar();
+  });
+}
+
+function requestSparseScrollWindowIfNeeded(): void {
+  if (!rootDropSurface || !currentProjection || !hydratingFullState || !isSparseInitialProjection(currentProjection)) {
+    return;
+  }
+
+  const rowHeight = currentRowHeight();
+  const viewportStartRow = Math.floor(rootDropSurface.scrollTop / rowHeight);
+  const viewportEndRow = Math.ceil((rootDropSurface.scrollTop + rootDropSurface.clientHeight) / rowHeight);
+  if (viewportEndRow <= viewportStartRow || sparseProjectionCoversViewport(currentProjection, viewportStartRow, viewportEndRow)) {
+    return;
+  }
+
+  const totalRowCount = currentProjection.totalRowCount ?? currentProjection.rows.length;
+  const centerRowIndex = Math.max(
+    0,
+    Math.min(totalRowCount - 1, Math.floor((viewportStartRow + viewportEndRow - 1) / 2))
+  );
+  if (pendingSparseWindowCenterRowIndex === centerRowIndex) {
+    return;
+  }
+
+  pendingSparseWindowCenterRowIndex = centerRowIndex;
+  const requestId = ++sparseWindowRequestSequence;
+  perfTrace.mark("sidebar.sparseScrollWindow.request", {
+    centerRowIndex,
+    viewportStartRow,
+    viewportEndRow
+  });
+  void loadSparseScrollWindow(centerRowIndex, requestId);
+}
+
+async function loadSparseScrollWindow(centerRowIndex: number, requestId: number): Promise<void> {
+  try {
+    const response = await sendCommand({
+      type: "getInitialTreeSnapshotWindow",
+      centerRowIndex,
+      rowLimit: INITIAL_TREE_SNAPSHOT_ROW_LIMIT
+    });
+    if (requestId !== sparseWindowRequestSequence) {
+      return;
+    }
+
+    if (!isInitialTreeSnapshot(response) || !currentProjection || !isSparseInitialProjection(currentProjection)) {
+      pendingSparseWindowCenterRowIndex = undefined;
+      return;
+    }
+
+    await nextAnimationFrame();
+    if (requestId !== sparseWindowRequestSequence) {
+      return;
+    }
+
+    applySparseScrollWindowSnapshot(response);
+    pendingSparseWindowCenterRowIndex = undefined;
+    requestSparseScrollWindowIfNeeded();
+  } catch (error) {
+    if (requestId === sparseWindowRequestSequence) {
+      pendingSparseWindowCenterRowIndex = undefined;
+      perfTrace.mark("sidebar.sparseScrollWindow.error", { message: commandErrorText(error) });
+    }
+  }
+}
+
+function sparseProjectionCoversViewport(
+  projection: VisibleTreeProjection,
+  viewportStartRow: number,
+  viewportEndRow: number
+): boolean {
+  const firstRow = projection.rows[0];
+  const lastRow = projection.rows[projection.rows.length - 1];
+  return Boolean(
+    firstRow &&
+      lastRow &&
+      firstRow.index <= viewportStartRow &&
+      lastRow.index >= viewportEndRow - 1
+  );
+}
+
 function shouldUseInitialTreeSnapshot(snapshot: InitialTreeSnapshot): boolean {
   return (
     !snapshot.hydrating ||
@@ -884,6 +998,7 @@ function registerVirtualViewport(): void {
       });
       clearHoverLineScope({ immediate: true, reason: "scroll" });
       scheduleVirtualRender();
+      requestSparseScrollWindowIfNeeded();
     },
     { passive: true }
   );
@@ -1142,7 +1257,10 @@ function projectionFromInitialTreeSnapshot(snapshot: InitialTreeSnapshot): Visib
   };
 }
 
-function renderSnapshotRows(projection: VisibleTreeProjection): void {
+function renderSnapshotRows(
+  projection: VisibleTreeProjection,
+  options: { scrollToActive?: boolean } = {}
+): void {
   if (!tree || !currentState) {
     return;
   }
@@ -1161,7 +1279,9 @@ function renderSnapshotRows(projection: VisibleTreeProjection): void {
     fragment.append(renderRow(currentState, row, rowHeight, projection.query, hasLiveDescendant, { includeActions }));
   }
   tree.append(fragment);
-  scrollToObservedActiveTab(projection);
+  if (options.scrollToActive ?? true) {
+    scrollToObservedActiveTab(projection);
+  }
 }
 
 function updateHydrationControls(): void {
@@ -2901,7 +3021,7 @@ async function openFullSizeSidebarWindow(): Promise<void> {
 }
 
 async function sendCommand(
-  command: BackgroundCommand | InitialTreeSnapshotRequest | OpenSidebarWindowRequest
+  command: BackgroundCommand | InitialTreeSnapshotRequest | InitialTreeSnapshotWindowRequest | OpenSidebarWindowRequest
 ): Promise<unknown> {
   const response = await perfTrace.measureAsync("sidebar.command", { command: command.type }, () =>
     browser.runtime.sendMessage(command)
