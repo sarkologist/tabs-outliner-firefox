@@ -16,7 +16,8 @@
     "profile:restore": "node scripts/profile-restore.mjs",
     "profile:diagnostics": "node scripts/profile-diagnostics.mjs",
     "profile:command": "node scripts/profile-command.mjs",
-    "profile:sidebar-startup": "node scripts/profile-sidebar-startup.mjs"
+    "profile:sidebar-startup": "node scripts/profile-sidebar-startup.mjs",
+    "profile:startup-hover": "playwright test tests/playwright/sidebar-startup-interaction-profile.spec.ts --reporter=list"
   },
   "devDependencies": {
     "@playwright/test": "^1.60.0",
