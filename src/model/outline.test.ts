@@ -10,6 +10,7 @@ import {
   deleteNode,
   flattenSubtreeOneLevel,
   moveNode,
+  moveSubtreeToTopLevel,
   moveTabToNewClosedWindow,
   moveTabToNewLiveWindow,
   planRestore,
@@ -1508,6 +1509,138 @@ describe("outline model", () => {
     expect(moved.nodes[wrapperId!]).toBeUndefined();
     expect(moved.rootIds).toEqual(["window:20", "window:10"]);
     expect(moved.nodes["window:10"]?.parentId).toBeUndefined();
+  });
+
+  it("moves nested group-like subtrees to root after their ultimate ancestor", () => {
+    const wrapped = wrapNodeInGroup(bootstrapFromWindows([
+      {
+        id: 10,
+        incognito: false,
+        focused: true,
+        tabs: [
+          {
+            id: 1,
+            windowId: 10,
+            index: 0,
+            active: true,
+            url: "https://one.example/",
+            title: "One"
+          }
+        ]
+      },
+      {
+        id: 20,
+        incognito: false,
+        focused: false,
+        tabs: [
+          {
+            id: 2,
+            windowId: 20,
+            index: 0,
+            active: true,
+            url: "https://two.example/",
+            title: "Two"
+          }
+        ]
+      }
+    ], { now: 1000 }), "window:10", { now: 3000 });
+    const wrapperId = wrapped.nodes["window:10"]?.parentId;
+    const nested = moveNode(wrapped, "window:20", { parentId: wrapperId, index: 1 });
+
+    const moved = moveSubtreeToTopLevel(nested, "window:10", { now: 4000 });
+
+    expect(wrapperId).toMatch(/^group:/);
+    expect(moved.rootIds).toEqual([wrapperId, "window:10"]);
+    expect(moved.nodes[wrapperId!]?.childIds).toEqual(["window:20"]);
+    expect(moved.nodes["window:10"]?.parentId).toBeUndefined();
+    expect(moved.nodes["tab:1"]?.parentId).toBe("window:10");
+  });
+
+  it("wraps live tabs before moving them to root after their ultimate ancestor", () => {
+    const state = bootstrapFromWindows(windows, { now: 1000 });
+
+    const moved = moveSubtreeToTopLevel(state, "tab:1", {
+      now: 3000,
+      liveWindow: {
+        id: 42,
+        focused: true,
+        incognito: false
+      }
+    });
+
+    expect(moved.rootIds).toEqual(["window:10", "window:42"]);
+    expect(moved.nodes["window:10"]?.childIds).toEqual(["tab:3"]);
+    expect(moved.nodes["window:42"]).toMatchObject({
+      kind: "window",
+      status: "live",
+      childIds: ["tab:1"],
+      title: "Group",
+      live: { windowId: 42 }
+    });
+    expect(moved.nodes["tab:1"]?.parentId).toBe("window:42");
+    expect(moved.nodes["tab:2"]?.live).toEqual({ tabId: 2, windowId: 42 });
+  });
+
+  it("wraps closed tabs before moving them to root after their ultimate ancestor", () => {
+    const state = closeTab(bootstrapFromWindows(windows, { now: 1000 }), 1, {
+      now: 2000,
+      sessionId: "session-tab-1"
+    });
+
+    const moved = moveSubtreeToTopLevel(state, "tab:1", { now: 3000 });
+    const placeholderId = "window:placeholder:3000";
+
+    expect(moved.rootIds).toEqual(["window:10", placeholderId]);
+    expect(moved.nodes["window:10"]?.childIds).toEqual(["tab:2", "tab:3"]);
+    expect(moved.nodes[placeholderId]).toMatchObject({
+      kind: "window",
+      status: "closed",
+      childIds: ["tab:1"],
+      title: "Group"
+    });
+    expect(moved.nodes["tab:1"]?.parentId).toBe(placeholderId);
+  });
+
+  it("does not move root rows to top level", () => {
+    const state = bootstrapFromWindows(windows, { now: 1000 });
+
+    const moved = moveSubtreeToTopLevel(state, "window:10", { now: 3000 });
+
+    expect(moved).toBe(state);
+  });
+
+  it("removes emptied ancestors when moving a wrapped tab to top level", () => {
+    const state = bootstrapFromWindows([
+      {
+        id: 10,
+        incognito: false,
+        focused: true,
+        tabs: [
+          {
+            id: 1,
+            windowId: 10,
+            index: 0,
+            active: true,
+            url: "https://solo.example/",
+            title: "Solo"
+          }
+        ]
+      }
+    ], { now: 1000 });
+
+    const moved = moveSubtreeToTopLevel(state, "tab:1", {
+      now: 3000,
+      liveWindow: {
+        id: 42,
+        focused: true,
+        incognito: false
+      }
+    });
+
+    expect(moved.nodes["window:10"]).toBeUndefined();
+    expect(moved.rootIds).toEqual(["window:42"]);
+    expect(moved.nodes["window:42"]?.childIds).toEqual(["tab:1"]);
+    expect(moved.nodes["tab:1"]?.parentId).toBe("window:42");
   });
 
   it("repairs cyclic and duplicate child links in stored state", () => {

@@ -29,6 +29,8 @@ export type WrapNodeInGroupContext = Clock & {
   liveWindow?: RuntimeWindow;
 };
 
+export type MoveSubtreeToTopLevelContext = WrapNodeInGroupContext;
+
 export function tabNodeId(tabId: number): NodeId {
   return `tab:${tabId}`;
 }
@@ -864,6 +866,52 @@ export function wrapNodeInGroup(
     createdAt: context.now,
     updatedAt: context.now
   }, context.now);
+}
+
+export function moveSubtreeToTopLevel(
+  state: OutlineState,
+  nodeId: NodeId,
+  context: MoveSubtreeToTopLevelContext
+): OutlineState {
+  const node = state.nodes[nodeId];
+  if (!node?.parentId) {
+    return state;
+  }
+
+  const rootAncestorId = rootAncestorIdFor(state, nodeId);
+  if (!rootAncestorId) {
+    return state;
+  }
+
+  const rootIndex = state.rootIds.indexOf(rootAncestorId);
+  if (rootIndex < 0) {
+    return state;
+  }
+
+  let next = state;
+  let movingNodeId = nodeId;
+
+  if (!isGroupLikeNode(node)) {
+    next = wrapNodeInGroup(state, nodeId, context);
+    if (next === state) {
+      return state;
+    }
+    const wrapperId = next.nodes[nodeId]?.parentId;
+    if (!wrapperId) {
+      return state;
+    }
+    movingNodeId = wrapperId;
+  }
+
+  const moving = next.nodes[movingNodeId];
+  if (!moving?.parentId) {
+    return next;
+  }
+
+  return moveNode(next, movingNodeId, {
+    index: rootIndex + 1,
+    now: context.now
+  });
 }
 
 export function projectLiveTabs(state: OutlineState, windowIdOrNodeId: number | NodeId): LiveTabProjection[] {
@@ -1731,6 +1779,22 @@ function uniqueNodeId(state: OutlineState, preferredId: NodeId, now: number): No
 
 function isGroupLikeNode(node: OutlineNode): boolean {
   return node.kind === "window" || node.kind === "group";
+}
+
+function rootAncestorIdFor(state: OutlineState, nodeId: NodeId): NodeId | undefined {
+  let current = state.nodes[nodeId];
+  const visited = new Set<NodeId>();
+
+  while (current?.parentId && !visited.has(current.id)) {
+    visited.add(current.id);
+    const parent = state.nodes[current.parentId];
+    if (!parent) {
+      return undefined;
+    }
+    current = parent;
+  }
+
+  return current?.id;
 }
 
 function isContainerNode(node: OutlineNode): boolean {
