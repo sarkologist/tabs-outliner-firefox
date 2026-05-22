@@ -245,6 +245,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   const deleteOwnedClosingWindowIds = new Set<number>();
   const removedTabIds = new Set<number>();
   const removedWindowIds = new Set<number>();
+  const outlineGroupedTabIdsByWindowId = new Map<number, Set<number>>();
   const commandRestoredTabIds = new Set<number>();
   const commandRelocatedTabEchoes = new Map<number, CommandRelocatedTabEcho>();
   const commandFocusedTabIds = new Set<number>();
@@ -402,6 +403,8 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         const current = await ensureState();
         const liveTabIds = liveTabIdsInWindow(current, windowId);
         const outlinerClosingWindow = outlinerClosingWindowIds.delete(windowId);
+        const outlineGroupedTabIds = outlineGroupedTabIdsByWindowId.get(windowId);
+        outlineGroupedTabIdsByWindowId.delete(windowId);
         const singleNativeRemovedTabId = !outlinerClosingWindow &&
           liveTabIds.length === 1 &&
           removedTabIds.has(liveTabIds[0]!) &&
@@ -411,7 +414,10 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
         if (typeof singleNativeRemovedTabId === "number") {
           let next: OutlineState;
-          if (shouldPreserveRestoredSingleTabWindowClose(current, windowId, singleNativeRemovedTabId)) {
+          if (
+            outlineGroupedTabIds?.has(singleNativeRemovedTabId) ||
+            shouldPreserveRestoredSingleTabWindowClose(current, windowId, singleNativeRemovedTabId)
+          ) {
             const recent = await mostRecentClosedSession();
             next = closeWindow(current, windowId, {
               now: now(),
@@ -646,6 +652,9 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       );
       if (commandMayRelocateLiveTabs(message.type)) {
         trackCommandRelocatedTabEchoes(current, result.state, commandRelocatedTabEchoes, runtimeIndexCandidateNodeIds);
+      }
+      if (message.type === "wrapNodeInGroup") {
+        trackOutlineGroupedTabIds(current, result.state, outlineGroupedTabIdsByWindowId, runtimeIndexCandidateNodeIds);
       }
       if (message.type === "restoreNode") {
         for (const tabId of restoredLiveTabIdsChangedByCommand(current, result.state, runtimeIndexCandidateNodeIds)) {
@@ -3313,6 +3322,33 @@ function trackCommandRelocatedTabEchoes(
       fromWindowIds,
       toWindowId: nextNode.live.windowId
     });
+  }
+}
+
+function trackOutlineGroupedTabIds(
+  previous: OutlineState,
+  next: OutlineState,
+  outlineGroupedTabIdsByWindowId: Map<number, Set<number>>,
+  candidateNodeIds?: readonly NodeId[]
+): void {
+  const nextNodes = candidateNodeIds
+    ? candidateNodeIds.flatMap((nodeId) => {
+        const node = next.nodes[nodeId];
+        return node ? [node] : [];
+      })
+    : Object.values(next.nodes);
+
+  for (const node of nextNodes) {
+    if (!isLiveWindowNode(node) || isLiveWindowNode(previous.nodes[node.id])) {
+      continue;
+    }
+
+    const tabIds = projectLiveTabs(next, node.id)
+      .filter((tab) => tab.windowId === node.live.windowId)
+      .map((tab) => tab.tabId);
+    if (tabIds.length > 0) {
+      outlineGroupedTabIdsByWindowId.set(node.live.windowId, new Set(tabIds));
+    }
   }
 }
 

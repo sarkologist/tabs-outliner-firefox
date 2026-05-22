@@ -4192,6 +4192,116 @@ describe("background controller lifecycle", () => {
     expect(state.nodes["tab:2"]?.live).toEqual({ tabId: 2, windowId: wrapperWindowId });
   });
 
+  it("keeps a moved-out live group in place when it is closed after grouping", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        },
+        {
+          id: 2,
+          windowId: 10,
+          index: 1,
+          active: false,
+          url: "https://two.example/",
+          title: "Two"
+        }
+      ]
+    );
+    vi.mocked(runtime.api.sessions.getRecentlyClosed).mockResolvedValue([
+      { window: { sessionId: "session-window-group" } } as never
+    ]);
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    await controller.flushPendingSaves();
+    const staleGroupedTab = copyTab(runtime.tabs.find((tab) => tab.id === 1)!);
+    let state: OutlineState;
+
+    await controller.handleMessage({ type: "wrapNodeInGroup", nodeId: "window:10" });
+    state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    const originalGroupId = state.nodes["window:10"]?.parentId;
+    expect(originalGroupId).toMatch(/^group:/);
+    if (!originalGroupId) {
+      throw new Error("Expected window:10 to be inside an outline group");
+    }
+
+    await controller.handleMessage({ type: "wrapNodeInGroup", nodeId: "tab:1" });
+    state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    const wrapperId = state.nodes["tab:1"]?.parentId;
+    expect(wrapperId).toMatch(/^window:/);
+    if (!wrapperId) {
+      throw new Error("Expected tab:1 to be wrapped in a live window");
+    }
+    expect(state.nodes["window:10"]?.childIds).toEqual([wrapperId, "tab:2"]);
+
+    await controller.handleMessage({
+      type: "moveNode",
+      nodeId: wrapperId,
+      index: 0
+    });
+    state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(state.rootIds).toEqual([wrapperId, originalGroupId]);
+    expect(state.nodes[wrapperId]?.parentId).toBeUndefined();
+    expect(state.nodes["window:10"]?.childIds).toEqual(["tab:2"]);
+    expect(state.nodes[originalGroupId]?.childIds).toEqual(["window:10"]);
+
+    const wrapperRuntimeWindowId = state.nodes[wrapperId]?.live?.windowId;
+    if (typeof wrapperRuntimeWindowId !== "number") {
+      throw new Error("Expected moved wrapper to be a live window");
+    }
+    await closeRuntimeWindow(runtime, wrapperRuntimeWindowId, { awaitListeners: true });
+    runtime.queueTabQueryResult([...runtime.tabs, staleGroupedTab]);
+    try {
+      await runtime.events.tabUpdated.emit(1, { title: "Stale grouped tab update" }, {
+        ...staleGroupedTab,
+        title: "Stale grouped tab update"
+      });
+    } finally {
+      runtime.clearNextTabQueryResult();
+    }
+
+    state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(state.rootIds).toEqual([wrapperId, originalGroupId]);
+    expect(state.nodes[wrapperId]).toMatchObject({
+      kind: "window",
+      status: "closed",
+      childIds: ["tab:1"],
+      restore: { sessionId: "session-window-group" }
+    });
+    expect(state.nodes["tab:1"]).toMatchObject({
+      kind: "tab",
+      status: "closed",
+      parentId: wrapperId
+    });
+    expect(state.nodes["window:10"]?.childIds).toEqual(["tab:2"]);
+    expect(state.nodes[originalGroupId]?.childIds).toEqual(["window:10"]);
+
+    await controller.flushPendingSaves();
+    const reloadedController = createBackgroundController({ api: runtime.api, now: () => 2000 });
+    const reloaded = await reloadedController.ensureState();
+    expect(reloaded.rootIds).toEqual([wrapperId, originalGroupId]);
+    expect(reloaded.nodes[wrapperId]).toMatchObject({
+      kind: "window",
+      status: "closed",
+      childIds: ["tab:1"]
+    });
+    expect(reloaded.nodes["tab:1"]?.parentId).toBe(wrapperId);
+    expect(reloaded.nodes["window:10"]?.childIds).toEqual(["tab:2"]);
+    expect(reloaded.nodes[originalGroupId]?.childIds).toEqual(["window:10"]);
+  });
+
   it("keeps command-moved child tabs nested when a stale pre-move tab update arrives", async () => {
     const runtime = fakeRuntime(
       [
