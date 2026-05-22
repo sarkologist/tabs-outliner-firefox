@@ -1201,8 +1201,8 @@ async function outlinerRestoreDeleteGeneratedWindowWithDelayedEvent(context: Gen
     return;
   }
 
+  reserveGeneratedRuntimeTabIds(context, context.runtime.tabs);
   const restoredTabs = tabsInRuntimeWindow(context.runtime, restoredWindowId);
-  reserveGeneratedRuntimeTabIds(context, restoredTabs);
   const delayedTab = restoredTabs[0];
   if (delayedTab) {
     await updateTabFromBrowser(context.runtime, delayedTab.id, {
@@ -4337,6 +4337,78 @@ describe("background controller lifecycle", () => {
     expect(state.nodes["tab:2"]?.live).toEqual({ tabId: 2, windowId: destinationRuntimeWindowId });
   });
 
+  it("ignores older command-relocated stale created events after a second command move", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        },
+        {
+          id: 2,
+          windowId: 10,
+          index: 1,
+          active: false,
+          openerTabId: 1,
+          url: "https://two.example/",
+          title: "Two"
+        },
+        {
+          id: 3,
+          windowId: 10,
+          index: 2,
+          active: false,
+          url: "https://three.example/",
+          title: "Three"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    const staleChild = copyTab(runtime.tabs.find((tab) => tab.id === 2)!);
+
+    await controller.handleMessage({
+      type: "moveNode",
+      nodeId: "tab:1",
+      index: 0
+    });
+    await controller.handleMessage({
+      type: "moveNode",
+      nodeId: "tab:2",
+      index: 0
+    });
+    const movedAgain = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    const destinationWindowId = movedAgain.nodes["tab:2"]?.parentId;
+    if (!destinationWindowId) {
+      throw new Error("Expected tab:2 to be moved into a live window");
+    }
+    const destinationRuntimeWindowId = movedAgain.nodes[destinationWindowId]?.live?.windowId;
+
+    runtime.queueTabQueryResult(snapshotReplacingTab(runtime.tabs, staleChild));
+    try {
+      await runtime.events.tabCreated.emit(staleChild);
+    } finally {
+      runtime.clearNextTabQueryResult();
+    }
+
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(liveWindowIds(state)).toContain(destinationRuntimeWindowId);
+    expect(state.nodes["tab:2"]?.parentId).toBe(destinationWindowId);
+    expect(state.nodes["tab:2"]?.live).toEqual({ tabId: 2, windowId: destinationRuntimeWindowId });
+    expect(nearestWindowNode(state, "tab:2")?.live).toEqual({ windowId: destinationRuntimeWindowId });
+  });
+
   it("filters coalesced command-relocated stale echoes without per-echo node table scans", async () => {
     const runtime = fakeRuntime(
       [
@@ -7227,6 +7299,62 @@ describe("background controller lifecycle", () => {
     expect(state.nodes["tab:1"]?.active).toBe(true);
     expect(runtime.api.windows.getAll).not.toHaveBeenCalled();
     expect(runtime.api.tabs.query).not.toHaveBeenCalled();
+  });
+
+  it("keeps nested live windows in their own runtime window when grouping an ancestor tab", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        },
+        {
+          id: 2,
+          windowId: 10,
+          index: 1,
+          active: false,
+          url: "https://two.example/",
+          title: "Two"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+
+    await createTabFromBrowser(runtime, {
+      id: 100,
+      windowId: 10,
+      index: 2,
+      active: true,
+      openerTabId: 1,
+      url: "https://child.example/",
+      title: "Child"
+    });
+    await controller.handleMessage({ type: "wrapNodeInGroup", nodeId: "tab:100" });
+    const childGrouped = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    const childWindowId = childGrouped.nodes["tab:100"]?.live?.windowId;
+
+    await controller.handleMessage({ type: "wrapNodeInGroup", nodeId: "tab:1" });
+
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    const childRuntimeTab = runtime.tabs.find((tab) => tab.id === 100);
+    const childOwnerWindow = nearestWindowNode(state, "tab:100");
+
+    expect(typeof childWindowId).toBe("number");
+    expect(childRuntimeTab?.windowId).toBe(childWindowId);
+    expect(state.nodes["tab:100"]?.live).toEqual({ tabId: 100, windowId: childWindowId });
+    expect(childOwnerWindow?.live).toEqual({ windowId: childWindowId });
   });
 
   it("ignores unknown extension message command types", async () => {

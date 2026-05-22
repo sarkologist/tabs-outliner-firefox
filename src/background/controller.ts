@@ -220,7 +220,7 @@ const SIDEBAR_WINDOW_PATH = "sidebar/sidebar.html";
 const SIDEBAR_PORT_NAME = "tabs-outliner-sidebar";
 
 type CommandRelocatedTabEcho = {
-  fromWindowId: number;
+  fromWindowIds: Set<number>;
   toWindowId: number;
 };
 
@@ -3306,8 +3306,11 @@ function trackCommandRelocatedTabEchoes(
       continue;
     }
 
+    const existingEcho = commandRelocatedTabEchoes.get(previousNode.live.tabId);
+    const fromWindowIds = new Set(existingEcho?.fromWindowIds ?? []);
+    fromWindowIds.add(previousNode.live.windowId);
     commandRelocatedTabEchoes.set(previousNode.live.tabId, {
-      fromWindowId: previousNode.live.windowId,
+      fromWindowIds,
       toWindowId: nextNode.live.windowId
     });
   }
@@ -3355,7 +3358,7 @@ function consumeCommandRelocatedStaleTabEvent(
     return false;
   }
 
-  if (tab.windowId === echo.fromWindowId && node.live.windowId === echo.toWindowId) {
+  if (echo.fromWindowIds.has(tab.windowId) && node.live.windowId === echo.toWindowId) {
     return true;
   }
 
@@ -3742,7 +3745,7 @@ function filterCommandRelocatedStaleTabsFromWindows(
         return true;
       }
 
-      const staleOldWindowEcho = tab.windowId === echo.fromWindowId && node.live.windowId === echo.toWindowId;
+      const staleOldWindowEcho = echo.fromWindowIds.has(tab.windowId) && node.live.windowId === echo.toWindowId;
       if (staleOldWindowEcho) {
         changed = true;
         if (!freshEchoTabIds.has(tab.id)) {

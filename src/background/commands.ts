@@ -766,7 +766,7 @@ async function moveRemainingLiveSubtreeTabsIntoCreatedWindow(
   createdFromTabId: number,
   windowId: number
 ): Promise<void> {
-  const remainingTabIds = liveTabIdsInSubtree(state, nodeId)
+  const remainingTabIds = liveTabIdsInSubtreeExcludingNestedLiveWindows(state, nodeId)
     .filter((tabId) => tabId !== createdFromTabId);
 
   if (remainingTabIds.length > 0) {
@@ -1013,6 +1013,36 @@ function liveTabIdsInSubtree(state: OutlineState, nodeId: NodeId): number[] {
 
     const node = state.nodes[currentId];
     if (!node) {
+      continue;
+    }
+    if (isLiveTab(node)) {
+      tabIds.push(node.live.tabId);
+    }
+    for (let index = node.childIds.length - 1; index >= 0; index -= 1) {
+      stack.push(node.childIds[index]!);
+    }
+  }
+
+  return tabIds;
+}
+
+function liveTabIdsInSubtreeExcludingNestedLiveWindows(state: OutlineState, nodeId: NodeId): number[] {
+  const tabIds: number[] = [];
+  const visited = new Set<NodeId>();
+  const stack = [nodeId];
+
+  while (stack.length > 0) {
+    const currentId = stack.pop()!;
+    if (visited.has(currentId)) {
+      continue;
+    }
+    visited.add(currentId);
+
+    const node = state.nodes[currentId];
+    if (!node) {
+      continue;
+    }
+    if (currentId !== nodeId && isLiveWindow(node)) {
       continue;
     }
     if (isLiveTab(node)) {

@@ -1424,25 +1424,7 @@ function updateLiveTabWindowRefs(
   windowId: number,
   now: number
 ): void {
-  walk(state, nodeId, (node) => {
-    if (isNodeLiveTab(node)) {
-      node.live = {
-        tabId: node.live.tabId,
-        windowId
-      };
-      node.updatedAt = now;
-    }
-  });
-}
-
-function updateLiveTabWindowRefsForSubtree(
-  state: OutlineState,
-  original: OutlineState,
-  nodeId: NodeId,
-  windowId: number,
-  now: number
-): void {
-  for (const id of collectSubtreeIds(original, nodeId)) {
+  for (const id of collectSubtreeIdsExcludingNestedLiveWindows(state, nodeId)) {
     const candidate = state.nodes[id];
     if (!candidate || !isNodeLiveTab(candidate)) {
       continue;
@@ -1456,6 +1438,58 @@ function updateLiveTabWindowRefsForSubtree(
     };
     liveTab.updatedAt = now;
   }
+}
+
+function updateLiveTabWindowRefsForSubtree(
+  state: OutlineState,
+  original: OutlineState,
+  nodeId: NodeId,
+  windowId: number,
+  now: number
+): void {
+  for (const id of collectSubtreeIdsExcludingNestedLiveWindows(original, nodeId)) {
+    const candidate = state.nodes[id];
+    if (!candidate || !isNodeLiveTab(candidate)) {
+      continue;
+    }
+
+    const tabId = candidate.live.tabId;
+    const liveTab = cloneNodeForMutation(state, id);
+    liveTab.live = {
+      tabId,
+      windowId
+    };
+    liveTab.updatedAt = now;
+  }
+}
+
+function collectSubtreeIdsExcludingNestedLiveWindows(state: OutlineState, nodeId: NodeId): NodeId[] {
+  const ids: NodeId[] = [];
+  const visited = new Set<NodeId>();
+  const stack = [nodeId];
+
+  while (stack.length > 0) {
+    const currentId = stack.pop()!;
+    if (visited.has(currentId)) {
+      continue;
+    }
+    visited.add(currentId);
+
+    const node = state.nodes[currentId];
+    if (!node) {
+      continue;
+    }
+    if (currentId !== nodeId && isNodeLiveWindow(node)) {
+      continue;
+    }
+
+    ids.push(currentId);
+    for (let index = node.childIds.length - 1; index >= 0; index -= 1) {
+      stack.push(node.childIds[index]!);
+    }
+  }
+
+  return ids;
 }
 
 function closedSingleTabSourceWindow(state: OutlineState, nodeId: NodeId): OutlineNode | undefined {
