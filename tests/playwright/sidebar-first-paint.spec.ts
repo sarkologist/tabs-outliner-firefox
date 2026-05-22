@@ -202,6 +202,7 @@ test.describe("sidebar first paint", () => {
   test("hydrates after first paint and exposes startup timing marks", async ({ page }) => {
     const issues = collectPageIssues(page);
     await page.addInitScript(({ snapshot, fullState }) => {
+      window.localStorage.setItem("tabsOutlinerProfileEnabled", "true");
       const messages: Array<{ type: string; at: number }> = [];
       (window as typeof window & { __sidebarBootMessages?: typeof messages }).__sidebarBootMessages = messages;
       window.browser = {
@@ -260,7 +261,7 @@ test.describe("sidebar first paint", () => {
     await expect(page.locator("#search")).toBeEnabled();
     await expect(page.locator("#state-count")).toHaveText("501 items / 0 saved");
 
-    const metrics = await page.evaluate(() => {
+    const metrics = await page.evaluate(async () => {
       const mark = (name: string) => performance.getEntriesByName(name).at(-1)?.startTime;
       const messages = (window as typeof window & { __sidebarBootMessages?: Array<{ type: string; at: number }> })
         .__sidebarBootMessages ?? [];
@@ -273,7 +274,10 @@ test.describe("sidebar first paint", () => {
         hydrationStart: mark("tabs-outliner.sidebar.hydration.start"),
         hydrationComplete: mark("tabs-outliner.sidebar.hydration.complete"),
         initialSnapshotRequests: messages.filter((message) => message.type === "getInitialTreeSnapshot").length,
-        hydrationRequests: messages.filter((message) => message.type === "getState").length
+        hydrationRequests: messages.filter((message) => message.type === "getState").length,
+        hydrationTrace: (await window.tabsOutlinerProfile?.summary())?.find(
+          (row) => row.name === "sidebar.hydration"
+        )
       };
     });
 
@@ -286,6 +290,8 @@ test.describe("sidebar first paint", () => {
     expect(metrics.fullAppImportStart).toBeLessThanOrEqual(metrics.fullAppImportEnd);
     expect(metrics.fullAppImportEnd).toBeLessThan(metrics.hydrationStart);
     expect(metrics.hydrationStart).toBeLessThanOrEqual(metrics.hydrationComplete);
+    expect(metrics.hydrationTrace?.count).toBe(1);
+    expect(metrics.hydrationTrace?.maxMs).toBeGreaterThanOrEqual(0);
     expect(issues).toEqual([]);
   });
 });

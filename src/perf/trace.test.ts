@@ -60,6 +60,25 @@ describe("createPerformanceTracer", () => {
     });
   });
 
+  it("records externally measured durations", () => {
+    const clock = fakeClock();
+    const tracer = createPerformanceTracer("sidebar", { clock, enabled: true });
+
+    tracer.record("input.delay", 24.5, { event: "scroll" });
+
+    expect(tracer.snapshot().entries).toEqual([
+      {
+        source: "sidebar",
+        name: "input.delay",
+        atMs: 1000,
+        durationMs: 24.5,
+        detail: {
+          event: "scroll"
+        }
+      }
+    ]);
+  });
+
   it("keeps a bounded ring buffer", () => {
     const clock = fakeClock();
     const tracer = createPerformanceTracer("sidebar", { clock, enabled: true, maxEntries: 2 });

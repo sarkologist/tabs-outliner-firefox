@@ -144,6 +144,75 @@ test.describe("sidebar drag/drop performance", () => {
     expect(issues).toEqual([]);
   });
 
+  test("profiles queued pointer and scroll input delay", async ({ page }, testInfo) => {
+    test.setTimeout(90_000);
+    const issues = collectPageIssues(page);
+
+    await loadLargeSidebar(page, TAB_COUNT);
+    await page.evaluate(async () => {
+      await window.tabsOutlinerProfile?.enable();
+      await window.tabsOutlinerProfile?.clear();
+    });
+
+    const result = await page.evaluate(async () => {
+      const row = document.querySelector(`.node[data-node-id="${CSS.escape("tab:40")}"] > .node-row`);
+      const viewport = document.querySelector("main");
+      if (!(row instanceof HTMLElement) || !(viewport instanceof HTMLElement)) {
+        throw new Error("Missing sidebar row or viewport");
+      }
+
+      const rect = row.getBoundingClientRect();
+      const pointerEvent = new PointerEvent("pointerover", {
+        bubbles: true,
+        clientX: rect.left + 20,
+        clientY: rect.top + rect.height / 2,
+        pointerType: "mouse"
+      });
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 30));
+      row.dispatchEvent(pointerEvent);
+
+      const scrollEvent = new Event("scroll");
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 30));
+      viewport.scrollTop = 600;
+      viewport.dispatchEvent(scrollEvent);
+
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+
+      const snapshot = await window.tabsOutlinerProfile?.snapshot();
+      const summary = await window.tabsOutlinerProfile?.summary();
+      const inputDelayEntries =
+        snapshot?.sidebar.entries.filter((entry) => entry.name.startsWith("sidebar.input.")) ?? [];
+
+      return {
+        summary,
+        inputDelayEntries
+      };
+    });
+
+    await testInfo.attach("input-delay-profile.json", {
+      body: JSON.stringify(result, null, 2),
+      contentType: "application/json"
+    });
+    console.log(`input-delay-profile ${JSON.stringify(result)}`);
+
+    expect(result.summary?.find((row) => row.name === "sidebar.input.pointerDelay")?.maxMs).toBeGreaterThanOrEqual(15);
+    expect(result.summary?.find((row) => row.name === "sidebar.input.scrollDelay")?.maxMs).toBeGreaterThanOrEqual(15);
+    expect(result.inputDelayEntries).toContainEqual(expect.objectContaining({
+      name: "sidebar.input.pointerDelay",
+      detail: expect.objectContaining({
+        event: "pointerover"
+      })
+    }));
+    expect(result.inputDelayEntries).toContainEqual(expect.objectContaining({
+      name: "sidebar.input.scrollDelay",
+      detail: expect.objectContaining({
+        event: "scroll"
+      })
+    }));
+    expect(issues).toEqual([]);
+  });
+
   test("profiles dragover previews with 50,000 tabs", async ({ page }, testInfo) => {
     test.setTimeout(90_000);
     const issues = collectPageIssues(page);

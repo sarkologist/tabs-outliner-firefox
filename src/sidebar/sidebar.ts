@@ -9,6 +9,7 @@ import { isOutlinerSidebarNode } from "../model/outliner-page.js";
 import type { NodeId, OutlineNode, OutlineState } from "../model/types.js";
 import {
   createPerformanceTracer,
+  type TraceDetail,
   type TraceSnapshot,
   type TraceSummaryRow
 } from "../perf/trace.js";
@@ -410,22 +411,34 @@ async function hydrateFullState(): Promise<void> {
     pendingFullHydrationTimer = undefined;
   }
   try {
-    hydratingFullState = true;
-    performance.mark("tabs-outliner.sidebar.hydration.start");
-    updateHydrationControls();
-    currentState = (await sendCommand({ type: "getState" })) as OutlineState;
-    invalidateSidebarWindowActiveTabTargets();
-    hydratingFullState = false;
-    updateHydrationControls();
-    render();
-    performance.mark("tabs-outliner.sidebar.hydration.complete");
-    scheduleDiagnosticsLoad();
+    await perfTrace.measureAsync("sidebar.hydration", hydrationTraceDetail(), async () => {
+      hydratingFullState = true;
+      performance.mark("tabs-outliner.sidebar.hydration.start");
+      updateHydrationControls();
+      currentState = (await sendCommand({ type: "getState" })) as OutlineState;
+      invalidateSidebarWindowActiveTabTargets();
+      hydratingFullState = false;
+      updateHydrationControls();
+      render();
+      performance.mark("tabs-outliner.sidebar.hydration.complete");
+      scheduleDiagnosticsLoad();
+    });
   } catch (error) {
     hydratingFullState = false;
     updateHydrationControls();
     revealSidebar();
     showLoadError(error);
   }
+}
+
+function hydrationTraceDetail(): TraceDetail {
+  const rows = currentProjection?.rows.length ?? 0;
+  return {
+    initialSnapshotVisible: Boolean(currentProjection),
+    sparseInitialSnapshot: currentProjection ? isSparseInitialProjection(currentProjection) : false,
+    rows,
+    totalRows: currentProjection?.totalRowCount ?? rows
+  };
 }
 
 function scheduleFullStateHydration(): void {
@@ -798,7 +811,12 @@ function registerTreeControls(): void {
 function registerVirtualViewport(): void {
   rootDropSurface?.addEventListener(
     "scroll",
-    () => {
+    (event) => {
+      recordInputDelay("sidebar.input.scrollDelay", event, {
+        event: event.type,
+        hydrating: hydratingFullState,
+        rows: currentProjection?.rows.length ?? 0
+      });
       clearHoverLineScope({ immediate: true, reason: "scroll" });
       scheduleVirtualRender();
     },
@@ -1590,6 +1608,12 @@ function appendTitleText(element: HTMLElement, titleText: string, searchQuery: s
 }
 
 function handleTreePointerOver(event: PointerEvent): void {
+  recordInputDelay("sidebar.input.pointerDelay", event, {
+    event: event.type,
+    hydrating: hydratingFullState,
+    pointerType: event.pointerType || "unknown"
+  });
+
   if (draggedNodeId) {
     clearHoverLineScope();
     return;
@@ -1624,6 +1648,35 @@ function handleTreePointerOver(event: PointerEvent): void {
 
 function handleTreePointerLeave(event: PointerEvent): void {
   clearHoverLineScope();
+}
+
+function recordInputDelay(name: string, event: Event, detail: TraceDetail): void {
+  if (!perfTrace.isEnabled()) {
+    return;
+  }
+
+  const delayMs = eventQueueDelayMs(event);
+  if (typeof delayMs !== "number") {
+    return;
+  }
+
+  perfTrace.record(name, delayMs, detail);
+}
+
+function eventQueueDelayMs(event: Event): number | undefined {
+  const eventTime = event.timeStamp;
+  if (!Number.isFinite(eventTime) || eventTime <= 0) {
+    return undefined;
+  }
+
+  const now = performance.now();
+  const delayMs = eventTime > performance.timeOrigin
+    ? performance.timeOrigin + now - eventTime
+    : now - eventTime;
+  if (!Number.isFinite(delayMs)) {
+    return undefined;
+  }
+  return Math.max(0, delayMs);
 }
 
 function setHoverLineScope(scope: HoverLineScope): void {

@@ -36,6 +36,7 @@ export type PerformanceTracer = {
   setEnabled(enabled: boolean): void;
   clear(): void;
   mark(name: string, detail?: TraceDetail): void;
+  record(name: string, durationMs: number, detail?: TraceDetail): void;
   measure<T>(name: string, fn: () => T): T;
   measure<T>(name: string, detail: TraceDetail | undefined, fn: () => T): T;
   measureAsync<T>(name: string, fn: () => Promise<T>): Promise<T>;
@@ -79,6 +80,20 @@ export function createPerformanceTracer(
       source,
       name,
       atMs: currentTimeMs(clock),
+      ...normalizedDetail(detail)
+    });
+  }
+
+  function record(name: string, durationMs: number, detail?: TraceDetail): void {
+    if (!enabled) {
+      return;
+    }
+
+    push({
+      source,
+      name,
+      atMs: currentTimeMs(clock),
+      durationMs,
       ...normalizedDetail(detail)
     });
   }
@@ -160,6 +175,7 @@ export function createPerformanceTracer(
     setEnabled,
     clear,
     mark,
+    record,
     measure,
     measureAsync,
     snapshot
