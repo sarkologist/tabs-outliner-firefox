@@ -202,6 +202,7 @@ type IconName =
   | "close-circle"
   | "flatten"
   | "outdent"
+  | "root-outdent"
   | "pencil"
   | "trash"
   | "locate";
@@ -1450,6 +1451,10 @@ function canPromoteChildren(node: OutlineNode): boolean {
   return Boolean(node.parentId && node.childIds.length > 0 && !(node.kind === "window" && node.status === "live"));
 }
 
+function canMoveSubtreeToTopLevel(node: OutlineNode): boolean {
+  return Boolean(node.parentId);
+}
+
 function isRenamableGroup(node: OutlineNode): boolean {
   return node.kind === "window" || node.kind === "group";
 }
@@ -1625,6 +1630,9 @@ function renderRow(
     actions.append(actionButton("Paste", "paste", "clipboard", !pasteAfterCommand(state, pendingCutNodeId, node.id)));
   }
   actions.append(actionButton("Group", "group", "group"));
+  if (canMoveSubtreeToTopLevel(node)) {
+    actions.append(actionButton("Move to top level", "move-subtree-to-top-level", "root-outdent"));
+  }
   if (node.status === "live" || hasLiveDescendant(node.id)) {
     actions.append(actionButton("Close", "close-node", "close-circle"));
   }
@@ -1922,6 +1930,11 @@ function handleTreeClick(event: MouseEvent): void {
 
   if (action === "group") {
     void runAndRender({ type: "wrapNodeInGroup", nodeId: node.id });
+    return;
+  }
+
+  if (action === "move-subtree-to-top-level") {
+    void runAndRender({ type: "moveSubtreeToTopLevel", nodeId: node.id });
     return;
   }
 

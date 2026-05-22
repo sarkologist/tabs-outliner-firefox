@@ -59,6 +59,37 @@ test.describe("sidebar promote children and icons", () => {
 
     expect(issues).toEqual([]);
   });
+
+  test("moves a subtree to top level through an icon action", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadSidebar(page);
+
+    await nodeRow(page, "tab:a").hover();
+    const moveToTop = nodeRow(page, "tab:a").getByRole("button", { name: "Move to top level", exact: true });
+    await expect(moveToTop).toHaveAttribute("title", "Move to top level");
+    await expect(moveToTop.locator("svg")).toHaveCount(1);
+
+    await moveToTop.click();
+
+    await expect(outlineRootIds(page)).resolves.toEqual(["window:1", "window:top:tab:a"]);
+    await expect(outlineChildIds(page, "window:1")).resolves.toEqual(["tab:b", "tab:c"]);
+    await expect(outlineChildIds(page, "window:top:tab:a")).resolves.toEqual(["tab:a"]);
+    await expect(outlineParentId(page, "tab:a")).resolves.toBe("window:top:tab:a");
+    await expect(page.locator(".node[data-node-id='window:top:tab:a']")).toHaveAttribute("aria-level", "1");
+    await expect(visibleNodeOrder(page)).resolves.toEqual([
+      "window:1",
+      "tab:b",
+      "tab:b1",
+      "tab:b1i",
+      "tab:c",
+      "window:top:tab:a",
+      "tab:a",
+      "tab:a1",
+      "tab:a1i"
+    ]);
+
+    expect(issues).toEqual([]);
+  });
 });
 
 async function loadSidebar(page: Page): Promise<void> {
@@ -134,6 +165,78 @@ async function loadSidebar(page: Page): Promise<void> {
       return next;
     }
 
+    function moveSubtreeToTopLevel(nodeId: string): State {
+      const node = state.nodes[nodeId];
+      if (!node?.parentId) {
+        return state;
+      }
+      const rootAncestorId = rootAncestorIdFor(nodeId);
+      if (!rootAncestorId) {
+        return state;
+      }
+
+      const next = structuredClone(state) as State;
+      let movingId = nodeId;
+      const nextNode = next.nodes[nodeId]!;
+
+      if (!isGroupLike(node)) {
+        const wrapperId = `window:top:${nodeId}`;
+        const oldSiblings = nextNode.parentId ? next.nodes[nextNode.parentId]?.childIds : next.rootIds;
+        if (!oldSiblings) {
+          return state;
+        }
+        const oldIndex = oldSiblings.indexOf(nodeId);
+        if (oldIndex < 0) {
+          return state;
+        }
+        next.nodes[wrapperId] = {
+          id: wrapperId,
+          kind: "window",
+          status: "live",
+          parentId: nextNode.parentId,
+          title: "Group",
+          childIds: [nodeId],
+          collapsed: false,
+          createdAt: Date.now(),
+          updatedAt: Date.now()
+        } as Node;
+        oldSiblings.splice(oldIndex, 1, wrapperId);
+        nextNode.parentId = wrapperId;
+        movingId = wrapperId;
+      }
+
+      const moving = next.nodes[movingId];
+      if (!moving?.parentId) {
+        return next;
+      }
+      removeId(next.nodes[moving.parentId]?.childIds, movingId);
+      const rootIndex = next.rootIds.indexOf(rootAncestorId);
+      next.rootIds.splice(rootIndex >= 0 ? rootIndex + 1 : next.rootIds.length, 0, movingId);
+      delete moving.parentId;
+      return next;
+    }
+
+    function rootAncestorIdFor(nodeId: string): string | undefined {
+      let current = state.nodes[nodeId];
+      const visited = new Set<string>();
+      while (current?.parentId && !visited.has(current.id)) {
+        visited.add(current.id);
+        current = state.nodes[current.parentId];
+      }
+      return current?.id;
+    }
+
+    function isGroupLike(node: { kind?: string }): boolean {
+      return node.kind === "window" || node.kind === "group";
+    }
+
+    function removeId(ids: string[] | undefined, id: string): void {
+      const index = ids?.indexOf(id) ?? -1;
+      if (ids && index >= 0) {
+        ids.splice(index, 1);
+      }
+    }
+
     window.browser = {
       runtime: {
         sendMessage: async (message: unknown) => {
@@ -176,6 +279,10 @@ async function loadSidebar(page: Page): Promise<void> {
             replaceState(flattenSubtree((message as { nodeId: string }).nodeId));
             return { type: "commandAck", stateChanged: true };
           }
+          if (type === "moveSubtreeToTopLevel") {
+            replaceState(moveSubtreeToTopLevel((message as { nodeId: string }).nodeId));
+            return { type: "commandAck", stateChanged: true };
+          }
           return { type: "commandAck", stateChanged: false };
         },
         onMessage: {
@@ -209,6 +316,12 @@ async function visibleNodeOrder(page: Page): Promise<string[]> {
   return page.locator(".node").evaluateAll((nodes) =>
     nodes.map((node) => (node as HTMLElement).dataset.nodeId ?? "")
   );
+}
+
+async function outlineRootIds(page: Page): Promise<string[]> {
+  return page.evaluate(() =>
+    (window as typeof window & { __outlineState?: { rootIds: string[] } })
+      .__outlineState?.rootIds ?? []);
 }
 
 async function outlineChildIds(page: Page, nodeId: string): Promise<string[]> {
