@@ -5574,6 +5574,62 @@ describe("background controller lifecycle", () => {
     expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
   });
 
+  it("defers command close session echoes until the matching tabRemoved event", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      Array.from({ length: 100 }, (_value, index) => ({
+        id: index + 1,
+        windowId: 10,
+        index,
+        active: index === 0,
+        url: `https://close.example/${index + 1}`,
+        title: `Tab ${index + 1}`
+      })),
+      { browserLikeTabRemove: "sessionChangedThenTabRemoved" }
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    const initialState = await controller.ensureState();
+
+    runtime.broadcasts.length = 0;
+    vi.mocked(runtime.api.tabs.query).mockClear();
+    vi.mocked(runtime.api.windows.getAll).mockClear();
+    vi.mocked(runtime.api.storage.local.set).mockClear();
+
+    await controller.handleMessage({ type: "closeNode", nodeId: "tab:100" });
+    const sessionResult = await countNodePropertyReads(initialState, ["tab:40"], () =>
+      runtime.events.sessionChanged.flush()
+    );
+
+    expect(sessionResult.reads).toBe(0);
+    expect(runtime.api.tabs.query).not.toHaveBeenCalled();
+    expect(runtime.api.windows.getAll).not.toHaveBeenCalled();
+
+    await runtime.events.tabRemoved.flush();
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+
+    expect(state.nodes["tab:100"]?.status).toBe("closed");
+    expect(state.nodes["tab:40"]?.status).toBe("live");
+    expect(stateBroadcasts(runtime.broadcasts)).toHaveLength(1);
+    expect(runtime.broadcasts.at(-1)).toMatchObject({
+      type: "nodeStateUpdated",
+      updatedNodes: [
+        expect.objectContaining({
+          id: "tab:100",
+          status: "closed"
+        })
+      ],
+      closedCountDelta: 1
+    });
+    await controller.flushPendingSaves();
+    expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
+  });
+
   it("skips the session-changed snapshot after an outliner closeNode tabRemoved update", async () => {
     const runtime = fakeRuntime(
       [

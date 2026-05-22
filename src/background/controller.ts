@@ -254,6 +254,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   const stateCache = createStateCache(initializeState);
   let sessionChangedQueued = false;
   let commandCloseSessionEchoesToSkip = 0;
+  let commandCloseSessionEchoesSkippedBeforeRemoval = 0;
   let pendingRuntimeRefresh: PendingRuntimeRefresh | undefined;
   let pendingSaveState: OutlineState | undefined;
   let pendingSaveHistory: HistoryState | undefined;
@@ -368,7 +369,11 @@ export function createBackgroundController(options: BackgroundControllerOptions)
             now: now(),
             ...(recent?.tab?.sessionId ? { sessionId: recent.tab.sessionId } : {})
           });
-          commandCloseSessionEchoesToSkip += 1;
+          if (commandCloseSessionEchoesSkippedBeforeRemoval > 0) {
+            commandCloseSessionEchoesSkippedBeforeRemoval -= 1;
+          } else {
+            commandCloseSessionEchoesToSkip += 1;
+          }
         } else if (isRestoredLiveTabId(current, tabId)) {
           const recent = await mostRecentClosedSession();
           next = closeTab(current, tabId, {
@@ -472,6 +477,10 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         try {
           if (commandCloseSessionEchoesToSkip > 0) {
             commandCloseSessionEchoesToSkip -= 1;
+            return;
+          }
+          if (outlinerClosingTabIds.size > 0) {
+            commandCloseSessionEchoesSkippedBeforeRemoval += 1;
             return;
           }
           const reconciled = await reconcileMissingLiveTabsInOpenWindows();
