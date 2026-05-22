@@ -619,3 +619,17 @@ Use these as starting targets, not hard promises:
 - Synthetic restore cross-checks after `pnpm run build`:
   - `node scripts/profile-restore.mjs --tabs 26460 --target last`: 31ms measured, 6ms command, 23ms save stringify, 8 MB stringified.
   - `node scripts/profile-restore.mjs --scenario controller-event-echo --tabs 26460 --target last`: 85ms command, 0ms event echo, 221ms explicit save flush, 1 save, 1 broadcast.
+
+### 2026-05-22: Autoresearch Restore Candidate Narrowing
+
+- Ran the first autoresearch performance cycle for large-tree interaction latency. Baseline matrix used three sequential runs per scenario after `pnpm run build`; synthetic medians were:
+  - Restore transient echo, 50k closed tabs: 219ms total, first broadcast 215ms, 0ms projection, 1 save, 1 broadcast, 2 runtime events.
+  - Close, session-before-tabRemoved, 50k tabs: 143ms total, first broadcast 116ms, 0ms projection, 1 save, 1 broadcast, 2 runtime events.
+  - Delete 10 leaves, 50k tabs: 715ms total, first broadcast 47ms, 0ms projection, 1 save, 20 patch broadcasts, 10 runtime events.
+  - Focus 10 successive tabs, 50k tabs: 194ms total, 0 saves, 10 active broadcasts, 30 runtime events.
+  - Move one leaf, 50k tabs: 126ms total, first broadcast 43ms, 43ms tree patch/projection simulation, 1 save, 2 broadcasts, 1 runtime event.
+- Selected restore as the first bottleneck because it had the slowest visible-path first broadcast and no projection/full-transport explanation. The issue was restore candidate expansion: a single-tab restore added the owning window to the restore candidate set, then runtime-index candidate collection expanded that window subtree before the compact `nodeStateUpdated` broadcast.
+- Change: restore patch candidates now add only the explicitly restored plan nodes, their destination window nodes, and the currently active live window from the warm `RuntimeStateIndex`. Restore runtime-index candidate collection treats that set as exact instead of expanding seed subtrees. This preserves the compact restore patch while avoiding unrelated closed siblings on the interaction path.
+- Added red/green controller coverage with a wide stored closed-tab tree. Before the fix, restoring one tab read an unrelated sibling 6 times; after the fix the unrelated sibling is read at most once, from the unavoidable shallow node table copy in `restoreNodes()`.
+- After `pnpm run build`, the targeted restore profile medians over three sequential runs were 23ms total, first broadcast 17ms, 0ms projection, 4ms node patch, 1 save, 1 broadcast, and 2 runtime events. A full after-matrix cross-check reported restore at 29ms total / 23ms first broadcast, with close/delete/focus/move counters flat versus baseline. This satisfies the stop condition: first broadcast improved by about 89% and landed under the 75ms target without increasing saves, broadcasts, projection rebuilds, stringified MB, or event counts.
+- Verification: `pnpm test -- src/background/controller.test.ts -t "restores one closed tab without traversing unrelated closed siblings"`, `pnpm test`, `pnpm run build`, and the before/after synthetic profile matrices passed. Real sidebar Playwright verification was not run because the accepted change is in background candidate selection and the synthetic restore harness already exercises compact sidebar patch application with no full projection rebuild.

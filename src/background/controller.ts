@@ -566,7 +566,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         ? planLiveSubtreeClose(current, message.nodeId)
         : undefined;
       const restorePatchNodeIds = message.type === "restoreNode"
-        ? restorePatchCandidateNodeIds(current, message.nodeId)
+        ? restorePatchCandidateNodeIds(current, message.nodeId, runtimeIndexForState(current))
         : undefined;
       for (const tabId of outlinerClosePlan?.tabIds ?? []) {
         outlinerClosingTabIds.add(tabId);
@@ -2632,7 +2632,9 @@ function runtimeIndexCandidateNodeIdsForCommand(
 ): NodeId[] | undefined {
   switch (command.type) {
     case "restoreNode":
-      return collectRuntimeIndexCandidateNodeIds(previous, next, options.restorePatchNodeIds ?? [command.nodeId]);
+      return collectRuntimeIndexCandidateNodeIds(previous, next, options.restorePatchNodeIds ?? [command.nodeId], {
+        includeSeedSubtrees: false
+      });
 
     case "moveNode":
     case "moveNodeToNewWindow":
@@ -3182,7 +3184,11 @@ function restoreRefsEqual(previous: OutlineNode["restore"], next: OutlineNode["r
     previous?.favIconUrl === next?.favIconUrl;
 }
 
-function restorePatchCandidateNodeIds(state: OutlineState, nodeId: NodeId): NodeId[] {
+function restorePatchCandidateNodeIds(
+  state: OutlineState,
+  nodeId: NodeId,
+  index?: RuntimeStateIndex
+): NodeId[] {
   const nodeIds = new Set<NodeId>();
   for (const plan of planRestore(state, nodeId)) {
     nodeIds.add(plan.nodeId);
@@ -3190,10 +3196,8 @@ function restorePatchCandidateNodeIds(state: OutlineState, nodeId: NodeId): Node
       nodeIds.add(plan.windowNodeId);
     }
   }
-  for (const node of Object.values(state.nodes)) {
-    if (node.kind === "window" && node.status === "live" && node.live && "windowId" in node.live) {
-      nodeIds.add(node.id);
-    }
+  if (index?.activeWindowNodeId) {
+    nodeIds.add(index.activeWindowNodeId);
   }
   return [...nodeIds];
 }

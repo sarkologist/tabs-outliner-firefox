@@ -7,7 +7,7 @@ import {
 } from "./backups.js";
 import { createBackgroundController } from "./controller.js";
 import type { CommandAck } from "./commands.js";
-import { HISTORY_KEY, STATE_KEY, loadStateV2, outlineStateV2Items } from "./storage.js";
+import { HISTORY_KEY, STATE_KEY, loadStateV2, outlineStateV2Items, outlineStateV3Changes } from "./storage.js";
 import { PORTABLE_TREE_SCHEMA } from "../model/portable-tree.js";
 import type { OutlineState, RuntimeTab, RuntimeWindow } from "../model/types.js";
 import { APP_PREFERENCES_STORAGE_KEY, DEFAULT_APP_PREFERENCES } from "../preferences.js";
@@ -737,6 +737,49 @@ function runtimeWindowSnapshot(
           : {})
       };
     });
+}
+
+function wideClosedTabState(tabCount: number): OutlineState {
+  const rootId = "window:10";
+  const childIds = Array.from({ length: tabCount }, (_value, index) => `tab:${index + 1}`);
+  return {
+    version: 1,
+    rootIds: [rootId],
+    nodes: {
+      [rootId]: {
+        id: rootId,
+        kind: "window",
+        status: "live",
+        title: "Window",
+        active: true,
+        collapsed: false,
+        childIds,
+        createdAt: 1000,
+        updatedAt: 1000,
+        live: { windowId: 10 }
+      },
+      ...Object.fromEntries(childIds.map((id, index) => [
+        id,
+        {
+          id,
+          kind: "tab",
+          status: "closed",
+          parentId: rootId,
+          childIds: [],
+          title: `Saved ${index + 1}`,
+          url: `https://restore.example/${index + 1}`,
+          collapsed: false,
+          createdAt: 1000,
+          updatedAt: 1000,
+          closedAt: 2000 + index,
+          restore: {
+            url: `https://restore.example/${index + 1}`,
+            title: `Saved ${index + 1}`
+          }
+        }
+      ]))
+    }
+  };
 }
 
 function isPromiseLike(value: unknown): value is Promise<unknown> {
@@ -5068,6 +5111,49 @@ describe("background controller lifecycle", () => {
 
     expect(calls).toBe(0);
     expect(state.nodes["tab:2"]?.live).toEqual({ tabId: 22, windowId: 10 });
+  });
+
+  it("restores one closed tab without traversing unrelated closed siblings", async () => {
+    const storedState = wideClosedTabState(100);
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [],
+      { initialStorage: outlineStateV3Changes(storedState).setItems }
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    const initialState = await controller.ensureState();
+
+    runtime.broadcasts.length = 0;
+    vi.mocked(runtime.api.storage.local.set).mockClear();
+
+    const { reads, value } = await countNodePropertyReads(initialState, ["tab:40"], () =>
+      controller.handleMessage({ type: "restoreNode", nodeId: "tab:100" })
+    );
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+
+    expectCommandAck(value, true);
+    expect(reads).toBeLessThanOrEqual(1);
+    expect(state.nodes["tab:100"]?.live).toEqual({ tabId: 1, windowId: 10 });
+    expect(state.nodes["tab:40"]?.status).toBe("closed");
+    expect(stateBroadcasts(runtime.broadcasts)).toHaveLength(1);
+    expect(runtime.broadcasts.at(-1)).toMatchObject({
+      type: "nodeStateUpdated",
+      updatedNodes: [
+        expect.objectContaining({
+          id: "tab:100",
+          status: "live"
+        })
+      ],
+      closedCountDelta: -1
+    });
+    await controller.flushPendingSaves();
+    expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
   });
 
   it("broadcasts a restored focused new window and the cleared active window in one compact restore patch", async () => {
