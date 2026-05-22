@@ -65,6 +65,29 @@ describe("createDiagnosticsScheduler", () => {
     expect(clock.timerCount).toBe(0);
   });
 
+  it("defers a pending diagnostics load when more idle time is requested", async () => {
+    const clock = new FakeClock();
+    const load = vi.fn().mockResolvedValue(undefined);
+    const defer = vi.fn()
+      .mockReturnValueOnce(125)
+      .mockReturnValueOnce(0);
+    const scheduler = createDiagnosticsScheduler(load, { clock, delayMs: 250, defer });
+
+    scheduler.request();
+    await clock.runNext();
+
+    expect(load).not.toHaveBeenCalled();
+    expect(defer).toHaveBeenCalledTimes(1);
+    expect(clock.delayHistory).toEqual([250, 125]);
+    expect(clock.timerCount).toBe(1);
+
+    await clock.runNext();
+
+    expect(load).toHaveBeenCalledTimes(1);
+    expect(defer).toHaveBeenCalledTimes(2);
+    expect(clock.timerCount).toBe(0);
+  });
+
   it("cancels a pending diagnostics load", () => {
     const clock = new FakeClock();
     const load = vi.fn().mockResolvedValue(undefined);
@@ -82,14 +105,16 @@ class FakeClock implements DiagnosticsSchedulerClock {
   private nextId = 1;
   private readonly timers = new Map<number, () => void>();
   clearCount = 0;
+  delayHistory: number[] = [];
 
   get timerCount(): number {
     return this.timers.size;
   }
 
-  setTimeout(callback: () => void): number {
+  setTimeout(callback: () => void, delayMs: number): number {
     const id = this.nextId;
     this.nextId += 1;
+    this.delayHistory.push(delayMs);
     this.timers.set(id, callback);
     return id;
   }

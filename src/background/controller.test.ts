@@ -3122,6 +3122,15 @@ describe("background controller lifecycle", () => {
     expect(runtime.api.windows.getAll).toHaveBeenCalledTimes(1);
   });
 
+  it("rebroadcasts sidebar non-edit interaction notices", async () => {
+    const runtime = fakeRuntime([], []);
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+
+    await expect(controller.handleMessage({ type: "sidebarNonEditInteraction" })).resolves.toEqual({ ok: true });
+
+    expect(runtime.broadcasts).toEqual([{ type: "sidebarNonEditInteraction" }]);
+  });
+
   it("adds new tab events without closing existing tabs when query is stale", async () => {
     const runtime = fakeRuntime(
       [

@@ -259,6 +259,123 @@ test.describe("sidebar startup interaction profile", () => {
     expect(result.render?.count).toBe(1);
     expect(issues).toEqual([]);
   });
+
+  test("defers sparse startup hydration after another sidebar reports interaction", async ({ page }, testInfo) => {
+    const issues = collectPageIssues(page);
+
+    await page.addInitScript(({ snapshot, fullState }) => {
+      const messages: Array<{ type: string; at: number }> = [];
+      const portListeners: Array<(message: unknown) => void> = [];
+      Object.assign(window as typeof window & {
+        __sidebarBootMessages?: typeof messages;
+        __remoteSidebarInteractionAt?: number;
+      }, {
+        __sidebarBootMessages: messages
+      });
+
+      function emitRemoteSidebarInteraction(): void {
+        (window as typeof window & { __remoteSidebarInteractionAt?: number }).__remoteSidebarInteractionAt =
+          performance.now();
+        for (const listener of portListeners) {
+          listener({ type: "sidebarNonEditInteraction" });
+        }
+      }
+
+      window.browser = {
+        runtime: {
+          sendMessage: async (message: unknown) => {
+            const type = typeof message === "object" && message ? String((message as { type?: unknown }).type) : "";
+            messages.push({ type, at: performance.now() });
+            if (type === "getInitialTreeSnapshot") {
+              window.setTimeout(emitRemoteSidebarInteraction, 50);
+              return structuredClone(snapshot);
+            }
+            if (type === "getState") {
+              return structuredClone(fullState);
+            }
+            if (
+              type === "getDiagnostics" ||
+              type === "getPerformanceTrace" ||
+              type === "setPerformanceTraceEnabled" ||
+              type === "clearPerformanceTrace"
+            ) {
+              return undefined;
+            }
+            return { ok: true };
+          },
+          onMessage: {
+            addListener: () => undefined
+          },
+          connect: () => ({
+            onMessage: {
+              addListener: (listener: (message: unknown) => void) => {
+                portListeners.push(listener);
+              }
+            },
+            onDisconnect: { addListener: () => undefined }
+          })
+        },
+        storage: {
+          local: {
+            get: async () => ({}),
+            set: async () => undefined
+          },
+          onChanged: {
+            addListener: () => undefined
+          }
+        },
+        windows: {
+          getCurrent: async () => ({ id: 1 })
+        }
+      };
+    }, {
+      snapshot: fixtureActiveCenteredSnapshot(TAB_COUNT, ACTIVE_TAB_ID),
+      fullState: fixtureFullState(TAB_COUNT, ACTIVE_TAB_ID)
+    });
+
+    await page.goto("/sidebar/sidebar.html");
+    await expect(page.locator(`.node[data-node-id='${TARGET_NODE_ID}'].is-active`)).toBeVisible();
+    await page.waitForFunction(() => {
+      return typeof (window as typeof window & { __remoteSidebarInteractionAt?: number }).__remoteSidebarInteractionAt ===
+        "number";
+    });
+
+    const result = await page.evaluate(async () => {
+      const state = window as typeof window & {
+        __sidebarBootMessages?: Array<{ type: string; at: number }>;
+        __remoteSidebarInteractionAt?: number;
+      };
+      const remoteInteractionAt = state.__remoteSidebarInteractionAt ?? performance.now();
+      const waitUntil = (targetTime: number) =>
+        new Promise<void>((resolve) => window.setTimeout(resolve, Math.max(0, targetTime - performance.now())));
+
+      await waitUntil(remoteInteractionAt + 900);
+      const messagesBeforeIdle = state.__sidebarBootMessages ?? [];
+      const hydrationRequestsBeforeIdle = messagesBeforeIdle.filter((message) => message.type === "getState").length;
+
+      await waitUntil(remoteInteractionAt + 1250);
+      const messagesAfterIdle = state.__sidebarBootMessages ?? [];
+      const firstHydrationAt = messagesAfterIdle.find((message) => message.type === "getState")?.at;
+
+      return {
+        remoteInteractionAt,
+        firstHydrationAt,
+        hydrationRequestsBeforeIdle,
+        hydrationRequestsAfterIdle: messagesAfterIdle.filter((message) => message.type === "getState").length
+      };
+    });
+
+    await testInfo.attach("startup-remote-interaction-hydration-defer.json", {
+      body: JSON.stringify(result, null, 2),
+      contentType: "application/json"
+    });
+    console.log(`startup-remote-interaction-hydration-defer ${JSON.stringify(result)}`);
+
+    expect(result.hydrationRequestsBeforeIdle).toBe(0);
+    expect(result.hydrationRequestsAfterIdle).toBe(1);
+    expect(result.firstHydrationAt).toBeGreaterThanOrEqual(result.remoteInteractionAt + 950);
+    expect(issues).toEqual([]);
+  });
 });
 
 function fixtureActiveCenteredSnapshot(tabCount: number, activeTabId: number) {

@@ -15,11 +15,24 @@ export function createDiagnosticsScheduler(
   options: {
     clock: DiagnosticsSchedulerClock;
     delayMs: number;
+    defer?: () => number | undefined;
   }
 ): DiagnosticsScheduler {
   let timerId: number | undefined;
   let inFlight = false;
   let rerunAfterInFlight = false;
+
+  function schedule(delayMs: number): void {
+    timerId = options.clock.setTimeout(() => {
+      timerId = undefined;
+      const deferredMs = options.defer?.();
+      if (typeof deferredMs === "number" && deferredMs > 0) {
+        schedule(deferredMs);
+        return;
+      }
+      void run();
+    }, delayMs);
+  }
 
   async function run(): Promise<void> {
     if (inFlight) {
@@ -50,10 +63,7 @@ export function createDiagnosticsScheduler(
       options.clock.clearTimeout(timerId);
     }
 
-    timerId = options.clock.setTimeout(() => {
-      timerId = undefined;
-      void run();
-    }, options.delayMs);
+    schedule(options.delayMs);
   }
 
   function cancel(): void {

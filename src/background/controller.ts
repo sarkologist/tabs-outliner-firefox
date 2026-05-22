@@ -161,6 +161,10 @@ type OpenSidebarWindowMessage = {
   type: "openSidebarWindow";
 };
 
+type SidebarNonEditInteractionMessage = {
+  type: "sidebarNonEditInteraction";
+};
+
 type PendingSidebarProfileCollection = {
   sidebars: LabeledTraceSnapshot[];
   seenSidebarIds: Set<string>;
@@ -526,6 +530,11 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   }
 
   async function handleNonTraceMessage(message: unknown): Promise<unknown> {
+    if (isSidebarNonEditInteractionMessage(message)) {
+      postSidebarMessage({ type: "sidebarNonEditInteraction" });
+      return { ok: true };
+    }
+
     if (isDiagnosticsRequest(message)) {
       return getDiagnosticsCoalesced();
     }
@@ -4113,6 +4122,14 @@ function isOpenSidebarWindowMessage(message: unknown): message is OpenSidebarWin
     message &&
       typeof message === "object" &&
       (message as { type?: unknown }).type === "openSidebarWindow"
+  );
+}
+
+function isSidebarNonEditInteractionMessage(message: unknown): message is SidebarNonEditInteractionMessage {
+  return Boolean(
+    message &&
+      typeof message === "object" &&
+      (message as { type?: unknown }).type === "sidebarNonEditInteraction"
   );
 }
 

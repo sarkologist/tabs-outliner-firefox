@@ -117,6 +117,7 @@ let pendingHoverGuideReason: HoverGuideApplyReason = "pointer";
 let pendingHoverFeedbackTrace: HoverFeedbackTrace | undefined;
 let scheduledHoverGuideFrame: number | undefined;
 let lastNonEditInteractionAt = Number.NEGATIVE_INFINITY;
+let lastNonEditInteractionBroadcastAt = Number.NEGATIVE_INFINITY;
 let pendingCutNodeId: NodeId | undefined;
 let currentCutRowRange: CutSubtreeRowRange | undefined;
 let pendingShowInTreeNodeId: NodeId | undefined;
@@ -132,10 +133,12 @@ const activeTabScrollTracker = createActiveTabScrollTracker();
 const WHEEL_ZOOM_THRESHOLD_PX = 80;
 const DIAGNOSTICS_NOTICE_MS = 4000;
 const DIAGNOSTICS_REFRESH_DELAY_MS = 750;
+const DIAGNOSTICS_AFTER_NON_EDIT_INPUT_DELAY_MS = 1500;
 const FULL_STATE_HYDRATION_DELAY_MS = 750;
 const HYDRATION_AFTER_NON_EDIT_INPUT_DELAY_MS = 1000;
 const HYDRATION_RENDER_INPUT_IDLE_MS = 120;
 const HYDRATION_RENDER_INPUT_MAX_DELAY_MS = 1500;
+const NON_EDIT_INTERACTION_BROADCAST_MIN_INTERVAL_MS = 500;
 const SHOW_IN_TREE_HIGHLIGHT_MS = 1200;
 const VIRTUAL_OVERSCAN_ROWS = 32;
 const HOVER_GUIDE_MAX_SUBTREE_ROWS = 1000;
@@ -162,6 +165,10 @@ type InitialTreeSnapshotRequest = {
 
 type OpenSidebarWindowRequest = {
   type: "openSidebarWindow";
+};
+
+type SidebarNonEditInteractionMessage = {
+  type: "sidebarNonEditInteraction";
 };
 
 type SidebarPerformanceTraceMessage =
@@ -240,7 +247,8 @@ const diagnosticsScheduler = createDiagnosticsScheduler(loadDiagnostics, {
     setTimeout: (callback, delayMs) => window.setTimeout(callback, delayMs),
     clearTimeout: (timerId) => window.clearTimeout(timerId)
   },
-  delayMs: DIAGNOSTICS_REFRESH_DELAY_MS
+  delayMs: DIAGNOSTICS_REFRESH_DELAY_MS,
+  defer: diagnosticsNonEditInteractionDeferralMs
 });
 const perfTrace = createPerformanceTracer("sidebar", {
   enabled: storedProfileEnabled()
@@ -351,6 +359,10 @@ function handleBackgroundMessage(message: unknown): unknown {
   }
 
   perfTrace.measure("sidebar.runtime.message", { type: messageType(message) }, () => {
+    if (isSidebarNonEditInteractionMessage(message)) {
+      noteRemoteNonEditInteraction();
+      return;
+    }
     if (isStateUpdated(message)) {
       currentState = message.state;
       invalidateSidebarWindowActiveTabTargets();
@@ -630,6 +642,14 @@ function isSidebarPerformanceTraceMessage(message: unknown): message is SidebarP
       typeof (message as { requestId?: unknown }).requestId === "string") ||
     (type === "setSidebarPerformanceTraceEnabled" &&
       typeof (message as { enabled?: unknown }).enabled === "boolean");
+}
+
+function isSidebarNonEditInteractionMessage(message: unknown): message is SidebarNonEditInteractionMessage {
+  return Boolean(
+    message &&
+      typeof message === "object" &&
+      (message as { type?: unknown }).type === "sidebarNonEditInteraction"
+  );
 }
 
 async function labeledSidebarPerformanceTrace(): Promise<LabeledTraceSnapshot> {
@@ -1704,12 +1724,34 @@ function handleTreePointerLeave(event: PointerEvent): void {
 }
 
 function noteNonEditInteraction(): void {
-  lastNonEditInteractionAt = performance.now();
+  const now = performance.now();
+  noteNonEditInteractionAt(now);
+  broadcastStartupNonEditInteraction(now);
+}
+
+function noteRemoteNonEditInteraction(): void {
+  noteNonEditInteractionAt(performance.now());
+}
+
+function noteNonEditInteractionAt(now: number): void {
+  lastNonEditInteractionAt = Math.max(lastNonEditInteractionAt, now);
   if (hydratingFullState && pendingFullHydrationTimer !== undefined) {
     window.clearTimeout(pendingFullHydrationTimer);
     pendingFullHydrationTimer = undefined;
     scheduleFullStateHydration(HYDRATION_AFTER_NON_EDIT_INPUT_DELAY_MS);
   }
+}
+
+function broadcastStartupNonEditInteraction(now: number): void {
+  if (!hydratingFullState) {
+    return;
+  }
+  if (now - lastNonEditInteractionBroadcastAt < NON_EDIT_INTERACTION_BROADCAST_MIN_INTERVAL_MS) {
+    return;
+  }
+
+  lastNonEditInteractionBroadcastAt = now;
+  void browser.runtime.sendMessage({ type: "sidebarNonEditInteraction" }).catch(() => undefined);
 }
 
 function recordInputDelay(name: string, event: Event, detail: TraceDetail): void {
@@ -2906,6 +2948,21 @@ function showDiagnosticsNotice(message: string, options: { error?: boolean } = {
 
 function scheduleDiagnosticsLoad(): void {
   diagnosticsScheduler.request();
+}
+
+function diagnosticsNonEditInteractionDeferralMs(): number | undefined {
+  if (!Number.isFinite(lastNonEditInteractionAt)) {
+    return undefined;
+  }
+
+  const idleMs = performance.now() - lastNonEditInteractionAt;
+  if (idleMs >= DIAGNOSTICS_AFTER_NON_EDIT_INPUT_DELAY_MS) {
+    return undefined;
+  }
+
+  const remainingMs = Math.ceil(DIAGNOSTICS_AFTER_NON_EDIT_INPUT_DELAY_MS - idleMs);
+  perfTrace.record("sidebar.diagnostics.defer", remainingMs, { reason: "recent-non-edit-interaction" });
+  return remainingMs;
 }
 
 async function loadDiagnostics(): Promise<void> {
