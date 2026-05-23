@@ -427,37 +427,9 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       await enqueueMutation(async () => {
         const current = await ensureState();
         const liveTabIds = liveTabIdsInWindow(current, windowId);
-        const outlinerClosingWindow = outlinerClosingWindowIds.delete(windowId);
-        const movedOutGroupedTabIds = movedOutGroupedTabIdsByWindowId.get(windowId);
+        outlinerClosingWindowIds.delete(windowId);
         movedOutGroupedTabIdsByWindowId.delete(windowId);
         pendingGroupedTabIdsByWindowId.delete(windowId);
-        const singleNativeRemovedTabId = !outlinerClosingWindow &&
-          liveTabIds.length === 1 &&
-          removedTabIds.has(liveTabIds[0]!) &&
-          !outlinerClosingTabIds.has(liveTabIds[0]!)
-          ? liveTabIds[0]
-          : undefined;
-
-        if (typeof singleNativeRemovedTabId === "number") {
-          let next: OutlineState;
-          if (
-            movedOutGroupedTabIds?.has(singleNativeRemovedTabId) ||
-            shouldPreserveRestoredSingleTabWindowClose(current, windowId, singleNativeRemovedTabId)
-          ) {
-            const recent = await mostRecentClosedSession();
-            next = closeWindow(current, windowId, {
-              now: now(),
-              ...(recent?.window?.sessionId ? { sessionId: recent.window.sessionId } : {})
-            });
-          } else {
-            next = closeWindow(deleteLiveTabNodeByTabId(current, singleNativeRemovedTabId), windowId, { now: now() });
-          }
-          installStateTransition(current, next, {
-            candidateNodeIds: runtimeIndexCandidateNodeIdsForWindowRemoval(current, next, runtimeIndexForState(current), windowId)
-          });
-          await persistWithNodeStateUpdate(current, next);
-          return;
-        }
 
         for (const tabId of liveTabIds) {
           outlinerClosingTabIds.delete(tabId);
@@ -467,6 +439,9 @@ export function createBackgroundController(options: BackgroundControllerOptions)
           now: now(),
           ...(recent?.window?.sessionId ? { sessionId: recent.window.sessionId } : {})
         });
+        if (next === current) {
+          return;
+        }
         installStateTransition(current, next, {
           candidateNodeIds: runtimeIndexCandidateNodeIdsForWindowRemoval(current, next, runtimeIndexForState(current), windowId)
         });
@@ -645,6 +620,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
           deleteClosePlan &&
           await runtimeClosePlanCompleted(deleteClosePlan)
         ) {
+          recordCompletedClosePlanTombstones(deleteClosePlan);
           const recovered = deleteOutlineNode(current, message.nodeId, { allowLive: true });
           if (recovered !== current) {
             const runtimeIndexCandidateNodeIds = runtimeIndexCandidateNodeIdsForCommand(message, current, recovered);
@@ -797,6 +773,18 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
     const openTabIds = new Set(windows.flatMap((windowInfo) => windowInfo.tabs ?? []).map((tab) => tab.id));
     return plan.tabIds.every((tabId) => !openTabIds.has(tabId));
+  }
+
+  function recordCompletedClosePlanTombstones(plan: RuntimeClosePlan): void {
+    for (const tabId of plan.tabIds) {
+      removedTabIds.add(tabId);
+      deleteOwnedClosingTabIds.delete(tabId);
+      commandRelocatedTabEchoes.delete(tabId);
+    }
+    for (const windowId of plan.windowIds) {
+      removedWindowIds.add(windowId);
+      deleteOwnedClosingWindowIds.delete(windowId);
+    }
   }
 
   async function ensureState(): Promise<OutlineState> {
@@ -1417,7 +1405,9 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         ),
         current,
         index,
-        commandRelocatedTabEchoes
+        commandRelocatedTabEchoes,
+        ignoredTabIds,
+        ignoredWindowIds
       ),
       current,
       index,
@@ -2413,19 +2403,30 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
   async function reconcileMissingLiveTabsInOpenWindows(): Promise<ReconciledStateChange | undefined> {
     const current = await ensureState();
+    const ignoredTabIds = ignoredRuntimeTabIdsForRefresh(removedTabIds, deleteOwnedClosingTabIds);
+    const ignoredWindowIds = ignoredRuntimeWindowIdsForRefresh(removedWindowIds, deleteOwnedClosingWindowIds);
     const windows = filterRemovedWindowsFromWindows(
       filterRemovedTabsFromWindows(
         await getNormalWindows(api),
-        ignoredRuntimeTabIdsForRefresh(removedTabIds, deleteOwnedClosingTabIds)
+        ignoredTabIds
       ),
-      ignoredRuntimeWindowIdsForRefresh(removedWindowIds, deleteOwnedClosingWindowIds)
+      ignoredWindowIds
     );
     const openWindowIds = new Set(windows.map((windowInfo) => windowInfo.id));
     const openTabIds = new Set(
       windows.flatMap((windowInfo) => windowInfo.tabs ?? []).map((tab) => tab.id)
     );
     const missingLiveTabIds = Object.values(current.nodes)
-      .filter(isLiveTabInOpenWindow(openWindowIds, openTabIds))
+      .filter((node): node is OutlineNode & { live: { tabId: number; windowId: number } } => {
+        if (!isLiveTabNode(node) || openTabIds.has(node.live.tabId) || ignoredTabIds.has(node.live.tabId)) {
+          return false;
+        }
+        if (openWindowIds.has(node.live.windowId)) {
+          return true;
+        }
+        const relocationEcho = commandRelocatedTabEchoes.get(node.live.tabId);
+        return relocationEcho?.toWindowId === node.live.windowId && !ignoredWindowIds.has(node.live.windowId);
+      })
       .map((node) => node.live.tabId);
     if (missingLiveTabIds.length === 0) {
       return undefined;
@@ -3867,17 +3868,6 @@ function isRestoredLiveTabId(state: OutlineState, tabId: number): boolean {
   return Boolean(liveTabNodeByRuntimeId(state, tabId)?.restoredFromClosed);
 }
 
-function shouldPreserveRestoredSingleTabWindowClose(
-  state: OutlineState,
-  windowId: number,
-  tabId: number
-): boolean {
-  return Boolean(
-    liveWindowNodeByRuntimeId(state, windowId)?.restoredFromClosed ||
-      liveTabNodeByRuntimeId(state, tabId)?.restoredFromClosed
-  );
-}
-
 function liveTabNodeByRuntimeId(
   state: OutlineState,
   tabId: number
@@ -3909,19 +3899,6 @@ function liveTabIdsInWindow(state: OutlineState, windowId: number): number[] {
     }
     return [node.live.tabId];
   });
-}
-
-function isLiveTabInOpenWindow(
-  openWindowIds: Set<number>,
-  openTabIds: Set<number>
-): (node: OutlineNode) => node is OutlineNode & { live: { tabId: number; windowId: number } } {
-  return (node): node is OutlineNode & { live: { tabId: number; windowId: number } } => {
-    return Boolean(
-      isLiveTabNode(node) &&
-        openWindowIds.has(node.live.windowId) &&
-        !openTabIds.has(node.live.tabId)
-    );
-  };
 }
 
 function liveStructureChanged(previous: OutlineState, next: OutlineState): boolean {
@@ -4082,7 +4059,9 @@ function filterCommandRelocatedStaleTabsFromWindows(
   windows: RuntimeWindow[],
   state: OutlineState,
   index: RuntimeStateIndex,
-  commandRelocatedTabEchoes: Map<number, CommandRelocatedTabEcho>
+  commandRelocatedTabEchoes: Map<number, CommandRelocatedTabEcho>,
+  ignoredTabIds: Set<number>,
+  ignoredWindowIds: Set<number>
 ): RuntimeWindow[] {
   if (commandRelocatedTabEchoes.size === 0) {
     return windows;
@@ -4131,7 +4110,7 @@ function filterCommandRelocatedStaleTabsFromWindows(
       if (staleOldWindowEcho) {
         changed = true;
         if (!freshEchoTabIds.has(tab.id)) {
-          const fallbackTab = commandRelocatedTabFromCurrentState(state, index, tab);
+          const fallbackTab = commandRelocatedTabFromCurrentState(state, index, tab, ignoredTabIds, ignoredWindowIds);
           if (fallbackTab) {
             fallbackTabs.push(fallbackTab);
           }
@@ -4223,17 +4202,27 @@ function applyActivationOverridesToWindows(
 function commandRelocatedTabFromCurrentState(
   state: OutlineState,
   index: RuntimeStateIndex,
-  staleTab: RuntimeTab
+  staleTab: RuntimeTab,
+  ignoredTabIds: Set<number>,
+  ignoredWindowIds: Set<number>
 ): RuntimeTab | undefined {
+  if (ignoredTabIds.has(staleTab.id)) {
+    return undefined;
+  }
+
   const node = indexedLiveTabNodeByRuntimeId(state, index, staleTab.id);
   if (!node) {
     return undefined;
   }
+  if (ignoredWindowIds.has(node.live.windowId)) {
+    return undefined;
+  }
 
   const windowNode = indexedLiveWindowNodeByRuntimeId(state, index, node.live.windowId);
-  const projectedIndex = windowNode
-    ? projectLiveTabs(state, windowNode.id).findIndex((tab) => tab.tabId === staleTab.id)
-    : -1;
+  if (!windowNode) {
+    return undefined;
+  }
+  const projectedIndex = projectLiveTabs(state, windowNode.id).findIndex((tab) => tab.tabId === staleTab.id);
   return {
     ...staleTab,
     windowId: node.live.windowId,

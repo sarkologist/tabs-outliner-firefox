@@ -297,12 +297,26 @@ async function closeLiveSubtree(
 }
 
 async function closeRuntimePlan(adapter: BrowserAdapter, plan: RuntimeClosePlan): Promise<void> {
+  const errors: unknown[] = [];
+
   for (const windowId of plan.windowIds) {
-    await adapter.closeWindow(windowId);
+    try {
+      await adapter.closeWindow(windowId);
+    } catch (error) {
+      errors.push(error);
+    }
   }
 
   if (plan.tabIds.length > 0) {
-    await adapter.closeTabs(plan.tabIds);
+    try {
+      await adapter.closeTabs(plan.tabIds);
+    } catch (error) {
+      errors.push(error);
+    }
+  }
+
+  if (errors.length > 0) {
+    throw errors[0];
   }
 }
 

@@ -726,10 +726,12 @@ export function moveTabToNewLiveWindow(
   if (node.kind !== "tab") {
     throw new Error("Only tab nodes can be moved into a new window");
   }
-  if (node.status !== "live") {
+  if (!isNodeLiveTab(node)) {
     throw new Error("Only live tab nodes can be moved into a live window");
   }
 
+  const sourceWindowNodeId = nearestWindow(state, nodeId)?.id;
+  const sourceRuntimeWindowId = node.live.windowId;
   const next = cloneState(state);
   const newWindowNodeId = uniqueNodeId(next, windowNodeId(windowInfo.id), clock.now);
   next.nodes[newWindowNodeId] = {
@@ -757,7 +759,7 @@ export function moveTabToNewLiveWindow(
   moveExistingNodeUnderNewWindow(next, nodeId, newWindowNodeId, clock.now, clock.rootIndex);
   updateLiveTabWindowRefs(next, nodeId, windowInfo.id, clock.now);
   applyRuntimeTabsToLiveSubtree(next, nodeId, windowInfo.tabs ?? [], clock.now);
-  return repairState(next);
+  return closeSourceWindowIfRelocationEmptiedIt(next, sourceWindowNodeId, sourceRuntimeWindowId, clock.now);
 }
 
 export function moveTabToNewClosedWindow(
@@ -810,6 +812,8 @@ export function wrapNodeInGroup(
     if (!context.liveWindow) {
       throw new Error("Wrapping a live tab requires a live window destination");
     }
+    const sourceWindowNodeId = nearestWindow(state, nodeId)?.id;
+    const sourceRuntimeWindowId = node.live.windowId;
     const wrapperId = uniqueNodeId(state, windowNodeId(context.liveWindow.id), context.now);
     const next = wrapExistingNodeWithContainer(state, nodeId, {
       id: wrapperId,
@@ -839,7 +843,7 @@ export function wrapNodeInGroup(
     }
     updateLiveTabWindowRefsForSubtree(next, state, nodeId, context.liveWindow.id, context.now);
     applyRuntimeTabsToLiveSubtree(next, nodeId, context.liveWindow.tabs ?? [], context.now);
-    return next;
+    return closeSourceWindowIfRelocationEmptiedIt(next, sourceWindowNodeId, sourceRuntimeWindowId, context.now);
   }
 
   if (node.kind === "tab" && node.status === "closed") {
@@ -1561,6 +1565,30 @@ function applyRuntimeTabsToLiveSubtree(
       }
     }
   }
+}
+
+function closeSourceWindowIfRelocationEmptiedIt(
+  state: OutlineState,
+  sourceWindowNodeId: NodeId | undefined,
+  sourceRuntimeWindowId: number,
+  now: number
+): OutlineState {
+  if (!sourceWindowNodeId) {
+    return state;
+  }
+
+  const sourceWindow = state.nodes[sourceWindowNodeId];
+  if (!sourceWindow || !isNodeLiveWindow(sourceWindow) || sourceWindow.live.windowId !== sourceRuntimeWindowId) {
+    return state;
+  }
+
+  const hasOwnedLiveTabs = projectLiveTabs(state, sourceWindowNodeId)
+    .some((tab) => tab.windowId === sourceRuntimeWindowId);
+  if (hasOwnedLiveTabs) {
+    return state;
+  }
+
+  return repairState(closeWindow(state, sourceRuntimeWindowId, { now }));
 }
 
 function collectSubtreeIdsExcludingNestedLiveWindows(state: OutlineState, nodeId: NodeId): NodeId[] {

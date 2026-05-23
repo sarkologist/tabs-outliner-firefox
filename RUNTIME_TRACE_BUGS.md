@@ -31,7 +31,7 @@ Default hunt bounds:
 
 ## Finding Index
 
-- Current domain trace adversary: RT-009 through RT-021
+- Current domain trace adversary: RT-009 through RT-021 (all fixed as of the principled runtime trace fix pass)
 - Previous adaptive seed-frontier run: RT-001 through RT-008
 - Recovered pre-adaptive seed sweep: SS-001 through SS-006
 
@@ -39,7 +39,11 @@ Default hunt bounds:
 
 - Active-state relocation race: RT-001, RT-002, RT-009, RT-010, SS-001, and SS-002 were fixed by applying browser-returned command-created window tab data to relocated outline tabs instead of preserving stale pre-command `active` flags.
 - Stale old-window relocation echoes: RT-003 through RT-008 and SS-003 through SS-006 were fixed by keeping old-window stale echo protection after fresh current-window events; protection now ends only when the tab/node disappears or a later command updates the tracked destination.
-- Verification: all listed generated seed repros and domain trace repros pass as of the principled runtime trace fix pass.
+- Empty source/destination windows after command relocation: RT-011, RT-019, RT-020, and RT-021 were fixed by making the fake browser remove windows emptied by tab moves/closes, and by closing/promoting source outline windows when a command relocation moves all owned live tabs into a command-created runtime window.
+- Native close ownership: RT-012, RT-013, RT-014, and RT-016 were fixed by treating `windows.onRemoved` as authoritative browser-window close evidence; the outline now preserves the closed window subtree instead of deleting the single removed tab first.
+- Delete rejection recovery: RT-015, RT-019, RT-020, and RT-021 were fixed by continuing through every resource in a captured close plan, then recovering model deletion when the runtime resources are already gone despite an adapter rejection.
+- Removed relocated-tab resurrection: RT-017 and RT-018 were fixed by limiting session-only missing-window cleanup to command-relocated tabs and by keeping removed/deleted tombstones in stale relocation fallback paths.
+- Verification: all listed generated seed repros and promoted domain trace repros pass as of the principled runtime trace fix pass.
 
 ## Previous Adaptive Seed-Frontier Run
 
@@ -626,7 +630,7 @@ action: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"role":"lastMovedTab"
 - First seen: 2026-05-23T12:00:05.387Z
 - Trace id: `rt-repeated-direct-relocation-stale-events`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=rt-repeated-direct-relocation-stale-events pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in principled runtime trace fix pass.
 
 ```text
 domain trace rt-repeated-direct-relocation-stale-events: stale events from multiple old windows follow repeated direct relocation
@@ -656,7 +660,7 @@ action: {"type":"nativeCloseWindow","window":{"windowId":10}} -->
 - First seen: 2026-05-23T12:09:19.101Z
 - Trace id: `rt-direct-new-window-native-close-old-window-stale-created`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=rt-direct-new-window-native-close-old-window-stale-created pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in principled runtime trace fix pass.
 
 ```text
 domain trace rt-direct-new-window-native-close-old-window-stale-created: stale created event follows direct relocation after native old-window close
@@ -678,7 +682,7 @@ action: {"type":"nativeCloseWindow","window":{"windowId":10}} -->
 - First seen: 2026-05-23T12:09:21.125Z
 - Trace id: `rt-top-level-native-close-old-window-stale-created`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=rt-top-level-native-close-old-window-stale-created pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in principled runtime trace fix pass.
 
 ```text
 domain trace rt-top-level-native-close-old-window-stale-created: stale created event follows top-level relocation after native old-window close
@@ -700,7 +704,7 @@ action: {"type":"nativeCloseWindow","window":{"windowId":10}} -->
 - First seen: 2026-05-23T12:09:22.104Z
 - Trace id: `rt-group-native-close-old-window-stale-updated`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=rt-group-native-close-old-window-stale-updated pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in principled runtime trace fix pass.
 
 ```text
 domain trace rt-group-native-close-old-window-stale-updated: stale updated event follows grouping relocation after native old-window close
@@ -724,7 +728,7 @@ action: {"type":"outlinerDeleteWindowRejectingClose","window":{"windowId":10}} -
 - First seen: 2026-05-23T12:10:40.932Z
 - Trace id: `rt-group-delete-old-window-rejecting-close-stale-created`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=rt-group-delete-old-window-rejecting-close-stale-created pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in principled runtime trace fix pass.
 
 ```text
 domain trace rt-group-delete-old-window-rejecting-close-stale-created: stale created event follows grouping relocation after delete-owned old-window close
@@ -742,7 +746,7 @@ action: {"type":"nativeCloseWindow","window":{"role":"lastOpenedWindow"}} -->
 - First seen: 2026-05-23T12:12:05.042Z
 - Trace id: `rt-direct-new-window-native-close-destination-stale-updated`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=rt-direct-new-window-native-close-destination-stale-updated pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in principled runtime trace fix pass.
 
 ```text
 domain trace rt-direct-new-window-native-close-destination-stale-updated: stale updated event follows native destination-window close after direct relocation
@@ -766,7 +770,7 @@ action: {"type":"nativeCloseTab","tab":{"role":"lastMovedTab"},"order":"tabRemov
 - First seen: 2026-05-23T12:13:37.651Z
 - Trace id: `rt-top-level-native-close-tab-removed-only-stale-created`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=rt-top-level-native-close-tab-removed-only-stale-created pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in principled runtime trace fix pass.
 
 ```text
 domain trace rt-top-level-native-close-tab-removed-only-stale-created: stale created event follows top-level relocation after tab-removed-only native close
@@ -790,7 +794,7 @@ action: {"type":"nativeCloseTab","tab":{"role":"lastMovedTab"},"order":"sessionC
 - First seen: 2026-05-23T12:15:05.701Z
 - Trace id: `rt-top-level-native-close-session-only-stale-updated`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=rt-top-level-native-close-session-only-stale-updated pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in principled runtime trace fix pass.
 
 ```text
 domain trace rt-top-level-native-close-session-only-stale-updated: stale updated event follows top-level relocation after session-only native close
@@ -820,7 +824,7 @@ action: {"type":"outlinerDeleteTabRejectingClose","tab":{"role":"lastMovedTab"}}
 - First seen: 2026-05-23T12:24:27.228Z
 - Trace id: `rt-direct-new-window-delete-tab-rejecting-close-stale-created`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=rt-direct-new-window-delete-tab-rejecting-close-stale-created pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in principled runtime trace fix pass.
 
 ```text
 domain trace rt-direct-new-window-delete-tab-rejecting-close-stale-created: stale created event follows direct relocation after delete-owned tab close rejection
@@ -842,7 +846,7 @@ action: {"type":"outlinerDeleteTabRejectingClose","tab":{"role":"lastMovedTab"}}
 - First seen: 2026-05-23T12:24:28.425Z
 - Trace id: `rt-top-level-delete-tab-rejecting-close-stale-updated`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=rt-top-level-delete-tab-rejecting-close-stale-updated pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in principled runtime trace fix pass.
 
 ```text
 domain trace rt-top-level-delete-tab-rejecting-close-stale-updated: stale updated event follows top-level relocation after delete-owned tab close rejection
@@ -864,7 +868,7 @@ action: {"type":"outlinerDeleteTabRejectingClose","tab":{"role":"lastMovedTab"}}
 - First seen: 2026-05-23T12:24:29.644Z
 - Trace id: `rt-group-delete-tab-rejecting-close-stale-created`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=rt-group-delete-tab-rejecting-close-stale-created pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in principled runtime trace fix pass.
 
 ```text
 domain trace rt-group-delete-tab-rejecting-close-stale-created: stale created event follows grouping relocation after delete-owned tab close rejection

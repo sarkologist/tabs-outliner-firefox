@@ -513,6 +513,7 @@ function moveTabsFromBrowser(
   for (const windowId of affectedWindowIds) {
     reindexWindowTabs(runtime, windowId);
   }
+  removeEmptyRuntimeWindows(runtime, [...affectedWindowIds].filter((windowId) => windowId !== targetWindowId));
 
   return movedTabs.map((tab) => copyTab(runtime.tabs.find((candidate) => candidate.id === tab.id) ?? tab));
 }
@@ -597,22 +598,48 @@ async function closeRuntimeTab(
     return;
   }
 
-  runtime.tabs = runtime.tabs.filter((candidate) => candidate.id !== tabId);
-  reindexWindowTabs(runtime, tab.windowId);
+  const windowWillBecomeEmpty = runtime.tabs.filter((candidate) => candidate.windowId === tab.windowId).length === 1;
+  const emitsWindowRemoved = windowWillBecomeEmpty &&
+    (order === "tabRemovedThenSessionChanged" || order === "sessionChangedThenTabRemoved");
+  let removedFromRuntime = false;
+  const removeFromRuntime = (): void => {
+    if (removedFromRuntime) {
+      return;
+    }
+    removedFromRuntime = true;
+    runtime.tabs = runtime.tabs.filter((candidate) => candidate.id !== tabId);
+    reindexWindowTabs(runtime, tab.windowId);
+    if (windowWillBecomeEmpty) {
+      removeEmptyRuntimeWindows(runtime, [tab.windowId]);
+    }
+  };
 
   const emit = async (): Promise<void> => {
-    const tabRemoved = (): Promise<void> | void => fireEvent(runtime.events.tabRemoved, options.awaitListeners, tabId, {
-      windowId: tab.windowId,
-      isWindowClosing: !runtime.windows.some((windowInfo) => windowInfo.id === tab.windowId)
-    });
-    const sessionChanged = (): Promise<void> | void => fireEvent(runtime.events.sessionChanged, options.awaitListeners);
+    const tabRemoved = (): Promise<void> | void => {
+      removeFromRuntime();
+      return fireEvent(runtime.events.tabRemoved, options.awaitListeners, tabId, {
+        windowId: tab.windowId,
+        isWindowClosing: emitsWindowRemoved
+      });
+    };
+    const windowRemoved = (): Promise<void> | void => emitsWindowRemoved
+      ? fireEvent(runtime.events.windowRemoved, options.awaitListeners, tab.windowId)
+      : undefined;
+    const sessionChanged = (): Promise<void> | void => {
+      if (order === "sessionChangedOnly") {
+        removeFromRuntime();
+      }
+      return fireEvent(runtime.events.sessionChanged, options.awaitListeners);
+    };
 
     if (order === "tabRemovedThenSessionChanged") {
       await tabRemoved();
+      await windowRemoved();
       await sessionChanged();
     } else if (order === "sessionChangedThenTabRemoved") {
       await sessionChanged();
       await tabRemoved();
+      await windowRemoved();
     } else if (order === "tabRemovedOnly") {
       await tabRemoved();
     } else {
@@ -625,6 +652,18 @@ async function closeRuntimeTab(
   } else {
     void emit();
   }
+}
+
+function removeEmptyRuntimeWindows(runtime: FakeRuntime, windowIds: number[]): number[] {
+  const emptyWindowIds = new Set(
+    windowIds.filter((windowId) => runtime.tabs.every((tab) => tab.windowId !== windowId))
+  );
+  if (emptyWindowIds.size === 0) {
+    return [];
+  }
+
+  runtime.windows = runtime.windows.filter((windowInfo) => !emptyWindowIds.has(windowInfo.id));
+  return [...emptyWindowIds];
 }
 
 async function closeRuntimeWindow(
@@ -1841,7 +1880,18 @@ const RUNTIME_DOMAIN_REGRESSION_TRACE_IDS = new Set([
   "rt-stale-updated-after-fresh-relocation-event",
   "rt-stale-activation-after-fresh-relocation-event",
   "rt-native-close-after-relocation",
-  "rt-restore-delete-delayed-stale-event"
+  "rt-restore-delete-delayed-stale-event",
+  "rt-repeated-direct-relocation-stale-events",
+  "rt-direct-new-window-native-close-old-window-stale-created",
+  "rt-top-level-native-close-old-window-stale-created",
+  "rt-group-native-close-old-window-stale-updated",
+  "rt-group-delete-old-window-rejecting-close-stale-created",
+  "rt-direct-new-window-native-close-destination-stale-updated",
+  "rt-top-level-native-close-tab-removed-only-stale-created",
+  "rt-top-level-native-close-session-only-stale-updated",
+  "rt-direct-new-window-delete-tab-rejecting-close-stale-created",
+  "rt-top-level-delete-tab-rejecting-close-stale-updated",
+  "rt-group-delete-tab-rejecting-close-stale-created"
 ]);
 
 function seededRandom(seed: number): () => number {
@@ -2011,21 +2061,12 @@ async function nativeCloseGeneratedTab(context: GeneratedTraceContext): Promise<
   context.staleTabs.push(copyTab(tab));
 
   if (tabsInWindow.length === 1) {
-    context.nativeDeletedNodeIds.add(tabNodeIdFor(tab.id));
+    const protectedExpectedNodeIds = [windowNodeIdFor(tab.windowId), tabNodeIdFor(tab.id)];
+    context.expectedClosedNodeIds.add(protectedExpectedNodeIds[0]!);
+    context.expectedClosedNodeIds.add(protectedExpectedNodeIds[1]!);
     context.history.push(`native close last tab ${tab.id} in window ${tab.windowId}`);
     await closeRuntimeWindow(context.runtime, tab.windowId, { awaitListeners: true });
-    const state = (await context.controller.handleMessage({ type: "getState" })) as OutlineState;
-    const windowNodeId = windowNodeIdFor(tab.windowId);
-    const windowNode = state.nodes[windowNodeId];
-    if (windowNode?.status === "closed" && windowNode.childIds.length > 0) {
-      context.expectedClosedNodeIds.add(windowNodeId);
-      await pruneMissingExpectedClosedNodes(context, [windowNodeId]);
-    } else if (!windowNode) {
-      context.nativeDeletedNodeIds.add(windowNodeId);
-      await pruneMissingExpectedClosedNodes(context, []);
-    } else {
-      await pruneMissingExpectedClosedNodes(context, []);
-    }
+    await pruneMissingExpectedClosedNodes(context, protectedExpectedNodeIds);
     return;
   }
 
@@ -3046,10 +3087,14 @@ async function runDomainNativeCloseTab(
   const tab = resolveDomainTab(context, selector);
   context.staleTabs.push(copyTab(tab));
   const tabsInWindow = tabsInRuntimeWindow(context.runtime, tab.windowId);
-  if (tabsInWindow.length === 1) {
-    context.nativeDeletedNodeIds.add(tabNodeIdFor(tab.id));
-    await closeRuntimeWindow(context.runtime, tab.windowId, { awaitListeners: true });
-    await pruneMissingExpectedClosedNodes(context, []);
+  const emitsWindowRemoved = tabsInWindow.length === 1 &&
+    (order === "tabRemovedThenSessionChanged" || order === "sessionChangedThenTabRemoved");
+  if (emitsWindowRemoved) {
+    const protectedExpectedNodeIds = [windowNodeIdFor(tab.windowId), tabNodeIdFor(tab.id)];
+    context.expectedClosedNodeIds.add(protectedExpectedNodeIds[0]!);
+    context.expectedClosedNodeIds.add(protectedExpectedNodeIds[1]!);
+    await closeRuntimeTab(context.runtime, tab.id, order, { awaitListeners: true });
+    await pruneMissingExpectedClosedNodes(context, protectedExpectedNodeIds);
     return;
   }
 
@@ -6141,7 +6186,7 @@ describe("background controller lifecycle", () => {
     expect(reloaded.nodes[originalGroupId]?.childIds).toEqual(["window:10"]);
   });
 
-  it("deletes a grouped live tab that was only promoted by a native parent window close", async () => {
+  it("preserves grouped live tabs across native parent and child window closes", async () => {
     const runtime = fakeRuntime(
       [
         {
@@ -6188,15 +6233,15 @@ describe("background controller lifecycle", () => {
     state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
     expect(state.nodes[wrapperId]?.parentId).toBeUndefined();
     expect(state.nodes["window:10"]?.status).toBe("closed");
-    expect(state.nodes["tab:2"]).toBeUndefined();
+    expect(state.nodes["tab:2"]?.status).toBe("closed");
     expect(state.nodes[wrapperId]?.status).toBe("live");
     expect(state.nodes["tab:1"]?.status).toBe("live");
 
     await closeRuntimeWindow(runtime, wrapperRuntimeWindowId, { awaitListeners: true });
 
     state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
-    expect(state.nodes[wrapperId]).toBeUndefined();
-    expect(state.nodes["tab:1"]).toBeUndefined();
+    expect(state.nodes[wrapperId]?.status).toBe("closed");
+    expect(state.nodes["tab:1"]?.status).toBe("closed");
   });
 
   it("keeps command-moved child tabs nested when a stale pre-move tab update arrives", async () => {
@@ -8314,7 +8359,7 @@ describe("background controller lifecycle", () => {
     expect(state.nodes["tab:2"]?.status).toBe("closed");
   });
 
-  it("deletes a single-tab window when Firefox reports a native tab close as window-closing", async () => {
+  it("preserves a single-tab window when Firefox reports the corresponding window removal", async () => {
     const runtime = fakeRuntime(
       [
         {
@@ -8356,8 +8401,8 @@ describe("background controller lifecycle", () => {
     await runtime.events.windowRemoved.emit(20);
 
     const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
-    expect(state.nodes["window:20"]).toBeUndefined();
-    expect(state.nodes["tab:2"]).toBeUndefined();
+    expect(state.nodes["window:20"]?.status).toBe("closed");
+    expect(state.nodes["tab:2"]?.status).toBe("closed");
     expect(state.nodes["window:10"]?.status).toBe("live");
     expect(state.nodes["tab:1"]?.status).toBe("live");
   });
