@@ -35,7 +35,7 @@ ensureBugLogFile(BUG_FILE);
 console.log(`Runtime trace hunt writing findings to ${BUG_FILE}`);
 console.log(`This corpus run is capped at ${CORPUS_RUN_CAP_MS}ms.`);
 console.log(`Agent stop rule: stop after ${STOP_AFTER_CLEAN} clean mutation cycle(s) with no new distinct findings.`);
-console.log(`Trace strategy: run the current domain corpus once; Codex/humans mutate trace actions between runs.`);
+console.log(`Trace strategy: run the current domain corpus once, recording every distinct failure; Codex/humans mutate trace actions between runs.`);
 console.log(`Trace IDs: ${traceIds.join(", ")}`);
 
 const deadline = Date.now() + CORPUS_RUN_CAP_MS;
@@ -78,9 +78,10 @@ for (const traceId of traceIds) {
     };
     if (recordFinding(BUG_FILE, bugLog, fallback)) {
       newFindings += 1;
-      break;
+      console.log(`New unparsed finding in ${traceId}: ${fallback.message}`);
+    } else {
+      duplicateFailures += 1;
     }
-    duplicateFailures += 1;
     completedCorpus = traceId === traceIds.at(-1);
     continue;
   }
@@ -88,9 +89,9 @@ for (const traceId of traceIds) {
   if (recordFinding(BUG_FILE, bugLog, finding)) {
     newFindings += 1;
     console.log(`New finding in ${traceId}: ${finding.message}`);
-    break;
+  } else {
+    duplicateFailures += 1;
   }
-  duplicateFailures += 1;
   completedCorpus = traceId === traceIds.at(-1);
 }
 
@@ -236,7 +237,7 @@ Default hunt bounds:
 
 - Corpus run cap: 5 minutes
 - Agent stop condition: 3 consecutive agent mutation cycles with no new distinct findings
-- Trace selection: execute the current explicit domain trace corpus once; Codex/humans mutate trace actions between runs, not seeds
+- Trace selection: execute the current explicit domain trace corpus once, recording every distinct failure; Codex/humans mutate trace actions between runs, not seeds
 - Test target: \`${TEST_FILE}\`
 - Test name: \`${TEST_NAME}\`
 

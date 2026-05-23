@@ -14,7 +14,7 @@ Default hunt bounds:
 
 - Corpus run cap: 5 minutes
 - Agent stop condition: 3 consecutive agent mutation cycles with no new distinct findings
-- Trace selection: execute the current explicit domain trace corpus once; mutate domain actions between runs instead of perturbing seeds
+- Trace selection: execute the current explicit domain trace corpus once, recording every distinct failure; mutate domain actions between runs instead of perturbing seeds
 - Test target: `src/background/controller.test.ts`
 - Test name: `adversarial runtime domain traces`
 - Trace filter: `RUNTIME_TRACE_HUNT_TRACE_IDS=rt-active-race,rt-stale-updated-after-move`
