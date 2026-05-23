@@ -27,6 +27,10 @@ class FakeEvent<TArgs extends unknown[]> {
     this.listeners = this.listeners.filter((candidate) => candidate !== listener);
   }
 
+  clearListeners(): void {
+    this.listeners = [];
+  }
+
   dispatch(...args: TArgs): void {
     for (const listener of this.listeners) {
       try {
@@ -1045,6 +1049,7 @@ function reachableNodeIds(state: OutlineState): string[] {
 type GeneratedTraceContext = {
   runtime: FakeRuntime;
   controller: ReturnType<typeof createBackgroundController>;
+  now: number;
   nextTabId: number;
   allocatedRuntimeTabIds: Set<number>;
   history: string[];
@@ -1234,6 +1239,9 @@ type DomainAction =
     }
   | {
       type: "sessionChanged";
+    }
+  | {
+      type: "restartBackground";
     }
   | {
       type: "outlinerUndo";
@@ -3703,6 +3711,1041 @@ const RUNTIME_DOMAIN_DISCOVERY_TRACES: RuntimeDomainTrace[] = [
       { type: "staleLiveCreatedEvent", staleTab: { capture: "flush-stale-created-destination-old" }, withStaleQuery: false },
       { type: "flushRuntimeEvents" }
     ]
+  },
+  {
+    id: "dh-restart-relocation-old-updated",
+    title: "restart relocation old updated",
+    notes: "Architecture-stress probe for relocation guard reconstruction when stale old-window update evidence arrives after restart.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restart", "reconciliation", "relocation", "tombstone", "stale-event", "partial-snapshot"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "restart-relocation-old-updated-old" },
+      { type: "restartBackground" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "restart-relocation-old-updated-old" }, withStaleQuery: true },
+      { type: "manualRefreshWithMissingWindowQuery", window: { role: "lastOpenedWindow" } }
+    ]
+  },
+  {
+    id: "dh-restart-relocation-current-then-old-created",
+    title: "restart relocation current then old created",
+    notes: "Architecture-stress probe where current-window metadata is observed before restart and stale old-window creation arrives after.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restart", "reconciliation", "relocation", "stale-event", "metadata"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "restart-current-old-created-old" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "Current after relocation" },
+      { type: "restartBackground" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "restart-current-old-created-old" }, withStaleQuery: false },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "dh-restart-destination-close-stale-old",
+    title: "restart destination close stale old",
+    notes: "Architecture-stress probe for destination window removal, lost ephemeral relocation guards, and stale old-window evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restart", "reconciliation", "relocation", "native-close", "tombstone", "stale-event", "session"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "restart-destination-close-old" },
+      { type: "nativeCloseWindow", window: { role: "lastOpenedWindow" }, order: "windowRemovedOnly" },
+      { type: "restartBackground" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "restart-destination-close-old" }, withStaleQuery: true },
+      { type: "sessionChanged" }
+    ]
+  },
+  {
+    id: "dh-restart-source-close-missing-destination",
+    title: "restart source close missing destination",
+    notes: "Architecture-stress probe for source-window tab-only close before restart and a missing destination snapshot after.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restart", "reconciliation", "relocation", "native-close", "partial-snapshot", "stale-event"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "restart-source-close-old" },
+      { type: "nativeCloseWindow", window: { windowId: 10 }, order: "tabsRemovedOnly" },
+      { type: "restartBackground" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { role: "lastOpenedWindow" } },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "restart-source-close-old" }, withStaleQuery: false }
+    ]
+  },
+  {
+    id: "dh-restart-restore-redo-delayed-echo",
+    title: "restart restore redo delayed echo",
+    notes: "Architecture-stress probe for restored-delete delayed events crossing history replay and background restart.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restart", "reconciliation", "restore", "undo-redo", "tombstone", "stale-event", "partial-snapshot", "session"],
+    actions: [
+      { type: "outlinerRestoreDeleteWindowDelayedEvent", window: { windowId: 20 }, captureStaleTabs: "restart-restore-redo-delayed" },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedo" },
+      { type: "restartBackground" },
+      { type: "sessionChanged" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "restart-restore-redo-delayed" }, withStaleQuery: false },
+      { type: "manualRefreshWithMissingWindowQuery", window: { windowId: 10 } }
+    ]
+  },
+  {
+    id: "dh-restart-delete-reject-relocation",
+    title: "restart delete reject relocation",
+    notes: "Architecture-stress probe for create-window relocation side effects that reject, then restart before stale source evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restart", "reconciliation", "command-rejection", "relocation", "partial-snapshot", "stale-event"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, captureTab: "restart-delete-reject-tab" },
+      { type: "outlinerMoveTabCommandToNewWindowRejectingCreate", tab: { capture: "restart-delete-reject-tab" }, captureStaleTabs: "restart-delete-reject-old" },
+      { type: "restartBackground" },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 10 }, order: "reverse" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "restart-delete-reject-old" }, withStaleQuery: false }
+    ]
+  },
+  {
+    id: "dh-restart-focus-command-activation",
+    title: "restart focus command activation",
+    notes: "Architecture-stress probe for command focus facts reconstructed before activation and reordered destination evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restart", "reconciliation", "relocation", "focus", "activation", "partial-snapshot"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "restart-focus-command-old" },
+      { type: "outlinerFocusTab", tab: { role: "lastMovedTab" } },
+      { type: "restartBackground" },
+      { type: "activateTab", tab: { role: "lastMovedTab" } },
+      { type: "manualRefreshWithReorderedQuery", window: { role: "lastOpenedWindow" }, order: "reverse" }
+    ]
+  },
+  {
+    id: "dh-opener-chain-restart-source-close",
+    title: "opener chain restart source close",
+    notes: "Architecture-stress probe for opener chains when the deepest child relocates and source-window evidence arrives after restart.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restart", "reconciliation", "opener", "relocation", "native-close", "stale-event"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, openerTab: { tabId: 1 }, captureTab: "restart-opener-chain-child" },
+      { type: "openTab", window: { windowId: 10 }, active: false, openerTab: { capture: "restart-opener-chain-child" }, captureTab: "restart-opener-chain-grandchild" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { capture: "restart-opener-chain-grandchild" }, captureStaleTabs: "restart-opener-chain-old" },
+      { type: "nativeCloseWindow", window: { windowId: 10 }, order: "windowRemovedOnly" },
+      { type: "restartBackground" },
+      { type: "manualRefresh" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "restart-opener-chain-old" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "dh-restore-native-close-after-restart",
+    title: "restore native close after restart",
+    notes: "Architecture-stress probe for restored-window lifecycle reconstructed before native close and stale restored-tab echo.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restart", "reconciliation", "restore", "native-close", "tombstone", "stale-event"],
+    actions: [
+      { type: "outlinerRestoreDeleteWindowDelayedEvent", window: { windowId: 20 }, captureStaleTabs: "restart-restore-native-close" },
+      { type: "outlinerUndo" },
+      { type: "restartBackground" },
+      { type: "nativeCloseWindow", window: { role: "focusedWindow" }, order: "windowRemovedOnly" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "restart-restore-native-close" }, withStaleQuery: false }
+    ]
+  },
+  {
+    id: "dh-session-only-tab-close-after-restart-query",
+    title: "session only tab close after restart query",
+    notes: "Architecture-stress probe for a session-only disappearance reconstructed before a reordered source-window refresh.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restart", "reconciliation", "native-close", "session", "partial-snapshot", "activation"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, captureTab: "restart-session-only-extra" },
+      { type: "nativeCloseTab", tab: { tabId: 2 }, order: "sessionChangedOnly" },
+      { type: "restartBackground" },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 10 }, order: "reverse" },
+      { type: "activateTab", tab: { capture: "restart-session-only-extra" } }
+    ]
+  },
+  {
+    id: "dh-restart-paired-old-events-after-current-refresh",
+    title: "restart paired old events after current refresh",
+    notes: "Architecture-stress probe for a complete current refresh before restart followed by paired stale old-window echoes.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restart", "reconciliation", "relocation", "stale-event", "manual-refresh"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "restart-paired-old-events-old" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "Fresh before restart" },
+      { type: "manualRefresh" },
+      { type: "restartBackground" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "restart-paired-old-events-old" }, withStaleQuery: false },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "restart-paired-old-events-old" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "dh-nested-restart-missing-background",
+    title: "nested restart missing background",
+    notes: "Architecture-stress probe for grouped relocation, focus/session churn, restart, and a missing background-window query.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restart", "reconciliation", "nested", "relocation", "focus", "session", "partial-snapshot", "stale-event"],
+    actions: [
+      { type: "openTab", window: { windowId: 20 }, active: false, captureTab: "nested-restart-background-extra" },
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "nested-restart-missing-background-old" },
+      { type: "focusWindow", window: { role: "lastOpenedWindow" } },
+      { type: "sessionChanged" },
+      { type: "restartBackground" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { windowId: 20 } },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "nested-restart-missing-background-old" }, withStaleQuery: false }
+    ]
+  },
+  {
+    id: "dh-restart-destination-tabs-only-stale-created",
+    title: "restart destination tabs only stale created",
+    notes: "Mutation probe for destination close that emits only tab removals before restart, then stale source creation evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restart", "reconciliation", "relocation", "native-close", "event-order", "stale-event", "tombstone"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "restart-destination-tabs-only-old" },
+      { type: "nativeCloseWindow", window: { role: "lastOpenedWindow" }, order: "tabsRemovedOnly" },
+      { type: "restartBackground" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "restart-destination-tabs-only-old" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "dh-restart-destination-window-first-paired-old",
+    title: "restart destination window first paired old",
+    notes: "Mutation probe for window-first destination close followed by paired stale old-window echoes after restart.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restart", "reconciliation", "relocation", "native-close", "event-order", "stale-event", "paired-echo"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "restart-destination-window-first-old" },
+      { type: "nativeCloseWindow", window: { role: "lastOpenedWindow" }, order: "windowRemovedThenTabsRemoved" },
+      { type: "restartBackground" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "restart-destination-window-first-old" }, withStaleQuery: false },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "restart-destination-window-first-old" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "dh-restart-relocated-tab-session-only-stale",
+    title: "restart relocated tab session only stale",
+    notes: "Mutation probe for a relocated tab disappearing via session-only tab close before stale old-window evidence arrives after restart.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restart", "reconciliation", "relocation", "native-close", "session", "stale-event", "tombstone"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "restart-relocated-session-only-old" },
+      { type: "nativeCloseTab", tab: { role: "lastMovedTab" }, order: "sessionChangedOnly" },
+      { type: "restartBackground" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "restart-relocated-session-only-old" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "dh-restart-relocated-tab-removed-only-stale",
+    title: "restart relocated tab removed only stale",
+    notes: "Mutation probe for a relocated tab disappearing via tabRemoved-only evidence before restart and stale source evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restart", "reconciliation", "relocation", "native-close", "event-order", "stale-event", "tombstone"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "restart-relocated-tab-only-old" },
+      { type: "nativeCloseTab", tab: { role: "lastMovedTab" }, order: "tabRemovedOnly" },
+      { type: "restartBackground" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "restart-relocated-tab-only-old" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "dh-restart-restore-native-tabs-only-stale",
+    title: "restart restore native tabs only stale",
+    notes: "Mutation probe for restored-window native close with tab-removal-only evidence after restart and delayed restored-tab echo.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restart", "reconciliation", "restore", "native-close", "event-order", "stale-event", "tombstone"],
+    actions: [
+      { type: "outlinerRestoreDeleteWindowDelayedEvent", window: { windowId: 20 }, captureStaleTabs: "restart-restore-tabs-only" },
+      { type: "outlinerUndo" },
+      { type: "restartBackground" },
+      { type: "nativeCloseWindow", window: { role: "focusedWindow" }, order: "tabsRemovedOnly" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "restart-restore-tabs-only" }, withStaleQuery: false }
+    ]
+  },
+  {
+    id: "dh-restart-restore-native-window-first-stale",
+    title: "restart restore native window first stale",
+    notes: "Mutation probe for restored-window native close with window-first event order after restart and stale update echo.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restart", "reconciliation", "restore", "native-close", "event-order", "stale-event", "tombstone"],
+    actions: [
+      { type: "outlinerRestoreDeleteWindowDelayedEvent", window: { windowId: 20 }, captureStaleTabs: "restart-restore-window-first" },
+      { type: "outlinerUndo" },
+      { type: "restartBackground" },
+      { type: "nativeCloseWindow", window: { role: "focusedWindow" }, order: "windowRemovedThenTabsRemoved" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "restart-restore-window-first" }, withStaleQuery: false }
+    ]
+  },
+  {
+    id: "dh-restart-reject-destination-close-stale-old",
+    title: "restart reject destination close stale old",
+    notes: "Mutation probe for create-window relocation rejection, destination close, restart, and stale old-window evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restart", "reconciliation", "command-rejection", "relocation", "native-close", "stale-event", "tombstone"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, captureTab: "restart-reject-destination-close-tab" },
+      { type: "outlinerMoveTabCommandToNewWindowRejectingCreate", tab: { capture: "restart-reject-destination-close-tab" }, captureStaleTabs: "restart-reject-destination-close-old" },
+      { type: "nativeCloseWindow", window: { role: "lastOpenedWindow" }, order: "windowRemovedOnly" },
+      { type: "restartBackground" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "restart-reject-destination-close-old" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "dh-restart-reject-destination-missing-query",
+    title: "restart reject destination missing query",
+    notes: "Mutation probe for rejected relocation side effects followed by restart and missing-destination snapshot confidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restart", "reconciliation", "command-rejection", "relocation", "partial-snapshot", "stale-event"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, captureTab: "restart-reject-destination-missing-tab" },
+      { type: "outlinerMoveTabCommandToNewWindowRejectingCreate", tab: { capture: "restart-reject-destination-missing-tab" }, captureStaleTabs: "restart-reject-destination-missing-old" },
+      { type: "restartBackground" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { role: "lastOpenedWindow" } },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "restart-reject-destination-missing-old" }, withStaleQuery: false }
+    ]
+  },
+  {
+    id: "dh-restart-source-window-only-stale-updated",
+    title: "restart source window only stale updated",
+    notes: "Mutation probe for source-window native close with only windowRemoved before restart and stale relocated-tab update.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restart", "reconciliation", "relocation", "native-close", "event-order", "stale-event", "stale-query"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "restart-source-window-only-old" },
+      { type: "nativeCloseWindow", window: { windowId: 10 }, order: "windowRemovedOnly" },
+      { type: "restartBackground" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "restart-source-window-only-old" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "dh-restart-source-tabs-only-stale-created",
+    title: "restart source tabs only stale created",
+    notes: "Mutation probe for source-window native close with tab removals only before restart and stale old-window creation evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restart", "reconciliation", "relocation", "native-close", "event-order", "stale-event", "stale-query"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "restart-source-tabs-only-old" },
+      { type: "nativeCloseWindow", window: { windowId: 10 }, order: "tabsRemovedOnly" },
+      { type: "restartBackground" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "restart-source-tabs-only-old" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "dh-restart-source-default-missing-destination",
+    title: "restart source default missing destination",
+    notes: "Mutation probe for source default close, restart, a partial destination snapshot, and stale old-window evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restart", "reconciliation", "relocation", "native-close", "partial-snapshot", "stale-event"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "restart-source-default-missing-destination-old" },
+      { type: "nativeCloseWindow", window: { windowId: 10 }, order: "tabsRemovedThenWindowRemoved" },
+      { type: "restartBackground" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { role: "lastOpenedWindow" } },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "restart-source-default-missing-destination-old" }, withStaleQuery: false }
+    ]
+  },
+  {
+    id: "dh-restart-group-destination-close-stale-old",
+    title: "restart group destination close stale old",
+    notes: "Mutation probe for grouped relocation whose destination closes before restart and stale source evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restart", "reconciliation", "nested", "relocation", "native-close", "stale-event", "stale-query"],
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "restart-group-destination-close-old" },
+      { type: "nativeCloseWindow", window: { role: "lastOpenedWindow" }, order: "windowRemovedOnly" },
+      { type: "restartBackground" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "restart-group-destination-close-old" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "dh-restart-top-level-destination-close-stale-old",
+    title: "restart top level destination close stale old",
+    notes: "Mutation probe for top-level relocation whose destination closes before restart and stale source creation evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restart", "reconciliation", "relocation", "native-close", "stale-event", "stale-query"],
+    actions: [
+      { type: "outlinerMoveSubtreeToTopLevel", tab: { tabId: 1 }, captureStaleTabs: "restart-top-level-destination-close-old" },
+      { type: "nativeCloseWindow", window: { role: "lastOpenedWindow" }, order: "windowRemovedOnly" },
+      { type: "restartBackground" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "restart-top-level-destination-close-old" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "dh-restart-outliner-close-destination-stale-old",
+    title: "restart outliner close destination stale old",
+    notes: "Mutation probe for command-owned destination close before restart followed by stale source update evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restart", "reconciliation", "relocation", "outliner-close", "stale-event", "stale-query", "tombstone"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "restart-outliner-close-destination-old" },
+      { type: "outlinerCloseWindow", window: { role: "lastOpenedWindow" } },
+      { type: "restartBackground" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "restart-outliner-close-destination-old" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "dh-restart-outliner-close-tab-stale-old",
+    title: "restart outliner close tab stale old",
+    notes: "Mutation probe for command-owned relocated tab close before restart followed by stale source creation evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restart", "reconciliation", "relocation", "outliner-close", "stale-event", "stale-query", "tombstone"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "restart-outliner-close-tab-old" },
+      { type: "outlinerCloseTab", tab: { role: "lastMovedTab" } },
+      { type: "restartBackground" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "restart-outliner-close-tab-old" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "dh-restart-focus-session-source-window-only-old",
+    title: "restart focus session source window only old",
+    notes: "Mutation probe for focus/session churn before source window-only native close, restart, and stale source evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restart", "reconciliation", "relocation", "focus", "session", "native-close", "event-order", "stale-event"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "restart-focus-session-source-window-only-old" },
+      { type: "focusWindow", window: { role: "lastOpenedWindow" } },
+      { type: "sessionChanged" },
+      { type: "nativeCloseWindow", window: { windowId: 10 }, order: "windowRemovedOnly" },
+      { type: "restartBackground" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "restart-focus-session-source-window-only-old" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "dh-restart-destination-window-only-manual-stale",
+    title: "restart destination window only manual stale",
+    notes: "Mutation probe for stale query evidence, without a tab event, after destination window-only close and restart.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restart", "reconciliation", "relocation", "native-close", "event-order", "stale-query", "manual-refresh"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "restart-destination-window-only-manual-old" },
+      { type: "nativeCloseWindow", window: { role: "lastOpenedWindow" }, order: "windowRemovedOnly" },
+      { type: "restartBackground" },
+      { type: "manualRefreshWithStaleQuery", staleTab: { capture: "restart-destination-window-only-manual-old" } }
+    ]
+  },
+  {
+    id: "dh-restart-destination-tabs-only-manual-stale",
+    title: "restart destination tabs only manual stale",
+    notes: "Mutation probe for stale query evidence after destination tab-removal-only close and restart.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restart", "reconciliation", "relocation", "native-close", "event-order", "stale-query", "manual-refresh"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "restart-destination-tabs-only-manual-old" },
+      { type: "nativeCloseWindow", window: { role: "lastOpenedWindow" }, order: "tabsRemovedOnly" },
+      { type: "restartBackground" },
+      { type: "manualRefreshWithStaleQuery", staleTab: { capture: "restart-destination-tabs-only-manual-old" } }
+    ]
+  },
+  {
+    id: "dh-restart-restore-native-default-stale",
+    title: "restart restore native default stale",
+    notes: "Mutation probe for restored-window native close in default event order after restart and delayed stale echo.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restart", "reconciliation", "restore", "native-close", "event-order", "stale-event", "tombstone"],
+    actions: [
+      { type: "outlinerRestoreDeleteWindowDelayedEvent", window: { windowId: 20 }, captureStaleTabs: "restart-restore-default" },
+      { type: "outlinerUndo" },
+      { type: "restartBackground" },
+      { type: "nativeCloseWindow", window: { role: "focusedWindow" }, order: "tabsRemovedThenWindowRemoved" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "restart-restore-default" }, withStaleQuery: false }
+    ]
+  },
+  {
+    id: "dh-restart-restore-native-tab-close-stale",
+    title: "restart restore native tab close stale",
+    notes: "Mutation probe for closing the restored live tab after restart, then delivering a delayed restored-tab echo.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restart", "reconciliation", "restore", "native-close", "session", "stale-event", "tombstone"],
+    actions: [
+      { type: "outlinerRestoreDeleteWindowDelayedEvent", window: { windowId: 20 }, captureStaleTabs: "restart-restore-tab-close" },
+      { type: "outlinerUndo" },
+      { type: "restartBackground" },
+      { type: "nativeCloseTab", tab: { inWindow: { role: "focusedWindow" } }, order: "tabRemovedThenSessionChanged" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "restart-restore-tab-close" }, withStaleQuery: false }
+    ]
+  },
+  {
+    id: "dh-restart-restore-outliner-close-window-stale",
+    title: "restart restore outliner close window stale",
+    notes: "Mutation probe for command-owned close of a restored window after restart and delayed stale restored-tab echo.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restart", "reconciliation", "restore", "outliner-close", "stale-event", "tombstone"],
+    actions: [
+      { type: "outlinerRestoreDeleteWindowDelayedEvent", window: { windowId: 20 }, captureStaleTabs: "restart-restore-outliner-close-window" },
+      { type: "outlinerUndo" },
+      { type: "restartBackground" },
+      { type: "outlinerCloseWindow", window: { role: "focusedWindow" } },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "restart-restore-outliner-close-window" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "dh-restart-delete-reject-destination-close-created",
+    title: "restart delete reject destination close created",
+    notes: "Mutation probe for rejected relocation side effect, destination close, restart, and stale creation evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restart", "reconciliation", "command-rejection", "relocation", "native-close", "stale-event", "tombstone"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, captureTab: "restart-reject-destination-close-created-tab" },
+      { type: "outlinerMoveTabCommandToNewWindowRejectingCreate", tab: { capture: "restart-reject-destination-close-created-tab" }, captureStaleTabs: "restart-reject-destination-close-created-old" },
+      { type: "nativeCloseWindow", window: { role: "lastOpenedWindow" }, order: "tabsRemovedOnly" },
+      { type: "restartBackground" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "restart-reject-destination-close-created-old" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "dh-opener-chain-restart-destination-close",
+    title: "opener chain restart destination close",
+    notes: "Mutation probe for an opener chain whose relocated child destination closes before restart and stale child evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restart", "reconciliation", "opener", "relocation", "native-close", "stale-event", "stale-query"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, openerTab: { tabId: 1 }, captureTab: "opener-chain-destination-close-child" },
+      { type: "openTab", window: { windowId: 10 }, active: false, openerTab: { capture: "opener-chain-destination-close-child" }, captureTab: "opener-chain-destination-close-grandchild" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { capture: "opener-chain-destination-close-grandchild" }, captureStaleTabs: "opener-chain-destination-close-old" },
+      { type: "nativeCloseWindow", window: { role: "lastOpenedWindow" }, order: "windowRemovedOnly" },
+      { type: "restartBackground" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "opener-chain-destination-close-old" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "dh-restart-baseline-reordered-focus-session",
+    title: "restart baseline reordered focus session",
+    notes: "Clean-block probe for startup reconstruction under focus/session churn and reordered query without command ownership.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restart", "reconciliation", "focus", "session", "stale-query", "manual-refresh"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, captureTab: "restart-baseline-reordered-extra" },
+      { type: "restartBackground" },
+      { type: "focusWindow", window: { windowId: 20 } },
+      { type: "sessionChanged" },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 10 }, order: "reverse" },
+      { type: "activateTab", tab: { capture: "restart-baseline-reordered-extra" } }
+    ]
+  },
+  {
+    id: "dh-restart-opener-chain-reordered-query",
+    title: "restart opener chain reordered query",
+    notes: "Clean-block probe for opener chains reconstructed across restart with reordered source-window query evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restart", "reconciliation", "opener", "stale-query", "manual-refresh"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, openerTab: { tabId: 1 }, captureTab: "restart-opener-reordered-child" },
+      { type: "openTab", window: { windowId: 10 }, active: false, openerTab: { capture: "restart-opener-reordered-child" }, captureTab: "restart-opener-reordered-grandchild" },
+      { type: "restartBackground" },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 10 }, order: "rotateRight" }
+    ]
+  },
+  {
+    id: "dh-restart-missing-background-no-command",
+    title: "restart missing background no command",
+    notes: "Clean-block probe for missing whole-window snapshot confidence after restart without command-owned resources.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restart", "reconciliation", "partial-snapshot", "manual-refresh"],
+    actions: [
+      { type: "openTab", window: { windowId: 20 }, active: false, captureTab: "restart-missing-background-extra" },
+      { type: "restartBackground" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { windowId: 20 } },
+      { type: "sessionChanged" }
+    ]
+  },
+  {
+    id: "dh-restart-session-refresh-after-open",
+    title: "restart session refresh after open",
+    notes: "Clean-block probe for created-tab reconstruction across restart followed by session and complete refresh.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restart", "reconciliation", "created-event", "session", "manual-refresh"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: true, captureTab: "restart-session-refresh-opened" },
+      { type: "restartBackground" },
+      { type: "sessionChanged" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "dh-restart-native-tab-close-current-refresh",
+    title: "restart native tab close current refresh",
+    notes: "Clean-block probe for a non-last native tab close before restart followed by complete current refresh.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restart", "reconciliation", "native-close", "session", "manual-refresh"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, captureTab: "restart-native-close-survivor" },
+      { type: "nativeCloseTab", tab: { tabId: 2 }, order: "tabRemovedThenSessionChanged" },
+      { type: "restartBackground" },
+      { type: "manualRefresh" },
+      { type: "activateTab", tab: { capture: "restart-native-close-survivor" } }
+    ]
+  },
+  {
+    id: "dh-restart-focus-current-window-reordered",
+    title: "restart focus current window reordered",
+    notes: "Clean-block probe for current-window focus and activation facts after restart with reordered destination evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restart", "reconciliation", "focus", "activation", "stale-query", "manual-refresh"],
+    actions: [
+      { type: "openTab", window: { windowId: 20 }, active: false, captureTab: "restart-focus-current-background" },
+      { type: "restartBackground" },
+      { type: "focusWindow", window: { windowId: 20 } },
+      { type: "activateTab", tab: { capture: "restart-focus-current-background" } },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 20 }, order: "rotateLeft" }
+    ]
+  },
+  {
+    id: "dh-restart-close-undo-refresh",
+    title: "restart close undo refresh",
+    notes: "Clean-block probe for a command-closed tab restored by undo after restart and then reconciled from a complete refresh.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restart", "reconciliation", "outliner-close", "undo-redo", "manual-refresh"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, captureTab: "restart-close-undo-tab" },
+      { type: "outlinerCloseTab", tab: { capture: "restart-close-undo-tab" } },
+      { type: "restartBackground" },
+      { type: "outlinerUndo" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "dh-restart-native-background-window-close",
+    title: "restart native background window close",
+    notes: "Clean-block probe for native close classification on a background window after startup reconstruction.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restart", "reconciliation", "native-close", "event-order", "manual-refresh"],
+    actions: [
+      { type: "openTab", window: { windowId: 20 }, active: false, captureTab: "restart-background-window-close-extra" },
+      { type: "restartBackground" },
+      { type: "nativeCloseWindow", window: { windowId: 20 }, order: "tabsRemovedThenWindowRemoved" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "dh-restart-delete-reject-background-window-refresh",
+    title: "restart delete reject background window refresh",
+    notes: "Clean-block probe for delete-reject recovery reconstructed after restart and confirmed by complete refresh.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restart", "reconciliation", "delete-rejection", "tombstone", "manual-refresh"],
+    actions: [
+      { type: "outlinerDeleteWindowRejectingClose", window: { windowId: 20 } },
+      { type: "restartBackground" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "dh-restart-opener-native-child-close-refresh",
+    title: "restart opener native child close refresh",
+    notes: "Clean-block probe for opener-linked tab deletion after restart followed by complete refresh.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restart", "reconciliation", "opener", "native-close", "manual-refresh"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, openerTab: { tabId: 1 }, captureTab: "restart-opener-native-child" },
+      { type: "restartBackground" },
+      { type: "nativeCloseTab", tab: { capture: "restart-opener-native-child" }, order: "tabRemovedThenSessionChanged" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "dh-restart-session-only-background-tab-query",
+    title: "restart session only background tab query",
+    notes: "Clean-block probe for session-only background tab disappearance after restart with reordered survivor query.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restart", "reconciliation", "session", "native-close", "stale-query", "manual-refresh"],
+    actions: [
+      { type: "openTab", window: { windowId: 20 }, active: false, captureTab: "restart-session-only-background-tab" },
+      { type: "restartBackground" },
+      { type: "nativeCloseTab", tab: { capture: "restart-session-only-background-tab" }, order: "sessionChangedOnly" },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 20 }, order: "reverse" }
+    ]
+  },
+  {
+    id: "dh-restart-focus-command-no-relocation",
+    title: "restart focus command no relocation",
+    notes: "Clean-block probe for command focus facts reconstructed across restart without relocation or deletion.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restart", "reconciliation", "focus", "activation", "stale-query", "manual-refresh"],
+    actions: [
+      { type: "outlinerFocusTab", tab: { tabId: 2 } },
+      { type: "restartBackground" },
+      { type: "activateTab", tab: { tabId: 1 } },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 10 }, order: "rotateRight" }
+    ]
+  },
+  {
+    id: "dh-restart-focus-command-complete-refresh",
+    title: "restart focus command complete refresh",
+    notes: "Mutation probe for command focus reconstructed across restart and then reconciled from a complete refresh.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restart", "reconciliation", "focus", "activation", "manual-refresh"],
+    actions: [
+      { type: "outlinerFocusTab", tab: { tabId: 2 } },
+      { type: "restartBackground" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "dh-restart-focus-command-session-activation",
+    title: "restart focus command session activation",
+    notes: "Mutation probe for command focus reconstructed across restart, session churn, and later activation.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restart", "reconciliation", "focus", "activation", "session", "manual-refresh"],
+    actions: [
+      { type: "outlinerFocusTab", tab: { tabId: 2 } },
+      { type: "restartBackground" },
+      { type: "sessionChanged" },
+      { type: "activateTab", tab: { tabId: 1 } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "dh-restart-focus-command-background-activation",
+    title: "restart focus command background activation",
+    notes: "Mutation probe for command focus into a background window across restart before returning activation to the source window.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restart", "reconciliation", "focus", "activation", "stale-query", "manual-refresh"],
+    actions: [
+      { type: "outlinerFocusTab", tab: { tabId: 3 } },
+      { type: "restartBackground" },
+      { type: "focusWindow", window: { windowId: 10 } },
+      { type: "activateTab", tab: { tabId: 1 } },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 10 }, order: "reverse" }
+    ]
+  },
+  {
+    id: "dh-restart-focus-command-missing-focused-tab",
+    title: "restart focus command missing focused tab",
+    notes: "Mutation probe for command focus across restart when the focused tab is omitted from a partial snapshot.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restart", "reconciliation", "focus", "activation", "partial-snapshot", "manual-refresh"],
+    actions: [
+      { type: "outlinerFocusTab", tab: { tabId: 2 } },
+      { type: "restartBackground" },
+      { type: "manualRefreshWithMissingTabQuery", tab: { tabId: 2 } },
+      { type: "activateTab", tab: { tabId: 1 } }
+    ]
+  },
+  {
+    id: "dh-restart-noop-complete-refresh",
+    title: "restart noop complete refresh",
+    notes: "Clean-block probe for startup reconstruction without intervening browser or command skew.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restart", "reconciliation", "manual-refresh"],
+    actions: [
+      { type: "restartBackground" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "dh-restart-opened-tabs-reordered-both",
+    title: "restart opened tabs reordered both",
+    notes: "Clean-block probe for tabs opened before restart and reordered snapshots in both live windows.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restart", "reconciliation", "created-event", "stale-query", "manual-refresh"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, captureTab: "restart-opened-reordered-source" },
+      { type: "openTab", window: { windowId: 20 }, active: false, captureTab: "restart-opened-reordered-background" },
+      { type: "restartBackground" },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 10 }, order: "rotateLeft" },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 20 }, order: "rotateRight" }
+    ]
+  },
+  {
+    id: "dh-restart-opener-chain-current-refresh",
+    title: "restart opener chain current refresh",
+    notes: "Clean-block probe for opener chain reconstruction across restart with only current runtime evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restart", "reconciliation", "opener", "manual-refresh"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, openerTab: { tabId: 1 }, captureTab: "restart-opener-current-child" },
+      { type: "openTab", window: { windowId: 10 }, active: false, openerTab: { capture: "restart-opener-current-child" }, captureTab: "restart-opener-current-grandchild" },
+      { type: "restartBackground" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "dh-restart-nonlast-tab-removed-only-refresh",
+    title: "restart nonlast tab removed only refresh",
+    notes: "Clean-block probe for tabRemoved-only deletion of a non-last tab after restart followed by complete refresh.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restart", "reconciliation", "native-close", "event-order", "manual-refresh"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, captureTab: "restart-nonlast-tab-removed-survivor" },
+      { type: "restartBackground" },
+      { type: "nativeCloseTab", tab: { tabId: 2 }, order: "tabRemovedOnly" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "dh-restart-session-only-opened-tab-refresh",
+    title: "restart session only opened tab refresh",
+    notes: "Clean-block probe for session-only disappearance of a pre-restart opened tab resolved by complete refresh.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restart", "reconciliation", "session", "native-close", "manual-refresh"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, captureTab: "restart-session-only-opened-tab" },
+      { type: "restartBackground" },
+      { type: "nativeCloseTab", tab: { capture: "restart-session-only-opened-tab" }, order: "sessionChangedOnly" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "dh-restart-window-focus-churn-refresh",
+    title: "restart window focus churn refresh",
+    notes: "Clean-block probe for browser window focus churn around restart followed by complete refresh.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restart", "reconciliation", "focus", "manual-refresh"],
+    actions: [
+      { type: "focusWindow", window: { windowId: 20 } },
+      { type: "restartBackground" },
+      { type: "focusWindow", window: { windowId: 10 } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "dh-restart-open-active-background-refresh",
+    title: "restart open active background refresh",
+    notes: "Clean-block probe for a browser-created active background tab reconstructed across restart with current evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restart", "reconciliation", "created-event", "activation", "manual-refresh"],
+    actions: [
+      { type: "openTab", window: { windowId: 20 }, active: true, captureTab: "restart-open-active-background" },
+      { type: "restartBackground" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "dh-restart-missing-opened-tab-query",
+    title: "restart missing opened tab query",
+    notes: "Clean-block probe for a partial snapshot missing a browser-created tab after restart without command ownership.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restart", "reconciliation", "created-event", "partial-snapshot", "manual-refresh"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, captureTab: "restart-missing-opened-tab" },
+      { type: "restartBackground" },
+      { type: "manualRefreshWithMissingTabQuery", tab: { capture: "restart-missing-opened-tab" } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "dh-restart-session-reordered-both-current",
+    title: "restart session reordered both current",
+    notes: "Clean-block probe for session refresh after restart followed by reordered snapshots in both current windows.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restart", "reconciliation", "session", "stale-query", "manual-refresh"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, captureTab: "restart-session-reordered-source" },
+      { type: "openTab", window: { windowId: 20 }, active: false, captureTab: "restart-session-reordered-background" },
+      { type: "restartBackground" },
+      { type: "sessionChanged" },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 10 }, order: "reverse" },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 20 }, order: "reverse" }
+    ]
+  },
+  {
+    id: "dh-restart-missing-background-opened-tab-query",
+    title: "restart missing background opened tab query",
+    notes: "Mutation probe for a post-restart partial snapshot missing a browser-created background-window tab.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restart", "reconciliation", "created-event", "partial-snapshot", "manual-refresh"],
+    actions: [
+      { type: "openTab", window: { windowId: 20 }, active: false, captureTab: "restart-missing-background-opened-tab" },
+      { type: "restartBackground" },
+      { type: "manualRefreshWithMissingTabQuery", tab: { capture: "restart-missing-background-opened-tab" } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "dh-restart-missing-active-opened-tab-query",
+    title: "restart missing active opened tab query",
+    notes: "Mutation probe for a post-restart partial snapshot missing a browser-created active tab.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restart", "reconciliation", "created-event", "activation", "partial-snapshot", "manual-refresh"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: true, captureTab: "restart-missing-active-opened-tab" },
+      { type: "restartBackground" },
+      { type: "manualRefreshWithMissingTabQuery", tab: { capture: "restart-missing-active-opened-tab" } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "dh-restart-missing-opener-child-query",
+    title: "restart missing opener child query",
+    notes: "Mutation probe for a post-restart partial snapshot missing an opener-linked browser-created child.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restart", "reconciliation", "opener", "created-event", "partial-snapshot", "manual-refresh"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, openerTab: { tabId: 1 }, captureTab: "restart-missing-opener-child" },
+      { type: "restartBackground" },
+      { type: "manualRefreshWithMissingTabQuery", tab: { capture: "restart-missing-opener-child" } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "dh-restart-multiple-opens-complete-refresh",
+    title: "restart multiple opens complete refresh",
+    notes: "Clean-block probe for multiple browser-created tabs across windows reconstructed by complete refresh only.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restart", "reconciliation", "created-event", "manual-refresh"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, captureTab: "restart-multiple-opens-source" },
+      { type: "openTab", window: { windowId: 20 }, active: true, captureTab: "restart-multiple-opens-background" },
+      { type: "restartBackground" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "dh-restart-updated-tabs-complete-refresh",
+    title: "restart updated tabs complete refresh",
+    notes: "Clean-block probe for browser metadata updates before and after restart with complete refresh evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restart", "reconciliation", "updated-event", "manual-refresh"],
+    actions: [
+      { type: "updateTab", tab: { tabId: 1 }, title: "Updated before restart" },
+      { type: "restartBackground" },
+      { type: "updateTab", tab: { tabId: 2 }, title: "Updated after restart" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "dh-restart-window-focus-reordered-current",
+    title: "restart window focus reordered current",
+    notes: "Clean-block probe for window focus changes and reordered current snapshots without command focus ownership.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restart", "reconciliation", "focus", "stale-query", "manual-refresh"],
+    actions: [
+      { type: "openTab", window: { windowId: 20 }, active: false, captureTab: "restart-window-focus-reordered-extra" },
+      { type: "focusWindow", window: { windowId: 20 } },
+      { type: "restartBackground" },
+      { type: "focusWindow", window: { windowId: 10 } },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 20 }, order: "rotateRight" }
+    ]
+  },
+  {
+    id: "dh-restart-updated-reordered-both",
+    title: "restart updated reordered both",
+    notes: "Clean-block probe for metadata updates around restart followed by reordered current snapshots in both windows.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restart", "reconciliation", "updated-event", "stale-query", "manual-refresh"],
+    actions: [
+      { type: "updateTab", tab: { tabId: 1 }, title: "Source before restart" },
+      { type: "updateTab", tab: { tabId: 3 }, title: "Background before restart" },
+      { type: "restartBackground" },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 10 }, order: "rotateLeft" },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 20 }, order: "rotateRight" }
+    ]
+  },
+  {
+    id: "dh-restart-opener-focus-current-refresh",
+    title: "restart opener focus current refresh",
+    notes: "Clean-block probe for opener-linked tabs plus browser focus changes across restart with complete refresh evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restart", "reconciliation", "opener", "focus", "manual-refresh"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, openerTab: { tabId: 1 }, captureTab: "restart-opener-focus-child" },
+      { type: "focusWindow", window: { windowId: 20 } },
+      { type: "restartBackground" },
+      { type: "focusWindow", window: { windowId: 10 } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "dh-restart-native-nonlast-session-refresh",
+    title: "restart native nonlast session refresh",
+    notes: "Clean-block probe for session-notified non-last tab deletion after restart with complete refresh evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restart", "reconciliation", "native-close", "session", "manual-refresh"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, captureTab: "restart-native-nonlast-session-survivor" },
+      { type: "restartBackground" },
+      { type: "nativeCloseTab", tab: { tabId: 2 }, order: "sessionChangedThenTabRemoved" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "dh-restart-created-updated-session-refresh",
+    title: "restart created updated session refresh",
+    notes: "Clean-block probe for created and updated browser facts across restart plus session and complete refresh.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restart", "reconciliation", "created-event", "updated-event", "session", "manual-refresh"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, captureTab: "restart-created-updated-tab" },
+      { type: "updateTab", tab: { capture: "restart-created-updated-tab" }, title: "Created then updated" },
+      { type: "restartBackground" },
+      { type: "sessionChanged" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "dh-restart-opener-updated-reordered",
+    title: "restart opener updated reordered",
+    notes: "Clean-block probe for opener-linked metadata update before restart followed by reordered current source evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restart", "reconciliation", "opener", "updated-event", "stale-query", "manual-refresh"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, openerTab: { tabId: 1 }, captureTab: "restart-opener-updated-tab" },
+      { type: "updateTab", tab: { capture: "restart-opener-updated-tab" }, title: "Opener child updated" },
+      { type: "restartBackground" },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 10 }, order: "reverse" }
+    ]
   }
 ];
 
@@ -4593,6 +5636,7 @@ function createGeneratedTraceContext(options: { now: number; history: string[] }
   return {
     runtime,
     controller,
+    now: options.now,
     nextTabId: 100,
     allocatedRuntimeTabIds: new Set(runtime.tabs.map((tab) => tab.id)),
     history: [...options.history],
@@ -4723,6 +5767,11 @@ async function runDomainAction(context: GeneratedTraceContext, action: DomainAct
     return;
   }
 
+  if (action.type === "restartBackground") {
+    await runDomainRestartBackground(context);
+    return;
+  }
+
   if (action.type === "outlinerUndo") {
     await runDomainHistoryCommand(context, "undo");
     return;
@@ -4754,6 +5803,32 @@ async function runDomainAction(context: GeneratedTraceContext, action: DomainAct
   }
 
   await flushGeneratedRuntimeEventRefreshes(context);
+}
+
+async function runDomainRestartBackground(context: GeneratedTraceContext): Promise<void> {
+  await flushGeneratedRuntimeEventRefreshes(context);
+  await context.controller.flushPendingSaves();
+  clearFakeRuntimeListeners(context.runtime);
+  context.controller = createBackgroundController({
+    api: context.runtime.api,
+    now: () => context.now
+  });
+  await context.controller.ensureState();
+}
+
+function clearFakeRuntimeListeners(runtime: FakeRuntime): void {
+  runtime.events.installed.clearListeners();
+  runtime.events.startup.clearListeners();
+  runtime.events.alarm.clearListeners();
+  runtime.events.tabCreated.clearListeners();
+  runtime.events.tabActivated.clearListeners();
+  runtime.events.tabUpdated.clearListeners();
+  runtime.events.tabRemoved.clearListeners();
+  runtime.events.windowFocusChanged.clearListeners();
+  runtime.events.windowRemoved.clearListeners();
+  runtime.events.sessionChanged.clearListeners();
+  runtime.events.command.clearListeners();
+  runtime.events.storageChanged.clearListeners();
 }
 
 function isDomainRuntimeEventAction(action: DomainAction): action is DomainRuntimeEventAction {

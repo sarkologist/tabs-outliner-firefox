@@ -43,7 +43,7 @@ Core selectors:
 
 Useful actions:
 
-- Runtime events: `openTab`, `activateTab`, `updateTab`, `focusWindow`, `sessionChanged`, `manualRefresh`.
+- Runtime events: `openTab`, `activateTab`, `updateTab`, `focusWindow`, `sessionChanged`, `manualRefresh`, `restartBackground`.
 - Commands: `outlinerGroupTab`, `outlinerMoveTabToNewWindow`, `outlinerMoveTabCommandToNewWindow`, `outlinerMoveSubtreeToTopLevel`, `outlinerFocusTab`, `outlinerCloseTab`, `outlinerCloseWindow`, `outlinerUndo`, `outlinerRedo`.
 - Failure-shape commands: `outlinerDeleteWindowRejectingClose`, `outlinerDeleteTabRejectingClose`, `outlinerDeleteNodeRejectingClose`, `outlinerMoveTabCommandToNewWindowRejectingCreate`, `outlinerRestoreDeleteWindowDelayedEvent`.
 - Query skews: `manualRefreshWithStaleQuery`, `manualRefreshWithMissingTabQuery`, `manualRefreshWithMissingWindowQuery`, `manualRefreshWithReorderedQuery`.
@@ -51,6 +51,7 @@ Useful actions:
 
 `openTab` may include `openerTab` to model opener/reparenting behavior.
 `nativeCloseWindow` may set `order` to `tabsRemovedThenWindowRemoved`, `windowRemovedThenTabsRemoved`, `windowRemovedOnly`, or `tabsRemovedOnly`.
+`restartBackground` flushes pending saves, recreates the background controller against the same fake runtime/storage, calls `ensureState`, and keeps named stale captures intact so delayed browser evidence can arrive after restart.
 
 ## Invariants
 
@@ -76,7 +77,7 @@ Focus mutations on stale or contradictory evidence crossing command boundaries:
 
 ## Coverage Matrix
 
-Current coverage after the coverage-first discovery fix pass on 2026-05-23: 106 regression traces and 78 discovery traces. The expansion started from 46 discovery traces, added neutral threat-model variants for sparse cells, recorded RT-040 through RT-062, and promoted those fixed repros to regression coverage.
+Current coverage after the reconciliation architecture stress hunt on 2026-05-23: 106 regression traces and 149 discovery traces. The restart-stress expansion recorded RT-063 through RT-090, then stopped after three full five-minute mutation blocks found no new distinct signatures.
 
 | State shape | Command edge | Runtime skew | Refresh edge | Current coverage | Next target |
 | --- | --- | --- | --- | --- | --- |
@@ -89,6 +90,7 @@ Current coverage after the coverage-first discovery fix pass on 2026-05-23: 106 
 | relocated live tabs | moved tab remains live | partial `tabs.query` omits tab/window | manual refresh | regression-covered after RT-040, RT-047, RT-050, RT-051, RT-052, RT-058, and RT-061 | add missing-window snapshots for multi-window/multi-tab projections |
 | focus churn | focus/activate during command | stale active or reordered snapshot | session/manual refresh | expanded | keep adding reorder-only and cross-window focus variants |
 | history replay | undo/redo around live command | stale event from undone shape | manual refresh | regression-covered plus opener/restore expansion | keep combined with opener/restore only |
+| ledger/restart lifecycle | command, focus, native, restore, or rejection facts cross background restart | stale event after ephemeral guards are gone | startup reconciliation plus partial/manual refresh | open findings RT-063 through RT-090 plus clean current-evidence controls | next hunt should avoid enumerating fixed restart repro variants until after the fix pass |
 
 ## Five-Minute Mutation Block
 

@@ -22,20 +22,21 @@ Default hunt bounds:
 
 ## Last Domain Run
 
-- Completed: 2026-05-23T17:33:58Z
-- Strategy: coverage-first lower-priming discovery profile, with wall-clock five-minute agent mutation blocks guided by `RUNTIME_TRACE_HUNT_GUIDE.md`
+- Completed: 2026-05-23T20:31:56Z
+- Strategy: reconciliation architecture stress discovery profile, with wall-clock five-minute agent mutation blocks guided by `RUNTIME_TRACE_HUNT_GUIDE.md`
 - Trace ids: current discovery corpus in `src/background/controller.test.ts` and `scripts/hunt-runtime-traces.mjs`
-- Corpus size at stop: 101 discovery traces, 83 regression traces
-- Distinct discovery findings recorded in coverage-first hunt: 23
-- New findings in coverage-first discovery hunt: RT-040 through RT-062
-- Stop condition reached: yes; after RT-062, 3 full five-minute discovery mutation blocks found no new distinct signatures
-- Clean blocks after RT-062: 17:12:23Z-17:19:30Z, 17:19:30Z-17:26:19Z, and 17:26:19Z-17:33:58Z
-- Duplicate failures during final clean mutation blocks: 207
-- Regression safety replay: 83 known regression traces, 0 failures before and after the coverage-first discovery hunt
-- Fix pass: RT-040 through RT-062 promoted to regression coverage; corpus now has 106 regression traces and 78 discovery traces.
+- Corpus size at stop: 149 discovery traces, 106 regression traces
+- Distinct discovery findings recorded in restart-stress hunt: 28
+- New findings in restart-stress discovery hunt: RT-063 through RT-090
+- Stop condition reached: yes; after RT-090, 3 full five-minute discovery mutation blocks found no new distinct signatures
+- Clean blocks after RT-090: corpus runs ending 20:25:11Z, 20:28:27Z, and 20:31:56Z
+- Duplicate failures during final clean mutation blocks: 84
+- Regression safety replay before and after hunt: 106 known regression traces, 0 failures
+- Status: RT-063 through RT-090 are documented, not fixed.
 
 ## Finding Index
 
+- Open reconciliation architecture stress findings: RT-063 through RT-090
 - Fixed coverage-first discovery findings: RT-040 through RT-062
 - Fixed lower-priming discovery findings: RT-022 through RT-039
 - Fixed domain trace adversary findings: RT-009 through RT-021
@@ -58,6 +59,13 @@ Default hunt bounds:
 - Native close event-order ownership: RT-044, RT-045, RT-046, RT-053, RT-054, and RT-055 were fixed by deriving close semantics from the event shape and browser window existence, preserving closed window subtrees even when only tab removal events arrive.
 - Command relocation rejection side effects: RT-048, RT-049, RT-057, and RT-059 were fixed by detecting successful browser-side `createWindow({ tabId })` effects after adapter rejection and applying the matching model relocation recovery.
 - Verification: all listed generated seed repros and promoted domain trace repros pass as of the principled runtime trace fix pass.
+
+## Open Restart-Stress Analysis
+
+- Lost relocated-resource protection after restart: RT-063, RT-065 through RT-068, RT-071 through RT-077, RT-081, and RT-082 show stale old-window events or stale manual query evidence resurrecting moved/deleted relocated tabs after command-created destinations disappear across a background restart.
+- Restored-window close ownership after restart: RT-064, RT-069, RT-070, RT-078, RT-079, and RT-080 show restored windows being removed instead of preserved as expected closed outline subtrees when native or outliner close happens after restart.
+- Command focus active-state reconstruction after restart: RT-083 through RT-086 show command focus leaving outline `active` flags stale even before later refresh/activation variants.
+- Partial post-restart snapshots for browser-created tabs: RT-087 through RT-090 show `tabs.query` snapshots missing a live browser-created tab being treated as deletion evidence after restart.
 
 ## Previous Adaptive Seed-Frontier Run
 
@@ -2015,3 +2023,741 @@ action 6: {"type":"manualRefreshWithMissingWindowQuery","window":{"windowId":10}
 <!-- hunt-corpus-run: {"at":"2026-05-23T19:27:58.101Z","mode":"agent-corpus-run","profile":"regression","coverageTags":["activation","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","known-finding","manual-refresh","native-close","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","race","relocation","restore","session","stale-event","stale-query","tombstone","undo-redo"],"firstTraceId":"rt-active-race","lastTraceId":"dh-restore-redo-missing-source-session","runs":106,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
 
 <!-- hunt-corpus-run: {"at":"2026-05-23T19:29:30.408Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","manual-refresh","native-close","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","race","relocation","reparenting","restore","session","stale-event","stale-query","tombstone","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"dh-flush-stale-created-destination-reordered","runs":78,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-23T19:45:45.212Z","mode":"agent-corpus-run","profile":"regression","coverageTags":["activation","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","known-finding","manual-refresh","native-close","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","race","relocation","restore","session","stale-event","stale-query","tombstone","undo-redo"],"firstTraceId":"rt-active-race","lastTraceId":"dh-restore-redo-missing-source-session","runs":106,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-23T19:47:12.357Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","manual-refresh","native-close","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","race","relocation","reparenting","restore","session","stale-event","stale-query","tombstone","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"dh-flush-stale-created-destination-reordered","runs":78,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
+
+### RT-063 live tab IDs match runtime tabs
+<!-- signature: live tab IDs match runtime tabs
+domain trace: dh-restart-destination-close-stale-old
+action: {"type":"staleLiveUpdatedEvent","staleTab":{"capture":"restart-destination-close-old"},"withStaleQuery":true} -->
+
+- First seen: 2026-05-23T19:49:22.554Z
+- Trace id: `dh-restart-destination-close-stale-old`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-restart-destination-close-stale-old pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace dh-restart-destination-close-stale-old: restart destination close stale old
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"restart-destination-close-old"}
+action 2: {"type":"nativeCloseWindow","window":{"role":"lastOpenedWindow"},"order":"windowRemovedOnly"}
+action 3: {"type":"restartBackground"}
+action 4: {"type":"staleLiveUpdatedEvent","staleTab":{"capture":"restart-destination-close-old"},"withStaleQuery":true}
+Domain trace: dh-restart-destination-close-stale-old
+Action 4: {"type":"staleLiveUpdatedEvent","staleTab":{"capture":"restart-destination-close-old"},"withStaleQuery":true}
+Trace:
+domain trace dh-restart-destination-close-stale-old: restart destination close stale old
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"restart-destination-close-old"}
+action 2: {"type":"nativeCloseWindow","window":{"role":"lastOpenedWindow"},"order":"windowRemovedOnly"}
+action 3: {"type":"restartBackground"}
+action 4: {"type":"staleLiveUpdatedEvent","staleTab":{"capture":"restart-destination-close-old"},"withStaleQuery":true}
+```
+
+<!-- hunt-corpus-run: {"at":"2026-05-23T19:49:32.360Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","manual-refresh","metadata","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","race","reconciliation","relocation","reparenting","restart","restore","session","stale-event","stale-query","tombstone","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"dh-nested-restart-missing-background","runs":90,"completedCorpus":true,"failures":1,"duplicateFailures":0,"newFindings":1} -->
+
+### RT-064 expected closed node window:22 is missing
+<!-- signature: expected closed node window:<id> is missing
+domain trace: dh-restore-native-close-after-restart
+action: {"type":"nativeCloseWindow","window":{"role":"focusedWindow"},"order":"windowRemovedOnly"} -->
+
+- First seen: 2026-05-23T19:52:12.257Z
+- Trace id: `dh-restore-native-close-after-restart`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-restore-native-close-after-restart pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace dh-restore-native-close-after-restart: restore native close after restart
+action 1: {"type":"outlinerRestoreDeleteWindowDelayedEvent","window":{"windowId":20},"captureStaleTabs":"restart-restore-native-close"}
+action 2: {"type":"outlinerUndo"}
+action 3: {"type":"restartBackground"}
+action 4: {"type":"nativeCloseWindow","window":{"role":"focusedWindow"},"order":"windowRemovedOnly"}
+Domain trace: dh-restore-native-close-after-restart
+Action 4: {"type":"nativeCloseWindow","window":{"role":"focusedWindow"},"order":"windowRemovedOnly"}
+Trace:
+domain trace dh-restore-native-close-after-restart: restore native close after restart
+action 1: {"type":"outlinerRestoreDeleteWindowDelayedEvent","window":{"windowId":20},"captureStaleTabs":"restart-restore-native-close"}
+action 2: {"type":"outlinerUndo"}
+action 3: {"type":"restartBackground"}
+action 4: {"type":"nativeCloseWindow","window":{"role":"focusedWindow"},"order":"windowRemovedOnly"}
+```
+
+<!-- hunt-corpus-run: {"at":"2026-05-23T19:52:15.351Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","manual-refresh","metadata","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","race","reconciliation","relocation","reparenting","restart","restore","session","stale-event","stale-query","tombstone","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"dh-nested-restart-missing-background","runs":90,"completedCorpus":true,"failures":2,"duplicateFailures":1,"newFindings":1} -->
+
+### RT-065 live tab IDs match runtime tabs
+<!-- signature: live tab IDs match runtime tabs
+domain trace: dh-restart-destination-tabs-only-stale-created
+action: {"type":"staleLiveCreatedEvent","staleTab":{"capture":"restart-destination-tabs-only-old"},"withStaleQuery":true} -->
+
+- First seen: 2026-05-23T19:55:24.127Z
+- Trace id: `dh-restart-destination-tabs-only-stale-created`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-restart-destination-tabs-only-stale-created pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace dh-restart-destination-tabs-only-stale-created: restart destination tabs only stale created
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"restart-destination-tabs-only-old"}
+action 2: {"type":"nativeCloseWindow","window":{"role":"lastOpenedWindow"},"order":"tabsRemovedOnly"}
+action 3: {"type":"restartBackground"}
+action 4: {"type":"staleLiveCreatedEvent","staleTab":{"capture":"restart-destination-tabs-only-old"},"withStaleQuery":true}
+Domain trace: dh-restart-destination-tabs-only-stale-created
+Action 4: {"type":"staleLiveCreatedEvent","staleTab":{"capture":"restart-destination-tabs-only-old"},"withStaleQuery":true}
+Trace:
+domain trace dh-restart-destination-tabs-only-stale-created: restart destination tabs only stale created
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"restart-destination-tabs-only-old"}
+action 2: {"type":"nativeCloseWindow","window":{"role":"lastOpenedWindow"},"order":"tabsRemovedOnly"}
+action 3: {"type":"restartBackground"}
+action 4: {"type":"staleLiveCreatedEvent","staleTab":{"capture":"restart-destination-tabs-only-old"},"withStaleQuery":true}
+```
+
+### RT-066 live tab IDs match runtime tabs
+<!-- signature: live tab IDs match runtime tabs
+domain trace: dh-restart-destination-window-first-paired-old
+action: {"type":"staleLiveUpdatedEvent","staleTab":{"capture":"restart-destination-window-first-old"},"withStaleQuery":false} -->
+
+- First seen: 2026-05-23T19:55:25.178Z
+- Trace id: `dh-restart-destination-window-first-paired-old`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-restart-destination-window-first-paired-old pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace dh-restart-destination-window-first-paired-old: restart destination window first paired old
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"restart-destination-window-first-old"}
+action 2: {"type":"nativeCloseWindow","window":{"role":"lastOpenedWindow"},"order":"windowRemovedThenTabsRemoved"}
+action 3: {"type":"restartBackground"}
+action 4: {"type":"staleLiveUpdatedEvent","staleTab":{"capture":"restart-destination-window-first-old"},"withStaleQuery":false}
+Domain trace: dh-restart-destination-window-first-paired-old
+Action 4: {"type":"staleLiveUpdatedEvent","staleTab":{"capture":"restart-destination-window-first-old"},"withStaleQuery":false}
+Trace:
+domain trace dh-restart-destination-window-first-paired-old: restart destination window first paired old
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"restart-destination-window-first-old"}
+action 2: {"type":"nativeCloseWindow","window":{"role":"lastOpenedWindow"},"order":"windowRemovedThenTabsRemoved"}
+action 3: {"type":"restartBackground"}
+action 4: {"type":"staleLiveUpdatedEvent","staleTab":{"capture":"restart-destination-window-first-old"},"withStaleQuery":false}
+```
+
+### RT-067 live tab IDs match runtime tabs
+<!-- signature: live tab IDs match runtime tabs
+domain trace: dh-restart-relocated-tab-session-only-stale
+action: {"type":"staleLiveCreatedEvent","staleTab":{"capture":"restart-relocated-session-only-old"},"withStaleQuery":true} -->
+
+- First seen: 2026-05-23T19:55:26.204Z
+- Trace id: `dh-restart-relocated-tab-session-only-stale`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-restart-relocated-tab-session-only-stale pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace dh-restart-relocated-tab-session-only-stale: restart relocated tab session only stale
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"restart-relocated-session-only-old"}
+action 2: {"type":"nativeCloseTab","tab":{"role":"lastMovedTab"},"order":"sessionChangedOnly"}
+action 3: {"type":"restartBackground"}
+action 4: {"type":"staleLiveCreatedEvent","staleTab":{"capture":"restart-relocated-session-only-old"},"withStaleQuery":true}
+Domain trace: dh-restart-relocated-tab-session-only-stale
+Action 4: {"type":"staleLiveCreatedEvent","staleTab":{"capture":"restart-relocated-session-only-old"},"withStaleQuery":true}
+Trace:
+domain trace dh-restart-relocated-tab-session-only-stale: restart relocated tab session only stale
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"restart-relocated-session-only-old"}
+action 2: {"type":"nativeCloseTab","tab":{"role":"lastMovedTab"},"order":"sessionChangedOnly"}
+action 3: {"type":"restartBackground"}
+action 4: {"type":"staleLiveCreatedEvent","staleTab":{"capture":"restart-relocated-session-only-old"},"withStaleQuery":true}
+```
+
+### RT-068 live tab IDs match runtime tabs
+<!-- signature: live tab IDs match runtime tabs
+domain trace: dh-restart-relocated-tab-removed-only-stale
+action: {"type":"staleLiveUpdatedEvent","staleTab":{"capture":"restart-relocated-tab-only-old"},"withStaleQuery":true} -->
+
+- First seen: 2026-05-23T19:55:27.232Z
+- Trace id: `dh-restart-relocated-tab-removed-only-stale`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-restart-relocated-tab-removed-only-stale pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace dh-restart-relocated-tab-removed-only-stale: restart relocated tab removed only stale
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"restart-relocated-tab-only-old"}
+action 2: {"type":"nativeCloseTab","tab":{"role":"lastMovedTab"},"order":"tabRemovedOnly"}
+action 3: {"type":"restartBackground"}
+action 4: {"type":"staleLiveUpdatedEvent","staleTab":{"capture":"restart-relocated-tab-only-old"},"withStaleQuery":true}
+Domain trace: dh-restart-relocated-tab-removed-only-stale
+Action 4: {"type":"staleLiveUpdatedEvent","staleTab":{"capture":"restart-relocated-tab-only-old"},"withStaleQuery":true}
+Trace:
+domain trace dh-restart-relocated-tab-removed-only-stale: restart relocated tab removed only stale
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"restart-relocated-tab-only-old"}
+action 2: {"type":"nativeCloseTab","tab":{"role":"lastMovedTab"},"order":"tabRemovedOnly"}
+action 3: {"type":"restartBackground"}
+action 4: {"type":"staleLiveUpdatedEvent","staleTab":{"capture":"restart-relocated-tab-only-old"},"withStaleQuery":true}
+```
+
+### RT-069 expected closed node window:22 is missing
+<!-- signature: expected closed node window:<id> is missing
+domain trace: dh-restart-restore-native-tabs-only-stale
+action: {"type":"nativeCloseWindow","window":{"role":"focusedWindow"},"order":"tabsRemovedOnly"} -->
+
+- First seen: 2026-05-23T19:55:28.310Z
+- Trace id: `dh-restart-restore-native-tabs-only-stale`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-restart-restore-native-tabs-only-stale pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace dh-restart-restore-native-tabs-only-stale: restart restore native tabs only stale
+action 1: {"type":"outlinerRestoreDeleteWindowDelayedEvent","window":{"windowId":20},"captureStaleTabs":"restart-restore-tabs-only"}
+action 2: {"type":"outlinerUndo"}
+action 3: {"type":"restartBackground"}
+action 4: {"type":"nativeCloseWindow","window":{"role":"focusedWindow"},"order":"tabsRemovedOnly"}
+Domain trace: dh-restart-restore-native-tabs-only-stale
+Action 4: {"type":"nativeCloseWindow","window":{"role":"focusedWindow"},"order":"tabsRemovedOnly"}
+Trace:
+domain trace dh-restart-restore-native-tabs-only-stale: restart restore native tabs only stale
+action 1: {"type":"outlinerRestoreDeleteWindowDelayedEvent","window":{"windowId":20},"captureStaleTabs":"restart-restore-tabs-only"}
+action 2: {"type":"outlinerUndo"}
+action 3: {"type":"restartBackground"}
+action 4: {"type":"nativeCloseWindow","window":{"role":"focusedWindow"},"order":"tabsRemovedOnly"}
+```
+
+### RT-070 expected closed node window:22 is missing
+<!-- signature: expected closed node window:<id> is missing
+domain trace: dh-restart-restore-native-window-first-stale
+action: {"type":"nativeCloseWindow","window":{"role":"focusedWindow"},"order":"windowRemovedThenTabsRemoved"} -->
+
+- First seen: 2026-05-23T19:55:29.371Z
+- Trace id: `dh-restart-restore-native-window-first-stale`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-restart-restore-native-window-first-stale pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace dh-restart-restore-native-window-first-stale: restart restore native window first stale
+action 1: {"type":"outlinerRestoreDeleteWindowDelayedEvent","window":{"windowId":20},"captureStaleTabs":"restart-restore-window-first"}
+action 2: {"type":"outlinerUndo"}
+action 3: {"type":"restartBackground"}
+action 4: {"type":"nativeCloseWindow","window":{"role":"focusedWindow"},"order":"windowRemovedThenTabsRemoved"}
+Domain trace: dh-restart-restore-native-window-first-stale
+Action 4: {"type":"nativeCloseWindow","window":{"role":"focusedWindow"},"order":"windowRemovedThenTabsRemoved"}
+Trace:
+domain trace dh-restart-restore-native-window-first-stale: restart restore native window first stale
+action 1: {"type":"outlinerRestoreDeleteWindowDelayedEvent","window":{"windowId":20},"captureStaleTabs":"restart-restore-window-first"}
+action 2: {"type":"outlinerUndo"}
+action 3: {"type":"restartBackground"}
+action 4: {"type":"nativeCloseWindow","window":{"role":"focusedWindow"},"order":"windowRemovedThenTabsRemoved"}
+```
+
+### RT-071 live tab IDs match runtime tabs
+<!-- signature: live tab IDs match runtime tabs
+domain trace: dh-restart-reject-destination-close-stale-old
+action: {"type":"staleLiveUpdatedEvent","staleTab":{"capture":"restart-reject-destination-close-old"},"withStaleQuery":true} -->
+
+- First seen: 2026-05-23T19:55:30.451Z
+- Trace id: `dh-restart-reject-destination-close-stale-old`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-restart-reject-destination-close-stale-old pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace dh-restart-reject-destination-close-stale-old: restart reject destination close stale old
+action 1: {"type":"openTab","window":{"windowId":10},"active":false,"captureTab":"restart-reject-destination-close-tab"}
+action 2: {"type":"outlinerMoveTabCommandToNewWindowRejectingCreate","tab":{"capture":"restart-reject-destination-close-tab"},"captureStaleTabs":"restart-reject-destination-close-old"}
+action 3: {"type":"nativeCloseWindow","window":{"role":"lastOpenedWindow"},"order":"windowRemovedOnly"}
+action 4: {"type":"restartBackground"}
+action 5: {"type":"staleLiveUpdatedEvent","staleTab":{"capture":"restart-reject-destination-close-old"},"withStaleQuery":true}
+Domain trace: dh-restart-reject-destination-close-stale-old
+Action 5: {"type":"staleLiveUpdatedEvent","staleTab":{"capture":"restart-reject-destination-close-old"},"withStaleQuery":true}
+Trace:
+domain trace dh-restart-reject-destination-close-stale-old: restart reject destination close stale old
+action 1: {"type":"openTab","window":{"windowId":10},"active":false,"captureTab":"restart-reject-destination-close-tab"}
+action 2: {"type":"outlinerMoveTabCommandToNewWindowRejectingCreate","tab":{"capture":"restart-reject-destination-close-tab"},"captureStaleTabs":"restart-reject-destination-close-old"}
+action 3: {"type":"nativeCloseWindow","window":{"role":"lastOpenedWindow"},"order":"windowRemovedOnly"}
+action 4: {"type":"restartBackground"}
+action 5: {"type":"staleLiveUpdatedEvent","staleTab":{"capture":"restart-reject-destination-close-old"},"withStaleQuery":true}
+```
+
+<!-- hunt-corpus-run: {"at":"2026-05-23T19:55:31.474Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","manual-refresh","metadata","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","race","reconciliation","relocation","reparenting","restart","restore","session","stale-event","stale-query","tombstone","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"dh-restart-reject-destination-missing-query","runs":98,"completedCorpus":true,"failures":9,"duplicateFailures":2,"newFindings":7} -->
+
+### RT-072 live tab IDs match runtime tabs
+<!-- signature: live tab IDs match runtime tabs
+domain trace: dh-restart-group-destination-close-stale-old
+action: {"type":"staleLiveUpdatedEvent","staleTab":{"capture":"restart-group-destination-close-old"},"withStaleQuery":true} -->
+
+- First seen: 2026-05-23T19:58:37.691Z
+- Trace id: `dh-restart-group-destination-close-stale-old`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-restart-group-destination-close-stale-old pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace dh-restart-group-destination-close-stale-old: restart group destination close stale old
+action 1: {"type":"outlinerGroupTab","tab":{"tabId":1},"captureStaleTabs":"restart-group-destination-close-old"}
+action 2: {"type":"nativeCloseWindow","window":{"role":"lastOpenedWindow"},"order":"windowRemovedOnly"}
+action 3: {"type":"restartBackground"}
+action 4: {"type":"staleLiveUpdatedEvent","staleTab":{"capture":"restart-group-destination-close-old"},"withStaleQuery":true}
+Domain trace: dh-restart-group-destination-close-stale-old
+Action 4: {"type":"staleLiveUpdatedEvent","staleTab":{"capture":"restart-group-destination-close-old"},"withStaleQuery":true}
+Trace:
+domain trace dh-restart-group-destination-close-stale-old: restart group destination close stale old
+action 1: {"type":"outlinerGroupTab","tab":{"tabId":1},"captureStaleTabs":"restart-group-destination-close-old"}
+action 2: {"type":"nativeCloseWindow","window":{"role":"lastOpenedWindow"},"order":"windowRemovedOnly"}
+action 3: {"type":"restartBackground"}
+action 4: {"type":"staleLiveUpdatedEvent","staleTab":{"capture":"restart-group-destination-close-old"},"withStaleQuery":true}
+```
+
+### RT-073 live tab IDs match runtime tabs
+<!-- signature: live tab IDs match runtime tabs
+domain trace: dh-restart-top-level-destination-close-stale-old
+action: {"type":"staleLiveCreatedEvent","staleTab":{"capture":"restart-top-level-destination-close-old"},"withStaleQuery":true} -->
+
+- First seen: 2026-05-23T19:58:38.746Z
+- Trace id: `dh-restart-top-level-destination-close-stale-old`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-restart-top-level-destination-close-stale-old pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace dh-restart-top-level-destination-close-stale-old: restart top level destination close stale old
+action 1: {"type":"outlinerMoveSubtreeToTopLevel","tab":{"tabId":1},"captureStaleTabs":"restart-top-level-destination-close-old"}
+action 2: {"type":"nativeCloseWindow","window":{"role":"lastOpenedWindow"},"order":"windowRemovedOnly"}
+action 3: {"type":"restartBackground"}
+action 4: {"type":"staleLiveCreatedEvent","staleTab":{"capture":"restart-top-level-destination-close-old"},"withStaleQuery":true}
+Domain trace: dh-restart-top-level-destination-close-stale-old
+Action 4: {"type":"staleLiveCreatedEvent","staleTab":{"capture":"restart-top-level-destination-close-old"},"withStaleQuery":true}
+Trace:
+domain trace dh-restart-top-level-destination-close-stale-old: restart top level destination close stale old
+action 1: {"type":"outlinerMoveSubtreeToTopLevel","tab":{"tabId":1},"captureStaleTabs":"restart-top-level-destination-close-old"}
+action 2: {"type":"nativeCloseWindow","window":{"role":"lastOpenedWindow"},"order":"windowRemovedOnly"}
+action 3: {"type":"restartBackground"}
+action 4: {"type":"staleLiveCreatedEvent","staleTab":{"capture":"restart-top-level-destination-close-old"},"withStaleQuery":true}
+```
+
+### RT-074 live tab IDs match runtime tabs
+<!-- signature: live tab IDs match runtime tabs
+domain trace: dh-restart-outliner-close-destination-stale-old
+action: {"type":"staleLiveUpdatedEvent","staleTab":{"capture":"restart-outliner-close-destination-old"},"withStaleQuery":true} -->
+
+- First seen: 2026-05-23T19:58:39.812Z
+- Trace id: `dh-restart-outliner-close-destination-stale-old`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-restart-outliner-close-destination-stale-old pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace dh-restart-outliner-close-destination-stale-old: restart outliner close destination stale old
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"restart-outliner-close-destination-old"}
+action 2: {"type":"outlinerCloseWindow","window":{"role":"lastOpenedWindow"}}
+action 3: {"type":"restartBackground"}
+action 4: {"type":"staleLiveUpdatedEvent","staleTab":{"capture":"restart-outliner-close-destination-old"},"withStaleQuery":true}
+Domain trace: dh-restart-outliner-close-destination-stale-old
+Action 4: {"type":"staleLiveUpdatedEvent","staleTab":{"capture":"restart-outliner-close-destination-old"},"withStaleQuery":true}
+Trace:
+domain trace dh-restart-outliner-close-destination-stale-old: restart outliner close destination stale old
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"restart-outliner-close-destination-old"}
+action 2: {"type":"outlinerCloseWindow","window":{"role":"lastOpenedWindow"}}
+action 3: {"type":"restartBackground"}
+action 4: {"type":"staleLiveUpdatedEvent","staleTab":{"capture":"restart-outliner-close-destination-old"},"withStaleQuery":true}
+```
+
+### RT-075 live tab IDs match runtime tabs
+<!-- signature: live tab IDs match runtime tabs
+domain trace: dh-restart-outliner-close-tab-stale-old
+action: {"type":"staleLiveCreatedEvent","staleTab":{"capture":"restart-outliner-close-tab-old"},"withStaleQuery":true} -->
+
+- First seen: 2026-05-23T19:58:40.846Z
+- Trace id: `dh-restart-outliner-close-tab-stale-old`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-restart-outliner-close-tab-stale-old pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace dh-restart-outliner-close-tab-stale-old: restart outliner close tab stale old
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"restart-outliner-close-tab-old"}
+action 2: {"type":"outlinerCloseTab","tab":{"role":"lastMovedTab"}}
+action 3: {"type":"restartBackground"}
+action 4: {"type":"staleLiveCreatedEvent","staleTab":{"capture":"restart-outliner-close-tab-old"},"withStaleQuery":true}
+Domain trace: dh-restart-outliner-close-tab-stale-old
+Action 4: {"type":"staleLiveCreatedEvent","staleTab":{"capture":"restart-outliner-close-tab-old"},"withStaleQuery":true}
+Trace:
+domain trace dh-restart-outliner-close-tab-stale-old: restart outliner close tab stale old
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"restart-outliner-close-tab-old"}
+action 2: {"type":"outlinerCloseTab","tab":{"role":"lastMovedTab"}}
+action 3: {"type":"restartBackground"}
+action 4: {"type":"staleLiveCreatedEvent","staleTab":{"capture":"restart-outliner-close-tab-old"},"withStaleQuery":true}
+```
+
+<!-- hunt-corpus-run: {"at":"2026-05-23T19:58:41.879Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","manual-refresh","metadata","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","race","reconciliation","relocation","reparenting","restart","restore","session","stale-event","stale-query","tombstone","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"dh-restart-focus-session-source-window-only-old","runs":106,"completedCorpus":true,"failures":13,"duplicateFailures":9,"newFindings":4} -->
+
+### RT-076 live tab IDs match runtime tabs
+<!-- signature: live tab IDs match runtime tabs
+domain trace: dh-restart-destination-window-only-manual-stale
+action: {"type":"manualRefreshWithStaleQuery","staleTab":{"capture":"restart-destination-window-only-manual-old"}} -->
+
+- First seen: 2026-05-23T20:02:02.303Z
+- Trace id: `dh-restart-destination-window-only-manual-stale`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-restart-destination-window-only-manual-stale pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace dh-restart-destination-window-only-manual-stale: restart destination window only manual stale
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"restart-destination-window-only-manual-old"}
+action 2: {"type":"nativeCloseWindow","window":{"role":"lastOpenedWindow"},"order":"windowRemovedOnly"}
+action 3: {"type":"restartBackground"}
+action 4: {"type":"manualRefreshWithStaleQuery","staleTab":{"capture":"restart-destination-window-only-manual-old"}}
+Domain trace: dh-restart-destination-window-only-manual-stale
+Action 4: {"type":"manualRefreshWithStaleQuery","staleTab":{"capture":"restart-destination-window-only-manual-old"}}
+Trace:
+domain trace dh-restart-destination-window-only-manual-stale: restart destination window only manual stale
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"restart-destination-window-only-manual-old"}
+action 2: {"type":"nativeCloseWindow","window":{"role":"lastOpenedWindow"},"order":"windowRemovedOnly"}
+action 3: {"type":"restartBackground"}
+action 4: {"type":"manualRefreshWithStaleQuery","staleTab":{"capture":"restart-destination-window-only-manual-old"}}
+```
+
+### RT-077 live tab IDs match runtime tabs
+<!-- signature: live tab IDs match runtime tabs
+domain trace: dh-restart-destination-tabs-only-manual-stale
+action: {"type":"manualRefreshWithStaleQuery","staleTab":{"capture":"restart-destination-tabs-only-manual-old"}} -->
+
+- First seen: 2026-05-23T20:02:03.611Z
+- Trace id: `dh-restart-destination-tabs-only-manual-stale`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-restart-destination-tabs-only-manual-stale pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace dh-restart-destination-tabs-only-manual-stale: restart destination tabs only manual stale
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"restart-destination-tabs-only-manual-old"}
+action 2: {"type":"nativeCloseWindow","window":{"role":"lastOpenedWindow"},"order":"tabsRemovedOnly"}
+action 3: {"type":"restartBackground"}
+action 4: {"type":"manualRefreshWithStaleQuery","staleTab":{"capture":"restart-destination-tabs-only-manual-old"}}
+Domain trace: dh-restart-destination-tabs-only-manual-stale
+Action 4: {"type":"manualRefreshWithStaleQuery","staleTab":{"capture":"restart-destination-tabs-only-manual-old"}}
+Trace:
+domain trace dh-restart-destination-tabs-only-manual-stale: restart destination tabs only manual stale
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"restart-destination-tabs-only-manual-old"}
+action 2: {"type":"nativeCloseWindow","window":{"role":"lastOpenedWindow"},"order":"tabsRemovedOnly"}
+action 3: {"type":"restartBackground"}
+action 4: {"type":"manualRefreshWithStaleQuery","staleTab":{"capture":"restart-destination-tabs-only-manual-old"}}
+```
+
+### RT-078 expected closed node window:22 is missing
+<!-- signature: expected closed node window:<id> is missing
+domain trace: dh-restart-restore-native-default-stale
+action: {"type":"nativeCloseWindow","window":{"role":"focusedWindow"},"order":"tabsRemovedThenWindowRemoved"} -->
+
+- First seen: 2026-05-23T20:02:04.896Z
+- Trace id: `dh-restart-restore-native-default-stale`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-restart-restore-native-default-stale pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace dh-restart-restore-native-default-stale: restart restore native default stale
+action 1: {"type":"outlinerRestoreDeleteWindowDelayedEvent","window":{"windowId":20},"captureStaleTabs":"restart-restore-default"}
+action 2: {"type":"outlinerUndo"}
+action 3: {"type":"restartBackground"}
+action 4: {"type":"nativeCloseWindow","window":{"role":"focusedWindow"},"order":"tabsRemovedThenWindowRemoved"}
+Domain trace: dh-restart-restore-native-default-stale
+Action 4: {"type":"nativeCloseWindow","window":{"role":"focusedWindow"},"order":"tabsRemovedThenWindowRemoved"}
+Trace:
+domain trace dh-restart-restore-native-default-stale: restart restore native default stale
+action 1: {"type":"outlinerRestoreDeleteWindowDelayedEvent","window":{"windowId":20},"captureStaleTabs":"restart-restore-default"}
+action 2: {"type":"outlinerUndo"}
+action 3: {"type":"restartBackground"}
+action 4: {"type":"nativeCloseWindow","window":{"role":"focusedWindow"},"order":"tabsRemovedThenWindowRemoved"}
+```
+
+### RT-079 expected closed node window:22 is missing
+<!-- signature: expected closed node window:<id> is missing
+domain trace: dh-restart-restore-native-tab-close-stale
+action: {"type":"nativeCloseTab","tab":{"inWindow":{"role":"focusedWindow"}},"order":"tabRemovedThenSessionChanged"} -->
+
+- First seen: 2026-05-23T20:02:06.073Z
+- Trace id: `dh-restart-restore-native-tab-close-stale`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-restart-restore-native-tab-close-stale pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace dh-restart-restore-native-tab-close-stale: restart restore native tab close stale
+action 1: {"type":"outlinerRestoreDeleteWindowDelayedEvent","window":{"windowId":20},"captureStaleTabs":"restart-restore-tab-close"}
+action 2: {"type":"outlinerUndo"}
+action 3: {"type":"restartBackground"}
+action 4: {"type":"nativeCloseTab","tab":{"inWindow":{"role":"focusedWindow"}},"order":"tabRemovedThenSessionChanged"}
+Domain trace: dh-restart-restore-native-tab-close-stale
+Action 4: {"type":"nativeCloseTab","tab":{"inWindow":{"role":"focusedWindow"}},"order":"tabRemovedThenSessionChanged"}
+Trace:
+domain trace dh-restart-restore-native-tab-close-stale: restart restore native tab close stale
+action 1: {"type":"outlinerRestoreDeleteWindowDelayedEvent","window":{"windowId":20},"captureStaleTabs":"restart-restore-tab-close"}
+action 2: {"type":"outlinerUndo"}
+action 3: {"type":"restartBackground"}
+action 4: {"type":"nativeCloseTab","tab":{"inWindow":{"role":"focusedWindow"}},"order":"tabRemovedThenSessionChanged"}
+```
+
+### RT-080 expected closed node window:22 is missing
+<!-- signature: expected closed node window:<id> is missing
+domain trace: dh-restart-restore-outliner-close-window-stale
+action: {"type":"outlinerCloseWindow","window":{"role":"focusedWindow"}} -->
+
+- First seen: 2026-05-23T20:02:07.315Z
+- Trace id: `dh-restart-restore-outliner-close-window-stale`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-restart-restore-outliner-close-window-stale pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace dh-restart-restore-outliner-close-window-stale: restart restore outliner close window stale
+action 1: {"type":"outlinerRestoreDeleteWindowDelayedEvent","window":{"windowId":20},"captureStaleTabs":"restart-restore-outliner-close-window"}
+action 2: {"type":"outlinerUndo"}
+action 3: {"type":"restartBackground"}
+action 4: {"type":"outlinerCloseWindow","window":{"role":"focusedWindow"}}
+Domain trace: dh-restart-restore-outliner-close-window-stale
+Action 4: {"type":"outlinerCloseWindow","window":{"role":"focusedWindow"}}
+Trace:
+domain trace dh-restart-restore-outliner-close-window-stale: restart restore outliner close window stale
+action 1: {"type":"outlinerRestoreDeleteWindowDelayedEvent","window":{"windowId":20},"captureStaleTabs":"restart-restore-outliner-close-window"}
+action 2: {"type":"outlinerUndo"}
+action 3: {"type":"restartBackground"}
+action 4: {"type":"outlinerCloseWindow","window":{"role":"focusedWindow"}}
+```
+
+### RT-081 live tab IDs match runtime tabs
+<!-- signature: live tab IDs match runtime tabs
+domain trace: dh-restart-delete-reject-destination-close-created
+action: {"type":"staleLiveCreatedEvent","staleTab":{"capture":"restart-reject-destination-close-created-old"},"withStaleQuery":true} -->
+
+- First seen: 2026-05-23T20:02:08.481Z
+- Trace id: `dh-restart-delete-reject-destination-close-created`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-restart-delete-reject-destination-close-created pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace dh-restart-delete-reject-destination-close-created: restart delete reject destination close created
+action 1: {"type":"openTab","window":{"windowId":10},"active":false,"captureTab":"restart-reject-destination-close-created-tab"}
+action 2: {"type":"outlinerMoveTabCommandToNewWindowRejectingCreate","tab":{"capture":"restart-reject-destination-close-created-tab"},"captureStaleTabs":"restart-reject-destination-close-created-old"}
+action 3: {"type":"nativeCloseWindow","window":{"role":"lastOpenedWindow"},"order":"tabsRemovedOnly"}
+action 4: {"type":"restartBackground"}
+action 5: {"type":"staleLiveCreatedEvent","staleTab":{"capture":"restart-reject-destination-close-created-old"},"withStaleQuery":true}
+Domain trace: dh-restart-delete-reject-destination-close-created
+Action 5: {"type":"staleLiveCreatedEvent","staleTab":{"capture":"restart-reject-destination-close-created-old"},"withStaleQuery":true}
+Trace:
+domain trace dh-restart-delete-reject-destination-close-created: restart delete reject destination close created
+action 1: {"type":"openTab","window":{"windowId":10},"active":false,"captureTab":"restart-reject-destination-close-created-tab"}
+action 2: {"type":"outlinerMoveTabCommandToNewWindowRejectingCreate","tab":{"capture":"restart-reject-destination-close-created-tab"},"captureStaleTabs":"restart-reject-destination-close-created-old"}
+action 3: {"type":"nativeCloseWindow","window":{"role":"lastOpenedWindow"},"order":"tabsRemovedOnly"}
+action 4: {"type":"restartBackground"}
+action 5: {"type":"staleLiveCreatedEvent","staleTab":{"capture":"restart-reject-destination-close-created-old"},"withStaleQuery":true}
+```
+
+### RT-082 live tab IDs match runtime tabs
+<!-- signature: live tab IDs match runtime tabs
+domain trace: dh-opener-chain-restart-destination-close
+action: {"type":"staleLiveUpdatedEvent","staleTab":{"capture":"opener-chain-destination-close-old"},"withStaleQuery":true} -->
+
+- First seen: 2026-05-23T20:02:09.733Z
+- Trace id: `dh-opener-chain-restart-destination-close`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-opener-chain-restart-destination-close pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace dh-opener-chain-restart-destination-close: opener chain restart destination close
+action 1: {"type":"openTab","window":{"windowId":10},"active":false,"openerTab":{"tabId":1},"captureTab":"opener-chain-destination-close-child"}
+action 2: {"type":"openTab","window":{"windowId":10},"active":false,"openerTab":{"capture":"opener-chain-destination-close-child"},"captureTab":"opener-chain-destination-close-grandchild"}
+action 3: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"capture":"opener-chain-destination-close-grandchild"},"captureStaleTabs":"opener-chain-destination-close-old"}
+action 4: {"type":"nativeCloseWindow","window":{"role":"lastOpenedWindow"},"order":"windowRemovedOnly"}
+action 5: {"type":"restartBackground"}
+action 6: {"type":"staleLiveUpdatedEvent","staleTab":{"capture":"opener-chain-destination-close-old"},"withStaleQuery":true}
+Domain trace: dh-opener-chain-restart-destination-close
+Action 6: {"type":"staleLiveUpdatedEvent","staleTab":{"capture":"opener-chain-destination-close-old"},"withStaleQuery":true}
+Trace:
+domain trace dh-opener-chain-restart-destination-close: opener chain restart destination close
+action 1: {"type":"openTab","window":{"windowId":10},"active":false,"openerTab":{"tabId":1},"captureTab":"opener-chain-destination-close-child"}
+action 2: {"type":"openTab","window":{"windowId":10},"active":false,"openerTab":{"capture":"opener-chain-destination-close-child"},"captureTab":"opener-chain-destination-close-grandchild"}
+action 3: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"capture":"opener-chain-destination-close-grandchild"},"captureStaleTabs":"opener-chain-destination-close-old"}
+action 4: {"type":"nativeCloseWindow","window":{"role":"lastOpenedWindow"},"order":"windowRemovedOnly"}
+action 5: {"type":"restartBackground"}
+action 6: {"type":"staleLiveUpdatedEvent","staleTab":{"capture":"opener-chain-destination-close-old"},"withStaleQuery":true}
+```
+
+<!-- hunt-corpus-run: {"at":"2026-05-23T20:02:09.733Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","manual-refresh","metadata","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","race","reconciliation","relocation","reparenting","restart","restore","session","stale-event","stale-query","tombstone","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"dh-opener-chain-restart-destination-close","runs":113,"completedCorpus":true,"failures":20,"duplicateFailures":13,"newFindings":7} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-23T20:05:29.168Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","manual-refresh","metadata","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","race","reconciliation","relocation","reparenting","restart","restore","session","stale-event","stale-query","tombstone","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"dh-restart-focus-current-window-reordered","runs":119,"completedCorpus":true,"failures":20,"duplicateFailures":20,"newFindings":0} -->
+
+### RT-083 tab 1 active flag diverged
+<!-- signature: tab <id> active flag diverged
+domain trace: dh-restart-focus-command-no-relocation
+action: {"type":"outlinerFocusTab","tab":{"tabId":2}} -->
+
+- First seen: 2026-05-23T20:08:40.526Z
+- Trace id: `dh-restart-focus-command-no-relocation`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-restart-focus-command-no-relocation pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace dh-restart-focus-command-no-relocation: restart focus command no relocation
+action 1: {"type":"outlinerFocusTab","tab":{"tabId":2}}
+Domain trace: dh-restart-focus-command-no-relocation
+Action 1: {"type":"outlinerFocusTab","tab":{"tabId":2}}
+Trace:
+domain trace dh-restart-focus-command-no-relocation: restart focus command no relocation
+action 1: {"type":"outlinerFocusTab","tab":{"tabId":2}}
+```
+
+<!-- hunt-corpus-run: {"at":"2026-05-23T20:08:40.528Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","manual-refresh","metadata","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","race","reconciliation","relocation","reparenting","restart","restore","session","stale-event","stale-query","tombstone","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"dh-restart-focus-command-no-relocation","runs":125,"completedCorpus":true,"failures":21,"duplicateFailures":20,"newFindings":1} -->
+
+### RT-084 tab 1 active flag diverged
+<!-- signature: tab <id> active flag diverged
+domain trace: dh-restart-focus-command-complete-refresh
+action: {"type":"outlinerFocusTab","tab":{"tabId":2}} -->
+
+- First seen: 2026-05-23T20:11:36.669Z
+- Trace id: `dh-restart-focus-command-complete-refresh`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-restart-focus-command-complete-refresh pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace dh-restart-focus-command-complete-refresh: restart focus command complete refresh
+action 1: {"type":"outlinerFocusTab","tab":{"tabId":2}}
+Domain trace: dh-restart-focus-command-complete-refresh
+Action 1: {"type":"outlinerFocusTab","tab":{"tabId":2}}
+Trace:
+domain trace dh-restart-focus-command-complete-refresh: restart focus command complete refresh
+action 1: {"type":"outlinerFocusTab","tab":{"tabId":2}}
+```
+
+### RT-085 tab 1 active flag diverged
+<!-- signature: tab <id> active flag diverged
+domain trace: dh-restart-focus-command-session-activation
+action: {"type":"outlinerFocusTab","tab":{"tabId":2}} -->
+
+- First seen: 2026-05-23T20:11:37.715Z
+- Trace id: `dh-restart-focus-command-session-activation`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-restart-focus-command-session-activation pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace dh-restart-focus-command-session-activation: restart focus command session activation
+action 1: {"type":"outlinerFocusTab","tab":{"tabId":2}}
+Domain trace: dh-restart-focus-command-session-activation
+Action 1: {"type":"outlinerFocusTab","tab":{"tabId":2}}
+Trace:
+domain trace dh-restart-focus-command-session-activation: restart focus command session activation
+action 1: {"type":"outlinerFocusTab","tab":{"tabId":2}}
+```
+
+### RT-086 tab 1 active flag diverged
+<!-- signature: tab <id> active flag diverged
+domain trace: dh-restart-focus-command-missing-focused-tab
+action: {"type":"outlinerFocusTab","tab":{"tabId":2}} -->
+
+- First seen: 2026-05-23T20:11:39.837Z
+- Trace id: `dh-restart-focus-command-missing-focused-tab`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-restart-focus-command-missing-focused-tab pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace dh-restart-focus-command-missing-focused-tab: restart focus command missing focused tab
+action 1: {"type":"outlinerFocusTab","tab":{"tabId":2}}
+Domain trace: dh-restart-focus-command-missing-focused-tab
+Action 1: {"type":"outlinerFocusTab","tab":{"tabId":2}}
+Trace:
+domain trace dh-restart-focus-command-missing-focused-tab: restart focus command missing focused tab
+action 1: {"type":"outlinerFocusTab","tab":{"tabId":2}}
+```
+
+<!-- hunt-corpus-run: {"at":"2026-05-23T20:11:39.838Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","manual-refresh","metadata","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","race","reconciliation","relocation","reparenting","restart","restore","session","stale-event","stale-query","tombstone","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"dh-restart-focus-command-missing-focused-tab","runs":129,"completedCorpus":true,"failures":24,"duplicateFailures":21,"newFindings":3} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-23T20:14:54.010Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","manual-refresh","metadata","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","race","reconciliation","relocation","reparenting","restart","restore","session","stale-event","stale-query","tombstone","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"dh-restart-session-only-opened-tab-refresh","runs":134,"completedCorpus":true,"failures":24,"duplicateFailures":24,"newFindings":0} -->
+
+### RT-087 live tab IDs match runtime tabs
+<!-- signature: live tab IDs match runtime tabs
+domain trace: dh-restart-missing-opened-tab-query
+action: {"type":"manualRefreshWithMissingTabQuery","tab":{"capture":"restart-missing-opened-tab"}} -->
+
+- First seen: 2026-05-23T20:18:05.688Z
+- Trace id: `dh-restart-missing-opened-tab-query`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-restart-missing-opened-tab-query pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace dh-restart-missing-opened-tab-query: restart missing opened tab query
+action 1: {"type":"openTab","window":{"windowId":10},"active":false,"captureTab":"restart-missing-opened-tab"}
+action 2: {"type":"restartBackground"}
+action 3: {"type":"manualRefreshWithMissingTabQuery","tab":{"capture":"restart-missing-opened-tab"}}
+Domain trace: dh-restart-missing-opened-tab-query
+Action 3: {"type":"manualRefreshWithMissingTabQuery","tab":{"capture":"restart-missing-opened-tab"}}
+Trace:
+domain trace dh-restart-missing-opened-tab-query: restart missing opened tab query
+action 1: {"type":"openTab","window":{"windowId":10},"active":false,"captureTab":"restart-missing-opened-tab"}
+action 2: {"type":"restartBackground"}
+action 3: {"type":"manualRefreshWithMissingTabQuery","tab":{"capture":"restart-missing-opened-tab"}}
+```
+
+<!-- hunt-corpus-run: {"at":"2026-05-23T20:18:06.821Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","manual-refresh","metadata","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","race","reconciliation","relocation","reparenting","restart","restore","session","stale-event","stale-query","tombstone","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"dh-restart-session-reordered-both-current","runs":138,"completedCorpus":true,"failures":25,"duplicateFailures":24,"newFindings":1} -->
+
+### RT-088 live tab IDs match runtime tabs
+<!-- signature: live tab IDs match runtime tabs
+domain trace: dh-restart-missing-background-opened-tab-query
+action: {"type":"manualRefreshWithMissingTabQuery","tab":{"capture":"restart-missing-background-opened-tab"}} -->
+
+- First seen: 2026-05-23T20:21:41.488Z
+- Trace id: `dh-restart-missing-background-opened-tab-query`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-restart-missing-background-opened-tab-query pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace dh-restart-missing-background-opened-tab-query: restart missing background opened tab query
+action 1: {"type":"openTab","window":{"windowId":20},"active":false,"captureTab":"restart-missing-background-opened-tab"}
+action 2: {"type":"restartBackground"}
+action 3: {"type":"manualRefreshWithMissingTabQuery","tab":{"capture":"restart-missing-background-opened-tab"}}
+Domain trace: dh-restart-missing-background-opened-tab-query
+Action 3: {"type":"manualRefreshWithMissingTabQuery","tab":{"capture":"restart-missing-background-opened-tab"}}
+Trace:
+domain trace dh-restart-missing-background-opened-tab-query: restart missing background opened tab query
+action 1: {"type":"openTab","window":{"windowId":20},"active":false,"captureTab":"restart-missing-background-opened-tab"}
+action 2: {"type":"restartBackground"}
+action 3: {"type":"manualRefreshWithMissingTabQuery","tab":{"capture":"restart-missing-background-opened-tab"}}
+```
+
+### RT-089 live tab IDs match runtime tabs
+<!-- signature: live tab IDs match runtime tabs
+domain trace: dh-restart-missing-active-opened-tab-query
+action: {"type":"manualRefreshWithMissingTabQuery","tab":{"capture":"restart-missing-active-opened-tab"}} -->
+
+- First seen: 2026-05-23T20:21:42.609Z
+- Trace id: `dh-restart-missing-active-opened-tab-query`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-restart-missing-active-opened-tab-query pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace dh-restart-missing-active-opened-tab-query: restart missing active opened tab query
+action 1: {"type":"openTab","window":{"windowId":10},"active":true,"captureTab":"restart-missing-active-opened-tab"}
+action 2: {"type":"restartBackground"}
+action 3: {"type":"manualRefreshWithMissingTabQuery","tab":{"capture":"restart-missing-active-opened-tab"}}
+Domain trace: dh-restart-missing-active-opened-tab-query
+Action 3: {"type":"manualRefreshWithMissingTabQuery","tab":{"capture":"restart-missing-active-opened-tab"}}
+Trace:
+domain trace dh-restart-missing-active-opened-tab-query: restart missing active opened tab query
+action 1: {"type":"openTab","window":{"windowId":10},"active":true,"captureTab":"restart-missing-active-opened-tab"}
+action 2: {"type":"restartBackground"}
+action 3: {"type":"manualRefreshWithMissingTabQuery","tab":{"capture":"restart-missing-active-opened-tab"}}
+```
+
+### RT-090 live tab IDs match runtime tabs
+<!-- signature: live tab IDs match runtime tabs
+domain trace: dh-restart-missing-opener-child-query
+action: {"type":"manualRefreshWithMissingTabQuery","tab":{"capture":"restart-missing-opener-child"}} -->
+
+- First seen: 2026-05-23T20:21:43.683Z
+- Trace id: `dh-restart-missing-opener-child-query`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-restart-missing-opener-child-query pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace dh-restart-missing-opener-child-query: restart missing opener child query
+action 1: {"type":"openTab","window":{"windowId":10},"active":false,"openerTab":{"tabId":1},"captureTab":"restart-missing-opener-child"}
+action 2: {"type":"restartBackground"}
+action 3: {"type":"manualRefreshWithMissingTabQuery","tab":{"capture":"restart-missing-opener-child"}}
+Domain trace: dh-restart-missing-opener-child-query
+Action 3: {"type":"manualRefreshWithMissingTabQuery","tab":{"capture":"restart-missing-opener-child"}}
+Trace:
+domain trace dh-restart-missing-opener-child-query: restart missing opener child query
+action 1: {"type":"openTab","window":{"windowId":10},"active":false,"openerTab":{"tabId":1},"captureTab":"restart-missing-opener-child"}
+action 2: {"type":"restartBackground"}
+action 3: {"type":"manualRefreshWithMissingTabQuery","tab":{"capture":"restart-missing-opener-child"}}
+```
+
+<!-- hunt-corpus-run: {"at":"2026-05-23T20:21:43.684Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","manual-refresh","metadata","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","race","reconciliation","relocation","reparenting","restart","restore","session","stale-event","stale-query","tombstone","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"dh-restart-missing-opener-child-query","runs":141,"completedCorpus":true,"failures":28,"duplicateFailures":25,"newFindings":3} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-23T20:25:11.222Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","manual-refresh","metadata","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","race","reconciliation","relocation","reparenting","restart","restore","session","stale-event","stale-query","tombstone","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"dh-restart-window-focus-reordered-current","runs":144,"completedCorpus":true,"failures":28,"duplicateFailures":28,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-23T20:28:27.539Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","manual-refresh","metadata","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","race","reconciliation","relocation","reparenting","restart","restore","session","stale-event","stale-query","tombstone","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"dh-restart-native-nonlast-session-refresh","runs":147,"completedCorpus":true,"failures":28,"duplicateFailures":28,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-23T20:31:56.645Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","manual-refresh","metadata","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","race","reconciliation","relocation","reparenting","restart","restore","session","stale-event","stale-query","tombstone","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"dh-restart-opener-updated-reordered","runs":149,"completedCorpus":true,"failures":28,"duplicateFailures":28,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-23T20:35:18.943Z","mode":"agent-corpus-run","profile":"regression","coverageTags":["activation","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","known-finding","manual-refresh","native-close","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","race","relocation","restore","session","stale-event","stale-query","tombstone","undo-redo"],"firstTraceId":"rt-active-race","lastTraceId":"dh-restore-redo-missing-source-session","runs":106,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
