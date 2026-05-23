@@ -12,8 +12,9 @@ const STEPS = positiveIntegerEnv("RUNTIME_TRACE_HUNT_STEPS") ?? 120;
 const BASE_SEED = positiveIntegerEnv("RUNTIME_TRACE_HUNT_BASE_SEED") ?? 10_000;
 const SEED_STRIDE = positiveIntegerEnv("RUNTIME_TRACE_HUNT_SEED_STRIDE") ?? 1;
 const MIN_RUN_BUDGET_MS = 2_000;
+const MAX_SEED = 0x7fffffff;
 
-let nextSeed = BASE_SEED;
+const scheduler = createAdversarialSeedScheduler(BASE_SEED, SEED_STRIDE);
 let cleanIterations = 0;
 let iteration = 0;
 const bugLog = loadBugLog(BUG_FILE);
@@ -23,6 +24,7 @@ ensureBugLogFile(BUG_FILE);
 console.log(`Runtime trace hunt writing findings to ${BUG_FILE}`);
 console.log(`Each iteration is capped at ${ITERATION_MS}ms; stopping after ${STOP_AFTER_CLEAN} clean iterations.`);
 console.log(`Replay template: GENERATED_TRACE_BASE_SEED=<seed> GENERATED_TRACE_SEED_COUNT=1 GENERATED_TRACE_STEPS=${STEPS} pnpm exec vitest run ${TEST_FILE} --testNamePattern "${TEST_NAME}" --reporter=dot`);
+console.log("Seed strategy: adaptive deterministic frontier; mutate newly failing seeds first, then fall back to mixed global probes.");
 
 while (cleanIterations < STOP_AFTER_CLEAN) {
   iteration += 1;
@@ -31,13 +33,14 @@ while (cleanIterations < STOP_AFTER_CLEAN) {
   let failures = 0;
   let duplicateFailures = 0;
   let newFindings = 0;
-  const firstSeed = nextSeed;
+  const firstSeed = scheduler.peekNextSeed();
+  let lastSeed = firstSeed;
 
   console.log(`\nIteration ${iteration} starting at seed ${firstSeed}`);
 
   while (Date.now() + MIN_RUN_BUDGET_MS <= deadline) {
-    const seed = nextSeed;
-    nextSeed += SEED_STRIDE;
+    const seed = scheduler.nextSeed();
+    lastSeed = seed;
     runs += 1;
 
     const result = await runSeed(seed, Math.max(MIN_RUN_BUDGET_MS, deadline - Date.now()));
@@ -59,7 +62,9 @@ while (cleanIterations < STOP_AFTER_CLEAN) {
         signature: `unparsed failure:${result.code}:${seed}`,
         replay: replayCommand(seed)
       };
-      if (recordFinding(BUG_FILE, bugLog, fallback)) {
+      const recorded = recordFinding(BUG_FILE, bugLog, fallback);
+      scheduler.noteFailure(seed, fallback.signature, recorded);
+      if (recorded) {
         newFindings += 1;
       } else {
         duplicateFailures += 1;
@@ -67,7 +72,9 @@ while (cleanIterations < STOP_AFTER_CLEAN) {
       continue;
     }
 
-    if (recordFinding(BUG_FILE, bugLog, finding)) {
+    const recorded = recordFinding(BUG_FILE, bugLog, finding);
+    scheduler.noteFailure(seed, finding.signature, recorded);
+    if (recorded) {
       newFindings += 1;
       console.log(`New finding at seed ${seed}: ${finding.message}`);
       break;
@@ -76,7 +83,6 @@ while (cleanIterations < STOP_AFTER_CLEAN) {
     duplicateFailures += 1;
   }
 
-  const lastSeed = nextSeed - SEED_STRIDE;
   appendIterationSummary(BUG_FILE, {
     iteration,
     firstSeed,
@@ -100,6 +106,91 @@ while (cleanIterations < STOP_AFTER_CLEAN) {
 }
 
 console.log(`Runtime trace hunt stopped after ${cleanIterations} consecutive clean iteration(s).`);
+
+function createAdversarialSeedScheduler(baseSeed, stride) {
+  const seen = new Set();
+  const frontier = [];
+  const duplicateMutationCounts = new Map();
+  let globalIndex = 0;
+
+  enqueueFrontier([
+    baseSeed,
+    ...[1, 2, 3, 5, 8, 13, 20, 21, 34, 55, 89, 144, 233].map((offset) => baseSeed + offset * stride),
+    ...[1, 2, 4, 8, 16, 32, 64, 128, 256].map((mask) => normalizeSeed(baseSeed ^ mask))
+  ]);
+
+  return {
+    nextSeed() {
+      const queued = dequeueFrontier();
+      if (queued !== undefined) {
+        return queued;
+      }
+
+      for (;;) {
+        const seed = globalProbeSeed(baseSeed, globalIndex);
+        globalIndex += 1;
+        if (!seen.has(seed)) {
+          seen.add(seed);
+          return seed;
+        }
+      }
+    },
+
+    peekNextSeed() {
+      for (const seed of frontier) {
+        if (!seen.has(seed)) {
+          return seed;
+        }
+      }
+      let probeIndex = globalIndex;
+      for (;;) {
+        const seed = globalProbeSeed(baseSeed, probeIndex);
+        probeIndex += 1;
+        if (!seen.has(seed)) {
+          return seed;
+        }
+      }
+    },
+
+    noteFailure(seed, signature, isNewFinding) {
+      if (isNewFinding) {
+        enqueueFrontier(adversarialSeedMutations(seed, stride, "wide"));
+        return;
+      }
+
+      const count = duplicateMutationCounts.get(signature) ?? 0;
+      if (count >= 2) {
+        return;
+      }
+      duplicateMutationCounts.set(signature, count + 1);
+      enqueueFrontier(adversarialSeedMutations(seed, stride, "narrow"));
+    }
+  };
+
+  function enqueueFrontier(seeds) {
+    const next = [];
+    for (const seed of seeds) {
+      const normalized = normalizeSeed(seed);
+      if (seen.has(normalized) || next.includes(normalized)) {
+        continue;
+      }
+      next.push(normalized);
+    }
+    frontier.unshift(...next);
+  }
+
+  function dequeueFrontier() {
+    while (frontier.length > 0) {
+      const seed = frontier.shift();
+      if (seed === undefined || seen.has(seed)) {
+        continue;
+      }
+      seen.add(seed);
+      return seed;
+    }
+    return undefined;
+  }
+}
 
 async function runSeed(seed, timeoutMs) {
   const env = {
@@ -230,6 +321,7 @@ Default hunt bounds:
 
 - Iteration limit: 5 minutes
 - Stop condition: 3 consecutive iterations with no new distinct findings
+- Trace selection: deterministic adaptive frontier; mutate newly failing seeds first, then fall back to mixed global probes
 - Test target: \`${TEST_FILE}\`
 - Test name: \`${TEST_NAME}\`
 
@@ -288,6 +380,44 @@ function normalizeTraceSignaturePart(value) {
     .replace(/\bgroup:\d+\b/g, "group:<id>")
     .replace(/\btab:\d+\b/g, "tab:<id>")
     .replace(/\bwindow:\d+\b/g, "window:<id>");
+}
+
+function adversarialSeedMutations(seed, stride, width) {
+  const offsets = width === "wide"
+    ? [1, -1, 2, -2, 3, -3, 5, -5, 8, -8, 13, -13, 21, -21, 34, -34, 55, -55, 89, -89, 144, -144]
+    : [1, -1, 2, -2, 5, -5, 13, -13];
+  const masks = width === "wide"
+    ? [0x1, 0x2, 0x4, 0x8, 0x10, 0x20, 0x40, 0x80, 0x100, 0x200, 0x400, 0x800, 0x1000, 0x55, 0xaa, 0x5a5a]
+    : [0x1, 0x2, 0x4, 0x8, 0x10, 0x55];
+  return [
+    ...offsets.map((offset) => seed + offset * stride),
+    ...masks.map((mask) => seed ^ mask),
+    mixSeed(seed),
+    mixSeed(seed ^ 0x9e3779b9),
+    mixSeed(seed + 0x7f4a7c15)
+  ];
+}
+
+function globalProbeSeed(baseSeed, index) {
+  if (index === 0) {
+    return normalizeSeed(baseSeed);
+  }
+  return normalizeSeed(mixSeed(baseSeed + Math.imul(index, 0x9e3779b1)));
+}
+
+function mixSeed(seed) {
+  let value = seed >>> 0;
+  value ^= value >>> 16;
+  value = Math.imul(value, 0x7feb352d);
+  value ^= value >>> 15;
+  value = Math.imul(value, 0x846ca68b);
+  value ^= value >>> 16;
+  return value >>> 0;
+}
+
+function normalizeSeed(seed) {
+  const normalized = seed % MAX_SEED;
+  return normalized > 0 ? normalized : normalized + MAX_SEED;
 }
 
 function positiveIntegerEnv(name) {

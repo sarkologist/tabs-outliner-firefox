@@ -13,21 +13,356 @@ Default hunt bounds:
 
 - Iteration limit: 5 minutes
 - Stop condition: 3 consecutive iterations with no new distinct findings
+- Trace selection: deterministic adaptive frontier; mutate newly failing seeds first, then fall back to mixed global probes
 - Test target: `src/background/controller.test.ts`
 - Test name: `adversarial runtime concurrency traces`
 
-## Last Run
+## Last Adaptive Run
 
-- Completed: 2026-05-23T09:39:12.505Z
-- Seed range scanned: 10000 through 11496
-- Distinct findings recorded: 6
-- Stop condition reached: iterations 8, 9, and 10 found no new distinct signatures
-- Duplicate failures during final clean streak: 133
+- Completed: 2026-05-23T10:32:29.655Z
+- Strategy: adaptive deterministic frontier, with mutations around newly failing seeds and mixed global probes
+- Distinct adaptive findings recorded: 8
+- Stop condition reached: iterations 12, 13, and 14 found no new distinct signatures
+- Duplicate failures during final clean streak: 157
 
 ## Findings
 
 ### RT-001 tab 1 active flag diverged
 <!-- signature: tab <id> active flag diverged
+step: concurrent-activated-tab-then-group
+dispatch tab <id> activated, then group tab <id> -->
+
+- First seen: 2026-05-23T09:47:00.099Z
+- Repro: `env GENERATED_TRACE_BASE_SEED=10001 GENERATED_TRACE_SEED_COUNT=1 GENERATED_TRACE_STEPS=120 pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime concurrency traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+seed 10001
+step 1: concurrent-activated-tab-then-group
+dispatch tab 2 activated, then group tab 1
+```
+
+<!-- hunt-iteration: {"at":"2026-05-23T09:47:00.100Z","iteration":1,"firstSeed":10000,"lastSeed":10001,"runs":2,"failures":1,"duplicateFailures":0,"newFindings":1} -->
+
+### RT-002 tab 101 active flag diverged
+<!-- signature: tab <id> active flag diverged
+step: concurrent-created-tab-then-group
+dispatch tab <id> created, then group tab <id> -->
+
+- First seen: 2026-05-23T09:47:14.597Z
+- Repro: `env GENERATED_TRACE_BASE_SEED=10020 GENERATED_TRACE_SEED_COUNT=1 GENERATED_TRACE_STEPS=120 pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime concurrency traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+seed 10020
+step 1: outliner-close-window
+outliner close window 10 with 2 tabs
+step 2: open-tab
+open tab 100 in window 20 with stale query
+step 3: concurrent-focused-window-then-group
+dispatch window 20 focused, then group tab 100
+step 4: outliner-delete-window-rejecting-close
+outliner delete window 21 with rejecting close
+step 5: open-tab
+open tab 101 in window 20
+step 6: concurrent-created-tab-then-group
+dispatch tab 102 created, then group tab 101
+```
+
+<!-- hunt-iteration: {"at":"2026-05-23T09:47:14.598Z","iteration":2,"firstSeed":10002,"lastSeed":10020,"runs":15,"failures":3,"duplicateFailures":2,"newFindings":1} -->
+
+### RT-003 live window IDs match runtime windows
+<!-- signature: live window IDs match runtime windows
+step: activate-tab-with-stale-query
+ -->
+
+- First seen: 2026-05-23T09:48:54.164Z
+- Repro: `env GENERATED_TRACE_BASE_SEED=1892143700 GENERATED_TRACE_SEED_COUNT=1 GENERATED_TRACE_STEPS=120 pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime concurrency traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+seed 1892143700
+step 1: concurrent-focused-window-then-group
+dispatch window 10 focused, then group tab 2
+step 2: native-close-tab
+native close last tab 2 in window 21
+step 3: concurrent-activated-tab-then-group
+step 4: open-tab
+open tab 100 in window 20
+step 5: native-close-tab
+native close last tab 1 in window 10
+step 6: concurrent-focused-window-then-group
+dispatch window 20 focused, then group tab 100
+step 7: concurrent-focused-window-then-group
+step 8: activate-tab-with-stale-query
+activate tab 100 with stale query for moved tab 100
+step 9: concurrent-activated-tab-then-group
+step 10: concurrent-updated-tab-then-group
+step 11: open-tab
+open tab 101 in window 20
+step 12: activate-tab
+activate tab 3
+step 13: concurrent-updated-tab-then-group
+dispatch tab 100 updated, then group tab 101
+step 14: activate-tab-with-stale-query
+activate tab 100 with stale query for moved tab 100
+```
+
+<!-- hunt-iteration: {"at":"2026-05-23T09:48:54.164Z","iteration":3,"firstSeed":10019,"lastSeed":1892143700,"runs":103,"failures":11,"duplicateFailures":10,"newFindings":1} -->
+
+### RT-004 live window IDs match runtime windows
+<!-- signature: live window IDs match runtime windows
+step: stale-live-tab-created-event-stale-query
+dispatch stale live created event for moved tab <id> with stale query window <id> -->
+
+- First seen: 2026-05-23T09:52:31.734Z
+- Repro: `env GENERATED_TRACE_BASE_SEED=560291164 GENERATED_TRACE_SEED_COUNT=1 GENERATED_TRACE_STEPS=120 pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime concurrency traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+seed 560291164
+step 1: open-tab
+open tab 100 in window 10 with stale query
+step 2: native-close-window
+native close multi-tab window 10
+step 3: open-tab
+open tab 101 in window 20
+step 4: open-tab
+open tab 102 in window 20
+step 5: concurrent-focused-window-then-group
+dispatch window 20 focused, then group tab 102
+step 6: concurrent-updated-tab-then-group
+dispatch tab 102 updated, then group tab 3
+step 7: open-tab
+open tab 103 in window 22
+step 8: open-tab
+open tab 104 in window 20 with stale query
+step 9: outliner-move-tab-new-window
+outliner move tab 104 to new window
+step 10: stale-live-tab-created-event-stale-query
+dispatch stale live created event for moved tab 102 with stale query window 20
+```
+
+<!-- hunt-iteration: {"at":"2026-05-23T09:52:31.735Z","iteration":4,"firstSeed":1892143701,"lastSeed":560291164,"runs":202,"failures":37,"duplicateFailures":36,"newFindings":1} -->
+
+### RT-005 tab 2 has wrong live window
+<!-- signature: tab <id> has wrong live window
+step: activate-tab-with-stale-query
+ -->
+
+- First seen: 2026-05-23T09:52:55.009Z
+- Repro: `env GENERATED_TRACE_BASE_SEED=560291075 GENERATED_TRACE_SEED_COUNT=1 GENERATED_TRACE_STEPS=120 pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime concurrency traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+seed 560291075
+step 1: concurrent-activated-tab-then-group
+dispatch tab 1 activated, then group tab 1
+step 2: concurrent-focused-window-then-group
+step 3: stale-live-tab-created-event-stale-query
+dispatch stale live created event for moved tab 1 with stale query window 10
+step 4: concurrent-focused-window-then-group
+step 5: outliner-delete-window-rejecting-close
+outliner delete window 21 with rejecting close
+step 6: outliner-restore-delete-window-delayed-event
+outliner restore-delete window 20 with delayed restored-tab event
+step 7: concurrent-activated-tab-then-group
+step 8: concurrent-activated-tab-then-group
+step 9: concurrent-activated-tab-then-group
+step 10: concurrent-created-tab-then-group
+step 11: activate-tab
+activate tab 2
+step 12: open-tab
+open tab 100 in window 10 with stale query
+step 13: open-tab
+open tab 101 in window 10
+step 14: outliner-move-tab-new-window
+outliner move tab 2 to new window
+step 15: stale-live-tab-updated-event
+dispatch stale live updated event for tab 100 in old window 10
+step 16: open-tab
+open tab 102 in window 23 with stale query
+step 17: open-tab
+open tab 103 in window 10
+step 18: concurrent-updated-tab-then-group
+dispatch tab 2 updated, then group tab 100
+step 19: open-tab
+open tab 104 in window 24
+step 20: activate-tab
+activate tab 100
+step 21: concurrent-updated-tab-then-group
+dispatch tab 2 updated, then group tab 103
+step 22: open-tab
+open tab 105 in window 23 with stale query
+step 23: outliner-close-tab
+outliner close tab 100
+step 24: activate-tab
+activate tab 105
+step 25: outliner-group-tab
+outliner group tab 2
+step 26: activate-tab-with-stale-query
+activate tab 2 with stale query for moved tab 2
+```
+
+<!-- hunt-iteration: {"at":"2026-05-23T09:52:55.010Z","iteration":5,"firstSeed":560291165,"lastSeed":560291075,"runs":20,"failures":3,"duplicateFailures":2,"newFindings":1} -->
+
+<!-- hunt-iteration: {"at":"2026-05-23T09:57:53.279Z","iteration":6,"firstSeed":560291076,"lastSeed":822530453,"runs":289,"failures":57,"duplicateFailures":57,"newFindings":0} -->
+
+### RT-006 tab 102 has wrong live window
+<!-- signature: tab <id> has wrong live window
+step: stale-live-tab-created-event-stale-query
+dispatch stale live created event for moved tab <id> with stale query window <id> -->
+
+- First seen: 2026-05-23T10:02:00.255Z
+- Repro: `env GENERATED_TRACE_BASE_SEED=1429519014 GENERATED_TRACE_SEED_COUNT=1 GENERATED_TRACE_STEPS=120 pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime concurrency traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+seed 1429519014
+step 1: concurrent-focused-window-then-group
+dispatch window 20 focused, then group tab 1
+step 2: stale-live-tab-updated-event-stale-query
+dispatch stale live updated event for tab 1 with stale query window 10
+step 3: native-close-tab
+native close last tab 2 in window 10
+step 4: open-tab
+open tab 100 in window 20
+step 5: native-close-tab
+native close tab 3 with sessionChangedOnly
+step 6: native-close-tab
+native close last tab 100 in window 20
+step 7: concurrent-focused-window-then-group
+step 8: concurrent-created-tab-then-group
+step 9: concurrent-updated-tab-then-group
+step 10: open-tab
+open tab 101 in window 21
+step 11: open-tab
+open tab 102 in window 21
+step 12: open-tab
+open tab 103 in window 21
+step 13: outliner-group-tab
+outliner group tab 1
+step 14: open-tab
+open tab 104 in window 21 with stale query
+step 15: native-close-window
+native close multi-tab window 21
+step 16: outliner-group-tab
+outliner group tab 102
+step 17: open-tab
+open tab 105 in window 23
+step 18: stale-live-tab-updated-event
+dispatch stale live updated event for tab 102 in old window 22
+step 19: stale-live-tab-updated-event
+dispatch stale live updated event for tab 102 in old window 22
+step 20: outliner-move-tab-new-window
+outliner move tab 105 to new window
+step 21: open-tab
+open tab 106 in window 23 with stale query
+step 22: stale-live-tab-updated-event-stale-query
+dispatch stale live updated event for tab 105 with stale query window 23
+step 23: stale-live-tab-created-event-stale-query
+dispatch stale live created event for moved tab 105 with stale query window 23
+step 24: concurrent-updated-tab-then-group
+dispatch tab 102 updated, then group tab 101
+step 25: stale-live-tab-created-event-stale-query
+dispatch stale live created event for moved tab 102 with stale query window 22
+```
+
+<!-- hunt-iteration: {"at":"2026-05-23T10:02:00.255Z","iteration":7,"firstSeed":570178208,"lastSeed":1429519014,"runs":258,"failures":43,"duplicateFailures":42,"newFindings":1} -->
+
+### RT-007 live window IDs match runtime windows
+<!-- signature: live window IDs match runtime windows
+step: stale-live-tab-updated-event-stale-query
+dispatch stale live updated event for tab <id> with stale query window <id> -->
+
+- First seen: 2026-05-23T10:03:18.235Z
+- Repro: `env GENERATED_TRACE_BASE_SEED=2055959888 GENERATED_TRACE_SEED_COUNT=1 GENERATED_TRACE_STEPS=120 pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime concurrency traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+seed 2055959888
+step 1: outliner-group-tab
+outliner group tab 2
+step 2: stale-live-tab-created-event-stale-query
+dispatch stale live created event for moved tab 2 with stale query window 10
+step 3: open-tab
+open tab 100 in window 20
+step 4: open-tab
+open tab 101 in window 21
+step 5: stale-live-tab-updated-event
+dispatch stale live updated event for tab 2 in old window 10
+step 6: concurrent-created-tab-then-group
+dispatch tab 102 created, then group tab 101
+step 7: open-tab
+open tab 103 in window 20 with stale query
+step 8: native-close-tab
+native close tab 103 with tabRemovedThenSessionChanged
+step 9: concurrent-created-tab-then-group
+dispatch tab 104 created, then group tab 102
+step 10: open-tab
+open tab 105 in window 21
+step 11: concurrent-focused-window-then-group
+dispatch window 10 focused, then group tab 104
+step 12: concurrent-updated-tab-then-group
+dispatch tab 102 updated, then group tab 105
+step 13: stale-live-tab-updated-event
+dispatch stale live updated event for tab 105 in old window 21
+step 14: stale-live-tab-updated-event-stale-query
+dispatch stale live updated event for tab 102 with stale query window 21
+```
+
+<!-- hunt-iteration: {"at":"2026-05-23T10:03:18.235Z","iteration":8,"firstSeed":1429519015,"lastSeed":2055959888,"runs":78,"failures":17,"duplicateFailures":16,"newFindings":1} -->
+
+<!-- hunt-iteration: {"at":"2026-05-23T10:08:17.318Z","iteration":9,"firstSeed":2055959889,"lastSeed":110939912,"runs":276,"failures":52,"duplicateFailures":52,"newFindings":0} -->
+
+<!-- hunt-iteration: {"at":"2026-05-23T10:13:15.921Z","iteration":10,"firstSeed":827338997,"lastSeed":1621964926,"runs":295,"failures":51,"duplicateFailures":51,"newFindings":0} -->
+
+### RT-008 tab 1 has wrong live window
+<!-- signature: tab <id> has wrong live window
+step: stale-live-tab-updated-event-stale-query
+dispatch stale live updated event for tab <id> with stale query window <id> -->
+
+- First seen: 2026-05-23T10:17:34.391Z
+- Repro: `env GENERATED_TRACE_BASE_SEED=1384879344 GENERATED_TRACE_SEED_COUNT=1 GENERATED_TRACE_STEPS=120 pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime concurrency traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+seed 1384879344
+step 1: outliner-move-tab-new-window
+outliner move tab 1 to new window
+step 2: activate-tab-with-stale-query
+activate tab 1 with stale query for moved tab 1
+step 3: stale-live-tab-updated-event
+dispatch stale live updated event for tab 1 in old window 10
+step 4: open-tab
+open tab 100 in window 20 with stale query
+step 5: open-tab
+open tab 101 in window 21 with stale query
+step 6: native-close-tab
+native close tab 100 with tabRemovedThenSessionChanged
+step 7: concurrent-updated-tab-then-group
+dispatch tab 1 updated, then group tab 101
+step 8: stale-live-tab-updated-event-stale-query
+dispatch stale live updated event for tab 1 with stale query window 10
+```
+
+<!-- hunt-iteration: {"at":"2026-05-23T10:17:34.392Z","iteration":11,"firstSeed":1766343339,"lastSeed":1384879344,"runs":244,"failures":40,"duplicateFailures":39,"newFindings":1} -->
+
+<!-- hunt-iteration: {"at":"2026-05-23T10:22:33.379Z","iteration":12,"firstSeed":1384879345,"lastSeed":112808897,"runs":281,"failures":52,"duplicateFailures":52,"newFindings":0} -->
+
+<!-- hunt-iteration: {"at":"2026-05-23T10:27:31.497Z","iteration":13,"firstSeed":1963229263,"lastSeed":1329790459,"runs":291,"failures":53,"duplicateFailures":53,"newFindings":0} -->
+
+<!-- hunt-iteration: {"at":"2026-05-23T10:32:29.655Z","iteration":14,"firstSeed":788727522,"lastSeed":290892481,"runs":297,"failures":52,"duplicateFailures":52,"newFindings":0} -->
+
+## Recovered Seed-Sweep Run
+
+These findings were recovered from the committed pre-adaptive seed sweep (`HEAD:RUNTIME_TRACE_BUGS.md`).
+That run scanned seeds 10000 through 11496 sequentially, recorded 6 distinct signatures, and stopped after
+iterations 8, 9, and 10 found no new distinct signatures. Several signatures overlap with the adaptive run, but
+the original seeds and traces are kept here so the evidence is not lost.
+
+### SS-001 tab 1 active flag diverged
+<!-- seed-sweep-signature: tab <id> active flag diverged
 step: concurrent-activated-tab-then-group
 dispatch tab <id> activated, then group tab <id> -->
 
@@ -41,10 +376,8 @@ step 1: concurrent-activated-tab-then-group
 dispatch tab 2 activated, then group tab 1
 ```
 
-<!-- hunt-iteration: {"at":"2026-05-23T09:13:27.017Z","iteration":1,"firstSeed":10000,"lastSeed":10001,"runs":2,"failures":1,"duplicateFailures":0,"newFindings":1} -->
-
-### RT-002 tab 101 active flag diverged
-<!-- signature: tab <id> active flag diverged
+### SS-002 tab 101 active flag diverged
+<!-- seed-sweep-signature: tab <id> active flag diverged
 step: concurrent-created-tab-then-group
 dispatch tab <id> created, then group tab <id> -->
 
@@ -68,10 +401,8 @@ step 6: concurrent-created-tab-then-group
 dispatch tab 102 created, then group tab 101
 ```
 
-<!-- hunt-iteration: {"at":"2026-05-23T09:13:45.143Z","iteration":2,"firstSeed":10002,"lastSeed":10020,"runs":19,"failures":3,"duplicateFailures":2,"newFindings":1} -->
-
-### RT-003 live window IDs match runtime windows
-<!-- signature: live window IDs match runtime windows
+### SS-003 live window IDs match runtime windows
+<!-- seed-sweep-signature: live window IDs match runtime windows
 step: stale-live-tab-created-event-stale-query
 dispatch stale live created event for moved tab <id> with stale query window <id> -->
 
@@ -94,10 +425,8 @@ step 6: stale-live-tab-created-event-stale-query
 dispatch stale live created event for moved tab 1 with stale query window 10
 ```
 
-<!-- hunt-iteration: {"at":"2026-05-23T09:16:13.395Z","iteration":3,"firstSeed":10021,"lastSeed":10175,"runs":155,"failures":21,"duplicateFailures":20,"newFindings":1} -->
-
-### RT-004 live window IDs match runtime windows
-<!-- signature: live window IDs match runtime windows
+### SS-004 live window IDs match runtime windows
+<!-- seed-sweep-signature: live window IDs match runtime windows
 step: activate-tab-with-stale-query
  -->
 
@@ -127,10 +456,8 @@ step 9: activate-tab-with-stale-query
 activate tab 100 with stale query for moved tab 100
 ```
 
-<!-- hunt-iteration: {"at":"2026-05-23T09:17:15.939Z","iteration":4,"firstSeed":10176,"lastSeed":10240,"runs":65,"failures":15,"duplicateFailures":14,"newFindings":1} -->
-
-### RT-005 tab 101 has wrong live window
-<!-- signature: tab <id> has wrong live window
+### SS-005 tab 101 has wrong live window
+<!-- seed-sweep-signature: tab <id> has wrong live window
 step: stale-live-tab-updated-event-stale-query
 dispatch stale live updated event for tab <id> with stale query window <id> -->
 
@@ -171,12 +498,8 @@ step 15: stale-live-tab-updated-event-stale-query
 dispatch stale live updated event for tab 101 with stale query window 10
 ```
 
-<!-- hunt-iteration: {"at":"2026-05-23T09:17:47.746Z","iteration":5,"firstSeed":10241,"lastSeed":10267,"runs":27,"failures":3,"duplicateFailures":2,"newFindings":1} -->
-
-<!-- hunt-iteration: {"at":"2026-05-23T09:22:46.211Z","iteration":6,"firstSeed":10268,"lastSeed":10549,"runs":282,"failures":56,"duplicateFailures":56,"newFindings":0} -->
-
-### RT-006 live window IDs match runtime windows
-<!-- signature: live window IDs match runtime windows
+### SS-006 live window IDs match runtime windows
+<!-- seed-sweep-signature: live window IDs match runtime windows
 step: stale-live-tab-updated-event-stale-query
 dispatch stale live updated event for tab <id> with stale query window <id> -->
 
@@ -206,11 +529,3 @@ step 9: concurrent-focused-window-then-group
 step 10: stale-live-tab-updated-event-stale-query
 dispatch stale live updated event for tab 100 with stale query window 20
 ```
-
-<!-- hunt-iteration: {"at":"2026-05-23T09:24:16.721Z","iteration":7,"firstSeed":10550,"lastSeed":10636,"runs":87,"failures":15,"duplicateFailures":14,"newFindings":1} -->
-
-<!-- hunt-iteration: {"at":"2026-05-23T09:29:15.582Z","iteration":8,"firstSeed":10637,"lastSeed":10936,"runs":300,"failures":35,"duplicateFailures":35,"newFindings":0} -->
-
-<!-- hunt-iteration: {"at":"2026-05-23T09:34:14.141Z","iteration":9,"firstSeed":10937,"lastSeed":11213,"runs":277,"failures":49,"duplicateFailures":49,"newFindings":0} -->
-
-<!-- hunt-iteration: {"at":"2026-05-23T09:39:12.505Z","iteration":10,"firstSeed":11214,"lastSeed":11496,"runs":283,"failures":49,"duplicateFailures":49,"newFindings":0} -->
