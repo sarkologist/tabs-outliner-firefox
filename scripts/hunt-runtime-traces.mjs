@@ -12,7 +12,8 @@ const CORPUS_RUN_CAP_MS =
   5 * 60 * 1000;
 const STOP_AFTER_CLEAN = positiveIntegerEnv("RUNTIME_TRACE_HUNT_STOP_AFTER_CLEAN") ?? 3;
 const MIN_RUN_BUDGET_MS = 2_000;
-const DEFAULT_TRACE_IDS = [
+const TRACE_HUNT_PROFILE = traceHuntProfile();
+const REGRESSION_TRACE_IDS = [
   "rt-active-race",
   "rt-created-race-after-window-close",
   "rt-stale-created-after-move",
@@ -79,6 +80,26 @@ const DEFAULT_TRACE_IDS = [
   "rt-top-level-open-active-destination-tab-stale-updated",
   "rt-group-open-active-destination-tab-stale-created"
 ];
+const DISCOVERY_TRACE_IDS = [
+  "dh-restore-delayed-focus-refresh",
+  "dh-opener-reparent-refresh",
+  "dh-nested-parent-native-close",
+  "dh-partial-subtree-delete-reject",
+  "dh-focus-session-activation-refresh",
+  "dh-undo-redo-stale-refresh"
+];
+const ALL_TRACE_IDS = [...REGRESSION_TRACE_IDS, ...DISCOVERY_TRACE_IDS];
+const TRACE_TAGS = new Map([
+  ...REGRESSION_TRACE_IDS.map((traceId) => [traceId, ["known-finding"]]),
+  ["dh-restore-delayed-focus-refresh", ["restore", "delayed-event", "focus", "manual-refresh"]],
+  ["dh-opener-reparent-refresh", ["opener", "reparenting", "relocation", "manual-refresh"]],
+  ["dh-nested-parent-native-close", ["nested-window", "native-close", "relocation", "stale-event"]],
+  ["dh-partial-subtree-delete-reject", ["delete-rejection", "partial-close", "stale-event", "tombstone"]],
+  ["dh-focus-session-activation-refresh", ["focus", "activation", "session", "manual-refresh"]],
+  ["dh-undo-redo-stale-refresh", ["undo-redo", "stale-event", "relocation", "manual-refresh"]]
+]);
+const hasExplicitTraceIds = typeof process.env.RUNTIME_TRACE_HUNT_TRACE_IDS === "string" &&
+  process.env.RUNTIME_TRACE_HUNT_TRACE_IDS.trim() !== "";
 
 const traceIds = selectedTraceIds();
 if (traceIds.length === 0) {
@@ -90,9 +111,14 @@ ensureBugLogFile(BUG_FILE);
 
 console.log(`Runtime trace hunt writing findings to ${BUG_FILE}`);
 console.log(`This corpus run is capped at ${CORPUS_RUN_CAP_MS}ms.`);
-console.log(`Agent stop rule: stop after ${STOP_AFTER_CLEAN} clean 5-minute mutation round(s) with no new distinct findings.`);
-console.log(`Trace strategy: run the current domain corpus once, recording every distinct failure; Codex/humans mutate trace actions between runs.`);
-console.log(`Trace IDs: ${traceIds.join(", ")}`);
+console.log(`Agent stop rule: stop after ${STOP_AFTER_CLEAN} full 5-minute discovery mutation block(s) with no new distinct findings.`);
+console.log(`Trace strategy: run the selected domain corpus once, recording every distinct failure; Codex/humans mutate discovery trace actions between runs.`);
+console.log(`Trace profile: ${TRACE_HUNT_PROFILE}${hasExplicitTraceIds ? " (explicit trace IDs override profile)" : ""}`);
+console.log(`Trace count: ${traceIds.length}`);
+console.log(`Coverage tags: ${coverageTags(traceIds).join(", ") || "unknown"}`);
+if (hasExplicitTraceIds || process.env.RUNTIME_TRACE_HUNT_SHOW_TRACE_IDS === "1") {
+  console.log(`Trace IDs: ${traceIds.join(", ")}`);
+}
 
 const deadline = Date.now() + CORPUS_RUN_CAP_MS;
 let runs = 0;
@@ -153,6 +179,8 @@ for (const traceId of traceIds) {
 
 appendCorpusRunSummary(BUG_FILE, {
   mode: "agent-corpus-run",
+  profile: TRACE_HUNT_PROFILE,
+  coverageTags: coverageTags(traceIds),
   firstTraceId: traceIds[0] ?? "",
   lastTraceId,
   runs,
@@ -179,6 +207,7 @@ async function runTrace(traceId, timeoutMs) {
   ], {
     env: {
       ...process.env,
+      RUNTIME_TRACE_HUNT_PROFILE: TRACE_HUNT_PROFILE,
       RUNTIME_DOMAIN_TRACE_HUNT: "1",
       RUNTIME_TRACE_HUNT_TRACE_IDS: traceId
     },
@@ -292,8 +321,9 @@ pnpm trace-hunt:runtime
 Default hunt bounds:
 
 - Corpus run cap: 5 minutes
-- Agent stop condition: 3 consecutive clean 5-minute mutation rounds with no new distinct findings
-- Trace selection: execute the current explicit domain trace corpus once, recording every distinct failure; Codex/humans mutate trace actions between runs, not seeds
+- Agent stop condition: 3 full 5-minute discovery mutation blocks with no new distinct findings
+- Trace selection: default profile is \`discovery\`; use \`RUNTIME_TRACE_HUNT_PROFILE=regression|all\` for known repro replay, or \`RUNTIME_TRACE_HUNT_TRACE_IDS=...\` for explicit traces
+- Corpus semantics: execute the selected explicit domain trace corpus once, recording every distinct failure; Codex/humans mutate discovery trace actions between runs, not seeds
 - Test target: \`${TEST_FILE}\`
 - Test name: \`${TEST_NAME}\`
 
@@ -320,12 +350,31 @@ function loadBugLog(file) {
 function selectedTraceIds() {
   const rawTraceIds = process.env.RUNTIME_TRACE_HUNT_TRACE_IDS;
   if (!rawTraceIds) {
-    return DEFAULT_TRACE_IDS;
+    if (TRACE_HUNT_PROFILE === "discovery") {
+      return DISCOVERY_TRACE_IDS;
+    }
+    if (TRACE_HUNT_PROFILE === "regression") {
+      return REGRESSION_TRACE_IDS;
+    }
+    return ALL_TRACE_IDS;
   }
   return rawTraceIds
     .split(",")
     .map((traceId) => traceId.trim())
     .filter(Boolean);
+}
+
+function traceHuntProfile() {
+  const profile = process.env.RUNTIME_TRACE_HUNT_PROFILE ?? "discovery";
+  if (profile === "discovery" || profile === "regression" || profile === "all") {
+    return profile;
+  }
+  throw new Error(`RUNTIME_TRACE_HUNT_PROFILE must be discovery, regression, or all; got ${JSON.stringify(profile)}`);
+}
+
+function coverageTags(traceIds) {
+  return [...new Set(traceIds.flatMap((traceId) => TRACE_TAGS.get(traceId) ?? ["unknown"]))]
+    .sort();
 }
 
 function append(file, text) {

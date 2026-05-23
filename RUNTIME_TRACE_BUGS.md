@@ -1,7 +1,7 @@
 # Runtime Trace Bug Hunt
 
 This file records distinct bugs found by deterministic runtime trace hunts.
-The current adversarial hunt mode runs explicit domain trace artifacts that Codex/humans can inspect and mutate with runtime/model knowledge. Historical adaptive seed-frontier and seed-sweep findings are preserved as evidence and alternate repros, not as the current adversarial selection mechanism.
+The current adversarial hunt mode defaults to lower-anchoring discovery traces guided by `RUNTIME_TRACE_HUNT_GUIDE.md`; known RT/SS-derived traces are preserved as regression coverage and explicit replay evidence, not as the default mutation prompt.
 The hunt intentionally documents findings before fixes; fix passes update statuses while preserving the original repros.
 
 Run the hunt with:
@@ -13,8 +13,9 @@ pnpm trace-hunt:runtime
 Default hunt bounds:
 
 - Corpus run cap: 5 minutes
-- Agent stop condition: 3 consecutive clean 5-minute mutation rounds with no new distinct findings
-- Trace selection: execute the current explicit domain trace corpus once, recording every distinct failure; mutate domain actions between runs instead of perturbing seeds
+- Agent stop condition: 3 full 5-minute discovery mutation blocks with no new distinct findings
+- Trace selection: default profile is `discovery`; use `RUNTIME_TRACE_HUNT_PROFILE=regression|all` for known repro replay, or `RUNTIME_TRACE_HUNT_TRACE_IDS=...` for explicit trace replay
+- Corpus semantics: execute the selected explicit domain trace corpus once, recording every distinct failure; mutate discovery domain actions between runs instead of perturbing seeds
 - Test target: `src/background/controller.test.ts`
 - Test name: `adversarial runtime domain traces`
 - Trace filter: `RUNTIME_TRACE_HUNT_TRACE_IDS=rt-active-race,rt-stale-updated-after-move`
@@ -23,7 +24,7 @@ Default hunt bounds:
 
 - Completed: 2026-05-23T12:40:37Z
 - Strategy: explicit domain trace corpus, with agent-in-loop trace edits between hunt iterations
-- Trace ids: current default corpus in `scripts/hunt-runtime-traces.mjs`
+- Trace ids: historical all-known corpus before the discovery/regression profile split
 - Distinct domain findings recorded: 13
 - New findings in corrected 5-minute-round hunt: RT-012 through RT-021
 - Stop condition reached: yes; after RT-021, 3 consecutive 5-minute mutation rounds found no new distinct signatures

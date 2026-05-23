@@ -1050,11 +1050,24 @@ type GeneratedOperation = {
   run(context: GeneratedTraceContext): Promise<void>;
 };
 
+type RuntimeDomainTracePurpose = "regression" | "discovery";
+type RuntimeDomainTraceOrigin = "known-finding" | "threat-model" | "agent-generated";
+
 type RuntimeDomainTrace = {
   id: string;
   title: string;
   notes: string;
+  purpose: RuntimeDomainTracePurpose;
+  origin: RuntimeDomainTraceOrigin;
+  tags: string[];
+  coveredFindingIds?: string[];
   actions: DomainAction[];
+};
+
+type RuntimeDomainTraceDefinition = Omit<RuntimeDomainTrace, "purpose" | "origin" | "tags"> & {
+  purpose?: RuntimeDomainTracePurpose;
+  origin?: RuntimeDomainTraceOrigin;
+  tags?: string[];
 };
 
 type DomainTraceCaptures = {
@@ -1085,6 +1098,11 @@ type DomainStaleTabSelector =
       index?: number;
     };
 
+type DomainNodeSelector =
+  | { nodeId: string }
+  | { tab: DomainTabSelector }
+  | { window: DomainWindowSelector };
+
 type DomainRuntimeEventAction =
   | {
       type: "openTab";
@@ -1092,6 +1110,7 @@ type DomainRuntimeEventAction =
       active?: boolean;
       title?: string;
       url?: string;
+      openerTab?: DomainTabSelector;
       captureTab?: string;
     }
   | {
@@ -1158,8 +1177,24 @@ type DomainAction =
       tab: DomainTabSelector;
     }
   | {
+      type: "outlinerDeleteNodeRejectingClose";
+      node: DomainNodeSelector;
+    }
+  | {
       type: "outlinerRestoreDeleteWindowDelayedEvent";
       window: DomainWindowSelector;
+    }
+  | {
+      type: "manualRefresh";
+    }
+  | {
+      type: "sessionChanged";
+    }
+  | {
+      type: "outlinerUndo";
+    }
+  | {
+      type: "outlinerRedo";
     }
   | {
       type: "nativeCloseTab";
@@ -1184,7 +1219,7 @@ type DomainAction =
       type: "flushRuntimeEvents";
     };
 
-const RUNTIME_DOMAIN_TRACES: RuntimeDomainTrace[] = [
+const RUNTIME_DOMAIN_TRACE_DEFINITIONS: RuntimeDomainTraceDefinition[] = [
   {
     id: "rt-active-race",
     title: "activation event races a live-tab grouping command",
@@ -1871,28 +1906,102 @@ const RUNTIME_DOMAIN_TRACES: RuntimeDomainTrace[] = [
   }
 ];
 
-const RUNTIME_DOMAIN_REGRESSION_TRACE_IDS = new Set([
-  "rt-active-race",
-  "rt-created-race-after-window-close",
-  "rt-stale-created-after-move",
-  "rt-stale-created-after-fresh-relocation-event",
-  "rt-stale-updated-after-move",
-  "rt-stale-updated-after-fresh-relocation-event",
-  "rt-stale-activation-after-fresh-relocation-event",
-  "rt-native-close-after-relocation",
-  "rt-restore-delete-delayed-stale-event",
-  "rt-repeated-direct-relocation-stale-events",
-  "rt-direct-new-window-native-close-old-window-stale-created",
-  "rt-top-level-native-close-old-window-stale-created",
-  "rt-group-native-close-old-window-stale-updated",
-  "rt-group-delete-old-window-rejecting-close-stale-created",
-  "rt-direct-new-window-native-close-destination-stale-updated",
-  "rt-top-level-native-close-tab-removed-only-stale-created",
-  "rt-top-level-native-close-session-only-stale-updated",
-  "rt-direct-new-window-delete-tab-rejecting-close-stale-created",
-  "rt-top-level-delete-tab-rejecting-close-stale-updated",
-  "rt-group-delete-tab-rejecting-close-stale-created"
-]);
+const RUNTIME_DOMAIN_DISCOVERY_TRACES: RuntimeDomainTrace[] = [
+  {
+    id: "dh-restore-delayed-focus-refresh",
+    title: "restore plus delayed runtime events across focus and refresh",
+    notes: "Threat-model seed for restore/delete recovery followed by delayed runtime events and a manual refresh.",
+    purpose: "discovery",
+    origin: "threat-model",
+    tags: ["restore", "delayed-event", "focus", "manual-refresh"],
+    actions: [
+      { type: "outlinerRestoreDeleteWindowDelayedEvent", window: { windowId: 20 } },
+      { type: "manualRefresh" },
+      { type: "focusWindow", window: { role: "firstRuntimeWindow" } }
+    ]
+  },
+  {
+    id: "dh-opener-reparent-refresh",
+    title: "opener relationship survives relocation and refresh skew",
+    notes: "Threat-model seed for opener-linked tabs when a related tab is moved to a command-created window.",
+    purpose: "discovery",
+    origin: "threat-model",
+    tags: ["opener", "reparenting", "relocation", "manual-refresh"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, openerTab: { tabId: 1 }, captureTab: "opener-child" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { capture: "opener-child" }, captureStaleTabs: "opener-child-old-window" },
+      { type: "manualRefresh" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "opener-child-old-window" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "dh-nested-parent-native-close",
+    title: "nested live window under a closing runtime parent",
+    notes: "Threat-model seed for grouped live resources when a parent runtime window closes natively.",
+    purpose: "discovery",
+    origin: "threat-model",
+    tags: ["nested-window", "native-close", "relocation", "stale-event"],
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "nested-parent-before-close" },
+      { type: "nativeCloseWindow", window: { windowId: 10 } },
+      { type: "manualRefresh" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "nested-parent-before-close" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "dh-partial-subtree-delete-reject",
+    title: "partial subtree close rejects after runtime resources disappear",
+    notes: "Threat-model seed for a delete command whose adapter call rejects after close-side effects already happened.",
+    purpose: "discovery",
+    origin: "threat-model",
+    tags: ["delete-rejection", "partial-close", "stale-event", "tombstone"],
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "partial-delete-before-close" },
+      { type: "outlinerDeleteNodeRejectingClose", node: { window: { windowId: 10 } } },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "partial-delete-before-close" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "dh-focus-session-activation-refresh",
+    title: "focus activation and session refresh interleave",
+    notes: "Threat-model seed for focus, activation, session refresh, and manual refresh ordering.",
+    purpose: "discovery",
+    origin: "threat-model",
+    tags: ["focus", "activation", "session", "manual-refresh"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, captureTab: "focus-session-tab" },
+      { type: "focusWindow", window: { windowId: 20 } },
+      { type: "sessionChanged" },
+      { type: "activateTab", tab: { capture: "focus-session-tab" } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "dh-undo-redo-stale-refresh",
+    title: "undo redo around stale runtime events and refresh",
+    notes: "Threat-model seed for history commands followed by stale event and refresh reconciliation.",
+    purpose: "discovery",
+    origin: "threat-model",
+    tags: ["undo-redo", "stale-event", "relocation", "manual-refresh"],
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "undo-redo-before-stale" },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedo" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "undo-redo-before-stale" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  }
+];
+
+const RUNTIME_DOMAIN_TRACES: RuntimeDomainTrace[] = [
+  ...RUNTIME_DOMAIN_TRACE_DEFINITIONS.map((trace): RuntimeDomainTrace => ({
+    ...trace,
+    purpose: trace.purpose ?? "regression",
+    origin: trace.origin ?? "known-finding",
+    tags: trace.tags ?? ["known-finding"]
+  })),
+  ...RUNTIME_DOMAIN_DISCOVERY_TRACES
+];
 
 function seededRandom(seed: number): () => number {
   let value = seed >>> 0;
@@ -2586,7 +2695,7 @@ function liveTabIdsInOutlineSubtree(state: OutlineState, nodeId: string): Set<nu
 function selectedRuntimeDomainTraces(): RuntimeDomainTrace[] {
   const rawTraceIds = process.env.RUNTIME_TRACE_HUNT_TRACE_IDS;
   if (!rawTraceIds) {
-    return RUNTIME_DOMAIN_TRACES;
+    return runtimeDomainTracesForProfile(runtimeTraceHuntProfile());
   }
 
   const traceIds = rawTraceIds
@@ -2603,7 +2712,24 @@ function selectedRuntimeDomainTraces(): RuntimeDomainTrace[] {
 }
 
 function runtimeDomainRegressionTraces(): RuntimeDomainTrace[] {
-  return RUNTIME_DOMAIN_TRACES.filter((trace) => RUNTIME_DOMAIN_REGRESSION_TRACE_IDS.has(trace.id));
+  return runtimeDomainTracesForProfile("regression");
+}
+
+type RuntimeTraceHuntProfile = "discovery" | "regression" | "all";
+
+function runtimeTraceHuntProfile(): RuntimeTraceHuntProfile {
+  const profile = process.env.RUNTIME_TRACE_HUNT_PROFILE ?? "discovery";
+  if (profile === "discovery" || profile === "regression" || profile === "all") {
+    return profile;
+  }
+  throw new Error(`Unknown RUNTIME_TRACE_HUNT_PROFILE ${JSON.stringify(profile)}`);
+}
+
+function runtimeDomainTracesForProfile(profile: RuntimeTraceHuntProfile): RuntimeDomainTrace[] {
+  if (profile === "all") {
+    return RUNTIME_DOMAIN_TRACES;
+  }
+  return RUNTIME_DOMAIN_TRACES.filter((trace) => trace.purpose === profile);
 }
 
 async function runDomainTrace(trace: RuntimeDomainTrace): Promise<void> {
@@ -2757,8 +2883,33 @@ async function runDomainAction(context: GeneratedTraceContext, action: DomainAct
     return;
   }
 
+  if (action.type === "outlinerDeleteNodeRejectingClose") {
+    await runDomainOutlinerDeleteNodeRejectingClose(context, action.node);
+    return;
+  }
+
   if (action.type === "outlinerRestoreDeleteWindowDelayedEvent") {
     await runDomainOutlinerRestoreDeleteWindowDelayedEvent(context, action.window);
+    return;
+  }
+
+  if (action.type === "manualRefresh") {
+    await runDomainManualRefresh(context);
+    return;
+  }
+
+  if (action.type === "sessionChanged") {
+    await runDomainSessionChanged(context);
+    return;
+  }
+
+  if (action.type === "outlinerUndo") {
+    await runDomainHistoryCommand(context, "undo");
+    return;
+  }
+
+  if (action.type === "outlinerRedo") {
+    await runDomainHistoryCommand(context, "redo");
     return;
   }
 
@@ -2799,6 +2950,7 @@ async function runDomainRuntimeEventAction(
 ): Promise<void> {
   if (action.type === "openTab") {
     const windowInfo = resolveDomainWindow(context, action.window);
+    const openerTab = action.openerTab ? resolveDomainTab(context, action.openerTab) : undefined;
     const existingTabs = tabsInRuntimeWindow(context.runtime, windowInfo.id);
     const tabId = nextGeneratedTabId(context);
     const tab: RuntimeTab = {
@@ -2807,7 +2959,8 @@ async function runDomainRuntimeEventAction(
       index: existingTabs.length,
       active: action.active ?? true,
       url: action.url ?? `https://domain.example/${tabId}`,
-      title: action.title ?? `Domain ${tabId}`
+      title: action.title ?? `Domain ${tabId}`,
+      ...(openerTab ? { openerTabId: openerTab.id } : {})
     };
     await createTabFromBrowser(context.runtime, tab, { awaitListeners: options.awaitListeners });
     context.lastOpenedTabId = tabId;
@@ -3034,6 +3187,50 @@ async function runDomainOutlinerDeleteTabRejectingClose(
   await pruneMissingExpectedClosedNodes(context, []);
 }
 
+async function runDomainOutlinerDeleteNodeRejectingClose(
+  context: GeneratedTraceContext,
+  selector: DomainNodeSelector
+): Promise<void> {
+  const state = (await context.controller.handleMessage({ type: "getState" })) as OutlineState;
+  const nodeId = resolveDomainNodeId(context, state, selector);
+  const node = state.nodes[nodeId];
+  if (!node) {
+    throw new Error(`No outline node ${nodeId}`);
+  }
+
+  const deletedNodeIds = generatedSubtreeNodeIds(state, nodeId);
+  if (node.kind === "window" && node.status === "live" && node.live && "windowId" in node.live) {
+    vi.mocked(context.runtime.api.windows.remove).mockImplementationOnce(async (windowId) => {
+      await closeRuntimeWindow(context.runtime, windowId, { awaitListeners: false });
+      throw new Error("domain node window close rejected after completion");
+    });
+  } else if (node.kind === "tab" && node.status === "live" && node.live && "tabId" in node.live) {
+    vi.mocked(context.runtime.api.tabs.remove).mockImplementationOnce(async (tabIds) => {
+      for (const tabId of Array.isArray(tabIds) ? tabIds : [tabIds]) {
+        await closeRuntimeTab(context.runtime, tabId, "tabRemovedThenSessionChanged", { awaitListeners: false });
+      }
+      throw new Error("domain node tab close rejected after completion");
+    });
+  } else {
+    vi.mocked(context.runtime.api.windows.remove).mockImplementationOnce(async (windowId) => {
+      await closeRuntimeWindow(context.runtime, windowId, { awaitListeners: false });
+      throw new Error("domain node window close rejected after completion");
+    });
+    vi.mocked(context.runtime.api.tabs.remove).mockImplementationOnce(async (tabIds) => {
+      for (const tabId of Array.isArray(tabIds) ? tabIds : [tabIds]) {
+        await closeRuntimeTab(context.runtime, tabId, "tabRemovedThenSessionChanged", { awaitListeners: false });
+      }
+      throw new Error("domain node tab close rejected after completion");
+    });
+  }
+
+  const result = await context.controller.handleMessage({ type: "deleteNode", nodeId });
+  expect((result as CommandAck).type).toBe("commandAck");
+  markCommandDeletedNodes(context, deletedNodeIds);
+  await flushGeneratedCloseEvents(context);
+  await pruneMissingExpectedClosedNodes(context, []);
+}
+
 async function runDomainOutlinerRestoreDeleteWindowDelayedEvent(
   context: GeneratedTraceContext,
   selector: DomainWindowSelector
@@ -3077,6 +3274,24 @@ async function runDomainOutlinerRestoreDeleteWindowDelayedEvent(
   await context.runtime.events.tabUpdated.flush();
   await closeRuntimeWindow(context.runtime, restoredWindowId, { awaitListeners: true });
   await pruneMissingExpectedClosedNodes(context, []);
+}
+
+async function runDomainManualRefresh(context: GeneratedTraceContext): Promise<void> {
+  const result = await context.controller.handleMessage({ type: "refresh" });
+  expect((result as CommandAck).type).toBe("commandAck");
+  await flushGeneratedRuntimeEventRefreshes(context);
+}
+
+async function runDomainSessionChanged(context: GeneratedTraceContext): Promise<void> {
+  await context.runtime.events.sessionChanged.emit();
+  await flushGeneratedRuntimeEventRefreshes(context);
+}
+
+async function runDomainHistoryCommand(context: GeneratedTraceContext, type: "undo" | "redo"): Promise<void> {
+  const result = await context.controller.handleMessage({ type });
+  expect((result as CommandAck).type).toBe("commandAck");
+  await flushGeneratedCloseEvents(context);
+  await flushGeneratedRuntimeEventRefreshes(context);
 }
 
 async function runDomainNativeCloseTab(
@@ -3218,6 +3433,31 @@ function resolveDomainWindow(context: GeneratedTraceContext, selector: DomainWin
     throw new Error("Missing first runtime window");
   }
   return windowInfo;
+}
+
+function resolveDomainNodeId(
+  context: GeneratedTraceContext,
+  state: OutlineState,
+  selector: DomainNodeSelector
+): string {
+  if ("nodeId" in selector) {
+    return selector.nodeId;
+  }
+  if ("tab" in selector) {
+    const tab = resolveDomainTab(context, selector.tab);
+    const node = liveTabNodeForRuntimeTab(state, tab.id);
+    if (!node) {
+      throw new Error(`No live outline tab for runtime tab ${tab.id}`);
+    }
+    return node.id;
+  }
+
+  const windowInfo = resolveDomainWindow(context, selector.window);
+  const node = liveWindowNodeForRuntimeWindow(state, windowInfo.id);
+  if (!node) {
+    throw new Error(`No live outline window for runtime window ${windowInfo.id}`);
+  }
+  return node.id;
 }
 
 function resolveDomainStaleTab(context: GeneratedTraceContext, selector: DomainStaleTabSelector): RuntimeTab {
