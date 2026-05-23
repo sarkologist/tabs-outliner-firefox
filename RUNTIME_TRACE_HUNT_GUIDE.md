@@ -83,6 +83,8 @@ Pick sparse cells before adding another close variant:
 | opener-linked tabs | move opener or opened tab | opener points across windows | manual refresh | `opener`, `reparenting` |
 | closed/restored subtree | delete after restore | delayed restored-tab event | session refresh | `restore`, `delayed-event` |
 | partial command failure | delete or close rejects | runtime resource already gone | stale snapshot | `delete-rejection`, `tombstone` |
+| relocated/source-closed tabs | move or group tab, then source disappears | stale `tabs.query` copy from old/source window | manual refresh | `stale-query`, `relocation`, `tombstone` |
+| relocated live tabs | move or group tab, then tab remains live | partial `tabs.query` omits relocated tab | manual refresh | `partial-snapshot`, `relocation`, `manual-refresh` |
 | focus churn | focus/activate during command | stale active snapshot | manual refresh | `focus`, `activation` |
 | history replay | undo/redo around live command | stale event from undone shape | manual refresh | `undo-redo`, `stale-event` |
 
