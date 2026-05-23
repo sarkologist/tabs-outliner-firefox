@@ -45,7 +45,7 @@ Useful actions:
 
 - Runtime events: `openTab`, `activateTab`, `updateTab`, `focusWindow`, `sessionChanged`, `manualRefresh`, `restartBackground`.
 - Commands: `outlinerGroupTab`, `outlinerMoveTabToNewWindow`, `outlinerMoveTabCommandToNewWindow`, `outlinerMoveSubtreeToTopLevel`, `outlinerFocusTab`, `outlinerCloseTab`, `outlinerCloseWindow`, `outlinerUndo`, `outlinerRedo`.
-- Failure-shape commands: `outlinerDeleteWindowRejectingClose`, `outlinerDeleteTabRejectingClose`, `outlinerDeleteNodeRejectingClose`, `outlinerMoveTabCommandToNewWindowRejectingCreate`, `outlinerRestoreDeleteWindowDelayedEvent`.
+- Failure-shape commands: `outlinerDeleteWindowRejectingClose`, `outlinerDeleteTabRejectingClose`, `outlinerDeleteNodeRejectingClose`, `outlinerMoveTabCommandToNewWindowRejectingCreate`, `outlinerFocusTabRejectingUpdate`, `outlinerRestoreNodeRejectingCreate`, `outlinerRestoreDeleteWindowDelayedEvent`.
 - Query skews: `manualRefreshWithStaleQuery`, `manualRefreshWithMissingTabQuery`, `manualRefreshWithMissingWindowQuery`, `manualRefreshWithReorderedQuery`.
 - Stale echoes: `staleLiveUpdatedEvent`, `staleLiveCreatedEvent`, `flushRuntimeEvents`.
 
@@ -77,7 +77,7 @@ Focus mutations on stale or contradictory evidence crossing command boundaries:
 
 ## Coverage Matrix
 
-Current coverage after the reconciliation architecture tightening pass on 2026-05-23: 134 regression traces and 121 discovery traces. The restart-stress expansion recorded RT-063 through RT-090, the fix pass promoted those findings to regression coverage, and a temp discovery smoke run replayed the remaining discovery profile with 0 failures.
+Current coverage after the breadth hunt on 2026-05-23: 134 regression traces and 172 discovery traces. The restart-stress expansion recorded RT-063 through RT-090 and was promoted to regression coverage. The breadth sweep added neutral `bh-*` discovery traces, recorded RT-091 through RT-095 around restore create rejection side effects, then stopped after three full five-minute mutation blocks replayed the discovery profile with no new distinct findings.
 
 | State shape | Command edge | Runtime skew | Refresh edge | Current coverage | Next target |
 | --- | --- | --- | --- | --- | --- |
@@ -91,6 +91,17 @@ Current coverage after the reconciliation architecture tightening pass on 2026-0
 | focus churn | focus/activate during command | stale active or reordered snapshot | session/manual refresh | expanded | keep adding reorder-only and cross-window focus variants |
 | history replay | undo/redo around live command | stale event from undone shape | manual refresh | regression-covered plus opener/restore expansion | keep combined with opener/restore only |
 | ledger/restart lifecycle | command, focus, native, restore, or rejection facts cross background restart | stale event after ephemeral guards are gone | startup reconciliation plus partial/manual refresh | regression-covered after RT-063 through RT-090 plus clean current-evidence controls | next hunt should target novel restart shapes rather than enumerating fixed repro variants |
+
+## Breadth Hunt Targets
+
+Breadth expansion started from 134 regression traces and 121 discovery traces, then added neutral `bh-*` discovery traces. Prefer new qualitative cells over variants of fixed RT-063 through RT-090 restart stale-relocation repros.
+
+- Deep nested ownership: two-level grouping, multi-tab command-created destinations, native close event-order variants, and focus/session churn inside nested windows.
+- Opener chains: child/grandchild openers across relocation, undo/redo, native close, focus, and partial/reordered query evidence.
+- Restore/native-close mixes: closed subtree restore through undo/history, native close orders, delete rejection after restore, and delayed restored-tab echoes after focus.
+- Command side-effect rejection: focus and restore create operations whose browser side effects happen before adapter rejection, plus relocation rejection followed by another relocation.
+- Multi-window query skew: missing one whole window while another is reordered, empty focused-window evidence, and stale event-local evidence followed by partial snapshots.
+- Novel restart boundaries: opener/restore mixes, focus rejection before restart, multiple browser-created tabs with session churn, and runtime ID gaps.
 
 ## Five-Minute Mutation Block
 

@@ -1193,6 +1193,10 @@ type DomainAction =
       tab: DomainTabSelector;
     }
   | {
+      type: "outlinerFocusTabRejectingUpdate";
+      tab: DomainTabSelector;
+    }
+  | {
       type: "outlinerCloseTab";
       tab: DomainTabSelector;
     }
@@ -1216,6 +1220,10 @@ type DomainAction =
       type: "outlinerRestoreDeleteWindowDelayedEvent";
       window: DomainWindowSelector;
       captureStaleTabs?: string;
+    }
+  | {
+      type: "outlinerRestoreNodeRejectingCreate";
+      node: DomainNodeSelector;
     }
   | {
       type: "manualRefresh";
@@ -4746,6 +4754,743 @@ const RUNTIME_DOMAIN_DISCOVERY_TRACES: RuntimeDomainTrace[] = [
       { type: "restartBackground" },
       { type: "manualRefreshWithReorderedQuery", window: { windowId: 10 }, order: "reverse" }
     ]
+  },
+  {
+    id: "bh-deep-nested-double-group-source-window-only",
+    title: "deep nested double group source window only close",
+    notes: "Breadth probe for two nested grouping relocations followed by a source windowRemoved-only native close.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["breadth", "nested", "nested-window", "native-close", "event-order", "stale-event"],
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "bh-nested-double-first-old" },
+      { type: "openTab", window: { windowId: 10 }, active: false, captureTab: "bh-nested-double-source-sibling" },
+      { type: "outlinerGroupTab", tab: { tabId: 2 }, captureStaleTabs: "bh-nested-double-second-old" },
+      { type: "nativeCloseWindow", window: { windowId: 10 }, order: "windowRemovedOnly" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "bh-nested-double-second-old" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "bh-deep-nested-destination-multitab-close",
+    title: "deep nested destination multitab close",
+    notes: "Breadth probe for a command-created nested destination that gains another tab before a native close.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["breadth", "nested", "nested-window", "native-close", "manual-refresh"],
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "bh-nested-multitab-old" },
+      { type: "openTab", window: { role: "lastOpenedWindow" }, active: false, captureTab: "bh-nested-extra-destination-tab" },
+      { type: "nativeCloseWindow", window: { role: "lastOpenedWindow" }, order: "tabsRemovedThenWindowRemoved" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "bh-deep-nested-focus-session-churn",
+    title: "deep nested focus session churn",
+    notes: "Breadth probe for nested command-created windows under focus and session churn with reordered evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["breadth", "nested", "focus", "session", "stale-query", "manual-refresh"],
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "bh-nested-focus-old" },
+      { type: "openTab", window: { role: "lastOpenedWindow" }, active: true, captureTab: "bh-nested-focus-extra" },
+      { type: "focusWindow", window: { windowId: 20 } },
+      { type: "sessionChanged" },
+      { type: "manualRefreshWithReorderedQuery", window: { role: "lastOpenedWindow" }, order: "rotateRight" }
+    ]
+  },
+  {
+    id: "bh-deep-nested-source-tabs-only-after-second-group",
+    title: "deep nested source tabs only after second group",
+    notes: "Breadth probe for two grouped live tabs when the source window reports tab removals without window removal.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["breadth", "nested", "native-close", "event-order", "stale-event"],
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "bh-nested-tabs-only-first-old" },
+      { type: "openTab", window: { windowId: 10 }, active: false, captureTab: "bh-nested-tabs-only-source-sibling" },
+      { type: "outlinerGroupTab", tab: { tabId: 2 }, captureStaleTabs: "bh-nested-tabs-only-second-old" },
+      { type: "nativeCloseWindow", window: { windowId: 10 }, order: "tabsRemovedOnly" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "bh-nested-tabs-only-second-old" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "bh-opener-grandchild-relocation-refresh",
+    title: "opener grandchild relocation refresh",
+    notes: "Breadth probe for a two-hop opener chain where the grandchild is command-relocated and partially refreshed.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["breadth", "opener", "reparenting", "relocation", "partial-snapshot", "stale-event"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, openerTab: { tabId: 1 }, captureTab: "bh-opener-child" },
+      { type: "openTab", window: { windowId: 10 }, active: false, openerTab: { capture: "bh-opener-child" }, captureTab: "bh-opener-grandchild" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { capture: "bh-opener-grandchild" }, captureStaleTabs: "bh-opener-grandchild-old" },
+      { type: "manualRefreshWithMissingTabQuery", tab: { role: "lastMovedTab" } },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "bh-opener-grandchild-old" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "bh-opener-chain-undo-redo-source-close",
+    title: "opener chain undo redo source close",
+    notes: "Breadth probe for opener relocation replayed through history before a source window close and reordered query.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["breadth", "opener", "undo-redo", "native-close", "event-order", "stale-query"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, openerTab: { tabId: 1 }, captureTab: "bh-opener-undo-child" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { capture: "bh-opener-undo-child" }, captureStaleTabs: "bh-opener-undo-old" },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedo" },
+      { type: "nativeCloseWindow", window: { windowId: 10 }, order: "windowRemovedThenTabsRemoved" },
+      { type: "manualRefreshWithReorderedQuery", window: { role: "focusedWindow" }, order: "reverse" }
+    ]
+  },
+  {
+    id: "bh-opener-child-native-close-missing-query",
+    title: "opener child native close missing query",
+    notes: "Breadth probe for opener child deletion while a grandchild remains and a partial query omits the survivor.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["breadth", "opener", "native-close", "partial-snapshot", "session"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, openerTab: { tabId: 1 }, captureTab: "bh-opener-native-child" },
+      { type: "openTab", window: { windowId: 10 }, active: false, openerTab: { capture: "bh-opener-native-child" }, captureTab: "bh-opener-native-grandchild" },
+      { type: "nativeCloseTab", tab: { capture: "bh-opener-native-child" }, order: "sessionChangedThenTabRemoved" },
+      { type: "manualRefreshWithMissingTabQuery", tab: { capture: "bh-opener-native-grandchild" } }
+    ]
+  },
+  {
+    id: "bh-opener-focus-reordered-cross-window",
+    title: "opener focus reordered cross window",
+    notes: "Breadth probe for opener-linked relocation, command focus, and reordered destination evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["breadth", "opener", "focus", "activation", "relocation", "stale-query"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, openerTab: { tabId: 1 }, captureTab: "bh-opener-focus-child" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { capture: "bh-opener-focus-child" }, captureStaleTabs: "bh-opener-focus-old" },
+      { type: "outlinerFocusTab", tab: { role: "lastMovedTab" } },
+      { type: "manualRefreshWithReorderedQuery", window: { role: "lastOpenedWindow" }, order: "rotateLeft" }
+    ]
+  },
+  {
+    id: "bh-restore-window-native-window-only",
+    title: "restore window native window only",
+    notes: "Breadth probe for a restored window that later emits only a native windowRemoved event.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["breadth", "restore", "undo-redo", "native-close", "event-order"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerUndo" },
+      { type: "nativeCloseWindow", window: { role: "focusedWindow" }, order: "windowRemovedOnly" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "bh-restore-redo-reordered-query",
+    title: "restore redo reordered query",
+    notes: "Breadth probe for repeated restore history transitions with reordered live evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["breadth", "restore", "undo-redo", "stale-query", "manual-refresh"],
+    actions: [
+      { type: "outlinerCloseTab", tab: { tabId: 2 } },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedo" },
+      { type: "outlinerUndo" },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 10 }, order: "rotateRight" }
+    ]
+  },
+  {
+    id: "bh-restore-delete-reject-after-undo",
+    title: "restore delete reject after undo",
+    notes: "Breadth probe for restored window ownership followed by a delete rejection side effect.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["breadth", "restore", "undo-redo", "delete-rejection", "tombstone"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerUndo" },
+      { type: "outlinerDeleteWindowRejectingClose", window: { role: "focusedWindow" } },
+      { type: "sessionChanged" }
+    ]
+  },
+  {
+    id: "bh-restore-delayed-event-after-focus",
+    title: "restore delayed event after focus",
+    notes: "Breadth probe for restored delayed runtime evidence after command focus has changed active state.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["breadth", "restore", "focus", "delayed-event", "stale-event"],
+    actions: [
+      { type: "outlinerRestoreDeleteWindowDelayedEvent", window: { windowId: 20 }, captureStaleTabs: "bh-restore-focus-stale" },
+      { type: "outlinerFocusTab", tab: { tabId: 1 } },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "bh-restore-focus-stale" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "bh-focus-reject-same-window-session",
+    title: "focus reject same window session",
+    notes: "Breadth probe for a focus command whose tab activation side effect happens before adapter rejection.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["breadth", "focus", "activation", "command-rejection", "session"],
+    actions: [
+      { type: "outlinerFocusTabRejectingUpdate", tab: { tabId: 2 } },
+      { type: "sessionChanged" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "bh-focus-reject-cross-window-reordered",
+    title: "focus reject cross window reordered",
+    notes: "Breadth probe for a cross-window focus side effect that rejects and is followed by reordered old-window evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["breadth", "focus", "activation", "command-rejection", "stale-query"],
+    actions: [
+      { type: "outlinerFocusTabRejectingUpdate", tab: { tabId: 3 } },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 10 }, order: "reverse" }
+    ]
+  },
+  {
+    id: "bh-restore-create-reject-tab",
+    title: "restore create reject tab",
+    notes: "Breadth probe for restore fallback tab creation side effects followed by adapter rejection.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["breadth", "restore", "command-rejection", "created-event", "session"],
+    actions: [
+      { type: "outlinerCloseTab", tab: { tabId: 2 } },
+      { type: "outlinerRestoreNodeRejectingCreate", node: { nodeId: "tab:2" } },
+      { type: "sessionChanged" }
+    ]
+  },
+  {
+    id: "bh-relocation-reject-after-second-relocation",
+    title: "relocation reject after second relocation",
+    notes: "Breadth probe for a rejected command-created relocation followed by another relocation attempt and partial evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["breadth", "relocation", "command-rejection", "partial-snapshot", "stale-event"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindowRejectingCreate", tab: { tabId: 1 }, captureStaleTabs: "bh-reject-second-first-old" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { role: "lastMovedTab" }, captureStaleTabs: "bh-reject-second-second-old" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { role: "lastOpenedWindow" } },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "bh-reject-second-first-old" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "bh-query-missing-source-reorder-destination",
+    title: "query missing source reorder destination",
+    notes: "Breadth probe for multi-window query skew where one window is missing and another is reordered.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["breadth", "partial-snapshot", "stale-query", "relocation", "manual-refresh"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "bh-query-missing-source-old" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { windowId: 10 } },
+      { type: "manualRefreshWithReorderedQuery", window: { role: "lastOpenedWindow" }, order: "reverse" }
+    ]
+  },
+  {
+    id: "bh-query-empty-focused-background-active",
+    title: "query empty focused background active",
+    notes: "Breadth probe for missing focused-window evidence while a background tab becomes active.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["breadth", "partial-snapshot", "focus", "activation", "manual-refresh"],
+    actions: [
+      { type: "openTab", window: { windowId: 20 }, active: true, captureTab: "bh-query-background-active" },
+      { type: "focusWindow", window: { windowId: 20 } },
+      { type: "manualRefreshWithMissingWindowQuery", window: { windowId: 20 } },
+      { type: "activateTab", tab: { tabId: 1 } }
+    ]
+  },
+  {
+    id: "bh-query-reordered-source-destination-pair",
+    title: "query reordered source destination pair",
+    notes: "Breadth probe for back-to-back reordered source and destination snapshots after relocation.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["breadth", "stale-query", "relocation", "manual-refresh"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "bh-query-reorder-pair-old" },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 10 }, order: "rotateLeft" },
+      { type: "manualRefreshWithReorderedQuery", window: { role: "lastOpenedWindow" }, order: "rotateRight" }
+    ]
+  },
+  {
+    id: "bh-query-stale-event-partial-two-windows",
+    title: "query stale event partial two windows",
+    notes: "Breadth probe for stale event-local evidence followed by a missing-window snapshot across another window.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["breadth", "stale-event", "partial-snapshot", "relocation", "manual-refresh"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "bh-query-stale-partial-old" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "bh-query-stale-partial-old" }, withStaleQuery: true },
+      { type: "manualRefreshWithMissingWindowQuery", window: { windowId: 20 } }
+    ]
+  },
+  {
+    id: "bh-restart-opener-restore-mix",
+    title: "restart opener restore mix",
+    notes: "Breadth probe for opener-linked closed tab recovery across a restart and manual refresh.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["breadth", "restart", "opener", "restore", "undo-redo", "manual-refresh"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, openerTab: { tabId: 1 }, captureTab: "bh-restart-opener-restore-child" },
+      { type: "outlinerCloseTab", tab: { capture: "bh-restart-opener-restore-child" } },
+      { type: "restartBackground" },
+      { type: "outlinerUndo" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "bh-restart-focus-reject",
+    title: "restart focus reject",
+    notes: "Breadth probe for command-focus side effects that reject before restart reconstruction.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["breadth", "restart", "focus", "activation", "command-rejection", "stale-query"],
+    actions: [
+      { type: "outlinerFocusTabRejectingUpdate", tab: { tabId: 2 } },
+      { type: "restartBackground" },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 10 }, order: "rotateRight" }
+    ]
+  },
+  {
+    id: "bh-restart-multiple-open-session-churn",
+    title: "restart multiple open session churn",
+    notes: "Breadth probe for multiple browser-created tabs crossing restart with session churn and reordered evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["breadth", "restart", "created-event", "session", "stale-query", "manual-refresh"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, captureTab: "bh-restart-multi-open-a" },
+      { type: "openTab", window: { windowId: 20 }, active: true, captureTab: "bh-restart-multi-open-b" },
+      { type: "restartBackground" },
+      { type: "sessionChanged" },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 10 }, order: "reverse" },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 20 }, order: "rotateLeft" }
+    ]
+  },
+  {
+    id: "bh-restart-runtime-id-gap",
+    title: "restart runtime id gap",
+    notes: "Breadth probe for runtime tab ID gaps from native close before restart followed by a new browser-created tab.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["breadth", "restart", "created-event", "native-close", "session", "manual-refresh"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, captureTab: "bh-restart-gap-closed" },
+      { type: "nativeCloseTab", tab: { capture: "bh-restart-gap-closed" }, order: "sessionChangedOnly" },
+      { type: "restartBackground" },
+      { type: "openTab", window: { windowId: 10 }, active: false, captureTab: "bh-restart-gap-opened" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "bh-restore-create-reject-window",
+    title: "restore create reject window",
+    notes: "Breadth probe for restored window creation side effects followed by adapter rejection.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["breadth", "restore", "command-rejection", "created-event", "session"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeRejectingCreate", node: { nodeId: "window:20" } },
+      { type: "sessionChanged" }
+    ]
+  },
+  {
+    id: "bh-restart-restore-create-reject-tab",
+    title: "restart restore create reject tab",
+    notes: "Breadth probe for tab restore creation rejection after startup reconstruction has lost command-local facts.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["breadth", "restart", "restore", "command-rejection", "created-event", "manual-refresh"],
+    actions: [
+      { type: "outlinerCloseTab", tab: { tabId: 2 } },
+      { type: "restartBackground" },
+      { type: "outlinerRestoreNodeRejectingCreate", node: { nodeId: "tab:2" } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "bh-restore-create-reject-tab-after-redo",
+    title: "restore create reject tab after redo",
+    notes: "Breadth probe for restore creation rejection after history replay has closed the tab again.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["breadth", "restore", "undo-redo", "command-rejection", "created-event"],
+    actions: [
+      { type: "outlinerCloseTab", tab: { tabId: 2 } },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedo" },
+      { type: "outlinerRestoreNodeRejectingCreate", node: { nodeId: "tab:2" } }
+    ]
+  },
+  {
+    id: "bh-restart-restore-create-reject-window",
+    title: "restart restore create reject window",
+    notes: "Breadth probe for restored window creation rejection after background restart.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["breadth", "restart", "restore", "command-rejection", "created-event", "manual-refresh"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "restartBackground" },
+      { type: "outlinerRestoreNodeRejectingCreate", node: { nodeId: "window:20" } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "bh-focus-reject-after-relocation-restart",
+    title: "focus reject after relocation restart",
+    notes: "Breadth probe for focus side-effect rejection after command relocation and startup reconstruction.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["breadth", "restart", "focus", "activation", "command-rejection", "relocation", "stale-query"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "bh-focus-reject-relocated-old" },
+      { type: "restartBackground" },
+      { type: "outlinerFocusTabRejectingUpdate", tab: { role: "lastMovedTab" } },
+      { type: "manualRefreshWithReorderedQuery", window: { role: "lastOpenedWindow" }, order: "rotateRight" }
+    ]
+  },
+  {
+    id: "bh-focus-reject-opener-chain-query",
+    title: "focus reject opener chain query",
+    notes: "Breadth probe for opener-chain relocation followed by focus rejection and source-window reordered evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["breadth", "opener", "focus", "activation", "command-rejection", "relocation", "stale-query"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, openerTab: { tabId: 1 }, captureTab: "bh-focus-reject-opener-child" },
+      { type: "openTab", window: { windowId: 10 }, active: false, openerTab: { capture: "bh-focus-reject-opener-child" }, captureTab: "bh-focus-reject-opener-grandchild" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { capture: "bh-focus-reject-opener-grandchild" }, captureStaleTabs: "bh-focus-reject-opener-old" },
+      { type: "outlinerFocusTabRejectingUpdate", tab: { role: "lastMovedTab" } },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 10 }, order: "reverse" }
+    ]
+  },
+  {
+    id: "bh-query-missing-two-windows-reordered-focus",
+    title: "query missing two windows reordered focus",
+    notes: "Breadth probe for sequential missing-window and reordered-window query skew during focus churn.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["breadth", "partial-snapshot", "stale-query", "focus", "activation", "manual-refresh"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, captureTab: "bh-query-two-source" },
+      { type: "openTab", window: { windowId: 20 }, active: false, captureTab: "bh-query-two-background" },
+      { type: "focusWindow", window: { windowId: 20 } },
+      { type: "manualRefreshWithMissingWindowQuery", window: { windowId: 10 } },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 20 }, order: "reverse" },
+      { type: "activateTab", tab: { capture: "bh-query-two-background" } }
+    ]
+  },
+  {
+    id: "bh-restart-query-skew-id-gap-focus",
+    title: "restart query skew id gap focus",
+    notes: "Breadth probe for native ID gaps across restart followed by focus side-effect rejection and reordered current evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["breadth", "restart", "native-close", "focus", "activation", "command-rejection", "stale-query"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, captureTab: "bh-restart-skew-gap-tab" },
+      { type: "nativeCloseTab", tab: { capture: "bh-restart-skew-gap-tab" }, order: "sessionChangedOnly" },
+      { type: "restartBackground" },
+      { type: "outlinerFocusTabRejectingUpdate", tab: { tabId: 1 } },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 10 }, order: "rotateLeft" }
+    ]
+  },
+  {
+    id: "bh-nested-destination-window-only-stale-pair",
+    title: "nested destination window only stale pair",
+    notes: "Breadth probe for a multi-tab nested destination closed by windowRemoved-only before old source echoes arrive.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["breadth", "nested", "nested-window", "native-close", "event-order", "stale-event"],
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "bh-nested-dest-window-only-old" },
+      { type: "openTab", window: { role: "lastOpenedWindow" }, active: false, captureTab: "bh-nested-dest-window-only-extra" },
+      { type: "nativeCloseWindow", window: { role: "lastOpenedWindow" }, order: "windowRemovedOnly" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "bh-nested-dest-window-only-old" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "bh-nested-destination-tabs-only-reordered-source",
+    title: "nested destination tabs only reordered source",
+    notes: "Breadth probe for destination tab removals without window removal followed by reordered source evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["breadth", "nested", "nested-window", "native-close", "event-order", "stale-query"],
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "bh-nested-dest-tabs-only-old" },
+      { type: "openTab", window: { role: "lastOpenedWindow" }, active: false, captureTab: "bh-nested-dest-tabs-only-extra" },
+      { type: "nativeCloseWindow", window: { role: "lastOpenedWindow" }, order: "tabsRemovedOnly" },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 10 }, order: "rotateLeft" }
+    ]
+  },
+  {
+    id: "bh-opener-grandchild-source-window-only-after-focus",
+    title: "opener grandchild source window only after focus",
+    notes: "Breadth probe for a relocated opener grandchild focused before source windowRemoved-only evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["breadth", "opener", "focus", "activation", "native-close", "event-order", "stale-event"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, openerTab: { tabId: 1 }, captureTab: "bh-opener-window-only-child" },
+      { type: "openTab", window: { windowId: 10 }, active: false, openerTab: { capture: "bh-opener-window-only-child" }, captureTab: "bh-opener-window-only-grandchild" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { capture: "bh-opener-window-only-grandchild" }, captureStaleTabs: "bh-opener-window-only-old" },
+      { type: "outlinerFocusTab", tab: { role: "lastMovedTab" } },
+      { type: "nativeCloseWindow", window: { windowId: 10 }, order: "windowRemovedOnly" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "bh-opener-window-only-old" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "bh-opener-destination-tabs-only-extra-tab",
+    title: "opener destination tabs only extra tab",
+    notes: "Breadth probe for opener-linked relocation into a destination with another tab before tabsRemoved-only close.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["breadth", "opener", "native-close", "event-order", "partial-snapshot", "relocation"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, openerTab: { tabId: 1 }, captureTab: "bh-opener-dest-tabs-child" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { capture: "bh-opener-dest-tabs-child" }, captureStaleTabs: "bh-opener-dest-tabs-old" },
+      { type: "openTab", window: { role: "lastOpenedWindow" }, active: false, captureTab: "bh-opener-dest-tabs-extra" },
+      { type: "nativeCloseWindow", window: { role: "lastOpenedWindow" }, order: "tabsRemovedOnly" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { windowId: 10 } }
+    ]
+  },
+  {
+    id: "bh-query-missing-both-windows-sequential",
+    title: "query missing both windows sequential",
+    notes: "Breadth probe for separate partial snapshots omitting first the source window and then the background window.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["breadth", "partial-snapshot", "manual-refresh", "focus", "activation"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, captureTab: "bh-query-both-source" },
+      { type: "openTab", window: { windowId: 20 }, active: false, captureTab: "bh-query-both-background" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { windowId: 10 } },
+      { type: "manualRefreshWithMissingWindowQuery", window: { windowId: 20 } },
+      { type: "activateTab", tab: { capture: "bh-query-both-source" } }
+    ]
+  },
+  {
+    id: "bh-restart-opener-native-gap-reordered",
+    title: "restart opener native gap reordered",
+    notes: "Breadth probe for opener child native disappearance before restart, then reordered evidence after a new ID is allocated.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["breadth", "restart", "opener", "native-close", "session", "stale-query"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, openerTab: { tabId: 1 }, captureTab: "bh-restart-opener-gap-child" },
+      { type: "nativeCloseTab", tab: { capture: "bh-restart-opener-gap-child" }, order: "sessionChangedOnly" },
+      { type: "restartBackground" },
+      { type: "openTab", window: { windowId: 10 }, active: false, openerTab: { tabId: 1 }, captureTab: "bh-restart-opener-gap-new" },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 10 }, order: "rotateRight" }
+    ]
+  },
+  {
+    id: "bh-relocation-reject-then-focus-reject",
+    title: "relocation reject then focus reject",
+    notes: "Breadth probe for relocation create rejection followed by focus update rejection on the side-effect-created destination.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["breadth", "relocation", "focus", "activation", "command-rejection", "stale-query"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindowRejectingCreate", tab: { tabId: 1 }, captureStaleTabs: "bh-relocation-focus-reject-old" },
+      { type: "outlinerFocusTabRejectingUpdate", tab: { role: "lastMovedTab" } },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 10 }, order: "reverse" }
+    ]
+  },
+  {
+    id: "bh-history-opener-grandchild-missing-window",
+    title: "history opener grandchild missing window",
+    notes: "Breadth probe for opener grandchild relocation replayed through history before a missing source-window query.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["breadth", "opener", "undo-redo", "relocation", "partial-snapshot", "stale-query"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, openerTab: { tabId: 1 }, captureTab: "bh-history-opener-child" },
+      { type: "openTab", window: { windowId: 10 }, active: false, openerTab: { capture: "bh-history-opener-child" }, captureTab: "bh-history-opener-grandchild" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { capture: "bh-history-opener-grandchild" }, captureStaleTabs: "bh-history-opener-old" },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedo" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { windowId: 10 } },
+      { type: "manualRefreshWithReorderedQuery", window: { role: "focusedWindow" }, order: "rotateLeft" }
+    ]
+  },
+  {
+    id: "bh-history-nested-source-tabs-only-focus",
+    title: "history nested source tabs only focus",
+    notes: "Breadth probe for nested grouping replayed through history before focus churn and source tabsRemoved-only evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["breadth", "nested", "undo-redo", "native-close", "focus", "event-order"],
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "bh-history-nested-old" },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedo" },
+      { type: "openTab", window: { role: "focusedWindow" }, active: false, captureTab: "bh-history-nested-extra" },
+      { type: "focusWindow", window: { role: "focusedWindow" } },
+      { type: "nativeCloseWindow", window: { windowId: 10 }, order: "tabsRemovedOnly" }
+    ]
+  },
+  {
+    id: "bh-native-source-tabs-then-window-after-focus",
+    title: "native source tabs then window after focus",
+    notes: "Breadth probe for source close ordering after a relocated tab and cross-window focus churn.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["breadth", "native-close", "event-order", "focus", "relocation", "manual-refresh"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "bh-native-source-order-old" },
+      { type: "outlinerFocusTab", tab: { tabId: 3 } },
+      { type: "nativeCloseWindow", window: { windowId: 10 }, order: "tabsRemovedThenWindowRemoved" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { role: "lastOpenedWindow" } }
+    ]
+  },
+  {
+    id: "bh-native-destination-window-only-after-reorder",
+    title: "native destination window only after reorder",
+    notes: "Breadth probe for reordered destination evidence immediately before a windowRemoved-only destination close.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["breadth", "native-close", "event-order", "stale-query", "relocation", "manual-refresh"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "bh-native-dest-window-only-old" },
+      { type: "openTab", window: { role: "lastOpenedWindow" }, active: false, captureTab: "bh-native-dest-window-only-extra" },
+      { type: "manualRefreshWithReorderedQuery", window: { role: "lastOpenedWindow" }, order: "reverse" },
+      { type: "nativeCloseWindow", window: { role: "lastOpenedWindow" }, order: "windowRemovedOnly" }
+    ]
+  },
+  {
+    id: "bh-query-no-command-missing-reordered-pair",
+    title: "query no command missing reordered pair",
+    notes: "Breadth probe for partial and reordered snapshots across two windows without command ownership facts.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["breadth", "partial-snapshot", "stale-query", "manual-refresh", "focus"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, captureTab: "bh-query-no-command-source" },
+      { type: "openTab", window: { windowId: 20 }, active: true, captureTab: "bh-query-no-command-background" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { windowId: 20 } },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 10 }, order: "rotateRight" },
+      { type: "focusWindow", window: { windowId: 10 } }
+    ]
+  },
+  {
+    id: "bh-restart-after-partial-query-no-command",
+    title: "restart after partial query no command",
+    notes: "Breadth probe for startup reconstruction after a partial query that omitted a browser-created background tab.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["breadth", "restart", "partial-snapshot", "created-event", "session", "manual-refresh"],
+    actions: [
+      { type: "openTab", window: { windowId: 20 }, active: false, captureTab: "bh-restart-partial-background" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { windowId: 20 } },
+      { type: "restartBackground" },
+      { type: "sessionChanged" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "bh-session-focus-nested-multitab-restart",
+    title: "session focus nested multitab restart",
+    notes: "Breadth probe for nested multi-tab ownership across session churn, restart, focus, and reordered destination evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["breadth", "nested", "restart", "focus", "session", "stale-query"],
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "bh-session-nested-old" },
+      { type: "openTab", window: { role: "lastOpenedWindow" }, active: false, captureTab: "bh-session-nested-extra" },
+      { type: "sessionChanged" },
+      { type: "restartBackground" },
+      { type: "focusWindow", window: { role: "lastOpenedWindow" } },
+      { type: "manualRefreshWithReorderedQuery", window: { role: "lastOpenedWindow" }, order: "rotateRight" }
+    ]
+  },
+  {
+    id: "bh-opener-history-source-tabs-only-restart",
+    title: "opener history source tabs only restart",
+    notes: "Breadth probe for opener relocation replayed through history and restart before source tabsRemoved-only evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["breadth", "opener", "undo-redo", "restart", "native-close", "event-order"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, openerTab: { tabId: 1 }, captureTab: "bh-opener-history-restart-child" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { capture: "bh-opener-history-restart-child" }, captureStaleTabs: "bh-opener-history-restart-old" },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedo" },
+      { type: "restartBackground" },
+      { type: "nativeCloseWindow", window: { windowId: 10 }, order: "tabsRemovedOnly" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "bh-query-two-command-windows-reordered",
+    title: "query two command windows reordered",
+    notes: "Breadth probe for multiple command-created windows with reordered source, background, and newest destination snapshots.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["breadth", "relocation", "stale-query", "manual-refresh", "focus"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "bh-query-two-command-first-old" },
+      { type: "openTab", window: { windowId: 20 }, active: false, captureTab: "bh-query-two-command-background-survivor" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 3 }, captureStaleTabs: "bh-query-two-command-second-old" },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 10 }, order: "reverse" },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 20 }, order: "rotateLeft" },
+      { type: "manualRefreshWithReorderedQuery", window: { role: "lastOpenedWindow" }, order: "rotateRight" }
+    ]
+  },
+  {
+    id: "bh-native-background-window-only-no-command-restart",
+    title: "native background window only no command restart",
+    notes: "Breadth probe for a browser-only background windowRemoved event crossing restart without command ownership facts.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["breadth", "native-close", "event-order", "restart", "created-event", "manual-refresh"],
+    actions: [
+      { type: "openTab", window: { windowId: 20 }, active: false, captureTab: "bh-native-background-window-only-extra" },
+      { type: "nativeCloseWindow", window: { windowId: 20 }, order: "windowRemovedOnly" },
+      { type: "restartBackground" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "bh-focus-after-session-only-close-missing-source",
+    title: "focus after session only close missing source",
+    notes: "Breadth probe for focus side-effect rejection after a session-only tab disappearance and missing source-window query.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["breadth", "focus", "activation", "native-close", "session", "partial-snapshot", "command-rejection"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, captureTab: "bh-focus-session-only-closed" },
+      { type: "nativeCloseTab", tab: { capture: "bh-focus-session-only-closed" }, order: "sessionChangedOnly" },
+      { type: "outlinerFocusTabRejectingUpdate", tab: { tabId: 1 } },
+      { type: "manualRefreshWithMissingWindowQuery", window: { windowId: 10 } }
+    ]
+  },
+  {
+    id: "bh-relocation-reject-source-window-only-restart",
+    title: "relocation reject source window only restart",
+    notes: "Breadth probe for relocation create rejection followed by source windowRemoved-only evidence across restart.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["breadth", "relocation", "command-rejection", "restart", "native-close", "stale-event"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindowRejectingCreate", tab: { tabId: 1 }, captureStaleTabs: "bh-reject-source-window-only-old" },
+      { type: "nativeCloseWindow", window: { windowId: 10 }, order: "windowRemovedOnly" },
+      { type: "restartBackground" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "bh-reject-source-window-only-old" }, withStaleQuery: true }
+    ]
   }
 ];
 
@@ -5750,6 +6495,11 @@ async function runDomainAction(context: GeneratedTraceContext, action: DomainAct
     return;
   }
 
+  if (action.type === "outlinerFocusTabRejectingUpdate") {
+    await runDomainOutlinerFocusTabRejectingUpdate(context, action.tab);
+    return;
+  }
+
   if (action.type === "outlinerCloseTab") {
     await runDomainOutlinerCloseTab(context, action.tab);
     return;
@@ -5777,6 +6527,11 @@ async function runDomainAction(context: GeneratedTraceContext, action: DomainAct
 
   if (action.type === "outlinerRestoreDeleteWindowDelayedEvent") {
     await runDomainOutlinerRestoreDeleteWindowDelayedEvent(context, action.window, action.captureStaleTabs);
+    return;
+  }
+
+  if (action.type === "outlinerRestoreNodeRejectingCreate") {
+    await runDomainOutlinerRestoreNodeRejectingCreate(context, action.node);
     return;
   }
 
@@ -6074,6 +6829,28 @@ async function runDomainOutlinerFocusTab(
   await flushGeneratedRuntimeEventRefreshes(context);
 }
 
+async function runDomainOutlinerFocusTabRejectingUpdate(
+  context: GeneratedTraceContext,
+  selector: DomainTabSelector
+): Promise<void> {
+  const tab = resolveDomainTab(context, selector);
+  const state = (await context.controller.handleMessage({ type: "getState" })) as OutlineState;
+  vi.mocked(context.runtime.api.tabs.update).mockImplementationOnce(async (tabId, updateProperties = {}) => {
+    await updateTabFromBrowser(context.runtime, tabId, updateProperties as Partial<RuntimeTab>, { awaitListeners: false });
+    throw new Error("domain focus tab update rejected after completion");
+  });
+  try {
+    const result = await context.controller.handleMessage({
+      type: "focusNode",
+      nodeId: liveTabNodeIdForRuntimeTab(state, tab.id)
+    });
+    expect((result as CommandAck).type).toBe("commandAck");
+  } catch {
+    // The breadth action models a browser side effect that completes before the command rejects.
+  }
+  await flushGeneratedRuntimeEventRefreshes(context);
+}
+
 async function runDomainOutlinerCloseWindow(
   context: GeneratedTraceContext,
   selector: DomainWindowSelector
@@ -6244,6 +7021,44 @@ async function runDomainOutlinerRestoreDeleteWindowDelayedEvent(
   await context.runtime.events.tabUpdated.flush();
   await closeRuntimeWindow(context.runtime, restoredWindowId, { awaitListeners: true });
   await pruneMissingExpectedClosedNodes(context, []);
+}
+
+async function runDomainOutlinerRestoreNodeRejectingCreate(
+  context: GeneratedTraceContext,
+  selector: DomainNodeSelector
+): Promise<void> {
+  const state = (await context.controller.handleMessage({ type: "getState" })) as OutlineState;
+  const nodeId = resolveDomainNodeId(context, state, selector);
+  vi.mocked(context.runtime.api.tabs.create).mockImplementationOnce(async (createProperties) => {
+    const windowId =
+      createProperties.windowId ??
+      context.runtime.windows.find((windowInfo) => windowInfo.focused)?.id ??
+      context.runtime.windows[0]?.id;
+    if (typeof windowId !== "number") {
+      throw new Error("Cannot create a rejecting restore tab without a window");
+    }
+    const tab: RuntimeTab = {
+      id: nextRuntimeTabId(context.runtime),
+      windowId,
+      index: tabsInRuntimeWindow(context.runtime, windowId).length,
+      active: createProperties.active ?? true,
+      url: createProperties.url,
+      title: createProperties.url
+    };
+    await createTabFromBrowser(context.runtime, tab, { awaitListeners: false });
+    throw new Error("domain restore tab create rejected after completion");
+  });
+  vi.mocked(context.runtime.api.windows.create).mockImplementationOnce(async (createData = {}) => {
+    createWindowFromBrowser(context.runtime, createData as FakeWindowCreateData);
+    throw new Error("domain restore window create rejected after completion");
+  });
+  try {
+    const result = await context.controller.handleMessage({ type: "restoreNode", nodeId });
+    expect((result as CommandAck).type).toBe("commandAck");
+  } catch {
+    // The breadth action models a browser create/restore side effect that completes before the command rejects.
+  }
+  await flushGeneratedRuntimeEventRefreshes(context);
 }
 
 async function runDomainManualRefresh(context: GeneratedTraceContext): Promise<void> {
