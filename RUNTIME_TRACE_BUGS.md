@@ -13,7 +13,7 @@ pnpm trace-hunt:runtime
 Default hunt bounds:
 
 - Corpus run cap: 5 minutes
-- Agent stop condition: 3 consecutive agent mutation cycles with no new distinct findings
+- Agent stop condition: 3 consecutive clean 5-minute mutation rounds with no new distinct findings
 - Trace selection: execute the current explicit domain trace corpus once, recording every distinct failure; mutate domain actions between runs instead of perturbing seeds
 - Test target: `src/background/controller.test.ts`
 - Test name: `adversarial runtime domain traces`
@@ -21,17 +21,17 @@ Default hunt bounds:
 
 ## Last Domain Run
 
-- Completed: 2026-05-23T12:03:00.391Z
+- Completed: 2026-05-23T12:40:37Z
 - Strategy: explicit domain trace corpus, with agent-in-loop trace edits between hunt iterations
 - Trace ids: current default corpus in `scripts/hunt-runtime-traces.mjs`
-- Distinct domain findings recorded: 3
-- New finding in this hunt: RT-011
-- Stop condition reached: 3 agent mutation cycles after RT-011 found no new distinct signatures
-- Duplicate failures during final clean streak: 3
+- Distinct domain findings recorded: 13
+- New findings in corrected 5-minute-round hunt: RT-012 through RT-021
+- Stop condition reached: yes; after RT-021, 3 consecutive 5-minute mutation rounds found no new distinct signatures
+- Duplicate failures during final clean 5-minute streak: 66
 
 ## Finding Index
 
-- Current domain trace adversary: RT-009 through RT-011
+- Current domain trace adversary: RT-009 through RT-021
 - Previous adaptive seed-frontier run: RT-001 through RT-008
 - Recovered pre-adaptive seed sweep: SS-001 through SS-006
 
@@ -647,3 +647,247 @@ action 2: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"role":"lastMovedTa
 <!-- hunt-corpus-run: {"at":"2026-05-23T12:02:09.481Z","mode":"agent-corpus-run","firstTraceId":"rt-active-race","lastTraceId":"rt-repeated-direct-relocation-native-close-stale-event","runs":14,"completedCorpus":true,"failures":1,"duplicateFailures":1,"newFindings":0} -->
 
 <!-- hunt-corpus-run: {"at":"2026-05-23T12:03:00.391Z","mode":"agent-corpus-run","firstTraceId":"rt-active-race","lastTraceId":"rt-repeated-top-level-relocation-with-filler-stale-events","runs":15,"completedCorpus":true,"failures":1,"duplicateFailures":1,"newFindings":0} -->
+
+### RT-012 expected closed node window:10 is missing
+<!-- signature: expected closed node window:<id> is missing
+domain trace: rt-direct-new-window-native-close-old-window-stale-created
+action: {"type":"nativeCloseWindow","window":{"windowId":10}} -->
+
+- First seen: 2026-05-23T12:09:19.101Z
+- Trace id: `rt-direct-new-window-native-close-old-window-stale-created`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=rt-direct-new-window-native-close-old-window-stale-created pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace rt-direct-new-window-native-close-old-window-stale-created: stale created event follows direct relocation after native old-window close
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"direct-old-window-before-native-close"}
+action 2: {"type":"nativeCloseWindow","window":{"windowId":10}}
+Domain trace: rt-direct-new-window-native-close-old-window-stale-created
+Action 2: {"type":"nativeCloseWindow","window":{"windowId":10}}
+Trace:
+domain trace rt-direct-new-window-native-close-old-window-stale-created: stale created event follows direct relocation after native old-window close
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"direct-old-window-before-native-close"}
+action 2: {"type":"nativeCloseWindow","window":{"windowId":10}}
+```
+
+### RT-013 expected closed node window:10 is missing
+<!-- signature: expected closed node window:<id> is missing
+domain trace: rt-top-level-native-close-old-window-stale-created
+action: {"type":"nativeCloseWindow","window":{"windowId":10}} -->
+
+- First seen: 2026-05-23T12:09:21.125Z
+- Trace id: `rt-top-level-native-close-old-window-stale-created`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=rt-top-level-native-close-old-window-stale-created pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace rt-top-level-native-close-old-window-stale-created: stale created event follows top-level relocation after native old-window close
+action 1: {"type":"outlinerMoveSubtreeToTopLevel","tab":{"tabId":1},"captureStaleTabs":"top-level-old-window-before-native-close"}
+action 2: {"type":"nativeCloseWindow","window":{"windowId":10}}
+Domain trace: rt-top-level-native-close-old-window-stale-created
+Action 2: {"type":"nativeCloseWindow","window":{"windowId":10}}
+Trace:
+domain trace rt-top-level-native-close-old-window-stale-created: stale created event follows top-level relocation after native old-window close
+action 1: {"type":"outlinerMoveSubtreeToTopLevel","tab":{"tabId":1},"captureStaleTabs":"top-level-old-window-before-native-close"}
+action 2: {"type":"nativeCloseWindow","window":{"windowId":10}}
+```
+
+### RT-014 expected closed node tab:2 is missing
+<!-- signature: expected closed node tab:<id> is missing
+domain trace: rt-group-native-close-old-window-stale-updated
+action: {"type":"nativeCloseWindow","window":{"windowId":10}} -->
+
+- First seen: 2026-05-23T12:09:22.104Z
+- Trace id: `rt-group-native-close-old-window-stale-updated`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=rt-group-native-close-old-window-stale-updated pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace rt-group-native-close-old-window-stale-updated: stale updated event follows grouping relocation after native old-window close
+action 1: {"type":"outlinerGroupTab","tab":{"tabId":1},"captureStaleTabs":"group-old-window-before-native-close"}
+action 2: {"type":"nativeCloseWindow","window":{"windowId":10}}
+Domain trace: rt-group-native-close-old-window-stale-updated
+Action 2: {"type":"nativeCloseWindow","window":{"windowId":10}}
+Trace:
+domain trace rt-group-native-close-old-window-stale-updated: stale updated event follows grouping relocation after native old-window close
+action 1: {"type":"outlinerGroupTab","tab":{"tabId":1},"captureStaleTabs":"group-old-window-before-native-close"}
+action 2: {"type":"nativeCloseWindow","window":{"windowId":10}}
+```
+
+<!-- hunt-corpus-run: {"at":"2026-05-23T12:09:22.104Z","mode":"agent-corpus-run","firstTraceId":"rt-active-race","lastTraceId":"rt-group-native-close-old-window-stale-updated","runs":19,"completedCorpus":true,"failures":4,"duplicateFailures":1,"newFindings":3} -->
+
+### RT-015 domain window close rejected after completion
+<!-- signature: domain window close rejected after completion
+domain trace: rt-group-delete-old-window-rejecting-close-stale-created
+action: {"type":"outlinerDeleteWindowRejectingClose","window":{"windowId":10}} -->
+
+- First seen: 2026-05-23T12:10:40.932Z
+- Trace id: `rt-group-delete-old-window-rejecting-close-stale-created`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=rt-group-delete-old-window-rejecting-close-stale-created pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace rt-group-delete-old-window-rejecting-close-stale-created: stale created event follows grouping relocation after delete-owned old-window close
+action 1: {"type":"outlinerGroupTab","tab":{"tabId":1},"captureStaleTabs":"group-old-window-before-delete-close"}
+action 2: {"type":"outlinerDeleteWindowRejectingClose","window":{"windowId":10}}
+```
+
+<!-- hunt-corpus-run: {"at":"2026-05-23T12:10:42.915Z","mode":"agent-corpus-run","firstTraceId":"rt-active-race","lastTraceId":"rt-group-outliner-close-old-window-stale-updated","runs":24,"completedCorpus":true,"failures":5,"duplicateFailures":4,"newFindings":1} -->
+
+### RT-016 expected closed node window:21 is missing
+<!-- signature: expected closed node window:<id> is missing
+domain trace: rt-direct-new-window-native-close-destination-stale-updated
+action: {"type":"nativeCloseWindow","window":{"role":"lastOpenedWindow"}} -->
+
+- First seen: 2026-05-23T12:12:05.042Z
+- Trace id: `rt-direct-new-window-native-close-destination-stale-updated`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=rt-direct-new-window-native-close-destination-stale-updated pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace rt-direct-new-window-native-close-destination-stale-updated: stale updated event follows native destination-window close after direct relocation
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"direct-old-window-before-destination-native-close"}
+action 2: {"type":"nativeCloseWindow","window":{"role":"lastOpenedWindow"}}
+Domain trace: rt-direct-new-window-native-close-destination-stale-updated
+Action 2: {"type":"nativeCloseWindow","window":{"role":"lastOpenedWindow"}}
+Trace:
+domain trace rt-direct-new-window-native-close-destination-stale-updated: stale updated event follows native destination-window close after direct relocation
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"direct-old-window-before-destination-native-close"}
+action 2: {"type":"nativeCloseWindow","window":{"role":"lastOpenedWindow"}}
+```
+
+<!-- hunt-corpus-run: {"at":"2026-05-23T12:12:08.441Z","mode":"agent-corpus-run","firstTraceId":"rt-active-race","lastTraceId":"rt-group-outliner-close-destination-stale-created","runs":28,"completedCorpus":true,"failures":6,"duplicateFailures":5,"newFindings":1} -->
+
+### RT-017 native-deleted node tab:1 was resurrected
+<!-- signature: native-deleted node tab:<id> was resurrected
+domain trace: rt-top-level-native-close-tab-removed-only-stale-created
+action: {"type":"nativeCloseTab","tab":{"role":"lastMovedTab"},"order":"tabRemovedOnly"} -->
+
+- First seen: 2026-05-23T12:13:37.651Z
+- Trace id: `rt-top-level-native-close-tab-removed-only-stale-created`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=rt-top-level-native-close-tab-removed-only-stale-created pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace rt-top-level-native-close-tab-removed-only-stale-created: stale created event follows top-level relocation after tab-removed-only native close
+action 1: {"type":"outlinerMoveSubtreeToTopLevel","tab":{"tabId":1},"captureStaleTabs":"top-level-old-window-before-tab-removed-only"}
+action 2: {"type":"nativeCloseTab","tab":{"role":"lastMovedTab"},"order":"tabRemovedOnly"}
+Domain trace: rt-top-level-native-close-tab-removed-only-stale-created
+Action 2: {"type":"nativeCloseTab","tab":{"role":"lastMovedTab"},"order":"tabRemovedOnly"}
+Trace:
+domain trace rt-top-level-native-close-tab-removed-only-stale-created: stale created event follows top-level relocation after tab-removed-only native close
+action 1: {"type":"outlinerMoveSubtreeToTopLevel","tab":{"tabId":1},"captureStaleTabs":"top-level-old-window-before-tab-removed-only"}
+action 2: {"type":"nativeCloseTab","tab":{"role":"lastMovedTab"},"order":"tabRemovedOnly"}
+```
+
+<!-- hunt-corpus-run: {"at":"2026-05-23T12:13:38.658Z","mode":"agent-corpus-run","firstTraceId":"rt-active-race","lastTraceId":"rt-group-native-close-session-only-stale-updated","runs":32,"completedCorpus":true,"failures":7,"duplicateFailures":6,"newFindings":1} -->
+
+### RT-018 native-deleted node tab:1 was resurrected
+<!-- signature: native-deleted node tab:<id> was resurrected
+domain trace: rt-top-level-native-close-session-only-stale-updated
+action: {"type":"nativeCloseTab","tab":{"role":"lastMovedTab"},"order":"sessionChangedOnly"} -->
+
+- First seen: 2026-05-23T12:15:05.701Z
+- Trace id: `rt-top-level-native-close-session-only-stale-updated`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=rt-top-level-native-close-session-only-stale-updated pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace rt-top-level-native-close-session-only-stale-updated: stale updated event follows top-level relocation after session-only native close
+action 1: {"type":"outlinerMoveSubtreeToTopLevel","tab":{"tabId":1},"captureStaleTabs":"top-level-old-window-before-session-only"}
+action 2: {"type":"nativeCloseTab","tab":{"role":"lastMovedTab"},"order":"sessionChangedOnly"}
+Domain trace: rt-top-level-native-close-session-only-stale-updated
+Action 2: {"type":"nativeCloseTab","tab":{"role":"lastMovedTab"},"order":"sessionChangedOnly"}
+Trace:
+domain trace rt-top-level-native-close-session-only-stale-updated: stale updated event follows top-level relocation after session-only native close
+action 1: {"type":"outlinerMoveSubtreeToTopLevel","tab":{"tabId":1},"captureStaleTabs":"top-level-old-window-before-session-only"}
+action 2: {"type":"nativeCloseTab","tab":{"role":"lastMovedTab"},"order":"sessionChangedOnly"}
+```
+
+<!-- hunt-corpus-run: {"at":"2026-05-23T12:15:08.045Z","mode":"agent-corpus-run","firstTraceId":"rt-active-race","lastTraceId":"rt-direct-new-window-native-close-default-order-stale-created","runs":35,"completedCorpus":true,"failures":8,"duplicateFailures":7,"newFindings":1} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-23T12:16:51.275Z","mode":"agent-corpus-run","firstTraceId":"rt-active-race","lastTraceId":"rt-group-stale-activation-after-focus","runs":38,"completedCorpus":true,"failures":8,"duplicateFailures":8,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-23T12:18:20.150Z","mode":"agent-corpus-run","firstTraceId":"rt-active-race","lastTraceId":"rt-group-old-window-activation-with-stale-relocated-tab","runs":41,"completedCorpus":true,"failures":8,"duplicateFailures":8,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-23T12:22:37.686Z","mode":"agent-corpus-run","firstTraceId":"rt-active-race","lastTraceId":"rt-group-command-focus-stale-updated","runs":44,"completedCorpus":true,"failures":8,"duplicateFailures":8,"newFindings":0} -->
+
+### RT-019 live window IDs match runtime windows
+<!-- signature: live window IDs match runtime windows
+domain trace: rt-direct-new-window-delete-tab-rejecting-close-stale-created
+action: {"type":"outlinerDeleteTabRejectingClose","tab":{"role":"lastMovedTab"}} -->
+
+- First seen: 2026-05-23T12:24:27.228Z
+- Trace id: `rt-direct-new-window-delete-tab-rejecting-close-stale-created`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=rt-direct-new-window-delete-tab-rejecting-close-stale-created pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace rt-direct-new-window-delete-tab-rejecting-close-stale-created: stale created event follows direct relocation after delete-owned tab close rejection
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"direct-old-window-before-delete-tab"}
+action 2: {"type":"outlinerDeleteTabRejectingClose","tab":{"role":"lastMovedTab"}}
+Domain trace: rt-direct-new-window-delete-tab-rejecting-close-stale-created
+Action 2: {"type":"outlinerDeleteTabRejectingClose","tab":{"role":"lastMovedTab"}}
+Trace:
+domain trace rt-direct-new-window-delete-tab-rejecting-close-stale-created: stale created event follows direct relocation after delete-owned tab close rejection
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"direct-old-window-before-delete-tab"}
+action 2: {"type":"outlinerDeleteTabRejectingClose","tab":{"role":"lastMovedTab"}}
+```
+
+### RT-020 live window IDs match runtime windows
+<!-- signature: live window IDs match runtime windows
+domain trace: rt-top-level-delete-tab-rejecting-close-stale-updated
+action: {"type":"outlinerDeleteTabRejectingClose","tab":{"role":"lastMovedTab"}} -->
+
+- First seen: 2026-05-23T12:24:28.425Z
+- Trace id: `rt-top-level-delete-tab-rejecting-close-stale-updated`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=rt-top-level-delete-tab-rejecting-close-stale-updated pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace rt-top-level-delete-tab-rejecting-close-stale-updated: stale updated event follows top-level relocation after delete-owned tab close rejection
+action 1: {"type":"outlinerMoveSubtreeToTopLevel","tab":{"tabId":1},"captureStaleTabs":"top-level-old-window-before-delete-tab"}
+action 2: {"type":"outlinerDeleteTabRejectingClose","tab":{"role":"lastMovedTab"}}
+Domain trace: rt-top-level-delete-tab-rejecting-close-stale-updated
+Action 2: {"type":"outlinerDeleteTabRejectingClose","tab":{"role":"lastMovedTab"}}
+Trace:
+domain trace rt-top-level-delete-tab-rejecting-close-stale-updated: stale updated event follows top-level relocation after delete-owned tab close rejection
+action 1: {"type":"outlinerMoveSubtreeToTopLevel","tab":{"tabId":1},"captureStaleTabs":"top-level-old-window-before-delete-tab"}
+action 2: {"type":"outlinerDeleteTabRejectingClose","tab":{"role":"lastMovedTab"}}
+```
+
+### RT-021 live window IDs match runtime windows
+<!-- signature: live window IDs match runtime windows
+domain trace: rt-group-delete-tab-rejecting-close-stale-created
+action: {"type":"outlinerDeleteTabRejectingClose","tab":{"role":"lastMovedTab"}} -->
+
+- First seen: 2026-05-23T12:24:29.644Z
+- Trace id: `rt-group-delete-tab-rejecting-close-stale-created`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=rt-group-delete-tab-rejecting-close-stale-created pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace rt-group-delete-tab-rejecting-close-stale-created: stale created event follows grouping relocation after delete-owned tab close rejection
+action 1: {"type":"outlinerGroupTab","tab":{"tabId":1},"captureStaleTabs":"group-old-window-before-delete-tab"}
+action 2: {"type":"outlinerDeleteTabRejectingClose","tab":{"role":"lastMovedTab"}}
+Domain trace: rt-group-delete-tab-rejecting-close-stale-created
+Action 2: {"type":"outlinerDeleteTabRejectingClose","tab":{"role":"lastMovedTab"}}
+Trace:
+domain trace rt-group-delete-tab-rejecting-close-stale-created: stale created event follows grouping relocation after delete-owned tab close rejection
+action 1: {"type":"outlinerGroupTab","tab":{"tabId":1},"captureStaleTabs":"group-old-window-before-delete-tab"}
+action 2: {"type":"outlinerDeleteTabRejectingClose","tab":{"role":"lastMovedTab"}}
+```
+
+<!-- hunt-corpus-run: {"at":"2026-05-23T12:24:29.644Z","mode":"agent-corpus-run","firstTraceId":"rt-active-race","lastTraceId":"rt-group-delete-tab-rejecting-close-stale-created","runs":47,"completedCorpus":true,"failures":11,"duplicateFailures":8,"newFindings":3} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-23T12:26:33.600Z","mode":"agent-corpus-run","firstTraceId":"rt-active-race","lastTraceId":"rt-group-outliner-close-tab-stale-updated","runs":50,"completedCorpus":true,"failures":11,"duplicateFailures":11,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-23T12:28:17.750Z","mode":"agent-corpus-run","firstTraceId":"rt-active-race","lastTraceId":"rt-group-close-source-tab-stale-created","runs":53,"completedCorpus":true,"failures":11,"duplicateFailures":11,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-23T12:31:50.005Z","mode":"agent-corpus-run","firstTraceId":"rt-active-race","lastTraceId":"rt-group-stale-updated-fast-path-after-fresh-event","runs":56,"completedCorpus":true,"failures":11,"duplicateFailures":11,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-23T12:33:38.602Z","mode":"agent-corpus-run","firstTraceId":"rt-active-race","lastTraceId":"rt-group-paired-stale-events-after-fresh-event","runs":59,"completedCorpus":true,"failures":11,"duplicateFailures":11,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-23T12:37:21.785Z","mode":"agent-corpus-run","firstTraceId":"rt-active-race","lastTraceId":"rt-group-open-active-source-tab-stale-updated","runs":62,"completedCorpus":true,"failures":11,"duplicateFailures":11,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-23T12:39:16.910Z","mode":"agent-corpus-run","firstTraceId":"rt-active-race","lastTraceId":"rt-group-open-active-destination-tab-stale-created","runs":65,"completedCorpus":true,"failures":11,"duplicateFailures":11,"newFindings":0} -->

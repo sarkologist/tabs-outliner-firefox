@@ -1099,12 +1099,24 @@ type DomainAction =
       captureStaleTabs?: string;
     }
   | {
+      type: "outlinerFocusTab";
+      tab: DomainTabSelector;
+    }
+  | {
+      type: "outlinerCloseTab";
+      tab: DomainTabSelector;
+    }
+  | {
       type: "outlinerCloseWindow";
       window: DomainWindowSelector;
     }
   | {
       type: "outlinerDeleteWindowRejectingClose";
       window: DomainWindowSelector;
+    }
+  | {
+      type: "outlinerDeleteTabRejectingClose";
+      tab: DomainTabSelector;
     }
   | {
       type: "outlinerRestoreDeleteWindowDelayedEvent";
@@ -1313,6 +1325,509 @@ const RUNTIME_DOMAIN_TRACES: RuntimeDomainTrace[] = [
       { type: "updateTab", tab: { role: "lastMovedTab" }, title: "fresh repeated top-level filler relocation update" },
       { type: "staleLiveUpdatedEvent", staleTab: { capture: "first-top-level-old-window-with-filler" }, withStaleQuery: true },
       { type: "staleLiveCreatedEvent", staleTab: { capture: "second-top-level-old-window-with-filler", tabId: 1 }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "rt-direct-new-window-native-close-old-window-stale-created",
+    title: "stale created event follows direct relocation after native old-window close",
+    notes: "Timed mutation round 1: close the source runtime window after direct command relocation, then deliver a stale old-window created echo.",
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "direct-old-window-before-native-close" },
+      { type: "nativeCloseWindow", window: { windowId: 10 } },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "direct-old-window-before-native-close" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "rt-direct-new-window-outliner-close-old-window-stale-updated",
+    title: "stale updated event follows direct relocation after outliner old-window close",
+    notes: "Timed mutation round 1: outliner-owned close of the source window after direct command relocation.",
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "direct-old-window-before-outliner-close" },
+      { type: "outlinerCloseWindow", window: { windowId: 10 } },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "direct-old-window-before-outliner-close" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "rt-top-level-native-close-old-window-stale-created",
+    title: "stale created event follows top-level relocation after native old-window close",
+    notes: "Timed mutation round 1: close the source runtime window after moveSubtreeToTopLevel relocation.",
+    actions: [
+      { type: "outlinerMoveSubtreeToTopLevel", tab: { tabId: 1 }, captureStaleTabs: "top-level-old-window-before-native-close" },
+      { type: "nativeCloseWindow", window: { windowId: 10 } },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "top-level-old-window-before-native-close" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "rt-group-native-close-old-window-stale-updated",
+    title: "stale updated event follows grouping relocation after native old-window close",
+    notes: "Timed mutation round 1: close the source runtime window after grouping relocation.",
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "group-old-window-before-native-close" },
+      { type: "nativeCloseWindow", window: { windowId: 10 } },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "group-old-window-before-native-close" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "rt-direct-new-window-delete-old-window-rejecting-close-stale-created",
+    title: "stale created event follows direct relocation after delete-owned old-window close",
+    notes: "Timed mutation round 2: delete command closes the source window after direct relocation and reports a late rejection.",
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "direct-old-window-before-delete-close" },
+      { type: "outlinerDeleteWindowRejectingClose", window: { windowId: 10 } },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "direct-old-window-before-delete-close" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "rt-top-level-delete-old-window-rejecting-close-stale-updated",
+    title: "stale updated event follows top-level relocation after delete-owned old-window close",
+    notes: "Timed mutation round 2: delete-owned old-window close after moveSubtreeToTopLevel relocation.",
+    actions: [
+      { type: "outlinerMoveSubtreeToTopLevel", tab: { tabId: 1 }, captureStaleTabs: "top-level-old-window-before-delete-close" },
+      { type: "outlinerDeleteWindowRejectingClose", window: { windowId: 10 } },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "top-level-old-window-before-delete-close" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "rt-group-delete-old-window-rejecting-close-stale-created",
+    title: "stale created event follows grouping relocation after delete-owned old-window close",
+    notes: "Timed mutation round 2: delete-owned old-window close after grouping relocation.",
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "group-old-window-before-delete-close" },
+      { type: "outlinerDeleteWindowRejectingClose", window: { windowId: 10 } },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "group-old-window-before-delete-close" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "rt-top-level-outliner-close-old-window-stale-created",
+    title: "stale created event follows top-level relocation after outliner old-window close",
+    notes: "Timed mutation round 2: outliner-owned source-window close after moveSubtreeToTopLevel relocation.",
+    actions: [
+      { type: "outlinerMoveSubtreeToTopLevel", tab: { tabId: 1 }, captureStaleTabs: "top-level-old-window-before-outliner-close" },
+      { type: "outlinerCloseWindow", window: { windowId: 10 } },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "top-level-old-window-before-outliner-close" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "rt-group-outliner-close-old-window-stale-updated",
+    title: "stale updated event follows grouping relocation after outliner old-window close",
+    notes: "Timed mutation round 2: outliner-owned source-window close after grouping relocation.",
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "group-old-window-before-outliner-close" },
+      { type: "outlinerCloseWindow", window: { windowId: 10 } },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "group-old-window-before-outliner-close" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "rt-direct-new-window-native-close-destination-stale-updated",
+    title: "stale updated event follows native destination-window close after direct relocation",
+    notes: "Timed mutation round 3: close the command-created destination window after direct relocation.",
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "direct-old-window-before-destination-native-close" },
+      { type: "nativeCloseWindow", window: { role: "lastOpenedWindow" } },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "direct-old-window-before-destination-native-close" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "rt-direct-new-window-outliner-close-destination-stale-created",
+    title: "stale created event follows outliner destination-window close after direct relocation",
+    notes: "Timed mutation round 3: outliner-owned close of the command-created destination window.",
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "direct-old-window-before-destination-outliner-close" },
+      { type: "outlinerCloseWindow", window: { role: "lastOpenedWindow" } },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "direct-old-window-before-destination-outliner-close" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "rt-top-level-native-close-destination-stale-updated",
+    title: "stale updated event follows native destination-window close after top-level relocation",
+    notes: "Timed mutation round 3: native close of the command-created destination window after moveSubtreeToTopLevel.",
+    actions: [
+      { type: "outlinerMoveSubtreeToTopLevel", tab: { tabId: 1 }, captureStaleTabs: "top-level-old-window-before-destination-native-close" },
+      { type: "nativeCloseWindow", window: { role: "lastOpenedWindow" } },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "top-level-old-window-before-destination-native-close" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "rt-group-outliner-close-destination-stale-created",
+    title: "stale created event follows outliner destination-window close after grouping relocation",
+    notes: "Timed mutation round 3: outliner-owned close of the command-created destination window after grouping.",
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "group-old-window-before-destination-outliner-close" },
+      { type: "outlinerCloseWindow", window: { role: "lastOpenedWindow" } },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "group-old-window-before-destination-outliner-close" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "rt-direct-new-window-native-close-tab-removed-only-stale-created",
+    title: "stale created event follows direct relocation after tab-removed-only native close",
+    notes: "Timed mutation round 4: close the moved tab after direct relocation with only a tabRemoved event.",
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "direct-old-window-before-tab-removed-only" },
+      { type: "nativeCloseTab", tab: { role: "lastMovedTab" }, order: "tabRemovedOnly" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "direct-old-window-before-tab-removed-only" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "rt-direct-new-window-native-close-session-only-stale-updated",
+    title: "stale updated event follows direct relocation after session-only native close",
+    notes: "Timed mutation round 4: close the moved tab after direct relocation with only a sessionChanged event.",
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "direct-old-window-before-session-only" },
+      { type: "nativeCloseTab", tab: { role: "lastMovedTab" }, order: "sessionChangedOnly" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "direct-old-window-before-session-only" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "rt-top-level-native-close-tab-removed-only-stale-created",
+    title: "stale created event follows top-level relocation after tab-removed-only native close",
+    notes: "Timed mutation round 4: tabRemoved-only close after moveSubtreeToTopLevel relocation.",
+    actions: [
+      { type: "outlinerMoveSubtreeToTopLevel", tab: { tabId: 1 }, captureStaleTabs: "top-level-old-window-before-tab-removed-only" },
+      { type: "nativeCloseTab", tab: { role: "lastMovedTab" }, order: "tabRemovedOnly" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "top-level-old-window-before-tab-removed-only" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "rt-group-native-close-session-only-stale-updated",
+    title: "stale updated event follows grouping relocation after session-only native close",
+    notes: "Timed mutation round 4: sessionChanged-only close after grouping relocation.",
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "group-old-window-before-session-only" },
+      { type: "nativeCloseTab", tab: { role: "lastMovedTab" }, order: "sessionChangedOnly" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "group-old-window-before-session-only" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "rt-top-level-native-close-session-only-stale-updated",
+    title: "stale updated event follows top-level relocation after session-only native close",
+    notes: "Timed mutation round 5: sessionChanged-only close after moveSubtreeToTopLevel relocation.",
+    actions: [
+      { type: "outlinerMoveSubtreeToTopLevel", tab: { tabId: 1 }, captureStaleTabs: "top-level-old-window-before-session-only" },
+      { type: "nativeCloseTab", tab: { role: "lastMovedTab" }, order: "sessionChangedOnly" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "top-level-old-window-before-session-only" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "rt-group-native-close-tab-removed-only-stale-created",
+    title: "stale created event follows grouping relocation after tab-removed-only native close",
+    notes: "Timed mutation round 5: tabRemoved-only close after grouping relocation.",
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "group-old-window-before-tab-removed-only" },
+      { type: "nativeCloseTab", tab: { role: "lastMovedTab" }, order: "tabRemovedOnly" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "group-old-window-before-tab-removed-only" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "rt-direct-new-window-native-close-default-order-stale-created",
+    title: "stale created event follows direct relocation after default native close order",
+    notes: "Timed mutation round 5: tabRemovedThenSessionChanged close after explicit moveNodeToNewWindow relocation.",
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "direct-old-window-before-default-close" },
+      { type: "nativeCloseTab", tab: { role: "lastMovedTab" }, order: "tabRemovedThenSessionChanged" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "direct-old-window-before-default-close" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "rt-direct-new-window-stale-activation-after-focus",
+    title: "stale activation snapshot follows direct relocation and destination focus",
+    notes: "Timed mutation round 6: activation snapshot stale query through explicit moveNodeToNewWindow.",
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "direct-old-window-before-stale-activation" },
+      { type: "focusWindow", window: { role: "lastOpenedWindow" } },
+      { type: "activateTab", tab: { role: "lastMovedTab" }, staleQueryFrom: { capture: "direct-old-window-before-stale-activation" } }
+    ]
+  },
+  {
+    id: "rt-top-level-stale-activation-after-focus",
+    title: "stale activation snapshot follows top-level relocation and destination focus",
+    notes: "Timed mutation round 6: activation snapshot stale query through moveSubtreeToTopLevel.",
+    actions: [
+      { type: "outlinerMoveSubtreeToTopLevel", tab: { tabId: 1 }, captureStaleTabs: "top-level-old-window-before-stale-activation" },
+      { type: "focusWindow", window: { role: "lastOpenedWindow" } },
+      { type: "activateTab", tab: { role: "lastMovedTab" }, staleQueryFrom: { capture: "top-level-old-window-before-stale-activation" } }
+    ]
+  },
+  {
+    id: "rt-group-stale-activation-after-focus",
+    title: "stale activation snapshot follows grouping relocation and destination focus",
+    notes: "Timed mutation round 6: activation snapshot stale query through wrapNodeInGroup.",
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "group-old-window-before-stale-activation" },
+      { type: "focusWindow", window: { role: "lastOpenedWindow" } },
+      { type: "activateTab", tab: { role: "lastMovedTab" }, staleQueryFrom: { capture: "group-old-window-before-stale-activation" } }
+    ]
+  },
+  {
+    id: "rt-direct-new-window-old-window-activation-with-stale-relocated-tab",
+    title: "old-window activation carries stale relocated tab after direct relocation",
+    notes: "Timed mutation round 6: refocus the source window and activate its remaining tab with a stale relocated-tab query copy.",
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "direct-old-window-before-old-window-activation" },
+      { type: "focusWindow", window: { windowId: 10 } },
+      { type: "activateTab", tab: { tabId: 2 }, staleQueryFrom: { capture: "direct-old-window-before-old-window-activation" } }
+    ]
+  },
+  {
+    id: "rt-top-level-old-window-activation-with-stale-relocated-tab",
+    title: "old-window activation carries stale relocated tab after top-level relocation",
+    notes: "Timed mutation round 6: source-window activation with stale relocated-tab query copy after moveSubtreeToTopLevel.",
+    actions: [
+      { type: "outlinerMoveSubtreeToTopLevel", tab: { tabId: 1 }, captureStaleTabs: "top-level-old-window-before-old-window-activation" },
+      { type: "focusWindow", window: { windowId: 10 } },
+      { type: "activateTab", tab: { tabId: 2 }, staleQueryFrom: { capture: "top-level-old-window-before-old-window-activation" } }
+    ]
+  },
+  {
+    id: "rt-group-old-window-activation-with-stale-relocated-tab",
+    title: "old-window activation carries stale relocated tab after grouping relocation",
+    notes: "Timed mutation round 6: source-window activation with stale relocated-tab query copy after grouping.",
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "group-old-window-before-old-window-activation" },
+      { type: "focusWindow", window: { windowId: 10 } },
+      { type: "activateTab", tab: { tabId: 2 }, staleQueryFrom: { capture: "group-old-window-before-old-window-activation" } }
+    ]
+  },
+  {
+    id: "rt-direct-new-window-command-focus-stale-updated",
+    title: "stale updated event follows command focus after direct relocation",
+    notes: "Timed mutation round 7: focusNode command after explicit moveNodeToNewWindow relocation.",
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "direct-old-window-before-command-focus" },
+      { type: "outlinerFocusTab", tab: { role: "lastMovedTab" } },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "direct-old-window-before-command-focus" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "rt-top-level-command-focus-stale-created",
+    title: "stale created event follows command focus after top-level relocation",
+    notes: "Timed mutation round 7: focusNode command after moveSubtreeToTopLevel relocation.",
+    actions: [
+      { type: "outlinerMoveSubtreeToTopLevel", tab: { tabId: 1 }, captureStaleTabs: "top-level-old-window-before-command-focus" },
+      { type: "outlinerFocusTab", tab: { role: "lastMovedTab" } },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "top-level-old-window-before-command-focus" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "rt-group-command-focus-stale-updated",
+    title: "stale updated event follows command focus after grouping relocation",
+    notes: "Timed mutation round 7: focusNode command after grouping relocation.",
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "group-old-window-before-command-focus" },
+      { type: "outlinerFocusTab", tab: { role: "lastMovedTab" } },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "group-old-window-before-command-focus" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "rt-direct-new-window-delete-tab-rejecting-close-stale-created",
+    title: "stale created event follows direct relocation after delete-owned tab close rejection",
+    notes: "Timed mutation round 7: delete the relocated tab after browser close completes but reports rejection.",
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "direct-old-window-before-delete-tab" },
+      { type: "outlinerDeleteTabRejectingClose", tab: { role: "lastMovedTab" } },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "direct-old-window-before-delete-tab" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "rt-top-level-delete-tab-rejecting-close-stale-updated",
+    title: "stale updated event follows top-level relocation after delete-owned tab close rejection",
+    notes: "Timed mutation round 7: delete relocated top-level tab after browser close completes but reports rejection.",
+    actions: [
+      { type: "outlinerMoveSubtreeToTopLevel", tab: { tabId: 1 }, captureStaleTabs: "top-level-old-window-before-delete-tab" },
+      { type: "outlinerDeleteTabRejectingClose", tab: { role: "lastMovedTab" } },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "top-level-old-window-before-delete-tab" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "rt-group-delete-tab-rejecting-close-stale-created",
+    title: "stale created event follows grouping relocation after delete-owned tab close rejection",
+    notes: "Timed mutation round 7: delete relocated grouped tab after browser close completes but reports rejection.",
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "group-old-window-before-delete-tab" },
+      { type: "outlinerDeleteTabRejectingClose", tab: { role: "lastMovedTab" } },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "group-old-window-before-delete-tab" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "rt-direct-new-window-outliner-close-tab-stale-updated",
+    title: "stale updated event follows outliner tab close after direct relocation",
+    notes: "Timed mutation round 8: closeNode workflow for relocated tab after explicit moveNodeToNewWindow.",
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "direct-old-window-before-outliner-close-tab" },
+      { type: "outlinerCloseTab", tab: { role: "lastMovedTab" } },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "direct-old-window-before-outliner-close-tab" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "rt-top-level-outliner-close-tab-stale-created",
+    title: "stale created event follows outliner tab close after top-level relocation",
+    notes: "Timed mutation round 8: closeNode workflow for relocated tab after moveSubtreeToTopLevel.",
+    actions: [
+      { type: "outlinerMoveSubtreeToTopLevel", tab: { tabId: 1 }, captureStaleTabs: "top-level-old-window-before-outliner-close-tab" },
+      { type: "outlinerCloseTab", tab: { role: "lastMovedTab" } },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "top-level-old-window-before-outliner-close-tab" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "rt-group-outliner-close-tab-stale-updated",
+    title: "stale updated event follows outliner tab close after grouping relocation",
+    notes: "Timed mutation round 8: closeNode workflow for relocated tab after grouping.",
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "group-old-window-before-outliner-close-tab" },
+      { type: "outlinerCloseTab", tab: { role: "lastMovedTab" } },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "group-old-window-before-outliner-close-tab" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "rt-direct-new-window-close-source-tab-stale-created",
+    title: "stale created event follows source-tab close after direct relocation",
+    notes: "Timed mutation round 8: close the remaining source-window tab after direct relocation.",
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "direct-old-window-before-source-tab-close" },
+      { type: "outlinerCloseTab", tab: { tabId: 2 } },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "direct-old-window-before-source-tab-close" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "rt-top-level-close-source-tab-stale-updated",
+    title: "stale updated event follows source-tab close after top-level relocation",
+    notes: "Timed mutation round 8: close the remaining source-window tab after moveSubtreeToTopLevel relocation.",
+    actions: [
+      { type: "outlinerMoveSubtreeToTopLevel", tab: { tabId: 1 }, captureStaleTabs: "top-level-old-window-before-source-tab-close" },
+      { type: "outlinerCloseTab", tab: { tabId: 2 } },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "top-level-old-window-before-source-tab-close" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "rt-group-close-source-tab-stale-created",
+    title: "stale created event follows source-tab close after grouping relocation",
+    notes: "Timed mutation round 8: close the remaining source-window tab after grouping relocation.",
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "group-old-window-before-source-tab-close" },
+      { type: "outlinerCloseTab", tab: { tabId: 2 } },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "group-old-window-before-source-tab-close" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "rt-direct-new-window-stale-updated-fast-path-after-fresh-event",
+    title: "stale updated fast-path event follows direct relocation after fresh current-window event",
+    notes: "Timed mutation round 9: stale old-window event without stale query after explicit moveNodeToNewWindow.",
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "direct-old-window-before-fast-path-stale-update" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "fresh direct fast path update" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "direct-old-window-before-fast-path-stale-update" } }
+    ]
+  },
+  {
+    id: "rt-top-level-stale-created-fast-path-after-fresh-event",
+    title: "stale created fast-path event follows top-level relocation after fresh current-window event",
+    notes: "Timed mutation round 9: stale old-window created event without stale query after moveSubtreeToTopLevel.",
+    actions: [
+      { type: "outlinerMoveSubtreeToTopLevel", tab: { tabId: 1 }, captureStaleTabs: "top-level-old-window-before-fast-path-stale-create" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "fresh top-level fast path update" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "top-level-old-window-before-fast-path-stale-create" } }
+    ]
+  },
+  {
+    id: "rt-group-stale-updated-fast-path-after-fresh-event",
+    title: "stale updated fast-path event follows grouping relocation after fresh current-window event",
+    notes: "Timed mutation round 9: stale old-window event without stale query after grouping.",
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "group-old-window-before-fast-path-stale-update" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "fresh group fast path update" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "group-old-window-before-fast-path-stale-update" } }
+    ]
+  },
+  {
+    id: "rt-direct-new-window-paired-stale-events-after-fresh-event",
+    title: "paired stale old-window events follow direct relocation after fresh current-window event",
+    notes: "Timed mutation round 9: stale updated then stale created after explicit moveNodeToNewWindow.",
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "direct-old-window-before-paired-stale-events" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "fresh direct paired stale update" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "direct-old-window-before-paired-stale-events" } },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "direct-old-window-before-paired-stale-events" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "rt-top-level-paired-stale-events-after-fresh-event",
+    title: "paired stale old-window events follow top-level relocation after fresh current-window event",
+    notes: "Timed mutation round 9: stale updated then stale created after moveSubtreeToTopLevel.",
+    actions: [
+      { type: "outlinerMoveSubtreeToTopLevel", tab: { tabId: 1 }, captureStaleTabs: "top-level-old-window-before-paired-stale-events" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "fresh top-level paired stale update" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "top-level-old-window-before-paired-stale-events" } },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "top-level-old-window-before-paired-stale-events" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "rt-group-paired-stale-events-after-fresh-event",
+    title: "paired stale old-window events follow grouping relocation after fresh current-window event",
+    notes: "Timed mutation round 9: stale updated then stale created after grouping.",
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "group-old-window-before-paired-stale-events" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "fresh group paired stale update" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "group-old-window-before-paired-stale-events" } },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "group-old-window-before-paired-stale-events" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "rt-direct-new-window-open-active-source-tab-stale-updated",
+    title: "stale updated event follows active source-tab open after direct relocation",
+    notes: "Timed mutation round 10: open a new active tab in the old source window after direct relocation.",
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "direct-old-window-before-active-source-open" },
+      { type: "openTab", window: { windowId: 10 }, active: true, captureTab: "direct-active-source-tab" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "direct-old-window-before-active-source-open" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "rt-top-level-open-active-source-tab-stale-created",
+    title: "stale created event follows active source-tab open after top-level relocation",
+    notes: "Timed mutation round 10: open a new active tab in the old source window after moveSubtreeToTopLevel.",
+    actions: [
+      { type: "outlinerMoveSubtreeToTopLevel", tab: { tabId: 1 }, captureStaleTabs: "top-level-old-window-before-active-source-open" },
+      { type: "openTab", window: { windowId: 10 }, active: true, captureTab: "top-level-active-source-tab" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "top-level-old-window-before-active-source-open" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "rt-group-open-active-source-tab-stale-updated",
+    title: "stale updated event follows active source-tab open after grouping relocation",
+    notes: "Timed mutation round 10: open a new active tab in the old source window after grouping.",
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "group-old-window-before-active-source-open" },
+      { type: "openTab", window: { windowId: 10 }, active: true, captureTab: "group-active-source-tab" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "group-old-window-before-active-source-open" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "rt-direct-new-window-open-active-destination-tab-stale-created",
+    title: "stale created event follows active destination-tab open after direct relocation",
+    notes: "Timed mutation round 10: open a new active tab in the command-created destination window after direct relocation.",
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "direct-old-window-before-active-destination-open" },
+      { type: "openTab", window: { role: "lastOpenedWindow" }, active: true, captureTab: "direct-active-destination-tab" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "direct-old-window-before-active-destination-open" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "rt-top-level-open-active-destination-tab-stale-updated",
+    title: "stale updated event follows active destination-tab open after top-level relocation",
+    notes: "Timed mutation round 10: open a new active tab in the command-created destination window after moveSubtreeToTopLevel.",
+    actions: [
+      { type: "outlinerMoveSubtreeToTopLevel", tab: { tabId: 1 }, captureStaleTabs: "top-level-old-window-before-active-destination-open" },
+      { type: "openTab", window: { role: "lastOpenedWindow" }, active: true, captureTab: "top-level-active-destination-tab" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "top-level-old-window-before-active-destination-open" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "rt-group-open-active-destination-tab-stale-created",
+    title: "stale created event follows active destination-tab open after grouping relocation",
+    notes: "Timed mutation round 10: open a new active tab in the command-created destination window after grouping.",
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "group-old-window-before-active-destination-open" },
+      { type: "openTab", window: { role: "lastOpenedWindow" }, active: true, captureTab: "group-active-destination-tab" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "group-old-window-before-active-destination-open" }, withStaleQuery: true }
     ]
   }
 ];
@@ -2176,6 +2691,16 @@ async function runDomainAction(context: GeneratedTraceContext, action: DomainAct
     return;
   }
 
+  if (action.type === "outlinerFocusTab") {
+    await runDomainOutlinerFocusTab(context, action.tab);
+    return;
+  }
+
+  if (action.type === "outlinerCloseTab") {
+    await runDomainOutlinerCloseTab(context, action.tab);
+    return;
+  }
+
   if (action.type === "outlinerCloseWindow") {
     await runDomainOutlinerCloseWindow(context, action.window);
     return;
@@ -2183,6 +2708,11 @@ async function runDomainAction(context: GeneratedTraceContext, action: DomainAct
 
   if (action.type === "outlinerDeleteWindowRejectingClose") {
     await runDomainOutlinerDeleteWindowRejectingClose(context, action.window);
+    return;
+  }
+
+  if (action.type === "outlinerDeleteTabRejectingClose") {
+    await runDomainOutlinerDeleteTabRejectingClose(context, action.tab);
     return;
   }
 
@@ -2375,6 +2905,19 @@ async function domainRelocatableCommandCandidateForTab(
   };
 }
 
+async function runDomainOutlinerFocusTab(
+  context: GeneratedTraceContext,
+  selector: DomainTabSelector
+): Promise<void> {
+  const tab = resolveDomainTab(context, selector);
+  const result = await context.controller.handleMessage({
+    type: "focusNode",
+    nodeId: tabNodeIdFor(tab.id)
+  });
+  expectCommandAck(result, false);
+  await flushGeneratedRuntimeEventRefreshes(context);
+}
+
 async function runDomainOutlinerCloseWindow(
   context: GeneratedTraceContext,
   selector: DomainWindowSelector
@@ -2388,6 +2931,18 @@ async function runDomainOutlinerCloseWindow(
   }
   await context.controller.handleMessage({ type: "closeNode", nodeId: windowNodeIdFor(windowInfo.id) });
   await pruneMissingExpectedClosedNodes(context, protectedExpectedNodeIds);
+}
+
+async function runDomainOutlinerCloseTab(
+  context: GeneratedTraceContext,
+  selector: DomainTabSelector
+): Promise<void> {
+  const tab = resolveDomainTab(context, selector);
+  const nodeId = tabNodeIdFor(tab.id);
+  context.expectedClosedNodeIds.add(nodeId);
+  await context.controller.handleMessage({ type: "closeNode", nodeId });
+  await flushGeneratedCloseEvents(context);
+  await pruneMissingExpectedClosedNodes(context, [nodeId]);
 }
 
 async function runDomainOutlinerDeleteWindowRejectingClose(
@@ -2407,6 +2962,31 @@ async function runDomainOutlinerDeleteWindowRejectingClose(
     throw new Error("domain window close rejected after completion");
   });
   const result = await context.controller.handleMessage({ type: "deleteNode", nodeId: stateWindow.id });
+  expectCommandAck(result, true);
+  markCommandDeletedNodes(context, deletedNodeIds);
+  await flushGeneratedCloseEvents(context);
+  await pruneMissingExpectedClosedNodes(context, []);
+}
+
+async function runDomainOutlinerDeleteTabRejectingClose(
+  context: GeneratedTraceContext,
+  selector: DomainTabSelector
+): Promise<void> {
+  const tab = resolveDomainTab(context, selector);
+  const state = (await context.controller.handleMessage({ type: "getState" })) as OutlineState;
+  const stateTab = liveTabNodeForRuntimeTab(state, tab.id);
+  if (!stateTab) {
+    throw new Error(`No live outline tab for runtime tab ${tab.id}`);
+  }
+
+  const deletedNodeIds = generatedSubtreeNodeIds(state, stateTab.id);
+  vi.mocked(context.runtime.api.tabs.remove).mockImplementationOnce(async (tabIds) => {
+    for (const tabId of Array.isArray(tabIds) ? tabIds : [tabIds]) {
+      await closeRuntimeTab(context.runtime, tabId, "tabRemovedThenSessionChanged", { awaitListeners: false });
+    }
+    throw new Error("domain tab close rejected after completion");
+  });
+  const result = await context.controller.handleMessage({ type: "deleteNode", nodeId: stateTab.id });
   expectCommandAck(result, true);
   markCommandDeletedNodes(context, deletedNodeIds);
   await flushGeneratedCloseEvents(context);

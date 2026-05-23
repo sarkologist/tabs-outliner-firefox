@@ -27,7 +27,57 @@ const DEFAULT_TRACE_IDS = [
   "rt-repeated-direct-relocation-stale-events",
   "rt-repeated-direct-relocation-with-filler-stale-events",
   "rt-repeated-direct-relocation-native-close-stale-event",
-  "rt-repeated-top-level-relocation-with-filler-stale-events"
+  "rt-repeated-top-level-relocation-with-filler-stale-events",
+  "rt-direct-new-window-native-close-old-window-stale-created",
+  "rt-direct-new-window-outliner-close-old-window-stale-updated",
+  "rt-top-level-native-close-old-window-stale-created",
+  "rt-group-native-close-old-window-stale-updated",
+  "rt-direct-new-window-delete-old-window-rejecting-close-stale-created",
+  "rt-top-level-delete-old-window-rejecting-close-stale-updated",
+  "rt-group-delete-old-window-rejecting-close-stale-created",
+  "rt-top-level-outliner-close-old-window-stale-created",
+  "rt-group-outliner-close-old-window-stale-updated",
+  "rt-direct-new-window-native-close-destination-stale-updated",
+  "rt-direct-new-window-outliner-close-destination-stale-created",
+  "rt-top-level-native-close-destination-stale-updated",
+  "rt-group-outliner-close-destination-stale-created",
+  "rt-direct-new-window-native-close-tab-removed-only-stale-created",
+  "rt-direct-new-window-native-close-session-only-stale-updated",
+  "rt-top-level-native-close-tab-removed-only-stale-created",
+  "rt-group-native-close-session-only-stale-updated",
+  "rt-top-level-native-close-session-only-stale-updated",
+  "rt-group-native-close-tab-removed-only-stale-created",
+  "rt-direct-new-window-native-close-default-order-stale-created",
+  "rt-direct-new-window-stale-activation-after-focus",
+  "rt-top-level-stale-activation-after-focus",
+  "rt-group-stale-activation-after-focus",
+  "rt-direct-new-window-old-window-activation-with-stale-relocated-tab",
+  "rt-top-level-old-window-activation-with-stale-relocated-tab",
+  "rt-group-old-window-activation-with-stale-relocated-tab",
+  "rt-direct-new-window-command-focus-stale-updated",
+  "rt-top-level-command-focus-stale-created",
+  "rt-group-command-focus-stale-updated",
+  "rt-direct-new-window-delete-tab-rejecting-close-stale-created",
+  "rt-top-level-delete-tab-rejecting-close-stale-updated",
+  "rt-group-delete-tab-rejecting-close-stale-created",
+  "rt-direct-new-window-outliner-close-tab-stale-updated",
+  "rt-top-level-outliner-close-tab-stale-created",
+  "rt-group-outliner-close-tab-stale-updated",
+  "rt-direct-new-window-close-source-tab-stale-created",
+  "rt-top-level-close-source-tab-stale-updated",
+  "rt-group-close-source-tab-stale-created",
+  "rt-direct-new-window-stale-updated-fast-path-after-fresh-event",
+  "rt-top-level-stale-created-fast-path-after-fresh-event",
+  "rt-group-stale-updated-fast-path-after-fresh-event",
+  "rt-direct-new-window-paired-stale-events-after-fresh-event",
+  "rt-top-level-paired-stale-events-after-fresh-event",
+  "rt-group-paired-stale-events-after-fresh-event",
+  "rt-direct-new-window-open-active-source-tab-stale-updated",
+  "rt-top-level-open-active-source-tab-stale-created",
+  "rt-group-open-active-source-tab-stale-updated",
+  "rt-direct-new-window-open-active-destination-tab-stale-created",
+  "rt-top-level-open-active-destination-tab-stale-updated",
+  "rt-group-open-active-destination-tab-stale-created"
 ];
 
 const traceIds = selectedTraceIds();
@@ -40,7 +90,7 @@ ensureBugLogFile(BUG_FILE);
 
 console.log(`Runtime trace hunt writing findings to ${BUG_FILE}`);
 console.log(`This corpus run is capped at ${CORPUS_RUN_CAP_MS}ms.`);
-console.log(`Agent stop rule: stop after ${STOP_AFTER_CLEAN} clean mutation cycle(s) with no new distinct findings.`);
+console.log(`Agent stop rule: stop after ${STOP_AFTER_CLEAN} clean 5-minute mutation round(s) with no new distinct findings.`);
 console.log(`Trace strategy: run the current domain corpus once, recording every distinct failure; Codex/humans mutate trace actions between runs.`);
 console.log(`Trace IDs: ${traceIds.join(", ")}`);
 
@@ -242,7 +292,7 @@ pnpm trace-hunt:runtime
 Default hunt bounds:
 
 - Corpus run cap: 5 minutes
-- Agent stop condition: 3 consecutive agent mutation cycles with no new distinct findings
+- Agent stop condition: 3 consecutive clean 5-minute mutation rounds with no new distinct findings
 - Trace selection: execute the current explicit domain trace corpus once, recording every distinct failure; Codex/humans mutate trace actions between runs, not seeds
 - Test target: \`${TEST_FILE}\`
 - Test name: \`${TEST_NAME}\`
