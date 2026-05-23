@@ -14,6 +14,9 @@ import { createBrowserAdapter } from "./browser-adapter.js";
 import { computeDiagnostics, type OutlineDiagnostics } from "./diagnostics.js";
 import { isBackgroundCommand, planLiveSubtreeClose, runCommand, syncBrowserOrder } from "./commands.js";
 import type { BackgroundCommand, CommandAck, RuntimeClosePlan } from "./commands.js";
+import { RuntimeFactLedger } from "./runtime-facts.js";
+import type { CommandOwnership, CommandTransaction } from "./runtime-facts.js";
+import { RuntimeReconciler } from "./runtime-reconciler.js";
 import { getNormalWindow, getNormalWindows, getNormalWindowsIncludingTabs } from "./runtime-snapshot.js";
 import { createStateCache } from "./state-cache.js";
 import {
@@ -238,15 +241,12 @@ const TOGGLE_SIDEBAR_COMMAND = "toggle-sidebar";
 const SIDEBAR_WINDOW_PATH = "sidebar/sidebar.html";
 const SIDEBAR_PORT_NAME = "tabs-outliner-sidebar";
 
-type CommandRelocatedTabEcho = {
-  fromWindowIds: Set<number>;
-  toWindowId: number;
-};
-
 export function createBackgroundController(options: BackgroundControllerOptions): BackgroundController {
   const { api, now = Date.now } = options;
   const adapter = options.adapter ?? createBrowserAdapter(api);
   const perfTrace = createPerformanceTracer("background");
+  const runtimeFacts = new RuntimeFactLedger();
+  const runtimeReconciler = new RuntimeReconciler();
 
   let state: OutlineState | undefined;
   let lastPersistedState: OutlineState | undefined;
@@ -261,19 +261,6 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   const schedulerIdleResolvers: Array<() => void> = [];
   let schedulerRunning = false;
   let schedulerDrainQueued = false;
-  const outlinerClosingTabIds = new Set<number>();
-  const outlinerClosingWindowIds = new Set<number>();
-  const deleteOwnedClosingTabIds = new Set<number>();
-  const deleteOwnedClosingWindowIds = new Set<number>();
-  const removedTabIds = new Set<number>();
-  const removedWindowIds = new Set<number>();
-  const pendingGroupedTabIdsByWindowId = new Map<number, Set<number>>();
-  const movedOutGroupedTabIdsByWindowId = new Map<number, Set<number>>();
-  const commandRestoredTabIds = new Set<number>();
-  const commandRelocatedTabEchoes = new Map<number, CommandRelocatedTabEcho>();
-  const commandFocusedTabIds = new Set<number>();
-  const commandFocusedActivationWindowIds = new Set<number>();
-  const commandFocusedWindowIds = new Set<number>();
   const stateCache = createStateCache(initializeState);
   let sessionChangedQueued = false;
   let commandCloseSessionEchoesToSkip = 0;
@@ -347,7 +334,10 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   });
 
   api.tabs.onCreated.addListener(async (tab) => {
-    await perfTrace.measureAsync("background.event.tabs.onCreated", { tabId: tab.id }, () => queueRuntimeRefresh([tab]));
+    await perfTrace.measureAsync("background.event.tabs.onCreated", { tabId: tab.id }, () => {
+      runtimeFacts.recordObservation({ source: "tabEvent", kind: "created", tabId: tab.id, windowId: tab.windowId, tab });
+      return queueRuntimeRefresh([tab]);
+    });
   });
 
   api.tabs.onUpdated.addListener(async (_tabId, changeInfo, tab) => {
@@ -355,7 +345,8 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       if (!hasOutlineRelevantTabUpdate(changeInfo)) {
         return;
       }
-      if (isCommandFocusActiveUpdateEcho(commandFocusedActivationWindowIds, changeInfo, tab)) {
+      runtimeFacts.recordObservation({ source: "tabEvent", kind: "updated", tabId: tab.id, windowId: tab.windowId, tab });
+      if (runtimeFacts.isCommandFocusActiveUpdateEcho(changeInfo, tab)) {
         return;
       }
       await queueRuntimeRefresh([tab]);
@@ -364,7 +355,13 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
   api.tabs.onActivated.addListener(async (activeInfo) => {
     await perfTrace.measureAsync("background.event.tabs.onActivated", { tabId: activeInfo.tabId }, async () => {
-      if (commandFocusedTabIds.has(activeInfo.tabId)) {
+      runtimeFacts.recordObservation({
+        source: "tabEvent",
+        kind: "activated",
+        tabId: activeInfo.tabId,
+        windowId: activeInfo.windowId
+      });
+      if (runtimeFacts.hasCommandFocusedTab(activeInfo.tabId)) {
         await handleCommandTabActivated(activeInfo);
         return;
       }
@@ -374,36 +371,42 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
   api.tabs.onRemoved.addListener(async (tabId, removeInfo) => {
     await perfTrace.measureAsync("background.event.tabs.onRemoved", { tabId }, async () => {
-      removedTabIds.add(tabId);
-      commandRelocatedTabEchoes.delete(tabId);
-      if (deleteOwnedClosingTabIds.delete(tabId)) {
+      runtimeFacts.recordObservation({
+        source: "tabEvent",
+        kind: "removed",
+        tabId,
+        windowId: removeInfo.windowId
+      });
+      runtimeFacts.markTabRemoved(tabId);
+      if (runtimeFacts.consumeDeleteOwnedClosingTab(tabId)) {
         return;
       }
       if (removeInfo.isWindowClosing) {
-        if (deleteOwnedClosingWindowIds.has(removeInfo.windowId) || outlinerClosingWindowIds.has(removeInfo.windowId)) {
+        if (runtimeFacts.hasDeleteOwnedClosingWindow(removeInfo.windowId) || runtimeFacts.hasOutlinerClosingWindow(removeInfo.windowId)) {
           return;
         }
 
         await enqueueMutation(async () => {
           const runtimeWindow = await getNormalWindow(api, removeInfo.windowId);
-          if (runtimeWindow) {
-            return;
-          }
-
           const current = await ensureState();
           const liveTabIds = liveTabIdsInWindow(current, removeInfo.windowId);
-          if (liveTabIds.length === 0 || liveTabIds.some((liveTabId) => !removedTabIds.has(liveTabId))) {
+          const decision = runtimeReconciler.classifyWindowClosingTabRemoval(
+            runtimeFacts,
+            {
+              windowId: removeInfo.windowId,
+              liveTabIds,
+              runtimeWindowOpen: Boolean(runtimeWindow)
+            }
+          );
+          if (decision !== "close-window") {
             return;
           }
 
-          removedWindowIds.add(removeInfo.windowId);
-          outlinerClosingWindowIds.delete(removeInfo.windowId);
-          movedOutGroupedTabIdsByWindowId.delete(removeInfo.windowId);
-          pendingGroupedTabIdsByWindowId.delete(removeInfo.windowId);
+          runtimeFacts.markWindowRemoved(removeInfo.windowId);
+          runtimeFacts.clearWindowCloseTracking(removeInfo.windowId);
 
           for (const liveTabId of liveTabIds) {
-            outlinerClosingTabIds.delete(liveTabId);
-            commandRelocatedTabEchoes.delete(liveTabId);
+            runtimeFacts.clearTabCloseTracking(liveTabId);
           }
 
           const recent = await mostRecentClosedSession();
@@ -425,7 +428,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       await enqueueMutation(async () => {
         const current = await ensureState();
         let next: OutlineState;
-        if (outlinerClosingTabIds.delete(tabId)) {
+        if (runtimeFacts.consumeOutlinerClosingTab(tabId)) {
           const recent = await mostRecentClosedSession();
           next = closeTab(current, tabId, {
             now: now(),
@@ -461,26 +464,24 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       if (fullSizeOutlinerWindowIds.delete(windowId)) {
         return;
       }
-      const alreadyRemoved = removedWindowIds.has(windowId);
+      runtimeFacts.recordObservation({ source: "windowEvent", kind: "removed", windowId });
+      const alreadyRemoved = runtimeFacts.hasRemovedWindow(windowId);
       if (alreadyRemoved) {
         return;
       }
-      removedWindowIds.add(windowId);
-      if (deleteOwnedClosingWindowIds.delete(windowId)) {
+      runtimeFacts.markWindowRemoved(windowId);
+      if (runtimeFacts.consumeDeleteOwnedClosingWindow(windowId)) {
         return;
       }
 
       await enqueueMutation(async () => {
         const current = await ensureState();
         const liveTabIds = liveTabIdsInWindow(current, windowId);
-        outlinerClosingWindowIds.delete(windowId);
-        movedOutGroupedTabIdsByWindowId.delete(windowId);
-        pendingGroupedTabIdsByWindowId.delete(windowId);
+        runtimeFacts.clearWindowCloseTracking(windowId);
 
         for (const tabId of liveTabIds) {
-          removedTabIds.add(tabId);
-          outlinerClosingTabIds.delete(tabId);
-          commandRelocatedTabEchoes.delete(tabId);
+          runtimeFacts.markTabRemoved(tabId);
+          runtimeFacts.clearTabCloseTracking(tabId);
         }
         const recent = await mostRecentClosedSession();
         const next = closeWindow(current, windowId, {
@@ -503,7 +504,8 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       if (await shouldIgnoreSidebarWindowFocus(windowId)) {
         return;
       }
-      if (commandFocusedWindowIds.has(windowId)) {
+      runtimeFacts.recordObservation({ source: "windowEvent", kind: "focused", windowId });
+      if (runtimeFacts.hasCommandFocusedWindow(windowId)) {
         await handleCommandWindowFocusChanged(windowId);
         return;
       }
@@ -513,6 +515,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
   api.sessions.onChanged.addListener(async () => {
     await perfTrace.measureAsync("background.event.sessions.onChanged", async () => {
+      runtimeFacts.recordObservation({ source: "sessionEvent", kind: "changed" });
       if (sessionChangedQueued) {
         return;
       }
@@ -523,7 +526,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
             commandCloseSessionEchoesToSkip -= 1;
             return;
           }
-          if (outlinerClosingTabIds.size > 0) {
+          if (runtimeFacts.hasOutlinerClosingTabs()) {
             commandCloseSessionEchoesSkippedBeforeRemoval += 1;
             return;
           }
@@ -634,24 +637,19 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       const restorePatchNodeIds = message.type === "restoreNode"
         ? restorePatchCandidateNodeIds(current, message.nodeId, runtimeIndexForState(current))
         : undefined;
-      for (const tabId of outlinerClosePlan?.tabIds ?? []) {
-        outlinerClosingTabIds.add(tabId);
-      }
-      for (const windowId of outlinerClosePlan?.windowIds ?? []) {
-        outlinerClosingWindowIds.add(windowId);
-      }
-      if (focusTarget && !focusTarget.tabActive) {
-        commandFocusedTabIds.add(focusTarget.tabId);
-        commandFocusedActivationWindowIds.add(focusTarget.windowId);
+      const commandTransaction = commandTransactionForMessage(message, {
+        outlinerClosePlan,
+        deleteClosePlan,
+        focusTarget
+      });
+      if (outlinerClosePlan) {
+        runtimeFacts.markOutlinerClosePlan(outlinerClosePlan);
       }
       if (focusTarget) {
-        commandFocusedWindowIds.add(focusTarget.windowId);
+        runtimeFacts.markCommandFocusTarget(focusTarget.tabId, focusTarget.windowId, focusTarget.tabActive);
       }
-      for (const tabId of deleteClosePlan?.tabIds ?? []) {
-        deleteOwnedClosingTabIds.add(tabId);
-      }
-      for (const windowId of deleteClosePlan?.windowIds ?? []) {
-        deleteOwnedClosingWindowIds.add(windowId);
+      if (deleteClosePlan) {
+        runtimeFacts.markDeleteClosePlan(deleteClosePlan);
       }
 
       let result: Awaited<ReturnType<typeof runCommand>>;
@@ -662,11 +660,17 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         result = await perfTrace.measureAsync("background.command.run", { command: message.type }, () =>
           runCommand(current, adapter, message)
         );
+        if (commandTransaction) {
+          runtimeFacts.recordCommandObserved(commandTransaction.id);
+        }
       } catch (error) {
         const recoveredRelocation = commandMayRelocateLiveTabs(message.type)
           ? await recoverCommandRelocationCreateSideEffect(current, message)
           : undefined;
         if (recoveredRelocation && recoveredRelocation !== current) {
+          if (commandTransaction) {
+            runtimeFacts.recordCommandObserved(commandTransaction.id);
+          }
           result = {
             state: recoveredRelocation,
             changed: true
@@ -677,7 +681,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
             deleteClosePlan &&
             await runtimeClosePlanCompleted(deleteClosePlan)
           ) {
-            recordCompletedClosePlanTombstones(deleteClosePlan);
+            runtimeFacts.recordCompletedClosePlanTombstones(deleteClosePlan);
             const recovered = deleteOutlineNode(current, message.nodeId, { allowLive: true });
             if (recovered !== current) {
               const runtimeIndexCandidateNodeIds = runtimeIndexCandidateNodeIdsForCommand(message, current, recovered);
@@ -695,30 +699,31 @@ export function createBackgroundController(options: BackgroundControllerOptions)
               );
               await broadcastTreeStructureUpdate(update);
               scheduleStateSave(recovered, saveSchedule);
+              if (commandTransaction) {
+                runtimeFacts.commitCommand(commandTransaction.id);
+              }
               return commandAck(true);
             }
           }
-          for (const tabId of outlinerClosePlan?.tabIds ?? []) {
-            outlinerClosingTabIds.delete(tabId);
+          if (outlinerClosePlan) {
+            runtimeFacts.clearOutlinerClosePlan(outlinerClosePlan);
           }
-          for (const windowId of outlinerClosePlan?.windowIds ?? []) {
-            outlinerClosingWindowIds.delete(windowId);
-          }
-          for (const tabId of deleteClosePlan?.tabIds ?? []) {
-            deleteOwnedClosingTabIds.delete(tabId);
-          }
-          for (const windowId of deleteClosePlan?.windowIds ?? []) {
-            deleteOwnedClosingWindowIds.delete(windowId);
+          if (deleteClosePlan) {
+            runtimeFacts.clearDeleteClosePlan(deleteClosePlan);
           }
           if (focusTarget) {
-            commandFocusedTabIds.delete(focusTarget.tabId);
-            commandFocusedActivationWindowIds.delete(focusTarget.windowId);
-            commandFocusedWindowIds.delete(focusTarget.windowId);
+            runtimeFacts.clearCommandFocusTarget(focusTarget.tabId, focusTarget.windowId);
+          }
+          if (commandTransaction) {
+            runtimeFacts.rejectCommand(commandTransaction.id);
           }
           throw error;
         }
       }
       if (!result.changed) {
+        if (commandTransaction) {
+          runtimeFacts.commitCommand(commandTransaction.id);
+        }
         return commandAck(false);
       }
 
@@ -732,26 +737,26 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         }
       );
       if (commandMayRelocateLiveTabs(message.type)) {
-        trackCommandRelocatedTabEchoes(current, result.state, commandRelocatedTabEchoes, runtimeIndexCandidateNodeIds);
+        runtimeFacts.recordCommandRelocatedTabs(current, result.state, runtimeIndexCandidateNodeIds);
       }
       if (message.type === "wrapNodeInGroup") {
-        trackNewGroupedTabIds(current, result.state, pendingGroupedTabIdsByWindowId, runtimeIndexCandidateNodeIds);
+        trackNewGroupedTabIds(current, result.state, runtimeFacts.pendingGroupedTabIdsByWindowId, runtimeIndexCandidateNodeIds);
       }
       if (message.type === "moveNode" || message.type === "moveSubtreeToTopLevel") {
         promoteMovedOutGroupedTabIds(
           current,
           result.state,
-          pendingGroupedTabIdsByWindowId,
-          movedOutGroupedTabIdsByWindowId,
+          runtimeFacts.pendingGroupedTabIdsByWindowId,
+          runtimeFacts.movedOutGroupedTabIdsByWindowId,
           runtimeIndexCandidateNodeIds
         );
       }
       if (message.type === "moveSubtreeToTopLevel") {
-        trackNewGroupedTabIds(current, result.state, movedOutGroupedTabIdsByWindowId, runtimeIndexCandidateNodeIds);
+        trackNewGroupedTabIds(current, result.state, runtimeFacts.movedOutGroupedTabIdsByWindowId, runtimeIndexCandidateNodeIds);
       }
       if (message.type === "restoreNode") {
         for (const tabId of restoredLiveTabIdsChangedByCommand(current, result.state, runtimeIndexCandidateNodeIds)) {
-          commandRestoredTabIds.add(tabId);
+          runtimeFacts.recordCommandRestoredTab(tabId);
         }
       }
       installStateTransition(current, result.state, { candidateNodeIds: runtimeIndexCandidateNodeIds });
@@ -775,6 +780,9 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       }
       if (message.type === "restoreNode") {
         await persistWithNodeStateUpdate(current, result.state, restorePatchNodeIds, { saveSchedule });
+        if (commandTransaction) {
+          runtimeFacts.commitCommand(commandTransaction.id);
+        }
         return commandAck(true);
       }
       if (message.type === "deleteNode") {
@@ -783,6 +791,9 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         );
         await broadcastTreeStructureUpdate(update);
         scheduleStateSave(result.state, saveSchedule);
+        if (commandTransaction) {
+          runtimeFacts.commitCommand(commandTransaction.id);
+        }
         return commandAck(true);
       }
       if (
@@ -795,23 +806,78 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         );
         await broadcastTreeStructureUpdate(update);
         scheduleStateSave(result.state, saveSchedule);
+        if (commandTransaction) {
+          runtimeFacts.commitCommand(commandTransaction.id);
+        }
         return commandAck(true);
       }
       if (message.type === "renameGroup") {
         await persistKnownNodeStateUpdate(current, result.state, message.nodeId);
+        if (commandTransaction) {
+          runtimeFacts.commitCommand(commandTransaction.id);
+        }
         return commandAck(true);
       }
       if (message.type === "toggleCollapsed") {
         await persistKnownNodeStateUpdate(current, result.state, message.nodeId);
+        if (commandTransaction) {
+          runtimeFacts.commitCommand(commandTransaction.id);
+        }
         return commandAck(true);
       }
       if (message.type === "expandAncestors") {
         await persistKnownNodeStateUpdates(current, result.state, expandAncestorNodeIds ?? []);
+        if (commandTransaction) {
+          runtimeFacts.commitCommand(commandTransaction.id);
+        }
         return commandAck(true);
       }
       await persistWithBestEffortPatch(current, result.state, { saveSchedule });
+      if (commandTransaction) {
+        runtimeFacts.commitCommand(commandTransaction.id);
+      }
       return commandAck(true);
     }, { reason: "command", command: message.type });
+  }
+
+  function commandTransactionForMessage(
+    message: BackgroundCommand,
+    plans: {
+      outlinerClosePlan: RuntimeClosePlan | undefined;
+      deleteClosePlan: RuntimeClosePlan | undefined;
+      focusTarget: { tabId: number; windowId: number; tabActive: boolean } | undefined;
+    }
+  ): CommandTransaction | undefined {
+    const ownership = commandOwnershipForMessage(message.type);
+    if (!ownership) {
+      return undefined;
+    }
+
+    const plannedTabs = new Set<number>();
+    const plannedWindows = new Set<number>();
+    for (const tabId of plans.outlinerClosePlan?.tabIds ?? []) {
+      plannedTabs.add(tabId);
+    }
+    for (const windowId of plans.outlinerClosePlan?.windowIds ?? []) {
+      plannedWindows.add(windowId);
+    }
+    for (const tabId of plans.deleteClosePlan?.tabIds ?? []) {
+      plannedTabs.add(tabId);
+    }
+    for (const windowId of plans.deleteClosePlan?.windowIds ?? []) {
+      plannedWindows.add(windowId);
+    }
+    if (plans.focusTarget) {
+      plannedTabs.add(plans.focusTarget.tabId);
+      plannedWindows.add(plans.focusTarget.windowId);
+    }
+
+    return runtimeFacts.beginCommandTransaction({
+      commandType: message.type,
+      plannedTabs: [...plannedTabs],
+      plannedWindows: [...plannedWindows],
+      ownership
+    });
   }
 
   async function runtimeClosePlanCompleted(plan: RuntimeClosePlan): Promise<boolean> {
@@ -912,27 +978,6 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         ? { rootIndex: command.index }
         : {})
     };
-  }
-
-  function recordCompletedClosePlanTombstones(plan: RuntimeClosePlan): void {
-    for (const tabId of plan.tabIds) {
-      removedTabIds.add(tabId);
-      deleteOwnedClosingTabIds.delete(tabId);
-      commandRelocatedTabEchoes.delete(tabId);
-    }
-    for (const windowId of plan.windowIds) {
-      removedWindowIds.add(windowId);
-      deleteOwnedClosingWindowIds.delete(windowId);
-    }
-  }
-
-  function clearRemovalTombstonesForLiveState(next: OutlineState): void {
-    for (const node of liveTabNodes(next)) {
-      removedTabIds.delete(node.live.tabId);
-    }
-    for (const node of liveWindowNodes(next)) {
-      removedWindowIds.delete(node.live.windowId);
-    }
   }
 
   async function ensureState(): Promise<OutlineState> {
@@ -1194,16 +1239,28 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
     const current = await ensureState();
     const saveSchedule = saveScheduleForCommand(popped.entry.commandType);
-    const next = await applyHistoryDeltaWithRuntime(current, direction === "undo" ? popped.entry.undo : popped.entry.redo);
-    clearRemovalTombstonesForLiveState(next);
+    const transaction = runtimeFacts.beginCommandTransaction({
+      commandType: direction,
+      ownership: "restore"
+    });
+    let next: OutlineState;
+    try {
+      next = await applyHistoryDeltaWithRuntime(current, direction === "undo" ? popped.entry.undo : popped.entry.redo);
+      runtimeFacts.recordCommandObserved(transaction.id);
+    } catch (error) {
+      runtimeFacts.rejectCommand(transaction.id);
+      throw error;
+    }
+    runtimeFacts.clearRemovalTombstonesForLiveState(next);
     if (statesMateriallyEqual(current, next)) {
       historyState = popped.history;
       scheduleHistorySave(historyState, saveSchedule);
       broadcastHistoryStatusSoon(historyState);
+      runtimeFacts.commitCommand(transaction.id);
       return commandAck(false);
     }
 
-    trackCommandRelocatedTabEchoes(current, next, commandRelocatedTabEchoes);
+    runtimeFacts.recordCommandRelocatedTabs(current, next);
     installStateTransition(current, next, { rebuildRuntimeIndex: true });
     const activePreferences = await ensurePreferences();
     historyState = direction === "undo"
@@ -1212,6 +1269,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     await persistWithBestEffortPatch(current, next, { diffMode: "material", saveSchedule });
     scheduleHistorySave(historyState, saveSchedule);
     broadcastHistoryStatusSoon(historyState);
+    runtimeFacts.commitCommand(transaction.id);
     return commandAck(true);
   }
 
@@ -1330,7 +1388,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       const createdTab = createdWindow.tabs?.[0];
       if (firstMissingTab && createdTab) {
         updateLiveTabRef(next, firstMissingTab.id, createdTab.id, createdWindow.id);
-        commandRestoredTabIds.add(createdTab.id);
+        runtimeFacts.recordCommandRestoredTab(createdTab.id);
         tabNodesCreatedWithWindow.add(firstMissingTab.id);
       }
       changed = true;
@@ -1357,7 +1415,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         active: node.active === true
       });
       updateLiveTabRef(next, node.id, created.id, created.windowId);
-      commandRestoredTabIds.add(created.id);
+      runtimeFacts.recordCommandRestoredTab(created.id);
       changed = true;
     }
 
@@ -1520,14 +1578,14 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     const current = await ensureState();
     const closeMissing = options.closeMissing ?? eventTabs.length === 0;
     const index = runtimeIndexForState(current);
-    const ignoredTabIds = ignoredRuntimeTabIdsForRefresh(removedTabIds, deleteOwnedClosingTabIds);
-    const ignoredWindowIds = ignoredRuntimeWindowIdsForRefresh(removedWindowIds, deleteOwnedClosingWindowIds);
+    const ignoredTabIds = runtimeFacts.ignoredTabIdsForRefresh();
+    const ignoredWindowIds = runtimeFacts.ignoredWindowIdsForRefresh();
     const currentEventTabs = eventTabs
       .filter((tab) => !ignoredTabIds.has(tab.id))
       .filter((tab) => !ignoredWindowIds.has(tab.windowId))
-      .filter((tab) => !consumeCommandRestoredTabEvent(current, index, commandRestoredTabIds, tab))
-      .filter((tab) => !consumeCommandRelocatedStaleTabEvent(current, index, commandRelocatedTabEchoes, tab))
-      .filter((tab) => tabEventMayChangeState(current, tab, index));
+      .filter((tab) => !runtimeReconciler.consumeCommandRestoredTabEvent(current, index, runtimeFacts, tab))
+      .filter((tab) => !runtimeReconciler.consumeCommandRelocatedStaleTabEvent(current, index, runtimeFacts, tab))
+      .filter((tab) => runtimeReconciler.tabEventMayChangeState(current, index, tab));
     if (eventTabs.length > 0 && currentEventTabs.length === 0 && !closeMissing) {
       return false;
     }
@@ -1549,35 +1607,14 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     }, () => currentEventTabs.length > 0
       ? getNormalWindowsIncludingTabs(api, currentEventTabs)
       : getNormalWindows(api));
-    const windows = applyActivationOverridesToWindows(
-      addMissingCommandRelocatedTabsFromCurrentState(
-        filterCommandRelocatedStaleTabsFromWindows(
-          addMissingTabsForEmptyOpenWindowSnapshots(
-            filterRemovedWindowsFromWindows(
-              filterRemovedTabsFromWindows(windowsSnapshot, ignoredTabIds),
-              ignoredWindowIds
-            ),
-            current,
-            index,
-            ignoredTabIds,
-            ignoredWindowIds
-          ),
-          current,
-          index,
-          commandRelocatedTabEchoes,
-          ignoredTabIds,
-          ignoredWindowIds
-        ),
-        current,
-        index,
-        commandRelocatedTabEchoes,
-        ignoredTabIds,
-        ignoredWindowIds
-      ),
-      current,
+    const windows = runtimeReconciler.normalizeSnapshot({
+      windows: windowsSnapshot,
+      state: current,
       index,
-      options.activationByWindowId
-    );
+      ledger: runtimeFacts,
+      confidence: currentEventTabs.length > 0 ? "eventLocal" : closeMissing ? "complete" : "partial",
+      activationByWindowId: options.activationByWindowId
+    });
     if (runtimeSnapshotMateriallyMatchesState(current, windows).matches) {
       return false;
     }
@@ -1967,8 +2004,8 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   }
 
   async function handleCommandTabActivated(activeInfo: { tabId: number; windowId: number; previousTabId?: number }): Promise<boolean> {
-    commandFocusedTabIds.delete(activeInfo.tabId);
-    commandFocusedActivationWindowIds.delete(activeInfo.windowId);
+    runtimeFacts.consumeCommandFocusedTab(activeInfo.tabId);
+    runtimeFacts.consumeCommandFocusedActivationWindow(activeInfo.windowId);
     return enqueueMutation(async () => {
       const current = await ensureState();
       const index = runtimeIndexForState(current);
@@ -1990,7 +2027,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   }
 
   async function handleCommandWindowFocusChanged(windowId: number): Promise<boolean> {
-    commandFocusedWindowIds.delete(windowId);
+    runtimeFacts.consumeCommandFocusedWindow(windowId);
     return enqueueMutation(async () => {
       const current = await ensureState();
       if (windowId === api.windows.WINDOW_ID_NONE) {
@@ -2569,35 +2606,15 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   async function reconcileMissingLiveTabsInOpenWindows(): Promise<ReconciledStateChange | undefined> {
     const current = await ensureState();
     const index = runtimeIndexForState(current);
-    const ignoredTabIds = ignoredRuntimeTabIdsForRefresh(removedTabIds, deleteOwnedClosingTabIds);
-    const ignoredWindowIds = ignoredRuntimeWindowIdsForRefresh(removedWindowIds, deleteOwnedClosingWindowIds);
-    const windows = addMissingCommandRelocatedTabsFromCurrentState(
-      filterCommandRelocatedStaleTabsFromWindows(
-        addMissingTabsForEmptyOpenWindowSnapshots(
-          filterRemovedWindowsFromWindows(
-            filterRemovedTabsFromWindows(
-              await getNormalWindows(api),
-              ignoredTabIds
-            ),
-            ignoredWindowIds
-          ),
-          current,
-          index,
-          ignoredTabIds,
-          ignoredWindowIds
-        ),
-        current,
-        index,
-        commandRelocatedTabEchoes,
-        ignoredTabIds,
-        ignoredWindowIds
-      ),
-      current,
+    const ignoredTabIds = runtimeFacts.ignoredTabIdsForRefresh();
+    const ignoredWindowIds = runtimeFacts.ignoredWindowIdsForRefresh();
+    const windows = runtimeReconciler.normalizeSnapshot({
+      windows: await getNormalWindows(api),
+      state: current,
       index,
-      commandRelocatedTabEchoes,
-      ignoredTabIds,
-      ignoredWindowIds
-    );
+      ledger: runtimeFacts,
+      confidence: "partial"
+    });
     const openWindowIds = new Set(windows.map((windowInfo) => windowInfo.id));
     const openTabIds = new Set(
       windows.flatMap((windowInfo) => windowInfo.tabs ?? []).map((tab) => tab.id)
@@ -2610,7 +2627,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         if (openWindowIds.has(node.live.windowId)) {
           return true;
         }
-        const relocationEcho = commandRelocatedTabEchoes.get(node.live.tabId);
+        const relocationEcho = runtimeFacts.commandRelocatedTabEcho(node.live.tabId);
         return relocationEcho?.toWindowId === node.live.windowId && !ignoredWindowIds.has(node.live.windowId);
       })
       .map((node) => node.live.tabId);
@@ -2620,8 +2637,8 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
     let next = current;
     for (const tabId of missingLiveTabIds) {
-      removedTabIds.add(tabId);
-      if (outlinerClosingTabIds.delete(tabId)) {
+      runtimeFacts.markTabRemoved(tabId);
+      if (runtimeFacts.consumeOutlinerClosingTab(tabId)) {
         const recent = await mostRecentClosedSession();
         next = closeTab(next, tabId, {
           now: now(),
@@ -3681,6 +3698,25 @@ function commandMayRelocateLiveTabs(type: BackgroundCommand["type"]): boolean {
     type === "moveSubtreeToTopLevel";
 }
 
+function commandOwnershipForMessage(type: BackgroundCommand["type"]): CommandOwnership | undefined {
+  if (type === "closeNode") {
+    return "outliner-close";
+  }
+  if (type === "deleteNode") {
+    return "delete";
+  }
+  if (commandMayRelocateLiveTabs(type)) {
+    return "relocation";
+  }
+  if (type === "restoreNode" || type === "undo" || type === "redo") {
+    return "restore";
+  }
+  if (type === "focusNode") {
+    return "focus";
+  }
+  return undefined;
+}
+
 function saveScheduleForCommand(type: BackgroundCommand["type"]): SaveSchedule {
   return isStructuralCommand(type) ? "interaction" : "normal";
 }
@@ -3753,42 +3789,6 @@ function commandOwnedFocusedWindowIds(
     }
   }
   return focusedWindowIds;
-}
-
-function trackCommandRelocatedTabEchoes(
-  previous: OutlineState,
-  next: OutlineState,
-  commandRelocatedTabEchoes: Map<number, CommandRelocatedTabEcho>,
-  candidateNodeIds?: readonly NodeId[]
-): void {
-  const previousNodes = candidateNodeIds
-    ? candidateNodeIds.flatMap((nodeId) => {
-        const node = previous.nodes[nodeId];
-        return node ? [node] : [];
-      })
-    : Object.values(previous.nodes);
-  for (const previousNode of previousNodes) {
-    if (!isLiveTabNode(previousNode)) {
-      continue;
-    }
-
-    const nextNode = next.nodes[previousNode.id];
-    if (
-      !isLiveTabNode(nextNode) ||
-      nextNode.live.tabId !== previousNode.live.tabId ||
-      nextNode.live.windowId === previousNode.live.windowId
-    ) {
-      continue;
-    }
-
-    const existingEcho = commandRelocatedTabEchoes.get(previousNode.live.tabId);
-    const fromWindowIds = new Set(existingEcho?.fromWindowIds ?? []);
-    fromWindowIds.add(previousNode.live.windowId);
-    commandRelocatedTabEchoes.set(previousNode.live.tabId, {
-      fromWindowIds,
-      toWindowId: nextNode.live.windowId
-    });
-  }
 }
 
 function trackNewGroupedTabIds(
@@ -3879,74 +3879,6 @@ function nearestLiveWindowAncestorId(state: OutlineState, nodeId: NodeId): NodeI
   }
 
   return undefined;
-}
-
-function consumeCommandRestoredTabEvent(
-  state: OutlineState,
-  index: RuntimeStateIndex,
-  commandRestoredTabIds: Set<number>,
-  tab: RuntimeTab
-): boolean {
-  if (!commandRestoredTabIds.has(tab.id)) {
-    return false;
-  }
-
-  const node = indexedLiveTabNodeByRuntimeId(state, index, tab.id);
-  if (!node || node.live.windowId !== tab.windowId) {
-    commandRestoredTabIds.delete(tab.id);
-    return false;
-  }
-
-  commandRestoredTabIds.delete(tab.id);
-  return true;
-}
-
-function consumeCommandRelocatedStaleTabEvent(
-  state: OutlineState,
-  index: RuntimeStateIndex,
-  commandRelocatedTabEchoes: Map<number, CommandRelocatedTabEcho>,
-  tab: RuntimeTab
-): boolean {
-  const echo = commandRelocatedTabEchoes.get(tab.id);
-  if (!echo) {
-    return false;
-  }
-
-  const node = indexedLiveTabNodeByRuntimeId(state, index, tab.id);
-  if (!node) {
-    commandRelocatedTabEchoes.delete(tab.id);
-    return false;
-  }
-
-  if (node.live.windowId !== echo.toWindowId) {
-    commandRelocatedTabEchoes.delete(tab.id);
-    return false;
-  }
-
-  if (echo.fromWindowIds.has(tab.windowId)) {
-    return true;
-  }
-
-  return false;
-}
-
-function tabEventMayChangeState(state: OutlineState, tab: RuntimeTab, index: RuntimeStateIndex): boolean {
-  const node = indexedLiveTabNodeByRuntimeId(state, index, tab.id);
-  if (!isLiveTabNode(node) || node.live.windowId !== tab.windowId) {
-    return true;
-  }
-
-  return liveTabNodeWouldChange(node, tab);
-}
-
-function isCommandFocusActiveUpdateEcho(
-  commandFocusedActivationWindowIds: Set<number>,
-  changeInfo: Partial<RuntimeTab>,
-  tab: RuntimeTab
-): boolean {
-  return tab.active === true &&
-    commandFocusedActivationWindowIds.has(tab.windowId) &&
-    Object.keys(changeInfo).every((key) => key === "active");
 }
 
 function activateRuntimeTabInPlace(
@@ -4198,340 +4130,6 @@ function isLiveWindowNode(node: OutlineNode | undefined): node is OutlineNode & 
 
 function isLiveTabNode(node: OutlineNode | undefined): node is OutlineNode & { live: { tabId: number; windowId: number } } {
   return Boolean(node?.kind === "tab" && node.status === "live" && node.live && "tabId" in node.live);
-}
-
-function filterRemovedTabsFromWindows(windows: RuntimeWindow[], removedTabIds: Set<number>): RuntimeWindow[] {
-  if (removedTabIds.size === 0) {
-    return windows;
-  }
-
-  return windows.map((windowInfo) => ({
-    ...windowInfo,
-    tabs: (windowInfo.tabs ?? []).filter((tab) => !removedTabIds.has(tab.id))
-  }));
-}
-
-function filterRemovedWindowsFromWindows(windows: RuntimeWindow[], removedWindowIds: Set<number>): RuntimeWindow[] {
-  if (removedWindowIds.size === 0) {
-    return windows;
-  }
-
-  return windows.filter((windowInfo) => !removedWindowIds.has(windowInfo.id));
-}
-
-function ignoredRuntimeTabIdsForRefresh(
-  removedTabIds: Set<number>,
-  deleteOwnedClosingTabIds: Set<number>
-): Set<number> {
-  if (deleteOwnedClosingTabIds.size === 0) {
-    return removedTabIds;
-  }
-
-  return new Set([...removedTabIds, ...deleteOwnedClosingTabIds]);
-}
-
-function ignoredRuntimeWindowIdsForRefresh(
-  removedWindowIds: Set<number>,
-  deleteOwnedClosingWindowIds: Set<number>
-): Set<number> {
-  if (deleteOwnedClosingWindowIds.size === 0) {
-    return removedWindowIds;
-  }
-
-  return new Set([...removedWindowIds, ...deleteOwnedClosingWindowIds]);
-}
-
-function addMissingTabsForEmptyOpenWindowSnapshots(
-  windows: RuntimeWindow[],
-  state: OutlineState,
-  index: RuntimeStateIndex,
-  ignoredTabIds: Set<number>,
-  ignoredWindowIds: Set<number>
-): RuntimeWindow[] {
-  const additionsByWindowId = new Map<number, RuntimeTab[]>();
-
-  for (const windowInfo of windows) {
-    if (ignoredWindowIds.has(windowInfo.id) || (windowInfo.tabs?.length ?? 0) > 0) {
-      continue;
-    }
-
-    const additions = liveTabNodes(state)
-      .filter((node) =>
-        node.live.windowId === windowInfo.id &&
-        !ignoredTabIds.has(node.live.tabId)
-      )
-      .flatMap((node) => {
-        const tab = commandRelocatedTabFromCurrentState(state, index, node.live.tabId, ignoredTabIds, ignoredWindowIds);
-        return tab ? [tab] : [];
-      });
-
-    if (additions.length > 0) {
-      additionsByWindowId.set(windowInfo.id, additions);
-    }
-  }
-
-  if (additionsByWindowId.size === 0) {
-    return windows;
-  }
-
-  return windows.map((windowInfo) => {
-    const additions = additionsByWindowId.get(windowInfo.id);
-    if (!additions || additions.length === 0) {
-      return windowInfo;
-    }
-
-    return {
-      ...windowInfo,
-      tabs: [...additions].sort((left, right) => left.index - right.index)
-    };
-  });
-}
-
-function filterCommandRelocatedStaleTabsFromWindows(
-  windows: RuntimeWindow[],
-  state: OutlineState,
-  index: RuntimeStateIndex,
-  commandRelocatedTabEchoes: Map<number, CommandRelocatedTabEcho>,
-  ignoredTabIds: Set<number>,
-  ignoredWindowIds: Set<number>
-): RuntimeWindow[] {
-  if (commandRelocatedTabEchoes.size === 0) {
-    return windows;
-  }
-
-  const freshEchoTabIds = new Set<number>();
-  for (const windowInfo of windows) {
-    for (const tab of windowInfo.tabs ?? []) {
-      const echo = commandRelocatedTabEchoes.get(tab.id);
-      if (!echo) {
-        continue;
-      }
-      const node = indexedLiveTabNodeByRuntimeId(state, index, tab.id);
-      if (!node) {
-        commandRelocatedTabEchoes.delete(tab.id);
-        continue;
-      }
-      if (tab.windowId === node.live.windowId || tab.windowId === echo.toWindowId) {
-        freshEchoTabIds.add(tab.id);
-      }
-    }
-  }
-
-  let changed = false;
-  const fallbackTabs: RuntimeTab[] = [];
-  const filtered = windows.map((windowInfo) => {
-    const tabs = windowInfo.tabs ?? [];
-    const nextTabs = tabs.filter((tab) => {
-      const echo = commandRelocatedTabEchoes.get(tab.id);
-      if (!echo) {
-        return true;
-      }
-
-      const node = indexedLiveTabNodeByRuntimeId(state, index, tab.id);
-      if (!node) {
-        commandRelocatedTabEchoes.delete(tab.id);
-        return true;
-      }
-
-      if (node.live.windowId !== echo.toWindowId) {
-        commandRelocatedTabEchoes.delete(tab.id);
-        return true;
-      }
-
-      const staleOldWindowEcho = echo.fromWindowIds.has(tab.windowId);
-      if (staleOldWindowEcho) {
-        changed = true;
-        if (!freshEchoTabIds.has(tab.id)) {
-          const fallbackTab = commandRelocatedTabFromCurrentState(state, index, tab, ignoredTabIds, ignoredWindowIds);
-          if (fallbackTab) {
-            fallbackTabs.push(fallbackTab);
-          }
-        }
-        return false;
-      }
-
-      if (tab.windowId === node.live.windowId || tab.windowId === echo.toWindowId) {
-        return true;
-      }
-
-      return true;
-    });
-
-    return nextTabs.length === tabs.length
-      ? windowInfo
-      : {
-          ...windowInfo,
-          tabs: nextTabs
-        };
-  });
-
-  if (fallbackTabs.length === 0) {
-    return changed ? filtered : windows;
-  }
-
-  const missingFallbackTabs = fallbackTabs.filter((tab) =>
-    !filtered.some((windowInfo) => windowInfo.tabs?.some((candidate) => candidate.id === tab.id))
-  );
-  if (missingFallbackTabs.length === 0) {
-    return changed ? filtered : windows;
-  }
-
-  const withFallbackTabs = filtered.map((windowInfo) => {
-    const additions = missingFallbackTabs.filter((tab) => tab.windowId === windowInfo.id);
-    if (additions.length === 0) {
-      return windowInfo;
-    }
-
-    return {
-      ...windowInfo,
-      tabs: [...(windowInfo.tabs ?? []), ...additions].sort((left, right) => left.index - right.index)
-    };
-  });
-
-  return withFallbackTabs;
-}
-
-function addMissingCommandRelocatedTabsFromCurrentState(
-  windows: RuntimeWindow[],
-  state: OutlineState,
-  index: RuntimeStateIndex,
-  commandRelocatedTabEchoes: Map<number, CommandRelocatedTabEcho>,
-  ignoredTabIds: Set<number>,
-  ignoredWindowIds: Set<number>
-): RuntimeWindow[] {
-  if (commandRelocatedTabEchoes.size === 0) {
-    return windows;
-  }
-
-  const presentTabIds = new Set(windows.flatMap((windowInfo) => windowInfo.tabs ?? []).map((tab) => tab.id));
-  const windowIds = new Set(windows.map((windowInfo) => windowInfo.id));
-  const additionsByWindowId = new Map<number, RuntimeTab[]>();
-
-  for (const [tabId, echo] of commandRelocatedTabEchoes) {
-    if (presentTabIds.has(tabId) || ignoredTabIds.has(tabId)) {
-      continue;
-    }
-
-    const node = indexedLiveTabNodeByRuntimeId(state, index, tabId);
-    if (!node) {
-      commandRelocatedTabEchoes.delete(tabId);
-      continue;
-    }
-    if (node.live.windowId !== echo.toWindowId) {
-      commandRelocatedTabEchoes.delete(tabId);
-      continue;
-    }
-    if (ignoredWindowIds.has(node.live.windowId) || !windowIds.has(node.live.windowId)) {
-      continue;
-    }
-
-    const fallbackTab = commandRelocatedTabFromCurrentState(state, index, tabId, ignoredTabIds, ignoredWindowIds);
-    if (!fallbackTab) {
-      continue;
-    }
-    const additions = additionsByWindowId.get(fallbackTab.windowId) ?? [];
-    additions.push(fallbackTab);
-    additionsByWindowId.set(fallbackTab.windowId, additions);
-  }
-
-  if (additionsByWindowId.size === 0) {
-    return windows;
-  }
-
-  return windows.map((windowInfo) => {
-    const additions = additionsByWindowId.get(windowInfo.id);
-    if (!additions || additions.length === 0) {
-      return windowInfo;
-    }
-
-    return {
-      ...windowInfo,
-      tabs: [...(windowInfo.tabs ?? []), ...additions].sort((left, right) => left.index - right.index)
-    };
-  });
-}
-
-function applyActivationOverridesToWindows(
-  windows: RuntimeWindow[],
-  state: OutlineState,
-  index: RuntimeStateIndex,
-  activationByWindowId?: ReadonlyMap<number, number>
-): RuntimeWindow[] {
-  if (!activationByWindowId || activationByWindowId.size === 0) {
-    return windows;
-  }
-
-  let changed = false;
-  const nextWindows = windows.map((windowInfo) => {
-    const activeTabId = activationByWindowId.get(windowInfo.id);
-    const tabs = windowInfo.tabs ?? [];
-    const nextTabs = tabs.map((tab) => {
-      const currentNode = indexedLiveTabNodeByRuntimeId(state, index, tab.id);
-      const active = typeof activeTabId === "number"
-        ? tab.id === activeTabId
-        : currentNode?.active ?? tab.active;
-      if (tab.active === active) {
-        return tab;
-      }
-      changed = true;
-      return {
-        ...tab,
-        active
-      };
-    });
-
-    return changed
-      ? {
-          ...windowInfo,
-          tabs: nextTabs
-        }
-      : windowInfo;
-  });
-
-  return changed ? nextWindows : windows;
-}
-
-function commandRelocatedTabFromCurrentState(
-  state: OutlineState,
-  index: RuntimeStateIndex,
-  staleTabOrId: RuntimeTab | number,
-  ignoredTabIds: Set<number>,
-  ignoredWindowIds: Set<number>
-): RuntimeTab | undefined {
-  const tabId = typeof staleTabOrId === "number" ? staleTabOrId : staleTabOrId.id;
-  if (ignoredTabIds.has(tabId)) {
-    return undefined;
-  }
-
-  const node = indexedLiveTabNodeByRuntimeId(state, index, tabId);
-  if (!node) {
-    return undefined;
-  }
-  if (ignoredWindowIds.has(node.live.windowId)) {
-    return undefined;
-  }
-
-  const windowNode = indexedLiveWindowNodeByRuntimeId(state, index, node.live.windowId);
-  if (!windowNode) {
-    return undefined;
-  }
-  const staleTab = typeof staleTabOrId === "number" ? undefined : staleTabOrId;
-  const projectedIndex = projectLiveTabs(state, windowNode.id).findIndex((tab) => tab.tabId === tabId);
-  return {
-    ...(staleTab ?? {
-      id: tabId,
-      windowId: node.live.windowId,
-      index: projectedIndex >= 0 ? projectedIndex : 0,
-      active: node.active === true
-    }),
-    id: tabId,
-    windowId: node.live.windowId,
-    index: projectedIndex >= 0 ? projectedIndex : (staleTab?.index ?? 0),
-    active: node.active === true,
-    ...(node.url ? { url: node.url } : {}),
-    ...(node.title ? { title: node.title } : {}),
-    ...(node.favIconUrl ? { favIconUrl: node.favIconUrl } : {})
-  };
 }
 
 function isDiagnosticsRequest(message: unknown): message is { type: "getDiagnostics" } {
