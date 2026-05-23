@@ -45,10 +45,12 @@ Useful actions:
 
 - Runtime events: `openTab`, `activateTab`, `updateTab`, `focusWindow`, `sessionChanged`, `manualRefresh`.
 - Commands: `outlinerGroupTab`, `outlinerMoveTabToNewWindow`, `outlinerMoveTabCommandToNewWindow`, `outlinerMoveSubtreeToTopLevel`, `outlinerFocusTab`, `outlinerCloseTab`, `outlinerCloseWindow`, `outlinerUndo`, `outlinerRedo`.
-- Failure-shape commands: `outlinerDeleteWindowRejectingClose`, `outlinerDeleteTabRejectingClose`, `outlinerDeleteNodeRejectingClose`, `outlinerRestoreDeleteWindowDelayedEvent`.
+- Failure-shape commands: `outlinerDeleteWindowRejectingClose`, `outlinerDeleteTabRejectingClose`, `outlinerDeleteNodeRejectingClose`, `outlinerMoveTabCommandToNewWindowRejectingCreate`, `outlinerRestoreDeleteWindowDelayedEvent`.
+- Query skews: `manualRefreshWithStaleQuery`, `manualRefreshWithMissingTabQuery`, `manualRefreshWithMissingWindowQuery`, `manualRefreshWithReorderedQuery`.
 - Stale echoes: `staleLiveUpdatedEvent`, `staleLiveCreatedEvent`, `flushRuntimeEvents`.
 
 `openTab` may include `openerTab` to model opener/reparenting behavior.
+`nativeCloseWindow` may set `order` to `tabsRemovedThenWindowRemoved`, `windowRemovedThenTabsRemoved`, `windowRemovedOnly`, or `tabsRemovedOnly`.
 
 ## Invariants
 
@@ -74,19 +76,19 @@ Focus mutations on stale or contradictory evidence crossing command boundaries:
 
 ## Coverage Matrix
 
-Pick sparse cells before adding another close variant:
+Current coverage after the coverage-first discovery hunt on 2026-05-23: 83 regression traces and 101 discovery traces. The expansion started from 46 discovery traces, added neutral threat-model variants for sparse cells, and recorded RT-040 through RT-062 as open discovery findings.
 
-| State shape | Command edge | Runtime skew | Refresh edge | Tags |
-| --- | --- | --- | --- | --- |
-| flat windows | move tab to command window | stale old-window created/update | manual refresh | `relocation`, `stale-event`, `manual-refresh` |
-| grouped/nested windows | close parent or source window | window removed before tab removed | session refresh | `nested-window`, `native-close`, `session` |
-| opener-linked tabs | move opener or opened tab | opener points across windows | manual refresh | `opener`, `reparenting` |
-| closed/restored subtree | delete after restore | delayed restored-tab event | session refresh | `restore`, `delayed-event` |
-| partial command failure | delete or close rejects | runtime resource already gone | stale snapshot | `delete-rejection`, `tombstone` |
-| relocated/source-closed tabs | move or group tab, then source disappears | stale `tabs.query` copy from old/source window | manual refresh | `stale-query`, `relocation`, `tombstone` |
-| relocated live tabs | move or group tab, then tab remains live | partial `tabs.query` omits relocated tab | manual refresh | `partial-snapshot`, `relocation`, `manual-refresh` |
-| focus churn | focus/activate during command | stale active snapshot | manual refresh | `focus`, `activation` |
-| history replay | undo/redo around live command | stale event from undone shape | manual refresh | `undo-redo`, `stale-event` |
+| State shape | Command edge | Runtime skew | Refresh edge | Current coverage | Next target |
+| --- | --- | --- | --- | --- | --- |
+| flat windows | move tab to command window | stale old-window created/update | manual refresh | covered | keep as baseline only |
+| grouped/nested windows | close parent or source window | window removed before/without tab removed | session/manual refresh | expanded; open RT findings | fix/dedupe native close ownership after RT-044, RT-045, RT-046, RT-053, RT-054, and RT-055 |
+| opener-linked tabs | move opened tab across windows | opener survives undo/redo | partial or reordered refresh | expanded | keep as regression input after fixes; avoid over-anchoring on exact RT histories |
+| closed/restored subtree | delete after restore | delayed restored-tab event crosses history | stale, missing, or reordered query | expanded; open RT findings | fix stale/partial restore refresh semantics after RT-041, RT-042, RT-043, RT-056, RT-060, and RT-062 |
+| partial command failure | relocation/create rejects | runtime side effect already happened | stale/manual refresh | expanded; open RT findings | fix command side-effect rejection recovery after RT-048, RT-049, RT-057, and RT-059 |
+| relocated/source-closed tabs | move or group tab, then source disappears | stale `tabs.query` old/source copy | manual refresh | regression-covered | avoid as primary prompt |
+| relocated live tabs | moved tab remains live | partial `tabs.query` omits tab/window | manual refresh | expanded; open RT findings | fix whole-window omission handling after RT-040, RT-047, RT-050, RT-051, RT-052, RT-058, and RT-061 |
+| focus churn | focus/activate during command | stale active or reordered snapshot | session/manual refresh | expanded | keep adding reorder-only variants after fixes, not before |
+| history replay | undo/redo around live command | stale event from undone shape | manual refresh | regression-covered plus opener/restore expansion | keep combined with opener/restore only |
 
 ## Five-Minute Mutation Block
 

@@ -121,6 +121,11 @@ type TabCloseEventOrder =
   | "sessionChangedThenTabRemoved"
   | "tabRemovedOnly"
   | "sessionChangedOnly";
+type WindowCloseEventOrder =
+  | "tabsRemovedThenWindowRemoved"
+  | "windowRemovedThenTabsRemoved"
+  | "windowRemovedOnly"
+  | "tabsRemovedOnly";
 
 type FakeRuntimeOptions = {
   browserLikeTabRemove?: TabCloseEventOrder;
@@ -669,7 +674,8 @@ function removeEmptyRuntimeWindows(runtime: FakeRuntime, windowIds: number[]): n
 async function closeRuntimeWindow(
   runtime: FakeRuntime,
   windowId: number,
-  options: { awaitListeners: boolean }
+  options: { awaitListeners: boolean },
+  order: WindowCloseEventOrder = "tabsRemovedThenWindowRemoved"
 ): Promise<void> {
   if (!runtime.windows.some((windowInfo) => windowInfo.id === windowId)) {
     return;
@@ -683,13 +689,29 @@ async function closeRuntimeWindow(
   runtime.windows = runtime.windows.filter((windowInfo) => windowInfo.id !== windowId);
 
   const emit = async (): Promise<void> => {
-    for (const tab of removedTabs) {
-      await fireEvent(runtime.events.tabRemoved, options.awaitListeners, tab.id, {
-        windowId,
-        isWindowClosing: true
-      });
+    const tabsRemoved = async (): Promise<void> => {
+      for (const tab of removedTabs) {
+        await fireEvent(runtime.events.tabRemoved, options.awaitListeners, tab.id, {
+          windowId,
+          isWindowClosing: true
+        });
+      }
+    };
+    const windowRemoved = async (): Promise<void> => {
+      await fireEvent(runtime.events.windowRemoved, options.awaitListeners, windowId);
+    };
+
+    if (order === "tabsRemovedThenWindowRemoved") {
+      await tabsRemoved();
+      await windowRemoved();
+    } else if (order === "windowRemovedThenTabsRemoved") {
+      await windowRemoved();
+      await tabsRemoved();
+    } else if (order === "windowRemovedOnly") {
+      await windowRemoved();
+    } else {
+      await tabsRemoved();
     }
-    await fireEvent(runtime.events.windowRemoved, options.awaitListeners, windowId);
   };
 
   if (options.awaitListeners) {
@@ -1152,6 +1174,11 @@ type DomainAction =
       captureStaleTabs?: string;
     }
   | {
+      type: "outlinerMoveTabCommandToNewWindowRejectingCreate";
+      tab: DomainTabSelector;
+      captureStaleTabs?: string;
+    }
+  | {
       type: "outlinerMoveSubtreeToTopLevel";
       tab: DomainTabSelector;
       captureStaleTabs?: string;
@@ -1197,6 +1224,15 @@ type DomainAction =
       tab: DomainTabSelector;
     }
   | {
+      type: "manualRefreshWithMissingWindowQuery";
+      window: DomainWindowSelector;
+    }
+  | {
+      type: "manualRefreshWithReorderedQuery";
+      window: DomainWindowSelector;
+      order?: "reverse" | "rotateLeft" | "rotateRight";
+    }
+  | {
       type: "sessionChanged";
     }
   | {
@@ -1213,6 +1249,7 @@ type DomainAction =
   | {
       type: "nativeCloseWindow";
       window: DomainWindowSelector;
+      order?: WindowCloseEventOrder;
     }
   | {
       type: "staleLiveUpdatedEvent";
@@ -2848,6 +2885,824 @@ const RUNTIME_DOMAIN_DISCOVERY_TRACES: RuntimeDomainTrace[] = [
       { type: "activateTab", tab: { role: "lastMovedTab" } },
       { type: "manualRefresh" }
     ]
+  },
+  {
+    id: "dh-opener-history-missing-source-query",
+    title: "opener history replay with missing source query",
+    notes: "Coverage expansion for opener-linked history replay when a partial refresh omits the old source window.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["opener", "undo-redo", "partial-snapshot", "manual-refresh", "relocation"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, openerTab: { tabId: 1 }, captureTab: "opener-history-missing-child" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { capture: "opener-history-missing-child" }, captureStaleTabs: "opener-history-missing-old" },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedo" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { windowId: 10 } },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "opener-history-missing-old" }, withStaleQuery: false }
+    ]
+  },
+  {
+    id: "dh-opener-history-reordered-source-query",
+    title: "opener history replay with reordered source query",
+    notes: "Coverage expansion for opener-linked history replay when the source window snapshot has stale tab indices.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["opener", "undo-redo", "stale-query", "manual-refresh", "relocation"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, openerTab: { tabId: 1 }, captureTab: "opener-history-reorder-child" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { capture: "opener-history-reorder-child" }, captureStaleTabs: "opener-history-reorder-old" },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedo" },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 10 }, order: "reverse" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "opener-history-reorder-old" }, withStaleQuery: false }
+    ]
+  },
+  {
+    id: "dh-opener-history-missing-moved-tab-query",
+    title: "opener history replay with missing moved tab query",
+    notes: "Coverage expansion for opener-linked history replay when a partial refresh omits the relocated opener child.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["opener", "undo-redo", "partial-snapshot", "manual-refresh", "relocation"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, openerTab: { tabId: 1 }, captureTab: "opener-history-missing-tab-child" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { capture: "opener-history-missing-tab-child" }, captureStaleTabs: "opener-history-missing-tab-old" },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedo" },
+      { type: "manualRefreshWithMissingTabQuery", tab: { role: "lastMovedTab" } },
+      { type: "sessionChanged" }
+    ]
+  },
+  {
+    id: "dh-restore-history-missing-window-query",
+    title: "restore history replay with missing window query",
+    notes: "Coverage expansion for restored/deleted subtrees when undo is followed by a partial refresh.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restore", "undo-redo", "partial-snapshot", "manual-refresh", "delayed-event"],
+    actions: [
+      { type: "outlinerRestoreDeleteWindowDelayedEvent", window: { windowId: 20 }, captureStaleTabs: "restore-history-missing-window" },
+      { type: "outlinerUndo" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { role: "focusedWindow" } },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "restore-history-missing-window" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "dh-restore-history-reordered-query",
+    title: "restore history replay with reordered query",
+    notes: "Coverage expansion for restored/deleted subtrees when a refreshed restored window has stale tab order.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restore", "undo-redo", "stale-query", "manual-refresh", "delayed-event"],
+    actions: [
+      { type: "outlinerRestoreDeleteWindowDelayedEvent", window: { windowId: 20 }, captureStaleTabs: "restore-history-reorder" },
+      { type: "outlinerUndo" },
+      { type: "openTab", window: { role: "focusedWindow" }, active: false, captureTab: "restore-history-reorder-extra" },
+      { type: "manualRefreshWithReorderedQuery", window: { role: "focusedWindow" }, order: "rotateRight" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "restore-history-reorder" }, withStaleQuery: false }
+    ]
+  },
+  {
+    id: "dh-restore-history-redo-partial-query",
+    title: "restore history redo with partial query",
+    notes: "Coverage expansion for restore/delete history redo followed by session and partial refresh evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restore", "undo-redo", "partial-snapshot", "session", "manual-refresh"],
+    actions: [
+      { type: "outlinerRestoreDeleteWindowDelayedEvent", window: { windowId: 20 }, captureStaleTabs: "restore-history-redo-partial" },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedo" },
+      { type: "sessionChanged" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { role: "firstRuntimeWindow" } }
+    ]
+  },
+  {
+    id: "dh-window-close-source-window-first",
+    title: "source window close emits window before tabs",
+    notes: "Coverage expansion for native window-close event ordering after command relocation.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["native-close", "relocation", "event-order", "stale-event"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "window-close-source-first-old" },
+      { type: "nativeCloseWindow", window: { windowId: 10 }, order: "windowRemovedThenTabsRemoved" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "window-close-source-first-old" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "dh-window-close-destination-tabs-only",
+    title: "destination window close emits tabs only",
+    notes: "Coverage expansion for native destination-window disappearance without a windowRemoved event.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["native-close", "relocation", "event-order", "tombstone"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "window-close-destination-tabs-only-old" },
+      { type: "nativeCloseWindow", window: { role: "lastOpenedWindow" }, order: "tabsRemovedOnly" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "dh-window-close-nested-window-only",
+    title: "nested window close emits window only",
+    notes: "Coverage expansion for nested command-created windows disappearing without tabRemoved events.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["native-close", "nested-window", "event-order", "manual-refresh"],
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "window-close-nested-window-only-old" },
+      { type: "nativeCloseWindow", window: { role: "lastOpenedWindow" }, order: "windowRemovedOnly" },
+      { type: "manualRefresh" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "window-close-nested-window-only-old" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "dh-window-close-source-tabs-only",
+    title: "source window close emits tabs only",
+    notes: "Coverage expansion for source-window disappearance with tabRemoved events but no windowRemoved event.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["native-close", "relocation", "event-order", "manual-refresh"],
+    actions: [
+      { type: "outlinerMoveSubtreeToTopLevel", tab: { tabId: 1 }, captureStaleTabs: "window-close-source-tabs-only-old" },
+      { type: "nativeCloseWindow", window: { windowId: 10 }, order: "tabsRemovedOnly" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { role: "lastOpenedWindow" } }
+    ]
+  },
+  {
+    id: "dh-query-missing-source-window-after-relocation",
+    title: "query omits source window after relocation",
+    notes: "Coverage expansion for whole-window partial refresh snapshots beyond single-tab omission.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["partial-snapshot", "manual-refresh", "relocation", "stale-query"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "query-missing-source-window-old" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { windowId: 10 } },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "query-missing-source-window-old" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "dh-query-reordered-destination-after-relocation",
+    title: "query reorders destination window after relocation",
+    notes: "Coverage expansion for stale tab indices in the command-created destination window.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["stale-query", "manual-refresh", "relocation", "fresh-event"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "query-reordered-destination-old" },
+      { type: "openTab", window: { role: "lastOpenedWindow" }, active: false, captureTab: "query-reordered-destination-extra" },
+      { type: "manualRefreshWithReorderedQuery", window: { role: "lastOpenedWindow" }, order: "reverse" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "query-reordered-destination-old" }, withStaleQuery: false }
+    ]
+  },
+  {
+    id: "dh-query-reordered-focus-session",
+    title: "query reorders focused window across session refresh",
+    notes: "Coverage expansion for reordered snapshots with focus and session churn but no relocation.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["stale-query", "focus", "activation", "session", "manual-refresh"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, captureTab: "query-reordered-focus-extra" },
+      { type: "focusWindow", window: { windowId: 10 } },
+      { type: "activateTab", tab: { capture: "query-reordered-focus-extra" } },
+      { type: "sessionChanged" },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 10 }, order: "rotateLeft" }
+    ]
+  },
+  {
+    id: "dh-relocation-create-reject-direct",
+    title: "relocation create rejects after moving tab",
+    notes: "Coverage expansion for command relocation whose browser createWindow side effect completes before rejection.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["relocation", "command-rejection", "partial-close", "manual-refresh"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindowRejectingCreate", tab: { tabId: 1 }, captureStaleTabs: "relocation-create-reject-direct-old" },
+      { type: "manualRefresh" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "relocation-create-reject-direct-old" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "dh-relocation-create-reject-opener",
+    title: "opener relocation create rejects after moving tab",
+    notes: "Coverage expansion for opener-linked command relocation whose browser side effect completes before rejection.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["opener", "relocation", "command-rejection", "partial-close"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, openerTab: { tabId: 1 }, captureTab: "relocation-create-reject-opener-child" },
+      { type: "outlinerMoveTabCommandToNewWindowRejectingCreate", tab: { capture: "relocation-create-reject-opener-child" }, captureStaleTabs: "relocation-create-reject-opener-old" },
+      { type: "sessionChanged" },
+      { type: "manualRefreshWithMissingTabQuery", tab: { capture: "relocation-create-reject-opener-child" } }
+    ]
+  },
+  {
+    id: "dh-opener-history-reordered-focused-query",
+    title: "opener history replay with reordered focused query",
+    notes: "Second-wave coverage for opener history replay when the command-created focused window reports stale indices.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["opener", "undo-redo", "stale-query", "manual-refresh", "relocation"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, openerTab: { tabId: 1 }, captureTab: "opener-history-focused-child" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { capture: "opener-history-focused-child" }, captureStaleTabs: "opener-history-focused-old" },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedo" },
+      { type: "openTab", window: { role: "focusedWindow" }, active: false, captureTab: "opener-history-focused-extra" },
+      { type: "manualRefreshWithReorderedQuery", window: { role: "focusedWindow" }, order: "rotateLeft" }
+    ]
+  },
+  {
+    id: "dh-window-close-source-window-only",
+    title: "source window close emits window only",
+    notes: "Second-wave coverage for source-window disappearance without tabRemoved events.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["native-close", "relocation", "event-order", "manual-refresh"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "window-close-source-window-only-old" },
+      { type: "nativeCloseWindow", window: { windowId: 10 }, order: "windowRemovedOnly" },
+      { type: "manualRefresh" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "window-close-source-window-only-old" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "dh-window-close-destination-window-first",
+    title: "destination window close emits window before tabs",
+    notes: "Second-wave coverage for destination-window close event order after relocation.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["native-close", "relocation", "event-order", "tombstone"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "window-close-destination-window-first-old" },
+      { type: "nativeCloseWindow", window: { role: "lastOpenedWindow" }, order: "windowRemovedThenTabsRemoved" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "window-close-destination-window-first-old" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "dh-query-missing-destination-window-after-relocation",
+    title: "query omits destination window after relocation",
+    notes: "Second-wave coverage for whole-window partial snapshots that omit the command-created destination window.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["partial-snapshot", "manual-refresh", "relocation", "stale-query"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "query-missing-destination-window-old" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { role: "lastOpenedWindow" } },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "query-missing-destination-window-old" }, withStaleQuery: false }
+    ]
+  },
+  {
+    id: "dh-query-reordered-source-after-relocation",
+    title: "query reorders source window after relocation",
+    notes: "Second-wave coverage for stale indices in a still-open source window after relocation.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["stale-query", "manual-refresh", "relocation", "fresh-event"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, captureTab: "query-reordered-source-extra" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "query-reordered-source-old" },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 10 }, order: "rotateRight" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "query-reordered-source-old" }, withStaleQuery: false }
+    ]
+  },
+  {
+    id: "dh-focus-session-missing-window-query",
+    title: "focus session refresh with missing focused window query",
+    notes: "Second-wave coverage for multi-tab ownership under focus/session churn and whole-window omission.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["focus", "activation", "session", "partial-snapshot", "manual-refresh"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, captureTab: "focus-session-missing-window-extra" },
+      { type: "focusWindow", window: { windowId: 10 } },
+      { type: "activateTab", tab: { capture: "focus-session-missing-window-extra" } },
+      { type: "sessionChanged" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { windowId: 10 } }
+    ]
+  },
+  {
+    id: "dh-focus-session-missing-background-window",
+    title: "focus session refresh with missing background window",
+    notes: "Third-wave coverage for session refresh when a partial snapshot omits an unfocused live window.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["focus", "activation", "session", "partial-snapshot", "manual-refresh"],
+    actions: [
+      { type: "openTab", window: { windowId: 20 }, active: false, captureTab: "focus-session-background-extra" },
+      { type: "focusWindow", window: { windowId: 10 } },
+      { type: "activateTab", tab: { tabId: 2 } },
+      { type: "sessionChanged" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { windowId: 20 } }
+    ]
+  },
+  {
+    id: "dh-nested-focus-session-missing-destination",
+    title: "nested focus session omits destination window",
+    notes: "Third-wave coverage for nested relocated windows under focus/session churn and whole-window omission.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["nested-window", "focus", "session", "partial-snapshot", "relocation"],
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "nested-focus-session-missing-old" },
+      { type: "focusWindow", window: { role: "lastOpenedWindow" } },
+      { type: "sessionChanged" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { role: "lastOpenedWindow" } },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "nested-focus-session-missing-old" }, withStaleQuery: false }
+    ]
+  },
+  {
+    id: "dh-opener-focus-session-missing-window",
+    title: "opener focus session omits source window",
+    notes: "Third-wave coverage combining opener relationships, focus/session churn, and whole-window omission.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["opener", "focus", "session", "partial-snapshot", "manual-refresh"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, openerTab: { tabId: 1 }, captureTab: "opener-focus-session-child" },
+      { type: "focusWindow", window: { windowId: 10 } },
+      { type: "activateTab", tab: { capture: "opener-focus-session-child" } },
+      { type: "sessionChanged" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { windowId: 10 } }
+    ]
+  },
+  {
+    id: "dh-window-close-opener-tabs-only",
+    title: "opener source window close emits tabs only",
+    notes: "Third-wave coverage for opener-linked source-window close without a windowRemoved event.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["opener", "native-close", "event-order", "partial-snapshot"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, openerTab: { tabId: 1 }, captureTab: "window-close-opener-tabs-only-child" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { capture: "window-close-opener-tabs-only-child" }, captureStaleTabs: "window-close-opener-tabs-only-old" },
+      { type: "nativeCloseWindow", window: { windowId: 10 }, order: "tabsRemovedOnly" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { role: "lastOpenedWindow" } }
+    ]
+  },
+  {
+    id: "dh-window-close-destination-window-only",
+    title: "destination window close emits window only",
+    notes: "Final coverage pass for destination-window close without tabRemoved events.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["native-close", "relocation", "event-order", "manual-refresh"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "window-close-destination-window-only-old" },
+      { type: "nativeCloseWindow", window: { role: "lastOpenedWindow" }, order: "windowRemovedOnly" },
+      { type: "manualRefresh" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "window-close-destination-window-only-old" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "dh-nested-query-reordered-destination",
+    title: "nested destination query reorder",
+    notes: "Final coverage pass for stale indices in a nested command-created window.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["nested-window", "stale-query", "manual-refresh", "relocation"],
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "nested-query-reordered-destination-old" },
+      { type: "openTab", window: { role: "lastOpenedWindow" }, active: false, captureTab: "nested-query-reordered-destination-extra" },
+      { type: "manualRefreshWithReorderedQuery", window: { role: "lastOpenedWindow" }, order: "reverse" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "nested-query-reordered-destination-old" }, withStaleQuery: false }
+    ]
+  },
+  {
+    id: "dh-opener-history-reordered-background-query",
+    title: "opener history reorders background query",
+    notes: "Final coverage pass for opener history replay when an unfocused source window reports stale indices.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["opener", "undo-redo", "stale-query", "manual-refresh", "relocation"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, openerTab: { tabId: 1 }, captureTab: "opener-history-background-child" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { capture: "opener-history-background-child" }, captureStaleTabs: "opener-history-background-old" },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedo" },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 10 }, order: "rotateLeft" }
+    ]
+  },
+  {
+    id: "dh-session-reordered-both-windows",
+    title: "session refresh with reordered windows",
+    notes: "Final coverage pass for stale tab indices under session refresh without relocation.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["session", "stale-query", "manual-refresh", "focus", "activation"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, captureTab: "session-reordered-window-ten-extra" },
+      { type: "openTab", window: { windowId: 20 }, active: false, captureTab: "session-reordered-window-twenty-extra" },
+      { type: "activateTab", tab: { capture: "session-reordered-window-ten-extra" } },
+      { type: "sessionChanged" },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 10 }, order: "reverse" },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 20 }, order: "rotateRight" }
+    ]
+  },
+  {
+    id: "dh-nested-source-reordered-focus-session",
+    title: "nested source reordered after focus session",
+    notes: "Clean-block probe for stale source-window indices after nested relocation and focus/session churn.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["nested-window", "focus", "session", "stale-query", "manual-refresh"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, captureTab: "nested-source-reordered-extra" },
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "nested-source-reordered-old" },
+      { type: "focusWindow", window: { windowId: 10 } },
+      { type: "sessionChanged" },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 10 }, order: "reverse" }
+    ]
+  },
+  {
+    id: "dh-source-window-only-session-refresh",
+    title: "source window-only close followed by session refresh",
+    notes: "Clean-block probe for source-window `windowRemovedOnly` ordering across session refresh.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["native-close", "event-order", "session", "relocation", "manual-refresh"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "source-window-only-session-old" },
+      { type: "nativeCloseWindow", window: { windowId: 10 }, order: "windowRemovedOnly" },
+      { type: "sessionChanged" },
+      { type: "manualRefresh" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "source-window-only-session-old" }, withStaleQuery: false }
+    ]
+  },
+  {
+    id: "dh-destination-window-first-session-refresh",
+    title: "destination window-first close followed by session refresh",
+    notes: "Clean-block probe for destination-window `windowRemovedThenTabsRemoved` ordering across session refresh.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["native-close", "event-order", "session", "relocation", "manual-refresh"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "destination-window-first-session-old" },
+      { type: "nativeCloseWindow", window: { role: "lastOpenedWindow" }, order: "windowRemovedThenTabsRemoved" },
+      { type: "sessionChanged" },
+      { type: "manualRefresh" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "destination-window-first-session-old" }, withStaleQuery: false }
+    ]
+  },
+  {
+    id: "dh-nested-tabs-only-session-refresh",
+    title: "nested tabs-only close followed by session refresh",
+    notes: "Clean-block probe for nested destination-window `tabsRemovedOnly` ordering across session refresh.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["nested-window", "native-close", "event-order", "session", "manual-refresh"],
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "nested-tabs-only-session-old" },
+      { type: "nativeCloseWindow", window: { role: "lastOpenedWindow" }, order: "tabsRemovedOnly" },
+      { type: "sessionChanged" },
+      { type: "manualRefresh" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "nested-tabs-only-session-old" }, withStaleQuery: false }
+    ]
+  },
+  {
+    id: "dh-restore-history-source-reordered-session",
+    title: "restore history with source reordered after session",
+    notes: "Clean-block probe for restore/history replay when a non-restored live window returns stale tab order.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restore", "undo-redo", "session", "stale-query", "manual-refresh"],
+    actions: [
+      { type: "outlinerRestoreDeleteWindowDelayedEvent", window: { windowId: 20 }, captureStaleTabs: "restore-source-reordered-session" },
+      { type: "outlinerUndo" },
+      { type: "openTab", window: { windowId: 10 }, active: false, captureTab: "restore-source-reordered-extra" },
+      { type: "sessionChanged" },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 10 }, order: "reverse" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "restore-source-reordered-session" }, withStaleQuery: false }
+    ]
+  },
+  {
+    id: "dh-relocation-reject-after-reordered-query",
+    title: "relocation create rejects after reordered query",
+    notes: "Clean-block probe for command relocation rejection after a stale ordered source-window refresh.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["relocation", "command-rejection", "stale-query", "manual-refresh"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, captureTab: "reject-reordered-query-tab" },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 10 }, order: "rotateRight" },
+      { type: "outlinerMoveTabCommandToNewWindowRejectingCreate", tab: { capture: "reject-reordered-query-tab" }, captureStaleTabs: "reject-reordered-query-old" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "dh-focus-session-destination-reordered",
+    title: "focus session with reordered destination",
+    notes: "Clean-block probe for a command-created destination window under multi-window focus and session churn.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["focus", "session", "stale-query", "relocation", "manual-refresh"],
+    actions: [
+      { type: "openTab", window: { windowId: 20 }, active: false, captureTab: "focus-destination-background-extra" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "focus-destination-reordered-old" },
+      { type: "openTab", window: { role: "lastOpenedWindow" }, active: false, captureTab: "focus-destination-reordered-extra" },
+      { type: "focusWindow", window: { role: "lastOpenedWindow" } },
+      { type: "sessionChanged" },
+      { type: "manualRefreshWithReorderedQuery", window: { role: "lastOpenedWindow" }, order: "rotateRight" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "focus-destination-reordered-old" }, withStaleQuery: false }
+    ]
+  },
+  {
+    id: "dh-opener-history-window-only-source-close",
+    title: "opener history with source window-only close",
+    notes: "Clean-block probe for opener/history replay followed by a source-window close that emits no tabRemoved events.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["opener", "undo-redo", "native-close", "event-order", "manual-refresh"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, openerTab: { tabId: 1 }, captureTab: "opener-history-window-only-child" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { capture: "opener-history-window-only-child" }, captureStaleTabs: "opener-history-window-only-old" },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedo" },
+      { type: "nativeCloseWindow", window: { windowId: 10 }, order: "windowRemovedOnly" },
+      { type: "manualRefresh" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "opener-history-window-only-old" }, withStaleQuery: false }
+    ]
+  },
+  {
+    id: "dh-restore-redo-source-reordered-session",
+    title: "restore redo with source reordered after session",
+    notes: "Clean-block probe for restore/history redo when a still-live source window reports stale tab order.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restore", "undo-redo", "session", "stale-query", "manual-refresh"],
+    actions: [
+      { type: "outlinerRestoreDeleteWindowDelayedEvent", window: { windowId: 20 }, captureStaleTabs: "restore-redo-source-reordered" },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedo" },
+      { type: "openTab", window: { windowId: 10 }, active: false, captureTab: "restore-redo-source-reordered-extra" },
+      { type: "sessionChanged" },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 10 }, order: "rotateLeft" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "restore-redo-source-reordered" }, withStaleQuery: false }
+    ]
+  },
+  {
+    id: "dh-focus-relocation-missing-background-query",
+    title: "focus relocation with missing background query",
+    notes: "Clean-block probe for a background window omitted after focus moves to a command-created destination.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["focus", "activation", "relocation", "partial-snapshot", "manual-refresh"],
+    actions: [
+      { type: "openTab", window: { windowId: 20 }, active: false, captureTab: "focus-relocation-background-extra" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "focus-relocation-missing-background-old" },
+      { type: "focusWindow", window: { role: "lastOpenedWindow" } },
+      { type: "activateTab", tab: { role: "lastMovedTab" } },
+      { type: "manualRefreshWithMissingWindowQuery", window: { windowId: 20 } },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "focus-relocation-missing-background-old" }, withStaleQuery: false }
+    ]
+  },
+  {
+    id: "dh-opener-source-default-close-session",
+    title: "opener source default close followed by session",
+    notes: "Clean-block probe for opener-linked relocation when source close emits tab removals before window removal.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["opener", "native-close", "event-order", "session", "manual-refresh"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, openerTab: { tabId: 1 }, captureTab: "opener-source-default-close-child" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { capture: "opener-source-default-close-child" }, captureStaleTabs: "opener-source-default-close-old" },
+      { type: "nativeCloseWindow", window: { windowId: 10 }, order: "tabsRemovedThenWindowRemoved" },
+      { type: "sessionChanged" },
+      { type: "manualRefresh" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "opener-source-default-close-old" }, withStaleQuery: false }
+    ]
+  },
+  {
+    id: "dh-relocation-reject-after-focus-session",
+    title: "relocation create rejects after focus session",
+    notes: "Clean-block probe for relocation rejection after unrelated focus/session churn.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["relocation", "command-rejection", "focus", "session", "manual-refresh"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, captureTab: "reject-focus-session-tab" },
+      { type: "focusWindow", window: { windowId: 20 } },
+      { type: "sessionChanged" },
+      { type: "outlinerMoveTabCommandToNewWindowRejectingCreate", tab: { capture: "reject-focus-session-tab" }, captureStaleTabs: "reject-focus-session-old" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "dh-destination-default-close-session-refresh",
+    title: "destination default close followed by session refresh",
+    notes: "Clean-block probe for destination-window close with tab removals followed by window removal.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["native-close", "event-order", "session", "relocation", "manual-refresh"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "destination-default-close-old" },
+      { type: "nativeCloseWindow", window: { role: "lastOpenedWindow" }, order: "tabsRemovedThenWindowRemoved" },
+      { type: "sessionChanged" },
+      { type: "manualRefresh" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "destination-default-close-old" }, withStaleQuery: false }
+    ]
+  },
+  {
+    id: "dh-restore-history-missing-source-session",
+    title: "restore history with missing source after session",
+    notes: "Clean-block probe for restore/history replay when a partial refresh omits a still-live source window.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restore", "undo-redo", "session", "partial-snapshot", "manual-refresh"],
+    actions: [
+      { type: "outlinerRestoreDeleteWindowDelayedEvent", window: { windowId: 20 }, captureStaleTabs: "restore-missing-source-session" },
+      { type: "outlinerUndo" },
+      { type: "openTab", window: { windowId: 10 }, active: false, captureTab: "restore-missing-source-extra" },
+      { type: "sessionChanged" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { windowId: 10 } },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "restore-missing-source-session" }, withStaleQuery: false }
+    ]
+  },
+  {
+    id: "dh-focus-session-reordered-background-query",
+    title: "focus session with reordered background query",
+    notes: "Clean-block probe for stale tab order in an unfocused background window after focus/session churn.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["focus", "activation", "session", "stale-query", "manual-refresh"],
+    actions: [
+      { type: "openTab", window: { windowId: 20 }, active: false, captureTab: "focus-session-reordered-background-extra" },
+      { type: "focusWindow", window: { windowId: 10 } },
+      { type: "activateTab", tab: { tabId: 2 } },
+      { type: "sessionChanged" },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 20 }, order: "rotateLeft" }
+    ]
+  },
+  {
+    id: "dh-opener-history-source-default-close-session",
+    title: "opener history source default close followed by session",
+    notes: "Clean-block probe for opener/history replay when source close emits tab removals before window removal.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["opener", "undo-redo", "native-close", "event-order", "session"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, openerTab: { tabId: 1 }, captureTab: "opener-history-source-default-child" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { capture: "opener-history-source-default-child" }, captureStaleTabs: "opener-history-source-default-old" },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedo" },
+      { type: "nativeCloseWindow", window: { windowId: 10 }, order: "tabsRemovedThenWindowRemoved" },
+      { type: "sessionChanged" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "dh-destination-default-close-missing-source-query",
+    title: "destination default close with missing source query",
+    notes: "Clean-block probe for canonical destination close followed by a source-window partial refresh.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["native-close", "event-order", "partial-snapshot", "relocation", "manual-refresh"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "destination-default-missing-source-old" },
+      { type: "nativeCloseWindow", window: { role: "lastOpenedWindow" }, order: "tabsRemovedThenWindowRemoved" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { windowId: 10 } },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "destination-default-missing-source-old" }, withStaleQuery: false }
+    ]
+  },
+  {
+    id: "dh-restore-redo-missing-source-session",
+    title: "restore redo with missing source after session",
+    notes: "Clean-block probe for restore/history redo when a partial refresh omits a still-live source window.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restore", "undo-redo", "session", "partial-snapshot", "manual-refresh"],
+    actions: [
+      { type: "outlinerRestoreDeleteWindowDelayedEvent", window: { windowId: 20 }, captureStaleTabs: "restore-redo-missing-source" },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedo" },
+      { type: "openTab", window: { windowId: 10 }, active: false, captureTab: "restore-redo-missing-source-extra" },
+      { type: "sessionChanged" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { windowId: 10 } },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "restore-redo-missing-source" }, withStaleQuery: false }
+    ]
+  },
+  {
+    id: "dh-destination-default-close-reordered-source-query",
+    title: "destination default close with reordered source query",
+    notes: "Clean-block probe for canonical destination close followed by stale source-window tab order.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["native-close", "event-order", "stale-query", "relocation", "manual-refresh"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, captureTab: "destination-default-reordered-source-extra" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "destination-default-reordered-source-old" },
+      { type: "nativeCloseWindow", window: { role: "lastOpenedWindow" }, order: "tabsRemovedThenWindowRemoved" },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 10 }, order: "reverse" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "destination-default-reordered-source-old" }, withStaleQuery: false }
+    ]
+  },
+  {
+    id: "dh-direct-move-source-reordered-session",
+    title: "direct move source reordered after session",
+    notes: "Clean-block probe for outliner move-to-new-window with stale source-window order after session refresh.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["relocation", "session", "stale-query", "manual-refresh"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, captureTab: "direct-move-source-reordered-extra" },
+      { type: "outlinerMoveTabToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "direct-move-source-reordered-old" },
+      { type: "sessionChanged" },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 10 }, order: "rotateLeft" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "direct-move-source-reordered-old" }, withStaleQuery: false }
+    ]
+  },
+  {
+    id: "dh-top-level-move-background-reordered-focus",
+    title: "top-level move background reordered after focus",
+    notes: "Clean-block probe for top-level relocation while an unfocused background window reports stale tab order.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["relocation", "focus", "stale-query", "manual-refresh"],
+    actions: [
+      { type: "openTab", window: { windowId: 20 }, active: false, captureTab: "top-level-background-reordered-extra" },
+      { type: "outlinerMoveSubtreeToTopLevel", tab: { tabId: 1 }, captureStaleTabs: "top-level-background-reordered-old" },
+      { type: "focusWindow", window: { role: "lastOpenedWindow" } },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 20 }, order: "rotateRight" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "top-level-background-reordered-old" }, withStaleQuery: false }
+    ]
+  },
+  {
+    id: "dh-opener-tab-close-reordered-session",
+    title: "opener tab close with reordered session refresh",
+    notes: "Clean-block probe for opener-linked native tab close before a stale ordered source-window refresh.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["opener", "native-close", "session", "stale-query", "manual-refresh"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, openerTab: { tabId: 1 }, captureTab: "opener-tab-close-reordered-child" },
+      { type: "nativeCloseTab", tab: { capture: "opener-tab-close-reordered-child" }, order: "sessionChangedThenTabRemoved" },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 10 }, order: "reverse" }
+    ]
+  },
+  {
+    id: "dh-stale-created-destination-reordered-session",
+    title: "stale created after destination reordered session",
+    notes: "Clean-block probe for stale old-window created evidence after destination reordering and session refresh.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["relocation", "session", "stale-event", "stale-query", "manual-refresh"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "stale-created-destination-reordered-old" },
+      { type: "openTab", window: { role: "lastOpenedWindow" }, active: false, captureTab: "stale-created-destination-reordered-extra" },
+      { type: "sessionChanged" },
+      { type: "manualRefreshWithReorderedQuery", window: { role: "lastOpenedWindow" }, order: "rotateLeft" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "stale-created-destination-reordered-old" }, withStaleQuery: false }
+    ]
+  },
+  {
+    id: "dh-session-only-tab-close-reordered-source",
+    title: "session-only tab close with reordered source",
+    notes: "Clean-block probe for native tab disappearance without tabRemoved followed by stale source-window order.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["native-close", "session", "stale-query", "manual-refresh"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, captureTab: "session-only-close-reordered-extra" },
+      { type: "nativeCloseTab", tab: { tabId: 2 }, order: "sessionChangedOnly" },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 10 }, order: "reverse" },
+      { type: "activateTab", tab: { capture: "session-only-close-reordered-extra" } }
+    ]
+  },
+  {
+    id: "dh-opener-history-reordered-session",
+    title: "opener history reordered after session",
+    notes: "Clean-block probe for opener/history replay with session churn and stale source-window order.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["opener", "undo-redo", "session", "stale-query", "manual-refresh"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, openerTab: { tabId: 1 }, captureTab: "opener-history-reordered-session-child" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { capture: "opener-history-reordered-session-child" }, captureStaleTabs: "opener-history-reordered-session-old" },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedo" },
+      { type: "sessionChanged" },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 10 }, order: "reverse" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "opener-history-reordered-session-old" }, withStaleQuery: false }
+    ]
+  },
+  {
+    id: "dh-flush-stale-created-destination-reordered",
+    title: "flush after stale created destination reordered",
+    notes: "Clean-block probe for explicit runtime flush after stale-created evidence and destination reordering.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["relocation", "stale-event", "stale-query", "manual-refresh"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "flush-stale-created-destination-old" },
+      { type: "openTab", window: { role: "lastOpenedWindow" }, active: false, captureTab: "flush-stale-created-destination-extra" },
+      { type: "manualRefreshWithReorderedQuery", window: { role: "lastOpenedWindow" }, order: "reverse" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "flush-stale-created-destination-old" }, withStaleQuery: false },
+      { type: "flushRuntimeEvents" }
+    ]
   }
 ];
 
@@ -3435,6 +4290,33 @@ function snapshotMissingTab(tabs: RuntimeTab[], tabId: number): RuntimeTab[] {
   return tabs.filter((tab) => tab.id !== tabId).map(copyTab);
 }
 
+function snapshotMissingWindow(tabs: RuntimeTab[], windowId: number): RuntimeTab[] {
+  return tabs.filter((tab) => tab.windowId !== windowId).map(copyTab);
+}
+
+function snapshotReorderedWindowTabs(
+  tabs: RuntimeTab[],
+  windowId: number,
+  order: "reverse" | "rotateLeft" | "rotateRight"
+): RuntimeTab[] {
+  const windowTabs = tabs
+    .filter((tab) => tab.windowId === windowId)
+    .sort((left, right) => left.index - right.index)
+    .map(copyTab);
+  const reorderedTabs = order === "reverse"
+    ? [...windowTabs].reverse()
+    : order === "rotateLeft"
+      ? [...windowTabs.slice(1), ...windowTabs.slice(0, 1)]
+      : [...windowTabs.slice(-1), ...windowTabs.slice(0, -1)];
+  const indexByTabId = new Map(reorderedTabs.map((tab, index) => [tab.id, index]));
+  return tabs.map((tab) => ({
+    ...tab,
+    ...(tab.windowId === windowId && indexByTabId.has(tab.id)
+      ? { index: indexByTabId.get(tab.id)! }
+      : {})
+  }));
+}
+
 function snapshotContainingDeletedTab(tabs: RuntimeTab[], stale: RuntimeTab): RuntimeTab[] {
   return tabs.some((tab) => tab.id === stale.id)
     ? snapshotReplacingTab(tabs, stale)
@@ -3743,6 +4625,11 @@ async function runDomainAction(context: GeneratedTraceContext, action: DomainAct
     return;
   }
 
+  if (action.type === "outlinerMoveTabCommandToNewWindowRejectingCreate") {
+    await runDomainOutlinerMoveTabCommandToNewWindowRejectingCreate(context, action.tab, action.captureStaleTabs);
+    return;
+  }
+
   if (action.type === "outlinerMoveSubtreeToTopLevel") {
     await runDomainOutlinerMoveSubtreeToTopLevel(context, action.tab, action.captureStaleTabs);
     return;
@@ -3798,6 +4685,16 @@ async function runDomainAction(context: GeneratedTraceContext, action: DomainAct
     return;
   }
 
+  if (action.type === "manualRefreshWithMissingWindowQuery") {
+    await runDomainManualRefreshWithMissingWindowQuery(context, action.window);
+    return;
+  }
+
+  if (action.type === "manualRefreshWithReorderedQuery") {
+    await runDomainManualRefreshWithReorderedQuery(context, action.window, action.order ?? "reverse");
+    return;
+  }
+
   if (action.type === "sessionChanged") {
     await runDomainSessionChanged(context);
     return;
@@ -3819,7 +4716,7 @@ async function runDomainAction(context: GeneratedTraceContext, action: DomainAct
   }
 
   if (action.type === "nativeCloseWindow") {
-    await runDomainNativeCloseWindow(context, action.window);
+    await runDomainNativeCloseWindow(context, action.window, action.order ?? "tabsRemovedThenWindowRemoved");
     return;
   }
 
@@ -3948,6 +4845,29 @@ async function runDomainOutlinerMoveTabCommandToNewWindow(
   });
   expectCommandAck(result, true);
   captureMovedTab(context, tab.id);
+}
+
+async function runDomainOutlinerMoveTabCommandToNewWindowRejectingCreate(
+  context: GeneratedTraceContext,
+  selector: DomainTabSelector,
+  captureStaleTabs?: string
+): Promise<void> {
+  const tab = resolveDomainTab(context, selector);
+  const candidate = await domainRelocatableCommandCandidateForTab(context, tab.id);
+  captureStaleRuntimeTabs(context, captureStaleTabs, candidate.staleTabs);
+  context.staleLiveEventTabs.push(...candidate.staleTabs);
+  vi.mocked(context.runtime.api.windows.create).mockImplementationOnce(async (createData) => {
+    createWindowFromBrowser(context.runtime, createData as FakeWindowCreateData);
+    throw new Error("domain create window rejected after completion");
+  });
+  const result = await context.controller.handleMessage({
+    type: "moveNodeToNewWindow",
+    nodeId: candidate.nodeId,
+    index: 0
+  });
+  expect((result as CommandAck).type).toBe("commandAck");
+  captureMovedTab(context, tab.id);
+  await flushGeneratedRuntimeEventRefreshes(context);
 }
 
 async function runDomainOutlinerMoveSubtreeToTopLevel(
@@ -4210,6 +5130,33 @@ async function runDomainManualRefreshWithMissingTabQuery(
   }
 }
 
+async function runDomainManualRefreshWithMissingWindowQuery(
+  context: GeneratedTraceContext,
+  selector: DomainWindowSelector
+): Promise<void> {
+  const windowInfo = resolveDomainWindow(context, selector);
+  context.runtime.queueTabQueryResult(snapshotMissingWindow(context.runtime.tabs, windowInfo.id));
+  try {
+    await runDomainManualRefresh(context);
+  } finally {
+    context.runtime.clearNextTabQueryResult();
+  }
+}
+
+async function runDomainManualRefreshWithReorderedQuery(
+  context: GeneratedTraceContext,
+  selector: DomainWindowSelector,
+  order: "reverse" | "rotateLeft" | "rotateRight"
+): Promise<void> {
+  const windowInfo = resolveDomainWindow(context, selector);
+  context.runtime.queueTabQueryResult(snapshotReorderedWindowTabs(context.runtime.tabs, windowInfo.id, order));
+  try {
+    await runDomainManualRefresh(context);
+  } finally {
+    context.runtime.clearNextTabQueryResult();
+  }
+}
+
 async function runDomainSessionChanged(context: GeneratedTraceContext): Promise<void> {
   await context.runtime.events.sessionChanged.emit();
   await flushGeneratedRuntimeEventRefreshes(context);
@@ -4270,7 +5217,8 @@ async function runDomainNativeCloseTab(
 
 async function runDomainNativeCloseWindow(
   context: GeneratedTraceContext,
-  selector: DomainWindowSelector
+  selector: DomainWindowSelector,
+  order: WindowCloseEventOrder
 ): Promise<void> {
   const windowInfo = resolveDomainWindow(context, selector);
   const tabs = tabsInRuntimeWindow(context.runtime, windowInfo.id);
@@ -4279,7 +5227,7 @@ async function runDomainNativeCloseWindow(
   for (const tab of tabs) {
     context.expectedClosedNodeIds.add(tabNodeIdFor(tab.id));
   }
-  await closeRuntimeWindow(context.runtime, windowInfo.id, { awaitListeners: true });
+  await closeRuntimeWindow(context.runtime, windowInfo.id, { awaitListeners: true }, order);
   await pruneMissingExpectedClosedNodes(context, protectedExpectedNodeIds);
 }
 
