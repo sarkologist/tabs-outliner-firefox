@@ -4441,6 +4441,64 @@ describe("background controller lifecycle", () => {
     expect(reloaded.nodes[originalGroupId]?.childIds).toEqual(["window:10"]);
   });
 
+  it("deletes a grouped live tab that was only promoted by a native parent window close", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        },
+        {
+          id: 2,
+          windowId: 10,
+          index: 1,
+          active: false,
+          url: "https://two.example/",
+          title: "Two"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+
+    await controller.handleMessage({ type: "wrapNodeInGroup", nodeId: "tab:1" });
+    let state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    const wrapperId = state.nodes["tab:1"]?.parentId;
+    expect(wrapperId).toMatch(/^window:/);
+    if (!wrapperId) {
+      throw new Error("Expected tab:1 to be wrapped in a live window");
+    }
+    const wrapperRuntimeWindowId = state.nodes[wrapperId]?.live?.windowId;
+    if (typeof wrapperRuntimeWindowId !== "number") {
+      throw new Error("Expected tab:1 wrapper to be a live window");
+    }
+
+    await closeRuntimeWindow(runtime, 10, { awaitListeners: true });
+    state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(state.nodes[wrapperId]?.parentId).toBeUndefined();
+    expect(state.nodes["window:10"]?.status).toBe("closed");
+    expect(state.nodes["tab:2"]).toBeUndefined();
+    expect(state.nodes[wrapperId]?.status).toBe("live");
+    expect(state.nodes["tab:1"]?.status).toBe("live");
+
+    await closeRuntimeWindow(runtime, wrapperRuntimeWindowId, { awaitListeners: true });
+
+    state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(state.nodes[wrapperId]).toBeUndefined();
+    expect(state.nodes["tab:1"]).toBeUndefined();
+  });
+
   it("keeps command-moved child tabs nested when a stale pre-move tab update arrives", async () => {
     const runtime = fakeRuntime(
       [

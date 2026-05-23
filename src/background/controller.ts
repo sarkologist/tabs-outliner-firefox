@@ -262,7 +262,8 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   const deleteOwnedClosingWindowIds = new Set<number>();
   const removedTabIds = new Set<number>();
   const removedWindowIds = new Set<number>();
-  const outlineGroupedTabIdsByWindowId = new Map<number, Set<number>>();
+  const pendingGroupedTabIdsByWindowId = new Map<number, Set<number>>();
+  const movedOutGroupedTabIdsByWindowId = new Map<number, Set<number>>();
   const commandRestoredTabIds = new Set<number>();
   const commandRelocatedTabEchoes = new Map<number, CommandRelocatedTabEcho>();
   const commandFocusedTabIds = new Set<number>();
@@ -425,8 +426,9 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         const current = await ensureState();
         const liveTabIds = liveTabIdsInWindow(current, windowId);
         const outlinerClosingWindow = outlinerClosingWindowIds.delete(windowId);
-        const outlineGroupedTabIds = outlineGroupedTabIdsByWindowId.get(windowId);
-        outlineGroupedTabIdsByWindowId.delete(windowId);
+        const movedOutGroupedTabIds = movedOutGroupedTabIdsByWindowId.get(windowId);
+        movedOutGroupedTabIdsByWindowId.delete(windowId);
+        pendingGroupedTabIdsByWindowId.delete(windowId);
         const singleNativeRemovedTabId = !outlinerClosingWindow &&
           liveTabIds.length === 1 &&
           removedTabIds.has(liveTabIds[0]!) &&
@@ -437,7 +439,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         if (typeof singleNativeRemovedTabId === "number") {
           let next: OutlineState;
           if (
-            outlineGroupedTabIds?.has(singleNativeRemovedTabId) ||
+            movedOutGroupedTabIds?.has(singleNativeRemovedTabId) ||
             shouldPreserveRestoredSingleTabWindowClose(current, windowId, singleNativeRemovedTabId)
           ) {
             const recent = await mostRecentClosedSession();
@@ -692,8 +694,20 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       if (commandMayRelocateLiveTabs(message.type)) {
         trackCommandRelocatedTabEchoes(current, result.state, commandRelocatedTabEchoes, runtimeIndexCandidateNodeIds);
       }
-      if (message.type === "wrapNodeInGroup" || message.type === "moveSubtreeToTopLevel") {
-        trackOutlineGroupedTabIds(current, result.state, outlineGroupedTabIdsByWindowId, runtimeIndexCandidateNodeIds);
+      if (message.type === "wrapNodeInGroup") {
+        trackNewGroupedTabIds(current, result.state, pendingGroupedTabIdsByWindowId, runtimeIndexCandidateNodeIds);
+      }
+      if (message.type === "moveNode" || message.type === "moveSubtreeToTopLevel") {
+        promoteMovedOutGroupedTabIds(
+          current,
+          result.state,
+          pendingGroupedTabIdsByWindowId,
+          movedOutGroupedTabIdsByWindowId,
+          runtimeIndexCandidateNodeIds
+        );
+      }
+      if (message.type === "moveSubtreeToTopLevel") {
+        trackNewGroupedTabIds(current, result.state, movedOutGroupedTabIdsByWindowId, runtimeIndexCandidateNodeIds);
       }
       if (message.type === "restoreNode") {
         for (const tabId of restoredLiveTabIdsChangedByCommand(current, result.state, runtimeIndexCandidateNodeIds)) {
@@ -3554,10 +3568,10 @@ function trackCommandRelocatedTabEchoes(
   }
 }
 
-function trackOutlineGroupedTabIds(
+function trackNewGroupedTabIds(
   previous: OutlineState,
   next: OutlineState,
-  outlineGroupedTabIdsByWindowId: Map<number, Set<number>>,
+  groupedTabIdsByWindowId: Map<number, Set<number>>,
   candidateNodeIds?: readonly NodeId[]
 ): void {
   const nextNodes = candidateNodeIds
@@ -3576,9 +3590,72 @@ function trackOutlineGroupedTabIds(
       .filter((tab) => tab.windowId === node.live.windowId)
       .map((tab) => tab.tabId);
     if (tabIds.length > 0) {
-      outlineGroupedTabIdsByWindowId.set(node.live.windowId, new Set(tabIds));
+      groupedTabIdsByWindowId.set(node.live.windowId, new Set(tabIds));
     }
   }
+}
+
+function promoteMovedOutGroupedTabIds(
+  previous: OutlineState,
+  next: OutlineState,
+  pendingGroupedTabIdsByWindowId: Map<number, Set<number>>,
+  movedOutGroupedTabIdsByWindowId: Map<number, Set<number>>,
+  candidateNodeIds?: readonly NodeId[]
+): void {
+  if (pendingGroupedTabIdsByWindowId.size === 0) {
+    return;
+  }
+
+  const nextNodes = candidateNodeIds
+    ? candidateNodeIds.flatMap((nodeId) => {
+        const node = next.nodes[nodeId];
+        return node ? [node] : [];
+      })
+    : Object.values(next.nodes);
+
+  for (const node of nextNodes) {
+    if (!isLiveWindowNode(node)) {
+      continue;
+    }
+
+    const pendingTabIds = pendingGroupedTabIdsByWindowId.get(node.live.windowId);
+    if (!pendingTabIds) {
+      continue;
+    }
+
+    const previousNode = previous.nodes[node.id];
+    if (!isLiveWindowNode(previousNode)) {
+      continue;
+    }
+
+    const previousLiveWindowAncestorId = nearestLiveWindowAncestorId(previous, previousNode.id);
+    const nextLiveWindowAncestorId = nearestLiveWindowAncestorId(next, node.id);
+    if (!previousLiveWindowAncestorId || nextLiveWindowAncestorId) {
+      continue;
+    }
+
+    pendingGroupedTabIdsByWindowId.delete(node.live.windowId);
+    movedOutGroupedTabIdsByWindowId.set(node.live.windowId, new Set(pendingTabIds));
+  }
+}
+
+function nearestLiveWindowAncestorId(state: OutlineState, nodeId: NodeId): NodeId | undefined {
+  const seen = new Set<NodeId>();
+  let currentId = state.nodes[nodeId]?.parentId;
+
+  while (currentId && !seen.has(currentId)) {
+    seen.add(currentId);
+    const current = state.nodes[currentId];
+    if (!current) {
+      return undefined;
+    }
+    if (isLiveWindowNode(current)) {
+      return current.id;
+    }
+    currentId = current.parentId;
+  }
+
+  return undefined;
 }
 
 function consumeCommandRestoredTabEvent(
