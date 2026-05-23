@@ -992,6 +992,10 @@ type GeneratedTraceContext = {
   expectedClosedNodeIds: Set<string>;
   staleTabs: RuntimeTab[];
   staleLiveEventTabs: RuntimeTab[];
+  domainCaptures: DomainTraceCaptures;
+  lastOpenedTabId?: number;
+  lastMovedTabId?: number;
+  lastOpenedWindowId?: number;
   adversarialRuntimeQueries: boolean;
   adversarialConcurrency: boolean;
   rng: () => number;
@@ -1006,6 +1010,201 @@ type GeneratedOperation = {
   name: string;
   run(context: GeneratedTraceContext): Promise<void>;
 };
+
+type RuntimeDomainTrace = {
+  id: string;
+  title: string;
+  notes: string;
+  actions: DomainAction[];
+};
+
+type DomainTraceCaptures = {
+  tabs: Map<string, RuntimeTab>;
+  windows: Map<string, FakeRuntimeWindow>;
+  staleTabs: Map<string, RuntimeTab[]>;
+};
+
+type DomainTabSelector =
+  | { tabId: number }
+  | { capture: string }
+  | { role: "activeTab" | "firstRuntimeTab" | "lastOpenedTab" | "lastMovedTab" }
+  | { inWindow: DomainWindowSelector; index?: number };
+
+type DomainWindowSelector =
+  | { windowId: number }
+  | { capture: string }
+  | { role: "focusedWindow" | "firstRuntimeWindow" | "lastOpenedWindow" };
+
+type DomainStaleTabSelector =
+  | {
+      capture: string;
+      tabId?: number;
+      index?: number;
+    }
+  | {
+      role: "tabInOldWindow";
+      index?: number;
+    };
+
+type DomainRuntimeEventAction =
+  | {
+      type: "openTab";
+      window: DomainWindowSelector;
+      active?: boolean;
+      title?: string;
+      url?: string;
+      captureTab?: string;
+    }
+  | {
+      type: "activateTab";
+      tab: DomainTabSelector;
+      staleQueryFrom?: DomainStaleTabSelector;
+    }
+  | {
+      type: "updateTab";
+      tab: DomainTabSelector;
+      title?: string;
+    }
+  | {
+      type: "focusWindow";
+      window: DomainWindowSelector;
+    };
+
+type DomainAction =
+  | DomainRuntimeEventAction
+  | {
+      type: "raceWithOutlinerGroup";
+      event: DomainRuntimeEventAction;
+      groupTab: DomainTabSelector;
+      captureStaleTabs?: string;
+    }
+  | {
+      type: "outlinerGroupTab";
+      tab: DomainTabSelector;
+      captureStaleTabs?: string;
+    }
+  | {
+      type: "outlinerMoveTabToNewWindow";
+      tab: DomainTabSelector;
+      captureStaleTabs?: string;
+    }
+  | {
+      type: "outlinerCloseWindow";
+      window: DomainWindowSelector;
+    }
+  | {
+      type: "outlinerDeleteWindowRejectingClose";
+      window: DomainWindowSelector;
+    }
+  | {
+      type: "outlinerRestoreDeleteWindowDelayedEvent";
+      window: DomainWindowSelector;
+    }
+  | {
+      type: "nativeCloseTab";
+      tab: DomainTabSelector;
+      order?: TabCloseEventOrder;
+    }
+  | {
+      type: "nativeCloseWindow";
+      window: DomainWindowSelector;
+    }
+  | {
+      type: "staleLiveUpdatedEvent";
+      staleTab: DomainStaleTabSelector;
+      withStaleQuery?: boolean;
+    }
+  | {
+      type: "staleLiveCreatedEvent";
+      staleTab: DomainStaleTabSelector;
+      withStaleQuery?: boolean;
+    }
+  | {
+      type: "flushRuntimeEvents";
+    };
+
+const RUNTIME_DOMAIN_TRACES: RuntimeDomainTrace[] = [
+  {
+    id: "rt-active-race",
+    title: "activation event races a live-tab grouping command",
+    notes: "Translated from RT-001/SS-001.",
+    actions: [
+      {
+        type: "raceWithOutlinerGroup",
+        event: { type: "activateTab", tab: { tabId: 2 } },
+        groupTab: { tabId: 1 },
+        captureStaleTabs: "grouped-tab-1"
+      }
+    ]
+  },
+  {
+    id: "rt-created-race-after-window-close",
+    title: "created-tab event races grouping after source-window closure",
+    notes: "Translated from RT-002/SS-002 at the domain level.",
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 10 } },
+      { type: "openTab", window: { windowId: 20 }, captureTab: "tab-100" },
+      {
+        type: "raceWithOutlinerGroup",
+        event: { type: "focusWindow", window: { windowId: 20 } },
+        groupTab: { capture: "tab-100" },
+        captureStaleTabs: "tab-100-before-focus-race"
+      },
+      { type: "outlinerDeleteWindowRejectingClose", window: { role: "lastOpenedWindow" } },
+      { type: "openTab", window: { windowId: 20 }, captureTab: "tab-101" },
+      {
+        type: "raceWithOutlinerGroup",
+        event: { type: "openTab", window: { windowId: 20 }, captureTab: "tab-102" },
+        groupTab: { capture: "tab-101" },
+        captureStaleTabs: "tab-101-before-created-race"
+      }
+    ]
+  },
+  {
+    id: "rt-stale-created-after-move",
+    title: "stale created event follows move-to-new-window",
+    notes: "Targets stale live created echoes after command relocation.",
+    actions: [
+      { type: "outlinerMoveTabToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "moved-tab-1" },
+      { type: "staleLiveCreatedEvent", staleTab: { role: "tabInOldWindow" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "rt-stale-updated-after-move",
+    title: "stale updated event follows move-to-new-window",
+    notes: "Targets stale live update echoes after command relocation.",
+    actions: [
+      { type: "outlinerMoveTabToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "moved-tab-1" },
+      { type: "staleLiveUpdatedEvent", staleTab: { role: "tabInOldWindow" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "rt-native-close-after-relocation",
+    title: "native close interleaves with relocated tab stale echoes",
+    notes: "Covers native close after command-owned relocation.",
+    actions: [
+      { type: "outlinerMoveTabToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "moved-tab-1" },
+      { type: "nativeCloseTab", tab: { role: "lastMovedTab" }, order: "sessionChangedThenTabRemoved" },
+      { type: "staleLiveUpdatedEvent", staleTab: { role: "tabInOldWindow" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "rt-restore-delete-delayed-stale-event",
+    title: "restore-delete delayed event followed by stale runtime echo",
+    notes: "Covers delayed restored-tab events after restore/delete workflows.",
+    actions: [
+      { type: "outlinerRestoreDeleteWindowDelayedEvent", window: { windowId: 20 } },
+      { type: "openTab", window: { role: "firstRuntimeWindow" }, captureTab: "post-restore-tab" },
+      {
+        type: "raceWithOutlinerGroup",
+        event: { type: "updateTab", tab: { capture: "post-restore-tab" }, title: "post restore stale update" },
+        groupTab: { capture: "post-restore-tab" },
+        captureStaleTabs: "post-restore-tab-before-group"
+      },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "post-restore-tab-before-group" }, withStaleQuery: true }
+    ]
+  }
+];
 
 function seededRandom(seed: number): () => number {
   let value = seed >>> 0;
@@ -1705,7 +1904,47 @@ function liveTabIdsInOutlineSubtree(state: OutlineState, nodeId: string): Set<nu
   return tabIds;
 }
 
-async function runGeneratedTrace(seed: number, steps: number, options: GeneratedTraceOptions = {}): Promise<void> {
+function selectedRuntimeDomainTraces(): RuntimeDomainTrace[] {
+  const rawTraceIds = process.env.RUNTIME_TRACE_HUNT_TRACE_IDS;
+  if (!rawTraceIds) {
+    return RUNTIME_DOMAIN_TRACES;
+  }
+
+  const traceIds = rawTraceIds
+    .split(",")
+    .map((traceId) => traceId.trim())
+    .filter(Boolean);
+  const selected = RUNTIME_DOMAIN_TRACES.filter((trace) => traceIds.includes(trace.id));
+  if (selected.length !== traceIds.length) {
+    const known = new Set(RUNTIME_DOMAIN_TRACES.map((trace) => trace.id));
+    const missing = traceIds.filter((traceId) => !known.has(traceId));
+    throw new Error(`Unknown runtime domain trace id(s): ${missing.join(", ")}`);
+  }
+  return selected;
+}
+
+async function runDomainTrace(trace: RuntimeDomainTrace): Promise<void> {
+  const context = createGeneratedTraceContext({
+    now: 10_000,
+    history: [`domain trace ${trace.id}: ${trace.title}`]
+  });
+
+  await context.controller.ensureState();
+  await assertGeneratedInvariants(context);
+
+  for (let index = 0; index < trace.actions.length; index += 1) {
+    const action = trace.actions[index]!;
+    context.history.push(`action ${index + 1}: ${domainActionSummary(action)}`);
+    try {
+      await runDomainAction(context, action);
+      await assertGeneratedInvariants(context);
+    } catch (error) {
+      throw new Error(domainTraceErrorText(trace, index, action, error, context.history));
+    }
+  }
+}
+
+function createGeneratedTraceContext(options: { now: number; history: string[] }): GeneratedTraceContext {
   const runtime = fakeRuntime(
     [
       {
@@ -1746,24 +1985,509 @@ async function runGeneratedTrace(seed: number, steps: number, options: Generated
       }
     ]
   );
-  const controller = createBackgroundController({ api: runtime.api, now: () => seed * 1000 });
-  const context: GeneratedTraceContext = {
+  const controller = createBackgroundController({ api: runtime.api, now: () => options.now });
+  return {
     runtime,
     controller,
     nextTabId: 100,
     allocatedRuntimeTabIds: new Set(runtime.tabs.map((tab) => tab.id)),
-    history: [`seed ${seed}`],
+    history: [...options.history],
     nativeDeletedNodeIds: new Set(),
     commandDeletedNodeIds: new Set(),
     expectedClosedNodeIds: new Set(),
     staleTabs: [],
     staleLiveEventTabs: [],
-    adversarialRuntimeQueries: options.adversarialRuntimeQueries ?? false,
-    adversarialConcurrency: options.adversarialConcurrency ?? false,
-    rng: seededRandom(seed)
+    domainCaptures: emptyDomainTraceCaptures(),
+    adversarialRuntimeQueries: false,
+    adversarialConcurrency: false,
+    rng: seededRandom(options.now)
   };
+}
 
-  await controller.ensureState();
+function emptyDomainTraceCaptures(): DomainTraceCaptures {
+  return {
+    tabs: new Map(),
+    windows: new Map(),
+    staleTabs: new Map()
+  };
+}
+
+async function runDomainAction(context: GeneratedTraceContext, action: DomainAction): Promise<void> {
+  if (isDomainRuntimeEventAction(action)) {
+    await runDomainRuntimeEventAction(context, action, { awaitListeners: true });
+    return;
+  }
+
+  if (action.type === "raceWithOutlinerGroup") {
+    const groupTab = resolveDomainTab(context, action.groupTab);
+    const candidate = await domainCommandCandidateForTab(context, groupTab.id);
+    captureStaleRuntimeTabs(context, action.captureStaleTabs, candidate.staleTabs);
+    await runDomainRuntimeEventAction(context, action.event, { awaitListeners: false });
+    await runGeneratedGroupCommand(context, candidate);
+    captureMovedTab(context, groupTab.id);
+    await flushGeneratedRuntimeEventRefreshes(context);
+    return;
+  }
+
+  if (action.type === "outlinerGroupTab") {
+    await runDomainOutlinerGroupTab(context, action.tab, action.captureStaleTabs);
+    return;
+  }
+
+  if (action.type === "outlinerMoveTabToNewWindow") {
+    await runDomainOutlinerMoveTabToNewWindow(context, action.tab, action.captureStaleTabs);
+    return;
+  }
+
+  if (action.type === "outlinerCloseWindow") {
+    await runDomainOutlinerCloseWindow(context, action.window);
+    return;
+  }
+
+  if (action.type === "outlinerDeleteWindowRejectingClose") {
+    await runDomainOutlinerDeleteWindowRejectingClose(context, action.window);
+    return;
+  }
+
+  if (action.type === "outlinerRestoreDeleteWindowDelayedEvent") {
+    await runDomainOutlinerRestoreDeleteWindowDelayedEvent(context, action.window);
+    return;
+  }
+
+  if (action.type === "nativeCloseTab") {
+    await runDomainNativeCloseTab(context, action.tab, action.order ?? "tabRemovedThenSessionChanged");
+    return;
+  }
+
+  if (action.type === "nativeCloseWindow") {
+    await runDomainNativeCloseWindow(context, action.window);
+    return;
+  }
+
+  if (action.type === "staleLiveUpdatedEvent") {
+    await runDomainStaleLiveUpdatedEvent(context, action.staleTab, action.withStaleQuery ?? false);
+    return;
+  }
+
+  if (action.type === "staleLiveCreatedEvent") {
+    await runDomainStaleLiveCreatedEvent(context, action.staleTab, action.withStaleQuery ?? false);
+    return;
+  }
+
+  await flushGeneratedRuntimeEventRefreshes(context);
+}
+
+function isDomainRuntimeEventAction(action: DomainAction): action is DomainRuntimeEventAction {
+  return action.type === "openTab" ||
+    action.type === "activateTab" ||
+    action.type === "updateTab" ||
+    action.type === "focusWindow";
+}
+
+async function runDomainRuntimeEventAction(
+  context: GeneratedTraceContext,
+  action: DomainRuntimeEventAction,
+  options: { awaitListeners: boolean }
+): Promise<void> {
+  if (action.type === "openTab") {
+    const windowInfo = resolveDomainWindow(context, action.window);
+    const existingTabs = tabsInRuntimeWindow(context.runtime, windowInfo.id);
+    const tabId = nextGeneratedTabId(context);
+    const tab: RuntimeTab = {
+      id: tabId,
+      windowId: windowInfo.id,
+      index: existingTabs.length,
+      active: action.active ?? true,
+      url: action.url ?? `https://domain.example/${tabId}`,
+      title: action.title ?? `Domain ${tabId}`
+    };
+    await createTabFromBrowser(context.runtime, tab, { awaitListeners: options.awaitListeners });
+    context.lastOpenedTabId = tabId;
+    captureRuntimeTab(context, action.captureTab, tabId);
+    return;
+  }
+
+  if (action.type === "activateTab") {
+    const tab = resolveDomainTab(context, action.tab);
+    if (action.staleQueryFrom) {
+      const stale = resolveDomainStaleTab(context, action.staleQueryFrom);
+      context.runtime.queueTabQueryResult(snapshotWithStaleActiveFlags(
+        snapshotReplacingTab(context.runtime.tabs, stale),
+        stale
+      ));
+    }
+    if (options.awaitListeners) {
+      await activateTabFromBrowser(context.runtime, tab.id);
+    } else {
+      dispatchTabActivatedFromBrowser(context.runtime, tab.id);
+    }
+    context.runtime.clearNextTabQueryResult();
+    return;
+  }
+
+  if (action.type === "updateTab") {
+    const tab = resolveDomainTab(context, action.tab);
+    await updateTabFromBrowser(context.runtime, tab.id, {
+      title: action.title ?? `${tab.title ?? "Domain"} updated`
+    }, { awaitListeners: options.awaitListeners });
+    return;
+  }
+
+  const windowInfo = resolveDomainWindow(context, action.window);
+  if (options.awaitListeners) {
+    await focusWindowFromBrowser(context.runtime, windowInfo.id);
+  } else {
+    dispatchWindowFocusedFromBrowser(context.runtime, windowInfo.id);
+  }
+}
+
+async function runDomainOutlinerGroupTab(
+  context: GeneratedTraceContext,
+  selector: DomainTabSelector,
+  captureStaleTabs?: string
+): Promise<void> {
+  const tab = resolveDomainTab(context, selector);
+  const candidate = await domainCommandCandidateForTab(context, tab.id);
+  captureStaleRuntimeTabs(context, captureStaleTabs, candidate.staleTabs);
+  await runGeneratedGroupCommand(context, candidate);
+  captureMovedTab(context, tab.id);
+}
+
+async function runDomainOutlinerMoveTabToNewWindow(
+  context: GeneratedTraceContext,
+  selector: DomainTabSelector,
+  captureStaleTabs?: string
+): Promise<void> {
+  const tab = resolveDomainTab(context, selector);
+  const candidate = await domainCommandCandidateForTab(context, tab.id);
+  captureStaleRuntimeTabs(context, captureStaleTabs, candidate.staleTabs);
+  context.staleLiveEventTabs.push(...candidate.staleTabs);
+  const result = await context.controller.handleMessage({
+    type: "moveNode",
+    nodeId: candidate.nodeId,
+    index: 0
+  });
+  expectCommandAck(result, true);
+  captureMovedTab(context, tab.id);
+}
+
+async function domainCommandCandidateForTab(
+  context: GeneratedTraceContext,
+  tabId: number
+): Promise<CommandMovableLiveTabCandidate> {
+  const candidates = await commandMovableLiveTabCandidates(context);
+  const candidate = candidates.find((value) => value.runtimeTab.id === tabId);
+  if (!candidate) {
+    throw new Error(`No movable live-tab command candidate for runtime tab ${tabId}`);
+  }
+  return candidate;
+}
+
+async function runDomainOutlinerCloseWindow(
+  context: GeneratedTraceContext,
+  selector: DomainWindowSelector
+): Promise<void> {
+  const windowInfo = resolveDomainWindow(context, selector);
+  const tabs = tabsInRuntimeWindow(context.runtime, windowInfo.id);
+  const protectedExpectedNodeIds = [windowNodeIdFor(windowInfo.id), ...tabs.map((tab) => tabNodeIdFor(tab.id))];
+  context.expectedClosedNodeIds.add(protectedExpectedNodeIds[0]!);
+  for (const tab of tabs) {
+    context.expectedClosedNodeIds.add(tabNodeIdFor(tab.id));
+  }
+  await context.controller.handleMessage({ type: "closeNode", nodeId: windowNodeIdFor(windowInfo.id) });
+  await pruneMissingExpectedClosedNodes(context, protectedExpectedNodeIds);
+}
+
+async function runDomainOutlinerDeleteWindowRejectingClose(
+  context: GeneratedTraceContext,
+  selector: DomainWindowSelector
+): Promise<void> {
+  const windowInfo = resolveDomainWindow(context, selector);
+  const state = (await context.controller.handleMessage({ type: "getState" })) as OutlineState;
+  const stateWindow = liveWindowNodeForRuntimeWindow(state, windowInfo.id);
+  if (!stateWindow) {
+    throw new Error(`No live outline window for runtime window ${windowInfo.id}`);
+  }
+
+  const deletedNodeIds = generatedSubtreeNodeIds(state, stateWindow.id);
+  vi.mocked(context.runtime.api.windows.remove).mockImplementationOnce(async (windowId) => {
+    await closeRuntimeWindow(context.runtime, windowId, { awaitListeners: false });
+    throw new Error("domain window close rejected after completion");
+  });
+  const result = await context.controller.handleMessage({ type: "deleteNode", nodeId: stateWindow.id });
+  expectCommandAck(result, true);
+  markCommandDeletedNodes(context, deletedNodeIds);
+  await flushGeneratedCloseEvents(context);
+  await pruneMissingExpectedClosedNodes(context, []);
+}
+
+async function runDomainOutlinerRestoreDeleteWindowDelayedEvent(
+  context: GeneratedTraceContext,
+  selector: DomainWindowSelector
+): Promise<void> {
+  const windowInfo = resolveDomainWindow(context, selector);
+  const originalWindowNodeId = windowNodeIdFor(windowInfo.id);
+  await context.controller.handleMessage({ type: "wrapNodeInGroup", nodeId: originalWindowNodeId });
+  let state = (await context.controller.handleMessage({ type: "getState" })) as OutlineState;
+  const groupId = state.nodes[originalWindowNodeId]?.parentId;
+  if (!groupId) {
+    throw new Error(`Window ${windowInfo.id} was not wrapped before restore-delete trace`);
+  }
+
+  await context.controller.handleMessage({ type: "closeNode", nodeId: groupId });
+  await flushGeneratedCloseEvents(context);
+  await context.controller.handleMessage({ type: "restoreNode", nodeId: groupId });
+  state = (await context.controller.handleMessage({ type: "getState" })) as OutlineState;
+  const restoredWindow = state.nodes[originalWindowNodeId];
+  const restoredWindowId =
+    restoredWindow?.kind === "window" && restoredWindow.status === "live" && restoredWindow.live && "windowId" in restoredWindow.live
+      ? restoredWindow.live.windowId
+      : undefined;
+  if (typeof restoredWindowId !== "number") {
+    throw new Error(`Window ${windowInfo.id} did not restore to a live runtime window`);
+  }
+
+  context.lastOpenedWindowId = restoredWindowId;
+  const restoredTabs = tabsInRuntimeWindow(context.runtime, restoredWindowId);
+  const delayedTab = restoredTabs[0];
+  if (delayedTab) {
+    await updateTabFromBrowser(context.runtime, delayedTab.id, {
+      title: `${delayedTab.title ?? "Domain"} delayed`
+    }, { awaitListeners: false });
+  }
+
+  const deletedNodeIds = generatedSubtreeNodeIds(state, groupId);
+  vi.mocked(context.runtime.api.windows.remove).mockImplementationOnce(async () => undefined);
+  const result = await context.controller.handleMessage({ type: "deleteNode", nodeId: groupId });
+  expectCommandAck(result, true);
+  markCommandDeletedNodes(context, deletedNodeIds);
+  await context.runtime.events.tabUpdated.flush();
+  await closeRuntimeWindow(context.runtime, restoredWindowId, { awaitListeners: true });
+  await pruneMissingExpectedClosedNodes(context, []);
+}
+
+async function runDomainNativeCloseTab(
+  context: GeneratedTraceContext,
+  selector: DomainTabSelector,
+  order: TabCloseEventOrder
+): Promise<void> {
+  const tab = resolveDomainTab(context, selector);
+  context.staleTabs.push(copyTab(tab));
+  const tabsInWindow = tabsInRuntimeWindow(context.runtime, tab.windowId);
+  if (tabsInWindow.length === 1) {
+    context.nativeDeletedNodeIds.add(tabNodeIdFor(tab.id));
+    await closeRuntimeWindow(context.runtime, tab.windowId, { awaitListeners: true });
+    await pruneMissingExpectedClosedNodes(context, []);
+    return;
+  }
+
+  context.nativeDeletedNodeIds.add(tabNodeIdFor(tab.id));
+  await closeRuntimeTab(context.runtime, tab.id, order, { awaitListeners: true });
+  await pruneMissingExpectedClosedNodes(context, []);
+}
+
+async function runDomainNativeCloseWindow(
+  context: GeneratedTraceContext,
+  selector: DomainWindowSelector
+): Promise<void> {
+  const windowInfo = resolveDomainWindow(context, selector);
+  const tabs = tabsInRuntimeWindow(context.runtime, windowInfo.id);
+  const protectedExpectedNodeIds = [windowNodeIdFor(windowInfo.id), ...tabs.map((tab) => tabNodeIdFor(tab.id))];
+  context.expectedClosedNodeIds.add(protectedExpectedNodeIds[0]!);
+  for (const tab of tabs) {
+    context.expectedClosedNodeIds.add(tabNodeIdFor(tab.id));
+  }
+  await closeRuntimeWindow(context.runtime, windowInfo.id, { awaitListeners: true });
+  await pruneMissingExpectedClosedNodes(context, protectedExpectedNodeIds);
+}
+
+async function runDomainStaleLiveUpdatedEvent(
+  context: GeneratedTraceContext,
+  selector: DomainStaleTabSelector,
+  withStaleQuery: boolean
+): Promise<void> {
+  const stale = resolveDomainStaleTab(context, selector);
+  if (withStaleQuery) {
+    context.runtime.queueTabQueryResult(snapshotReplacingTab(context.runtime.tabs, stale));
+  }
+  try {
+    await context.runtime.events.tabUpdated.emit(stale.id, { title: "Domain stale live" }, {
+      ...stale,
+      title: "Domain stale live"
+    });
+  } finally {
+    context.runtime.clearNextTabQueryResult();
+  }
+}
+
+async function runDomainStaleLiveCreatedEvent(
+  context: GeneratedTraceContext,
+  selector: DomainStaleTabSelector,
+  withStaleQuery: boolean
+): Promise<void> {
+  const stale = resolveDomainStaleTab(context, selector);
+  if (withStaleQuery) {
+    context.runtime.queueTabQueryResult(snapshotReplacingTab(context.runtime.tabs, stale));
+  }
+  try {
+    await context.runtime.events.tabCreated.emit(copyTab(stale));
+  } finally {
+    context.runtime.clearNextTabQueryResult();
+  }
+}
+
+function resolveDomainTab(context: GeneratedTraceContext, selector: DomainTabSelector): RuntimeTab {
+  if ("tabId" in selector) {
+    return runtimeTabById(context, selector.tabId);
+  }
+  if ("capture" in selector) {
+    const tab = context.domainCaptures.tabs.get(selector.capture);
+    if (!tab) {
+      throw new Error(`Missing captured tab ${selector.capture}`);
+    }
+    return runtimeTabById(context, tab.id);
+  }
+  if ("inWindow" in selector) {
+    const windowInfo = resolveDomainWindow(context, selector.inWindow);
+    const tab = tabsInRuntimeWindow(context.runtime, windowInfo.id)[selector.index ?? 0];
+    if (!tab) {
+      throw new Error(`Missing tab at index ${selector.index ?? 0} in window ${windowInfo.id}`);
+    }
+    return tab;
+  }
+  if (selector.role === "activeTab") {
+    const tab = context.runtime.tabs.find((candidate) => candidate.active);
+    if (!tab) {
+      throw new Error("Missing active runtime tab");
+    }
+    return tab;
+  }
+  if (selector.role === "lastOpenedTab") {
+    return runtimeTabById(context, context.lastOpenedTabId ?? -1);
+  }
+  if (selector.role === "lastMovedTab") {
+    return runtimeTabById(context, context.lastMovedTabId ?? -1);
+  }
+  const tab = context.runtime.tabs.slice().sort((left, right) => left.id - right.id)[0];
+  if (!tab) {
+    throw new Error("Missing first runtime tab");
+  }
+  return tab;
+}
+
+function resolveDomainWindow(context: GeneratedTraceContext, selector: DomainWindowSelector): FakeRuntimeWindow {
+  if ("windowId" in selector) {
+    return runtimeWindowById(context, selector.windowId);
+  }
+  if ("capture" in selector) {
+    const windowInfo = context.domainCaptures.windows.get(selector.capture);
+    if (!windowInfo) {
+      throw new Error(`Missing captured window ${selector.capture}`);
+    }
+    return runtimeWindowById(context, windowInfo.id);
+  }
+  if (selector.role === "focusedWindow") {
+    const windowInfo = context.runtime.windows.find((candidate) => candidate.focused);
+    if (!windowInfo) {
+      throw new Error("Missing focused runtime window");
+    }
+    return windowInfo;
+  }
+  if (selector.role === "lastOpenedWindow") {
+    return runtimeWindowById(context, context.lastOpenedWindowId ?? -1);
+  }
+  const windowInfo = context.runtime.windows.slice().sort((left, right) => left.id - right.id)[0];
+  if (!windowInfo) {
+    throw new Error("Missing first runtime window");
+  }
+  return windowInfo;
+}
+
+function resolveDomainStaleTab(context: GeneratedTraceContext, selector: DomainStaleTabSelector): RuntimeTab {
+  if ("role" in selector) {
+    const defaultIndex = Math.max(0, context.staleLiveEventTabs.length - 1);
+    const tab = context.staleLiveEventTabs[selector.index ?? defaultIndex];
+    if (!tab) {
+      throw new Error("Missing stale live tab from an old window");
+    }
+    return copyTab(tab);
+  }
+
+  const tabs = context.domainCaptures.staleTabs.get(selector.capture);
+  if (!tabs || tabs.length === 0) {
+    throw new Error(`Missing captured stale tab set ${selector.capture}`);
+  }
+  if (typeof selector.tabId === "number") {
+    const tab = tabs.find((candidate) => candidate.id === selector.tabId);
+    if (!tab) {
+      throw new Error(`Missing stale tab ${selector.tabId} in ${selector.capture}`);
+    }
+    return copyTab(tab);
+  }
+  return copyTab(tabs[selector.index ?? 0]!);
+}
+
+function runtimeTabById(context: GeneratedTraceContext, tabId: number): RuntimeTab {
+  const tab = context.runtime.tabs.find((candidate) => candidate.id === tabId);
+  if (!tab) {
+    throw new Error(`Missing runtime tab ${tabId}`);
+  }
+  return tab;
+}
+
+function runtimeWindowById(context: GeneratedTraceContext, windowId: number): FakeRuntimeWindow {
+  const windowInfo = context.runtime.windows.find((candidate) => candidate.id === windowId);
+  if (!windowInfo) {
+    throw new Error(`Missing runtime window ${windowId}`);
+  }
+  return windowInfo;
+}
+
+function captureRuntimeTab(context: GeneratedTraceContext, captureName: string | undefined, tabId: number): void {
+  if (!captureName) {
+    return;
+  }
+  context.domainCaptures.tabs.set(captureName, copyTab(runtimeTabById(context, tabId)));
+}
+
+function captureStaleRuntimeTabs(
+  context: GeneratedTraceContext,
+  captureName: string | undefined,
+  tabs: RuntimeTab[]
+): void {
+  if (!captureName) {
+    return;
+  }
+  context.domainCaptures.staleTabs.set(captureName, tabs.map(copyTab));
+}
+
+function captureMovedTab(context: GeneratedTraceContext, tabId: number): void {
+  const moved = runtimeTabById(context, tabId);
+  context.lastMovedTabId = moved.id;
+  context.lastOpenedWindowId = moved.windowId;
+}
+
+function domainActionSummary(action: DomainAction): string {
+  return JSON.stringify(action);
+}
+
+function domainTraceErrorText(
+  trace: RuntimeDomainTrace,
+  actionIndex: number,
+  action: DomainAction,
+  error: unknown,
+  history: string[]
+): string {
+  return `${generatedErrorText(error)}\nDomain trace: ${trace.id}\nAction ${actionIndex + 1}: ${JSON.stringify(action)}\nTrace:\n${history.join("\n")}`;
+}
+
+async function runGeneratedTrace(seed: number, steps: number, options: GeneratedTraceOptions = {}): Promise<void> {
+  const context = createGeneratedTraceContext({ now: seed * 1000, history: [`seed ${seed}`] });
+  context.adversarialRuntimeQueries = options.adversarialRuntimeQueries ?? false;
+  context.adversarialConcurrency = options.adversarialConcurrency ?? false;
+  context.rng = seededRandom(seed);
+
+  await context.controller.ensureState();
   await assertGeneratedInvariants(context);
 
   for (let step = 0; step < steps; step += 1) {
@@ -1841,6 +2565,7 @@ async function runGeneratedGroupingTrace(): Promise<void> {
     expectedClosedNodeIds: new Set(),
     staleTabs: [],
     staleLiveEventTabs: [],
+    domainCaptures: emptyDomainTraceCaptures(),
     adversarialRuntimeQueries: false,
     adversarialConcurrency: false,
     rng: seededRandom(1001)
@@ -4443,6 +5168,15 @@ describe("background controller lifecycle", () => {
         adversarialRuntimeQueries: true,
         adversarialConcurrency: true
       });
+    }
+  }, generatedTraceTimeoutMs(10_000, 120_000));
+
+  const domainTraceIt = process.env.RUNTIME_DOMAIN_TRACE_HUNT === "1" || process.env.RUNTIME_TRACE_HUNT_TRACE_IDS
+    ? it
+    : it.skip;
+  domainTraceIt("preserves invariants across adversarial runtime domain traces", async () => {
+    for (const trace of selectedRuntimeDomainTraces()) {
+      await runDomainTrace(trace);
     }
   }, generatedTraceTimeoutMs(10_000, 120_000));
 

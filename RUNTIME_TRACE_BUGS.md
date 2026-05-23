@@ -1,6 +1,7 @@
 # Runtime Trace Bug Hunt
 
-This file records distinct bugs found by deterministic adversarial runtime concurrency traces.
+This file records distinct bugs found by deterministic runtime trace hunts.
+The current adversarial hunt mode runs explicit domain trace artifacts that Codex/humans can inspect and mutate with runtime/model knowledge. Historical adaptive seed-frontier and seed-sweep findings are preserved as evidence and alternate repros, not as the current adversarial selection mechanism.
 The hunt intentionally documents findings without fixing them.
 
 Run the hunt with:
@@ -13,11 +14,27 @@ Default hunt bounds:
 
 - Iteration limit: 5 minutes
 - Stop condition: 3 consecutive iterations with no new distinct findings
-- Trace selection: deterministic adaptive frontier; mutate newly failing seeds first, then fall back to mixed global probes
+- Trace selection: explicit domain trace corpus; mutate domain actions between iterations instead of perturbing seeds
 - Test target: `src/background/controller.test.ts`
-- Test name: `adversarial runtime concurrency traces`
+- Test name: `adversarial runtime domain traces`
+- Trace filter: `RUNTIME_TRACE_HUNT_TRACE_IDS=rt-active-race,rt-stale-updated-after-move`
 
-## Last Adaptive Run
+## Last Domain Run
+
+- Completed: 2026-05-23T10:58:52.252Z
+- Strategy: explicit domain trace corpus, with agent-in-loop trace edits between hunt iterations
+- Trace ids: `rt-active-race`, `rt-created-race-after-window-close`, `rt-stale-created-after-move`, `rt-stale-updated-after-move`, `rt-native-close-after-relocation`, `rt-restore-delete-delayed-stale-event`
+- Distinct domain findings recorded: 2
+- Stop condition reached: iterations 2, 3, and 4 found no new distinct signatures
+- Duplicate failures during final clean streak: 6
+
+## Finding Index
+
+- Current domain trace adversary: RT-009, RT-010
+- Previous adaptive seed-frontier run: RT-001 through RT-008
+- Recovered pre-adaptive seed sweep: SS-001 through SS-006
+
+## Previous Adaptive Seed-Frontier Run
 
 - Completed: 2026-05-23T10:32:29.655Z
 - Strategy: adaptive deterministic frontier, with mutations around newly failing seeds and mixed global probes
@@ -25,7 +42,7 @@ Default hunt bounds:
 - Stop condition reached: iterations 12, 13, and 14 found no new distinct signatures
 - Duplicate failures during final clean streak: 157
 
-## Findings
+## Previous Adaptive Findings
 
 ### RT-001 tab 1 active flag diverged
 <!-- signature: tab <id> active flag diverged
@@ -529,3 +546,63 @@ step 9: concurrent-focused-window-then-group
 step 10: stale-live-tab-updated-event-stale-query
 dispatch stale live updated event for tab 100 with stale query window 20
 ```
+
+## Domain Trace Findings
+
+### RT-009 tab 1 active flag diverged
+<!-- signature: tab <id> active flag diverged
+domain trace: rt-active-race
+action: {"type":"raceWithOutlinerGroup","event":{"type":"activateTab","tab":{"tabId":2}},"groupTab":{"tabId":1},"captureStaleTabs":"grouped-tab-1"} -->
+
+- First seen: 2026-05-23T10:58:27.512Z
+- Trace id: `rt-active-race`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=rt-active-race pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace rt-active-race: activation event races a live-tab grouping command
+action 1: {"type":"raceWithOutlinerGroup","event":{"type":"activateTab","tab":{"tabId":2}},"groupTab":{"tabId":1},"captureStaleTabs":"grouped-tab-1"}
+Domain trace: rt-active-race
+Action 1: {"type":"raceWithOutlinerGroup","event":{"type":"activateTab","tab":{"tabId":2}},"groupTab":{"tabId":1},"captureStaleTabs":"grouped-tab-1"}
+Trace:
+domain trace rt-active-race: activation event races a live-tab grouping command
+action 1: {"type":"raceWithOutlinerGroup","event":{"type":"activateTab","tab":{"tabId":2}},"groupTab":{"tabId":1},"captureStaleTabs":"grouped-tab-1"}
+```
+
+### RT-010 tab 101 active flag diverged
+<!-- signature: tab <id> active flag diverged
+domain trace: rt-created-race-after-window-close
+action: {"type":"raceWithOutlinerGroup","event":{"type":"openTab","window":{"windowId":20},"captureTab":"tab-102"},"groupTab":{"capture":"tab-101"},"captureStaleTabs":"tab-101-before-created-race"} -->
+
+- First seen: 2026-05-23T10:58:28.457Z
+- Trace id: `rt-created-race-after-window-close`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=rt-created-race-after-window-close pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace rt-created-race-after-window-close: created-tab event races grouping after source-window closure
+action 1: {"type":"outlinerCloseWindow","window":{"windowId":10}}
+action 2: {"type":"openTab","window":{"windowId":20},"captureTab":"tab-100"}
+action 3: {"type":"raceWithOutlinerGroup","event":{"type":"focusWindow","window":{"windowId":20}},"groupTab":{"capture":"tab-100"},"captureStaleTabs":"tab-100-before-focus-race"}
+action 4: {"type":"outlinerDeleteWindowRejectingClose","window":{"role":"lastOpenedWindow"}}
+action 5: {"type":"openTab","window":{"windowId":20},"captureTab":"tab-101"}
+action 6: {"type":"raceWithOutlinerGroup","event":{"type":"openTab","window":{"windowId":20},"captureTab":"tab-102"},"groupTab":{"capture":"tab-101"},"captureStaleTabs":"tab-101-before-created-race"}
+Domain trace: rt-created-race-after-window-close
+Action 6: {"type":"raceWithOutlinerGroup","event":{"type":"openTab","window":{"windowId":20},"captureTab":"tab-102"},"groupTab":{"capture":"tab-101"},"captureStaleTabs":"tab-101-before-created-race"}
+Trace:
+domain trace rt-created-race-after-window-close: created-tab event races grouping after source-window closure
+action 1: {"type":"outlinerCloseWindow","window":{"windowId":10}}
+action 2: {"type":"openTab","window":{"windowId":20},"captureTab":"tab-100"}
+action 3: {"type":"raceWithOutlinerGroup","event":{"type":"focusWindow","window":{"windowId":20}},"groupTab":{"capture":"tab-100"},"captureStaleTabs":"tab-100-before-focus-race"}
+action 4: {"type":"outlinerDeleteWindowRejectingClose","window":{"role":"lastOpenedWindow"}}
+action 5: {"type":"openTab","window":{"windowId":20},"captureTab":"tab-101"}
+action 6: {"type":"raceWithOutlinerGroup","event":{"type":"openTab","window":{"windowId":20},"captureTab":"tab-102"},"groupTab":{"capture":"tab-101"},"captureStaleTabs":"tab-101-before-created-race"}
+```
+
+<!-- hunt-iteration: {"at":"2026-05-23T10:58:32.266Z","iteration":1,"firstTraceId":"rt-active-race","lastTraceId":"rt-restore-delete-delayed-stale-event","runs":6,"failures":2,"duplicateFailures":0,"newFindings":2} -->
+
+<!-- hunt-iteration: {"at":"2026-05-23T10:58:39.166Z","iteration":2,"firstTraceId":"rt-active-race","lastTraceId":"rt-restore-delete-delayed-stale-event","runs":6,"failures":2,"duplicateFailures":2,"newFindings":0} -->
+
+<!-- hunt-iteration: {"at":"2026-05-23T10:58:45.643Z","iteration":3,"firstTraceId":"rt-active-race","lastTraceId":"rt-restore-delete-delayed-stale-event","runs":6,"failures":2,"duplicateFailures":2,"newFindings":0} -->
+
+<!-- hunt-iteration: {"at":"2026-05-23T10:58:52.252Z","iteration":4,"firstTraceId":"rt-active-race","lastTraceId":"rt-restore-delete-delayed-stale-event","runs":6,"failures":2,"duplicateFailures":2,"newFindings":0} -->
