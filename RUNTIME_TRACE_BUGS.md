@@ -21,16 +21,17 @@ Default hunt bounds:
 
 ## Last Domain Run
 
-- Completed: 2026-05-23T10:58:52.252Z
+- Completed: 2026-05-23T12:03:00.391Z
 - Strategy: explicit domain trace corpus, with agent-in-loop trace edits between hunt iterations
-- Trace ids: `rt-active-race`, `rt-created-race-after-window-close`, `rt-stale-created-after-move`, `rt-stale-updated-after-move`, `rt-native-close-after-relocation`, `rt-restore-delete-delayed-stale-event`
-- Distinct domain findings recorded: 2
-- Stop condition reached: iterations 2, 3, and 4 found no new distinct signatures
-- Duplicate failures during final clean streak: 6
+- Trace ids: current default corpus in `scripts/hunt-runtime-traces.mjs`
+- Distinct domain findings recorded: 3
+- New finding in this hunt: RT-011
+- Stop condition reached: 3 agent mutation cycles after RT-011 found no new distinct signatures
+- Duplicate failures during final clean streak: 3
 
 ## Finding Index
 
-- Current domain trace adversary: RT-009, RT-010
+- Current domain trace adversary: RT-009 through RT-011
 - Previous adaptive seed-frontier run: RT-001 through RT-008
 - Recovered pre-adaptive seed sweep: SS-001 through SS-006
 
@@ -612,3 +613,37 @@ action 6: {"type":"raceWithOutlinerGroup","event":{"type":"openTab","window":{"w
 <!-- hunt-iteration: {"at":"2026-05-23T10:58:45.643Z","iteration":3,"firstTraceId":"rt-active-race","lastTraceId":"rt-restore-delete-delayed-stale-event","runs":6,"failures":2,"duplicateFailures":2,"newFindings":0} -->
 
 <!-- hunt-iteration: {"at":"2026-05-23T10:58:52.252Z","iteration":4,"firstTraceId":"rt-active-race","lastTraceId":"rt-restore-delete-delayed-stale-event","runs":6,"failures":2,"duplicateFailures":2,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-23T11:56:20.113Z","mode":"agent-corpus-run","firstTraceId":"rt-active-race","lastTraceId":"rt-restore-delete-delayed-stale-event","runs":9,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-23T11:58:53.977Z","mode":"agent-corpus-run","firstTraceId":"rt-active-race","lastTraceId":"rt-top-level-stale-updated-after-fresh-event","runs":11,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
+
+### RT-011 live window IDs match runtime windows
+<!-- signature: live window IDs match runtime windows
+domain trace: rt-repeated-direct-relocation-stale-events
+action: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"role":"lastMovedTab"},"captureStaleTabs":"second-direct-old-window"} -->
+
+- First seen: 2026-05-23T12:00:05.387Z
+- Trace id: `rt-repeated-direct-relocation-stale-events`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=rt-repeated-direct-relocation-stale-events pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace rt-repeated-direct-relocation-stale-events: stale events from multiple old windows follow repeated direct relocation
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"first-direct-old-window"}
+action 2: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"role":"lastMovedTab"},"captureStaleTabs":"second-direct-old-window"}
+Domain trace: rt-repeated-direct-relocation-stale-events
+Action 2: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"role":"lastMovedTab"},"captureStaleTabs":"second-direct-old-window"}
+Trace:
+domain trace rt-repeated-direct-relocation-stale-events: stale events from multiple old windows follow repeated direct relocation
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"first-direct-old-window"}
+action 2: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"role":"lastMovedTab"},"captureStaleTabs":"second-direct-old-window"}
+```
+
+<!-- hunt-corpus-run: {"at":"2026-05-23T12:00:05.388Z","mode":"agent-corpus-run","firstTraceId":"rt-active-race","lastTraceId":"rt-repeated-direct-relocation-stale-events","runs":12,"completedCorpus":true,"failures":1,"duplicateFailures":0,"newFindings":1} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-23T12:01:06.206Z","mode":"agent-corpus-run","firstTraceId":"rt-active-race","lastTraceId":"rt-repeated-direct-relocation-with-filler-stale-events","runs":13,"completedCorpus":true,"failures":1,"duplicateFailures":1,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-23T12:02:09.481Z","mode":"agent-corpus-run","firstTraceId":"rt-active-race","lastTraceId":"rt-repeated-direct-relocation-native-close-stale-event","runs":14,"completedCorpus":true,"failures":1,"duplicateFailures":1,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-23T12:03:00.391Z","mode":"agent-corpus-run","firstTraceId":"rt-active-race","lastTraceId":"rt-repeated-top-level-relocation-with-filler-stale-events","runs":15,"completedCorpus":true,"failures":1,"duplicateFailures":1,"newFindings":0} -->

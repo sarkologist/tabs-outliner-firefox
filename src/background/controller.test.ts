@@ -1089,6 +1089,16 @@ type DomainAction =
       captureStaleTabs?: string;
     }
   | {
+      type: "outlinerMoveTabCommandToNewWindow";
+      tab: DomainTabSelector;
+      captureStaleTabs?: string;
+    }
+  | {
+      type: "outlinerMoveSubtreeToTopLevel";
+      tab: DomainTabSelector;
+      captureStaleTabs?: string;
+    }
+  | {
       type: "outlinerCloseWindow";
       window: DomainWindowSelector;
     }
@@ -1232,6 +1242,77 @@ const RUNTIME_DOMAIN_TRACES: RuntimeDomainTrace[] = [
         captureStaleTabs: "post-restore-tab-before-group"
       },
       { type: "staleLiveUpdatedEvent", staleTab: { capture: "post-restore-tab-before-group" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "rt-direct-new-window-stale-created-after-fresh-event",
+    title: "stale created event follows direct move-to-new-window command",
+    notes: "Mutated corpus trace for the explicit moveNodeToNewWindow command path.",
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "direct-moved-tab-1" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "fresh direct relocated tab update" },
+      { type: "staleLiveCreatedEvent", staleTab: { role: "tabInOldWindow" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "rt-top-level-stale-updated-after-fresh-event",
+    title: "stale updated event follows move-subtree-to-top-level command",
+    notes: "Mutated corpus trace for the moveSubtreeToTopLevel command relocation path.",
+    actions: [
+      { type: "outlinerMoveSubtreeToTopLevel", tab: { tabId: 1 }, captureStaleTabs: "top-level-moved-tab-1" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "fresh top-level relocated tab update" },
+      { type: "staleLiveUpdatedEvent", staleTab: { role: "tabInOldWindow" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "rt-repeated-direct-relocation-stale-events",
+    title: "stale events from multiple old windows follow repeated direct relocation",
+    notes: "Mutated corpus trace for long-lived command relocation echo protection across updated destinations.",
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "first-direct-old-window" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { role: "lastMovedTab" }, captureStaleTabs: "second-direct-old-window" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "fresh repeated direct relocation update" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "first-direct-old-window" }, withStaleQuery: true },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "second-direct-old-window" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "rt-repeated-direct-relocation-with-filler-stale-events",
+    title: "stale events from multiple old windows follow repeated direct relocation with intermediate filler tab",
+    notes: "Mutated corpus trace that keeps the first command-created window non-empty to probe stale echoes past the second relocation.",
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "first-direct-old-window-with-filler" },
+      { type: "openTab", window: { role: "lastOpenedWindow" }, active: false, captureTab: "intermediate-filler-tab" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { role: "lastMovedTab" }, captureStaleTabs: "second-direct-old-window-with-filler" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "fresh repeated direct filler relocation update" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "first-direct-old-window-with-filler" }, withStaleQuery: true },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "second-direct-old-window-with-filler", tabId: 1 }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "rt-repeated-direct-relocation-native-close-stale-event",
+    title: "native close follows repeated direct relocation before stale old-window events",
+    notes: "Mutated corpus trace for close/delete protection composed with repeated command relocation.",
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "first-direct-old-window-before-close" },
+      { type: "openTab", window: { role: "lastOpenedWindow" }, active: false, captureTab: "intermediate-close-filler-tab" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { role: "lastMovedTab" }, captureStaleTabs: "second-direct-old-window-before-close" },
+      { type: "nativeCloseTab", tab: { role: "lastMovedTab" }, order: "sessionChangedThenTabRemoved" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "first-direct-old-window-before-close" }, withStaleQuery: true },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "second-direct-old-window-before-close", tabId: 1 }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "rt-repeated-top-level-relocation-with-filler-stale-events",
+    title: "stale events from multiple old windows follow repeated top-level relocation with intermediate filler tab",
+    notes: "Mutated corpus trace for repeated moveSubtreeToTopLevel relocation and stale old-window echoes.",
+    actions: [
+      { type: "outlinerMoveSubtreeToTopLevel", tab: { tabId: 1 }, captureStaleTabs: "first-top-level-old-window-with-filler" },
+      { type: "openTab", window: { role: "lastOpenedWindow" }, active: false, captureTab: "top-level-intermediate-filler-tab" },
+      { type: "outlinerMoveSubtreeToTopLevel", tab: { role: "lastMovedTab" }, captureStaleTabs: "second-top-level-old-window-with-filler" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "fresh repeated top-level filler relocation update" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "first-top-level-old-window-with-filler" }, withStaleQuery: true },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "second-top-level-old-window-with-filler", tabId: 1 }, withStaleQuery: true }
     ]
   }
 ];
@@ -2085,6 +2166,16 @@ async function runDomainAction(context: GeneratedTraceContext, action: DomainAct
     return;
   }
 
+  if (action.type === "outlinerMoveTabCommandToNewWindow") {
+    await runDomainOutlinerMoveTabCommandToNewWindow(context, action.tab, action.captureStaleTabs);
+    return;
+  }
+
+  if (action.type === "outlinerMoveSubtreeToTopLevel") {
+    await runDomainOutlinerMoveSubtreeToTopLevel(context, action.tab, action.captureStaleTabs);
+    return;
+  }
+
   if (action.type === "outlinerCloseWindow") {
     await runDomainOutlinerCloseWindow(context, action.window);
     return;
@@ -2217,6 +2308,41 @@ async function runDomainOutlinerMoveTabToNewWindow(
   captureMovedTab(context, tab.id);
 }
 
+async function runDomainOutlinerMoveTabCommandToNewWindow(
+  context: GeneratedTraceContext,
+  selector: DomainTabSelector,
+  captureStaleTabs?: string
+): Promise<void> {
+  const tab = resolveDomainTab(context, selector);
+  const candidate = await domainRelocatableCommandCandidateForTab(context, tab.id);
+  captureStaleRuntimeTabs(context, captureStaleTabs, candidate.staleTabs);
+  context.staleLiveEventTabs.push(...candidate.staleTabs);
+  const result = await context.controller.handleMessage({
+    type: "moveNodeToNewWindow",
+    nodeId: candidate.nodeId,
+    index: 0
+  });
+  expectCommandAck(result, true);
+  captureMovedTab(context, tab.id);
+}
+
+async function runDomainOutlinerMoveSubtreeToTopLevel(
+  context: GeneratedTraceContext,
+  selector: DomainTabSelector,
+  captureStaleTabs?: string
+): Promise<void> {
+  const tab = resolveDomainTab(context, selector);
+  const candidate = await domainRelocatableCommandCandidateForTab(context, tab.id);
+  captureStaleRuntimeTabs(context, captureStaleTabs, candidate.staleTabs);
+  context.staleLiveEventTabs.push(...candidate.staleTabs);
+  const result = await context.controller.handleMessage({
+    type: "moveSubtreeToTopLevel",
+    nodeId: candidate.nodeId
+  });
+  expectCommandAck(result, true);
+  captureMovedTab(context, tab.id);
+}
+
 async function domainCommandCandidateForTab(
   context: GeneratedTraceContext,
   tabId: number
@@ -2227,6 +2353,26 @@ async function domainCommandCandidateForTab(
     throw new Error(`No movable live-tab command candidate for runtime tab ${tabId}`);
   }
   return candidate;
+}
+
+async function domainRelocatableCommandCandidateForTab(
+  context: GeneratedTraceContext,
+  tabId: number
+): Promise<CommandMovableLiveTabCandidate> {
+  const state = (await context.controller.handleMessage({ type: "getState" })) as OutlineState;
+  const runtimeTab = runtimeTabById(context, tabId);
+  const node = liveTabNodeForRuntimeTab(state, runtimeTab.id);
+  if (!node) {
+    throw new Error(`No live outline tab for runtime tab ${tabId}`);
+  }
+
+  const subtreeTabIds = liveTabIdsInOutlineSubtree(state, node.id);
+  const sameWindowTabs = tabsInRuntimeWindow(context.runtime, runtimeTab.windowId);
+  return {
+    nodeId: node.id,
+    runtimeTab,
+    staleTabs: sameWindowTabs.filter((tab) => subtreeTabIds.has(tab.id)).map(copyTab)
+  };
 }
 
 async function runDomainOutlinerCloseWindow(

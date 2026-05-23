@@ -21,7 +21,13 @@ const DEFAULT_TRACE_IDS = [
   "rt-stale-updated-after-fresh-relocation-event",
   "rt-stale-activation-after-fresh-relocation-event",
   "rt-native-close-after-relocation",
-  "rt-restore-delete-delayed-stale-event"
+  "rt-restore-delete-delayed-stale-event",
+  "rt-direct-new-window-stale-created-after-fresh-event",
+  "rt-top-level-stale-updated-after-fresh-event",
+  "rt-repeated-direct-relocation-stale-events",
+  "rt-repeated-direct-relocation-with-filler-stale-events",
+  "rt-repeated-direct-relocation-native-close-stale-event",
+  "rt-repeated-top-level-relocation-with-filler-stale-events"
 ];
 
 const traceIds = selectedTraceIds();
