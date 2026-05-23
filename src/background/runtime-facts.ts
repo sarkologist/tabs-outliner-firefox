@@ -47,6 +47,12 @@ export type CommandRelocatedTabEcho = {
   toWindowId: number;
 };
 
+export type CommandTransactionFacts = {
+  outlinerClosePlan?: RuntimeClosePlan | undefined;
+  deleteClosePlan?: RuntimeClosePlan | undefined;
+  focusTarget?: { tabId: number; windowId: number } | undefined;
+};
+
 type LiveTabNode = OutlineNode & { live: { tabId: number; windowId: number } };
 
 export type WindowClosingTabRemovalDecision =
@@ -55,10 +61,12 @@ export type WindowClosingTabRemovalDecision =
   | "wait-for-remaining-tabs"
   | "close-window";
 
-export class RuntimeFactLedger {
-  readonly pendingGroupedTabIdsByWindowId = new Map<number, Set<number>>();
-  readonly movedOutGroupedTabIdsByWindowId = new Map<number, Set<number>>();
+export type NativeTabRemovedDecision = "ignore-delete-owned" | "continue";
+export type NativeTabUpdatedDecision = "ignore-command-focus-echo" | "refresh";
+export type NativeFocusEventDecision = "command-focus" | "runtime-refresh";
+export type NativeWindowRemovedDecision = "ignore-duplicate" | "ignore-delete-owned" | "close-window";
 
+export class RuntimeFactLedger {
   private readonly outlinerClosingTabIds = new Set<number>();
   private readonly outlinerClosingWindowIds = new Set<number>();
   private readonly deleteOwnedClosingTabIds = new Set<number>();
@@ -72,6 +80,8 @@ export class RuntimeFactLedger {
   private readonly commandFocusedWindowIds = new Set<number>();
   private readonly observations: RuntimeObservation[] = [];
   private readonly transactions = new Map<string, CommandTransaction>();
+  private commandCloseSessionEchoesToSkip = 0;
+  private commandCloseSessionEchoesSkippedBeforeRemoval = 0;
   private nextCommandSequence = 1;
 
   constructor(private readonly maxObservations = 500) {}
@@ -111,6 +121,42 @@ export class RuntimeFactLedger {
     return transaction;
   }
 
+  beginCommandTransactionForCommand(
+    commandType: BackgroundCommand["type"],
+    facts: CommandTransactionFacts = {}
+  ): CommandTransaction | undefined {
+    const ownership = commandOwnershipForType(commandType);
+    if (!ownership) {
+      return undefined;
+    }
+
+    const plannedTabs = new Set<number>();
+    const plannedWindows = new Set<number>();
+    for (const tabId of facts.outlinerClosePlan?.tabIds ?? []) {
+      plannedTabs.add(tabId);
+    }
+    for (const windowId of facts.outlinerClosePlan?.windowIds ?? []) {
+      plannedWindows.add(windowId);
+    }
+    for (const tabId of facts.deleteClosePlan?.tabIds ?? []) {
+      plannedTabs.add(tabId);
+    }
+    for (const windowId of facts.deleteClosePlan?.windowIds ?? []) {
+      plannedWindows.add(windowId);
+    }
+    if (facts.focusTarget) {
+      plannedTabs.add(facts.focusTarget.tabId);
+      plannedWindows.add(facts.focusTarget.windowId);
+    }
+
+    return this.beginCommandTransaction({
+      commandType,
+      plannedTabs: [...plannedTabs],
+      plannedWindows: [...plannedWindows],
+      ownership
+    });
+  }
+
   recordCommandObserved(commandId: string): void {
     if (!this.transactions.has(commandId)) {
       return;
@@ -130,6 +176,68 @@ export class RuntimeFactLedger {
       return;
     }
     this.recordObservation({ source: "command", commandId, kind: "rejected" });
+  }
+
+  recordNativeTabCreated(tab: RuntimeTab): void {
+    this.recordObservation({ source: "tabEvent", kind: "created", tabId: tab.id, windowId: tab.windowId, tab });
+  }
+
+  recordNativeTabUpdated(tab: RuntimeTab, changeInfo: Partial<RuntimeTab>): NativeTabUpdatedDecision {
+    this.recordObservation({ source: "tabEvent", kind: "updated", tabId: tab.id, windowId: tab.windowId, tab });
+    return this.isCommandFocusActiveUpdateEcho(changeInfo, tab) ? "ignore-command-focus-echo" : "refresh";
+  }
+
+  recordNativeTabActivated(tabId: number, windowId: number | undefined): NativeFocusEventDecision {
+    this.recordObservation({
+      source: "tabEvent",
+      kind: "activated",
+      tabId,
+      ...(typeof windowId === "number" ? { windowId } : {})
+    });
+    return this.hasCommandFocusedTab(tabId) ? "command-focus" : "runtime-refresh";
+  }
+
+  recordNativeTabRemoved(tabId: number, windowId: number | undefined): NativeTabRemovedDecision {
+    this.recordObservation({
+      source: "tabEvent",
+      kind: "removed",
+      tabId,
+      ...(typeof windowId === "number" ? { windowId } : {})
+    });
+    this.markTabRemoved(tabId);
+    return this.consumeDeleteOwnedClosingTab(tabId) ? "ignore-delete-owned" : "continue";
+  }
+
+  recordNativeWindowFocused(windowId: number): NativeFocusEventDecision {
+    this.recordObservation({ source: "windowEvent", kind: "focused", windowId });
+    return this.hasCommandFocusedWindow(windowId) ? "command-focus" : "runtime-refresh";
+  }
+
+  recordNativeWindowRemoved(windowId: number): NativeWindowRemovedDecision {
+    this.recordObservation({ source: "windowEvent", kind: "removed", windowId });
+    if (this.hasRemovedWindow(windowId)) {
+      return "ignore-duplicate";
+    }
+
+    this.markWindowRemoved(windowId);
+    return this.consumeDeleteOwnedClosingWindow(windowId) ? "ignore-delete-owned" : "close-window";
+  }
+
+  recordClosedRuntimeWindow(windowId: number, liveTabIds: readonly number[]): void {
+    this.markWindowRemoved(windowId);
+    this.clearWindowCloseTracking(windowId);
+    for (const tabId of liveTabIds) {
+      this.markTabRemoved(tabId);
+      this.clearTabCloseTracking(tabId);
+    }
+  }
+
+  recordMissingLiveTab(tabId: number): void {
+    this.markTabRemoved(tabId);
+  }
+
+  recordNativeSessionChanged(): void {
+    this.recordObservation({ source: "sessionEvent", kind: "changed" });
   }
 
   markOutlinerClosePlan(plan: RuntimeClosePlan): void {
@@ -179,22 +287,16 @@ export class RuntimeFactLedger {
     }
   }
 
-  markTabRemoved(tabId: number): void {
+  private markTabRemoved(tabId: number): void {
     this.removedTabIds.add(tabId);
     this.commandRelocatedTabEchoes.delete(tabId);
   }
 
-  markTabsRemoved(tabIds: readonly number[]): void {
-    for (const tabId of tabIds) {
-      this.markTabRemoved(tabId);
-    }
-  }
-
-  markWindowRemoved(windowId: number): void {
+  private markWindowRemoved(windowId: number): void {
     this.removedWindowIds.add(windowId);
   }
 
-  hasRemovedWindow(windowId: number): boolean {
+  private hasRemovedWindow(windowId: number): boolean {
     return this.removedWindowIds.has(windowId);
   }
 
@@ -215,37 +317,62 @@ export class RuntimeFactLedger {
     return new Set([...this.removedWindowIds, ...this.deleteOwnedClosingWindowIds]);
   }
 
-  consumeDeleteOwnedClosingTab(tabId: number): boolean {
+  private consumeDeleteOwnedClosingTab(tabId: number): boolean {
     return this.deleteOwnedClosingTabIds.delete(tabId);
   }
 
-  consumeDeleteOwnedClosingWindow(windowId: number): boolean {
+  private consumeDeleteOwnedClosingWindow(windowId: number): boolean {
     return this.deleteOwnedClosingWindowIds.delete(windowId);
   }
 
-  hasDeleteOwnedClosingWindow(windowId: number): boolean {
+  private hasDeleteOwnedClosingWindow(windowId: number): boolean {
     return this.deleteOwnedClosingWindowIds.has(windowId);
+  }
+
+  isCommandOwnedWindowClose(windowId: number): boolean {
+    return this.hasDeleteOwnedClosingWindow(windowId) || this.hasOutlinerClosingWindow(windowId);
   }
 
   consumeOutlinerClosingTab(tabId: number): boolean {
     return this.outlinerClosingTabIds.delete(tabId);
   }
 
-  hasOutlinerClosingWindow(windowId: number): boolean {
+  private hasOutlinerClosingWindow(windowId: number): boolean {
     return this.outlinerClosingWindowIds.has(windowId);
   }
 
-  hasOutlinerClosingTabs(): boolean {
+  private hasOutlinerClosingTabs(): boolean {
     return this.outlinerClosingTabIds.size > 0;
   }
 
-  clearWindowCloseTracking(windowId: number): void {
-    this.outlinerClosingWindowIds.delete(windowId);
-    this.pendingGroupedTabIdsByWindowId.delete(windowId);
-    this.movedOutGroupedTabIdsByWindowId.delete(windowId);
+  recordOutlinerClosedTabRemovalApplied(): void {
+    if (this.commandCloseSessionEchoesSkippedBeforeRemoval > 0) {
+      this.commandCloseSessionEchoesSkippedBeforeRemoval -= 1;
+      return;
+    }
+
+    this.commandCloseSessionEchoesToSkip += 1;
   }
 
-  clearTabCloseTracking(tabId: number): void {
+  consumeOutlinerCloseSessionEcho(): boolean {
+    if (this.commandCloseSessionEchoesToSkip > 0) {
+      this.commandCloseSessionEchoesToSkip -= 1;
+      return true;
+    }
+
+    if (this.hasOutlinerClosingTabs()) {
+      this.commandCloseSessionEchoesSkippedBeforeRemoval += 1;
+      return true;
+    }
+
+    return false;
+  }
+
+  private clearWindowCloseTracking(windowId: number): void {
+    this.outlinerClosingWindowIds.delete(windowId);
+  }
+
+  private clearTabCloseTracking(tabId: number): void {
     this.outlinerClosingTabIds.delete(tabId);
     this.commandRelocatedTabEchoes.delete(tabId);
   }
@@ -272,6 +399,19 @@ export class RuntimeFactLedger {
 
   recordCommandRestoredTab(tabId: number): void {
     this.commandRestoredTabIds.add(tabId);
+  }
+
+  recordCommandRestoredTabs(
+    previous: OutlineState,
+    next: OutlineState,
+    candidateNodeIds?: readonly NodeId[]
+  ): void {
+    for (const node of selectedNodes(next, candidateNodeIds)) {
+      if (!isLiveTabNode(node) || !node.restoredFromClosed || previous.nodes[node.id]?.status !== "closed") {
+        continue;
+      }
+      this.recordCommandRestoredTab(node.live.tabId);
+    }
   }
 
   hasCommandRestoredTab(tabId: number): boolean {
@@ -355,7 +495,7 @@ export class RuntimeFactLedger {
     this.commandFocusedWindowIds.delete(windowId);
   }
 
-  hasCommandFocusedTab(tabId: number): boolean {
+  private hasCommandFocusedTab(tabId: number): boolean {
     return this.commandFocusedTabIds.has(tabId);
   }
 
@@ -367,7 +507,7 @@ export class RuntimeFactLedger {
     this.commandFocusedActivationWindowIds.delete(windowId);
   }
 
-  hasCommandFocusedWindow(windowId: number): boolean {
+  private hasCommandFocusedWindow(windowId: number): boolean {
     return this.commandFocusedWindowIds.has(windowId);
   }
 
@@ -375,7 +515,7 @@ export class RuntimeFactLedger {
     this.commandFocusedWindowIds.delete(windowId);
   }
 
-  isCommandFocusActiveUpdateEcho(changeInfo: Partial<RuntimeTab>, tab: RuntimeTab): boolean {
+  private isCommandFocusActiveUpdateEcho(changeInfo: Partial<RuntimeTab>, tab: RuntimeTab): boolean {
     return tab.active === true &&
       this.commandFocusedActivationWindowIds.has(tab.windowId) &&
       Object.keys(changeInfo).every((key) => key === "active");
@@ -396,4 +536,39 @@ function liveTabNodes(state: OutlineState): LiveTabNode[] {
 
 function liveWindowNodes(state: OutlineState): Array<OutlineNode & { live: { windowId: number } }> {
   return Object.values(state.nodes).filter(isLiveWindowNode);
+}
+
+export function runtimeCommandRelocatesLiveTabs(type: BackgroundCommand["type"]): boolean {
+  return type === "moveNode" ||
+    type === "moveNodeToNewWindow" ||
+    type === "wrapNodeInGroup" ||
+    type === "moveSubtreeToTopLevel";
+}
+
+function commandOwnershipForType(type: BackgroundCommand["type"]): CommandOwnership | undefined {
+  if (type === "closeNode") {
+    return "outliner-close";
+  }
+  if (type === "deleteNode") {
+    return "delete";
+  }
+  if (runtimeCommandRelocatesLiveTabs(type)) {
+    return "relocation";
+  }
+  if (type === "restoreNode" || type === "undo" || type === "redo") {
+    return "restore";
+  }
+  if (type === "focusNode") {
+    return "focus";
+  }
+  return undefined;
+}
+
+function selectedNodes(state: OutlineState, candidateNodeIds?: readonly NodeId[]): OutlineNode[] {
+  return candidateNodeIds
+    ? candidateNodeIds.flatMap((nodeId) => {
+        const node = state.nodes[nodeId];
+        return node ? [node] : [];
+      })
+    : Object.values(state.nodes);
 }

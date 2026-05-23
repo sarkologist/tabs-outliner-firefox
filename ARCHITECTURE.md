@@ -176,6 +176,8 @@ The current reconciler keeps the following rules centralized:
 
 The controller still owns orchestration: command dispatch, adapter calls, scheduling, history, patch selection, persistence, and sidebar broadcasts. The intended direction is that more event meaning and command side-effect recovery moves behind the ledger/reconciler boundary, leaving the controller as plumbing rather than the place where runtime truth is inferred.
 
+Current event handlers record native facts through the ledger and receive domain decisions such as "ignore command-owned tab removal," "handle command focus," or "close this runtime window." Event-local tab filtering, missing-live-tab detection, restored-tab classification, and stale-relocation echo filtering live in the reconciler. The remaining controller branches are mostly the effects around those decisions: reading browser snapshots, applying model operations, updating the warm runtime index, recording history, selecting patches, saving, and broadcasting.
+
 ## Message And Patch Contract
 
 The background sends several update shapes:
@@ -362,7 +364,7 @@ Most behavior changes should move through these layers:
 - v3 incremental saves greatly reduce repeated save cost, but full v3 hydration is still heavier than the old monolithic read. The initial snapshot hides most of that from first paint.
 - Large structural operations such as flattening a huge window can still produce large history and structure deltas.
 - Runtime fast paths cover common tab/window create/update flows, but full reconciliation remains necessary for ambiguous or restore-candidate cases.
-- The runtime fact ledger/reconciler has absorbed command ownership and stale-evidence filtering, but the controller still contains orchestration-specific branches while the strangler refactor continues.
+- The runtime fact ledger/reconciler has absorbed command ownership, native event classification, stale-evidence filtering, and missing-live-tab detection. The controller still intentionally owns orchestration-specific branches for adapter calls, history, patching, persistence, and broadcasts.
 - Opener-created runtime tab placement still walks ancestors to validate ownership; an owner-window index would make that path closer to `O(u + k)`.
 - The scheduler lets high-priority commands overtake queued low-priority runtime refreshes, but it does not interrupt work already in flight.
 - Sidebar projection fast paths are intentionally narrow. Search-active, active-row side effects, and non-local structural patches still need stronger projection indexes before they can avoid broader row scans or full projection rebuilds.

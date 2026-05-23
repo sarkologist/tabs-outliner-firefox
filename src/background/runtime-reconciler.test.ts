@@ -93,12 +93,31 @@ describe("runtime reconciliation ledger", () => {
     expect(reconciler.consumeCommandRestoredTabEvent(state, index, ledger, tabOne)).toBe(false);
   });
 
+  it("filters event-local tabs through command echo and no-op rules", () => {
+    const state = bootstrapFromWindows([windowInfo(10, [tabOne, tabTwo])], { now: 1000 });
+    const index = buildRuntimeStateIndexForReconciliation(state);
+    const ledger = new RuntimeFactLedger();
+    const reconciler = new RuntimeReconciler();
+    ledger.recordCommandRestoredTab(1);
+
+    expect(reconciler.filterEventTabsForReconciliation({
+      eventTabs: [
+        tabOne,
+        tabTwo,
+        { ...tabTwo, title: "Two updated" }
+      ],
+      state,
+      index,
+      ledger
+    }).map((tab) => tab.title)).toEqual(["Two updated"]);
+  });
+
   it("classifies native close event orders from resource facts", () => {
     const ledger = new RuntimeFactLedger();
     const reconciler = new RuntimeReconciler();
 
-    ledger.markTabRemoved(1);
-    ledger.markTabRemoved(2);
+    ledger.recordNativeTabRemoved(1, 10);
+    ledger.recordNativeTabRemoved(2, 10);
     expect(reconciler.classifyWindowClosingTabRemoval(ledger, {
       windowId: 10,
       liveTabIds: [1, 2],
@@ -118,6 +137,54 @@ describe("runtime reconciliation ledger", () => {
       liveTabIds: [1],
       runtimeWindowOpen: false
     })).toBe("ignore-command-owned");
+  });
+
+  it("classifies missing live tabs from command ownership and restored state", () => {
+    const state = bootstrapFromWindows([windowInfo(10, [tabOne, tabTwo])], { now: 1000 });
+    const tabNode = Object.values(state.nodes).find((node) =>
+      node.kind === "tab" &&
+      node.status === "live" &&
+      node.live &&
+      "tabId" in node.live &&
+      node.live.tabId === 2
+    );
+    expect(tabNode).toBeDefined();
+    const restoredState = {
+      ...state,
+      nodes: {
+        ...state.nodes,
+        [tabNode!.id]: {
+          ...tabNode!,
+          restoredFromClosed: true
+        }
+      }
+    };
+    const reconciler = new RuntimeReconciler();
+    const ledger = new RuntimeFactLedger();
+
+    ledger.markOutlinerClosePlan({ tabIds: [1], windowIds: [] });
+    expect(reconciler.classifyMissingLiveTabRemoval(state, ledger, 1)).toBe("close-outliner-tab");
+    expect(reconciler.classifyMissingLiveTabRemoval(state, ledger, 1)).toBe("delete-tab");
+    expect(reconciler.classifyMissingLiveTabRemoval(restoredState, ledger, 2)).toBe("close-restored-tab");
+  });
+
+  it("finds missing live tabs from open-window snapshots through ledger filters", () => {
+    const state = bootstrapFromWindows([windowInfo(10, [tabOne, tabTwo])], { now: 1000 });
+    const reconciler = new RuntimeReconciler();
+    const ledger = new RuntimeFactLedger();
+
+    expect(reconciler.missingLiveTabIdsInOpenWindows({
+      windows: [windowInfo(10, [tabOne])],
+      state,
+      ledger
+    })).toEqual([2]);
+
+    ledger.recordMissingLiveTab(2);
+    expect(reconciler.missingLiveTabIdsInOpenWindows({
+      windows: [windowInfo(10, [tabOne])],
+      state,
+      ledger
+    })).toEqual([]);
   });
 
   it("records command transaction provenance for partial side-effect recovery", () => {
@@ -147,6 +214,41 @@ describe("runtime reconciliation ledger", () => {
         source: "command",
         commandId: transaction.id,
         kind: "rejected"
+      }
+    ]);
+  });
+
+  it("records native removal facts and classifies command-owned removals", () => {
+    const ledger = new RuntimeFactLedger();
+
+    ledger.markDeleteClosePlan({ tabIds: [1], windowIds: [10] });
+    expect(ledger.recordNativeTabRemoved(1, 10)).toBe("ignore-delete-owned");
+    expect(ledger.recordNativeWindowRemoved(10)).toBe("ignore-delete-owned");
+    expect(ledger.recordNativeWindowRemoved(10)).toBe("ignore-duplicate");
+    expect(ledger.recordNativeTabRemoved(2, 10)).toBe("continue");
+
+    expect(ledger.observationsSnapshot()).toMatchObject([
+      {
+        source: "tabEvent",
+        kind: "removed",
+        tabId: 1,
+        windowId: 10
+      },
+      {
+        source: "windowEvent",
+        kind: "removed",
+        windowId: 10
+      },
+      {
+        source: "windowEvent",
+        kind: "removed",
+        windowId: 10
+      },
+      {
+        source: "tabEvent",
+        kind: "removed",
+        tabId: 2,
+        windowId: 10
       }
     ]);
   });

@@ -29,6 +29,21 @@ export type RuntimeSnapshotNormalizationInput = {
   activationByWindowId?: ReadonlyMap<number, number> | undefined;
 };
 
+export type MissingLiveTabsInput = {
+  windows: RuntimeWindow[];
+  state: OutlineState;
+  ledger: RuntimeFactLedger;
+};
+
+export type RuntimeEventTabFilterInput = {
+  eventTabs: RuntimeTab[];
+  state: OutlineState;
+  index: RuntimeStateIndexForReconciliation;
+  ledger: RuntimeFactLedger;
+};
+
+export type MissingLiveTabRemovalDecision = "close-outliner-tab" | "close-restored-tab" | "delete-tab";
+
 export class RuntimeReconciler {
   classifyWindowClosingTabRemoval(
     ledger: RuntimeFactLedger,
@@ -138,6 +153,52 @@ export class RuntimeReconciler {
     }
 
     return liveTabNodeWouldChange(node, tab);
+  }
+
+  filterEventTabsForReconciliation(input: RuntimeEventTabFilterInput): RuntimeTab[] {
+    const ignoredTabIds = input.ledger.ignoredTabIdsForRefresh();
+    const ignoredWindowIds = input.ledger.ignoredWindowIdsForRefresh();
+    return input.eventTabs
+      .filter((tab) => !ignoredTabIds.has(tab.id))
+      .filter((tab) => !ignoredWindowIds.has(tab.windowId))
+      .filter((tab) => !this.consumeCommandRestoredTabEvent(input.state, input.index, input.ledger, tab))
+      .filter((tab) => !this.consumeCommandRelocatedStaleTabEvent(input.state, input.index, input.ledger, tab))
+      .filter((tab) => this.tabEventMayChangeState(input.state, input.index, tab));
+  }
+
+  classifyMissingLiveTabRemoval(
+    state: OutlineState,
+    ledger: RuntimeFactLedger,
+    tabId: number
+  ): MissingLiveTabRemovalDecision {
+    if (ledger.consumeOutlinerClosingTab(tabId)) {
+      return "close-outliner-tab";
+    }
+
+    const node = liveTabNodes(state).find((candidate) => candidate.live.tabId === tabId);
+    return node?.restoredFromClosed ? "close-restored-tab" : "delete-tab";
+  }
+
+  missingLiveTabIdsInOpenWindows(input: MissingLiveTabsInput): number[] {
+    const ignoredTabIds = input.ledger.ignoredTabIdsForRefresh();
+    const ignoredWindowIds = input.ledger.ignoredWindowIdsForRefresh();
+    const openWindowIds = new Set(input.windows.map((windowInfo) => windowInfo.id));
+    const openTabIds = new Set(
+      input.windows.flatMap((windowInfo) => windowInfo.tabs ?? []).map((tab) => tab.id)
+    );
+
+    return liveTabNodes(input.state)
+      .filter((node) => {
+        if (openTabIds.has(node.live.tabId) || ignoredTabIds.has(node.live.tabId)) {
+          return false;
+        }
+        if (openWindowIds.has(node.live.windowId)) {
+          return true;
+        }
+        const relocationEcho = input.ledger.commandRelocatedTabEcho(node.live.tabId);
+        return relocationEcho?.toWindowId === node.live.windowId && !ignoredWindowIds.has(node.live.windowId);
+      })
+      .map((node) => node.live.tabId);
   }
 }
 
