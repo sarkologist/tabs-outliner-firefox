@@ -1170,12 +1170,42 @@ const RUNTIME_DOMAIN_TRACES: RuntimeDomainTrace[] = [
     ]
   },
   {
+    id: "rt-stale-created-after-fresh-relocation-event",
+    title: "stale created event follows a fresh relocated-tab event",
+    notes: "Fresh current-window events must not disable old-window stale echo protection.",
+    actions: [
+      { type: "outlinerMoveTabToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "moved-tab-1" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "fresh relocated tab update" },
+      { type: "staleLiveCreatedEvent", staleTab: { role: "tabInOldWindow" }, withStaleQuery: true }
+    ]
+  },
+  {
     id: "rt-stale-updated-after-move",
     title: "stale updated event follows move-to-new-window",
     notes: "Targets stale live update echoes after command relocation.",
     actions: [
       { type: "outlinerMoveTabToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "moved-tab-1" },
       { type: "staleLiveUpdatedEvent", staleTab: { role: "tabInOldWindow" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "rt-stale-updated-after-fresh-relocation-event",
+    title: "stale updated event follows a fresh relocated-tab event",
+    notes: "Translated from stale old-window update findings that occur after protection was cleared too early.",
+    actions: [
+      { type: "outlinerMoveTabToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "moved-tab-1" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "fresh relocated tab update" },
+      { type: "staleLiveUpdatedEvent", staleTab: { role: "tabInOldWindow" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "rt-stale-activation-after-fresh-relocation-event",
+    title: "stale activation snapshot follows a fresh relocated-tab event",
+    notes: "Translated from RT-003/RT-005/RT-008 stale activation snapshot findings.",
+    actions: [
+      { type: "outlinerMoveTabToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "moved-tab-1" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "fresh relocated tab update" },
+      { type: "activateTab", tab: { role: "lastMovedTab" }, staleQueryFrom: { role: "tabInOldWindow" } }
     ]
   },
   {
@@ -1205,6 +1235,18 @@ const RUNTIME_DOMAIN_TRACES: RuntimeDomainTrace[] = [
     ]
   }
 ];
+
+const RUNTIME_DOMAIN_REGRESSION_TRACE_IDS = new Set([
+  "rt-active-race",
+  "rt-created-race-after-window-close",
+  "rt-stale-created-after-move",
+  "rt-stale-created-after-fresh-relocation-event",
+  "rt-stale-updated-after-move",
+  "rt-stale-updated-after-fresh-relocation-event",
+  "rt-stale-activation-after-fresh-relocation-event",
+  "rt-native-close-after-relocation",
+  "rt-restore-delete-delayed-stale-event"
+]);
 
 function seededRandom(seed: number): () => number {
   let value = seed >>> 0;
@@ -1921,6 +1963,10 @@ function selectedRuntimeDomainTraces(): RuntimeDomainTrace[] {
     throw new Error(`Unknown runtime domain trace id(s): ${missing.join(", ")}`);
   }
   return selected;
+}
+
+function runtimeDomainRegressionTraces(): RuntimeDomainTrace[] {
+  return RUNTIME_DOMAIN_TRACES.filter((trace) => RUNTIME_DOMAIN_REGRESSION_TRACE_IDS.has(trace.id));
 }
 
 async function runDomainTrace(trace: RuntimeDomainTrace): Promise<void> {
@@ -5176,6 +5222,12 @@ describe("background controller lifecycle", () => {
     : it.skip;
   domainTraceIt("preserves invariants across adversarial runtime domain traces", async () => {
     for (const trace of selectedRuntimeDomainTraces()) {
+      await runDomainTrace(trace);
+    }
+  }, generatedTraceTimeoutMs(10_000, 120_000));
+
+  it("preserves invariants across known runtime domain regression traces", async () => {
+    for (const trace of runtimeDomainRegressionTraces()) {
       await runDomainTrace(trace);
     }
   }, generatedTraceTimeoutMs(10_000, 120_000));

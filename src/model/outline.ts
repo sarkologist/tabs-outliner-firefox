@@ -756,6 +756,7 @@ export function moveTabToNewLiveWindow(
 
   moveExistingNodeUnderNewWindow(next, nodeId, newWindowNodeId, clock.now, clock.rootIndex);
   updateLiveTabWindowRefs(next, nodeId, windowInfo.id, clock.now);
+  applyRuntimeTabsToLiveSubtree(next, nodeId, windowInfo.tabs ?? [], clock.now);
   return repairState(next);
 }
 
@@ -837,6 +838,7 @@ export function wrapNodeInGroup(
       }
     }
     updateLiveTabWindowRefsForSubtree(next, state, nodeId, context.liveWindow.id, context.now);
+    applyRuntimeTabsToLiveSubtree(next, nodeId, context.liveWindow.tabs ?? [], context.now);
     return next;
   }
 
@@ -1517,6 +1519,47 @@ function updateLiveTabWindowRefsForSubtree(
       windowId
     };
     liveTab.updatedAt = now;
+  }
+}
+
+function applyRuntimeTabsToLiveSubtree(
+  state: OutlineState,
+  nodeId: NodeId,
+  tabs: RuntimeTab[],
+  now: number
+): void {
+  if (tabs.length === 0) {
+    return;
+  }
+
+  const tabsById = new Map(tabs.map((tab) => [tab.id, tab]));
+  const activeWindowIds = new Set<number>();
+  for (const id of collectSubtreeIdsExcludingNestedLiveWindows(state, nodeId)) {
+    const candidate = state.nodes[id];
+    if (!candidate || !isNodeLiveTab(candidate)) {
+      continue;
+    }
+
+    const tab = tabsById.get(candidate.live.tabId);
+    if (!tab || tab.windowId !== candidate.live.windowId) {
+      continue;
+    }
+
+    const liveTab = cloneNodeForMutation(state, id);
+    updateLiveTabNode(liveTab, tab, now);
+    if (tab.active) {
+      activeWindowIds.add(tab.windowId);
+    }
+  }
+
+  for (const windowId of activeWindowIds) {
+    const activeTab = tabs.find((tab) => tab.windowId === windowId && tab.active);
+    if (activeTab) {
+      const activeNodeId = buildOutlineLookup(state).liveTabNodeIdsByRuntimeId.get(activeTab.id);
+      if (activeNodeId) {
+        setActiveTabInRuntimeWindow(state, windowId, activeNodeId);
+      }
+    }
   }
 }
 

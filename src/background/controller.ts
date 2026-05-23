@@ -3731,16 +3731,15 @@ function consumeCommandRelocatedStaleTabEvent(
     return false;
   }
 
-  if (tab.windowId === node.live.windowId || tab.windowId === echo.toWindowId) {
+  if (node.live.windowId !== echo.toWindowId) {
     commandRelocatedTabEchoes.delete(tab.id);
     return false;
   }
 
-  if (echo.fromWindowIds.has(tab.windowId) && node.live.windowId === echo.toWindowId) {
+  if (echo.fromWindowIds.has(tab.windowId)) {
     return true;
   }
 
-  commandRelocatedTabEchoes.delete(tab.id);
   return false;
 }
 
@@ -4123,7 +4122,12 @@ function filterCommandRelocatedStaleTabsFromWindows(
         return true;
       }
 
-      const staleOldWindowEcho = echo.fromWindowIds.has(tab.windowId) && node.live.windowId === echo.toWindowId;
+      if (node.live.windowId !== echo.toWindowId) {
+        commandRelocatedTabEchoes.delete(tab.id);
+        return true;
+      }
+
+      const staleOldWindowEcho = echo.fromWindowIds.has(tab.windowId);
       if (staleOldWindowEcho) {
         changed = true;
         if (!freshEchoTabIds.has(tab.id)) {
@@ -4139,7 +4143,6 @@ function filterCommandRelocatedStaleTabsFromWindows(
         return true;
       }
 
-      commandRelocatedTabEchoes.delete(tab.id);
       return true;
     });
 

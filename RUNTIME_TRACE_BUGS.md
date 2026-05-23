@@ -2,7 +2,7 @@
 
 This file records distinct bugs found by deterministic runtime trace hunts.
 The current adversarial hunt mode runs explicit domain trace artifacts that Codex/humans can inspect and mutate with runtime/model knowledge. Historical adaptive seed-frontier and seed-sweep findings are preserved as evidence and alternate repros, not as the current adversarial selection mechanism.
-The hunt intentionally documents findings without fixing them.
+The hunt intentionally documents findings before fixes; fix passes update statuses while preserving the original repros.
 
 Run the hunt with:
 
@@ -34,6 +34,12 @@ Default hunt bounds:
 - Previous adaptive seed-frontier run: RT-001 through RT-008
 - Recovered pre-adaptive seed sweep: SS-001 through SS-006
 
+## Fix Analysis
+
+- Active-state relocation race: RT-001, RT-002, RT-009, RT-010, SS-001, and SS-002 were fixed by applying browser-returned command-created window tab data to relocated outline tabs instead of preserving stale pre-command `active` flags.
+- Stale old-window relocation echoes: RT-003 through RT-008 and SS-003 through SS-006 were fixed by keeping old-window stale echo protection after fresh current-window events; protection now ends only when the tab/node disappears or a later command updates the tracked destination.
+- Verification: all listed generated seed repros and domain trace repros pass as of the principled runtime trace fix pass.
+
 ## Previous Adaptive Seed-Frontier Run
 
 - Completed: 2026-05-23T10:32:29.655Z
@@ -51,7 +57,7 @@ dispatch tab <id> activated, then group tab <id> -->
 
 - First seen: 2026-05-23T09:47:00.099Z
 - Repro: `env GENERATED_TRACE_BASE_SEED=10001 GENERATED_TRACE_SEED_COUNT=1 GENERATED_TRACE_STEPS=120 pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime concurrency traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in principled runtime trace fix pass.
 
 ```text
 seed 10001
@@ -68,7 +74,7 @@ dispatch tab <id> created, then group tab <id> -->
 
 - First seen: 2026-05-23T09:47:14.597Z
 - Repro: `env GENERATED_TRACE_BASE_SEED=10020 GENERATED_TRACE_SEED_COUNT=1 GENERATED_TRACE_STEPS=120 pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime concurrency traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in principled runtime trace fix pass.
 
 ```text
 seed 10020
@@ -95,7 +101,7 @@ step: activate-tab-with-stale-query
 
 - First seen: 2026-05-23T09:48:54.164Z
 - Repro: `env GENERATED_TRACE_BASE_SEED=1892143700 GENERATED_TRACE_SEED_COUNT=1 GENERATED_TRACE_STEPS=120 pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime concurrency traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in principled runtime trace fix pass.
 
 ```text
 seed 1892143700
@@ -134,7 +140,7 @@ dispatch stale live created event for moved tab <id> with stale query window <id
 
 - First seen: 2026-05-23T09:52:31.734Z
 - Repro: `env GENERATED_TRACE_BASE_SEED=560291164 GENERATED_TRACE_SEED_COUNT=1 GENERATED_TRACE_STEPS=120 pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime concurrency traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in principled runtime trace fix pass.
 
 ```text
 seed 560291164
@@ -169,7 +175,7 @@ step: activate-tab-with-stale-query
 
 - First seen: 2026-05-23T09:52:55.009Z
 - Repro: `env GENERATED_TRACE_BASE_SEED=560291075 GENERATED_TRACE_SEED_COUNT=1 GENERATED_TRACE_STEPS=120 pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime concurrency traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in principled runtime trace fix pass.
 
 ```text
 seed 560291075
@@ -232,7 +238,7 @@ dispatch stale live created event for moved tab <id> with stale query window <id
 
 - First seen: 2026-05-23T10:02:00.255Z
 - Repro: `env GENERATED_TRACE_BASE_SEED=1429519014 GENERATED_TRACE_SEED_COUNT=1 GENERATED_TRACE_STEPS=120 pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime concurrency traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in principled runtime trace fix pass.
 
 ```text
 seed 1429519014
@@ -294,7 +300,7 @@ dispatch stale live updated event for tab <id> with stale query window <id> -->
 
 - First seen: 2026-05-23T10:03:18.235Z
 - Repro: `env GENERATED_TRACE_BASE_SEED=2055959888 GENERATED_TRACE_SEED_COUNT=1 GENERATED_TRACE_STEPS=120 pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime concurrency traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in principled runtime trace fix pass.
 
 ```text
 seed 2055959888
@@ -341,7 +347,7 @@ dispatch stale live updated event for tab <id> with stale query window <id> -->
 
 - First seen: 2026-05-23T10:17:34.391Z
 - Repro: `env GENERATED_TRACE_BASE_SEED=1384879344 GENERATED_TRACE_SEED_COUNT=1 GENERATED_TRACE_STEPS=120 pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime concurrency traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in principled runtime trace fix pass.
 
 ```text
 seed 1384879344
@@ -385,7 +391,7 @@ dispatch tab <id> activated, then group tab <id> -->
 
 - First seen: 2026-05-23T09:13:27.016Z
 - Repro: `env GENERATED_TRACE_BASE_SEED=10001 GENERATED_TRACE_SEED_COUNT=1 GENERATED_TRACE_STEPS=120 pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime concurrency traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in principled runtime trace fix pass.
 
 ```text
 seed 10001
@@ -400,7 +406,7 @@ dispatch tab <id> created, then group tab <id> -->
 
 - First seen: 2026-05-23T09:13:45.142Z
 - Repro: `env GENERATED_TRACE_BASE_SEED=10020 GENERATED_TRACE_SEED_COUNT=1 GENERATED_TRACE_STEPS=120 pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime concurrency traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in principled runtime trace fix pass.
 
 ```text
 seed 10020
@@ -425,7 +431,7 @@ dispatch stale live created event for moved tab <id> with stale query window <id
 
 - First seen: 2026-05-23T09:16:13.394Z
 - Repro: `env GENERATED_TRACE_BASE_SEED=10175 GENERATED_TRACE_SEED_COUNT=1 GENERATED_TRACE_STEPS=120 pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime concurrency traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in principled runtime trace fix pass.
 
 ```text
 seed 10175
@@ -449,7 +455,7 @@ step: activate-tab-with-stale-query
 
 - First seen: 2026-05-23T09:17:15.938Z
 - Repro: `env GENERATED_TRACE_BASE_SEED=10240 GENERATED_TRACE_SEED_COUNT=1 GENERATED_TRACE_STEPS=120 pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime concurrency traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in principled runtime trace fix pass.
 
 ```text
 seed 10240
@@ -480,7 +486,7 @@ dispatch stale live updated event for tab <id> with stale query window <id> -->
 
 - First seen: 2026-05-23T09:17:47.746Z
 - Repro: `env GENERATED_TRACE_BASE_SEED=10267 GENERATED_TRACE_SEED_COUNT=1 GENERATED_TRACE_STEPS=120 pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime concurrency traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in principled runtime trace fix pass.
 
 ```text
 seed 10267
@@ -522,7 +528,7 @@ dispatch stale live updated event for tab <id> with stale query window <id> -->
 
 - First seen: 2026-05-23T09:24:16.720Z
 - Repro: `env GENERATED_TRACE_BASE_SEED=10636 GENERATED_TRACE_SEED_COUNT=1 GENERATED_TRACE_STEPS=120 pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime concurrency traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in principled runtime trace fix pass.
 
 ```text
 seed 10636
@@ -557,7 +563,7 @@ action: {"type":"raceWithOutlinerGroup","event":{"type":"activateTab","tab":{"ta
 - First seen: 2026-05-23T10:58:27.512Z
 - Trace id: `rt-active-race`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=rt-active-race pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in principled runtime trace fix pass.
 
 ```text
 domain trace rt-active-race: activation event races a live-tab grouping command
@@ -577,7 +583,7 @@ action: {"type":"raceWithOutlinerGroup","event":{"type":"openTab","window":{"win
 - First seen: 2026-05-23T10:58:28.457Z
 - Trace id: `rt-created-race-after-window-close`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=rt-created-race-after-window-close pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in principled runtime trace fix pass.
 
 ```text
 domain trace rt-created-race-after-window-close: created-tab event races grouping after source-window closure

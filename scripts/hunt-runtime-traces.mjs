@@ -13,7 +13,10 @@ const DEFAULT_TRACE_IDS = [
   "rt-active-race",
   "rt-created-race-after-window-close",
   "rt-stale-created-after-move",
+  "rt-stale-created-after-fresh-relocation-event",
   "rt-stale-updated-after-move",
+  "rt-stale-updated-after-fresh-relocation-event",
+  "rt-stale-activation-after-fresh-relocation-event",
   "rt-native-close-after-relocation",
   "rt-restore-delete-delayed-stale-event"
 ];
