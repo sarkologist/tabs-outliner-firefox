@@ -4790,7 +4790,35 @@ const RUNTIME_DOMAIN_DISCOVERED_FINDING_IDS = new Map<string, string[]>([
   ["dh-relocation-reject-after-focus-session", ["RT-059"]],
   ["dh-restore-history-missing-source-session", ["RT-060"]],
   ["dh-destination-default-close-missing-source-query", ["RT-061"]],
-  ["dh-restore-redo-missing-source-session", ["RT-062"]]
+  ["dh-restore-redo-missing-source-session", ["RT-062"]],
+  ["dh-restart-destination-close-stale-old", ["RT-063"]],
+  ["dh-restore-native-close-after-restart", ["RT-064"]],
+  ["dh-restart-destination-tabs-only-stale-created", ["RT-065"]],
+  ["dh-restart-destination-window-first-paired-old", ["RT-066"]],
+  ["dh-restart-relocated-tab-session-only-stale", ["RT-067"]],
+  ["dh-restart-relocated-tab-removed-only-stale", ["RT-068"]],
+  ["dh-restart-restore-native-tabs-only-stale", ["RT-069"]],
+  ["dh-restart-restore-native-window-first-stale", ["RT-070"]],
+  ["dh-restart-reject-destination-close-stale-old", ["RT-071"]],
+  ["dh-restart-group-destination-close-stale-old", ["RT-072"]],
+  ["dh-restart-top-level-destination-close-stale-old", ["RT-073"]],
+  ["dh-restart-outliner-close-destination-stale-old", ["RT-074"]],
+  ["dh-restart-outliner-close-tab-stale-old", ["RT-075"]],
+  ["dh-restart-destination-window-only-manual-stale", ["RT-076"]],
+  ["dh-restart-destination-tabs-only-manual-stale", ["RT-077"]],
+  ["dh-restart-restore-native-default-stale", ["RT-078"]],
+  ["dh-restart-restore-native-tab-close-stale", ["RT-079"]],
+  ["dh-restart-restore-outliner-close-window-stale", ["RT-080"]],
+  ["dh-restart-delete-reject-destination-close-created", ["RT-081"]],
+  ["dh-opener-chain-restart-destination-close", ["RT-082"]],
+  ["dh-restart-focus-command-no-relocation", ["RT-083"]],
+  ["dh-restart-focus-command-complete-refresh", ["RT-084"]],
+  ["dh-restart-focus-command-session-activation", ["RT-085"]],
+  ["dh-restart-focus-command-missing-focused-tab", ["RT-086"]],
+  ["dh-restart-missing-opened-tab-query", ["RT-087"]],
+  ["dh-restart-missing-background-opened-tab-query", ["RT-088"]],
+  ["dh-restart-missing-active-opened-tab-query", ["RT-089"]],
+  ["dh-restart-missing-opener-child-query", ["RT-090"]]
 ]);
 
 function runtimeDomainTraceWithFindingMetadata(trace: RuntimeDomainTrace): RuntimeDomainTrace {
@@ -4981,7 +5009,11 @@ async function nativeCloseGeneratedTab(context: GeneratedTraceContext): Promise<
   context.staleTabs.push(copyTab(tab));
 
   if (tabsInWindow.length === 1) {
-    const protectedExpectedNodeIds = [windowNodeIdFor(tab.windowId), tabNodeIdFor(tab.id)];
+    const state = (await context.controller.handleMessage({ type: "getState" })) as OutlineState;
+    const protectedExpectedNodeIds = [
+      liveWindowNodeIdForRuntimeWindow(state, tab.windowId),
+      liveTabNodeIdForRuntimeTab(state, tab.id)
+    ];
     context.expectedClosedNodeIds.add(protectedExpectedNodeIds[0]!);
     context.expectedClosedNodeIds.add(protectedExpectedNodeIds[1]!);
     context.history.push(`native close last tab ${tab.id} in window ${tab.windowId}`);
@@ -4996,7 +5028,8 @@ async function nativeCloseGeneratedTab(context: GeneratedTraceContext): Promise<
     "tabRemovedOnly",
     "sessionChangedOnly"
   ] satisfies TabCloseEventOrder[]);
-  context.nativeDeletedNodeIds.add(tabNodeIdFor(tab.id));
+  const state = (await context.controller.handleMessage({ type: "getState" })) as OutlineState;
+  context.nativeDeletedNodeIds.add(liveTabNodeIdForRuntimeTab(state, tab.id));
   context.history.push(`native close tab ${tab.id} with ${order}`);
   await closeTabFromBrowser(context.runtime, tab.id, order);
   await pruneMissingExpectedClosedNodes(context, []);
@@ -5007,23 +5040,28 @@ async function outlinerCloseGeneratedTab(context: GeneratedTraceContext): Promis
     tabsInRuntimeWindow(context.runtime, tab.windowId).length > 1
   );
   const tab = pickOne(context.rng, candidates);
-  const protectedExpectedNodeIds = [tabNodeIdFor(tab.id)];
+  const state = (await context.controller.handleMessage({ type: "getState" })) as OutlineState;
+  const protectedExpectedNodeIds = [liveTabNodeIdForRuntimeTab(state, tab.id)];
   context.expectedClosedNodeIds.add(protectedExpectedNodeIds[0]!);
   context.history.push(`outliner close tab ${tab.id}`);
-  await context.controller.handleMessage({ type: "closeNode", nodeId: tabNodeIdFor(tab.id) });
+  await context.controller.handleMessage({ type: "closeNode", nodeId: protectedExpectedNodeIds[0]! });
   await pruneMissingExpectedClosedNodes(context, protectedExpectedNodeIds);
 }
 
 async function outlinerCloseGeneratedWindow(context: GeneratedTraceContext): Promise<void> {
   const windowInfo = pickOne(context.rng, context.runtime.windows);
   const tabs = tabsInRuntimeWindow(context.runtime, windowInfo.id);
-  const protectedExpectedNodeIds = [windowNodeIdFor(windowInfo.id), ...tabs.map((tab) => tabNodeIdFor(tab.id))];
+  const state = (await context.controller.handleMessage({ type: "getState" })) as OutlineState;
+  const protectedExpectedNodeIds = [
+    liveWindowNodeIdForRuntimeWindow(state, windowInfo.id),
+    ...tabs.map((tab) => liveTabNodeIdForRuntimeTab(state, tab.id))
+  ];
   context.expectedClosedNodeIds.add(protectedExpectedNodeIds[0]!);
-  for (const tab of tabs) {
-    context.expectedClosedNodeIds.add(tabNodeIdFor(tab.id));
+  for (const nodeId of protectedExpectedNodeIds.slice(1)) {
+    context.expectedClosedNodeIds.add(nodeId);
   }
   context.history.push(`outliner close window ${windowInfo.id} with ${tabs.length} tabs`);
-  await context.controller.handleMessage({ type: "closeNode", nodeId: windowNodeIdFor(windowInfo.id) });
+  await context.controller.handleMessage({ type: "closeNode", nodeId: protectedExpectedNodeIds[0]! });
   await pruneMissingExpectedClosedNodes(context, protectedExpectedNodeIds);
 }
 
@@ -5064,10 +5102,14 @@ async function nativeCloseGeneratedWindow(context: GeneratedTraceContext): Promi
   );
   const windowInfo = pickOne(context.rng, candidates);
   const tabs = tabsInRuntimeWindow(context.runtime, windowInfo.id);
-  const protectedExpectedNodeIds = [windowNodeIdFor(windowInfo.id), ...tabs.map((tab) => tabNodeIdFor(tab.id))];
+  const state = (await context.controller.handleMessage({ type: "getState" })) as OutlineState;
+  const protectedExpectedNodeIds = [
+    liveWindowNodeIdForRuntimeWindow(state, windowInfo.id),
+    ...tabs.map((tab) => liveTabNodeIdForRuntimeTab(state, tab.id))
+  ];
   context.expectedClosedNodeIds.add(protectedExpectedNodeIds[0]!);
-  for (const tab of tabs) {
-    context.expectedClosedNodeIds.add(tabNodeIdFor(tab.id));
+  for (const nodeId of protectedExpectedNodeIds.slice(1)) {
+    context.expectedClosedNodeIds.add(nodeId);
   }
   context.history.push(`native close multi-tab window ${windowInfo.id}`);
   await closeRuntimeWindow(context.runtime, windowInfo.id, { awaitListeners: true });
@@ -5076,10 +5118,11 @@ async function nativeCloseGeneratedWindow(context: GeneratedTraceContext): Promi
 
 async function outlinerRestoreDeleteGeneratedWindowWithDelayedEvent(context: GeneratedTraceContext): Promise<void> {
   const windowInfo = pickOne(context.rng, context.runtime.windows);
-  const originalWindowNodeId = windowNodeIdFor(windowInfo.id);
+  let state = (await context.controller.handleMessage({ type: "getState" })) as OutlineState;
+  const originalWindowNodeId = liveWindowNodeIdForRuntimeWindow(state, windowInfo.id);
   context.history.push(`outliner restore-delete window ${windowInfo.id} with delayed restored-tab event`);
   await context.controller.handleMessage({ type: "wrapNodeInGroup", nodeId: originalWindowNodeId });
-  let state = (await context.controller.handleMessage({ type: "getState" })) as OutlineState;
+  state = (await context.controller.handleMessage({ type: "getState" })) as OutlineState;
   const groupId = state.nodes[originalWindowNodeId]?.parentId;
   if (!groupId) {
     return;
@@ -6022,9 +6065,10 @@ async function runDomainOutlinerFocusTab(
   selector: DomainTabSelector
 ): Promise<void> {
   const tab = resolveDomainTab(context, selector);
+  const state = (await context.controller.handleMessage({ type: "getState" })) as OutlineState;
   const result = await context.controller.handleMessage({
     type: "focusNode",
-    nodeId: tabNodeIdFor(tab.id)
+    nodeId: liveTabNodeIdForRuntimeTab(state, tab.id)
   });
   expectCommandAck(result, false);
   await flushGeneratedRuntimeEventRefreshes(context);
@@ -6036,12 +6080,16 @@ async function runDomainOutlinerCloseWindow(
 ): Promise<void> {
   const windowInfo = resolveDomainWindow(context, selector);
   const tabs = tabsInRuntimeWindow(context.runtime, windowInfo.id);
-  const protectedExpectedNodeIds = [windowNodeIdFor(windowInfo.id), ...tabs.map((tab) => tabNodeIdFor(tab.id))];
+  const state = (await context.controller.handleMessage({ type: "getState" })) as OutlineState;
+  const protectedExpectedNodeIds = [
+    liveWindowNodeIdForRuntimeWindow(state, windowInfo.id),
+    ...tabs.map((tab) => liveTabNodeIdForRuntimeTab(state, tab.id))
+  ];
   context.expectedClosedNodeIds.add(protectedExpectedNodeIds[0]!);
-  for (const tab of tabs) {
-    context.expectedClosedNodeIds.add(tabNodeIdFor(tab.id));
+  for (const nodeId of protectedExpectedNodeIds.slice(1)) {
+    context.expectedClosedNodeIds.add(nodeId);
   }
-  await context.controller.handleMessage({ type: "closeNode", nodeId: windowNodeIdFor(windowInfo.id) });
+  await context.controller.handleMessage({ type: "closeNode", nodeId: protectedExpectedNodeIds[0]! });
   await pruneMissingExpectedClosedNodes(context, protectedExpectedNodeIds);
 }
 
@@ -6050,7 +6098,8 @@ async function runDomainOutlinerCloseTab(
   selector: DomainTabSelector
 ): Promise<void> {
   const tab = resolveDomainTab(context, selector);
-  const nodeId = tabNodeIdFor(tab.id);
+  const state = (await context.controller.handleMessage({ type: "getState" })) as OutlineState;
+  const nodeId = liveTabNodeIdForRuntimeTab(state, tab.id);
   context.expectedClosedNodeIds.add(nodeId);
   await context.controller.handleMessage({ type: "closeNode", nodeId });
   await flushGeneratedCloseEvents(context);
@@ -6155,9 +6204,10 @@ async function runDomainOutlinerRestoreDeleteWindowDelayedEvent(
   captureStaleTabs?: string
 ): Promise<void> {
   const windowInfo = resolveDomainWindow(context, selector);
-  const originalWindowNodeId = windowNodeIdFor(windowInfo.id);
-  await context.controller.handleMessage({ type: "wrapNodeInGroup", nodeId: originalWindowNodeId });
   let state = (await context.controller.handleMessage({ type: "getState" })) as OutlineState;
+  const originalWindowNodeId = liveWindowNodeIdForRuntimeWindow(state, windowInfo.id);
+  await context.controller.handleMessage({ type: "wrapNodeInGroup", nodeId: originalWindowNodeId });
+  state = (await context.controller.handleMessage({ type: "getState" })) as OutlineState;
   const groupId = state.nodes[originalWindowNodeId]?.parentId;
   if (!groupId) {
     throw new Error(`Window ${windowInfo.id} was not wrapped before restore-delete trace`);
@@ -6300,7 +6350,11 @@ async function runDomainNativeCloseTab(
   const emitsWindowRemoved = tabsInWindow.length === 1 &&
     (order === "tabRemovedThenSessionChanged" || order === "sessionChangedThenTabRemoved");
   if (emitsWindowRemoved) {
-    const protectedExpectedNodeIds = [windowNodeIdFor(tab.windowId), tabNodeIdFor(tab.id)];
+    const state = (await context.controller.handleMessage({ type: "getState" })) as OutlineState;
+    const protectedExpectedNodeIds = [
+      liveWindowNodeIdForRuntimeWindow(state, tab.windowId),
+      liveTabNodeIdForRuntimeTab(state, tab.id)
+    ];
     context.expectedClosedNodeIds.add(protectedExpectedNodeIds[0]!);
     context.expectedClosedNodeIds.add(protectedExpectedNodeIds[1]!);
     await closeRuntimeTab(context.runtime, tab.id, order, { awaitListeners: true });
@@ -6308,7 +6362,8 @@ async function runDomainNativeCloseTab(
     return;
   }
 
-  context.nativeDeletedNodeIds.add(tabNodeIdFor(tab.id));
+  const state = (await context.controller.handleMessage({ type: "getState" })) as OutlineState;
+  context.nativeDeletedNodeIds.add(liveTabNodeIdForRuntimeTab(state, tab.id));
   await closeRuntimeTab(context.runtime, tab.id, order, { awaitListeners: true });
   await pruneMissingExpectedClosedNodes(context, []);
 }
@@ -6320,10 +6375,14 @@ async function runDomainNativeCloseWindow(
 ): Promise<void> {
   const windowInfo = resolveDomainWindow(context, selector);
   const tabs = tabsInRuntimeWindow(context.runtime, windowInfo.id);
-  const protectedExpectedNodeIds = [windowNodeIdFor(windowInfo.id), ...tabs.map((tab) => tabNodeIdFor(tab.id))];
+  const state = (await context.controller.handleMessage({ type: "getState" })) as OutlineState;
+  const protectedExpectedNodeIds = [
+    liveWindowNodeIdForRuntimeWindow(state, windowInfo.id),
+    ...tabs.map((tab) => liveTabNodeIdForRuntimeTab(state, tab.id))
+  ];
   context.expectedClosedNodeIds.add(protectedExpectedNodeIds[0]!);
-  for (const tab of tabs) {
-    context.expectedClosedNodeIds.add(tabNodeIdFor(tab.id));
+  for (const nodeId of protectedExpectedNodeIds.slice(1)) {
+    context.expectedClosedNodeIds.add(nodeId);
   }
   await closeRuntimeWindow(context.runtime, windowInfo.id, { awaitListeners: true }, order);
   await pruneMissingExpectedClosedNodes(context, protectedExpectedNodeIds);
@@ -6762,6 +6821,10 @@ function liveTabNodeForRuntimeTab(state: OutlineState, tabId: number) {
   );
 }
 
+function liveTabNodeIdForRuntimeTab(state: OutlineState, tabId: number): string {
+  return liveTabNodeForRuntimeTab(state, tabId)?.id ?? tabNodeIdFor(tabId);
+}
+
 function liveWindowNodeForRuntimeWindow(state: OutlineState, windowId: number) {
   return Object.values(state.nodes).find((node) =>
     node.kind === "window" &&
@@ -6770,6 +6833,10 @@ function liveWindowNodeForRuntimeWindow(state: OutlineState, windowId: number) {
       "windowId" in node.live &&
       node.live.windowId === windowId
   );
+}
+
+function liveWindowNodeIdForRuntimeWindow(state: OutlineState, windowId: number): string {
+  return liveWindowNodeForRuntimeWindow(state, windowId)?.id ?? windowNodeIdFor(windowId);
 }
 
 function nearestWindowNode(state: OutlineState, nodeId: string) {

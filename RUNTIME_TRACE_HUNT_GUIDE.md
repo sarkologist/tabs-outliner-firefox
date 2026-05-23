@@ -77,7 +77,7 @@ Focus mutations on stale or contradictory evidence crossing command boundaries:
 
 ## Coverage Matrix
 
-Current coverage after the reconciliation architecture stress hunt on 2026-05-23: 106 regression traces and 149 discovery traces. The restart-stress expansion recorded RT-063 through RT-090, then stopped after three full five-minute mutation blocks found no new distinct signatures.
+Current coverage after the reconciliation architecture tightening pass on 2026-05-23: 134 regression traces and 121 discovery traces. The restart-stress expansion recorded RT-063 through RT-090, the fix pass promoted those findings to regression coverage, and a temp discovery smoke run replayed the remaining discovery profile with 0 failures.
 
 | State shape | Command edge | Runtime skew | Refresh edge | Current coverage | Next target |
 | --- | --- | --- | --- | --- | --- |
@@ -90,7 +90,7 @@ Current coverage after the reconciliation architecture stress hunt on 2026-05-23
 | relocated live tabs | moved tab remains live | partial `tabs.query` omits tab/window | manual refresh | regression-covered after RT-040, RT-047, RT-050, RT-051, RT-052, RT-058, and RT-061 | add missing-window snapshots for multi-window/multi-tab projections |
 | focus churn | focus/activate during command | stale active or reordered snapshot | session/manual refresh | expanded | keep adding reorder-only and cross-window focus variants |
 | history replay | undo/redo around live command | stale event from undone shape | manual refresh | regression-covered plus opener/restore expansion | keep combined with opener/restore only |
-| ledger/restart lifecycle | command, focus, native, restore, or rejection facts cross background restart | stale event after ephemeral guards are gone | startup reconciliation plus partial/manual refresh | open findings RT-063 through RT-090 plus clean current-evidence controls | next hunt should avoid enumerating fixed restart repro variants until after the fix pass |
+| ledger/restart lifecycle | command, focus, native, restore, or rejection facts cross background restart | stale event after ephemeral guards are gone | startup reconciliation plus partial/manual refresh | regression-covered after RT-063 through RT-090 plus clean current-evidence controls | next hunt should target novel restart shapes rather than enumerating fixed repro variants |
 
 ## Five-Minute Mutation Block
 

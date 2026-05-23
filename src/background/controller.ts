@@ -342,7 +342,8 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       if (!hasOutlineRelevantTabUpdate(changeInfo)) {
         return;
       }
-      if (runtimeFacts.recordNativeTabUpdated(tab, changeInfo) === "ignore-command-focus-echo") {
+      if (runtimeFacts.recordNativeTabUpdated(tab, changeInfo) === "command-focus-active") {
+        await handleCommandTabActivated({ tabId: tab.id, windowId: tab.windowId }, { consumeTabEcho: false });
         return;
       }
       await queueRuntimeRefresh([tab]);
@@ -1087,6 +1088,11 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     runtimeIndex = storedRuntimeMatch?.matches && state === stored
       ? buildRuntimeStateIndexFromLookup(state, storedRuntimeMatch.lookup)
       : buildRuntimeStateIndex(state);
+    runtimeFacts.reconstructFromState(
+      state,
+      windows,
+      storedRuntimeMatch?.matches && state === stored ? storedRuntimeMatch.lookup.nodes : undefined
+    );
     return state;
   }
 
@@ -1501,7 +1507,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     }, () => currentEventTabs.length > 0
       ? getNormalWindowsIncludingTabs(api, currentEventTabs)
       : getNormalWindows(api));
-    const windows = runtimeReconciler.normalizeSnapshot({
+    let windows = runtimeReconciler.normalizeSnapshot({
       windows: windowsSnapshot,
       state: current,
       index,
@@ -1509,6 +1515,9 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       confidence: currentEventTabs.length > 0 ? "eventLocal" : closeMissing ? "complete" : "partial",
       activationByWindowId: options.activationByWindowId
     });
+    if (closeMissing && currentEventTabs.length === 0) {
+      windows = await corroborateMissingOrMismatchedLiveTabs(current, index, windows);
+    }
     if (runtimeSnapshotMateriallyMatchesState(current, windows).matches) {
       return false;
     }
@@ -1521,6 +1530,54 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     installStateTransition(current, next, { rebuildRuntimeIndex: true });
     await persistWithBestEffortPatch(current, next, { diffMode: "material" });
     return state !== current;
+  }
+
+  async function corroborateMissingOrMismatchedLiveTabs(
+    current: OutlineState,
+    index: RuntimeStateIndex,
+    windows: RuntimeWindow[]
+  ): Promise<RuntimeWindow[]> {
+    const missingTabIds = runtimeReconciler.missingLiveTabIdsInOpenWindows({
+      windows,
+      state: current,
+      ledger: runtimeFacts
+    });
+    const mismatchedTabIds = runtimeReconciler.mismatchedLiveTabIdsInWindows({
+      windows,
+      state: current,
+      index,
+      ledger: runtimeFacts
+    });
+    if (missingTabIds.length === 0 && mismatchedTabIds.length === 0) {
+      return windows;
+    }
+
+    const corroboratingSnapshot = await perfTrace.measureAsync("background.runtime.getWindows.corroborate", {
+      missingTabCount: missingTabIds.length,
+      mismatchedTabCount: mismatchedTabIds.length
+    }, () => getNormalWindows(api));
+    const corroboratingWindows = runtimeReconciler.normalizeSnapshot({
+      windows: corroboratingSnapshot,
+      state: current,
+      index,
+      ledger: runtimeFacts,
+      confidence: "complete"
+    });
+    const corroboratedMissingTabIds = new Set(runtimeReconciler.missingLiveTabIdsInOpenWindows({
+      windows: corroboratingWindows,
+      state: current,
+      ledger: runtimeFacts
+    }));
+    const corroboratedMismatchedTabIds = new Set(runtimeReconciler.mismatchedLiveTabIdsInWindows({
+      windows: corroboratingWindows,
+      state: current,
+      index,
+      ledger: runtimeFacts
+    }));
+    const contradicted = missingTabIds.some((tabId) => !corroboratedMissingTabIds.has(tabId)) ||
+      mismatchedTabIds.some((tabId) => !corroboratedMismatchedTabIds.has(tabId));
+
+    return contradicted ? corroboratingWindows : windows;
   }
 
   async function applyRuntimeEventTabsFastPath(
@@ -1897,8 +1954,13 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     runtimeIndex = runtimeIndexForStateTransition(previous, next, runtimeIndex, options.candidateNodeIds);
   }
 
-  async function handleCommandTabActivated(activeInfo: { tabId: number; windowId: number; previousTabId?: number }): Promise<boolean> {
-    runtimeFacts.consumeCommandFocusedTab(activeInfo.tabId);
+  async function handleCommandTabActivated(
+    activeInfo: { tabId: number; windowId: number; previousTabId?: number },
+    options: { consumeTabEcho?: boolean } = {}
+  ): Promise<boolean> {
+    if (options.consumeTabEcho !== false) {
+      runtimeFacts.consumeCommandFocusedTab(activeInfo.tabId);
+    }
     runtimeFacts.consumeCommandFocusedActivationWindow(activeInfo.windowId);
     return enqueueMutation(async () => {
       const current = await ensureState();

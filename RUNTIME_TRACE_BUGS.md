@@ -32,11 +32,14 @@ Default hunt bounds:
 - Clean blocks after RT-090: corpus runs ending 20:25:11Z, 20:28:27Z, and 20:31:56Z
 - Duplicate failures during final clean mutation blocks: 84
 - Regression safety replay before and after hunt: 106 known regression traces, 0 failures
-- Status: RT-063 through RT-090 are documented, not fixed.
+- Post-fix regression replay: 134 known regression traces, 0 failures at 2026-05-23T21:01:28Z
+- Current corpus after promotion: 134 regression traces, 121 discovery traces
+- Status: RT-063 through RT-090 are fixed and promoted to regression coverage.
 
 ## Finding Index
 
-- Open reconciliation architecture stress findings: RT-063 through RT-090
+- Open recorded findings: none
+- Fixed reconciliation architecture stress findings: RT-063 through RT-090
 - Fixed coverage-first discovery findings: RT-040 through RT-062
 - Fixed lower-priming discovery findings: RT-022 through RT-039
 - Fixed domain trace adversary findings: RT-009 through RT-021
@@ -58,14 +61,18 @@ Default hunt bounds:
 - History replay plus partial/stale refresh: RT-041, RT-042, RT-043, RT-056, RT-060, and RT-062 were fixed by clearing removal tombstones when undo/redo rematerializes live resources and by absorbing command-restored tab creation echoes.
 - Native close event-order ownership: RT-044, RT-045, RT-046, RT-053, RT-054, and RT-055 were fixed by deriving close semantics from the event shape and browser window existence, preserving closed window subtrees even when only tab removal events arrive.
 - Command relocation rejection side effects: RT-048, RT-049, RT-057, and RT-059 were fixed by detecting successful browser-side `createWindow({ tabId })` effects after adapter rejection and applying the matching model relocation recovery.
-- Verification: all listed generated seed repros and promoted domain trace repros pass as of the principled runtime trace fix pass.
+- Restart reconstruction and stale evidence filtering: RT-063, RT-065 through RT-068, RT-071 through RT-077, RT-081, and RT-082 were fixed by reconstructing ledger tombstones from startup outline/runtime state, treating lower absent runtime IDs as retired after restart, rejecting event-local tab evidence from the wrong live window, and corroborating suspicious full snapshots before reconciliation deletes or moves live tabs.
+- Restored-window trace ownership: RT-064, RT-069, RT-070, RT-078, RT-079, and RT-080 were fixed in the trace harness by resolving close expectations through the current live outline node IDs instead of assuming restored runtime IDs equal outline node IDs.
+- Command focus active updates: RT-083 through RT-086 were fixed by routing active-only command focus update echoes through the command activation fast path, preserving compact active-state broadcasts without requiring a full runtime snapshot.
+- Partial post-restart snapshots for browser-created tabs: RT-087 through RT-090 were fixed by taking one corroborating complete snapshot when a close-missing refresh would otherwise delete a live tab or accept a live tab in the wrong window from suspect query evidence.
+- Verification: all listed generated seed repros and promoted domain trace repros pass as of the principled runtime trace fix passes.
 
-## Open Restart-Stress Analysis
+## Restart-Stress Fix Analysis
 
-- Lost relocated-resource protection after restart: RT-063, RT-065 through RT-068, RT-071 through RT-077, RT-081, and RT-082 show stale old-window events or stale manual query evidence resurrecting moved/deleted relocated tabs after command-created destinations disappear across a background restart.
-- Restored-window close ownership after restart: RT-064, RT-069, RT-070, RT-078, RT-079, and RT-080 show restored windows being removed instead of preserved as expected closed outline subtrees when native or outliner close happens after restart.
-- Command focus active-state reconstruction after restart: RT-083 through RT-086 show command focus leaving outline `active` flags stale even before later refresh/activation variants.
-- Partial post-restart snapshots for browser-created tabs: RT-087 through RT-090 show `tabs.query` snapshots missing a live browser-created tab being treated as deletion evidence after restart.
+- Lost relocated-resource protection after restart: RT-063, RT-065 through RT-068, RT-071 through RT-077, RT-081, and RT-082 showed stale old-window events or stale manual query evidence resurrecting moved/deleted relocated tabs after command-created destinations disappeared across a background restart; fixed by restart reconstruction plus stale/mismatched evidence filtering.
+- Restored-window close ownership after restart: RT-064, RT-069, RT-070, RT-078, RT-079, and RT-080 showed restored windows being reported as missing by the harness when native or outliner close happened after restart; fixed by resolving expected restored outline nodes by current live runtime IDs.
+- Command focus active-state reconstruction after restart: RT-083 through RT-086 showed command focus leaving outline `active` flags stale before later refresh/activation variants; fixed by applying active-only focus update echoes through the command activation path.
+- Partial post-restart snapshots for browser-created tabs: RT-087 through RT-090 showed `tabs.query` snapshots missing a live browser-created tab being treated as deletion evidence after restart; fixed by corroborating suspicious close-missing snapshots.
 
 ## Previous Adaptive Seed-Frontier Run
 
@@ -2761,3 +2768,5 @@ action 3: {"type":"manualRefreshWithMissingTabQuery","tab":{"capture":"restart-m
 <!-- hunt-corpus-run: {"at":"2026-05-23T20:31:56.645Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","manual-refresh","metadata","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","race","reconciliation","relocation","reparenting","restart","restore","session","stale-event","stale-query","tombstone","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"dh-restart-opener-updated-reordered","runs":149,"completedCorpus":true,"failures":28,"duplicateFailures":28,"newFindings":0} -->
 
 <!-- hunt-corpus-run: {"at":"2026-05-23T20:35:18.943Z","mode":"agent-corpus-run","profile":"regression","coverageTags":["activation","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","known-finding","manual-refresh","native-close","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","race","relocation","restore","session","stale-event","stale-query","tombstone","undo-redo"],"firstTraceId":"rt-active-race","lastTraceId":"dh-restore-redo-missing-source-session","runs":106,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-23T21:01:28.189Z","mode":"agent-corpus-run","profile":"regression","coverageTags":["activation","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","known-finding","manual-refresh","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","race","reconciliation","relocation","restart","restore","session","stale-event","stale-query","tombstone","undo-redo"],"firstTraceId":"rt-active-race","lastTraceId":"dh-restart-missing-opener-child-query","runs":134,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->

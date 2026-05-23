@@ -62,7 +62,7 @@ export type WindowClosingTabRemovalDecision =
   | "close-window";
 
 export type NativeTabRemovedDecision = "ignore-delete-owned" | "continue";
-export type NativeTabUpdatedDecision = "ignore-command-focus-echo" | "refresh";
+export type NativeTabUpdatedDecision = "command-focus-active" | "refresh";
 export type NativeFocusEventDecision = "command-focus" | "runtime-refresh";
 export type NativeWindowRemovedDecision = "ignore-duplicate" | "ignore-delete-owned" | "close-window";
 
@@ -80,6 +80,10 @@ export class RuntimeFactLedger {
   private readonly commandFocusedWindowIds = new Set<number>();
   private readonly observations: RuntimeObservation[] = [];
   private readonly transactions = new Map<string, CommandTransaction>();
+  private reconstructedLiveTabIds = new Set<number>();
+  private reconstructedLiveWindowIds = new Set<number>();
+  private reconstructedMaxTabId = 0;
+  private reconstructedMaxWindowId = 0;
   private commandCloseSessionEchoesToSkip = 0;
   private commandCloseSessionEchoesSkippedBeforeRemoval = 0;
   private nextCommandSequence = 1;
@@ -95,6 +99,65 @@ export class RuntimeFactLedger {
 
   observationsSnapshot(): RuntimeObservation[] {
     return [...this.observations];
+  }
+
+  reconstructFromState(
+    state: OutlineState,
+    windows: readonly RuntimeWindow[],
+    nodes: readonly OutlineNode[] = Object.values(state.nodes)
+  ): void {
+    const liveStateTabIds = new Set<number>();
+    const liveStateWindowIds = new Set<number>();
+    const canonicalTabIds: number[] = [];
+    const canonicalWindowIds: number[] = [];
+    for (const node of nodes) {
+      if (isLiveTabNode(node)) {
+        liveStateTabIds.add(node.live.tabId);
+      } else if (isLiveWindowNode(node)) {
+        liveStateWindowIds.add(node.live.windowId);
+      }
+
+      const canonicalTabId = canonicalRuntimeIdFromNodeId(node.id, "tab");
+      if (canonicalTabId !== undefined) {
+        canonicalTabIds.push(canonicalTabId);
+      }
+      const canonicalWindowId = canonicalRuntimeIdFromNodeId(node.id, "window");
+      if (canonicalWindowId !== undefined) {
+        canonicalWindowIds.push(canonicalWindowId);
+      }
+    }
+
+    const runtimeTabIds = new Set(windows.flatMap((windowInfo) => windowInfo.tabs ?? []).map((tab) => tab.id));
+    const runtimeWindowIds = new Set(windows.map((windowInfo) => windowInfo.id));
+    this.reconstructedLiveTabIds = new Set([...liveStateTabIds, ...runtimeTabIds]);
+    this.reconstructedLiveWindowIds = new Set([...liveStateWindowIds, ...runtimeWindowIds]);
+    this.reconstructedMaxTabId = maxNumericId(this.reconstructedLiveTabIds);
+    this.reconstructedMaxWindowId = maxNumericId(this.reconstructedLiveWindowIds);
+
+    for (const canonicalTabId of canonicalTabIds) {
+      if (
+        !liveStateTabIds.has(canonicalTabId) &&
+        !runtimeTabIds.has(canonicalTabId)
+      ) {
+        this.markTabRemoved(canonicalTabId);
+      }
+    }
+
+    for (const canonicalWindowId of canonicalWindowIds) {
+      if (
+        !liveStateWindowIds.has(canonicalWindowId) &&
+        !runtimeWindowIds.has(canonicalWindowId)
+      ) {
+        this.markWindowRemoved(canonicalWindowId);
+      }
+    }
+
+    for (const tabId of runtimeTabIds) {
+      this.removedTabIds.delete(tabId);
+    }
+    for (const windowId of runtimeWindowIds) {
+      this.removedWindowIds.delete(windowId);
+    }
   }
 
   beginCommandTransaction(input: {
@@ -184,7 +247,7 @@ export class RuntimeFactLedger {
 
   recordNativeTabUpdated(tab: RuntimeTab, changeInfo: Partial<RuntimeTab>): NativeTabUpdatedDecision {
     this.recordObservation({ source: "tabEvent", kind: "updated", tabId: tab.id, windowId: tab.windowId, tab });
-    return this.isCommandFocusActiveUpdateEcho(changeInfo, tab) ? "ignore-command-focus-echo" : "refresh";
+    return this.isCommandFocusActiveUpdateEcho(changeInfo, tab) ? "command-focus-active" : "refresh";
   }
 
   recordNativeTabActivated(tabId: number, windowId: number | undefined): NativeFocusEventDecision {
@@ -315,6 +378,26 @@ export class RuntimeFactLedger {
 
   ignoredWindowIdsForRefresh(): Set<number> {
     return new Set([...this.removedWindowIds, ...this.deleteOwnedClosingWindowIds]);
+  }
+
+  isTabIgnoredForRefresh(tabId: number): boolean {
+    return this.removedTabIds.has(tabId) ||
+      this.deleteOwnedClosingTabIds.has(tabId) ||
+      (
+        this.reconstructedMaxTabId > 0 &&
+        tabId <= this.reconstructedMaxTabId &&
+        !this.reconstructedLiveTabIds.has(tabId)
+      );
+  }
+
+  isWindowIgnoredForRefresh(windowId: number): boolean {
+    return this.removedWindowIds.has(windowId) ||
+      this.deleteOwnedClosingWindowIds.has(windowId) ||
+      (
+        this.reconstructedMaxWindowId > 0 &&
+        windowId <= this.reconstructedMaxWindowId &&
+        !this.reconstructedLiveWindowIds.has(windowId)
+      );
   }
 
   private consumeDeleteOwnedClosingTab(tabId: number): boolean {
@@ -536,6 +619,24 @@ function liveTabNodes(state: OutlineState): LiveTabNode[] {
 
 function liveWindowNodes(state: OutlineState): Array<OutlineNode & { live: { windowId: number } }> {
   return Object.values(state.nodes).filter(isLiveWindowNode);
+}
+
+function maxNumericId(ids: ReadonlySet<number>): number {
+  let maxId = 0;
+  for (const id of ids) {
+    if (id > maxId) {
+      maxId = id;
+    }
+  }
+  return maxId;
+}
+
+function canonicalRuntimeIdFromNodeId(nodeId: NodeId, kind: "tab" | "window"): number | undefined {
+  const match = new RegExp(`^${kind}:(\\d+)(?::|$)`).exec(nodeId);
+  if (!match?.[1]) {
+    return undefined;
+  }
+  return Number(match[1]);
 }
 
 export function runtimeCommandRelocatesLiveTabs(type: BackgroundCommand["type"]): boolean {

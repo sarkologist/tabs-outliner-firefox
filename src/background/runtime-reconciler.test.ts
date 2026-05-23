@@ -5,7 +5,7 @@ import {
   RuntimeReconciler,
   buildRuntimeStateIndexForReconciliation
 } from "./runtime-reconciler.js";
-import { bootstrapFromWindows, moveTabToNewLiveWindow } from "../model/outline.js";
+import { bootstrapFromWindows, closeTab, deleteLiveTabNodeByTabId, moveTabToNewLiveWindow } from "../model/outline.js";
 import type { RuntimeTab, RuntimeWindow } from "../model/types.js";
 
 const tabOne: RuntimeTab = {
@@ -112,6 +112,75 @@ describe("runtime reconciliation ledger", () => {
     }).map((tab) => tab.title)).toEqual(["Two updated"]);
   });
 
+  it("ignores event-local tabs for live runtime ids in unexpected windows", () => {
+    const base = bootstrapFromWindows([windowInfo(10, [tabOne, tabTwo])], { now: 1000 });
+    const movedTab = { ...tabOne, windowId: 20, index: 0, active: true };
+    const moved = moveTabToNewLiveWindow(
+      base,
+      "tab:1",
+      windowInfo(20, [movedTab]),
+      { now: 2000 }
+    );
+    const reconciler = new RuntimeReconciler();
+
+    expect(reconciler.filterEventTabsForReconciliation({
+      eventTabs: [{ ...tabOne, title: "Stale old window" }],
+      state: moved,
+      index: buildRuntimeStateIndexForReconciliation(moved),
+      ledger: new RuntimeFactLedger()
+    })).toEqual([]);
+
+    expect(reconciler.filterEventTabsForReconciliation({
+      eventTabs: [{ ...movedTab, title: "Fresh current window" }],
+      state: moved,
+      index: buildRuntimeStateIndexForReconciliation(moved),
+      ledger: new RuntimeFactLedger()
+    }).map((tab) => tab.title)).toEqual(["Fresh current window"]);
+  });
+
+  it("reconstructs restart tombstones for old canonical runtime ids", () => {
+    const state = closeTab(bootstrapFromWindows([windowInfo(10, [tabOne, tabTwo])], { now: 1000 }), 1, { now: 2000 });
+    const ledger = new RuntimeFactLedger();
+    ledger.reconstructFromState(state, [windowInfo(10, [tabTwo])]);
+
+    const normalized = new RuntimeReconciler().normalizeSnapshot({
+      windows: [windowInfo(10, [tabTwo, { ...tabOne, index: 1, active: false }])],
+      state,
+      index: buildRuntimeStateIndexForReconciliation(state),
+      ledger,
+      confidence: "complete"
+    });
+
+    expect(normalized[0]?.tabs?.map((tab) => tab.id)).toEqual([2]);
+  });
+
+  it("reconstructs restart tombstones for deleted lower runtime ids from the startup snapshot", () => {
+    const state = deleteLiveTabNodeByTabId(
+      bootstrapFromWindows([windowInfo(10, [tabOne, tabTwo])], { now: 1000 }),
+      1
+    );
+    const ledger = new RuntimeFactLedger();
+    ledger.reconstructFromState(state, [windowInfo(10, [tabTwo])]);
+    const reconciler = new RuntimeReconciler();
+
+    expect(reconciler.filterEventTabsForReconciliation({
+      eventTabs: [{ ...tabOne, active: false }],
+      state,
+      index: buildRuntimeStateIndexForReconciliation(state),
+      ledger
+    })).toEqual([]);
+
+    const normalized = reconciler.normalizeSnapshot({
+      windows: [windowInfo(10, [tabTwo, { ...tabOne, index: 1, active: false }])],
+      state,
+      index: buildRuntimeStateIndexForReconciliation(state),
+      ledger,
+      confidence: "complete"
+    });
+
+    expect(normalized[0]?.tabs?.map((tab) => tab.id)).toEqual([2]);
+  });
+
   it("classifies native close event orders from resource facts", () => {
     const ledger = new RuntimeFactLedger();
     const reconciler = new RuntimeReconciler();
@@ -185,6 +254,28 @@ describe("runtime reconciliation ledger", () => {
       state,
       ledger
     })).toEqual([]);
+  });
+
+  it("finds live tabs that appear in the wrong runtime window snapshot", () => {
+    const base = bootstrapFromWindows([windowInfo(10, [tabOne, tabTwo])], { now: 1000 });
+    const movedTab = { ...tabOne, windowId: 20, index: 0, active: true };
+    const moved = moveTabToNewLiveWindow(
+      base,
+      "tab:1",
+      windowInfo(20, [movedTab]),
+      { now: 2000 }
+    );
+    const reconciler = new RuntimeReconciler();
+
+    expect(reconciler.mismatchedLiveTabIdsInWindows({
+      windows: [
+        windowInfo(10, [{ ...tabOne, active: false }, tabTwo], false),
+        windowInfo(20, [], true)
+      ],
+      state: moved,
+      index: buildRuntimeStateIndexForReconciliation(moved),
+      ledger: new RuntimeFactLedger()
+    })).toEqual([1]);
   });
 
   it("records command transaction provenance for partial side-effect recovery", () => {

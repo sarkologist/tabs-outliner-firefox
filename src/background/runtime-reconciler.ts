@@ -35,6 +35,13 @@ export type MissingLiveTabsInput = {
   ledger: RuntimeFactLedger;
 };
 
+export type SnapshotSuspicionInput = {
+  windows: RuntimeWindow[];
+  state: OutlineState;
+  index: RuntimeStateIndexForReconciliation;
+  ledger: RuntimeFactLedger;
+};
+
 export type RuntimeEventTabFilterInput = {
   eventTabs: RuntimeTab[];
   state: OutlineState;
@@ -70,9 +77,9 @@ export class RuntimeReconciler {
       addMissingCommandRelocatedTabsFromCurrentState(
         filterCommandRelocatedStaleTabsFromWindows(
           addMissingTabsForEmptyOpenWindowSnapshots(
-            filterRemovedWindowsFromWindows(
-              filterRemovedTabsFromWindows(input.windows, ignoredTabIds),
-              ignoredWindowIds
+            filterIgnoredWindowsFromWindows(
+              filterIgnoredTabsFromWindows(input.windows, input.ledger),
+              input.ledger
             ),
             input.state,
             input.index,
@@ -148,19 +155,20 @@ export class RuntimeReconciler {
     tab: RuntimeTab
   ): boolean {
     const node = indexedLiveTabNodeByRuntimeId(state, index, tab.id);
-    if (!isLiveTabNode(node) || node.live.windowId !== tab.windowId) {
+    if (!isLiveTabNode(node)) {
       return true;
+    }
+    if (node.live.windowId !== tab.windowId) {
+      return false;
     }
 
     return liveTabNodeWouldChange(node, tab);
   }
 
   filterEventTabsForReconciliation(input: RuntimeEventTabFilterInput): RuntimeTab[] {
-    const ignoredTabIds = input.ledger.ignoredTabIdsForRefresh();
-    const ignoredWindowIds = input.ledger.ignoredWindowIdsForRefresh();
     return input.eventTabs
-      .filter((tab) => !ignoredTabIds.has(tab.id))
-      .filter((tab) => !ignoredWindowIds.has(tab.windowId))
+      .filter((tab) => !input.ledger.isTabIgnoredForRefresh(tab.id))
+      .filter((tab) => !input.ledger.isWindowIgnoredForRefresh(tab.windowId))
       .filter((tab) => !this.consumeCommandRestoredTabEvent(input.state, input.index, input.ledger, tab))
       .filter((tab) => !this.consumeCommandRelocatedStaleTabEvent(input.state, input.index, input.ledger, tab))
       .filter((tab) => this.tabEventMayChangeState(input.state, input.index, tab));
@@ -189,16 +197,37 @@ export class RuntimeReconciler {
 
     return liveTabNodes(input.state)
       .filter((node) => {
-        if (openTabIds.has(node.live.tabId) || ignoredTabIds.has(node.live.tabId)) {
+        if (openTabIds.has(node.live.tabId) || input.ledger.isTabIgnoredForRefresh(node.live.tabId)) {
           return false;
         }
         if (openWindowIds.has(node.live.windowId)) {
           return true;
         }
         const relocationEcho = input.ledger.commandRelocatedTabEcho(node.live.tabId);
-        return relocationEcho?.toWindowId === node.live.windowId && !ignoredWindowIds.has(node.live.windowId);
+        return relocationEcho?.toWindowId === node.live.windowId && !input.ledger.isWindowIgnoredForRefresh(node.live.windowId);
       })
       .map((node) => node.live.tabId);
+  }
+
+  mismatchedLiveTabIdsInWindows(input: SnapshotSuspicionInput): number[] {
+    const mismatchedTabIds = new Set<number>();
+
+    for (const windowInfo of input.windows) {
+      if (input.ledger.isWindowIgnoredForRefresh(windowInfo.id)) {
+        continue;
+      }
+      for (const tab of windowInfo.tabs ?? []) {
+        if (input.ledger.isTabIgnoredForRefresh(tab.id)) {
+          continue;
+        }
+        const node = indexedLiveTabNodeByRuntimeId(input.state, input.index, tab.id);
+        if (node && node.live.windowId !== tab.windowId) {
+          mismatchedTabIds.add(tab.id);
+        }
+      }
+    }
+
+    return [...mismatchedTabIds];
   }
 }
 
@@ -236,23 +265,27 @@ export function buildRuntimeStateIndexForReconciliation(state: OutlineState): Ru
   return index;
 }
 
-function filterRemovedTabsFromWindows(windows: RuntimeWindow[], removedTabIds: Set<number>): RuntimeWindow[] {
-  if (removedTabIds.size === 0) {
-    return windows;
-  }
+function filterIgnoredTabsFromWindows(windows: RuntimeWindow[], ledger: RuntimeFactLedger): RuntimeWindow[] {
+  let changed = false;
+  const next = windows.map((windowInfo) => {
+    const tabs = windowInfo.tabs ?? [];
+    const nextTabs = tabs.filter((tab) => !ledger.isTabIgnoredForRefresh(tab.id));
+    if (nextTabs.length === tabs.length) {
+      return windowInfo;
+    }
+    changed = true;
+    return {
+      ...windowInfo,
+      tabs: nextTabs
+    };
+  });
 
-  return windows.map((windowInfo) => ({
-    ...windowInfo,
-    tabs: (windowInfo.tabs ?? []).filter((tab) => !removedTabIds.has(tab.id))
-  }));
+  return changed ? next : windows;
 }
 
-function filterRemovedWindowsFromWindows(windows: RuntimeWindow[], removedWindowIds: Set<number>): RuntimeWindow[] {
-  if (removedWindowIds.size === 0) {
-    return windows;
-  }
-
-  return windows.filter((windowInfo) => !removedWindowIds.has(windowInfo.id));
+function filterIgnoredWindowsFromWindows(windows: RuntimeWindow[], ledger: RuntimeFactLedger): RuntimeWindow[] {
+  const next = windows.filter((windowInfo) => !ledger.isWindowIgnoredForRefresh(windowInfo.id));
+  return next.length === windows.length ? windows : next;
 }
 
 function addMissingTabsForEmptyOpenWindowSnapshots(
