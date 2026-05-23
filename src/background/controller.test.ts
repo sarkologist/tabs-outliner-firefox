@@ -993,11 +993,13 @@ type GeneratedTraceContext = {
   staleTabs: RuntimeTab[];
   staleLiveEventTabs: RuntimeTab[];
   adversarialRuntimeQueries: boolean;
+  adversarialConcurrency: boolean;
   rng: () => number;
 };
 
 type GeneratedTraceOptions = {
   adversarialRuntimeQueries?: boolean;
+  adversarialConcurrency?: boolean;
 };
 
 type GeneratedOperation = {
@@ -1108,6 +1110,14 @@ function availableGeneratedOperations(context: GeneratedTraceContext): Generated
         { name: "stale-live-tab-created-event-stale-query", run: staleLiveCreatedEventWithStaleQuery }
       );
     }
+  }
+  if (context.adversarialConcurrency && context.runtime.tabs.length > 0) {
+    operations.push(
+      { name: "concurrent-created-tab-then-group", run: concurrentCreatedTabThenGroup },
+      { name: "concurrent-updated-tab-then-group", run: concurrentUpdatedTabThenGroup },
+      { name: "concurrent-activated-tab-then-group", run: concurrentActivatedTabThenGroup },
+      { name: "concurrent-focused-window-then-group", run: concurrentFocusedWindowThenGroup }
+    );
   }
 
   return operations;
@@ -1416,6 +1426,127 @@ async function staleLiveCreatedEventWithStaleQuery(context: GeneratedTraceContex
   }
 }
 
+async function concurrentCreatedTabThenGroup(context: GeneratedTraceContext): Promise<void> {
+  const candidate = await generatedGroupCommandCandidate(context);
+  if (!candidate) {
+    return;
+  }
+
+  const windowInfo = pickOne(context.rng, context.runtime.windows);
+  const existingTabs = tabsInRuntimeWindow(context.runtime, windowInfo.id);
+  const tabId = nextGeneratedTabId(context);
+  const tab: RuntimeTab = {
+    id: tabId,
+    windowId: windowInfo.id,
+    index: Math.floor(context.rng() * (existingTabs.length + 1)),
+    active: context.rng() < 0.5,
+    url: `https://generated.example/concurrent/${tabId}`,
+    title: `Concurrent ${tabId}`
+  };
+  context.history.push(`dispatch tab ${tab.id} created, then group tab ${candidate.runtimeTab.id}`);
+  createTabFromBrowser(context.runtime, tab, { awaitListeners: false });
+  await runGeneratedGroupCommand(context, candidate);
+  await flushGeneratedRuntimeEventRefreshes(context);
+}
+
+async function concurrentUpdatedTabThenGroup(context: GeneratedTraceContext): Promise<void> {
+  const candidate = await generatedGroupCommandCandidate(context);
+  if (!candidate) {
+    return;
+  }
+
+  const tab = pickOne(context.rng, context.runtime.tabs);
+  context.history.push(`dispatch tab ${tab.id} updated, then group tab ${candidate.runtimeTab.id}`);
+  void updateTabFromBrowser(context.runtime, tab.id, {
+    title: `${tab.title ?? "Generated"} concurrent ${Math.floor(context.rng() * 10_000)}`
+  }, { awaitListeners: false });
+  await runGeneratedGroupCommand(context, candidate);
+  await flushGeneratedRuntimeEventRefreshes(context);
+}
+
+async function concurrentActivatedTabThenGroup(context: GeneratedTraceContext): Promise<void> {
+  const candidate = await generatedGroupCommandCandidate(context);
+  if (!candidate) {
+    return;
+  }
+
+  const tab = pickOne(context.rng, context.runtime.tabs);
+  context.history.push(`dispatch tab ${tab.id} activated, then group tab ${candidate.runtimeTab.id}`);
+  dispatchTabActivatedFromBrowser(context.runtime, tab.id);
+  await runGeneratedGroupCommand(context, candidate);
+  await flushGeneratedRuntimeEventRefreshes(context);
+}
+
+async function concurrentFocusedWindowThenGroup(context: GeneratedTraceContext): Promise<void> {
+  const candidate = await generatedGroupCommandCandidate(context);
+  if (!candidate) {
+    return;
+  }
+
+  const windowInfo = pickOne(context.rng, context.runtime.windows);
+  context.history.push(`dispatch window ${windowInfo.id} focused, then group tab ${candidate.runtimeTab.id}`);
+  dispatchWindowFocusedFromBrowser(context.runtime, windowInfo.id);
+  await runGeneratedGroupCommand(context, candidate);
+  await flushGeneratedRuntimeEventRefreshes(context);
+}
+
+async function generatedGroupCommandCandidate(
+  context: GeneratedTraceContext
+): Promise<CommandMovableLiveTabCandidate | undefined> {
+  const candidates = await commandMovableLiveTabCandidates(context);
+  return candidates.length > 0 ? pickOne(context.rng, candidates) : undefined;
+}
+
+async function runGeneratedGroupCommand(
+  context: GeneratedTraceContext,
+  candidate: CommandMovableLiveTabCandidate
+): Promise<void> {
+  context.staleLiveEventTabs.push(...candidate.staleTabs);
+  const result = await context.controller.handleMessage({
+    type: "wrapNodeInGroup",
+    nodeId: candidate.nodeId
+  });
+  expectCommandAck(result, true);
+}
+
+function dispatchTabActivatedFromBrowser(runtime: FakeRuntime, tabId: number): void {
+  const tab = runtime.tabs.find((candidate) => candidate.id === tabId);
+  if (!tab) {
+    return;
+  }
+
+  const previousTab = runtime.tabs.find((candidate) => candidate.windowId === tab.windowId && candidate.active);
+  runtime.tabs = runtime.tabs.map((candidate) => candidate.windowId === tab.windowId
+    ? { ...candidate, active: candidate.id === tabId }
+    : copyTab(candidate));
+  runtime.events.tabActivated.dispatch({
+    tabId,
+    windowId: tab.windowId,
+    ...(previousTab ? { previousTabId: previousTab.id } : {})
+  });
+}
+
+function dispatchWindowFocusedFromBrowser(runtime: FakeRuntime, windowId: number): void {
+  runtime.windows = runtime.windows.map((windowInfo) => ({
+    ...windowInfo,
+    focused: windowInfo.id === windowId
+  }));
+  runtime.events.windowFocusChanged.dispatch(windowId);
+}
+
+async function flushGeneratedRuntimeEventRefreshes(context: GeneratedTraceContext): Promise<void> {
+  await Promise.all([
+    context.runtime.events.tabCreated.flush(),
+    context.runtime.events.tabUpdated.flush(),
+    context.runtime.events.tabActivated.flush(),
+    context.runtime.events.windowFocusChanged.flush(),
+    context.runtime.events.tabRemoved.flush(),
+    context.runtime.events.windowRemoved.flush(),
+    context.runtime.events.sessionChanged.flush()
+  ]);
+  await waitForMacrotask();
+}
+
 function snapshotReplacingTab(tabs: RuntimeTab[], replacement: RuntimeTab): RuntimeTab[] {
   const replaced = tabs.map((tab) => tab.id === replacement.id ? copyTab(replacement) : copyTab(tab));
   return replaced.some((tab) => tab.id === replacement.id)
@@ -1628,6 +1759,7 @@ async function runGeneratedTrace(seed: number, steps: number, options: Generated
     staleTabs: [],
     staleLiveEventTabs: [],
     adversarialRuntimeQueries: options.adversarialRuntimeQueries ?? false,
+    adversarialConcurrency: options.adversarialConcurrency ?? false,
     rng: seededRandom(seed)
   };
 
@@ -1710,6 +1842,7 @@ async function runGeneratedGroupingTrace(): Promise<void> {
     staleTabs: [],
     staleLiveEventTabs: [],
     adversarialRuntimeQueries: false,
+    adversarialConcurrency: false,
     rng: seededRandom(1001)
   };
 
@@ -4295,6 +4428,21 @@ describe("background controller lifecycle", () => {
     });
     for (const seed of config.seeds) {
       await runGeneratedTrace(seed + 100, config.steps, { adversarialRuntimeQueries: true });
+    }
+  }, generatedTraceTimeoutMs(10_000, 120_000));
+
+  it("preserves invariants across adversarial runtime concurrency traces", async () => {
+    const config = generatedTraceConfig({
+      defaultSeedCount: 4,
+      defaultSteps: 30,
+      soakSeedCount: 20,
+      soakSteps: 100
+    });
+    for (const seed of config.seeds) {
+      await runGeneratedTrace(seed, config.steps, {
+        adversarialRuntimeQueries: true,
+        adversarialConcurrency: true
+      });
     }
   }, generatedTraceTimeoutMs(10_000, 120_000));
 
