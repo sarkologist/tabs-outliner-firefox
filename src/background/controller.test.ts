@@ -2851,6 +2851,38 @@ const RUNTIME_DOMAIN_DISCOVERY_TRACES: RuntimeDomainTrace[] = [
   }
 ];
 
+const RUNTIME_DOMAIN_DISCOVERED_FINDING_IDS = new Map<string, string[]>([
+  ["dh-undo-redo-stale-refresh", ["RT-022"]],
+  ["dh-history-redo-stale-created", ["RT-023"]],
+  ["dh-history-redo-session-refresh", ["RT-024"]],
+  ["dh-restore-history-redo-delayed-echo", ["RT-025"]],
+  ["dh-manual-stale-query-after-source-close", ["RT-026"]],
+  ["dh-history-manual-stale-query", ["RT-027"]],
+  ["dh-repeated-relocation-manual-stale-query", ["RT-028"]],
+  ["dh-opener-source-close-manual-stale-query", ["RT-029"]],
+  ["dh-group-source-close-manual-stale-query", ["RT-030"]],
+  ["dh-top-level-source-close-manual-stale-query", ["RT-031"]],
+  ["dh-created-race-source-close-manual-stale-query", ["RT-032"]],
+  ["dh-activation-race-source-close-manual-stale-query", ["RT-033"]],
+  ["dh-outliner-source-close-manual-stale-query", ["RT-034"]],
+  ["dh-delete-reject-source-window-manual-stale-query", ["RT-035"]],
+  ["dh-outliner-source-tab-close-manual-stale-query", ["RT-036"]],
+  ["dh-relocated-tab-missing-manual-query", ["RT-037"]],
+  ["dh-fresh-relocated-tab-missing-manual-query", ["RT-038"]],
+  ["dh-opener-child-missing-manual-query", ["RT-039"]]
+]);
+
+function runtimeDomainTraceWithFindingMetadata(trace: RuntimeDomainTrace): RuntimeDomainTrace {
+  const coveredFindingIds = RUNTIME_DOMAIN_DISCOVERED_FINDING_IDS.get(trace.id);
+  return coveredFindingIds
+    ? {
+        ...trace,
+        purpose: "regression",
+        coveredFindingIds
+      }
+    : trace;
+}
+
 const RUNTIME_DOMAIN_TRACES: RuntimeDomainTrace[] = [
   ...RUNTIME_DOMAIN_TRACE_DEFINITIONS.map((trace): RuntimeDomainTrace => ({
     ...trace,
@@ -2858,7 +2890,7 @@ const RUNTIME_DOMAIN_TRACES: RuntimeDomainTrace[] = [
     origin: trace.origin ?? "known-finding",
     tags: trace.tags ?? ["known-finding"]
   })),
-  ...RUNTIME_DOMAIN_DISCOVERY_TRACES
+  ...RUNTIME_DOMAIN_DISCOVERY_TRACES.map(runtimeDomainTraceWithFindingMetadata)
 ];
 
 function seededRandom(seed: number): () => number {
@@ -4184,10 +4216,32 @@ async function runDomainSessionChanged(context: GeneratedTraceContext): Promise<
 }
 
 async function runDomainHistoryCommand(context: GeneratedTraceContext, type: "undo" | "redo"): Promise<void> {
+  const before = (await context.controller.handleMessage({ type: "getState" })) as OutlineState;
   const result = await context.controller.handleMessage({ type });
   expect((result as CommandAck).type).toBe("commandAck");
+  const after = (await context.controller.handleMessage({ type: "getState" })) as OutlineState;
+  trackHistoryCommandLifecycleExpectations(context, before, after);
   await flushGeneratedCloseEvents(context);
   await flushGeneratedRuntimeEventRefreshes(context);
+}
+
+function trackHistoryCommandLifecycleExpectations(
+  context: GeneratedTraceContext,
+  before: OutlineState,
+  after: OutlineState
+): void {
+  for (const nodeId of [...context.commandDeletedNodeIds]) {
+    if (after.nodes[nodeId]) {
+      context.commandDeletedNodeIds.delete(nodeId);
+    }
+  }
+
+  for (const nodeId of Object.keys(before.nodes)) {
+    if (!after.nodes[nodeId]) {
+      context.commandDeletedNodeIds.add(nodeId);
+      context.expectedClosedNodeIds.delete(nodeId);
+    }
+  }
 }
 
 async function runDomainNativeCloseTab(

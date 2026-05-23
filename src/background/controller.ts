@@ -1054,6 +1054,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       return commandAck(false);
     }
 
+    trackCommandRelocatedTabEchoes(current, next, commandRelocatedTabEchoes);
     installStateTransition(current, next, { rebuildRuntimeIndex: true });
     const activePreferences = await ensurePreferences();
     historyState = direction === "undo"
@@ -1398,9 +1399,16 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       ? getNormalWindowsIncludingTabs(api, currentEventTabs)
       : getNormalWindows(api));
     const windows = applyActivationOverridesToWindows(
-      filterCommandRelocatedStaleTabsFromWindows(
-        filterRemovedWindowsFromWindows(
-          filterRemovedTabsFromWindows(windowsSnapshot, ignoredTabIds),
+      addMissingCommandRelocatedTabsFromCurrentState(
+        filterCommandRelocatedStaleTabsFromWindows(
+          filterRemovedWindowsFromWindows(
+            filterRemovedTabsFromWindows(windowsSnapshot, ignoredTabIds),
+            ignoredWindowIds
+          ),
+          current,
+          index,
+          commandRelocatedTabEchoes,
+          ignoredTabIds,
           ignoredWindowIds
         ),
         current,
@@ -2403,13 +2411,28 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
   async function reconcileMissingLiveTabsInOpenWindows(): Promise<ReconciledStateChange | undefined> {
     const current = await ensureState();
+    const index = runtimeIndexForState(current);
     const ignoredTabIds = ignoredRuntimeTabIdsForRefresh(removedTabIds, deleteOwnedClosingTabIds);
     const ignoredWindowIds = ignoredRuntimeWindowIdsForRefresh(removedWindowIds, deleteOwnedClosingWindowIds);
-    const windows = filterRemovedWindowsFromWindows(
-      filterRemovedTabsFromWindows(
-        await getNormalWindows(api),
-        ignoredTabIds
+    const windows = addMissingCommandRelocatedTabsFromCurrentState(
+      filterCommandRelocatedStaleTabsFromWindows(
+        filterRemovedWindowsFromWindows(
+          filterRemovedTabsFromWindows(
+            await getNormalWindows(api),
+            ignoredTabIds
+          ),
+          ignoredWindowIds
+        ),
+        current,
+        index,
+        commandRelocatedTabEchoes,
+        ignoredTabIds,
+        ignoredWindowIds
       ),
+      current,
+      index,
+      commandRelocatedTabEchoes,
+      ignoredTabIds,
       ignoredWindowIds
     );
     const openWindowIds = new Set(windows.map((windowInfo) => windowInfo.id));
@@ -4159,6 +4182,66 @@ function filterCommandRelocatedStaleTabsFromWindows(
   return withFallbackTabs;
 }
 
+function addMissingCommandRelocatedTabsFromCurrentState(
+  windows: RuntimeWindow[],
+  state: OutlineState,
+  index: RuntimeStateIndex,
+  commandRelocatedTabEchoes: Map<number, CommandRelocatedTabEcho>,
+  ignoredTabIds: Set<number>,
+  ignoredWindowIds: Set<number>
+): RuntimeWindow[] {
+  if (commandRelocatedTabEchoes.size === 0) {
+    return windows;
+  }
+
+  const presentTabIds = new Set(windows.flatMap((windowInfo) => windowInfo.tabs ?? []).map((tab) => tab.id));
+  const windowIds = new Set(windows.map((windowInfo) => windowInfo.id));
+  const additionsByWindowId = new Map<number, RuntimeTab[]>();
+
+  for (const [tabId, echo] of commandRelocatedTabEchoes) {
+    if (presentTabIds.has(tabId) || ignoredTabIds.has(tabId)) {
+      continue;
+    }
+
+    const node = indexedLiveTabNodeByRuntimeId(state, index, tabId);
+    if (!node) {
+      commandRelocatedTabEchoes.delete(tabId);
+      continue;
+    }
+    if (node.live.windowId !== echo.toWindowId) {
+      commandRelocatedTabEchoes.delete(tabId);
+      continue;
+    }
+    if (ignoredWindowIds.has(node.live.windowId) || !windowIds.has(node.live.windowId)) {
+      continue;
+    }
+
+    const fallbackTab = commandRelocatedTabFromCurrentState(state, index, tabId, ignoredTabIds, ignoredWindowIds);
+    if (!fallbackTab) {
+      continue;
+    }
+    const additions = additionsByWindowId.get(fallbackTab.windowId) ?? [];
+    additions.push(fallbackTab);
+    additionsByWindowId.set(fallbackTab.windowId, additions);
+  }
+
+  if (additionsByWindowId.size === 0) {
+    return windows;
+  }
+
+  return windows.map((windowInfo) => {
+    const additions = additionsByWindowId.get(windowInfo.id);
+    if (!additions || additions.length === 0) {
+      return windowInfo;
+    }
+
+    return {
+      ...windowInfo,
+      tabs: [...(windowInfo.tabs ?? []), ...additions].sort((left, right) => left.index - right.index)
+    };
+  });
+}
+
 function applyActivationOverridesToWindows(
   windows: RuntimeWindow[],
   state: OutlineState,
@@ -4202,15 +4285,16 @@ function applyActivationOverridesToWindows(
 function commandRelocatedTabFromCurrentState(
   state: OutlineState,
   index: RuntimeStateIndex,
-  staleTab: RuntimeTab,
+  staleTabOrId: RuntimeTab | number,
   ignoredTabIds: Set<number>,
   ignoredWindowIds: Set<number>
 ): RuntimeTab | undefined {
-  if (ignoredTabIds.has(staleTab.id)) {
+  const tabId = typeof staleTabOrId === "number" ? staleTabOrId : staleTabOrId.id;
+  if (ignoredTabIds.has(tabId)) {
     return undefined;
   }
 
-  const node = indexedLiveTabNodeByRuntimeId(state, index, staleTab.id);
+  const node = indexedLiveTabNodeByRuntimeId(state, index, tabId);
   if (!node) {
     return undefined;
   }
@@ -4222,11 +4306,18 @@ function commandRelocatedTabFromCurrentState(
   if (!windowNode) {
     return undefined;
   }
-  const projectedIndex = projectLiveTabs(state, windowNode.id).findIndex((tab) => tab.tabId === staleTab.id);
+  const staleTab = typeof staleTabOrId === "number" ? undefined : staleTabOrId;
+  const projectedIndex = projectLiveTabs(state, windowNode.id).findIndex((tab) => tab.tabId === tabId);
   return {
-    ...staleTab,
+    ...(staleTab ?? {
+      id: tabId,
+      windowId: node.live.windowId,
+      index: projectedIndex >= 0 ? projectedIndex : 0,
+      active: node.active === true
+    }),
+    id: tabId,
     windowId: node.live.windowId,
-    index: projectedIndex >= 0 ? projectedIndex : staleTab.index,
+    index: projectedIndex >= 0 ? projectedIndex : (staleTab?.index ?? 0),
     active: node.active === true,
     ...(node.url ? { url: node.url } : {}),
     ...(node.title ? { title: node.title } : {}),

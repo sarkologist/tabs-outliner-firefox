@@ -30,11 +30,11 @@ Default hunt bounds:
 - Stop condition reached: yes; after RT-039, 3 full five-minute discovery mutation blocks found no new distinct signatures
 - Clean blocks after RT-039: 15:29:48Z-15:34:55Z, 15:34:55Z-15:39:57Z, and 15:39:57Z-15:45:05Z
 - Duplicate failures during final clean mutation blocks: 162
-- Regression safety replay: 65 known regression traces, 0 failures
+- Regression safety replay: 83 known regression traces, 0 failures after the principled RT-022 through RT-039 fix pass
 
 ## Finding Index
 
-- Open lower-priming discovery findings: RT-022 through RT-039
+- Fixed lower-priming discovery findings: RT-022 through RT-039
 - Fixed domain trace adversary findings: RT-009 through RT-021
 - Previous adaptive seed-frontier run: RT-001 through RT-008
 - Recovered pre-adaptive seed sweep: SS-001 through SS-006
@@ -47,6 +47,9 @@ Default hunt bounds:
 - Native close ownership: RT-012, RT-013, RT-014, and RT-016 were fixed by treating `windows.onRemoved` as authoritative browser-window close evidence; the outline now preserves the closed window subtree instead of deleting the single removed tab first.
 - Delete rejection recovery: RT-015, RT-019, RT-020, and RT-021 were fixed by continuing through every resource in a captured close plan, then recovering model deletion when the runtime resources are already gone despite an adapter rejection.
 - Removed relocated-tab resurrection: RT-017 and RT-018 were fixed by limiting session-only missing-window cleanup to command-relocated tabs and by keeping removed/deleted tombstones in stale relocation fallback paths.
+- History replay relocation protection: RT-022, RT-023, RT-024, and RT-027 were fixed by making undo/redo transitions register the same command-relocation echo denylist as direct move/group commands.
+- History lifecycle expectations: RT-025 was fixed in the trace harness by treating explicit undo/redo as intentional lifecycle commands, so user history can restore command-deleted nodes while stale runtime events still cannot.
+- Stale and partial refresh snapshots: RT-026 and RT-028 through RT-039 were fixed by preserving command-relocated tabs from the current outline state when `tabs.query` returns an old-window copy or omits the relocated tab entirely, without recreating tabs whose node or destination window was actually removed.
 - Verification: all listed generated seed repros and promoted domain trace repros pass as of the principled runtime trace fix pass.
 
 ## Previous Adaptive Seed-Frontier Run
@@ -908,7 +911,7 @@ action: {"type":"staleLiveUpdatedEvent","staleTab":{"capture":"undo-redo-before-
 - First seen: 2026-05-23T14:59:15.837Z
 - Trace id: `dh-undo-redo-stale-refresh`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-undo-redo-stale-refresh pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in principled runtime trace fix pass.
 
 ```text
 domain trace dh-undo-redo-stale-refresh: undo redo around stale runtime events and refresh
@@ -938,7 +941,7 @@ action: {"type":"staleLiveCreatedEvent","staleTab":{"capture":"history-created-b
 - First seen: 2026-05-23T15:02:09.141Z
 - Trace id: `dh-history-redo-stale-created`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-history-redo-stale-created pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in principled runtime trace fix pass.
 
 ```text
 domain trace dh-history-redo-stale-created: history redo followed by stale created echo
@@ -964,7 +967,7 @@ action: {"type":"staleLiveUpdatedEvent","staleTab":{"capture":"history-session-b
 - First seen: 2026-05-23T15:02:10.210Z
 - Trace id: `dh-history-redo-session-refresh`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-history-redo-session-refresh pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in principled runtime trace fix pass.
 
 ```text
 domain trace dh-history-redo-session-refresh: history redo followed by session and refresh
@@ -992,7 +995,7 @@ action: {"type":"outlinerUndo"} -->
 - First seen: 2026-05-23T15:02:11.377Z
 - Trace id: `dh-restore-history-redo-delayed-echo`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-restore-history-redo-delayed-echo pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in principled runtime trace fix pass.
 
 ```text
 domain trace dh-restore-history-redo-delayed-echo: restored subtree history replay with delayed echo
@@ -1026,7 +1029,7 @@ action: {"type":"manualRefreshWithStaleQuery","staleTab":{"capture":"manual-stal
 - First seen: 2026-05-23T15:19:38.373Z
 - Trace id: `dh-manual-stale-query-after-source-close`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-manual-stale-query-after-source-close pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in principled runtime trace fix pass.
 
 ```text
 domain trace dh-manual-stale-query-after-source-close: manual stale query after source window close
@@ -1050,7 +1053,7 @@ action: {"type":"manualRefreshWithStaleQuery","staleTab":{"capture":"history-man
 - First seen: 2026-05-23T15:19:39.531Z
 - Trace id: `dh-history-manual-stale-query`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-history-manual-stale-query pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in principled runtime trace fix pass.
 
 ```text
 domain trace dh-history-manual-stale-query: history redo followed by manual stale query
@@ -1078,7 +1081,7 @@ action: {"type":"manualRefreshWithStaleQuery","staleTab":{"capture":"repeated-ma
 - First seen: 2026-05-23T15:21:23.600Z
 - Trace id: `dh-repeated-relocation-manual-stale-query`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-repeated-relocation-manual-stale-query pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in principled runtime trace fix pass.
 
 ```text
 domain trace dh-repeated-relocation-manual-stale-query: repeated relocation before manual stale query
@@ -1106,7 +1109,7 @@ action: {"type":"manualRefreshWithStaleQuery","staleTab":{"capture":"opener-sour
 - First seen: 2026-05-23T15:23:25.834Z
 - Trace id: `dh-opener-source-close-manual-stale-query`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-opener-source-close-manual-stale-query pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in principled runtime trace fix pass.
 
 ```text
 domain trace dh-opener-source-close-manual-stale-query: opener source closes before manual stale query
@@ -1134,7 +1137,7 @@ action: {"type":"manualRefreshWithStaleQuery","staleTab":{"capture":"group-sourc
 - First seen: 2026-05-23T15:25:26.821Z
 - Trace id: `dh-group-source-close-manual-stale-query`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-group-source-close-manual-stale-query pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in principled runtime trace fix pass.
 
 ```text
 domain trace dh-group-source-close-manual-stale-query: grouped source closes before manual stale query
@@ -1158,7 +1161,7 @@ action: {"type":"manualRefreshWithStaleQuery","staleTab":{"capture":"top-level-s
 - First seen: 2026-05-23T15:25:27.823Z
 - Trace id: `dh-top-level-source-close-manual-stale-query`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-top-level-source-close-manual-stale-query pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in principled runtime trace fix pass.
 
 ```text
 domain trace dh-top-level-source-close-manual-stale-query: top-level promotion source closes before manual stale query
@@ -1182,7 +1185,7 @@ action: {"type":"manualRefreshWithStaleQuery","staleTab":{"capture":"created-rac
 - First seen: 2026-05-23T15:25:28.852Z
 - Trace id: `dh-created-race-source-close-manual-stale-query`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-created-race-source-close-manual-stale-query pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in principled runtime trace fix pass.
 
 ```text
 domain trace dh-created-race-source-close-manual-stale-query: created race source closes before manual stale query
@@ -1206,7 +1209,7 @@ action: {"type":"manualRefreshWithStaleQuery","staleTab":{"capture":"activation-
 - First seen: 2026-05-23T15:25:29.871Z
 - Trace id: `dh-activation-race-source-close-manual-stale-query`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-activation-race-source-close-manual-stale-query pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in principled runtime trace fix pass.
 
 ```text
 domain trace dh-activation-race-source-close-manual-stale-query: activation race source closes before manual stale query
@@ -1232,7 +1235,7 @@ action: {"type":"manualRefreshWithStaleQuery","staleTab":{"capture":"outliner-so
 - First seen: 2026-05-23T15:27:18.212Z
 - Trace id: `dh-outliner-source-close-manual-stale-query`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-outliner-source-close-manual-stale-query pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in principled runtime trace fix pass.
 
 ```text
 domain trace dh-outliner-source-close-manual-stale-query: outliner source close before manual stale query
@@ -1256,7 +1259,7 @@ action: {"type":"manualRefreshWithStaleQuery","staleTab":{"capture":"delete-sour
 - First seen: 2026-05-23T15:27:19.210Z
 - Trace id: `dh-delete-reject-source-window-manual-stale-query`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-delete-reject-source-window-manual-stale-query pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in principled runtime trace fix pass.
 
 ```text
 domain trace dh-delete-reject-source-window-manual-stale-query: delete-reject source window before manual stale query
@@ -1280,7 +1283,7 @@ action: {"type":"manualRefreshWithStaleQuery","staleTab":{"capture":"outliner-so
 - First seen: 2026-05-23T15:27:20.230Z
 - Trace id: `dh-outliner-source-tab-close-manual-stale-query`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-outliner-source-tab-close-manual-stale-query pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in principled runtime trace fix pass.
 
 ```text
 domain trace dh-outliner-source-tab-close-manual-stale-query: outliner source sibling close before manual stale query
@@ -1306,7 +1309,7 @@ action: {"type":"manualRefreshWithMissingTabQuery","tab":{"role":"lastMovedTab"}
 - First seen: 2026-05-23T15:29:21.703Z
 - Trace id: `dh-relocated-tab-missing-manual-query`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-relocated-tab-missing-manual-query pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in principled runtime trace fix pass.
 
 ```text
 domain trace dh-relocated-tab-missing-manual-query: relocated tab missing from manual query
@@ -1328,7 +1331,7 @@ action: {"type":"manualRefreshWithMissingTabQuery","tab":{"role":"lastMovedTab"}
 - First seen: 2026-05-23T15:29:22.792Z
 - Trace id: `dh-fresh-relocated-tab-missing-manual-query`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-fresh-relocated-tab-missing-manual-query pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in principled runtime trace fix pass.
 
 ```text
 domain trace dh-fresh-relocated-tab-missing-manual-query: fresh relocated tab missing from manual query
@@ -1352,7 +1355,7 @@ action: {"type":"manualRefreshWithMissingTabQuery","tab":{"role":"lastMovedTab"}
 - First seen: 2026-05-23T15:29:23.838Z
 - Trace id: `dh-opener-child-missing-manual-query`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-opener-child-missing-manual-query pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in principled runtime trace fix pass.
 
 ```text
 domain trace dh-opener-child-missing-manual-query: opener child missing from manual query after relocation
