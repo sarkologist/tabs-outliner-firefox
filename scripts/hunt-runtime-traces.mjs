@@ -86,7 +86,28 @@ const DISCOVERY_TRACE_IDS = [
   "dh-nested-parent-native-close",
   "dh-partial-subtree-delete-reject",
   "dh-focus-session-activation-refresh",
-  "dh-undo-redo-stale-refresh"
+  "dh-undo-redo-stale-refresh",
+  "dh-opener-source-close-stale-child",
+  "dh-opener-session-only-close",
+  "dh-refresh-delete-reject-relocated-tab",
+  "dh-history-redo-stale-created",
+  "dh-history-redo-session-refresh",
+  "dh-restore-history-redo-delayed-echo",
+  "dh-repeated-relocation-refresh-stale-pair",
+  "dh-fresh-event-source-close-stale-echo",
+  "dh-focus-churn-refresh-stale-echo",
+  "dh-refresh-delete-reject-window-after-relocation",
+  "dh-created-race-refresh-delete-reject",
+  "dh-activation-race-source-close-refresh",
+  "dh-update-race-focus-session-refresh",
+  "dh-restore-delete-stale-created-refresh",
+  "dh-restore-delete-stale-updated-session",
+  "dh-nested-opener-delete-reject",
+  "dh-nested-opener-native-close-refresh",
+  "dh-command-focus-relocated-refresh-stale",
+  "dh-outliner-close-destination-refresh-stale",
+  "dh-outliner-close-tab-refresh-stale",
+  "dh-source-sibling-close-refresh-stale"
 ];
 const ALL_TRACE_IDS = [...REGRESSION_TRACE_IDS, ...DISCOVERY_TRACE_IDS];
 const TRACE_TAGS = new Map([
@@ -96,7 +117,28 @@ const TRACE_TAGS = new Map([
   ["dh-nested-parent-native-close", ["nested-window", "native-close", "relocation", "stale-event"]],
   ["dh-partial-subtree-delete-reject", ["delete-rejection", "partial-close", "stale-event", "tombstone"]],
   ["dh-focus-session-activation-refresh", ["focus", "activation", "session", "manual-refresh"]],
-  ["dh-undo-redo-stale-refresh", ["undo-redo", "stale-event", "relocation", "manual-refresh"]]
+  ["dh-undo-redo-stale-refresh", ["undo-redo", "stale-event", "relocation", "manual-refresh"]],
+  ["dh-opener-source-close-stale-child", ["opener", "reparenting", "relocation", "native-close", "stale-event"]],
+  ["dh-opener-session-only-close", ["opener", "relocation", "session", "stale-event", "tombstone"]],
+  ["dh-refresh-delete-reject-relocated-tab", ["manual-refresh", "delete-rejection", "relocation", "tombstone", "stale-event"]],
+  ["dh-history-redo-stale-created", ["undo-redo", "stale-event", "relocation", "manual-refresh"]],
+  ["dh-history-redo-session-refresh", ["undo-redo", "session", "relocation", "stale-event", "manual-refresh"]],
+  ["dh-restore-history-redo-delayed-echo", ["restore", "undo-redo", "delayed-event", "stale-event", "manual-refresh"]],
+  ["dh-repeated-relocation-refresh-stale-pair", ["relocation", "manual-refresh", "stale-event", "paired-echo"]],
+  ["dh-fresh-event-source-close-stale-echo", ["relocation", "native-close", "fresh-event", "stale-event", "manual-refresh"]],
+  ["dh-focus-churn-refresh-stale-echo", ["focus", "activation", "relocation", "manual-refresh", "stale-event"]],
+  ["dh-refresh-delete-reject-window-after-relocation", ["delete-rejection", "relocation", "manual-refresh", "tombstone", "stale-event"]],
+  ["dh-created-race-refresh-delete-reject", ["created-event", "race", "relocation", "manual-refresh", "delete-rejection"]],
+  ["dh-activation-race-source-close-refresh", ["activation", "race", "relocation", "native-close", "manual-refresh"]],
+  ["dh-update-race-focus-session-refresh", ["updated-event", "race", "relocation", "focus", "session", "manual-refresh"]],
+  ["dh-restore-delete-stale-created-refresh", ["restore", "delayed-event", "stale-event", "manual-refresh", "tombstone"]],
+  ["dh-restore-delete-stale-updated-session", ["restore", "delayed-event", "session", "stale-event", "tombstone"]],
+  ["dh-nested-opener-delete-reject", ["opener", "nested-window", "delete-rejection", "stale-event", "tombstone"]],
+  ["dh-nested-opener-native-close-refresh", ["opener", "nested-window", "native-close", "manual-refresh", "stale-event"]],
+  ["dh-command-focus-relocated-refresh-stale", ["focus", "relocation", "manual-refresh", "stale-event"]],
+  ["dh-outliner-close-destination-refresh-stale", ["outliner-close", "relocation", "manual-refresh", "stale-event", "tombstone"]],
+  ["dh-outliner-close-tab-refresh-stale", ["outliner-close", "relocation", "manual-refresh", "stale-event", "tombstone"]],
+  ["dh-source-sibling-close-refresh-stale", ["outliner-close", "relocation", "manual-refresh", "stale-event"]]
 ]);
 const hasExplicitTraceIds = typeof process.env.RUNTIME_TRACE_HUNT_TRACE_IDS === "string" &&
   process.env.RUNTIME_TRACE_HUNT_TRACE_IDS.trim() !== "";

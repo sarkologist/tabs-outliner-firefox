@@ -1183,6 +1183,7 @@ type DomainAction =
   | {
       type: "outlinerRestoreDeleteWindowDelayedEvent";
       window: DomainWindowSelector;
+      captureStaleTabs?: string;
     }
   | {
       type: "manualRefresh";
@@ -1989,6 +1990,325 @@ const RUNTIME_DOMAIN_DISCOVERY_TRACES: RuntimeDomainTrace[] = [
       { type: "outlinerRedo" },
       { type: "staleLiveUpdatedEvent", staleTab: { capture: "undo-redo-before-stale" }, withStaleQuery: true },
       { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "dh-opener-source-close-stale-child",
+    title: "opener subtree relocation followed by source window close",
+    notes: "Agent-generated discovery variant for opener-linked subtrees moved away before their old window closes.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["opener", "reparenting", "relocation", "native-close", "stale-event"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, openerTab: { tabId: 1 }, captureTab: "opener-source-child" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "opener-source-before-close" },
+      { type: "nativeCloseWindow", window: { windowId: 10 } },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "opener-source-before-close", index: 1 }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "dh-opener-session-only-close",
+    title: "opener-linked relocation with session-only tab removal",
+    notes: "Agent-generated discovery variant for session refresh when an opener-linked relocated tab disappears without a tabRemoved event.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["opener", "relocation", "session", "stale-event", "tombstone"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, openerTab: { tabId: 1 }, captureTab: "session-opener-child" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { capture: "session-opener-child" }, captureStaleTabs: "session-opener-old-window" },
+      { type: "nativeCloseTab", tab: { role: "lastMovedTab" }, order: "sessionChangedOnly" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "session-opener-old-window" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "dh-refresh-delete-reject-relocated-tab",
+    title: "manual refresh before rejecting close of relocated tab",
+    notes: "Agent-generated discovery variant for a refreshed model whose relocated tab close later rejects after runtime removal.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["manual-refresh", "delete-rejection", "relocation", "tombstone", "stale-event"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "refresh-delete-before-reject" },
+      { type: "manualRefresh" },
+      { type: "outlinerDeleteNodeRejectingClose", node: { tab: { role: "lastMovedTab" } } },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "refresh-delete-before-reject" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "dh-history-redo-stale-created",
+    title: "history redo followed by stale created echo",
+    notes: "Agent-generated discovery variant for history replay with a stale created event instead of an update event.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["undo-redo", "stale-event", "relocation", "manual-refresh"],
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "history-created-before-stale" },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedo" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "history-created-before-stale" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "dh-history-redo-session-refresh",
+    title: "history redo followed by session and refresh",
+    notes: "Agent-generated discovery variant for history replay followed by a session refresh before stale echo delivery.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["undo-redo", "session", "relocation", "stale-event", "manual-refresh"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "history-session-before-stale" },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedo" },
+      { type: "sessionChanged" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "history-session-before-stale" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "dh-restore-history-redo-delayed-echo",
+    title: "restored subtree history replay with delayed echo",
+    notes: "Agent-generated discovery variant for restore/delete behavior crossing undo/redo and a delayed stale echo.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restore", "undo-redo", "delayed-event", "stale-event", "manual-refresh"],
+    actions: [
+      { type: "outlinerRestoreDeleteWindowDelayedEvent", window: { windowId: 20 } },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedo" },
+      { type: "sessionChanged" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "dh-repeated-relocation-refresh-stale-pair",
+    title: "repeated relocation across refresh with paired stale echoes",
+    notes: "Agent-generated discovery variant for stale echo protection after a later relocation updates the destination.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["relocation", "manual-refresh", "stale-event", "paired-echo"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "repeat-first-old-window" },
+      { type: "manualRefresh" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { role: "lastMovedTab" }, captureStaleTabs: "repeat-second-old-window" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "repeat-first-old-window" }, withStaleQuery: true },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "repeat-second-old-window" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "dh-fresh-event-source-close-stale-echo",
+    title: "fresh relocated event before source close and stale echo",
+    notes: "Agent-generated discovery variant for a fresh current-window update followed by source window closure and stale old-window echo.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["relocation", "native-close", "fresh-event", "stale-event", "manual-refresh"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "fresh-source-before-close" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "Fresh relocated title" },
+      { type: "nativeCloseWindow", window: { windowId: 10 } },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "fresh-source-before-close" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "dh-focus-churn-refresh-stale-echo",
+    title: "focus churn and refresh before stale relocated echo",
+    notes: "Agent-generated discovery variant for focus and activation churn in the old window before stale relocated tab evidence arrives.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["focus", "activation", "relocation", "manual-refresh", "stale-event"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, captureTab: "focus-churn-extra" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { capture: "focus-churn-extra" }, captureStaleTabs: "focus-churn-old-window" },
+      { type: "focusWindow", window: { windowId: 10 } },
+      { type: "activateTab", tab: { tabId: 2 } },
+      { type: "manualRefresh" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "focus-churn-old-window" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "dh-refresh-delete-reject-window-after-relocation",
+    title: "delete rejecting relocated window after refresh",
+    notes: "Agent-generated discovery variant for destination-window deletion after relocation and refresh.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["delete-rejection", "relocation", "manual-refresh", "tombstone", "stale-event"],
+    actions: [
+      { type: "outlinerMoveSubtreeToTopLevel", tab: { tabId: 1 }, captureStaleTabs: "delete-window-after-refresh-old" },
+      { type: "manualRefresh" },
+      { type: "outlinerDeleteNodeRejectingClose", node: { window: { role: "lastOpenedWindow" } } },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "delete-window-after-refresh-old" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "dh-created-race-refresh-delete-reject",
+    title: "created event races grouping before refresh and delete rejection",
+    notes: "Agent-generated discovery variant for a pending created event that races relocation before a refreshed delete-reject path.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["created-event", "race", "relocation", "manual-refresh", "delete-rejection"],
+    actions: [
+      {
+        type: "raceWithOutlinerGroup",
+        event: { type: "openTab", window: { windowId: 10 }, active: false, openerTab: { tabId: 1 }, captureTab: "race-created-child" },
+        groupTab: { tabId: 1 },
+        captureStaleTabs: "race-created-before-delete"
+      },
+      { type: "manualRefresh" },
+      { type: "outlinerDeleteNodeRejectingClose", node: { tab: { role: "lastMovedTab" } } },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "race-created-before-delete" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "dh-activation-race-source-close-refresh",
+    title: "activation races grouping before source close and refresh",
+    notes: "Agent-generated discovery variant for activation snapshots racing relocation before the old window closes.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["activation", "race", "relocation", "native-close", "manual-refresh"],
+    actions: [
+      {
+        type: "raceWithOutlinerGroup",
+        event: { type: "activateTab", tab: { tabId: 2 } },
+        groupTab: { tabId: 1 },
+        captureStaleTabs: "activation-race-before-close"
+      },
+      { type: "nativeCloseWindow", window: { windowId: 10 } },
+      { type: "manualRefresh" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "activation-race-before-close" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "dh-update-race-focus-session-refresh",
+    title: "update races grouping before focus and session refresh",
+    notes: "Agent-generated discovery variant for metadata updates racing relocation before focus and session refresh.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["updated-event", "race", "relocation", "focus", "session", "manual-refresh"],
+    actions: [
+      {
+        type: "raceWithOutlinerGroup",
+        event: { type: "updateTab", tab: { tabId: 2 }, title: "Race updated sibling" },
+        groupTab: { tabId: 1 },
+        captureStaleTabs: "update-race-before-session"
+      },
+      { type: "focusWindow", window: { role: "lastOpenedWindow" } },
+      { type: "sessionChanged" },
+      { type: "manualRefresh" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "update-race-before-session" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "dh-restore-delete-stale-created-refresh",
+    title: "restore delete followed by stale created echo and refresh",
+    notes: "Agent-generated discovery variant for restored tabs that emit stale created evidence after their restored window is deleted.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restore", "delayed-event", "stale-event", "manual-refresh", "tombstone"],
+    actions: [
+      { type: "outlinerRestoreDeleteWindowDelayedEvent", window: { windowId: 20 }, captureStaleTabs: "restore-delete-stale-created" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "restore-delete-stale-created" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "dh-restore-delete-stale-updated-session",
+    title: "restore delete followed by session and stale update echo",
+    notes: "Agent-generated discovery variant for restored tabs that emit stale updated evidence after session reconciliation.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restore", "delayed-event", "session", "stale-event", "tombstone"],
+    actions: [
+      { type: "outlinerRestoreDeleteWindowDelayedEvent", window: { windowId: 20 }, captureStaleTabs: "restore-delete-stale-updated" },
+      { type: "sessionChanged" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "restore-delete-stale-updated" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "dh-nested-opener-delete-reject",
+    title: "nested opener subtree delete rejection",
+    notes: "Agent-generated discovery variant for opener nesting plus delete rejection without history replay.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["opener", "nested-window", "delete-rejection", "stale-event", "tombstone"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, openerTab: { tabId: 1 }, captureTab: "nested-delete-child" },
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "nested-opener-delete-before" },
+      { type: "outlinerDeleteNodeRejectingClose", node: { window: { windowId: 10 } } },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "nested-opener-delete-before", index: 1 }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "dh-nested-opener-native-close-refresh",
+    title: "nested opener subtree native close and refresh",
+    notes: "Agent-generated discovery variant for opener nesting when the source window closes natively before stale child evidence arrives.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["opener", "nested-window", "native-close", "manual-refresh", "stale-event"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, openerTab: { tabId: 1 }, captureTab: "nested-close-child" },
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "nested-opener-close-before" },
+      { type: "nativeCloseWindow", window: { windowId: 10 } },
+      { type: "manualRefresh" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "nested-opener-close-before", index: 1 }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "dh-command-focus-relocated-refresh-stale",
+    title: "command focus relocated tab before refresh and stale echo",
+    notes: "Agent-generated discovery variant for focus commands after relocation and before stale old-window evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["focus", "relocation", "manual-refresh", "stale-event"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "focus-command-before-stale" },
+      { type: "outlinerFocusTab", tab: { role: "lastMovedTab" } },
+      { type: "manualRefresh" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "focus-command-before-stale" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "dh-outliner-close-destination-refresh-stale",
+    title: "outliner closes relocated destination after refresh",
+    notes: "Agent-generated discovery variant for model-owned destination-window close after a refresh boundary.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["outliner-close", "relocation", "manual-refresh", "stale-event", "tombstone"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "close-destination-before-stale" },
+      { type: "manualRefresh" },
+      { type: "outlinerCloseWindow", window: { role: "lastOpenedWindow" } },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "close-destination-before-stale" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "dh-outliner-close-tab-refresh-stale",
+    title: "outliner closes relocated tab after refresh",
+    notes: "Agent-generated discovery variant for model-owned relocated tab close after refresh followed by stale old-window evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["outliner-close", "relocation", "manual-refresh", "stale-event", "tombstone"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "close-tab-before-stale" },
+      { type: "manualRefresh" },
+      { type: "outlinerCloseTab", tab: { role: "lastMovedTab" } },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "close-tab-before-stale" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "dh-source-sibling-close-refresh-stale",
+    title: "source sibling close after relocation and refresh",
+    notes: "Agent-generated discovery variant for closing an old-window sibling before stale relocated-tab evidence arrives.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["outliner-close", "relocation", "manual-refresh", "stale-event"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "source-sibling-before-stale" },
+      { type: "outlinerCloseTab", tab: { tabId: 2 } },
+      { type: "manualRefresh" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "source-sibling-before-stale" }, withStaleQuery: true }
     ]
   }
 ];
@@ -2889,7 +3209,7 @@ async function runDomainAction(context: GeneratedTraceContext, action: DomainAct
   }
 
   if (action.type === "outlinerRestoreDeleteWindowDelayedEvent") {
-    await runDomainOutlinerRestoreDeleteWindowDelayedEvent(context, action.window);
+    await runDomainOutlinerRestoreDeleteWindowDelayedEvent(context, action.window, action.captureStaleTabs);
     return;
   }
 
@@ -3233,7 +3553,8 @@ async function runDomainOutlinerDeleteNodeRejectingClose(
 
 async function runDomainOutlinerRestoreDeleteWindowDelayedEvent(
   context: GeneratedTraceContext,
-  selector: DomainWindowSelector
+  selector: DomainWindowSelector,
+  captureStaleTabs?: string
 ): Promise<void> {
   const windowInfo = resolveDomainWindow(context, selector);
   const originalWindowNodeId = windowNodeIdFor(windowInfo.id);
@@ -3259,6 +3580,7 @@ async function runDomainOutlinerRestoreDeleteWindowDelayedEvent(
 
   context.lastOpenedWindowId = restoredWindowId;
   const restoredTabs = tabsInRuntimeWindow(context.runtime, restoredWindowId);
+  captureStaleRuntimeTabs(context, captureStaleTabs, restoredTabs);
   const delayedTab = restoredTabs[0];
   if (delayedTab) {
     await updateTabFromBrowser(context.runtime, delayedTab.id, {
