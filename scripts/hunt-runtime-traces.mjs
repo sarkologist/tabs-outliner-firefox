@@ -22,6 +22,9 @@ const DEFAULT_TRACE_IDS = [
 ];
 
 const traceIds = selectedTraceIds();
+if (traceIds.length === 0) {
+  throw new Error("RUNTIME_TRACE_HUNT_TRACE_IDS selected no traces");
+}
 let cleanIterations = 0;
 let iteration = 0;
 const bugLog = loadBugLog(BUG_FILE);
@@ -30,7 +33,7 @@ ensureBugLogFile(BUG_FILE);
 
 console.log(`Runtime trace hunt writing findings to ${BUG_FILE}`);
 console.log(`Each iteration is capped at ${ITERATION_MS}ms; stopping after ${STOP_AFTER_CLEAN} clean iterations.`);
-console.log(`Trace strategy: domain-level corpus runner; Codex/humans mutate trace actions, not seeds.`);
+console.log(`Trace strategy: domain-level corpus runner; clean iterations keep cycling traces until the time cap.`);
 console.log(`Trace IDs: ${traceIds.join(", ")}`);
 
 while (cleanIterations < STOP_AFTER_CLEAN) {
@@ -40,50 +43,61 @@ while (cleanIterations < STOP_AFTER_CLEAN) {
   let failures = 0;
   let duplicateFailures = 0;
   let newFindings = 0;
+  let corpusPasses = 0;
   let lastTraceId = traceIds[0] ?? "";
+  let stopIteration = false;
 
   console.log(`\nIteration ${iteration} starting with ${traceIds.length} domain trace(s)`);
 
-  for (const traceId of traceIds) {
-    if (Date.now() + MIN_RUN_BUDGET_MS > deadline) {
-      console.log(`Trace ${traceId} skipped at the iteration boundary.`);
-      break;
-    }
+  while (!stopIteration && Date.now() + MIN_RUN_BUDGET_MS <= deadline) {
+    corpusPasses += 1;
+    for (const traceId of traceIds) {
+      if (Date.now() + MIN_RUN_BUDGET_MS > deadline) {
+        console.log(`Trace ${traceId} skipped at the iteration boundary.`);
+        stopIteration = true;
+        break;
+      }
 
-    lastTraceId = traceId;
-    runs += 1;
-    const result = await runTrace(traceId, Math.max(MIN_RUN_BUDGET_MS, deadline - Date.now()));
-    if (result.timedOut) {
-      console.log(`Trace ${traceId} timed out at the iteration boundary.`);
-      break;
-    }
-    if (result.code === 0) {
-      continue;
-    }
+      lastTraceId = traceId;
+      runs += 1;
+      const result = await runTrace(traceId, Math.max(MIN_RUN_BUDGET_MS, deadline - Date.now()));
+      if (result.timedOut) {
+        console.log(`Trace ${traceId} timed out at the iteration boundary.`);
+        stopIteration = true;
+        break;
+      }
+      if (result.code === 0) {
+        continue;
+      }
 
-    failures += 1;
-    const finding = parseFinding(traceId, result.output);
-    if (!finding) {
-      const fallback = {
-        traceId,
-        message: `vitest exited with code ${result.code}`,
-        trace: excerpt(result.output, 80),
-        signature: `unparsed failure:${result.code}:${traceId}`,
-        replay: replayCommand(traceId)
-      };
-      if (recordFinding(BUG_FILE, bugLog, fallback)) {
+      failures += 1;
+      const finding = parseFinding(traceId, result.output);
+      if (!finding) {
+        const fallback = {
+          traceId,
+          message: `vitest exited with code ${result.code}`,
+          trace: excerpt(result.output, 80),
+          signature: `unparsed failure:${result.code}:${traceId}`,
+          replay: replayCommand(traceId)
+        };
+        if (recordFinding(BUG_FILE, bugLog, fallback)) {
+          newFindings += 1;
+          stopIteration = true;
+          break;
+        } else {
+          duplicateFailures += 1;
+        }
+        continue;
+      }
+
+      if (recordFinding(BUG_FILE, bugLog, finding)) {
         newFindings += 1;
+        stopIteration = true;
+        console.log(`New finding in ${traceId}: ${finding.message}`);
+        break;
       } else {
         duplicateFailures += 1;
       }
-      continue;
-    }
-
-    if (recordFinding(BUG_FILE, bugLog, finding)) {
-      newFindings += 1;
-      console.log(`New finding in ${traceId}: ${finding.message}`);
-    } else {
-      duplicateFailures += 1;
     }
   }
 
@@ -92,6 +106,7 @@ while (cleanIterations < STOP_AFTER_CLEAN) {
     firstTraceId: traceIds[0] ?? "",
     lastTraceId,
     runs,
+    corpusPasses,
     failures,
     duplicateFailures,
     newFindings
@@ -104,7 +119,8 @@ while (cleanIterations < STOP_AFTER_CLEAN) {
   }
 
   console.log(
-    `Iteration ${iteration} done: ${runs} run(s), ${failures} failure(s), ${newFindings} new finding(s), ` +
+    `Iteration ${iteration} done: ${runs} run(s), ${corpusPasses} corpus pass(es), ` +
+      `${failures} failure(s), ${newFindings} new finding(s), ` +
       `${duplicateFailures} duplicate failure(s), clean streak ${cleanIterations}/${STOP_AFTER_CLEAN}.`
   );
 }
@@ -235,7 +251,7 @@ pnpm trace-hunt:runtime
 
 Default hunt bounds:
 
-- Iteration limit: 5 minutes
+- Clean iteration effort cap: 5 minutes; clean iterations cycle selected traces until the cap
 - Stop condition: 3 consecutive iterations with no new distinct findings
 - Trace selection: explicit domain trace corpus; Codex/humans mutate trace actions, not seeds
 - Test target: \`${TEST_FILE}\`

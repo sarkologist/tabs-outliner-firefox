@@ -12,7 +12,7 @@ pnpm trace-hunt:runtime
 
 Default hunt bounds:
 
-- Iteration limit: 5 minutes
+- Clean iteration effort cap: 5 minutes; clean iterations cycle selected traces until the cap
 - Stop condition: 3 consecutive iterations with no new distinct findings
 - Trace selection: explicit domain trace corpus; mutate domain actions between iterations instead of perturbing seeds
 - Test target: `src/background/controller.test.ts`
@@ -612,3 +612,9 @@ action 6: {"type":"raceWithOutlinerGroup","event":{"type":"openTab","window":{"w
 <!-- hunt-iteration: {"at":"2026-05-23T10:58:45.643Z","iteration":3,"firstTraceId":"rt-active-race","lastTraceId":"rt-restore-delete-delayed-stale-event","runs":6,"failures":2,"duplicateFailures":2,"newFindings":0} -->
 
 <!-- hunt-iteration: {"at":"2026-05-23T10:58:52.252Z","iteration":4,"firstTraceId":"rt-active-race","lastTraceId":"rt-restore-delete-delayed-stale-event","runs":6,"failures":2,"duplicateFailures":2,"newFindings":0} -->
+
+<!-- hunt-iteration: {"at":"2026-05-23T11:26:11.379Z","iteration":1,"firstTraceId":"rt-active-race","lastTraceId":"rt-restore-delete-delayed-stale-event","runs":9,"failures":0,"duplicateFailures":0,"newFindings":0} -->
+
+<!-- hunt-iteration: {"at":"2026-05-23T11:26:19.959Z","iteration":2,"firstTraceId":"rt-active-race","lastTraceId":"rt-restore-delete-delayed-stale-event","runs":9,"failures":0,"duplicateFailures":0,"newFindings":0} -->
+
+<!-- hunt-iteration: {"at":"2026-05-23T11:26:28.509Z","iteration":3,"firstTraceId":"rt-active-race","lastTraceId":"rt-restore-delete-delayed-stale-event","runs":9,"failures":0,"duplicateFailures":0,"newFindings":0} -->
