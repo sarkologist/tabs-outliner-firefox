@@ -32,10 +32,11 @@ Default hunt bounds:
 - Clean blocks after RT-062: 17:12:23Z-17:19:30Z, 17:19:30Z-17:26:19Z, and 17:26:19Z-17:33:58Z
 - Duplicate failures during final clean mutation blocks: 207
 - Regression safety replay: 83 known regression traces, 0 failures before and after the coverage-first discovery hunt
+- Fix pass: RT-040 through RT-062 promoted to regression coverage; corpus now has 106 regression traces and 78 discovery traces.
 
 ## Finding Index
 
-- Open coverage-first discovery findings: RT-040 through RT-062
+- Fixed coverage-first discovery findings: RT-040 through RT-062
 - Fixed lower-priming discovery findings: RT-022 through RT-039
 - Fixed domain trace adversary findings: RT-009 through RT-021
 - Previous adaptive seed-frontier run: RT-001 through RT-008
@@ -52,6 +53,10 @@ Default hunt bounds:
 - History replay relocation protection: RT-022, RT-023, RT-024, and RT-027 were fixed by making undo/redo transitions register the same command-relocation echo denylist as direct move/group commands.
 - History lifecycle expectations: RT-025 was fixed in the trace harness by treating explicit undo/redo as intentional lifecycle commands, so user history can restore command-deleted nodes while stale runtime events still cannot.
 - Stale and partial refresh snapshots: RT-026 and RT-028 through RT-039 were fixed by preserving command-relocated tabs from the current outline state when `tabs.query` returns an old-window copy or omits the relocated tab entirely, without recreating tabs whose node or destination window was actually removed.
+- Missing whole-window refresh snapshots: RT-040, RT-047, RT-050, RT-051, RT-052, RT-058, and RT-061 were fixed by treating zero-tab snapshots for still-open windows as partial evidence and filling them from current live outline tabs before reconciliation.
+- History replay plus partial/stale refresh: RT-041, RT-042, RT-043, RT-056, RT-060, and RT-062 were fixed by clearing removal tombstones when undo/redo rematerializes live resources and by absorbing command-restored tab creation echoes.
+- Native close event-order ownership: RT-044, RT-045, RT-046, RT-053, RT-054, and RT-055 were fixed by deriving close semantics from the event shape and browser window existence, preserving closed window subtrees even when only tab removal events arrive.
+- Command relocation rejection side effects: RT-048, RT-049, RT-057, and RT-059 were fixed by detecting successful browser-side `createWindow({ tabId })` effects after adapter rejection and applying the matching model relocation recovery.
 - Verification: all listed generated seed repros and promoted domain trace repros pass as of the principled runtime trace fix pass.
 
 ## Previous Adaptive Seed-Frontier Run
@@ -1405,7 +1410,7 @@ action: {"type":"manualRefreshWithMissingWindowQuery","window":{"windowId":10}} 
 - First seen: 2026-05-23T16:42:42.776Z
 - Trace id: `dh-opener-history-missing-source-query`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-opener-history-missing-source-query pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in principled coverage-first runtime trace fix pass.
 
 ```text
 domain trace dh-opener-history-missing-source-query: opener history replay with missing source query
@@ -1433,7 +1438,7 @@ action: {"type":"manualRefreshWithMissingWindowQuery","window":{"role":"focusedW
 - First seen: 2026-05-23T16:42:45.699Z
 - Trace id: `dh-restore-history-missing-window-query`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-restore-history-missing-window-query pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in principled coverage-first runtime trace fix pass.
 
 ```text
 domain trace dh-restore-history-missing-window-query: restore history replay with missing window query
@@ -1457,7 +1462,7 @@ action: {"type":"manualRefreshWithReorderedQuery","window":{"role":"focusedWindo
 - First seen: 2026-05-23T16:42:46.675Z
 - Trace id: `dh-restore-history-reordered-query`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-restore-history-reordered-query pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in principled coverage-first runtime trace fix pass.
 
 ```text
 domain trace dh-restore-history-reordered-query: restore history replay with reordered query
@@ -1483,7 +1488,7 @@ action: {"type":"manualRefreshWithMissingWindowQuery","window":{"role":"firstRun
 - First seen: 2026-05-23T16:42:47.663Z
 - Trace id: `dh-restore-history-redo-partial-query`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-restore-history-redo-partial-query pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in principled coverage-first runtime trace fix pass.
 
 ```text
 domain trace dh-restore-history-redo-partial-query: restore history redo with partial query
@@ -1511,7 +1516,7 @@ action: {"type":"nativeCloseWindow","window":{"role":"lastOpenedWindow"},"order"
 - First seen: 2026-05-23T16:42:49.597Z
 - Trace id: `dh-window-close-destination-tabs-only`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-window-close-destination-tabs-only pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in principled coverage-first runtime trace fix pass.
 
 ```text
 domain trace dh-window-close-destination-tabs-only: destination window close emits tabs only
@@ -1533,7 +1538,7 @@ action: {"type":"staleLiveCreatedEvent","staleTab":{"capture":"window-close-nest
 - First seen: 2026-05-23T16:42:50.595Z
 - Trace id: `dh-window-close-nested-window-only`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-window-close-nested-window-only pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in principled coverage-first runtime trace fix pass.
 
 ```text
 domain trace dh-window-close-nested-window-only: nested window close emits window only
@@ -1559,7 +1564,7 @@ action: {"type":"nativeCloseWindow","window":{"windowId":10},"order":"tabsRemove
 - First seen: 2026-05-23T16:42:51.581Z
 - Trace id: `dh-window-close-source-tabs-only`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-window-close-source-tabs-only pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in principled coverage-first runtime trace fix pass.
 
 ```text
 domain trace dh-window-close-source-tabs-only: source window close emits tabs only
@@ -1581,7 +1586,7 @@ action: {"type":"manualRefreshWithMissingWindowQuery","window":{"windowId":10}} 
 - First seen: 2026-05-23T16:42:52.577Z
 - Trace id: `dh-query-missing-source-window-after-relocation`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-query-missing-source-window-after-relocation pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in principled coverage-first runtime trace fix pass.
 
 ```text
 domain trace dh-query-missing-source-window-after-relocation: query omits source window after relocation
@@ -1603,7 +1608,7 @@ action: {"type":"outlinerMoveTabCommandToNewWindowRejectingCreate","tab":{"tabId
 - First seen: 2026-05-23T16:42:55.605Z
 - Trace id: `dh-relocation-create-reject-direct`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-relocation-create-reject-direct pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in principled coverage-first runtime trace fix pass.
 
 ```text
 domain trace dh-relocation-create-reject-direct: relocation create rejects after moving tab
@@ -1618,7 +1623,7 @@ action: {"type":"outlinerMoveTabCommandToNewWindowRejectingCreate","tab":{"captu
 - First seen: 2026-05-23T16:42:56.587Z
 - Trace id: `dh-relocation-create-reject-opener`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-relocation-create-reject-opener pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in principled coverage-first runtime trace fix pass.
 
 ```text
 domain trace dh-relocation-create-reject-opener: opener relocation create rejects after moving tab
@@ -1636,7 +1641,7 @@ action: {"type":"manualRefreshWithMissingWindowQuery","window":{"windowId":10}} 
 - First seen: 2026-05-23T16:45:27.479Z
 - Trace id: `dh-focus-session-missing-window-query`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-focus-session-missing-window-query pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in principled coverage-first runtime trace fix pass.
 
 ```text
 domain trace dh-focus-session-missing-window-query: focus session refresh with missing focused window query
@@ -1666,7 +1671,7 @@ action: {"type":"manualRefreshWithMissingWindowQuery","window":{"windowId":20}} 
 - First seen: 2026-05-23T16:47:44.173Z
 - Trace id: `dh-focus-session-missing-background-window`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-focus-session-missing-background-window pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in principled coverage-first runtime trace fix pass.
 
 ```text
 domain trace dh-focus-session-missing-background-window: focus session refresh with missing background window
@@ -1694,7 +1699,7 @@ action: {"type":"manualRefreshWithMissingWindowQuery","window":{"windowId":10}} 
 - First seen: 2026-05-23T16:47:46.551Z
 - Trace id: `dh-opener-focus-session-missing-window`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-opener-focus-session-missing-window pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in principled coverage-first runtime trace fix pass.
 
 ```text
 domain trace dh-opener-focus-session-missing-window: opener focus session omits source window
@@ -1722,7 +1727,7 @@ action: {"type":"nativeCloseWindow","window":{"windowId":10},"order":"tabsRemove
 - First seen: 2026-05-23T16:47:47.635Z
 - Trace id: `dh-window-close-opener-tabs-only`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-window-close-opener-tabs-only pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in principled coverage-first runtime trace fix pass.
 
 ```text
 domain trace dh-window-close-opener-tabs-only: opener source window close emits tabs only
@@ -1748,7 +1753,7 @@ action: {"type":"staleLiveCreatedEvent","staleTab":{"capture":"window-close-dest
 - First seen: 2026-05-23T16:49:59.450Z
 - Trace id: `dh-window-close-destination-window-only`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-window-close-destination-window-only pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in principled coverage-first runtime trace fix pass.
 
 ```text
 domain trace dh-window-close-destination-window-only: destination window close emits window only
@@ -1782,7 +1787,7 @@ action: {"type":"nativeCloseWindow","window":{"role":"lastOpenedWindow"},"order"
 - First seen: 2026-05-23T17:01:38.588Z
 - Trace id: `dh-nested-tabs-only-session-refresh`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-nested-tabs-only-session-refresh pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in principled coverage-first runtime trace fix pass.
 
 ```text
 domain trace dh-nested-tabs-only-session-refresh: nested tabs-only close followed by session refresh
@@ -1804,7 +1809,7 @@ action: {"type":"manualRefreshWithReorderedQuery","window":{"windowId":10},"orde
 - First seen: 2026-05-23T17:01:39.689Z
 - Trace id: `dh-restore-history-source-reordered-session`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-restore-history-source-reordered-session pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in principled coverage-first runtime trace fix pass.
 
 ```text
 domain trace dh-restore-history-source-reordered-session: restore history with source reordered after session
@@ -1832,7 +1837,7 @@ action: {"type":"outlinerMoveTabCommandToNewWindowRejectingCreate","tab":{"captu
 - First seen: 2026-05-23T17:01:40.937Z
 - Trace id: `dh-relocation-reject-after-reordered-query`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-relocation-reject-after-reordered-query pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in principled coverage-first runtime trace fix pass.
 
 ```text
 domain trace dh-relocation-reject-after-reordered-query: relocation create rejects after reordered query
@@ -1851,7 +1856,7 @@ action: {"type":"manualRefreshWithMissingWindowQuery","window":{"windowId":20}} 
 - First seen: 2026-05-23T17:04:44.168Z
 - Trace id: `dh-focus-relocation-missing-background-query`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-focus-relocation-missing-background-query pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in principled coverage-first runtime trace fix pass.
 
 ```text
 domain trace dh-focus-relocation-missing-background-query: focus relocation with missing background query
@@ -1879,7 +1884,7 @@ action: {"type":"outlinerMoveTabCommandToNewWindowRejectingCreate","tab":{"captu
 - First seen: 2026-05-23T17:04:46.374Z
 - Trace id: `dh-relocation-reject-after-focus-session`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-relocation-reject-after-focus-session pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in principled coverage-first runtime trace fix pass.
 
 ```text
 domain trace dh-relocation-reject-after-focus-session: relocation create rejects after focus session
@@ -1899,7 +1904,7 @@ action: {"type":"manualRefreshWithMissingWindowQuery","window":{"windowId":10}} 
 - First seen: 2026-05-23T17:07:19.387Z
 - Trace id: `dh-restore-history-missing-source-session`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-restore-history-missing-source-session pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in principled coverage-first runtime trace fix pass.
 
 ```text
 domain trace dh-restore-history-missing-source-session: restore history with missing source after session
@@ -1929,7 +1934,7 @@ action: {"type":"manualRefreshWithMissingWindowQuery","window":{"windowId":10}} 
 - First seen: 2026-05-23T17:09:46.158Z
 - Trace id: `dh-destination-default-close-missing-source-query`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-destination-default-close-missing-source-query pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in principled coverage-first runtime trace fix pass.
 
 ```text
 domain trace dh-destination-default-close-missing-source-query: destination default close with missing source query
@@ -1955,7 +1960,7 @@ action: {"type":"manualRefreshWithMissingWindowQuery","window":{"windowId":10}} 
 - First seen: 2026-05-23T17:12:07.935Z
 - Trace id: `dh-restore-redo-missing-source-session`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-restore-redo-missing-source-session pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in principled coverage-first runtime trace fix pass.
 
 ```text
 domain trace dh-restore-redo-missing-source-session: restore redo with missing source after session
@@ -1998,3 +2003,7 @@ action 6: {"type":"manualRefreshWithMissingWindowQuery","window":{"windowId":10}
 <!-- hunt-corpus-run: {"at":"2026-05-23T17:33:58.734Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","manual-refresh","native-close","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","race","relocation","reparenting","restore","session","stale-event","stale-query","tombstone","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"dh-flush-stale-created-destination-reordered","runs":101,"completedCorpus":true,"failures":23,"duplicateFailures":23,"newFindings":0} -->
 
 <!-- hunt-corpus-run: {"at":"2026-05-23T17:36:48.653Z","mode":"agent-corpus-run","profile":"regression","coverageTags":["activation","created-event","delayed-event","delete-rejection","fresh-event","known-finding","manual-refresh","native-close","nested-window","opener","outliner-close","paired-echo","partial-snapshot","race","relocation","restore","session","stale-event","stale-query","tombstone","undo-redo"],"firstTraceId":"rt-active-race","lastTraceId":"dh-opener-child-missing-manual-query","runs":83,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-23T18:07:39.448Z","mode":"agent-corpus-run","profile":"regression","coverageTags":["activation","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","known-finding","manual-refresh","native-close","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","race","relocation","restore","session","stale-event","stale-query","tombstone","undo-redo"],"firstTraceId":"rt-active-race","lastTraceId":"dh-restore-redo-missing-source-session","runs":106,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-23T18:09:03.768Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","manual-refresh","native-close","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","race","relocation","reparenting","restore","session","stale-event","stale-query","tombstone","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"dh-flush-stale-created-destination-reordered","runs":78,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->

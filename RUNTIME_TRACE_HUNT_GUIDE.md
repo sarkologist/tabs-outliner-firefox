@@ -76,18 +76,18 @@ Focus mutations on stale or contradictory evidence crossing command boundaries:
 
 ## Coverage Matrix
 
-Current coverage after the coverage-first discovery hunt on 2026-05-23: 83 regression traces and 101 discovery traces. The expansion started from 46 discovery traces, added neutral threat-model variants for sparse cells, and recorded RT-040 through RT-062 as open discovery findings.
+Current coverage after the coverage-first discovery fix pass on 2026-05-23: 106 regression traces and 78 discovery traces. The expansion started from 46 discovery traces, added neutral threat-model variants for sparse cells, recorded RT-040 through RT-062, and promoted those fixed repros to regression coverage.
 
 | State shape | Command edge | Runtime skew | Refresh edge | Current coverage | Next target |
 | --- | --- | --- | --- | --- | --- |
 | flat windows | move tab to command window | stale old-window created/update | manual refresh | covered | keep as baseline only |
-| grouped/nested windows | close parent or source window | window removed before/without tab removed | session/manual refresh | expanded; open RT findings | fix/dedupe native close ownership after RT-044, RT-045, RT-046, RT-053, RT-054, and RT-055 |
-| opener-linked tabs | move opened tab across windows | opener survives undo/redo | partial or reordered refresh | expanded | keep as regression input after fixes; avoid over-anchoring on exact RT histories |
-| closed/restored subtree | delete after restore | delayed restored-tab event crosses history | stale, missing, or reordered query | expanded; open RT findings | fix stale/partial restore refresh semantics after RT-041, RT-042, RT-043, RT-056, RT-060, and RT-062 |
-| partial command failure | relocation/create rejects | runtime side effect already happened | stale/manual refresh | expanded; open RT findings | fix command side-effect rejection recovery after RT-048, RT-049, RT-057, and RT-059 |
+| grouped/nested windows | close parent or source window | window removed before/without tab removed | session/manual refresh | regression-covered after RT-044, RT-045, RT-046, RT-053, RT-054, and RT-055 | add deeper nesting and multi-tab ownership permutations |
+| opener-linked tabs | move opened tab across windows | opener survives undo/redo | partial or reordered refresh | expanded and partially regression-covered | add opener chains and opener source-window deletion variants |
+| closed/restored subtree | delete after restore | delayed restored-tab event crosses history | stale, missing, or reordered query | regression-covered after RT-041, RT-042, RT-043, RT-056, RT-060, and RT-062 | add restore plus native close and restore plus relocation rejection combinations |
+| partial command failure | relocation/create rejects | runtime side effect already happened | stale/manual refresh | regression-covered after RT-048, RT-049, RT-057, and RT-059 | add side-effect rejection coverage outside create-window relocation |
 | relocated/source-closed tabs | move or group tab, then source disappears | stale `tabs.query` old/source copy | manual refresh | regression-covered | avoid as primary prompt |
-| relocated live tabs | moved tab remains live | partial `tabs.query` omits tab/window | manual refresh | expanded; open RT findings | fix whole-window omission handling after RT-040, RT-047, RT-050, RT-051, RT-052, RT-058, and RT-061 |
-| focus churn | focus/activate during command | stale active or reordered snapshot | session/manual refresh | expanded | keep adding reorder-only variants after fixes, not before |
+| relocated live tabs | moved tab remains live | partial `tabs.query` omits tab/window | manual refresh | regression-covered after RT-040, RT-047, RT-050, RT-051, RT-052, RT-058, and RT-061 | add missing-window snapshots for multi-window/multi-tab projections |
+| focus churn | focus/activate during command | stale active or reordered snapshot | session/manual refresh | expanded | keep adding reorder-only and cross-window focus variants |
 | history replay | undo/redo around live command | stale event from undone shape | manual refresh | regression-covered plus opener/restore expansion | keep combined with opener/restore only |
 
 ## Five-Minute Mutation Block

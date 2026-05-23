@@ -3724,7 +3724,30 @@ const RUNTIME_DOMAIN_DISCOVERED_FINDING_IDS = new Map<string, string[]>([
   ["dh-outliner-source-tab-close-manual-stale-query", ["RT-036"]],
   ["dh-relocated-tab-missing-manual-query", ["RT-037"]],
   ["dh-fresh-relocated-tab-missing-manual-query", ["RT-038"]],
-  ["dh-opener-child-missing-manual-query", ["RT-039"]]
+  ["dh-opener-child-missing-manual-query", ["RT-039"]],
+  ["dh-opener-history-missing-source-query", ["RT-040"]],
+  ["dh-restore-history-missing-window-query", ["RT-041"]],
+  ["dh-restore-history-reordered-query", ["RT-042"]],
+  ["dh-restore-history-redo-partial-query", ["RT-043"]],
+  ["dh-window-close-destination-tabs-only", ["RT-044"]],
+  ["dh-window-close-nested-window-only", ["RT-045"]],
+  ["dh-window-close-source-tabs-only", ["RT-046"]],
+  ["dh-query-missing-source-window-after-relocation", ["RT-047"]],
+  ["dh-relocation-create-reject-direct", ["RT-048"]],
+  ["dh-relocation-create-reject-opener", ["RT-049"]],
+  ["dh-focus-session-missing-window-query", ["RT-050"]],
+  ["dh-focus-session-missing-background-window", ["RT-051"]],
+  ["dh-opener-focus-session-missing-window", ["RT-052"]],
+  ["dh-window-close-opener-tabs-only", ["RT-053"]],
+  ["dh-window-close-destination-window-only", ["RT-054"]],
+  ["dh-nested-tabs-only-session-refresh", ["RT-055"]],
+  ["dh-restore-history-source-reordered-session", ["RT-056"]],
+  ["dh-relocation-reject-after-reordered-query", ["RT-057"]],
+  ["dh-focus-relocation-missing-background-query", ["RT-058"]],
+  ["dh-relocation-reject-after-focus-session", ["RT-059"]],
+  ["dh-restore-history-missing-source-session", ["RT-060"]],
+  ["dh-destination-default-close-missing-source-query", ["RT-061"]],
+  ["dh-restore-redo-missing-source-session", ["RT-062"]]
 ]);
 
 function runtimeDomainTraceWithFindingMetadata(trace: RuntimeDomainTrace): RuntimeDomainTrace {
@@ -10704,12 +10727,14 @@ describe("background controller lifecycle", () => {
     await controller.ensureState();
 
     runtime.tabs = [];
+    runtime.windows = [];
     const result = await controller.handleMessage({ type: "refresh" });
     const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
 
     expectCommandAck(result, true);
-    expect(state.nodes["tab:1"]).toBeUndefined();
-    expect(state.nodes["window:10"]).toBeUndefined();
+    expect(state.nodes["window:10"]?.status).toBe("closed");
+    expect(state.nodes["tab:1"]?.status).toBe("closed");
+    expect(state.nodes["tab:1"]?.live).toBeUndefined();
   });
 
   it("acknowledges unchanged manual refresh without saving or broadcasting", async () => {
