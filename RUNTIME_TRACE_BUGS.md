@@ -22,18 +22,19 @@ Default hunt bounds:
 
 ## Last Domain Run
 
-- Completed: 2026-05-23T15:10:04Z
-- Strategy: lower-priming discovery profile, with agent-in-loop trace edits guided by `RUNTIME_TRACE_HUNT_GUIDE.md`
+- Completed: 2026-05-23T15:47:19Z
+- Strategy: lower-priming discovery profile, with wall-clock five-minute agent mutation blocks guided by `RUNTIME_TRACE_HUNT_GUIDE.md`
 - Trace ids: current discovery corpus in `src/background/controller.test.ts` and `scripts/hunt-runtime-traces.mjs`
-- Distinct discovery findings recorded: 4
-- New findings in lower-priming discovery hunt: RT-022 through RT-025
-- Stop condition reached: yes; after RT-025, 3 full discovery mutation blocks found no new distinct signatures
-- Duplicate failures during final clean mutation blocks: 16
+- Distinct discovery findings recorded in proper timed hunt: 14
+- New findings in proper timed discovery hunt: RT-026 through RT-039
+- Stop condition reached: yes; after RT-039, 3 full five-minute discovery mutation blocks found no new distinct signatures
+- Clean blocks after RT-039: 15:29:48Z-15:34:55Z, 15:34:55Z-15:39:57Z, and 15:39:57Z-15:45:05Z
+- Duplicate failures during final clean mutation blocks: 162
 - Regression safety replay: 65 known regression traces, 0 failures
 
 ## Finding Index
 
-- Open lower-priming discovery findings: RT-022 through RT-025
+- Open lower-priming discovery findings: RT-022 through RT-039
 - Fixed domain trace adversary findings: RT-009 through RT-021
 - Previous adaptive seed-frontier run: RT-001 through RT-008
 - Recovered pre-adaptive seed sweep: SS-001 through SS-006
@@ -1016,3 +1017,375 @@ action 2: {"type":"outlinerUndo"}
 <!-- hunt-corpus-run: {"at":"2026-05-23T15:08:16.534Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","created-event","delayed-event","delete-rejection","focus","fresh-event","manual-refresh","native-close","nested-window","opener","outliner-close","paired-echo","partial-close","race","relocation","reparenting","restore","session","stale-event","tombstone","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"dh-source-sibling-close-refresh-stale","runs":27,"completedCorpus":true,"failures":4,"duplicateFailures":4,"newFindings":0} -->
 
 <!-- hunt-corpus-run: {"at":"2026-05-23T15:10:04.555Z","mode":"agent-corpus-run","profile":"regression","coverageTags":["known-finding"],"firstTraceId":"rt-active-race","lastTraceId":"rt-group-open-active-destination-tab-stale-created","runs":65,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
+
+### RT-026 live tab IDs match runtime tabs
+<!-- signature: live tab IDs match runtime tabs
+domain trace: dh-manual-stale-query-after-source-close
+action: {"type":"manualRefreshWithStaleQuery","staleTab":{"capture":"manual-stale-source-close-old"}} -->
+
+- First seen: 2026-05-23T15:19:38.373Z
+- Trace id: `dh-manual-stale-query-after-source-close`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-manual-stale-query-after-source-close pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace dh-manual-stale-query-after-source-close: manual stale query after source window close
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"manual-stale-source-close-old"}
+action 2: {"type":"nativeCloseWindow","window":{"windowId":10}}
+action 3: {"type":"manualRefreshWithStaleQuery","staleTab":{"capture":"manual-stale-source-close-old"}}
+Domain trace: dh-manual-stale-query-after-source-close
+Action 3: {"type":"manualRefreshWithStaleQuery","staleTab":{"capture":"manual-stale-source-close-old"}}
+Trace:
+domain trace dh-manual-stale-query-after-source-close: manual stale query after source window close
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"manual-stale-source-close-old"}
+action 2: {"type":"nativeCloseWindow","window":{"windowId":10}}
+action 3: {"type":"manualRefreshWithStaleQuery","staleTab":{"capture":"manual-stale-source-close-old"}}
+```
+
+### RT-027 live window IDs match runtime windows
+<!-- signature: live window IDs match runtime windows
+domain trace: dh-history-manual-stale-query
+action: {"type":"manualRefreshWithStaleQuery","staleTab":{"capture":"history-manual-stale-old"}} -->
+
+- First seen: 2026-05-23T15:19:39.531Z
+- Trace id: `dh-history-manual-stale-query`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-history-manual-stale-query pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace dh-history-manual-stale-query: history redo followed by manual stale query
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"history-manual-stale-old"}
+action 2: {"type":"outlinerUndo"}
+action 3: {"type":"outlinerRedo"}
+action 4: {"type":"manualRefreshWithStaleQuery","staleTab":{"capture":"history-manual-stale-old"}}
+Domain trace: dh-history-manual-stale-query
+Action 4: {"type":"manualRefreshWithStaleQuery","staleTab":{"capture":"history-manual-stale-old"}}
+Trace:
+domain trace dh-history-manual-stale-query: history redo followed by manual stale query
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"history-manual-stale-old"}
+action 2: {"type":"outlinerUndo"}
+action 3: {"type":"outlinerRedo"}
+action 4: {"type":"manualRefreshWithStaleQuery","staleTab":{"capture":"history-manual-stale-old"}}
+```
+
+<!-- hunt-corpus-run: {"at":"2026-05-23T15:19:39.531Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","created-event","delayed-event","delete-rejection","focus","fresh-event","manual-refresh","native-close","nested-window","opener","outliner-close","paired-echo","partial-close","race","relocation","reparenting","restore","session","stale-event","stale-query","tombstone","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"dh-history-manual-stale-query","runs":30,"completedCorpus":true,"failures":6,"duplicateFailures":4,"newFindings":2} -->
+
+### RT-028 live tab IDs match runtime tabs
+<!-- signature: live tab IDs match runtime tabs
+domain trace: dh-repeated-relocation-manual-stale-query
+action: {"type":"manualRefreshWithStaleQuery","staleTab":{"capture":"repeated-manual-second-old"}} -->
+
+- First seen: 2026-05-23T15:21:23.600Z
+- Trace id: `dh-repeated-relocation-manual-stale-query`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-repeated-relocation-manual-stale-query pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace dh-repeated-relocation-manual-stale-query: repeated relocation before manual stale query
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"repeated-manual-first-old"}
+action 2: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"role":"lastMovedTab"},"captureStaleTabs":"repeated-manual-second-old"}
+action 3: {"type":"manualRefreshWithStaleQuery","staleTab":{"capture":"repeated-manual-first-old"}}
+action 4: {"type":"manualRefreshWithStaleQuery","staleTab":{"capture":"repeated-manual-second-old"}}
+Domain trace: dh-repeated-relocation-manual-stale-query
+Action 4: {"type":"manualRefreshWithStaleQuery","staleTab":{"capture":"repeated-manual-second-old"}}
+Trace:
+domain trace dh-repeated-relocation-manual-stale-query: repeated relocation before manual stale query
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"repeated-manual-first-old"}
+action 2: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"role":"lastMovedTab"},"captureStaleTabs":"repeated-manual-second-old"}
+action 3: {"type":"manualRefreshWithStaleQuery","staleTab":{"capture":"repeated-manual-first-old"}}
+action 4: {"type":"manualRefreshWithStaleQuery","staleTab":{"capture":"repeated-manual-second-old"}}
+```
+
+<!-- hunt-corpus-run: {"at":"2026-05-23T15:21:24.660Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","created-event","delayed-event","delete-rejection","focus","fresh-event","manual-refresh","native-close","nested-window","opener","outliner-close","paired-echo","partial-close","race","relocation","reparenting","restore","session","stale-event","stale-query","tombstone","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"dh-restore-delete-manual-stale-query","runs":34,"completedCorpus":true,"failures":7,"duplicateFailures":6,"newFindings":1} -->
+
+### RT-029 live tab IDs match runtime tabs
+<!-- signature: live tab IDs match runtime tabs
+domain trace: dh-opener-source-close-manual-stale-query
+action: {"type":"manualRefreshWithStaleQuery","staleTab":{"capture":"opener-source-close-manual-old"}} -->
+
+- First seen: 2026-05-23T15:23:25.834Z
+- Trace id: `dh-opener-source-close-manual-stale-query`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-opener-source-close-manual-stale-query pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace dh-opener-source-close-manual-stale-query: opener source closes before manual stale query
+action 1: {"type":"openTab","window":{"windowId":10},"active":false,"openerTab":{"tabId":1},"captureTab":"opener-manual-child"}
+action 2: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"capture":"opener-manual-child"},"captureStaleTabs":"opener-source-close-manual-old"}
+action 3: {"type":"nativeCloseWindow","window":{"windowId":10}}
+action 4: {"type":"manualRefreshWithStaleQuery","staleTab":{"capture":"opener-source-close-manual-old"}}
+Domain trace: dh-opener-source-close-manual-stale-query
+Action 4: {"type":"manualRefreshWithStaleQuery","staleTab":{"capture":"opener-source-close-manual-old"}}
+Trace:
+domain trace dh-opener-source-close-manual-stale-query: opener source closes before manual stale query
+action 1: {"type":"openTab","window":{"windowId":10},"active":false,"openerTab":{"tabId":1},"captureTab":"opener-manual-child"}
+action 2: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"capture":"opener-manual-child"},"captureStaleTabs":"opener-source-close-manual-old"}
+action 3: {"type":"nativeCloseWindow","window":{"windowId":10}}
+action 4: {"type":"manualRefreshWithStaleQuery","staleTab":{"capture":"opener-source-close-manual-old"}}
+```
+
+<!-- hunt-corpus-run: {"at":"2026-05-23T15:23:25.836Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","created-event","delayed-event","delete-rejection","focus","fresh-event","manual-refresh","native-close","nested-window","opener","outliner-close","paired-echo","partial-close","race","relocation","reparenting","restore","session","stale-event","stale-query","tombstone","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"dh-opener-source-close-manual-stale-query","runs":38,"completedCorpus":true,"failures":8,"duplicateFailures":7,"newFindings":1} -->
+
+### RT-030 live tab IDs match runtime tabs
+<!-- signature: live tab IDs match runtime tabs
+domain trace: dh-group-source-close-manual-stale-query
+action: {"type":"manualRefreshWithStaleQuery","staleTab":{"capture":"group-source-close-manual-old"}} -->
+
+- First seen: 2026-05-23T15:25:26.821Z
+- Trace id: `dh-group-source-close-manual-stale-query`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-group-source-close-manual-stale-query pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace dh-group-source-close-manual-stale-query: grouped source closes before manual stale query
+action 1: {"type":"outlinerGroupTab","tab":{"tabId":1},"captureStaleTabs":"group-source-close-manual-old"}
+action 2: {"type":"nativeCloseWindow","window":{"windowId":10}}
+action 3: {"type":"manualRefreshWithStaleQuery","staleTab":{"capture":"group-source-close-manual-old"}}
+Domain trace: dh-group-source-close-manual-stale-query
+Action 3: {"type":"manualRefreshWithStaleQuery","staleTab":{"capture":"group-source-close-manual-old"}}
+Trace:
+domain trace dh-group-source-close-manual-stale-query: grouped source closes before manual stale query
+action 1: {"type":"outlinerGroupTab","tab":{"tabId":1},"captureStaleTabs":"group-source-close-manual-old"}
+action 2: {"type":"nativeCloseWindow","window":{"windowId":10}}
+action 3: {"type":"manualRefreshWithStaleQuery","staleTab":{"capture":"group-source-close-manual-old"}}
+```
+
+### RT-031 live tab IDs match runtime tabs
+<!-- signature: live tab IDs match runtime tabs
+domain trace: dh-top-level-source-close-manual-stale-query
+action: {"type":"manualRefreshWithStaleQuery","staleTab":{"capture":"top-level-source-close-manual-old"}} -->
+
+- First seen: 2026-05-23T15:25:27.823Z
+- Trace id: `dh-top-level-source-close-manual-stale-query`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-top-level-source-close-manual-stale-query pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace dh-top-level-source-close-manual-stale-query: top-level promotion source closes before manual stale query
+action 1: {"type":"outlinerMoveSubtreeToTopLevel","tab":{"tabId":1},"captureStaleTabs":"top-level-source-close-manual-old"}
+action 2: {"type":"nativeCloseWindow","window":{"windowId":10}}
+action 3: {"type":"manualRefreshWithStaleQuery","staleTab":{"capture":"top-level-source-close-manual-old"}}
+Domain trace: dh-top-level-source-close-manual-stale-query
+Action 3: {"type":"manualRefreshWithStaleQuery","staleTab":{"capture":"top-level-source-close-manual-old"}}
+Trace:
+domain trace dh-top-level-source-close-manual-stale-query: top-level promotion source closes before manual stale query
+action 1: {"type":"outlinerMoveSubtreeToTopLevel","tab":{"tabId":1},"captureStaleTabs":"top-level-source-close-manual-old"}
+action 2: {"type":"nativeCloseWindow","window":{"windowId":10}}
+action 3: {"type":"manualRefreshWithStaleQuery","staleTab":{"capture":"top-level-source-close-manual-old"}}
+```
+
+### RT-032 live tab IDs match runtime tabs
+<!-- signature: live tab IDs match runtime tabs
+domain trace: dh-created-race-source-close-manual-stale-query
+action: {"type":"manualRefreshWithStaleQuery","staleTab":{"capture":"created-race-source-close-manual-old"}} -->
+
+- First seen: 2026-05-23T15:25:28.852Z
+- Trace id: `dh-created-race-source-close-manual-stale-query`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-created-race-source-close-manual-stale-query pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace dh-created-race-source-close-manual-stale-query: created race source closes before manual stale query
+action 1: {"type":"raceWithOutlinerGroup","event":{"type":"openTab","window":{"windowId":10},"active":false,"captureTab":"created-race-manual-tab"},"groupTab":{"tabId":1},"captureStaleTabs":"created-race-source-close-manual-old"}
+action 2: {"type":"nativeCloseWindow","window":{"windowId":10}}
+action 3: {"type":"manualRefreshWithStaleQuery","staleTab":{"capture":"created-race-source-close-manual-old"}}
+Domain trace: dh-created-race-source-close-manual-stale-query
+Action 3: {"type":"manualRefreshWithStaleQuery","staleTab":{"capture":"created-race-source-close-manual-old"}}
+Trace:
+domain trace dh-created-race-source-close-manual-stale-query: created race source closes before manual stale query
+action 1: {"type":"raceWithOutlinerGroup","event":{"type":"openTab","window":{"windowId":10},"active":false,"captureTab":"created-race-manual-tab"},"groupTab":{"tabId":1},"captureStaleTabs":"created-race-source-close-manual-old"}
+action 2: {"type":"nativeCloseWindow","window":{"windowId":10}}
+action 3: {"type":"manualRefreshWithStaleQuery","staleTab":{"capture":"created-race-source-close-manual-old"}}
+```
+
+### RT-033 live tab IDs match runtime tabs
+<!-- signature: live tab IDs match runtime tabs
+domain trace: dh-activation-race-source-close-manual-stale-query
+action: {"type":"manualRefreshWithStaleQuery","staleTab":{"capture":"activation-race-source-close-manual-old"}} -->
+
+- First seen: 2026-05-23T15:25:29.871Z
+- Trace id: `dh-activation-race-source-close-manual-stale-query`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-activation-race-source-close-manual-stale-query pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace dh-activation-race-source-close-manual-stale-query: activation race source closes before manual stale query
+action 1: {"type":"raceWithOutlinerGroup","event":{"type":"activateTab","tab":{"tabId":2}},"groupTab":{"tabId":1},"captureStaleTabs":"activation-race-source-close-manual-old"}
+action 2: {"type":"nativeCloseWindow","window":{"windowId":10}}
+action 3: {"type":"manualRefreshWithStaleQuery","staleTab":{"capture":"activation-race-source-close-manual-old"}}
+Domain trace: dh-activation-race-source-close-manual-stale-query
+Action 3: {"type":"manualRefreshWithStaleQuery","staleTab":{"capture":"activation-race-source-close-manual-old"}}
+Trace:
+domain trace dh-activation-race-source-close-manual-stale-query: activation race source closes before manual stale query
+action 1: {"type":"raceWithOutlinerGroup","event":{"type":"activateTab","tab":{"tabId":2}},"groupTab":{"tabId":1},"captureStaleTabs":"activation-race-source-close-manual-old"}
+action 2: {"type":"nativeCloseWindow","window":{"windowId":10}}
+action 3: {"type":"manualRefreshWithStaleQuery","staleTab":{"capture":"activation-race-source-close-manual-old"}}
+```
+
+<!-- hunt-corpus-run: {"at":"2026-05-23T15:25:29.871Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","created-event","delayed-event","delete-rejection","focus","fresh-event","manual-refresh","native-close","nested-window","opener","outliner-close","paired-echo","partial-close","race","relocation","reparenting","restore","session","stale-event","stale-query","tombstone","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"dh-activation-race-source-close-manual-stale-query","runs":42,"completedCorpus":true,"failures":12,"duplicateFailures":8,"newFindings":4} -->
+
+### RT-034 live tab IDs match runtime tabs
+<!-- signature: live tab IDs match runtime tabs
+domain trace: dh-outliner-source-close-manual-stale-query
+action: {"type":"manualRefreshWithStaleQuery","staleTab":{"capture":"outliner-source-close-manual-old"}} -->
+
+- First seen: 2026-05-23T15:27:18.212Z
+- Trace id: `dh-outliner-source-close-manual-stale-query`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-outliner-source-close-manual-stale-query pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace dh-outliner-source-close-manual-stale-query: outliner source close before manual stale query
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"outliner-source-close-manual-old"}
+action 2: {"type":"outlinerCloseWindow","window":{"windowId":10}}
+action 3: {"type":"manualRefreshWithStaleQuery","staleTab":{"capture":"outliner-source-close-manual-old"}}
+Domain trace: dh-outliner-source-close-manual-stale-query
+Action 3: {"type":"manualRefreshWithStaleQuery","staleTab":{"capture":"outliner-source-close-manual-old"}}
+Trace:
+domain trace dh-outliner-source-close-manual-stale-query: outliner source close before manual stale query
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"outliner-source-close-manual-old"}
+action 2: {"type":"outlinerCloseWindow","window":{"windowId":10}}
+action 3: {"type":"manualRefreshWithStaleQuery","staleTab":{"capture":"outliner-source-close-manual-old"}}
+```
+
+### RT-035 live tab IDs match runtime tabs
+<!-- signature: live tab IDs match runtime tabs
+domain trace: dh-delete-reject-source-window-manual-stale-query
+action: {"type":"manualRefreshWithStaleQuery","staleTab":{"capture":"delete-source-window-manual-old"}} -->
+
+- First seen: 2026-05-23T15:27:19.210Z
+- Trace id: `dh-delete-reject-source-window-manual-stale-query`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-delete-reject-source-window-manual-stale-query pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace dh-delete-reject-source-window-manual-stale-query: delete-reject source window before manual stale query
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"delete-source-window-manual-old"}
+action 2: {"type":"outlinerDeleteNodeRejectingClose","node":{"window":{"windowId":10}}}
+action 3: {"type":"manualRefreshWithStaleQuery","staleTab":{"capture":"delete-source-window-manual-old"}}
+Domain trace: dh-delete-reject-source-window-manual-stale-query
+Action 3: {"type":"manualRefreshWithStaleQuery","staleTab":{"capture":"delete-source-window-manual-old"}}
+Trace:
+domain trace dh-delete-reject-source-window-manual-stale-query: delete-reject source window before manual stale query
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"delete-source-window-manual-old"}
+action 2: {"type":"outlinerDeleteNodeRejectingClose","node":{"window":{"windowId":10}}}
+action 3: {"type":"manualRefreshWithStaleQuery","staleTab":{"capture":"delete-source-window-manual-old"}}
+```
+
+### RT-036 live tab IDs match runtime tabs
+<!-- signature: live tab IDs match runtime tabs
+domain trace: dh-outliner-source-tab-close-manual-stale-query
+action: {"type":"manualRefreshWithStaleQuery","staleTab":{"capture":"outliner-source-tab-close-manual-old"}} -->
+
+- First seen: 2026-05-23T15:27:20.230Z
+- Trace id: `dh-outliner-source-tab-close-manual-stale-query`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-outliner-source-tab-close-manual-stale-query pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace dh-outliner-source-tab-close-manual-stale-query: outliner source sibling close before manual stale query
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"outliner-source-tab-close-manual-old"}
+action 2: {"type":"outlinerCloseTab","tab":{"tabId":2}}
+action 3: {"type":"manualRefreshWithStaleQuery","staleTab":{"capture":"outliner-source-tab-close-manual-old"}}
+Domain trace: dh-outliner-source-tab-close-manual-stale-query
+Action 3: {"type":"manualRefreshWithStaleQuery","staleTab":{"capture":"outliner-source-tab-close-manual-old"}}
+Trace:
+domain trace dh-outliner-source-tab-close-manual-stale-query: outliner source sibling close before manual stale query
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"outliner-source-tab-close-manual-old"}
+action 2: {"type":"outlinerCloseTab","tab":{"tabId":2}}
+action 3: {"type":"manualRefreshWithStaleQuery","staleTab":{"capture":"outliner-source-tab-close-manual-old"}}
+```
+
+<!-- hunt-corpus-run: {"at":"2026-05-23T15:27:20.231Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","created-event","delayed-event","delete-rejection","focus","fresh-event","manual-refresh","native-close","nested-window","opener","outliner-close","paired-echo","partial-close","race","relocation","reparenting","restore","session","stale-event","stale-query","tombstone","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"dh-outliner-source-tab-close-manual-stale-query","runs":45,"completedCorpus":true,"failures":15,"duplicateFailures":12,"newFindings":3} -->
+
+### RT-037 live tab IDs match runtime tabs
+<!-- signature: live tab IDs match runtime tabs
+domain trace: dh-relocated-tab-missing-manual-query
+action: {"type":"manualRefreshWithMissingTabQuery","tab":{"role":"lastMovedTab"}} -->
+
+- First seen: 2026-05-23T15:29:21.703Z
+- Trace id: `dh-relocated-tab-missing-manual-query`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-relocated-tab-missing-manual-query pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace dh-relocated-tab-missing-manual-query: relocated tab missing from manual query
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"missing-query-relocated-old"}
+action 2: {"type":"manualRefreshWithMissingTabQuery","tab":{"role":"lastMovedTab"}}
+Domain trace: dh-relocated-tab-missing-manual-query
+Action 2: {"type":"manualRefreshWithMissingTabQuery","tab":{"role":"lastMovedTab"}}
+Trace:
+domain trace dh-relocated-tab-missing-manual-query: relocated tab missing from manual query
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"missing-query-relocated-old"}
+action 2: {"type":"manualRefreshWithMissingTabQuery","tab":{"role":"lastMovedTab"}}
+```
+
+### RT-038 live tab IDs match runtime tabs
+<!-- signature: live tab IDs match runtime tabs
+domain trace: dh-fresh-relocated-tab-missing-manual-query
+action: {"type":"manualRefreshWithMissingTabQuery","tab":{"role":"lastMovedTab"}} -->
+
+- First seen: 2026-05-23T15:29:22.792Z
+- Trace id: `dh-fresh-relocated-tab-missing-manual-query`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-fresh-relocated-tab-missing-manual-query pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace dh-fresh-relocated-tab-missing-manual-query: fresh relocated tab missing from manual query
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"fresh-missing-query-old"}
+action 2: {"type":"updateTab","tab":{"role":"lastMovedTab"},"title":"Fresh before missing query"}
+action 3: {"type":"manualRefreshWithMissingTabQuery","tab":{"role":"lastMovedTab"}}
+Domain trace: dh-fresh-relocated-tab-missing-manual-query
+Action 3: {"type":"manualRefreshWithMissingTabQuery","tab":{"role":"lastMovedTab"}}
+Trace:
+domain trace dh-fresh-relocated-tab-missing-manual-query: fresh relocated tab missing from manual query
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"fresh-missing-query-old"}
+action 2: {"type":"updateTab","tab":{"role":"lastMovedTab"},"title":"Fresh before missing query"}
+action 3: {"type":"manualRefreshWithMissingTabQuery","tab":{"role":"lastMovedTab"}}
+```
+
+### RT-039 live tab IDs match runtime tabs
+<!-- signature: live tab IDs match runtime tabs
+domain trace: dh-opener-child-missing-manual-query
+action: {"type":"manualRefreshWithMissingTabQuery","tab":{"role":"lastMovedTab"}} -->
+
+- First seen: 2026-05-23T15:29:23.838Z
+- Trace id: `dh-opener-child-missing-manual-query`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-opener-child-missing-manual-query pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace dh-opener-child-missing-manual-query: opener child missing from manual query after relocation
+action 1: {"type":"openTab","window":{"windowId":10},"active":false,"openerTab":{"tabId":1},"captureTab":"missing-query-opener-child"}
+action 2: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"capture":"missing-query-opener-child"},"captureStaleTabs":"opener-missing-query-old"}
+action 3: {"type":"manualRefreshWithMissingTabQuery","tab":{"role":"lastMovedTab"}}
+Domain trace: dh-opener-child-missing-manual-query
+Action 3: {"type":"manualRefreshWithMissingTabQuery","tab":{"role":"lastMovedTab"}}
+Trace:
+domain trace dh-opener-child-missing-manual-query: opener child missing from manual query after relocation
+action 1: {"type":"openTab","window":{"windowId":10},"active":false,"openerTab":{"tabId":1},"captureTab":"missing-query-opener-child"}
+action 2: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"capture":"missing-query-opener-child"},"captureStaleTabs":"opener-missing-query-old"}
+action 3: {"type":"manualRefreshWithMissingTabQuery","tab":{"role":"lastMovedTab"}}
+```
+
+<!-- hunt-corpus-run: {"at":"2026-05-23T15:29:23.839Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","created-event","delayed-event","delete-rejection","focus","fresh-event","manual-refresh","native-close","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","race","relocation","reparenting","restore","session","stale-event","stale-query","tombstone","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"dh-opener-child-missing-manual-query","runs":48,"completedCorpus":true,"failures":18,"duplicateFailures":15,"newFindings":3} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-23T15:31:33.422Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","created-event","delayed-event","delete-rejection","focus","fresh-event","manual-refresh","native-close","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","race","relocation","reparenting","restore","session","stale-event","stale-query","tombstone","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"dh-focus-current-refresh-after-relocation","runs":51,"completedCorpus":true,"failures":18,"duplicateFailures":18,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-23T15:33:09.652Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","created-event","delayed-event","delete-rejection","focus","fresh-event","manual-refresh","native-close","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","race","relocation","reparenting","restore","session","stale-event","stale-query","tombstone","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"dh-restore-current-refresh-after-delete","runs":54,"completedCorpus":true,"failures":18,"duplicateFailures":18,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-23T15:34:46.614Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","created-event","delayed-event","delete-rejection","focus","fresh-event","manual-refresh","native-close","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","race","relocation","reparenting","restore","session","stale-event","stale-query","tombstone","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"dh-delete-reject-current-refresh","runs":55,"completedCorpus":true,"failures":18,"duplicateFailures":18,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-23T15:36:28.206Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","created-event","delayed-event","delete-rejection","focus","fresh-event","manual-refresh","native-close","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","race","relocation","reparenting","restore","session","stale-event","stale-query","tombstone","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"dh-native-close-current-refresh","runs":57,"completedCorpus":true,"failures":18,"duplicateFailures":18,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-23T15:38:07.606Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","created-event","delayed-event","delete-rejection","focus","fresh-event","manual-refresh","native-close","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","race","relocation","reparenting","restore","session","stale-event","stale-query","tombstone","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"dh-destination-window-current-refresh","runs":58,"completedCorpus":true,"failures":18,"duplicateFailures":18,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-23T15:39:39.527Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","created-event","delayed-event","delete-rejection","focus","fresh-event","manual-refresh","native-close","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","race","relocation","reparenting","restore","session","stale-event","stale-query","tombstone","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"dh-source-sibling-current-refresh","runs":59,"completedCorpus":true,"failures":18,"duplicateFailures":18,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-23T15:41:35.826Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","created-event","delayed-event","delete-rejection","focus","fresh-event","manual-refresh","native-close","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","race","relocation","reparenting","restore","session","stale-event","stale-query","tombstone","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"dh-active-source-current-refresh","runs":61,"completedCorpus":true,"failures":18,"duplicateFailures":18,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-23T15:43:15.454Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","created-event","delayed-event","delete-rejection","focus","fresh-event","manual-refresh","native-close","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","race","relocation","reparenting","restore","session","stale-event","stale-query","tombstone","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"dh-race-active-current-refresh","runs":63,"completedCorpus":true,"failures":18,"duplicateFailures":18,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-23T15:45:01.572Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","created-event","delayed-event","delete-rejection","focus","fresh-event","manual-refresh","native-close","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","race","relocation","reparenting","restore","session","stale-event","stale-query","tombstone","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"dh-repeated-active-current-refresh","runs":64,"completedCorpus":true,"failures":18,"duplicateFailures":18,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-23T15:47:14.719Z","mode":"agent-corpus-run","profile":"regression","coverageTags":["known-finding"],"firstTraceId":"rt-active-race","lastTraceId":"rt-group-open-active-destination-tab-stale-created","runs":65,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->

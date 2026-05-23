@@ -1189,6 +1189,14 @@ type DomainAction =
       type: "manualRefresh";
     }
   | {
+      type: "manualRefreshWithStaleQuery";
+      staleTab: DomainStaleTabSelector;
+    }
+  | {
+      type: "manualRefreshWithMissingTabQuery";
+      tab: DomainTabSelector;
+    }
+  | {
       type: "sessionChanged";
     }
   | {
@@ -2310,6 +2318,536 @@ const RUNTIME_DOMAIN_DISCOVERY_TRACES: RuntimeDomainTrace[] = [
       { type: "manualRefresh" },
       { type: "staleLiveCreatedEvent", staleTab: { capture: "source-sibling-before-stale" }, withStaleQuery: true }
     ]
+  },
+  {
+    id: "dh-manual-stale-query-after-relocation",
+    title: "manual stale query after command relocation",
+    notes: "Agent-generated discovery variant for manual refresh seeing an old-window copy of a relocated tab.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["manual-refresh", "stale-query", "relocation", "stale-event"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "manual-stale-query-old" },
+      { type: "manualRefreshWithStaleQuery", staleTab: { capture: "manual-stale-query-old" } },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "manual-stale-query-old" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "dh-manual-stale-query-after-source-close",
+    title: "manual stale query after source window close",
+    notes: "Agent-generated discovery variant for manual refresh seeing an old-window copy after the old window disappears.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["manual-refresh", "stale-query", "native-close", "relocation", "tombstone"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "manual-stale-source-close-old" },
+      { type: "nativeCloseWindow", window: { windowId: 10 } },
+      { type: "manualRefreshWithStaleQuery", staleTab: { capture: "manual-stale-source-close-old" } },
+      { type: "sessionChanged" }
+    ]
+  },
+  {
+    id: "dh-history-manual-stale-query",
+    title: "history redo followed by manual stale query",
+    notes: "Agent-generated discovery variant for history replay followed by a stale manual refresh snapshot.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["undo-redo", "manual-refresh", "stale-query", "relocation"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "history-manual-stale-old" },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedo" },
+      { type: "manualRefreshWithStaleQuery", staleTab: { capture: "history-manual-stale-old" } }
+    ]
+  },
+  {
+    id: "dh-delete-reject-manual-stale-query",
+    title: "delete rejecting relocated tab before manual stale query",
+    notes: "Agent-generated discovery variant for delete-owned tombstones followed by a stale manual refresh snapshot.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["delete-rejection", "manual-refresh", "stale-query", "relocation", "tombstone"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "delete-reject-manual-old" },
+      { type: "outlinerDeleteNodeRejectingClose", node: { tab: { role: "lastMovedTab" } } },
+      { type: "manualRefreshWithStaleQuery", staleTab: { capture: "delete-reject-manual-old" } }
+    ]
+  },
+  {
+    id: "dh-outliner-close-manual-stale-query",
+    title: "outliner close relocated tab before manual stale query",
+    notes: "Agent-generated discovery variant for outliner-owned close followed by a stale manual refresh snapshot.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["outliner-close", "manual-refresh", "stale-query", "relocation", "tombstone"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "outliner-close-manual-old" },
+      { type: "outlinerCloseTab", tab: { role: "lastMovedTab" } },
+      { type: "manualRefreshWithStaleQuery", staleTab: { capture: "outliner-close-manual-old" } }
+    ]
+  },
+  {
+    id: "dh-repeated-relocation-manual-stale-query",
+    title: "repeated relocation before manual stale query",
+    notes: "Agent-generated discovery variant for stale manual refresh snapshots after a later command relocation changes the destination.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["manual-refresh", "stale-query", "relocation", "paired-echo"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "repeated-manual-first-old" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { role: "lastMovedTab" }, captureStaleTabs: "repeated-manual-second-old" },
+      { type: "manualRefreshWithStaleQuery", staleTab: { capture: "repeated-manual-first-old" } },
+      { type: "manualRefreshWithStaleQuery", staleTab: { capture: "repeated-manual-second-old" } }
+    ]
+  },
+  {
+    id: "dh-restore-delete-manual-stale-query",
+    title: "restore delete followed by manual stale query",
+    notes: "Agent-generated discovery variant for restored/deleted tabs appearing in a stale manual refresh snapshot.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restore", "delayed-event", "manual-refresh", "stale-query", "tombstone"],
+    actions: [
+      { type: "outlinerRestoreDeleteWindowDelayedEvent", window: { windowId: 20 }, captureStaleTabs: "restore-manual-stale" },
+      { type: "manualRefreshWithStaleQuery", staleTab: { capture: "restore-manual-stale" } }
+    ]
+  },
+  {
+    id: "dh-session-only-close-manual-stale-query",
+    title: "session-only moved tab close before manual stale query",
+    notes: "Agent-generated discovery variant for session-only runtime removal followed by stale manual refresh evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["session", "manual-refresh", "stale-query", "relocation", "tombstone"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "session-only-manual-old" },
+      { type: "nativeCloseTab", tab: { role: "lastMovedTab" }, order: "sessionChangedOnly" },
+      { type: "manualRefreshWithStaleQuery", staleTab: { capture: "session-only-manual-old" } }
+    ]
+  },
+  {
+    id: "dh-destination-close-manual-stale-query",
+    title: "destination window closes before manual stale query",
+    notes: "Agent-generated discovery variant for destination-window removal followed by an old-window stale manual refresh.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["native-close", "manual-refresh", "stale-query", "relocation", "tombstone"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "destination-close-manual-old" },
+      { type: "nativeCloseWindow", window: { role: "lastOpenedWindow" } },
+      { type: "manualRefreshWithStaleQuery", staleTab: { capture: "destination-close-manual-old" } }
+    ]
+  },
+  {
+    id: "dh-focus-override-manual-stale-query",
+    title: "focus override before manual stale query",
+    notes: "Agent-generated discovery variant for command focus/activation state followed by stale manual refresh evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["focus", "activation", "manual-refresh", "stale-query", "relocation"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "focus-override-manual-old" },
+      { type: "outlinerFocusTab", tab: { role: "lastMovedTab" } },
+      { type: "activateTab", tab: { tabId: 3 } },
+      { type: "manualRefreshWithStaleQuery", staleTab: { capture: "focus-override-manual-old" } }
+    ]
+  },
+  {
+    id: "dh-opener-source-close-manual-stale-query",
+    title: "opener source closes before manual stale query",
+    notes: "Agent-generated discovery variant for opener-linked tabs and source-window removal followed by stale manual refresh evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["opener", "native-close", "manual-refresh", "stale-query", "relocation"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, openerTab: { tabId: 1 }, captureTab: "opener-manual-child" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { capture: "opener-manual-child" }, captureStaleTabs: "opener-source-close-manual-old" },
+      { type: "nativeCloseWindow", window: { windowId: 10 } },
+      { type: "manualRefreshWithStaleQuery", staleTab: { capture: "opener-source-close-manual-old" } }
+    ]
+  },
+  {
+    id: "dh-group-source-close-manual-stale-query",
+    title: "grouped source closes before manual stale query",
+    notes: "Agent-generated discovery variant for grouped relocation, source-window removal, and stale manual refresh evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["nested-window", "native-close", "manual-refresh", "stale-query", "relocation"],
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "group-source-close-manual-old" },
+      { type: "nativeCloseWindow", window: { windowId: 10 } },
+      { type: "manualRefreshWithStaleQuery", staleTab: { capture: "group-source-close-manual-old" } }
+    ]
+  },
+  {
+    id: "dh-top-level-source-close-manual-stale-query",
+    title: "top-level promotion source closes before manual stale query",
+    notes: "Agent-generated discovery variant for top-level relocation, source-window removal, and stale manual refresh evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["native-close", "manual-refresh", "stale-query", "relocation"],
+    actions: [
+      { type: "outlinerMoveSubtreeToTopLevel", tab: { tabId: 1 }, captureStaleTabs: "top-level-source-close-manual-old" },
+      { type: "nativeCloseWindow", window: { windowId: 10 } },
+      { type: "manualRefreshWithStaleQuery", staleTab: { capture: "top-level-source-close-manual-old" } }
+    ]
+  },
+  {
+    id: "dh-created-race-source-close-manual-stale-query",
+    title: "created race source closes before manual stale query",
+    notes: "Agent-generated discovery variant for a created-tab race, source-window removal, and stale manual refresh evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["created-event", "race", "native-close", "manual-refresh", "stale-query", "relocation"],
+    actions: [
+      {
+        type: "raceWithOutlinerGroup",
+        event: { type: "openTab", window: { windowId: 10 }, active: false, captureTab: "created-race-manual-tab" },
+        groupTab: { tabId: 1 },
+        captureStaleTabs: "created-race-source-close-manual-old"
+      },
+      { type: "nativeCloseWindow", window: { windowId: 10 } },
+      { type: "manualRefreshWithStaleQuery", staleTab: { capture: "created-race-source-close-manual-old" } }
+    ]
+  },
+  {
+    id: "dh-activation-race-source-close-manual-stale-query",
+    title: "activation race source closes before manual stale query",
+    notes: "Agent-generated discovery variant for activation racing relocation before source-window removal and stale manual refresh evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["activation", "race", "native-close", "manual-refresh", "stale-query", "relocation"],
+    actions: [
+      {
+        type: "raceWithOutlinerGroup",
+        event: { type: "activateTab", tab: { tabId: 2 } },
+        groupTab: { tabId: 1 },
+        captureStaleTabs: "activation-race-source-close-manual-old"
+      },
+      { type: "nativeCloseWindow", window: { windowId: 10 } },
+      { type: "manualRefreshWithStaleQuery", staleTab: { capture: "activation-race-source-close-manual-old" } }
+    ]
+  },
+  {
+    id: "dh-outliner-source-close-manual-stale-query",
+    title: "outliner source close before manual stale query",
+    notes: "Agent-generated discovery variant for model-owned source-window close followed by stale manual refresh evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["outliner-close", "manual-refresh", "stale-query", "relocation", "tombstone"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "outliner-source-close-manual-old" },
+      { type: "outlinerCloseWindow", window: { windowId: 10 } },
+      { type: "manualRefreshWithStaleQuery", staleTab: { capture: "outliner-source-close-manual-old" } }
+    ]
+  },
+  {
+    id: "dh-delete-reject-source-window-manual-stale-query",
+    title: "delete-reject source window before manual stale query",
+    notes: "Agent-generated discovery variant for delete-owned source-window removal followed by stale manual refresh evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["delete-rejection", "manual-refresh", "stale-query", "relocation", "tombstone"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "delete-source-window-manual-old" },
+      { type: "outlinerDeleteNodeRejectingClose", node: { window: { windowId: 10 } } },
+      { type: "manualRefreshWithStaleQuery", staleTab: { capture: "delete-source-window-manual-old" } }
+    ]
+  },
+  {
+    id: "dh-outliner-source-tab-close-manual-stale-query",
+    title: "outliner source sibling close before manual stale query",
+    notes: "Agent-generated discovery variant for source sibling close before stale manual refresh evidence for a relocated tab.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["outliner-close", "manual-refresh", "stale-query", "relocation"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "outliner-source-tab-close-manual-old" },
+      { type: "outlinerCloseTab", tab: { tabId: 2 } },
+      { type: "manualRefreshWithStaleQuery", staleTab: { capture: "outliner-source-tab-close-manual-old" } }
+    ]
+  },
+  {
+    id: "dh-relocated-tab-missing-manual-query",
+    title: "relocated tab missing from manual query",
+    notes: "Agent-generated discovery variant for a partial manual refresh snapshot that omits a relocated live tab.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["manual-refresh", "partial-snapshot", "relocation"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "missing-query-relocated-old" },
+      { type: "manualRefreshWithMissingTabQuery", tab: { role: "lastMovedTab" } },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "missing-query-relocated-old" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "dh-fresh-relocated-tab-missing-manual-query",
+    title: "fresh relocated tab missing from manual query",
+    notes: "Agent-generated discovery variant for a partial manual refresh snapshot after a fresh current-window update.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["manual-refresh", "partial-snapshot", "relocation", "fresh-event"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "fresh-missing-query-old" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "Fresh before missing query" },
+      { type: "manualRefreshWithMissingTabQuery", tab: { role: "lastMovedTab" } },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "fresh-missing-query-old" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "dh-opener-child-missing-manual-query",
+    title: "opener child missing from manual query after relocation",
+    notes: "Agent-generated discovery variant for a partial manual refresh snapshot that omits an opener-linked relocated tab.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["manual-refresh", "partial-snapshot", "opener", "relocation"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, openerTab: { tabId: 1 }, captureTab: "missing-query-opener-child" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { capture: "missing-query-opener-child" }, captureStaleTabs: "opener-missing-query-old" },
+      { type: "manualRefreshWithMissingTabQuery", tab: { role: "lastMovedTab" } },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "opener-missing-query-old" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "dh-current-session-refresh-after-relocation",
+    title: "current session refresh after relocation",
+    notes: "Agent-generated discovery variant for clean session/manual refresh after relocation without stale query injection.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["session", "manual-refresh", "relocation", "fresh-event"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "current-session-refresh-old" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "Current session refresh" },
+      { type: "sessionChanged" },
+      { type: "manualRefresh" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "current-session-refresh-old" }, withStaleQuery: false }
+    ]
+  },
+  {
+    id: "dh-opener-current-refresh-after-relocation",
+    title: "opener current refresh after relocation",
+    notes: "Agent-generated discovery variant for opener-linked relocation followed by current refreshes and stale event without stale query.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["opener", "manual-refresh", "relocation", "fresh-event"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, openerTab: { tabId: 1 }, captureTab: "opener-current-refresh-child" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { capture: "opener-current-refresh-child" }, captureStaleTabs: "opener-current-refresh-old" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "Opener current refresh" },
+      { type: "manualRefresh" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "opener-current-refresh-old" }, withStaleQuery: false }
+    ]
+  },
+  {
+    id: "dh-focus-current-refresh-after-relocation",
+    title: "focus current refresh after relocation",
+    notes: "Agent-generated discovery variant for focus/activation churn with current snapshots only.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["focus", "activation", "manual-refresh", "relocation", "fresh-event"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "focus-current-refresh-old" },
+      { type: "outlinerFocusTab", tab: { role: "lastMovedTab" } },
+      { type: "activateTab", tab: { role: "lastMovedTab" } },
+      { type: "manualRefresh" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "focus-current-refresh-old" }, withStaleQuery: false }
+    ]
+  },
+  {
+    id: "dh-race-current-refresh-after-relocation",
+    title: "created race with current refresh after relocation",
+    notes: "Agent-generated discovery variant for a created event race followed by current snapshots only.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["created-event", "race", "manual-refresh", "relocation", "fresh-event"],
+    actions: [
+      {
+        type: "raceWithOutlinerGroup",
+        event: { type: "openTab", window: { windowId: 10 }, active: false, captureTab: "race-current-refresh-tab" },
+        groupTab: { tabId: 1 },
+        captureStaleTabs: "race-current-refresh-old"
+      },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "Race current refresh" },
+      { type: "manualRefresh" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "race-current-refresh-old" }, withStaleQuery: false }
+    ]
+  },
+  {
+    id: "dh-repeated-current-refresh-after-relocation",
+    title: "repeated relocation with current refresh",
+    notes: "Agent-generated discovery variant for repeated relocation followed by current snapshots only.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["paired-echo", "manual-refresh", "relocation", "fresh-event"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "repeated-current-first-old" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { role: "lastMovedTab" }, captureStaleTabs: "repeated-current-second-old" },
+      { type: "manualRefresh" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "repeated-current-first-old" }, withStaleQuery: false },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "repeated-current-second-old" }, withStaleQuery: false }
+    ]
+  },
+  {
+    id: "dh-restore-current-refresh-after-delete",
+    title: "restore delete with current refresh only",
+    notes: "Agent-generated discovery variant for restore/delete followed by current session and manual refresh.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restore", "delayed-event", "session", "manual-refresh"],
+    actions: [
+      { type: "outlinerRestoreDeleteWindowDelayedEvent", window: { windowId: 20 }, captureStaleTabs: "restore-current-refresh-tabs" },
+      { type: "sessionChanged" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "dh-delete-reject-current-refresh",
+    title: "delete rejection followed by current refresh only",
+    notes: "Agent-generated discovery variant for delete-reject recovery followed by current session and manual refresh.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["delete-rejection", "session", "manual-refresh", "tombstone"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "delete-current-refresh-old" },
+      { type: "outlinerDeleteNodeRejectingClose", node: { tab: { role: "lastMovedTab" } } },
+      { type: "sessionChanged" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "dh-outliner-close-current-refresh",
+    title: "outliner close followed by current refresh only",
+    notes: "Agent-generated discovery variant for outliner-owned relocated-tab close followed by current refreshes.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["outliner-close", "session", "manual-refresh", "tombstone"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "outliner-close-current-refresh-old" },
+      { type: "outlinerCloseTab", tab: { role: "lastMovedTab" } },
+      { type: "sessionChanged" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "dh-native-close-current-refresh",
+    title: "native close followed by current refresh only",
+    notes: "Agent-generated discovery variant for native relocated-tab close followed by current refreshes.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["native-close", "session", "manual-refresh", "tombstone"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "native-close-current-refresh-old" },
+      { type: "nativeCloseTab", tab: { role: "lastMovedTab" }, order: "tabRemovedThenSessionChanged" },
+      { type: "sessionChanged" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "dh-destination-window-current-refresh",
+    title: "destination window close with current refresh only",
+    notes: "Agent-generated discovery variant for destination-window native close followed by current refreshes.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["native-close", "session", "manual-refresh", "relocation", "tombstone"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "destination-current-refresh-old" },
+      { type: "nativeCloseWindow", window: { role: "lastOpenedWindow" } },
+      { type: "sessionChanged" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "dh-source-sibling-current-refresh",
+    title: "source sibling close with current refresh only",
+    notes: "Agent-generated discovery variant for source sibling close followed by current refreshes.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["outliner-close", "session", "manual-refresh", "relocation"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "source-sibling-current-refresh-old" },
+      { type: "outlinerCloseTab", tab: { tabId: 2 } },
+      { type: "sessionChanged" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "dh-active-destination-current-refresh",
+    title: "active destination tab current refresh",
+    notes: "Agent-generated discovery variant for active destination-window tab changes followed by current refreshes.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["activation", "manual-refresh", "relocation", "fresh-event"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "active-destination-current-old" },
+      { type: "openTab", window: { role: "lastOpenedWindow" }, active: true, captureTab: "active-destination-current-tab" },
+      { type: "activateTab", tab: { role: "lastMovedTab" } },
+      { type: "sessionChanged" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "dh-active-source-current-refresh",
+    title: "active source tab current refresh",
+    notes: "Agent-generated discovery variant for active source-window tab changes followed by current refreshes.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["activation", "manual-refresh", "relocation", "fresh-event"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: true, captureTab: "active-source-current-tab" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "active-source-current-old" },
+      { type: "activateTab", tab: { capture: "active-source-current-tab" } },
+      { type: "sessionChanged" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "dh-opener-active-current-refresh",
+    title: "opener active current refresh",
+    notes: "Agent-generated discovery variant for opener-linked active state changes followed by current refreshes.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["opener", "activation", "manual-refresh", "relocation", "fresh-event"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, openerTab: { tabId: 1 }, captureTab: "opener-active-current-child" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { capture: "opener-active-current-child" }, captureStaleTabs: "opener-active-current-old" },
+      { type: "openTab", window: { role: "lastOpenedWindow" }, active: true, captureTab: "opener-active-current-destination" },
+      { type: "activateTab", tab: { role: "lastMovedTab" } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "dh-race-active-current-refresh",
+    title: "race active current refresh",
+    notes: "Agent-generated discovery variant for activation race followed by current active state refreshes.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["activation", "race", "manual-refresh", "relocation", "fresh-event"],
+    actions: [
+      {
+        type: "raceWithOutlinerGroup",
+        event: { type: "activateTab", tab: { tabId: 2 } },
+        groupTab: { tabId: 1 },
+        captureStaleTabs: "race-active-current-old"
+      },
+      { type: "activateTab", tab: { role: "lastMovedTab" } },
+      { type: "sessionChanged" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "dh-repeated-active-current-refresh",
+    title: "repeated relocation active current refresh",
+    notes: "Agent-generated discovery variant for repeated relocation with active state changes and current refreshes.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["activation", "paired-echo", "manual-refresh", "relocation", "fresh-event"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "repeated-active-current-first-old" },
+      { type: "activateTab", tab: { role: "lastMovedTab" } },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { role: "lastMovedTab" }, captureStaleTabs: "repeated-active-current-second-old" },
+      { type: "activateTab", tab: { role: "lastMovedTab" } },
+      { type: "manualRefresh" }
+    ]
   }
 ];
 
@@ -3218,6 +3756,16 @@ async function runDomainAction(context: GeneratedTraceContext, action: DomainAct
     return;
   }
 
+  if (action.type === "manualRefreshWithStaleQuery") {
+    await runDomainManualRefreshWithStaleQuery(context, action.staleTab);
+    return;
+  }
+
+  if (action.type === "manualRefreshWithMissingTabQuery") {
+    await runDomainManualRefreshWithMissingTabQuery(context, action.tab);
+    return;
+  }
+
   if (action.type === "sessionChanged") {
     await runDomainSessionChanged(context);
     return;
@@ -3602,6 +4150,32 @@ async function runDomainManualRefresh(context: GeneratedTraceContext): Promise<v
   const result = await context.controller.handleMessage({ type: "refresh" });
   expect((result as CommandAck).type).toBe("commandAck");
   await flushGeneratedRuntimeEventRefreshes(context);
+}
+
+async function runDomainManualRefreshWithStaleQuery(
+  context: GeneratedTraceContext,
+  selector: DomainStaleTabSelector
+): Promise<void> {
+  const stale = resolveDomainStaleTab(context, selector);
+  context.runtime.queueTabQueryResult(snapshotReplacingTab(context.runtime.tabs, stale));
+  try {
+    await runDomainManualRefresh(context);
+  } finally {
+    context.runtime.clearNextTabQueryResult();
+  }
+}
+
+async function runDomainManualRefreshWithMissingTabQuery(
+  context: GeneratedTraceContext,
+  selector: DomainTabSelector
+): Promise<void> {
+  const tab = resolveDomainTab(context, selector);
+  context.runtime.queueTabQueryResult(snapshotMissingTab(context.runtime.tabs, tab.id));
+  try {
+    await runDomainManualRefresh(context);
+  } finally {
+    context.runtime.clearNextTabQueryResult();
+  }
 }
 
 async function runDomainSessionChanged(context: GeneratedTraceContext): Promise<void> {
