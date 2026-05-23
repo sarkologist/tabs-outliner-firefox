@@ -249,6 +249,8 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   let lastPersistedState: OutlineState | undefined;
   let deferredPersistedStateCloneTimer: ReturnType<typeof setTimeout> | undefined;
   let historyState: HistoryState | undefined;
+  let historyLoadInFlight: Promise<HistoryState> | undefined;
+  let historyWarmupTimer: number | undefined;
   let preferences: AppPreferences | undefined;
   let runtimeIndex: RuntimeStateIndex | undefined;
   const highPriorityMutations: ScheduledMutation[] = [];
@@ -549,11 +551,15 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     }
 
     if (isInitialTreeSnapshotMessage(message)) {
-      return initialTreeSnapshot();
+      const snapshot = await initialTreeSnapshot();
+      scheduleHistoryWarmup();
+      return snapshot;
     }
 
     if (isInitialTreeSnapshotWindowMessage(message)) {
-      return initialTreeSnapshotWindow(message);
+      const snapshot = await initialTreeSnapshotWindow(message);
+      scheduleHistoryWarmup();
+      return snapshot;
     }
 
     if (isOpenSidebarWindowMessage(message)) {
@@ -799,6 +805,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
   async function initializeExtensionLifecycle(): Promise<void> {
     await ensureState();
+    scheduleHistoryWarmup();
     await configureAutomaticBackups({ runIfDue: true });
   }
 
@@ -933,8 +940,37 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
   async function ensureHistory(): Promise<HistoryState> {
     const activePreferences = await ensurePreferences();
-    historyState ??= normalizeHistoryState(await loadHistory(api, activePreferences.undoHistoryLimit), activePreferences.undoHistoryLimit);
+    if (historyState) {
+      return historyState;
+    }
+
+    historyLoadInFlight ??= loadHistory(api, activePreferences.undoHistoryLimit)
+      .then((loaded) => normalizeHistoryState(loaded, activePreferences.undoHistoryLimit))
+      .finally(() => {
+        historyLoadInFlight = undefined;
+      });
+    historyState = await historyLoadInFlight;
     return historyState;
+  }
+
+  function warmHistoryCache(): void {
+    if (historyState || historyLoadInFlight) {
+      return;
+    }
+    void ensureHistory().catch((error) => {
+      perfTrace.mark("background.history.warm.error", { message: errorText(error) });
+    });
+  }
+
+  function scheduleHistoryWarmup(): void {
+    if (historyState || historyLoadInFlight || typeof historyWarmupTimer === "number") {
+      return;
+    }
+
+    historyWarmupTimer = globalThis.setTimeout(() => {
+      historyWarmupTimer = undefined;
+      warmHistoryCache();
+    }, 0);
   }
 
   async function ensurePreferences(): Promise<AppPreferences> {

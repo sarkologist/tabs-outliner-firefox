@@ -2610,6 +2610,46 @@ describe("background controller lifecycle", () => {
     expect(runtime.api.tabs.query).not.toHaveBeenCalled();
   });
 
+  it("warms undo history after the initial tree snapshot before the first structural command", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        },
+        {
+          id: 2,
+          windowId: 10,
+          index: 1,
+          active: false,
+          url: "https://two.example/",
+          title: "Two"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+
+    await controller.handleMessage({ type: "getInitialTreeSnapshot" });
+    await waitForMacrotask();
+    vi.mocked(runtime.api.storage.local.get).mockClear();
+
+    await controller.handleMessage({ type: "deleteNode", nodeId: "tab:2" });
+
+    const historyReads = vi.mocked(runtime.api.storage.local.get).mock.calls.filter(([key]) => key === HISTORY_KEY);
+    expect(historyReads).toHaveLength(0);
+  });
+
   it("does not wait for storage persistence before acknowledging a patched command", async () => {
     const runtime = fakeRuntime(
       [

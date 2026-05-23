@@ -1,6 +1,7 @@
 import { performance } from "node:perf_hooks";
 
 import { createBackgroundController } from "../dist/background/controller.js";
+import { HISTORY_KEY } from "../dist/background/storage.js";
 import {
   applyDeleteTreeStructurePatchToProjection,
   buildVisibleTreeProjection
@@ -21,7 +22,9 @@ function parseArgs(argv) {
     target: "last",
     count: 1,
     shape: "wide",
-    query: ""
+    query: "",
+    warmHistory: false,
+    historyReadDelayMs: 0
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -42,6 +45,11 @@ function parseArgs(argv) {
     } else if (arg === "--query" && next !== undefined) {
       options.query = next;
       index += 1;
+    } else if (arg === "--warm-history") {
+      options.warmHistory = true;
+    } else if (arg === "--history-read-delay-ms" && next) {
+      options.historyReadDelayMs = Number.parseInt(next, 10);
+      index += 1;
     }
   }
 
@@ -60,6 +68,9 @@ function parseArgs(argv) {
   }
   if (!["first", "middle", "last"].includes(options.target)) {
     throw new Error("--target must be first, middle, or last");
+  }
+  if (!Number.isFinite(options.historyReadDelayMs) || options.historyReadDelayMs < 0) {
+    throw new Error("--history-read-delay-ms must be an integer >= 0");
   }
 
   return options;
@@ -147,7 +158,12 @@ function makeRuntime(options) {
     },
     storage: {
       local: {
-        get: async (key) => typeof key === "string" ? { [key]: undefined } : {},
+        get: async (key) => {
+          if (key === HISTORY_KEY && options.historyReadDelayMs > 0) {
+            await delay(options.historyReadDelayMs);
+          }
+          return typeof key === "string" ? { [key]: undefined } : {};
+        },
         set: async (items) => {
           measureRuntimeJson(runtime, "save", items);
           runtime.saves += 1;
@@ -268,6 +284,12 @@ async function measureAsync(fn) {
   };
 }
 
+function delay(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
 function measureRuntimeJson(runtime, bucket, value) {
   const measured = measure(() => JSON.stringify(value));
   runtime[`${bucket}StringifyMs`] += measured.ms;
@@ -300,6 +322,10 @@ async function profile(options) {
   const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
   const init = await measureAsync(() => controller.ensureState());
   await controller.flushPendingSaves();
+  if (options.warmHistory) {
+    await controller.handleMessage({ type: "getInitialTreeSnapshot" });
+    await delay(Math.max(1, options.historyReadDelayMs + 1));
+  }
   runtime.sidebarState = await controller.handleMessage({ type: "getState" });
   runtime.sidebarProjection = buildVisibleTreeProjection(runtime.sidebarState, options.query);
   const nodeIds = targetNodeIds(options);
@@ -335,6 +361,8 @@ async function profile(options) {
     query: options.query,
     target: options.target,
     count: nodeIds.length,
+    warmHistory: options.warmHistory,
+    historyReadDelayMs: options.historyReadDelayMs,
     firstNodeId: nodeIds[0],
     lastNodeId: nodeIds.at(-1),
     initMs: Math.round(init.ms),
