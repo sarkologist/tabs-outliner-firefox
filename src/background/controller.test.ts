@@ -1205,6 +1205,10 @@ type DomainAction =
       window: DomainWindowSelector;
     }
   | {
+      type: "outlinerCloseNodeRejectingClose";
+      node: DomainNodeSelector;
+    }
+  | {
       type: "outlinerDeleteWindowRejectingClose";
       window: DomainWindowSelector;
     }
@@ -5491,6 +5495,785 @@ const RUNTIME_DOMAIN_DISCOVERY_TRACES: RuntimeDomainTrace[] = [
       { type: "restartBackground" },
       { type: "staleLiveUpdatedEvent", staleTab: { capture: "bh-reject-source-window-only-old" }, withStaleQuery: true }
     ]
+  },
+  {
+    id: "ph-close-reject-tab-session-refresh",
+    title: "close reject tab session refresh",
+    notes: "Post-recovery probe for outliner tab close side effects that complete before adapter rejection, followed by session/manual reconciliation.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["post-recovery", "outliner-close", "command-rejection", "session", "manual-refresh"],
+    actions: [
+      { type: "outlinerCloseNodeRejectingClose", node: { tab: { tabId: 2 } } },
+      { type: "sessionChanged" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "ph-close-reject-single-window-restart",
+    title: "close reject single window restart",
+    notes: "Post-recovery probe for a rejected outliner close of a single-tab window across startup reconstruction.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["post-recovery", "outliner-close", "command-rejection", "restart", "manual-refresh"],
+    actions: [
+      { type: "outlinerCloseNodeRejectingClose", node: { window: { windowId: 20 } } },
+      { type: "restartBackground" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "ph-close-reject-multitab-window-reordered",
+    title: "close reject multitab window reordered",
+    notes: "Post-recovery probe for a rejected outliner close of a multi-tab runtime window followed by reordered surviving-window query evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["post-recovery", "outliner-close", "command-rejection", "stale-query", "manual-refresh"],
+    actions: [
+      { type: "openTab", window: { windowId: 20 }, active: false, captureTab: "ph-close-reject-multitab-extra" },
+      { type: "outlinerCloseNodeRejectingClose", node: { window: { windowId: 20 } } },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 10 }, order: "reverse" }
+    ]
+  },
+  {
+    id: "ph-close-reject-nested-destination-stale",
+    title: "close reject nested destination stale",
+    notes: "Post-recovery probe for rejected outliner close of a command-created nested destination, then stale old-window evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["post-recovery", "nested", "outliner-close", "command-rejection", "stale-event", "stale-query"],
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "ph-close-reject-nested-old" },
+      { type: "openTab", window: { role: "lastOpenedWindow" }, active: false, captureTab: "ph-close-reject-nested-extra" },
+      { type: "outlinerCloseNodeRejectingClose", node: { window: { role: "lastOpenedWindow" } } },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "ph-close-reject-nested-old" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "ph-restore-native-window-only-after-recovery",
+    title: "restore native window only after recovery",
+    notes: "Post-recovery probe for restored window create-rejection recovery followed by windowRemoved-only native close.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["post-recovery", "restore", "command-rejection", "native-close", "event-order", "manual-refresh"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeRejectingCreate", node: { nodeId: "window:20" } },
+      { type: "nativeCloseWindow", window: { role: "focusedWindow" }, order: "windowRemovedOnly" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "ph-restore-native-default-after-recovery",
+    title: "restore native default after recovery",
+    notes: "Post-recovery probe for restored window create-rejection recovery followed by full native close ordering and session evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["post-recovery", "restore", "command-rejection", "native-close", "event-order", "session"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeRejectingCreate", node: { nodeId: "window:20" } },
+      { type: "nativeCloseWindow", window: { role: "focusedWindow" }, order: "tabsRemovedThenWindowRemoved" },
+      { type: "sessionChanged" }
+    ]
+  },
+  {
+    id: "ph-restore-delayed-focus-partial-query",
+    title: "restore delayed focus partial query",
+    notes: "Post-recovery probe for restore/delete delayed echoes, command focus, and a missing source-window query.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["post-recovery", "restore", "delayed-event", "focus", "partial-snapshot", "manual-refresh"],
+    actions: [
+      { type: "outlinerRestoreDeleteWindowDelayedEvent", window: { windowId: 20 }, captureStaleTabs: "ph-restore-delayed-focus" },
+      { type: "outlinerFocusTab", tab: { tabId: 1 } },
+      { type: "manualRefreshWithMissingWindowQuery", window: { windowId: 10 } },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "ph-restore-delayed-focus" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "ph-restore-redo-native-tabs-only",
+    title: "restore redo native tabs only",
+    notes: "Post-recovery probe for history replay around restored windows followed by tabsRemoved-only native close evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["post-recovery", "restore", "undo-redo", "native-close", "event-order", "manual-refresh"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedo" },
+      { type: "outlinerRestoreNodeRejectingCreate", node: { nodeId: "window:20" } },
+      { type: "nativeCloseWindow", window: { role: "focusedWindow" }, order: "tabsRemovedOnly" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "ph-opener-grandchild-redo-missing-destination",
+    title: "opener grandchild redo missing destination",
+    notes: "Post-recovery probe for opener grandchild relocation through history replay and missing destination query evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["post-recovery", "opener", "undo-redo", "relocation", "partial-snapshot", "manual-refresh"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, openerTab: { tabId: 1 }, captureTab: "ph-opener-redo-child" },
+      { type: "openTab", window: { windowId: 10 }, active: false, openerTab: { capture: "ph-opener-redo-child" }, captureTab: "ph-opener-redo-grandchild" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { capture: "ph-opener-redo-grandchild" }, captureStaleTabs: "ph-opener-redo-old" },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedo" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { role: "lastOpenedWindow" } }
+    ]
+  },
+  {
+    id: "ph-opener-source-close-reject-stale",
+    title: "opener source close reject stale",
+    notes: "Post-recovery probe for opener relocation followed by source outliner close rejection and stale old-window evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["post-recovery", "opener", "outliner-close", "command-rejection", "stale-event", "stale-query"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, openerTab: { tabId: 1 }, captureTab: "ph-opener-close-child" },
+      { type: "openTab", window: { windowId: 10 }, active: false, openerTab: { capture: "ph-opener-close-child" }, captureTab: "ph-opener-close-grandchild" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { capture: "ph-opener-close-grandchild" }, captureStaleTabs: "ph-opener-close-old" },
+      { type: "outlinerCloseNodeRejectingClose", node: { window: { windowId: 10 } } },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "ph-opener-close-old" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "ph-opener-native-child-reordered-restart",
+    title: "opener native child reordered restart",
+    notes: "Post-recovery probe for opener child native close, restart reconstruction, and reordered source query.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["post-recovery", "opener", "native-close", "restart", "stale-query", "manual-refresh"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, openerTab: { tabId: 1 }, captureTab: "ph-opener-native-child" },
+      { type: "nativeCloseTab", tab: { capture: "ph-opener-native-child" }, order: "sessionChangedOnly" },
+      { type: "restartBackground" },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 10 }, order: "rotateRight" }
+    ]
+  },
+  {
+    id: "ph-query-no-command-two-window-skew",
+    title: "query no command two window skew",
+    notes: "Post-recovery probe for browser-created tabs with missing one window and reordered another without command ownership.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["post-recovery", "partial-snapshot", "stale-query", "created-event", "manual-refresh"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, captureTab: "ph-query-skew-source" },
+      { type: "openTab", window: { windowId: 20 }, active: false, captureTab: "ph-query-skew-background" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { windowId: 10 } },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 20 }, order: "reverse" }
+    ]
+  },
+  {
+    id: "ph-query-command-destination-source-skew",
+    title: "query command destination source skew",
+    notes: "Post-recovery probe for command-created destination and source windows receiving different partial query shapes.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["post-recovery", "relocation", "partial-snapshot", "stale-query", "manual-refresh"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "ph-query-command-old" },
+      { type: "openTab", window: { role: "lastOpenedWindow" }, active: false, captureTab: "ph-query-command-extra" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { role: "lastOpenedWindow" } },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 10 }, order: "rotateLeft" }
+    ]
+  },
+  {
+    id: "ph-query-stale-event-two-window-skew",
+    title: "query stale event two window skew",
+    notes: "Post-recovery probe for stale old-window event followed by missing and reordered evidence across two windows.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["post-recovery", "stale-event", "partial-snapshot", "stale-query", "relocation", "manual-refresh"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "ph-query-stale-old" },
+      { type: "openTab", window: { windowId: 20 }, active: false, captureTab: "ph-query-stale-background" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "ph-query-stale-old" }, withStaleQuery: true },
+      { type: "manualRefreshWithMissingWindowQuery", window: { windowId: 20 } },
+      { type: "manualRefreshWithReorderedQuery", window: { role: "lastOpenedWindow" }, order: "reverse" }
+    ]
+  },
+  {
+    id: "ph-focus-after-close-reject-session",
+    title: "focus after close reject session",
+    notes: "Post-recovery probe for focus side-effect rejection after an outliner close rejection and session churn.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["post-recovery", "focus", "activation", "outliner-close", "command-rejection", "session"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, captureTab: "ph-focus-close-reject-tab" },
+      { type: "outlinerCloseNodeRejectingClose", node: { tab: { capture: "ph-focus-close-reject-tab" } } },
+      { type: "outlinerFocusTabRejectingUpdate", tab: { tabId: 1 } },
+      { type: "sessionChanged" }
+    ]
+  },
+  {
+    id: "ph-focus-restore-native-session",
+    title: "focus restore native session",
+    notes: "Post-recovery probe for restore recovery, native close, command focus rejection, and session refresh interaction.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["post-recovery", "focus", "restore", "native-close", "command-rejection", "session"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeRejectingCreate", node: { nodeId: "window:20" } },
+      { type: "nativeCloseWindow", window: { role: "focusedWindow" }, order: "windowRemovedOnly" },
+      { type: "outlinerFocusTabRejectingUpdate", tab: { tabId: 1 } },
+      { type: "sessionChanged" }
+    ]
+  },
+  {
+    id: "ph-restart-close-reject-stale-old",
+    title: "restart close reject stale old",
+    notes: "Post-recovery probe for close rejection across restart followed by stale old-window relocation evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["post-recovery", "restart", "outliner-close", "command-rejection", "stale-event", "stale-query"],
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "ph-restart-close-reject-old" },
+      { type: "outlinerCloseNodeRejectingClose", node: { window: { windowId: 10 } } },
+      { type: "restartBackground" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "ph-restart-close-reject-old" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "ph-restart-restore-native-id-gap",
+    title: "restart restore native id gap",
+    notes: "Post-recovery probe for runtime id gaps, restored window recovery, native close, restart, and reordered surviving evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["post-recovery", "restart", "restore", "native-close", "session", "stale-query"],
+    actions: [
+      { type: "openTab", window: { windowId: 20 }, active: false, captureTab: "ph-restart-gap-tab" },
+      { type: "nativeCloseTab", tab: { capture: "ph-restart-gap-tab" }, order: "sessionChangedOnly" },
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeRejectingCreate", node: { nodeId: "window:20" } },
+      { type: "nativeCloseWindow", window: { role: "focusedWindow" }, order: "tabsRemovedOnly" },
+      { type: "restartBackground" },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 10 }, order: "rotateLeft" }
+    ]
+  },
+  {
+    id: "ph-restore-tab-native-source-missing",
+    title: "restore tab native source missing",
+    notes: "Post-recovery mutation for restored tab create-rejection recovery followed by native tab removal and missing source-window query evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["post-recovery", "restore", "command-rejection", "native-close", "partial-snapshot", "manual-refresh"],
+    actions: [
+      { type: "outlinerCloseTab", tab: { tabId: 2 } },
+      { type: "outlinerRestoreNodeRejectingCreate", node: { nodeId: "tab:2" } },
+      { type: "nativeCloseTab", tab: { tabId: 2 }, order: "tabRemovedOnly" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { windowId: 10 } }
+    ]
+  },
+  {
+    id: "ph-restore-window-focus-restart-stale-query",
+    title: "restore window focus restart stale query",
+    notes: "Post-recovery mutation for restored window recovery followed by focus churn, restart reconstruction, and partial focused-window query evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["post-recovery", "restore", "focus", "restart", "partial-snapshot", "manual-refresh"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeRejectingCreate", node: { nodeId: "window:20" } },
+      { type: "outlinerFocusTab", tab: { tabId: 1 } },
+      { type: "restartBackground" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { role: "focusedWindow" } }
+    ]
+  },
+  {
+    id: "ph-opener-grandchild-redo-missing-tab",
+    title: "opener grandchild redo missing tab",
+    notes: "Post-recovery mutation for opener grandchild relocation through history replay, using the current moved tab as the partial-query target.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["post-recovery", "opener", "undo-redo", "relocation", "partial-snapshot", "manual-refresh"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, openerTab: { tabId: 1 }, captureTab: "ph-opener-redo-tab-child" },
+      { type: "openTab", window: { windowId: 10 }, active: false, openerTab: { capture: "ph-opener-redo-tab-child" }, captureTab: "ph-opener-redo-tab-grandchild" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { capture: "ph-opener-redo-tab-grandchild" }, captureStaleTabs: "ph-opener-redo-tab-old" },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedo" },
+      { type: "manualRefreshWithMissingTabQuery", tab: { role: "lastMovedTab" } }
+    ]
+  },
+  {
+    id: "ph-opener-grandchild-restart-reordered",
+    title: "opener grandchild restart reordered",
+    notes: "Post-recovery mutation for opener grandchild relocation across restart with fresh metadata and reordered current-window query evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["post-recovery", "opener", "relocation", "restart", "stale-query", "manual-refresh"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, openerTab: { tabId: 1 }, captureTab: "ph-opener-restart-child" },
+      { type: "openTab", window: { windowId: 10 }, active: false, openerTab: { capture: "ph-opener-restart-child" }, captureTab: "ph-opener-restart-grandchild" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { capture: "ph-opener-restart-grandchild" }, captureStaleTabs: "ph-opener-restart-old" },
+      { type: "restartBackground" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "Post recovery opener current" },
+      { type: "manualRefreshWithReorderedQuery", window: { role: "focusedWindow" }, order: "rotateRight" }
+    ]
+  },
+  {
+    id: "ph-query-restart-two-window-no-command",
+    title: "query restart two window no command",
+    notes: "Post-recovery mutation for no-command browser-created tabs, startup reconstruction, missing one window, and reordered another.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["post-recovery", "created-event", "restart", "partial-snapshot", "stale-query", "manual-refresh"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, captureTab: "ph-query-restart-source" },
+      { type: "openTab", window: { windowId: 20 }, active: false, captureTab: "ph-query-restart-background" },
+      { type: "restartBackground" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { windowId: 20 } },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 10 }, order: "reverse" }
+    ]
+  },
+  {
+    id: "ph-focus-close-reject-window-restart-session",
+    title: "focus close reject window restart session",
+    notes: "Post-recovery mutation for rejected outliner close of a window followed by focus rejection, restart reconstruction, and session evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["post-recovery", "focus", "outliner-close", "command-rejection", "restart", "session"],
+    actions: [
+      { type: "outlinerCloseNodeRejectingClose", node: { window: { windowId: 20 } } },
+      { type: "outlinerFocusTabRejectingUpdate", tab: { tabId: 1 } },
+      { type: "restartBackground" },
+      { type: "sessionChanged" }
+    ]
+  },
+  {
+    id: "ph-restore-tab-native-active-missing",
+    title: "restore tab native active missing",
+    notes: "Post-recovery mutation for restored tab recovery addressed through the current active runtime tab before native close and partial source query.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["post-recovery", "restore", "command-rejection", "native-close", "partial-snapshot", "manual-refresh"],
+    actions: [
+      { type: "outlinerCloseTab", tab: { tabId: 2 } },
+      { type: "outlinerRestoreNodeRejectingCreate", node: { nodeId: "tab:2" } },
+      { type: "nativeCloseTab", tab: { role: "activeTab" }, order: "sessionChangedThenTabRemoved" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { windowId: 10 } }
+    ]
+  },
+  {
+    id: "ph-restore-tab-restart-active-reordered",
+    title: "restore tab restart active reordered",
+    notes: "Post-recovery mutation for restored tab recovery across restart followed by current active-tab metadata and reordered source query.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["post-recovery", "restore", "restart", "metadata", "stale-query", "manual-refresh"],
+    actions: [
+      { type: "outlinerCloseTab", tab: { tabId: 2 } },
+      { type: "outlinerRestoreNodeRejectingCreate", node: { nodeId: "tab:2" } },
+      { type: "restartBackground" },
+      { type: "updateTab", tab: { role: "activeTab" }, title: "Post recovery restored active" },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 10 }, order: "rotateLeft" }
+    ]
+  },
+  {
+    id: "ph-opener-redo-current-window-reordered",
+    title: "opener redo current window reordered",
+    notes: "Post-recovery mutation for opener grandchild relocation through redo, then current destination metadata and focused-window reorder evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["post-recovery", "opener", "undo-redo", "relocation", "metadata", "stale-query"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, openerTab: { tabId: 1 }, captureTab: "ph-opener-current-child" },
+      { type: "openTab", window: { windowId: 10 }, active: false, openerTab: { capture: "ph-opener-current-child" }, captureTab: "ph-opener-current-grandchild" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { capture: "ph-opener-current-grandchild" }, captureStaleTabs: "ph-opener-current-old" },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedo" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "Post recovery redo current" },
+      { type: "manualRefreshWithReorderedQuery", window: { role: "focusedWindow" }, order: "reverse" }
+    ]
+  },
+  {
+    id: "ph-close-reject-window-focus-partial",
+    title: "close reject window focus partial",
+    notes: "Post-recovery mutation for rejected close of a single-tab window followed by focus churn and partial surviving-window query.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["post-recovery", "outliner-close", "command-rejection", "focus", "partial-snapshot", "manual-refresh"],
+    actions: [
+      { type: "outlinerCloseNodeRejectingClose", node: { window: { windowId: 20 } } },
+      { type: "outlinerFocusTab", tab: { tabId: 1 } },
+      { type: "manualRefreshWithMissingWindowQuery", window: { windowId: 10 } }
+    ]
+  },
+  {
+    id: "ph-query-native-restart-two-window-skew",
+    title: "query native restart two window skew",
+    notes: "Post-recovery mutation for browser-created tabs, native session-only disappearance, restart, and skewed query evidence in both windows.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["post-recovery", "created-event", "native-close", "restart", "partial-snapshot", "stale-query"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, captureTab: "ph-query-native-source" },
+      { type: "openTab", window: { windowId: 20 }, active: false, captureTab: "ph-query-native-background" },
+      { type: "nativeCloseTab", tab: { capture: "ph-query-native-source" }, order: "sessionChangedOnly" },
+      { type: "restartBackground" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { windowId: 20 } },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 10 }, order: "rotateRight" }
+    ]
+  },
+  {
+    id: "ph-restore-window-native-restart-partial",
+    title: "restore window native restart partial",
+    notes: "Post-recovery mutation for restored window recovery, native tabs-only close, restart reconstruction, and partial surviving-window query.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["post-recovery", "restore", "native-close", "restart", "event-order", "partial-snapshot"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeRejectingCreate", node: { nodeId: "window:20" } },
+      { type: "nativeCloseWindow", window: { role: "focusedWindow" }, order: "tabsRemovedOnly" },
+      { type: "restartBackground" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { windowId: 10 } }
+    ]
+  },
+  {
+    id: "ph-restore-opener-native-window-only",
+    title: "restore opener native window only",
+    notes: "Post-recovery mutation for opener children inside a restored window, followed by windowRemoved-only native close and source-window refresh.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["post-recovery", "restore", "opener", "native-close", "event-order", "manual-refresh"],
+    actions: [
+      { type: "openTab", window: { windowId: 20 }, active: false, openerTab: { tabId: 3 }, captureTab: "ph-restore-opener-child" },
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeRejectingCreate", node: { nodeId: "window:20" } },
+      { type: "nativeCloseWindow", window: { role: "focusedWindow" }, order: "windowRemovedOnly" },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 10 }, order: "rotateRight" }
+    ]
+  },
+  {
+    id: "ph-restore-then-close-reject-focused",
+    title: "restore then close reject focused",
+    notes: "Post-recovery mutation for restored window recovery followed by rejected outliner close of the restored focused window and restart reconstruction.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["post-recovery", "restore", "outliner-close", "command-rejection", "restart", "manual-refresh"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeRejectingCreate", node: { nodeId: "window:20" } },
+      { type: "outlinerCloseNodeRejectingClose", node: { window: { role: "focusedWindow" } } },
+      { type: "restartBackground" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "ph-opener-source-delete-redo-reordered",
+    title: "opener source delete redo reordered",
+    notes: "Post-recovery mutation for opener grandchild relocation, source delete rejection recovery, history replay, and reordered focused-window query.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["post-recovery", "opener", "delete-rejection", "undo-redo", "stale-query", "manual-refresh"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, openerTab: { tabId: 1 }, captureTab: "ph-opener-delete-child" },
+      { type: "openTab", window: { windowId: 10 }, active: false, openerTab: { capture: "ph-opener-delete-child" }, captureTab: "ph-opener-delete-grandchild" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { capture: "ph-opener-delete-grandchild" }, captureStaleTabs: "ph-opener-delete-old" },
+      { type: "outlinerDeleteNodeRejectingClose", node: { window: { windowId: 10 } } },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedo" },
+      { type: "manualRefreshWithReorderedQuery", window: { role: "focusedWindow" }, order: "rotateLeft" }
+    ]
+  },
+  {
+    id: "ph-relocation-current-refresh-missing-destination",
+    title: "relocation current refresh missing destination",
+    notes: "Post-recovery mutation for command relocation with fresh current metadata before a missing destination-window query.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["post-recovery", "relocation", "fresh-event", "partial-snapshot", "manual-refresh"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "ph-relocation-current-old" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "Post recovery before missing destination" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { role: "lastOpenedWindow" } }
+    ]
+  },
+  {
+    id: "ph-restart-id-gap-session-skew",
+    title: "restart id gap session skew",
+    notes: "Post-recovery mutation for browser-created runtime ID gaps, session-only disappearance, restart, and skewed surviving-window query evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["post-recovery", "created-event", "native-close", "restart", "session", "stale-query"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, captureTab: "ph-restart-gap-source" },
+      { type: "openTab", window: { windowId: 20 }, active: false, captureTab: "ph-restart-gap-background" },
+      { type: "nativeCloseTab", tab: { capture: "ph-restart-gap-background" }, order: "sessionChangedOnly" },
+      { type: "restartBackground" },
+      { type: "sessionChanged" },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 10 }, order: "reverse" }
+    ]
+  },
+  {
+    id: "ph-focus-reject-after-native-window-only",
+    title: "focus reject after native window only",
+    notes: "Post-recovery mutation for native windowRemoved-only evidence followed by focus rejection and session/manual reconciliation.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["post-recovery", "focus", "native-close", "event-order", "command-rejection", "session"],
+    actions: [
+      { type: "nativeCloseWindow", window: { windowId: 20 }, order: "windowRemovedOnly" },
+      { type: "outlinerFocusTabRejectingUpdate", tab: { tabId: 1 } },
+      { type: "sessionChanged" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "ph-opener-source-delete-redo-first-reordered",
+    title: "opener source delete redo first reordered",
+    notes: "Post-recovery mutation for opener relocation and source delete recovery, using first surviving runtime window after history replay.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["post-recovery", "opener", "delete-rejection", "undo-redo", "stale-query", "manual-refresh"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, openerTab: { tabId: 1 }, captureTab: "ph-opener-first-child" },
+      { type: "openTab", window: { windowId: 10 }, active: false, openerTab: { capture: "ph-opener-first-child" }, captureTab: "ph-opener-first-grandchild" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { capture: "ph-opener-first-grandchild" }, captureStaleTabs: "ph-opener-first-old" },
+      { type: "outlinerDeleteNodeRejectingClose", node: { window: { windowId: 10 } } },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedo" },
+      { type: "manualRefreshWithReorderedQuery", window: { role: "firstRuntimeWindow" }, order: "rotateRight" }
+    ]
+  },
+  {
+    id: "ph-restore-delete-redo-first-query",
+    title: "restore delete redo first query",
+    notes: "Post-recovery mutation for restore recovery followed by delete rejection history replay and first-window partial query.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["post-recovery", "restore", "delete-rejection", "undo-redo", "partial-snapshot", "manual-refresh"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeRejectingCreate", node: { nodeId: "window:20" } },
+      { type: "outlinerDeleteNodeRejectingClose", node: { window: { role: "firstRuntimeWindow" } } },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedo" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { role: "firstRuntimeWindow" } }
+    ]
+  },
+  {
+    id: "ph-close-reject-multitab-source-restart-first",
+    title: "close reject multitab source restart first",
+    notes: "Post-recovery mutation for rejected close of a multi-tab source window, restart, and reordered first surviving window.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["post-recovery", "outliner-close", "command-rejection", "restart", "stale-query", "manual-refresh"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, captureTab: "ph-close-multitab-source-extra" },
+      { type: "outlinerCloseNodeRejectingClose", node: { window: { windowId: 10 } } },
+      { type: "restartBackground" },
+      { type: "manualRefreshWithReorderedQuery", window: { role: "firstRuntimeWindow" }, order: "reverse" }
+    ]
+  },
+  {
+    id: "ph-relocation-native-source-stale-first",
+    title: "relocation native source stale first",
+    notes: "Post-recovery mutation for relocation, native source windowRemoved-only evidence, stale old-window echo, and first-window query refresh.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["post-recovery", "relocation", "native-close", "stale-event", "stale-query", "manual-refresh"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "ph-relocation-native-source-old" },
+      { type: "nativeCloseWindow", window: { windowId: 10 }, order: "windowRemovedOnly" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "ph-relocation-native-source-old" }, withStaleQuery: true },
+      { type: "manualRefreshWithReorderedQuery", window: { role: "firstRuntimeWindow" }, order: "rotateLeft" }
+    ]
+  },
+  {
+    id: "ph-restore-active-focus-reject-session",
+    title: "restore active focus reject session",
+    notes: "Post-recovery mutation for restored active tab recovery followed by focus rejection on the current active runtime tab and session refresh.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["post-recovery", "restore", "focus", "command-rejection", "session", "manual-refresh"],
+    actions: [
+      { type: "outlinerCloseTab", tab: { tabId: 2 } },
+      { type: "outlinerRestoreNodeRejectingCreate", node: { nodeId: "tab:2" } },
+      { type: "outlinerFocusTabRejectingUpdate", tab: { role: "activeTab" } },
+      { type: "sessionChanged" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "ph-query-created-focus-session-first",
+    title: "query created focus session first",
+    notes: "Post-recovery mutation for no-command tab creation, focus churn, session refresh, and partial first-window query skew.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["post-recovery", "created-event", "focus", "session", "partial-snapshot", "manual-refresh"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, captureTab: "ph-query-focus-source" },
+      { type: "focusWindow", window: { windowId: 20 } },
+      { type: "activateTab", tab: { tabId: 3 } },
+      { type: "sessionChanged" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { role: "firstRuntimeWindow" } }
+    ]
+  },
+  {
+    id: "ph-query-no-command-focus-restart-reordered",
+    title: "query no command focus restart reordered",
+    notes: "Post-recovery mutation for browser-created tabs with focus/session churn across restart and reordered first-window query evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["post-recovery", "created-event", "focus", "restart", "session", "stale-query"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, captureTab: "ph-query-no-command-focus-source" },
+      { type: "openTab", window: { windowId: 20 }, active: false, captureTab: "ph-query-no-command-focus-background" },
+      { type: "focusWindow", window: { windowId: 20 } },
+      { type: "sessionChanged" },
+      { type: "restartBackground" },
+      { type: "manualRefreshWithReorderedQuery", window: { role: "firstRuntimeWindow" }, order: "rotateLeft" }
+    ]
+  },
+  {
+    id: "ph-native-close-order-restart-session",
+    title: "native close order restart session",
+    notes: "Post-recovery mutation for native tabs-then-window removal order across restart and later session refresh.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["post-recovery", "native-close", "event-order", "restart", "session", "manual-refresh"],
+    actions: [
+      { type: "nativeCloseWindow", window: { windowId: 20 }, order: "tabsRemovedThenWindowRemoved" },
+      { type: "restartBackground" },
+      { type: "sessionChanged" },
+      { type: "manualRefreshWithReorderedQuery", window: { role: "firstRuntimeWindow" }, order: "reverse" }
+    ]
+  },
+  {
+    id: "ph-relocation-restart-current-first-reordered",
+    title: "relocation restart current first reordered",
+    notes: "Post-recovery mutation for command relocation across restart with fresh current tab metadata and first-window query reorder.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["post-recovery", "relocation", "restart", "fresh-event", "stale-query", "manual-refresh"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "ph-relocation-restart-current-old" },
+      { type: "restartBackground" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "Post recovery relocation restart current" },
+      { type: "manualRefreshWithReorderedQuery", window: { role: "firstRuntimeWindow" }, order: "rotateRight" }
+    ]
+  },
+  {
+    id: "ph-close-reject-tab-undo-redo",
+    title: "close reject tab undo redo",
+    notes: "Post-recovery mutation for rejected tab close side effects combined with history replay and manual reconciliation.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["post-recovery", "outliner-close", "command-rejection", "undo-redo", "manual-refresh"],
+    actions: [
+      { type: "outlinerCloseNodeRejectingClose", node: { tab: { tabId: 2 } } },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedo" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "ph-query-session-rotate-both-windows",
+    title: "query session rotate both windows",
+    notes: "Post-recovery mutation for no-command browser-created tabs, session churn, and sequential reordered snapshots in both windows.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["post-recovery", "created-event", "session", "stale-query", "manual-refresh"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, captureTab: "ph-query-rotate-source" },
+      { type: "openTab", window: { windowId: 20 }, active: false, captureTab: "ph-query-rotate-background" },
+      { type: "sessionChanged" },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 10 }, order: "rotateLeft" },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 20 }, order: "rotateRight" }
+    ]
+  },
+  {
+    id: "ph-relocation-fresh-session-reordered",
+    title: "relocation fresh session reordered",
+    notes: "Post-recovery mutation for relocation with fresh current metadata, session refresh, and reordered source-window query.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["post-recovery", "relocation", "fresh-event", "session", "stale-query", "manual-refresh"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "ph-relocation-fresh-session-old" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "Post recovery fresh session" },
+      { type: "sessionChanged" },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 10 }, order: "reverse" }
+    ]
+  },
+  {
+    id: "ph-native-tabs-only-refresh-restart",
+    title: "native tabs only refresh restart",
+    notes: "Post-recovery mutation for tabsRemoved-only native window evidence, manual refresh, restart, and surviving-window reorder.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["post-recovery", "native-close", "event-order", "manual-refresh", "restart", "stale-query"],
+    actions: [
+      { type: "nativeCloseWindow", window: { windowId: 20 }, order: "tabsRemovedOnly" },
+      { type: "manualRefresh" },
+      { type: "restartBackground" },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 10 }, order: "rotateLeft" }
+    ]
+  },
+  {
+    id: "ph-query-created-restart-missing-first",
+    title: "query created restart missing first",
+    notes: "Post-recovery mutation for browser-created tabs across restart followed by a missing first-window query and surviving-window reorder.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["post-recovery", "created-event", "restart", "partial-snapshot", "stale-query", "manual-refresh"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, captureTab: "ph-query-created-restart-source" },
+      { type: "openTab", window: { windowId: 20 }, active: false, captureTab: "ph-query-created-restart-background" },
+      { type: "restartBackground" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { role: "firstRuntimeWindow" } },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 20 }, order: "rotateLeft" }
+    ]
+  },
+  {
+    id: "ph-relocation-fresh-restart-missing-tab",
+    title: "relocation fresh restart missing tab",
+    notes: "Post-recovery mutation for command relocation with fresh metadata across restart and a missing moved-tab query snapshot.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["post-recovery", "relocation", "fresh-event", "restart", "partial-snapshot", "manual-refresh"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "ph-relocation-fresh-restart-old" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "Post recovery before restart missing tab" },
+      { type: "restartBackground" },
+      { type: "manualRefreshWithMissingTabQuery", tab: { role: "lastMovedTab" } }
+    ]
+  },
+  {
+    id: "ph-query-created-session-missing-tab-restart",
+    title: "query created session missing tab restart",
+    notes: "Post-recovery mutation for no-command created tab, partial missing-tab query, session churn, and restart reconstruction.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["post-recovery", "created-event", "partial-snapshot", "session", "restart", "manual-refresh"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, captureTab: "ph-query-created-session-tab" },
+      { type: "manualRefreshWithMissingTabQuery", tab: { capture: "ph-query-created-session-tab" } },
+      { type: "sessionChanged" },
+      { type: "restartBackground" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "ph-relocation-session-source-destination-skew",
+    title: "relocation session source destination skew",
+    notes: "Post-recovery mutation for relocation, session churn, source-window missing query, and destination reordered query evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["post-recovery", "relocation", "session", "partial-snapshot", "stale-query", "manual-refresh"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "ph-relocation-session-skew-old" },
+      { type: "sessionChanged" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { windowId: 10 } },
+      { type: "manualRefreshWithReorderedQuery", window: { role: "lastOpenedWindow" }, order: "rotateLeft" }
+    ]
   }
 ];
 
@@ -6515,6 +7298,11 @@ async function runDomainAction(context: GeneratedTraceContext, action: DomainAct
     return;
   }
 
+  if (action.type === "outlinerCloseNodeRejectingClose") {
+    await runDomainOutlinerCloseNodeRejectingClose(context, action.node);
+    return;
+  }
+
   if (action.type === "outlinerDeleteWindowRejectingClose") {
     await runDomainOutlinerDeleteWindowRejectingClose(context, action.window);
     return;
@@ -6886,6 +7674,39 @@ async function runDomainOutlinerCloseTab(
   await context.controller.handleMessage({ type: "closeNode", nodeId });
   await flushGeneratedCloseEvents(context);
   await pruneMissingExpectedClosedNodes(context, [nodeId]);
+}
+
+async function runDomainOutlinerCloseNodeRejectingClose(
+  context: GeneratedTraceContext,
+  selector: DomainNodeSelector
+): Promise<void> {
+  const state = (await context.controller.handleMessage({ type: "getState" })) as OutlineState;
+  const nodeId = resolveDomainNodeId(context, state, selector);
+  const protectedExpectedNodeIds = generatedSubtreeNodeIds(state, nodeId)
+    .filter((candidateId) => state.nodes[candidateId]?.status === "live");
+  for (const protectedNodeId of protectedExpectedNodeIds) {
+    context.expectedClosedNodeIds.add(protectedNodeId);
+  }
+
+  vi.mocked(context.runtime.api.windows.remove).mockImplementationOnce(async (windowId) => {
+    await closeRuntimeWindow(context.runtime, windowId, { awaitListeners: false });
+    throw new Error("domain close window rejected after completion");
+  });
+  vi.mocked(context.runtime.api.tabs.remove).mockImplementationOnce(async (tabIds) => {
+    for (const tabId of Array.isArray(tabIds) ? tabIds : [tabIds]) {
+      await closeRuntimeTab(context.runtime, tabId, "tabRemovedThenSessionChanged", { awaitListeners: false });
+    }
+    throw new Error("domain close tab rejected after completion");
+  });
+
+  try {
+    const result = await context.controller.handleMessage({ type: "closeNode", nodeId });
+    expect((result as CommandAck).type).toBe("commandAck");
+  } catch {
+    // The post-recovery hunt models an outliner close side effect that completes before the command rejects.
+  }
+  await flushGeneratedCloseEvents(context);
+  await pruneMissingExpectedClosedNodes(context, protectedExpectedNodeIds);
 }
 
 async function runDomainOutlinerDeleteWindowRejectingClose(

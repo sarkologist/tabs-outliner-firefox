@@ -45,7 +45,7 @@ Useful actions:
 
 - Runtime events: `openTab`, `activateTab`, `updateTab`, `focusWindow`, `sessionChanged`, `manualRefresh`, `restartBackground`.
 - Commands: `outlinerGroupTab`, `outlinerMoveTabToNewWindow`, `outlinerMoveTabCommandToNewWindow`, `outlinerMoveSubtreeToTopLevel`, `outlinerFocusTab`, `outlinerCloseTab`, `outlinerCloseWindow`, `outlinerUndo`, `outlinerRedo`.
-- Failure-shape commands: `outlinerDeleteWindowRejectingClose`, `outlinerDeleteTabRejectingClose`, `outlinerDeleteNodeRejectingClose`, `outlinerMoveTabCommandToNewWindowRejectingCreate`, `outlinerFocusTabRejectingUpdate`, `outlinerRestoreNodeRejectingCreate`, `outlinerRestoreDeleteWindowDelayedEvent`.
+- Failure-shape commands: `outlinerDeleteWindowRejectingClose`, `outlinerDeleteTabRejectingClose`, `outlinerDeleteNodeRejectingClose`, `outlinerCloseNodeRejectingClose`, `outlinerMoveTabCommandToNewWindowRejectingCreate`, `outlinerFocusTabRejectingUpdate`, `outlinerRestoreNodeRejectingCreate`, `outlinerRestoreDeleteWindowDelayedEvent`.
 - Query skews: `manualRefreshWithStaleQuery`, `manualRefreshWithMissingTabQuery`, `manualRefreshWithMissingWindowQuery`, `manualRefreshWithReorderedQuery`.
 - Stale echoes: `staleLiveUpdatedEvent`, `staleLiveCreatedEvent`, `flushRuntimeEvents`.
 
@@ -77,7 +77,7 @@ Focus mutations on stale or contradictory evidence crossing command boundaries:
 
 ## Coverage Matrix
 
-Current coverage after the restore create rejection fix pass on 2026-05-24: 139 regression traces and 167 discovery traces. The restart-stress expansion recorded RT-063 through RT-090 and was promoted to regression coverage. The breadth sweep added neutral `bh-*` discovery traces, recorded RT-091 through RT-095 around restore create rejection side effects, and those five traces are now promoted to regression coverage after the recovery fix.
+Current coverage after the post-recovery lifecycle sweep on 2026-05-24: 139 regression traces and 220 discovery traces. The restart-stress expansion recorded RT-063 through RT-090 and was promoted to regression coverage. The breadth sweep added neutral `bh-*` discovery traces, recorded RT-091 through RT-095 around restore create rejection side effects, and those five traces are now promoted to regression coverage after the recovery fix. The post-recovery sweep added neutral `ph-*` discovery traces and recorded RT-096 through RT-103 as open discovery findings.
 
 | State shape | Command edge | Runtime skew | Refresh edge | Current coverage | Next target |
 | --- | --- | --- | --- | --- | --- |
@@ -103,11 +103,24 @@ Breadth expansion started from 134 regression traces and 121 discovery traces, t
 - Multi-window query skew: missing one whole window while another is reordered, empty focused-window evidence, and stale event-local evidence followed by partial snapshots.
 - Novel restart boundaries: opener/restore mixes, focus rejection before restart, multiple browser-created tabs with session churn, and runtime ID gaps.
 
+## Post-Recovery Hunt Targets
+
+Post-recovery discovery started from 139 regression traces and 167 discovery traces after the restore create rejection recovery fix. After the lifecycle sweep, the corpus has 139 regression traces and 220 discovery traces. Add neutral `ph-*` traces and leave fixed RT-derived regression traces frozen.
+
+- Command close rejection: outliner close of a tab, single-tab window, multi-tab window, or grouped subtree where the browser close completes before the adapter rejects.
+- Restore/native-close mixes: restored tabs or windows followed by native close event-order variants, delayed restored-tab echoes, partial query, focus churn, and restart reconstruction.
+- Opener chains: child/grandchild opener relocation combined with source deletion or close, undo/redo, stale opener evidence, and missing or reordered query results.
+- Multi-window query skew: simultaneous missing/reordered source and destination windows, no-command browser-created tabs, and stale event-local evidence crossing two runtime windows.
+- Focus/session churn: activation or focus side effects after rejected focus or close commands, followed by session-only refreshes.
+- Restart reconstruction: close rejection or restore/native-close state across background restart, with runtime ID gaps and delayed stale evidence after ledger facts are reconstructed.
+
 ## Five-Minute Mutation Block
 
 A clean block is measured by wall-clock mutation effort, not by the runner's corpus cap and not by the UI's total turn duration. Start a timer for the block. If a new distinct bug appears, record it, reset the clean-streak count, and start a fresh block. If no new distinct bug appears, keep inspecting sparse coverage cells, editing or adding discovery traces, and rerunning the discovery profile until the block has consumed about five minutes.
 
 Do not count a quick inspect/edit/run cycle as a full clean block just because the selected corpus ran once. The runner executes the current corpus once and may finish quickly; the five-minute budget belongs to the adversarial agent loop around the runner.
+
+Do not count a corpus run as clean if it stops at the runner safety boundary before completing the selected traces. Increase `RUNTIME_TRACE_HUNT_CORPUS_RUN_MS` or reduce the explicit trace selection when you need a complete sweep of a large corpus.
 
 1. Read this guide, the current discovery trace definitions, and the relevant controller/model code.
 2. Do not read fixed repro details in `RUNTIME_TRACE_BUGS.md` until after candidate mutations have been written and run.

@@ -9,7 +9,7 @@ const BUG_FILE = process.env.RUNTIME_TRACE_BUGS_FILE ?? "RUNTIME_TRACE_BUGS.md";
 const CORPUS_RUN_CAP_MS =
   positiveIntegerEnv("RUNTIME_TRACE_HUNT_CORPUS_RUN_MS") ??
   positiveIntegerEnv("RUNTIME_TRACE_HUNT_ITERATION_MS") ??
-  5 * 60 * 1000;
+  30 * 60 * 1000;
 const STOP_AFTER_CLEAN = positiveIntegerEnv("RUNTIME_TRACE_HUNT_STOP_AFTER_CLEAN") ?? 3;
 const MIN_RUN_BUDGET_MS = 2_000;
 const TRACE_HUNT_PROFILE = traceHuntProfile();
@@ -321,7 +321,60 @@ const DISCOVERY_TRACE_IDS = [
   "bh-query-two-command-windows-reordered",
   "bh-native-background-window-only-no-command-restart",
   "bh-focus-after-session-only-close-missing-source",
-  "bh-relocation-reject-source-window-only-restart"
+  "bh-relocation-reject-source-window-only-restart",
+  "ph-close-reject-tab-session-refresh",
+  "ph-close-reject-single-window-restart",
+  "ph-close-reject-multitab-window-reordered",
+  "ph-close-reject-nested-destination-stale",
+  "ph-restore-native-window-only-after-recovery",
+  "ph-restore-native-default-after-recovery",
+  "ph-restore-delayed-focus-partial-query",
+  "ph-restore-redo-native-tabs-only",
+  "ph-opener-grandchild-redo-missing-destination",
+  "ph-opener-source-close-reject-stale",
+  "ph-opener-native-child-reordered-restart",
+  "ph-query-no-command-two-window-skew",
+  "ph-query-command-destination-source-skew",
+  "ph-query-stale-event-two-window-skew",
+  "ph-focus-after-close-reject-session",
+  "ph-focus-restore-native-session",
+  "ph-restart-close-reject-stale-old",
+  "ph-restart-restore-native-id-gap",
+  "ph-restore-tab-native-source-missing",
+  "ph-restore-window-focus-restart-stale-query",
+  "ph-opener-grandchild-redo-missing-tab",
+  "ph-opener-grandchild-restart-reordered",
+  "ph-query-restart-two-window-no-command",
+  "ph-focus-close-reject-window-restart-session",
+  "ph-restore-tab-native-active-missing",
+  "ph-restore-tab-restart-active-reordered",
+  "ph-opener-redo-current-window-reordered",
+  "ph-close-reject-window-focus-partial",
+  "ph-query-native-restart-two-window-skew",
+  "ph-restore-window-native-restart-partial",
+  "ph-restore-opener-native-window-only",
+  "ph-restore-then-close-reject-focused",
+  "ph-opener-source-delete-redo-reordered",
+  "ph-relocation-current-refresh-missing-destination",
+  "ph-restart-id-gap-session-skew",
+  "ph-focus-reject-after-native-window-only",
+  "ph-opener-source-delete-redo-first-reordered",
+  "ph-restore-delete-redo-first-query",
+  "ph-close-reject-multitab-source-restart-first",
+  "ph-relocation-native-source-stale-first",
+  "ph-restore-active-focus-reject-session",
+  "ph-query-created-focus-session-first",
+  "ph-query-no-command-focus-restart-reordered",
+  "ph-native-close-order-restart-session",
+  "ph-relocation-restart-current-first-reordered",
+  "ph-close-reject-tab-undo-redo",
+  "ph-query-session-rotate-both-windows",
+  "ph-relocation-fresh-session-reordered",
+  "ph-native-tabs-only-refresh-restart",
+  "ph-query-created-restart-missing-first",
+  "ph-relocation-fresh-restart-missing-tab",
+  "ph-query-created-session-missing-tab-restart",
+  "ph-relocation-session-source-destination-skew"
 ];
 const ALL_TRACE_IDS = [...REGRESSION_TRACE_IDS, ...DISCOVERY_TRACE_IDS];
 const TRACE_TAGS = new Map([
@@ -566,7 +619,60 @@ const TRACE_TAGS = new Map([
   ["bh-query-two-command-windows-reordered", ["breadth", "relocation", "stale-query", "manual-refresh", "focus"]],
   ["bh-native-background-window-only-no-command-restart", ["breadth", "native-close", "event-order", "restart", "created-event", "manual-refresh"]],
   ["bh-focus-after-session-only-close-missing-source", ["breadth", "focus", "activation", "native-close", "session", "partial-snapshot", "command-rejection"]],
-  ["bh-relocation-reject-source-window-only-restart", ["breadth", "relocation", "command-rejection", "restart", "native-close", "stale-event"]]
+  ["bh-relocation-reject-source-window-only-restart", ["breadth", "relocation", "command-rejection", "restart", "native-close", "stale-event"]],
+  ["ph-close-reject-tab-session-refresh", ["post-recovery", "outliner-close", "command-rejection", "session", "manual-refresh"]],
+  ["ph-close-reject-single-window-restart", ["post-recovery", "outliner-close", "command-rejection", "restart", "manual-refresh"]],
+  ["ph-close-reject-multitab-window-reordered", ["post-recovery", "outliner-close", "command-rejection", "stale-query", "manual-refresh"]],
+  ["ph-close-reject-nested-destination-stale", ["post-recovery", "nested", "outliner-close", "command-rejection", "stale-event", "stale-query"]],
+  ["ph-restore-native-window-only-after-recovery", ["post-recovery", "restore", "command-rejection", "native-close", "event-order", "manual-refresh"]],
+  ["ph-restore-native-default-after-recovery", ["post-recovery", "restore", "command-rejection", "native-close", "event-order", "session"]],
+  ["ph-restore-delayed-focus-partial-query", ["post-recovery", "restore", "delayed-event", "focus", "partial-snapshot", "manual-refresh"]],
+  ["ph-restore-redo-native-tabs-only", ["post-recovery", "restore", "undo-redo", "native-close", "event-order", "manual-refresh"]],
+  ["ph-opener-grandchild-redo-missing-destination", ["post-recovery", "opener", "undo-redo", "relocation", "partial-snapshot", "manual-refresh"]],
+  ["ph-opener-source-close-reject-stale", ["post-recovery", "opener", "outliner-close", "command-rejection", "stale-event", "stale-query"]],
+  ["ph-opener-native-child-reordered-restart", ["post-recovery", "opener", "native-close", "restart", "stale-query", "manual-refresh"]],
+  ["ph-query-no-command-two-window-skew", ["post-recovery", "partial-snapshot", "stale-query", "created-event", "manual-refresh"]],
+  ["ph-query-command-destination-source-skew", ["post-recovery", "relocation", "partial-snapshot", "stale-query", "manual-refresh"]],
+  ["ph-query-stale-event-two-window-skew", ["post-recovery", "stale-event", "partial-snapshot", "stale-query", "relocation", "manual-refresh"]],
+  ["ph-focus-after-close-reject-session", ["post-recovery", "focus", "activation", "outliner-close", "command-rejection", "session"]],
+  ["ph-focus-restore-native-session", ["post-recovery", "focus", "restore", "native-close", "command-rejection", "session"]],
+  ["ph-restart-close-reject-stale-old", ["post-recovery", "restart", "outliner-close", "command-rejection", "stale-event", "stale-query"]],
+  ["ph-restart-restore-native-id-gap", ["post-recovery", "restart", "restore", "native-close", "session", "stale-query"]],
+  ["ph-restore-tab-native-source-missing", ["post-recovery", "restore", "command-rejection", "native-close", "partial-snapshot", "manual-refresh"]],
+  ["ph-restore-window-focus-restart-stale-query", ["post-recovery", "restore", "focus", "restart", "partial-snapshot", "manual-refresh"]],
+  ["ph-opener-grandchild-redo-missing-tab", ["post-recovery", "opener", "undo-redo", "relocation", "partial-snapshot", "manual-refresh"]],
+  ["ph-opener-grandchild-restart-reordered", ["post-recovery", "opener", "relocation", "restart", "stale-query", "manual-refresh"]],
+  ["ph-query-restart-two-window-no-command", ["post-recovery", "created-event", "restart", "partial-snapshot", "stale-query", "manual-refresh"]],
+  ["ph-focus-close-reject-window-restart-session", ["post-recovery", "focus", "outliner-close", "command-rejection", "restart", "session"]],
+  ["ph-restore-tab-native-active-missing", ["post-recovery", "restore", "command-rejection", "native-close", "partial-snapshot", "manual-refresh"]],
+  ["ph-restore-tab-restart-active-reordered", ["post-recovery", "restore", "restart", "metadata", "stale-query", "manual-refresh"]],
+  ["ph-opener-redo-current-window-reordered", ["post-recovery", "opener", "undo-redo", "relocation", "metadata", "stale-query"]],
+  ["ph-close-reject-window-focus-partial", ["post-recovery", "outliner-close", "command-rejection", "focus", "partial-snapshot", "manual-refresh"]],
+  ["ph-query-native-restart-two-window-skew", ["post-recovery", "created-event", "native-close", "restart", "partial-snapshot", "stale-query"]],
+  ["ph-restore-window-native-restart-partial", ["post-recovery", "restore", "native-close", "restart", "event-order", "partial-snapshot"]],
+  ["ph-restore-opener-native-window-only", ["post-recovery", "restore", "opener", "native-close", "event-order", "manual-refresh"]],
+  ["ph-restore-then-close-reject-focused", ["post-recovery", "restore", "outliner-close", "command-rejection", "restart", "manual-refresh"]],
+  ["ph-opener-source-delete-redo-reordered", ["post-recovery", "opener", "delete-rejection", "undo-redo", "stale-query", "manual-refresh"]],
+  ["ph-relocation-current-refresh-missing-destination", ["post-recovery", "relocation", "fresh-event", "partial-snapshot", "manual-refresh"]],
+  ["ph-restart-id-gap-session-skew", ["post-recovery", "created-event", "native-close", "restart", "session", "stale-query"]],
+  ["ph-focus-reject-after-native-window-only", ["post-recovery", "focus", "native-close", "event-order", "command-rejection", "session"]],
+  ["ph-opener-source-delete-redo-first-reordered", ["post-recovery", "opener", "delete-rejection", "undo-redo", "stale-query", "manual-refresh"]],
+  ["ph-restore-delete-redo-first-query", ["post-recovery", "restore", "delete-rejection", "undo-redo", "partial-snapshot", "manual-refresh"]],
+  ["ph-close-reject-multitab-source-restart-first", ["post-recovery", "outliner-close", "command-rejection", "restart", "stale-query", "manual-refresh"]],
+  ["ph-relocation-native-source-stale-first", ["post-recovery", "relocation", "native-close", "stale-event", "stale-query", "manual-refresh"]],
+  ["ph-restore-active-focus-reject-session", ["post-recovery", "restore", "focus", "command-rejection", "session", "manual-refresh"]],
+  ["ph-query-created-focus-session-first", ["post-recovery", "created-event", "focus", "session", "partial-snapshot", "manual-refresh"]],
+  ["ph-query-no-command-focus-restart-reordered", ["post-recovery", "created-event", "focus", "restart", "session", "stale-query"]],
+  ["ph-native-close-order-restart-session", ["post-recovery", "native-close", "event-order", "restart", "session", "manual-refresh"]],
+  ["ph-relocation-restart-current-first-reordered", ["post-recovery", "relocation", "restart", "fresh-event", "stale-query", "manual-refresh"]],
+  ["ph-close-reject-tab-undo-redo", ["post-recovery", "outliner-close", "command-rejection", "undo-redo", "manual-refresh"]],
+  ["ph-query-session-rotate-both-windows", ["post-recovery", "created-event", "session", "stale-query", "manual-refresh"]],
+  ["ph-relocation-fresh-session-reordered", ["post-recovery", "relocation", "fresh-event", "session", "stale-query", "manual-refresh"]],
+  ["ph-native-tabs-only-refresh-restart", ["post-recovery", "native-close", "event-order", "manual-refresh", "restart", "stale-query"]],
+  ["ph-query-created-restart-missing-first", ["post-recovery", "created-event", "restart", "partial-snapshot", "stale-query", "manual-refresh"]],
+  ["ph-relocation-fresh-restart-missing-tab", ["post-recovery", "relocation", "fresh-event", "restart", "partial-snapshot", "manual-refresh"]],
+  ["ph-query-created-session-missing-tab-restart", ["post-recovery", "created-event", "partial-snapshot", "session", "restart", "manual-refresh"]],
+  ["ph-relocation-session-source-destination-skew", ["post-recovery", "relocation", "session", "partial-snapshot", "stale-query", "manual-refresh"]]
 ]);
 const hasExplicitTraceIds = typeof process.env.RUNTIME_TRACE_HUNT_TRACE_IDS === "string" &&
   process.env.RUNTIME_TRACE_HUNT_TRACE_IDS.trim() !== "";
@@ -580,7 +686,7 @@ const bugLog = loadBugLog(BUG_FILE);
 ensureBugLogFile(BUG_FILE);
 
 console.log(`Runtime trace hunt writing findings to ${BUG_FILE}`);
-console.log(`This corpus run is capped at ${CORPUS_RUN_CAP_MS}ms.`);
+console.log(`This corpus run has a safety cap of ${CORPUS_RUN_CAP_MS}ms.`);
 console.log(`Agent stop rule: stop after ${STOP_AFTER_CLEAN} full 5-minute discovery mutation block(s) with no new distinct findings.`);
 console.log(`Trace strategy: run the selected domain corpus once, recording every distinct failure; Codex/humans mutate discovery trace actions between runs.`);
 console.log(`Trace profile: ${TRACE_HUNT_PROFILE}${hasExplicitTraceIds ? " (explicit trace IDs override profile)" : ""}`);

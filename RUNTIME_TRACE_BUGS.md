@@ -2905,3 +2905,187 @@ action 3: {"type":"outlinerRestoreNodeRejectingCreate","node":{"nodeId":"window:
 <!-- hunt-corpus-run: {"at":"2026-05-23T21:52:59.827Z","mode":"agent-corpus-run","profile":"regression","coverageTags":["activation","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","known-finding","manual-refresh","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","race","reconciliation","relocation","restart","restore","session","stale-event","stale-query","tombstone","undo-redo"],"firstTraceId":"rt-active-race","lastTraceId":"dh-restart-missing-opener-child-query","runs":134,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
 
 <!-- hunt-corpus-run: {"at":"2026-05-24T07:49:27.269Z","mode":"agent-corpus-run","profile":"regression","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","known-finding","manual-refresh","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","race","reconciliation","relocation","restart","restore","session","stale-event","stale-query","tombstone","undo-redo"],"firstTraceId":"rt-active-race","lastTraceId":"bh-restart-restore-create-reject-window","runs":139,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-24T08:01:50.433Z","mode":"agent-corpus-run","profile":"regression","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","known-finding","manual-refresh","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","race","reconciliation","relocation","restart","restore","session","stale-event","stale-query","tombstone","undo-redo"],"firstTraceId":"rt-active-race","lastTraceId":"bh-restart-restore-create-reject-window","runs":139,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
+
+### RT-096 expected closed node tab:2 is missing
+<!-- signature: expected closed node tab:<id> is missing
+domain trace: ph-close-reject-tab-session-refresh
+action: {"type":"outlinerCloseNodeRejectingClose","node":{"tab":{"tabId":2}}} -->
+
+- First seen: 2026-05-24T08:11:28.504Z
+- Trace id: `ph-close-reject-tab-session-refresh`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=ph-close-reject-tab-session-refresh pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace ph-close-reject-tab-session-refresh: close reject tab session refresh
+action 1: {"type":"outlinerCloseNodeRejectingClose","node":{"tab":{"tabId":2}}}
+Domain trace: ph-close-reject-tab-session-refresh
+Action 1: {"type":"outlinerCloseNodeRejectingClose","node":{"tab":{"tabId":2}}}
+Trace:
+domain trace ph-close-reject-tab-session-refresh: close reject tab session refresh
+action 1: {"type":"outlinerCloseNodeRejectingClose","node":{"tab":{"tabId":2}}}
+```
+
+### RT-097 Missing runtime window 21
+<!-- signature: Missing runtime window <id>
+domain trace: ph-opener-grandchild-redo-missing-destination
+action: {"type":"manualRefreshWithMissingWindowQuery","window":{"role":"lastOpenedWindow"}} -->
+
+- First seen: 2026-05-24T08:11:37.482Z
+- Trace id: `ph-opener-grandchild-redo-missing-destination`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=ph-opener-grandchild-redo-missing-destination pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace ph-opener-grandchild-redo-missing-destination: opener grandchild redo missing destination
+action 1: {"type":"openTab","window":{"windowId":10},"active":false,"openerTab":{"tabId":1},"captureTab":"ph-opener-redo-child"}
+action 2: {"type":"openTab","window":{"windowId":10},"active":false,"openerTab":{"capture":"ph-opener-redo-child"},"captureTab":"ph-opener-redo-grandchild"}
+action 3: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"capture":"ph-opener-redo-grandchild"},"captureStaleTabs":"ph-opener-redo-old"}
+action 4: {"type":"outlinerUndo"}
+action 5: {"type":"outlinerRedo"}
+action 6: {"type":"manualRefreshWithMissingWindowQuery","window":{"role":"lastOpenedWindow"}}
+```
+
+### RT-098 expected closed node tab:100 is missing
+<!-- signature: expected closed node tab:<id> is missing
+domain trace: ph-focus-after-close-reject-session
+action: {"type":"outlinerCloseNodeRejectingClose","node":{"tab":{"capture":"ph-focus-close-reject-tab"}}} -->
+
+- First seen: 2026-05-24T08:11:44.024Z
+- Trace id: `ph-focus-after-close-reject-session`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=ph-focus-after-close-reject-session pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace ph-focus-after-close-reject-session: focus after close reject session
+action 1: {"type":"openTab","window":{"windowId":10},"active":false,"captureTab":"ph-focus-close-reject-tab"}
+action 2: {"type":"outlinerCloseNodeRejectingClose","node":{"tab":{"capture":"ph-focus-close-reject-tab"}}}
+Domain trace: ph-focus-after-close-reject-session
+Action 2: {"type":"outlinerCloseNodeRejectingClose","node":{"tab":{"capture":"ph-focus-close-reject-tab"}}}
+Trace:
+domain trace ph-focus-after-close-reject-session: focus after close reject session
+action 1: {"type":"openTab","window":{"windowId":10},"active":false,"captureTab":"ph-focus-close-reject-tab"}
+action 2: {"type":"outlinerCloseNodeRejectingClose","node":{"tab":{"capture":"ph-focus-close-reject-tab"}}}
+```
+
+### RT-099 expected closed node window:21 is live
+<!-- signature: expected closed node window:<id> is live
+domain trace: ph-restart-close-reject-stale-old
+action: {"type":"outlinerCloseNodeRejectingClose","node":{"window":{"windowId":10}}} -->
+
+- First seen: 2026-05-24T08:11:46.193Z
+- Trace id: `ph-restart-close-reject-stale-old`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=ph-restart-close-reject-stale-old pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace ph-restart-close-reject-stale-old: restart close reject stale old
+action 1: {"type":"outlinerGroupTab","tab":{"tabId":1},"captureStaleTabs":"ph-restart-close-reject-old"}
+action 2: {"type":"outlinerCloseNodeRejectingClose","node":{"window":{"windowId":10}}}
+Domain trace: ph-restart-close-reject-stale-old
+Action 2: {"type":"outlinerCloseNodeRejectingClose","node":{"window":{"windowId":10}}}
+Trace:
+domain trace ph-restart-close-reject-stale-old: restart close reject stale old
+action 1: {"type":"outlinerGroupTab","tab":{"tabId":1},"captureStaleTabs":"ph-restart-close-reject-old"}
+action 2: {"type":"outlinerCloseNodeRejectingClose","node":{"window":{"windowId":10}}}
+```
+
+<!-- hunt-corpus-run: {"at":"2026-05-24T08:11:47.271Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","manual-refresh","metadata","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","session","stale-event","stale-query","tombstone","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"ph-restart-restore-native-id-gap","runs":185,"completedCorpus":true,"failures":4,"duplicateFailures":0,"newFindings":4} -->
+
+### RT-100 Missing runtime tab 2
+<!-- signature: Missing runtime tab <id>
+domain trace: ph-restore-tab-native-source-missing
+action: {"type":"nativeCloseTab","tab":{"tabId":2},"order":"tabRemovedOnly"} -->
+
+- First seen: 2026-05-24T08:17:40.508Z
+- Trace id: `ph-restore-tab-native-source-missing`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=ph-restore-tab-native-source-missing pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace ph-restore-tab-native-source-missing: restore tab native source missing
+action 1: {"type":"outlinerCloseTab","tab":{"tabId":2}}
+action 2: {"type":"outlinerRestoreNodeRejectingCreate","node":{"nodeId":"tab:2"}}
+action 3: {"type":"nativeCloseTab","tab":{"tabId":2},"order":"tabRemovedOnly"}
+```
+
+<!-- hunt-corpus-run: {"at":"2026-05-24T08:17:45.840Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","manual-refresh","metadata","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","session","stale-event","stale-query","tombstone","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"ph-focus-close-reject-window-restart-session","runs":191,"completedCorpus":true,"failures":5,"duplicateFailures":4,"newFindings":1} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-24T08:23:02.067Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","manual-refresh","metadata","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","session","stale-event","stale-query","tombstone","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"ph-restore-window-native-restart-partial","runs":197,"completedCorpus":true,"failures":5,"duplicateFailures":5,"newFindings":0} -->
+
+### RT-101 Missing focused runtime window
+<!-- signature: Missing focused runtime window
+domain trace: ph-opener-source-delete-redo-reordered
+action: {"type":"manualRefreshWithReorderedQuery","window":{"role":"focusedWindow"},"order":"rotateLeft"} -->
+
+- First seen: 2026-05-24T08:27:48.467Z
+- Trace id: `ph-opener-source-delete-redo-reordered`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=ph-opener-source-delete-redo-reordered pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace ph-opener-source-delete-redo-reordered: opener source delete redo reordered
+action 1: {"type":"openTab","window":{"windowId":10},"active":false,"openerTab":{"tabId":1},"captureTab":"ph-opener-delete-child"}
+action 2: {"type":"openTab","window":{"windowId":10},"active":false,"openerTab":{"capture":"ph-opener-delete-child"},"captureTab":"ph-opener-delete-grandchild"}
+action 3: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"capture":"ph-opener-delete-grandchild"},"captureStaleTabs":"ph-opener-delete-old"}
+action 4: {"type":"outlinerDeleteNodeRejectingClose","node":{"window":{"windowId":10}}}
+action 5: {"type":"outlinerUndo"}
+action 6: {"type":"outlinerRedo"}
+action 7: {"type":"manualRefreshWithReorderedQuery","window":{"role":"focusedWindow"},"order":"rotateLeft"}
+```
+
+<!-- hunt-corpus-run: {"at":"2026-05-24T08:27:52.163Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","manual-refresh","metadata","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","session","stale-event","stale-query","tombstone","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"ph-focus-reject-after-native-window-only","runs":203,"completedCorpus":true,"failures":6,"duplicateFailures":5,"newFindings":1} -->
+
+### RT-102 domain restore tab create rejected after completion
+<!-- signature: domain restore tab create rejected after completion
+domain trace: ph-restore-delete-redo-first-query
+action: {"type":"outlinerUndo"} -->
+
+- First seen: 2026-05-24T08:32:55.645Z
+- Trace id: `ph-restore-delete-redo-first-query`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=ph-restore-delete-redo-first-query pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace ph-restore-delete-redo-first-query: restore delete redo first query
+action 1: {"type":"outlinerCloseWindow","window":{"windowId":20}}
+action 2: {"type":"outlinerRestoreNodeRejectingCreate","node":{"nodeId":"window:20"}}
+action 3: {"type":"outlinerDeleteNodeRejectingClose","node":{"window":{"role":"firstRuntimeWindow"}}}
+action 4: {"type":"outlinerUndo"}
+```
+
+<!-- hunt-corpus-run: {"at":"2026-05-24T08:33:00.373Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","manual-refresh","metadata","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","session","stale-event","stale-query","tombstone","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"ph-query-created-focus-session-first","runs":209,"completedCorpus":true,"failures":7,"duplicateFailures":6,"newFindings":1} -->
+
+### RT-103 expected closed node tab:2 is missing
+<!-- signature: expected closed node tab:<id> is missing
+domain trace: ph-close-reject-tab-undo-redo
+action: {"type":"outlinerCloseNodeRejectingClose","node":{"tab":{"tabId":2}}} -->
+
+- First seen: 2026-05-24T08:37:58.333Z
+- Trace id: `ph-close-reject-tab-undo-redo`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=ph-close-reject-tab-undo-redo pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace ph-close-reject-tab-undo-redo: close reject tab undo redo
+action 1: {"type":"outlinerCloseNodeRejectingClose","node":{"tab":{"tabId":2}}}
+Domain trace: ph-close-reject-tab-undo-redo
+Action 1: {"type":"outlinerCloseNodeRejectingClose","node":{"tab":{"tabId":2}}}
+Trace:
+domain trace ph-close-reject-tab-undo-redo: close reject tab undo redo
+action 1: {"type":"outlinerCloseNodeRejectingClose","node":{"tab":{"tabId":2}}}
+```
+
+<!-- hunt-corpus-run: {"at":"2026-05-24T08:37:58.334Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","manual-refresh","metadata","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","session","stale-event","stale-query","tombstone","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"ph-close-reject-tab-undo-redo","runs":213,"completedCorpus":true,"failures":8,"duplicateFailures":7,"newFindings":1} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-24T08:43:48.328Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","manual-refresh","metadata","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","session","stale-event","stale-query","tombstone","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"ph-restore-native-window-only-after-recovery","runs":172,"completedCorpus":false,"failures":1,"duplicateFailures":1,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-24T08:49:34.537Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","manual-refresh","metadata","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","session","stale-event","stale-query","tombstone","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"ph-native-tabs-only-refresh-restart","runs":216,"completedCorpus":true,"failures":8,"duplicateFailures":8,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-24T08:54:14.687Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","manual-refresh","metadata","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","session","stale-event","stale-query","tombstone","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"ph-relocation-fresh-restart-missing-tab","runs":218,"completedCorpus":true,"failures":8,"duplicateFailures":8,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-24T08:59:03.794Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","manual-refresh","metadata","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","session","stale-event","stale-query","tombstone","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"ph-relocation-session-source-destination-skew","runs":220,"completedCorpus":true,"failures":8,"duplicateFailures":8,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-24T09:02:27.985Z","mode":"agent-corpus-run","profile":"regression","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","known-finding","manual-refresh","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","race","reconciliation","relocation","restart","restore","session","stale-event","stale-query","tombstone","undo-redo"],"firstTraceId":"rt-active-race","lastTraceId":"bh-restart-restore-create-reject-window","runs":139,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
