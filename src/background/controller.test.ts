@@ -1228,6 +1228,8 @@ type DomainAction =
   | {
       type: "outlinerRestoreNodeRejectingCreate";
       node: DomainNodeSelector;
+      captureRestoredTabs?: string;
+      captureRestoredWindows?: string;
     }
   | {
       type: "manualRefresh";
@@ -6274,6 +6276,702 @@ const RUNTIME_DOMAIN_DISCOVERY_TRACES: RuntimeDomainTrace[] = [
       { type: "manualRefreshWithMissingWindowQuery", window: { windowId: 10 } },
       { type: "manualRefreshWithReorderedQuery", window: { role: "lastOpenedWindow" }, order: "rotateLeft" }
     ]
+  },
+  {
+    id: "lh-close-restore-reject-captured-tab",
+    title: "close restore reject captured tab",
+    notes: "Transaction-boundary probe for close side-effect recovery followed by restore create rejection, using current restored-tab capture.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["transaction-boundary", "outliner-close", "restore", "command-rejection", "partial-snapshot"],
+    actions: [
+      { type: "outlinerCloseNodeRejectingClose", node: { tab: { tabId: 2 } } },
+      { type: "outlinerRestoreNodeRejectingCreate", node: { nodeId: "tab:2" }, captureRestoredTabs: "lh-restored-tab" },
+      { type: "manualRefreshWithMissingTabQuery", tab: { capture: "lh-restored-tab" } }
+    ]
+  },
+  {
+    id: "lh-delete-reject-then-close-reject-survivor",
+    title: "delete reject then close reject survivor",
+    notes: "Transaction-boundary probe for delete-owned side-effect recovery followed by independent outliner close recovery.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["transaction-boundary", "delete-rejection", "outliner-close", "command-rejection", "manual-refresh"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, captureTab: "lh-delete-then-close-extra" },
+      { type: "outlinerDeleteNodeRejectingClose", node: { tab: { capture: "lh-delete-then-close-extra" } } },
+      { type: "outlinerCloseNodeRejectingClose", node: { tab: { tabId: 2 } } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "lh-restore-reject-then-close-reject-window",
+    title: "restore reject then close reject window",
+    notes: "Transaction-boundary probe for restored-window recovery followed by rejected close of the current restored runtime window.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["transaction-boundary", "restore", "outliner-close", "command-rejection", "restart"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeRejectingCreate", node: { nodeId: "window:20" }, captureRestoredWindows: "lh-restored-window" },
+      { type: "outlinerCloseNodeRejectingClose", node: { window: { capture: "lh-restored-window" } } },
+      { type: "restartBackground" }
+    ]
+  },
+  {
+    id: "lh-close-recovery-undo-redo-session",
+    title: "close recovery undo redo session",
+    notes: "Transaction-boundary probe for close recovery followed by history replay and session/manual reconciliation.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["transaction-boundary", "outliner-close", "undo-redo", "session", "manual-refresh"],
+    actions: [
+      { type: "outlinerCloseNodeRejectingClose", node: { tab: { tabId: 2 } } },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedo" },
+      { type: "sessionChanged" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "lh-group-foreign-window-close-reject",
+    title: "group foreign window close reject",
+    notes: "Transaction-boundary probe for closing a source window that contains a command-created foreign live window.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["transaction-boundary", "nested", "outliner-close", "command-rejection", "stale-event"],
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "lh-foreign-close-old" },
+      { type: "outlinerCloseNodeRejectingClose", node: { window: { windowId: 10 } } },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "lh-foreign-close-old" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "lh-multitab-source-close-reject-reordered",
+    title: "multitab source close reject reordered",
+    notes: "Transaction-boundary probe for rejected close of a multi-tab source window followed by reordered surviving-window evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["transaction-boundary", "outliner-close", "command-rejection", "stale-query", "manual-refresh"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, captureTab: "lh-multitab-close-extra" },
+      { type: "outlinerCloseNodeRejectingClose", node: { window: { windowId: 10 } } },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 20 }, order: "reverse" }
+    ]
+  },
+  {
+    id: "lh-nested-command-window-close-reject-extra",
+    title: "nested command window close reject extra",
+    notes: "Transaction-boundary probe for closing a command-created destination window that also gained a browser-created tab.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["transaction-boundary", "nested", "outliner-close", "created-event", "session"],
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "lh-nested-close-old" },
+      { type: "openTab", window: { role: "lastOpenedWindow" }, active: false, captureTab: "lh-nested-close-extra" },
+      { type: "outlinerCloseNodeRejectingClose", node: { window: { role: "lastOpenedWindow" } } },
+      { type: "sessionChanged" }
+    ]
+  },
+  {
+    id: "lh-restored-multitab-window-close-reject",
+    title: "restored multitab window close reject",
+    notes: "Transaction-boundary probe for restoring a multi-tab window via rejected create, then closing the restored runtime window via rejected close.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["transaction-boundary", "restore", "outliner-close", "command-rejection", "manual-refresh"],
+    actions: [
+      { type: "openTab", window: { windowId: 20 }, active: false, captureTab: "lh-restored-multitab-extra" },
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeRejectingCreate", node: { nodeId: "window:20" }, captureRestoredWindows: "lh-restored-multitab-window" },
+      { type: "outlinerCloseNodeRejectingClose", node: { window: { capture: "lh-restored-multitab-window" } } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "lh-no-focused-after-delete-first-query",
+    title: "no focused after delete first query",
+    notes: "Transaction-boundary probe for destructive delete/history replay without assuming a focused runtime window.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["transaction-boundary", "delete-rejection", "undo-redo", "focus", "stale-query"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, captureTab: "lh-no-focus-extra" },
+      { type: "outlinerDeleteNodeRejectingClose", node: { window: { windowId: 10 } } },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedo" },
+      { type: "manualRefreshWithReorderedQuery", window: { role: "firstRuntimeWindow" }, order: "rotateRight" }
+    ]
+  },
+  {
+    id: "lh-focus-reject-after-close-recovery",
+    title: "focus reject after close recovery",
+    notes: "Transaction-boundary probe for focus command side effects after a recovered outliner close.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["transaction-boundary", "outliner-close", "focus", "command-rejection", "session"],
+    actions: [
+      { type: "outlinerCloseNodeRejectingClose", node: { tab: { tabId: 2 } } },
+      { type: "outlinerFocusTabRejectingUpdate", tab: { tabId: 1 } },
+      { type: "sessionChanged" }
+    ]
+  },
+  {
+    id: "lh-activation-after-restart-close-reject",
+    title: "activation after restart close reject",
+    notes: "Transaction-boundary probe for activation/session evidence after close recovery crosses restart reconstruction.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["transaction-boundary", "outliner-close", "restart", "activation", "manual-refresh"],
+    actions: [
+      { type: "outlinerCloseNodeRejectingClose", node: { tab: { tabId: 2 } } },
+      { type: "restartBackground" },
+      { type: "activateTab", tab: { tabId: 1 } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "lh-active-snapshot-after-undo-redo",
+    title: "active snapshot after undo redo",
+    notes: "Transaction-boundary probe for active state after close/history replay and reordered source query.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["transaction-boundary", "activation", "undo-redo", "stale-query", "manual-refresh"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, captureTab: "lh-active-history-tab" },
+      { type: "activateTab", tab: { capture: "lh-active-history-tab" } },
+      { type: "outlinerCloseTab", tab: { capture: "lh-active-history-tab" } },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedo" },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 10 }, order: "rotateLeft" }
+    ]
+  },
+  {
+    id: "lh-missing-command-window-reordered-source",
+    title: "missing command window reordered source",
+    notes: "Transaction-boundary probe for missing command-created destination evidence plus reordered source evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["transaction-boundary", "relocation", "partial-snapshot", "stale-query", "manual-refresh"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "lh-missing-command-old" },
+      { type: "openTab", window: { role: "lastOpenedWindow" }, active: false, captureTab: "lh-missing-command-extra" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { role: "lastOpenedWindow" } },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 10 }, order: "rotateRight" }
+    ]
+  },
+  {
+    id: "lh-missing-restored-window-fresh-event",
+    title: "missing restored window fresh event",
+    notes: "Transaction-boundary probe for fresh current evidence in a restored window before a partial missing-window snapshot.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["transaction-boundary", "restore", "fresh-event", "partial-snapshot", "manual-refresh"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeRejectingCreate", node: { nodeId: "window:20" }, captureRestoredTabs: "lh-restored-fresh-tabs", captureRestoredWindows: "lh-restored-fresh-window" },
+      { type: "updateTab", tab: { capture: "lh-restored-fresh-tabs" }, title: "Ledger restored fresh" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { capture: "lh-restored-fresh-window" } }
+    ]
+  },
+  {
+    id: "lh-stale-event-after-close-recovery",
+    title: "stale event after close recovery",
+    notes: "Transaction-boundary probe for stale old-window evidence after closing a command-relocated tab through recovered outliner close.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["transaction-boundary", "relocation", "outliner-close", "stale-event", "stale-query"],
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "lh-close-recovery-stale-old" },
+      { type: "outlinerCloseNodeRejectingClose", node: { tab: { role: "lastMovedTab" } } },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "lh-close-recovery-stale-old" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "lh-no-command-created-partial-pair",
+    title: "no command created partial pair",
+    notes: "Transaction-boundary control for browser-created tabs under paired partial/reordered query evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["transaction-boundary", "created-event", "partial-snapshot", "stale-query", "manual-refresh"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, captureTab: "lh-no-command-source" },
+      { type: "openTab", window: { windowId: 20 }, active: false, captureTab: "lh-no-command-background" },
+      { type: "manualRefreshWithMissingTabQuery", tab: { capture: "lh-no-command-source" } },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 20 }, order: "reverse" }
+    ]
+  },
+  {
+    id: "lh-close-recovery-restart-stale-query",
+    title: "close recovery restart stale query",
+    notes: "Transaction-boundary probe for recovered close across restart followed by source-window reordered evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["transaction-boundary", "outliner-close", "restart", "stale-query", "manual-refresh"],
+    actions: [
+      { type: "outlinerCloseNodeRejectingClose", node: { tab: { tabId: 2 } } },
+      { type: "restartBackground" },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 10 }, order: "reverse" }
+    ]
+  },
+  {
+    id: "lh-restore-delete-redo-restart-first",
+    title: "restore delete redo restart first",
+    notes: "Transaction-boundary probe for restore recovery, delete rejection, history replay, restart, and first-window query evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["transaction-boundary", "restore", "delete-rejection", "undo-redo", "restart"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeRejectingCreate", node: { nodeId: "window:20" }, captureRestoredWindows: "lh-restore-delete-window" },
+      { type: "outlinerDeleteNodeRejectingClose", node: { window: { role: "firstRuntimeWindow" } } },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedo" },
+      { type: "restartBackground" },
+      { type: "manualRefreshWithReorderedQuery", window: { role: "firstRuntimeWindow" }, order: "rotateLeft" }
+    ]
+  },
+  {
+    id: "lh-relocation-focus-restart-stale-old",
+    title: "relocation focus restart stale old",
+    notes: "Transaction-boundary probe for relocation focus command across restart followed by stale old-window evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["transaction-boundary", "relocation", "focus", "restart", "stale-event"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "lh-relocation-focus-old" },
+      { type: "outlinerFocusTab", tab: { role: "lastMovedTab" } },
+      { type: "restartBackground" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "lh-relocation-focus-old" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "lh-id-gap-history-replay",
+    title: "id gap history replay",
+    notes: "Transaction-boundary probe for browser-created id gaps, native session-only disappearance, history replay, and restart reconstruction.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["transaction-boundary", "created-event", "native-close", "undo-redo", "restart"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, captureTab: "lh-id-gap-tab" },
+      { type: "nativeCloseTab", tab: { capture: "lh-id-gap-tab" }, order: "sessionChangedOnly" },
+      { type: "outlinerCloseTab", tab: { tabId: 2 } },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedo" },
+      { type: "restartBackground" },
+      { type: "manualRefreshWithReorderedQuery", window: { role: "firstRuntimeWindow" }, order: "rotateRight" }
+    ]
+  },
+  {
+    id: "lh-restore-tab-close-reject-after-current-update",
+    title: "restore tab close reject after current update",
+    notes: "Transaction-boundary mutation for restore recovery, fresh current metadata, and rejected close of the recovered tab.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["transaction-boundary", "restore", "fresh-event", "outliner-close", "command-rejection"],
+    actions: [
+      { type: "outlinerCloseTab", tab: { tabId: 2 } },
+      { type: "outlinerRestoreNodeRejectingCreate", node: { nodeId: "tab:2" }, captureRestoredTabs: "lh-restored-close-tab" },
+      { type: "updateTab", tab: { capture: "lh-restored-close-tab" }, title: "Recovered then closed" },
+      { type: "outlinerCloseNodeRejectingClose", node: { tab: { capture: "lh-restored-close-tab" } } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "lh-close-reject-window-then-restore-reject",
+    title: "close reject window then restore reject",
+    notes: "Transaction-boundary mutation for window close recovery followed by restore create rejection of the same outline window.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["transaction-boundary", "outliner-close", "restore", "command-rejection", "restart"],
+    actions: [
+      { type: "outlinerCloseNodeRejectingClose", node: { window: { windowId: 20 } } },
+      { type: "outlinerRestoreNodeRejectingCreate", node: { nodeId: "window:20" }, captureRestoredWindows: "lh-close-then-restore-window" },
+      { type: "restartBackground" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { capture: "lh-close-then-restore-window" } }
+    ]
+  },
+  {
+    id: "lh-relocation-reject-close-destination-current",
+    title: "relocation reject close destination current",
+    notes: "Transaction-boundary mutation for relocation side-effect rejection, destination close recovery, restart, and stale old evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["transaction-boundary", "relocation", "command-rejection", "outliner-close", "stale-event"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindowRejectingCreate", tab: { tabId: 1 }, captureStaleTabs: "lh-reject-close-destination-old" },
+      { type: "outlinerCloseNodeRejectingClose", node: { window: { role: "lastOpenedWindow" } } },
+      { type: "restartBackground" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "lh-reject-close-destination-old" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "lh-focus-reject-after-window-only-close",
+    title: "focus reject after window only close",
+    notes: "Transaction-boundary mutation for native window-only close classification followed by rejected focus side effects.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["transaction-boundary", "native-close", "event-order", "focus", "command-rejection"],
+    actions: [
+      { type: "nativeCloseWindow", window: { windowId: 10 }, order: "windowRemovedOnly" },
+      { type: "restartBackground" },
+      { type: "outlinerFocusTabRejectingUpdate", tab: { tabId: 3 } },
+      { type: "sessionChanged" }
+    ]
+  },
+  {
+    id: "lh-restored-window-close-native-order",
+    title: "restored window close native order",
+    notes: "Transaction-boundary mutation for restored-window recovery followed by native close event-order classification.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["transaction-boundary", "restore", "native-close", "event-order", "restart"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeRejectingCreate", node: { nodeId: "window:20" }, captureRestoredWindows: "lh-native-restored-window" },
+      { type: "nativeCloseWindow", window: { capture: "lh-native-restored-window" }, order: "tabsRemovedThenWindowRemoved" },
+      { type: "restartBackground" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "lh-source-close-reject-missing-destination",
+    title: "source close reject missing destination",
+    notes: "Transaction-boundary mutation for recovered source close while destination evidence is absent and old evidence arrives later.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["transaction-boundary", "relocation", "outliner-close", "partial-snapshot", "stale-event"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "lh-source-close-missing-destination-old" },
+      { type: "outlinerCloseNodeRejectingClose", node: { window: { windowId: 10 } } },
+      { type: "manualRefreshWithMissingWindowQuery", window: { role: "lastOpenedWindow" } },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "lh-source-close-missing-destination-old" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "lh-relocated-tab-close-reject-history",
+    title: "relocated tab close reject history",
+    notes: "Transaction-boundary mutation for relocated tab close recovery followed by undo/redo replay and stale source query.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["transaction-boundary", "relocation", "outliner-close", "undo-redo", "manual-refresh"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "lh-relocated-close-history-old" },
+      { type: "outlinerCloseNodeRejectingClose", node: { tab: { role: "lastMovedTab" } } },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedo" },
+      { type: "manualRefreshWithStaleQuery", staleTab: { capture: "lh-relocated-close-history-old" } }
+    ]
+  },
+  {
+    id: "lh-delete-reject-window-restore-history",
+    title: "delete reject window restore history",
+    notes: "Transaction-boundary mutation for delete rejection, history replay, restored captures, and reordered first-window evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["transaction-boundary", "delete-rejection", "restore", "undo-redo", "stale-query"],
+    actions: [
+      { type: "outlinerDeleteNodeRejectingClose", node: { window: { windowId: 20 } } },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedo" },
+      { type: "outlinerUndo" },
+      { type: "manualRefreshWithReorderedQuery", window: { role: "firstRuntimeWindow" }, order: "reverse" }
+    ]
+  },
+  {
+    id: "lh-no-command-id-gap-double-partial",
+    title: "no command id gap double partial",
+    notes: "Transaction-boundary control for browser-created id gaps and paired partial snapshots without command ownership.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["transaction-boundary", "created-event", "native-close", "partial-snapshot", "manual-refresh"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, captureTab: "lh-id-gap-a" },
+      { type: "openTab", window: { windowId: 20 }, active: false, captureTab: "lh-id-gap-b" },
+      { type: "nativeCloseTab", tab: { capture: "lh-id-gap-a" }, order: "sessionChangedOnly" },
+      { type: "manualRefreshWithMissingTabQuery", tab: { capture: "lh-id-gap-b" } },
+      { type: "manualRefreshWithReorderedQuery", window: { role: "firstRuntimeWindow" }, order: "rotateRight" }
+    ]
+  },
+  {
+    id: "lh-close-reject-focus-reject-restart-current",
+    title: "close reject focus reject restart current",
+    notes: "Transaction-boundary mutation for consecutive close/focus command rejections across restart and current refresh.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["transaction-boundary", "outliner-close", "focus", "command-rejection", "restart"],
+    actions: [
+      { type: "outlinerCloseNodeRejectingClose", node: { tab: { tabId: 2 } } },
+      { type: "outlinerFocusTabRejectingUpdate", tab: { tabId: 1 } },
+      { type: "restartBackground" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "lh-relocated-window-close-reject-history",
+    title: "relocated window close reject history",
+    notes: "Transaction-boundary mutation for closing a command-created destination window, then replaying undo/redo with old source evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["transaction-boundary", "relocation", "outliner-close", "undo-redo", "stale-event"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "lh-relocated-window-history-old" },
+      { type: "outlinerCloseNodeRejectingClose", node: { window: { role: "lastOpenedWindow" } } },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedo" },
+      { type: "manualRefreshWithStaleQuery", staleTab: { capture: "lh-relocated-window-history-old" } }
+    ]
+  },
+  {
+    id: "lh-restored-tab-delete-reject-focus-restart",
+    title: "restored tab delete reject focus restart",
+    notes: "Transaction-boundary mutation for recovered restore, delete rejection, focus rejection, and restart reconstruction.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["transaction-boundary", "restore", "delete-rejection", "focus", "restart"],
+    actions: [
+      { type: "outlinerCloseTab", tab: { tabId: 2 } },
+      { type: "outlinerRestoreNodeRejectingCreate", node: { nodeId: "tab:2" }, captureRestoredTabs: "lh-restored-delete-focus-tab" },
+      { type: "outlinerDeleteNodeRejectingClose", node: { tab: { capture: "lh-restored-delete-focus-tab" } } },
+      { type: "outlinerUndo" },
+      { type: "outlinerFocusTabRejectingUpdate", tab: { tabId: 1 } },
+      { type: "restartBackground" }
+    ]
+  },
+  {
+    id: "lh-restored-window-close-reject-undo",
+    title: "restored window close reject undo",
+    notes: "Transaction-boundary mutation for restored-window close recovery followed by undo and full refresh.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["transaction-boundary", "restore", "outliner-close", "undo-redo", "manual-refresh"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeRejectingCreate", node: { nodeId: "window:20" }, captureRestoredWindows: "lh-restored-close-undo-window" },
+      { type: "outlinerCloseNodeRejectingClose", node: { window: { capture: "lh-restored-close-undo-window" } } },
+      { type: "outlinerUndo" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "lh-close-reject-native-tabs-only-history",
+    title: "close reject native tabs only history",
+    notes: "Transaction-boundary mutation for rejected close recovery, undo, then tabs-only native source-window evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["transaction-boundary", "outliner-close", "native-close", "event-order", "undo-redo"],
+    actions: [
+      { type: "outlinerCloseNodeRejectingClose", node: { tab: { tabId: 2 } } },
+      { type: "outlinerUndo" },
+      { type: "nativeCloseWindow", window: { windowId: 10 }, order: "tabsRemovedOnly" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "lh-relocation-reject-focus-history",
+    title: "relocation reject focus history",
+    notes: "Transaction-boundary mutation for relocation side-effect rejection, focus rejection, history replay, and stale old query.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["transaction-boundary", "relocation", "focus", "command-rejection", "undo-redo"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindowRejectingCreate", tab: { tabId: 1 }, captureStaleTabs: "lh-reject-focus-history-old" },
+      { type: "outlinerFocusTabRejectingUpdate", tab: { role: "lastMovedTab" } },
+      { type: "outlinerUndo" },
+      { type: "manualRefreshWithStaleQuery", staleTab: { capture: "lh-reject-focus-history-old" } }
+    ]
+  },
+  {
+    id: "lh-close-reject-multitab-window-undo-query",
+    title: "close reject multitab window undo query",
+    notes: "Transaction-boundary mutation for multi-tab window close recovery, undo/redo, and reordered surviving query.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["transaction-boundary", "outliner-close", "undo-redo", "stale-query", "manual-refresh"],
+    actions: [
+      { type: "openTab", window: { windowId: 20 }, active: false, captureTab: "lh-close-reject-multitab-undo-extra" },
+      { type: "outlinerCloseNodeRejectingClose", node: { window: { windowId: 20 } } },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedo" },
+      { type: "manualRefreshWithReorderedQuery", window: { role: "firstRuntimeWindow" }, order: "rotateLeft" }
+    ]
+  },
+  {
+    id: "lh-delete-reject-focus-restart-partial",
+    title: "delete reject focus restart partial",
+    notes: "Transaction-boundary mutation for delete rejection followed by focus rejection, restart, and partial source evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["transaction-boundary", "delete-rejection", "focus", "restart", "partial-snapshot"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, captureTab: "lh-delete-focus-partial-tab" },
+      { type: "outlinerDeleteNodeRejectingClose", node: { tab: { capture: "lh-delete-focus-partial-tab" } } },
+      { type: "outlinerFocusTabRejectingUpdate", tab: { tabId: 3 } },
+      { type: "restartBackground" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { windowId: 10 } }
+    ]
+  },
+  {
+    id: "lh-restore-current-missing-double-window",
+    title: "restore current missing double window",
+    notes: "Transaction-boundary mutation for restored current evidence, missing restored window, and reordered source window.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["transaction-boundary", "restore", "fresh-event", "partial-snapshot", "stale-query"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeRejectingCreate", node: { nodeId: "window:20" }, captureRestoredTabs: "lh-restore-current-missing-tabs", captureRestoredWindows: "lh-restore-current-missing-window" },
+      { type: "updateTab", tab: { capture: "lh-restore-current-missing-tabs" }, title: "Recovered partial source" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { capture: "lh-restore-current-missing-window" } },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 10 }, order: "reverse" }
+    ]
+  },
+  {
+    id: "lh-focus-reject-close-reject-current-window",
+    title: "focus reject close reject current window",
+    notes: "Transaction-boundary mutation for rejected focus side effects before rejected close of the same current window.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["transaction-boundary", "focus", "outliner-close", "command-rejection", "session"],
+    actions: [
+      { type: "outlinerFocusTabRejectingUpdate", tab: { tabId: 3 } },
+      { type: "outlinerCloseNodeRejectingClose", node: { window: { windowId: 20 } } },
+      { type: "sessionChanged" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "lh-relocation-reject-native-destination-tabs-only",
+    title: "relocation reject native destination tabs only",
+    notes: "Transaction-boundary mutation for relocation side-effect rejection followed by tabs-only destination native close.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["transaction-boundary", "relocation", "command-rejection", "native-close", "event-order"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindowRejectingCreate", tab: { tabId: 1 }, captureStaleTabs: "lh-reject-native-destination-old" },
+      { type: "nativeCloseWindow", window: { role: "lastOpenedWindow" }, order: "tabsRemovedOnly" },
+      { type: "sessionChanged" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "lh-browser-created-close-reject-partial",
+    title: "browser created close reject partial",
+    notes: "Transaction-boundary control for browser-created tabs, rejected close, and partial query without command relocation.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["transaction-boundary", "created-event", "outliner-close", "partial-snapshot", "manual-refresh"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, captureTab: "lh-browser-created-close-tab" },
+      { type: "outlinerCloseNodeRejectingClose", node: { tab: { capture: "lh-browser-created-close-tab" } } },
+      { type: "manualRefreshWithMissingWindowQuery", window: { windowId: 20 } },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 10 }, order: "rotateRight" }
+    ]
+  },
+  {
+    id: "lh-restore-focus-native-tabs-only",
+    title: "restore focus native tabs only",
+    notes: "Transaction-boundary mutation for restore recovery, rejected focus, and tabs-only native close of the restored window.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["transaction-boundary", "restore", "focus", "native-close", "event-order"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeRejectingCreate", node: { nodeId: "window:20" }, captureRestoredTabs: "lh-restore-focus-native-tabs", captureRestoredWindows: "lh-restore-focus-native-window" },
+      { type: "outlinerFocusTabRejectingUpdate", tab: { capture: "lh-restore-focus-native-tabs" } },
+      { type: "nativeCloseWindow", window: { capture: "lh-restore-focus-native-window" }, order: "tabsRemovedOnly" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "lh-delete-close-chain-partial-current",
+    title: "delete close chain partial current",
+    notes: "Transaction-boundary mutation for delete rejection followed by independent rejected close and partial current evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["transaction-boundary", "delete-rejection", "outliner-close", "partial-snapshot", "manual-refresh"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, captureTab: "lh-delete-close-chain-tab" },
+      { type: "outlinerDeleteNodeRejectingClose", node: { tab: { capture: "lh-delete-close-chain-tab" } } },
+      { type: "outlinerCloseNodeRejectingClose", node: { window: { windowId: 20 } } },
+      { type: "manualRefreshWithMissingWindowQuery", window: { windowId: 10 } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "lh-session-created-close-reject-restart",
+    title: "session created close reject restart",
+    notes: "Transaction-boundary control for browser-created tab, session churn, rejected close, and restart reconstruction.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["transaction-boundary", "created-event", "session", "outliner-close", "restart"],
+    actions: [
+      { type: "openTab", window: { windowId: 20 }, active: true, captureTab: "lh-session-created-close-tab" },
+      { type: "sessionChanged" },
+      { type: "outlinerCloseNodeRejectingClose", node: { tab: { capture: "lh-session-created-close-tab" } } },
+      { type: "restartBackground" },
+      { type: "manualRefreshWithReorderedQuery", window: { role: "firstRuntimeWindow" }, order: "rotateLeft" }
+    ]
+  },
+  {
+    id: "lh-focus-reject-two-window-reorder",
+    title: "focus reject two window reorder",
+    notes: "Transaction-boundary mutation for rejected focus followed by reordered snapshots from both initial windows.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["transaction-boundary", "focus", "command-rejection", "stale-query", "manual-refresh"],
+    actions: [
+      { type: "outlinerFocusTabRejectingUpdate", tab: { tabId: 3 } },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 20 }, order: "reverse" },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 10 }, order: "rotateRight" },
+      { type: "sessionChanged" }
+    ]
+  },
+  {
+    id: "lh-restart-no-command-focus-id-gap",
+    title: "restart no command focus id gap",
+    notes: "Transaction-boundary control for browser-only id gaps, restart reconstruction, and rejected focus.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["transaction-boundary", "created-event", "native-close", "restart", "focus"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, captureTab: "lh-restart-gap-a" },
+      { type: "openTab", window: { windowId: 20 }, active: false, captureTab: "lh-restart-gap-b" },
+      { type: "nativeCloseTab", tab: { capture: "lh-restart-gap-a" }, order: "sessionChangedOnly" },
+      { type: "restartBackground" },
+      { type: "outlinerFocusTabRejectingUpdate", tab: { capture: "lh-restart-gap-b" } },
+      { type: "manualRefreshWithReorderedQuery", window: { role: "firstRuntimeWindow" }, order: "reverse" }
+    ]
+  },
+  {
+    id: "lh-restore-delete-close-chain-session",
+    title: "restore delete close chain session",
+    notes: "Transaction-boundary mutation for restore recovery, delete rejection, independent close rejection, and session churn.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["transaction-boundary", "restore", "delete-rejection", "outliner-close", "session"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeRejectingCreate", node: { nodeId: "window:20" }, captureRestoredTabs: "lh-restore-delete-close-tabs" },
+      { type: "outlinerDeleteNodeRejectingClose", node: { tab: { capture: "lh-restore-delete-close-tabs" } } },
+      { type: "outlinerCloseNodeRejectingClose", node: { tab: { tabId: 1 } } },
+      { type: "sessionChanged" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "lh-relocation-fresh-current-native-source-close",
+    title: "relocation fresh current native source close",
+    notes: "Transaction-boundary mutation for fresh current relocated metadata followed by native source close without history replay.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["transaction-boundary", "relocation", "fresh-event", "native-close", "event-order"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "lh-fresh-current-native-source-old" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "Fresh before source close" },
+      { type: "nativeCloseWindow", window: { windowId: 10 }, order: "windowRemovedThenTabsRemoved" },
+      { type: "manualRefreshWithStaleQuery", staleTab: { capture: "lh-fresh-current-native-source-old" } }
+    ]
   }
 ];
 
@@ -7327,7 +8025,12 @@ async function runDomainAction(context: GeneratedTraceContext, action: DomainAct
   }
 
   if (action.type === "outlinerRestoreNodeRejectingCreate") {
-    await runDomainOutlinerRestoreNodeRejectingCreate(context, action.node);
+    await runDomainOutlinerRestoreNodeRejectingCreate(
+      context,
+      action.node,
+      action.captureRestoredTabs,
+      action.captureRestoredWindows
+    );
     return;
   }
 
@@ -7884,10 +8587,13 @@ async function runDomainOutlinerRestoreDeleteWindowDelayedEvent(
 
 async function runDomainOutlinerRestoreNodeRejectingCreate(
   context: GeneratedTraceContext,
-  selector: DomainNodeSelector
+  selector: DomainNodeSelector,
+  captureRestoredTabs?: string,
+  captureRestoredWindows?: string
 ): Promise<void> {
   const before = (await context.controller.handleMessage({ type: "getState" })) as OutlineState;
   const nodeId = resolveDomainNodeId(context, before, selector);
+  const candidateNodeIds = new Set(generatedSubtreeNodeIds(before, nodeId));
   const node = before.nodes[nodeId];
   const shouldMockTabCreate = node?.kind !== "window";
   const shouldMockWindowCreate = node?.kind !== "tab";
@@ -7925,8 +8631,52 @@ async function runDomainOutlinerRestoreNodeRejectingCreate(
     // The breadth action models a browser create/restore side effect that completes before the command rejects.
   }
   const after = (await context.controller.handleMessage({ type: "getState" })) as OutlineState;
+  captureRestoredRuntimeResources(context, before, after, candidateNodeIds, {
+    tabs: captureRestoredTabs,
+    windows: captureRestoredWindows
+  });
   trackRestoreCommandLifecycleExpectations(context, before, after);
   await flushGeneratedRuntimeEventRefreshes(context);
+}
+
+function captureRestoredRuntimeResources(
+  context: GeneratedTraceContext,
+  before: OutlineState,
+  after: OutlineState,
+  candidateNodeIds: ReadonlySet<NodeId>,
+  captures: { tabs?: string; windows?: string }
+): void {
+  const restoredTabs: RuntimeTab[] = [];
+  const restoredWindows: FakeRuntimeWindow[] = [];
+  for (const nodeId of candidateNodeIds) {
+    const beforeNode = before.nodes[nodeId];
+    const afterNode = after.nodes[nodeId];
+    if (beforeNode?.status !== "closed" || afterNode?.status !== "live") {
+      continue;
+    }
+    if (afterNode.kind === "tab" && afterNode.live && "tabId" in afterNode.live) {
+      const tab = context.runtime.tabs.find((candidate) => candidate.id === afterNode.live.tabId);
+      if (tab) {
+        restoredTabs.push(copyTab(tab));
+      }
+    }
+    if (afterNode.kind === "window" && afterNode.live && "windowId" in afterNode.live) {
+      const windowInfo = context.runtime.windows.find((candidate) => candidate.id === afterNode.live.windowId);
+      if (windowInfo) {
+        restoredWindows.push({ ...windowInfo });
+      }
+    }
+  }
+
+  if (captures.tabs && restoredTabs.length > 0) {
+    context.domainCaptures.staleTabs.set(captures.tabs, restoredTabs.map(copyTab));
+    context.domainCaptures.tabs.set(captures.tabs, copyTab(restoredTabs[0]!));
+    context.lastOpenedTabId = restoredTabs[0]!.id;
+  }
+  if (captures.windows && restoredWindows.length > 0) {
+    context.domainCaptures.windows.set(captures.windows, { ...restoredWindows[0]! });
+    context.lastOpenedWindowId = restoredWindows[0]!.id;
+  }
 }
 
 function trackRestoreCommandLifecycleExpectations(

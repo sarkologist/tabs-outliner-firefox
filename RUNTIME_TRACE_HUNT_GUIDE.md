@@ -51,6 +51,7 @@ Useful actions:
 
 `openTab` may include `openerTab` to model opener/reparenting behavior.
 `nativeCloseWindow` may set `order` to `tabsRemovedThenWindowRemoved`, `windowRemovedThenTabsRemoved`, `windowRemovedOnly`, or `tabsRemovedOnly`.
+`outlinerRestoreNodeRejectingCreate` may set `captureRestoredTabs` and `captureRestoredWindows`; these captures bind to current live runtime resources restored from the original closed outline node IDs, not historical tab/window IDs.
 `restartBackground` flushes pending saves, recreates the background controller against the same fake runtime/storage, calls `ensureState`, and keeps named stale captures intact so delayed browser evidence can arrive after restart.
 
 ## Invariants
@@ -113,6 +114,16 @@ Post-recovery discovery started from 139 regression traces and 167 discovery tra
 - Multi-window query skew: simultaneous missing/reordered source and destination windows, no-command browser-created tabs, and stale event-local evidence crossing two runtime windows.
 - Focus/session churn: activation or focus side effects after rejected focus or close commands, followed by session-only refreshes.
 - Restart reconstruction: close rejection or restore/native-close state across background restart, with runtime ID gaps and delayed stale evidence after ledger facts are reconstructed.
+
+## Transaction Boundary Sweep
+
+Transaction-boundary discovery starts from 142 regression traces and 217 discovery traces after close recovery triage. The neutral `lh-*` seed and clone batches bring the discovery corpus to 265 traces. Add further `lh-*` traces by cloning, and avoid mutating fixed `rt-*`, `bh-*`, or `ph-*` repros.
+
+- Target one rule: command side effects for close, delete, restore, relocation, and focus should all become explicit ledger facts before browser evidence can race them.
+- Prefer current-resource captures after restore or history replay. Do not assume a restored tab keeps its old browser tab id.
+- Avoid stale `lastOpenedWindow` after undo/redo when the runtime window may have disappeared; prefer `lastMovedTab`, current restored captures, or `firstRuntimeWindow`.
+- Avoid assuming any runtime window is focused after destructive close/delete/history interleavings unless the trace explicitly focuses one.
+- Initial sparse cells: transaction chains, multi-resource close plans, no-focused-window focus/session edges, partial snapshots after recovery, and restart/history reconstruction after recovered side effects.
 
 ## Five-Minute Mutation Block
 

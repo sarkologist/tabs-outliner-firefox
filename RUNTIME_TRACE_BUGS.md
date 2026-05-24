@@ -22,20 +22,19 @@ Default hunt bounds:
 
 ## Last Domain Run
 
-- Completed: 2026-05-24T09:37:45Z
-- Strategy: post-recovery triage/fix replay after the lifecycle sweep, with real close-side-effect findings promoted and harness artifacts corrected
+- Completed: 2026-05-24T10:42:03Z
+- Strategy: transaction boundary sweep after close/restore recovery, stressing command side-effect recovery plus undo/redo/history boundaries without mutating fixed RT-derived repros
 - Trace ids: current discovery corpus in `src/background/controller.test.ts` and `scripts/hunt-runtime-traces.mjs`
-- Corpus size after triage: 217 discovery traces, 142 regression traces
-- Distinct post-recovery findings triaged: 8
-- Real app findings fixed/promoted: RT-096, RT-098, and RT-103
-- Harness artifacts corrected: RT-097, RT-099, RT-100, RT-101, and RT-102
-- Regression safety replay after fix: 142 known regression traces, 0 failures at 2026-05-24T09:02:27Z and again after promotion at 2026-05-24T09:37Z
-- Current corpus after post-recovery triage/fix: 142 regression traces, 217 discovery traces
-- Status: RT-096, RT-098, and RT-103 are fixed and promoted to regression coverage; RT-097, RT-099, RT-100, RT-101, and RT-102 were harness artifacts corrected in discovery traces. Original discovery repros remain as historical evidence.
+- Corpus size after sweep: 265 discovery traces, 142 regression traces
+- Distinct transaction-boundary findings recorded: RT-104 and RT-105
+- Stop condition: after RT-105, three complete discovery mutation blocks at 258, 262, and 265 traces found no new distinct signatures
+- Regression safety replay: 142 known regression traces, 0 failures at 2026-05-24T10:45:00Z
+- Status: RT-104 and RT-105 are documented, not fixed. They remain discovery-only until the next principled fix pass.
 
 ## Finding Index
 
-- Open recorded findings: none
+- Open recorded findings: RT-104 and RT-105
+- Open transaction-boundary findings: RT-104 through RT-105
 - Fixed/triaged post-recovery lifecycle findings: RT-096 through RT-103
 - Fixed breadth discovery findings: RT-091 through RT-095
 - Fixed reconciliation architecture stress findings: RT-063 through RT-090
@@ -3092,3 +3091,67 @@ action 1: {"type":"outlinerCloseNodeRejectingClose","node":{"tab":{"tabId":2}}}
 <!-- hunt-corpus-run: {"at":"2026-05-24T09:02:27.985Z","mode":"agent-corpus-run","profile":"regression","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","known-finding","manual-refresh","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","race","reconciliation","relocation","restart","restore","session","stale-event","stale-query","tombstone","undo-redo"],"firstTraceId":"rt-active-race","lastTraceId":"bh-restart-restore-create-reject-window","runs":139,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
 
 <!-- hunt-corpus-run: {"at":"2026-05-24T09:31:49.323Z","mode":"agent-corpus-run","profile":"regression","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","known-finding","manual-refresh","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","restart","restore","session","stale-event","stale-query","tombstone","undo-redo"],"firstTraceId":"rt-active-race","lastTraceId":"ph-close-reject-tab-undo-redo","runs":142,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-24T09:59:57.009Z","mode":"agent-corpus-run","profile":"regression","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","known-finding","manual-refresh","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","restart","restore","session","stale-event","stale-query","tombstone","undo-redo"],"firstTraceId":"rt-active-race","lastTraceId":"ph-close-reject-tab-undo-redo","runs":142,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-24T10:10:37.279Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","manual-refresh","metadata","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"lh-id-gap-history-replay","runs":237,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
+
+### RT-104 expected closed node tab:1 is live
+<!-- signature: expected closed node tab:<id> is live
+domain trace: lh-relocated-tab-close-reject-history
+action: {"type":"outlinerUndo"} -->
+
+- First seen: 2026-05-24T10:17:25.882Z
+- Trace id: `lh-relocated-tab-close-reject-history`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=lh-relocated-tab-close-reject-history pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace lh-relocated-tab-close-reject-history: relocated tab close reject history
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"lh-relocated-close-history-old"}
+action 2: {"type":"outlinerCloseNodeRejectingClose","node":{"tab":{"role":"lastMovedTab"}}}
+action 3: {"type":"outlinerUndo"}
+Domain trace: lh-relocated-tab-close-reject-history
+Action 3: {"type":"outlinerUndo"}
+Trace:
+domain trace lh-relocated-tab-close-reject-history: relocated tab close reject history
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"lh-relocated-close-history-old"}
+action 2: {"type":"outlinerCloseNodeRejectingClose","node":{"tab":{"role":"lastMovedTab"}}}
+action 3: {"type":"outlinerUndo"}
+```
+
+<!-- hunt-corpus-run: {"at":"2026-05-24T10:17:29.274Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","manual-refresh","metadata","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"lh-close-reject-focus-reject-restart-current","runs":247,"completedCorpus":true,"failures":1,"duplicateFailures":0,"newFindings":1} -->
+
+### RT-105 expected closed node tab:1 is live
+<!-- signature: expected closed node tab:<id> is live
+domain trace: lh-relocated-window-close-reject-history
+action: {"type":"outlinerUndo"} -->
+
+- First seen: 2026-05-24T10:23:46.052Z
+- Trace id: `lh-relocated-window-close-reject-history`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=lh-relocated-window-close-reject-history pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace lh-relocated-window-close-reject-history: relocated window close reject history
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"lh-relocated-window-history-old"}
+action 2: {"type":"outlinerCloseNodeRejectingClose","node":{"window":{"role":"lastOpenedWindow"}}}
+action 3: {"type":"outlinerUndo"}
+Domain trace: lh-relocated-window-close-reject-history
+Action 3: {"type":"outlinerUndo"}
+Trace:
+domain trace lh-relocated-window-close-reject-history: relocated window close reject history
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"lh-relocated-window-history-old"}
+action 2: {"type":"outlinerCloseNodeRejectingClose","node":{"window":{"role":"lastOpenedWindow"}}}
+action 3: {"type":"outlinerUndo"}
+```
+
+<!-- hunt-corpus-run: {"at":"2026-05-24T10:23:52.327Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","manual-refresh","metadata","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"lh-close-reject-multitab-window-undo-query","runs":253,"completedCorpus":true,"failures":2,"duplicateFailures":1,"newFindings":1} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-24T10:30:03.927Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","manual-refresh","metadata","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"lh-browser-created-close-reject-partial","runs":258,"completedCorpus":true,"failures":2,"duplicateFailures":2,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-24T10:36:04.610Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","manual-refresh","metadata","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"lh-focus-reject-two-window-reorder","runs":262,"completedCorpus":true,"failures":2,"duplicateFailures":2,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-24T10:42:03.431Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","manual-refresh","metadata","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"lh-relocation-fresh-current-native-source-close","runs":265,"completedCorpus":true,"failures":2,"duplicateFailures":2,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-24T10:45:00.523Z","mode":"agent-corpus-run","profile":"regression","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","known-finding","manual-refresh","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","restart","restore","session","stale-event","stale-query","tombstone","undo-redo"],"firstTraceId":"rt-active-race","lastTraceId":"ph-close-reject-tab-undo-redo","runs":142,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
