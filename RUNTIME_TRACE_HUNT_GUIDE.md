@@ -131,6 +131,10 @@ A clean block is measured by wall-clock mutation effort, not by the runner's cor
 
 Do not count a quick inspect/edit/run cycle as a full clean block just because the selected corpus ran once. The runner executes the current corpus once and may finish quickly; the five-minute budget belongs to the adversarial agent loop around the runner.
 
+Do not count time spent waiting for trace execution as mutation effort. A five-minute block means about five minutes of active adversarial work: inspecting sparse coverage, reading relevant code, designing or cloning traces, editing the corpus, and deduping results. Runner wall-clock time is separate verification time, even when the runner takes longer than five minutes.
+
+If the runner is slow, finish the corpus run so failures are fully recorded, then resume the mutation-effort timer afterward. Do not call a block clean merely because a long corpus run produced no new findings; perform the remaining active mutation work and rerun the selected discovery corpus.
+
 Do not count a corpus run as clean if it stops at the runner safety boundary before completing the selected traces. Increase `RUNTIME_TRACE_HUNT_CORPUS_RUN_MS` or reduce the explicit trace selection when you need a complete sweep of a large corpus.
 
 1. Read this guide, the current discovery trace definitions, and the relevant controller/model code.
