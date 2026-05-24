@@ -3158,3 +3158,565 @@ action 3: {"type":"outlinerUndo"}
 <!-- hunt-corpus-run: {"at":"2026-05-24T10:45:00.523Z","mode":"agent-corpus-run","profile":"regression","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","known-finding","manual-refresh","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","restart","restore","session","stale-event","stale-query","tombstone","undo-redo"],"firstTraceId":"rt-active-race","lastTraceId":"ph-close-reject-tab-undo-redo","runs":142,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
 
 <!-- hunt-corpus-run: {"at":"2026-05-24T11:23:35.735Z","mode":"agent-corpus-run","profile":"regression","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","known-finding","manual-refresh","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo"],"firstTraceId":"rt-active-race","lastTraceId":"lh-relocated-window-close-reject-history","runs":144,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-24T11:36:03.859Z","mode":"agent-corpus-run","profile":"regression","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","known-finding","manual-refresh","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo"],"firstTraceId":"rt-active-race","lastTraceId":"lh-relocated-window-close-reject-history","runs":144,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
+
+### RT-106 native-deleted node tab:1 was resurrected
+<!-- signature: native-deleted node tab:<id> was resurrected
+domain trace: hh-native-close-after-relocation-history
+action: {"type":"outlinerUndo"} -->
+
+- First seen: 2026-05-24T11:44:45.034Z
+- Trace id: `hh-native-close-after-relocation-history`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=hh-native-close-after-relocation-history pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace hh-native-close-after-relocation-history: native close after relocation history
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"hh-native-close-old"}
+action 2: {"type":"nativeCloseTab","tab":{"role":"lastMovedTab"},"order":"sessionChangedOnly"}
+action 3: {"type":"outlinerUndo"}
+Domain trace: hh-native-close-after-relocation-history
+Action 3: {"type":"outlinerUndo"}
+Trace:
+domain trace hh-native-close-after-relocation-history: native close after relocation history
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"hh-native-close-old"}
+action 2: {"type":"nativeCloseTab","tab":{"role":"lastMovedTab"},"order":"sessionChangedOnly"}
+action 3: {"type":"outlinerUndo"}
+```
+
+### RT-107 tab 4 active flag diverged
+<!-- signature: tab <id> active flag diverged
+domain trace: hh-delete-source-window-history
+action: {"type":"outlinerUndo"} -->
+
+- First seen: 2026-05-24T11:45:01.551Z
+- Trace id: `hh-delete-source-window-history`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=hh-delete-source-window-history pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace hh-delete-source-window-history: delete source window history
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"hh-delete-source-old"}
+action 2: {"type":"outlinerDeleteNodeRejectingClose","node":{"window":{"windowId":10}}}
+action 3: {"type":"outlinerUndo"}
+Domain trace: hh-delete-source-window-history
+Action 3: {"type":"outlinerUndo"}
+Trace:
+domain trace hh-delete-source-window-history: delete source window history
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"hh-delete-source-old"}
+action 2: {"type":"outlinerDeleteNodeRejectingClose","node":{"window":{"windowId":10}}}
+action 3: {"type":"outlinerUndo"}
+```
+
+<!-- hunt-corpus-run: {"at":"2026-05-24T11:45:02.716Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","history-boundary","manual-refresh","metadata","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"hh-restore-window-history-restart","runs":281,"completedCorpus":true,"failures":2,"duplicateFailures":0,"newFindings":2} -->
+
+### RT-108 native-deleted node tab:1 was resurrected
+<!-- signature: native-deleted node tab:<id> was resurrected
+domain trace: hh-native-close-group-history
+action: {"type":"outlinerUndo"} -->
+
+- First seen: 2026-05-24T11:53:10.053Z
+- Trace id: `hh-native-close-group-history`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=hh-native-close-group-history pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace hh-native-close-group-history: native close group history
+action 1: {"type":"outlinerGroupTab","tab":{"tabId":1},"captureStaleTabs":"hh-native-group-old"}
+action 2: {"type":"nativeCloseTab","tab":{"role":"lastMovedTab"},"order":"sessionChangedOnly"}
+action 3: {"type":"outlinerUndo"}
+Domain trace: hh-native-close-group-history
+Action 3: {"type":"outlinerUndo"}
+Trace:
+domain trace hh-native-close-group-history: native close group history
+action 1: {"type":"outlinerGroupTab","tab":{"tabId":1},"captureStaleTabs":"hh-native-group-old"}
+action 2: {"type":"nativeCloseTab","tab":{"role":"lastMovedTab"},"order":"sessionChangedOnly"}
+action 3: {"type":"outlinerUndo"}
+```
+
+### RT-109 native-deleted node tab:100 was resurrected
+<!-- signature: native-deleted node tab:<id> was resurrected
+domain trace: hh-native-close-opener-history
+action: {"type":"outlinerUndo"} -->
+
+- First seen: 2026-05-24T11:53:11.188Z
+- Trace id: `hh-native-close-opener-history`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=hh-native-close-opener-history pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace hh-native-close-opener-history: native close opener history
+action 1: {"type":"openTab","window":{"windowId":10},"active":false,"openerTab":{"tabId":1},"captureTab":"hh-native-opener-child"}
+action 2: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"capture":"hh-native-opener-child"},"captureStaleTabs":"hh-native-opener-old"}
+action 3: {"type":"nativeCloseTab","tab":{"role":"lastMovedTab"},"order":"sessionChangedOnly"}
+action 4: {"type":"outlinerUndo"}
+Domain trace: hh-native-close-opener-history
+Action 4: {"type":"outlinerUndo"}
+Trace:
+domain trace hh-native-close-opener-history: native close opener history
+action 1: {"type":"openTab","window":{"windowId":10},"active":false,"openerTab":{"tabId":1},"captureTab":"hh-native-opener-child"}
+action 2: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"capture":"hh-native-opener-child"},"captureStaleTabs":"hh-native-opener-old"}
+action 3: {"type":"nativeCloseTab","tab":{"role":"lastMovedTab"},"order":"sessionChangedOnly"}
+action 4: {"type":"outlinerUndo"}
+```
+
+### RT-110 native-deleted node tab:1 was resurrected
+<!-- signature: native-deleted node tab:<id> was resurrected
+domain trace: hh-native-close-restart-before-undo
+action: {"type":"outlinerUndo"} -->
+
+- First seen: 2026-05-24T11:53:12.411Z
+- Trace id: `hh-native-close-restart-before-undo`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=hh-native-close-restart-before-undo pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace hh-native-close-restart-before-undo: native close restart before undo
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"hh-native-restart-old"}
+action 2: {"type":"nativeCloseTab","tab":{"role":"lastMovedTab"},"order":"sessionChangedOnly"}
+action 3: {"type":"restartBackground"}
+action 4: {"type":"outlinerUndo"}
+Domain trace: hh-native-close-restart-before-undo
+Action 4: {"type":"outlinerUndo"}
+Trace:
+domain trace hh-native-close-restart-before-undo: native close restart before undo
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"hh-native-restart-old"}
+action 2: {"type":"nativeCloseTab","tab":{"role":"lastMovedTab"},"order":"sessionChangedOnly"}
+action 3: {"type":"restartBackground"}
+action 4: {"type":"outlinerUndo"}
+```
+
+### RT-111 live tab IDs match runtime tabs
+<!-- signature: live tab IDs match runtime tabs
+domain trace: hh-delete-source-group-history
+action: {"type":"outlinerUndo"} -->
+
+- First seen: 2026-05-24T11:53:14.718Z
+- Trace id: `hh-delete-source-group-history`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=hh-delete-source-group-history pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace hh-delete-source-group-history: delete source group history
+action 1: {"type":"outlinerGroupTab","tab":{"tabId":1},"captureStaleTabs":"hh-delete-source-group-old"}
+action 2: {"type":"outlinerDeleteNodeRejectingClose","node":{"window":{"windowId":10}}}
+action 3: {"type":"outlinerUndo"}
+Domain trace: hh-delete-source-group-history
+Action 3: {"type":"outlinerUndo"}
+Trace:
+domain trace hh-delete-source-group-history: delete source group history
+action 1: {"type":"outlinerGroupTab","tab":{"tabId":1},"captureStaleTabs":"hh-delete-source-group-old"}
+action 2: {"type":"outlinerDeleteNodeRejectingClose","node":{"window":{"windowId":10}}}
+action 3: {"type":"outlinerUndo"}
+```
+
+### RT-112 tab 4 active flag diverged
+<!-- signature: tab <id> active flag diverged
+domain trace: hh-delete-source-focus-history
+action: {"type":"outlinerUndo"} -->
+
+- First seen: 2026-05-24T11:53:16.953Z
+- Trace id: `hh-delete-source-focus-history`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=hh-delete-source-focus-history pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace hh-delete-source-focus-history: delete source focus history
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"hh-delete-source-focus-old"}
+action 2: {"type":"outlinerFocusTab","tab":{"tabId":3}}
+action 3: {"type":"outlinerDeleteNodeRejectingClose","node":{"window":{"windowId":10}}}
+action 4: {"type":"outlinerUndo"}
+Domain trace: hh-delete-source-focus-history
+Action 4: {"type":"outlinerUndo"}
+Trace:
+domain trace hh-delete-source-focus-history: delete source focus history
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"hh-delete-source-focus-old"}
+action 2: {"type":"outlinerFocusTab","tab":{"tabId":3}}
+action 3: {"type":"outlinerDeleteNodeRejectingClose","node":{"window":{"windowId":10}}}
+action 4: {"type":"outlinerUndo"}
+```
+
+### RT-113 tab 4 active flag diverged
+<!-- signature: tab <id> active flag diverged
+domain trace: hh-delete-source-reordered-history
+action: {"type":"outlinerUndo"} -->
+
+- First seen: 2026-05-24T11:53:18.101Z
+- Trace id: `hh-delete-source-reordered-history`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=hh-delete-source-reordered-history pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace hh-delete-source-reordered-history: delete source reordered history
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"hh-delete-source-reordered-old"}
+action 2: {"type":"outlinerDeleteNodeRejectingClose","node":{"window":{"windowId":10}}}
+action 3: {"type":"outlinerUndo"}
+Domain trace: hh-delete-source-reordered-history
+Action 3: {"type":"outlinerUndo"}
+Trace:
+domain trace hh-delete-source-reordered-history: delete source reordered history
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"hh-delete-source-reordered-old"}
+action 2: {"type":"outlinerDeleteNodeRejectingClose","node":{"window":{"windowId":10}}}
+action 3: {"type":"outlinerUndo"}
+```
+
+<!-- hunt-corpus-run: {"at":"2026-05-24T11:53:18.102Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","history-boundary","manual-refresh","metadata","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"hh-delete-source-reordered-history","runs":289,"completedCorpus":true,"failures":8,"duplicateFailures":2,"newFindings":6} -->
+
+### RT-114 live window IDs match runtime windows
+<!-- signature: live window IDs match runtime windows
+domain trace: hh-native-source-window-tabs-then-history
+action: {"type":"outlinerUndo"} -->
+
+- First seen: 2026-05-24T12:01:24.186Z
+- Trace id: `hh-native-source-window-tabs-then-history`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=hh-native-source-window-tabs-then-history pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace hh-native-source-window-tabs-then-history: native source window tabs then history
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"hh-native-source-tabs-then-old"}
+action 2: {"type":"nativeCloseWindow","window":{"windowId":10},"order":"tabsRemovedThenWindowRemoved"}
+action 3: {"type":"outlinerUndo"}
+Domain trace: hh-native-source-window-tabs-then-history
+Action 3: {"type":"outlinerUndo"}
+Trace:
+domain trace hh-native-source-window-tabs-then-history: native source window tabs then history
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"hh-native-source-tabs-then-old"}
+action 2: {"type":"nativeCloseWindow","window":{"windowId":10},"order":"tabsRemovedThenWindowRemoved"}
+action 3: {"type":"outlinerUndo"}
+```
+
+### RT-115 live window IDs match runtime windows
+<!-- signature: live window IDs match runtime windows
+domain trace: hh-native-source-window-restart-history
+action: {"type":"outlinerUndo"} -->
+
+- First seen: 2026-05-24T12:01:25.444Z
+- Trace id: `hh-native-source-window-restart-history`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=hh-native-source-window-restart-history pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace hh-native-source-window-restart-history: native source window restart history
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"hh-native-source-restart-old"}
+action 2: {"type":"nativeCloseWindow","window":{"windowId":10},"order":"windowRemovedThenTabsRemoved"}
+action 3: {"type":"restartBackground"}
+action 4: {"type":"outlinerUndo"}
+Domain trace: hh-native-source-window-restart-history
+Action 4: {"type":"outlinerUndo"}
+Trace:
+domain trace hh-native-source-window-restart-history: native source window restart history
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"hh-native-source-restart-old"}
+action 2: {"type":"nativeCloseWindow","window":{"windowId":10},"order":"windowRemovedThenTabsRemoved"}
+action 3: {"type":"restartBackground"}
+action 4: {"type":"outlinerUndo"}
+```
+
+### RT-116 tab 4 active flag diverged
+<!-- signature: tab <id> active flag diverged
+domain trace: hh-delete-source-window-redo-history
+action: {"type":"outlinerUndo"} -->
+
+- First seen: 2026-05-24T12:01:26.674Z
+- Trace id: `hh-delete-source-window-redo-history`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=hh-delete-source-window-redo-history pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace hh-delete-source-window-redo-history: delete source window redo history
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"hh-delete-source-redo-old"}
+action 2: {"type":"outlinerDeleteNodeRejectingClose","node":{"window":{"windowId":10}}}
+action 3: {"type":"outlinerUndo"}
+Domain trace: hh-delete-source-window-redo-history
+Action 3: {"type":"outlinerUndo"}
+Trace:
+domain trace hh-delete-source-window-redo-history: delete source window redo history
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"hh-delete-source-redo-old"}
+action 2: {"type":"outlinerDeleteNodeRejectingClose","node":{"window":{"windowId":10}}}
+action 3: {"type":"outlinerUndo"}
+```
+
+### RT-117 tab 4 active flag diverged
+<!-- signature: tab <id> active flag diverged
+domain trace: hh-delete-source-restart-before-undo
+action: {"type":"outlinerUndo"} -->
+
+- First seen: 2026-05-24T12:01:27.905Z
+- Trace id: `hh-delete-source-restart-before-undo`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=hh-delete-source-restart-before-undo pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace hh-delete-source-restart-before-undo: delete source restart before undo
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"hh-delete-source-restart-old"}
+action 2: {"type":"outlinerDeleteNodeRejectingClose","node":{"window":{"windowId":10}}}
+action 3: {"type":"restartBackground"}
+action 4: {"type":"outlinerUndo"}
+Domain trace: hh-delete-source-restart-before-undo
+Action 4: {"type":"outlinerUndo"}
+Trace:
+domain trace hh-delete-source-restart-before-undo: delete source restart before undo
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"hh-delete-source-restart-old"}
+action 2: {"type":"outlinerDeleteNodeRejectingClose","node":{"window":{"windowId":10}}}
+action 3: {"type":"restartBackground"}
+action 4: {"type":"outlinerUndo"}
+```
+
+### RT-118 tab 4 active flag diverged
+<!-- signature: tab <id> active flag diverged
+domain trace: hh-delete-source-stale-after-redo
+action: {"type":"outlinerUndo"} -->
+
+- First seen: 2026-05-24T12:01:29.152Z
+- Trace id: `hh-delete-source-stale-after-redo`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=hh-delete-source-stale-after-redo pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace hh-delete-source-stale-after-redo: delete source stale after redo
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"hh-delete-source-stale-redo-old"}
+action 2: {"type":"outlinerDeleteNodeRejectingClose","node":{"window":{"windowId":10}}}
+action 3: {"type":"outlinerUndo"}
+Domain trace: hh-delete-source-stale-after-redo
+Action 3: {"type":"outlinerUndo"}
+Trace:
+domain trace hh-delete-source-stale-after-redo: delete source stale after redo
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"hh-delete-source-stale-redo-old"}
+action 2: {"type":"outlinerDeleteNodeRejectingClose","node":{"window":{"windowId":10}}}
+action 3: {"type":"outlinerUndo"}
+```
+
+### RT-119 tab 4 active flag diverged
+<!-- signature: tab <id> active flag diverged
+domain trace: hh-top-level-delete-source-history
+action: {"type":"outlinerUndo"} -->
+
+- First seen: 2026-05-24T12:01:32.944Z
+- Trace id: `hh-top-level-delete-source-history`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=hh-top-level-delete-source-history pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace hh-top-level-delete-source-history: top level delete source history
+action 1: {"type":"outlinerMoveSubtreeToTopLevel","tab":{"tabId":1},"captureStaleTabs":"hh-top-level-delete-source-old"}
+action 2: {"type":"outlinerDeleteNodeRejectingClose","node":{"window":{"windowId":10}}}
+action 3: {"type":"outlinerUndo"}
+Domain trace: hh-top-level-delete-source-history
+Action 3: {"type":"outlinerUndo"}
+Trace:
+domain trace hh-top-level-delete-source-history: top level delete source history
+action 1: {"type":"outlinerMoveSubtreeToTopLevel","tab":{"tabId":1},"captureStaleTabs":"hh-top-level-delete-source-old"}
+action 2: {"type":"outlinerDeleteNodeRejectingClose","node":{"window":{"windowId":10}}}
+action 3: {"type":"outlinerUndo"}
+```
+
+<!-- hunt-corpus-run: {"at":"2026-05-24T12:01:32.945Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","history-boundary","manual-refresh","metadata","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"hh-top-level-delete-source-history","runs":299,"completedCorpus":true,"failures":14,"duplicateFailures":8,"newFindings":6} -->
+
+### RT-120 native-deleted node tab:2 was resurrected
+<!-- signature: native-deleted node tab:<id> was resurrected
+domain trace: hh-restored-tab-native-close-history
+action: {"type":"nativeCloseTab","tab":{"capture":"hh-restored-native-tab"},"order":"tabRemovedThenSessionChanged"} -->
+
+- First seen: 2026-05-24T12:09:38.167Z
+- Trace id: `hh-restored-tab-native-close-history`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=hh-restored-tab-native-close-history pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace hh-restored-tab-native-close-history: restored tab native close history
+action 1: {"type":"outlinerCloseTab","tab":{"tabId":2}}
+action 2: {"type":"outlinerRestoreNodeRejectingCreate","node":{"nodeId":"tab:2"},"captureRestoredTabs":"hh-restored-native-tab"}
+action 3: {"type":"nativeCloseTab","tab":{"capture":"hh-restored-native-tab"},"order":"tabRemovedThenSessionChanged"}
+Domain trace: hh-restored-tab-native-close-history
+Action 3: {"type":"nativeCloseTab","tab":{"capture":"hh-restored-native-tab"},"order":"tabRemovedThenSessionChanged"}
+Trace:
+domain trace hh-restored-tab-native-close-history: restored tab native close history
+action 1: {"type":"outlinerCloseTab","tab":{"tabId":2}}
+action 2: {"type":"outlinerRestoreNodeRejectingCreate","node":{"nodeId":"tab:2"},"captureRestoredTabs":"hh-restored-native-tab"}
+action 3: {"type":"nativeCloseTab","tab":{"capture":"hh-restored-native-tab"},"order":"tabRemovedThenSessionChanged"}
+```
+
+### RT-121 live window IDs match runtime windows
+<!-- signature: live window IDs match runtime windows
+domain trace: hh-native-source-window-only-redo
+action: {"type":"outlinerUndo"} -->
+
+- First seen: 2026-05-24T12:09:42.955Z
+- Trace id: `hh-native-source-window-only-redo`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=hh-native-source-window-only-redo pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace hh-native-source-window-only-redo: native source window only redo
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"hh-native-source-window-only-old"}
+action 2: {"type":"nativeCloseWindow","window":{"windowId":10},"order":"windowRemovedOnly"}
+action 3: {"type":"outlinerUndo"}
+Domain trace: hh-native-source-window-only-redo
+Action 3: {"type":"outlinerUndo"}
+Trace:
+domain trace hh-native-source-window-only-redo: native source window only redo
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"hh-native-source-window-only-old"}
+action 2: {"type":"nativeCloseWindow","window":{"windowId":10},"order":"windowRemovedOnly"}
+action 3: {"type":"outlinerUndo"}
+```
+
+### RT-122 live window IDs match runtime windows
+<!-- signature: live window IDs match runtime windows
+domain trace: hh-native-source-tabs-only-redo
+action: {"type":"outlinerUndo"} -->
+
+- First seen: 2026-05-24T12:09:44.171Z
+- Trace id: `hh-native-source-tabs-only-redo`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=hh-native-source-tabs-only-redo pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace hh-native-source-tabs-only-redo: native source tabs only redo
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"hh-native-source-tabs-only-old"}
+action 2: {"type":"nativeCloseWindow","window":{"windowId":10},"order":"tabsRemovedOnly"}
+action 3: {"type":"outlinerUndo"}
+Domain trace: hh-native-source-tabs-only-redo
+Action 3: {"type":"outlinerUndo"}
+Trace:
+domain trace hh-native-source-tabs-only-redo: native source tabs only redo
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"hh-native-source-tabs-only-old"}
+action 2: {"type":"nativeCloseWindow","window":{"windowId":10},"order":"tabsRemovedOnly"}
+action 3: {"type":"outlinerUndo"}
+```
+
+### RT-123 live window IDs match runtime windows
+<!-- signature: live window IDs match runtime windows
+domain trace: hh-native-source-focus-history
+action: {"type":"outlinerUndo"} -->
+
+- First seen: 2026-05-24T12:09:45.353Z
+- Trace id: `hh-native-source-focus-history`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=hh-native-source-focus-history pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace hh-native-source-focus-history: native source focus history
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"hh-native-source-focus-old"}
+action 2: {"type":"outlinerFocusTab","tab":{"role":"lastMovedTab"}}
+action 3: {"type":"nativeCloseWindow","window":{"windowId":10},"order":"tabsRemovedThenWindowRemoved"}
+action 4: {"type":"outlinerUndo"}
+Domain trace: hh-native-source-focus-history
+Action 4: {"type":"outlinerUndo"}
+Trace:
+domain trace hh-native-source-focus-history: native source focus history
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"hh-native-source-focus-old"}
+action 2: {"type":"outlinerFocusTab","tab":{"role":"lastMovedTab"}}
+action 3: {"type":"nativeCloseWindow","window":{"windowId":10},"order":"tabsRemovedThenWindowRemoved"}
+action 4: {"type":"outlinerUndo"}
+```
+
+### RT-124 live window IDs match runtime windows
+<!-- signature: live window IDs match runtime windows
+domain trace: hh-native-source-opener-history
+action: {"type":"outlinerUndo"} -->
+
+- First seen: 2026-05-24T12:09:46.570Z
+- Trace id: `hh-native-source-opener-history`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=hh-native-source-opener-history pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace hh-native-source-opener-history: native source opener history
+action 1: {"type":"openTab","window":{"windowId":10},"active":false,"openerTab":{"tabId":1},"captureTab":"hh-native-source-opener-child"}
+action 2: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"capture":"hh-native-source-opener-child"},"captureStaleTabs":"hh-native-source-opener-old"}
+action 3: {"type":"nativeCloseWindow","window":{"windowId":10},"order":"tabsRemovedThenWindowRemoved"}
+action 4: {"type":"outlinerUndo"}
+Domain trace: hh-native-source-opener-history
+Action 4: {"type":"outlinerUndo"}
+Trace:
+domain trace hh-native-source-opener-history: native source opener history
+action 1: {"type":"openTab","window":{"windowId":10},"active":false,"openerTab":{"tabId":1},"captureTab":"hh-native-source-opener-child"}
+action 2: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"capture":"hh-native-source-opener-child"},"captureStaleTabs":"hh-native-source-opener-old"}
+action 3: {"type":"nativeCloseWindow","window":{"windowId":10},"order":"tabsRemovedThenWindowRemoved"}
+action 4: {"type":"outlinerUndo"}
+```
+
+<!-- hunt-corpus-run: {"at":"2026-05-24T12:09:46.571Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","history-boundary","manual-refresh","metadata","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"hh-native-source-opener-history","runs":307,"completedCorpus":true,"failures":19,"duplicateFailures":14,"newFindings":5} -->
+
+### RT-125 native-deleted node tab:2 was resurrected
+<!-- signature: native-deleted node tab:<id> was resurrected
+domain trace: hh-restored-tab-native-session-history
+action: {"type":"nativeCloseTab","tab":{"capture":"hh-restored-native-session-tab"},"order":"sessionChangedOnly"} -->
+
+- First seen: 2026-05-24T12:17:43.988Z
+- Trace id: `hh-restored-tab-native-session-history`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=hh-restored-tab-native-session-history pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace hh-restored-tab-native-session-history: restored tab native session history
+action 1: {"type":"outlinerCloseTab","tab":{"tabId":2}}
+action 2: {"type":"outlinerRestoreNodeRejectingCreate","node":{"nodeId":"tab:2"},"captureRestoredTabs":"hh-restored-native-session-tab"}
+action 3: {"type":"nativeCloseTab","tab":{"capture":"hh-restored-native-session-tab"},"order":"sessionChangedOnly"}
+Domain trace: hh-restored-tab-native-session-history
+Action 3: {"type":"nativeCloseTab","tab":{"capture":"hh-restored-native-session-tab"},"order":"sessionChangedOnly"}
+Trace:
+domain trace hh-restored-tab-native-session-history: restored tab native session history
+action 1: {"type":"outlinerCloseTab","tab":{"tabId":2}}
+action 2: {"type":"outlinerRestoreNodeRejectingCreate","node":{"nodeId":"tab:2"},"captureRestoredTabs":"hh-restored-native-session-tab"}
+action 3: {"type":"nativeCloseTab","tab":{"capture":"hh-restored-native-session-tab"},"order":"sessionChangedOnly"}
+```
+
+### RT-126 native-deleted node tab:2 was resurrected
+<!-- signature: native-deleted node tab:<id> was resurrected
+domain trace: hh-restored-tab-native-restart-history
+action: {"type":"nativeCloseTab","tab":{"capture":"hh-restored-native-restart-tab"},"order":"tabRemovedOnly"} -->
+
+- First seen: 2026-05-24T12:17:45.137Z
+- Trace id: `hh-restored-tab-native-restart-history`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=hh-restored-tab-native-restart-history pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace hh-restored-tab-native-restart-history: restored tab native restart history
+action 1: {"type":"outlinerCloseTab","tab":{"tabId":2}}
+action 2: {"type":"outlinerRestoreNodeRejectingCreate","node":{"nodeId":"tab:2"},"captureRestoredTabs":"hh-restored-native-restart-tab"}
+action 3: {"type":"nativeCloseTab","tab":{"capture":"hh-restored-native-restart-tab"},"order":"tabRemovedOnly"}
+Domain trace: hh-restored-tab-native-restart-history
+Action 3: {"type":"nativeCloseTab","tab":{"capture":"hh-restored-native-restart-tab"},"order":"tabRemovedOnly"}
+Trace:
+domain trace hh-restored-tab-native-restart-history: restored tab native restart history
+action 1: {"type":"outlinerCloseTab","tab":{"tabId":2}}
+action 2: {"type":"outlinerRestoreNodeRejectingCreate","node":{"nodeId":"tab:2"},"captureRestoredTabs":"hh-restored-native-restart-tab"}
+action 3: {"type":"nativeCloseTab","tab":{"capture":"hh-restored-native-restart-tab"},"order":"tabRemovedOnly"}
+```
+
+### RT-127 native-deleted node tab:2 was resurrected
+<!-- signature: native-deleted node tab:<id> was resurrected
+domain trace: hh-restored-tab-native-stale-history
+action: {"type":"nativeCloseTab","tab":{"capture":"hh-restored-native-stale-tab"},"order":"tabRemovedThenSessionChanged"} -->
+
+- First seen: 2026-05-24T12:17:46.254Z
+- Trace id: `hh-restored-tab-native-stale-history`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=hh-restored-tab-native-stale-history pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace hh-restored-tab-native-stale-history: restored tab native stale history
+action 1: {"type":"outlinerCloseTab","tab":{"tabId":2}}
+action 2: {"type":"outlinerRestoreNodeRejectingCreate","node":{"nodeId":"tab:2"},"captureRestoredTabs":"hh-restored-native-stale-tab"}
+action 3: {"type":"nativeCloseTab","tab":{"capture":"hh-restored-native-stale-tab"},"order":"tabRemovedThenSessionChanged"}
+Domain trace: hh-restored-tab-native-stale-history
+Action 3: {"type":"nativeCloseTab","tab":{"capture":"hh-restored-native-stale-tab"},"order":"tabRemovedThenSessionChanged"}
+Trace:
+domain trace hh-restored-tab-native-stale-history: restored tab native stale history
+action 1: {"type":"outlinerCloseTab","tab":{"tabId":2}}
+action 2: {"type":"outlinerRestoreNodeRejectingCreate","node":{"nodeId":"tab:2"},"captureRestoredTabs":"hh-restored-native-stale-tab"}
+action 3: {"type":"nativeCloseTab","tab":{"capture":"hh-restored-native-stale-tab"},"order":"tabRemovedThenSessionChanged"}
+```
+
+<!-- hunt-corpus-run: {"at":"2026-05-24T12:17:51.847Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","history-boundary","manual-refresh","metadata","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"hh-restored-window-native-missing-history","runs":315,"completedCorpus":true,"failures":22,"duplicateFailures":19,"newFindings":3} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-24T12:26:01.991Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","history-boundary","manual-refresh","metadata","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"hh-control-restore-window-redo-history","runs":319,"completedCorpus":true,"failures":22,"duplicateFailures":22,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-24T12:33:37.771Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","history-boundary","manual-refresh","metadata","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"hh-control-delete-created-restart-history","runs":322,"completedCorpus":true,"failures":22,"duplicateFailures":22,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-24T12:41:07.045Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","history-boundary","manual-refresh","metadata","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"hh-control-created-window-delete-history","runs":325,"completedCorpus":true,"failures":22,"duplicateFailures":22,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-24T12:44:19.576Z","mode":"agent-corpus-run","profile":"regression","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","known-finding","manual-refresh","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo"],"firstTraceId":"rt-active-race","lastTraceId":"lh-relocated-window-close-reject-history","runs":144,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->

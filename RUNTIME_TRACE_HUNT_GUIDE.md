@@ -125,6 +125,15 @@ Transaction-boundary discovery started from 142 regression traces and 217 discov
 - Avoid assuming any runtime window is focused after destructive close/delete/history interleavings unless the trace explicitly focuses one.
 - Initial sparse cells: transaction chains, multi-resource close plans, no-focused-window focus/session edges, partial snapshots after recovery, and restart/history reconstruction after recovered side effects.
 
+## History Boundary Sweep
+
+History-boundary discovery starts from 144 regression traces and 263 discovery traces after the transaction-boundary fix. The initial neutral `hh-*` seed batch plus clone sets bring the discovery corpus to 325 traces. Add further `hh-*` traces by cloning, and avoid mutating fixed `rt-*`, `bh-*`, `ph-*`, or `lh-*` repros.
+
+- Target one rule: undo/redo may replay old outline structure, but must not rematerialize browser resources that are currently closed, deleted, tombstoned, or absent after restart.
+- Prefer traces where a trackable history command happens before a later close/delete/restore/runtime lifecycle change.
+- Cover normal close, rejecting close, native close, restore/delete rejection, stale event, partial query, session, and restart around closed or tombstoned resources.
+- Keep `RT-104`/`RT-105` as regression baselines only; use `hh-*` clones for new variants.
+
 ## Five-Minute Mutation Block
 
 A clean block is measured by wall-clock mutation effort, not by the runner's corpus cap and not by the UI's total turn duration. Start a timer for the block. If a new distinct bug appears, record it, reset the clean-streak count, and start a fresh block. If no new distinct bug appears, keep inspecting sparse coverage cells, editing or adding discovery traces, and rerunning the discovery profile until the block has consumed about five minutes.

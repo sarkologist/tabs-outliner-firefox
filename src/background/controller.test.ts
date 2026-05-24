@@ -6972,6 +6972,916 @@ const RUNTIME_DOMAIN_DISCOVERY_TRACES: RuntimeDomainTrace[] = [
       { type: "nativeCloseWindow", window: { windowId: 10 }, order: "windowRemovedThenTabsRemoved" },
       { type: "manualRefreshWithStaleQuery", staleTab: { capture: "lh-fresh-current-native-source-old" } }
     ]
+  },
+  {
+    id: "hh-normal-close-after-relocation-history",
+    title: "normal close after relocation history",
+    notes: "History-boundary seed for normal outliner close after relocation, then undo/redo of the earlier move.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["history-boundary", "relocation", "outliner-close", "undo-redo", "manual-refresh"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "hh-normal-close-old" },
+      { type: "outlinerCloseTab", tab: { role: "lastMovedTab" } },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedo" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "hh-native-close-after-relocation-history",
+    title: "native close after relocation history",
+    notes: "History-boundary seed for browser/native close of a relocated tab before old move undo/redo.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["history-boundary", "relocation", "native-close", "undo-redo", "session"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "hh-native-close-old" },
+      { type: "nativeCloseTab", tab: { role: "lastMovedTab" }, order: "sessionChangedOnly" },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedo" },
+      { type: "sessionChanged" }
+    ]
+  },
+  {
+    id: "hh-group-close-history-stale-old",
+    title: "group close history stale old",
+    notes: "History-boundary seed for grouped relocation, close, old move undo, and stale source-window evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["history-boundary", "relocation", "nested", "outliner-close", "stale-event"],
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "hh-group-close-old" },
+      { type: "outlinerCloseTab", tab: { role: "lastMovedTab" } },
+      { type: "outlinerUndo" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "hh-group-close-old" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "hh-group-window-close-history",
+    title: "group window close history",
+    notes: "History-boundary seed for closing a command-created group window before undo/redo of the grouping command.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["history-boundary", "relocation", "nested", "outliner-close", "undo-redo"],
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "hh-group-window-close-old" },
+      { type: "outlinerCloseWindow", window: { role: "lastOpenedWindow" } },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedo" },
+      { type: "manualRefreshWithStaleQuery", staleTab: { capture: "hh-group-window-close-old" } }
+    ]
+  },
+  {
+    id: "hh-relocation-reject-close-history",
+    title: "relocation reject close history",
+    notes: "History-boundary seed for relocation create side effect recovery followed by close and history replay.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["history-boundary", "relocation", "command-rejection", "outliner-close", "undo-redo"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindowRejectingCreate", tab: { tabId: 1 }, captureStaleTabs: "hh-reject-close-old" },
+      { type: "outlinerCloseTab", tab: { role: "lastMovedTab" } },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedo" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "hh-restore-after-closed-history",
+    title: "restore after closed history",
+    notes: "History-boundary seed for restoring a tab after an old move undo touched its closed outline record.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["history-boundary", "relocation", "restore", "undo-redo", "command-rejection"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "hh-restore-after-history-old" },
+      { type: "outlinerCloseTab", tab: { role: "lastMovedTab" } },
+      { type: "outlinerUndo" },
+      { type: "outlinerRestoreNodeRejectingCreate", node: { nodeId: "tab:1" }, captureRestoredTabs: "hh-restored-after-history-tab" },
+      { type: "manualRefreshWithMissingTabQuery", tab: { capture: "hh-restored-after-history-tab" } }
+    ]
+  },
+  {
+    id: "hh-delete-reject-after-closed-history",
+    title: "delete reject after closed history",
+    notes: "History-boundary seed for deleting a closed relocated record after old move undo.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["history-boundary", "relocation", "delete-rejection", "undo-redo", "manual-refresh"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "hh-delete-after-history-old" },
+      { type: "outlinerCloseTab", tab: { role: "lastMovedTab" } },
+      { type: "outlinerUndo" },
+      { type: "outlinerDeleteNodeRejectingClose", node: { nodeId: "tab:1" } },
+      { type: "manualRefreshWithStaleQuery", staleTab: { capture: "hh-delete-after-history-old" } }
+    ]
+  },
+  {
+    id: "hh-opener-child-closed-history",
+    title: "opener child closed history",
+    notes: "History-boundary seed for opener-linked moved tab closed before history replay and stale opener/source evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["history-boundary", "opener", "relocation", "outliner-close", "stale-event"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, openerTab: { tabId: 1 }, captureTab: "hh-opener-child" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { capture: "hh-opener-child" }, captureStaleTabs: "hh-opener-child-old" },
+      { type: "outlinerCloseTab", tab: { role: "lastMovedTab" } },
+      { type: "outlinerUndo" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "hh-opener-child-old" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "hh-focus-session-around-closed-history",
+    title: "focus session around closed history",
+    notes: "History-boundary seed for focus/session churn around a closed relocated tab touched by old undo.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["history-boundary", "relocation", "focus", "session", "undo-redo"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "hh-focus-session-old" },
+      { type: "outlinerFocusTab", tab: { role: "lastMovedTab" } },
+      { type: "outlinerCloseTab", tab: { role: "lastMovedTab" } },
+      { type: "outlinerUndo" },
+      { type: "sessionChanged" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "hh-restart-after-closed-history",
+    title: "restart after closed history",
+    notes: "History-boundary seed for restart reconstruction after old move undo touches a closed relocated record.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["history-boundary", "relocation", "outliner-close", "restart", "manual-refresh"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "hh-restart-closed-old" },
+      { type: "outlinerCloseTab", tab: { role: "lastMovedTab" } },
+      { type: "outlinerUndo" },
+      { type: "restartBackground" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "hh-redo-closed-stale-old",
+    title: "redo closed stale old",
+    notes: "History-boundary seed for stale old-window event after undo/redo around a closed relocated record.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["history-boundary", "relocation", "undo-redo", "stale-event", "manual-refresh"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "hh-redo-closed-old" },
+      { type: "outlinerCloseTab", tab: { role: "lastMovedTab" } },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedo" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "hh-redo-closed-old" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "hh-missing-source-after-closed-history",
+    title: "missing source after closed history",
+    notes: "History-boundary seed for missing source-window snapshot after closed-node history replay.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["history-boundary", "relocation", "partial-snapshot", "manual-refresh", "undo-redo"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "hh-missing-source-old" },
+      { type: "outlinerCloseTab", tab: { role: "lastMovedTab" } },
+      { type: "outlinerUndo" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { windowId: 10 } }
+    ]
+  },
+  {
+    id: "hh-missing-first-after-closed-history",
+    title: "missing first after closed history",
+    notes: "History-boundary seed for first surviving window missing from query after closed-node history replay.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["history-boundary", "relocation", "partial-snapshot", "manual-refresh", "undo-redo"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "hh-missing-first-old" },
+      { type: "outlinerCloseTab", tab: { role: "lastMovedTab" } },
+      { type: "outlinerUndo" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { role: "firstRuntimeWindow" } }
+    ]
+  },
+  {
+    id: "hh-close-without-prior-move-control",
+    title: "close without prior move control",
+    notes: "History-boundary control for closing a browser-created tab without prior relocation history.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["history-boundary", "created-event", "outliner-close", "undo-redo", "manual-refresh"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, captureTab: "hh-control-close-tab" },
+      { type: "outlinerCloseTab", tab: { capture: "hh-control-close-tab" } },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedo" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "hh-browser-created-session-control",
+    title: "browser created session control",
+    notes: "History-boundary control for browser-created tab close plus session/reordered query without relocation history.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["history-boundary", "created-event", "session", "outliner-close", "stale-query"],
+    actions: [
+      { type: "openTab", window: { windowId: 20 }, active: true, captureTab: "hh-created-session-tab" },
+      { type: "outlinerCloseTab", tab: { capture: "hh-created-session-tab" } },
+      { type: "sessionChanged" },
+      { type: "manualRefreshWithReorderedQuery", window: { role: "firstRuntimeWindow" }, order: "rotateRight" }
+    ]
+  },
+  {
+    id: "hh-native-window-close-after-relocation-history",
+    title: "native window close after relocation history",
+    notes: "History-boundary seed for native close of command-created destination before old move undo.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["history-boundary", "relocation", "native-close", "event-order", "undo-redo"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "hh-native-window-close-old" },
+      { type: "nativeCloseWindow", window: { role: "lastOpenedWindow" }, order: "windowRemovedOnly" },
+      { type: "outlinerUndo" },
+      { type: "manualRefreshWithStaleQuery", staleTab: { capture: "hh-native-window-close-old" } }
+    ]
+  },
+  {
+    id: "hh-delete-source-window-history",
+    title: "delete source window history",
+    notes: "History-boundary seed for deleting source window after relocation and then replaying old move history.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["history-boundary", "relocation", "delete-rejection", "undo-redo", "partial-snapshot"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "hh-delete-source-old" },
+      { type: "outlinerDeleteNodeRejectingClose", node: { window: { windowId: 10 } } },
+      { type: "outlinerUndo" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { role: "firstRuntimeWindow" } }
+    ]
+  },
+  {
+    id: "hh-restore-window-history-restart",
+    title: "restore window history restart",
+    notes: "History-boundary seed for restore recovery followed by history replay and restart reconstruction.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["history-boundary", "restore", "undo-redo", "restart", "manual-refresh"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeRejectingCreate", node: { nodeId: "window:20" }, captureRestoredWindows: "hh-restore-history-window" },
+      { type: "outlinerUndo" },
+      { type: "restartBackground" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { role: "firstRuntimeWindow" } }
+    ]
+  },
+  {
+    id: "hh-native-close-group-history",
+    title: "native close group history",
+    notes: "History-boundary clone for native session-only close after grouped relocation before history replay.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["history-boundary", "relocation", "nested", "native-close", "undo-redo"],
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "hh-native-group-old" },
+      { type: "nativeCloseTab", tab: { role: "lastMovedTab" }, order: "sessionChangedOnly" },
+      { type: "outlinerUndo" },
+      { type: "manualRefreshWithStaleQuery", staleTab: { capture: "hh-native-group-old" } }
+    ]
+  },
+  {
+    id: "hh-native-close-opener-history",
+    title: "native close opener history",
+    notes: "History-boundary clone for opener-linked relocated tab natively closed before old move undo.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["history-boundary", "opener", "relocation", "native-close", "undo-redo"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, openerTab: { tabId: 1 }, captureTab: "hh-native-opener-child" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { capture: "hh-native-opener-child" }, captureStaleTabs: "hh-native-opener-old" },
+      { type: "nativeCloseTab", tab: { role: "lastMovedTab" }, order: "sessionChangedOnly" },
+      { type: "outlinerUndo" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "hh-native-opener-old" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "hh-native-close-restart-before-undo",
+    title: "native close restart before undo",
+    notes: "History-boundary clone for native-closed relocated tab crossing restart before undo.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["history-boundary", "relocation", "native-close", "restart", "undo-redo"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "hh-native-restart-old" },
+      { type: "nativeCloseTab", tab: { role: "lastMovedTab" }, order: "sessionChangedOnly" },
+      { type: "restartBackground" },
+      { type: "outlinerUndo" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "hh-native-close-tabremoved-history",
+    title: "native close tabremoved history",
+    notes: "History-boundary clone for native tabRemoved event order before old move undo.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["history-boundary", "relocation", "native-close", "event-order", "undo-redo"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "hh-native-tabremoved-old" },
+      { type: "nativeCloseTab", tab: { role: "lastMovedTab" }, order: "tabRemovedThenSessionChanged" },
+      { type: "outlinerUndo" },
+      { type: "manualRefreshWithStaleQuery", staleTab: { capture: "hh-native-tabremoved-old" } }
+    ]
+  },
+  {
+    id: "hh-delete-source-group-history",
+    title: "delete source group history",
+    notes: "History-boundary clone for source-window delete rejection after grouped relocation before old undo.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["history-boundary", "relocation", "nested", "delete-rejection", "undo-redo"],
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "hh-delete-source-group-old" },
+      { type: "outlinerDeleteNodeRejectingClose", node: { window: { windowId: 10 } } },
+      { type: "outlinerUndo" },
+      { type: "manualRefreshWithStaleQuery", staleTab: { capture: "hh-delete-source-group-old" } }
+    ]
+  },
+  {
+    id: "hh-delete-destination-window-history",
+    title: "delete destination window history",
+    notes: "History-boundary clone for deleting command-created destination before old move undo.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["history-boundary", "relocation", "delete-rejection", "undo-redo", "partial-snapshot"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "hh-delete-destination-old" },
+      { type: "outlinerDeleteNodeRejectingClose", node: { window: { role: "lastOpenedWindow" } } },
+      { type: "outlinerUndo" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { role: "firstRuntimeWindow" } }
+    ]
+  },
+  {
+    id: "hh-delete-source-focus-history",
+    title: "delete source focus history",
+    notes: "History-boundary clone for focus churn before source delete rejection and old move undo.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["history-boundary", "relocation", "focus", "delete-rejection", "undo-redo"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "hh-delete-source-focus-old" },
+      { type: "outlinerFocusTab", tab: { tabId: 3 } },
+      { type: "outlinerDeleteNodeRejectingClose", node: { window: { windowId: 10 } } },
+      { type: "outlinerUndo" },
+      { type: "sessionChanged" }
+    ]
+  },
+  {
+    id: "hh-delete-source-reordered-history",
+    title: "delete source reordered history",
+    notes: "History-boundary clone for source delete rejection, old undo, and reordered surviving-window evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["history-boundary", "relocation", "delete-rejection", "stale-query", "undo-redo"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "hh-delete-source-reordered-old" },
+      { type: "outlinerDeleteNodeRejectingClose", node: { window: { windowId: 10 } } },
+      { type: "outlinerUndo" },
+      { type: "manualRefreshWithReorderedQuery", window: { role: "firstRuntimeWindow" }, order: "reverse" }
+    ]
+  },
+  {
+    id: "hh-native-destination-tabs-then-history",
+    title: "native destination tabs then history",
+    notes: "History-boundary clone for destination window native close with tab removals before window removal, then old move history.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["history-boundary", "relocation", "native-close", "event-order", "undo-redo"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "hh-native-dest-tabs-then-old" },
+      { type: "nativeCloseWindow", window: { role: "lastOpenedWindow" }, order: "tabsRemovedThenWindowRemoved" },
+      { type: "outlinerUndo" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "hh-native-dest-tabs-then-old" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "hh-native-destination-tabs-only-redo",
+    title: "native destination tabs only redo",
+    notes: "History-boundary clone for tabs-only destination close followed by undo/redo of the old relocation.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["history-boundary", "relocation", "native-close", "event-order", "undo-redo"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "hh-native-dest-tabs-only-old" },
+      { type: "nativeCloseWindow", window: { role: "lastOpenedWindow" }, order: "tabsRemovedOnly" },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedo" },
+      { type: "sessionChanged" }
+    ]
+  },
+  {
+    id: "hh-native-source-window-tabs-then-history",
+    title: "native source window tabs then history",
+    notes: "History-boundary clone for source window native close after relocation before old move undo.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["history-boundary", "relocation", "native-close", "event-order", "undo-redo"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "hh-native-source-tabs-then-old" },
+      { type: "nativeCloseWindow", window: { windowId: 10 }, order: "tabsRemovedThenWindowRemoved" },
+      { type: "outlinerUndo" },
+      { type: "manualRefreshWithStaleQuery", staleTab: { capture: "hh-native-source-tabs-then-old" } }
+    ]
+  },
+  {
+    id: "hh-native-source-window-restart-history",
+    title: "native source window restart history",
+    notes: "History-boundary clone for source window native close crossing restart before undo.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["history-boundary", "relocation", "native-close", "restart", "undo-redo"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "hh-native-source-restart-old" },
+      { type: "nativeCloseWindow", window: { windowId: 10 }, order: "windowRemovedThenTabsRemoved" },
+      { type: "restartBackground" },
+      { type: "outlinerUndo" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "hh-delete-source-window-redo-history",
+    title: "delete source window redo history",
+    notes: "History-boundary clone for source delete rejection followed by undo/redo of the old relocation.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["history-boundary", "relocation", "delete-rejection", "undo-redo", "manual-refresh"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "hh-delete-source-redo-old" },
+      { type: "outlinerDeleteNodeRejectingClose", node: { window: { windowId: 10 } } },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedo" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "hh-delete-source-restart-before-undo",
+    title: "delete source restart before undo",
+    notes: "History-boundary clone for source delete rejection crossing restart before old move undo.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["history-boundary", "relocation", "delete-rejection", "restart", "undo-redo"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "hh-delete-source-restart-old" },
+      { type: "outlinerDeleteNodeRejectingClose", node: { window: { windowId: 10 } } },
+      { type: "restartBackground" },
+      { type: "outlinerUndo" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "hh-delete-source-stale-after-redo",
+    title: "delete source stale after redo",
+    notes: "History-boundary clone for source delete rejection, undo/redo, and late stale source-window evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["history-boundary", "relocation", "delete-rejection", "stale-event", "undo-redo"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "hh-delete-source-stale-redo-old" },
+      { type: "outlinerDeleteNodeRejectingClose", node: { window: { windowId: 10 } } },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedo" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "hh-delete-source-stale-redo-old" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "hh-delete-source-opener-history",
+    title: "delete source opener history",
+    notes: "History-boundary clone for opener-linked relocated child after source delete rejection and old undo.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["history-boundary", "opener", "relocation", "delete-rejection", "undo-redo"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, openerTab: { tabId: 1 }, captureTab: "hh-delete-source-opener-child" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { capture: "hh-delete-source-opener-child" }, captureStaleTabs: "hh-delete-source-opener-old" },
+      { type: "outlinerDeleteNodeRejectingClose", node: { window: { windowId: 10 } } },
+      { type: "outlinerUndo" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "hh-delete-source-opener-old" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "hh-top-level-native-close-history",
+    title: "top level native close history",
+    notes: "History-boundary clone for top-level relocation natively closed before old move undo.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["history-boundary", "relocation", "native-close", "undo-redo", "stale-event"],
+    actions: [
+      { type: "outlinerMoveSubtreeToTopLevel", tab: { tabId: 1 }, captureStaleTabs: "hh-top-level-native-old" },
+      { type: "nativeCloseTab", tab: { role: "lastMovedTab" }, order: "sessionChangedThenTabRemoved" },
+      { type: "outlinerUndo" },
+      { type: "manualRefreshWithStaleQuery", staleTab: { capture: "hh-top-level-native-old" } }
+    ]
+  },
+  {
+    id: "hh-top-level-delete-source-history",
+    title: "top level delete source history",
+    notes: "History-boundary clone for top-level relocation, source delete rejection, and old undo.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["history-boundary", "relocation", "delete-rejection", "undo-redo", "partial-snapshot"],
+    actions: [
+      { type: "outlinerMoveSubtreeToTopLevel", tab: { tabId: 1 }, captureStaleTabs: "hh-top-level-delete-source-old" },
+      { type: "outlinerDeleteNodeRejectingClose", node: { window: { windowId: 10 } } },
+      { type: "outlinerUndo" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { role: "firstRuntimeWindow" } }
+    ]
+  },
+  {
+    id: "hh-restored-tab-native-close-history",
+    title: "restored tab native close history",
+    notes: "History-boundary clone for a restored tab that is natively closed before undo of the restore entry.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["history-boundary", "restore", "native-close", "undo-redo", "tombstone"],
+    actions: [
+      { type: "outlinerCloseTab", tab: { tabId: 2 } },
+      { type: "outlinerRestoreNodeRejectingCreate", node: { nodeId: "tab:2" }, captureRestoredTabs: "hh-restored-native-tab" },
+      { type: "nativeCloseTab", tab: { capture: "hh-restored-native-tab" }, order: "tabRemovedThenSessionChanged" },
+      { type: "outlinerUndo" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "hh-restored-window-native-close-history",
+    title: "restored window native close history",
+    notes: "History-boundary clone for a restored window that is natively closed before undo of the restore entry.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["history-boundary", "restore", "native-close", "undo-redo", "tombstone"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeRejectingCreate", node: { nodeId: "window:20" }, captureRestoredWindows: "hh-restored-native-window" },
+      { type: "nativeCloseWindow", window: { capture: "hh-restored-native-window" }, order: "tabsRemovedThenWindowRemoved" },
+      { type: "outlinerUndo" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "hh-restored-tab-delete-reject-history",
+    title: "restored tab delete reject history",
+    notes: "History-boundary clone for deleting a recovered restored tab before replaying restore history.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["history-boundary", "restore", "delete-rejection", "undo-redo", "manual-refresh"],
+    actions: [
+      { type: "outlinerCloseTab", tab: { tabId: 2 } },
+      { type: "outlinerRestoreNodeRejectingCreate", node: { nodeId: "tab:2" }, captureRestoredTabs: "hh-restored-delete-tab" },
+      { type: "outlinerDeleteNodeRejectingClose", node: { tab: { capture: "hh-restored-delete-tab" } } },
+      { type: "outlinerUndo" },
+      { type: "manualRefreshWithMissingTabQuery", tab: { capture: "hh-restored-delete-tab" } }
+    ]
+  },
+  {
+    id: "hh-restored-window-delete-reject-history",
+    title: "restored window delete reject history",
+    notes: "History-boundary clone for deleting a recovered restored window before replaying restore history.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["history-boundary", "restore", "delete-rejection", "undo-redo", "partial-snapshot"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeRejectingCreate", node: { nodeId: "window:20" }, captureRestoredWindows: "hh-restored-delete-window" },
+      { type: "outlinerDeleteNodeRejectingClose", node: { window: { capture: "hh-restored-delete-window" } } },
+      { type: "outlinerUndo" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { role: "firstRuntimeWindow" } }
+    ]
+  },
+  {
+    id: "hh-native-source-window-only-redo",
+    title: "native source window only redo",
+    notes: "History-boundary clone for window-only source close before undo/redo of the old relocation.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["history-boundary", "relocation", "native-close", "event-order", "undo-redo"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "hh-native-source-window-only-old" },
+      { type: "nativeCloseWindow", window: { windowId: 10 }, order: "windowRemovedOnly" },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedo" },
+      { type: "manualRefreshWithStaleQuery", staleTab: { capture: "hh-native-source-window-only-old" } }
+    ]
+  },
+  {
+    id: "hh-native-source-tabs-only-redo",
+    title: "native source tabs only redo",
+    notes: "History-boundary clone for tabs-only source close before undo/redo of the old relocation.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["history-boundary", "relocation", "native-close", "event-order", "undo-redo"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "hh-native-source-tabs-only-old" },
+      { type: "nativeCloseWindow", window: { windowId: 10 }, order: "tabsRemovedOnly" },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedo" },
+      { type: "manualRefreshWithStaleQuery", staleTab: { capture: "hh-native-source-tabs-only-old" } }
+    ]
+  },
+  {
+    id: "hh-native-source-focus-history",
+    title: "native source focus history",
+    notes: "History-boundary clone for focus churn before native source close and old move undo.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["history-boundary", "relocation", "native-close", "focus", "undo-redo"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "hh-native-source-focus-old" },
+      { type: "outlinerFocusTab", tab: { role: "lastMovedTab" } },
+      { type: "nativeCloseWindow", window: { windowId: 10 }, order: "tabsRemovedThenWindowRemoved" },
+      { type: "outlinerUndo" },
+      { type: "sessionChanged" }
+    ]
+  },
+  {
+    id: "hh-native-source-opener-history",
+    title: "native source opener history",
+    notes: "History-boundary clone for opener-linked relocated child after native source close and old move undo.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["history-boundary", "opener", "relocation", "native-close", "undo-redo"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, openerTab: { tabId: 1 }, captureTab: "hh-native-source-opener-child" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { capture: "hh-native-source-opener-child" }, captureStaleTabs: "hh-native-source-opener-old" },
+      { type: "nativeCloseWindow", window: { windowId: 10 }, order: "tabsRemovedThenWindowRemoved" },
+      { type: "outlinerUndo" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "hh-native-source-opener-old" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "hh-restored-tab-native-session-history",
+    title: "restored tab native session history",
+    notes: "History-boundary clone for restored tab closed by session-only evidence before restore undo.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["history-boundary", "restore", "native-close", "session", "undo-redo"],
+    actions: [
+      { type: "outlinerCloseTab", tab: { tabId: 2 } },
+      { type: "outlinerRestoreNodeRejectingCreate", node: { nodeId: "tab:2" }, captureRestoredTabs: "hh-restored-native-session-tab" },
+      { type: "nativeCloseTab", tab: { capture: "hh-restored-native-session-tab" }, order: "sessionChangedOnly" },
+      { type: "outlinerUndo" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "hh-restored-tab-native-restart-history",
+    title: "restored tab native restart history",
+    notes: "History-boundary clone for restored tab natively closed, then restart before restore undo.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["history-boundary", "restore", "native-close", "restart", "undo-redo"],
+    actions: [
+      { type: "outlinerCloseTab", tab: { tabId: 2 } },
+      { type: "outlinerRestoreNodeRejectingCreate", node: { nodeId: "tab:2" }, captureRestoredTabs: "hh-restored-native-restart-tab" },
+      { type: "nativeCloseTab", tab: { capture: "hh-restored-native-restart-tab" }, order: "tabRemovedOnly" },
+      { type: "restartBackground" },
+      { type: "outlinerUndo" }
+    ]
+  },
+  {
+    id: "hh-restored-tab-native-stale-history",
+    title: "restored tab native stale history",
+    notes: "History-boundary clone for restored tab native close followed by stale restored-tab evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["history-boundary", "restore", "native-close", "stale-event", "manual-refresh"],
+    actions: [
+      { type: "outlinerCloseTab", tab: { tabId: 2 } },
+      { type: "outlinerRestoreNodeRejectingCreate", node: { nodeId: "tab:2" }, captureRestoredTabs: "hh-restored-native-stale-tab" },
+      { type: "nativeCloseTab", tab: { capture: "hh-restored-native-stale-tab" }, order: "tabRemovedThenSessionChanged" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "hh-restored-native-stale-tab" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "hh-restored-window-native-window-only-history",
+    title: "restored window native window only history",
+    notes: "History-boundary clone for restored window closed by windowRemovedOnly evidence before restore undo.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["history-boundary", "restore", "native-close", "event-order", "undo-redo"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeRejectingCreate", node: { nodeId: "window:20" }, captureRestoredWindows: "hh-restored-window-only-window" },
+      { type: "nativeCloseWindow", window: { capture: "hh-restored-window-only-window" }, order: "windowRemovedOnly" },
+      { type: "outlinerUndo" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "hh-restored-window-native-tabs-only-history",
+    title: "restored window native tabs only history",
+    notes: "History-boundary clone for restored window closed by tabsRemovedOnly evidence before restore undo/redo.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["history-boundary", "restore", "native-close", "event-order", "undo-redo"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeRejectingCreate", node: { nodeId: "window:20" }, captureRestoredWindows: "hh-restored-tabs-only-window" },
+      { type: "nativeCloseWindow", window: { capture: "hh-restored-tabs-only-window" }, order: "tabsRemovedOnly" },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedo" }
+    ]
+  },
+  {
+    id: "hh-restored-window-native-restart-history",
+    title: "restored window native restart history",
+    notes: "History-boundary clone for restored window natively closed, then restart before restore undo.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["history-boundary", "restore", "native-close", "restart", "undo-redo"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeRejectingCreate", node: { nodeId: "window:20" }, captureRestoredWindows: "hh-restored-native-restart-window" },
+      { type: "nativeCloseWindow", window: { capture: "hh-restored-native-restart-window" }, order: "windowRemovedThenTabsRemoved" },
+      { type: "restartBackground" },
+      { type: "outlinerUndo" }
+    ]
+  },
+  {
+    id: "hh-restored-window-native-stale-history",
+    title: "restored window native stale history",
+    notes: "History-boundary clone for restored window native close followed by stale restored-tab evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["history-boundary", "restore", "native-close", "stale-event", "manual-refresh"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeRejectingCreate", node: { nodeId: "window:20" }, captureRestoredTabs: "hh-restored-window-stale-tabs", captureRestoredWindows: "hh-restored-window-stale-window" },
+      { type: "nativeCloseWindow", window: { capture: "hh-restored-window-stale-window" }, order: "tabsRemovedThenWindowRemoved" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "hh-restored-window-stale-tabs" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "hh-restored-window-native-missing-history",
+    title: "restored window native missing history",
+    notes: "History-boundary clone for restored window native close followed by a missing-window refresh.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["history-boundary", "restore", "native-close", "partial-snapshot", "manual-refresh"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeRejectingCreate", node: { nodeId: "window:20" }, captureRestoredWindows: "hh-restored-window-missing-window" },
+      { type: "nativeCloseWindow", window: { capture: "hh-restored-window-missing-window" }, order: "windowRemovedOnly" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { role: "firstRuntimeWindow" } }
+    ]
+  },
+  {
+    id: "hh-control-browser-close-restart-history",
+    title: "control browser close restart history",
+    notes: "History-boundary control for browser-created tab close, undo, restart, and refresh without prior relocation.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["history-boundary", "created-event", "outliner-close", "restart", "manual-refresh"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, captureTab: "hh-control-browser-restart-tab" },
+      { type: "outlinerCloseTab", tab: { capture: "hh-control-browser-restart-tab" } },
+      { type: "outlinerUndo" },
+      { type: "restartBackground" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "hh-control-browser-close-redo-query",
+    title: "control browser close redo query",
+    notes: "History-boundary control for browser-created tab close, undo/redo, and reordered query without relocation.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["history-boundary", "created-event", "outliner-close", "undo-redo", "stale-query"],
+    actions: [
+      { type: "openTab", window: { windowId: 20 }, active: false, captureTab: "hh-control-browser-redo-tab" },
+      { type: "outlinerCloseTab", tab: { capture: "hh-control-browser-redo-tab" } },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedo" },
+      { type: "manualRefreshWithReorderedQuery", window: { role: "firstRuntimeWindow" }, order: "rotateLeft" }
+    ]
+  },
+  {
+    id: "hh-control-delete-browser-created-history",
+    title: "control delete browser created history",
+    notes: "History-boundary control for delete rejection on a browser-created tab before history replay.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["history-boundary", "created-event", "delete-rejection", "undo-redo", "manual-refresh"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, captureTab: "hh-control-delete-browser-tab" },
+      { type: "outlinerDeleteNodeRejectingClose", node: { tab: { capture: "hh-control-delete-browser-tab" } } },
+      { type: "outlinerUndo" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "hh-control-restore-window-redo-history",
+    title: "control restore window redo history",
+    notes: "History-boundary control for restore recovery and undo/redo without later native deletion.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["history-boundary", "restore", "undo-redo", "manual-refresh"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeRejectingCreate", node: { nodeId: "window:20" }, captureRestoredWindows: "hh-control-restore-redo-window" },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedo" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "hh-control-browser-created-missing-history",
+    title: "control browser created missing history",
+    notes: "History-boundary control for browser-created tab history replay with a missing-window query.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["history-boundary", "created-event", "partial-snapshot", "undo-redo", "manual-refresh"],
+    actions: [
+      { type: "openTab", window: { windowId: 20 }, active: false, captureTab: "hh-control-browser-missing-tab" },
+      { type: "outlinerCloseTab", tab: { capture: "hh-control-browser-missing-tab" } },
+      { type: "outlinerUndo" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { windowId: 20 } }
+    ]
+  },
+  {
+    id: "hh-control-restore-tab-redo-query",
+    title: "control restore tab redo query",
+    notes: "History-boundary control for restored tab undo/redo and reordered query without later native deletion.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["history-boundary", "restore", "undo-redo", "stale-query", "manual-refresh"],
+    actions: [
+      { type: "outlinerCloseTab", tab: { tabId: 2 } },
+      { type: "outlinerRestoreNodeRejectingCreate", node: { nodeId: "tab:2" }, captureRestoredTabs: "hh-control-restore-redo-tab" },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedo" },
+      { type: "manualRefreshWithReorderedQuery", window: { role: "firstRuntimeWindow" }, order: "rotateRight" }
+    ]
+  },
+  {
+    id: "hh-control-delete-created-restart-history",
+    title: "control delete created restart history",
+    notes: "History-boundary control for browser-created tab delete rejection crossing restart before undo.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["history-boundary", "created-event", "delete-rejection", "restart", "undo-redo"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, captureTab: "hh-control-delete-created-restart-tab" },
+      { type: "outlinerDeleteNodeRejectingClose", node: { tab: { capture: "hh-control-delete-created-restart-tab" } } },
+      { type: "restartBackground" },
+      { type: "outlinerUndo" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "hh-control-created-focus-session-history",
+    title: "control created focus session history",
+    notes: "History-boundary control for browser-created tab focus/session churn around close history.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["history-boundary", "created-event", "focus", "session", "undo-redo"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, captureTab: "hh-control-created-focus-tab" },
+      { type: "outlinerFocusTab", tab: { capture: "hh-control-created-focus-tab" } },
+      { type: "outlinerCloseTab", tab: { capture: "hh-control-created-focus-tab" } },
+      { type: "outlinerUndo" },
+      { type: "sessionChanged" }
+    ]
+  },
+  {
+    id: "hh-control-restore-tab-restart-query",
+    title: "control restore tab restart query",
+    notes: "History-boundary control for restored tab history replay across restart without native deletion.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["history-boundary", "restore", "restart", "undo-redo", "manual-refresh"],
+    actions: [
+      { type: "outlinerCloseTab", tab: { tabId: 2 } },
+      { type: "outlinerRestoreNodeRejectingCreate", node: { nodeId: "tab:2" }, captureRestoredTabs: "hh-control-restore-restart-tab" },
+      { type: "outlinerUndo" },
+      { type: "restartBackground" },
+      { type: "manualRefreshWithMissingTabQuery", tab: { capture: "hh-control-restore-restart-tab" } }
+    ]
+  },
+  {
+    id: "hh-control-created-window-delete-history",
+    title: "control created window delete history",
+    notes: "History-boundary control for deleting a no-relocation browser-created tab window before undo.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["history-boundary", "created-event", "delete-rejection", "partial-snapshot", "undo-redo"],
+    actions: [
+      { type: "openTab", window: { windowId: 20 }, active: false, captureTab: "hh-control-created-window-tab" },
+      { type: "outlinerDeleteNodeRejectingClose", node: { window: { windowId: 20 } } },
+      { type: "outlinerUndo" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { role: "firstRuntimeWindow" } }
+    ]
   }
 ];
 
