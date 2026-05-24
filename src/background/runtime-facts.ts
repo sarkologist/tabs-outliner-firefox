@@ -366,9 +366,17 @@ export class RuntimeFactLedger {
   clearRemovalTombstonesForLiveState(next: OutlineState): void {
     for (const node of liveTabNodes(next)) {
       this.removedTabIds.delete(node.live.tabId);
+      this.deleteOwnedClosingTabIds.delete(node.live.tabId);
+      this.outlinerClosingTabIds.delete(node.live.tabId);
+      this.reconstructedLiveTabIds.add(node.live.tabId);
+      this.reconstructedMaxTabId = Math.max(this.reconstructedMaxTabId, node.live.tabId);
     }
     for (const node of liveWindowNodes(next)) {
       this.removedWindowIds.delete(node.live.windowId);
+      this.deleteOwnedClosingWindowIds.delete(node.live.windowId);
+      this.outlinerClosingWindowIds.delete(node.live.windowId);
+      this.reconstructedLiveWindowIds.add(node.live.windowId);
+      this.reconstructedMaxWindowId = Math.max(this.reconstructedMaxWindowId, node.live.windowId);
     }
   }
 
@@ -482,6 +490,9 @@ export class RuntimeFactLedger {
 
   recordCommandRestoredTab(tabId: number): void {
     this.commandRestoredTabIds.add(tabId);
+    this.removedTabIds.delete(tabId);
+    this.reconstructedLiveTabIds.add(tabId);
+    this.reconstructedMaxTabId = Math.max(this.reconstructedMaxTabId, tabId);
   }
 
   recordCommandRestoredTabs(
@@ -490,6 +501,11 @@ export class RuntimeFactLedger {
     candidateNodeIds?: readonly NodeId[]
   ): void {
     for (const node of selectedNodes(next, candidateNodeIds)) {
+      if (isLiveWindowNode(node) && node.restoredFromClosed && previous.nodes[node.id]?.status === "closed") {
+        this.removedWindowIds.delete(node.live.windowId);
+        this.reconstructedLiveWindowIds.add(node.live.windowId);
+        this.reconstructedMaxWindowId = Math.max(this.reconstructedMaxWindowId, node.live.windowId);
+      }
       if (!isLiveTabNode(node) || !node.restoredFromClosed || previous.nodes[node.id]?.status !== "closed") {
         continue;
       }

@@ -25,19 +25,20 @@ Default hunt bounds:
 - Completed: 2026-05-23T21:49:48Z
 - Strategy: breadth-first discovery profile, with wall-clock five-minute agent mutation blocks guided by `RUNTIME_TRACE_HUNT_GUIDE.md`
 - Trace ids: current discovery corpus in `src/background/controller.test.ts` and `scripts/hunt-runtime-traces.mjs`
-- Corpus size at stop: 172 discovery traces, 134 regression traces
+- Corpus size at stop: 172 discovery traces, 134 regression traces; after fix promotion: 167 discovery traces, 139 regression traces
 - Distinct discovery findings recorded in breadth hunt: 5
 - New findings in breadth discovery hunt: RT-091 through RT-095
 - Stop condition reached: yes; after RT-095, 3 full five-minute discovery mutation blocks found no new distinct signatures
 - Clean blocks after RT-095: corpus runs ending 21:38:26Z, 21:44:33Z, and 21:49:48Z
 - Duplicate failures during final clean mutation blocks: 15
 - Regression safety replay after hunt: 134 known regression traces, 0 failures at 2026-05-23T21:52:59Z
-- Current corpus after hunt: 134 regression traces, 172 discovery traces
-- Status: RT-091 through RT-095 are documented and not fixed; failing traces are frozen as discovery evidence.
+- Current corpus after fix: 139 regression traces, 167 discovery traces
+- Status: RT-091 through RT-095 are fixed and promoted to regression coverage; original discovery repros remain as historical evidence.
 
 ## Finding Index
 
-- Open recorded findings: RT-091 through RT-095
+- Open recorded findings: none
+- Fixed breadth discovery findings: RT-091 through RT-095
 - Fixed reconciliation architecture stress findings: RT-063 through RT-090
 - Fixed coverage-first discovery findings: RT-040 through RT-062
 - Fixed lower-priming discovery findings: RT-022 through RT-039
@@ -64,6 +65,7 @@ Default hunt bounds:
 - Restored-window trace ownership: RT-064, RT-069, RT-070, RT-078, RT-079, and RT-080 were fixed in the trace harness by resolving close expectations through the current live outline node IDs instead of assuming restored runtime IDs equal outline node IDs.
 - Command focus active updates: RT-083 through RT-086 were fixed by routing active-only command focus update echoes through the command activation fast path, preserving compact active-state broadcasts without requiring a full runtime snapshot.
 - Partial post-restart snapshots for browser-created tabs: RT-087 through RT-090 were fixed by taking one corroborating complete snapshot when a close-missing refresh would otherwise delete a live tab or accept a live tab in the wrong window from suspect query evidence.
+- Restore create rejection side effects: RT-091 through RT-095 were fixed by recording restore `createTab`/`createWindow` attempts, detecting matching browser-created tabs/windows from a complete post-rejection snapshot, restoring the original closed outline nodes from that runtime evidence, and clearing reconstructed tombstones for command-restored resources after restart. The same pass also treats the post-command live outline as authoritative for clearing stale command-owned close guards that would otherwise suppress later runtime evidence for still-live resources.
 - Verification: all listed generated seed repros and promoted domain trace repros pass as of the principled runtime trace fix passes.
 
 ## Restart-Stress Fix Analysis
@@ -2042,7 +2044,7 @@ action: {"type":"staleLiveUpdatedEvent","staleTab":{"capture":"restart-destinati
 - First seen: 2026-05-23T19:49:22.554Z
 - Trace id: `dh-restart-destination-close-stale-old`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-restart-destination-close-stale-old pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in reconciliation architecture stress tightening pass.
 
 ```text
 domain trace dh-restart-destination-close-stale-old: restart destination close stale old
@@ -2070,7 +2072,7 @@ action: {"type":"nativeCloseWindow","window":{"role":"focusedWindow"},"order":"w
 - First seen: 2026-05-23T19:52:12.257Z
 - Trace id: `dh-restore-native-close-after-restart`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-restore-native-close-after-restart pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in reconciliation architecture stress tightening pass.
 
 ```text
 domain trace dh-restore-native-close-after-restart: restore native close after restart
@@ -2098,7 +2100,7 @@ action: {"type":"staleLiveCreatedEvent","staleTab":{"capture":"restart-destinati
 - First seen: 2026-05-23T19:55:24.127Z
 - Trace id: `dh-restart-destination-tabs-only-stale-created`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-restart-destination-tabs-only-stale-created pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in reconciliation architecture stress tightening pass.
 
 ```text
 domain trace dh-restart-destination-tabs-only-stale-created: restart destination tabs only stale created
@@ -2124,7 +2126,7 @@ action: {"type":"staleLiveUpdatedEvent","staleTab":{"capture":"restart-destinati
 - First seen: 2026-05-23T19:55:25.178Z
 - Trace id: `dh-restart-destination-window-first-paired-old`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-restart-destination-window-first-paired-old pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in reconciliation architecture stress tightening pass.
 
 ```text
 domain trace dh-restart-destination-window-first-paired-old: restart destination window first paired old
@@ -2150,7 +2152,7 @@ action: {"type":"staleLiveCreatedEvent","staleTab":{"capture":"restart-relocated
 - First seen: 2026-05-23T19:55:26.204Z
 - Trace id: `dh-restart-relocated-tab-session-only-stale`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-restart-relocated-tab-session-only-stale pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in reconciliation architecture stress tightening pass.
 
 ```text
 domain trace dh-restart-relocated-tab-session-only-stale: restart relocated tab session only stale
@@ -2176,7 +2178,7 @@ action: {"type":"staleLiveUpdatedEvent","staleTab":{"capture":"restart-relocated
 - First seen: 2026-05-23T19:55:27.232Z
 - Trace id: `dh-restart-relocated-tab-removed-only-stale`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-restart-relocated-tab-removed-only-stale pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in reconciliation architecture stress tightening pass.
 
 ```text
 domain trace dh-restart-relocated-tab-removed-only-stale: restart relocated tab removed only stale
@@ -2202,7 +2204,7 @@ action: {"type":"nativeCloseWindow","window":{"role":"focusedWindow"},"order":"t
 - First seen: 2026-05-23T19:55:28.310Z
 - Trace id: `dh-restart-restore-native-tabs-only-stale`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-restart-restore-native-tabs-only-stale pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in reconciliation architecture stress tightening pass.
 
 ```text
 domain trace dh-restart-restore-native-tabs-only-stale: restart restore native tabs only stale
@@ -2228,7 +2230,7 @@ action: {"type":"nativeCloseWindow","window":{"role":"focusedWindow"},"order":"w
 - First seen: 2026-05-23T19:55:29.371Z
 - Trace id: `dh-restart-restore-native-window-first-stale`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-restart-restore-native-window-first-stale pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in reconciliation architecture stress tightening pass.
 
 ```text
 domain trace dh-restart-restore-native-window-first-stale: restart restore native window first stale
@@ -2254,7 +2256,7 @@ action: {"type":"staleLiveUpdatedEvent","staleTab":{"capture":"restart-reject-de
 - First seen: 2026-05-23T19:55:30.451Z
 - Trace id: `dh-restart-reject-destination-close-stale-old`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-restart-reject-destination-close-stale-old pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in reconciliation architecture stress tightening pass.
 
 ```text
 domain trace dh-restart-reject-destination-close-stale-old: restart reject destination close stale old
@@ -2284,7 +2286,7 @@ action: {"type":"staleLiveUpdatedEvent","staleTab":{"capture":"restart-group-des
 - First seen: 2026-05-23T19:58:37.691Z
 - Trace id: `dh-restart-group-destination-close-stale-old`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-restart-group-destination-close-stale-old pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in reconciliation architecture stress tightening pass.
 
 ```text
 domain trace dh-restart-group-destination-close-stale-old: restart group destination close stale old
@@ -2310,7 +2312,7 @@ action: {"type":"staleLiveCreatedEvent","staleTab":{"capture":"restart-top-level
 - First seen: 2026-05-23T19:58:38.746Z
 - Trace id: `dh-restart-top-level-destination-close-stale-old`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-restart-top-level-destination-close-stale-old pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in reconciliation architecture stress tightening pass.
 
 ```text
 domain trace dh-restart-top-level-destination-close-stale-old: restart top level destination close stale old
@@ -2336,7 +2338,7 @@ action: {"type":"staleLiveUpdatedEvent","staleTab":{"capture":"restart-outliner-
 - First seen: 2026-05-23T19:58:39.812Z
 - Trace id: `dh-restart-outliner-close-destination-stale-old`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-restart-outliner-close-destination-stale-old pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in reconciliation architecture stress tightening pass.
 
 ```text
 domain trace dh-restart-outliner-close-destination-stale-old: restart outliner close destination stale old
@@ -2362,7 +2364,7 @@ action: {"type":"staleLiveCreatedEvent","staleTab":{"capture":"restart-outliner-
 - First seen: 2026-05-23T19:58:40.846Z
 - Trace id: `dh-restart-outliner-close-tab-stale-old`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-restart-outliner-close-tab-stale-old pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in reconciliation architecture stress tightening pass.
 
 ```text
 domain trace dh-restart-outliner-close-tab-stale-old: restart outliner close tab stale old
@@ -2390,7 +2392,7 @@ action: {"type":"manualRefreshWithStaleQuery","staleTab":{"capture":"restart-des
 - First seen: 2026-05-23T20:02:02.303Z
 - Trace id: `dh-restart-destination-window-only-manual-stale`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-restart-destination-window-only-manual-stale pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in reconciliation architecture stress tightening pass.
 
 ```text
 domain trace dh-restart-destination-window-only-manual-stale: restart destination window only manual stale
@@ -2416,7 +2418,7 @@ action: {"type":"manualRefreshWithStaleQuery","staleTab":{"capture":"restart-des
 - First seen: 2026-05-23T20:02:03.611Z
 - Trace id: `dh-restart-destination-tabs-only-manual-stale`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-restart-destination-tabs-only-manual-stale pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in reconciliation architecture stress tightening pass.
 
 ```text
 domain trace dh-restart-destination-tabs-only-manual-stale: restart destination tabs only manual stale
@@ -2442,7 +2444,7 @@ action: {"type":"nativeCloseWindow","window":{"role":"focusedWindow"},"order":"t
 - First seen: 2026-05-23T20:02:04.896Z
 - Trace id: `dh-restart-restore-native-default-stale`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-restart-restore-native-default-stale pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in reconciliation architecture stress tightening pass.
 
 ```text
 domain trace dh-restart-restore-native-default-stale: restart restore native default stale
@@ -2468,7 +2470,7 @@ action: {"type":"nativeCloseTab","tab":{"inWindow":{"role":"focusedWindow"}},"or
 - First seen: 2026-05-23T20:02:06.073Z
 - Trace id: `dh-restart-restore-native-tab-close-stale`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-restart-restore-native-tab-close-stale pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in reconciliation architecture stress tightening pass.
 
 ```text
 domain trace dh-restart-restore-native-tab-close-stale: restart restore native tab close stale
@@ -2494,7 +2496,7 @@ action: {"type":"outlinerCloseWindow","window":{"role":"focusedWindow"}} -->
 - First seen: 2026-05-23T20:02:07.315Z
 - Trace id: `dh-restart-restore-outliner-close-window-stale`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-restart-restore-outliner-close-window-stale pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in reconciliation architecture stress tightening pass.
 
 ```text
 domain trace dh-restart-restore-outliner-close-window-stale: restart restore outliner close window stale
@@ -2520,7 +2522,7 @@ action: {"type":"staleLiveCreatedEvent","staleTab":{"capture":"restart-reject-de
 - First seen: 2026-05-23T20:02:08.481Z
 - Trace id: `dh-restart-delete-reject-destination-close-created`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-restart-delete-reject-destination-close-created pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in reconciliation architecture stress tightening pass.
 
 ```text
 domain trace dh-restart-delete-reject-destination-close-created: restart delete reject destination close created
@@ -2548,7 +2550,7 @@ action: {"type":"staleLiveUpdatedEvent","staleTab":{"capture":"opener-chain-dest
 - First seen: 2026-05-23T20:02:09.733Z
 - Trace id: `dh-opener-chain-restart-destination-close`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-opener-chain-restart-destination-close pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in reconciliation architecture stress tightening pass.
 
 ```text
 domain trace dh-opener-chain-restart-destination-close: opener chain restart destination close
@@ -2582,7 +2584,7 @@ action: {"type":"outlinerFocusTab","tab":{"tabId":2}} -->
 - First seen: 2026-05-23T20:08:40.526Z
 - Trace id: `dh-restart-focus-command-no-relocation`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-restart-focus-command-no-relocation pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in reconciliation architecture stress tightening pass.
 
 ```text
 domain trace dh-restart-focus-command-no-relocation: restart focus command no relocation
@@ -2604,7 +2606,7 @@ action: {"type":"outlinerFocusTab","tab":{"tabId":2}} -->
 - First seen: 2026-05-23T20:11:36.669Z
 - Trace id: `dh-restart-focus-command-complete-refresh`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-restart-focus-command-complete-refresh pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in reconciliation architecture stress tightening pass.
 
 ```text
 domain trace dh-restart-focus-command-complete-refresh: restart focus command complete refresh
@@ -2624,7 +2626,7 @@ action: {"type":"outlinerFocusTab","tab":{"tabId":2}} -->
 - First seen: 2026-05-23T20:11:37.715Z
 - Trace id: `dh-restart-focus-command-session-activation`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-restart-focus-command-session-activation pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in reconciliation architecture stress tightening pass.
 
 ```text
 domain trace dh-restart-focus-command-session-activation: restart focus command session activation
@@ -2644,7 +2646,7 @@ action: {"type":"outlinerFocusTab","tab":{"tabId":2}} -->
 - First seen: 2026-05-23T20:11:39.837Z
 - Trace id: `dh-restart-focus-command-missing-focused-tab`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-restart-focus-command-missing-focused-tab pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in reconciliation architecture stress tightening pass.
 
 ```text
 domain trace dh-restart-focus-command-missing-focused-tab: restart focus command missing focused tab
@@ -2668,7 +2670,7 @@ action: {"type":"manualRefreshWithMissingTabQuery","tab":{"capture":"restart-mis
 - First seen: 2026-05-23T20:18:05.688Z
 - Trace id: `dh-restart-missing-opened-tab-query`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-restart-missing-opened-tab-query pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in reconciliation architecture stress tightening pass.
 
 ```text
 domain trace dh-restart-missing-opened-tab-query: restart missing opened tab query
@@ -2694,7 +2696,7 @@ action: {"type":"manualRefreshWithMissingTabQuery","tab":{"capture":"restart-mis
 - First seen: 2026-05-23T20:21:41.488Z
 - Trace id: `dh-restart-missing-background-opened-tab-query`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-restart-missing-background-opened-tab-query pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in reconciliation architecture stress tightening pass.
 
 ```text
 domain trace dh-restart-missing-background-opened-tab-query: restart missing background opened tab query
@@ -2718,7 +2720,7 @@ action: {"type":"manualRefreshWithMissingTabQuery","tab":{"capture":"restart-mis
 - First seen: 2026-05-23T20:21:42.609Z
 - Trace id: `dh-restart-missing-active-opened-tab-query`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-restart-missing-active-opened-tab-query pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in reconciliation architecture stress tightening pass.
 
 ```text
 domain trace dh-restart-missing-active-opened-tab-query: restart missing active opened tab query
@@ -2742,7 +2744,7 @@ action: {"type":"manualRefreshWithMissingTabQuery","tab":{"capture":"restart-mis
 - First seen: 2026-05-23T20:21:43.683Z
 - Trace id: `dh-restart-missing-opener-child-query`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-restart-missing-opener-child-query pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in reconciliation architecture stress tightening pass.
 
 ```text
 domain trace dh-restart-missing-opener-child-query: restart missing opener child query
@@ -2780,7 +2782,7 @@ action: {"type":"outlinerRestoreNodeRejectingCreate","node":{"nodeId":"tab:<id>"
 - First seen: 2026-05-23T21:24:51.934Z
 - Trace id: `bh-restore-create-reject-tab`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=bh-restore-create-reject-tab pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in restore create side-effect recovery pass.
 
 ```text
 domain trace bh-restore-create-reject-tab: restore create reject tab
@@ -2804,7 +2806,7 @@ action: {"type":"outlinerRestoreNodeRejectingCreate","node":{"nodeId":"window:<i
 - First seen: 2026-05-23T21:31:45.805Z
 - Trace id: `bh-restore-create-reject-window`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=bh-restore-create-reject-window pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in restore create side-effect recovery pass.
 
 ```text
 domain trace bh-restore-create-reject-window: restore create reject window
@@ -2826,7 +2828,7 @@ action: {"type":"outlinerRestoreNodeRejectingCreate","node":{"nodeId":"tab:<id>"
 - First seen: 2026-05-23T21:31:46.867Z
 - Trace id: `bh-restart-restore-create-reject-tab`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=bh-restart-restore-create-reject-tab pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in restore create side-effect recovery pass.
 
 ```text
 domain trace bh-restart-restore-create-reject-tab: restart restore create reject tab
@@ -2850,7 +2852,7 @@ action: {"type":"outlinerRestoreNodeRejectingCreate","node":{"nodeId":"tab:<id>"
 - First seen: 2026-05-23T21:31:47.901Z
 - Trace id: `bh-restore-create-reject-tab-after-redo`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=bh-restore-create-reject-tab-after-redo pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in restore create side-effect recovery pass.
 
 ```text
 domain trace bh-restore-create-reject-tab-after-redo: restore create reject tab after redo
@@ -2876,7 +2878,7 @@ action: {"type":"outlinerRestoreNodeRejectingCreate","node":{"nodeId":"window:<i
 - First seen: 2026-05-23T21:31:48.943Z
 - Trace id: `bh-restart-restore-create-reject-window`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=bh-restart-restore-create-reject-window pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in restore create side-effect recovery pass.
 
 ```text
 domain trace bh-restart-restore-create-reject-window: restart restore create reject window
@@ -2901,3 +2903,5 @@ action 3: {"type":"outlinerRestoreNodeRejectingCreate","node":{"nodeId":"window:
 <!-- hunt-corpus-run: {"at":"2026-05-23T21:49:48.511Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","manual-refresh","metadata","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","race","reconciliation","relocation","reparenting","restart","restore","session","stale-event","stale-query","tombstone","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"bh-relocation-reject-source-window-only-restart","runs":172,"completedCorpus":true,"failures":5,"duplicateFailures":5,"newFindings":0} -->
 
 <!-- hunt-corpus-run: {"at":"2026-05-23T21:52:59.827Z","mode":"agent-corpus-run","profile":"regression","coverageTags":["activation","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","known-finding","manual-refresh","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","race","reconciliation","relocation","restart","restore","session","stale-event","stale-query","tombstone","undo-redo"],"firstTraceId":"rt-active-race","lastTraceId":"dh-restart-missing-opener-child-query","runs":134,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-24T07:49:27.269Z","mode":"agent-corpus-run","profile":"regression","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","known-finding","manual-refresh","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","race","reconciliation","relocation","restart","restore","session","stale-event","stale-query","tombstone","undo-redo"],"firstTraceId":"rt-active-race","lastTraceId":"bh-restart-restore-create-reject-window","runs":139,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->

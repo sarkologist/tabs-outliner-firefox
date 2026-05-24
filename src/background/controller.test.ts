@@ -5563,7 +5563,12 @@ const RUNTIME_DOMAIN_DISCOVERED_FINDING_IDS = new Map<string, string[]>([
   ["dh-restart-missing-opened-tab-query", ["RT-087"]],
   ["dh-restart-missing-background-opened-tab-query", ["RT-088"]],
   ["dh-restart-missing-active-opened-tab-query", ["RT-089"]],
-  ["dh-restart-missing-opener-child-query", ["RT-090"]]
+  ["dh-restart-missing-opener-child-query", ["RT-090"]],
+  ["bh-restore-create-reject-tab", ["RT-091"]],
+  ["bh-restore-create-reject-window", ["RT-092"]],
+  ["bh-restart-restore-create-reject-tab", ["RT-093"]],
+  ["bh-restore-create-reject-tab-after-redo", ["RT-094"]],
+  ["bh-restart-restore-create-reject-window", ["RT-095"]]
 ]);
 
 function runtimeDomainTraceWithFindingMetadata(trace: RuntimeDomainTrace): RuntimeDomainTrace {
@@ -7027,8 +7032,8 @@ async function runDomainOutlinerRestoreNodeRejectingCreate(
   context: GeneratedTraceContext,
   selector: DomainNodeSelector
 ): Promise<void> {
-  const state = (await context.controller.handleMessage({ type: "getState" })) as OutlineState;
-  const nodeId = resolveDomainNodeId(context, state, selector);
+  const before = (await context.controller.handleMessage({ type: "getState" })) as OutlineState;
+  const nodeId = resolveDomainNodeId(context, before, selector);
   vi.mocked(context.runtime.api.tabs.create).mockImplementationOnce(async (createProperties) => {
     const windowId =
       createProperties.windowId ??
@@ -7058,7 +7063,27 @@ async function runDomainOutlinerRestoreNodeRejectingCreate(
   } catch {
     // The breadth action models a browser create/restore side effect that completes before the command rejects.
   }
+  const after = (await context.controller.handleMessage({ type: "getState" })) as OutlineState;
+  trackRestoreCommandLifecycleExpectations(context, before, after);
   await flushGeneratedRuntimeEventRefreshes(context);
+}
+
+function trackRestoreCommandLifecycleExpectations(
+  context: GeneratedTraceContext,
+  before: OutlineState,
+  after: OutlineState
+): void {
+  for (const nodeId of [...context.expectedClosedNodeIds]) {
+    if (before.nodes[nodeId]?.status === "closed" && after.nodes[nodeId]?.status === "live") {
+      context.expectedClosedNodeIds.delete(nodeId);
+    }
+  }
+
+  for (const nodeId of [...context.commandDeletedNodeIds]) {
+    if (after.nodes[nodeId]) {
+      context.commandDeletedNodeIds.delete(nodeId);
+    }
+  }
 }
 
 async function runDomainManualRefresh(context: GeneratedTraceContext): Promise<void> {
@@ -11128,6 +11153,285 @@ describe("background controller lifecycle", () => {
 
     expect(calls).toBe(0);
     expect(state.nodes["tab:2"]?.live).toEqual({ tabId: 22, windowId: 10 });
+  });
+
+  it("recovers a closed-tab restore when tabs.create succeeds before rejecting", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        },
+        {
+          id: 2,
+          windowId: 10,
+          index: 1,
+          active: false,
+          url: "https://two.example/",
+          title: "Two"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    await controller.handleMessage({ type: "closeNode", nodeId: "tab:2" });
+    await runtime.events.tabRemoved.flush();
+    await runtime.events.sessionChanged.flush();
+
+    vi.mocked(runtime.api.tabs.create).mockImplementationOnce(async (createProperties) => {
+      const tab: RuntimeTab = {
+        id: 22,
+        windowId: createProperties.windowId ?? 10,
+        index: 1,
+        active: createProperties.active ?? true,
+        url: createProperties.url,
+        title: "Recovered"
+      };
+      await createTabFromBrowser(runtime, tab, { awaitListeners: false });
+      throw new Error("tabs.create rejected after side effect");
+    });
+
+    const result = await controller.handleMessage({ type: "restoreNode", nodeId: "tab:2" });
+    await runtime.events.tabCreated.flush();
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+
+    expectCommandAck(result, true);
+    expect(state.nodes["tab:2"]?.status).toBe("live");
+    expect(state.nodes["tab:2"]?.live).toEqual({ tabId: 22, windowId: 10 });
+    expect(
+      Object.values(state.nodes)
+        .filter((node) => node.kind === "tab" && node.status === "live" && node.live && "tabId" in node.live && node.live.tabId === 22)
+        .map((node) => node.id)
+    ).toEqual(["tab:2"]);
+  });
+
+  it("recovers a closed-window restore when windows.create succeeds before rejecting", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        },
+        {
+          id: 20,
+          focused: false,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        },
+        {
+          id: 2,
+          windowId: 20,
+          index: 0,
+          active: true,
+          url: "https://two.example/",
+          title: "Two"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    await controller.handleMessage({ type: "closeNode", nodeId: "window:20" });
+    await runtime.events.tabRemoved.flush();
+    await runtime.events.windowRemoved.flush();
+    await runtime.events.sessionChanged.flush();
+
+    vi.mocked(runtime.api.windows.create).mockImplementationOnce(async (createData = {}) => {
+      createWindowFromBrowser(runtime, createData as FakeWindowCreateData);
+      throw new Error("windows.create rejected after side effect");
+    });
+
+    const result = await controller.handleMessage({ type: "restoreNode", nodeId: "window:20" });
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+
+    expectCommandAck(result, true);
+    expect(state.nodes["window:20"]?.status).toBe("live");
+    expect(state.nodes["window:20"]?.live).toEqual({ windowId: 21 });
+    expect(state.nodes["tab:2"]?.status).toBe("live");
+    expect(state.nodes["tab:2"]?.live).toEqual({ tabId: 2, windowId: 21 });
+    expect(state.nodes["tab:2"]?.active).toBe(true);
+  });
+
+  it("keeps restart-reconstructed restore tombstones clear after create rejection recovery", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        },
+        {
+          id: 2,
+          windowId: 10,
+          index: 1,
+          active: false,
+          url: "https://two.example/",
+          title: "Two"
+        }
+      ]
+    );
+    let controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    await controller.handleMessage({ type: "closeNode", nodeId: "tab:2" });
+    await runtime.events.tabRemoved.flush();
+    await runtime.events.sessionChanged.flush();
+    await controller.flushPendingSaves();
+    clearFakeRuntimeListeners(runtime);
+    controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+
+    vi.mocked(runtime.api.tabs.create).mockImplementationOnce(async (createProperties) => {
+      const tab: RuntimeTab = {
+        id: 2,
+        windowId: createProperties.windowId ?? 10,
+        index: 1,
+        active: createProperties.active ?? true,
+        url: createProperties.url,
+        title: "Recovered after restart"
+      };
+      await createTabFromBrowser(runtime, tab, { awaitListeners: false });
+      throw new Error("tabs.create rejected after restart side effect");
+    });
+
+    expectCommandAck(await controller.handleMessage({ type: "restoreNode", nodeId: "tab:2" }), true);
+    expectCommandAck(await controller.handleMessage({ type: "refresh" }), false);
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+
+    expect(state.nodes["tab:2"]?.status).toBe("live");
+    expect(state.nodes["tab:2"]?.live).toEqual({ tabId: 2, windowId: 10 });
+    expect(liveTabIds(state)).toEqual([1, 2]);
+  });
+
+  it("recovers tab restore create rejection after redo closes the tab again", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        },
+        {
+          id: 2,
+          windowId: 10,
+          index: 1,
+          active: false,
+          url: "https://two.example/",
+          title: "Two"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    await controller.handleMessage({ type: "closeNode", nodeId: "tab:2" });
+    await runtime.events.tabRemoved.flush();
+    await runtime.events.sessionChanged.flush();
+    await controller.handleMessage({ type: "undo" });
+    await controller.handleMessage({ type: "redo" });
+
+    vi.mocked(runtime.api.tabs.create).mockImplementationOnce(async (createProperties) => {
+      const tab: RuntimeTab = {
+        id: 22,
+        windowId: createProperties.windowId ?? 10,
+        index: 1,
+        active: createProperties.active ?? true,
+        url: createProperties.url,
+        title: "Recovered after redo"
+      };
+      await createTabFromBrowser(runtime, tab, { awaitListeners: false });
+      throw new Error("tabs.create rejected after redo side effect");
+    });
+
+    expectCommandAck(await controller.handleMessage({ type: "restoreNode", nodeId: "tab:2" }), true);
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+
+    expect(state.nodes["tab:2"]?.status).toBe("live");
+    expect(state.nodes["tab:2"]?.live).toEqual({ tabId: 22, windowId: 10 });
+  });
+
+  it("rejects restore create failures when no browser side effect is detectable", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        },
+        {
+          id: 2,
+          windowId: 10,
+          index: 1,
+          active: false,
+          url: "https://two.example/",
+          title: "Two"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    await controller.handleMessage({ type: "closeNode", nodeId: "tab:2" });
+    await runtime.events.tabRemoved.flush();
+    await runtime.events.sessionChanged.flush();
+    vi.mocked(runtime.api.tabs.create).mockImplementationOnce(async () => {
+      throw new Error("tabs.create rejected before side effect");
+    });
+
+    await expect(controller.handleMessage({ type: "restoreNode", nodeId: "tab:2" })).rejects.toThrow(
+      "tabs.create rejected before side effect"
+    );
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+
+    expect(state.nodes["tab:2"]?.status).toBe("closed");
+    expect(runtime.tabs.map((tab) => tab.id).sort((left, right) => left - right)).toEqual([1]);
   });
 
   it("restores one closed tab without traversing unrelated closed siblings", async () => {

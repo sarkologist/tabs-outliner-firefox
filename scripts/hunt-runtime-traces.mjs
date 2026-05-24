@@ -147,7 +147,12 @@ const REGRESSION_TRACE_IDS = [
   "dh-restart-missing-opened-tab-query",
   "dh-restart-missing-background-opened-tab-query",
   "dh-restart-missing-active-opened-tab-query",
-  "dh-restart-missing-opener-child-query"
+  "dh-restart-missing-opener-child-query",
+  "bh-restore-create-reject-tab",
+  "bh-restore-create-reject-window",
+  "bh-restart-restore-create-reject-tab",
+  "bh-restore-create-reject-tab-after-redo",
+  "bh-restart-restore-create-reject-window"
 ];
 const DISCOVERY_TRACE_IDS = [
   "dh-restore-delayed-focus-refresh",
@@ -285,7 +290,6 @@ const DISCOVERY_TRACE_IDS = [
   "bh-restore-delayed-event-after-focus",
   "bh-focus-reject-same-window-session",
   "bh-focus-reject-cross-window-reordered",
-  "bh-restore-create-reject-tab",
   "bh-relocation-reject-after-second-relocation",
   "bh-query-missing-source-reorder-destination",
   "bh-query-empty-focused-background-active",
@@ -295,10 +299,6 @@ const DISCOVERY_TRACE_IDS = [
   "bh-restart-focus-reject",
   "bh-restart-multiple-open-session-churn",
   "bh-restart-runtime-id-gap",
-  "bh-restore-create-reject-window",
-  "bh-restart-restore-create-reject-tab",
-  "bh-restore-create-reject-tab-after-redo",
-  "bh-restart-restore-create-reject-window",
   "bh-focus-reject-after-relocation-restart",
   "bh-focus-reject-opener-chain-query",
   "bh-query-missing-two-windows-reordered-focus",

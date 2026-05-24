@@ -77,14 +77,14 @@ Focus mutations on stale or contradictory evidence crossing command boundaries:
 
 ## Coverage Matrix
 
-Current coverage after the breadth hunt on 2026-05-23: 134 regression traces and 172 discovery traces. The restart-stress expansion recorded RT-063 through RT-090 and was promoted to regression coverage. The breadth sweep added neutral `bh-*` discovery traces, recorded RT-091 through RT-095 around restore create rejection side effects, then stopped after three full five-minute mutation blocks replayed the discovery profile with no new distinct findings.
+Current coverage after the restore create rejection fix pass on 2026-05-24: 139 regression traces and 167 discovery traces. The restart-stress expansion recorded RT-063 through RT-090 and was promoted to regression coverage. The breadth sweep added neutral `bh-*` discovery traces, recorded RT-091 through RT-095 around restore create rejection side effects, and those five traces are now promoted to regression coverage after the recovery fix.
 
 | State shape | Command edge | Runtime skew | Refresh edge | Current coverage | Next target |
 | --- | --- | --- | --- | --- | --- |
 | flat windows | move tab to command window | stale old-window created/update | manual refresh | covered | keep as baseline only |
 | grouped/nested windows | close parent or source window | window removed before/without tab removed | session/manual refresh | regression-covered after RT-044, RT-045, RT-046, RT-053, RT-054, and RT-055 | add deeper nesting and multi-tab ownership permutations |
 | opener-linked tabs | move opened tab across windows | opener survives undo/redo | partial or reordered refresh | expanded and partially regression-covered | add opener chains and opener source-window deletion variants |
-| closed/restored subtree | delete after restore | delayed restored-tab event crosses history | stale, missing, or reordered query | regression-covered after RT-041, RT-042, RT-043, RT-056, RT-060, and RT-062 | add restore plus native close and restore plus relocation rejection combinations |
+| closed/restored subtree | restore/delete/native close after restore | delayed restored-tab event or create rejection side effect crosses history/restart | stale, missing, or reordered query | regression-covered after RT-041, RT-042, RT-043, RT-056, RT-060, RT-062, and RT-091 through RT-095 | add restore plus native close and restore plus relocation rejection combinations |
 | partial command failure | relocation/create rejects | runtime side effect already happened | stale/manual refresh | regression-covered after RT-048, RT-049, RT-057, and RT-059 | add side-effect rejection coverage outside create-window relocation |
 | relocated/source-closed tabs | move or group tab, then source disappears | stale `tabs.query` old/source copy | manual refresh | regression-covered | avoid as primary prompt |
 | relocated live tabs | moved tab remains live | partial `tabs.query` omits tab/window | manual refresh | regression-covered after RT-040, RT-047, RT-050, RT-051, RT-052, RT-058, and RT-061 | add missing-window snapshots for multi-window/multi-tab projections |
@@ -94,7 +94,7 @@ Current coverage after the breadth hunt on 2026-05-23: 134 regression traces and
 
 ## Breadth Hunt Targets
 
-Breadth expansion started from 134 regression traces and 121 discovery traces, then added neutral `bh-*` discovery traces. Prefer new qualitative cells over variants of fixed RT-063 through RT-090 restart stale-relocation repros.
+Breadth expansion started from 134 regression traces and 121 discovery traces, then added neutral `bh-*` discovery traces. After promoting RT-091 through RT-095, the baseline is 139 regression traces and 167 discovery traces. Prefer new qualitative cells over variants of fixed RT-063 through RT-095 repros.
 
 - Deep nested ownership: two-level grouping, multi-tab command-created destinations, native close event-order variants, and focus/session churn inside nested windows.
 - Opener chains: child/grandchild openers across relocation, undo/redo, native close, focus, and partial/reordered query evidence.

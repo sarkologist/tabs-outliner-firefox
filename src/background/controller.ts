@@ -13,7 +13,7 @@ import {
 import { createBrowserAdapter } from "./browser-adapter.js";
 import { computeDiagnostics, type OutlineDiagnostics } from "./diagnostics.js";
 import { isBackgroundCommand, planLiveSubtreeClose, runCommand, syncBrowserOrder } from "./commands.js";
-import type { BackgroundCommand, CommandAck, RuntimeClosePlan } from "./commands.js";
+import type { BackgroundCommand, CommandAck, RestoreCreateAttempt, RuntimeClosePlan } from "./commands.js";
 import { RuntimeFactLedger, runtimeCommandRelocatesLiveTabs } from "./runtime-facts.js";
 import { RuntimeReconciler } from "./runtime-reconciler.js";
 import { getNormalWindow, getNormalWindows, getNormalWindowsIncludingTabs } from "./runtime-snapshot.js";
@@ -63,11 +63,12 @@ import {
   projectLiveTabs,
   reconcileWithWindows,
   repairState,
+  restoreNodes,
   runtimeTitleForOutlineTab,
   wrapNodeInGroup
 } from "../model/outline.js";
 import { buildOutlineLookup, type OutlineLookup } from "../model/outline-lookup.js";
-import type { NodeId, OutlineNode, OutlineState, RuntimeTab, RuntimeWindow } from "../model/types.js";
+import type { NodeId, OutlineNode, OutlineState, RestoredNode, RuntimeTab, RuntimeWindow } from "../model/types.js";
 import { createPerformanceTracer, type TraceDetail, type TraceSnapshot } from "../perf/trace.js";
 import {
   isLabeledTraceSnapshot,
@@ -101,6 +102,16 @@ type PendingRuntimeRefresh = {
   closeMissing: boolean;
   callers: RuntimeRefreshCaller[];
   scheduled: boolean;
+};
+
+type RuntimeResourceIds = {
+  tabIds: Set<number>;
+  windowIds: Set<number>;
+};
+
+type RestoreCreateRecoveryContext = {
+  attempts: RestoreCreateAttempt[];
+  before: RuntimeResourceIds | undefined;
 };
 
 type MutationPriority = "high" | "low";
@@ -591,6 +602,9 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       const restorePatchNodeIds = message.type === "restoreNode"
         ? restorePatchCandidateNodeIds(current, message.nodeId, runtimeIndexForState(current))
         : undefined;
+      const restoreCreateRecovery = message.type === "restoreNode"
+        ? await createRestoreCreateRecoveryContext()
+        : undefined;
       const commandTransaction = runtimeFacts.beginCommandTransactionForCommand(message.type, {
         outlinerClosePlan,
         deleteClosePlan,
@@ -612,21 +626,33 @@ export function createBackgroundController(options: BackgroundControllerOptions)
           detachPersistedStateBaselineForMutation();
         }
         result = await perfTrace.measureAsync("background.command.run", { command: message.type }, () =>
-          runCommand(current, adapter, message)
+          runCommand(current, adapter, message, restoreCreateRecovery
+            ? {
+                restoreObserver: {
+                  recordCreateAttempt: (attempt) => {
+                    restoreCreateRecovery.attempts.push(attempt);
+                  }
+                }
+              }
+            : {})
         );
         if (commandTransaction) {
           runtimeFacts.recordCommandObserved(commandTransaction.id);
         }
       } catch (error) {
-        const recoveredRelocation = runtimeCommandRelocatesLiveTabs(message.type)
+        const recoveredRestore = message.type === "restoreNode" && restoreCreateRecovery
+          ? await recoverRestoreCreateSideEffect(current, restoreCreateRecovery)
+          : undefined;
+        const recoveredRelocation = !recoveredRestore && runtimeCommandRelocatesLiveTabs(message.type)
           ? await recoverCommandRelocationCreateSideEffect(current, message)
           : undefined;
-        if (recoveredRelocation && recoveredRelocation !== current) {
+        const recovered = recoveredRestore ?? recoveredRelocation;
+        if (recovered && recovered !== current) {
           if (commandTransaction) {
             runtimeFacts.recordCommandObserved(commandTransaction.id);
           }
           result = {
-            state: recoveredRelocation,
+            state: recovered,
             changed: true
           };
         } else {
@@ -690,6 +716,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
           ...(restorePatchNodeIds ? { restorePatchNodeIds } : {})
         }
       );
+      runtimeFacts.clearRemovalTombstonesForLiveState(result.state);
       if (runtimeCommandRelocatesLiveTabs(message.type)) {
         runtimeFacts.recordCommandRelocatedTabs(current, result.state, runtimeIndexCandidateNodeIds);
       }
@@ -794,6 +821,178 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
     const openTabIds = new Set(windows.flatMap((windowInfo) => windowInfo.tabs ?? []).map((tab) => tab.id));
     return plan.tabIds.every((tabId) => !openTabIds.has(tabId));
+  }
+
+  async function createRestoreCreateRecoveryContext(): Promise<RestoreCreateRecoveryContext> {
+    const windows = await getNormalWindowsIncludingTabs(api, []).catch(() => undefined);
+    return {
+      attempts: [],
+      before: windows ? runtimeResourceIdsForWindows(windows) : undefined
+    };
+  }
+
+  async function recoverRestoreCreateSideEffect(
+    current: OutlineState,
+    recovery: RestoreCreateRecoveryContext
+  ): Promise<OutlineState | undefined> {
+    if (!recovery.before || recovery.attempts.length === 0) {
+      return undefined;
+    }
+
+    const windows = await getNormalWindowsIncludingTabs(api, []).catch(() => undefined);
+    if (!windows) {
+      return undefined;
+    }
+
+    const restoredNodes = restoredNodesFromRestoreCreateSideEffects(current, recovery.attempts, recovery.before, windows);
+    if (restoredNodes.length === 0) {
+      return undefined;
+    }
+
+    const next = restoreNodes(current, restoredNodes);
+    return next === current ? undefined : next;
+  }
+
+  function runtimeResourceIdsForWindows(windows: RuntimeWindow[]): RuntimeResourceIds {
+    return {
+      windowIds: new Set(windows.map((windowInfo) => windowInfo.id)),
+      tabIds: new Set(windows.flatMap((windowInfo) => windowInfo.tabs ?? []).map((tab) => tab.id))
+    };
+  }
+
+  function restoredNodesFromRestoreCreateSideEffects(
+    state: OutlineState,
+    attempts: readonly RestoreCreateAttempt[],
+    before: RuntimeResourceIds,
+    windows: RuntimeWindow[]
+  ): RestoredNode[] {
+    const restoredNodes: RestoredNode[] = [];
+    const restoredNodeIds = new Set<NodeId>();
+    const usedTabIds = new Set<number>();
+    const usedWindowIds = new Set<number>();
+
+    for (const attempt of attempts) {
+      if (attempt.kind === "tab") {
+        const tab = recoverCreatedTabForAttempt(attempt, before, windows, usedTabIds);
+        if (!tab || state.nodes[attempt.nodeId]?.status !== "closed" || restoredNodeIds.has(attempt.nodeId)) {
+          continue;
+        }
+        usedTabIds.add(tab.id);
+        restoredNodeIds.add(attempt.nodeId);
+        restoredNodes.push(restoredNodeFromRuntimeTab(attempt.nodeId, tab));
+        continue;
+      }
+
+      const windowInfo = recoverCreatedWindowForAttempt(attempt, before, windows, usedWindowIds);
+      if (!windowInfo) {
+        continue;
+      }
+      usedWindowIds.add(windowInfo.id);
+      if (state.nodes[attempt.windowNodeId]?.status === "closed" && !restoredNodeIds.has(attempt.windowNodeId)) {
+        restoredNodeIds.add(attempt.windowNodeId);
+        restoredNodes.push({
+          nodeId: attempt.windowNodeId,
+          windowId: windowInfo.id,
+          active: windowInfo.focused
+        });
+      }
+
+      const availableTabs = [...(windowInfo.tabs ?? [])];
+      for (const [index, tabNodeId] of attempt.tabNodeIds.entries()) {
+        if (state.nodes[tabNodeId]?.status !== "closed" || restoredNodeIds.has(tabNodeId)) {
+          continue;
+        }
+        const tab = takeMatchingRestoredWindowTab(availableTabs, {
+          ...(typeof attempt.createData.tabId === "number" ? { tabId: attempt.createData.tabId } : {}),
+          ...(attempt.urls?.[index] ? { url: attempt.urls[index] } : {}),
+          usedTabIds
+        });
+        if (!tab) {
+          continue;
+        }
+        usedTabIds.add(tab.id);
+        restoredNodeIds.add(tabNodeId);
+        restoredNodes.push(restoredNodeFromRuntimeTab(tabNodeId, tab));
+      }
+    }
+
+    return restoredNodes;
+  }
+
+  function recoverCreatedTabForAttempt(
+    attempt: Extract<RestoreCreateAttempt, { kind: "tab" }>,
+    before: RuntimeResourceIds,
+    windows: RuntimeWindow[],
+    usedTabIds: ReadonlySet<number>
+  ): RuntimeTab | undefined {
+    const tabs = windows
+      .flatMap((windowInfo) => windowInfo.tabs ?? [])
+      .filter((tab) => !before.tabIds.has(tab.id) && !usedTabIds.has(tab.id));
+    const expectedWindowId = attempt.createProperties.windowId;
+    const expectedUrl = attempt.createProperties.url;
+    return tabs.find((tab) =>
+      (typeof expectedWindowId !== "number" || tab.windowId === expectedWindowId) &&
+      (!expectedUrl || tab.url === expectedUrl)
+    ) ?? tabs.find((tab) => !expectedUrl || tab.url === expectedUrl);
+  }
+
+  function recoverCreatedWindowForAttempt(
+    attempt: Extract<RestoreCreateAttempt, { kind: "window" }>,
+    before: RuntimeResourceIds,
+    windows: RuntimeWindow[],
+    usedWindowIds: ReadonlySet<number>
+  ): RuntimeWindow | undefined {
+    const candidates = windows.filter((windowInfo) => !before.windowIds.has(windowInfo.id) && !usedWindowIds.has(windowInfo.id));
+    if (typeof attempt.createData.tabId === "number") {
+      return candidates.find((windowInfo) => (windowInfo.tabs ?? []).some((tab) => tab.id === attempt.createData.tabId));
+    }
+    if (attempt.urls && attempt.urls.length > 0) {
+      return candidates.find((windowInfo) => runtimeWindowHasUrls(windowInfo, attempt.urls ?? [])) ?? candidates[0];
+    }
+    return candidates[0];
+  }
+
+  function runtimeWindowHasUrls(windowInfo: RuntimeWindow, urls: readonly string[]): boolean {
+    const remainingTabs = [...(windowInfo.tabs ?? [])];
+    for (const url of urls) {
+      const index = remainingTabs.findIndex((tab) => tab.url === url);
+      if (index < 0) {
+        return false;
+      }
+      remainingTabs.splice(index, 1);
+    }
+    return true;
+  }
+
+  function takeMatchingRestoredWindowTab(
+    tabs: RuntimeTab[],
+    input: { tabId?: number; url?: string; usedTabIds: ReadonlySet<number> }
+  ): RuntimeTab | undefined {
+    const index = tabs.findIndex((tab) =>
+      !input.usedTabIds.has(tab.id) &&
+      (typeof input.tabId !== "number" || tab.id === input.tabId) &&
+      (!input.url || tab.url === input.url)
+    );
+    const fallbackIndex = index >= 0
+      ? index
+      : tabs.findIndex((tab) => !input.usedTabIds.has(tab.id) && (!input.url || tab.url === input.url));
+    if (fallbackIndex < 0) {
+      return undefined;
+    }
+    const [tab] = tabs.splice(fallbackIndex, 1);
+    return tab;
+  }
+
+  function restoredNodeFromRuntimeTab(nodeId: NodeId, tab: RuntimeTab): RestoredNode {
+    return {
+      nodeId,
+      windowId: tab.windowId,
+      tabId: tab.id,
+      active: tab.active,
+      ...(tab.url ? { url: tab.url } : {}),
+      ...(tab.title ? { title: tab.title } : {}),
+      ...(tab.favIconUrl ? { favIconUrl: tab.favIconUrl } : {})
+    };
   }
 
   async function recoverCommandRelocationCreateSideEffect(

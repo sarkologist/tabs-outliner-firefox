@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { BrowserAdapter } from "./adapter.js";
 import { isBackgroundCommand, runCommand } from "./commands.js";
-import type { BackgroundCommand } from "./commands.js";
+import type { BackgroundCommand, RestoreCreateAttempt } from "./commands.js";
 import {
   LARGE_RESTORE_NODE_THRESHOLD,
   bootstrapFromWindows,
@@ -356,6 +356,186 @@ describe("background commands", () => {
       active: false
     });
     expect(result.state.nodes["tab:2"]?.live).toEqual({ tabId: 23, windowId: 10 });
+  });
+
+  it("records restore tab create attempts for command-side recovery", async () => {
+    const state = closeTab(bootstrapFromWindows(runtimeWindows, { now: 1000 }), 2, {
+      now: 2000,
+      sessionId: "session-tab-2"
+    });
+    const adapter = fakeAdapter({
+      restoreSession: vi.fn(async () => {
+        throw new Error("expired");
+      })
+    });
+    const attempts: RestoreCreateAttempt[] = [];
+
+    await runCommand(state, adapter, { type: "restoreNode", nodeId: "tab:2" }, {
+      restoreObserver: {
+        recordCreateAttempt: (attempt) => attempts.push(attempt)
+      }
+    });
+
+    expect(attempts).toEqual([
+      {
+        kind: "tab",
+        nodeId: "tab:2",
+        windowNodeId: "window:10",
+        createProperties: {
+          url: "https://example.com/child",
+          windowId: 10,
+          active: false
+        }
+      }
+    ]);
+  });
+
+  it("records restore window create attempts for command-side recovery", async () => {
+    const state = closeWindow(bootstrapFromWindows([
+      ...runtimeWindows,
+      {
+        id: 20,
+        focused: false,
+        incognito: false,
+        tabs: [
+          {
+            id: 5,
+            windowId: 20,
+            index: 0,
+            active: true,
+            url: "https://solo.example/",
+            title: "Solo"
+          }
+        ]
+      }
+    ], { now: 1000 }), 20, { now: 2000 });
+    const adapter = fakeAdapter();
+    const attempts: RestoreCreateAttempt[] = [];
+
+    await runCommand(state, adapter, { type: "restoreNode", nodeId: "tab:5" }, {
+      restoreObserver: {
+        recordCreateAttempt: (attempt) => attempts.push(attempt)
+      }
+    });
+
+    expect(attempts).toEqual([
+      {
+        kind: "window",
+        windowNodeId: "window:20",
+        tabNodeIds: ["tab:5"],
+        urls: ["https://solo.example/"],
+        createData: {
+          url: "https://solo.example/"
+        }
+      }
+    ]);
+  });
+
+  it("records multi-tab closed-window restore create attempts for command-side recovery", async () => {
+    const state = closeWindow(bootstrapFromWindows([
+      {
+        id: 20,
+        focused: true,
+        incognito: false,
+        tabs: [
+          {
+            id: 5,
+            windowId: 20,
+            index: 0,
+            active: true,
+            url: "https://one.example/",
+            title: "One"
+          },
+          {
+            id: 6,
+            windowId: 20,
+            index: 1,
+            active: false,
+            url: "https://two.example/",
+            title: "Two"
+          }
+        ]
+      }
+    ], { now: 1000 }), 20, { now: 2000 });
+    const adapter = fakeAdapter();
+    const attempts: RestoreCreateAttempt[] = [];
+
+    await runCommand(state, adapter, { type: "restoreNode", nodeId: "window:20" }, {
+      restoreObserver: {
+        recordCreateAttempt: (attempt) => attempts.push(attempt)
+      }
+    });
+
+    expect(attempts).toEqual([
+      {
+        kind: "window",
+        windowNodeId: "window:20",
+        tabNodeIds: ["tab:5", "tab:6"],
+        urls: ["https://one.example/", "https://two.example/"],
+        createData: {
+          url: ["https://one.example/", "https://two.example/"]
+        }
+      }
+    ]);
+  });
+
+  it("records restored session tab moves into closed-window destinations", async () => {
+    const state = closeTab(bootstrapFromWindows(runtimeWindows, { now: 1000 }), 1, {
+      now: 2000,
+      sessionId: "session-tab-1"
+    });
+    const adapter = fakeAdapter({
+      restoreSession: vi.fn(async () => ({
+        tab: {
+          id: 21,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://example.com/parent",
+          title: "Parent"
+        }
+      })),
+      createWindow: vi.fn(async ({ tabId }) => ({
+        id: 42,
+        focused: true,
+        incognito: false,
+        tabs: typeof tabId === "number"
+          ? [
+              {
+                id: tabId,
+                windowId: 42,
+                index: 0,
+                active: true,
+                url: "https://example.com/parent",
+                title: "Parent"
+              }
+            ]
+          : []
+      }))
+    });
+    const moved = await runCommand(state, adapter, {
+      type: "moveNodeToNewWindow",
+      nodeId: "tab:1"
+    });
+    const placeholderId = moved.state.rootIds.at(-1)!;
+    const attempts: RestoreCreateAttempt[] = [];
+
+    await runCommand(moved.state, adapter, { type: "restoreNode", nodeId: placeholderId }, {
+      restoreObserver: {
+        recordCreateAttempt: (attempt) => attempts.push(attempt)
+      }
+    });
+
+    expect(attempts).toEqual([
+      {
+        kind: "window",
+        windowNodeId: placeholderId,
+        tabNodeIds: ["tab:1"],
+        createData: {
+          tabId: 21
+        }
+      }
+    ]);
   });
 
   it("refuses large restores that have not been confirmed", async () => {
