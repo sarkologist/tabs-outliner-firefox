@@ -78,7 +78,7 @@ Focus mutations on stale or contradictory evidence crossing command boundaries:
 
 ## Coverage Matrix
 
-Current coverage after the post-recovery triage/fix pass on 2026-05-24: 142 regression traces and 217 discovery traces. The restart-stress expansion recorded RT-063 through RT-090 and was promoted to regression coverage. The breadth sweep added neutral `bh-*` discovery traces, recorded RT-091 through RT-095 around restore create rejection side effects, and those five traces are now promoted to regression coverage after the recovery fix. The post-recovery sweep added neutral `ph-*` discovery traces and recorded RT-096 through RT-103; RT-096, RT-098, and RT-103 are promoted regression coverage, while the remaining RT-097/099/100/101/102 entries were harness artifacts corrected in discovery traces.
+Current coverage after the transaction-boundary fix pass on 2026-05-24: 144 regression traces and 263 discovery traces. The restart-stress expansion recorded RT-063 through RT-090 and was promoted to regression coverage. The breadth sweep added neutral `bh-*` discovery traces, recorded RT-091 through RT-095 around restore create rejection side effects, and those five traces are now promoted to regression coverage after the recovery fix. The post-recovery sweep added neutral `ph-*` discovery traces and recorded RT-096 through RT-103; RT-096, RT-098, and RT-103 are promoted regression coverage, while the remaining RT-097/099/100/101/102 entries were harness artifacts corrected in discovery traces. The transaction-boundary sweep recorded RT-104 and RT-105 around history replay after recovered relocated closes; both are promoted regression coverage after the history replay fix.
 
 | State shape | Command edge | Runtime skew | Refresh edge | Current coverage | Next target |
 | --- | --- | --- | --- | --- | --- |
@@ -117,7 +117,7 @@ Post-recovery discovery started from 139 regression traces and 167 discovery tra
 
 ## Transaction Boundary Sweep
 
-Transaction-boundary discovery starts from 142 regression traces and 217 discovery traces after close recovery triage. The neutral `lh-*` seed and clone batches bring the discovery corpus to 265 traces. Add further `lh-*` traces by cloning, and avoid mutating fixed `rt-*`, `bh-*`, or `ph-*` repros.
+Transaction-boundary discovery started from 142 regression traces and 217 discovery traces after close recovery triage. After RT-104/RT-105 promotion, the corpus has 144 regression traces and 263 discovery traces. Add further `lh-*` traces by cloning, and avoid mutating fixed `rt-*`, `bh-*`, or `ph-*` repros.
 
 - Target one rule: command side effects for close, delete, restore, relocation, and focus should all become explicit ledger facts before browser evidence can race them.
 - Prefer current-resource captures after restore or history replay. Do not assume a restored tab keeps its old browser tab id.

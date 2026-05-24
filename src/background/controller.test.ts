@@ -7052,7 +7052,9 @@ const RUNTIME_DOMAIN_DISCOVERED_FINDING_IDS = new Map<string, string[]>([
   ["bh-restart-restore-create-reject-window", ["RT-095"]],
   ["ph-close-reject-tab-session-refresh", ["RT-096"]],
   ["ph-focus-after-close-reject-session", ["RT-098"]],
-  ["ph-close-reject-tab-undo-redo", ["RT-103"]]
+  ["ph-close-reject-tab-undo-redo", ["RT-103"]],
+  ["lh-relocated-tab-close-reject-history", ["RT-104"]],
+  ["lh-relocated-window-close-reject-history", ["RT-105"]]
 ]);
 
 function runtimeDomainTraceWithFindingMetadata(trace: RuntimeDomainTrace): RuntimeDomainTrace {

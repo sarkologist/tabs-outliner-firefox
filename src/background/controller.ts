@@ -1437,13 +1437,71 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   }
 
   async function applyHistoryDeltaWithRuntime(current: OutlineState, delta: OutlineDelta): Promise<OutlineState> {
-    const next = applyOutlineDelta(current, delta);
+    const next = preserveClosedNodesDuringHistoryReplay(current, applyOutlineDelta(current, delta));
     const closedRuntimeResources = await closeDeletedLiveRuntimeResources(current, next);
     const materializedRuntimeResources = await materializeHistoryLiveResources(current, next);
     if (closedRuntimeResources || materializedRuntimeResources || liveStructureChanged(current, next)) {
       await syncBrowserOrder(next, adapter);
     }
     return next;
+  }
+
+  function preserveClosedNodesDuringHistoryReplay(current: OutlineState, next: OutlineState): OutlineState {
+    let changed = false;
+    const nodes = { ...next.nodes };
+    for (const [nodeId, currentNode] of Object.entries(current.nodes)) {
+      const nextNode = nodes[nodeId];
+      if (currentNode.status !== "closed" || nextNode?.status !== "live") {
+        continue;
+      }
+
+      const preservedNode = {
+        ...currentNode,
+        childIds: [...nextNode.childIds],
+        collapsed: nextNode.collapsed
+      };
+      if (nextNode.parentId) {
+        preservedNode.parentId = nextNode.parentId;
+      } else {
+        delete preservedNode.parentId;
+      }
+      nodes[nodeId] = preservedNode;
+      changed = true;
+    }
+
+    const stateView = { ...next, nodes };
+    for (const [nodeId, nextNode] of Object.entries(nodes)) {
+      if (
+        !isLiveWindowNode(nextNode) ||
+        isLiveWindowNode(current.nodes[nodeId]) ||
+        liveTabNodesInSubtree(stateView, nodeId).length > 0
+      ) {
+        continue;
+      }
+
+      const closedAt = now();
+      const preservedWindow: OutlineNode = {
+        ...nextNode,
+        status: "closed" as const,
+        updatedAt: closedAt,
+        closedAt,
+        restore: {
+          ...(nextNode.title ? { title: nextNode.title } : {})
+        }
+      };
+      delete preservedWindow.live;
+      delete preservedWindow.active;
+      delete preservedWindow.restoredFromClosed;
+      nodes[nodeId] = preservedWindow;
+      changed = true;
+    }
+
+    return changed
+      ? {
+          ...next,
+          nodes
+        }
+      : next;
   }
 
   async function closeDeletedLiveRuntimeResources(current: OutlineState, next: OutlineState): Promise<boolean> {

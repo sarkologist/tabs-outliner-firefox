@@ -155,7 +155,9 @@ const REGRESSION_TRACE_IDS = [
   "bh-restart-restore-create-reject-window",
   "ph-close-reject-tab-session-refresh",
   "ph-focus-after-close-reject-session",
-  "ph-close-reject-tab-undo-redo"
+  "ph-close-reject-tab-undo-redo",
+  "lh-relocated-tab-close-reject-history",
+  "lh-relocated-window-close-reject-history"
 ];
 const DISCOVERY_TRACE_IDS = [
   "dh-restore-delayed-focus-refresh",
@@ -401,11 +403,9 @@ const DISCOVERY_TRACE_IDS = [
   "lh-focus-reject-after-window-only-close",
   "lh-restored-window-close-native-order",
   "lh-source-close-reject-missing-destination",
-  "lh-relocated-tab-close-reject-history",
   "lh-delete-reject-window-restore-history",
   "lh-no-command-id-gap-double-partial",
   "lh-close-reject-focus-reject-restart-current",
-  "lh-relocated-window-close-reject-history",
   "lh-restored-tab-delete-reject-focus-restart",
   "lh-restored-window-close-reject-undo",
   "lh-close-reject-native-tabs-only-history",
