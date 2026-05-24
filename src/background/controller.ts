@@ -62,6 +62,7 @@ import {
 } from "../preferences.js";
 import {
   bootstrapFromWindows,
+  analyzeRestoreScope,
   closeTab,
   closeWindow,
   deleteNode as deleteOutlineNode,
@@ -97,6 +98,7 @@ type RefreshOptions = {
   closeMissing?: boolean;
   activationByWindowId?: ReadonlyMap<number, number>;
   focusWindowId?: number;
+  forceSnapshot?: boolean;
 };
 
 type RuntimeRefreshCaller = {
@@ -109,6 +111,7 @@ type PendingRuntimeRefresh = {
   activationByWindowId: Map<number, number>;
   focusWindowIds: Set<number>;
   closeMissing: boolean;
+  forceSnapshot: boolean;
   callers: RuntimeRefreshCaller[];
   scheduled: boolean;
 };
@@ -201,7 +204,7 @@ type InitialTreeSnapshotMessage = {
 };
 
 type InitialTreeSnapshotWindowMessage = {
-  type: "getInitialTreeSnapshotWindow";
+  type: "getInitialTreeSnapshotWindow" | "getTreeProjectionSlice";
   centerRowIndex: number;
   rowLimit?: number;
 };
@@ -380,6 +383,27 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     await perfTrace.measureAsync("background.event.tabs.onCreated", { tabId: tab.id }, () => {
       runtimeFacts.recordNativeTabCreated(tab);
       return queueRuntimeRefresh([tab]);
+    });
+  });
+
+  api.tabs.onDetached?.addListener(async (tabId, detachInfo) => {
+    await perfTrace.measureAsync("background.event.tabs.onDetached", { tabId, windowId: detachInfo.oldWindowId }, () => {
+      runtimeFacts.recordNativeTabDetached(tabId, detachInfo.oldWindowId);
+      return queueRuntimeRefresh([], { closeMissing: false, forceSnapshot: true });
+    });
+  });
+
+  api.tabs.onAttached?.addListener(async (tabId, attachInfo) => {
+    await perfTrace.measureAsync("background.event.tabs.onAttached", { tabId, windowId: attachInfo.newWindowId }, () => {
+      runtimeFacts.recordNativeTabAttached(tabId, attachInfo.newWindowId);
+      return queueRuntimeRefresh([], { closeMissing: false, forceSnapshot: true });
+    });
+  });
+
+  api.tabs.onMoved?.addListener(async (tabId, moveInfo) => {
+    await perfTrace.measureAsync("background.event.tabs.onMoved", { tabId, windowId: moveInfo.windowId }, () => {
+      runtimeFacts.recordNativeTabMoved(tabId, moveInfo.windowId);
+      return queueRuntimeRefresh([], { closeMissing: false, forceSnapshot: true });
     });
   });
 
@@ -640,6 +664,10 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
     if (message.type === "getHistoryStatus") {
       return historyStatusMessage(await ensureHistory());
+    }
+
+    if (message.type === "analyzeRestoreScope") {
+      return analyzeRestoreScope(await ensureState(), message.nodeId);
     }
 
     if (message.type === "undo" || message.type === "redo") {
@@ -1640,7 +1668,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         }
       } else {
         lastPersistedState = loaded.format === "v3" ? cloneOutlineState(stored) : undefined;
-        const reconciled = reconcileWithWindows(startupBase, windows, { now: now() });
+        const reconciled = reconcileWithWindows(startupBase, windows, { now: now() }, { respectRuntimeTabOrder: true });
         state = statesEqualIgnoringUpdatedAt(startupBase, reconciled) ? startupBase : reconciled;
         if (!statesMateriallyEqual(stored, state)) {
           scheduleStateSave(state);
@@ -2041,9 +2069,14 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     delta: OutlineDelta,
     commandType: TrackableHistoryCommandType
   ): Promise<OutlineState> {
-    const next = guardHistoryReplayRuntimeLifecycle(
+    let next = preserveClosedNodesDuringHistoryReplay(current, applyOutlineDelta(current, delta));
+    if (historyReplayMayDropCurrentLiveRuntimeResources(current, next, delta)) {
+      const windowsBeforeReplay = await getNormalWindows(api);
+      next = preserveCurrentLiveRuntimeResourcesDuringHistoryReplay(current, next, delta, windowsBeforeReplay);
+    }
+    next = guardHistoryReplayRuntimeLifecycle(
       current,
-      preserveClosedNodesDuringHistoryReplay(current, applyOutlineDelta(current, delta)),
+      next,
       commandType
     );
     const closedRuntimeResources = await closeDeletedLiveRuntimeResources(current, next);
@@ -2124,6 +2157,78 @@ export function createBackgroundController(options: BackgroundControllerOptions)
           nodes
         }
       : next;
+  }
+
+  function historyReplayMayDropCurrentLiveRuntimeResources(
+    current: OutlineState,
+    next: OutlineState,
+    delta: OutlineDelta
+  ): boolean {
+    const deletedNodeIds = new Set(delta.deletedNodeIds);
+    for (const windowNode of liveWindowNodes(current)) {
+      if (deletedNodeIds.has(windowNode.id)) {
+        continue;
+      }
+      if (!isLiveWindowNode(next.nodes[windowNode.id]) || !nodeIsReachableFromRoot(next, windowNode.id)) {
+        return true;
+      }
+    }
+
+    for (const tabNode of liveTabNodes(current)) {
+      if (deletedNodeIds.has(tabNode.id)) {
+        continue;
+      }
+      const nextNode = next.nodes[tabNode.id];
+      if (!isLiveTabNode(nextNode) || nextNode.live.tabId !== tabNode.live.tabId || !nodeIsReachableFromRoot(next, tabNode.id)) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  function preserveCurrentLiveRuntimeResourcesDuringHistoryReplay(
+    current: OutlineState,
+    next: OutlineState,
+    delta: OutlineDelta,
+    windows: RuntimeWindow[]
+  ): OutlineState {
+    const runtimeWindowIds = new Set(windows.map((windowInfo) => windowInfo.id));
+    const runtimeTabIds = new Set(windows.flatMap((windowInfo) => windowInfo.tabs ?? []).map((tab) => tab.id));
+    const deletedNodeIds = new Set(delta.deletedNodeIds);
+    let preserved: OutlineState | undefined;
+    const mutable = (): OutlineState => {
+      preserved ??= cloneOutlineState(next);
+      return preserved;
+    };
+
+    for (const windowNode of liveWindowNodes(current)) {
+      if (deletedNodeIds.has(windowNode.id) || !runtimeWindowIds.has(windowNode.live.windowId)) {
+        continue;
+      }
+      const nextNode = next.nodes[windowNode.id];
+      if (isLiveWindowNode(nextNode) && nodeIsReachableFromRoot(next, windowNode.id)) {
+        continue;
+      }
+      mergeCurrentLiveWindowSubtree(mutable(), current, windowNode.live.windowId);
+    }
+
+    for (const tabNode of liveTabNodes(current)) {
+      if (deletedNodeIds.has(tabNode.id) || !runtimeTabIds.has(tabNode.live.tabId)) {
+        continue;
+      }
+      const nextNode = next.nodes[tabNode.id];
+      if (
+        isLiveTabNode(nextNode) &&
+        nextNode.live.tabId === tabNode.live.tabId &&
+        nodeIsReachableFromRoot(next, tabNode.id)
+      ) {
+        continue;
+      }
+      mergeCurrentLiveWindowSubtree(mutable(), current, tabNode.live.windowId);
+    }
+
+    return preserved ? repairState(preserved) : next;
   }
 
   function guardHistoryReplayRuntimeLifecycle(
@@ -2291,6 +2396,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     const pending = pendingRuntimeRefresh ?? createPendingRuntimeRefresh();
     pendingRuntimeRefresh = pending;
     pending.closeMissing ||= requestedCloseMissing;
+    pending.forceSnapshot ||= options.forceSnapshot === true;
     if (typeof options.focusWindowId === "number") {
       pending.focusWindowIds.add(options.focusWindowId);
     }
@@ -2332,6 +2438,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       activationByWindowId: new Map(),
       focusWindowIds: new Set(),
       closeMissing: false,
+      forceSnapshot: false,
       callers: [],
       scheduled: false
     };
@@ -2420,7 +2527,8 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       });
       const changed = await refreshFromRuntimeNow(eventTabs, {
         closeMissing: pending.closeMissing,
-        activationByWindowId: pending.activationByWindowId
+        activationByWindowId: pending.activationByWindowId,
+        forceSnapshot: pending.forceSnapshot
       });
       for (const caller of pending.callers) {
         caller.resolve(changed);
@@ -2444,10 +2552,41 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       index,
       ledger: runtimeFacts
     });
-    if (eventTabs.length > 0 && currentEventTabs.length === 0 && !closeMissing) {
+    const allEventTabsWereRelocatedStaleEchoes = eventTabs.length > 0 && eventTabs.every((tab) =>
+      runtimeReconciler.isCommandRelocatedStaleTabEvent(current, index, runtimeFacts, tab)
+    );
+    const allEventTabsWereCommandRestoredAbsorbableEchoes = eventTabs.length > 0 && eventTabs.every((tab) =>
+      runtimeReconciler.isCommandRestoredAbsorbableTabEvent(current, index, runtimeFacts, tab)
+    );
+    const inactiveEventInWindowWithoutKnownActiveTab = eventTabs.some((tab) =>
+      !tab.active &&
+      !index.activeTabNodeIdsByWindowId.has(tab.windowId) &&
+      !runtimeFacts.isTabIgnoredForRefresh(tab.id) &&
+      !runtimeFacts.isWindowIgnoredForRefresh(tab.windowId) &&
+      !allEventTabsWereRelocatedStaleEchoes &&
+      !allEventTabsWereCommandRestoredAbsorbableEchoes
+    );
+    if (
+      eventTabs.length > 0 &&
+      currentEventTabs.length === 0 &&
+      !closeMissing &&
+      options.forceSnapshot !== true &&
+      !inactiveEventInWindowWithoutKnownActiveTab
+    ) {
       return false;
     }
-    if (!closeMissing && currentEventTabs.length > 0) {
+    const restoredEventNeedsShapeCorroboration = runtimeReconciler.eventTabsNeedShapeCorroboration({
+      eventTabs: currentEventTabs,
+      state: current,
+      index,
+      ledger: runtimeFacts
+    });
+    if (
+      !closeMissing &&
+      currentEventTabs.length > 0 &&
+      options.forceSnapshot !== true &&
+      !restoredEventNeedsShapeCorroboration
+    ) {
       const fastPath = await applyRuntimeEventTabsFastPath(current, currentEventTabs, index);
       if (fastPath.handled) {
         if (!fastPath.changed) {
@@ -2473,14 +2612,15 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       confidence: currentEventTabs.length > 0 ? "eventLocal" : closeMissing ? "complete" : "partial",
       activationByWindowId: options.activationByWindowId
     });
-    if (closeMissing && currentEventTabs.length === 0) {
+    if (currentEventTabs.length > 0 || (closeMissing && currentEventTabs.length === 0)) {
       windows = await corroborateMissingOrMismatchedLiveTabs(current, index, windows);
     }
     if (runtimeSnapshotMateriallyMatchesState(current, windows).matches) {
       return false;
     }
     const next = reconcileWithWindows(current, windows, { now: now() }, {
-      closeMissing
+      closeMissing,
+      respectRuntimeTabOrder: true
     });
     if (statesMateriallyEqual(current, next)) {
       return false;
@@ -2506,13 +2646,32 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       index,
       ledger: runtimeFacts
     });
-    if (missingTabIds.length === 0 && mismatchedTabIds.length === 0) {
+    const suspiciousShapeTabIds = runtimeReconciler.suspiciousShapeTabIdsInWindows({
+      windows,
+      state: current,
+      index,
+      ledger: runtimeFacts
+    });
+    const orderMismatchedWindowIds = runtimeReconciler.orderMismatchedWindowIdsInWindows({
+      windows,
+      state: current,
+      index,
+      ledger: runtimeFacts
+    });
+    if (
+      missingTabIds.length === 0 &&
+      mismatchedTabIds.length === 0 &&
+      suspiciousShapeTabIds.length === 0 &&
+      orderMismatchedWindowIds.length === 0
+    ) {
       return windows;
     }
 
     const corroboratingSnapshot = await perfTrace.measureAsync("background.runtime.getWindows.corroborate", {
       missingTabCount: missingTabIds.length,
-      mismatchedTabCount: mismatchedTabIds.length
+      mismatchedTabCount: mismatchedTabIds.length,
+      suspiciousShapeTabCount: suspiciousShapeTabIds.length,
+      orderMismatchedWindowCount: orderMismatchedWindowIds.length
     }, () => getNormalWindows(api));
     const corroboratingWindows = runtimeReconciler.normalizeSnapshot({
       windows: corroboratingSnapshot,
@@ -2532,8 +2691,22 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       index,
       ledger: runtimeFacts
     }));
+    const corroboratedSuspiciousShapeTabIds = new Set(runtimeReconciler.suspiciousShapeTabIdsInWindows({
+      windows: corroboratingWindows,
+      state: current,
+      index,
+      ledger: runtimeFacts
+    }));
+    const corroboratedOrderMismatchedWindowIds = new Set(runtimeReconciler.orderMismatchedWindowIdsInWindows({
+      windows: corroboratingWindows,
+      state: current,
+      index,
+      ledger: runtimeFacts
+    }));
     const contradicted = missingTabIds.some((tabId) => !corroboratedMissingTabIds.has(tabId)) ||
-      mismatchedTabIds.some((tabId) => !corroboratedMismatchedTabIds.has(tabId));
+      mismatchedTabIds.some((tabId) => !corroboratedMismatchedTabIds.has(tabId)) ||
+      suspiciousShapeTabIds.some((tabId) => !corroboratedSuspiciousShapeTabIds.has(tabId)) ||
+      orderMismatchedWindowIds.some((windowId) => !corroboratedOrderMismatchedWindowIds.has(windowId));
 
     return contradicted ? corroboratingWindows : windows;
   }
@@ -2717,19 +2890,6 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       activeTabNodeIdOverrides.set(windowId, activeTabNodeId);
     };
 
-    const deactivateTabForRuntimeFastPath = (windowId: number, tabNodeId: NodeId): void => {
-      const tabNode = nodeForPlan(tabNodeId);
-      if (tabNode?.active !== false) {
-        const mutableTabNode = mutableNodeForPlan(tabNodeId);
-        if (mutableTabNode) {
-          mutableTabNode.active = false;
-        }
-      }
-      if (plannedActiveTabNodeId(windowId) === tabNodeId) {
-        activeTabNodeIdOverrides.set(windowId, undefined);
-      }
-    };
-
     const applyPlannedIndexUpdates = (): void => {
       for (const [windowId, nodeId] of liveWindowNodeIdAdditions) {
         index.liveWindowNodeIdsByRuntimeId.set(windowId, nodeId);
@@ -2798,7 +2958,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         if (tab.active) {
           activateTabForRuntimeFastPath(tab.windowId, existingTabNodeId);
         } else if (wasActive) {
-          deactivateTabForRuntimeFastPath(tab.windowId, existingTabNodeId);
+          return { handled: false };
         }
         continue;
       }
@@ -4872,6 +5032,30 @@ function liveTabNodesInSubtree(
   return nodes;
 }
 
+function nodeIsReachableFromRoot(state: OutlineState, nodeId: NodeId): boolean {
+  const visited = new Set<NodeId>();
+  const stack = [...state.rootIds];
+  while (stack.length > 0) {
+    const currentId = stack.pop()!;
+    if (currentId === nodeId) {
+      return true;
+    }
+    if (visited.has(currentId)) {
+      continue;
+    }
+    visited.add(currentId);
+
+    const node = state.nodes[currentId];
+    if (!node) {
+      continue;
+    }
+    for (const childId of node.childIds) {
+      stack.push(childId);
+    }
+  }
+  return false;
+}
+
 function mergeCurrentLiveWindowSubtree(state: OutlineState, current: OutlineState, runtimeWindowId: number): void {
   const windowNode = liveWindowNodes(current).find((candidate) => candidate.live.windowId === runtimeWindowId);
   if (!windowNode) {
@@ -5013,7 +5197,10 @@ function isInitialTreeSnapshotWindowMessage(message: unknown): message is Initia
   return Boolean(
     message &&
       typeof message === "object" &&
-      (message as { type?: unknown }).type === "getInitialTreeSnapshotWindow" &&
+      (
+        (message as { type?: unknown }).type === "getInitialTreeSnapshotWindow" ||
+        (message as { type?: unknown }).type === "getTreeProjectionSlice"
+      ) &&
       typeof (message as { centerRowIndex?: unknown }).centerRowIndex === "number" &&
       Number.isFinite((message as { centerRowIndex?: number }).centerRowIndex)
   );

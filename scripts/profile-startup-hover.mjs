@@ -18,6 +18,8 @@ const STARTUP_HOVER_RESULTS_TSV_HEADER = [
   "first_paint_median_ms",
   "first_paint_max_ms",
   "first_paint_action_buttons_max",
+  "sparse_hover_action_buttons_min",
+  "hydration_action_buttons_min",
   "sparse_hover_frame_max_ms",
   "sparse_hover_feedback_max_ms",
   "hydration_before_idle_max",
@@ -136,6 +138,10 @@ function summarize(results) {
     .filter(isFiniteNumber);
   const sparseHoverFeedbackMaxValues = sparseHoverProfiles.map((profile) => profile.hoverFeedbackDelay?.maxMs)
     .filter(isFiniteNumber);
+  const sparseHoverActionButtons = sparseHoverProfiles.map((profile) => profile.actionButtonsAfterHover)
+    .filter(isFiniteNumber);
+  const hydrationActionButtons = hydrationProfiles.map((profile) => profile.actionButtonsAfterHydration)
+    .filter(isFiniteNumber);
   const hydrationBeforeIdleValues = hydrationProfiles.map((profile) => profile.hydrationRequestsBeforeIdle)
     .filter(isFiniteNumber);
   const remoteHydrationDelayValues = remoteProfiles
@@ -147,6 +153,8 @@ function summarize(results) {
     firstPaintMedianMs: median(firstPaintDurations),
     firstPaintMaxMs: max(firstPaintDurations),
     firstPaintActionButtonsMax: max(firstPaintActionButtons),
+    sparseHoverActionButtonsMin: min(sparseHoverActionButtons),
+    hydrationActionButtonsMin: min(hydrationActionButtons),
     sparseHoverFrameMaxMs: max(sparseHoverFrameMaxValues),
     sparseHoverFeedbackMaxMs: max(sparseHoverFeedbackMaxValues),
     hydrationBeforeIdleMax: max(hydrationBeforeIdleValues),
@@ -184,6 +192,12 @@ function startupHoverGuardFailures(summary, profiles) {
   if (summary.firstPaintActionButtonsMax !== 0) {
     failures.push("sparse hydrating first paint must not render inert action buttons");
   }
+  if (summary.sparseHoverActionButtonsMin <= 0) {
+    failures.push("sparse hover must materialize action buttons for the hovered row");
+  }
+  if (summary.hydrationActionButtonsMin <= 0) {
+    failures.push("hovered row actions must survive full hydration");
+  }
   if (summary.sparseHoverFrameMaxMs >= 8) {
     failures.push("sparse hover frame feedback must stay below 8ms");
   }
@@ -215,6 +229,8 @@ function formatTsvRow(summary, fields) {
     summary.firstPaintMedianMs,
     summary.firstPaintMaxMs,
     summary.firstPaintActionButtonsMax,
+    summary.sparseHoverActionButtonsMin,
+    summary.hydrationActionButtonsMin,
     summary.sparseHoverFrameMaxMs,
     summary.sparseHoverFeedbackMaxMs,
     summary.hydrationBeforeIdleMax,

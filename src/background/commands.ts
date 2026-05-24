@@ -36,6 +36,10 @@ export type BackgroundCommand =
       confirmedLargeRestore?: boolean;
     }
   | {
+      type: "analyzeRestoreScope";
+      nodeId: NodeId;
+    }
+  | {
       type: "deleteNode";
       nodeId: NodeId;
     }
@@ -101,6 +105,7 @@ export const BACKGROUND_COMMAND_TYPES = [
   "focusNode",
   "closeNode",
   "restoreNode",
+  "analyzeRestoreScope",
   "deleteNode",
   "moveNode",
   "moveNodeToNewWindow",
@@ -228,6 +233,9 @@ export async function runCommand(
       }
       return commandResultFromNextState(state, await restoreNode(state, adapter, command.nodeId, context.restoreObserver));
     }
+
+    case "analyzeRestoreScope":
+      return unchangedCommandResult(state);
 
     case "moveNode": {
       const node = state.nodes[command.nodeId];

@@ -61,6 +61,14 @@ type InitialTreeRow = {
   insideActiveWindow: boolean;
 };
 
+export type ProjectionSliceCoverage = {
+  startRowIndex: number;
+  endRowIndex: number;
+  editableNodeIds: NodeId[];
+  completeSubtreeNodeIds: NodeId[];
+  completeSiblingParentIds: NodeId[];
+};
+
 export type InitialTreeSnapshot = {
   type: "initialTreeSnapshot";
   version: 1;
@@ -79,6 +87,7 @@ export type InitialTreeSnapshot = {
     closedCount: number;
     matchCount: 0;
   };
+  coverage?: ProjectionSliceCoverage;
   hydrating: boolean;
 };
 
@@ -561,6 +570,7 @@ export function initialTreeSnapshotForState(
   for (const row of rows) {
     loadedNodeIds.add(row.nodeId);
   }
+  const coverage = projectionSliceCoverageForRows(state, rows, loadedNodeIds);
   const partialNodes: OutlineState["nodes"] = {};
   for (const nodeId of loadedNodeIds) {
     const node = state.nodes[nodeId];
@@ -596,7 +606,42 @@ export function initialTreeSnapshotForState(
       closedCount: nodeValues.filter((node) => node.status === "closed").length,
       matchCount: 0
     },
+    coverage,
     hydrating: options.hydrating ?? true
+  };
+}
+
+function projectionSliceCoverageForRows(
+  state: OutlineState,
+  rows: InitialTreeRow[],
+  loadedNodeIds: ReadonlySet<NodeId>
+): ProjectionSliceCoverage {
+  const startRowIndex = rows[0]?.index ?? 0;
+  const endRowIndex = rows.length > 0 ? (rows.at(-1)?.index ?? startRowIndex) + 1 : startRowIndex;
+  const editableNodeIds: NodeId[] = [];
+  const completeSubtreeNodeIds: NodeId[] = [];
+  const completeSiblingParentIds: NodeId[] = [];
+
+  for (const row of rows) {
+    const node = state.nodes[row.nodeId];
+    if (!node) {
+      continue;
+    }
+    editableNodeIds.push(node.id);
+    if (row.index >= startRowIndex && row.subtreeEndIndex <= endRowIndex) {
+      completeSubtreeNodeIds.push(node.id);
+    }
+    if (node.childIds.every((childId) => loadedNodeIds.has(childId))) {
+      completeSiblingParentIds.push(node.id);
+    }
+  }
+
+  return {
+    startRowIndex,
+    endRowIndex,
+    editableNodeIds,
+    completeSubtreeNodeIds,
+    completeSiblingParentIds
   };
 }
 
@@ -885,7 +930,18 @@ function cloneInitialTreeSnapshot(snapshot: InitialTreeSnapshot, hydrating: bool
       rows: snapshot.projection.rows.map((row) => ({ ...row })),
       matchingNodeIds: [...snapshot.projection.matchingNodeIds],
       visibleNodeIds: [...snapshot.projection.visibleNodeIds]
-    }
+    },
+    ...(snapshot.coverage
+      ? {
+          coverage: {
+            startRowIndex: snapshot.coverage.startRowIndex,
+            endRowIndex: snapshot.coverage.endRowIndex,
+            editableNodeIds: [...snapshot.coverage.editableNodeIds],
+            completeSubtreeNodeIds: [...snapshot.coverage.completeSubtreeNodeIds],
+            completeSiblingParentIds: [...snapshot.coverage.completeSiblingParentIds]
+          }
+        }
+      : {})
   };
 }
 

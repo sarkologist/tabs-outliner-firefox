@@ -58,6 +58,7 @@ Useful actions:
 `openTab` may include `openerTab` to model opener/reparenting behavior.
 `nativeCloseWindow` may set `order` to `tabsRemovedThenWindowRemoved`, `windowRemovedThenTabsRemoved`, `windowRemovedOnly`, or `tabsRemovedOnly`.
 `outlinerRestoreNodeRejectingCreate` may set `captureRestoredTabs` and `captureRestoredWindows`; these captures bind to current live runtime resources restored from the original closed outline node IDs, not historical tab/window IDs.
+`nativeOpenWindow`, `nativeMoveTabToWindow`, and `nativeMoveTabToNewWindow` model browser-authored runtime changes without a Tabs Outliner command transaction or lifecycle journal.
 `restartBackground` flushes pending saves, recreates the background controller against the same fake runtime/storage, calls `ensureState`, and keeps named stale captures intact so delayed browser evidence can arrive after restart.
 `restartBackgroundAbrupt` drops listeners, clears pending fake runtime callbacks, and recreates the controller without flushing runtime events or pending saves. Use it only for crash-boundary traces where the durable lifecycle journal, not the ephemeral ledger, must recover confirmed browser side effects.
 
@@ -96,7 +97,7 @@ Focus mutations on stale or contradictory evidence crossing command boundaries:
 
 ## Coverage Matrix
 
-Current coverage after the lifecycle journal crash fix on 2026-05-24: 193 regression traces and 352 discovery traces. The restart-stress expansion recorded RT-063 through RT-090 and was promoted to regression coverage. The breadth sweep added neutral `bh-*` discovery traces, recorded RT-091 through RT-095 around restore create rejection side effects, and those five traces are now promoted to regression coverage after the recovery fix. The post-recovery sweep added neutral `ph-*` discovery traces and recorded RT-096 through RT-103; RT-096, RT-098, and RT-103 are promoted regression coverage, while the remaining RT-097/099/100/101/102 entries were harness artifacts corrected in discovery traces. The transaction-boundary sweep recorded RT-104 and RT-105 around history replay after recovered relocated closes; both are promoted regression coverage after the history replay fix. The history-boundary sweep recorded RT-106 through RT-127 and promoted them after the lifecycle guard pass. The lifecycle journal crash sweep recorded RT-128 through RT-154 and promoted them after the durability fix. Crash-boundary focused tests now cover durable recovery for close, delete, restore, relocation, history replay, native tab close, and native window close.
+Current coverage after the runtime shape integrity fix on 2026-05-24: 225 regression traces and 445 discovery traces. The restart-stress expansion recorded RT-063 through RT-090 and was promoted to regression coverage. The breadth sweep added neutral `bh-*` discovery traces, recorded RT-091 through RT-095 around restore create rejection side effects, and those five traces are now promoted to regression coverage after the recovery fix. The post-recovery sweep added neutral `ph-*` discovery traces and recorded RT-096 through RT-103; RT-096, RT-098, and RT-103 are promoted regression coverage, while the remaining RT-097/099/100/101/102 entries were harness artifacts corrected in discovery traces. The transaction-boundary sweep recorded RT-104 and RT-105 around history replay after recovered relocated closes; both are promoted regression coverage after the history replay fix. The history-boundary sweep recorded RT-106 through RT-127 and promoted them after the lifecycle guard pass. The lifecycle journal crash sweep recorded RT-128 through RT-154 and promoted them after the durability fix. The browser-authored drift sweep recorded RT-155 through RT-170 and promoted them after the native move/history preservation fix. The runtime shape integrity sweep recorded RT-171 through RT-186 around active fallback, tab order, command-relocated move-back, and restored-resource metadata; all are now promoted after the runtime shape authority fix. Crash-boundary focused tests now cover durable recovery for close, delete, restore, relocation, history replay, native tab close, and native window close.
 
 | State shape | Command edge | Runtime skew | Refresh edge | Current coverage | Next target |
 | --- | --- | --- | --- | --- | --- |
@@ -162,6 +163,26 @@ Lifecycle-journal discovery started from 166 regression traces and 303 discovery
 - Initial cells: outliner close crash, delete crash, restore create crash, relocation crash, undo/redo crash, no-op unconfirmed journal, already-persisted state plus uncleared journal, stale event contradiction, and native browser action without a journal.
 - If an abrupt trace fails because pending fake event work still arrived after restart, fix the harness before counting it as a finding. If the failure is an invariant mismatch after confirmed recovery, record it as a new runtime bug.
 - The completed sweep stopped after three full active mutation blocks with no new distinct signatures. The fixed findings clustered into close-journal recovery loss, delete/native-tab tombstone stale-echo loss, and native window-close save-loss across abrupt restart.
+
+## Browser-Authored Drift Sweep
+
+Browser-authored drift discovery started from 193 regression traces and 352 discovery traces after the lifecycle-journal crash fix and expanded to 419 discovery traces. After the RT-155 through RT-170 fix pass, the failing `nh-*` traces are promoted regression coverage, leaving 209 regression traces and 403 discovery traces. Add future browser-authored drift probes as fresh neutral discovery traces; avoid mutating fixed `rt-*`, `bh-*`, `ph-*`, `lh-*`, fixed `hh-*`, fixed `jh-*`, or fixed `nh-*` repros.
+
+- Target one boundary: reconciliation must converge from browser evidence when there is no command transaction, no lifecycle journal, and no command-owned stale echo guard.
+- Prefer external runtime changes: native window/tab creation, native tab movement between windows, opener chains, focus/session churn, partial snapshots, and restart reconstruction.
+- New `nativeOpenWindow` and `nativeMove*` actions are browser-authored. Pair them with refresh/session/focus/stale evidence when stressing delayed convergence.
+- Initial sparse cells: external creation, native move, native move plus close, restart/no-journal, multi-window query skew, and history crossover controls.
+- Perf guard is not part of discovery. It applies to the later fix/pass promotion step if this sweep records findings.
+
+## Runtime Shape Integrity Sweep
+
+Runtime-shape discovery started from 209 regression traces and 403 discovery traces after the browser-authored drift fix and expanded to 461 discovery traces. It recorded RT-171 through RT-186 and stopped after three complete active mutation blocks found no new distinct signatures. After the fix pass, those 16 `mh-*` traces are regression coverage, leaving 225 regression traces and 445 discovery traces. Add future shape probes as fresh neutral IDs and avoid mutating fixed `rt-*`, `bh-*`, `ph-*`, `lh-*`, fixed `hh-*`, fixed `jh-*`, fixed `nh-*`, or fixed `mh-*` repros. This sweep adds opt-in trace assertions for order and metadata so failures are about browser shape, not only live ID convergence.
+
+- Target one boundary: live runtime IDs now have broad coverage, so stress whether the outline preserves current browser shape: tab order, metadata, opener nesting, active/focus state, and multi-tab window structure.
+- Sparse tags to prioritize: `metadata`, `partial-close`, `reparenting`, `paired-echo`, `race`, `updated-event`, `delayed-event`, `multi-tab`, and `nested-window`.
+- Use `assertions: ["runtimeOrder"]` only when runtime tab order should match outline preorder for the selected shape. Avoid using it on opener traces where nested opener structure intentionally differs from flat browser tab order.
+- Use `assertions: ["runtimeMetadata"]` on traces where current runtime title/url/favicon should be authoritative after browser update, refresh, restart, restore, or stale echo evidence.
+- Findings clustered into active fallback after browser-authored reorder, runtime tab order after cross-window moves, command-relocated tabs moved back by the browser, and restored-resource metadata overwritten by stale echo evidence. The fix pass made runtime shape facts explicit in reconciliation: browser move/order evidence can force snapshot reconciliation, suspicious order/metadata snapshots are corroborated, command-relocated echo guards are cleared by later browser-authored moves, and transient restore echoes stay cheap.
 
 ## Five-Minute Mutation Block
 

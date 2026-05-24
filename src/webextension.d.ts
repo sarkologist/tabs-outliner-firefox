@@ -127,7 +127,10 @@ type WebExtensionBrowserApi = {
     create(createProperties: { url: string; windowId?: number; active?: boolean }): Promise<RuntimeTab>;
     move(tabIds: number | number[], moveProperties: { windowId?: number; index: number }): Promise<RuntimeTab | RuntimeTab[]>;
     onActivated: Listener<(activeInfo: { tabId: number; windowId: number; previousTabId?: number }) => void | Promise<void>>;
+    onAttached?: Listener<(tabId: number, attachInfo: { newWindowId: number; newPosition: number }) => void | Promise<void>>;
     onCreated: Listener<(tab: RuntimeTab) => void | Promise<void>>;
+    onDetached?: Listener<(tabId: number, detachInfo: { oldWindowId: number; oldPosition: number }) => void | Promise<void>>;
+    onMoved?: Listener<(tabId: number, moveInfo: { windowId: number; fromIndex: number; toIndex: number }) => void | Promise<void>>;
     onUpdated: Listener<(tabId: number, changeInfo: Partial<RuntimeTab>, tab: RuntimeTab) => void | Promise<void>>;
     onRemoved: Listener<(tabId: number, removeInfo: { windowId: number; isWindowClosing: boolean }) => void | Promise<void>>;
   };

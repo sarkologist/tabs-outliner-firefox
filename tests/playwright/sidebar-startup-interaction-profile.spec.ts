@@ -198,12 +198,14 @@ test.describe("sidebar startup interaction profile", () => {
       const tree = document.querySelector<HTMLElement>("#tree");
       const viewport = document.querySelector<HTMLElement>("main");
       const target = document.querySelector<HTMLElement>(`.node[data-node-id="${CSS.escape(targetNodeId)}"]`);
+      const actionButtonsAfterHover = target?.querySelectorAll(".node-actions .icon-button").length ?? 0;
 
       return {
         targetVisible: Boolean(target && target.offsetParent !== null),
         targetRowIndex: target?.dataset.rowIndex,
         treeHeight: tree?.style.height,
         scrollTop: viewport?.scrollTop ?? 0,
+        actionButtonsAfterHover,
         hydrationRequests: messages.filter((message) => message.type === "getState").length,
         initialSnapshotRequests: messages.filter((message) => message.type === "getInitialTreeSnapshot").length,
         pointerOutcomes: pointerEntries.map((entry) => entry.detail?.outcome ?? "none"),
@@ -227,6 +229,7 @@ test.describe("sidebar startup interaction profile", () => {
     expect(result.targetVisible).toBe(true);
     expect(result.initialSnapshotRequests).toBe(1);
     expect(result.hydrationRequests).toBeGreaterThanOrEqual(0);
+    expect(result.actionButtonsAfterHover).toBeGreaterThan(0);
     expect(result.pointerOutcomes.length).toBeGreaterThan(0);
     expect(result.clearMissingRowCount).toBe(0);
     expect(result.hoverFeedbackCount).toBeGreaterThan(0);
@@ -317,6 +320,38 @@ test.describe("sidebar startup interaction profile", () => {
       await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
       await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
       await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+      const rowAfterHover = document.querySelector<HTMLElement>(
+        `.node[data-node-id="${CSS.escape(targetNodeId)}"] > .node-row`
+      );
+      const actionStripAfterHover = rowAfterHover?.querySelector<HTMLElement>(".node-actions");
+      const closeButtonAfterHover = rowAfterHover?.querySelector<HTMLElement>('[data-action="close-node"]');
+      const tree = document.querySelector("#tree");
+      const detachCounts = {
+        row: 0,
+        actionStrip: 0,
+        closeButton: 0
+      };
+      const detachObserver = new MutationObserver((records) => {
+        for (const record of records) {
+          for (const node of Array.from(record.removedNodes)) {
+            if (!(node instanceof Node)) {
+              continue;
+            }
+            if (rowAfterHover && (node === rowAfterHover || node.contains(rowAfterHover))) {
+              detachCounts.row += 1;
+            }
+            if (actionStripAfterHover && (node === actionStripAfterHover || node.contains(actionStripAfterHover))) {
+              detachCounts.actionStrip += 1;
+            }
+            if (closeButtonAfterHover && (node === closeButtonAfterHover || node.contains(closeButtonAfterHover))) {
+              detachCounts.closeButton += 1;
+            }
+          }
+        }
+      });
+      if (tree) {
+        detachObserver.observe(tree, { childList: true, subtree: true });
+      }
       await new Promise<void>((resolve) => window.setTimeout(resolve, 900));
 
       const messages = (window as typeof window & { __sidebarBootMessages?: Array<{ type: string; at: number }> })
@@ -328,12 +363,22 @@ test.describe("sidebar startup interaction profile", () => {
       const snapshot = await window.tabsOutlinerProfile?.snapshot();
       const summary = await window.tabsOutlinerProfile?.summary();
       const entries = snapshot?.sidebar.entries ?? [];
+      const target = document.querySelector<HTMLElement>(`.node[data-node-id="${CSS.escape(targetNodeId)}"]`);
+      const rowAfterHydration = target?.querySelector<HTMLElement>(":scope > .node-row");
+      const actionStripAfterHydration = rowAfterHydration?.querySelector<HTMLElement>(".node-actions");
+      const closeButtonAfterHydration = rowAfterHydration?.querySelector<HTMLElement>('[data-action="close-node"]');
+      detachObserver.disconnect();
 
       return {
         hoverFrameDelay: summary?.find((row) => row.name === "sidebar.input.hoverFrameDelay"),
         hoverFeedbackDelay: summary?.find((row) => row.name === "sidebar.input.hoverFeedbackDelay"),
         hydration: summary?.find((row) => row.name === "sidebar.hydration"),
         render: summary?.find((row) => row.name === "sidebar.render"),
+        actionButtonsAfterHydration: target?.querySelectorAll(".node-actions .icon-button").length ?? 0,
+        rowElementPreservedAcrossHydration: rowAfterHover === rowAfterHydration,
+        actionStripPreservedAcrossHydration: actionStripAfterHover === actionStripAfterHydration,
+        closeButtonPreservedAcrossHydration: closeButtonAfterHover === closeButtonAfterHydration,
+        detachedDuringHydration: detachCounts,
         hydrationRequestsBeforeIdle,
         hydrationRequestsAfterIdle: messagesAfterIdle.filter((message) => message.type === "getState").length,
         pointerEntries: entries.filter((entry) => entry.name === "sidebar.input.pointerDelay").map((entry) => entry.detail),
@@ -356,6 +401,105 @@ test.describe("sidebar startup interaction profile", () => {
     expect(result.hydrationRequestsAfterIdle).toBe(1);
     expect(result.hydration?.count).toBe(1);
     expect(result.render?.count).toBe(1);
+    expect(result.actionButtonsAfterHydration).toBeGreaterThan(0);
+    expect(result.rowElementPreservedAcrossHydration).toBe(true);
+    expect(result.actionStripPreservedAcrossHydration).toBe(true);
+    expect(result.closeButtonPreservedAcrossHydration).toBe(true);
+    expect(result.detachedDuringHydration).toEqual({ row: 0, actionStrip: 0, closeButton: 0 });
+    expect(issues).toEqual([]);
+  });
+
+  test("allows closing a covered visible row while full hydration is pending", async ({ page }) => {
+    const issues = collectPageIssues(page);
+
+    await page.addInitScript(({ snapshot, targetNodeId }) => {
+      const messages: unknown[] = [];
+      const listeners: Array<(message: unknown) => void> = [];
+      (window as typeof window & { __sidebarBootMessages?: typeof messages }).__sidebarBootMessages = messages;
+      window.browser = {
+        runtime: {
+          sendMessage: async (message: unknown) => {
+            messages.push(structuredClone(message));
+            const type = typeof message === "object" && message ? String((message as { type?: unknown }).type) : "";
+            if (type === "getInitialTreeSnapshot") {
+              return structuredClone(snapshot);
+            }
+            if (type === "getState") {
+              return new Promise(() => undefined);
+            }
+            if (type === "closeNode") {
+              const node = structuredClone(snapshot.state.nodes[targetNodeId]);
+              delete node.live;
+              node.status = "closed";
+              node.active = false;
+              node.closedAt = 1_700_000_001_000;
+              node.restore = {
+                url: node.url,
+                title: node.title,
+                favIconUrl: node.favIconUrl
+              };
+              window.setTimeout(() => {
+                for (const listener of listeners) {
+                  listener({
+                    type: "nodeStateUpdated",
+                    updatedNodes: [node],
+                    closedCountDelta: 1
+                  });
+                }
+              }, 0);
+              return { type: "commandAck", stateChanged: true };
+            }
+            if (
+              type === "getDiagnostics" ||
+              type === "getPerformanceTrace" ||
+              type === "setPerformanceTraceEnabled" ||
+              type === "clearPerformanceTrace"
+            ) {
+              return undefined;
+            }
+            return { type: "commandAck", stateChanged: false };
+          },
+          onMessage: {
+            addListener: (listener: (message: unknown) => void) => {
+              listeners.push(listener);
+            }
+          },
+          connect: () => ({
+            onMessage: { addListener: () => undefined },
+            onDisconnect: { addListener: () => undefined }
+          })
+        },
+        storage: {
+          local: {
+            get: async () => ({}),
+            set: async () => undefined
+          },
+          onChanged: {
+            addListener: () => undefined
+          }
+        },
+        windows: {
+          getCurrent: async () => ({ id: 1 })
+        }
+      };
+    }, {
+      snapshot: fixtureActiveCenteredSnapshot(TAB_COUNT, ACTIVE_TAB_ID),
+      targetNodeId: TARGET_NODE_ID
+    });
+
+    await page.goto("/sidebar/sidebar.html");
+    const target = page.locator(`.node[data-node-id='${TARGET_NODE_ID}']`);
+    await expect(target).toBeVisible();
+    await target.hover();
+    await target.getByRole("button", { name: "Close", exact: true }).click();
+
+    await expect(target).toHaveClass(/is-closed/);
+    await expect(target.getByRole("button", { name: "Close", exact: true })).toHaveCount(0);
+    const messages = await page.evaluate(() =>
+      ((window as typeof window & { __sidebarBootMessages?: unknown[] }).__sidebarBootMessages ?? [])
+        .filter((message) => typeof message === "object" && message && (message as { type?: unknown }).type === "closeNode")
+    );
+    expect(messages).toEqual([{ type: "closeNode", nodeId: TARGET_NODE_ID }]);
     expect(issues).toEqual([]);
   });
 
@@ -502,6 +646,7 @@ function fixtureActiveCenteredSnapshot(tabCount: number, activeTabId: number) {
       insideActiveWindow: true
     };
   });
+  const coverage = fixtureCoverageForRows(rows);
   return {
     type: "initialTreeSnapshot",
     version: 1,
@@ -545,7 +690,22 @@ function fixtureActiveCenteredSnapshot(tabCount: number, activeTabId: number) {
       nodeCount: tabCount + 1,
       closedCount: 0,
       matchCount: 0
-    }
+    },
+    coverage
+  };
+}
+
+function fixtureCoverageForRows(rows: Array<{ nodeId: string; index: number; subtreeEndIndex: number }>) {
+  const startRowIndex = rows[0]?.index ?? 0;
+  const endRowIndex = rows.length > 0 ? (rows.at(-1)?.index ?? startRowIndex) + 1 : startRowIndex;
+  return {
+    startRowIndex,
+    endRowIndex,
+    editableNodeIds: rows.map((row) => row.nodeId),
+    completeSubtreeNodeIds: rows
+      .filter((row) => row.subtreeEndIndex <= endRowIndex)
+      .map((row) => row.nodeId),
+    completeSiblingParentIds: rows.map((row) => row.nodeId)
   };
 }
 

@@ -82,7 +82,7 @@ describe("runtime reconciliation ledger", () => {
     expect(normalized[0]?.tabs?.map((tab) => tab.id)).toEqual([1, 2]);
   });
 
-  it("absorbs command-restored tab creation echoes once", () => {
+  it("absorbs no-op command-restored tab creation echoes without dropping stale protection", () => {
     const state = bootstrapFromWindows([windowInfo(10, [tabOne])], { now: 1000 });
     const index = buildRuntimeStateIndexForReconciliation(state);
     const ledger = new RuntimeFactLedger();
@@ -90,7 +90,8 @@ describe("runtime reconciliation ledger", () => {
     ledger.recordCommandRestoredTab(1);
 
     expect(reconciler.consumeCommandRestoredTabEvent(state, index, ledger, tabOne)).toBe(true);
-    expect(reconciler.consumeCommandRestoredTabEvent(state, index, ledger, tabOne)).toBe(false);
+    expect(reconciler.consumeCommandRestoredTabEvent(state, index, ledger, tabOne)).toBe(true);
+    expect(reconciler.consumeCommandRestoredTabEvent(state, index, ledger, { ...tabOne, title: "Fresh title" })).toBe(false);
   });
 
   it("filters event-local tabs through command echo and no-op rules", () => {
@@ -112,7 +113,7 @@ describe("runtime reconciliation ledger", () => {
     }).map((tab) => tab.title)).toEqual(["Two updated"]);
   });
 
-  it("ignores event-local tabs for live runtime ids in unexpected windows", () => {
+  it("treats event-local tabs for known runtime ids in new windows as structural changes", () => {
     const base = bootstrapFromWindows([windowInfo(10, [tabOne, tabTwo])], { now: 1000 });
     const movedTab = { ...tabOne, windowId: 20, index: 0, active: true };
     const moved = moveTabToNewLiveWindow(
@@ -128,7 +129,7 @@ describe("runtime reconciliation ledger", () => {
       state: moved,
       index: buildRuntimeStateIndexForReconciliation(moved),
       ledger: new RuntimeFactLedger()
-    })).toEqual([]);
+    }).map((tab) => tab.title)).toEqual(["Stale old window"]);
 
     expect(reconciler.filterEventTabsForReconciliation({
       eventTabs: [{ ...movedTab, title: "Fresh current window" }],

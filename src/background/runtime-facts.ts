@@ -6,7 +6,7 @@ export type RuntimeSnapshotConfidence = "complete" | "partial" | "eventLocal" | 
 export type RuntimeObservation =
   | {
       source: "tabEvent";
-      kind: "created" | "updated" | "activated" | "removed";
+      kind: "created" | "updated" | "activated" | "removed" | "attached" | "detached" | "moved";
       tabId: number;
       windowId?: number;
       tab?: RuntimeTab;
@@ -94,6 +94,14 @@ export class RuntimeFactLedger {
     this.observations.push(observation);
     if (this.observations.length > this.maxObservations) {
       this.observations.splice(0, this.observations.length - this.maxObservations);
+    }
+    if (observation.source === "snapshot" && observation.confidence === "complete") {
+      for (const windowInfo of observation.windows) {
+        this.observeLiveWindowIfAccepted(windowInfo.id);
+        for (const tab of windowInfo.tabs ?? []) {
+          this.observeLiveTabIfAccepted(tab);
+        }
+      }
     }
   }
 
@@ -242,15 +250,18 @@ export class RuntimeFactLedger {
   }
 
   recordNativeTabCreated(tab: RuntimeTab): void {
+    this.observeLiveTabIfAccepted(tab);
     this.recordObservation({ source: "tabEvent", kind: "created", tabId: tab.id, windowId: tab.windowId, tab });
   }
 
   recordNativeTabUpdated(tab: RuntimeTab, changeInfo: Partial<RuntimeTab>): NativeTabUpdatedDecision {
+    this.observeLiveTabIfAccepted(tab);
     this.recordObservation({ source: "tabEvent", kind: "updated", tabId: tab.id, windowId: tab.windowId, tab });
     return this.isCommandFocusActiveUpdateEcho(changeInfo, tab) ? "command-focus-active" : "refresh";
   }
 
   recordNativeTabActivated(tabId: number, windowId: number | undefined): NativeFocusEventDecision {
+    this.observeLiveTabIdIfAccepted(tabId, windowId);
     this.recordObservation({
       source: "tabEvent",
       kind: "activated",
@@ -258,6 +269,37 @@ export class RuntimeFactLedger {
       ...(typeof windowId === "number" ? { windowId } : {})
     });
     return this.hasCommandFocusedTab(tabId) ? "command-focus" : "runtime-refresh";
+  }
+
+  recordNativeTabDetached(tabId: number, oldWindowId: number | undefined): void {
+    this.recordObservation({
+      source: "tabEvent",
+      kind: "detached",
+      tabId,
+      ...(typeof oldWindowId === "number" ? { windowId: oldWindowId } : {})
+    });
+  }
+
+  recordNativeTabAttached(tabId: number, newWindowId: number | undefined): void {
+    this.observeLiveTabIdIfAccepted(tabId, newWindowId);
+    this.clearCommandRelocationEchoIfBrowserMoved(tabId, newWindowId);
+    this.recordObservation({
+      source: "tabEvent",
+      kind: "attached",
+      tabId,
+      ...(typeof newWindowId === "number" ? { windowId: newWindowId } : {})
+    });
+  }
+
+  recordNativeTabMoved(tabId: number, windowId: number | undefined): void {
+    this.observeLiveTabIdIfAccepted(tabId, windowId);
+    this.clearCommandRelocationEchoIfBrowserMoved(tabId, windowId);
+    this.recordObservation({
+      source: "tabEvent",
+      kind: "moved",
+      tabId,
+      ...(typeof windowId === "number" ? { windowId } : {})
+    });
   }
 
   recordNativeTabRemoved(tabId: number, windowId: number | undefined): NativeTabRemovedDecision {
@@ -272,6 +314,7 @@ export class RuntimeFactLedger {
   }
 
   recordNativeWindowFocused(windowId: number): NativeFocusEventDecision {
+    this.observeLiveWindowIfAccepted(windowId);
     this.recordObservation({ source: "windowEvent", kind: "focused", windowId });
     return this.hasCommandFocusedWindow(windowId) ? "command-focus" : "runtime-refresh";
   }
@@ -363,11 +406,47 @@ export class RuntimeFactLedger {
 
   private markTabRemoved(tabId: number): void {
     this.removedTabIds.add(tabId);
+    this.commandRestoredTabIds.delete(tabId);
     this.commandRelocatedTabEchoes.delete(tabId);
   }
 
   private markWindowRemoved(windowId: number): void {
     this.removedWindowIds.add(windowId);
+  }
+
+  private observeLiveTab(tab: RuntimeTab): void {
+    this.observeLiveTabId(tab.id, tab.windowId);
+  }
+
+  private observeLiveTabIfAccepted(tab: RuntimeTab): void {
+    this.observeLiveTabIdIfAccepted(tab.id, tab.windowId);
+  }
+
+  private observeLiveTabIdIfAccepted(tabId: number, windowId: number | undefined): void {
+    if (this.isTabIgnoredForRefresh(tabId)) {
+      return;
+    }
+    this.observeLiveTabId(tabId, windowId);
+  }
+
+  private observeLiveTabId(tabId: number, windowId: number | undefined): void {
+    this.reconstructedLiveTabIds.add(tabId);
+    this.reconstructedMaxTabId = Math.max(this.reconstructedMaxTabId, tabId);
+    if (typeof windowId === "number") {
+      this.observeLiveWindow(windowId);
+    }
+  }
+
+  private observeLiveWindow(windowId: number): void {
+    this.reconstructedLiveWindowIds.add(windowId);
+    this.reconstructedMaxWindowId = Math.max(this.reconstructedMaxWindowId, windowId);
+  }
+
+  private observeLiveWindowIfAccepted(windowId: number): void {
+    if (this.isWindowIgnoredForRefresh(windowId)) {
+      return;
+    }
+    this.observeLiveWindow(windowId);
   }
 
   private hasRemovedWindow(windowId: number): boolean {
@@ -592,6 +671,16 @@ export class RuntimeFactLedger {
 
   deleteCommandRelocatedTabEcho(tabId: number): void {
     this.commandRelocatedTabEchoes.delete(tabId);
+  }
+
+  private clearCommandRelocationEchoIfBrowserMoved(tabId: number, windowId: number | undefined): void {
+    if (typeof windowId !== "number") {
+      return;
+    }
+    const echo = this.commandRelocatedTabEchoes.get(tabId);
+    if (echo && windowId !== echo.toWindowId) {
+      this.commandRelocatedTabEchoes.delete(tabId);
+    }
   }
 
   markCommandFocusTarget(tabId: number, windowId: number, tabActive: boolean): void {

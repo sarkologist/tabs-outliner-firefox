@@ -24,18 +24,20 @@ Default hunt bounds:
 
 ## Last Domain Run
 
-- Completed: 2026-05-24T15:59:20Z
-- Strategy: lifecycle journal crash sweep after durable lifecycle journal work, stressing close/delete/restore/relocation/history/native-close side effects across abrupt background restart before saves or runtime events settle
+- Completed: 2026-05-24T22:16:24Z
+- Strategy: runtime shape integrity fix pass, grouping RT-171 through RT-186 into browser runtime-shape authority fixes
 - Trace ids: current discovery corpus in `src/background/controller.test.ts` and `scripts/hunt-runtime-traces.mjs`
-- Corpus size after fix: 352 discovery traces, 193 regression traces
-- Distinct lifecycle-journal findings recorded: RT-128 through RT-154
-- Stop condition: lifecycle crash sweep had already stopped after three complete discovery mutation blocks; this fix pass promoted the failing `jh-*` traces and a smoke-caught native restored-tab close variant.
-- Regression safety replay: 193 regression traces, 0 failures, 0 new findings at 2026-05-24T15:59:20.960Z.
-- Status: RT-128 through RT-154 are fixed by durable baseline flushing before lifecycle side effects, startup recovery tombstones, native tab/window lifecycle journals, and promotion to regression coverage.
+- Corpus size after fix: 445 discovery traces, 225 regression traces
+- Distinct runtime-shape findings recorded: RT-171 through RT-186
+- Stop condition: reached after three complete active discovery mutation blocks found no new distinct signatures; runner wait time was not counted as mutation effort.
+- Regression safety replay after the fix: 225 regression traces, 0 failures, 0 new findings at 2026-05-24T22:16:24Z.
+- Status: RT-171 through RT-186 are fixed and promoted to regression coverage.
 
 ## Finding Index
 
 - Open recorded findings: none
+- Fixed runtime-shape integrity findings: RT-171 through RT-186
+- Fixed browser-authored drift findings: RT-155 through RT-170
 - Fixed lifecycle-journal crash findings: RT-128 through RT-154
 - Fixed history-boundary findings: RT-106 through RT-127
 - Fixed transaction-boundary findings: RT-104 through RT-105
@@ -75,6 +77,13 @@ Default hunt bounds:
 - Durable lifecycle baseline before side effects: RT-128 through RT-140 were fixed by flushing any pending outline/history save before writing lifecycle journal entries and before touching browser runtime resources. A journal entry now has a durable pre-command outline base to replay against if the background dies after the browser side effect.
 - Delete/native tab tombstones after journal recovery: RT-141 through RT-143 and RT-154 were fixed by reinstalling completed delete/native-tab-close tombstones during startup journal recovery, so stale event-local evidence cannot resurrect tabs that the browser already removed.
 - Native window-close pending-save recovery: RT-144 through RT-153 were fixed by journaling browser-native window close transitions before applying the model close. Startup consumes the journal only when a complete runtime snapshot confirms the window/tabs are gone, then preserves the closed outline subtree and clears the hint after persistence.
+- Browser-authored native move convergence: RT-155 through RT-164 were fixed by treating same-tab/different-window evidence as a structural browser-authored move instead of an ignorable stale tab event. The controller now listens for native attach/detach/moved signals, cross-window tab events bail to reconciliation, stale event-local mismatches are corroborated before acceptance, and ledger live-id learning accepts browser-observed resources without clearing tombstones.
+- Browser-authored live resource preservation during history replay: RT-165 through RT-170 were fixed by preserving currently live runtime tabs/windows from a complete snapshot when structural undo/redo replays an older outline shape. History replay still applies the requested command delta, but unrelated browser-created or browser-moved resources survive, confirmed live windows can be re-rooted, and the replay result is reconciled against current browser evidence before persistence.
+- Perf gate for RT-155 through RT-170: `pnpm perf:runtime-guard` passed all 8 scenarios. Targeted 50k-tab profiles: group-live-leaf firstBroadcastMs=91 totalWithSaveFlushMs=217 saves=1 broadcasts=2; move-leaf firstBroadcastMs=39 totalWithSaveFlushMs=183 saves=1 broadcasts=2; refresh-noop firstBroadcastMs=0 totalWithSaveFlushMs=76 saves=0 broadcasts=0; focus-last firstBroadcastMs=19 totalWithSaveFlushMs=20 saves=0 broadcasts=1. The existing in-browser profile export was reviewed and still flags the pre-existing repeated initial snapshot, slow save/event, and diagnostics-churn hotspots; no budget movement was accepted for this fix.
+- Runtime shape authority: RT-171 through RT-176, RT-180, and RT-181 were fixed by treating browser tab order and active fallback as runtime shape facts during reconciliation. Native attached/moved/detached events now force snapshot reconciliation instead of falling through a metadata-only fast path, suspicious reordered snapshots are corroborated once before changing outline preorder, and `reconcileWithWindows` can apply browser tab-index order when invoked from runtime reconciliation while preserving normal user/history outline moves.
+- Browser-authored move-back after command relocation: RT-177 through RT-179 were fixed by recording native attach/move facts in the ledger and clearing command-relocated old-window echo protection when the browser moves the same tab away from the command destination. Stale old-window echoes remain filtered, but a real later browser-authored move back to the source window is accepted.
+- Restored-resource metadata freshness: RT-182 through RT-186 were fixed by keeping restored-tab stale protection long enough to corroborate suspicious metadata echoes. Transient `about:blank`/`New Tab` restore echoes are absorbed without a full snapshot; later restored-tab metadata changes are accepted only when fresh runtime evidence corroborates them, so stale created/updated echoes cannot overwrite current title/url/favicon.
+- Perf gate for RT-171 through RT-186: `pnpm perf:runtime-guard` passed all 8 scenarios. Key 50k-tab sentinels: restore transient echo firstBroadcastMs=17 totalWithSaveFlushMs=153 saves=1 broadcasts=1; group-live-leaf firstBroadcastMs=90 totalWithSaveFlushMs=219 saves=1 broadcasts=2; move-leaf firstBroadcastMs=39 totalWithSaveFlushMs=182 saves=1 broadcasts=2; refresh-noop firstBroadcastMs=0 totalWithSaveFlushMs=94 saves=0 broadcasts=0. The existing in-browser profile export was reviewed and still flags pre-existing repeated initial snapshot, slow save/event, and diagnostics-churn hotspots; no budget movement was accepted for this fix.
 - Post-recovery harness artifacts: RT-097, RT-099, RT-100, RT-101, and RT-102 were triaged as trace-harness bugs, not runtime model bugs. The harness now avoids stale `lastOpenedWindow`/old restored-tab runtime IDs, treats a foreign live window under a closed source window as intentionally promoted/still live, permits no focused runtime window after destructive history replay by selecting `firstRuntimeWindow` for query skew, and scopes rejecting restore-create mocks to the selected node kind so unused one-shot mocks cannot poison later undo/redo commands.
 - Verification: all listed generated seed repros and promoted domain trace repros pass as of the principled runtime trace fix passes.
 
@@ -4391,3 +4400,813 @@ action 4: {"type":"restartBackgroundAbrupt"}
 <!-- hunt-corpus-run: {"at":"2026-05-24T15:54:38.809Z","mode":"agent-corpus-run","profile":"regression","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","history-boundary","journal","known-finding","manual-refresh","multi-tab","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo"],"firstTraceId":"rt-active-race","lastTraceId":"jh-native-restored-window-tabs-only-abrupt","runs":192,"processRuns":4,"batchSize":50,"batchFailures":0,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
 
 <!-- hunt-corpus-run: {"at":"2026-05-24T15:59:20.960Z","mode":"agent-corpus-run","profile":"regression","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","history-boundary","journal","known-finding","manual-refresh","multi-tab","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo"],"firstTraceId":"rt-active-race","lastTraceId":"jh-native-restored-tab-abrupt","runs":193,"processRuns":4,"batchSize":50,"batchFailures":0,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-24T18:23:01.418Z","mode":"agent-corpus-run","profile":"regression","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","history-boundary","journal","known-finding","manual-refresh","multi-tab","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo"],"firstTraceId":"rt-active-race","lastTraceId":"jh-native-restored-tab-abrupt","runs":193,"processRuns":4,"batchSize":50,"batchFailures":0,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-24T18:23:31.892Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","history-boundary","journal","manual-refresh","metadata","multi-tab","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"jh-delete-window-abrupt-missing-survivor-control","runs":352,"processRuns":18,"batchSize":20,"batchFailures":0,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
+
+### RT-155 tab 2 has wrong live window
+<!-- signature: tab <id> has wrong live window
+domain trace: nh-native-move-existing-refresh
+action: {"type":"nativeMoveTabToWindow","tab":{"tabId":2},"window":{"windowId":20},"active":false,"captureStaleTabs":"nh-move-existing-old"} -->
+
+- First seen: 2026-05-24T18:26:46.799Z
+- Trace id: `nh-native-move-existing-refresh`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=nh-native-move-existing-refresh pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: fixed in browser-authored drift fix pass and promoted to regression coverage.
+
+```text
+domain trace nh-native-move-existing-refresh: native move existing refresh
+action 1: {"type":"nativeMoveTabToWindow","tab":{"tabId":2},"window":{"windowId":20},"active":false,"captureStaleTabs":"nh-move-existing-old"}
+Domain trace: nh-native-move-existing-refresh
+Action 1: {"type":"nativeMoveTabToWindow","tab":{"tabId":2},"window":{"windowId":20},"active":false,"captureStaleTabs":"nh-move-existing-old"}
+Trace:
+domain trace nh-native-move-existing-refresh: native move existing refresh
+action 1: {"type":"nativeMoveTabToWindow","tab":{"tabId":2},"window":{"windowId":20},"active":false,"captureStaleTabs":"nh-move-existing-old"}
+```
+
+### RT-156 tab 100 has wrong live window
+<!-- signature: tab <id> has wrong live window
+domain trace: nh-native-move-opener-child-refresh
+action: {"type":"nativeMoveTabToWindow","tab":{"capture":"nh-move-opener-child"},"window":{"windowId":20},"active":false,"captureStaleTabs":"nh-move-opener-old"} -->
+
+- First seen: 2026-05-24T18:26:50.359Z
+- Trace id: `nh-native-move-opener-child-refresh`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=nh-native-move-opener-child-refresh pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: fixed in browser-authored drift fix pass and promoted to regression coverage.
+
+```text
+domain trace nh-native-move-opener-child-refresh: native move opener child refresh
+action 1: {"type":"openTab","window":{"windowId":10},"active":false,"openerTab":{"tabId":1},"captureTab":"nh-move-opener-child"}
+action 2: {"type":"nativeMoveTabToWindow","tab":{"capture":"nh-move-opener-child"},"window":{"windowId":20},"active":false,"captureStaleTabs":"nh-move-opener-old"}
+Domain trace: nh-native-move-opener-child-refresh
+Action 2: {"type":"nativeMoveTabToWindow","tab":{"capture":"nh-move-opener-child"},"window":{"windowId":20},"active":false,"captureStaleTabs":"nh-move-opener-old"}
+Trace:
+domain trace nh-native-move-opener-child-refresh: native move opener child refresh
+action 1: {"type":"openTab","window":{"windowId":10},"active":false,"openerTab":{"tabId":1},"captureTab":"nh-move-opener-child"}
+action 2: {"type":"nativeMoveTabToWindow","tab":{"capture":"nh-move-opener-child"},"window":{"windowId":20},"active":false,"captureStaleTabs":"nh-move-opener-old"}
+```
+
+### RT-157 tab 2 has wrong live window
+<!-- signature: tab <id> has wrong live window
+domain trace: nh-native-move-close-tab-stale
+action: {"type":"nativeMoveTabToWindow","tab":{"tabId":2},"window":{"windowId":20},"captureStaleTabs":"nh-move-close-tab-old"} -->
+
+- First seen: 2026-05-24T18:26:52.735Z
+- Trace id: `nh-native-move-close-tab-stale`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=nh-native-move-close-tab-stale pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: fixed in browser-authored drift fix pass and promoted to regression coverage.
+
+```text
+domain trace nh-native-move-close-tab-stale: native move close tab stale
+action 1: {"type":"nativeMoveTabToWindow","tab":{"tabId":2},"window":{"windowId":20},"captureStaleTabs":"nh-move-close-tab-old"}
+Domain trace: nh-native-move-close-tab-stale
+Action 1: {"type":"nativeMoveTabToWindow","tab":{"tabId":2},"window":{"windowId":20},"captureStaleTabs":"nh-move-close-tab-old"}
+Trace:
+domain trace nh-native-move-close-tab-stale: native move close tab stale
+action 1: {"type":"nativeMoveTabToWindow","tab":{"tabId":2},"window":{"windowId":20},"captureStaleTabs":"nh-move-close-tab-old"}
+```
+
+### RT-158 tab 2 has wrong live window
+<!-- signature: tab <id> has wrong live window
+domain trace: nh-native-move-close-destination-window
+action: {"type":"nativeMoveTabToWindow","tab":{"tabId":2},"window":{"windowId":20},"captureStaleTabs":"nh-move-destination-close-old"} -->
+
+- First seen: 2026-05-24T18:26:53.935Z
+- Trace id: `nh-native-move-close-destination-window`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=nh-native-move-close-destination-window pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: fixed in browser-authored drift fix pass and promoted to regression coverage.
+
+```text
+domain trace nh-native-move-close-destination-window: native move close destination window
+action 1: {"type":"nativeMoveTabToWindow","tab":{"tabId":2},"window":{"windowId":20},"captureStaleTabs":"nh-move-destination-close-old"}
+Domain trace: nh-native-move-close-destination-window
+Action 1: {"type":"nativeMoveTabToWindow","tab":{"tabId":2},"window":{"windowId":20},"captureStaleTabs":"nh-move-destination-close-old"}
+Trace:
+domain trace nh-native-move-close-destination-window: native move close destination window
+action 1: {"type":"nativeMoveTabToWindow","tab":{"tabId":2},"window":{"windowId":20},"captureStaleTabs":"nh-move-destination-close-old"}
+```
+
+### RT-159 tab 2 has wrong live window
+<!-- signature: tab <id> has wrong live window
+domain trace: nh-native-move-close-source-window
+action: {"type":"nativeMoveTabToWindow","tab":{"tabId":2},"window":{"windowId":20},"active":false,"captureStaleTabs":"nh-move-source-close-old"} -->
+
+- First seen: 2026-05-24T18:26:55.118Z
+- Trace id: `nh-native-move-close-source-window`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=nh-native-move-close-source-window pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: fixed in browser-authored drift fix pass and promoted to regression coverage.
+
+```text
+domain trace nh-native-move-close-source-window: native move close source window
+action 1: {"type":"openTab","window":{"windowId":10},"active":false,"captureTab":"nh-source-close-extra"}
+action 2: {"type":"nativeMoveTabToWindow","tab":{"tabId":2},"window":{"windowId":20},"active":false,"captureStaleTabs":"nh-move-source-close-old"}
+Domain trace: nh-native-move-close-source-window
+Action 2: {"type":"nativeMoveTabToWindow","tab":{"tabId":2},"window":{"windowId":20},"active":false,"captureStaleTabs":"nh-move-source-close-old"}
+Trace:
+domain trace nh-native-move-close-source-window: native move close source window
+action 1: {"type":"openTab","window":{"windowId":10},"active":false,"captureTab":"nh-source-close-extra"}
+action 2: {"type":"nativeMoveTabToWindow","tab":{"tabId":2},"window":{"windowId":20},"active":false,"captureStaleTabs":"nh-move-source-close-old"}
+```
+
+### RT-160 tab 2 has wrong live window
+<!-- signature: tab <id> has wrong live window
+domain trace: nh-native-move-session-only-close
+action: {"type":"nativeMoveTabToWindow","tab":{"tabId":2},"window":{"windowId":20},"captureStaleTabs":"nh-move-session-only-old"} -->
+
+- First seen: 2026-05-24T18:26:56.331Z
+- Trace id: `nh-native-move-session-only-close`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=nh-native-move-session-only-close pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: fixed in browser-authored drift fix pass and promoted to regression coverage.
+
+```text
+domain trace nh-native-move-session-only-close: native move session only close
+action 1: {"type":"nativeMoveTabToWindow","tab":{"tabId":2},"window":{"windowId":20},"captureStaleTabs":"nh-move-session-only-old"}
+Domain trace: nh-native-move-session-only-close
+Action 1: {"type":"nativeMoveTabToWindow","tab":{"tabId":2},"window":{"windowId":20},"captureStaleTabs":"nh-move-session-only-old"}
+Trace:
+domain trace nh-native-move-session-only-close: native move session only close
+action 1: {"type":"nativeMoveTabToWindow","tab":{"tabId":2},"window":{"windowId":20},"captureStaleTabs":"nh-move-session-only-old"}
+```
+
+### RT-161 tab 2 has wrong live window
+<!-- signature: tab <id> has wrong live window
+domain trace: nh-native-move-restart-refresh
+action: {"type":"nativeMoveTabToWindow","tab":{"tabId":2},"window":{"windowId":20},"captureStaleTabs":"nh-move-restart-old"} -->
+
+- First seen: 2026-05-24T18:26:57.507Z
+- Trace id: `nh-native-move-restart-refresh`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=nh-native-move-restart-refresh pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: fixed in browser-authored drift fix pass and promoted to regression coverage.
+
+```text
+domain trace nh-native-move-restart-refresh: native move restart refresh
+action 1: {"type":"nativeMoveTabToWindow","tab":{"tabId":2},"window":{"windowId":20},"captureStaleTabs":"nh-move-restart-old"}
+Domain trace: nh-native-move-restart-refresh
+Action 1: {"type":"nativeMoveTabToWindow","tab":{"tabId":2},"window":{"windowId":20},"captureStaleTabs":"nh-move-restart-old"}
+Trace:
+domain trace nh-native-move-restart-refresh: native move restart refresh
+action 1: {"type":"nativeMoveTabToWindow","tab":{"tabId":2},"window":{"windowId":20},"captureStaleTabs":"nh-move-restart-old"}
+```
+
+### RT-162 tab 2 has wrong live window
+<!-- signature: tab <id> has wrong live window
+domain trace: nh-native-move-reordered-destination
+action: {"type":"nativeMoveTabToWindow","tab":{"tabId":2},"window":{"windowId":20},"captureStaleTabs":"nh-move-reordered-old"} -->
+
+- First seen: 2026-05-24T18:27:03.494Z
+- Trace id: `nh-native-move-reordered-destination`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=nh-native-move-reordered-destination pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: fixed in browser-authored drift fix pass and promoted to regression coverage.
+
+```text
+domain trace nh-native-move-reordered-destination: native move reordered destination
+action 1: {"type":"nativeMoveTabToWindow","tab":{"tabId":2},"window":{"windowId":20},"captureStaleTabs":"nh-move-reordered-old"}
+Domain trace: nh-native-move-reordered-destination
+Action 1: {"type":"nativeMoveTabToWindow","tab":{"tabId":2},"window":{"windowId":20},"captureStaleTabs":"nh-move-reordered-old"}
+Trace:
+domain trace nh-native-move-reordered-destination: native move reordered destination
+action 1: {"type":"nativeMoveTabToWindow","tab":{"tabId":2},"window":{"windowId":20},"captureStaleTabs":"nh-move-reordered-old"}
+```
+
+### RT-163 tab 2 has wrong live window
+<!-- signature: tab <id> has wrong live window
+domain trace: nh-history-undo-native-move
+action: {"type":"nativeMoveTabToWindow","tab":{"tabId":2},"window":{"windowId":20},"captureStaleTabs":"nh-history-undo-move-old"} -->
+
+- First seen: 2026-05-24T18:27:07.031Z
+- Trace id: `nh-history-undo-native-move`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=nh-history-undo-native-move pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: fixed in browser-authored drift fix pass and promoted to regression coverage.
+
+```text
+domain trace nh-history-undo-native-move: history undo native move
+action 1: {"type":"outlinerGroupTab","tab":{"tabId":1}}
+action 2: {"type":"outlinerUndo"}
+action 3: {"type":"nativeMoveTabToWindow","tab":{"tabId":2},"window":{"windowId":20},"captureStaleTabs":"nh-history-undo-move-old"}
+Domain trace: nh-history-undo-native-move
+Action 3: {"type":"nativeMoveTabToWindow","tab":{"tabId":2},"window":{"windowId":20},"captureStaleTabs":"nh-history-undo-move-old"}
+Trace:
+domain trace nh-history-undo-native-move: history undo native move
+action 1: {"type":"outlinerGroupTab","tab":{"tabId":1}}
+action 2: {"type":"outlinerUndo"}
+action 3: {"type":"nativeMoveTabToWindow","tab":{"tabId":2},"window":{"windowId":20},"captureStaleTabs":"nh-history-undo-move-old"}
+```
+
+### RT-164 tab 4 has wrong live window
+<!-- signature: tab <id> has wrong live window
+domain trace: nh-restored-tab-native-move
+action: {"type":"nativeMoveTabToWindow","tab":{"capture":"nh-restored-tab"},"window":{"windowId":20},"captureStaleTabs":"nh-restored-tab-move-old"} -->
+
+- First seen: 2026-05-24T18:27:09.431Z
+- Trace id: `nh-restored-tab-native-move`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=nh-restored-tab-native-move pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: fixed in browser-authored drift fix pass and promoted to regression coverage.
+
+```text
+domain trace nh-restored-tab-native-move: restored tab native move
+action 1: {"type":"outlinerCloseTab","tab":{"tabId":2}}
+action 2: {"type":"outlinerRestoreNodeThenAbruptRestart","node":{"nodeId":"tab:2"},"captureRestoredTabs":"nh-restored-tab"}
+action 3: {"type":"nativeMoveTabToWindow","tab":{"capture":"nh-restored-tab"},"window":{"windowId":20},"captureStaleTabs":"nh-restored-tab-move-old"}
+Domain trace: nh-restored-tab-native-move
+Action 3: {"type":"nativeMoveTabToWindow","tab":{"capture":"nh-restored-tab"},"window":{"windowId":20},"captureStaleTabs":"nh-restored-tab-move-old"}
+Trace:
+domain trace nh-restored-tab-native-move: restored tab native move
+action 1: {"type":"outlinerCloseTab","tab":{"tabId":2}}
+action 2: {"type":"outlinerRestoreNodeThenAbruptRestart","node":{"nodeId":"tab:2"},"captureRestoredTabs":"nh-restored-tab"}
+action 3: {"type":"nativeMoveTabToWindow","tab":{"capture":"nh-restored-tab"},"window":{"windowId":20},"captureStaleTabs":"nh-restored-tab-move-old"}
+```
+
+<!-- hunt-corpus-run: {"at":"2026-05-24T18:27:10.609Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","history-boundary","journal","manual-refresh","metadata","multi-tab","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"nh-restored-window-native-open-sibling","runs":376,"processRuns":55,"batchSize":20,"batchFailures":2,"completedCorpus":true,"failures":10,"duplicateFailures":0,"newFindings":10} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-24T18:31:01.709Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","history-boundary","journal","manual-refresh","metadata","multi-tab","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"nh-native-move-new-window-restart-missing-destination","runs":384,"processRuns":60,"batchSize":20,"batchFailures":2,"completedCorpus":true,"failures":10,"duplicateFailures":10,"newFindings":0} -->
+
+### RT-165 live tab IDs match runtime tabs
+<!-- signature: live tab IDs match runtime tabs
+domain trace: nh-native-open-id-gap-history-restart
+action: {"type":"outlinerUndo"} -->
+
+- First seen: 2026-05-24T18:33:55.584Z
+- Trace id: `nh-native-open-id-gap-history-restart`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=nh-native-open-id-gap-history-restart pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: fixed in browser-authored drift fix pass and promoted to regression coverage.
+
+```text
+domain trace nh-native-open-id-gap-history-restart: native open id gap history restart
+action 1: {"type":"nativeOpenWindow","tabs":[{"title":"Native gap A"}],"captureWindow":"nh-id-gap-window-a","captureTabs":"nh-id-gap-tabs-a"}
+action 2: {"type":"nativeOpenWindow","tabs":[{"title":"Native gap B"}],"captureWindow":"nh-id-gap-window-b","captureTabs":"nh-id-gap-tabs-b"}
+action 3: {"type":"outlinerGroupTab","tab":{"tabId":1}}
+action 4: {"type":"outlinerUndo"}
+Domain trace: nh-native-open-id-gap-history-restart
+Action 4: {"type":"outlinerUndo"}
+Trace:
+domain trace nh-native-open-id-gap-history-restart: native open id gap history restart
+action 1: {"type":"nativeOpenWindow","tabs":[{"title":"Native gap A"}],"captureWindow":"nh-id-gap-window-a","captureTabs":"nh-id-gap-tabs-a"}
+action 2: {"type":"nativeOpenWindow","tabs":[{"title":"Native gap B"}],"captureWindow":"nh-id-gap-window-b","captureTabs":"nh-id-gap-tabs-b"}
+action 3: {"type":"outlinerGroupTab","tab":{"tabId":1}}
+action 4: {"type":"outlinerUndo"}
+```
+
+<!-- hunt-corpus-run: {"at":"2026-05-24T18:33:55.586Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","history-boundary","journal","manual-refresh","metadata","multi-tab","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"nh-native-open-id-gap-history-restart","runs":392,"processRuns":72,"batchSize":20,"batchFailures":3,"completedCorpus":true,"failures":11,"duplicateFailures":10,"newFindings":1} -->
+
+### RT-166 live tab IDs match runtime tabs
+<!-- signature: live tab IDs match runtime tabs
+domain trace: nh-native-open-single-history-undo
+action: {"type":"outlinerUndo"} -->
+
+- First seen: 2026-05-24T18:36:13.457Z
+- Trace id: `nh-native-open-single-history-undo`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=nh-native-open-single-history-undo pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: fixed in browser-authored drift fix pass and promoted to regression coverage.
+
+```text
+domain trace nh-native-open-single-history-undo: native open single history undo
+action 1: {"type":"nativeOpenWindow","tabs":[{"title":"Native single history"}],"captureWindow":"nh-history-single-window","captureTabs":"nh-history-single-tabs"}
+action 2: {"type":"outlinerGroupTab","tab":{"tabId":1}}
+action 3: {"type":"outlinerUndo"}
+Domain trace: nh-native-open-single-history-undo
+Action 3: {"type":"outlinerUndo"}
+Trace:
+domain trace nh-native-open-single-history-undo: native open single history undo
+action 1: {"type":"nativeOpenWindow","tabs":[{"title":"Native single history"}],"captureWindow":"nh-history-single-window","captureTabs":"nh-history-single-tabs"}
+action 2: {"type":"outlinerGroupTab","tab":{"tabId":1}}
+action 3: {"type":"outlinerUndo"}
+```
+
+### RT-167 live tab IDs match runtime tabs
+<!-- signature: live tab IDs match runtime tabs
+domain trace: nh-native-open-multitab-history-undo
+action: {"type":"outlinerUndo"} -->
+
+- First seen: 2026-05-24T18:36:14.609Z
+- Trace id: `nh-native-open-multitab-history-undo`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=nh-native-open-multitab-history-undo pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: fixed in browser-authored drift fix pass and promoted to regression coverage.
+
+```text
+domain trace nh-native-open-multitab-history-undo: native open multitab history undo
+action 1: {"type":"nativeOpenWindow","tabs":[{"title":"Native history A"},{"title":"Native history B","active":true}],"captureWindow":"nh-history-multitab-window","captureTabs":"nh-history-multitab-tabs"}
+action 2: {"type":"outlinerGroupTab","tab":{"tabId":1}}
+action 3: {"type":"outlinerUndo"}
+Domain trace: nh-native-open-multitab-history-undo
+Action 3: {"type":"outlinerUndo"}
+Trace:
+domain trace nh-native-open-multitab-history-undo: native open multitab history undo
+action 1: {"type":"nativeOpenWindow","tabs":[{"title":"Native history A"},{"title":"Native history B","active":true}],"captureWindow":"nh-history-multitab-window","captureTabs":"nh-history-multitab-tabs"}
+action 2: {"type":"outlinerGroupTab","tab":{"tabId":1}}
+action 3: {"type":"outlinerUndo"}
+```
+
+### RT-168 live tab IDs match runtime tabs
+<!-- signature: live tab IDs match runtime tabs
+domain trace: nh-native-open-history-group-redo
+action: {"type":"outlinerUndo"} -->
+
+- First seen: 2026-05-24T18:36:18.114Z
+- Trace id: `nh-native-open-history-group-redo`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=nh-native-open-history-group-redo pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: fixed in browser-authored drift fix pass and promoted to regression coverage.
+
+```text
+domain trace nh-native-open-history-group-redo: native open history group redo
+action 1: {"type":"nativeOpenWindow","tabs":[{"title":"Native redo history"}],"captureWindow":"nh-history-redo-window","captureTabs":"nh-history-redo-tabs"}
+action 2: {"type":"outlinerGroupTab","tab":{"tabId":1}}
+action 3: {"type":"outlinerUndo"}
+Domain trace: nh-native-open-history-group-redo
+Action 3: {"type":"outlinerUndo"}
+Trace:
+domain trace nh-native-open-history-group-redo: native open history group redo
+action 1: {"type":"nativeOpenWindow","tabs":[{"title":"Native redo history"}],"captureWindow":"nh-history-redo-window","captureTabs":"nh-history-redo-tabs"}
+action 2: {"type":"outlinerGroupTab","tab":{"tabId":1}}
+action 3: {"type":"outlinerUndo"}
+```
+
+### RT-169 live tab IDs match runtime tabs
+<!-- signature: live tab IDs match runtime tabs
+domain trace: nh-native-open-history-session-undo
+action: {"type":"outlinerUndo"} -->
+
+- First seen: 2026-05-24T18:36:19.284Z
+- Trace id: `nh-native-open-history-session-undo`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=nh-native-open-history-session-undo pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: fixed in browser-authored drift fix pass and promoted to regression coverage.
+
+```text
+domain trace nh-native-open-history-session-undo: native open history session undo
+action 1: {"type":"nativeOpenWindow","tabs":[{"title":"Native session history"}],"captureWindow":"nh-history-session-window","captureTabs":"nh-history-session-tabs"}
+action 2: {"type":"sessionChanged"}
+action 3: {"type":"outlinerGroupTab","tab":{"tabId":1}}
+action 4: {"type":"outlinerUndo"}
+Domain trace: nh-native-open-history-session-undo
+Action 4: {"type":"outlinerUndo"}
+Trace:
+domain trace nh-native-open-history-session-undo: native open history session undo
+action 1: {"type":"nativeOpenWindow","tabs":[{"title":"Native session history"}],"captureWindow":"nh-history-session-window","captureTabs":"nh-history-session-tabs"}
+action 2: {"type":"sessionChanged"}
+action 3: {"type":"outlinerGroupTab","tab":{"tabId":1}}
+action 4: {"type":"outlinerUndo"}
+```
+
+<!-- hunt-corpus-run: {"at":"2026-05-24T18:36:19.286Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","history-boundary","journal","manual-refresh","metadata","multi-tab","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"nh-native-open-history-session-undo","runs":398,"processRuns":78,"batchSize":20,"batchFailures":3,"completedCorpus":true,"failures":15,"duplicateFailures":11,"newFindings":4} -->
+
+### RT-170 live tab IDs match runtime tabs
+<!-- signature: live tab IDs match runtime tabs
+domain trace: nh-native-detach-group-undo
+action: {"type":"outlinerUndo"} -->
+
+- First seen: 2026-05-24T18:39:25.061Z
+- Trace id: `nh-native-detach-group-undo`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=nh-native-detach-group-undo pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: fixed in browser-authored drift fix pass and promoted to regression coverage.
+
+```text
+domain trace nh-native-detach-group-undo: native detach group undo
+action 1: {"type":"openTab","window":{"windowId":10},"active":false,"captureTab":"nh-detach-group-filler"}
+action 2: {"type":"nativeMoveTabToNewWindow","tab":{"tabId":2},"captureWindow":"nh-detach-group-window","captureStaleTabs":"nh-detach-group-old"}
+action 3: {"type":"outlinerGroupTab","tab":{"tabId":1}}
+action 4: {"type":"outlinerUndo"}
+Domain trace: nh-native-detach-group-undo
+Action 4: {"type":"outlinerUndo"}
+Trace:
+domain trace nh-native-detach-group-undo: native detach group undo
+action 1: {"type":"openTab","window":{"windowId":10},"active":false,"captureTab":"nh-detach-group-filler"}
+action 2: {"type":"nativeMoveTabToNewWindow","tab":{"tabId":2},"captureWindow":"nh-detach-group-window","captureStaleTabs":"nh-detach-group-old"}
+action 3: {"type":"outlinerGroupTab","tab":{"tabId":1}}
+action 4: {"type":"outlinerUndo"}
+```
+
+<!-- hunt-corpus-run: {"at":"2026-05-24T18:39:28.524Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","history-boundary","journal","manual-refresh","metadata","multi-tab","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"nh-native-detach-abrupt-session-refresh","runs":404,"processRuns":85,"batchSize":20,"batchFailures":4,"completedCorpus":true,"failures":16,"duplicateFailures":15,"newFindings":1} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-24T18:42:20.083Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","history-boundary","journal","manual-refresh","metadata","multi-tab","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"nh-native-open-opener-focus-reordered","runs":409,"processRuns":90,"batchSize":20,"batchFailures":4,"completedCorpus":true,"failures":16,"duplicateFailures":16,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-24T18:45:11.406Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","history-boundary","journal","manual-refresh","metadata","multi-tab","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"nh-native-open-close-reject-tab-session","runs":414,"processRuns":95,"batchSize":20,"batchFailures":4,"completedCorpus":true,"failures":16,"duplicateFailures":16,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-24T18:48:13.302Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","history-boundary","journal","manual-refresh","metadata","multi-tab","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"nh-native-open-opener-close-child-stale","runs":419,"processRuns":100,"batchSize":20,"batchFailures":4,"completedCorpus":true,"failures":16,"duplicateFailures":16,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-24T18:48:49.280Z","mode":"agent-corpus-run","profile":"regression","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","history-boundary","journal","known-finding","manual-refresh","multi-tab","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo"],"firstTraceId":"rt-active-race","lastTraceId":"jh-native-restored-tab-abrupt","runs":193,"processRuns":4,"batchSize":50,"batchFailures":0,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-24T19:06:45.815Z","mode":"agent-corpus-run","profile":"regression","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","history-boundary","journal","known-finding","manual-refresh","multi-tab","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo"],"firstTraceId":"rt-active-race","lastTraceId":"nh-native-detach-group-undo","runs":209,"processRuns":5,"batchSize":50,"batchFailures":0,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-24T19:08:57.607Z","mode":"agent-corpus-run","profile":"regression","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","history-boundary","journal","known-finding","manual-refresh","multi-tab","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo"],"firstTraceId":"rt-active-race","lastTraceId":"nh-native-detach-group-undo","runs":209,"processRuns":5,"batchSize":50,"batchFailures":0,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-24T19:21:12.490Z","mode":"agent-corpus-run","profile":"regression","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","history-boundary","journal","known-finding","manual-refresh","multi-tab","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo"],"firstTraceId":"rt-active-race","lastTraceId":"nh-native-detach-group-undo","runs":209,"processRuns":5,"batchSize":50,"batchFailures":0,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
+
+### RT-171 tab 2 active flag diverged
+<!-- signature: tab <id> active flag diverged
+domain trace: mh-grouped-sibling-reorder-history
+action: {"type":"nativeMoveTabToWindow","tab":{"capture":"mh-grouped-order-sibling"},"window":{"windowId":10},"index":0,"active":false,"captureStaleTabs":"mh-grouped-order-old"} -->
+
+- First seen: 2026-05-24T19:28:49.378Z
+- Trace id: `mh-grouped-sibling-reorder-history`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=mh-grouped-sibling-reorder-history pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: fixed by runtime shape fact pass and promoted to regression coverage.
+
+```text
+domain trace mh-grouped-sibling-reorder-history: grouped sibling reorder history
+action 1: {"type":"openTab","window":{"windowId":10},"active":false,"title":"Grouped order sibling","captureTab":"mh-grouped-order-sibling"}
+action 2: {"type":"outlinerGroupTab","tab":{"tabId":1},"captureStaleTabs":"mh-grouped-order-before"}
+action 3: {"type":"outlinerUndo"}
+action 4: {"type":"outlinerRedo"}
+action 5: {"type":"nativeMoveTabToWindow","tab":{"capture":"mh-grouped-order-sibling"},"window":{"windowId":10},"index":0,"active":false,"captureStaleTabs":"mh-grouped-order-old"}
+Domain trace: mh-grouped-sibling-reorder-history
+Action 5: {"type":"nativeMoveTabToWindow","tab":{"capture":"mh-grouped-order-sibling"},"window":{"windowId":10},"index":0,"active":false,"captureStaleTabs":"mh-grouped-order-old"}
+Trace:
+domain trace mh-grouped-sibling-reorder-history: grouped sibling reorder history
+action 1: {"type":"openTab","window":{"windowId":10},"active":false,"title":"Grouped order sibling","captureTab":"mh-grouped-order-sibling"}
+action 2: {"type":"outlinerGroupTab","tab":{"tabId":1},"captureStaleTabs":"mh-grouped-order-before"}
+action 3: {"type":"outlinerUndo"}
+action 4: {"type":"outlinerRedo"}
+action 5: {"type":"nativeMoveTabToWindow","tab":{"capture":"mh-grouped-order-sibling"},"window":{"windowId":10},"index":0,"active":false,"captureStaleTabs":"mh-grouped-order-old"}
+```
+
+### RT-172 runtime tab order for window 10 matches outline preorder
+<!-- signature: runtime tab order for window <id> matches outline preorder
+domain trace: mh-native-multitab-move-one-out
+action: {"type":"nativeMoveTabToWindow","tab":{"capture":"mh-multitab-tabs","index":1},"window":{"windowId":10},"index":1,"active":false,"captureStaleTabs":"mh-multitab-move-old"} -->
+
+- First seen: 2026-05-24T19:29:08.457Z
+- Trace id: `mh-native-multitab-move-one-out`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=mh-native-multitab-move-one-out pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: fixed by runtime shape fact pass and promoted to regression coverage.
+
+```text
+domain trace mh-native-multitab-move-one-out: native multitab move one out
+action 1: {"type":"nativeOpenWindow","focused":false,"tabs":[{"title":"Multi A"},{"title":"Multi B"},{"title":"Multi C","active":true}],"captureWindow":"mh-multitab-window","captureTabs":"mh-multitab-tabs"}
+action 2: {"type":"nativeMoveTabToWindow","tab":{"capture":"mh-multitab-tabs","index":1},"window":{"windowId":10},"index":1,"active":false,"captureStaleTabs":"mh-multitab-move-old"}
+Domain trace: mh-native-multitab-move-one-out
+Action 2: {"type":"nativeMoveTabToWindow","tab":{"capture":"mh-multitab-tabs","index":1},"window":{"windowId":10},"index":1,"active":false,"captureStaleTabs":"mh-multitab-move-old"}
+Trace:
+domain trace mh-native-multitab-move-one-out: native multitab move one out
+action 1: {"type":"nativeOpenWindow","focused":false,"tabs":[{"title":"Multi A"},{"title":"Multi B"},{"title":"Multi C","active":true}],"captureWindow":"mh-multitab-window","captureTabs":"mh-multitab-tabs"}
+action 2: {"type":"nativeMoveTabToWindow","tab":{"capture":"mh-multitab-tabs","index":1},"window":{"windowId":10},"index":1,"active":false,"captureStaleTabs":"mh-multitab-move-old"}
+```
+
+### RT-173 tab 2 active flag diverged
+<!-- signature: tab <id> active flag diverged
+domain trace: mh-restart-nested-reorder-missing
+action: {"type":"nativeMoveTabToWindow","tab":{"capture":"mh-restart-nested-sibling"},"window":{"role":"lastOpenedWindow"},"index":0,"active":false,"captureStaleTabs":"mh-restart-nested-reorder-old"} -->
+
+- First seen: 2026-05-24T19:29:09.593Z
+- Trace id: `mh-restart-nested-reorder-missing`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=mh-restart-nested-reorder-missing pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: fixed by runtime shape fact pass and promoted to regression coverage.
+
+```text
+domain trace mh-restart-nested-reorder-missing: restart nested reorder missing
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":2},"captureStaleTabs":"mh-restart-nested-old"}
+action 2: {"type":"openTab","window":{"role":"lastOpenedWindow"},"active":false,"title":"Restart nested sibling","captureTab":"mh-restart-nested-sibling"}
+action 3: {"type":"nativeMoveTabToWindow","tab":{"capture":"mh-restart-nested-sibling"},"window":{"role":"lastOpenedWindow"},"index":0,"active":false,"captureStaleTabs":"mh-restart-nested-reorder-old"}
+Domain trace: mh-restart-nested-reorder-missing
+Action 3: {"type":"nativeMoveTabToWindow","tab":{"capture":"mh-restart-nested-sibling"},"window":{"role":"lastOpenedWindow"},"index":0,"active":false,"captureStaleTabs":"mh-restart-nested-reorder-old"}
+Trace:
+domain trace mh-restart-nested-reorder-missing: restart nested reorder missing
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":2},"captureStaleTabs":"mh-restart-nested-old"}
+action 2: {"type":"openTab","window":{"role":"lastOpenedWindow"},"active":false,"title":"Restart nested sibling","captureTab":"mh-restart-nested-sibling"}
+action 3: {"type":"nativeMoveTabToWindow","tab":{"capture":"mh-restart-nested-sibling"},"window":{"role":"lastOpenedWindow"},"index":0,"active":false,"captureStaleTabs":"mh-restart-nested-reorder-old"}
+```
+
+<!-- hunt-corpus-run: {"at":"2026-05-24T19:29:09.594Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","history-boundary","journal","manual-refresh","metadata","multi-tab","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"mh-restart-nested-reorder-missing","runs":425,"processRuns":47,"batchSize":20,"batchFailures":2,"completedCorpus":true,"failures":3,"duplicateFailures":0,"newFindings":3} -->
+
+### RT-174 tab 1 active flag diverged
+<!-- signature: tab <id> active flag diverged
+domain trace: mh-active-fallback-same-window-reorder
+action: {"type":"nativeMoveTabToWindow","tab":{"tabId":2},"window":{"windowId":10},"index":0,"active":false,"captureStaleTabs":"mh-active-fallback-old"} -->
+
+- First seen: 2026-05-24T19:31:37.357Z
+- Trace id: `mh-active-fallback-same-window-reorder`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=mh-active-fallback-same-window-reorder pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: fixed by runtime shape fact pass and promoted to regression coverage.
+
+```text
+domain trace mh-active-fallback-same-window-reorder: active fallback same window reorder
+action 1: {"type":"activateTab","tab":{"tabId":2}}
+action 2: {"type":"nativeMoveTabToWindow","tab":{"tabId":2},"window":{"windowId":10},"index":0,"active":false,"captureStaleTabs":"mh-active-fallback-old"}
+Domain trace: mh-active-fallback-same-window-reorder
+Action 2: {"type":"nativeMoveTabToWindow","tab":{"tabId":2},"window":{"windowId":10},"index":0,"active":false,"captureStaleTabs":"mh-active-fallback-old"}
+Trace:
+domain trace mh-active-fallback-same-window-reorder: active fallback same window reorder
+action 1: {"type":"activateTab","tab":{"tabId":2}}
+action 2: {"type":"nativeMoveTabToWindow","tab":{"tabId":2},"window":{"windowId":10},"index":0,"active":false,"captureStaleTabs":"mh-active-fallback-old"}
+```
+
+### RT-175 runtime tab order for window 10 matches outline preorder
+<!-- signature: runtime tab order for window <id> matches outline preorder
+domain trace: mh-order-native-open-move-front
+action: {"type":"nativeMoveTabToWindow","tab":{"capture":"mh-order-front-tabs","index":1},"window":{"windowId":10},"index":0,"active":false,"captureStaleTabs":"mh-order-front-old"} -->
+
+- First seen: 2026-05-24T19:31:40.728Z
+- Trace id: `mh-order-native-open-move-front`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=mh-order-native-open-move-front pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: fixed by runtime shape fact pass and promoted to regression coverage.
+
+```text
+domain trace mh-order-native-open-move-front: order native open move front
+action 1: {"type":"nativeOpenWindow","focused":false,"tabs":[{"title":"Move front A"},{"title":"Move front B","active":true}],"captureWindow":"mh-order-front-window","captureTabs":"mh-order-front-tabs"}
+action 2: {"type":"nativeMoveTabToWindow","tab":{"capture":"mh-order-front-tabs","index":1},"window":{"windowId":10},"index":0,"active":false,"captureStaleTabs":"mh-order-front-old"}
+Domain trace: mh-order-native-open-move-front
+Action 2: {"type":"nativeMoveTabToWindow","tab":{"capture":"mh-order-front-tabs","index":1},"window":{"windowId":10},"index":0,"active":false,"captureStaleTabs":"mh-order-front-old"}
+Trace:
+domain trace mh-order-native-open-move-front: order native open move front
+action 1: {"type":"nativeOpenWindow","focused":false,"tabs":[{"title":"Move front A"},{"title":"Move front B","active":true}],"captureWindow":"mh-order-front-window","captureTabs":"mh-order-front-tabs"}
+action 2: {"type":"nativeMoveTabToWindow","tab":{"capture":"mh-order-front-tabs","index":1},"window":{"windowId":10},"index":0,"active":false,"captureStaleTabs":"mh-order-front-old"}
+```
+
+### RT-176 runtime tab order for window 10 matches outline preorder
+<!-- signature: runtime tab order for window <id> matches outline preorder
+domain trace: mh-order-native-open-move-middle-session
+action: {"type":"nativeMoveTabToWindow","tab":{"capture":"mh-order-middle-tabs"},"window":{"windowId":10},"index":1,"active":false,"captureStaleTabs":"mh-order-middle-old"} -->
+
+- First seen: 2026-05-24T19:31:41.851Z
+- Trace id: `mh-order-native-open-move-middle-session`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=mh-order-native-open-move-middle-session pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: fixed by runtime shape fact pass and promoted to regression coverage.
+
+```text
+domain trace mh-order-native-open-move-middle-session: order native open move middle session
+action 1: {"type":"openTab","window":{"windowId":10},"active":false,"title":"Middle target filler","captureTab":"mh-order-middle-filler"}
+action 2: {"type":"nativeOpenWindow","focused":false,"tabs":[{"title":"Move middle A"},{"title":"Move middle B","active":true}],"captureWindow":"mh-order-middle-window","captureTabs":"mh-order-middle-tabs"}
+action 3: {"type":"nativeMoveTabToWindow","tab":{"capture":"mh-order-middle-tabs"},"window":{"windowId":10},"index":1,"active":false,"captureStaleTabs":"mh-order-middle-old"}
+Domain trace: mh-order-native-open-move-middle-session
+Action 3: {"type":"nativeMoveTabToWindow","tab":{"capture":"mh-order-middle-tabs"},"window":{"windowId":10},"index":1,"active":false,"captureStaleTabs":"mh-order-middle-old"}
+Trace:
+domain trace mh-order-native-open-move-middle-session: order native open move middle session
+action 1: {"type":"openTab","window":{"windowId":10},"active":false,"title":"Middle target filler","captureTab":"mh-order-middle-filler"}
+action 2: {"type":"nativeOpenWindow","focused":false,"tabs":[{"title":"Move middle A"},{"title":"Move middle B","active":true}],"captureWindow":"mh-order-middle-window","captureTabs":"mh-order-middle-tabs"}
+action 3: {"type":"nativeMoveTabToWindow","tab":{"capture":"mh-order-middle-tabs"},"window":{"windowId":10},"index":1,"active":false,"captureStaleTabs":"mh-order-middle-old"}
+```
+
+### RT-177 tab 1 has wrong live window
+<!-- signature: tab <id> has wrong live window
+domain trace: mh-order-command-destination-move-out
+action: {"type":"nativeMoveTabToWindow","tab":{"role":"lastMovedTab"},"window":{"windowId":10},"index":1,"active":false,"captureStaleTabs":"mh-order-command-move-old"} -->
+
+- First seen: 2026-05-24T19:31:42.997Z
+- Trace id: `mh-order-command-destination-move-out`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=mh-order-command-destination-move-out pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: fixed by runtime shape fact pass and promoted to regression coverage.
+
+```text
+domain trace mh-order-command-destination-move-out: order command destination move out
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"mh-order-command-old"}
+action 2: {"type":"openTab","window":{"role":"lastOpenedWindow"},"active":false,"title":"Command order sibling","captureTab":"mh-order-command-sibling"}
+action 3: {"type":"nativeMoveTabToWindow","tab":{"role":"lastMovedTab"},"window":{"windowId":10},"index":1,"active":false,"captureStaleTabs":"mh-order-command-move-old"}
+Domain trace: mh-order-command-destination-move-out
+Action 3: {"type":"nativeMoveTabToWindow","tab":{"role":"lastMovedTab"},"window":{"windowId":10},"index":1,"active":false,"captureStaleTabs":"mh-order-command-move-old"}
+Trace:
+domain trace mh-order-command-destination-move-out: order command destination move out
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"mh-order-command-old"}
+action 2: {"type":"openTab","window":{"role":"lastOpenedWindow"},"active":false,"title":"Command order sibling","captureTab":"mh-order-command-sibling"}
+action 3: {"type":"nativeMoveTabToWindow","tab":{"role":"lastMovedTab"},"window":{"windowId":10},"index":1,"active":false,"captureStaleTabs":"mh-order-command-move-old"}
+```
+
+<!-- hunt-corpus-run: {"at":"2026-05-24T19:31:45.242Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","history-boundary","journal","manual-refresh","metadata","multi-tab","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"mh-metadata-native-created-stale-refresh","runs":433,"processRuns":55,"batchSize":20,"batchFailures":2,"completedCorpus":true,"failures":7,"duplicateFailures":3,"newFindings":4} -->
+
+### RT-178 tab 2 has wrong live window
+<!-- signature: tab <id> has wrong live window
+domain trace: mh-command-destination-move-out-restart
+action: {"type":"nativeMoveTabToWindow","tab":{"role":"lastMovedTab"},"window":{"windowId":10},"index":0,"active":false,"captureStaleTabs":"mh-command-out-restart-move-old"} -->
+
+- First seen: 2026-05-24T19:34:13.979Z
+- Trace id: `mh-command-destination-move-out-restart`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=mh-command-destination-move-out-restart pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: fixed by runtime shape fact pass and promoted to regression coverage.
+
+```text
+domain trace mh-command-destination-move-out-restart: command destination move out restart
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":2},"captureStaleTabs":"mh-command-out-restart-old"}
+action 2: {"type":"openTab","window":{"role":"lastOpenedWindow"},"active":false,"title":"Command out restart sibling","captureTab":"mh-command-out-restart-sibling"}
+action 3: {"type":"nativeMoveTabToWindow","tab":{"role":"lastMovedTab"},"window":{"windowId":10},"index":0,"active":false,"captureStaleTabs":"mh-command-out-restart-move-old"}
+Domain trace: mh-command-destination-move-out-restart
+Action 3: {"type":"nativeMoveTabToWindow","tab":{"role":"lastMovedTab"},"window":{"windowId":10},"index":0,"active":false,"captureStaleTabs":"mh-command-out-restart-move-old"}
+Trace:
+domain trace mh-command-destination-move-out-restart: command destination move out restart
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":2},"captureStaleTabs":"mh-command-out-restart-old"}
+action 2: {"type":"openTab","window":{"role":"lastOpenedWindow"},"active":false,"title":"Command out restart sibling","captureTab":"mh-command-out-restart-sibling"}
+action 3: {"type":"nativeMoveTabToWindow","tab":{"role":"lastMovedTab"},"window":{"windowId":10},"index":0,"active":false,"captureStaleTabs":"mh-command-out-restart-move-old"}
+```
+
+### RT-179 live tab IDs match runtime tabs
+<!-- signature: live tab IDs match runtime tabs
+domain trace: mh-command-destination-move-out-stale
+action: {"type":"nativeMoveTabToWindow","tab":{"role":"lastMovedTab"},"window":{"windowId":10},"index":1,"active":false,"captureStaleTabs":"mh-command-out-stale-destination-old"} -->
+
+- First seen: 2026-05-24T19:34:15.204Z
+- Trace id: `mh-command-destination-move-out-stale`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=mh-command-destination-move-out-stale pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: fixed by runtime shape fact pass and promoted to regression coverage.
+
+```text
+domain trace mh-command-destination-move-out-stale: command destination move out stale
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"mh-command-out-stale-source-old"}
+action 2: {"type":"updateTab","tab":{"role":"lastMovedTab"},"title":"Before move back","url":"https://move-back.example/before"}
+action 3: {"type":"nativeMoveTabToWindow","tab":{"role":"lastMovedTab"},"window":{"windowId":10},"index":1,"active":false,"captureStaleTabs":"mh-command-out-stale-destination-old"}
+Domain trace: mh-command-destination-move-out-stale
+Action 3: {"type":"nativeMoveTabToWindow","tab":{"role":"lastMovedTab"},"window":{"windowId":10},"index":1,"active":false,"captureStaleTabs":"mh-command-out-stale-destination-old"}
+Trace:
+domain trace mh-command-destination-move-out-stale: command destination move out stale
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"mh-command-out-stale-source-old"}
+action 2: {"type":"updateTab","tab":{"role":"lastMovedTab"},"title":"Before move back","url":"https://move-back.example/before"}
+action 3: {"type":"nativeMoveTabToWindow","tab":{"role":"lastMovedTab"},"window":{"windowId":10},"index":1,"active":false,"captureStaleTabs":"mh-command-out-stale-destination-old"}
+```
+
+### RT-180 runtime tab order for window 10 matches outline preorder
+<!-- signature: runtime tab order for window <id> matches outline preorder
+domain trace: mh-native-detach-move-back-history
+action: {"type":"nativeMoveTabToWindow","tab":{"role":"lastMovedTab"},"window":{"windowId":10},"index":0,"active":false,"captureStaleTabs":"mh-detach-back-destination-old"} -->
+
+- First seen: 2026-05-24T19:34:16.421Z
+- Trace id: `mh-native-detach-move-back-history`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=mh-native-detach-move-back-history pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: fixed by runtime shape fact pass and promoted to regression coverage.
+
+```text
+domain trace mh-native-detach-move-back-history: native detach move back history
+action 1: {"type":"nativeMoveTabToNewWindow","tab":{"tabId":2},"captureWindow":"mh-detach-back-window","captureStaleTabs":"mh-detach-back-old"}
+action 2: {"type":"nativeMoveTabToWindow","tab":{"role":"lastMovedTab"},"window":{"windowId":10},"index":0,"active":false,"captureStaleTabs":"mh-detach-back-destination-old"}
+Domain trace: mh-native-detach-move-back-history
+Action 2: {"type":"nativeMoveTabToWindow","tab":{"role":"lastMovedTab"},"window":{"windowId":10},"index":0,"active":false,"captureStaleTabs":"mh-detach-back-destination-old"}
+Trace:
+domain trace mh-native-detach-move-back-history: native detach move back history
+action 1: {"type":"nativeMoveTabToNewWindow","tab":{"tabId":2},"captureWindow":"mh-detach-back-window","captureStaleTabs":"mh-detach-back-old"}
+action 2: {"type":"nativeMoveTabToWindow","tab":{"role":"lastMovedTab"},"window":{"windowId":10},"index":0,"active":false,"captureStaleTabs":"mh-detach-back-destination-old"}
+```
+
+### RT-181 runtime tab order for window 22 matches outline preorder
+<!-- signature: runtime tab order for window <id> matches outline preorder
+domain trace: mh-order-two-window-swap
+action: {"type":"nativeMoveTabToWindow","tab":{"capture":"mh-swap-tabs-a"},"window":{"capture":"mh-swap-window-b"},"index":1,"active":false,"captureStaleTabs":"mh-swap-a-old"} -->
+
+- First seen: 2026-05-24T19:34:19.987Z
+- Trace id: `mh-order-two-window-swap`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=mh-order-two-window-swap pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: fixed by runtime shape fact pass and promoted to regression coverage.
+
+```text
+domain trace mh-order-two-window-swap: order two window swap
+action 1: {"type":"nativeOpenWindow","focused":false,"tabs":[{"title":"Swap A1"},{"title":"Swap A2","active":true}],"captureWindow":"mh-swap-window-a","captureTabs":"mh-swap-tabs-a"}
+action 2: {"type":"nativeOpenWindow","focused":false,"tabs":[{"title":"Swap B1"},{"title":"Swap B2","active":true}],"captureWindow":"mh-swap-window-b","captureTabs":"mh-swap-tabs-b"}
+action 3: {"type":"nativeMoveTabToWindow","tab":{"capture":"mh-swap-tabs-a"},"window":{"capture":"mh-swap-window-b"},"index":1,"active":false,"captureStaleTabs":"mh-swap-a-old"}
+Domain trace: mh-order-two-window-swap
+Action 3: {"type":"nativeMoveTabToWindow","tab":{"capture":"mh-swap-tabs-a"},"window":{"capture":"mh-swap-window-b"},"index":1,"active":false,"captureStaleTabs":"mh-swap-a-old"}
+Trace:
+domain trace mh-order-two-window-swap: order two window swap
+action 1: {"type":"nativeOpenWindow","focused":false,"tabs":[{"title":"Swap A1"},{"title":"Swap A2","active":true}],"captureWindow":"mh-swap-window-a","captureTabs":"mh-swap-tabs-a"}
+action 2: {"type":"nativeOpenWindow","focused":false,"tabs":[{"title":"Swap B1"},{"title":"Swap B2","active":true}],"captureWindow":"mh-swap-window-b","captureTabs":"mh-swap-tabs-b"}
+action 3: {"type":"nativeMoveTabToWindow","tab":{"capture":"mh-swap-tabs-a"},"window":{"capture":"mh-swap-window-b"},"index":1,"active":false,"captureStaleTabs":"mh-swap-a-old"}
+```
+
+<!-- hunt-corpus-run: {"at":"2026-05-24T19:34:19.988Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","history-boundary","journal","manual-refresh","metadata","multi-tab","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"mh-order-two-window-swap","runs":439,"processRuns":61,"batchSize":20,"batchFailures":2,"completedCorpus":true,"failures":11,"duplicateFailures":7,"newFindings":4} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-24T19:37:14.640Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","history-boundary","journal","manual-refresh","metadata","multi-tab","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"mh-paired-browser-created-close-metadata","runs":443,"processRuns":63,"batchSize":20,"batchFailures":2,"completedCorpus":true,"failures":11,"duplicateFailures":11,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-24T19:39:33.767Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","history-boundary","journal","manual-refresh","metadata","multi-tab","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"mh-nested-window-metadata-focus","runs":447,"processRuns":63,"batchSize":20,"batchFailures":2,"completedCorpus":true,"failures":11,"duplicateFailures":11,"newFindings":0} -->
+
+### RT-182 tab 4 title metadata diverged
+<!-- signature: tab <id> title metadata diverged
+domain trace: mh-delayed-restored-tab-updated-echo
+action: {"type":"staleLiveUpdatedEvent","staleTab":{"capture":"mh-delayed-restored-tab"},"withStaleQuery":true} -->
+
+- First seen: 2026-05-24T19:42:25.139Z
+- Trace id: `mh-delayed-restored-tab-updated-echo`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=mh-delayed-restored-tab-updated-echo pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: fixed by runtime shape fact pass and promoted to regression coverage.
+
+```text
+domain trace mh-delayed-restored-tab-updated-echo: delayed restored tab updated echo
+action 1: {"type":"outlinerCloseTab","tab":{"tabId":2}}
+action 2: {"type":"outlinerRestoreNodeRejectingCreate","node":{"nodeId":"tab:2"},"captureRestoredTabs":"mh-delayed-restored-tab"}
+action 3: {"type":"updateTab","tab":{"capture":"mh-delayed-restored-tab"},"title":"Delayed Restored Current","url":"https://delayed-restored.example/"}
+action 4: {"type":"staleLiveUpdatedEvent","staleTab":{"capture":"mh-delayed-restored-tab"},"withStaleQuery":true}
+Domain trace: mh-delayed-restored-tab-updated-echo
+Action 4: {"type":"staleLiveUpdatedEvent","staleTab":{"capture":"mh-delayed-restored-tab"},"withStaleQuery":true}
+Trace:
+domain trace mh-delayed-restored-tab-updated-echo: delayed restored tab updated echo
+action 1: {"type":"outlinerCloseTab","tab":{"tabId":2}}
+action 2: {"type":"outlinerRestoreNodeRejectingCreate","node":{"nodeId":"tab:2"},"captureRestoredTabs":"mh-delayed-restored-tab"}
+action 3: {"type":"updateTab","tab":{"capture":"mh-delayed-restored-tab"},"title":"Delayed Restored Current","url":"https://delayed-restored.example/"}
+action 4: {"type":"staleLiveUpdatedEvent","staleTab":{"capture":"mh-delayed-restored-tab"},"withStaleQuery":true}
+```
+
+<!-- hunt-corpus-run: {"at":"2026-05-24T19:42:26.350Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","history-boundary","journal","manual-refresh","metadata","multi-tab","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"mh-opener-native-move-metadata-restart","runs":451,"processRuns":74,"batchSize":20,"batchFailures":3,"completedCorpus":true,"failures":12,"duplicateFailures":11,"newFindings":1} -->
+
+### RT-183 tab 4 url metadata diverged
+<!-- signature: tab <id> url metadata diverged
+domain trace: mh-restored-tab-created-echo-metadata
+action: {"type":"staleLiveCreatedEvent","staleTab":{"capture":"mh-restored-created-meta-tab"},"withStaleQuery":true} -->
+
+- First seen: 2026-05-24T19:45:01.172Z
+- Trace id: `mh-restored-tab-created-echo-metadata`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=mh-restored-tab-created-echo-metadata pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: fixed by runtime shape fact pass and promoted to regression coverage.
+
+```text
+domain trace mh-restored-tab-created-echo-metadata: restored tab created echo metadata
+action 1: {"type":"outlinerCloseTab","tab":{"tabId":2}}
+action 2: {"type":"outlinerRestoreNodeRejectingCreate","node":{"nodeId":"tab:2"},"captureRestoredTabs":"mh-restored-created-meta-tab"}
+action 3: {"type":"updateTab","tab":{"capture":"mh-restored-created-meta-tab"},"title":"Restored Created Current","url":"https://restored-created.example/"}
+action 4: {"type":"staleLiveCreatedEvent","staleTab":{"capture":"mh-restored-created-meta-tab"},"withStaleQuery":true}
+Domain trace: mh-restored-tab-created-echo-metadata
+Action 4: {"type":"staleLiveCreatedEvent","staleTab":{"capture":"mh-restored-created-meta-tab"},"withStaleQuery":true}
+Trace:
+domain trace mh-restored-tab-created-echo-metadata: restored tab created echo metadata
+action 1: {"type":"outlinerCloseTab","tab":{"tabId":2}}
+action 2: {"type":"outlinerRestoreNodeRejectingCreate","node":{"nodeId":"tab:2"},"captureRestoredTabs":"mh-restored-created-meta-tab"}
+action 3: {"type":"updateTab","tab":{"capture":"mh-restored-created-meta-tab"},"title":"Restored Created Current","url":"https://restored-created.example/"}
+action 4: {"type":"staleLiveCreatedEvent","staleTab":{"capture":"mh-restored-created-meta-tab"},"withStaleQuery":true}
+```
+
+### RT-184 tab 3 title metadata diverged
+<!-- signature: tab <id> title metadata diverged
+domain trace: mh-restored-window-tab-updated-echo
+action: {"type":"updateTab","tab":{"capture":"mh-restored-window-meta-tabs"},"title":"Restored Window Current","url":"https://restored-window-meta.example/"} -->
+
+- First seen: 2026-05-24T19:45:02.450Z
+- Trace id: `mh-restored-window-tab-updated-echo`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=mh-restored-window-tab-updated-echo pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: fixed by runtime shape fact pass and promoted to regression coverage.
+
+```text
+domain trace mh-restored-window-tab-updated-echo: restored window tab updated echo
+action 1: {"type":"outlinerCloseWindow","window":{"windowId":20}}
+action 2: {"type":"outlinerRestoreNodeRejectingCreate","node":{"nodeId":"window:20"},"captureRestoredTabs":"mh-restored-window-meta-tabs","captureRestoredWindows":"mh-restored-window-meta-window"}
+action 3: {"type":"updateTab","tab":{"capture":"mh-restored-window-meta-tabs"},"title":"Restored Window Current","url":"https://restored-window-meta.example/"}
+Domain trace: mh-restored-window-tab-updated-echo
+Action 3: {"type":"updateTab","tab":{"capture":"mh-restored-window-meta-tabs"},"title":"Restored Window Current","url":"https://restored-window-meta.example/"}
+Trace:
+domain trace mh-restored-window-tab-updated-echo: restored window tab updated echo
+action 1: {"type":"outlinerCloseWindow","window":{"windowId":20}}
+action 2: {"type":"outlinerRestoreNodeRejectingCreate","node":{"nodeId":"window:20"},"captureRestoredTabs":"mh-restored-window-meta-tabs","captureRestoredWindows":"mh-restored-window-meta-window"}
+action 3: {"type":"updateTab","tab":{"capture":"mh-restored-window-meta-tabs"},"title":"Restored Window Current","url":"https://restored-window-meta.example/"}
+```
+
+### RT-185 tab 4 title metadata diverged
+<!-- signature: tab <id> title metadata diverged
+domain trace: mh-restored-tab-restart-stale-metadata
+action: {"type":"staleLiveUpdatedEvent","staleTab":{"capture":"mh-restored-restart-meta-tab"},"withStaleQuery":true} -->
+
+- First seen: 2026-05-24T19:45:03.846Z
+- Trace id: `mh-restored-tab-restart-stale-metadata`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=mh-restored-tab-restart-stale-metadata pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: fixed by runtime shape fact pass and promoted to regression coverage.
+
+```text
+domain trace mh-restored-tab-restart-stale-metadata: restored tab restart stale metadata
+action 1: {"type":"outlinerCloseTab","tab":{"tabId":2}}
+action 2: {"type":"outlinerRestoreNodeRejectingCreate","node":{"nodeId":"tab:2"},"captureRestoredTabs":"mh-restored-restart-meta-tab"}
+action 3: {"type":"updateTab","tab":{"capture":"mh-restored-restart-meta-tab"},"title":"Restored Restart Current","url":"https://restored-restart.example/"}
+action 4: {"type":"restartBackground"}
+action 5: {"type":"staleLiveUpdatedEvent","staleTab":{"capture":"mh-restored-restart-meta-tab"},"withStaleQuery":true}
+Domain trace: mh-restored-tab-restart-stale-metadata
+Action 5: {"type":"staleLiveUpdatedEvent","staleTab":{"capture":"mh-restored-restart-meta-tab"},"withStaleQuery":true}
+Trace:
+domain trace mh-restored-tab-restart-stale-metadata: restored tab restart stale metadata
+action 1: {"type":"outlinerCloseTab","tab":{"tabId":2}}
+action 2: {"type":"outlinerRestoreNodeRejectingCreate","node":{"nodeId":"tab:2"},"captureRestoredTabs":"mh-restored-restart-meta-tab"}
+action 3: {"type":"updateTab","tab":{"capture":"mh-restored-restart-meta-tab"},"title":"Restored Restart Current","url":"https://restored-restart.example/"}
+action 4: {"type":"restartBackground"}
+action 5: {"type":"staleLiveUpdatedEvent","staleTab":{"capture":"mh-restored-restart-meta-tab"},"withStaleQuery":true}
+```
+
+### RT-186 tab 4 title metadata diverged
+<!-- signature: tab <id> title metadata diverged
+domain trace: mh-restored-tab-missing-query-metadata
+action: {"type":"staleLiveUpdatedEvent","staleTab":{"capture":"mh-restored-missing-meta-tab"},"withStaleQuery":true} -->
+
+- First seen: 2026-05-24T19:45:05.063Z
+- Trace id: `mh-restored-tab-missing-query-metadata`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=mh-restored-tab-missing-query-metadata pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: fixed by runtime shape fact pass and promoted to regression coverage.
+
+```text
+domain trace mh-restored-tab-missing-query-metadata: restored tab missing query metadata
+action 1: {"type":"outlinerCloseTab","tab":{"tabId":2}}
+action 2: {"type":"outlinerRestoreNodeRejectingCreate","node":{"nodeId":"tab:2"},"captureRestoredTabs":"mh-restored-missing-meta-tab"}
+action 3: {"type":"updateTab","tab":{"capture":"mh-restored-missing-meta-tab"},"title":"Restored Missing Current","url":"https://restored-missing.example/"}
+action 4: {"type":"manualRefreshWithMissingTabQuery","tab":{"capture":"mh-restored-missing-meta-tab"}}
+action 5: {"type":"staleLiveUpdatedEvent","staleTab":{"capture":"mh-restored-missing-meta-tab"},"withStaleQuery":true}
+Domain trace: mh-restored-tab-missing-query-metadata
+Action 5: {"type":"staleLiveUpdatedEvent","staleTab":{"capture":"mh-restored-missing-meta-tab"},"withStaleQuery":true}
+Trace:
+domain trace mh-restored-tab-missing-query-metadata: restored tab missing query metadata
+action 1: {"type":"outlinerCloseTab","tab":{"tabId":2}}
+action 2: {"type":"outlinerRestoreNodeRejectingCreate","node":{"nodeId":"tab:2"},"captureRestoredTabs":"mh-restored-missing-meta-tab"}
+action 3: {"type":"updateTab","tab":{"capture":"mh-restored-missing-meta-tab"},"title":"Restored Missing Current","url":"https://restored-missing.example/"}
+action 4: {"type":"manualRefreshWithMissingTabQuery","tab":{"capture":"mh-restored-missing-meta-tab"}}
+action 5: {"type":"staleLiveUpdatedEvent","staleTab":{"capture":"mh-restored-missing-meta-tab"},"withStaleQuery":true}
+```
+
+<!-- hunt-corpus-run: {"at":"2026-05-24T19:45:05.065Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","history-boundary","journal","manual-refresh","metadata","multi-tab","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"mh-restored-tab-missing-query-metadata","runs":455,"processRuns":78,"batchSize":20,"batchFailures":3,"completedCorpus":true,"failures":16,"duplicateFailures":12,"newFindings":4} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-24T19:47:38.254Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","history-boundary","journal","manual-refresh","metadata","multi-tab","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"mh-control-opener-metadata-partial","runs":457,"processRuns":80,"batchSize":20,"batchFailures":3,"completedCorpus":true,"failures":16,"duplicateFailures":16,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-24T19:49:57.791Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","history-boundary","journal","manual-refresh","metadata","multi-tab","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"mh-control-paired-nonrestored-echo","runs":459,"processRuns":82,"batchSize":20,"batchFailures":3,"completedCorpus":true,"failures":16,"duplicateFailures":16,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-24T19:52:27.860Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","history-boundary","journal","manual-refresh","metadata","multi-tab","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"mh-control-partial-query-current-metadata","runs":461,"processRuns":84,"batchSize":20,"batchFailures":3,"completedCorpus":true,"failures":16,"duplicateFailures":16,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-24T19:53:56.823Z","mode":"agent-corpus-run","profile":"regression","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","history-boundary","journal","known-finding","manual-refresh","multi-tab","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo"],"firstTraceId":"rt-active-race","lastTraceId":"nh-native-detach-group-undo","runs":209,"processRuns":5,"batchSize":50,"batchFailures":0,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-24T22:11:26.529Z","mode":"agent-corpus-run","profile":"regression","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","history-boundary","journal","known-finding","manual-refresh","multi-tab","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo"],"firstTraceId":"rt-active-race","lastTraceId":"nh-native-detach-group-undo","runs":209,"processRuns":5,"batchSize":50,"batchFailures":0,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-24T22:12:24.341Z","mode":"agent-corpus-run","profile":"regression","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","history-boundary","journal","known-finding","manual-refresh","metadata","multi-tab","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event"],"firstTraceId":"rt-active-race","lastTraceId":"mh-restored-tab-missing-query-metadata","runs":225,"processRuns":5,"batchSize":50,"batchFailures":0,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-24T22:16:07.240Z","mode":"agent-corpus-run","profile":"regression","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","history-boundary","journal","known-finding","manual-refresh","metadata","multi-tab","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event"],"firstTraceId":"rt-active-race","lastTraceId":"mh-restored-tab-missing-query-metadata","runs":225,"processRuns":5,"batchSize":50,"batchFailures":0,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->

@@ -115,4 +115,5 @@ export type RestoredNode = {
 
 export type ReconcileOptions = {
   closeMissing?: boolean;
+  respectRuntimeTabOrder?: boolean;
 };

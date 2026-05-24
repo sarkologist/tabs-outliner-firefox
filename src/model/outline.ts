@@ -221,6 +221,12 @@ export function reconcileWithWindows(
       existingWindow.active = win.focused;
       existingWindow.live = { windowId: win.id };
       existingWindow.updatedAt = clock.now;
+      if (existingWindow.parentId && !next.nodes[existingWindow.parentId]) {
+        delete existingWindow.parentId;
+      }
+      if (!existingWindow.parentId && !next.rootIds.includes(winId)) {
+        next.rootIds.push(winId);
+      }
       delete existingWindow.closedAt;
       delete existingWindow.restore;
     } else {
@@ -306,6 +312,9 @@ export function reconcileWithWindows(
     const activeNodeId = activeTab ? runtimeToNode.get(activeTab.id) : undefined;
     if (activeNodeId) {
       setActiveTabInRuntimeWindow(next, win.id, activeNodeId);
+    }
+    if (options.respectRuntimeTabOrder === true) {
+      reorderLiveTabPreorderInRuntimeWindow(next, winId, win.id, tabs, clock.now);
     }
   }
 
@@ -1193,6 +1202,89 @@ function setActiveTabInRuntimeWindow(
   }
 }
 
+function reorderLiveTabPreorderInRuntimeWindow(
+  state: OutlineState,
+  windowNodeId: NodeId,
+  runtimeWindowId: number,
+  runtimeTabs: RuntimeTab[],
+  now: number
+): void {
+  const rankByRuntimeTabId = new Map(runtimeTabs.map((tab, index) => [tab.id, index]));
+  reorderChildPreorderByRuntimeRank(state, windowNodeId, runtimeWindowId, rankByRuntimeTabId, now, new Set());
+}
+
+function reorderChildPreorderByRuntimeRank(
+  state: OutlineState,
+  nodeId: NodeId,
+  runtimeWindowId: number,
+  rankByRuntimeTabId: ReadonlyMap<number, number>,
+  now: number,
+  visited: Set<NodeId>
+): void {
+  if (visited.has(nodeId)) {
+    return;
+  }
+  visited.add(nodeId);
+
+  const node = state.nodes[nodeId];
+  if (!node || node.childIds.length === 0) {
+    return;
+  }
+
+  const rankedChildren = node.childIds.map((childId, index) => ({
+    childId,
+    index,
+    rank: minimumRuntimeRankInSubtree(state, childId, runtimeWindowId, rankByRuntimeTabId, new Set(visited))
+  }));
+  const sortedChildIds = [...rankedChildren]
+    .sort((left, right) => {
+      if (left.rank !== undefined && right.rank !== undefined) {
+        return left.rank - right.rank || left.index - right.index;
+      }
+      return left.index - right.index;
+    })
+    .map((entry) => entry.childId);
+
+  if (!sameNodeIdList(node.childIds, sortedChildIds)) {
+    node.childIds = sortedChildIds;
+    node.updatedAt = now;
+  }
+
+  for (const childId of node.childIds) {
+    reorderChildPreorderByRuntimeRank(state, childId, runtimeWindowId, rankByRuntimeTabId, now, visited);
+  }
+}
+
+function minimumRuntimeRankInSubtree(
+  state: OutlineState,
+  nodeId: NodeId,
+  runtimeWindowId: number,
+  rankByRuntimeTabId: ReadonlyMap<number, number>,
+  visited: Set<NodeId>
+): number | undefined {
+  if (visited.has(nodeId)) {
+    return undefined;
+  }
+  visited.add(nodeId);
+
+  const node = state.nodes[nodeId];
+  if (!node) {
+    return undefined;
+  }
+
+  let rank = isNodeLiveTab(node) && node.live.windowId === runtimeWindowId
+    ? rankByRuntimeTabId.get(node.live.tabId)
+    : undefined;
+  for (const childId of node.childIds) {
+    const childRank = minimumRuntimeRankInSubtree(state, childId, runtimeWindowId, rankByRuntimeTabId, visited);
+    if (childRank === undefined) {
+      continue;
+    }
+    rank = rank === undefined ? childRank : Math.min(rank, childRank);
+  }
+  return rank;
+}
+
 function findRestorableClosedTabNode(
   state: OutlineState,
   lookup: OutlineLookup,
@@ -1927,6 +2019,10 @@ function removeId(ids: NodeId[], id: NodeId): void {
   if (index >= 0) {
     ids.splice(index, 1);
   }
+}
+
+function sameNodeIdList(left: readonly NodeId[], right: readonly NodeId[]): boolean {
+  return left.length === right.length && left.every((id, index) => right[index] === id);
 }
 
 function uniqueIds(ids: NodeId[]): NodeId[] {
