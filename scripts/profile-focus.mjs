@@ -91,6 +91,8 @@ function makeRuntime(tabCount) {
     projectionMs: 0,
     activePatchMs: 0,
     bytes: 0,
+    operationStart: 0,
+    firstBroadcastMs: undefined,
     sidebarState: undefined,
     sidebarProjection: undefined,
     eventCounts,
@@ -118,6 +120,7 @@ function makeRuntime(tabCount) {
       onStartup: createPassiveEvent(),
       onMessage: createPassiveEvent(),
       sendMessage: async (message) => {
+        runtime.firstBroadcastMs ??= performance.now() - runtime.operationStart;
         measureRuntimeJson(runtime, "broadcast", message);
         if (message?.type === "stateUpdated" && message.state) {
           runtime.sidebarState = message.state;
@@ -281,6 +284,8 @@ async function profile(options) {
   runtime.projectionMs = 0;
   runtime.activePatchMs = 0;
   runtime.bytes = 0;
+  runtime.operationStart = performance.now();
+  runtime.firstBroadcastMs = undefined;
   resetEventCounts(runtime.eventCounts);
 
   let commandMs = 0;
@@ -310,6 +315,7 @@ async function profile(options) {
     averageMeasuredMs: Math.round((commandMs + eventEchoMs) / nodeIds.length),
     saveFlushMs: Math.round(saveFlush.ms),
     totalWithSaveFlushMs: Math.round(commandMs + eventEchoMs + saveFlush.ms),
+    firstBroadcastMs: Math.round(runtime.firstBroadcastMs ?? 0),
     saveStringifyMs: Math.round(runtime.saveStringifyMs),
     broadcastStringifyMs: Math.round(runtime.broadcastStringifyMs),
     projectionMs: Math.round(runtime.projectionMs),

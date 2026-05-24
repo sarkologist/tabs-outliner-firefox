@@ -7,6 +7,7 @@
     "build": "tsc -p tsconfig.json && node scripts/copy-static.mjs",
     "test": "vitest run",
     "trace-hunt:runtime": "node scripts/hunt-runtime-traces.mjs",
+    "perf:runtime-guard": "pnpm build && node scripts/perf-runtime-guard.mjs",
     "test:soak": "node scripts/run-generated-soak.mjs",
     "test:watch": "vitest",
     "check": "npm run test && npm run build",

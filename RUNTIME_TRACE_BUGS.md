@@ -4,6 +4,8 @@ This file records distinct bugs found by deterministic runtime trace hunts.
 The current adversarial hunt mode defaults to lower-anchoring discovery traces guided by `RUNTIME_TRACE_HUNT_GUIDE.md`; known RT/SS-derived traces are preserved as regression coverage and explicit replay evidence, not as the default mutation prompt.
 The hunt intentionally documents findings before fixes; fix passes update statuses while preserving the original repros.
 
+Fix passes must satisfy both correctness and performance gates before changing a finding to fixed: promoted trace replay, the selected `pnpm perf:runtime-guard` scenarios, and profile-export analysis when a real sluggishness trace is available. Record the selected perf suite, before/after numbers, and any approved budget movement in the relevant fix analysis.
+
 Run the hunt with:
 
 ```sh

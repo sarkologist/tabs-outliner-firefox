@@ -17,6 +17,8 @@ RUNTIME_TRACE_HUNT_PROFILE=regression pnpm trace-hunt:runtime
 RUNTIME_TRACE_HUNT_PROFILE=all pnpm trace-hunt:runtime
 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-focus-session-activation-refresh pnpm trace-hunt:runtime
 RUNTIME_TRACE_HUNT_PROFILE=regression RUNTIME_TRACE_HUNT_BATCH_SIZE=50 pnpm trace-hunt:runtime
+pnpm perf:runtime-guard
+node scripts/analyze-profile-export.mjs dist/tabs-outliner-profile-2026-05-24.json
 ```
 
 The runner batches green corpus replay by default (`RUNTIME_TRACE_HUNT_BATCH_SIZE`, default `20`) so regression sweeps do not spawn one Vitest process per trace. If a batch fails, the runner replays only that batch one trace at a time and records precise findings. Use `RUNTIME_TRACE_HUNT_BATCH_SIZE=1` for the old single-trace execution behavior.
@@ -69,6 +71,16 @@ Every action is followed by the generated runtime invariants. The important clas
 - active flags agree with browser state;
 - closed or deleted outline subtrees do not contain live runtime resources;
 - stale event/query snapshots do not resurrect moved or removed runtime resources.
+
+## Fix-Pass Performance Gate
+
+Every correctness fix pass needs a **Perf Blast Radius** before findings are marked fixed or promoted to regression:
+
+- Map changed trace tags to perf tags first: `close`, `native-close`, `journal`, `delete`, `restore`, `relocation`, `history`, `focus`, and `manual-refresh`.
+- Run `pnpm perf:runtime-guard` after `pnpm build`; use `RUNTIME_PERF_GUARD_TAGS=journal,close` or `RUNTIME_PERF_GUARD_SCENARIOS=close-last-tab-removed-then-session` for targeted prechecks.
+- If controller/model/storage/sidebar projection code changed, review at least one synthetic profile and one in-browser profile-export summary when a real export is available.
+- A finding is not fixed until correctness regression traces and the selected perf guard pass. If correctness requires moving a full save onto an interaction path, redesign it or explicitly record an accepted perf budget movement.
+- Do not promote traces or update `RUNTIME_TRACE_BUGS.md` fixed statuses while the selected perf guard is red.
 
 ## Threat Model
 

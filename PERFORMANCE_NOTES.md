@@ -35,6 +35,7 @@ As of 2026-05-17, the broadly applicable lessons from the accepted performance w
 - Sidebar diagnostics are advisory and coalesced so they do not multiply immediate background work after every patch.
 - Compact patch paths preserve important full-render side effects, especially active-tab auto-scroll.
 - Real extension traces are available through `tabsOutlinerProfile` and should be preferred when synthetic profiles do not match manual QA.
+- Runtime trace fix passes now have a hard performance guard: `pnpm perf:runtime-guard` runs budgeted synthetic profiles, and `node scripts/analyze-profile-export.mjs <profile.json>` summarizes in-browser profile exports before accepting fixes that touched hot paths.
 
 Known follow-up, intentionally not tackled before longer naturalistic QA:
 
@@ -50,6 +51,7 @@ Known follow-up, intentionally not tackled before longer naturalistic QA:
 - Coalesce advisory/background work such as diagnostics and persistence. Advisory work should not contend with user-visible mutations.
 - When replacing full renders with patches, audit side effects that used to live inside `render()`: scrolling, counters, empty states, active flags, rename/drop cleanup, and diagnostics scheduling.
 - Synthetic Node profiles are useful for repeatability, but browser-extension structured cloning, sidebar contexts, storage, and Firefox event ordering can dominate. Use in-browser traces before larger architectural changes.
+- Do not ratchet budgets from a known-degraded working tree. Update `scripts/runtime-perf-budgets.json` only after a measured, accepted before/after comparison or an explicit decision to accept the regression.
 
 ## Agent Instructions
 
@@ -57,6 +59,7 @@ Update this file as you investigate and implement performance improvements.
 
 - Keep the `Progress Log` section current. Add a new dated entry for each meaningful experiment, design decision, implementation step, or surprising finding.
 - Record commands, benchmark shapes, tree sizes, and before/after numbers when available.
+- For correctness hunt fix passes, record the Perf Blast Radius tags, selected `perf:runtime-guard` scenarios, profile-export summary if available, and whether any budget moved.
 - Preserve prior findings unless they are clearly wrong; if correcting one, add a note explaining why.
 - Prefer red-green TDD for behavior changes, following `AGENTS.md`.
 - For interleaving-heavy controller/sidebar changes, add deterministic tests that cover duplicate events, stale broadcasts, and repeated renders.
@@ -96,6 +99,12 @@ Use these as starting targets, not hard promises:
 - Existing lifecycle behavior must remain intact for browser-native close, outliner close, delete-owned removals, restore, and stale events.
 
 ## Progress Log
+
+### 2026-05-24: Runtime Hunt Perf Guardrails
+
+- Added a budgeted `pnpm perf:runtime-guard` process for correctness fix passes. It checks perceived latency and deferred work: first patch/broadcast time, measured command/event time, save-flush-inclusive time, save/broadcast counts, projection work, runtime query work, and stringified MB.
+- Added `scripts/analyze-profile-export.mjs` for real in-browser `tabsOutlinerProfile` exports. On `dist/tabs-outliner-profile-2026-05-24.json` it flags 413 initial snapshot requests, slow `background.state.save`, slow native window/session/focus handlers, and diagnostics churn.
+- The guard uses accepted historical budgets from the performant close/restore/delete/focus/command profiles. Current degraded lifecycle paths are expected to fail full-size budgets until repaired; smoke budgets exist only to verify the guard wiring cheaply.
 
 ### 2026-05-16: Initial Diagnosis
 
