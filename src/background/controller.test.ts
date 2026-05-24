@@ -8192,7 +8192,7 @@ const RUNTIME_DOMAIN_DISCOVERY_TRACES: RuntimeDomainTrace[] = [
     actions: [
       { type: "outlinerCloseTab", tab: { tabId: 2 } },
       { type: "outlinerUndoThenAbruptRestart" },
-      { type: "manualRefreshWithMissingTabQuery", tab: { tabId: 2 } }
+      { type: "manualRefresh" }
     ]
   },
   {
@@ -9082,7 +9082,34 @@ const RUNTIME_DOMAIN_DISCOVERED_FINDING_IDS = new Map<string, string[]>([
   ["hh-native-source-opener-history", ["RT-124"]],
   ["hh-restored-tab-native-session-history", ["RT-125"]],
   ["hh-restored-tab-native-restart-history", ["RT-126"]],
-  ["hh-restored-tab-native-stale-history", ["RT-127"]]
+  ["hh-restored-tab-native-stale-history", ["RT-127"]],
+  ["jh-close-tab-abrupt-stale-update", ["RT-128"]],
+  ["jh-close-single-window-abrupt-session", ["RT-129"]],
+  ["jh-close-multi-window-abrupt-refresh", ["RT-130"]],
+  ["jh-close-grouped-window-abrupt-reordered", ["RT-131"]],
+  ["jh-undo-close-abrupt-missing", ["RT-132"]],
+  ["jh-journal-recovered-stale-contradiction", ["RT-133"]],
+  ["jh-journal-recovered-native-contradiction", ["RT-134"]],
+  ["jh-close-relocated-destination-abrupt-old-event", ["RT-135"]],
+  ["jh-close-relocated-source-abrupt-session", ["RT-136"]],
+  ["jh-close-restored-tab-abrupt-session", ["RT-137"]],
+  ["jh-close-restored-window-abrupt-missing", ["RT-138"]],
+  ["jh-close-opener-child-abrupt-query", ["RT-139"]],
+  ["jh-window-close-undo-abrupt-refresh", ["RT-140"]],
+  ["jh-delete-opener-child-abrupt-stale", ["RT-141"]],
+  ["jh-delete-opener-child-abrupt-updated", ["RT-142"]],
+  ["jh-delete-opened-child-abrupt-created", ["RT-143"]],
+  ["jh-native-window-no-journal-abrupt", ["RT-144"]],
+  ["jh-native-window-tabs-then-abrupt", ["RT-145"]],
+  ["jh-native-window-window-then-tabs-abrupt", ["RT-146"]],
+  ["jh-native-window-tabs-only-abrupt", ["RT-147"]],
+  ["jh-native-multitab-window-abrupt", ["RT-148"]],
+  ["jh-native-restored-window-abrupt", ["RT-149"]],
+  ["jh-native-restored-window-tabs-then-abrupt", ["RT-150"]],
+  ["jh-native-restored-multitab-window-abrupt", ["RT-151"]],
+  ["jh-native-restored-window-window-then-tabs-abrupt", ["RT-152"]],
+  ["jh-native-restored-window-tabs-only-abrupt", ["RT-153"]],
+  ["jh-native-restored-tab-abrupt", ["RT-154"]]
 ]);
 
 function runtimeDomainTraceWithFindingMetadata(trace: RuntimeDomainTrace): RuntimeDomainTrace {
@@ -11855,6 +11882,7 @@ describe("background controller lifecycle", () => {
     );
     const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
     await controller.ensureState();
+    await controller.flushPendingSaves();
     runtime.broadcasts.length = 0;
     vi.mocked(runtime.api.storage.local.set).mockClear();
 
@@ -12972,6 +13000,7 @@ describe("background controller lifecycle", () => {
     );
     const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
     await controller.ensureState();
+    await controller.flushPendingSaves();
     runtime.broadcasts.length = 0;
     vi.mocked(runtime.api.storage.local.set).mockClear();
 
@@ -14967,6 +14996,7 @@ describe("background controller lifecycle", () => {
     await runtime.events.tabRemoved.flush();
     await runtime.events.sessionChanged.flush();
 
+    await controller.flushPendingSaves();
     runtime.broadcasts.length = 0;
     vi.mocked(runtime.api.storage.local.set).mockClear();
 
@@ -16092,6 +16122,7 @@ describe("background controller lifecycle", () => {
     await runtime.events.tabRemoved.flush();
     await runtime.events.windowRemoved.flush();
 
+    await controller.flushPendingSaves();
     runtime.broadcasts.length = 0;
     vi.mocked(runtime.api.storage.local.set).mockClear();
 
@@ -16187,6 +16218,7 @@ describe("background controller lifecycle", () => {
     await runtime.events.tabRemoved.flush();
     await runtime.events.sessionChanged.flush();
 
+    await controller.flushPendingSaves();
     runtime.broadcasts.length = 0;
     vi.mocked(runtime.api.storage.local.set).mockClear();
 
@@ -16399,6 +16431,7 @@ describe("background controller lifecycle", () => {
     );
     const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
     await controller.ensureState();
+    await controller.flushPendingSaves();
     runtime.broadcasts.length = 0;
     vi.mocked(runtime.api.storage.local.set).mockClear();
 
@@ -16454,6 +16487,7 @@ describe("background controller lifecycle", () => {
     );
     const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
     await controller.ensureState();
+    await controller.flushPendingSaves();
     runtime.broadcasts.length = 0;
     vi.mocked(runtime.api.storage.local.set).mockClear();
 
@@ -16493,6 +16527,7 @@ describe("background controller lifecycle", () => {
     const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
     const initialState = await controller.ensureState();
 
+    await controller.flushPendingSaves();
     runtime.broadcasts.length = 0;
     vi.mocked(runtime.api.tabs.query).mockClear();
     vi.mocked(runtime.api.windows.getAll).mockClear();
@@ -17596,6 +17631,7 @@ describe("background controller lifecycle", () => {
     );
     const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
     await controller.ensureState();
+    await controller.flushPendingSaves();
     runtime.broadcasts.length = 0;
     vi.mocked(runtime.api.storage.local.set).mockClear();
 
@@ -18108,6 +18144,7 @@ describe("background controller lifecycle", () => {
     );
     const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
     await controller.ensureState();
+    await controller.flushPendingSaves();
     runtime.broadcasts.length = 0;
     vi.mocked(runtime.api.storage.local.set).mockClear();
 
@@ -18388,6 +18425,7 @@ describe("background controller lifecycle", () => {
     };
     const controller = createBackgroundController({ api: runtime.api, adapter, now: () => 1000 });
     await controller.ensureState();
+    await controller.flushPendingSaves();
     runtime.broadcasts.length = 0;
     vi.mocked(runtime.api.storage.local.set).mockClear();
 
@@ -18478,6 +18516,7 @@ describe("background controller lifecycle", () => {
     };
     const controller = createBackgroundController({ api: runtime.api, adapter, now: () => 1000 });
     await controller.ensureState();
+    await controller.flushPendingSaves();
     runtime.broadcasts.length = 0;
     vi.mocked(runtime.api.storage.local.set).mockClear();
 

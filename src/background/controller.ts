@@ -129,6 +129,15 @@ type RuntimeLifecycleJournalRecovery = {
   changed: boolean;
   changedHistory: boolean;
   consumedEntryIds: string[];
+  completedOutlinerClosePlans: RuntimeClosePlan[];
+  completedDeleteClosePlans: RuntimeClosePlan[];
+};
+
+type RuntimeLifecycleJournalEntryRecovery = {
+  state: OutlineState;
+  history?: HistoryState;
+  completedOutlinerClosePlan?: RuntimeClosePlan;
+  completedDeleteClosePlan?: RuntimeClosePlan;
 };
 
 type MutationPriority = "high" | "low";
@@ -430,15 +439,26 @@ export function createBackgroundController(options: BackgroundControllerOptions)
           if (next === current) {
             return;
           }
-        installStateTransition(current, next, {
-          candidateNodeIds: runtimeIndexCandidateNodeIdsForWindowRemoval(current, next, runtimeIndexForState(current), removeInfo.windowId)
-        });
-        markCompletedOutlinerCloseJournalEntriesForClearAfterSave({
-          tabIds: liveTabIds,
-          windowIds: [removeInfo.windowId]
-        });
-        await persistWithNodeStateUpdate(current, next);
-      }, { reason: "tabs.onRemoved.windowClosing" });
+          const runtimeLifecycleJournalEntry = runtimeLifecycleJournalEntryForNativeWindowClose(
+            current,
+            removeInfo.windowId,
+            liveTabIds,
+            recent?.window?.sessionId
+          );
+          if (runtimeLifecycleJournalEntry) {
+            await ensureDurableRuntimeLifecycleBase();
+            await appendRuntimeLifecycleJournalEntry(api, runtimeLifecycleJournalEntry);
+          }
+          installStateTransition(current, next, {
+            candidateNodeIds: runtimeIndexCandidateNodeIdsForWindowRemoval(current, next, runtimeIndexForState(current), removeInfo.windowId)
+          });
+          markCompletedOutlinerCloseJournalEntriesForClearAfterSave({
+            tabIds: liveTabIds,
+            windowIds: [removeInfo.windowId]
+          });
+          markRuntimeLifecycleJournalEntryForClearAfterSave(runtimeLifecycleJournalEntry);
+          await persistWithNodeStateUpdate(current, next);
+        }, { reason: "tabs.onRemoved.windowClosing" });
         return;
       }
 
@@ -461,6 +481,13 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         if (next === current) {
           return;
         }
+        const runtimeLifecycleJournalEntry = removal === "delete-tab"
+          ? runtimeLifecycleJournalEntryForNativeTabClose(current, tabId, removeInfo.windowId)
+          : undefined;
+        if (runtimeLifecycleJournalEntry) {
+          await ensureDurableRuntimeLifecycleBase();
+          await appendRuntimeLifecycleJournalEntry(api, runtimeLifecycleJournalEntry);
+        }
         installStateTransition(current, next, {
           candidateNodeIds: runtimeIndexCandidateNodeIdsForTabRemoval(current, next, runtimeIndexForState(current), tabId)
         });
@@ -468,6 +495,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
           tabIds: [tabId],
           windowIds: []
         });
+        markRuntimeLifecycleJournalEntryForClearAfterSave(runtimeLifecycleJournalEntry);
         await persistWithNodeStateUpdate(current, next);
       }, { reason: "tabs.onRemoved" });
     });
@@ -494,6 +522,16 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         if (next === current) {
           return;
         }
+        const runtimeLifecycleJournalEntry = runtimeLifecycleJournalEntryForNativeWindowClose(
+          current,
+          windowId,
+          liveTabIds,
+          recent?.window?.sessionId
+        );
+        if (runtimeLifecycleJournalEntry) {
+          await ensureDurableRuntimeLifecycleBase();
+          await appendRuntimeLifecycleJournalEntry(api, runtimeLifecycleJournalEntry);
+        }
         installStateTransition(current, next, {
           candidateNodeIds: runtimeIndexCandidateNodeIdsForWindowRemoval(current, next, runtimeIndexForState(current), windowId)
         });
@@ -501,6 +539,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
           tabIds: liveTabIds,
           windowIds: [windowId]
         });
+        markRuntimeLifecycleJournalEntryForClearAfterSave(runtimeLifecycleJournalEntry);
         await persistWithNodeStateUpdate(current, next);
       }, { reason: "windows.onRemoved" });
     });
@@ -650,6 +689,9 @@ export function createBackgroundController(options: BackgroundControllerOptions)
           restoreCreateRecovery
         }
       );
+      if (runtimeLifecycleJournalEntry) {
+        await ensureDurableRuntimeLifecycleBase();
+      }
       if (runtimeLifecycleJournalEntry && runtimeLifecycleJournalEntry.kind !== "restoreNode") {
         await appendRuntimeLifecycleJournalEntry(api, runtimeLifecycleJournalEntry);
         if (runtimeLifecycleJournalEntry.kind === "closeNode") {
@@ -964,6 +1006,50 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     };
   }
 
+  function runtimeLifecycleJournalEntryForNativeWindowClose(
+    current: OutlineState,
+    windowId: number,
+    liveTabIds: readonly number[],
+    sessionId?: string
+  ): RuntimeLifecycleJournalEntry | undefined {
+    if (!liveWindowNodeByRuntimeId(current, windowId)) {
+      return undefined;
+    }
+
+    return {
+      ...runtimeLifecycleJournalEntryBase("nativeWindowClose"),
+      windowId,
+      plan: {
+        windowIds: [windowId],
+        tabIds: [...liveTabIds]
+      },
+      ...(sessionId ? { sessionId } : {})
+    };
+  }
+
+  function runtimeLifecycleJournalEntryForNativeTabClose(
+    current: OutlineState,
+    tabId: number,
+    windowId?: number
+  ): RuntimeLifecycleJournalEntry | undefined {
+    const liveTab = Object.values(current.nodes).find(
+      (node) => isLiveTabNode(node) && node.live.tabId === tabId
+    );
+    if (!liveTab) {
+      return undefined;
+    }
+
+    return {
+      ...runtimeLifecycleJournalEntryBase("nativeTabClose"),
+      tabId,
+      ...(typeof windowId === "number" ? { windowId } : {}),
+      plan: {
+        tabIds: [tabId],
+        windowIds: []
+      }
+    };
+  }
+
   function historyDeltaMayHaveRuntimeLifecycleEffects(current: OutlineState, delta: OutlineDelta): boolean {
     for (const nodeId of delta.deletedNodeIds) {
       if (isLiveRuntimeNode(current.nodes[nodeId])) {
@@ -995,6 +1081,13 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
   function runtimeClosePlanIsEmpty(plan: RuntimeClosePlan): boolean {
     return plan.tabIds.length === 0 && plan.windowIds.length === 0;
+  }
+
+  async function ensureDurableRuntimeLifecycleBase(): Promise<void> {
+    if (!pendingSaveState && !pendingSaveHistory && !saveInFlight) {
+      return;
+    }
+    await flushPendingSaves();
   }
 
   function markRuntimeLifecycleJournalEntryForClearAfterSave(entry: RuntimeLifecycleJournalEntry | undefined): void {
@@ -1505,16 +1598,27 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     let consumedRuntimeLifecycleJournalEntryIds: string[] = [];
     let runtimeLifecycleJournalChangedState = false;
     let runtimeLifecycleJournalChangedHistory = false;
+    let completedOutlinerClosePlans: RuntimeClosePlan[] = [];
+    let completedDeleteClosePlans: RuntimeClosePlan[] = [];
     if (stored) {
       const lifecycleRecoveryHistory = lifecycleJournal.entries.some((entry) => entry.kind === "history")
         ? await loadHistory(api)
         : undefined;
       const lifecycleRecovery = lifecycleJournal.entries.length > 0
         ? recoverRuntimeLifecycleJournal(repairState(stored), windows, lifecycleJournal, lifecycleRecoveryHistory)
-        : { state: stored, changed: false, changedHistory: false, consumedEntryIds: [] };
+        : {
+            state: stored,
+            changed: false,
+            changedHistory: false,
+            consumedEntryIds: [],
+            completedOutlinerClosePlans: [],
+            completedDeleteClosePlans: []
+          };
       consumedRuntimeLifecycleJournalEntryIds = lifecycleRecovery.consumedEntryIds;
       runtimeLifecycleJournalChangedState = lifecycleRecovery.changed;
       runtimeLifecycleJournalChangedHistory = lifecycleRecovery.changedHistory;
+      completedOutlinerClosePlans = lifecycleRecovery.completedOutlinerClosePlans;
+      completedDeleteClosePlans = lifecycleRecovery.completedDeleteClosePlans;
       if (lifecycleRecovery.history) {
         historyState = lifecycleRecovery.history;
       }
@@ -1568,6 +1672,12 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       windows,
       storedRuntimeMatch?.matches && state === stored ? storedRuntimeMatch.lookup.nodes : undefined
     );
+    for (const plan of completedOutlinerClosePlans) {
+      runtimeFacts.recordCompletedOutlinerClosePlan(plan);
+    }
+    for (const plan of completedDeleteClosePlans) {
+      runtimeFacts.recordCompletedClosePlanTombstones(plan);
+    }
     return state;
   }
 
@@ -1582,11 +1692,19 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     let changed = false;
     let changedHistory = false;
     const consumedEntryIds: string[] = [];
+    const completedOutlinerClosePlans: RuntimeClosePlan[] = [];
+    const completedDeleteClosePlans: RuntimeClosePlan[] = [];
 
     for (const entry of journal.entries) {
       const result = recoverRuntimeLifecycleJournalEntry(recovered, windows, entry, recoveredHistory);
       const next = result.state;
       consumedEntryIds.push(entry.id);
+      if (result.completedOutlinerClosePlan) {
+        completedOutlinerClosePlans.push(result.completedOutlinerClosePlan);
+      }
+      if (result.completedDeleteClosePlan) {
+        completedDeleteClosePlans.push(result.completedDeleteClosePlan);
+      }
       if (next !== recovered && !statesMateriallyEqual(recovered, next)) {
         recovered = next;
         changed = true;
@@ -1604,7 +1722,9 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       ...(recoveredHistory && changedHistory ? { history: recoveredHistory } : {}),
       changed,
       changedHistory,
-      consumedEntryIds
+      consumedEntryIds,
+      completedOutlinerClosePlans,
+      completedDeleteClosePlans
     };
   }
 
@@ -1613,26 +1733,36 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     windows: RuntimeWindow[],
     entry: RuntimeLifecycleJournalEntry,
     history?: HistoryState
-  ): { state: OutlineState; history?: HistoryState } {
+  ): RuntimeLifecycleJournalEntryRecovery {
     if (entry.kind === "closeNode") {
       if (!current.nodes[entry.nodeId] || current.nodes[entry.nodeId]?.status === "closed") {
-        return { state: current };
+        return {
+          state: current,
+          ...(runtimeClosePlanCompletedInWindows(entry.plan, windows) ? { completedOutlinerClosePlan: entry.plan } : {})
+        };
       }
+      const completed = runtimeClosePlanCompletedInWindows(entry.plan, windows);
       return {
-        state: runtimeClosePlanCompletedInWindows(entry.plan, windows)
+        state: completed
           ? applyClosedRuntimeClosePlan(current, entry.plan)
-          : current
+          : current,
+        ...(completed ? { completedOutlinerClosePlan: entry.plan } : {})
       };
     }
 
     if (entry.kind === "deleteNode") {
       if (!current.nodes[entry.nodeId]) {
-        return { state: current };
+        return {
+          state: current,
+          ...(runtimeClosePlanCompletedInWindows(entry.plan, windows) ? { completedDeleteClosePlan: entry.plan } : {})
+        };
       }
+      const completed = runtimeClosePlanCompletedInWindows(entry.plan, windows);
       return {
-        state: runtimeClosePlanCompletedInWindows(entry.plan, windows)
+        state: completed
           ? deleteOutlineNode(current, entry.nodeId, { allowLive: true })
-          : current
+          : current,
+        ...(completed ? { completedDeleteClosePlan: entry.plan } : {})
       };
     }
 
@@ -1656,6 +1786,27 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
     if (entry.kind === "history") {
       return recoverHistoryJournalEntry(current, windows, entry, history);
+    }
+
+    if (entry.kind === "nativeTabClose") {
+      const completed = runtimeClosePlanCompletedInWindows(entry.plan, windows);
+      return {
+        state: completed ? deleteLiveTabNodeByTabId(current, entry.tabId) : current,
+        ...(completed ? { completedDeleteClosePlan: entry.plan } : {})
+      };
+    }
+
+    if (entry.kind === "nativeWindowClose") {
+      const completed = runtimeClosePlanCompletedInWindows(entry.plan, windows);
+      return {
+        state: completed
+          ? closeWindow(current, entry.windowId, {
+              now: now(),
+              ...(entry.sessionId ? { sessionId: entry.sessionId } : {})
+            })
+          : current,
+        ...(completed ? { completedOutlinerClosePlan: entry.plan } : {})
+      };
     }
 
     return { state: current };
@@ -1808,6 +1959,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       ? runtimeLifecycleJournalEntryForHistory(direction, popped.entry, popped.history, delta)
       : undefined;
     if (runtimeLifecycleJournalEntry) {
+      await ensureDurableRuntimeLifecycleBase();
       await appendRuntimeLifecycleJournalEntry(api, runtimeLifecycleJournalEntry);
     }
     const transaction = runtimeFacts.beginCommandTransactionForCommand(direction);

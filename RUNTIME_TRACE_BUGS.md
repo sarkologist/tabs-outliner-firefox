@@ -22,18 +22,19 @@ Default hunt bounds:
 
 ## Last Domain Run
 
-- Completed: 2026-05-24T12:41:07Z
-- Strategy: history boundary sweep after transaction-boundary fixes, stressing old undo/redo entries against resources later closed, deleted, restored, tombstoned, or reconstructed after restart
+- Completed: 2026-05-24T15:59:20Z
+- Strategy: lifecycle journal crash sweep after durable lifecycle journal work, stressing close/delete/restore/relocation/history/native-close side effects across abrupt background restart before saves or runtime events settle
 - Trace ids: current discovery corpus in `src/background/controller.test.ts` and `scripts/hunt-runtime-traces.mjs`
-- Corpus size after fix: 303 discovery traces, 166 regression traces
-- Distinct history-boundary findings recorded: RT-106 through RT-127
-- Stop condition: after RT-127, three complete discovery mutation blocks at 319, 322, and 325 traces found no new distinct signatures
-- Regression safety replay: 166 regression traces, 0 failures, 0 new findings at 2026-05-24T13:13:16.901Z.
-- Status: RT-106 through RT-127 are fixed by the history replay runtime-lifecycle guard, native-restored-tab deletion semantics, and final complete runtime reconciliation after history replay.
+- Corpus size after fix: 352 discovery traces, 193 regression traces
+- Distinct lifecycle-journal findings recorded: RT-128 through RT-154
+- Stop condition: lifecycle crash sweep had already stopped after three complete discovery mutation blocks; this fix pass promoted the failing `jh-*` traces and a smoke-caught native restored-tab close variant.
+- Regression safety replay: 193 regression traces, 0 failures, 0 new findings at 2026-05-24T15:59:20.960Z.
+- Status: RT-128 through RT-154 are fixed by durable baseline flushing before lifecycle side effects, startup recovery tombstones, native tab/window lifecycle journals, and promotion to regression coverage.
 
 ## Finding Index
 
 - Open recorded findings: none
+- Fixed lifecycle-journal crash findings: RT-128 through RT-154
 - Fixed history-boundary findings: RT-106 through RT-127
 - Fixed transaction-boundary findings: RT-104 through RT-105
 - Fixed/triaged post-recovery lifecycle findings: RT-096 through RT-103
@@ -69,6 +70,9 @@ Default hunt bounds:
 - History replay after recovered relocated closes: RT-104 and RT-105 were fixed by preserving closed lifecycle state when old move undo/redo deltas touch a command-closed relocated tab or destination window. History may move the closed outline record, but it must not rematerialize the browser tab/window or synthesize an empty live command-created window.
 - History replay after later runtime lifecycle changes: RT-106 through RT-119 and RT-121 through RT-124 were fixed by guarding non-delete history deltas against ledger-removed tab/window targets. Old move/group/top-level undo/redo can still replay outline structure, but if its destination runtime window is tombstoned the current live browser window subtree is preserved, and if its live tab was natively removed the old live node is not rematerialized. A complete runtime reconciliation now runs after history replay so active metadata and live tab/window IDs agree with the browser.
 - Native close of command-restored tabs: RT-120 and RT-125 through RT-127 were fixed by treating missing restored live tabs like ordinary native browser removals instead of preserving the restored outline node as closed. Restore commands still preserve outliner-owned close/restore semantics, but a later native tab disappearance deletes the live restored node and tombstones its runtime id.
+- Durable lifecycle baseline before side effects: RT-128 through RT-140 were fixed by flushing any pending outline/history save before writing lifecycle journal entries and before touching browser runtime resources. A journal entry now has a durable pre-command outline base to replay against if the background dies after the browser side effect.
+- Delete/native tab tombstones after journal recovery: RT-141 through RT-143 and RT-154 were fixed by reinstalling completed delete/native-tab-close tombstones during startup journal recovery, so stale event-local evidence cannot resurrect tabs that the browser already removed.
+- Native window-close pending-save recovery: RT-144 through RT-153 were fixed by journaling browser-native window close transitions before applying the model close. Startup consumes the journal only when a complete runtime snapshot confirms the window/tabs are gone, then preserves the closed outline subtree and clears the hint after persistence.
 - Post-recovery harness artifacts: RT-097, RT-099, RT-100, RT-101, and RT-102 were triaged as trace-harness bugs, not runtime model bugs. The harness now avoids stale `lastOpenedWindow`/old restored-tab runtime IDs, treats a foreign live window under a closed source window as intentionally promoted/still live, permits no focused runtime window after destructive history replay by selecting `firstRuntimeWindow` for query skew, and scopes rejecting restore-create mocks to the selected node kind so unused one-shot mocks cannot poison later undo/redo commands.
 - Verification: all listed generated seed repros and promoted domain trace repros pass as of the principled runtime trace fix passes.
 
@@ -3736,7 +3740,7 @@ action: {"type":"outlinerCloseNodeThenAbruptRestart","node":{"tab":{"tabId":2}},
 - First seen: 2026-05-24T14:49:01.774Z
 - Trace id: `jh-close-tab-abrupt-stale-update`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=jh-close-tab-abrupt-stale-update pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in lifecycle journal durability pass and promoted to regression coverage.
 
 ```text
 domain trace jh-close-tab-abrupt-stale-update: journal close tab abrupt stale update
@@ -3756,7 +3760,7 @@ action: {"type":"outlinerCloseNodeThenAbruptRestart","node":{"window":{"windowId
 - First seen: 2026-05-24T14:49:02.972Z
 - Trace id: `jh-close-single-window-abrupt-session`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=jh-close-single-window-abrupt-session pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in lifecycle journal durability pass and promoted to regression coverage.
 
 ```text
 domain trace jh-close-single-window-abrupt-session: journal close single window abrupt session
@@ -3776,7 +3780,7 @@ action: {"type":"outlinerCloseNodeThenAbruptRestart","node":{"window":{"windowId
 - First seen: 2026-05-24T14:49:04.184Z
 - Trace id: `jh-close-multi-window-abrupt-refresh`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=jh-close-multi-window-abrupt-refresh pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in lifecycle journal durability pass and promoted to regression coverage.
 
 ```text
 domain trace jh-close-multi-window-abrupt-refresh: journal close multi window abrupt refresh
@@ -3798,7 +3802,7 @@ action: {"type":"outlinerCloseNodeThenAbruptRestart","node":{"window":{"role":"l
 - First seen: 2026-05-24T14:49:05.391Z
 - Trace id: `jh-close-grouped-window-abrupt-reordered`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=jh-close-grouped-window-abrupt-reordered pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in lifecycle journal durability pass and promoted to regression coverage.
 
 ```text
 domain trace jh-close-grouped-window-abrupt-reordered: journal close grouped window abrupt reordered
@@ -3820,7 +3824,7 @@ action: {"type":"outlinerUndoThenAbruptRestart"} -->
 - First seen: 2026-05-24T14:49:20.892Z
 - Trace id: `jh-undo-close-abrupt-missing`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=jh-undo-close-abrupt-missing pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in lifecycle journal durability pass and promoted to regression coverage.
 
 ```text
 domain trace jh-undo-close-abrupt-missing: journal undo close abrupt missing
@@ -3842,7 +3846,7 @@ action: {"type":"outlinerCloseNodeThenAbruptRestart","node":{"tab":{"tabId":2}},
 - First seen: 2026-05-24T14:49:29.338Z
 - Trace id: `jh-journal-recovered-stale-contradiction`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=jh-journal-recovered-stale-contradiction pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in lifecycle journal durability pass and promoted to regression coverage.
 
 ```text
 domain trace jh-journal-recovered-stale-contradiction: journal recovered stale contradiction
@@ -3862,7 +3866,7 @@ action: {"type":"outlinerCloseNodeThenAbruptRestart","node":{"tab":{"tabId":2}},
 - First seen: 2026-05-24T14:49:30.563Z
 - Trace id: `jh-journal-recovered-native-contradiction`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=jh-journal-recovered-native-contradiction pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in lifecycle journal durability pass and promoted to regression coverage.
 
 ```text
 domain trace jh-journal-recovered-native-contradiction: journal recovered native contradiction
@@ -3884,7 +3888,7 @@ action: {"type":"outlinerCloseNodeThenAbruptRestart","node":{"window":{"role":"l
 - First seen: 2026-05-24T14:52:35.241Z
 - Trace id: `jh-close-relocated-destination-abrupt-old-event`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=jh-close-relocated-destination-abrupt-old-event pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in lifecycle journal durability pass and promoted to regression coverage.
 
 ```text
 domain trace jh-close-relocated-destination-abrupt-old-event: journal close relocated destination abrupt old event
@@ -3906,7 +3910,7 @@ action: {"type":"outlinerCloseNodeThenAbruptRestart","node":{"window":{"windowId
 - First seen: 2026-05-24T14:52:36.382Z
 - Trace id: `jh-close-relocated-source-abrupt-session`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=jh-close-relocated-source-abrupt-session pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in lifecycle journal durability pass and promoted to regression coverage.
 
 ```text
 domain trace jh-close-relocated-source-abrupt-session: journal close relocated source abrupt session
@@ -3928,7 +3932,7 @@ action: {"type":"outlinerCloseNodeThenAbruptRestart","node":{"tab":{"capture":"j
 - First seen: 2026-05-24T14:52:37.532Z
 - Trace id: `jh-close-restored-tab-abrupt-session`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=jh-close-restored-tab-abrupt-session pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in lifecycle journal durability pass and promoted to regression coverage.
 
 ```text
 domain trace jh-close-restored-tab-abrupt-session: journal close restored tab abrupt session
@@ -3952,7 +3956,7 @@ action: {"type":"outlinerCloseNodeThenAbruptRestart","node":{"window":{"capture"
 - First seen: 2026-05-24T14:52:38.702Z
 - Trace id: `jh-close-restored-window-abrupt-missing`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=jh-close-restored-window-abrupt-missing pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in lifecycle journal durability pass and promoted to regression coverage.
 
 ```text
 domain trace jh-close-restored-window-abrupt-missing: journal close restored window abrupt missing
@@ -3976,7 +3980,7 @@ action: {"type":"outlinerCloseNodeThenAbruptRestart","node":{"tab":{"capture":"j
 - First seen: 2026-05-24T14:52:39.873Z
 - Trace id: `jh-close-opener-child-abrupt-query`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=jh-close-opener-child-abrupt-query pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in lifecycle journal durability pass and promoted to regression coverage.
 
 ```text
 domain trace jh-close-opener-child-abrupt-query: journal close opener child abrupt query
@@ -3998,7 +4002,7 @@ action: {"type":"outlinerUndoThenAbruptRestart"} -->
 - First seen: 2026-05-24T14:52:41.027Z
 - Trace id: `jh-window-close-undo-abrupt-refresh`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=jh-window-close-undo-abrupt-refresh pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in lifecycle journal durability pass and promoted to regression coverage.
 
 ```text
 domain trace jh-window-close-undo-abrupt-refresh: journal window close undo abrupt refresh
@@ -4024,7 +4028,7 @@ action: {"type":"staleLiveCreatedEvent","staleTab":{"capture":"jh-delete-opener-
 - First seen: 2026-05-24T14:59:07.559Z
 - Trace id: `jh-delete-opener-child-abrupt-stale`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=jh-delete-opener-child-abrupt-stale pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in lifecycle journal durability pass and promoted to regression coverage.
 
 ```text
 domain trace jh-delete-opener-child-abrupt-stale: journal delete opener child abrupt stale
@@ -4050,7 +4054,7 @@ action: {"type":"staleLiveUpdatedEvent","staleTab":{"capture":"jh-delete-opener-
 - First seen: 2026-05-24T15:01:24.251Z
 - Trace id: `jh-delete-opener-child-abrupt-updated`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=jh-delete-opener-child-abrupt-updated pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in lifecycle journal durability pass and promoted to regression coverage.
 
 ```text
 domain trace jh-delete-opener-child-abrupt-updated: journal delete opener child abrupt updated
@@ -4074,7 +4078,7 @@ action: {"type":"staleLiveCreatedEvent","staleTab":{"capture":"jh-delete-opened-
 - First seen: 2026-05-24T15:01:25.445Z
 - Trace id: `jh-delete-opened-child-abrupt-created`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=jh-delete-opened-child-abrupt-created pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in lifecycle journal durability pass and promoted to regression coverage.
 
 ```text
 domain trace jh-delete-opened-child-abrupt-created: journal delete opened child abrupt created
@@ -4102,7 +4106,7 @@ action: {"type":"restartBackgroundAbrupt"} -->
 - First seen: 2026-05-24T15:05:57.125Z
 - Trace id: `jh-native-window-no-journal-abrupt`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=jh-native-window-no-journal-abrupt pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in lifecycle journal durability pass and promoted to regression coverage.
 
 ```text
 domain trace jh-native-window-no-journal-abrupt: native window no journal abrupt
@@ -4126,7 +4130,7 @@ action: {"type":"restartBackgroundAbrupt"} -->
 - First seen: 2026-05-24T15:08:16.835Z
 - Trace id: `jh-native-window-tabs-then-abrupt`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=jh-native-window-tabs-then-abrupt pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in lifecycle journal durability pass and promoted to regression coverage.
 
 ```text
 domain trace jh-native-window-tabs-then-abrupt: native window tabs then abrupt
@@ -4148,7 +4152,7 @@ action: {"type":"restartBackgroundAbrupt"} -->
 - First seen: 2026-05-24T15:08:17.960Z
 - Trace id: `jh-native-window-window-then-tabs-abrupt`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=jh-native-window-window-then-tabs-abrupt pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in lifecycle journal durability pass and promoted to regression coverage.
 
 ```text
 domain trace jh-native-window-window-then-tabs-abrupt: native window window then tabs abrupt
@@ -4170,7 +4174,7 @@ action: {"type":"restartBackgroundAbrupt"} -->
 - First seen: 2026-05-24T15:08:19.094Z
 - Trace id: `jh-native-window-tabs-only-abrupt`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=jh-native-window-tabs-only-abrupt pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in lifecycle journal durability pass and promoted to regression coverage.
 
 ```text
 domain trace jh-native-window-tabs-only-abrupt: native window tabs only abrupt
@@ -4192,7 +4196,7 @@ action: {"type":"restartBackgroundAbrupt"} -->
 - First seen: 2026-05-24T15:08:20.235Z
 - Trace id: `jh-native-multitab-window-abrupt`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=jh-native-multitab-window-abrupt pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in lifecycle journal durability pass and promoted to regression coverage.
 
 ```text
 domain trace jh-native-multitab-window-abrupt: native multitab window abrupt
@@ -4218,7 +4222,7 @@ action: {"type":"restartBackgroundAbrupt"} -->
 - First seen: 2026-05-24T15:10:38.911Z
 - Trace id: `jh-native-restored-window-abrupt`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=jh-native-restored-window-abrupt pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in lifecycle journal durability pass and promoted to regression coverage.
 
 ```text
 domain trace jh-native-restored-window-abrupt: native restored window abrupt
@@ -4246,7 +4250,7 @@ action: {"type":"restartBackgroundAbrupt"} -->
 - First seen: 2026-05-24T15:13:02.821Z
 - Trace id: `jh-native-restored-window-tabs-then-abrupt`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=jh-native-restored-window-tabs-then-abrupt pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in lifecycle journal durability pass and promoted to regression coverage.
 
 ```text
 domain trace jh-native-restored-window-tabs-then-abrupt: native restored window tabs then abrupt
@@ -4272,7 +4276,7 @@ action: {"type":"restartBackgroundAbrupt"} -->
 - First seen: 2026-05-24T15:13:03.963Z
 - Trace id: `jh-native-restored-multitab-window-abrupt`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=jh-native-restored-multitab-window-abrupt pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in lifecycle journal durability pass and promoted to regression coverage.
 
 ```text
 domain trace jh-native-restored-multitab-window-abrupt: native restored multitab window abrupt
@@ -4302,7 +4306,7 @@ action: {"type":"restartBackgroundAbrupt"} -->
 - First seen: 2026-05-24T15:15:23.904Z
 - Trace id: `jh-native-restored-window-window-then-tabs-abrupt`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=jh-native-restored-window-window-then-tabs-abrupt pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in lifecycle journal durability pass and promoted to regression coverage.
 
 ```text
 domain trace jh-native-restored-window-window-then-tabs-abrupt: native restored window window then tabs abrupt
@@ -4328,7 +4332,7 @@ action: {"type":"restartBackgroundAbrupt"} -->
 - First seen: 2026-05-24T15:15:25.049Z
 - Trace id: `jh-native-restored-window-tabs-only-abrupt`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=jh-native-restored-window-tabs-only-abrupt pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in lifecycle journal durability pass and promoted to regression coverage.
 
 ```text
 domain trace jh-native-restored-window-tabs-only-abrupt: native restored window tabs only abrupt
@@ -4346,6 +4350,32 @@ action 3: {"type":"nativeCloseWindow","window":{"capture":"jh-native-restored-ta
 action 4: {"type":"restartBackgroundAbrupt"}
 ```
 
+### RT-154 native-deleted node tab:2 was resurrected
+<!-- signature: native-deleted node tab:<id> was resurrected
+domain trace: jh-native-restored-tab-abrupt
+action: {"type":"restartBackgroundAbrupt"} -->
+
+- First seen: 2026-05-24T15:55:07.001Z
+- Trace id: `jh-native-restored-tab-abrupt`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=jh-native-restored-tab-abrupt pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: fixed in lifecycle journal durability pass and promoted to regression coverage.
+
+```text
+domain trace jh-native-restored-tab-abrupt: native restored tab abrupt
+action 1: {"type":"outlinerCloseTab","tab":{"tabId":2}}
+action 2: {"type":"outlinerRestoreNodeRejectingCreate","node":{"nodeId":"tab:2"},"captureRestoredTabs":"jh-native-restored-tab"}
+action 3: {"type":"nativeCloseTab","tab":{"capture":"jh-native-restored-tab"},"order":"tabRemovedOnly"}
+action 4: {"type":"restartBackgroundAbrupt"}
+Domain trace: jh-native-restored-tab-abrupt
+Action 4: {"type":"restartBackgroundAbrupt"}
+Trace:
+domain trace jh-native-restored-tab-abrupt: native restored tab abrupt
+action 1: {"type":"outlinerCloseTab","tab":{"tabId":2}}
+action 2: {"type":"outlinerRestoreNodeRejectingCreate","node":{"nodeId":"tab:2"},"captureRestoredTabs":"jh-native-restored-tab"}
+action 3: {"type":"nativeCloseTab","tab":{"capture":"jh-native-restored-tab"},"order":"tabRemovedOnly"}
+action 4: {"type":"restartBackgroundAbrupt"}
+```
+
 <!-- hunt-corpus-run: {"at":"2026-05-24T15:15:25.051Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","history-boundary","journal","manual-refresh","metadata","multi-tab","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"jh-native-restored-window-tabs-only-abrupt","runs":368,"processRuns":87,"batchSize":20,"batchFailures":4,"completedCorpus":true,"failures":26,"duplicateFailures":24,"newFindings":2} -->
 
 <!-- hunt-corpus-run: {"at":"2026-05-24T15:18:08.605Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","history-boundary","journal","manual-refresh","metadata","multi-tab","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"jh-delete-leaf-abrupt-refresh-control","runs":372,"processRuns":91,"batchSize":20,"batchFailures":4,"completedCorpus":true,"failures":26,"duplicateFailures":26,"newFindings":0} -->
@@ -4355,3 +4385,7 @@ action 4: {"type":"restartBackgroundAbrupt"}
 <!-- hunt-corpus-run: {"at":"2026-05-24T15:23:59.625Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","history-boundary","journal","manual-refresh","metadata","multi-tab","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"jh-delete-window-abrupt-missing-survivor-control","runs":379,"processRuns":98,"batchSize":20,"batchFailures":4,"completedCorpus":true,"failures":26,"duplicateFailures":26,"newFindings":0} -->
 
 <!-- hunt-corpus-run: {"at":"2026-05-24T15:24:37.507Z","mode":"agent-corpus-run","profile":"regression","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","history-boundary","known-finding","manual-refresh","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo"],"firstTraceId":"rt-active-race","lastTraceId":"hh-restored-tab-native-stale-history","runs":166,"processRuns":4,"batchSize":50,"batchFailures":0,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-24T15:54:38.809Z","mode":"agent-corpus-run","profile":"regression","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","history-boundary","journal","known-finding","manual-refresh","multi-tab","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo"],"firstTraceId":"rt-active-race","lastTraceId":"jh-native-restored-window-tabs-only-abrupt","runs":192,"processRuns":4,"batchSize":50,"batchFailures":0,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-24T15:59:20.960Z","mode":"agent-corpus-run","profile":"regression","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","history-boundary","journal","known-finding","manual-refresh","multi-tab","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo"],"firstTraceId":"rt-active-race","lastTraceId":"jh-native-restored-tab-abrupt","runs":193,"processRuns":4,"batchSize":50,"batchFailures":0,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->

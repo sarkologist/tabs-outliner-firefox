@@ -56,6 +56,24 @@ export type RuntimeLifecycleJournalEntry =
       entry: HistoryEntry;
       poppedHistory: HistoryState;
       delta: OutlineDelta;
+    }
+  | {
+      version: 1;
+      id: string;
+      createdAt: number;
+      kind: "nativeTabClose";
+      tabId: number;
+      windowId?: number;
+      plan: RuntimeClosePlan;
+    }
+  | {
+      version: 1;
+      id: string;
+      createdAt: number;
+      kind: "nativeWindowClose";
+      windowId: number;
+      plan: RuntimeClosePlan;
+      sessionId?: string;
     };
 
 export type RuntimeLifecycleJournal = {
@@ -175,6 +193,16 @@ function isRuntimeLifecycleJournalEntry(value: unknown): value is RuntimeLifecyc
       Boolean(entry.entry) &&
       Boolean(entry.poppedHistory) &&
       Boolean(entry.delta);
+  }
+  if (entry.kind === "nativeTabClose") {
+    return typeof entry.tabId === "number" &&
+      (entry.windowId === undefined || typeof entry.windowId === "number") &&
+      isRuntimeClosePlan(entry.plan);
+  }
+  if (entry.kind === "nativeWindowClose") {
+    return typeof entry.windowId === "number" &&
+      isRuntimeClosePlan(entry.plan) &&
+      (entry.sessionId === undefined || typeof entry.sessionId === "string");
   }
   return false;
 }
