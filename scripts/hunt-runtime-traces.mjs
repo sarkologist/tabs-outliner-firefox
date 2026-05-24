@@ -12,6 +12,7 @@ const CORPUS_RUN_CAP_MS =
   30 * 60 * 1000;
 const STOP_AFTER_CLEAN = positiveIntegerEnv("RUNTIME_TRACE_HUNT_STOP_AFTER_CLEAN") ?? 3;
 const MIN_RUN_BUDGET_MS = 2_000;
+const TRACE_HUNT_BATCH_SIZE = positiveIntegerEnv("RUNTIME_TRACE_HUNT_BATCH_SIZE") ?? 20;
 const TRACE_HUNT_PROFILE = traceHuntProfile();
 const REGRESSION_TRACE_IDS = [
   "rt-active-race",
@@ -911,6 +912,7 @@ console.log(`Agent stop rule: stop after ${STOP_AFTER_CLEAN} full 5-minute disco
 console.log(`Trace strategy: run the selected domain corpus once, recording every distinct failure; Codex/humans mutate discovery trace actions between runs.`);
 console.log(`Trace profile: ${TRACE_HUNT_PROFILE}${hasExplicitTraceIds ? " (explicit trace IDs override profile)" : ""}`);
 console.log(`Trace count: ${traceIds.length}`);
+console.log(`Trace batch size: ${TRACE_HUNT_BATCH_SIZE}`);
 console.log(`Coverage tags: ${coverageTags(traceIds).join(", ") || "unknown"}`);
 if (hasExplicitTraceIds || process.env.RUNTIME_TRACE_HUNT_SHOW_TRACE_IDS === "1") {
   console.log(`Trace IDs: ${traceIds.join(", ")}`);
@@ -923,54 +925,41 @@ let duplicateFailures = 0;
 let newFindings = 0;
 let lastTraceId = traceIds[0] ?? "";
 let completedCorpus = false;
+let processRuns = 0;
+let batchFailures = 0;
 
 console.log(`\nRunning ${traceIds.length} domain trace(s) once`);
 
-for (const traceId of traceIds) {
+for (const batch of chunks(traceIds, TRACE_HUNT_BATCH_SIZE)) {
+  const firstTraceId = batch[0] ?? "";
+  const batchLastTraceId = batch.at(-1) ?? firstTraceId;
   if (Date.now() + MIN_RUN_BUDGET_MS > deadline) {
-    console.log(`Trace ${traceId} skipped at the corpus run boundary.`);
+    console.log(`Trace batch ${firstTraceId}..${batchLastTraceId} skipped at the corpus run boundary.`);
     break;
   }
 
-  lastTraceId = traceId;
-  runs += 1;
-  const result = await runTrace(traceId, Math.max(MIN_RUN_BUDGET_MS, deadline - Date.now()));
+  lastTraceId = batchLastTraceId;
+  runs += batch.length;
+  processRuns += 1;
+  const result = await runTraceBatch(batch, Math.max(MIN_RUN_BUDGET_MS, deadline - Date.now()));
   if (result.timedOut) {
-    console.log(`Trace ${traceId} timed out at the corpus run boundary.`);
+    console.log(`Trace batch ${firstTraceId}..${batchLastTraceId} timed out at the corpus run boundary.`);
     break;
   }
   if (result.code === 0) {
-    completedCorpus = traceId === traceIds.at(-1);
+    completedCorpus = batchLastTraceId === traceIds.at(-1);
     continue;
   }
 
-  failures += 1;
-  const finding = parseFinding(traceId, result.output);
-  if (!finding) {
-    const fallback = {
-      traceId,
-      message: `vitest exited with code ${result.code}`,
-      trace: excerpt(result.output, 80),
-      signature: `unparsed failure:${result.code}:${traceId}`,
-      replay: replayCommand(traceId)
-    };
-    if (recordFinding(BUG_FILE, bugLog, fallback)) {
-      newFindings += 1;
-      console.log(`New unparsed finding in ${traceId}: ${fallback.message}`);
-    } else {
-      duplicateFailures += 1;
-    }
-    completedCorpus = traceId === traceIds.at(-1);
-    continue;
+  batchFailures += 1;
+  const splitResult = await recordFailingBatch(batch);
+  failures += splitResult.failures;
+  duplicateFailures += splitResult.duplicateFailures;
+  newFindings += splitResult.newFindings;
+  if (!splitResult.completed) {
+    break;
   }
-
-  if (recordFinding(BUG_FILE, bugLog, finding)) {
-    newFindings += 1;
-    console.log(`New finding in ${traceId}: ${finding.message}`);
-  } else {
-    duplicateFailures += 1;
-  }
-  completedCorpus = traceId === traceIds.at(-1);
+  completedCorpus = batchLastTraceId === traceIds.at(-1);
 }
 
 appendCorpusRunSummary(BUG_FILE, {
@@ -980,6 +969,9 @@ appendCorpusRunSummary(BUG_FILE, {
   firstTraceId: traceIds[0] ?? "",
   lastTraceId,
   runs,
+  processRuns,
+  batchSize: TRACE_HUNT_BATCH_SIZE,
+  batchFailures,
   completedCorpus,
   failures,
   duplicateFailures,
@@ -987,11 +979,69 @@ appendCorpusRunSummary(BUG_FILE, {
 });
 
 console.log(
-  `Corpus run done: ${runs} run(s), ${failures} failure(s), ${newFindings} new finding(s), ` +
+  `Corpus run done: ${runs} trace run(s), ${processRuns} vitest process(es), ` +
+    `${batchFailures} failing batch(es), ${failures} failure(s), ${newFindings} new finding(s), ` +
     `${duplicateFailures} duplicate failure(s), completed corpus: ${completedCorpus ? "yes" : "no"}.`
 );
 
-async function runTrace(traceId, timeoutMs) {
+async function recordFailingBatch(batch) {
+  let completed = true;
+  let failures = 0;
+  let duplicateFailures = 0;
+  let newFindings = 0;
+  console.log(
+    `Batch ${batch[0]}..${batch.at(-1)} failed; replaying ${batch.length} trace(s) individually for findings.`
+  );
+
+  for (const traceId of batch) {
+    if (Date.now() + MIN_RUN_BUDGET_MS > deadline) {
+      console.log(`Trace ${traceId} skipped during failing batch split at the corpus run boundary.`);
+      completed = false;
+      break;
+    }
+
+    processRuns += 1;
+    const result = await runTraceBatch([traceId], Math.max(MIN_RUN_BUDGET_MS, deadline - Date.now()));
+    if (result.timedOut) {
+      console.log(`Trace ${traceId} timed out during failing batch split.`);
+      completed = false;
+      break;
+    }
+    if (result.code === 0) {
+      continue;
+    }
+
+    failures += 1;
+    const finding = parseFinding(traceId, result.output);
+    if (!finding) {
+      const fallback = {
+        traceId,
+        message: `vitest exited with code ${result.code}`,
+        trace: excerpt(result.output, 80),
+        signature: `unparsed failure:${result.code}:${traceId}`,
+        replay: replayCommand(traceId)
+      };
+      if (recordFinding(BUG_FILE, bugLog, fallback)) {
+        newFindings += 1;
+        console.log(`New unparsed finding in ${traceId}: ${fallback.message}`);
+      } else {
+        duplicateFailures += 1;
+      }
+      continue;
+    }
+
+    if (recordFinding(BUG_FILE, bugLog, finding)) {
+      newFindings += 1;
+      console.log(`New finding in ${traceId}: ${finding.message}`);
+    } else {
+      duplicateFailures += 1;
+    }
+  }
+
+  return { completed, failures, duplicateFailures, newFindings };
+}
+
+async function runTraceBatch(batch, timeoutMs) {
   const child = spawn(process.platform === "win32" ? "pnpm.cmd" : "pnpm", [
     "exec",
     "vitest",
@@ -1005,7 +1055,7 @@ async function runTrace(traceId, timeoutMs) {
       ...process.env,
       RUNTIME_TRACE_HUNT_PROFILE: TRACE_HUNT_PROFILE,
       RUNTIME_DOMAIN_TRACE_HUNT: "1",
-      RUNTIME_TRACE_HUNT_TRACE_IDS: traceId
+      RUNTIME_TRACE_HUNT_TRACE_IDS: batch.join(",")
     },
     stdio: ["ignore", "pipe", "pipe"]
   });
@@ -1119,6 +1169,7 @@ Default hunt bounds:
 - Corpus run cap: 5 minutes
 - Agent stop condition: 3 full 5-minute discovery mutation blocks with no new distinct findings
 - Trace selection: default profile is \`discovery\`; use \`RUNTIME_TRACE_HUNT_PROFILE=regression|all\` for known repro replay, or \`RUNTIME_TRACE_HUNT_TRACE_IDS=...\` for explicit traces
+- Batching: \`RUNTIME_TRACE_HUNT_BATCH_SIZE\` defaults to \`20\`; green batches run together, failing batches split into single-trace replays for precise findings
 - Corpus semantics: execute the selected explicit domain trace corpus once, recording every distinct failure; Codex/humans mutate discovery trace actions between runs, not seeds
 - Test target: \`${TEST_FILE}\`
 - Test name: \`${TEST_NAME}\`
@@ -1158,6 +1209,14 @@ function selectedTraceIds() {
     .split(",")
     .map((traceId) => traceId.trim())
     .filter(Boolean);
+}
+
+function chunks(values, size) {
+  const result = [];
+  for (let index = 0; index < values.length; index += size) {
+    result.push(values.slice(index, index + size));
+  }
+  return result;
 }
 
 function traceHuntProfile() {

@@ -16,7 +16,10 @@ pnpm trace-hunt:runtime
 RUNTIME_TRACE_HUNT_PROFILE=regression pnpm trace-hunt:runtime
 RUNTIME_TRACE_HUNT_PROFILE=all pnpm trace-hunt:runtime
 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-focus-session-activation-refresh pnpm trace-hunt:runtime
+RUNTIME_TRACE_HUNT_PROFILE=regression RUNTIME_TRACE_HUNT_BATCH_SIZE=50 pnpm trace-hunt:runtime
 ```
+
+The runner batches green corpus replay by default (`RUNTIME_TRACE_HUNT_BATCH_SIZE`, default `20`) so regression sweeps do not spawn one Vitest process per trace. If a batch fails, the runner replays only that batch one trace at a time and records precise findings. Use `RUNTIME_TRACE_HUNT_BATCH_SIZE=1` for the old single-trace execution behavior.
 
 ## Domain DSL
 
