@@ -5620,7 +5620,7 @@ const RUNTIME_DOMAIN_DISCOVERY_TRACES: RuntimeDomainTrace[] = [
       { type: "outlinerMoveTabCommandToNewWindow", tab: { capture: "ph-opener-redo-grandchild" }, captureStaleTabs: "ph-opener-redo-old" },
       { type: "outlinerUndo" },
       { type: "outlinerRedo" },
-      { type: "manualRefreshWithMissingWindowQuery", window: { role: "lastOpenedWindow" } }
+      { type: "manualRefreshWithMissingTabQuery", tab: { role: "lastMovedTab" } }
     ]
   },
   {
@@ -5765,7 +5765,7 @@ const RUNTIME_DOMAIN_DISCOVERY_TRACES: RuntimeDomainTrace[] = [
     actions: [
       { type: "outlinerCloseTab", tab: { tabId: 2 } },
       { type: "outlinerRestoreNodeRejectingCreate", node: { nodeId: "tab:2" } },
-      { type: "nativeCloseTab", tab: { tabId: 2 }, order: "tabRemovedOnly" },
+      { type: "nativeCloseTab", tab: { role: "activeTab" }, order: "tabRemovedOnly" },
       { type: "manualRefreshWithMissingWindowQuery", window: { windowId: 10 } }
     ]
   },
@@ -5979,7 +5979,7 @@ const RUNTIME_DOMAIN_DISCOVERY_TRACES: RuntimeDomainTrace[] = [
       { type: "outlinerDeleteNodeRejectingClose", node: { window: { windowId: 10 } } },
       { type: "outlinerUndo" },
       { type: "outlinerRedo" },
-      { type: "manualRefreshWithReorderedQuery", window: { role: "focusedWindow" }, order: "rotateLeft" }
+      { type: "manualRefreshWithReorderedQuery", window: { role: "firstRuntimeWindow" }, order: "rotateLeft" }
     ]
   },
   {
@@ -6351,7 +6351,10 @@ const RUNTIME_DOMAIN_DISCOVERED_FINDING_IDS = new Map<string, string[]>([
   ["bh-restore-create-reject-window", ["RT-092"]],
   ["bh-restart-restore-create-reject-tab", ["RT-093"]],
   ["bh-restore-create-reject-tab-after-redo", ["RT-094"]],
-  ["bh-restart-restore-create-reject-window", ["RT-095"]]
+  ["bh-restart-restore-create-reject-window", ["RT-095"]],
+  ["ph-close-reject-tab-session-refresh", ["RT-096"]],
+  ["ph-focus-after-close-reject-session", ["RT-098"]],
+  ["ph-close-reject-tab-undo-redo", ["RT-103"]]
 ]);
 
 function runtimeDomainTraceWithFindingMetadata(trace: RuntimeDomainTrace): RuntimeDomainTrace {
@@ -7682,8 +7685,7 @@ async function runDomainOutlinerCloseNodeRejectingClose(
 ): Promise<void> {
   const state = (await context.controller.handleMessage({ type: "getState" })) as OutlineState;
   const nodeId = resolveDomainNodeId(context, state, selector);
-  const protectedExpectedNodeIds = generatedSubtreeNodeIds(state, nodeId)
-    .filter((candidateId) => state.nodes[candidateId]?.status === "live");
+  const protectedExpectedNodeIds = expectedClosedNodeIdsForOutlinerCloseNode(state, nodeId);
   for (const protectedNodeId of protectedExpectedNodeIds) {
     context.expectedClosedNodeIds.add(protectedNodeId);
   }
@@ -7707,6 +7709,37 @@ async function runDomainOutlinerCloseNodeRejectingClose(
   }
   await flushGeneratedCloseEvents(context);
   await pruneMissingExpectedClosedNodes(context, protectedExpectedNodeIds);
+}
+
+function expectedClosedNodeIdsForOutlinerCloseNode(state: OutlineState, nodeId: NodeId): NodeId[] {
+  const node = state.nodes[nodeId];
+  if (!node) {
+    return [];
+  }
+
+  if (node.kind === "tab" && node.status === "live") {
+    return [node.id];
+  }
+
+  if (node.kind === "window" && node.status === "live" && node.live && "windowId" in node.live) {
+    return generatedSubtreeNodeIds(state, nodeId).filter((candidateId) => {
+      const candidate = state.nodes[candidateId];
+      if (!candidate) {
+        return false;
+      }
+      if (candidate.id === node.id) {
+        return true;
+      }
+      return candidate.kind === "tab" &&
+        candidate.status === "live" &&
+        candidate.live &&
+        "windowId" in candidate.live &&
+        candidate.live.windowId === node.live.windowId;
+    });
+  }
+
+  return generatedSubtreeNodeIds(state, nodeId)
+    .filter((candidateId) => state.nodes[candidateId]?.status === "live");
 }
 
 async function runDomainOutlinerDeleteWindowRejectingClose(
@@ -7855,29 +7888,36 @@ async function runDomainOutlinerRestoreNodeRejectingCreate(
 ): Promise<void> {
   const before = (await context.controller.handleMessage({ type: "getState" })) as OutlineState;
   const nodeId = resolveDomainNodeId(context, before, selector);
-  vi.mocked(context.runtime.api.tabs.create).mockImplementationOnce(async (createProperties) => {
-    const windowId =
-      createProperties.windowId ??
-      context.runtime.windows.find((windowInfo) => windowInfo.focused)?.id ??
-      context.runtime.windows[0]?.id;
-    if (typeof windowId !== "number") {
-      throw new Error("Cannot create a rejecting restore tab without a window");
-    }
-    const tab: RuntimeTab = {
-      id: nextRuntimeTabId(context.runtime),
-      windowId,
-      index: tabsInRuntimeWindow(context.runtime, windowId).length,
-      active: createProperties.active ?? true,
-      url: createProperties.url,
-      title: createProperties.url
-    };
-    await createTabFromBrowser(context.runtime, tab, { awaitListeners: false });
-    throw new Error("domain restore tab create rejected after completion");
-  });
-  vi.mocked(context.runtime.api.windows.create).mockImplementationOnce(async (createData = {}) => {
-    createWindowFromBrowser(context.runtime, createData as FakeWindowCreateData);
-    throw new Error("domain restore window create rejected after completion");
-  });
+  const node = before.nodes[nodeId];
+  const shouldMockTabCreate = node?.kind !== "window";
+  const shouldMockWindowCreate = node?.kind !== "tab";
+  if (shouldMockTabCreate) {
+    vi.mocked(context.runtime.api.tabs.create).mockImplementationOnce(async (createProperties) => {
+      const windowId =
+        createProperties.windowId ??
+        context.runtime.windows.find((windowInfo) => windowInfo.focused)?.id ??
+        context.runtime.windows[0]?.id;
+      if (typeof windowId !== "number") {
+        throw new Error("Cannot create a rejecting restore tab without a window");
+      }
+      const tab: RuntimeTab = {
+        id: nextRuntimeTabId(context.runtime),
+        windowId,
+        index: tabsInRuntimeWindow(context.runtime, windowId).length,
+        active: createProperties.active ?? true,
+        url: createProperties.url,
+        title: createProperties.url
+      };
+      await createTabFromBrowser(context.runtime, tab, { awaitListeners: false });
+      throw new Error("domain restore tab create rejected after completion");
+    });
+  }
+  if (shouldMockWindowCreate) {
+    vi.mocked(context.runtime.api.windows.create).mockImplementationOnce(async (createData = {}) => {
+      createWindowFromBrowser(context.runtime, createData as FakeWindowCreateData);
+      throw new Error("domain restore window create rejected after completion");
+    });
+  }
   try {
     const result = await context.controller.handleMessage({ type: "restoreNode", nodeId });
     expect((result as CommandAck).type).toBe("commandAck");
@@ -12253,6 +12293,111 @@ describe("background controller lifecycle", () => {
 
     expect(state.nodes["tab:2"]?.status).toBe("closed");
     expect(runtime.tabs.map((tab) => tab.id).sort((left, right) => left - right)).toEqual([1]);
+  });
+
+  it("recovers an outliner tab close when tabs.remove succeeds before rejecting", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        },
+        {
+          id: 2,
+          windowId: 10,
+          index: 1,
+          active: false,
+          url: "https://two.example/",
+          title: "Two"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    vi.mocked(runtime.api.tabs.remove).mockImplementationOnce(async (tabIds) => {
+      for (const tabId of Array.isArray(tabIds) ? tabIds : [tabIds]) {
+        await closeRuntimeTab(runtime, tabId, "tabRemovedThenSessionChanged", { awaitListeners: false });
+      }
+      throw new Error("tabs.remove rejected after close side effect");
+    });
+
+    expectCommandAck(await controller.handleMessage({ type: "closeNode", nodeId: "tab:2" }), true);
+
+    let state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(runtime.tabs.map((tab) => tab.id)).toEqual([1]);
+    expect(state.nodes["tab:2"]?.status).toBe("closed");
+    expect(state.nodes["tab:2"]?.live).toBeUndefined();
+    await runtime.events.tabRemoved.flush();
+    await runtime.events.sessionChanged.flush();
+    state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(state.nodes["tab:2"]?.status).toBe("closed");
+    expect(state.nodes["window:10"]?.childIds).toEqual(["tab:1", "tab:2"]);
+  });
+
+  it("recovers an outliner window close when windows.remove succeeds before rejecting", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        },
+        {
+          id: 20,
+          focused: false,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        },
+        {
+          id: 2,
+          windowId: 20,
+          index: 0,
+          active: true,
+          url: "https://two.example/",
+          title: "Two"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    vi.mocked(runtime.api.windows.remove).mockImplementationOnce(async (windowId) => {
+      await closeRuntimeWindow(runtime, windowId, { awaitListeners: false });
+      throw new Error("windows.remove rejected after close side effect");
+    });
+
+    expectCommandAck(await controller.handleMessage({ type: "closeNode", nodeId: "window:20" }), true);
+
+    let state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(runtime.windows.map((windowInfo) => windowInfo.id)).toEqual([10]);
+    expect(runtime.tabs.map((tab) => tab.id)).toEqual([1]);
+    expect(state.nodes["window:20"]?.status).toBe("closed");
+    expect(state.nodes["tab:2"]?.status).toBe("closed");
+    await runtime.events.tabRemoved.flush();
+    await runtime.events.windowRemoved.flush();
+    await runtime.events.sessionChanged.flush();
+    state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(state.nodes["window:20"]?.status).toBe("closed");
+    expect(state.nodes["tab:2"]?.status).toBe("closed");
   });
 
   it("restores one closed tab without traversing unrelated closed siblings", async () => {

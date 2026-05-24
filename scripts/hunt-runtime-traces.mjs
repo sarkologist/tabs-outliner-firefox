@@ -152,7 +152,10 @@ const REGRESSION_TRACE_IDS = [
   "bh-restore-create-reject-window",
   "bh-restart-restore-create-reject-tab",
   "bh-restore-create-reject-tab-after-redo",
-  "bh-restart-restore-create-reject-window"
+  "bh-restart-restore-create-reject-window",
+  "ph-close-reject-tab-session-refresh",
+  "ph-focus-after-close-reject-session",
+  "ph-close-reject-tab-undo-redo"
 ];
 const DISCOVERY_TRACE_IDS = [
   "dh-restore-delayed-focus-refresh",
@@ -322,7 +325,6 @@ const DISCOVERY_TRACE_IDS = [
   "bh-native-background-window-only-no-command-restart",
   "bh-focus-after-session-only-close-missing-source",
   "bh-relocation-reject-source-window-only-restart",
-  "ph-close-reject-tab-session-refresh",
   "ph-close-reject-single-window-restart",
   "ph-close-reject-multitab-window-reordered",
   "ph-close-reject-nested-destination-stale",
@@ -336,7 +338,6 @@ const DISCOVERY_TRACE_IDS = [
   "ph-query-no-command-two-window-skew",
   "ph-query-command-destination-source-skew",
   "ph-query-stale-event-two-window-skew",
-  "ph-focus-after-close-reject-session",
   "ph-focus-restore-native-session",
   "ph-restart-close-reject-stale-old",
   "ph-restart-restore-native-id-gap",
@@ -367,7 +368,6 @@ const DISCOVERY_TRACE_IDS = [
   "ph-query-no-command-focus-restart-reordered",
   "ph-native-close-order-restart-session",
   "ph-relocation-restart-current-first-reordered",
-  "ph-close-reject-tab-undo-redo",
   "ph-query-session-rotate-both-windows",
   "ph-relocation-fresh-session-reordered",
   "ph-native-tabs-only-refresh-restart",

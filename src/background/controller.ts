@@ -646,7 +646,13 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         const recoveredRelocation = !recoveredRestore && runtimeCommandRelocatesLiveTabs(message.type)
           ? await recoverCommandRelocationCreateSideEffect(current, message)
           : undefined;
-        const recovered = recoveredRestore ?? recoveredRelocation;
+        const recoveredOutlinerClose = !recoveredRestore &&
+          !recoveredRelocation &&
+          message.type === "closeNode" &&
+          outlinerClosePlan
+          ? await recoverOutlinerCloseSideEffect(current, outlinerClosePlan)
+          : undefined;
+        const recovered = recoveredRestore ?? recoveredRelocation ?? recoveredOutlinerClose;
         if (recovered && recovered !== current) {
           if (commandTransaction) {
             runtimeFacts.recordCommandObserved(commandTransaction.id);
@@ -821,6 +827,33 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
     const openTabIds = new Set(windows.flatMap((windowInfo) => windowInfo.tabs ?? []).map((tab) => tab.id));
     return plan.tabIds.every((tabId) => !openTabIds.has(tabId));
+  }
+
+  async function recoverOutlinerCloseSideEffect(
+    current: OutlineState,
+    plan: RuntimeClosePlan
+  ): Promise<OutlineState | undefined> {
+    if (!(await runtimeClosePlanCompleted(plan))) {
+      return undefined;
+    }
+
+    runtimeFacts.recordCompletedOutlinerClosePlan(plan);
+    const recent = await mostRecentClosedSession();
+    let next = current;
+    for (const windowId of plan.windowIds) {
+      next = closeWindow(next, windowId, {
+        now: now(),
+        ...(recent?.window?.sessionId ? { sessionId: recent.window.sessionId } : {})
+      });
+    }
+    for (const tabId of plan.tabIds) {
+      next = closeTab(next, tabId, {
+        now: now(),
+        ...(recent?.tab?.sessionId ? { sessionId: recent.tab.sessionId } : {})
+      });
+    }
+
+    return next === current ? undefined : next;
   }
 
   async function createRestoreCreateRecoveryContext(): Promise<RestoreCreateRecoveryContext> {
@@ -3192,6 +3225,7 @@ function runtimeIndexCandidateNodeIdsForCommand(
     case "moveSubtreeToTopLevel":
     case "flattenSubtree":
     case "promoteChildren":
+    case "closeNode":
     case "deleteNode":
       return collectRuntimeIndexCandidateNodeIds(previous, next, [command.nodeId]);
 

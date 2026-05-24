@@ -350,6 +350,17 @@ export class RuntimeFactLedger {
     }
   }
 
+  recordCompletedOutlinerClosePlan(plan: RuntimeClosePlan): void {
+    for (const tabId of plan.tabIds) {
+      this.markTabRemoved(tabId);
+      this.outlinerClosingTabIds.delete(tabId);
+    }
+    for (const windowId of plan.windowIds) {
+      this.markWindowRemoved(windowId);
+      this.outlinerClosingWindowIds.delete(windowId);
+    }
+  }
+
   private markTabRemoved(tabId: number): void {
     this.removedTabIds.add(tabId);
     this.commandRelocatedTabEchoes.delete(tabId);

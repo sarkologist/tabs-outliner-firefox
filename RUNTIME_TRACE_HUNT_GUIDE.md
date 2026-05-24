@@ -77,7 +77,7 @@ Focus mutations on stale or contradictory evidence crossing command boundaries:
 
 ## Coverage Matrix
 
-Current coverage after the post-recovery lifecycle sweep on 2026-05-24: 139 regression traces and 220 discovery traces. The restart-stress expansion recorded RT-063 through RT-090 and was promoted to regression coverage. The breadth sweep added neutral `bh-*` discovery traces, recorded RT-091 through RT-095 around restore create rejection side effects, and those five traces are now promoted to regression coverage after the recovery fix. The post-recovery sweep added neutral `ph-*` discovery traces and recorded RT-096 through RT-103 as open discovery findings.
+Current coverage after the post-recovery triage/fix pass on 2026-05-24: 142 regression traces and 217 discovery traces. The restart-stress expansion recorded RT-063 through RT-090 and was promoted to regression coverage. The breadth sweep added neutral `bh-*` discovery traces, recorded RT-091 through RT-095 around restore create rejection side effects, and those five traces are now promoted to regression coverage after the recovery fix. The post-recovery sweep added neutral `ph-*` discovery traces and recorded RT-096 through RT-103; RT-096, RT-098, and RT-103 are promoted regression coverage, while the remaining RT-097/099/100/101/102 entries were harness artifacts corrected in discovery traces.
 
 | State shape | Command edge | Runtime skew | Refresh edge | Current coverage | Next target |
 | --- | --- | --- | --- | --- | --- |
@@ -105,7 +105,7 @@ Breadth expansion started from 134 regression traces and 121 discovery traces, t
 
 ## Post-Recovery Hunt Targets
 
-Post-recovery discovery started from 139 regression traces and 167 discovery traces after the restore create rejection recovery fix. After the lifecycle sweep, the corpus has 139 regression traces and 220 discovery traces. Add neutral `ph-*` traces and leave fixed RT-derived regression traces frozen.
+Post-recovery discovery started from 139 regression traces and 167 discovery traces after the restore create rejection recovery fix. After triage and promotion, the corpus has 142 regression traces and 217 discovery traces. Add neutral `ph-*` traces and leave fixed RT-derived regression traces frozen.
 
 - Command close rejection: outliner close of a tab, single-tab window, multi-tab window, or grouped subtree where the browser close completes before the adapter rejects.
 - Restore/native-close mixes: restored tabs or windows followed by native close event-order variants, delayed restored-tab echoes, partial query, focus churn, and restart reconstruction.

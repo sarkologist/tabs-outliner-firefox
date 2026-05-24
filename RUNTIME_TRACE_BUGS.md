@@ -12,7 +12,7 @@ pnpm trace-hunt:runtime
 
 Default hunt bounds:
 
-- Corpus run cap: 5 minutes
+- Corpus run safety cap: 30 minutes by default (`RUNTIME_TRACE_HUNT_CORPUS_RUN_MS` overrides); the five-minute budget belongs to the external mutation effort block
 - Agent stop condition: 3 full 5-minute discovery mutation blocks with no new distinct findings
 - Trace selection: default profile is `discovery`; use `RUNTIME_TRACE_HUNT_PROFILE=regression|all` for known repro replay, or `RUNTIME_TRACE_HUNT_TRACE_IDS=...` for explicit trace replay
 - Corpus semantics: execute the selected explicit domain trace corpus once, recording every distinct failure; mutate discovery domain actions between runs instead of perturbing seeds
@@ -22,22 +22,21 @@ Default hunt bounds:
 
 ## Last Domain Run
 
-- Completed: 2026-05-23T21:49:48Z
-- Strategy: breadth-first discovery profile, with wall-clock five-minute agent mutation blocks guided by `RUNTIME_TRACE_HUNT_GUIDE.md`
+- Completed: 2026-05-24T09:37:45Z
+- Strategy: post-recovery triage/fix replay after the lifecycle sweep, with real close-side-effect findings promoted and harness artifacts corrected
 - Trace ids: current discovery corpus in `src/background/controller.test.ts` and `scripts/hunt-runtime-traces.mjs`
-- Corpus size at stop: 172 discovery traces, 134 regression traces; after fix promotion: 167 discovery traces, 139 regression traces
-- Distinct discovery findings recorded in breadth hunt: 5
-- New findings in breadth discovery hunt: RT-091 through RT-095
-- Stop condition reached: yes; after RT-095, 3 full five-minute discovery mutation blocks found no new distinct signatures
-- Clean blocks after RT-095: corpus runs ending 21:38:26Z, 21:44:33Z, and 21:49:48Z
-- Duplicate failures during final clean mutation blocks: 15
-- Regression safety replay after hunt: 134 known regression traces, 0 failures at 2026-05-23T21:52:59Z
-- Current corpus after fix: 139 regression traces, 167 discovery traces
-- Status: RT-091 through RT-095 are fixed and promoted to regression coverage; original discovery repros remain as historical evidence.
+- Corpus size after triage: 217 discovery traces, 142 regression traces
+- Distinct post-recovery findings triaged: 8
+- Real app findings fixed/promoted: RT-096, RT-098, and RT-103
+- Harness artifacts corrected: RT-097, RT-099, RT-100, RT-101, and RT-102
+- Regression safety replay after fix: 142 known regression traces, 0 failures at 2026-05-24T09:02:27Z and again after promotion at 2026-05-24T09:37Z
+- Current corpus after post-recovery triage/fix: 142 regression traces, 217 discovery traces
+- Status: RT-096, RT-098, and RT-103 are fixed and promoted to regression coverage; RT-097, RT-099, RT-100, RT-101, and RT-102 were harness artifacts corrected in discovery traces. Original discovery repros remain as historical evidence.
 
 ## Finding Index
 
 - Open recorded findings: none
+- Fixed/triaged post-recovery lifecycle findings: RT-096 through RT-103
 - Fixed breadth discovery findings: RT-091 through RT-095
 - Fixed reconciliation architecture stress findings: RT-063 through RT-090
 - Fixed coverage-first discovery findings: RT-040 through RT-062
@@ -66,6 +65,8 @@ Default hunt bounds:
 - Command focus active updates: RT-083 through RT-086 were fixed by routing active-only command focus update echoes through the command activation fast path, preserving compact active-state broadcasts without requiring a full runtime snapshot.
 - Partial post-restart snapshots for browser-created tabs: RT-087 through RT-090 were fixed by taking one corroborating complete snapshot when a close-missing refresh would otherwise delete a live tab or accept a live tab in the wrong window from suspect query evidence.
 - Restore create rejection side effects: RT-091 through RT-095 were fixed by recording restore `createTab`/`createWindow` attempts, detecting matching browser-created tabs/windows from a complete post-rejection snapshot, restoring the original closed outline nodes from that runtime evidence, and clearing reconstructed tombstones for command-restored resources after restart. The same pass also treats the post-command live outline as authoritative for clearing stale command-owned close guards that would otherwise suppress later runtime evidence for still-live resources.
+- Outliner close rejection side effects: RT-096, RT-098, and RT-103 were fixed by giving `closeNode` the same transaction/recovery discipline as delete/restore: when the browser close side effect completed before adapter rejection, the controller now preserves the affected outline tab/window as closed, records completed outliner close facts, and updates runtime-index candidates for the recovered close.
+- Post-recovery harness artifacts: RT-097, RT-099, RT-100, RT-101, and RT-102 were triaged as trace-harness bugs, not runtime model bugs. The harness now avoids stale `lastOpenedWindow`/old restored-tab runtime IDs, treats a foreign live window under a closed source window as intentionally promoted/still live, permits no focused runtime window after destructive history replay by selecting `firstRuntimeWindow` for query skew, and scopes rejecting restore-create mocks to the selected node kind so unused one-shot mocks cannot poison later undo/redo commands.
 - Verification: all listed generated seed repros and promoted domain trace repros pass as of the principled runtime trace fix passes.
 
 ## Restart-Stress Fix Analysis
@@ -2916,7 +2917,7 @@ action: {"type":"outlinerCloseNodeRejectingClose","node":{"tab":{"tabId":2}}} --
 - First seen: 2026-05-24T08:11:28.504Z
 - Trace id: `ph-close-reject-tab-session-refresh`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=ph-close-reject-tab-session-refresh pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in closeNode side-effect recovery and promoted to regression coverage.
 
 ```text
 domain trace ph-close-reject-tab-session-refresh: close reject tab session refresh
@@ -2936,7 +2937,7 @@ action: {"type":"manualRefreshWithMissingWindowQuery","window":{"role":"lastOpen
 - First seen: 2026-05-24T08:11:37.482Z
 - Trace id: `ph-opener-grandchild-redo-missing-destination`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=ph-opener-grandchild-redo-missing-destination pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: triaged as harness artifact; trace now uses current moved-tab evidence instead of stale `lastOpenedWindow`.
 
 ```text
 domain trace ph-opener-grandchild-redo-missing-destination: opener grandchild redo missing destination
@@ -2956,7 +2957,7 @@ action: {"type":"outlinerCloseNodeRejectingClose","node":{"tab":{"capture":"ph-f
 - First seen: 2026-05-24T08:11:44.024Z
 - Trace id: `ph-focus-after-close-reject-session`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=ph-focus-after-close-reject-session pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in closeNode side-effect recovery and promoted to regression coverage.
 
 ```text
 domain trace ph-focus-after-close-reject-session: focus after close reject session
@@ -2978,7 +2979,7 @@ action: {"type":"outlinerCloseNodeRejectingClose","node":{"window":{"windowId":1
 - First seen: 2026-05-24T08:11:46.193Z
 - Trace id: `ph-restart-close-reject-stale-old`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=ph-restart-close-reject-stale-old pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: triaged as harness artifact; outliner closing a live source window intentionally preserves/promotes foreign live windows.
 
 ```text
 domain trace ph-restart-close-reject-stale-old: restart close reject stale old
@@ -3002,7 +3003,7 @@ action: {"type":"nativeCloseTab","tab":{"tabId":2},"order":"tabRemovedOnly"} -->
 - First seen: 2026-05-24T08:17:40.508Z
 - Trace id: `ph-restore-tab-native-source-missing`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=ph-restore-tab-native-source-missing pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: triaged as harness artifact; trace now uses the current restored runtime tab instead of the old closed tab id.
 
 ```text
 domain trace ph-restore-tab-native-source-missing: restore tab native source missing
@@ -3023,7 +3024,7 @@ action: {"type":"manualRefreshWithReorderedQuery","window":{"role":"focusedWindo
 - First seen: 2026-05-24T08:27:48.467Z
 - Trace id: `ph-opener-source-delete-redo-reordered`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=ph-opener-source-delete-redo-reordered pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: triaged as harness artifact; trace now uses `firstRuntimeWindow` because a focused runtime window is not guaranteed after source delete/history replay.
 
 ```text
 domain trace ph-opener-source-delete-redo-reordered: opener source delete redo reordered
@@ -3046,7 +3047,7 @@ action: {"type":"outlinerUndo"} -->
 - First seen: 2026-05-24T08:32:55.645Z
 - Trace id: `ph-restore-delete-redo-first-query`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=ph-restore-delete-redo-first-query pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: triaged as harness artifact; rejecting restore-create mocks are now scoped to the selected node kind so unused tab mocks cannot poison later undo.
 
 ```text
 domain trace ph-restore-delete-redo-first-query: restore delete redo first query
@@ -3066,7 +3067,7 @@ action: {"type":"outlinerCloseNodeRejectingClose","node":{"tab":{"tabId":2}}} --
 - First seen: 2026-05-24T08:37:58.333Z
 - Trace id: `ph-close-reject-tab-undo-redo`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=ph-close-reject-tab-undo-redo pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in closeNode side-effect recovery and promoted to regression coverage.
 
 ```text
 domain trace ph-close-reject-tab-undo-redo: close reject tab undo redo
@@ -3089,3 +3090,5 @@ action 1: {"type":"outlinerCloseNodeRejectingClose","node":{"tab":{"tabId":2}}}
 <!-- hunt-corpus-run: {"at":"2026-05-24T08:59:03.794Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","manual-refresh","metadata","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","session","stale-event","stale-query","tombstone","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"ph-relocation-session-source-destination-skew","runs":220,"completedCorpus":true,"failures":8,"duplicateFailures":8,"newFindings":0} -->
 
 <!-- hunt-corpus-run: {"at":"2026-05-24T09:02:27.985Z","mode":"agent-corpus-run","profile":"regression","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","known-finding","manual-refresh","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","race","reconciliation","relocation","restart","restore","session","stale-event","stale-query","tombstone","undo-redo"],"firstTraceId":"rt-active-race","lastTraceId":"bh-restart-restore-create-reject-window","runs":139,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-24T09:31:49.323Z","mode":"agent-corpus-run","profile":"regression","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","known-finding","manual-refresh","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","restart","restore","session","stale-event","stale-query","tombstone","undo-redo"],"firstTraceId":"rt-active-race","lastTraceId":"ph-close-reject-tab-undo-redo","runs":142,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
