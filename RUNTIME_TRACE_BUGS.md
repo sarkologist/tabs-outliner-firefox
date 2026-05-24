@@ -22,18 +22,19 @@ Default hunt bounds:
 
 ## Last Domain Run
 
-- Completed: 2026-05-24T11:23:35Z
-- Strategy: transaction boundary sweep after close/restore recovery, stressing command side-effect recovery plus undo/redo/history boundaries without mutating fixed RT-derived repros
+- Completed: 2026-05-24T12:41:07Z
+- Strategy: history boundary sweep after transaction-boundary fixes, stressing old undo/redo entries against resources later closed, deleted, restored, tombstoned, or reconstructed after restart
 - Trace ids: current discovery corpus in `src/background/controller.test.ts` and `scripts/hunt-runtime-traces.mjs`
-- Corpus size after fix: 263 discovery traces, 144 regression traces
-- Distinct transaction-boundary findings recorded: RT-104 and RT-105
-- Stop condition: after RT-105, three complete discovery mutation blocks at 258, 262, and 265 traces found no new distinct signatures
-- Regression safety replay: 144 known regression traces, 0 failures at 2026-05-24T11:23:35Z after RT-104/RT-105 promotion.
-- Status: RT-104 and RT-105 are fixed by the history replay closed-lifecycle guard and promoted to regression coverage.
+- Corpus size after fix: 303 discovery traces, 166 regression traces
+- Distinct history-boundary findings recorded: RT-106 through RT-127
+- Stop condition: after RT-127, three complete discovery mutation blocks at 319, 322, and 325 traces found no new distinct signatures
+- Regression safety replay: 166 regression traces, 0 failures, 0 new findings at 2026-05-24T13:13:16.901Z.
+- Status: RT-106 through RT-127 are fixed by the history replay runtime-lifecycle guard, native-restored-tab deletion semantics, and final complete runtime reconciliation after history replay.
 
 ## Finding Index
 
 - Open recorded findings: none
+- Fixed history-boundary findings: RT-106 through RT-127
 - Fixed transaction-boundary findings: RT-104 through RT-105
 - Fixed/triaged post-recovery lifecycle findings: RT-096 through RT-103
 - Fixed breadth discovery findings: RT-091 through RT-095
@@ -66,6 +67,8 @@ Default hunt bounds:
 - Restore create rejection side effects: RT-091 through RT-095 were fixed by recording restore `createTab`/`createWindow` attempts, detecting matching browser-created tabs/windows from a complete post-rejection snapshot, restoring the original closed outline nodes from that runtime evidence, and clearing reconstructed tombstones for command-restored resources after restart. The same pass also treats the post-command live outline as authoritative for clearing stale command-owned close guards that would otherwise suppress later runtime evidence for still-live resources.
 - Outliner close rejection side effects: RT-096, RT-098, and RT-103 were fixed by giving `closeNode` the same transaction/recovery discipline as delete/restore: when the browser close side effect completed before adapter rejection, the controller now preserves the affected outline tab/window as closed, records completed outliner close facts, and updates runtime-index candidates for the recovered close.
 - History replay after recovered relocated closes: RT-104 and RT-105 were fixed by preserving closed lifecycle state when old move undo/redo deltas touch a command-closed relocated tab or destination window. History may move the closed outline record, but it must not rematerialize the browser tab/window or synthesize an empty live command-created window.
+- History replay after later runtime lifecycle changes: RT-106 through RT-119 and RT-121 through RT-124 were fixed by guarding non-delete history deltas against ledger-removed tab/window targets. Old move/group/top-level undo/redo can still replay outline structure, but if its destination runtime window is tombstoned the current live browser window subtree is preserved, and if its live tab was natively removed the old live node is not rematerialized. A complete runtime reconciliation now runs after history replay so active metadata and live tab/window IDs agree with the browser.
+- Native close of command-restored tabs: RT-120 and RT-125 through RT-127 were fixed by treating missing restored live tabs like ordinary native browser removals instead of preserving the restored outline node as closed. Restore commands still preserve outliner-owned close/restore semantics, but a later native tab disappearance deletes the live restored node and tombstones its runtime id.
 - Post-recovery harness artifacts: RT-097, RT-099, RT-100, RT-101, and RT-102 were triaged as trace-harness bugs, not runtime model bugs. The harness now avoids stale `lastOpenedWindow`/old restored-tab runtime IDs, treats a foreign live window under a closed source window as intentionally promoted/still live, permits no focused runtime window after destructive history replay by selecting `firstRuntimeWindow` for query skew, and scopes rejecting restore-create mocks to the selected node kind so unused one-shot mocks cannot poison later undo/redo commands.
 - Verification: all listed generated seed repros and promoted domain trace repros pass as of the principled runtime trace fix passes.
 
@@ -3169,7 +3172,7 @@ action: {"type":"outlinerUndo"} -->
 - First seen: 2026-05-24T11:44:45.034Z
 - Trace id: `hh-native-close-after-relocation-history`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=hh-native-close-after-relocation-history pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in history-boundary lifecycle guard pass and promoted to regression coverage.
 
 ```text
 domain trace hh-native-close-after-relocation-history: native close after relocation history
@@ -3193,7 +3196,7 @@ action: {"type":"outlinerUndo"} -->
 - First seen: 2026-05-24T11:45:01.551Z
 - Trace id: `hh-delete-source-window-history`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=hh-delete-source-window-history pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in history-boundary lifecycle guard pass and promoted to regression coverage.
 
 ```text
 domain trace hh-delete-source-window-history: delete source window history
@@ -3219,7 +3222,7 @@ action: {"type":"outlinerUndo"} -->
 - First seen: 2026-05-24T11:53:10.053Z
 - Trace id: `hh-native-close-group-history`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=hh-native-close-group-history pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in history-boundary lifecycle guard pass and promoted to regression coverage.
 
 ```text
 domain trace hh-native-close-group-history: native close group history
@@ -3243,7 +3246,7 @@ action: {"type":"outlinerUndo"} -->
 - First seen: 2026-05-24T11:53:11.188Z
 - Trace id: `hh-native-close-opener-history`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=hh-native-close-opener-history pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in history-boundary lifecycle guard pass and promoted to regression coverage.
 
 ```text
 domain trace hh-native-close-opener-history: native close opener history
@@ -3269,7 +3272,7 @@ action: {"type":"outlinerUndo"} -->
 - First seen: 2026-05-24T11:53:12.411Z
 - Trace id: `hh-native-close-restart-before-undo`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=hh-native-close-restart-before-undo pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in history-boundary lifecycle guard pass and promoted to regression coverage.
 
 ```text
 domain trace hh-native-close-restart-before-undo: native close restart before undo
@@ -3295,7 +3298,7 @@ action: {"type":"outlinerUndo"} -->
 - First seen: 2026-05-24T11:53:14.718Z
 - Trace id: `hh-delete-source-group-history`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=hh-delete-source-group-history pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in history-boundary lifecycle guard pass and promoted to regression coverage.
 
 ```text
 domain trace hh-delete-source-group-history: delete source group history
@@ -3319,7 +3322,7 @@ action: {"type":"outlinerUndo"} -->
 - First seen: 2026-05-24T11:53:16.953Z
 - Trace id: `hh-delete-source-focus-history`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=hh-delete-source-focus-history pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in history-boundary lifecycle guard pass and promoted to regression coverage.
 
 ```text
 domain trace hh-delete-source-focus-history: delete source focus history
@@ -3345,7 +3348,7 @@ action: {"type":"outlinerUndo"} -->
 - First seen: 2026-05-24T11:53:18.101Z
 - Trace id: `hh-delete-source-reordered-history`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=hh-delete-source-reordered-history pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in history-boundary lifecycle guard pass and promoted to regression coverage.
 
 ```text
 domain trace hh-delete-source-reordered-history: delete source reordered history
@@ -3371,7 +3374,7 @@ action: {"type":"outlinerUndo"} -->
 - First seen: 2026-05-24T12:01:24.186Z
 - Trace id: `hh-native-source-window-tabs-then-history`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=hh-native-source-window-tabs-then-history pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in history-boundary lifecycle guard pass and promoted to regression coverage.
 
 ```text
 domain trace hh-native-source-window-tabs-then-history: native source window tabs then history
@@ -3395,7 +3398,7 @@ action: {"type":"outlinerUndo"} -->
 - First seen: 2026-05-24T12:01:25.444Z
 - Trace id: `hh-native-source-window-restart-history`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=hh-native-source-window-restart-history pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in history-boundary lifecycle guard pass and promoted to regression coverage.
 
 ```text
 domain trace hh-native-source-window-restart-history: native source window restart history
@@ -3421,7 +3424,7 @@ action: {"type":"outlinerUndo"} -->
 - First seen: 2026-05-24T12:01:26.674Z
 - Trace id: `hh-delete-source-window-redo-history`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=hh-delete-source-window-redo-history pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in history-boundary lifecycle guard pass and promoted to regression coverage.
 
 ```text
 domain trace hh-delete-source-window-redo-history: delete source window redo history
@@ -3445,7 +3448,7 @@ action: {"type":"outlinerUndo"} -->
 - First seen: 2026-05-24T12:01:27.905Z
 - Trace id: `hh-delete-source-restart-before-undo`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=hh-delete-source-restart-before-undo pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in history-boundary lifecycle guard pass and promoted to regression coverage.
 
 ```text
 domain trace hh-delete-source-restart-before-undo: delete source restart before undo
@@ -3471,7 +3474,7 @@ action: {"type":"outlinerUndo"} -->
 - First seen: 2026-05-24T12:01:29.152Z
 - Trace id: `hh-delete-source-stale-after-redo`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=hh-delete-source-stale-after-redo pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in history-boundary lifecycle guard pass and promoted to regression coverage.
 
 ```text
 domain trace hh-delete-source-stale-after-redo: delete source stale after redo
@@ -3495,7 +3498,7 @@ action: {"type":"outlinerUndo"} -->
 - First seen: 2026-05-24T12:01:32.944Z
 - Trace id: `hh-top-level-delete-source-history`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=hh-top-level-delete-source-history pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in history-boundary lifecycle guard pass and promoted to regression coverage.
 
 ```text
 domain trace hh-top-level-delete-source-history: top level delete source history
@@ -3521,7 +3524,7 @@ action: {"type":"nativeCloseTab","tab":{"capture":"hh-restored-native-tab"},"ord
 - First seen: 2026-05-24T12:09:38.167Z
 - Trace id: `hh-restored-tab-native-close-history`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=hh-restored-tab-native-close-history pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in history-boundary lifecycle guard pass and promoted to regression coverage.
 
 ```text
 domain trace hh-restored-tab-native-close-history: restored tab native close history
@@ -3545,7 +3548,7 @@ action: {"type":"outlinerUndo"} -->
 - First seen: 2026-05-24T12:09:42.955Z
 - Trace id: `hh-native-source-window-only-redo`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=hh-native-source-window-only-redo pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in history-boundary lifecycle guard pass and promoted to regression coverage.
 
 ```text
 domain trace hh-native-source-window-only-redo: native source window only redo
@@ -3569,7 +3572,7 @@ action: {"type":"outlinerUndo"} -->
 - First seen: 2026-05-24T12:09:44.171Z
 - Trace id: `hh-native-source-tabs-only-redo`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=hh-native-source-tabs-only-redo pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in history-boundary lifecycle guard pass and promoted to regression coverage.
 
 ```text
 domain trace hh-native-source-tabs-only-redo: native source tabs only redo
@@ -3593,7 +3596,7 @@ action: {"type":"outlinerUndo"} -->
 - First seen: 2026-05-24T12:09:45.353Z
 - Trace id: `hh-native-source-focus-history`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=hh-native-source-focus-history pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in history-boundary lifecycle guard pass and promoted to regression coverage.
 
 ```text
 domain trace hh-native-source-focus-history: native source focus history
@@ -3619,7 +3622,7 @@ action: {"type":"outlinerUndo"} -->
 - First seen: 2026-05-24T12:09:46.570Z
 - Trace id: `hh-native-source-opener-history`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=hh-native-source-opener-history pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in history-boundary lifecycle guard pass and promoted to regression coverage.
 
 ```text
 domain trace hh-native-source-opener-history: native source opener history
@@ -3647,7 +3650,7 @@ action: {"type":"nativeCloseTab","tab":{"capture":"hh-restored-native-session-ta
 - First seen: 2026-05-24T12:17:43.988Z
 - Trace id: `hh-restored-tab-native-session-history`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=hh-restored-tab-native-session-history pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in history-boundary lifecycle guard pass and promoted to regression coverage.
 
 ```text
 domain trace hh-restored-tab-native-session-history: restored tab native session history
@@ -3671,7 +3674,7 @@ action: {"type":"nativeCloseTab","tab":{"capture":"hh-restored-native-restart-ta
 - First seen: 2026-05-24T12:17:45.137Z
 - Trace id: `hh-restored-tab-native-restart-history`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=hh-restored-tab-native-restart-history pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in history-boundary lifecycle guard pass and promoted to regression coverage.
 
 ```text
 domain trace hh-restored-tab-native-restart-history: restored tab native restart history
@@ -3695,7 +3698,7 @@ action: {"type":"nativeCloseTab","tab":{"capture":"hh-restored-native-stale-tab"
 - First seen: 2026-05-24T12:17:46.254Z
 - Trace id: `hh-restored-tab-native-stale-history`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=hh-restored-tab-native-stale-history pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in history-boundary lifecycle guard pass and promoted to regression coverage.
 
 ```text
 domain trace hh-restored-tab-native-stale-history: restored tab native stale history
@@ -3720,3 +3723,5 @@ action 3: {"type":"nativeCloseTab","tab":{"capture":"hh-restored-native-stale-ta
 <!-- hunt-corpus-run: {"at":"2026-05-24T12:41:07.045Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","history-boundary","manual-refresh","metadata","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"hh-control-created-window-delete-history","runs":325,"completedCorpus":true,"failures":22,"duplicateFailures":22,"newFindings":0} -->
 
 <!-- hunt-corpus-run: {"at":"2026-05-24T12:44:19.576Z","mode":"agent-corpus-run","profile":"regression","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","known-finding","manual-refresh","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo"],"firstTraceId":"rt-active-race","lastTraceId":"lh-relocated-window-close-reject-history","runs":144,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-24T13:13:16.901Z","mode":"agent-corpus-run","profile":"regression","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","history-boundary","known-finding","manual-refresh","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo"],"firstTraceId":"rt-active-race","lastTraceId":"hh-restored-tab-native-stale-history","runs":166,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->

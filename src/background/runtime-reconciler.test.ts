@@ -234,7 +234,7 @@ describe("runtime reconciliation ledger", () => {
     ledger.markOutlinerClosePlan({ tabIds: [1], windowIds: [] });
     expect(reconciler.classifyMissingLiveTabRemoval(state, ledger, 1)).toBe("close-outliner-tab");
     expect(reconciler.classifyMissingLiveTabRemoval(state, ledger, 1)).toBe("delete-tab");
-    expect(reconciler.classifyMissingLiveTabRemoval(restoredState, ledger, 2)).toBe("close-restored-tab");
+    expect(reconciler.classifyMissingLiveTabRemoval(restoredState, ledger, 2)).toBe("delete-tab");
   });
 
   it("finds missing live tabs from open-window snapshots through ledger filters", () => {

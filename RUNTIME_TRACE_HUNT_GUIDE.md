@@ -127,12 +127,12 @@ Transaction-boundary discovery started from 142 regression traces and 217 discov
 
 ## History Boundary Sweep
 
-History-boundary discovery starts from 144 regression traces and 263 discovery traces after the transaction-boundary fix. The initial neutral `hh-*` seed batch plus clone sets bring the discovery corpus to 325 traces. Add further `hh-*` traces by cloning, and avoid mutating fixed `rt-*`, `bh-*`, `ph-*`, or `lh-*` repros.
+History-boundary discovery started from 144 regression traces and 263 discovery traces after the transaction-boundary fix. The first history-boundary sweep found `RT-106` through `RT-127`; after the fix pass those traces are regression coverage, leaving 166 regression traces and 303 discovery traces. Add further `hh-*` traces by cloning new neutral probes, and avoid mutating fixed `rt-*`, `bh-*`, `ph-*`, `lh-*`, or fixed `hh-*` repros.
 
 - Target one rule: undo/redo may replay old outline structure, but must not rematerialize browser resources that are currently closed, deleted, tombstoned, or absent after restart.
 - Prefer traces where a trackable history command happens before a later close/delete/restore/runtime lifecycle change.
 - Cover normal close, rejecting close, native close, restore/delete rejection, stale event, partial query, session, and restart around closed or tombstoned resources.
-- Keep `RT-104`/`RT-105` as regression baselines only; use `hh-*` clones for new variants.
+- Keep `RT-104` through `RT-127` as regression baselines only; use fresh neutral `hh-*` clones for new variants.
 
 ## Five-Minute Mutation Block
 

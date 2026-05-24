@@ -7964,7 +7964,29 @@ const RUNTIME_DOMAIN_DISCOVERED_FINDING_IDS = new Map<string, string[]>([
   ["ph-focus-after-close-reject-session", ["RT-098"]],
   ["ph-close-reject-tab-undo-redo", ["RT-103"]],
   ["lh-relocated-tab-close-reject-history", ["RT-104"]],
-  ["lh-relocated-window-close-reject-history", ["RT-105"]]
+  ["lh-relocated-window-close-reject-history", ["RT-105"]],
+  ["hh-native-close-after-relocation-history", ["RT-106"]],
+  ["hh-delete-source-window-history", ["RT-107"]],
+  ["hh-native-close-group-history", ["RT-108"]],
+  ["hh-native-close-opener-history", ["RT-109"]],
+  ["hh-native-close-restart-before-undo", ["RT-110"]],
+  ["hh-delete-source-group-history", ["RT-111"]],
+  ["hh-delete-source-focus-history", ["RT-112"]],
+  ["hh-delete-source-reordered-history", ["RT-113"]],
+  ["hh-native-source-window-tabs-then-history", ["RT-114"]],
+  ["hh-native-source-window-restart-history", ["RT-115"]],
+  ["hh-delete-source-window-redo-history", ["RT-116"]],
+  ["hh-delete-source-restart-before-undo", ["RT-117"]],
+  ["hh-delete-source-stale-after-redo", ["RT-118"]],
+  ["hh-top-level-delete-source-history", ["RT-119"]],
+  ["hh-restored-tab-native-close-history", ["RT-120"]],
+  ["hh-native-source-window-only-redo", ["RT-121"]],
+  ["hh-native-source-tabs-only-redo", ["RT-122"]],
+  ["hh-native-source-focus-history", ["RT-123"]],
+  ["hh-native-source-opener-history", ["RT-124"]],
+  ["hh-restored-tab-native-session-history", ["RT-125"]],
+  ["hh-restored-tab-native-restart-history", ["RT-126"]],
+  ["hh-restored-tab-native-stale-history", ["RT-127"]]
 ]);
 
 function runtimeDomainTraceWithFindingMetadata(trace: RuntimeDomainTrace): RuntimeDomainTrace {
@@ -13479,7 +13501,7 @@ describe("background controller lifecycle", () => {
     expect(runtime.api.sessions.getRecentlyClosed).not.toHaveBeenCalled();
   });
 
-  it("preserves restored tabs when they are closed through browser chrome", async () => {
+  it("deletes restored tabs when they are closed through browser chrome", async () => {
     const runtime = fakeRuntime(
       [
         {
@@ -13534,14 +13556,8 @@ describe("background controller lifecycle", () => {
     await closeTabFromBrowser(runtime, 22);
 
     state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
-    expect(state.nodes["tab:2"]?.status).toBe("closed");
-    expect(state.nodes["tab:2"]?.live).toBeUndefined();
-    expect(state.nodes["tab:2"]?.restore).toEqual({
-      sessionId: "recent-session",
-      url: "https://two.example/",
-      title: "Two"
-    });
-    expect(state.nodes["window:10"]?.childIds).toEqual(["tab:1", "tab:2"]);
+    expect(state.nodes["tab:2"]).toBeUndefined();
+    expect(state.nodes["window:10"]?.childIds).toEqual(["tab:1"]);
   });
 
   it("absorbs the created-tab echo after a command restore", async () => {

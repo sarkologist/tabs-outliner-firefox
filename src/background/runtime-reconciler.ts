@@ -49,7 +49,7 @@ export type RuntimeEventTabFilterInput = {
   ledger: RuntimeFactLedger;
 };
 
-export type MissingLiveTabRemovalDecision = "close-outliner-tab" | "close-restored-tab" | "delete-tab";
+export type MissingLiveTabRemovalDecision = "close-outliner-tab" | "delete-tab";
 
 export class RuntimeReconciler {
   classifyWindowClosingTabRemoval(
@@ -183,8 +183,7 @@ export class RuntimeReconciler {
       return "close-outliner-tab";
     }
 
-    const node = liveTabNodes(state).find((candidate) => candidate.live.tabId === tabId);
-    return node?.restoredFromClosed ? "close-restored-tab" : "delete-tab";
+    return "delete-tab";
   }
 
   missingLiveTabIdsInOpenWindows(input: MissingLiveTabsInput): number[] {
