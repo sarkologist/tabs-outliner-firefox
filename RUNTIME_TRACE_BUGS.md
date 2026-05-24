@@ -3727,3 +3727,631 @@ action 3: {"type":"nativeCloseTab","tab":{"capture":"hh-restored-native-stale-ta
 <!-- hunt-corpus-run: {"at":"2026-05-24T13:13:16.901Z","mode":"agent-corpus-run","profile":"regression","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","history-boundary","known-finding","manual-refresh","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo"],"firstTraceId":"rt-active-race","lastTraceId":"hh-restored-tab-native-stale-history","runs":166,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
 
 <!-- hunt-corpus-run: {"at":"2026-05-24T14:07:05.855Z","mode":"agent-corpus-run","profile":"regression","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","history-boundary","known-finding","manual-refresh","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo"],"firstTraceId":"rt-active-race","lastTraceId":"hh-restored-tab-native-stale-history","runs":166,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
+
+### RT-128 expected closed node tab:2 is missing
+<!-- signature: expected closed node tab:<id> is missing
+domain trace: jh-close-tab-abrupt-stale-update
+action: {"type":"outlinerCloseNodeThenAbruptRestart","node":{"tab":{"tabId":2}},"captureStaleTabs":"jh-close-tab-stale"} -->
+
+- First seen: 2026-05-24T14:49:01.774Z
+- Trace id: `jh-close-tab-abrupt-stale-update`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=jh-close-tab-abrupt-stale-update pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace jh-close-tab-abrupt-stale-update: journal close tab abrupt stale update
+action 1: {"type":"outlinerCloseNodeThenAbruptRestart","node":{"tab":{"tabId":2}},"captureStaleTabs":"jh-close-tab-stale"}
+Domain trace: jh-close-tab-abrupt-stale-update
+Action 1: {"type":"outlinerCloseNodeThenAbruptRestart","node":{"tab":{"tabId":2}},"captureStaleTabs":"jh-close-tab-stale"}
+Trace:
+domain trace jh-close-tab-abrupt-stale-update: journal close tab abrupt stale update
+action 1: {"type":"outlinerCloseNodeThenAbruptRestart","node":{"tab":{"tabId":2}},"captureStaleTabs":"jh-close-tab-stale"}
+```
+
+### RT-129 expected closed node window:20 is missing
+<!-- signature: expected closed node window:<id> is missing
+domain trace: jh-close-single-window-abrupt-session
+action: {"type":"outlinerCloseNodeThenAbruptRestart","node":{"window":{"windowId":20}},"captureStaleTabs":"jh-close-single-window-stale"} -->
+
+- First seen: 2026-05-24T14:49:02.972Z
+- Trace id: `jh-close-single-window-abrupt-session`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=jh-close-single-window-abrupt-session pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace jh-close-single-window-abrupt-session: journal close single window abrupt session
+action 1: {"type":"outlinerCloseNodeThenAbruptRestart","node":{"window":{"windowId":20}},"captureStaleTabs":"jh-close-single-window-stale"}
+Domain trace: jh-close-single-window-abrupt-session
+Action 1: {"type":"outlinerCloseNodeThenAbruptRestart","node":{"window":{"windowId":20}},"captureStaleTabs":"jh-close-single-window-stale"}
+Trace:
+domain trace jh-close-single-window-abrupt-session: journal close single window abrupt session
+action 1: {"type":"outlinerCloseNodeThenAbruptRestart","node":{"window":{"windowId":20}},"captureStaleTabs":"jh-close-single-window-stale"}
+```
+
+### RT-130 expected closed node window:20 is missing
+<!-- signature: expected closed node window:<id> is missing
+domain trace: jh-close-multi-window-abrupt-refresh
+action: {"type":"outlinerCloseNodeThenAbruptRestart","node":{"window":{"windowId":20}},"captureStaleTabs":"jh-close-multi-stale"} -->
+
+- First seen: 2026-05-24T14:49:04.184Z
+- Trace id: `jh-close-multi-window-abrupt-refresh`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=jh-close-multi-window-abrupt-refresh pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace jh-close-multi-window-abrupt-refresh: journal close multi window abrupt refresh
+action 1: {"type":"openTab","window":{"windowId":20},"active":false,"captureTab":"jh-close-multi-extra"}
+action 2: {"type":"outlinerCloseNodeThenAbruptRestart","node":{"window":{"windowId":20}},"captureStaleTabs":"jh-close-multi-stale"}
+Domain trace: jh-close-multi-window-abrupt-refresh
+Action 2: {"type":"outlinerCloseNodeThenAbruptRestart","node":{"window":{"windowId":20}},"captureStaleTabs":"jh-close-multi-stale"}
+Trace:
+domain trace jh-close-multi-window-abrupt-refresh: journal close multi window abrupt refresh
+action 1: {"type":"openTab","window":{"windowId":20},"active":false,"captureTab":"jh-close-multi-extra"}
+action 2: {"type":"outlinerCloseNodeThenAbruptRestart","node":{"window":{"windowId":20}},"captureStaleTabs":"jh-close-multi-stale"}
+```
+
+### RT-131 expected closed node window:21 is missing
+<!-- signature: expected closed node window:<id> is missing
+domain trace: jh-close-grouped-window-abrupt-reordered
+action: {"type":"outlinerCloseNodeThenAbruptRestart","node":{"window":{"role":"lastOpenedWindow"}},"captureStaleTabs":"jh-close-group-stale"} -->
+
+- First seen: 2026-05-24T14:49:05.391Z
+- Trace id: `jh-close-grouped-window-abrupt-reordered`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=jh-close-grouped-window-abrupt-reordered pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace jh-close-grouped-window-abrupt-reordered: journal close grouped window abrupt reordered
+action 1: {"type":"outlinerGroupTab","tab":{"tabId":1},"captureStaleTabs":"jh-close-group-old"}
+action 2: {"type":"outlinerCloseNodeThenAbruptRestart","node":{"window":{"role":"lastOpenedWindow"}},"captureStaleTabs":"jh-close-group-stale"}
+Domain trace: jh-close-grouped-window-abrupt-reordered
+Action 2: {"type":"outlinerCloseNodeThenAbruptRestart","node":{"window":{"role":"lastOpenedWindow"}},"captureStaleTabs":"jh-close-group-stale"}
+Trace:
+domain trace jh-close-grouped-window-abrupt-reordered: journal close grouped window abrupt reordered
+action 1: {"type":"outlinerGroupTab","tab":{"tabId":1},"captureStaleTabs":"jh-close-group-old"}
+action 2: {"type":"outlinerCloseNodeThenAbruptRestart","node":{"window":{"role":"lastOpenedWindow"}},"captureStaleTabs":"jh-close-group-stale"}
+```
+
+### RT-132 expected closed node tab:2 is missing
+<!-- signature: expected closed node tab:<id> is missing
+domain trace: jh-undo-close-abrupt-missing
+action: {"type":"outlinerUndoThenAbruptRestart"} -->
+
+- First seen: 2026-05-24T14:49:20.892Z
+- Trace id: `jh-undo-close-abrupt-missing`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=jh-undo-close-abrupt-missing pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace jh-undo-close-abrupt-missing: journal undo close abrupt missing
+action 1: {"type":"outlinerCloseTab","tab":{"tabId":2}}
+action 2: {"type":"outlinerUndoThenAbruptRestart"}
+Domain trace: jh-undo-close-abrupt-missing
+Action 2: {"type":"outlinerUndoThenAbruptRestart"}
+Trace:
+domain trace jh-undo-close-abrupt-missing: journal undo close abrupt missing
+action 1: {"type":"outlinerCloseTab","tab":{"tabId":2}}
+action 2: {"type":"outlinerUndoThenAbruptRestart"}
+```
+
+### RT-133 expected closed node tab:2 is missing
+<!-- signature: expected closed node tab:<id> is missing
+domain trace: jh-journal-recovered-stale-contradiction
+action: {"type":"outlinerCloseNodeThenAbruptRestart","node":{"tab":{"tabId":2}},"captureStaleTabs":"jh-recovered-stale-tab"} -->
+
+- First seen: 2026-05-24T14:49:29.338Z
+- Trace id: `jh-journal-recovered-stale-contradiction`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=jh-journal-recovered-stale-contradiction pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace jh-journal-recovered-stale-contradiction: journal recovered stale contradiction
+action 1: {"type":"outlinerCloseNodeThenAbruptRestart","node":{"tab":{"tabId":2}},"captureStaleTabs":"jh-recovered-stale-tab"}
+Domain trace: jh-journal-recovered-stale-contradiction
+Action 1: {"type":"outlinerCloseNodeThenAbruptRestart","node":{"tab":{"tabId":2}},"captureStaleTabs":"jh-recovered-stale-tab"}
+Trace:
+domain trace jh-journal-recovered-stale-contradiction: journal recovered stale contradiction
+action 1: {"type":"outlinerCloseNodeThenAbruptRestart","node":{"tab":{"tabId":2}},"captureStaleTabs":"jh-recovered-stale-tab"}
+```
+
+### RT-134 expected closed node tab:2 is missing
+<!-- signature: expected closed node tab:<id> is missing
+domain trace: jh-journal-recovered-native-contradiction
+action: {"type":"outlinerCloseNodeThenAbruptRestart","node":{"tab":{"tabId":2}},"captureStaleTabs":"jh-recovered-native-stale"} -->
+
+- First seen: 2026-05-24T14:49:30.563Z
+- Trace id: `jh-journal-recovered-native-contradiction`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=jh-journal-recovered-native-contradiction pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace jh-journal-recovered-native-contradiction: journal recovered native contradiction
+action 1: {"type":"outlinerCloseNodeThenAbruptRestart","node":{"tab":{"tabId":2}},"captureStaleTabs":"jh-recovered-native-stale"}
+Domain trace: jh-journal-recovered-native-contradiction
+Action 1: {"type":"outlinerCloseNodeThenAbruptRestart","node":{"tab":{"tabId":2}},"captureStaleTabs":"jh-recovered-native-stale"}
+Trace:
+domain trace jh-journal-recovered-native-contradiction: journal recovered native contradiction
+action 1: {"type":"outlinerCloseNodeThenAbruptRestart","node":{"tab":{"tabId":2}},"captureStaleTabs":"jh-recovered-native-stale"}
+```
+
+<!-- hunt-corpus-run: {"at":"2026-05-24T14:49:30.565Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","history-boundary","journal","manual-refresh","metadata","multi-tab","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"jh-journal-recovered-native-contradiction","runs":327,"processRuns":44,"batchSize":20,"batchFailures":2,"completedCorpus":true,"failures":7,"duplicateFailures":0,"newFindings":7} -->
+
+### RT-135 expected closed node window:21 is missing
+<!-- signature: expected closed node window:<id> is missing
+domain trace: jh-close-relocated-destination-abrupt-old-event
+action: {"type":"outlinerCloseNodeThenAbruptRestart","node":{"window":{"role":"lastOpenedWindow"}},"captureStaleTabs":"jh-close-relocated-destination"} -->
+
+- First seen: 2026-05-24T14:52:35.241Z
+- Trace id: `jh-close-relocated-destination-abrupt-old-event`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=jh-close-relocated-destination-abrupt-old-event pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace jh-close-relocated-destination-abrupt-old-event: journal close relocated destination abrupt old event
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"jh-close-relocated-old"}
+action 2: {"type":"outlinerCloseNodeThenAbruptRestart","node":{"window":{"role":"lastOpenedWindow"}},"captureStaleTabs":"jh-close-relocated-destination"}
+Domain trace: jh-close-relocated-destination-abrupt-old-event
+Action 2: {"type":"outlinerCloseNodeThenAbruptRestart","node":{"window":{"role":"lastOpenedWindow"}},"captureStaleTabs":"jh-close-relocated-destination"}
+Trace:
+domain trace jh-close-relocated-destination-abrupt-old-event: journal close relocated destination abrupt old event
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"jh-close-relocated-old"}
+action 2: {"type":"outlinerCloseNodeThenAbruptRestart","node":{"window":{"role":"lastOpenedWindow"}},"captureStaleTabs":"jh-close-relocated-destination"}
+```
+
+### RT-136 expected closed node window:10 is missing
+<!-- signature: expected closed node window:<id> is missing
+domain trace: jh-close-relocated-source-abrupt-session
+action: {"type":"outlinerCloseNodeThenAbruptRestart","node":{"window":{"windowId":10}},"captureStaleTabs":"jh-close-source-stale"} -->
+
+- First seen: 2026-05-24T14:52:36.382Z
+- Trace id: `jh-close-relocated-source-abrupt-session`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=jh-close-relocated-source-abrupt-session pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace jh-close-relocated-source-abrupt-session: journal close relocated source abrupt session
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"jh-close-source-old"}
+action 2: {"type":"outlinerCloseNodeThenAbruptRestart","node":{"window":{"windowId":10}},"captureStaleTabs":"jh-close-source-stale"}
+Domain trace: jh-close-relocated-source-abrupt-session
+Action 2: {"type":"outlinerCloseNodeThenAbruptRestart","node":{"window":{"windowId":10}},"captureStaleTabs":"jh-close-source-stale"}
+Trace:
+domain trace jh-close-relocated-source-abrupt-session: journal close relocated source abrupt session
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"jh-close-source-old"}
+action 2: {"type":"outlinerCloseNodeThenAbruptRestart","node":{"window":{"windowId":10}},"captureStaleTabs":"jh-close-source-stale"}
+```
+
+### RT-137 expected closed node tab:2 is missing
+<!-- signature: expected closed node tab:<id> is missing
+domain trace: jh-close-restored-tab-abrupt-session
+action: {"type":"outlinerCloseNodeThenAbruptRestart","node":{"tab":{"capture":"jh-close-restored-tab"}},"captureStaleTabs":"jh-close-restored-tab-stale"} -->
+
+- First seen: 2026-05-24T14:52:37.532Z
+- Trace id: `jh-close-restored-tab-abrupt-session`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=jh-close-restored-tab-abrupt-session pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace jh-close-restored-tab-abrupt-session: journal close restored tab abrupt session
+action 1: {"type":"outlinerCloseTab","tab":{"tabId":2}}
+action 2: {"type":"outlinerRestoreNodeRejectingCreate","node":{"nodeId":"tab:2"},"captureRestoredTabs":"jh-close-restored-tab"}
+action 3: {"type":"outlinerCloseNodeThenAbruptRestart","node":{"tab":{"capture":"jh-close-restored-tab"}},"captureStaleTabs":"jh-close-restored-tab-stale"}
+Domain trace: jh-close-restored-tab-abrupt-session
+Action 3: {"type":"outlinerCloseNodeThenAbruptRestart","node":{"tab":{"capture":"jh-close-restored-tab"}},"captureStaleTabs":"jh-close-restored-tab-stale"}
+Trace:
+domain trace jh-close-restored-tab-abrupt-session: journal close restored tab abrupt session
+action 1: {"type":"outlinerCloseTab","tab":{"tabId":2}}
+action 2: {"type":"outlinerRestoreNodeRejectingCreate","node":{"nodeId":"tab:2"},"captureRestoredTabs":"jh-close-restored-tab"}
+action 3: {"type":"outlinerCloseNodeThenAbruptRestart","node":{"tab":{"capture":"jh-close-restored-tab"}},"captureStaleTabs":"jh-close-restored-tab-stale"}
+```
+
+### RT-138 expected closed node window:20 is missing
+<!-- signature: expected closed node window:<id> is missing
+domain trace: jh-close-restored-window-abrupt-missing
+action: {"type":"outlinerCloseNodeThenAbruptRestart","node":{"window":{"capture":"jh-close-restored-window"}},"captureStaleTabs":"jh-close-restored-window-stale"} -->
+
+- First seen: 2026-05-24T14:52:38.702Z
+- Trace id: `jh-close-restored-window-abrupt-missing`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=jh-close-restored-window-abrupt-missing pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace jh-close-restored-window-abrupt-missing: journal close restored window abrupt missing
+action 1: {"type":"outlinerCloseWindow","window":{"windowId":20}}
+action 2: {"type":"outlinerRestoreNodeRejectingCreate","node":{"nodeId":"window:20"},"captureRestoredWindows":"jh-close-restored-window"}
+action 3: {"type":"outlinerCloseNodeThenAbruptRestart","node":{"window":{"capture":"jh-close-restored-window"}},"captureStaleTabs":"jh-close-restored-window-stale"}
+Domain trace: jh-close-restored-window-abrupt-missing
+Action 3: {"type":"outlinerCloseNodeThenAbruptRestart","node":{"window":{"capture":"jh-close-restored-window"}},"captureStaleTabs":"jh-close-restored-window-stale"}
+Trace:
+domain trace jh-close-restored-window-abrupt-missing: journal close restored window abrupt missing
+action 1: {"type":"outlinerCloseWindow","window":{"windowId":20}}
+action 2: {"type":"outlinerRestoreNodeRejectingCreate","node":{"nodeId":"window:20"},"captureRestoredWindows":"jh-close-restored-window"}
+action 3: {"type":"outlinerCloseNodeThenAbruptRestart","node":{"window":{"capture":"jh-close-restored-window"}},"captureStaleTabs":"jh-close-restored-window-stale"}
+```
+
+### RT-139 expected closed node tab:100 is missing
+<!-- signature: expected closed node tab:<id> is missing
+domain trace: jh-close-opener-child-abrupt-query
+action: {"type":"outlinerCloseNodeThenAbruptRestart","node":{"tab":{"capture":"jh-close-opener-child"}},"captureStaleTabs":"jh-close-opener-stale"} -->
+
+- First seen: 2026-05-24T14:52:39.873Z
+- Trace id: `jh-close-opener-child-abrupt-query`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=jh-close-opener-child-abrupt-query pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace jh-close-opener-child-abrupt-query: journal close opener child abrupt query
+action 1: {"type":"openTab","window":{"windowId":10},"openerTab":{"tabId":1},"active":false,"captureTab":"jh-close-opener-child"}
+action 2: {"type":"outlinerCloseNodeThenAbruptRestart","node":{"tab":{"capture":"jh-close-opener-child"}},"captureStaleTabs":"jh-close-opener-stale"}
+Domain trace: jh-close-opener-child-abrupt-query
+Action 2: {"type":"outlinerCloseNodeThenAbruptRestart","node":{"tab":{"capture":"jh-close-opener-child"}},"captureStaleTabs":"jh-close-opener-stale"}
+Trace:
+domain trace jh-close-opener-child-abrupt-query: journal close opener child abrupt query
+action 1: {"type":"openTab","window":{"windowId":10},"openerTab":{"tabId":1},"active":false,"captureTab":"jh-close-opener-child"}
+action 2: {"type":"outlinerCloseNodeThenAbruptRestart","node":{"tab":{"capture":"jh-close-opener-child"}},"captureStaleTabs":"jh-close-opener-stale"}
+```
+
+### RT-140 expected closed node window:20 is missing
+<!-- signature: expected closed node window:<id> is missing
+domain trace: jh-window-close-undo-abrupt-refresh
+action: {"type":"outlinerUndoThenAbruptRestart"} -->
+
+- First seen: 2026-05-24T14:52:41.027Z
+- Trace id: `jh-window-close-undo-abrupt-refresh`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=jh-window-close-undo-abrupt-refresh pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace jh-window-close-undo-abrupt-refresh: journal window close undo abrupt refresh
+action 1: {"type":"outlinerCloseWindow","window":{"windowId":20}}
+action 2: {"type":"outlinerUndoThenAbruptRestart"}
+Domain trace: jh-window-close-undo-abrupt-refresh
+Action 2: {"type":"outlinerUndoThenAbruptRestart"}
+Trace:
+domain trace jh-window-close-undo-abrupt-refresh: journal window close undo abrupt refresh
+action 1: {"type":"outlinerCloseWindow","window":{"windowId":20}}
+action 2: {"type":"outlinerUndoThenAbruptRestart"}
+```
+
+<!-- hunt-corpus-run: {"at":"2026-05-24T14:52:41.028Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","history-boundary","journal","manual-refresh","metadata","multi-tab","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"jh-window-close-undo-abrupt-refresh","runs":333,"processRuns":50,"batchSize":20,"batchFailures":2,"completedCorpus":true,"failures":13,"duplicateFailures":7,"newFindings":6} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-24T14:56:24.056Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","history-boundary","journal","manual-refresh","metadata","multi-tab","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"jh-relocate-opener-child-abrupt-session","runs":338,"processRuns":55,"batchSize":20,"batchFailures":2,"completedCorpus":true,"failures":13,"duplicateFailures":13,"newFindings":0} -->
+
+### RT-141 live tab IDs match runtime tabs
+<!-- signature: live tab IDs match runtime tabs
+domain trace: jh-delete-opener-child-abrupt-stale
+action: {"type":"staleLiveCreatedEvent","staleTab":{"capture":"jh-delete-opener-stale"},"withStaleQuery":true} -->
+
+- First seen: 2026-05-24T14:59:07.559Z
+- Trace id: `jh-delete-opener-child-abrupt-stale`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=jh-delete-opener-child-abrupt-stale pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace jh-delete-opener-child-abrupt-stale: journal delete opener child abrupt stale
+action 1: {"type":"openTab","window":{"windowId":10},"openerTab":{"tabId":1},"active":false,"captureTab":"jh-delete-opener-child"}
+action 2: {"type":"outlinerDeleteNodeThenAbruptRestart","node":{"tab":{"capture":"jh-delete-opener-child"}},"captureStaleTabs":"jh-delete-opener-stale"}
+action 3: {"type":"staleLiveCreatedEvent","staleTab":{"capture":"jh-delete-opener-stale"},"withStaleQuery":true}
+Domain trace: jh-delete-opener-child-abrupt-stale
+Action 3: {"type":"staleLiveCreatedEvent","staleTab":{"capture":"jh-delete-opener-stale"},"withStaleQuery":true}
+Trace:
+domain trace jh-delete-opener-child-abrupt-stale: journal delete opener child abrupt stale
+action 1: {"type":"openTab","window":{"windowId":10},"openerTab":{"tabId":1},"active":false,"captureTab":"jh-delete-opener-child"}
+action 2: {"type":"outlinerDeleteNodeThenAbruptRestart","node":{"tab":{"capture":"jh-delete-opener-child"}},"captureStaleTabs":"jh-delete-opener-stale"}
+action 3: {"type":"staleLiveCreatedEvent","staleTab":{"capture":"jh-delete-opener-stale"},"withStaleQuery":true}
+```
+
+<!-- hunt-corpus-run: {"at":"2026-05-24T14:59:08.752Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","history-boundary","journal","manual-refresh","metadata","multi-tab","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"jh-redo-restore-abrupt-refresh","runs":344,"processRuns":58,"batchSize":20,"batchFailures":2,"completedCorpus":true,"failures":14,"duplicateFailures":13,"newFindings":1} -->
+
+### RT-142 live tab IDs match runtime tabs
+<!-- signature: live tab IDs match runtime tabs
+domain trace: jh-delete-opener-child-abrupt-updated
+action: {"type":"staleLiveUpdatedEvent","staleTab":{"capture":"jh-delete-opener-updated-stale"},"withStaleQuery":true} -->
+
+- First seen: 2026-05-24T15:01:24.251Z
+- Trace id: `jh-delete-opener-child-abrupt-updated`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=jh-delete-opener-child-abrupt-updated pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace jh-delete-opener-child-abrupt-updated: journal delete opener child abrupt updated
+action 1: {"type":"openTab","window":{"windowId":10},"openerTab":{"tabId":1},"active":false,"captureTab":"jh-delete-opener-updated-child"}
+action 2: {"type":"outlinerDeleteNodeThenAbruptRestart","node":{"tab":{"capture":"jh-delete-opener-updated-child"}},"captureStaleTabs":"jh-delete-opener-updated-stale"}
+action 3: {"type":"staleLiveUpdatedEvent","staleTab":{"capture":"jh-delete-opener-updated-stale"},"withStaleQuery":true}
+Domain trace: jh-delete-opener-child-abrupt-updated
+Action 3: {"type":"staleLiveUpdatedEvent","staleTab":{"capture":"jh-delete-opener-updated-stale"},"withStaleQuery":true}
+Trace:
+domain trace jh-delete-opener-child-abrupt-updated: journal delete opener child abrupt updated
+action 1: {"type":"openTab","window":{"windowId":10},"openerTab":{"tabId":1},"active":false,"captureTab":"jh-delete-opener-updated-child"}
+action 2: {"type":"outlinerDeleteNodeThenAbruptRestart","node":{"tab":{"capture":"jh-delete-opener-updated-child"}},"captureStaleTabs":"jh-delete-opener-updated-stale"}
+action 3: {"type":"staleLiveUpdatedEvent","staleTab":{"capture":"jh-delete-opener-updated-stale"},"withStaleQuery":true}
+```
+
+### RT-143 live tab IDs match runtime tabs
+<!-- signature: live tab IDs match runtime tabs
+domain trace: jh-delete-opened-child-abrupt-created
+action: {"type":"staleLiveCreatedEvent","staleTab":{"capture":"jh-delete-opened-stale"},"withStaleQuery":true} -->
+
+- First seen: 2026-05-24T15:01:25.445Z
+- Trace id: `jh-delete-opened-child-abrupt-created`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=jh-delete-opened-child-abrupt-created pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace jh-delete-opened-child-abrupt-created: journal delete opened child abrupt created
+action 1: {"type":"openTab","window":{"windowId":10},"active":false,"captureTab":"jh-delete-opened-child"}
+action 2: {"type":"outlinerDeleteNodeThenAbruptRestart","node":{"tab":{"capture":"jh-delete-opened-child"}},"captureStaleTabs":"jh-delete-opened-stale"}
+action 3: {"type":"staleLiveCreatedEvent","staleTab":{"capture":"jh-delete-opened-stale"},"withStaleQuery":true}
+Domain trace: jh-delete-opened-child-abrupt-created
+Action 3: {"type":"staleLiveCreatedEvent","staleTab":{"capture":"jh-delete-opened-stale"},"withStaleQuery":true}
+Trace:
+domain trace jh-delete-opened-child-abrupt-created: journal delete opened child abrupt created
+action 1: {"type":"openTab","window":{"windowId":10},"active":false,"captureTab":"jh-delete-opened-child"}
+action 2: {"type":"outlinerDeleteNodeThenAbruptRestart","node":{"tab":{"capture":"jh-delete-opened-child"}},"captureStaleTabs":"jh-delete-opened-stale"}
+action 3: {"type":"staleLiveCreatedEvent","staleTab":{"capture":"jh-delete-opened-stale"},"withStaleQuery":true}
+```
+
+<!-- hunt-corpus-run: {"at":"2026-05-24T15:01:27.829Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","history-boundary","journal","manual-refresh","metadata","multi-tab","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"jh-delete-opener-window-abrupt-created","runs":348,"processRuns":66,"batchSize":20,"batchFailures":3,"completedCorpus":true,"failures":16,"duplicateFailures":14,"newFindings":2} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-24T15:03:37.924Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","history-boundary","journal","manual-refresh","metadata","multi-tab","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"jh-delete-relocated-destination-abrupt-created","runs":352,"processRuns":70,"batchSize":20,"batchFailures":3,"completedCorpus":true,"failures":16,"duplicateFailures":16,"newFindings":0} -->
+
+### RT-144 expected closed node window:20 is missing
+<!-- signature: expected closed node window:<id> is missing
+domain trace: jh-native-window-no-journal-abrupt
+action: {"type":"restartBackgroundAbrupt"} -->
+
+- First seen: 2026-05-24T15:05:57.125Z
+- Trace id: `jh-native-window-no-journal-abrupt`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=jh-native-window-no-journal-abrupt pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace jh-native-window-no-journal-abrupt: native window no journal abrupt
+action 1: {"type":"nativeCloseWindow","window":{"windowId":20},"order":"windowRemovedOnly"}
+action 2: {"type":"restartBackgroundAbrupt"}
+Domain trace: jh-native-window-no-journal-abrupt
+Action 2: {"type":"restartBackgroundAbrupt"}
+Trace:
+domain trace jh-native-window-no-journal-abrupt: native window no journal abrupt
+action 1: {"type":"nativeCloseWindow","window":{"windowId":20},"order":"windowRemovedOnly"}
+action 2: {"type":"restartBackgroundAbrupt"}
+```
+
+<!-- hunt-corpus-run: {"at":"2026-05-24T15:05:57.126Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","history-boundary","journal","manual-refresh","metadata","multi-tab","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"jh-native-window-no-journal-abrupt","runs":356,"processRuns":74,"batchSize":20,"batchFailures":3,"completedCorpus":true,"failures":17,"duplicateFailures":16,"newFindings":1} -->
+
+### RT-145 expected closed node window:20 is missing
+<!-- signature: expected closed node window:<id> is missing
+domain trace: jh-native-window-tabs-then-abrupt
+action: {"type":"restartBackgroundAbrupt"} -->
+
+- First seen: 2026-05-24T15:08:16.835Z
+- Trace id: `jh-native-window-tabs-then-abrupt`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=jh-native-window-tabs-then-abrupt pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace jh-native-window-tabs-then-abrupt: native window tabs then abrupt
+action 1: {"type":"nativeCloseWindow","window":{"windowId":20},"order":"tabsRemovedThenWindowRemoved"}
+action 2: {"type":"restartBackgroundAbrupt"}
+Domain trace: jh-native-window-tabs-then-abrupt
+Action 2: {"type":"restartBackgroundAbrupt"}
+Trace:
+domain trace jh-native-window-tabs-then-abrupt: native window tabs then abrupt
+action 1: {"type":"nativeCloseWindow","window":{"windowId":20},"order":"tabsRemovedThenWindowRemoved"}
+action 2: {"type":"restartBackgroundAbrupt"}
+```
+
+### RT-146 expected closed node window:20 is missing
+<!-- signature: expected closed node window:<id> is missing
+domain trace: jh-native-window-window-then-tabs-abrupt
+action: {"type":"restartBackgroundAbrupt"} -->
+
+- First seen: 2026-05-24T15:08:17.960Z
+- Trace id: `jh-native-window-window-then-tabs-abrupt`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=jh-native-window-window-then-tabs-abrupt pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace jh-native-window-window-then-tabs-abrupt: native window window then tabs abrupt
+action 1: {"type":"nativeCloseWindow","window":{"windowId":20},"order":"windowRemovedThenTabsRemoved"}
+action 2: {"type":"restartBackgroundAbrupt"}
+Domain trace: jh-native-window-window-then-tabs-abrupt
+Action 2: {"type":"restartBackgroundAbrupt"}
+Trace:
+domain trace jh-native-window-window-then-tabs-abrupt: native window window then tabs abrupt
+action 1: {"type":"nativeCloseWindow","window":{"windowId":20},"order":"windowRemovedThenTabsRemoved"}
+action 2: {"type":"restartBackgroundAbrupt"}
+```
+
+### RT-147 expected closed node window:20 is missing
+<!-- signature: expected closed node window:<id> is missing
+domain trace: jh-native-window-tabs-only-abrupt
+action: {"type":"restartBackgroundAbrupt"} -->
+
+- First seen: 2026-05-24T15:08:19.094Z
+- Trace id: `jh-native-window-tabs-only-abrupt`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=jh-native-window-tabs-only-abrupt pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace jh-native-window-tabs-only-abrupt: native window tabs only abrupt
+action 1: {"type":"nativeCloseWindow","window":{"windowId":20},"order":"tabsRemovedOnly"}
+action 2: {"type":"restartBackgroundAbrupt"}
+Domain trace: jh-native-window-tabs-only-abrupt
+Action 2: {"type":"restartBackgroundAbrupt"}
+Trace:
+domain trace jh-native-window-tabs-only-abrupt: native window tabs only abrupt
+action 1: {"type":"nativeCloseWindow","window":{"windowId":20},"order":"tabsRemovedOnly"}
+action 2: {"type":"restartBackgroundAbrupt"}
+```
+
+### RT-148 expected closed node window:20 is missing
+<!-- signature: expected closed node window:<id> is missing
+domain trace: jh-native-multitab-window-abrupt
+action: {"type":"restartBackgroundAbrupt"} -->
+
+- First seen: 2026-05-24T15:08:20.235Z
+- Trace id: `jh-native-multitab-window-abrupt`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=jh-native-multitab-window-abrupt pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace jh-native-multitab-window-abrupt: native multitab window abrupt
+action 1: {"type":"openTab","window":{"windowId":20},"active":false,"captureTab":"jh-native-multitab-extra"}
+action 2: {"type":"nativeCloseWindow","window":{"windowId":20},"order":"windowRemovedOnly"}
+action 3: {"type":"restartBackgroundAbrupt"}
+Domain trace: jh-native-multitab-window-abrupt
+Action 3: {"type":"restartBackgroundAbrupt"}
+Trace:
+domain trace jh-native-multitab-window-abrupt: native multitab window abrupt
+action 1: {"type":"openTab","window":{"windowId":20},"active":false,"captureTab":"jh-native-multitab-extra"}
+action 2: {"type":"nativeCloseWindow","window":{"windowId":20},"order":"windowRemovedOnly"}
+action 3: {"type":"restartBackgroundAbrupt"}
+```
+
+<!-- hunt-corpus-run: {"at":"2026-05-24T15:08:20.236Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","history-boundary","journal","manual-refresh","metadata","multi-tab","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"jh-native-multitab-window-abrupt","runs":360,"processRuns":78,"batchSize":20,"batchFailures":3,"completedCorpus":true,"failures":21,"duplicateFailures":17,"newFindings":4} -->
+
+### RT-149 expected closed node window:20 is missing
+<!-- signature: expected closed node window:<id> is missing
+domain trace: jh-native-restored-window-abrupt
+action: {"type":"restartBackgroundAbrupt"} -->
+
+- First seen: 2026-05-24T15:10:38.911Z
+- Trace id: `jh-native-restored-window-abrupt`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=jh-native-restored-window-abrupt pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace jh-native-restored-window-abrupt: native restored window abrupt
+action 1: {"type":"outlinerCloseWindow","window":{"windowId":20}}
+action 2: {"type":"outlinerRestoreNodeRejectingCreate","node":{"nodeId":"window:20"},"captureRestoredWindows":"jh-native-restored-window"}
+action 3: {"type":"nativeCloseWindow","window":{"capture":"jh-native-restored-window"},"order":"windowRemovedOnly"}
+action 4: {"type":"restartBackgroundAbrupt"}
+Domain trace: jh-native-restored-window-abrupt
+Action 4: {"type":"restartBackgroundAbrupt"}
+Trace:
+domain trace jh-native-restored-window-abrupt: native restored window abrupt
+action 1: {"type":"outlinerCloseWindow","window":{"windowId":20}}
+action 2: {"type":"outlinerRestoreNodeRejectingCreate","node":{"nodeId":"window:20"},"captureRestoredWindows":"jh-native-restored-window"}
+action 3: {"type":"nativeCloseWindow","window":{"capture":"jh-native-restored-window"},"order":"windowRemovedOnly"}
+action 4: {"type":"restartBackgroundAbrupt"}
+```
+
+<!-- hunt-corpus-run: {"at":"2026-05-24T15:10:38.913Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","history-boundary","journal","manual-refresh","metadata","multi-tab","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"jh-native-restored-window-abrupt","runs":363,"processRuns":82,"batchSize":20,"batchFailures":4,"completedCorpus":true,"failures":22,"duplicateFailures":21,"newFindings":1} -->
+
+### RT-150 expected closed node window:20 is missing
+<!-- signature: expected closed node window:<id> is missing
+domain trace: jh-native-restored-window-tabs-then-abrupt
+action: {"type":"restartBackgroundAbrupt"} -->
+
+- First seen: 2026-05-24T15:13:02.821Z
+- Trace id: `jh-native-restored-window-tabs-then-abrupt`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=jh-native-restored-window-tabs-then-abrupt pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace jh-native-restored-window-tabs-then-abrupt: native restored window tabs then abrupt
+action 1: {"type":"outlinerCloseWindow","window":{"windowId":20}}
+action 2: {"type":"outlinerRestoreNodeRejectingCreate","node":{"nodeId":"window:20"},"captureRestoredWindows":"jh-native-restored-tabs-then-window"}
+action 3: {"type":"nativeCloseWindow","window":{"capture":"jh-native-restored-tabs-then-window"},"order":"tabsRemovedThenWindowRemoved"}
+action 4: {"type":"restartBackgroundAbrupt"}
+Domain trace: jh-native-restored-window-tabs-then-abrupt
+Action 4: {"type":"restartBackgroundAbrupt"}
+Trace:
+domain trace jh-native-restored-window-tabs-then-abrupt: native restored window tabs then abrupt
+action 1: {"type":"outlinerCloseWindow","window":{"windowId":20}}
+action 2: {"type":"outlinerRestoreNodeRejectingCreate","node":{"nodeId":"window:20"},"captureRestoredWindows":"jh-native-restored-tabs-then-window"}
+action 3: {"type":"nativeCloseWindow","window":{"capture":"jh-native-restored-tabs-then-window"},"order":"tabsRemovedThenWindowRemoved"}
+action 4: {"type":"restartBackgroundAbrupt"}
+```
+
+### RT-151 expected closed node window:20 is missing
+<!-- signature: expected closed node window:<id> is missing
+domain trace: jh-native-restored-multitab-window-abrupt
+action: {"type":"restartBackgroundAbrupt"} -->
+
+- First seen: 2026-05-24T15:13:03.963Z
+- Trace id: `jh-native-restored-multitab-window-abrupt`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=jh-native-restored-multitab-window-abrupt pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace jh-native-restored-multitab-window-abrupt: native restored multitab window abrupt
+action 1: {"type":"openTab","window":{"windowId":20},"active":false,"captureTab":"jh-native-restored-multitab-extra"}
+action 2: {"type":"outlinerCloseWindow","window":{"windowId":20}}
+action 3: {"type":"outlinerRestoreNodeRejectingCreate","node":{"nodeId":"window:20"},"captureRestoredWindows":"jh-native-restored-multitab-window"}
+action 4: {"type":"nativeCloseWindow","window":{"capture":"jh-native-restored-multitab-window"},"order":"windowRemovedOnly"}
+action 5: {"type":"restartBackgroundAbrupt"}
+Domain trace: jh-native-restored-multitab-window-abrupt
+Action 5: {"type":"restartBackgroundAbrupt"}
+Trace:
+domain trace jh-native-restored-multitab-window-abrupt: native restored multitab window abrupt
+action 1: {"type":"openTab","window":{"windowId":20},"active":false,"captureTab":"jh-native-restored-multitab-extra"}
+action 2: {"type":"outlinerCloseWindow","window":{"windowId":20}}
+action 3: {"type":"outlinerRestoreNodeRejectingCreate","node":{"nodeId":"window:20"},"captureRestoredWindows":"jh-native-restored-multitab-window"}
+action 4: {"type":"nativeCloseWindow","window":{"capture":"jh-native-restored-multitab-window"},"order":"windowRemovedOnly"}
+action 5: {"type":"restartBackgroundAbrupt"}
+```
+
+<!-- hunt-corpus-run: {"at":"2026-05-24T15:13:05.088Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","history-boundary","journal","manual-refresh","metadata","multi-tab","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"jh-native-restored-tab-abrupt","runs":366,"processRuns":85,"batchSize":20,"batchFailures":4,"completedCorpus":true,"failures":24,"duplicateFailures":22,"newFindings":2} -->
+
+### RT-152 expected closed node window:20 is missing
+<!-- signature: expected closed node window:<id> is missing
+domain trace: jh-native-restored-window-window-then-tabs-abrupt
+action: {"type":"restartBackgroundAbrupt"} -->
+
+- First seen: 2026-05-24T15:15:23.904Z
+- Trace id: `jh-native-restored-window-window-then-tabs-abrupt`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=jh-native-restored-window-window-then-tabs-abrupt pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace jh-native-restored-window-window-then-tabs-abrupt: native restored window window then tabs abrupt
+action 1: {"type":"outlinerCloseWindow","window":{"windowId":20}}
+action 2: {"type":"outlinerRestoreNodeRejectingCreate","node":{"nodeId":"window:20"},"captureRestoredWindows":"jh-native-restored-window-first"}
+action 3: {"type":"nativeCloseWindow","window":{"capture":"jh-native-restored-window-first"},"order":"windowRemovedThenTabsRemoved"}
+action 4: {"type":"restartBackgroundAbrupt"}
+Domain trace: jh-native-restored-window-window-then-tabs-abrupt
+Action 4: {"type":"restartBackgroundAbrupt"}
+Trace:
+domain trace jh-native-restored-window-window-then-tabs-abrupt: native restored window window then tabs abrupt
+action 1: {"type":"outlinerCloseWindow","window":{"windowId":20}}
+action 2: {"type":"outlinerRestoreNodeRejectingCreate","node":{"nodeId":"window:20"},"captureRestoredWindows":"jh-native-restored-window-first"}
+action 3: {"type":"nativeCloseWindow","window":{"capture":"jh-native-restored-window-first"},"order":"windowRemovedThenTabsRemoved"}
+action 4: {"type":"restartBackgroundAbrupt"}
+```
+
+### RT-153 expected closed node window:20 is missing
+<!-- signature: expected closed node window:<id> is missing
+domain trace: jh-native-restored-window-tabs-only-abrupt
+action: {"type":"restartBackgroundAbrupt"} -->
+
+- First seen: 2026-05-24T15:15:25.049Z
+- Trace id: `jh-native-restored-window-tabs-only-abrupt`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=jh-native-restored-window-tabs-only-abrupt pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace jh-native-restored-window-tabs-only-abrupt: native restored window tabs only abrupt
+action 1: {"type":"outlinerCloseWindow","window":{"windowId":20}}
+action 2: {"type":"outlinerRestoreNodeRejectingCreate","node":{"nodeId":"window:20"},"captureRestoredWindows":"jh-native-restored-tabs-only-window"}
+action 3: {"type":"nativeCloseWindow","window":{"capture":"jh-native-restored-tabs-only-window"},"order":"tabsRemovedOnly"}
+action 4: {"type":"restartBackgroundAbrupt"}
+Domain trace: jh-native-restored-window-tabs-only-abrupt
+Action 4: {"type":"restartBackgroundAbrupt"}
+Trace:
+domain trace jh-native-restored-window-tabs-only-abrupt: native restored window tabs only abrupt
+action 1: {"type":"outlinerCloseWindow","window":{"windowId":20}}
+action 2: {"type":"outlinerRestoreNodeRejectingCreate","node":{"nodeId":"window:20"},"captureRestoredWindows":"jh-native-restored-tabs-only-window"}
+action 3: {"type":"nativeCloseWindow","window":{"capture":"jh-native-restored-tabs-only-window"},"order":"tabsRemovedOnly"}
+action 4: {"type":"restartBackgroundAbrupt"}
+```
+
+<!-- hunt-corpus-run: {"at":"2026-05-24T15:15:25.051Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","history-boundary","journal","manual-refresh","metadata","multi-tab","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"jh-native-restored-window-tabs-only-abrupt","runs":368,"processRuns":87,"batchSize":20,"batchFailures":4,"completedCorpus":true,"failures":26,"duplicateFailures":24,"newFindings":2} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-24T15:18:08.605Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","history-boundary","journal","manual-refresh","metadata","multi-tab","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"jh-delete-leaf-abrupt-refresh-control","runs":372,"processRuns":91,"batchSize":20,"batchFailures":4,"completedCorpus":true,"failures":26,"duplicateFailures":26,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-24T15:21:02.662Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","history-boundary","journal","manual-refresh","metadata","multi-tab","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"jh-native-tab-session-abrupt","runs":376,"processRuns":95,"batchSize":20,"batchFailures":4,"completedCorpus":true,"failures":26,"duplicateFailures":26,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-24T15:23:59.625Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","history-boundary","journal","manual-refresh","metadata","multi-tab","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"jh-delete-window-abrupt-missing-survivor-control","runs":379,"processRuns":98,"batchSize":20,"batchFailures":4,"completedCorpus":true,"failures":26,"duplicateFailures":26,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-24T15:24:37.507Z","mode":"agent-corpus-run","profile":"regression","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","history-boundary","known-finding","manual-refresh","native-close","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo"],"firstTraceId":"rt-active-race","lastTraceId":"hh-restored-tab-native-stale-history","runs":166,"processRuns":4,"batchSize":50,"batchFailures":0,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->

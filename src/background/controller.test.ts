@@ -32,6 +32,10 @@ class FakeEvent<TArgs extends unknown[]> {
     this.listeners = [];
   }
 
+  clearPending(): void {
+    this.pending = [];
+  }
+
   dispatch(...args: TArgs): void {
     for (const listener of this.listeners) {
       try {
@@ -1210,6 +1214,11 @@ type DomainAction =
       captureStaleTabs?: string;
     }
   | {
+      type: "outlinerGroupTabThenAbruptRestart";
+      tab: DomainTabSelector;
+      captureStaleTabs?: string;
+    }
+  | {
       type: "outlinerMoveTabToNewWindow";
       tab: DomainTabSelector;
       captureStaleTabs?: string;
@@ -1220,12 +1229,22 @@ type DomainAction =
       captureStaleTabs?: string;
     }
   | {
+      type: "outlinerMoveTabCommandToNewWindowThenAbruptRestart";
+      tab: DomainTabSelector;
+      captureStaleTabs?: string;
+    }
+  | {
       type: "outlinerMoveTabCommandToNewWindowRejectingCreate";
       tab: DomainTabSelector;
       captureStaleTabs?: string;
     }
   | {
       type: "outlinerMoveSubtreeToTopLevel";
+      tab: DomainTabSelector;
+      captureStaleTabs?: string;
+    }
+  | {
+      type: "outlinerMoveSubtreeToTopLevelThenAbruptRestart";
       tab: DomainTabSelector;
       captureStaleTabs?: string;
     }
@@ -1250,6 +1269,11 @@ type DomainAction =
       node: DomainNodeSelector;
     }
   | {
+      type: "outlinerCloseNodeThenAbruptRestart";
+      node: DomainNodeSelector;
+      captureStaleTabs?: string;
+    }
+  | {
       type: "outlinerDeleteWindowRejectingClose";
       window: DomainWindowSelector;
     }
@@ -1262,6 +1286,11 @@ type DomainAction =
       node: DomainNodeSelector;
     }
   | {
+      type: "outlinerDeleteNodeThenAbruptRestart";
+      node: DomainNodeSelector;
+      captureStaleTabs?: string;
+    }
+  | {
       type: "outlinerRestoreDeleteWindowDelayedEvent";
       window: DomainWindowSelector;
       captureStaleTabs?: string;
@@ -1271,6 +1300,16 @@ type DomainAction =
       node: DomainNodeSelector;
       captureRestoredTabs?: string;
       captureRestoredWindows?: string;
+    }
+  | {
+      type: "outlinerRestoreNodeThenAbruptRestart";
+      node: DomainNodeSelector;
+      captureRestoredTabs?: string;
+      captureRestoredWindows?: string;
+    }
+  | {
+      type: "injectCloseJournalThenAbruptRestart";
+      node: DomainNodeSelector;
     }
   | {
       type: "manualRefresh";
@@ -1306,6 +1345,12 @@ type DomainAction =
     }
   | {
       type: "outlinerRedo";
+    }
+  | {
+      type: "outlinerUndoThenAbruptRestart";
+    }
+  | {
+      type: "outlinerRedoThenAbruptRestart";
     }
   | {
       type: "nativeCloseTab";
@@ -7926,6 +7971,1013 @@ const RUNTIME_DOMAIN_DISCOVERY_TRACES: RuntimeDomainTrace[] = [
       { type: "outlinerUndo" },
       { type: "manualRefreshWithMissingWindowQuery", window: { role: "firstRuntimeWindow" } }
     ]
+  },
+  {
+    id: "jh-close-tab-abrupt-stale-update",
+    title: "journal close tab abrupt stale update",
+    notes: "Lifecycle-journal crash probe for outliner tab close side effect before event/save flush, followed by stale tab update evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["journal", "restart", "outliner-close", "stale-event", "tombstone"],
+    actions: [
+      { type: "outlinerCloseNodeThenAbruptRestart", node: { tab: { tabId: 2 } }, captureStaleTabs: "jh-close-tab-stale" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "jh-close-tab-stale" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "jh-close-single-window-abrupt-session",
+    title: "journal close single window abrupt session",
+    notes: "Lifecycle-journal crash probe for outliner close of a single-tab runtime window before close events are delivered.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["journal", "restart", "outliner-close", "native-close", "session"],
+    actions: [
+      { type: "outlinerCloseNodeThenAbruptRestart", node: { window: { windowId: 20 } }, captureStaleTabs: "jh-close-single-window-stale" },
+      { type: "sessionChanged" }
+    ]
+  },
+  {
+    id: "jh-close-multi-window-abrupt-refresh",
+    title: "journal close multi window abrupt refresh",
+    notes: "Lifecycle-journal crash probe for a multi-tab runtime window close reconstructed from the journal before manual refresh.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["journal", "restart", "outliner-close", "manual-refresh", "multi-tab"],
+    actions: [
+      { type: "openTab", window: { windowId: 20 }, active: false, captureTab: "jh-close-multi-extra" },
+      { type: "outlinerCloseNodeThenAbruptRestart", node: { window: { windowId: 20 } }, captureStaleTabs: "jh-close-multi-stale" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "jh-close-grouped-window-abrupt-reordered",
+    title: "journal close grouped window abrupt reordered",
+    notes: "Lifecycle-journal crash probe for closing a command-created grouped live window before save, then checking surviving-window query order.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["journal", "restart", "outliner-close", "nested", "stale-query"],
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "jh-close-group-old" },
+      { type: "outlinerCloseNodeThenAbruptRestart", node: { window: { role: "lastOpenedWindow" } }, captureStaleTabs: "jh-close-group-stale" },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 10 }, order: "reverse" }
+    ]
+  },
+  {
+    id: "jh-delete-leaf-abrupt-session",
+    title: "journal delete leaf abrupt session",
+    notes: "Lifecycle-journal crash probe for delete of a live leaf tab before close events or state save.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["journal", "restart", "delete-rejection", "session", "tombstone"],
+    actions: [
+      { type: "outlinerDeleteNodeThenAbruptRestart", node: { tab: { tabId: 2 } }, captureStaleTabs: "jh-delete-leaf-stale" },
+      { type: "sessionChanged" }
+    ]
+  },
+  {
+    id: "jh-delete-relocated-source-abrupt-missing",
+    title: "journal delete relocated source abrupt missing",
+    notes: "Lifecycle-journal crash probe for deleting the source window after command relocation and restarting before delete persistence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["journal", "restart", "delete-rejection", "relocation", "partial-snapshot", "stale-event"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "jh-delete-source-old" },
+      { type: "outlinerDeleteNodeThenAbruptRestart", node: { window: { windowId: 10 } }, captureStaleTabs: "jh-delete-source-stale" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "jh-delete-source-old" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "jh-delete-restored-window-abrupt-query",
+    title: "journal delete restored window abrupt query",
+    notes: "Lifecycle-journal crash probe for deleting a restored window before delete state/history persistence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["journal", "restart", "restore", "delete-rejection", "partial-snapshot"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredWindows: "jh-delete-restored-window" },
+      { type: "outlinerDeleteNodeThenAbruptRestart", node: { window: { capture: "jh-delete-restored-window" } }, captureStaleTabs: "jh-delete-restored-stale" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "jh-delete-grouped-window-abrupt-stale",
+    title: "journal delete grouped window abrupt stale",
+    notes: "Lifecycle-journal crash probe for deleting a grouped command-created window before runtime close echoes drain.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["journal", "restart", "delete-rejection", "nested", "stale-event"],
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "jh-delete-group-old" },
+      { type: "outlinerDeleteNodeThenAbruptRestart", node: { window: { role: "lastOpenedWindow" } }, captureStaleTabs: "jh-delete-group-stale" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "jh-delete-group-stale" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "jh-restore-tab-abrupt-stale-created",
+    title: "journal restore tab abrupt stale created",
+    notes: "Lifecycle-journal crash probe for restoring a closed tab before create echo or save, followed by stale created evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["journal", "restart", "restore", "created-event", "stale-event"],
+    actions: [
+      { type: "outlinerCloseTab", tab: { tabId: 2 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "tab:2" }, captureRestoredTabs: "jh-restore-tab" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "jh-restore-tab" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "jh-restore-window-abrupt-missing",
+    title: "journal restore window abrupt missing",
+    notes: "Lifecycle-journal crash probe for restoring a closed window before create echo/save, then omitting the restored window from refresh.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["journal", "restart", "restore", "partial-snapshot", "manual-refresh"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredWindows: "jh-restore-window" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { capture: "jh-restore-window" } }
+    ]
+  },
+  {
+    id: "jh-restore-after-redo-abrupt-query",
+    title: "journal restore after redo abrupt query",
+    notes: "Lifecycle-journal crash probe for restore after close undo/redo history replay.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["journal", "restart", "restore", "undo-redo", "manual-refresh"],
+    actions: [
+      { type: "outlinerCloseTab", tab: { tabId: 2 } },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedo" },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "tab:2" }, captureRestoredTabs: "jh-restore-redo-tab" },
+      { type: "manualRefreshWithMissingTabQuery", tab: { capture: "jh-restore-redo-tab" } }
+    ]
+  },
+  {
+    id: "jh-restore-after-native-close-abrupt-session",
+    title: "journal restore after native close abrupt session",
+    notes: "Lifecycle-journal crash probe for restoring a browser-closed window before restore create evidence drains.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["journal", "restart", "restore", "native-close", "session"],
+    actions: [
+      { type: "nativeCloseWindow", window: { windowId: 20 }, order: "windowRemovedThenTabsRemoved" },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredWindows: "jh-native-restore-window" },
+      { type: "sessionChanged" }
+    ]
+  },
+  {
+    id: "jh-relocate-direct-abrupt-old-updated",
+    title: "journal relocate direct abrupt old updated",
+    notes: "Lifecycle-journal crash probe for direct command relocation reconstructed after abrupt restart with stale old-window update.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["journal", "restart", "relocation", "stale-event", "updated-event"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "jh-relocate-direct-old" },
+      { type: "restartBackgroundAbrupt" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "jh-relocate-direct-old" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "jh-relocate-group-abrupt-old-created",
+    title: "journal relocate group abrupt old created",
+    notes: "Lifecycle-journal crash probe for grouped relocation reconstructed after abrupt restart with stale created evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["journal", "restart", "relocation", "nested", "created-event", "stale-event"],
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "jh-relocate-group-old" },
+      { type: "restartBackgroundAbrupt" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "jh-relocate-group-old" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "jh-relocate-top-level-abrupt-missing",
+    title: "journal relocate top level abrupt missing",
+    notes: "Lifecycle-journal crash probe for top-level relocation followed by missing destination-window query after abrupt restart.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["journal", "restart", "relocation", "partial-snapshot", "manual-refresh"],
+    actions: [
+      { type: "outlinerMoveSubtreeToTopLevel", tab: { tabId: 1 }, captureStaleTabs: "jh-relocate-top-old" },
+      { type: "restartBackgroundAbrupt" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { role: "lastOpenedWindow" } }
+    ]
+  },
+  {
+    id: "jh-relocate-twice-abrupt-stale",
+    title: "journal relocate twice abrupt stale",
+    notes: "Lifecycle-journal crash probe for a later relocation journal entry superseding old relocation evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["journal", "restart", "relocation", "paired-echo", "stale-event"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "jh-relocate-twice-first-old" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { role: "lastMovedTab" }, captureStaleTabs: "jh-relocate-twice-second-old" },
+      { type: "restartBackgroundAbrupt" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "jh-relocate-twice-first-old" }, withStaleQuery: true },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "jh-relocate-twice-second-old" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "jh-undo-close-abrupt-missing",
+    title: "journal undo close abrupt missing",
+    notes: "Lifecycle-journal crash probe for undo of an outliner close before recreated runtime evidence is persisted.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["journal", "restart", "undo-redo", "outliner-close", "partial-snapshot"],
+    actions: [
+      { type: "outlinerCloseTab", tab: { tabId: 2 } },
+      { type: "outlinerUndoThenAbruptRestart" },
+      { type: "manualRefreshWithMissingTabQuery", tab: { tabId: 2 } }
+    ]
+  },
+  {
+    id: "jh-redo-delete-abrupt-session",
+    title: "journal redo delete abrupt session",
+    notes: "Lifecycle-journal crash probe for redo of a delete command before close echoes or history persistence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["journal", "restart", "undo-redo", "delete-rejection", "session"],
+    actions: [
+      { type: "outlinerDeleteNodeRejectingClose", node: { tab: { tabId: 2 } } },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedoThenAbruptRestart" },
+      { type: "sessionChanged" }
+    ]
+  },
+  {
+    id: "jh-undo-restore-abrupt-stale",
+    title: "journal undo restore abrupt stale",
+    notes: "Lifecycle-journal crash probe for undoing a restore before close/delete echoes drain.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["journal", "restart", "undo-redo", "restore", "stale-event"],
+    actions: [
+      { type: "outlinerCloseTab", tab: { tabId: 2 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "tab:2" }, captureRestoredTabs: "jh-undo-restore-tab" },
+      { type: "outlinerUndoThenAbruptRestart" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "jh-undo-restore-tab" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "jh-undo-relocation-abrupt-old",
+    title: "journal undo relocation abrupt old",
+    notes: "Lifecycle-journal crash probe for undoing relocation before history save, with stale source evidence arriving after restart.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["journal", "restart", "undo-redo", "relocation", "stale-event"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "jh-undo-relocation-old" },
+      { type: "outlinerUndoThenAbruptRestart" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "jh-undo-relocation-old" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "jh-native-close-no-journal-abrupt",
+    title: "native close no journal abrupt",
+    notes: "Lifecycle-journal control: a native browser close has no journal and must retain browser-native deletion semantics across abrupt restart.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["journal", "restart", "native-close", "manual-refresh"],
+    actions: [
+      { type: "nativeCloseTab", tab: { tabId: 2 }, order: "tabRemovedOnly" },
+      { type: "restartBackgroundAbrupt" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "jh-journal-unconfirmed-close-abrupt",
+    title: "journal unconfirmed close abrupt",
+    notes: "Lifecycle-journal control: an injected close journal entry without confirmed runtime disappearance must no-op on startup.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["journal", "restart", "outliner-close", "manual-refresh"],
+    actions: [
+      { type: "injectCloseJournalThenAbruptRestart", node: { tab: { tabId: 2 } } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "jh-journal-recovered-stale-contradiction",
+    title: "journal recovered stale contradiction",
+    notes: "Lifecycle-journal contradiction probe: recovered outliner close should ignore stale created evidence for the closed tab.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["journal", "restart", "outliner-close", "created-event", "stale-event"],
+    actions: [
+      { type: "outlinerCloseNodeThenAbruptRestart", node: { tab: { tabId: 2 } }, captureStaleTabs: "jh-recovered-stale-tab" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "jh-recovered-stale-tab" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "jh-journal-recovered-native-contradiction",
+    title: "journal recovered native contradiction",
+    notes: "Lifecycle-journal contradiction probe: recovered close of one tab followed by unrelated native close and session churn.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["journal", "restart", "outliner-close", "native-close", "session"],
+    actions: [
+      { type: "outlinerCloseNodeThenAbruptRestart", node: { tab: { tabId: 2 } }, captureStaleTabs: "jh-recovered-native-stale" },
+      { type: "nativeCloseWindow", window: { windowId: 20 }, order: "windowRemovedOnly" },
+      { type: "sessionChanged" }
+    ]
+  },
+  {
+    id: "jh-close-relocated-destination-abrupt-old-event",
+    title: "journal close relocated destination abrupt old event",
+    notes: "Lifecycle-journal crash probe for closing a command-created destination window after relocation, then delivering stale source-window evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["journal", "restart", "outliner-close", "relocation", "stale-event"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "jh-close-relocated-old" },
+      { type: "outlinerCloseNodeThenAbruptRestart", node: { window: { role: "lastOpenedWindow" } }, captureStaleTabs: "jh-close-relocated-destination" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "jh-close-relocated-old" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "jh-close-relocated-source-abrupt-session",
+    title: "journal close relocated source abrupt session",
+    notes: "Lifecycle-journal crash probe for closing the source window left behind after relocation before close persistence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["journal", "restart", "outliner-close", "relocation", "session"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "jh-close-source-old" },
+      { type: "outlinerCloseNodeThenAbruptRestart", node: { window: { windowId: 10 } }, captureStaleTabs: "jh-close-source-stale" },
+      { type: "sessionChanged" }
+    ]
+  },
+  {
+    id: "jh-close-restored-tab-abrupt-session",
+    title: "journal close restored tab abrupt session",
+    notes: "Lifecycle-journal crash probe for closing a restored tab whose current runtime id differs from the original closed tab id.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["journal", "restart", "outliner-close", "restore", "session"],
+    actions: [
+      { type: "outlinerCloseTab", tab: { tabId: 2 } },
+      { type: "outlinerRestoreNodeRejectingCreate", node: { nodeId: "tab:2" }, captureRestoredTabs: "jh-close-restored-tab" },
+      { type: "outlinerCloseNodeThenAbruptRestart", node: { tab: { capture: "jh-close-restored-tab" } }, captureStaleTabs: "jh-close-restored-tab-stale" },
+      { type: "sessionChanged" }
+    ]
+  },
+  {
+    id: "jh-close-restored-window-abrupt-missing",
+    title: "journal close restored window abrupt missing",
+    notes: "Lifecycle-journal crash probe for closing a restored window and then omitting its runtime window from a refresh snapshot.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["journal", "restart", "outliner-close", "restore", "partial-snapshot"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeRejectingCreate", node: { nodeId: "window:20" }, captureRestoredWindows: "jh-close-restored-window" },
+      { type: "outlinerCloseNodeThenAbruptRestart", node: { window: { capture: "jh-close-restored-window" } }, captureStaleTabs: "jh-close-restored-window-stale" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "jh-close-opener-child-abrupt-query",
+    title: "journal close opener child abrupt query",
+    notes: "Lifecycle-journal crash probe for an opener-linked child tab closed before event delivery, followed by a reordered source snapshot.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["journal", "restart", "outliner-close", "opener", "stale-query"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, openerTab: { tabId: 1 }, active: false, captureTab: "jh-close-opener-child" },
+      { type: "outlinerCloseNodeThenAbruptRestart", node: { tab: { capture: "jh-close-opener-child" } }, captureStaleTabs: "jh-close-opener-stale" },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 10 }, order: "reverse" }
+    ]
+  },
+  {
+    id: "jh-window-close-undo-abrupt-refresh",
+    title: "journal window close undo abrupt refresh",
+    notes: "Lifecycle-journal crash probe for undoing a window close before undo-created runtime evidence is saved.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["journal", "restart", "undo-redo", "outliner-close", "manual-refresh"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerUndoThenAbruptRestart" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "jh-relocate-command-abrupt-current-refresh",
+    title: "journal relocate command abrupt current refresh",
+    notes: "Lifecycle-journal crash probe for direct command relocation before persistence, followed by a complete current refresh.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["journal", "restart", "relocation", "manual-refresh"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindowThenAbruptRestart", tab: { tabId: 1 }, captureStaleTabs: "jh-relocate-command-crash-old" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "jh-relocate-group-abrupt-stale-created",
+    title: "journal relocate group abrupt stale created",
+    notes: "Lifecycle-journal crash probe for grouped relocation before persistence, followed by stale old-window created evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["journal", "restart", "relocation", "nested", "stale-event"],
+    actions: [
+      { type: "outlinerGroupTabThenAbruptRestart", tab: { tabId: 1 }, captureStaleTabs: "jh-group-crash-old" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "jh-group-crash-old" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "jh-relocate-top-level-abrupt-reordered",
+    title: "journal relocate top level abrupt reordered",
+    notes: "Lifecycle-journal crash probe for top-level subtree relocation before persistence, followed by reordered surviving source evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["journal", "restart", "relocation", "stale-query"],
+    actions: [
+      { type: "outlinerMoveSubtreeToTopLevelThenAbruptRestart", tab: { tabId: 1 }, captureStaleTabs: "jh-top-crash-old" },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 10 }, order: "reverse" }
+    ]
+  },
+  {
+    id: "jh-relocate-second-abrupt-paired-old",
+    title: "journal relocate second abrupt paired old",
+    notes: "Lifecycle-journal crash probe for a second relocation crashing before persistence while both old-window echoes remain possible.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["journal", "restart", "relocation", "paired-echo", "stale-event"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "jh-second-crash-first-old" },
+      { type: "outlinerMoveTabCommandToNewWindowThenAbruptRestart", tab: { role: "lastMovedTab" }, captureStaleTabs: "jh-second-crash-second-old" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "jh-second-crash-first-old" }, withStaleQuery: true },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "jh-second-crash-second-old" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "jh-relocate-opener-child-abrupt-session",
+    title: "journal relocate opener child abrupt session",
+    notes: "Lifecycle-journal crash probe for relocating an opener-linked child tab before persistence, then session refresh.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["journal", "restart", "relocation", "opener", "session"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, openerTab: { tabId: 1 }, active: false, captureTab: "jh-relocate-opener-child" },
+      { type: "outlinerMoveTabCommandToNewWindowThenAbruptRestart", tab: { capture: "jh-relocate-opener-child" }, captureStaleTabs: "jh-relocate-opener-old" },
+      { type: "sessionChanged" }
+    ]
+  },
+  {
+    id: "jh-delete-multitab-window-abrupt-reordered",
+    title: "journal delete multitab window abrupt reordered",
+    notes: "Lifecycle-journal crash probe for deleting a multi-tab runtime window before delete persistence, then reordering a survivor snapshot.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["journal", "restart", "delete-rejection", "multi-tab", "stale-query"],
+    actions: [
+      { type: "openTab", window: { windowId: 20 }, active: false, captureTab: "jh-delete-multitab-extra" },
+      { type: "outlinerDeleteNodeThenAbruptRestart", node: { window: { windowId: 20 } }, captureStaleTabs: "jh-delete-multitab-stale" },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 10 }, order: "reverse" }
+    ]
+  },
+  {
+    id: "jh-delete-opener-child-abrupt-stale",
+    title: "journal delete opener child abrupt stale",
+    notes: "Lifecycle-journal crash probe for deleting an opener-linked child tab before delete persistence, followed by stale child evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["journal", "restart", "delete-rejection", "opener", "stale-event"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, openerTab: { tabId: 1 }, active: false, captureTab: "jh-delete-opener-child" },
+      { type: "outlinerDeleteNodeThenAbruptRestart", node: { tab: { capture: "jh-delete-opener-child" } }, captureStaleTabs: "jh-delete-opener-stale" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "jh-delete-opener-stale" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "jh-delete-command-destination-abrupt-old",
+    title: "journal delete command destination abrupt old",
+    notes: "Lifecycle-journal crash probe for deleting a command-created destination window before persistence, followed by stale source evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["journal", "restart", "delete-rejection", "relocation", "stale-event"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "jh-delete-destination-old" },
+      { type: "outlinerDeleteNodeThenAbruptRestart", node: { window: { role: "lastOpenedWindow" } }, captureStaleTabs: "jh-delete-destination-stale" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "jh-delete-destination-old" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "jh-restore-multitab-window-abrupt-reordered",
+    title: "journal restore multitab window abrupt reordered",
+    notes: "Lifecycle-journal crash probe for restoring a multi-tab closed window before persistence and then reordering restored tabs.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["journal", "restart", "restore", "multi-tab", "stale-query"],
+    actions: [
+      { type: "openTab", window: { windowId: 20 }, active: false, captureTab: "jh-restore-multitab-extra" },
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredWindows: "jh-restore-multitab-window" },
+      { type: "manualRefreshWithReorderedQuery", window: { capture: "jh-restore-multitab-window" }, order: "reverse" }
+    ]
+  },
+  {
+    id: "jh-restore-opener-child-abrupt-session",
+    title: "journal restore opener child abrupt session",
+    notes: "Lifecycle-journal crash probe for restoring an opener-linked child tab before restore persistence and then session refresh.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["journal", "restart", "restore", "opener", "session"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, openerTab: { tabId: 1 }, active: false, captureTab: "jh-restore-opener-child" },
+      { type: "outlinerCloseTab", tab: { capture: "jh-restore-opener-child" } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "tab:100" }, captureRestoredTabs: "jh-restore-opener-restored" },
+      { type: "sessionChanged" }
+    ]
+  },
+  {
+    id: "jh-redo-restore-abrupt-refresh",
+    title: "journal redo restore abrupt refresh",
+    notes: "Lifecycle-journal crash probe for redoing a restore before restored runtime evidence is saved.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["journal", "restart", "restore", "undo-redo", "manual-refresh"],
+    actions: [
+      { type: "outlinerCloseTab", tab: { tabId: 2 } },
+      { type: "outlinerRestoreNodeRejectingCreate", node: { nodeId: "tab:2" }, captureRestoredTabs: "jh-redo-restore-tab" },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedoThenAbruptRestart" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "jh-delete-opener-child-abrupt-updated",
+    title: "journal delete opener child abrupt updated",
+    notes: "Lifecycle-journal crash probe for deleted opener-linked child tab receiving stale updated evidence after abrupt restart.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["journal", "restart", "delete-rejection", "opener", "stale-event"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, openerTab: { tabId: 1 }, active: false, captureTab: "jh-delete-opener-updated-child" },
+      { type: "outlinerDeleteNodeThenAbruptRestart", node: { tab: { capture: "jh-delete-opener-updated-child" } }, captureStaleTabs: "jh-delete-opener-updated-stale" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "jh-delete-opener-updated-stale" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "jh-delete-opened-child-abrupt-created",
+    title: "journal delete opened child abrupt created",
+    notes: "Lifecycle-journal control for deleting a browser-created child tab without opener linkage before stale created evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["journal", "restart", "delete-rejection", "created-event", "stale-event"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, captureTab: "jh-delete-opened-child" },
+      { type: "outlinerDeleteNodeThenAbruptRestart", node: { tab: { capture: "jh-delete-opened-child" } }, captureStaleTabs: "jh-delete-opened-stale" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "jh-delete-opened-stale" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "jh-delete-opener-child-abrupt-session-only",
+    title: "journal delete opener child abrupt session only",
+    notes: "Lifecycle-journal control for deleting an opener-linked child before restart with only session evidence afterward.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["journal", "restart", "delete-rejection", "opener", "session"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, openerTab: { tabId: 1 }, active: false, captureTab: "jh-delete-opener-session-child" },
+      { type: "outlinerDeleteNodeThenAbruptRestart", node: { tab: { capture: "jh-delete-opener-session-child" } }, captureStaleTabs: "jh-delete-opener-session-stale" },
+      { type: "sessionChanged" }
+    ]
+  },
+  {
+    id: "jh-delete-opener-window-abrupt-created",
+    title: "journal delete opener window abrupt created",
+    notes: "Lifecycle-journal crash probe for deleting a window containing opener-linked tabs before stale child created evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["journal", "restart", "delete-rejection", "opener", "stale-event"],
+    actions: [
+      { type: "openTab", window: { windowId: 20 }, openerTab: { tabId: 3 }, active: false, captureTab: "jh-delete-opener-window-child" },
+      { type: "outlinerDeleteNodeThenAbruptRestart", node: { window: { windowId: 20 } }, captureStaleTabs: "jh-delete-opener-window-stale" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "jh-delete-opener-window-stale", index: 1 }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "jh-delete-leaf-abrupt-created",
+    title: "journal delete leaf abrupt created",
+    notes: "Lifecycle-journal crash probe for a deleted initial leaf tab receiving stale created evidence after abrupt restart.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["journal", "restart", "delete-rejection", "created-event", "stale-event"],
+    actions: [
+      { type: "outlinerDeleteNodeThenAbruptRestart", node: { tab: { tabId: 2 } }, captureStaleTabs: "jh-delete-leaf-created-stale" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "jh-delete-leaf-created-stale" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "jh-delete-leaf-abrupt-updated",
+    title: "journal delete leaf abrupt updated",
+    notes: "Lifecycle-journal crash probe for a deleted initial leaf tab receiving stale updated evidence after abrupt restart.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["journal", "restart", "delete-rejection", "updated-event", "stale-event"],
+    actions: [
+      { type: "outlinerDeleteNodeThenAbruptRestart", node: { tab: { tabId: 2 } }, captureStaleTabs: "jh-delete-leaf-updated-stale" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "jh-delete-leaf-updated-stale" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "jh-delete-window-tab-abrupt-created",
+    title: "journal delete window tab abrupt created",
+    notes: "Lifecycle-journal crash probe for a tab inside a deleted window receiving stale created evidence after abrupt restart.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["journal", "restart", "delete-rejection", "native-close", "stale-event"],
+    actions: [
+      { type: "openTab", window: { windowId: 20 }, active: false, captureTab: "jh-delete-window-extra" },
+      { type: "outlinerDeleteNodeThenAbruptRestart", node: { window: { windowId: 20 } }, captureStaleTabs: "jh-delete-window-created-stale" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "jh-delete-window-created-stale", index: 1 }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "jh-delete-relocated-destination-abrupt-created",
+    title: "journal delete relocated destination abrupt created",
+    notes: "Lifecycle-journal crash probe for a deleted command-created destination tab receiving stale created evidence after abrupt restart.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["journal", "restart", "delete-rejection", "relocation", "stale-event"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "jh-delete-relocated-before" },
+      { type: "outlinerDeleteNodeThenAbruptRestart", node: { window: { role: "lastOpenedWindow" } }, captureStaleTabs: "jh-delete-relocated-destination-stale" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "jh-delete-relocated-destination-stale" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "jh-restore-tab-abrupt-stale-updated",
+    title: "journal restore tab abrupt stale updated",
+    notes: "Lifecycle-journal crash probe for restored tab receiving stale updated evidence after abrupt restore recovery.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["journal", "restart", "restore", "updated-event", "stale-event"],
+    actions: [
+      { type: "outlinerCloseTab", tab: { tabId: 2 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "tab:2" }, captureRestoredTabs: "jh-restore-updated-tab" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "jh-restore-updated-tab" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "jh-restore-window-abrupt-stale-created",
+    title: "journal restore window abrupt stale created",
+    notes: "Lifecycle-journal crash probe for restored window tab receiving stale created evidence after abrupt restore recovery.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["journal", "restart", "restore", "created-event", "stale-event"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "jh-restore-window-created-tabs", captureRestoredWindows: "jh-restore-created-window" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "jh-restore-window-created-tabs" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "jh-redo-restore-window-abrupt-reordered",
+    title: "journal redo restore window abrupt reordered",
+    notes: "Lifecycle-journal crash probe for redoing a window restore before persistence, followed by reordered restored-window query evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["journal", "restart", "restore", "undo-redo", "stale-query"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeRejectingCreate", node: { nodeId: "window:20" }, captureRestoredWindows: "jh-redo-window-before-undo" },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedoThenAbruptRestart" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "jh-native-window-no-journal-abrupt",
+    title: "native window no journal abrupt",
+    notes: "Lifecycle-journal control: native browser window close plus abrupt restart must not be reclassified as a Tabs Outliner command close.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["journal", "restart", "native-close", "manual-refresh"],
+    actions: [
+      { type: "nativeCloseWindow", window: { windowId: 20 }, order: "windowRemovedOnly" },
+      { type: "restartBackgroundAbrupt" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "jh-native-window-tabs-then-abrupt",
+    title: "native window tabs then abrupt",
+    notes: "Lifecycle-journal native-control probe for tabs-then-window native close order followed by abrupt restart.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["journal", "restart", "native-close", "event-order"],
+    actions: [
+      { type: "nativeCloseWindow", window: { windowId: 20 }, order: "tabsRemovedThenWindowRemoved" },
+      { type: "restartBackgroundAbrupt" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "jh-native-window-window-then-tabs-abrupt",
+    title: "native window window then tabs abrupt",
+    notes: "Lifecycle-journal native-control probe for window-then-tabs native close order followed by abrupt restart.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["journal", "restart", "native-close", "event-order"],
+    actions: [
+      { type: "nativeCloseWindow", window: { windowId: 20 }, order: "windowRemovedThenTabsRemoved" },
+      { type: "restartBackgroundAbrupt" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "jh-native-window-tabs-only-abrupt",
+    title: "native window tabs only abrupt",
+    notes: "Lifecycle-journal native-control probe for tabs-only native window close evidence followed by abrupt restart.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["journal", "restart", "native-close", "event-order"],
+    actions: [
+      { type: "nativeCloseWindow", window: { windowId: 20 }, order: "tabsRemovedOnly" },
+      { type: "restartBackgroundAbrupt" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "jh-native-multitab-window-abrupt",
+    title: "native multitab window abrupt",
+    notes: "Lifecycle-journal native-control probe for native close of a multi-tab window followed by abrupt restart.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["journal", "restart", "native-close", "multi-tab"],
+    actions: [
+      { type: "openTab", window: { windowId: 20 }, active: false, captureTab: "jh-native-multitab-extra" },
+      { type: "nativeCloseWindow", window: { windowId: 20 }, order: "windowRemovedOnly" },
+      { type: "restartBackgroundAbrupt" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "jh-native-last-tab-abrupt",
+    title: "native last tab abrupt",
+    notes: "Lifecycle-journal native-control probe for native close of the last tab in a window followed by abrupt restart.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["journal", "restart", "native-close", "tombstone"],
+    actions: [
+      { type: "nativeCloseTab", tab: { tabId: 3 }, order: "tabRemovedOnly" },
+      { type: "restartBackgroundAbrupt" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "jh-native-opener-child-tab-abrupt",
+    title: "native opener child tab abrupt",
+    notes: "Lifecycle-journal native-control probe for native close of an opener-linked child tab followed by abrupt restart.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["journal", "restart", "native-close", "opener"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, openerTab: { tabId: 1 }, active: false, captureTab: "jh-native-opener-child" },
+      { type: "nativeCloseTab", tab: { capture: "jh-native-opener-child" }, order: "tabRemovedOnly" },
+      { type: "restartBackgroundAbrupt" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "jh-native-restored-window-abrupt",
+    title: "native restored window abrupt",
+    notes: "Lifecycle-journal native-control probe for native close of a restored window followed by abrupt restart.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["journal", "restart", "native-close", "restore"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeRejectingCreate", node: { nodeId: "window:20" }, captureRestoredWindows: "jh-native-restored-window" },
+      { type: "nativeCloseWindow", window: { capture: "jh-native-restored-window" }, order: "windowRemovedOnly" },
+      { type: "restartBackgroundAbrupt" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "jh-native-restored-window-tabs-then-abrupt",
+    title: "native restored window tabs then abrupt",
+    notes: "Lifecycle-journal native-control probe for native close of a restored window with tabs-then-window event order before abrupt restart.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["journal", "restart", "native-close", "restore", "event-order"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeRejectingCreate", node: { nodeId: "window:20" }, captureRestoredWindows: "jh-native-restored-tabs-then-window" },
+      { type: "nativeCloseWindow", window: { capture: "jh-native-restored-tabs-then-window" }, order: "tabsRemovedThenWindowRemoved" },
+      { type: "restartBackgroundAbrupt" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "jh-native-restored-multitab-window-abrupt",
+    title: "native restored multitab window abrupt",
+    notes: "Lifecycle-journal native-control probe for native close of a restored multi-tab window before persistence survives.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["journal", "restart", "native-close", "restore", "multi-tab"],
+    actions: [
+      { type: "openTab", window: { windowId: 20 }, active: false, captureTab: "jh-native-restored-multitab-extra" },
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeRejectingCreate", node: { nodeId: "window:20" }, captureRestoredWindows: "jh-native-restored-multitab-window" },
+      { type: "nativeCloseWindow", window: { capture: "jh-native-restored-multitab-window" }, order: "windowRemovedOnly" },
+      { type: "restartBackgroundAbrupt" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "jh-native-restored-tab-abrupt",
+    title: "native restored tab abrupt",
+    notes: "Lifecycle-journal native-control probe for native close of a restored tab followed by abrupt restart.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["journal", "restart", "native-close", "restore"],
+    actions: [
+      { type: "outlinerCloseTab", tab: { tabId: 2 } },
+      { type: "outlinerRestoreNodeRejectingCreate", node: { nodeId: "tab:2" }, captureRestoredTabs: "jh-native-restored-tab" },
+      { type: "nativeCloseTab", tab: { capture: "jh-native-restored-tab" }, order: "tabRemovedOnly" },
+      { type: "restartBackgroundAbrupt" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "jh-native-restored-window-window-then-tabs-abrupt",
+    title: "native restored window window then tabs abrupt",
+    notes: "Lifecycle-journal native-control probe for restored-window native close where window removal arrives before tab removals.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["journal", "restart", "native-close", "restore", "event-order"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeRejectingCreate", node: { nodeId: "window:20" }, captureRestoredWindows: "jh-native-restored-window-first" },
+      { type: "nativeCloseWindow", window: { capture: "jh-native-restored-window-first" }, order: "windowRemovedThenTabsRemoved" },
+      { type: "restartBackgroundAbrupt" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "jh-native-restored-window-tabs-only-abrupt",
+    title: "native restored window tabs only abrupt",
+    notes: "Lifecycle-journal native-control probe for restored-window native close with only tab removal evidence before abrupt restart.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["journal", "restart", "native-close", "restore", "event-order"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeRejectingCreate", node: { nodeId: "window:20" }, captureRestoredWindows: "jh-native-restored-tabs-only-window" },
+      { type: "nativeCloseWindow", window: { capture: "jh-native-restored-tabs-only-window" }, order: "tabsRemovedOnly" },
+      { type: "restartBackgroundAbrupt" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "jh-relocate-command-abrupt-focus-session",
+    title: "journal relocate command abrupt focus session",
+    notes: "Lifecycle-journal clean-sector probe for command relocation crash followed by focus and session evidence from surviving windows.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["journal", "restart", "relocation", "focus", "session"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindowThenAbruptRestart", tab: { tabId: 1 }, captureStaleTabs: "jh-relocate-focus-session-old" },
+      { type: "focusWindow", window: { windowId: 20 } },
+      { type: "sessionChanged" }
+    ]
+  },
+  {
+    id: "jh-relocate-command-abrupt-missing-destination",
+    title: "journal relocate command abrupt missing destination",
+    notes: "Lifecycle-journal clean-sector probe for command relocation crash followed by partial query omitting the destination window.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["journal", "restart", "relocation", "partial-snapshot"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindowThenAbruptRestart", tab: { tabId: 1 }, captureStaleTabs: "jh-relocate-missing-destination-old" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { role: "lastOpenedWindow" } }
+    ]
+  },
+  {
+    id: "jh-restore-tab-abrupt-focus-session",
+    title: "journal restore tab abrupt focus session",
+    notes: "Lifecycle-journal clean-sector probe for restored tab crash followed by focus/session evidence without stale echoes.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["journal", "restart", "restore", "focus", "session"],
+    actions: [
+      { type: "outlinerCloseTab", tab: { tabId: 2 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "tab:2" }, captureRestoredTabs: "jh-restore-focus-tab" },
+      { type: "focusWindow", window: { windowId: 20 } },
+      { type: "sessionChanged" }
+    ]
+  },
+  {
+    id: "jh-delete-leaf-abrupt-refresh-control",
+    title: "journal delete leaf abrupt refresh control",
+    notes: "Lifecycle-journal clean-sector probe for leaf delete crash followed only by complete refresh evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["journal", "restart", "delete-rejection", "manual-refresh"],
+    actions: [
+      { type: "outlinerDeleteNodeThenAbruptRestart", node: { tab: { tabId: 2 } }, captureStaleTabs: "jh-delete-leaf-refresh-stale" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "jh-relocate-group-abrupt-focus-session",
+    title: "journal relocate group abrupt focus session",
+    notes: "Lifecycle-journal clean-sector probe for grouped relocation crash followed by focus/session evidence only.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["journal", "restart", "relocation", "nested", "focus", "session"],
+    actions: [
+      { type: "outlinerGroupTabThenAbruptRestart", tab: { tabId: 1 }, captureStaleTabs: "jh-group-focus-session-old" },
+      { type: "focusWindow", window: { windowId: 20 } },
+      { type: "sessionChanged" }
+    ]
+  },
+  {
+    id: "jh-restore-window-abrupt-focus-session",
+    title: "journal restore window abrupt focus session",
+    notes: "Lifecycle-journal clean-sector probe for restored window crash followed by focus/session evidence only.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["journal", "restart", "restore", "focus", "session"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredWindows: "jh-restore-window-focus-session" },
+      { type: "focusWindow", window: { capture: "jh-restore-window-focus-session" } },
+      { type: "sessionChanged" }
+    ]
+  },
+  {
+    id: "jh-delete-multitab-window-abrupt-refresh-control",
+    title: "journal delete multitab window abrupt refresh control",
+    notes: "Lifecycle-journal clean-sector probe for multi-tab window delete crash followed only by complete refresh evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["journal", "restart", "delete-rejection", "multi-tab", "manual-refresh"],
+    actions: [
+      { type: "openTab", window: { windowId: 20 }, active: false, captureTab: "jh-delete-multitab-refresh-extra" },
+      { type: "outlinerDeleteNodeThenAbruptRestart", node: { window: { windowId: 20 } }, captureStaleTabs: "jh-delete-multitab-refresh-stale" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "jh-native-tab-session-abrupt",
+    title: "native tab session abrupt",
+    notes: "Lifecycle-journal clean-sector probe for native non-last-tab close, abrupt restart, and session refresh.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["journal", "restart", "native-close", "session"],
+    actions: [
+      { type: "nativeCloseTab", tab: { tabId: 2 }, order: "sessionChangedOnly" },
+      { type: "restartBackgroundAbrupt" },
+      { type: "sessionChanged" }
+    ]
+  },
+  {
+    id: "jh-relocate-abrupt-reordered-survivor-control",
+    title: "journal relocate abrupt reordered survivor control",
+    notes: "Lifecycle-journal final control for relocation crash followed by reordered source-window survivor query evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["journal", "restart", "relocation", "stale-query"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindowThenAbruptRestart", tab: { tabId: 1 }, captureStaleTabs: "jh-relocate-final-old" },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 10 }, order: "reverse" }
+    ]
+  },
+  {
+    id: "jh-restore-window-abrupt-reordered-control",
+    title: "journal restore window abrupt reordered control",
+    notes: "Lifecycle-journal final control for restored-window crash followed by reordered restored-window query evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["journal", "restart", "restore", "stale-query"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredWindows: "jh-restore-final-window" },
+      { type: "manualRefreshWithReorderedQuery", window: { capture: "jh-restore-final-window" }, order: "reverse" }
+    ]
+  },
+  {
+    id: "jh-delete-window-abrupt-missing-survivor-control",
+    title: "journal delete window abrupt missing survivor control",
+    notes: "Lifecycle-journal final control for window delete crash followed by partial query omitting an unaffected survivor window.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["journal", "restart", "delete-rejection", "partial-snapshot"],
+    actions: [
+      { type: "outlinerDeleteNodeThenAbruptRestart", node: { window: { windowId: 20 } }, captureStaleTabs: "jh-delete-final-window-stale" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { windowId: 10 } }
+    ]
   }
 ];
 
@@ -8937,6 +9989,11 @@ async function runDomainAction(context: GeneratedTraceContext, action: DomainAct
     return;
   }
 
+  if (action.type === "outlinerGroupTabThenAbruptRestart") {
+    await runDomainOutlinerGroupTabThenAbruptRestart(context, action.tab, action.captureStaleTabs);
+    return;
+  }
+
   if (action.type === "outlinerMoveTabToNewWindow") {
     await runDomainOutlinerMoveTabToNewWindow(context, action.tab, action.captureStaleTabs);
     return;
@@ -8947,6 +10004,11 @@ async function runDomainAction(context: GeneratedTraceContext, action: DomainAct
     return;
   }
 
+  if (action.type === "outlinerMoveTabCommandToNewWindowThenAbruptRestart") {
+    await runDomainOutlinerMoveTabCommandToNewWindowThenAbruptRestart(context, action.tab, action.captureStaleTabs);
+    return;
+  }
+
   if (action.type === "outlinerMoveTabCommandToNewWindowRejectingCreate") {
     await runDomainOutlinerMoveTabCommandToNewWindowRejectingCreate(context, action.tab, action.captureStaleTabs);
     return;
@@ -8954,6 +10016,11 @@ async function runDomainAction(context: GeneratedTraceContext, action: DomainAct
 
   if (action.type === "outlinerMoveSubtreeToTopLevel") {
     await runDomainOutlinerMoveSubtreeToTopLevel(context, action.tab, action.captureStaleTabs);
+    return;
+  }
+
+  if (action.type === "outlinerMoveSubtreeToTopLevelThenAbruptRestart") {
+    await runDomainOutlinerMoveSubtreeToTopLevelThenAbruptRestart(context, action.tab, action.captureStaleTabs);
     return;
   }
 
@@ -8982,6 +10049,11 @@ async function runDomainAction(context: GeneratedTraceContext, action: DomainAct
     return;
   }
 
+  if (action.type === "outlinerCloseNodeThenAbruptRestart") {
+    await runDomainOutlinerCloseNodeThenAbruptRestart(context, action.node, action.captureStaleTabs);
+    return;
+  }
+
   if (action.type === "outlinerDeleteWindowRejectingClose") {
     await runDomainOutlinerDeleteWindowRejectingClose(context, action.window);
     return;
@@ -8997,6 +10069,11 @@ async function runDomainAction(context: GeneratedTraceContext, action: DomainAct
     return;
   }
 
+  if (action.type === "outlinerDeleteNodeThenAbruptRestart") {
+    await runDomainOutlinerDeleteNodeThenAbruptRestart(context, action.node, action.captureStaleTabs);
+    return;
+  }
+
   if (action.type === "outlinerRestoreDeleteWindowDelayedEvent") {
     await runDomainOutlinerRestoreDeleteWindowDelayedEvent(context, action.window, action.captureStaleTabs);
     return;
@@ -9009,6 +10086,21 @@ async function runDomainAction(context: GeneratedTraceContext, action: DomainAct
       action.captureRestoredTabs,
       action.captureRestoredWindows
     );
+    return;
+  }
+
+  if (action.type === "outlinerRestoreNodeThenAbruptRestart") {
+    await runDomainOutlinerRestoreNodeThenAbruptRestart(
+      context,
+      action.node,
+      action.captureRestoredTabs,
+      action.captureRestoredWindows
+    );
+    return;
+  }
+
+  if (action.type === "injectCloseJournalThenAbruptRestart") {
+    await runDomainInjectCloseJournalThenAbruptRestart(context, action.node);
     return;
   }
 
@@ -9062,6 +10154,16 @@ async function runDomainAction(context: GeneratedTraceContext, action: DomainAct
     return;
   }
 
+  if (action.type === "outlinerUndoThenAbruptRestart") {
+    await runDomainHistoryCommandThenAbruptRestart(context, "undo");
+    return;
+  }
+
+  if (action.type === "outlinerRedoThenAbruptRestart") {
+    await runDomainHistoryCommandThenAbruptRestart(context, "redo");
+    return;
+  }
+
   if (action.type === "nativeCloseTab") {
     await runDomainNativeCloseTab(context, action.tab, action.order ?? "tabRemovedThenSessionChanged");
     return;
@@ -9107,17 +10209,29 @@ async function runDomainRestartBackgroundAbrupt(context: GeneratedTraceContext):
 
 function clearFakeRuntimeListeners(runtime: FakeRuntime): void {
   runtime.events.installed.clearListeners();
+  runtime.events.installed.clearPending();
   runtime.events.startup.clearListeners();
+  runtime.events.startup.clearPending();
   runtime.events.alarm.clearListeners();
+  runtime.events.alarm.clearPending();
   runtime.events.tabCreated.clearListeners();
+  runtime.events.tabCreated.clearPending();
   runtime.events.tabActivated.clearListeners();
+  runtime.events.tabActivated.clearPending();
   runtime.events.tabUpdated.clearListeners();
+  runtime.events.tabUpdated.clearPending();
   runtime.events.tabRemoved.clearListeners();
+  runtime.events.tabRemoved.clearPending();
   runtime.events.windowFocusChanged.clearListeners();
+  runtime.events.windowFocusChanged.clearPending();
   runtime.events.windowRemoved.clearListeners();
+  runtime.events.windowRemoved.clearPending();
   runtime.events.sessionChanged.clearListeners();
+  runtime.events.sessionChanged.clearPending();
   runtime.events.command.clearListeners();
+  runtime.events.command.clearPending();
   runtime.events.storageChanged.clearListeners();
+  runtime.events.storageChanged.clearPending();
 }
 
 function isDomainRuntimeEventAction(action: DomainAction): action is DomainRuntimeEventAction {
@@ -9198,6 +10312,24 @@ async function runDomainOutlinerGroupTab(
   captureMovedTab(context, tab.id);
 }
 
+async function runDomainOutlinerGroupTabThenAbruptRestart(
+  context: GeneratedTraceContext,
+  selector: DomainTabSelector,
+  captureStaleTabs?: string
+): Promise<void> {
+  const tab = resolveDomainTab(context, selector);
+  const candidate = await domainCommandCandidateForTab(context, tab.id);
+  captureStaleRuntimeTabs(context, captureStaleTabs, candidate.staleTabs);
+  context.staleLiveEventTabs.push(...candidate.staleTabs);
+  const result = await context.controller.handleMessage({
+    type: "wrapNodeInGroup",
+    nodeId: candidate.nodeId
+  });
+  expectCommandAck(result, true);
+  captureMovedTab(context, tab.id);
+  await runDomainRestartBackgroundAbrupt(context);
+}
+
 async function runDomainOutlinerMoveTabToNewWindow(
   context: GeneratedTraceContext,
   selector: DomainTabSelector,
@@ -9232,6 +10364,25 @@ async function runDomainOutlinerMoveTabCommandToNewWindow(
   });
   expectCommandAck(result, true);
   captureMovedTab(context, tab.id);
+}
+
+async function runDomainOutlinerMoveTabCommandToNewWindowThenAbruptRestart(
+  context: GeneratedTraceContext,
+  selector: DomainTabSelector,
+  captureStaleTabs?: string
+): Promise<void> {
+  const tab = resolveDomainTab(context, selector);
+  const candidate = await domainRelocatableCommandCandidateForTab(context, tab.id);
+  captureStaleRuntimeTabs(context, captureStaleTabs, candidate.staleTabs);
+  context.staleLiveEventTabs.push(...candidate.staleTabs);
+  const result = await context.controller.handleMessage({
+    type: "moveNodeToNewWindow",
+    nodeId: candidate.nodeId,
+    index: 0
+  });
+  expectCommandAck(result, true);
+  captureMovedTab(context, tab.id);
+  await runDomainRestartBackgroundAbrupt(context);
 }
 
 async function runDomainOutlinerMoveTabCommandToNewWindowRejectingCreate(
@@ -9272,6 +10423,24 @@ async function runDomainOutlinerMoveSubtreeToTopLevel(
   });
   expectCommandAck(result, true);
   captureMovedTab(context, tab.id);
+}
+
+async function runDomainOutlinerMoveSubtreeToTopLevelThenAbruptRestart(
+  context: GeneratedTraceContext,
+  selector: DomainTabSelector,
+  captureStaleTabs?: string
+): Promise<void> {
+  const tab = resolveDomainTab(context, selector);
+  const candidate = await domainRelocatableCommandCandidateForTab(context, tab.id);
+  captureStaleRuntimeTabs(context, captureStaleTabs, candidate.staleTabs);
+  context.staleLiveEventTabs.push(...candidate.staleTabs);
+  const result = await context.controller.handleMessage({
+    type: "moveSubtreeToTopLevel",
+    nodeId: candidate.nodeId
+  });
+  expectCommandAck(result, true);
+  captureMovedTab(context, tab.id);
+  await runDomainRestartBackgroundAbrupt(context);
 }
 
 async function domainCommandCandidateForTab(
@@ -9406,6 +10575,25 @@ async function runDomainOutlinerCloseNodeRejectingClose(
   await pruneMissingExpectedClosedNodes(context, protectedExpectedNodeIds);
 }
 
+async function runDomainOutlinerCloseNodeThenAbruptRestart(
+  context: GeneratedTraceContext,
+  selector: DomainNodeSelector,
+  captureStaleTabs?: string
+): Promise<void> {
+  const state = (await context.controller.handleMessage({ type: "getState" })) as OutlineState;
+  const nodeId = resolveDomainNodeId(context, state, selector);
+  captureStaleRuntimeTabs(context, captureStaleTabs, staleRuntimeTabsForDomainNode(context, state, nodeId));
+  const protectedExpectedNodeIds = expectedClosedNodeIdsForOutlinerCloseNode(state, nodeId);
+  for (const protectedNodeId of protectedExpectedNodeIds) {
+    context.expectedClosedNodeIds.add(protectedNodeId);
+  }
+
+  const result = await context.controller.handleMessage({ type: "closeNode", nodeId });
+  expect((result as CommandAck).type).toBe("commandAck");
+  await runDomainRestartBackgroundAbrupt(context);
+  await pruneMissingExpectedClosedNodes(context, protectedExpectedNodeIds);
+}
+
 function expectedClosedNodeIdsForOutlinerCloseNode(state: OutlineState, nodeId: NodeId): NodeId[] {
   const node = state.nodes[nodeId];
   if (!node) {
@@ -9435,6 +10623,46 @@ function expectedClosedNodeIdsForOutlinerCloseNode(state: OutlineState, nodeId: 
 
   return generatedSubtreeNodeIds(state, nodeId)
     .filter((candidateId) => state.nodes[candidateId]?.status === "live");
+}
+
+function staleRuntimeTabsForDomainNode(
+  context: GeneratedTraceContext,
+  state: OutlineState,
+  nodeId: NodeId
+): RuntimeTab[] {
+  return generatedSubtreeNodeIds(state, nodeId).flatMap((candidateId) => {
+    const node = state.nodes[candidateId];
+    if (node?.kind !== "tab" || node.status !== "live" || !node.live || !("tabId" in node.live)) {
+      return [];
+    }
+    const tab = context.runtime.tabs.find((candidate) => candidate.id === node.live.tabId);
+    return tab ? [copyTab(tab)] : [];
+  });
+}
+
+function runtimeClosePlanForDomainNode(
+  context: GeneratedTraceContext,
+  state: OutlineState,
+  nodeId: NodeId
+): { tabIds: number[]; windowIds: number[] } {
+  const tabIds = new Set<number>();
+  const windowIds = new Set<number>();
+  for (const candidateId of generatedSubtreeNodeIds(state, nodeId)) {
+    const node = state.nodes[candidateId];
+    if (node?.kind === "tab" && node.status === "live" && node.live && "tabId" in node.live) {
+      tabIds.add(node.live.tabId);
+    }
+    if (node?.kind === "window" && node.status === "live" && node.live && "windowId" in node.live) {
+      windowIds.add(node.live.windowId);
+      for (const tab of tabsInRuntimeWindow(context.runtime, node.live.windowId)) {
+        tabIds.add(tab.id);
+      }
+    }
+  }
+  return {
+    tabIds: [...tabIds],
+    windowIds: [...windowIds]
+  };
 }
 
 async function runDomainOutlinerDeleteWindowRejectingClose(
@@ -9526,6 +10754,23 @@ async function runDomainOutlinerDeleteNodeRejectingClose(
   expect((result as CommandAck).type).toBe("commandAck");
   markCommandDeletedNodes(context, deletedNodeIds);
   await flushGeneratedCloseEvents(context);
+  await pruneMissingExpectedClosedNodes(context, []);
+}
+
+async function runDomainOutlinerDeleteNodeThenAbruptRestart(
+  context: GeneratedTraceContext,
+  selector: DomainNodeSelector,
+  captureStaleTabs?: string
+): Promise<void> {
+  const state = (await context.controller.handleMessage({ type: "getState" })) as OutlineState;
+  const nodeId = resolveDomainNodeId(context, state, selector);
+  captureStaleRuntimeTabs(context, captureStaleTabs, staleRuntimeTabsForDomainNode(context, state, nodeId));
+  const deletedNodeIds = generatedSubtreeNodeIds(state, nodeId);
+
+  const result = await context.controller.handleMessage({ type: "deleteNode", nodeId });
+  expectCommandAck(result, true);
+  markCommandDeletedNodes(context, deletedNodeIds);
+  await runDomainRestartBackgroundAbrupt(context);
   await pruneMissingExpectedClosedNodes(context, []);
 }
 
@@ -9629,6 +10874,52 @@ async function runDomainOutlinerRestoreNodeRejectingCreate(
   });
   trackRestoreCommandLifecycleExpectations(context, before, after);
   await flushGeneratedRuntimeEventRefreshes(context);
+}
+
+async function runDomainOutlinerRestoreNodeThenAbruptRestart(
+  context: GeneratedTraceContext,
+  selector: DomainNodeSelector,
+  captureRestoredTabs?: string,
+  captureRestoredWindows?: string
+): Promise<void> {
+  const before = (await context.controller.handleMessage({ type: "getState" })) as OutlineState;
+  const nodeId = resolveDomainNodeId(context, before, selector);
+  const candidateNodeIds = new Set(generatedSubtreeNodeIds(before, nodeId));
+
+  const result = await context.controller.handleMessage({ type: "restoreNode", nodeId });
+  expect((result as CommandAck).type).toBe("commandAck");
+  const after = (await context.controller.handleMessage({ type: "getState" })) as OutlineState;
+  captureRestoredRuntimeResources(context, before, after, candidateNodeIds, {
+    tabs: captureRestoredTabs,
+    windows: captureRestoredWindows
+  });
+  trackRestoreCommandLifecycleExpectations(context, before, after);
+  await runDomainRestartBackgroundAbrupt(context);
+}
+
+async function runDomainInjectCloseJournalThenAbruptRestart(
+  context: GeneratedTraceContext,
+  selector: DomainNodeSelector
+): Promise<void> {
+  const state = (await context.controller.handleMessage({ type: "getState" })) as OutlineState;
+  const nodeId = resolveDomainNodeId(context, state, selector);
+  const plan = runtimeClosePlanForDomainNode(context, state, nodeId);
+  await context.runtime.api.storage.local.set({
+    [RUNTIME_LIFECYCLE_JOURNAL_KEY]: {
+      version: 1,
+      entries: [
+        {
+          version: 1,
+          id: `domain-journal:${nodeId}`,
+          createdAt: context.now,
+          kind: "closeNode",
+          nodeId,
+          plan
+        }
+      ]
+    }
+  });
+  await runDomainRestartBackgroundAbrupt(context);
 }
 
 function captureRestoredRuntimeResources(
@@ -9761,6 +11052,18 @@ async function runDomainHistoryCommand(context: GeneratedTraceContext, type: "un
   trackHistoryCommandLifecycleExpectations(context, before, after);
   await flushGeneratedCloseEvents(context);
   await flushGeneratedRuntimeEventRefreshes(context);
+}
+
+async function runDomainHistoryCommandThenAbruptRestart(
+  context: GeneratedTraceContext,
+  type: "undo" | "redo"
+): Promise<void> {
+  const before = (await context.controller.handleMessage({ type: "getState" })) as OutlineState;
+  const result = await context.controller.handleMessage({ type });
+  expect((result as CommandAck).type).toBe("commandAck");
+  const after = (await context.controller.handleMessage({ type: "getState" })) as OutlineState;
+  trackHistoryCommandLifecycleExpectations(context, before, after);
+  await runDomainRestartBackgroundAbrupt(context);
 }
 
 function trackHistoryCommandLifecycleExpectations(
