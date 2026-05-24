@@ -100,6 +100,30 @@ Use these as starting targets, not hard promises:
 
 ## Progress Log
 
+### 2026-05-24: Runtime Lifecycle Perf Recovery
+
+- Recovered the lifecycle-journal performance regression while keeping the crash-recovery correctness work intact.
+- Split synthetic profile accounting so full state saves are tracked separately from tiny lifecycle-journal writes, and state/tree broadcasts are tracked separately from small `historyStatus` broadcasts. This keeps the guard strict about expensive work without marking required durability/status messages as full-tree regressions.
+- Removed avoidable O(total nodes) work from hot paths:
+  - command ledger tombstone cleanup now uses command candidate node IDs instead of scanning all live nodes;
+  - structural command history deltas reuse command candidate node IDs instead of full-tree undo/redo diffs;
+  - live-tab grouping no longer builds a full outline lookup to rediscover the active tab it already visited;
+  - source-window-empty checks after relocation now early-exit on the first remaining live tab;
+  - v3 manifest save no longer constructs every node shard just to list shard keys;
+  - save diffing accepts candidate node IDs from compact patch paths.
+- Deferred persisted-baseline cloning after saves, with synthetic profiles explicitly settling setup work before measuring interactions.
+- Accepted one small restore budget movement: `restore-last-transient-echo` `firstBroadcastMs` budget moved from 15ms to 20ms because durable restore-create journaling must complete before the browser create side effect. No full state save, state broadcast, projection, or query budget moved.
+- Final guard after `pnpm perf:runtime-guard`:
+  - close tabRemoved->session: first 49ms, measured 51ms, save-flush-inclusive 185ms, 1 state save, 1 journal write, 1 state broadcast.
+  - close session->tabRemoved: first 52ms, measured 54ms, save-flush-inclusive 203ms, 1 state save, 1 journal write, 1 state broadcast.
+  - restore transient echo: first 19ms, measured 23ms, save-flush-inclusive 172ms, 1 state save, 1 journal write, 1 state broadcast.
+  - delete last tab: first 16ms, measured 17ms, save-flush-inclusive 121ms, 1 state save, 1 journal write, 1 state broadcast, 1 status broadcast.
+  - focus last tab: first/measured 16ms, no saves.
+  - group live leaf: first 97ms, measured 122ms, save-flush-inclusive 238ms, 1 state save, 1 journal write, 1 state broadcast, 1 status broadcast.
+  - move leaf: first 41ms, measured 78ms, save-flush-inclusive 199ms, 1 state save, 1 state broadcast, 1 status broadcast.
+  - refresh no-op: measured 77ms, no saves or broadcasts.
+- Verification: `pnpm test`, `pnpm build` through `pnpm perf:runtime-guard`, `node --check scripts/hunt-runtime-traces.mjs`, and `pnpm perf:runtime-guard` passed.
+
 ### 2026-05-24: Runtime Hunt Perf Guardrails
 
 - Added a budgeted `pnpm perf:runtime-guard` process for correctness fix passes. It checks perceived latency and deferred work: first patch/broadcast time, measured command/event time, save-flush-inclusive time, save/broadcast counts, projection work, runtime query work, and stringified MB.

@@ -1537,7 +1537,7 @@ function applyRuntimeTabsToLiveSubtree(
   }
 
   const tabsById = new Map(tabs.map((tab) => [tab.id, tab]));
-  const activeWindowIds = new Set<number>();
+  const activeTabNodeIdsByWindowId = new Map<number, NodeId>();
   for (const id of collectSubtreeIdsExcludingNestedLiveWindows(state, nodeId)) {
     const candidate = state.nodes[id];
     if (!candidate || !isNodeLiveTab(candidate)) {
@@ -1552,18 +1552,12 @@ function applyRuntimeTabsToLiveSubtree(
     const liveTab = cloneNodeForMutation(state, id);
     updateLiveTabNode(liveTab, tab, now);
     if (tab.active) {
-      activeWindowIds.add(tab.windowId);
+      activeTabNodeIdsByWindowId.set(tab.windowId, id);
     }
   }
 
-  for (const windowId of activeWindowIds) {
-    const activeTab = tabs.find((tab) => tab.windowId === windowId && tab.active);
-    if (activeTab) {
-      const activeNodeId = buildOutlineLookup(state).liveTabNodeIdsByRuntimeId.get(activeTab.id);
-      if (activeNodeId) {
-        setActiveTabInRuntimeWindow(state, windowId, activeNodeId);
-      }
-    }
+  for (const [windowId, activeNodeId] of activeTabNodeIdsByWindowId) {
+    setActiveTabInRuntimeWindow(state, windowId, activeNodeId);
   }
 }
 
@@ -1582,13 +1576,44 @@ function closeSourceWindowIfRelocationEmptiedIt(
     return state;
   }
 
-  const hasOwnedLiveTabs = projectLiveTabs(state, sourceWindowNodeId)
-    .some((tab) => tab.windowId === sourceRuntimeWindowId);
-  if (hasOwnedLiveTabs) {
+  if (sourceWindowHasOwnedLiveTabs(state, sourceWindowNodeId, sourceRuntimeWindowId)) {
     return state;
   }
 
   return repairState(closeWindow(state, sourceRuntimeWindowId, { now }));
+}
+
+function sourceWindowHasOwnedLiveTabs(
+  state: OutlineState,
+  sourceWindowNodeId: NodeId,
+  sourceRuntimeWindowId: number
+): boolean {
+  const visited = new Set<NodeId>();
+  const stack = [...(state.nodes[sourceWindowNodeId]?.childIds ?? [])];
+
+  while (stack.length > 0) {
+    const currentId = stack.pop()!;
+    if (visited.has(currentId)) {
+      continue;
+    }
+    visited.add(currentId);
+
+    const node = state.nodes[currentId];
+    if (!node) {
+      continue;
+    }
+    if (isNodeLiveWindow(node)) {
+      continue;
+    }
+    if (isNodeLiveTab(node) && node.live.windowId === sourceRuntimeWindowId) {
+      return true;
+    }
+    for (let index = node.childIds.length - 1; index >= 0; index -= 1) {
+      stack.push(node.childIds[index]!);
+    }
+  }
+
+  return false;
 }
 
 function collectSubtreeIdsExcludingNestedLiveWindows(state: OutlineState, nodeId: NodeId): NodeId[] {

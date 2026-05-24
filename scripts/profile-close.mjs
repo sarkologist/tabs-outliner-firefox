@@ -9,8 +9,19 @@ import {
   eventCountsSnapshot,
   eventCountsTotal,
   flushProfileEvents,
-  resetEventCounts
+  resetEventCounts,
+  settleProfileBackgroundWork
 } from "./profile-harness.mjs";
+import {
+  broadcastMetricsResult,
+  createBroadcastMetrics,
+  createStorageMetrics,
+  recordProfileBroadcast,
+  recordProfileStorageSet,
+  resetBroadcastMetrics,
+  resetStorageMetrics,
+  storageMetricsResult
+} from "./profile-storage-metrics.mjs";
 
 function parseArgs(argv) {
   const options = {
@@ -70,13 +81,11 @@ function makeRuntime(tabCount, order) {
       title: `Tab ${index + 1}`
     })),
     recentlyClosed: undefined,
-    saves: 0,
-    broadcasts: 0,
-    saveStringifyMs: 0,
+    ...createStorageMetrics(),
+    ...createBroadcastMetrics(),
     broadcastStringifyMs: 0,
     projectionMs: 0,
     nodePatchMs: 0,
-    bytes: 0,
     operationStart: 0,
     firstBroadcastMs: undefined,
     sidebarState: undefined,
@@ -120,15 +129,14 @@ function makeRuntime(tabCount, order) {
           const patch = measure(() => applyNodeStateUpdate(runtime, message));
           runtime.nodePatchMs += patch.ms;
         }
-        runtime.broadcasts += 1;
+        recordProfileBroadcast(runtime, message);
       }
     },
     storage: {
       local: {
         get: async (key) => typeof key === "string" ? { [key]: undefined } : {},
         set: async (items) => {
-          measureRuntimeJson(runtime, "save", items);
-          runtime.saves += 1;
+          recordProfileStorageSet(runtime, items, measure);
         },
         remove: async () => undefined,
         onChanged: createPassiveEvent()
@@ -270,16 +278,15 @@ async function profile(options) {
   await controller.flushPendingSaves();
   runtime.sidebarState = await controller.handleMessage({ type: "getState" });
   runtime.sidebarProjection = buildVisibleTreeProjection(runtime.sidebarState, "");
+  await settleProfileBackgroundWork();
   const tabId = targetTabId(options.tabs, options.target);
   const nodeId = `tab:${tabId}`;
 
-  runtime.saves = 0;
-  runtime.broadcasts = 0;
-  runtime.saveStringifyMs = 0;
+  resetStorageMetrics(runtime);
+  resetBroadcastMetrics(runtime);
   runtime.broadcastStringifyMs = 0;
   runtime.projectionMs = 0;
   runtime.nodePatchMs = 0;
-  runtime.bytes = 0;
   runtime.operationStart = performance.now();
   runtime.firstBroadcastMs = undefined;
   runtime.tabsQueryMs = 0;
@@ -305,15 +312,13 @@ async function profile(options) {
     saveFlushMs: Math.round(saveFlush.ms),
     totalWithSaveFlushMs: Math.round(command.ms + eventEcho.ms + saveFlush.ms),
     firstBroadcastMs: Math.round(runtime.firstBroadcastMs ?? 0),
-    saveStringifyMs: Math.round(runtime.saveStringifyMs),
+    ...storageMetricsResult(runtime),
     broadcastStringifyMs: Math.round(runtime.broadcastStringifyMs),
     projectionMs: Math.round(runtime.projectionMs),
     nodePatchMs: Math.round(runtime.nodePatchMs),
     tabsQueryMs: Math.round(runtime.tabsQueryMs),
     windowsGetAllMs: Math.round(runtime.windowsGetAllMs),
-    mbStringified: Math.round(runtime.bytes / 1024 / 1024),
-    saves: runtime.saves,
-    broadcasts: runtime.broadcasts,
+    ...broadcastMetricsResult(runtime),
     recentClosedCalls: runtime.recentClosedCalls,
     eventCounts: eventCountsSnapshot(runtime.eventCounts),
     eventCount: eventCountsTotal(runtime.eventCounts),

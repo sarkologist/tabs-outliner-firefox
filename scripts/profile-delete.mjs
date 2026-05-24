@@ -13,8 +13,19 @@ import {
   eventCountsSnapshot,
   eventCountsTotal,
   flushProfileEvents,
-  resetEventCounts
+  resetEventCounts,
+  settleProfileBackgroundWork
 } from "./profile-harness.mjs";
+import {
+  broadcastMetricsResult,
+  createBroadcastMetrics,
+  createStorageMetrics,
+  recordProfileBroadcast,
+  recordProfileStorageSet,
+  resetBroadcastMetrics,
+  resetStorageMetrics,
+  storageMetricsResult
+} from "./profile-storage-metrics.mjs";
 
 function parseArgs(argv) {
   const options = {
@@ -106,13 +117,11 @@ function makeRuntime(options) {
     windows: [{ id: 10, focused: true, incognito: false }],
     tabs: makeRuntimeTabs(options),
     query: options.query,
-    saves: 0,
-    broadcasts: 0,
-    saveStringifyMs: 0,
+    ...createStorageMetrics(),
+    ...createBroadcastMetrics(),
     broadcastStringifyMs: 0,
     projectionMs: 0,
     treePatchMs: 0,
-    bytes: 0,
     operationStart: 0,
     firstBroadcastMs: undefined,
     sidebarState: undefined,
@@ -153,7 +162,7 @@ function makeRuntime(options) {
           const patch = measure(() => applyTreeStructureUpdate(runtime, message));
           runtime.treePatchMs += patch.ms;
         }
-        runtime.broadcasts += 1;
+        recordProfileBroadcast(runtime, message);
       }
     },
     storage: {
@@ -165,8 +174,7 @@ function makeRuntime(options) {
           return typeof key === "string" ? { [key]: undefined } : {};
         },
         set: async (items) => {
-          measureRuntimeJson(runtime, "save", items);
-          runtime.saves += 1;
+          recordProfileStorageSet(runtime, items, measure);
         },
         remove: async () => undefined,
         onChanged: createPassiveEvent()
@@ -328,15 +336,14 @@ async function profile(options) {
   }
   runtime.sidebarState = await controller.handleMessage({ type: "getState" });
   runtime.sidebarProjection = buildVisibleTreeProjection(runtime.sidebarState, options.query);
+  await settleProfileBackgroundWork();
   const nodeIds = targetNodeIds(options);
 
-  runtime.saves = 0;
-  runtime.broadcasts = 0;
-  runtime.saveStringifyMs = 0;
+  resetStorageMetrics(runtime);
+  resetBroadcastMetrics(runtime);
   runtime.broadcastStringifyMs = 0;
   runtime.projectionMs = 0;
   runtime.treePatchMs = 0;
-  runtime.bytes = 0;
   runtime.operationStart = performance.now();
   runtime.firstBroadcastMs = undefined;
   resetEventCounts(runtime.eventCounts);
@@ -373,13 +380,11 @@ async function profile(options) {
     saveFlushMs: Math.round(saveFlush.ms),
     totalWithSaveFlushMs: Math.round(commandMs + eventEchoMs + saveFlush.ms),
     firstBroadcastMs: Math.round(runtime.firstBroadcastMs ?? 0),
-    saveStringifyMs: Math.round(runtime.saveStringifyMs),
+    ...storageMetricsResult(runtime),
     broadcastStringifyMs: Math.round(runtime.broadcastStringifyMs),
     projectionMs: Math.round(runtime.projectionMs),
     treePatchMs: Math.round(runtime.treePatchMs),
-    mbStringified: Math.round(runtime.bytes / 1024 / 1024),
-    saves: runtime.saves,
-    broadcasts: runtime.broadcasts,
+    ...broadcastMetricsResult(runtime),
     eventCounts: eventCountsSnapshot(runtime.eventCounts),
     eventCount: eventCountsTotal(runtime.eventCounts),
     ack: lastAck,

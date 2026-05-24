@@ -14,8 +14,19 @@ import {
   eventCountsSnapshot,
   eventCountsTotal,
   flushProfileEvents,
-  resetEventCounts
+  resetEventCounts,
+  settleProfileBackgroundWork
 } from "./profile-harness.mjs";
+import {
+  broadcastMetricsResult,
+  createBroadcastMetrics,
+  createStorageMetrics,
+  recordProfileBroadcast,
+  recordProfileStorageSet,
+  resetBroadcastMetrics,
+  resetStorageMetrics,
+  storageMetricsResult
+} from "./profile-storage-metrics.mjs";
 
 function parseArgs(argv) {
   const options = {
@@ -68,18 +79,18 @@ function makeRuntime(tabCount, scenario) {
       url: `https://command.example/${index + 1}`,
       title: `Tab ${index + 1}`
     })),
-    saves: 0,
-    broadcasts: 0,
+    ...createStorageMetrics(),
+    ...createBroadcastMetrics(),
     createdWindows: 0,
+    createWindowMs: 0,
     moveCalls: 0,
     movedTabCount: 0,
     maxMoveBatch: 0,
-    saveStringifyMs: 0,
+    moveTabsMs: 0,
     broadcastStringifyMs: 0,
     projectionMs: 0,
     nodePatchMs: 0,
     treePatchMs: 0,
-    bytes: 0,
     operationStart: 0,
     firstBroadcastMs: undefined,
     sidebarState: undefined,
@@ -123,15 +134,14 @@ function makeRuntime(tabCount, scenario) {
           const patch = measure(() => applyTreeStructureUpdate(runtime, message));
           runtime.treePatchMs += patch.ms;
         }
-        runtime.broadcasts += 1;
+        recordProfileBroadcast(runtime, message);
       }
     },
     storage: {
       local: {
         get: async (key) => typeof key === "string" ? { [key]: undefined } : {},
         set: async (items) => {
-          measureRuntimeJson(runtime, "save", items);
-          runtime.saves += 1;
+          recordProfileStorageSet(runtime, items, measure);
         },
         remove: async () => undefined,
         onChanged: createPassiveEvent()
@@ -171,127 +181,137 @@ function makeRuntime(tabCount, scenario) {
 }
 
 function createWindow(runtime, createData = {}) {
-  const windowId = Math.max(0, ...runtime.windows.map((windowInfo) => windowInfo.id)) + 1;
-  runtime.createdWindows += 1;
-  const focused = createData.focused ?? true;
-  runtime.windows = runtime.windows
-    .map((windowInfo) => ({ ...windowInfo, focused: false }))
-    .concat({ id: windowId, focused, incognito: false });
+  const start = performance.now();
+  try {
+    const windowId = Math.max(0, ...runtime.windows.map((windowInfo) => windowInfo.id)) + 1;
+    runtime.createdWindows += 1;
+    const focused = createData.focused ?? true;
+    runtime.windows = runtime.windows
+      .map((windowInfo) => ({ ...windowInfo, focused: false }))
+      .concat({ id: windowId, focused, incognito: false });
 
-  if (typeof createData.tabId === "number") {
-    const tabs = moveTabs(runtime, [createData.tabId], { windowId, index: 0 }, { count: false });
+    if (typeof createData.tabId === "number") {
+      const tabs = moveTabs(runtime, [createData.tabId], { windowId, index: 0 }, { count: false });
+      if (focused) {
+        runtime.events.windowFocusChanged.dispatch(windowId);
+      }
+      return {
+        id: windowId,
+        focused,
+        incognito: false,
+        tabs
+      };
+    }
+
+    const urls = Array.isArray(createData.url) ? createData.url : createData.url ? [createData.url] : [];
+    const firstTabId = Math.max(0, ...runtime.tabs.map((tab) => tab.id)) + 1;
+    const tabs = urls.map((url, index) => ({
+      id: firstTabId + index,
+      windowId,
+      index,
+      active: index === 0,
+      url,
+      title: url
+    }));
+    runtime.tabs = [...runtime.tabs, ...tabs];
     if (focused) {
       runtime.events.windowFocusChanged.dispatch(windowId);
     }
+    for (const tab of tabs) {
+      runtime.events.tabCreated.dispatch({ ...tab });
+    }
+    const activeTab = tabs.find((tab) => tab.active);
+    if (activeTab) {
+      runtime.events.tabActivated.dispatch({ tabId: activeTab.id, windowId });
+    }
+
     return {
       id: windowId,
       focused,
       incognito: false,
-      tabs
+      tabs: tabs.map((tab) => ({ ...tab }))
     };
+  } finally {
+    runtime.createWindowMs += performance.now() - start;
   }
-
-  const urls = Array.isArray(createData.url) ? createData.url : createData.url ? [createData.url] : [];
-  const firstTabId = Math.max(0, ...runtime.tabs.map((tab) => tab.id)) + 1;
-  const tabs = urls.map((url, index) => ({
-    id: firstTabId + index,
-    windowId,
-    index,
-    active: index === 0,
-    url,
-    title: url
-  }));
-  runtime.tabs = [...runtime.tabs, ...tabs];
-  if (focused) {
-    runtime.events.windowFocusChanged.dispatch(windowId);
-  }
-  for (const tab of tabs) {
-    runtime.events.tabCreated.dispatch({ ...tab });
-  }
-  const activeTab = tabs.find((tab) => tab.active);
-  if (activeTab) {
-    runtime.events.tabActivated.dispatch({ tabId: activeTab.id, windowId });
-  }
-
-  return {
-    id: windowId,
-    focused,
-    incognito: false,
-    tabs: tabs.map((tab) => ({ ...tab }))
-  };
 }
 
 function moveTabs(runtime, tabIds, moveProperties, options = {}) {
-  const ids = Array.isArray(tabIds) ? tabIds : [tabIds];
-  if (options.count) {
-    runtime.moveCalls += 1;
-    runtime.movedTabCount += ids.length;
-    runtime.maxMoveBatch = Math.max(runtime.maxMoveBatch, ids.length);
-  }
+  const start = performance.now();
+  try {
+    const ids = Array.isArray(tabIds) ? tabIds : [tabIds];
+    if (options.count) {
+      runtime.moveCalls += 1;
+      runtime.movedTabCount += ids.length;
+      runtime.maxMoveBatch = Math.max(runtime.maxMoveBatch, ids.length);
+    }
 
-  const tabById = new Map(runtime.tabs.map((tab) => [tab.id, tab]));
-  const movingIds = new Set(ids);
-  const moving = ids.flatMap((tabId) => {
-    const tab = tabById.get(tabId);
-    return tab ? [{ ...tab }] : [];
-  });
-  if (moving.length === 0) {
-    return [];
-  }
+    const tabById = new Map(runtime.tabs.map((tab) => [tab.id, tab]));
+    const movingIds = new Set(ids);
+    const moving = ids.flatMap((tabId) => {
+      const tab = tabById.get(tabId);
+      return tab ? [{ ...tab }] : [];
+    });
+    if (moving.length === 0) {
+      return [];
+    }
 
-  const targetWindowId = moveProperties.windowId ?? moving[0].windowId;
-  const affectedWindowIds = new Set([targetWindowId, ...moving.map((tab) => tab.windowId)]);
-  const remaining = runtime.tabs.filter((tab) => !movingIds.has(tab.id));
-  const targetTabs = remaining
-    .filter((tab) => tab.windowId === targetWindowId)
-    .sort((left, right) => left.index - right.index)
-    .map((tab) => ({ ...tab }));
-  const boundedIndex = Math.max(0, Math.min(moveProperties.index, targetTabs.length));
-  targetTabs.splice(boundedIndex, 0, ...moving.map((tab) => ({ ...tab, windowId: targetWindowId })));
+    const targetWindowId = moveProperties.windowId ?? moving[0].windowId;
+    const affectedWindowIds = new Set([targetWindowId, ...moving.map((tab) => tab.windowId)]);
+    const remaining = runtime.tabs.filter((tab) => !movingIds.has(tab.id));
+    const targetTabs = remaining
+      .filter((tab) => tab.windowId === targetWindowId)
+      .sort((left, right) => left.index - right.index)
+      .map((tab) => ({ ...tab }));
+    const boundedIndex = Math.max(0, Math.min(moveProperties.index, targetTabs.length));
+    targetTabs.splice(boundedIndex, 0, ...moving.map((tab) => ({ ...tab, windowId: targetWindowId })));
 
-  const previousActiveByWindowId = new Map(
-    runtime.tabs.filter((tab) => tab.active).map((tab) => [tab.windowId, tab.id])
-  );
-  runtime.tabs = [
-    ...remaining.filter((tab) => tab.windowId !== targetWindowId).map((tab) => ({ ...tab })),
-    ...targetTabs.map((tab, index) => ({
-      ...tab,
-      index
-    }))
-  ];
-  for (const windowId of affectedWindowIds) {
-    let index = 0;
-    runtime.tabs = runtime.tabs.map((tab) => tab.windowId === windowId
-      ? {
-          ...tab,
-          index: index++
+    const previousActiveByWindowId = new Map(
+      runtime.tabs.filter((tab) => tab.active).map((tab) => [tab.windowId, tab.id])
+    );
+    runtime.tabs = [
+      ...remaining.filter((tab) => tab.windowId !== targetWindowId).map((tab) => ({ ...tab })),
+      ...targetTabs.map((tab, index) => ({
+        ...tab,
+        index
+      }))
+    ];
+    for (const windowId of affectedWindowIds) {
+      let index = 0;
+      runtime.tabs = runtime.tabs.map((tab) => tab.windowId === windowId
+        ? {
+            ...tab,
+            index: index++
+          }
+        : tab);
+    }
+
+    const movedById = new Map(runtime.tabs.map((tab) => [tab.id, tab]));
+    const moved = ids.flatMap((tabId) => {
+      const tab = movedById.get(tabId);
+      return tab ? [{ ...tab }] : [];
+    });
+    if (options.dispatch !== false) {
+      for (const tab of moved) {
+        runtime.events.tabUpdated.dispatch(tab.id, {
+          index: tab.index,
+          windowId: tab.windowId
+        }, { ...tab });
+        if (tab.active) {
+          runtime.events.tabActivated.dispatch({
+            tabId: tab.id,
+            windowId: tab.windowId,
+            ...(previousActiveByWindowId.has(tab.windowId)
+              ? { previousTabId: previousActiveByWindowId.get(tab.windowId) }
+              : {})
+          });
         }
-      : tab);
-  }
-
-  const movedById = new Map(runtime.tabs.map((tab) => [tab.id, tab]));
-  const moved = ids.flatMap((tabId) => {
-    const tab = movedById.get(tabId);
-    return tab ? [{ ...tab }] : [];
-  });
-  if (options.dispatch !== false) {
-    for (const tab of moved) {
-      runtime.events.tabUpdated.dispatch(tab.id, {
-        index: tab.index,
-        windowId: tab.windowId
-      }, { ...tab });
-      if (tab.active) {
-        runtime.events.tabActivated.dispatch({
-          tabId: tab.id,
-          windowId: tab.windowId,
-          ...(previousActiveByWindowId.has(tab.windowId)
-            ? { previousTabId: previousActiveByWindowId.get(tab.windowId) }
-            : {})
-        });
       }
     }
+    return moved;
+  } finally {
+    runtime.moveTabsMs += performance.now() - start;
   }
-  return moved;
 }
 
 function commandForScenario(scenario, tabCount) {
@@ -410,20 +430,26 @@ async function profile(options) {
   await controller.flushPendingSaves();
   runtime.sidebarState = await controller.handleMessage({ type: "getState" });
   runtime.sidebarProjection = buildVisibleTreeProjection(runtime.sidebarState, "");
+  await settleProfileBackgroundWork();
+  const traceBackground = process.env.PROFILE_BACKGROUND_TRACE === "1";
+  if (traceBackground) {
+    await controller.handleMessage({ type: "setPerformanceTraceEnabled", enabled: true });
+    await controller.handleMessage({ type: "clearPerformanceTrace" });
+  }
 
-  runtime.saves = 0;
-  runtime.broadcasts = 0;
+  resetStorageMetrics(runtime);
+  resetBroadcastMetrics(runtime);
   runtime.createdWindows = 0;
+  runtime.createWindowMs = 0;
   runtime.moveCalls = 0;
   runtime.movedTabCount = 0;
   runtime.maxMoveBatch = 0;
+  runtime.moveTabsMs = 0;
   resetEventCounts(runtime.eventCounts);
-  runtime.saveStringifyMs = 0;
   runtime.broadcastStringifyMs = 0;
   runtime.projectionMs = 0;
   runtime.nodePatchMs = 0;
   runtime.treePatchMs = 0;
-  runtime.bytes = 0;
   runtime.operationStart = performance.now();
   runtime.firstBroadcastMs = undefined;
 
@@ -431,6 +457,9 @@ async function profile(options) {
   const eventEcho = await measureAsync(() => flushProfileEvents(runtime.events));
   const current = await controller.handleMessage({ type: "getState" });
   const saveFlush = await measureAsync(() => controller.flushPendingSaves());
+  const trace = traceBackground
+    ? await controller.handleMessage({ type: "getPerformanceTrace" })
+    : undefined;
 
   return {
     scenario: options.scenario,
@@ -442,20 +471,21 @@ async function profile(options) {
     saveFlushMs: Math.round(saveFlush.ms),
     totalWithSaveFlushMs: Math.round(command.ms + eventEcho.ms + saveFlush.ms),
     firstBroadcastMs: Math.round(runtime.firstBroadcastMs ?? 0),
-    saveStringifyMs: Math.round(runtime.saveStringifyMs),
+    ...storageMetricsResult(runtime),
     broadcastStringifyMs: Math.round(runtime.broadcastStringifyMs),
     projectionMs: Math.round(runtime.projectionMs),
     nodePatchMs: Math.round(runtime.nodePatchMs),
     treePatchMs: Math.round(runtime.treePatchMs),
-    mbStringified: Math.round(runtime.bytes / 1024 / 1024),
-    saves: runtime.saves,
-    broadcasts: runtime.broadcasts,
+    ...broadcastMetricsResult(runtime),
     createdWindows: runtime.createdWindows,
+    createWindowMs: Math.round(runtime.createWindowMs),
     moveCalls: runtime.moveCalls,
     movedTabCount: runtime.movedTabCount,
     maxMoveBatch: runtime.maxMoveBatch,
+    moveTabsMs: Math.round(runtime.moveTabsMs),
     eventCounts: eventCountsSnapshot(runtime.eventCounts),
     eventCount: eventCountsTotal(runtime.eventCounts),
+    ...(traceBackground ? { trace: summarizeTrace(trace) } : {}),
     ack: command.value,
     nodes: Object.keys(current.nodes).length
   };
@@ -463,3 +493,16 @@ async function profile(options) {
 
 const result = await profile(parseArgs(process.argv.slice(2)));
 console.log(JSON.stringify(result, null, 2));
+
+function summarizeTrace(trace) {
+  const entries = Array.isArray(trace?.entries) ? trace.entries : [];
+  return entries
+    .filter((entry) => typeof entry.durationMs === "number")
+    .map((entry) => ({
+      name: entry.name,
+      durationMs: Math.round(entry.durationMs),
+      detail: entry.detail
+    }))
+    .sort((left, right) => right.durationMs - left.durationMs)
+    .slice(0, 20);
+}

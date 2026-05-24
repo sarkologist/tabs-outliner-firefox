@@ -78,6 +78,7 @@ Every correctness fix pass needs a **Perf Blast Radius** before findings are mar
 
 - Map changed trace tags to perf tags first: `close`, `native-close`, `journal`, `delete`, `restore`, `relocation`, `history`, `focus`, and `manual-refresh`.
 - Run `pnpm perf:runtime-guard` after `pnpm build`; use `RUNTIME_PERF_GUARD_TAGS=journal,close` or `RUNTIME_PERF_GUARD_SCENARIOS=close-last-tab-removed-then-session` for targeted prechecks.
+- Interpret guard counters by blast radius: `saves` means full outline/history persistence, `journalWrites` means tiny lifecycle durability hints, `stateBroadcasts` means tree/node/active state patches, and `statusBroadcasts` means small history-status messages.
 - If controller/model/storage/sidebar projection code changed, review at least one synthetic profile and one in-browser profile-export summary when a real export is available.
 - A finding is not fixed until correctness regression traces and the selected perf guard pass. If correctness requires moving a full save onto an interaction path, redesign it or explicitly record an accepted perf budget movement.
 - Do not promote traces or update `RUNTIME_TRACE_BUGS.md` fixed statuses while the selected perf guard is red.

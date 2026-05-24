@@ -374,20 +374,23 @@ export class RuntimeFactLedger {
     return this.removedWindowIds.has(windowId);
   }
 
-  clearRemovalTombstonesForLiveState(next: OutlineState): void {
-    for (const node of liveTabNodes(next)) {
-      this.removedTabIds.delete(node.live.tabId);
-      this.deleteOwnedClosingTabIds.delete(node.live.tabId);
-      this.outlinerClosingTabIds.delete(node.live.tabId);
-      this.reconstructedLiveTabIds.add(node.live.tabId);
-      this.reconstructedMaxTabId = Math.max(this.reconstructedMaxTabId, node.live.tabId);
-    }
-    for (const node of liveWindowNodes(next)) {
-      this.removedWindowIds.delete(node.live.windowId);
-      this.deleteOwnedClosingWindowIds.delete(node.live.windowId);
-      this.outlinerClosingWindowIds.delete(node.live.windowId);
-      this.reconstructedLiveWindowIds.add(node.live.windowId);
-      this.reconstructedMaxWindowId = Math.max(this.reconstructedMaxWindowId, node.live.windowId);
+  clearRemovalTombstonesForLiveState(next: OutlineState, candidateNodeIds?: readonly NodeId[]): void {
+    const nodes = candidateNodeIds ? selectedNodes(next, candidateNodeIds) : Object.values(next.nodes);
+    for (const node of nodes) {
+      if (isLiveTabNode(node)) {
+        this.removedTabIds.delete(node.live.tabId);
+        this.deleteOwnedClosingTabIds.delete(node.live.tabId);
+        this.outlinerClosingTabIds.delete(node.live.tabId);
+        this.reconstructedLiveTabIds.add(node.live.tabId);
+        this.reconstructedMaxTabId = Math.max(this.reconstructedMaxTabId, node.live.tabId);
+      }
+      if (isLiveWindowNode(node)) {
+        this.removedWindowIds.delete(node.live.windowId);
+        this.deleteOwnedClosingWindowIds.delete(node.live.windowId);
+        this.outlinerClosingWindowIds.delete(node.live.windowId);
+        this.reconstructedLiveWindowIds.add(node.live.windowId);
+        this.reconstructedMaxWindowId = Math.max(this.reconstructedMaxWindowId, node.live.windowId);
+      }
     }
   }
 

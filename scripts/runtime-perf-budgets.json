@@ -5,223 +5,377 @@
     {
       "id": "close-last-tab-removed-then-session",
       "pnpmScript": "profile:close",
-      "args": ["--tabs", "50000", "--target", "last", "--order", "tabRemovedThenSessionChanged"],
+      "args": [
+        "--tabs",
+        "50000",
+        "--target",
+        "last",
+        "--order",
+        "tabRemovedThenSessionChanged"
+      ],
       "smoke": {
-        "args": ["--tabs", "1000", "--target", "last", "--order", "tabRemovedThenSessionChanged"],
+        "args": [
+          "--tabs",
+          "1000",
+          "--target",
+          "last",
+          "--order",
+          "tabRemovedThenSessionChanged"
+        ],
         "budget": {
           "firstBroadcastMs": 40,
           "totalMeasuredMs": 60,
           "totalWithSaveFlushMs": 120,
-          "saves": 2,
-          "broadcasts": 1,
+          "saves": 1,
+          "journalWrites": 1,
           "projectionMs": 0,
           "tabsQueryMs": 0,
           "windowsGetAllMs": 0,
-          "mbStringified": 1
+          "mbStringified": 1,
+          "stateBroadcasts": 1,
+          "statusBroadcasts": 0
         }
       },
-      "tags": ["close", "native-close", "journal"],
+      "tags": [
+        "close",
+        "native-close",
+        "journal"
+      ],
       "budget": {
         "firstBroadcastMs": 55,
         "totalMeasuredMs": 103,
         "totalWithSaveFlushMs": 220,
         "saves": 1,
-        "broadcasts": 1,
+        "journalWrites": 1,
         "projectionMs": 0,
         "tabsQueryMs": 0,
         "windowsGetAllMs": 0,
-        "mbStringified": 13
+        "mbStringified": 13,
+        "stateBroadcasts": 1,
+        "statusBroadcasts": 0
       }
     },
     {
       "id": "close-last-session-then-tab-removed",
       "pnpmScript": "profile:close",
-      "args": ["--tabs", "50000", "--target", "last", "--order", "sessionChangedThenTabRemoved"],
+      "args": [
+        "--tabs",
+        "50000",
+        "--target",
+        "last",
+        "--order",
+        "sessionChangedThenTabRemoved"
+      ],
       "smoke": {
-        "args": ["--tabs", "1000", "--target", "last", "--order", "sessionChangedThenTabRemoved"],
+        "args": [
+          "--tabs",
+          "1000",
+          "--target",
+          "last",
+          "--order",
+          "sessionChangedThenTabRemoved"
+        ],
         "budget": {
           "firstBroadcastMs": 40,
           "totalMeasuredMs": 60,
           "totalWithSaveFlushMs": 120,
-          "saves": 2,
-          "broadcasts": 1,
+          "saves": 1,
+          "journalWrites": 1,
           "projectionMs": 0,
           "tabsQueryMs": 0,
           "windowsGetAllMs": 0,
-          "mbStringified": 1
+          "mbStringified": 1,
+          "stateBroadcasts": 1,
+          "statusBroadcasts": 0
         }
       },
-      "tags": ["close", "native-close", "journal", "session"],
+      "tags": [
+        "close",
+        "native-close",
+        "journal",
+        "session"
+      ],
       "budget": {
         "firstBroadcastMs": 94,
         "totalMeasuredMs": 156,
         "totalWithSaveFlushMs": 260,
         "saves": 1,
-        "broadcasts": 1,
+        "journalWrites": 1,
         "projectionMs": 0,
         "tabsQueryMs": 0,
         "windowsGetAllMs": 0,
-        "mbStringified": 13
+        "mbStringified": 13,
+        "stateBroadcasts": 1,
+        "statusBroadcasts": 0
       }
     },
     {
       "id": "restore-last-transient-echo",
       "pnpmScript": "profile:restore",
-      "args": ["--scenario", "controller-event-echo", "--tabs", "50000", "--target", "last", "--echo", "transient-separated"],
+      "args": [
+        "--scenario",
+        "controller-event-echo",
+        "--tabs",
+        "50000",
+        "--target",
+        "last",
+        "--echo",
+        "transient-separated"
+      ],
       "smoke": {
-        "args": ["--scenario", "controller-event-echo", "--tabs", "1000", "--target", "last", "--echo", "transient-separated"],
+        "args": [
+          "--scenario",
+          "controller-event-echo",
+          "--tabs",
+          "1000",
+          "--target",
+          "last",
+          "--echo",
+          "transient-separated"
+        ],
         "budget": {
           "firstBroadcastMs": 40,
           "totalMeasuredMs": 80,
           "totalWithSaveFlushMs": 140,
-          "saves": 2,
-          "broadcasts": 1,
+          "saves": 1,
+          "journalWrites": 1,
           "projectionMs": 0,
-          "mbStringified": 1
+          "mbStringified": 1,
+          "stateBroadcasts": 1,
+          "statusBroadcasts": 0
         }
       },
-      "tags": ["restore", "journal"],
+      "tags": [
+        "restore",
+        "journal"
+      ],
       "budget": {
-        "firstBroadcastMs": 15,
+        "firstBroadcastMs": 20,
         "totalMeasuredMs": 124,
         "totalWithSaveFlushMs": 220,
         "saves": 1,
-        "broadcasts": 1,
+        "journalWrites": 1,
         "projectionMs": 0,
-        "mbStringified": 15
+        "mbStringified": 15,
+        "stateBroadcasts": 1,
+        "statusBroadcasts": 0
       }
     },
     {
       "id": "delete-last-tab",
       "pnpmScript": "profile:delete",
-      "args": ["--tabs", "50000", "--target", "last"],
+      "args": [
+        "--tabs",
+        "50000",
+        "--target",
+        "last"
+      ],
       "smoke": {
-        "args": ["--tabs", "1000", "--target", "last"],
+        "args": [
+          "--tabs",
+          "1000",
+          "--target",
+          "last"
+        ],
         "budget": {
           "firstBroadcastMs": 40,
           "totalMeasuredMs": 80,
           "totalWithSaveFlushMs": 140,
-          "saves": 2,
-          "broadcasts": 2,
+          "saves": 1,
+          "journalWrites": 1,
           "projectionMs": 0,
-          "mbStringified": 1
+          "mbStringified": 1,
+          "stateBroadcasts": 1,
+          "statusBroadcasts": 1
         }
       },
-      "tags": ["delete", "journal"],
+      "tags": [
+        "delete",
+        "journal"
+      ],
       "budget": {
         "firstBroadcastMs": 55,
         "totalMeasuredMs": 113,
         "totalWithSaveFlushMs": 220,
         "saves": 1,
-        "broadcasts": 1,
+        "journalWrites": 1,
         "projectionMs": 0,
-        "mbStringified": 13
+        "mbStringified": 13,
+        "stateBroadcasts": 1,
+        "statusBroadcasts": 1
       }
     },
     {
       "id": "focus-last-tab",
       "pnpmScript": "profile:focus",
-      "args": ["--tabs", "50000", "--target", "last"],
+      "args": [
+        "--tabs",
+        "50000",
+        "--target",
+        "last"
+      ],
       "smoke": {
-        "args": ["--tabs", "1000", "--target", "last"],
+        "args": [
+          "--tabs",
+          "1000",
+          "--target",
+          "last"
+        ],
         "budget": {
           "firstBroadcastMs": 30,
           "totalMeasuredMs": 40,
           "totalWithSaveFlushMs": 40,
           "saves": 0,
-          "broadcasts": 1,
+          "journalWrites": 0,
           "projectionMs": 0,
-          "mbStringified": 0
+          "mbStringified": 0,
+          "stateBroadcasts": 1,
+          "statusBroadcasts": 0
         }
       },
-      "tags": ["focus"],
+      "tags": [
+        "focus"
+      ],
       "budget": {
         "firstBroadcastMs": 20,
         "totalMeasuredMs": 46,
         "totalWithSaveFlushMs": 60,
         "saves": 0,
-        "broadcasts": 1,
+        "journalWrites": 0,
         "projectionMs": 0,
-        "mbStringified": 0
+        "mbStringified": 0,
+        "stateBroadcasts": 1,
+        "statusBroadcasts": 0
       }
     },
     {
       "id": "command-group-live-leaf",
       "pnpmScript": "profile:command",
-      "args": ["--tabs", "50000", "--scenario", "group-live-leaf"],
+      "args": [
+        "--tabs",
+        "50000",
+        "--scenario",
+        "group-live-leaf"
+      ],
       "smoke": {
-        "args": ["--tabs", "1000", "--scenario", "group-live-leaf"],
+        "args": [
+          "--tabs",
+          "1000",
+          "--scenario",
+          "group-live-leaf"
+        ],
         "budget": {
           "firstBroadcastMs": 80,
           "totalMeasuredMs": 120,
           "totalWithSaveFlushMs": 180,
-          "saves": 2,
-          "broadcasts": 2,
+          "saves": 1,
+          "journalWrites": 1,
           "projectionMs": 0,
-          "mbStringified": 1
+          "mbStringified": 1,
+          "stateBroadcasts": 1,
+          "statusBroadcasts": 1
         }
       },
-      "tags": ["relocation", "journal", "focus"],
+      "tags": [
+        "relocation",
+        "journal",
+        "focus"
+      ],
       "budget": {
         "firstBroadcastMs": 120,
         "totalMeasuredMs": 180,
         "totalWithSaveFlushMs": 300,
         "saves": 1,
-        "broadcasts": 1,
+        "journalWrites": 1,
         "projectionMs": 0,
-        "mbStringified": 13
+        "mbStringified": 13,
+        "stateBroadcasts": 1,
+        "statusBroadcasts": 1
       }
     },
     {
       "id": "command-move-leaf",
       "pnpmScript": "profile:command",
-      "args": ["--tabs", "50000", "--scenario", "move-leaf"],
+      "args": [
+        "--tabs",
+        "50000",
+        "--scenario",
+        "move-leaf"
+      ],
       "smoke": {
-        "args": ["--tabs", "1000", "--scenario", "move-leaf"],
+        "args": [
+          "--tabs",
+          "1000",
+          "--scenario",
+          "move-leaf"
+        ],
         "budget": {
           "firstBroadcastMs": 60,
           "totalMeasuredMs": 80,
           "totalWithSaveFlushMs": 140,
           "saves": 1,
-          "broadcasts": 2,
+          "journalWrites": 0,
           "projectionMs": 0,
-          "mbStringified": 1
+          "mbStringified": 1,
+          "stateBroadcasts": 1,
+          "statusBroadcasts": 1
         }
       },
-      "tags": ["relocation", "history"],
+      "tags": [
+        "relocation",
+        "history"
+      ],
       "budget": {
         "firstBroadcastMs": 139,
         "totalMeasuredMs": 221,
         "totalWithSaveFlushMs": 330,
         "saves": 1,
-        "broadcasts": 2,
+        "journalWrites": 0,
         "projectionMs": 0,
-        "mbStringified": 13
+        "mbStringified": 13,
+        "stateBroadcasts": 1,
+        "statusBroadcasts": 1
       }
     },
     {
       "id": "command-refresh-noop",
       "pnpmScript": "profile:command",
-      "args": ["--tabs", "50000", "--scenario", "refresh-noop"],
+      "args": [
+        "--tabs",
+        "50000",
+        "--scenario",
+        "refresh-noop"
+      ],
       "smoke": {
-        "args": ["--tabs", "1000", "--scenario", "refresh-noop"],
+        "args": [
+          "--tabs",
+          "1000",
+          "--scenario",
+          "refresh-noop"
+        ],
         "budget": {
           "totalMeasuredMs": 80,
           "totalWithSaveFlushMs": 80,
           "saves": 0,
-          "broadcasts": 0,
+          "journalWrites": 0,
           "projectionMs": 0,
-          "mbStringified": 0
+          "mbStringified": 0,
+          "stateBroadcasts": 0,
+          "statusBroadcasts": 0
         }
       },
-      "tags": ["manual-refresh"],
+      "tags": [
+        "manual-refresh"
+      ],
       "budget": {
         "totalMeasuredMs": 123,
         "totalWithSaveFlushMs": 123,
         "saves": 0,
-        "broadcasts": 0,
+        "journalWrites": 0,
         "projectionMs": 0,
-        "mbStringified": 0
+        "mbStringified": 0,
+        "stateBroadcasts": 0,
+        "statusBroadcasts": 0
       }
     }
   ]

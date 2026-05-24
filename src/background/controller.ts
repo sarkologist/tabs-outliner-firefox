@@ -302,6 +302,8 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   let pendingRuntimeRefresh: PendingRuntimeRefresh | undefined;
   let pendingSaveState: OutlineState | undefined;
   let pendingSaveHistory: HistoryState | undefined;
+  let pendingSaveCandidateNodeIds: Set<NodeId> | undefined;
+  let pendingSaveRequiresFullDiff = false;
   let saveTimer: number | undefined;
   let saveMaxTimer: number | undefined;
   let saveInFlight: Promise<void> | undefined;
@@ -788,7 +790,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
                 treeStructureUpdateFromCandidateNodeIds(current, recovered, deletePatchNodeIds)
               );
               await broadcastTreeStructureUpdate(update);
-              scheduleStateSave(recovered, saveSchedule);
+              scheduleStateSave(recovered, saveSchedule, deletePatchNodeIds);
               if (commandTransaction) {
                 runtimeFacts.commitCommand(commandTransaction.id);
               }
@@ -828,7 +830,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
           ...(restorePatchNodeIds ? { restorePatchNodeIds } : {})
         }
       );
-      runtimeFacts.clearRemovalTombstonesForLiveState(result.state);
+      runtimeFacts.clearRemovalTombstonesForLiveState(result.state, runtimeIndexCandidateNodeIds);
       if (runtimeCommandRelocatesLiveTabs(message.type)) {
         runtimeFacts.recordCommandRelocatedTabs(current, result.state, runtimeIndexCandidateNodeIds);
       }
@@ -848,7 +850,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
           ? expandAncestorNodeIds
           : message.type === "deleteNode"
             ? deletePatchNodeIds
-          : historyCandidateNodeIds(message, historyPrevious, result.state);
+            : historyCandidateNodeIds(message, historyPrevious, result.state) ?? runtimeIndexCandidateNodeIds;
         await recordHistoryEntry(message.type, historyPrevious, result.state, {
           ...(candidateNodeIds ? { candidateNodeIds } : {}),
           saveSchedule
@@ -867,7 +869,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
           treeStructureUpdateFromCandidateNodeIds(current, result.state, deletePatchNodeIds ?? [message.nodeId])
         );
         await broadcastTreeStructureUpdate(update);
-        scheduleStateSave(result.state, saveSchedule);
+        scheduleStateSave(result.state, saveSchedule, deletePatchNodeIds ?? [message.nodeId]);
         if (commandTransaction) {
           runtimeFacts.commitCommand(commandTransaction.id);
         }
@@ -880,10 +882,12 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         message.type === "promoteChildren"
       ) {
         const update = perfTrace.measure("background.patch.build.treeStructure", { command: message.type }, () =>
-          treeStructureUpdateFromStateChange(current, result.state)
+          runtimeIndexCandidateNodeIds
+            ? treeStructureUpdateFromCandidateNodeIds(current, result.state, runtimeIndexCandidateNodeIds)
+            : treeStructureUpdateFromStateChange(current, result.state)
         );
         await broadcastTreeStructureUpdate(update);
-        scheduleStateSave(result.state, saveSchedule);
+        scheduleStateSave(result.state, saveSchedule, runtimeIndexCandidateNodeIds);
         if (commandTransaction) {
           runtimeFacts.commitCommand(commandTransaction.id);
         }
@@ -3090,7 +3094,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       : nodeStateUpdateFromStateChange(previous, next));
     if (isUsefulNodeStateUpdate(update, next)) {
       await broadcastNodeStateUpdate(update);
-      scheduleStateSave(next, options.saveSchedule);
+      scheduleStateSave(next, options.saveSchedule, candidateNodeIds);
       return;
     }
 
@@ -3125,7 +3129,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       updatedNodes,
       closedCountDelta: 0
     });
-    scheduleStateSave(next);
+    scheduleStateSave(next, "normal", uniqueIds);
   }
 
   async function persistKnownRuntimeFastPathUpdate(
@@ -3137,7 +3141,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     } else {
       await broadcastNodeStateUpdate(update);
     }
-    scheduleStateSave(next);
+    scheduleStateSave(next, "normal", candidateNodeIdsForPatch(update));
   }
 
   async function persistWithBestEffortPatch(
@@ -3219,6 +3223,16 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     await broadcastWithTrace(update);
   }
 
+  function candidateNodeIdsForPatch(update: TreeStructureUpdate | NodeStateUpdate): NodeId[] {
+    if (update.type === "treeStructureUpdated") {
+      return uniqueDefinedNodeIds([
+        ...update.deletedNodeIds,
+        ...update.updatedNodes.map((node) => node.id)
+      ]);
+    }
+    return uniqueDefinedNodeIds(update.updatedNodes.map((node) => node.id));
+  }
+
   async function broadcastHistoryStatus(history: HistoryState): Promise<void> {
     await broadcastWithTrace(historyStatusMessage(history));
   }
@@ -3229,8 +3243,23 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     });
   }
 
-  function scheduleStateSave(next: OutlineState, schedule: SaveSchedule = "normal"): void {
+  function scheduleStateSave(
+    next: OutlineState,
+    schedule: SaveSchedule = "normal",
+    candidateNodeIds?: readonly NodeId[]
+  ): void {
     pendingSaveState = next;
+    if (candidateNodeIds) {
+      if (!pendingSaveRequiresFullDiff) {
+        pendingSaveCandidateNodeIds ??= new Set<NodeId>();
+        for (const nodeId of candidateNodeIds) {
+          pendingSaveCandidateNodeIds.add(nodeId);
+        }
+      }
+    } else {
+      pendingSaveCandidateNodeIds = undefined;
+      pendingSaveRequiresFullDiff = true;
+    }
     schedulePendingSave(schedule);
   }
 
@@ -3281,13 +3310,18 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
         const nextState = pendingSaveState;
         const nextHistory = pendingSaveHistory;
+        const nextCandidateNodeIds = pendingSaveRequiresFullDiff
+          ? undefined
+          : [...(pendingSaveCandidateNodeIds ?? [])];
         if (!nextState && !nextHistory) {
           return;
         }
         pendingSaveState = undefined;
         pendingSaveHistory = undefined;
+        pendingSaveCandidateNodeIds = undefined;
+        pendingSaveRequiresFullDiff = false;
         saveAfterInFlight = false;
-        await startSaveStateAndHistory(nextState, nextHistory);
+        await startSaveStateAndHistory(nextState, nextHistory, nextCandidateNodeIds);
       }
     } finally {
       explicitSaveFlushInProgress = previousExplicitSaveFlushInProgress;
@@ -3312,13 +3346,18 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
       const nextState = pendingSaveState;
       const nextHistory = pendingSaveHistory;
+      const nextCandidateNodeIds = pendingSaveRequiresFullDiff
+        ? undefined
+        : [...(pendingSaveCandidateNodeIds ?? [])];
       if (!nextState && !nextHistory) {
         return;
       }
 
       pendingSaveState = undefined;
       pendingSaveHistory = undefined;
-      await startSaveStateAndHistory(nextState, nextHistory);
+      pendingSaveCandidateNodeIds = undefined;
+      pendingSaveRequiresFullDiff = false;
+      await startSaveStateAndHistory(nextState, nextHistory, nextCandidateNodeIds);
     } catch (error) {
       perfTrace.mark("background.state.save.error", { message: errorText(error) });
     }
@@ -3356,15 +3395,17 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
   async function saveStateAndHistoryNowWithTrace(
     nextState: OutlineState | undefined,
-    nextHistory: HistoryState | undefined
+    nextHistory: HistoryState | undefined,
+    candidateNodeIds?: readonly NodeId[]
   ): Promise<void> {
     await perfTrace.measureAsync("background.state.save", () =>
       saveStateAndHistory(nextState, nextHistory, api, {
-        ...(nextState && lastPersistedState ? { previousState: lastPersistedState } : {})
+        ...(nextState && lastPersistedState ? { previousState: lastPersistedState } : {}),
+        ...(nextState && candidateNodeIds ? { candidateNodeIds } : {})
       })
     );
     if (nextState) {
-      lastPersistedState = cloneOutlineState(nextState);
+      deferPersistedStateBaselineClone(nextState);
     }
     if (nextState || nextHistory) {
       await clearCompletedRuntimeLifecycleJournalEntriesAfterSave();
@@ -3384,9 +3425,10 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
   function startSaveStateAndHistory(
     nextState: OutlineState | undefined,
-    nextHistory: HistoryState | undefined
+    nextHistory: HistoryState | undefined,
+    candidateNodeIds?: readonly NodeId[]
   ): Promise<void> {
-    saveInFlight = saveStateAndHistoryNowWithTrace(nextState, nextHistory).finally(() => {
+    saveInFlight = saveStateAndHistoryNowWithTrace(nextState, nextHistory, candidateNodeIds).finally(() => {
       saveInFlight = undefined;
       if (saveAfterInFlight) {
         const schedule = saveAfterInFlightSchedule;
