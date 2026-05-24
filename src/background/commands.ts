@@ -161,7 +161,7 @@ export type RestoreCreateAttempt =
     };
 
 export type RestoreObserver = {
-  recordCreateAttempt(attempt: RestoreCreateAttempt): void;
+  recordCreateAttempt(attempt: RestoreCreateAttempt): void | Promise<void>;
 };
 
 export type CommandRunContext = {
@@ -553,7 +553,7 @@ async function restoreClosedWindowUrlBatch(
   try {
     const urls = plans.map((plan) => plan.url);
     const createData = { url: urls };
-    restoreObserver?.recordCreateAttempt({
+    await restoreObserver?.recordCreateAttempt({
       kind: "window",
       windowNodeId,
       tabNodeIds: plans.map((plan) => plan.nodeId),
@@ -637,7 +637,7 @@ async function restoreSessionIntoClosedWindowDestination(
 
   if (restoredSession?.tab && plan.windowNodeId) {
     const createData = { tabId: restoredSession.tab.id };
-    restoreObserver?.recordCreateAttempt({
+    await restoreObserver?.recordCreateAttempt({
       kind: "window",
       windowNodeId: plan.windowNodeId,
       tabNodeIds: [plan.nodeId],
@@ -704,7 +704,7 @@ async function createFallbackTab(
       windowId: plannedWindow.live.windowId,
       active: false
     };
-    restoreObserver?.recordCreateAttempt({
+    await restoreObserver?.recordCreateAttempt({
       kind: "tab",
       nodeId,
       ...(windowNodeId ? { windowNodeId } : {}),
@@ -723,7 +723,7 @@ async function createFallbackTab(
     }
 
     const createData = { url };
-    restoreObserver?.recordCreateAttempt({
+    await restoreObserver?.recordCreateAttempt({
       kind: "window",
       windowNodeId,
       tabNodeIds: [nodeId],
@@ -758,7 +758,7 @@ async function createFallbackTab(
     ...(parentWindow ? { windowId: parentWindow.live.windowId } : {}),
     active: false
   };
-  restoreObserver?.recordCreateAttempt({
+  await restoreObserver?.recordCreateAttempt({
     kind: "tab",
     nodeId,
     ...(parentWindow ? { windowNodeId: parentWindow.id } : {}),

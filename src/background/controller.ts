@@ -15,6 +15,14 @@ import { computeDiagnostics, type OutlineDiagnostics } from "./diagnostics.js";
 import { isBackgroundCommand, planLiveSubtreeClose, runCommand, syncBrowserOrder } from "./commands.js";
 import type { BackgroundCommand, CommandAck, RestoreCreateAttempt, RuntimeClosePlan } from "./commands.js";
 import { RuntimeFactLedger, runtimeCommandRelocatesLiveTabs } from "./runtime-facts.js";
+import {
+  appendRuntimeLifecycleJournalEntry,
+  clearRuntimeLifecycleJournalEntries,
+  loadRuntimeLifecycleJournal,
+  replaceRuntimeLifecycleJournalEntry,
+  type RuntimeLifecycleJournal,
+  type RuntimeLifecycleJournalEntry
+} from "./runtime-lifecycle-journal.js";
 import { RuntimeReconciler } from "./runtime-reconciler.js";
 import { getNormalWindow, getNormalWindows, getNormalWindowsIncludingTabs } from "./runtime-snapshot.js";
 import { createStateCache } from "./state-cache.js";
@@ -40,6 +48,7 @@ import {
   pushUndoEntry,
   pushUndoEntryPreservingRedo,
   type HistoryState,
+  type HistoryEntry,
   type HistoryStatus,
   type OutlineDelta,
   type TrackableHistoryCommandType
@@ -112,6 +121,14 @@ type RuntimeResourceIds = {
 type RestoreCreateRecoveryContext = {
   attempts: RestoreCreateAttempt[];
   before: RuntimeResourceIds | undefined;
+};
+
+type RuntimeLifecycleJournalRecovery = {
+  state: OutlineState;
+  history?: HistoryState;
+  changed: boolean;
+  changedHistory: boolean;
+  consumedEntryIds: string[];
 };
 
 type MutationPriority = "high" | "low";
@@ -285,6 +302,13 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   let pendingSaveBatchStartedAt: number | undefined;
   let pendingSaveMaxDelayMs: number | undefined;
   let pendingSaveSchedule: SaveSchedule | undefined;
+  let nextRuntimeLifecycleJournalSequence = 1;
+  const runtimeLifecycleJournalEntryIdsToClearAfterSave = new Set<string>();
+  const pendingOutlinerCloseJournalEntries = new Map<string, {
+    plan: RuntimeClosePlan;
+    completedTabIds: Set<number>;
+    completedWindowIds: Set<number>;
+  }>();
   let diagnosticsInFlight: Promise<OutlineDiagnostics> | undefined;
   let automaticBackupInFlight: Promise<AutomaticBackupStatus> | undefined;
   let sidebarProfileRequestSequence = 0;
@@ -406,11 +430,15 @@ export function createBackgroundController(options: BackgroundControllerOptions)
           if (next === current) {
             return;
           }
-          installStateTransition(current, next, {
-            candidateNodeIds: runtimeIndexCandidateNodeIdsForWindowRemoval(current, next, runtimeIndexForState(current), removeInfo.windowId)
-          });
-          await persistWithNodeStateUpdate(current, next);
-        }, { reason: "tabs.onRemoved.windowClosing" });
+        installStateTransition(current, next, {
+          candidateNodeIds: runtimeIndexCandidateNodeIdsForWindowRemoval(current, next, runtimeIndexForState(current), removeInfo.windowId)
+        });
+        markCompletedOutlinerCloseJournalEntriesForClearAfterSave({
+          tabIds: liveTabIds,
+          windowIds: [removeInfo.windowId]
+        });
+        await persistWithNodeStateUpdate(current, next);
+      }, { reason: "tabs.onRemoved.windowClosing" });
         return;
       }
 
@@ -435,6 +463,10 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         }
         installStateTransition(current, next, {
           candidateNodeIds: runtimeIndexCandidateNodeIdsForTabRemoval(current, next, runtimeIndexForState(current), tabId)
+        });
+        markCompletedOutlinerCloseJournalEntriesForClearAfterSave({
+          tabIds: [tabId],
+          windowIds: []
         });
         await persistWithNodeStateUpdate(current, next);
       }, { reason: "tabs.onRemoved" });
@@ -464,6 +496,10 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         }
         installStateTransition(current, next, {
           candidateNodeIds: runtimeIndexCandidateNodeIdsForWindowRemoval(current, next, runtimeIndexForState(current), windowId)
+        });
+        markCompletedOutlinerCloseJournalEntriesForClearAfterSave({
+          tabIds: liveTabIds,
+          windowIds: [windowId]
         });
         await persistWithNodeStateUpdate(current, next);
       }, { reason: "windows.onRemoved" });
@@ -605,6 +641,25 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       const restoreCreateRecovery = message.type === "restoreNode"
         ? await createRestoreCreateRecoveryContext()
         : undefined;
+      let runtimeLifecycleJournalEntry = runtimeLifecycleJournalEntryForCommand(
+        message,
+        current,
+        {
+          outlinerClosePlan,
+          deleteClosePlan,
+          restoreCreateRecovery
+        }
+      );
+      if (runtimeLifecycleJournalEntry && runtimeLifecycleJournalEntry.kind !== "restoreNode") {
+        await appendRuntimeLifecycleJournalEntry(api, runtimeLifecycleJournalEntry);
+        if (runtimeLifecycleJournalEntry.kind === "closeNode") {
+          pendingOutlinerCloseJournalEntries.set(runtimeLifecycleJournalEntry.id, {
+            plan: runtimeLifecycleJournalEntry.plan,
+            completedTabIds: new Set(),
+            completedWindowIds: new Set()
+          });
+        }
+      }
       const commandTransaction = runtimeFacts.beginCommandTransactionForCommand(message.type, {
         outlinerClosePlan,
         deleteClosePlan,
@@ -629,8 +684,15 @@ export function createBackgroundController(options: BackgroundControllerOptions)
           runCommand(current, adapter, message, restoreCreateRecovery
             ? {
                 restoreObserver: {
-                  recordCreateAttempt: (attempt) => {
+                  recordCreateAttempt: async (attempt) => {
                     restoreCreateRecovery.attempts.push(attempt);
+                    if (runtimeLifecycleJournalEntry?.kind === "restoreNode") {
+                      runtimeLifecycleJournalEntry = {
+                        ...runtimeLifecycleJournalEntry,
+                        attempts: [...restoreCreateRecovery.attempts]
+                      };
+                      await replaceRuntimeLifecycleJournalEntry(api, runtimeLifecycleJournalEntry);
+                    }
                   }
                 }
               }
@@ -688,6 +750,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
               if (commandTransaction) {
                 runtimeFacts.commitCommand(commandTransaction.id);
               }
+              markRuntimeLifecycleJournalEntryForClearAfterSave(runtimeLifecycleJournalEntry);
               return commandAck(true);
             }
           }
@@ -703,6 +766,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
           if (commandTransaction) {
             runtimeFacts.rejectCommand(commandTransaction.id);
           }
+          await clearRuntimeLifecycleJournalEntryNow(runtimeLifecycleJournalEntry);
           throw error;
         }
       }
@@ -753,6 +817,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         if (commandTransaction) {
           runtimeFacts.commitCommand(commandTransaction.id);
         }
+        markRuntimeLifecycleJournalEntryForClearAfterSave(runtimeLifecycleJournalEntry);
         return commandAck(true);
       }
       if (message.type === "deleteNode") {
@@ -764,6 +829,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         if (commandTransaction) {
           runtimeFacts.commitCommand(commandTransaction.id);
         }
+        markRuntimeLifecycleJournalEntryForClearAfterSave(runtimeLifecycleJournalEntry);
         return commandAck(true);
       }
       if (
@@ -779,6 +845,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         if (commandTransaction) {
           runtimeFacts.commitCommand(commandTransaction.id);
         }
+        markRuntimeLifecycleJournalEntryForClearAfterSave(runtimeLifecycleJournalEntry);
         return commandAck(true);
       }
       if (message.type === "renameGroup") {
@@ -806,6 +873,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       if (commandTransaction) {
         runtimeFacts.commitCommand(commandTransaction.id);
       }
+      markRuntimeLifecycleJournalEntryForClearAfterSave(runtimeLifecycleJournalEntry);
       return commandAck(true);
     }, { reason: "command", command: message.type });
   }
@@ -827,6 +895,144 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
     const openTabIds = new Set(windows.flatMap((windowInfo) => windowInfo.tabs ?? []).map((tab) => tab.id));
     return plan.tabIds.every((tabId) => !openTabIds.has(tabId));
+  }
+
+  function runtimeLifecycleJournalEntryForCommand(
+    command: BackgroundCommand,
+    current: OutlineState,
+    input: {
+      outlinerClosePlan?: RuntimeClosePlan | undefined;
+      deleteClosePlan?: RuntimeClosePlan | undefined;
+      restoreCreateRecovery?: RestoreCreateRecoveryContext | undefined;
+    }
+  ): RuntimeLifecycleJournalEntry | undefined {
+    if (command.type === "closeNode" && input.outlinerClosePlan && !runtimeClosePlanIsEmpty(input.outlinerClosePlan)) {
+      return {
+        ...runtimeLifecycleJournalEntryBase("closeNode"),
+        nodeId: command.nodeId,
+        plan: input.outlinerClosePlan
+      };
+    }
+
+    if (command.type === "deleteNode" && input.deleteClosePlan && !runtimeClosePlanIsEmpty(input.deleteClosePlan)) {
+      return {
+        ...runtimeLifecycleJournalEntryBase("deleteNode"),
+        nodeId: command.nodeId,
+        plan: input.deleteClosePlan
+      };
+    }
+
+    if (command.type === "restoreNode" && input.restoreCreateRecovery?.before) {
+      return {
+        ...runtimeLifecycleJournalEntryBase("restoreNode"),
+        nodeId: command.nodeId,
+        before: {
+          tabIds: [...input.restoreCreateRecovery.before.tabIds],
+          windowIds: [...input.restoreCreateRecovery.before.windowIds]
+        },
+        attempts: []
+      };
+    }
+
+    const relocation = relocationCreateRecoveryDetails(current, command);
+    if (relocation) {
+      return {
+        ...runtimeLifecycleJournalEntryBase("relocation"),
+        commandType: command.type as Extract<RuntimeLifecycleJournalEntry, { kind: "relocation" }>["commandType"],
+        nodeId: relocation.nodeId,
+        tabId: relocation.tabId,
+        sourceWindowId: relocation.sourceWindowId,
+        ...(typeof relocation.rootIndex === "number" ? { rootIndex: relocation.rootIndex } : {})
+      };
+    }
+
+    return undefined;
+  }
+
+  function runtimeLifecycleJournalEntryForHistory(
+    direction: "undo" | "redo",
+    entry: HistoryEntry,
+    poppedHistory: HistoryState,
+    delta: OutlineDelta
+  ): RuntimeLifecycleJournalEntry {
+    return {
+      ...runtimeLifecycleJournalEntryBase("history"),
+      direction,
+      entry,
+      poppedHistory,
+      delta
+    };
+  }
+
+  function historyDeltaMayHaveRuntimeLifecycleEffects(current: OutlineState, delta: OutlineDelta): boolean {
+    for (const nodeId of delta.deletedNodeIds) {
+      if (isLiveRuntimeNode(current.nodes[nodeId])) {
+        return true;
+      }
+    }
+    for (const node of delta.updatedNodes) {
+      const previous = current.nodes[node.id];
+      if (!previous && isLiveRuntimeNode(node)) {
+        return true;
+      }
+      if (previous && previous.status !== "live" && isLiveRuntimeNode(node)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function runtimeLifecycleJournalEntryBase<TKind extends RuntimeLifecycleJournalEntry["kind"]>(
+    kind: TKind
+  ): Pick<Extract<RuntimeLifecycleJournalEntry, { kind: TKind }>, "version" | "id" | "createdAt" | "kind"> {
+    return {
+      version: 1,
+      id: `runtime-lifecycle:${now()}:${nextRuntimeLifecycleJournalSequence++}`,
+      createdAt: now(),
+      kind
+    } as Pick<Extract<RuntimeLifecycleJournalEntry, { kind: TKind }>, "version" | "id" | "createdAt" | "kind">;
+  }
+
+  function runtimeClosePlanIsEmpty(plan: RuntimeClosePlan): boolean {
+    return plan.tabIds.length === 0 && plan.windowIds.length === 0;
+  }
+
+  function markRuntimeLifecycleJournalEntryForClearAfterSave(entry: RuntimeLifecycleJournalEntry | undefined): void {
+    if (!entry) {
+      return;
+    }
+    pendingOutlinerCloseJournalEntries.delete(entry.id);
+    runtimeLifecycleJournalEntryIdsToClearAfterSave.add(entry.id);
+  }
+
+  async function clearRuntimeLifecycleJournalEntryNow(entry: RuntimeLifecycleJournalEntry | undefined): Promise<void> {
+    if (!entry) {
+      return;
+    }
+    pendingOutlinerCloseJournalEntries.delete(entry.id);
+    runtimeLifecycleJournalEntryIdsToClearAfterSave.delete(entry.id);
+    await clearRuntimeLifecycleJournalEntries(api, [entry.id]);
+  }
+
+  function markCompletedOutlinerCloseJournalEntriesForClearAfterSave(completed: RuntimeClosePlan): void {
+    if (pendingOutlinerCloseJournalEntries.size === 0) {
+      return;
+    }
+    for (const [entryId, pending] of [...pendingOutlinerCloseJournalEntries.entries()]) {
+      for (const tabId of completed.tabIds) {
+        pending.completedTabIds.add(tabId);
+      }
+      for (const windowId of completed.windowIds) {
+        pending.completedWindowIds.add(windowId);
+      }
+      if (
+        pending.plan.tabIds.every((tabId) => pending.completedTabIds.has(tabId)) &&
+        pending.plan.windowIds.every((windowId) => pending.completedWindowIds.has(windowId))
+      ) {
+        pendingOutlinerCloseJournalEntries.delete(entryId);
+        runtimeLifecycleJournalEntryIdsToClearAfterSave.add(entryId);
+      }
+    }
   }
 
   async function recoverOutlinerCloseSideEffect(
@@ -1289,26 +1495,45 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   }
 
   async function initializeState(): Promise<OutlineState> {
-    const [windows, loaded] = await Promise.all([
+    const [windows, loaded, lifecycleJournal] = await Promise.all([
       perfTrace.measureAsync("background.runtime.getWindows", () => getNormalWindows(api)),
-      perfTrace.measureAsync("background.state.load", () => loadStateWithMetadata(api, stateLoadTraceOptions()))
+      perfTrace.measureAsync("background.state.load", () => loadStateWithMetadata(api, stateLoadTraceOptions())),
+      loadRuntimeLifecycleJournal(api)
     ]);
     const stored = loaded?.state;
     let storedRuntimeMatch: RuntimeSnapshotMatch | undefined;
+    let consumedRuntimeLifecycleJournalEntryIds: string[] = [];
+    let runtimeLifecycleJournalChangedState = false;
+    let runtimeLifecycleJournalChangedHistory = false;
     if (stored) {
-      storedRuntimeMatch = runtimeSnapshotMateriallyMatchesState(stored, windows);
+      const lifecycleRecoveryHistory = lifecycleJournal.entries.some((entry) => entry.kind === "history")
+        ? await loadHistory(api)
+        : undefined;
+      const lifecycleRecovery = lifecycleJournal.entries.length > 0
+        ? recoverRuntimeLifecycleJournal(repairState(stored), windows, lifecycleJournal, lifecycleRecoveryHistory)
+        : { state: stored, changed: false, changedHistory: false, consumedEntryIds: [] };
+      consumedRuntimeLifecycleJournalEntryIds = lifecycleRecovery.consumedEntryIds;
+      runtimeLifecycleJournalChangedState = lifecycleRecovery.changed;
+      runtimeLifecycleJournalChangedHistory = lifecycleRecovery.changedHistory;
+      if (lifecycleRecovery.history) {
+        historyState = lifecycleRecovery.history;
+      }
+      const startupBase = lifecycleRecovery.state;
+      storedRuntimeMatch = runtimeSnapshotMateriallyMatchesState(startupBase, windows);
       if (storedRuntimeMatch.matches) {
-        if (loaded.format === "v3") {
-          deferPersistedStateBaselineClone(stored);
+        if (loaded.format === "v3" && !runtimeLifecycleJournalChangedState) {
+          deferPersistedStateBaselineClone(startupBase);
         } else {
           lastPersistedState = undefined;
         }
-        state = stored;
+        state = startupBase;
+        if (runtimeLifecycleJournalChangedState || !statesMateriallyEqual(stored, state)) {
+          scheduleStateSave(state);
+        }
       } else {
         lastPersistedState = loaded.format === "v3" ? cloneOutlineState(stored) : undefined;
-        const repaired = repairState(stored);
-        const reconciled = reconcileWithWindows(repaired, windows, { now: now() });
-        state = statesEqualIgnoringUpdatedAt(repaired, reconciled) ? repaired : reconciled;
+        const reconciled = reconcileWithWindows(startupBase, windows, { now: now() });
+        state = statesEqualIgnoringUpdatedAt(startupBase, reconciled) ? startupBase : reconciled;
         if (!statesMateriallyEqual(stored, state)) {
           scheduleStateSave(state);
         }
@@ -1316,6 +1541,24 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     } else {
       state = bootstrapFromWindows(windows, { now: now() });
       scheduleStateSave(state);
+    }
+    if (consumedRuntimeLifecycleJournalEntryIds.length > 0) {
+      if (
+        runtimeLifecycleJournalChangedState ||
+        runtimeLifecycleJournalChangedHistory ||
+        (stored && !statesMateriallyEqual(stored, state))
+      ) {
+        for (const entryId of consumedRuntimeLifecycleJournalEntryIds) {
+          runtimeLifecycleJournalEntryIdsToClearAfterSave.add(entryId);
+        }
+      } else {
+        void clearRuntimeLifecycleJournalEntries(api, consumedRuntimeLifecycleJournalEntryIds).catch((error) => {
+          perfTrace.mark("background.lifecycleJournal.clear.error", { message: errorText(error) });
+        });
+      }
+    }
+    if (runtimeLifecycleJournalChangedHistory && historyState) {
+      scheduleHistorySave(historyState);
     }
     runtimeIndex = storedRuntimeMatch?.matches && state === stored
       ? buildRuntimeStateIndexFromLookup(state, storedRuntimeMatch.lookup)
@@ -1326,6 +1569,193 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       storedRuntimeMatch?.matches && state === stored ? storedRuntimeMatch.lookup.nodes : undefined
     );
     return state;
+  }
+
+  function recoverRuntimeLifecycleJournal(
+    initialState: OutlineState,
+    windows: RuntimeWindow[],
+    journal: RuntimeLifecycleJournal,
+    initialHistory?: HistoryState
+  ): RuntimeLifecycleJournalRecovery {
+    let recovered = initialState;
+    let recoveredHistory = initialHistory;
+    let changed = false;
+    let changedHistory = false;
+    const consumedEntryIds: string[] = [];
+
+    for (const entry of journal.entries) {
+      const result = recoverRuntimeLifecycleJournalEntry(recovered, windows, entry, recoveredHistory);
+      const next = result.state;
+      consumedEntryIds.push(entry.id);
+      if (next !== recovered && !statesMateriallyEqual(recovered, next)) {
+        recovered = next;
+        changed = true;
+      } else {
+        recovered = next;
+      }
+      if (result.history && result.history !== recoveredHistory) {
+        recoveredHistory = result.history;
+        changedHistory = true;
+      }
+    }
+
+    return {
+      state: recovered,
+      ...(recoveredHistory && changedHistory ? { history: recoveredHistory } : {}),
+      changed,
+      changedHistory,
+      consumedEntryIds
+    };
+  }
+
+  function recoverRuntimeLifecycleJournalEntry(
+    current: OutlineState,
+    windows: RuntimeWindow[],
+    entry: RuntimeLifecycleJournalEntry,
+    history?: HistoryState
+  ): { state: OutlineState; history?: HistoryState } {
+    if (entry.kind === "closeNode") {
+      if (!current.nodes[entry.nodeId] || current.nodes[entry.nodeId]?.status === "closed") {
+        return { state: current };
+      }
+      return {
+        state: runtimeClosePlanCompletedInWindows(entry.plan, windows)
+          ? applyClosedRuntimeClosePlan(current, entry.plan)
+          : current
+      };
+    }
+
+    if (entry.kind === "deleteNode") {
+      if (!current.nodes[entry.nodeId]) {
+        return { state: current };
+      }
+      return {
+        state: runtimeClosePlanCompletedInWindows(entry.plan, windows)
+          ? deleteOutlineNode(current, entry.nodeId, { allowLive: true })
+          : current
+      };
+    }
+
+    if (entry.kind === "restoreNode") {
+      if (current.nodes[entry.nodeId]?.status === "live") {
+        return { state: current };
+      }
+      const before: RuntimeResourceIds = {
+        tabIds: new Set(entry.before.tabIds),
+        windowIds: new Set(entry.before.windowIds)
+      };
+      const restoredNodes = restoredNodesFromRestoreCreateSideEffects(current, entry.attempts, before, windows);
+      return {
+        state: restoredNodes.length > 0 ? restoreNodes(current, restoredNodes) : current
+      };
+    }
+
+    if (entry.kind === "relocation") {
+      return { state: recoverRelocationJournalEntry(current, windows, entry) };
+    }
+
+    if (entry.kind === "history") {
+      return recoverHistoryJournalEntry(current, windows, entry, history);
+    }
+
+    return { state: current };
+  }
+
+  function runtimeClosePlanCompletedInWindows(plan: RuntimeClosePlan, windows: RuntimeWindow[]): boolean {
+    const openWindowIds = new Set(windows.map((windowInfo) => windowInfo.id));
+    if (plan.windowIds.some((windowId) => openWindowIds.has(windowId))) {
+      return false;
+    }
+
+    const openTabIds = new Set(windows.flatMap((windowInfo) => windowInfo.tabs ?? []).map((tab) => tab.id));
+    return plan.tabIds.every((tabId) => !openTabIds.has(tabId));
+  }
+
+  function applyClosedRuntimeClosePlan(current: OutlineState, plan: RuntimeClosePlan): OutlineState {
+    let next = current;
+    for (const windowId of plan.windowIds) {
+      next = closeWindow(next, windowId, { now: now() });
+    }
+    for (const tabId of plan.tabIds) {
+      next = closeTab(next, tabId, { now: now() });
+    }
+    return next;
+  }
+
+  function recoverRelocationJournalEntry(
+    current: OutlineState,
+    windows: RuntimeWindow[],
+    entry: Extract<RuntimeLifecycleJournalEntry, { kind: "relocation" }>
+  ): OutlineState {
+    const runtimeWindow = windows.find((windowInfo) =>
+      windowInfo.id !== entry.sourceWindowId &&
+      windowInfo.tabs?.some((tab) => tab.id === entry.tabId)
+    );
+    if (!runtimeWindow) {
+      return current;
+    }
+
+    const node = current.nodes[entry.nodeId];
+    if (!isLiveTabNode(node) || node.live.tabId !== entry.tabId || node.live.windowId === runtimeWindow.id) {
+      return current;
+    }
+
+    if (entry.commandType === "wrapNodeInGroup") {
+      return wrapNodeInGroup(current, entry.nodeId, { now: now(), liveWindow: runtimeWindow });
+    }
+    if (entry.commandType === "moveSubtreeToTopLevel") {
+      return moveSubtreeToTopLevel(current, entry.nodeId, { now: now(), liveWindow: runtimeWindow });
+    }
+    return moveTabToNewLiveWindow(current, entry.nodeId, runtimeWindow, {
+      now: now(),
+      ...(typeof entry.rootIndex === "number" ? { rootIndex: entry.rootIndex } : {})
+    });
+  }
+
+  function recoverHistoryJournalEntry(
+    current: OutlineState,
+    windows: RuntimeWindow[],
+    entry: Extract<RuntimeLifecycleJournalEntry, { kind: "history" }>,
+    history: HistoryState | undefined
+  ): { state: OutlineState; history?: HistoryState } {
+    if (!history || !historyTopMatchesJournalEntry(history, entry)) {
+      return { state: current };
+    }
+    const replayed = preserveClosedNodesDuringHistoryReplay(current, applyOutlineDelta(current, entry.delta));
+    const reconciled = reconcileWithWindows(replayed, windows, { now: now() }, { closeMissing: true });
+    if (statesMateriallyEqual(current, reconciled)) {
+      return { state: current };
+    }
+    return {
+      state: reconciled,
+      history: historyAfterJournalReplay(history, entry)
+    };
+  }
+
+  function historyTopMatchesJournalEntry(
+    history: HistoryState,
+    entry: Extract<RuntimeLifecycleJournalEntry, { kind: "history" }>
+  ): boolean {
+    const top = entry.direction === "undo" ? history.undoStack.at(-1) : history.redoStack.at(-1);
+    return Boolean(top && JSON.stringify(top) === JSON.stringify(entry.entry));
+  }
+
+  function historyAfterJournalReplay(
+    history: HistoryState,
+    entry: Extract<RuntimeLifecycleJournalEntry, { kind: "history" }>
+  ): HistoryState {
+    if (entry.direction === "undo") {
+      return {
+        version: 1,
+        undoStack: history.undoStack.slice(0, -1),
+        redoStack: [...history.redoStack, entry.entry]
+      };
+    }
+    return {
+      version: 1,
+      undoStack: [...history.undoStack, entry.entry],
+      redoStack: history.redoStack.slice(0, -1)
+    };
   }
 
   function stateLoadTraceOptions(): LoadStateOptions | undefined {
@@ -1373,6 +1803,13 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
     const current = await ensureState();
     const saveSchedule = saveScheduleForCommand(popped.entry.commandType);
+    const delta = direction === "undo" ? popped.entry.undo : popped.entry.redo;
+    const runtimeLifecycleJournalEntry = historyDeltaMayHaveRuntimeLifecycleEffects(current, delta)
+      ? runtimeLifecycleJournalEntryForHistory(direction, popped.entry, popped.history, delta)
+      : undefined;
+    if (runtimeLifecycleJournalEntry) {
+      await appendRuntimeLifecycleJournalEntry(api, runtimeLifecycleJournalEntry);
+    }
     const transaction = runtimeFacts.beginCommandTransactionForCommand(direction);
     if (!transaction) {
       return commandAck(false);
@@ -1381,12 +1818,13 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     try {
       next = await applyHistoryDeltaWithRuntime(
         current,
-        direction === "undo" ? popped.entry.undo : popped.entry.redo,
+        delta,
         popped.entry.commandType
       );
       runtimeFacts.recordCommandObserved(transaction.id);
     } catch (error) {
       runtimeFacts.rejectCommand(transaction.id);
+      await clearRuntimeLifecycleJournalEntryNow(runtimeLifecycleJournalEntry);
       throw error;
     }
     runtimeFacts.clearRemovalTombstonesForLiveState(next);
@@ -1395,6 +1833,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       scheduleHistorySave(historyState, saveSchedule);
       broadcastHistoryStatusSoon(historyState);
       runtimeFacts.commitCommand(transaction.id);
+      markRuntimeLifecycleJournalEntryForClearAfterSave(runtimeLifecycleJournalEntry);
       return commandAck(false);
     }
 
@@ -1408,6 +1847,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     scheduleHistorySave(historyState, saveSchedule);
     broadcastHistoryStatusSoon(historyState);
     runtimeFacts.commitCommand(transaction.id);
+    markRuntimeLifecycleJournalEntryForClearAfterSave(runtimeLifecycleJournalEntry);
     return commandAck(true);
   }
 
@@ -2773,6 +3213,20 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     );
     if (nextState) {
       lastPersistedState = cloneOutlineState(nextState);
+    }
+    if (nextState || nextHistory) {
+      await clearCompletedRuntimeLifecycleJournalEntriesAfterSave();
+    }
+  }
+
+  async function clearCompletedRuntimeLifecycleJournalEntriesAfterSave(): Promise<void> {
+    if (runtimeLifecycleJournalEntryIdsToClearAfterSave.size === 0) {
+      return;
+    }
+    const entryIds = [...runtimeLifecycleJournalEntryIdsToClearAfterSave];
+    await clearRuntimeLifecycleJournalEntries(api, entryIds);
+    for (const entryId of entryIds) {
+      runtimeLifecycleJournalEntryIdsToClearAfterSave.delete(entryId);
     }
   }
 
@@ -4339,6 +4793,10 @@ function isLiveWindowNode(node: OutlineNode | undefined): node is OutlineNode & 
 
 function isLiveTabNode(node: OutlineNode | undefined): node is OutlineNode & { live: { tabId: number; windowId: number } } {
   return Boolean(node?.kind === "tab" && node.status === "live" && node.live && "tabId" in node.live);
+}
+
+function isLiveRuntimeNode(node: OutlineNode | undefined): boolean {
+  return Boolean(node?.status === "live" && node.live);
 }
 
 function isDiagnosticsRequest(message: unknown): message is { type: "getDiagnostics" } {

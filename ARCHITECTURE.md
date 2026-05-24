@@ -152,6 +152,8 @@ flowchart LR
 
 The ledger is not persisted. On background startup, the durable outline and current browser runtime are loaded again, then reconciliation rebuilds the live truth from those sources. The bounded observation history exists for debugging and deterministic trace failures, not as storage state.
 
+There is one deliberately tiny durability exception: [runtime-lifecycle-journal.ts](./src/background/runtime-lifecycle-journal.ts) stores bounded, versioned recovery hints for in-flight user-visible lifecycle commands. It is not a persisted ledger. It records only intent needed to recover `close`, `delete`, `restore`, relocation, and history replay if the background dies after browser side effects but before outline/history persistence. Startup consumes the journal once against a complete `windows.getAll({ populate: true })` snapshot, applies recovery only when runtime evidence confirms the side effect, then clears the entries.
+
 Command handlers begin a ledger transaction before issuing browser-adapter calls. If the browser reports side effects before a command resolves, the controller records those observed facts and later commits or rejects the transaction. Recovery paths use the command plan plus current runtime facts so a rejected command does not resurrect resources that the browser already moved or removed.
 
 ### Runtime Reconciler
@@ -215,7 +217,7 @@ Saves are deferred and coalesced:
 - Once there is a persisted v3 baseline, flushes write only changed node shards, changed/removed order pages, manifest, and history.
 - Scheduled saves flush one pending state/history snapshot at a time. If another save is queued while storage is in flight, the controller re-arms the quiet timer afterward instead of immediately draining the next save. Explicit `flushPendingSaves()` still drains fully for tests and shutdown-style callers.
 
-This is a deliberate perceived-latency tradeoff: sidebar-visible broadcasts should not wait for a full `storage.local.set`. If the extension crashes between a broadcast and the delayed save, the latest outline-only edits may be lost, while startup reconciliation still corrects live tab/window facts from Firefox runtime.
+This is a deliberate perceived-latency tradeoff: sidebar-visible broadcasts should not wait for a full outline `storage.local.set`. If the extension crashes between a broadcast and the delayed save, the latest outline-only edits may be lost. Runtime lifecycle commands are stricter: the controller persists a small recovery journal before touching browser tabs/windows, so startup can repair confirmed side effects before normal reconciliation.
 
 ## Sidebar Rendering
 
@@ -321,7 +323,7 @@ Sidebar broadcasts are UI invalidations, not the mutation's durable completion p
 
 ### Separate Perceived Latency From Durability
 
-User-visible updates are broadcast first. Full persistence is deferred and coalesced. Structural bursts get a longer interaction save schedule, while ordinary saves keep a shorter schedule. This creates a brief window where the latest outline-only edits can be lost if the extension process dies before saving; live tab/window facts are still corrected by startup reconciliation.
+User-visible updates are broadcast first. Full persistence is deferred and coalesced. Structural bursts get a longer interaction save schedule, while ordinary saves keep a shorter schedule. This creates a brief window where the latest outline-only edits can be lost if the extension process dies before saving. Commands that can change browser lifecycle state first write the recovery journal, so browser-side close/delete/restore/relocation/history effects are either durably reflected on restart or ignored when a complete runtime snapshot does not confirm them.
 
 ### Make Runtime Provenance Explicit
 

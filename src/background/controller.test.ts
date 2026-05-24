@@ -5,8 +5,9 @@ import {
   AUTOMATIC_BACKUP_ALARM_NAME,
   AUTOMATIC_BACKUP_STATUS_STORAGE_KEY
 } from "./backups.js";
-import { createBackgroundController } from "./controller.js";
+import { createBackgroundController, type BackgroundController } from "./controller.js";
 import type { CommandAck } from "./commands.js";
+import { RUNTIME_LIFECYCLE_JOURNAL_KEY } from "./runtime-lifecycle-journal.js";
 import { HISTORY_KEY, STATE_KEY, loadStateV2, outlineStateV2Items, outlineStateV3Changes } from "./storage.js";
 import { PORTABLE_TREE_SCHEMA } from "../model/portable-tree.js";
 import type { OutlineState, RuntimeTab, RuntimeWindow } from "../model/types.js";
@@ -156,6 +157,20 @@ function waitForMacrotask(): Promise<void> {
   return new Promise((resolve) => {
     globalThis.setTimeout(resolve, 0);
   });
+}
+
+function storageSetCallsExcludingLifecycleJournal(runtime: FakeRuntime): unknown[][] {
+  return vi.mocked(runtime.api.storage.local.set).mock.calls.filter(
+    ([items]) => !isLifecycleJournalOnlyStorageSet(items)
+  );
+}
+
+function isLifecycleJournalOnlyStorageSet(items: unknown): boolean {
+  if (!items || typeof items !== "object" || Array.isArray(items)) {
+    return false;
+  }
+  const keys = Object.keys(items);
+  return keys.length === 1 && keys[0] === RUNTIME_LIFECYCLE_JOURNAL_KEY;
 }
 
 function fakeRuntime(windows: RuntimeWindow[], tabs: RuntimeTab[], options: FakeRuntimeOptions = {}): FakeRuntime {
@@ -751,6 +766,32 @@ function reindexWindowTabs(runtime: FakeRuntime, windowId: number): void {
       : tab);
 }
 
+function removeRuntimeTabWithoutEvents(runtime: FakeRuntime, tabId: number): void {
+  const tab = runtime.tabs.find((candidate) => candidate.id === tabId);
+  if (!tab) {
+    return;
+  }
+  runtime.tabs = runtime.tabs.filter((candidate) => candidate.id !== tabId);
+  reindexWindowTabs(runtime, tab.windowId);
+  removeEmptyRuntimeWindows(runtime, [tab.windowId]);
+}
+
+function removeRuntimeWindowWithoutEvents(runtime: FakeRuntime, windowId: number): void {
+  runtime.tabs = runtime.tabs.filter((candidate) => candidate.windowId !== windowId);
+  runtime.windows = runtime.windows.filter((candidate) => candidate.id !== windowId);
+  if (!runtime.windows.some((candidate) => candidate.focused) && runtime.windows[0]) {
+    runtime.windows = runtime.windows.map((candidate, index) => ({
+      ...candidate,
+      focused: index === 0
+    }));
+  }
+}
+
+function restartControllerAbrupt(runtime: FakeRuntime, now: () => number = () => 1000): BackgroundController {
+  clearFakeRuntimeListeners(runtime);
+  return createBackgroundController({ api: runtime.api, now });
+}
+
 function nextRuntimeWindowId(runtime: FakeRuntime): number {
   const windowId = runtime.nextWindowId;
   runtime.nextWindowId += 1;
@@ -1256,6 +1297,9 @@ type DomainAction =
     }
   | {
       type: "restartBackground";
+    }
+  | {
+      type: "restartBackgroundAbrupt";
     }
   | {
       type: "outlinerUndo";
@@ -9003,6 +9047,11 @@ async function runDomainAction(context: GeneratedTraceContext, action: DomainAct
     return;
   }
 
+  if (action.type === "restartBackgroundAbrupt") {
+    await runDomainRestartBackgroundAbrupt(context);
+    return;
+  }
+
   if (action.type === "outlinerUndo") {
     await runDomainHistoryCommand(context, "undo");
     return;
@@ -9039,6 +9088,15 @@ async function runDomainAction(context: GeneratedTraceContext, action: DomainAct
 async function runDomainRestartBackground(context: GeneratedTraceContext): Promise<void> {
   await flushGeneratedRuntimeEventRefreshes(context);
   await context.controller.flushPendingSaves();
+  clearFakeRuntimeListeners(context.runtime);
+  context.controller = createBackgroundController({
+    api: context.runtime.api,
+    now: () => context.now
+  });
+  await context.controller.ensureState();
+}
+
+async function runDomainRestartBackgroundAbrupt(context: GeneratedTraceContext): Promise<void> {
   clearFakeRuntimeListeners(context.runtime);
   context.controller = createBackgroundController({
     api: context.runtime.api,
@@ -13636,7 +13694,7 @@ describe("background controller lifecycle", () => {
     expect(restoreBroadcast?.closedCountDelta).toBe(-1);
     expect(restoreBroadcast?.state).toBeUndefined();
     await controller.flushPendingSaves();
-    expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
+    expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(1);
   });
 
   it("absorbs command-restored created-tab echoes without an extra node table scan", async () => {
@@ -14078,6 +14136,577 @@ describe("background controller lifecycle", () => {
     expect(state.nodes["tab:2"]?.status).toBe("closed");
   });
 
+  it("recovers an outliner tab close across abrupt restart before events or saves flush", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        },
+        {
+          id: 2,
+          windowId: 10,
+          index: 1,
+          active: false,
+          url: "https://two.example/",
+          title: "Two"
+        }
+      ]
+    );
+    let controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    await controller.flushPendingSaves();
+    vi.mocked(runtime.api.storage.local.set).mockClear();
+    vi.mocked(runtime.api.tabs.remove).mockImplementationOnce(async (tabIds) => {
+      for (const tabId of Array.isArray(tabIds) ? tabIds : [tabIds]) {
+        removeRuntimeTabWithoutEvents(runtime, tabId);
+      }
+    });
+
+    expectCommandAck(await controller.handleMessage({ type: "closeNode", nodeId: "tab:2" }), false);
+
+    controller = restartControllerAbrupt(runtime);
+    const state = await controller.ensureState();
+
+    expect(state.nodes["tab:2"]?.status).toBe("closed");
+    expect(state.nodes["tab:2"]?.live).toBeUndefined();
+    expect(state.nodes["window:10"]?.childIds).toEqual(["tab:1", "tab:2"]);
+  });
+
+  it("recovers an outliner window close across abrupt restart before events or saves flush", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        },
+        {
+          id: 20,
+          focused: false,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        },
+        {
+          id: 2,
+          windowId: 20,
+          index: 0,
+          active: true,
+          url: "https://two.example/",
+          title: "Two"
+        }
+      ]
+    );
+    let controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    await controller.flushPendingSaves();
+    vi.mocked(runtime.api.windows.remove).mockImplementationOnce(async (windowId) => {
+      removeRuntimeWindowWithoutEvents(runtime, windowId);
+    });
+
+    expectCommandAck(await controller.handleMessage({ type: "closeNode", nodeId: "window:20" }), false);
+
+    controller = restartControllerAbrupt(runtime);
+    const state = await controller.ensureState();
+
+    expect(state.nodes["window:20"]?.status).toBe("closed");
+    expect(state.nodes["tab:2"]?.status).toBe("closed");
+    expect(state.nodes["window:20"]?.live).toBeUndefined();
+    expect(state.rootIds).toEqual(["window:10", "window:20"]);
+  });
+
+  it("aborts lifecycle commands before browser side effects when journal persistence fails", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        },
+        {
+          id: 2,
+          windowId: 10,
+          index: 1,
+          active: false,
+          url: "https://two.example/",
+          title: "Two"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    await controller.flushPendingSaves();
+    const storageSet = vi.mocked(runtime.api.storage.local.set);
+    const defaultSet = storageSet.getMockImplementation();
+    vi.mocked(runtime.api.tabs.remove).mockClear();
+    storageSet.mockImplementationOnce(async (items: Record<string, unknown>) => {
+      if (RUNTIME_LIFECYCLE_JOURNAL_KEY in items) {
+        throw new Error("journal write failed");
+      }
+      await defaultSet?.(items);
+    });
+
+    await expect(controller.handleMessage({ type: "closeNode", nodeId: "tab:2" })).rejects.toThrow(
+      "journal write failed"
+    );
+
+    expect(runtime.api.tabs.remove).not.toHaveBeenCalled();
+    expect(runtime.tabs.map((tab) => tab.id)).toEqual([1, 2]);
+  });
+
+  it("does not preserve browser-native tab disappearance across abrupt restart without a journal", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        },
+        {
+          id: 2,
+          windowId: 10,
+          index: 1,
+          active: false,
+          url: "https://two.example/",
+          title: "Two"
+        }
+      ]
+    );
+    let controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    await controller.flushPendingSaves();
+
+    removeRuntimeTabWithoutEvents(runtime, 2);
+    controller = restartControllerAbrupt(runtime);
+    const state = await controller.ensureState();
+
+    expect(state.nodes["tab:2"]).toBeUndefined();
+    expect(state.nodes["window:10"]?.childIds).toEqual(["tab:1"]);
+  });
+
+  it("clears a lifecycle journal entry without mutation when runtime evidence does not confirm it", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        },
+        {
+          id: 2,
+          windowId: 10,
+          index: 1,
+          active: false,
+          url: "https://two.example/",
+          title: "Two"
+        }
+      ]
+    );
+    let controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    await controller.flushPendingSaves();
+    await runtime.api.storage.local.set({
+      [RUNTIME_LIFECYCLE_JOURNAL_KEY]: {
+        version: 1,
+        entries: [
+          {
+            version: 1,
+            id: "journal:no-side-effect",
+            createdAt: 1000,
+            kind: "closeNode",
+            nodeId: "tab:2",
+            plan: { tabIds: [2], windowIds: [] }
+          }
+        ]
+      }
+    });
+    vi.mocked(runtime.api.storage.local.remove).mockClear();
+
+    controller = restartControllerAbrupt(runtime);
+    const state = await controller.ensureState();
+    await waitForMacrotask();
+
+    expect(state.nodes["tab:2"]?.status).toBe("live");
+    expect(state.nodes["tab:2"]?.live).toEqual({ tabId: 2, windowId: 10 });
+    expect(runtime.api.storage.local.remove).toHaveBeenCalledWith(RUNTIME_LIFECYCLE_JOURNAL_KEY);
+  });
+
+  it("clears a lifecycle journal entry without duplicating work when persisted state already reflects it", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        },
+        {
+          id: 2,
+          windowId: 10,
+          index: 1,
+          active: false,
+          url: "https://two.example/",
+          title: "Two"
+        }
+      ]
+    );
+    let controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    await controller.handleMessage({ type: "closeNode", nodeId: "tab:2" });
+    await runtime.events.tabRemoved.flush();
+    await runtime.events.sessionChanged.flush();
+    await controller.flushPendingSaves();
+    await runtime.api.storage.local.set({
+      [RUNTIME_LIFECYCLE_JOURNAL_KEY]: {
+        version: 1,
+        entries: [
+          {
+            version: 1,
+            id: "journal:already-persisted",
+            createdAt: 1000,
+            kind: "closeNode",
+            nodeId: "tab:2",
+            plan: { tabIds: [2], windowIds: [] }
+          }
+        ]
+      }
+    });
+    vi.mocked(runtime.api.storage.local.remove).mockClear();
+
+    controller = restartControllerAbrupt(runtime);
+    const state = await controller.ensureState();
+    await waitForMacrotask();
+
+    expect(state.nodes["tab:2"]?.status).toBe("closed");
+    expect(state.nodes["window:10"]?.childIds.filter((nodeId) => nodeId === "tab:2")).toHaveLength(1);
+    expect(runtime.api.storage.local.remove).toHaveBeenCalledWith(RUNTIME_LIFECYCLE_JOURNAL_KEY);
+  });
+
+  it("recovers a delete command across abrupt restart before state save", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        },
+        {
+          id: 2,
+          windowId: 10,
+          index: 1,
+          active: false,
+          url: "https://two.example/",
+          title: "Two"
+        }
+      ]
+    );
+    let controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    await controller.flushPendingSaves();
+    vi.mocked(runtime.api.tabs.remove).mockImplementationOnce(async (tabIds) => {
+      for (const tabId of Array.isArray(tabIds) ? tabIds : [tabIds]) {
+        removeRuntimeTabWithoutEvents(runtime, tabId);
+      }
+    });
+
+    expectCommandAck(await controller.handleMessage({ type: "deleteNode", nodeId: "tab:2" }), true);
+
+    controller = restartControllerAbrupt(runtime);
+    const state = await controller.ensureState();
+
+    expect(state.nodes["tab:2"]).toBeUndefined();
+    expect(state.nodes["window:10"]?.childIds).toEqual(["tab:1"]);
+  });
+
+  it("recovers a restore create side effect across abrupt restart before state save", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        },
+        {
+          id: 2,
+          windowId: 10,
+          index: 1,
+          active: false,
+          url: "https://two.example/",
+          title: "Two"
+        }
+      ]
+    );
+    let controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    await controller.handleMessage({ type: "closeNode", nodeId: "tab:2" });
+    await runtime.events.tabRemoved.flush();
+    await runtime.events.sessionChanged.flush();
+    await controller.flushPendingSaves();
+    vi.mocked(runtime.api.tabs.create).mockImplementationOnce(async (createProperties) => {
+      const windowId = createProperties.windowId ?? 10;
+      const tab: RuntimeTab = {
+        id: nextRuntimeTabId(runtime),
+        windowId,
+        index: runtime.tabs.filter((candidate) => candidate.windowId === windowId).length,
+        active: createProperties.active ?? true,
+        url: createProperties.url,
+        title: createProperties.url
+      };
+      runtime.tabs.push(tab);
+      reindexWindowTabs(runtime, windowId);
+      return copyTab(tab);
+    });
+
+    expectCommandAck(await controller.handleMessage({ type: "restoreNode", nodeId: "tab:2" }), true);
+
+    controller = restartControllerAbrupt(runtime);
+    const state = await controller.ensureState();
+
+    expect(state.nodes["tab:2"]?.status).toBe("live");
+    expect(state.nodes["tab:2"]?.live).toEqual({ tabId: 2, windowId: 10 });
+    expect(state.nodes["tab:2"]?.title).toBe("Two");
+  });
+
+  it("recovers a restored window create side effect across abrupt restart before state save", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        },
+        {
+          id: 20,
+          focused: false,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        },
+        {
+          id: 2,
+          windowId: 20,
+          index: 0,
+          active: true,
+          url: "https://two.example/",
+          title: "Two"
+        }
+      ]
+    );
+    let controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    await controller.handleMessage({ type: "closeNode", nodeId: "window:20" });
+    await runtime.events.tabRemoved.flush();
+    await runtime.events.windowRemoved.flush();
+    await runtime.events.sessionChanged.flush();
+    await controller.flushPendingSaves();
+
+    expectCommandAck(await controller.handleMessage({ type: "restoreNode", nodeId: "window:20" }), true);
+
+    controller = restartControllerAbrupt(runtime);
+    const state = await controller.ensureState();
+
+    const restoredWindowId = state.nodes["window:20"]?.live?.windowId;
+    expect(restoredWindowId).toBe(21);
+    expect(state.nodes["window:20"]?.status).toBe("live");
+    expect(state.nodes["tab:2"]?.status).toBe("live");
+    expect(state.nodes["tab:2"]?.live).toEqual({ tabId: 2, windowId: restoredWindowId });
+  });
+
+  it("recovers a grouping relocation across abrupt restart before state save", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        },
+        {
+          id: 2,
+          windowId: 10,
+          index: 1,
+          active: false,
+          url: "https://two.example/",
+          title: "Two"
+        }
+      ]
+    );
+    let controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    await controller.flushPendingSaves();
+
+    expectCommandAck(await controller.handleMessage({ type: "wrapNodeInGroup", nodeId: "tab:1" }), true);
+
+    controller = restartControllerAbrupt(runtime);
+    const state = await controller.ensureState();
+
+    expect(state.rootIds).toEqual(["window:10"]);
+    expect(state.nodes["window:10"]?.childIds).toEqual(["window:11", "tab:2"]);
+    expect(state.nodes["window:11"]?.childIds).toEqual(["tab:1"]);
+    expect(state.nodes["tab:1"]?.live).toEqual({ tabId: 1, windowId: 11 });
+  });
+
+  it("recovers undo history replay across abrupt restart before state and history save", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        },
+        {
+          id: 2,
+          windowId: 10,
+          index: 1,
+          active: false,
+          url: "https://two.example/",
+          title: "Two"
+        }
+      ]
+    );
+    let controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    expectCommandAck(await controller.handleMessage({ type: "deleteNode", nodeId: "tab:2" }), true);
+    await runtime.events.tabRemoved.flush();
+    await runtime.events.sessionChanged.flush();
+    await controller.flushPendingSaves();
+    vi.mocked(runtime.api.tabs.create).mockImplementationOnce(async (createProperties) => {
+      const windowId = createProperties.windowId ?? 10;
+      const tab: RuntimeTab = {
+        id: nextRuntimeTabId(runtime),
+        windowId,
+        index: runtime.tabs.filter((candidate) => candidate.windowId === windowId).length,
+        active: createProperties.active ?? true,
+        url: createProperties.url,
+        title: createProperties.url
+      };
+      runtime.tabs.push(tab);
+      reindexWindowTabs(runtime, windowId);
+      return copyTab(tab);
+    });
+
+    expectCommandAck(await controller.handleMessage({ type: "undo" }), true);
+
+    controller = restartControllerAbrupt(runtime);
+    const state = await controller.ensureState();
+    const historyStatus = await controller.handleMessage({ type: "getHistoryStatus" });
+
+    expect(state.nodes["tab:2"]?.status).toBe("live");
+    expect(state.nodes["tab:2"]?.live).toEqual({ tabId: 2, windowId: 10 });
+    expect(historyStatus).toMatchObject({
+      type: "historyStatus",
+      canUndo: false,
+      canRedo: true,
+      redoLabel: "Delete"
+    });
+  });
+
   it("restores one closed tab without traversing unrelated closed siblings", async () => {
     const storedState = wideClosedTabState(100);
     const runtime = fakeRuntime(
@@ -14118,7 +14747,7 @@ describe("background controller lifecycle", () => {
       closedCountDelta: -1
     });
     await controller.flushPendingSaves();
-    expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
+    expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(1);
   });
 
   it("broadcasts a restored focused new window and the cleared active window in one compact restore patch", async () => {
@@ -14199,7 +14828,7 @@ describe("background controller lifecycle", () => {
     expect(restoreBroadcast?.closedCountDelta).toBe(-2);
     expect(restoreBroadcast?.state).toBeUndefined();
     await controller.flushPendingSaves();
-    expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
+    expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(1);
   });
 
   it("absorbs transient restored-tab create and no-op update echoes", async () => {
@@ -14488,7 +15117,7 @@ describe("background controller lifecycle", () => {
     expect(closeBroadcast?.closedCountDelta).toBe(1);
     expect(closeBroadcast?.state).toBeUndefined();
     await controller.flushPendingSaves();
-    expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
+    expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(1);
   });
 
   it("does not broadcast twice when outliner closeNode sessions arrive before tabRemoved", async () => {
@@ -14536,7 +15165,7 @@ describe("background controller lifecycle", () => {
     expect(closeBroadcast?.type).toBe("nodeStateUpdated");
     expect(closeBroadcast?.closedCountDelta).toBe(1);
     await controller.flushPendingSaves();
-    expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
+    expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(1);
   });
 
   it("defers command close session echoes until the matching tabRemoved event", async () => {
@@ -14592,7 +15221,7 @@ describe("background controller lifecycle", () => {
       closedCountDelta: 1
     });
     await controller.flushPendingSaves();
-    expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
+    expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(1);
   });
 
   it("skips the session-changed snapshot after an outliner closeNode tabRemoved update", async () => {
@@ -16191,7 +16820,7 @@ describe("background controller lifecycle", () => {
     expect(afterRemoveEvents).toEqual(deleted);
     expect(stateBroadcasts(runtime.broadcasts)).toHaveLength(1);
     await controller.flushPendingSaves();
-    expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
+    expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(1);
   });
 
   it("accepts flatten subtree commands through the extension message path", async () => {
@@ -16398,7 +17027,7 @@ describe("background controller lifecycle", () => {
     expect(lastBroadcast?.rootIds).toEqual(["window:10"]);
     expect(lastBroadcast?.state).toBeUndefined();
     await controller.flushPendingSaves();
-    expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
+    expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(1);
   });
 
   it("broadcasts wrap-in-group commands as tree structure patches", async () => {
@@ -16488,7 +17117,7 @@ describe("background controller lifecycle", () => {
     expect(lastBroadcast?.rootIds).toEqual(["window:10"]);
     expect(lastBroadcast?.state).toBeUndefined();
     await controller.flushPendingSaves();
-    expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
+    expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(1);
   });
 
   it("broadcasts move-to-top-level commands as tree structure patches", async () => {
@@ -16585,7 +17214,7 @@ describe("background controller lifecycle", () => {
       undoLabel: "Move to top level"
     });
     await controller.flushPendingSaves();
-    expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
+    expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(1);
   });
 
   it("absorbs focus and activation echoes from live-tab grouping without a full runtime refresh", async () => {

@@ -43,7 +43,7 @@ Core selectors:
 
 Useful actions:
 
-- Runtime events: `openTab`, `activateTab`, `updateTab`, `focusWindow`, `sessionChanged`, `manualRefresh`, `restartBackground`.
+- Runtime events: `openTab`, `activateTab`, `updateTab`, `focusWindow`, `sessionChanged`, `manualRefresh`, `restartBackground`, `restartBackgroundAbrupt`.
 - Commands: `outlinerGroupTab`, `outlinerMoveTabToNewWindow`, `outlinerMoveTabCommandToNewWindow`, `outlinerMoveSubtreeToTopLevel`, `outlinerFocusTab`, `outlinerCloseTab`, `outlinerCloseWindow`, `outlinerUndo`, `outlinerRedo`.
 - Failure-shape commands: `outlinerDeleteWindowRejectingClose`, `outlinerDeleteTabRejectingClose`, `outlinerDeleteNodeRejectingClose`, `outlinerCloseNodeRejectingClose`, `outlinerMoveTabCommandToNewWindowRejectingCreate`, `outlinerFocusTabRejectingUpdate`, `outlinerRestoreNodeRejectingCreate`, `outlinerRestoreDeleteWindowDelayedEvent`.
 - Query skews: `manualRefreshWithStaleQuery`, `manualRefreshWithMissingTabQuery`, `manualRefreshWithMissingWindowQuery`, `manualRefreshWithReorderedQuery`.
@@ -53,6 +53,7 @@ Useful actions:
 `nativeCloseWindow` may set `order` to `tabsRemovedThenWindowRemoved`, `windowRemovedThenTabsRemoved`, `windowRemovedOnly`, or `tabsRemovedOnly`.
 `outlinerRestoreNodeRejectingCreate` may set `captureRestoredTabs` and `captureRestoredWindows`; these captures bind to current live runtime resources restored from the original closed outline node IDs, not historical tab/window IDs.
 `restartBackground` flushes pending saves, recreates the background controller against the same fake runtime/storage, calls `ensureState`, and keeps named stale captures intact so delayed browser evidence can arrive after restart.
+`restartBackgroundAbrupt` drops listeners and recreates the controller without flushing runtime events or pending saves. Use it only for crash-boundary traces where the durable lifecycle journal, not the ephemeral ledger, must recover confirmed browser side effects.
 
 ## Invariants
 
@@ -78,7 +79,7 @@ Focus mutations on stale or contradictory evidence crossing command boundaries:
 
 ## Coverage Matrix
 
-Current coverage after the transaction-boundary fix pass on 2026-05-24: 144 regression traces and 263 discovery traces. The restart-stress expansion recorded RT-063 through RT-090 and was promoted to regression coverage. The breadth sweep added neutral `bh-*` discovery traces, recorded RT-091 through RT-095 around restore create rejection side effects, and those five traces are now promoted to regression coverage after the recovery fix. The post-recovery sweep added neutral `ph-*` discovery traces and recorded RT-096 through RT-103; RT-096, RT-098, and RT-103 are promoted regression coverage, while the remaining RT-097/099/100/101/102 entries were harness artifacts corrected in discovery traces. The transaction-boundary sweep recorded RT-104 and RT-105 around history replay after recovered relocated closes; both are promoted regression coverage after the history replay fix.
+Current coverage after the runtime lifecycle durability pass on 2026-05-24: 166 regression traces and 303 discovery traces. The restart-stress expansion recorded RT-063 through RT-090 and was promoted to regression coverage. The breadth sweep added neutral `bh-*` discovery traces, recorded RT-091 through RT-095 around restore create rejection side effects, and those five traces are now promoted to regression coverage after the recovery fix. The post-recovery sweep added neutral `ph-*` discovery traces and recorded RT-096 through RT-103; RT-096, RT-098, and RT-103 are promoted regression coverage, while the remaining RT-097/099/100/101/102 entries were harness artifacts corrected in discovery traces. The transaction-boundary sweep recorded RT-104 and RT-105 around history replay after recovered relocated closes; both are promoted regression coverage after the history replay fix. Crash-boundary focused tests now cover the durable journal for close, delete, restore, relocation, and history replay; discovery traces may use `restartBackgroundAbrupt` to probe similar edges.
 
 | State shape | Command edge | Runtime skew | Refresh edge | Current coverage | Next target |
 | --- | --- | --- | --- | --- | --- |
