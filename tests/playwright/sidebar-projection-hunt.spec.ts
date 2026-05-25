@@ -52,6 +52,86 @@ test.describe("sidebar projection hunt", () => {
     expect(issues).toEqual([]);
   });
 
+  test("psh-stale-covering-window-survives-latest-noncovering-slice", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadLargeSparseSidebar(page);
+
+    const result = await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      await api.nextFrame();
+      await api.scrollToRow(250);
+      await api.waitForSparseRequestCount(1);
+      await api.scrollToRow(260);
+      await api.waitForSparseRequestCount(2);
+      api.resolveSliceAt(0, { start: 240, end: 310 });
+      await api.waitForIdleFrames(2);
+      const before = api.visibleRows();
+      api.resolveSliceAt(0, { start: 700, end: 760 });
+      await api.waitForIdleFrames(2);
+      return {
+        before,
+        after: api.visibleRows(),
+        requestCount: api.sparseRequestCount()
+      };
+    });
+
+    expect(result.before).toContain(260);
+    expect(result.after).toContain(260);
+    expect(result.requestCount).toBeGreaterThanOrEqual(3);
+    expect(issues).toEqual([]);
+  });
+
+  test("psh-rejected-stale-request-does-not-block-current-slice", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadLargeSparseSidebar(page);
+
+    const result = await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      await api.nextFrame();
+      await api.scrollToRow(250);
+      await api.waitForSparseRequestCount(1);
+      await api.scrollToRow(360);
+      await api.waitForSparseRequestCount(2);
+      api.rejectSliceAt(0);
+      api.resolveSliceAt(0);
+      await api.waitForIdleFrames(2);
+      return {
+        requestCount: api.sparseRequestCount(),
+        visibleRows: api.visibleRows()
+      };
+    });
+
+    expect(result.requestCount).toBe(2);
+    expect(result.visibleRows).toContain(360);
+    expect(issues).toEqual([]);
+  });
+
+  test("psh-full-state-broadcast-recovers-after-rejected-slice", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadLargeSparseSidebar(page, { fullStatePending: true });
+
+    const result = await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      await api.nextFrame();
+      await api.scrollToRow(250);
+      await api.waitForSparseRequestCount(1);
+      api.rejectSliceAt(0);
+      await api.waitForIdleFrames(2);
+      api.resolveFullState();
+      for (let index = 0; index < 90 && !api.visibleRows().includes(250); index += 1) {
+        await api.nextFrame();
+      }
+      return {
+        requestCount: api.sparseRequestCount(),
+        visibleRows: api.visibleRows()
+      };
+    });
+
+    expect(result.requestCount).toBe(1);
+    expect(result.visibleRows).toContain(250);
+    expect(issues).toEqual([]);
+  });
+
   test("psh-three-jump-out-of-order-covering-slice-paints-current-viewport", async ({ page }) => {
     const issues = collectPageIssues(page);
     await loadLargeSparseSidebar(page);
@@ -247,6 +327,32 @@ test.describe("sidebar projection hunt", () => {
     await expect(sentCommands(page)).resolves.toEqual([{ type: "deleteNode", nodeId: "tab:2" }]);
     expect(issues).toEqual([]);
   });
+
+  test("psh-unloaded-delete-patch-preserves-visible-sparse-window", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadLargeSparseSidebar(page, { fullStatePending: true });
+
+    const result = await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      await api.nextFrame();
+      await api.scrollToRow(250);
+      await api.waitForSparseRequestCount(1);
+      api.resolveSliceAt(0);
+      await api.waitForIdleFrames(2);
+      const before = api.visibleRows();
+      api.emitDeletePatch(["tab:900"]);
+      await api.waitForIdleFrames(2);
+      return {
+        before,
+        after: api.visibleRows()
+      };
+    });
+
+    expect(result.before).toContain(250);
+    expect(result.after).toContain(250);
+    await expect(page.locator(nodeSelector("tab:900"))).toHaveCount(0);
+    expect(issues).toEqual([]);
+  });
 });
 
 async function loadLargeSparseSidebar(
@@ -381,6 +487,7 @@ function installProjectionHuntHarness(options: {
   }> = [];
   let fullState = options.restoredFixture ? restoredState() : largeState();
   let fullStateResolver: ((value: unknown) => void) | undefined;
+  let fullStateResolveQueued = false;
 
   window.projectionHuntApi = () => ({
     nextFrame,
@@ -418,6 +525,10 @@ function installProjectionHuntHarness(options: {
           });
         }
         if (type === "getState") {
+          if (fullStateResolveQueued) {
+            fullStateResolveQueued = false;
+            return structuredClone(fullState);
+          }
           if (options.fullStatePending) {
             return new Promise((resolve) => {
               fullStateResolver = resolve;
@@ -492,7 +603,11 @@ function installProjectionHuntHarness(options: {
   }
 
   function resolveFullState() {
-    fullStateResolver?.(structuredClone(fullState));
+    if (!fullStateResolver) {
+      fullStateResolveQueued = true;
+      return;
+    }
+    fullStateResolver(structuredClone(fullState));
     fullStateResolver = undefined;
   }
 
