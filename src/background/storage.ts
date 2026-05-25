@@ -61,6 +61,14 @@ type InitialTreeRow = {
   insideActiveWindow: boolean;
 };
 
+export type ProjectionSliceCoverage = {
+  startRowIndex: number;
+  endRowIndex: number;
+  editableNodeIds: NodeId[];
+  completeSubtreeNodeIds: NodeId[];
+  completeSiblingParentIds: NodeId[];
+};
+
 export type InitialTreeSnapshot = {
   type: "initialTreeSnapshot";
   version: 1;
@@ -79,6 +87,7 @@ export type InitialTreeSnapshot = {
     closedCount: number;
     matchCount: 0;
   };
+  coverage?: ProjectionSliceCoverage;
   hydrating: boolean;
 };
 
@@ -195,13 +204,14 @@ export async function saveStateAndHistory(
   state: OutlineState | undefined,
   history: HistoryState | undefined,
   api: WebExtensionBrowser = browser,
-  options: { previousState?: OutlineState } = {}
+  options: { previousState?: OutlineState; candidateNodeIds?: readonly NodeId[] } = {}
 ): Promise<void> {
   const setItems: Record<string, unknown> = {};
   const removeKeys: string[] = [];
   if (state) {
     const changes = outlineStateV3Changes(state, {
-      ...(options.previousState ? { previousState: options.previousState } : {})
+      ...(options.previousState ? { previousState: options.previousState } : {}),
+      ...(options.candidateNodeIds ? { candidateNodeIds: options.candidateNodeIds } : {})
     });
     Object.assign(setItems, changes.setItems);
     removeKeys.push(...changes.removeKeys);
@@ -448,7 +458,7 @@ async function loadStateV3FromManifest(
 
 export function outlineStateV3Changes(
   state: OutlineState,
-  options: { previousState?: OutlineState; revision?: number } = {}
+  options: { previousState?: OutlineState; candidateNodeIds?: readonly NodeId[]; revision?: number } = {}
 ): OutlineStateV3Changes {
   const revision = options.revision ?? Date.now();
   const manifest = stateV3ManifestForState(state, revision);
@@ -467,7 +477,7 @@ export function outlineStateV3Changes(
     return { setItems, removeKeys };
   }
 
-  for (const shardIndex of changedNodeShardIndexes(options.previousState, state)) {
+  for (const shardIndex of changedNodeShardIndexes(options.previousState, state, options.candidateNodeIds)) {
     const key = stateV3NodeShardKey(shardIndex);
     const shard = stateV3NodeShard(state, shardIndex);
     if (shard.nodes.length === 0) {
@@ -477,7 +487,7 @@ export function outlineStateV3Changes(
     }
   }
 
-  for (const change of changedOrderPages(options.previousState, state)) {
+  for (const change of changedOrderPages(options.previousState, state, options.candidateNodeIds)) {
     if (change.page) {
       setItems[change.key] = change.page;
     } else {
@@ -560,6 +570,7 @@ export function initialTreeSnapshotForState(
   for (const row of rows) {
     loadedNodeIds.add(row.nodeId);
   }
+  const coverage = projectionSliceCoverageForRows(state, rows, loadedNodeIds);
   const partialNodes: OutlineState["nodes"] = {};
   for (const nodeId of loadedNodeIds) {
     const node = state.nodes[nodeId];
@@ -595,7 +606,42 @@ export function initialTreeSnapshotForState(
       closedCount: nodeValues.filter((node) => node.status === "closed").length,
       matchCount: 0
     },
+    coverage,
     hydrating: options.hydrating ?? true
+  };
+}
+
+function projectionSliceCoverageForRows(
+  state: OutlineState,
+  rows: InitialTreeRow[],
+  loadedNodeIds: ReadonlySet<NodeId>
+): ProjectionSliceCoverage {
+  const startRowIndex = rows[0]?.index ?? 0;
+  const endRowIndex = rows.length > 0 ? (rows.at(-1)?.index ?? startRowIndex) + 1 : startRowIndex;
+  const editableNodeIds: NodeId[] = [];
+  const completeSubtreeNodeIds: NodeId[] = [];
+  const completeSiblingParentIds: NodeId[] = [];
+
+  for (const row of rows) {
+    const node = state.nodes[row.nodeId];
+    if (!node) {
+      continue;
+    }
+    editableNodeIds.push(node.id);
+    if (row.index >= startRowIndex && row.subtreeEndIndex <= endRowIndex) {
+      completeSubtreeNodeIds.push(node.id);
+    }
+    if (node.childIds.every((childId) => loadedNodeIds.has(childId))) {
+      completeSiblingParentIds.push(node.id);
+    }
+  }
+
+  return {
+    startRowIndex,
+    endRowIndex,
+    editableNodeIds,
+    completeSubtreeNodeIds,
+    completeSiblingParentIds
   };
 }
 
@@ -677,10 +723,20 @@ function stateV3ManifestForState(state: OutlineState, revision: number): StateV3
     nodeCount: nodes.length,
     closedCount: nodes.filter((node) => node.status === "closed").length,
     nodeShardCount: STATE_V3_NODE_SHARD_COUNT,
-    nodeShardKeys: [...stateV3NodeShardItems(state).keys()],
+    nodeShardKeys: stateV3NodeShardKeys(state),
     orderPageSize: STATE_V3_ORDER_PAGE_SIZE,
     initialSnapshot: initialTreeSnapshotForState(state, { revision, hydrating: true })
   };
+}
+
+function stateV3NodeShardKeys(state: OutlineState): string[] {
+  const shardIndexes = new Set<number>();
+  for (const node of Object.values(state.nodes)) {
+    shardIndexes.add(stateV3NodeShardIndex(node.id));
+  }
+  return [...shardIndexes]
+    .sort((left, right) => left - right)
+    .map(stateV3NodeShardKey);
 }
 
 function stateV3NodeShardItems(state: OutlineState): Map<string, StateV3NodeShard> {
@@ -738,9 +794,13 @@ function stateV3OrderPagesForNode(node: OutlineNode): StateV3OrderPage[] {
   return pages;
 }
 
-function changedNodeShardIndexes(previous: OutlineState, next: OutlineState): number[] {
+function changedNodeShardIndexes(
+  previous: OutlineState,
+  next: OutlineState,
+  candidateNodeIds?: readonly NodeId[]
+): number[] {
   const shardIndexes = new Set<number>();
-  for (const nodeId of unionNodeIds(previous, next)) {
+  for (const nodeId of candidateNodeIds ? uniqueNodeIds(candidateNodeIds) : unionNodeIds(previous, next)) {
     const previousNode = previous.nodes[nodeId];
     const nextNode = next.nodes[nodeId];
     if (!previousNode && nextNode) {
@@ -756,10 +816,11 @@ function changedNodeShardIndexes(previous: OutlineState, next: OutlineState): nu
 
 function changedOrderPages(
   previous: OutlineState,
-  next: OutlineState
+  next: OutlineState,
+  candidateNodeIds?: readonly NodeId[]
 ): Array<{ key: string; page?: StateV3OrderPage }> {
   const changes: Array<{ key: string; page?: StateV3OrderPage }> = [];
-  for (const nodeId of unionNodeIds(previous, next)) {
+  for (const nodeId of candidateNodeIds ? uniqueNodeIds(candidateNodeIds) : unionNodeIds(previous, next)) {
     const previousChildIds = previous.nodes[nodeId]?.childIds ?? [];
     const nextNode = next.nodes[nodeId];
     const nextChildIds = nextNode?.childIds ?? [];
@@ -790,6 +851,10 @@ function changedOrderPages(
 
 function unionNodeIds(left: OutlineState, right: OutlineState): NodeId[] {
   return [...new Set([...Object.keys(left.nodes), ...Object.keys(right.nodes)])];
+}
+
+function uniqueNodeIds(nodeIds: readonly NodeId[]): NodeId[] {
+  return [...new Set(nodeIds.filter(Boolean))];
 }
 
 function orderPageKeysForStoredNode(node: StoredOutlineNode, orderPageSize: number): string[] {
@@ -834,6 +899,7 @@ function storedOutlineNodesEqual(previous: OutlineNode, next: OutlineNode): bool
     previous.updatedAt === next.updatedAt &&
     previous.closedAt === next.closedAt &&
     previous.restoredFromClosed === next.restoredFromClosed &&
+    previous.runtimeProvenance === next.runtimeProvenance &&
     liveRefsEqual(previous.live, next.live) &&
     restoreRefsEqual(previous.restore, next.restore);
 }
@@ -865,7 +931,18 @@ function cloneInitialTreeSnapshot(snapshot: InitialTreeSnapshot, hydrating: bool
       rows: snapshot.projection.rows.map((row) => ({ ...row })),
       matchingNodeIds: [...snapshot.projection.matchingNodeIds],
       visibleNodeIds: [...snapshot.projection.visibleNodeIds]
-    }
+    },
+    ...(snapshot.coverage
+      ? {
+          coverage: {
+            startRowIndex: snapshot.coverage.startRowIndex,
+            endRowIndex: snapshot.coverage.endRowIndex,
+            editableNodeIds: [...snapshot.coverage.editableNodeIds],
+            completeSubtreeNodeIds: [...snapshot.coverage.completeSubtreeNodeIds],
+            completeSiblingParentIds: [...snapshot.coverage.completeSiblingParentIds]
+          }
+        }
+      : {})
   };
 }
 

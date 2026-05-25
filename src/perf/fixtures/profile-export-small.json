@@ -1,0 +1,76 @@
+{
+  "schema": "tabs-outliner-profile",
+  "exportedAt": "2026-05-24T16:06:42.408Z",
+  "snapshot": {
+    "background": {
+      "enabled": true,
+      "maxEntries": 500,
+      "entries": [
+        {
+          "source": "background",
+          "name": "background.runtime.message",
+          "atMs": 1,
+          "durationMs": 12,
+          "detail": {
+            "type": "getInitialTreeSnapshotWindow"
+          }
+        },
+        {
+          "source": "background",
+          "name": "background.runtime.message",
+          "atMs": 2,
+          "durationMs": 13,
+          "detail": {
+            "type": "getInitialTreeSnapshotWindow"
+          }
+        },
+        {
+          "source": "background",
+          "name": "background.state.save",
+          "atMs": 3,
+          "durationMs": 220
+        },
+        {
+          "source": "background",
+          "name": "background.event.windows.onRemoved",
+          "atMs": 4,
+          "durationMs": 180,
+          "detail": {
+            "windowId": 20
+          }
+        }
+      ]
+    },
+    "sidebars": [
+      {
+        "id": "sidebar-1",
+        "label": "Sidebar 1",
+        "snapshot": {
+          "enabled": true,
+          "maxEntries": 500,
+          "entries": [
+            {
+              "source": "sidebar",
+              "name": "sidebar.diagnostics.defer",
+              "atMs": 5,
+              "durationMs": 800
+            },
+            {
+              "source": "sidebar",
+              "name": "sidebar.diagnostics.defer",
+              "atMs": 6,
+              "durationMs": 900
+            },
+            {
+              "source": "sidebar",
+              "name": "sidebar.diagnostics",
+              "atMs": 7,
+              "durationMs": 90
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "summary": []
+}

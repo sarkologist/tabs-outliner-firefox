@@ -195,6 +195,25 @@ describe("outline state v2 storage", () => {
     expect(Object.keys(snapshot.state.nodes)).toHaveLength(INITIAL_TREE_SNAPSHOT_ROW_LIMIT);
   });
 
+  it("marks projection slice coverage for editable rows and complete loaded subtrees", () => {
+    const state = makeLargeState(20, { activeTabIndex: 10 });
+    const snapshot = initialTreeSnapshotForState(state, {
+      rowLimit: 8,
+      centerRowIndex: 10,
+      hydrating: true
+    });
+    const rowNodeIds = snapshot.projection.rows.map((row) => row.nodeId);
+
+    expect(snapshot.coverage).toBeDefined();
+    expect(snapshot.coverage?.startRowIndex).toBe(snapshot.projection.rows[0]?.index);
+    expect(snapshot.coverage?.endRowIndex).toBe((snapshot.projection.rows.at(-1)?.index ?? 0) + 1);
+    expect(snapshot.coverage?.editableNodeIds).toEqual(rowNodeIds);
+    expect(snapshot.coverage?.completeSubtreeNodeIds).toEqual(
+      rowNodeIds.filter((nodeId) => state.nodes[nodeId]?.kind === "tab")
+    );
+    expect(snapshot.coverage?.completeSiblingParentIds).not.toContain("window:10");
+  });
+
   it("skips outliner sidebar pages when choosing the initial snapshot active-scroll target", () => {
     const state = makeLargeState(10);
     state.nodes["tab:1"] = {

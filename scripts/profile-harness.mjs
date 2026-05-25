@@ -102,6 +102,12 @@ export function resetEventCounts(eventCounts) {
   }
 }
 
+export function settleProfileBackgroundWork() {
+  return new Promise((resolve) => {
+    setTimeout(resolve, 0);
+  });
+}
+
 export function eventCountsSnapshot(eventCounts) {
   return Object.fromEntries(PROFILE_EVENT_NAMES.map((name) => [name, eventCounts[name] ?? 0]));
 }

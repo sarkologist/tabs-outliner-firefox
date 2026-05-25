@@ -221,6 +221,12 @@ export function reconcileWithWindows(
       existingWindow.active = win.focused;
       existingWindow.live = { windowId: win.id };
       existingWindow.updatedAt = clock.now;
+      if (existingWindow.parentId && !next.nodes[existingWindow.parentId]) {
+        delete existingWindow.parentId;
+      }
+      if (!existingWindow.parentId && !next.rootIds.includes(winId)) {
+        next.rootIds.push(winId);
+      }
       delete existingWindow.closedAt;
       delete existingWindow.restore;
     } else {
@@ -234,6 +240,7 @@ export function reconcileWithWindows(
         collapsed: false,
         createdAt: clock.now,
         updatedAt: clock.now,
+        runtimeProvenance: "browserCreated",
         live: { windowId: win.id }
       };
       next.rootIds.push(winId);
@@ -306,6 +313,9 @@ export function reconcileWithWindows(
     const activeNodeId = activeTab ? runtimeToNode.get(activeTab.id) : undefined;
     if (activeNodeId) {
       setActiveTabInRuntimeWindow(next, win.id, activeNodeId);
+    }
+    if (options.respectRuntimeTabOrder === true) {
+      reorderLiveTabPreorderInRuntimeWindow(next, winId, win.id, tabs, clock.now);
     }
   }
 
@@ -726,10 +736,12 @@ export function moveTabToNewLiveWindow(
   if (node.kind !== "tab") {
     throw new Error("Only tab nodes can be moved into a new window");
   }
-  if (node.status !== "live") {
+  if (!isNodeLiveTab(node)) {
     throw new Error("Only live tab nodes can be moved into a live window");
   }
 
+  const sourceWindowNodeId = nearestWindow(state, nodeId)?.id;
+  const sourceRuntimeWindowId = node.live.windowId;
   const next = cloneState(state);
   const newWindowNodeId = uniqueNodeId(next, windowNodeId(windowInfo.id), clock.now);
   next.nodes[newWindowNodeId] = {
@@ -742,6 +754,7 @@ export function moveTabToNewLiveWindow(
     collapsed: false,
     createdAt: clock.now,
     updatedAt: clock.now,
+    runtimeProvenance: "commandCreated",
     live: { windowId: windowInfo.id }
   };
 
@@ -756,7 +769,8 @@ export function moveTabToNewLiveWindow(
 
   moveExistingNodeUnderNewWindow(next, nodeId, newWindowNodeId, clock.now, clock.rootIndex);
   updateLiveTabWindowRefs(next, nodeId, windowInfo.id, clock.now);
-  return repairState(next);
+  applyRuntimeTabsToLiveSubtree(next, nodeId, windowInfo.tabs ?? [], clock.now);
+  return closeSourceWindowIfRelocationEmptiedIt(next, sourceWindowNodeId, sourceRuntimeWindowId, clock.now);
 }
 
 export function moveTabToNewClosedWindow(
@@ -809,6 +823,8 @@ export function wrapNodeInGroup(
     if (!context.liveWindow) {
       throw new Error("Wrapping a live tab requires a live window destination");
     }
+    const sourceWindowNodeId = nearestWindow(state, nodeId)?.id;
+    const sourceRuntimeWindowId = node.live.windowId;
     const wrapperId = uniqueNodeId(state, windowNodeId(context.liveWindow.id), context.now);
     const next = wrapExistingNodeWithContainer(state, nodeId, {
       id: wrapperId,
@@ -821,6 +837,7 @@ export function wrapNodeInGroup(
       collapsed: false,
       createdAt: context.now,
       updatedAt: context.now,
+      runtimeProvenance: "commandCreated",
       live: { windowId: context.liveWindow.id }
     }, context.now);
 
@@ -837,7 +854,8 @@ export function wrapNodeInGroup(
       }
     }
     updateLiveTabWindowRefsForSubtree(next, state, nodeId, context.liveWindow.id, context.now);
-    return next;
+    applyRuntimeTabsToLiveSubtree(next, nodeId, context.liveWindow.tabs ?? [], context.now);
+    return closeSourceWindowIfRelocationEmptiedIt(next, sourceWindowNodeId, sourceRuntimeWindowId, context.now);
   }
 
   if (node.kind === "tab" && node.status === "closed") {
@@ -1187,6 +1205,89 @@ function setActiveTabInRuntimeWindow(
   }
 }
 
+function reorderLiveTabPreorderInRuntimeWindow(
+  state: OutlineState,
+  windowNodeId: NodeId,
+  runtimeWindowId: number,
+  runtimeTabs: RuntimeTab[],
+  now: number
+): void {
+  const rankByRuntimeTabId = new Map(runtimeTabs.map((tab, index) => [tab.id, index]));
+  reorderChildPreorderByRuntimeRank(state, windowNodeId, runtimeWindowId, rankByRuntimeTabId, now, new Set());
+}
+
+function reorderChildPreorderByRuntimeRank(
+  state: OutlineState,
+  nodeId: NodeId,
+  runtimeWindowId: number,
+  rankByRuntimeTabId: ReadonlyMap<number, number>,
+  now: number,
+  visited: Set<NodeId>
+): void {
+  if (visited.has(nodeId)) {
+    return;
+  }
+  visited.add(nodeId);
+
+  const node = state.nodes[nodeId];
+  if (!node || node.childIds.length === 0) {
+    return;
+  }
+
+  const rankedChildren = node.childIds.map((childId, index) => ({
+    childId,
+    index,
+    rank: minimumRuntimeRankInSubtree(state, childId, runtimeWindowId, rankByRuntimeTabId, new Set(visited))
+  }));
+  const sortedChildIds = [...rankedChildren]
+    .sort((left, right) => {
+      if (left.rank !== undefined && right.rank !== undefined) {
+        return left.rank - right.rank || left.index - right.index;
+      }
+      return left.index - right.index;
+    })
+    .map((entry) => entry.childId);
+
+  if (!sameNodeIdList(node.childIds, sortedChildIds)) {
+    node.childIds = sortedChildIds;
+    node.updatedAt = now;
+  }
+
+  for (const childId of node.childIds) {
+    reorderChildPreorderByRuntimeRank(state, childId, runtimeWindowId, rankByRuntimeTabId, now, visited);
+  }
+}
+
+function minimumRuntimeRankInSubtree(
+  state: OutlineState,
+  nodeId: NodeId,
+  runtimeWindowId: number,
+  rankByRuntimeTabId: ReadonlyMap<number, number>,
+  visited: Set<NodeId>
+): number | undefined {
+  if (visited.has(nodeId)) {
+    return undefined;
+  }
+  visited.add(nodeId);
+
+  const node = state.nodes[nodeId];
+  if (!node) {
+    return undefined;
+  }
+
+  let rank = isNodeLiveTab(node) && node.live.windowId === runtimeWindowId
+    ? rankByRuntimeTabId.get(node.live.tabId)
+    : undefined;
+  for (const childId of node.childIds) {
+    const childRank = minimumRuntimeRankInSubtree(state, childId, runtimeWindowId, rankByRuntimeTabId, visited);
+    if (childRank === undefined) {
+      continue;
+    }
+    rank = rank === undefined ? childRank : Math.min(rank, childRank);
+  }
+  return rank;
+}
+
 function findRestorableClosedTabNode(
   state: OutlineState,
   lookup: OutlineLookup,
@@ -1520,6 +1621,96 @@ function updateLiveTabWindowRefsForSubtree(
   }
 }
 
+function applyRuntimeTabsToLiveSubtree(
+  state: OutlineState,
+  nodeId: NodeId,
+  tabs: RuntimeTab[],
+  now: number
+): void {
+  if (tabs.length === 0) {
+    return;
+  }
+
+  const tabsById = new Map(tabs.map((tab) => [tab.id, tab]));
+  const activeTabNodeIdsByWindowId = new Map<number, NodeId>();
+  for (const id of collectSubtreeIdsExcludingNestedLiveWindows(state, nodeId)) {
+    const candidate = state.nodes[id];
+    if (!candidate || !isNodeLiveTab(candidate)) {
+      continue;
+    }
+
+    const tab = tabsById.get(candidate.live.tabId);
+    if (!tab || tab.windowId !== candidate.live.windowId) {
+      continue;
+    }
+
+    const liveTab = cloneNodeForMutation(state, id);
+    updateLiveTabNode(liveTab, tab, now);
+    if (tab.active) {
+      activeTabNodeIdsByWindowId.set(tab.windowId, id);
+    }
+  }
+
+  for (const [windowId, activeNodeId] of activeTabNodeIdsByWindowId) {
+    setActiveTabInRuntimeWindow(state, windowId, activeNodeId);
+  }
+}
+
+function closeSourceWindowIfRelocationEmptiedIt(
+  state: OutlineState,
+  sourceWindowNodeId: NodeId | undefined,
+  sourceRuntimeWindowId: number,
+  now: number
+): OutlineState {
+  if (!sourceWindowNodeId) {
+    return state;
+  }
+
+  const sourceWindow = state.nodes[sourceWindowNodeId];
+  if (!sourceWindow || !isNodeLiveWindow(sourceWindow) || sourceWindow.live.windowId !== sourceRuntimeWindowId) {
+    return state;
+  }
+
+  if (sourceWindowHasOwnedLiveTabs(state, sourceWindowNodeId, sourceRuntimeWindowId)) {
+    return state;
+  }
+
+  return repairState(closeWindow(state, sourceRuntimeWindowId, { now }));
+}
+
+function sourceWindowHasOwnedLiveTabs(
+  state: OutlineState,
+  sourceWindowNodeId: NodeId,
+  sourceRuntimeWindowId: number
+): boolean {
+  const visited = new Set<NodeId>();
+  const stack = [...(state.nodes[sourceWindowNodeId]?.childIds ?? [])];
+
+  while (stack.length > 0) {
+    const currentId = stack.pop()!;
+    if (visited.has(currentId)) {
+      continue;
+    }
+    visited.add(currentId);
+
+    const node = state.nodes[currentId];
+    if (!node) {
+      continue;
+    }
+    if (isNodeLiveWindow(node)) {
+      continue;
+    }
+    if (isNodeLiveTab(node) && node.live.windowId === sourceRuntimeWindowId) {
+      return true;
+    }
+    for (let index = node.childIds.length - 1; index >= 0; index -= 1) {
+      stack.push(node.childIds[index]!);
+    }
+  }
+
+  return false;
+}
+
 function collectSubtreeIdsExcludingNestedLiveWindows(state: OutlineState, nodeId: NodeId): NodeId[] {
   const ids: NodeId[] = [];
   const visited = new Set<NodeId>();
@@ -1831,6 +2022,10 @@ function removeId(ids: NodeId[], id: NodeId): void {
   if (index >= 0) {
     ids.splice(index, 1);
   }
+}
+
+function sameNodeIdList(left: readonly NodeId[], right: readonly NodeId[]): boolean {
+  return left.length === right.length && left.every((id, index) => right[index] === id);
 }
 
 function uniqueIds(ids: NodeId[]): NodeId[] {

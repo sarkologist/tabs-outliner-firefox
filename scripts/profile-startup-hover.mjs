@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -10,7 +10,7 @@ const rootDir = dirname(dirname(fileURLToPath(import.meta.url)));
 const defaultResultsPath = join(rootDir, "autoresearch/sidebar-startup-hover/results.tsv");
 const testFile = "tests/playwright/sidebar-startup-interaction-profile.spec.ts";
 
-const STARTUP_HOVER_RESULTS_TSV_HEADER = [
+export const STARTUP_HOVER_RESULTS_TSV_HEADER = [
   "timestamp",
   "tag",
   "commit",
@@ -18,6 +18,8 @@ const STARTUP_HOVER_RESULTS_TSV_HEADER = [
   "first_paint_median_ms",
   "first_paint_max_ms",
   "first_paint_action_buttons_max",
+  "sparse_hover_action_buttons_min",
+  "hydration_action_buttons_min",
   "sparse_hover_frame_max_ms",
   "sparse_hover_feedback_max_ms",
   "hydration_before_idle_max",
@@ -26,7 +28,7 @@ const STARTUP_HOVER_RESULTS_TSV_HEADER = [
   "description"
 ].join("\t");
 
-function parseArgs(argv) {
+export function parseArgs(argv) {
   const options = {
     runs: 5,
     tag: `${localDateTag(new Date())}-hover`,
@@ -62,7 +64,7 @@ function parseArgs(argv) {
   return options;
 }
 
-async function runStartupHoverLoop(options) {
+export async function runStartupHoverLoop(options) {
   const results = [];
   for (let runIndex = 0; runIndex < options.runs; runIndex += 1) {
     results.push(await runProfile(runIndex + 1));
@@ -111,7 +113,7 @@ async function runProfile(run) {
   };
 }
 
-function parseProfileLines(output) {
+export function parseProfileLines(output) {
   const profiles = {};
   for (const line of output.split(/\r?\n/)) {
     const match = line.match(/^(startup-[a-z0-9-]+) (\{.*\})$/);
@@ -123,7 +125,7 @@ function parseProfileLines(output) {
   return profiles;
 }
 
-function summarize(results) {
+export function summarize(results) {
   const firstPaintProfiles = profileValues(results, "startup-sparse-first-paint");
   const sparseHoverProfiles = profileValues(results, "startup-sparse-hover");
   const hydrationProfiles = profileValues(results, "startup-hover-hydration-defer");
@@ -136,6 +138,10 @@ function summarize(results) {
     .filter(isFiniteNumber);
   const sparseHoverFeedbackMaxValues = sparseHoverProfiles.map((profile) => profile.hoverFeedbackDelay?.maxMs)
     .filter(isFiniteNumber);
+  const sparseHoverActionButtons = sparseHoverProfiles.map((profile) => profile.actionButtonsAfterHover)
+    .filter(isFiniteNumber);
+  const hydrationActionButtons = hydrationProfiles.map((profile) => profile.actionButtonsAfterHydration)
+    .filter(isFiniteNumber);
   const hydrationBeforeIdleValues = hydrationProfiles.map((profile) => profile.hydrationRequestsBeforeIdle)
     .filter(isFiniteNumber);
   const remoteHydrationDelayValues = remoteProfiles
@@ -147,6 +153,8 @@ function summarize(results) {
     firstPaintMedianMs: median(firstPaintDurations),
     firstPaintMaxMs: max(firstPaintDurations),
     firstPaintActionButtonsMax: max(firstPaintActionButtons),
+    sparseHoverActionButtonsMin: min(sparseHoverActionButtons),
+    hydrationActionButtonsMin: min(hydrationActionButtons),
     sparseHoverFrameMaxMs: max(sparseHoverFrameMaxValues),
     sparseHoverFeedbackMaxMs: max(sparseHoverFeedbackMaxValues),
     hydrationBeforeIdleMax: max(hydrationBeforeIdleValues),
@@ -164,7 +172,7 @@ function summarize(results) {
   return summary;
 }
 
-function startupHoverGuardFailures(summary, profiles) {
+export function startupHoverGuardFailures(summary, profiles) {
   const failures = [];
   if (profiles.firstPaintProfiles.length !== summary.runs) {
     failures.push("missing sparse first-paint profile output");
@@ -183,6 +191,12 @@ function startupHoverGuardFailures(summary, profiles) {
   }
   if (summary.firstPaintActionButtonsMax !== 0) {
     failures.push("sparse hydrating first paint must not render inert action buttons");
+  }
+  if (summary.sparseHoverActionButtonsMin <= 0) {
+    failures.push("sparse hover must materialize action buttons for the hovered row");
+  }
+  if (summary.hydrationActionButtonsMin <= 0) {
+    failures.push("hovered row actions must survive full hydration");
   }
   if (summary.sparseHoverFrameMaxMs >= 8) {
     failures.push("sparse hover frame feedback must stay below 8ms");
@@ -215,6 +229,8 @@ function formatTsvRow(summary, fields) {
     summary.firstPaintMedianMs,
     summary.firstPaintMaxMs,
     summary.firstPaintActionButtonsMax,
+    summary.sparseHoverActionButtonsMin,
+    summary.hydrationActionButtonsMin,
     summary.sparseHoverFrameMaxMs,
     summary.sparseHoverFeedbackMaxMs,
     summary.hydrationBeforeIdleMax,
@@ -280,5 +296,14 @@ function tsvCell(value) {
   return String(value).replace(/[\t\r\n]+/g, " ").trim();
 }
 
-const result = await runStartupHoverLoop(parseArgs(process.argv.slice(2)));
-console.log(JSON.stringify(result, null, 2));
+async function main() {
+  const result = await runStartupHoverLoop(parseArgs(process.argv.slice(2)));
+  console.log(JSON.stringify(result, null, 2));
+}
+
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((error) => {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  });
+}

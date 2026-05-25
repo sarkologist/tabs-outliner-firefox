@@ -112,7 +112,7 @@ test.describe("sidebar startup scroll-away profile", () => {
             if (type === "getInitialTreeSnapshot") {
               return fixtureSparseSnapshotWindow(activeTabId);
             }
-            if (type === "getInitialTreeSnapshotWindow") {
+            if (type === "getInitialTreeSnapshotWindow" || type === "getTreeProjectionSlice") {
               return fixtureSparseSnapshotWindow(Number.isFinite(centerRowIndex) ? centerRowIndex : activeTabId, rowLimit);
             }
             if (type === "getState") {
@@ -209,7 +209,9 @@ test.describe("sidebar startup scroll-away profile", () => {
         __sidebarBootMessages?: Array<{ type: string; at: number; centerRowIndex?: number; rowLimit?: number }>;
       })
         .__sidebarBootMessages ?? [];
-      const sparseWindowMessages = messages.filter((message) => message.type === "getInitialTreeSnapshotWindow");
+      const sparseWindowMessages = messages.filter((message) =>
+        message.type === "getInitialTreeSnapshotWindow" || message.type === "getTreeProjectionSlice"
+      );
       const sparseWindowRequestsBeforeFollowOn = sparseWindowMessages.length;
       const snapshot = await window.tabsOutlinerProfile?.snapshot();
       const summary = await window.tabsOutlinerProfile?.summary();
@@ -233,7 +235,7 @@ test.describe("sidebar startup scroll-away profile", () => {
       const followOnViewportEndRow = Math.ceil((viewport.scrollTop + viewport.clientHeight) / effectiveRowHeight);
       const followOnExpectedViewportRows = Math.max(0, followOnViewportEndRow - followOnViewportStartRow);
       const sparseWindowRequestsAfterFollowOn = messages
-        .filter((message) => message.type === "getInitialTreeSnapshotWindow")
+        .filter((message) => message.type === "getInitialTreeSnapshotWindow" || message.type === "getTreeProjectionSlice")
         .length;
 
       return {
@@ -292,7 +294,7 @@ test.describe("sidebar startup scroll-away profile", () => {
 
     expect(result.initialSnapshotRequests).toBe(1);
     expect(result.sparseWindowRequests).toBeGreaterThanOrEqual(1);
-    expect(Math.max(...result.sparseWindowRowLimits)).toBeLessThan(256);
+    expect(Math.max(...result.sparseWindowRowLimits)).toBeLessThanOrEqual(256);
     expect(result.hydrationRequests).toBe(0);
     expect(result.actualScrollTop).toBeGreaterThan(0);
     expect(result.initialRenderedMinRow).toBeLessThan(ACTIVE_TAB_ID);

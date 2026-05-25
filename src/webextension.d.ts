@@ -1,4 +1,4 @@
-import type { OutlineState, RuntimeTab, RuntimeWindow } from "./model/types.js";
+import type { OutlineState, RuntimeTab, RuntimeWindow, RuntimeWindowState } from "./model/types.js";
 import type { HistoryStatus } from "./background/history.js";
 
 type Listener<T extends (...args: never[]) => unknown> = {
@@ -55,12 +55,11 @@ type WebExtensionDownloadOptions = {
 };
 
 type WebExtensionWindowType = "normal" | "popup" | "panel";
-type WebExtensionWindowState = "normal" | "minimized" | "maximized" | "fullscreen";
 type WebExtensionWindowCreateData = {
   url?: string | string[];
   tabId?: number;
   type?: WebExtensionWindowType;
-  state?: WebExtensionWindowState;
+  state?: RuntimeWindowState;
   focused?: boolean;
   width?: number;
   height?: number;
@@ -114,10 +113,11 @@ type WebExtensionBrowserApi = {
     getCurrent(getInfo?: { populate?: boolean; windowTypes?: string[] }): Promise<RuntimeWindow>;
     get(windowId: number, getInfo?: { populate?: boolean; windowTypes?: string[] }): Promise<RuntimeWindow>;
     getAll(getInfo?: { populate?: boolean; windowTypes?: string[] }): Promise<RuntimeWindow[]>;
-    update(windowId: number, updateInfo: { focused?: boolean }): Promise<RuntimeWindow>;
+    update(windowId: number, updateInfo: { focused?: boolean; state?: RuntimeWindowState }): Promise<RuntimeWindow>;
     remove(windowId: number): Promise<void>;
     create(createData: WebExtensionWindowCreateData): Promise<RuntimeWindow>;
     onFocusChanged: Listener<(windowId: number) => void | Promise<void>>;
+    onBoundsChanged?: Listener<(window: RuntimeWindow) => void | Promise<void>>;
     onRemoved: Listener<(windowId: number) => void | Promise<void>>;
   };
   tabs: {
@@ -127,7 +127,10 @@ type WebExtensionBrowserApi = {
     create(createProperties: { url: string; windowId?: number; active?: boolean }): Promise<RuntimeTab>;
     move(tabIds: number | number[], moveProperties: { windowId?: number; index: number }): Promise<RuntimeTab | RuntimeTab[]>;
     onActivated: Listener<(activeInfo: { tabId: number; windowId: number; previousTabId?: number }) => void | Promise<void>>;
+    onAttached?: Listener<(tabId: number, attachInfo: { newWindowId: number; newPosition: number }) => void | Promise<void>>;
     onCreated: Listener<(tab: RuntimeTab) => void | Promise<void>>;
+    onDetached?: Listener<(tabId: number, detachInfo: { oldWindowId: number; oldPosition: number }) => void | Promise<void>>;
+    onMoved?: Listener<(tabId: number, moveInfo: { windowId: number; fromIndex: number; toIndex: number }) => void | Promise<void>>;
     onUpdated: Listener<(tabId: number, changeInfo: Partial<RuntimeTab>, tab: RuntimeTab) => void | Promise<void>>;
     onRemoved: Listener<(tabId: number, removeInfo: { windowId: number; isWindowClosing: boolean }) => void | Promise<void>>;
   };

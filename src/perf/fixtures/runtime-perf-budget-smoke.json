@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "tolerance": 0.15,
+  "scenarios": [
+    {
+      "id": "fixture-pass",
+      "command": [
+        "node",
+        "-e",
+        "console.log(JSON.stringify({scenario:'fixture-pass',firstBroadcastMs:10,totalMeasuredMs:20,totalWithSaveFlushMs:25,saves:1,broadcasts:1,projectionMs:0,tabsQueryMs:0,windowsGetAllMs:0,mbStringified:0}))"
+      ],
+      "tags": ["close", "journal"],
+      "budget": {
+        "firstBroadcastMs": 10,
+        "totalMeasuredMs": 20,
+        "totalWithSaveFlushMs": 25,
+        "saves": 1,
+        "broadcasts": 1,
+        "projectionMs": 0,
+        "tabsQueryMs": 0,
+        "windowsGetAllMs": 0,
+        "mbStringified": 0
+      }
+    }
+  ]
+}

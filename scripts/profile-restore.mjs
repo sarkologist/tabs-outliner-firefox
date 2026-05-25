@@ -13,8 +13,19 @@ import {
   eventCountsSnapshot,
   eventCountsTotal,
   flushProfileEvents,
-  resetEventCounts
+  resetEventCounts,
+  settleProfileBackgroundWork
 } from "./profile-harness.mjs";
+import {
+  broadcastMetricsResult,
+  createBroadcastMetrics,
+  createStorageMetrics,
+  recordProfileBroadcast,
+  recordProfileStorageSet,
+  resetBroadcastMetrics,
+  resetStorageMetrics,
+  storageMetricsResult
+} from "./profile-storage-metrics.mjs";
 
 function parseArgs(argv) {
   const options = {
@@ -258,13 +269,11 @@ function makeControllerRuntime(initialState) {
     tabs: [],
     storage: new Map(Object.entries(outlineStateV3Changes(initialState).setItems)),
     restoreEcho: "final",
-    saves: 0,
-    broadcasts: 0,
-    saveStringifyMs: 0,
+    ...createStorageMetrics(),
+    ...createBroadcastMetrics(),
     broadcastStringifyMs: 0,
     projectionMs: 0,
     nodePatchMs: 0,
-    bytes: 0,
     operationStart: 0,
     firstBroadcastMs: undefined,
     sidebarState: undefined,
@@ -305,7 +314,7 @@ function makeControllerRuntime(initialState) {
           const patch = measure(() => applyNodeStateUpdate(runtime, message));
           runtime.nodePatchMs += patch.ms;
         }
-        runtime.broadcasts += 1;
+        recordProfileBroadcast(runtime, message);
       }
     },
     storage: {
@@ -320,11 +329,10 @@ function makeControllerRuntime(initialState) {
           return Object.fromEntries(runtime.storage);
         },
         set: async (items) => {
-          measureRuntimeJson(runtime, "save", items);
+          recordProfileStorageSet(runtime, items, measure);
           for (const [key, value] of Object.entries(items)) {
             runtime.storage.set(key, value);
           }
-          runtime.saves += 1;
         },
         remove: async (keys) => {
           for (const key of Array.isArray(keys) ? keys : [keys]) {
@@ -490,14 +498,13 @@ async function profileControllerEventEcho(options) {
   const init = await measureAsync(() => controller.ensureState());
   runtime.sidebarState = await controller.handleMessage({ type: "getState" });
   runtime.sidebarProjection = buildVisibleTreeProjection(runtime.sidebarState, "");
+  await settleProfileBackgroundWork();
 
-  runtime.saves = 0;
-  runtime.broadcasts = 0;
-  runtime.saveStringifyMs = 0;
+  resetStorageMetrics(runtime);
+  resetBroadcastMetrics(runtime);
   runtime.broadcastStringifyMs = 0;
   runtime.projectionMs = 0;
   runtime.nodePatchMs = 0;
-  runtime.bytes = 0;
   runtime.operationStart = performance.now();
   runtime.firstBroadcastMs = undefined;
   resetEventCounts(runtime.eventCounts);
@@ -531,13 +538,11 @@ async function profileControllerEventEcho(options) {
     saveFlushMs: Math.round(saveFlush.ms),
     totalWithSaveFlushMs: Math.round(command.ms + eventEcho.ms + updateEcho.ms + saveFlush.ms),
     firstBroadcastMs: Math.round(runtime.firstBroadcastMs ?? 0),
-    saveStringifyMs: Math.round(runtime.saveStringifyMs),
+    ...storageMetricsResult(runtime),
     broadcastStringifyMs: Math.round(runtime.broadcastStringifyMs),
     projectionMs: Math.round(runtime.projectionMs),
     nodePatchMs: Math.round(runtime.nodePatchMs),
-    mbStringified: Math.round(runtime.bytes / 1024 / 1024),
-    saves: runtime.saves,
-    broadcasts: runtime.broadcasts,
+    ...broadcastMetricsResult(runtime),
     ack: command.value,
     createTabCalls: calls.createTab,
     createWindowCalls: calls.createWindow,

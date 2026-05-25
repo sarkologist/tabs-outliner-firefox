@@ -1983,17 +1983,18 @@ describe("outline model", () => {
     expect(reconciled.nodes["tab:5"]?.status).toBe("live");
   });
 
-  it("keeps existing outline placement authoritative during reconciliation", () => {
+  it("preserves outline nesting while ordering live-tab preorder from runtime indices", () => {
     const state = moveNode(bootstrapFromWindows(windows, { now: 1000 }), "tab:3", {
       parentId: "tab:1",
       index: 0
     });
 
-    const reconciled = reconcileWithWindows(state, windows, { now: 2000 });
+    const reconciled = reconcileWithWindows(state, windows, { now: 2000 }, { respectRuntimeTabOrder: true });
 
-    expect(reconciled.nodes["tab:1"]?.childIds).toEqual(["tab:3", "tab:2"]);
+    expect(reconciled.nodes["tab:1"]?.childIds).toEqual(["tab:2", "tab:3"]);
     expect(reconciled.nodes["tab:3"]?.parentId).toBe("tab:1");
     expect(reconciled.nodes["window:10"]?.childIds).toEqual(["tab:1"]);
+    expect(projectLiveTabs(reconciled, "window:10").map((tab) => tab.tabId)).toEqual([1, 2, 3]);
   });
 
   it("keeps existing parent links during partial event reconciliation", () => {

@@ -9,8 +9,19 @@ import {
   eventCountsSnapshot,
   eventCountsTotal,
   flushProfileEvents,
-  resetEventCounts
+  resetEventCounts,
+  settleProfileBackgroundWork
 } from "./profile-harness.mjs";
+import {
+  broadcastMetricsResult,
+  createBroadcastMetrics,
+  createStorageMetrics,
+  recordProfileBroadcast,
+  recordProfileStorageSet,
+  resetBroadcastMetrics,
+  resetStorageMetrics,
+  storageMetricsResult
+} from "./profile-storage-metrics.mjs";
 
 function parseArgs(argv) {
   const options = {
@@ -84,13 +95,13 @@ function makeRuntime(tabCount) {
       url: `https://focus.example/${index + 1}`,
       title: `Tab ${index + 1}`
     })),
-    saves: 0,
-    broadcasts: 0,
-    saveStringifyMs: 0,
+    ...createStorageMetrics(),
+    ...createBroadcastMetrics(),
     broadcastStringifyMs: 0,
     projectionMs: 0,
     activePatchMs: 0,
-    bytes: 0,
+    operationStart: 0,
+    firstBroadcastMs: undefined,
     sidebarState: undefined,
     sidebarProjection: undefined,
     eventCounts,
@@ -118,6 +129,7 @@ function makeRuntime(tabCount) {
       onStartup: createPassiveEvent(),
       onMessage: createPassiveEvent(),
       sendMessage: async (message) => {
+        runtime.firstBroadcastMs ??= performance.now() - runtime.operationStart;
         measureRuntimeJson(runtime, "broadcast", message);
         if (message?.type === "stateUpdated" && message.state) {
           runtime.sidebarState = message.state;
@@ -128,15 +140,14 @@ function makeRuntime(tabCount) {
           const activePatch = measure(() => applyActiveStateUpdate(runtime, message.updates));
           runtime.activePatchMs += activePatch.ms;
         }
-        runtime.broadcasts += 1;
+        recordProfileBroadcast(runtime, message);
       }
     },
     storage: {
       local: {
         get: async (key) => typeof key === "string" ? { [key]: undefined } : {},
         set: async (items) => {
-          measureRuntimeJson(runtime, "save", items);
-          runtime.saves += 1;
+          recordProfileStorageSet(runtime, items, measure);
         },
         remove: async () => undefined,
         onChanged: createPassiveEvent()
@@ -269,18 +280,19 @@ async function profile(options) {
   await controller.flushPendingSaves();
   runtime.sidebarState = await controller.handleMessage({ type: "getState" });
   runtime.sidebarProjection = buildVisibleTreeProjection(runtime.sidebarState, "");
+  await settleProfileBackgroundWork();
   const tabIds = options.scenario === "successive-command-event-echo"
     ? successiveTabIds(options.tabs, options.count)
     : [targetTabId(options.tabs, options.target)];
   const nodeIds = tabIds.map((tabId) => `tab:${tabId}`);
 
-  runtime.saves = 0;
-  runtime.broadcasts = 0;
-  runtime.saveStringifyMs = 0;
+  resetStorageMetrics(runtime);
+  resetBroadcastMetrics(runtime);
   runtime.broadcastStringifyMs = 0;
   runtime.projectionMs = 0;
   runtime.activePatchMs = 0;
-  runtime.bytes = 0;
+  runtime.operationStart = performance.now();
+  runtime.firstBroadcastMs = undefined;
   resetEventCounts(runtime.eventCounts);
 
   let commandMs = 0;
@@ -310,13 +322,12 @@ async function profile(options) {
     averageMeasuredMs: Math.round((commandMs + eventEchoMs) / nodeIds.length),
     saveFlushMs: Math.round(saveFlush.ms),
     totalWithSaveFlushMs: Math.round(commandMs + eventEchoMs + saveFlush.ms),
-    saveStringifyMs: Math.round(runtime.saveStringifyMs),
+    firstBroadcastMs: Math.round(runtime.firstBroadcastMs ?? 0),
+    ...storageMetricsResult(runtime),
     broadcastStringifyMs: Math.round(runtime.broadcastStringifyMs),
     projectionMs: Math.round(runtime.projectionMs),
     activePatchMs: Math.round(runtime.activePatchMs),
-    mbStringified: Math.round(runtime.bytes / 1024 / 1024),
-    saves: runtime.saves,
-    broadcasts: runtime.broadcasts,
+    ...broadcastMetricsResult(runtime),
     eventCounts: eventCountsSnapshot(runtime.eventCounts),
     eventCount: eventCountsTotal(runtime.eventCounts),
     ack: lastAck,
