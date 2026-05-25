@@ -240,6 +240,7 @@ export function reconcileWithWindows(
         collapsed: false,
         createdAt: clock.now,
         updatedAt: clock.now,
+        runtimeProvenance: "browserCreated",
         live: { windowId: win.id }
       };
       next.rootIds.push(winId);
@@ -753,6 +754,7 @@ export function moveTabToNewLiveWindow(
     collapsed: false,
     createdAt: clock.now,
     updatedAt: clock.now,
+    runtimeProvenance: "commandCreated",
     live: { windowId: windowInfo.id }
   };
 
@@ -835,6 +837,7 @@ export function wrapNodeInGroup(
       collapsed: false,
       createdAt: context.now,
       updatedAt: context.now,
+      runtimeProvenance: "commandCreated",
       live: { windowId: context.liveWindow.id }
     }, context.now);
 

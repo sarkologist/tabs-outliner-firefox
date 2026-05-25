@@ -1,7 +1,57 @@
 import type { BackgroundCommand, RuntimeClosePlan } from "./commands.js";
+import {
+  RuntimeWindowScopeIndex,
+  type RuntimeWindowScope,
+  type RuntimeWindowScopeSnapshot
+} from "./runtime-window-scope.js";
 import type { NodeId, OutlineNode, OutlineState, RuntimeTab, RuntimeWindow } from "../model/types.js";
 
 export type RuntimeSnapshotConfidence = "complete" | "partial" | "eventLocal" | "staleSuspect";
+export type RuntimeShapeFactConfidence = RuntimeSnapshotConfidence | "installedState";
+export type RuntimeTabEvidenceKind = "created" | "updated";
+export type RuntimeTabEvidenceField =
+  | "windowId"
+  | "index"
+  | "active"
+  | "openerTabId"
+  | "url"
+  | "title"
+  | "favIconUrl";
+
+export type RuntimeTabEvidence = {
+  kind: RuntimeTabEvidenceKind;
+  tab: RuntimeTab;
+  changedFields: ReadonlySet<RuntimeTabEvidenceField>;
+  confidence: "eventLocal";
+  scopeGeneration: number;
+  sequence: number;
+};
+
+export type RuntimeTabShapeFact = {
+  tabId: number;
+  windowId: number;
+  index?: number;
+  active?: boolean;
+  title?: string;
+  url?: string;
+  favIconUrl?: string;
+  source: "command" | "tabEvent" | "snapshot" | "installedState";
+  confidence: RuntimeShapeFactConfidence;
+  scopeGeneration: number;
+  sequence: number;
+};
+
+export type RuntimeWindowShapeFact = {
+  windowId: number;
+  tabOrder: number[];
+  activeTabId?: number;
+  focused?: boolean;
+  state?: RuntimeWindow["state"];
+  source: "command" | "windowEvent" | "snapshot" | "installedState";
+  confidence: RuntimeShapeFactConfidence;
+  scopeGeneration: number;
+  sequence: number;
+};
 
 export type RuntimeObservation =
   | {
@@ -13,8 +63,9 @@ export type RuntimeObservation =
     }
   | {
       source: "windowEvent";
-      kind: "focused" | "removed";
+      kind: "focused" | "removed" | "boundsChanged";
       windowId: number;
+      window?: RuntimeWindow;
     }
   | {
       source: "sessionEvent";
@@ -63,6 +114,10 @@ export type WindowClosingTabRemovalDecision =
 
 export type NativeTabRemovedDecision = "ignore-delete-owned" | "continue";
 export type NativeTabUpdatedDecision = "command-focus-active" | "refresh";
+export type NativeTabUpdatedRecord = {
+  decision: NativeTabUpdatedDecision;
+  evidence: RuntimeTabEvidence;
+};
 export type NativeFocusEventDecision = "command-focus" | "runtime-refresh";
 export type NativeWindowRemovedDecision = "ignore-duplicate" | "ignore-delete-owned" | "close-window";
 
@@ -73,24 +128,194 @@ export class RuntimeFactLedger {
   private readonly deleteOwnedClosingWindowIds = new Set<number>();
   private readonly removedTabIds = new Set<number>();
   private readonly removedWindowIds = new Set<number>();
+  private readonly browserCreatedWindowIds = new Set<number>();
+  private readonly commandCreatedWindowIds = new Set<number>();
   private readonly commandRestoredTabIds = new Set<number>();
   private readonly commandRelocatedTabEchoes = new Map<number, CommandRelocatedTabEcho>();
   private readonly commandFocusedTabIds = new Set<number>();
   private readonly commandFocusedActivationWindowIds = new Set<number>();
   private readonly commandFocusedWindowIds = new Set<number>();
+  private readonly windowScopes = new RuntimeWindowScopeIndex();
+  private readonly tabShapeFacts = new Map<number, RuntimeTabShapeFact>();
+  private readonly windowShapeFacts = new Map<number, RuntimeWindowShapeFact>();
+  private readonly structurallyFreshTabIds = new Set<number>();
   private readonly observations: RuntimeObservation[] = [];
   private readonly transactions = new Map<string, CommandTransaction>();
   private reconstructedLiveTabIds = new Set<number>();
   private reconstructedLiveWindowIds = new Set<number>();
   private reconstructedMaxTabId = 0;
   private reconstructedMaxWindowId = 0;
+  private observationSequence = 0;
+  private scopeGeneration = 0;
+  private installedShapeSignature = "";
   private commandCloseSessionEchoesToSkip = 0;
   private commandCloseSessionEchoesSkippedBeforeRemoval = 0;
   private nextCommandSequence = 1;
 
   constructor(private readonly maxObservations = 500) {}
 
-  recordObservation(observation: RuntimeObservation): void {
+  private nextObservationSequence(): number {
+    this.observationSequence += 1;
+    return this.observationSequence;
+  }
+
+  private runtimeTabEvidence(
+    kind: RuntimeTabEvidenceKind,
+    tab: RuntimeTab,
+    changedFields: ReadonlySet<RuntimeTabEvidenceField>,
+    sequence: number
+  ): RuntimeTabEvidence {
+    return {
+      kind,
+      tab,
+      changedFields,
+      confidence: "eventLocal",
+      scopeGeneration: this.scopeGeneration,
+      sequence
+    };
+  }
+
+  private recordSnapshotShapeFacts(
+    windows: readonly RuntimeWindow[],
+    confidence: RuntimeSnapshotConfidence,
+    sequence: number
+  ): void {
+    for (const windowInfo of windows) {
+      if (windowInfo.incognito) {
+        continue;
+      }
+      const tabs = [...(windowInfo.tabs ?? [])]
+        .filter((tab) => !tab.incognito)
+        .sort((left, right) => left.index - right.index);
+      const activeTabId = tabs.find((tab) => tab.active)?.id;
+      this.recordWindowShapeFact({
+        windowInfo,
+        tabOrder: tabs.map((tab) => tab.id),
+        ...(typeof activeTabId === "number" ? { activeTabId } : {}),
+        activeTabIdKnown: true,
+        source: "snapshot",
+        confidence,
+        sequence
+      });
+      for (const tab of tabs) {
+        const previousFact = this.tabShapeFacts.get(tab.id);
+        if (
+          previousFact &&
+          (
+            previousFact.windowId !== tab.windowId ||
+            (previousFact.index !== undefined && previousFact.index !== tab.index) ||
+            (previousFact.active !== undefined && previousFact.active !== tab.active)
+          )
+        ) {
+          this.structurallyFreshTabIds.add(tab.id);
+        }
+        this.tabShapeFacts.set(tab.id, {
+          tabId: tab.id,
+          windowId: tab.windowId,
+          index: tab.index,
+          active: tab.active,
+          ...(tab.title !== undefined ? { title: tab.title } : {}),
+          ...(tab.url !== undefined ? { url: tab.url } : {}),
+          ...(tab.favIconUrl !== undefined ? { favIconUrl: tab.favIconUrl } : {}),
+          source: "snapshot",
+          confidence,
+          scopeGeneration: this.scopeGeneration,
+          sequence
+        });
+      }
+    }
+  }
+
+  private recordWindowShapeFact(input: {
+    windowInfo: RuntimeWindow;
+    tabOrder?: number[];
+    activeTabId?: number;
+    activeTabIdKnown?: boolean;
+    source: RuntimeWindowShapeFact["source"];
+    confidence: RuntimeShapeFactConfidence;
+    sequence: number;
+  }): void {
+    const previousFact = this.windowShapeFacts.get(input.windowInfo.id);
+    this.windowShapeFacts.set(input.windowInfo.id, {
+      windowId: input.windowInfo.id,
+      tabOrder: input.tabOrder ?? previousFact?.tabOrder ?? [],
+      ...(typeof input.activeTabId === "number"
+        ? { activeTabId: input.activeTabId }
+        : input.activeTabIdKnown === true
+          ? {}
+          : typeof previousFact?.activeTabId === "number"
+            ? { activeTabId: previousFact.activeTabId }
+            : {}),
+      focused: input.windowInfo.focused,
+      ...(input.windowInfo.state ? { state: input.windowInfo.state } : previousFact?.state ? { state: previousFact.state } : {}),
+      source: input.source,
+      confidence: input.confidence,
+      scopeGeneration: this.scopeGeneration,
+      sequence: input.sequence
+    });
+  }
+
+  private recordInstalledStateShape(state: OutlineState, nodes?: readonly OutlineNode[]): void {
+    const scopeSnapshots = this.windowScopes.snapshots();
+    const signature = scopeSnapshots
+      .filter((scope) => scope.lifecycle === "live")
+      .sort((left, right) => left.runtimeWindowId - right.runtimeWindowId)
+      .map((scope) => [
+        scope.runtimeWindowId,
+        scope.provenance,
+        scope.lifecycle,
+        scope.tabOrder.join(","),
+        scope.activeTabId ?? ""
+      ].join(":"))
+      .join("|");
+    if (signature !== this.installedShapeSignature) {
+      this.installedShapeSignature = signature;
+      this.scopeGeneration += 1;
+    }
+
+    const nodeList = nodes ?? Object.values(state.nodes);
+    const tabIndexByRuntimeId = new Map<number, number>();
+    for (const scope of scopeSnapshots) {
+      for (let index = 0; index < scope.tabOrder.length; index += 1) {
+        const tabId = scope.tabOrder[index]!;
+        tabIndexByRuntimeId.set(tabId, index);
+      }
+      if (scope.lifecycle === "live") {
+        this.windowShapeFacts.set(scope.runtimeWindowId, {
+          windowId: scope.runtimeWindowId,
+          tabOrder: [...scope.tabOrder],
+          ...(typeof scope.activeTabId === "number" ? { activeTabId: scope.activeTabId } : {}),
+          ...(scope.state ? { state: scope.state } : {}),
+          source: "installedState",
+          confidence: "installedState",
+          scopeGeneration: this.scopeGeneration,
+          sequence: this.observationSequence
+        });
+      }
+    }
+
+    for (const node of nodeList) {
+      if (!isLiveTabNode(node)) {
+        continue;
+      }
+      this.tabShapeFacts.set(node.live.tabId, {
+        tabId: node.live.tabId,
+        windowId: node.live.windowId,
+        ...(tabIndexByRuntimeId.has(node.live.tabId) ? { index: tabIndexByRuntimeId.get(node.live.tabId)! } : {}),
+        active: node.active === true,
+        title: node.title,
+        ...(node.url !== undefined ? { url: node.url } : {}),
+        ...(node.favIconUrl !== undefined ? { favIconUrl: node.favIconUrl } : {}),
+        source: "installedState",
+        confidence: "installedState",
+        scopeGeneration: this.scopeGeneration,
+        sequence: this.observationSequence
+      });
+    }
+  }
+
+  recordObservation(observation: RuntimeObservation): number {
+    const sequence = this.nextObservationSequence();
     this.observations.push(observation);
     if (this.observations.length > this.maxObservations) {
       this.observations.splice(0, this.observations.length - this.maxObservations);
@@ -103,6 +328,10 @@ export class RuntimeFactLedger {
         }
       }
     }
+    if (observation.source === "snapshot") {
+      this.recordSnapshotShapeFacts(observation.windows, observation.confidence, sequence);
+    }
+    return sequence;
   }
 
   observationsSnapshot(): RuntimeObservation[] {
@@ -123,6 +352,13 @@ export class RuntimeFactLedger {
         liveStateTabIds.add(node.live.tabId);
       } else if (isLiveWindowNode(node)) {
         liveStateWindowIds.add(node.live.windowId);
+        if (node.runtimeProvenance === "browserCreated") {
+          this.browserCreatedWindowIds.add(node.live.windowId);
+          this.commandCreatedWindowIds.delete(node.live.windowId);
+        } else if (node.runtimeProvenance === "commandCreated") {
+          this.commandCreatedWindowIds.add(node.live.windowId);
+          this.browserCreatedWindowIds.delete(node.live.windowId);
+        }
       }
 
       const canonicalTabId = canonicalRuntimeIdFromNodeId(node.id, "tab");
@@ -166,6 +402,68 @@ export class RuntimeFactLedger {
     for (const windowId of runtimeWindowIds) {
       this.removedWindowIds.delete(windowId);
     }
+    this.rebuildWindowScopes(state, windows, nodes);
+  }
+
+  rebuildWindowScopes(
+    state: OutlineState,
+    windows?: readonly RuntimeWindow[],
+    nodes?: readonly OutlineNode[]
+  ): void {
+    this.windowScopes.rebuild({
+      state,
+      ...(nodes ? { nodes } : {}),
+      ...(windows ? { windows } : {}),
+      browserCreatedWindowIds: this.browserCreatedWindowIds,
+      commandCreatedWindowIds: this.commandCreatedWindowIds
+    });
+    this.recordInstalledStateShape(state, nodes);
+  }
+
+  windowScope(windowId: number): RuntimeWindowScope | undefined {
+    return this.windowScopes.scopeForWindow(windowId);
+  }
+
+  windowScopeForTab(tabId: number): RuntimeWindowScope | undefined {
+    return this.windowScopes.scopeForTab(tabId);
+  }
+
+  windowScopeSnapshots(): RuntimeWindowScopeSnapshot[] {
+    return this.windowScopes.snapshots();
+  }
+
+  nodeTouchesRemovedRuntimeScope(state: OutlineState, nodeId: NodeId): boolean {
+    if (this.windowScopes.nodeTouchesRemovedRuntimeScope(state, nodeId)) {
+      return true;
+    }
+
+    const visited = new Set<NodeId>();
+    const stack = [nodeId];
+    while (stack.length > 0) {
+      const currentNodeId = stack.pop()!;
+      if (visited.has(currentNodeId)) {
+        continue;
+      }
+      visited.add(currentNodeId);
+      const node = state.nodes[currentNodeId];
+      if (!node) {
+        continue;
+      }
+      if (node.status === "closed" && node.kind === "window") {
+        const runtimeWindowId = canonicalRuntimeIdFromNodeId(node.id, "window");
+        if (runtimeWindowId !== undefined && this.removedWindowIds.has(runtimeWindowId)) {
+          return true;
+        }
+      }
+      if (node.status === "closed" && node.kind === "tab") {
+        const runtimeTabId = canonicalRuntimeIdFromNodeId(node.id, "tab");
+        if (runtimeTabId !== undefined && this.removedTabIds.has(runtimeTabId)) {
+          return true;
+        }
+      }
+      stack.push(...node.childIds);
+    }
+    return false;
   }
 
   beginCommandTransaction(input: {
@@ -249,19 +547,66 @@ export class RuntimeFactLedger {
     this.recordObservation({ source: "command", commandId, kind: "rejected" });
   }
 
-  recordNativeTabCreated(tab: RuntimeTab): void {
+  recordNativeTabCreated(tab: RuntimeTab): RuntimeTabEvidence {
+    if (!this.reconstructedLiveWindowIds.has(tab.windowId) && !this.isWindowIgnoredForRefresh(tab.windowId)) {
+      this.browserCreatedWindowIds.add(tab.windowId);
+    }
     this.observeLiveTabIfAccepted(tab);
-    this.recordObservation({ source: "tabEvent", kind: "created", tabId: tab.id, windowId: tab.windowId, tab });
+    const sequence = this.recordObservation({ source: "tabEvent", kind: "created", tabId: tab.id, windowId: tab.windowId, tab });
+    return this.runtimeTabEvidence("created", tab, allRuntimeTabEvidenceFields(), sequence);
   }
 
-  recordNativeTabUpdated(tab: RuntimeTab, changeInfo: Partial<RuntimeTab>): NativeTabUpdatedDecision {
+  recordBrowserCreatedRuntimeWindow(windowId: number): void {
+    if (this.isWindowIgnoredForRefresh(windowId)) {
+      return;
+    }
+    this.browserCreatedWindowIds.add(windowId);
+    this.commandCreatedWindowIds.delete(windowId);
+    this.observeLiveWindowIfAccepted(windowId);
+  }
+
+  isBrowserCreatedRuntimeWindow(windowId: number): boolean {
+    return this.browserCreatedWindowIds.has(windowId) ||
+      this.windowScopes.scopeForWindow(windowId)?.provenance === "browserCreated";
+  }
+
+  isRestoredRuntimeScopeForTab(tabId: number): boolean {
+    return this.windowScopes.scopeForTab(tabId)?.provenance === "restored";
+  }
+
+  isRestoredRuntimeScopeForWindow(windowId: number): boolean {
+    return this.windowScopes.scopeForWindow(windowId)?.provenance === "restored";
+  }
+
+  recordNativeTabUpdated(tab: RuntimeTab, changeInfo: Partial<RuntimeTab>): NativeTabUpdatedRecord {
     this.observeLiveTabIfAccepted(tab);
-    this.recordObservation({ source: "tabEvent", kind: "updated", tabId: tab.id, windowId: tab.windowId, tab });
-    return this.isCommandFocusActiveUpdateEcho(changeInfo, tab) ? "command-focus-active" : "refresh";
+    this.markStructurallyFreshIfShapeChanged(tab);
+    const sequence = this.recordObservation({ source: "tabEvent", kind: "updated", tabId: tab.id, windowId: tab.windowId, tab });
+    return {
+      decision: this.isCommandFocusActiveUpdateEcho(changeInfo, tab) ? "command-focus-active" : "refresh",
+      evidence: this.runtimeTabEvidence("updated", tab, runtimeTabEvidenceFieldsFromUpdate(changeInfo), sequence)
+    };
+  }
+
+  acceptedTabShapeFact(tabId: number): RuntimeTabShapeFact | undefined {
+    return this.tabShapeFacts.get(tabId);
+  }
+
+  acceptedWindowShapeFact(windowId: number): RuntimeWindowShapeFact | undefined {
+    return this.windowShapeFacts.get(windowId);
+  }
+
+  currentScopeGeneration(): number {
+    return this.scopeGeneration;
+  }
+
+  tabNeedsShapeCorroboration(tabId: number): boolean {
+    return this.structurallyFreshTabIds.has(tabId);
   }
 
   recordNativeTabActivated(tabId: number, windowId: number | undefined): NativeFocusEventDecision {
     this.observeLiveTabIdIfAccepted(tabId, windowId);
+    this.structurallyFreshTabIds.add(tabId);
     this.recordObservation({
       source: "tabEvent",
       kind: "activated",
@@ -272,6 +617,7 @@ export class RuntimeFactLedger {
   }
 
   recordNativeTabDetached(tabId: number, oldWindowId: number | undefined): void {
+    this.structurallyFreshTabIds.add(tabId);
     this.recordObservation({
       source: "tabEvent",
       kind: "detached",
@@ -282,6 +628,7 @@ export class RuntimeFactLedger {
 
   recordNativeTabAttached(tabId: number, newWindowId: number | undefined): void {
     this.observeLiveTabIdIfAccepted(tabId, newWindowId);
+    this.structurallyFreshTabIds.add(tabId);
     this.clearCommandRelocationEchoIfBrowserMoved(tabId, newWindowId);
     this.recordObservation({
       source: "tabEvent",
@@ -293,6 +640,7 @@ export class RuntimeFactLedger {
 
   recordNativeTabMoved(tabId: number, windowId: number | undefined): void {
     this.observeLiveTabIdIfAccepted(tabId, windowId);
+    this.structurallyFreshTabIds.add(tabId);
     this.clearCommandRelocationEchoIfBrowserMoved(tabId, windowId);
     this.recordObservation({
       source: "tabEvent",
@@ -300,6 +648,20 @@ export class RuntimeFactLedger {
       tabId,
       ...(typeof windowId === "number" ? { windowId } : {})
     });
+  }
+
+  private markStructurallyFreshIfShapeChanged(tab: RuntimeTab): void {
+    const previousFact = this.tabShapeFacts.get(tab.id);
+    if (
+      previousFact &&
+      (
+        previousFact.windowId !== tab.windowId ||
+        (previousFact.index !== undefined && previousFact.index !== tab.index) ||
+        (previousFact.active !== undefined && previousFact.active !== tab.active)
+      )
+    ) {
+      this.structurallyFreshTabIds.add(tab.id);
+    }
   }
 
   recordNativeTabRemoved(tabId: number, windowId: number | undefined): NativeTabRemovedDecision {
@@ -317,6 +679,33 @@ export class RuntimeFactLedger {
     this.observeLiveWindowIfAccepted(windowId);
     this.recordObservation({ source: "windowEvent", kind: "focused", windowId });
     return this.hasCommandFocusedWindow(windowId) ? "command-focus" : "runtime-refresh";
+  }
+
+  recordNativeWindowBoundsChanged(windowInfo: RuntimeWindow): void {
+    if (!this.reconstructedLiveWindowIds.has(windowInfo.id) && !this.isWindowIgnoredForRefresh(windowInfo.id)) {
+      this.browserCreatedWindowIds.add(windowInfo.id);
+    }
+    this.observeLiveWindowIfAccepted(windowInfo.id);
+    const sequence = this.recordObservation({
+      source: "windowEvent",
+      kind: "boundsChanged",
+      windowId: windowInfo.id,
+      window: windowInfo
+    });
+    const tabs = windowInfo.tabs
+      ? [...windowInfo.tabs]
+          .filter((tab) => !tab.incognito)
+          .sort((left, right) => left.index - right.index)
+      : undefined;
+    const activeTabId = tabs?.find((tab) => tab.active)?.id;
+    this.recordWindowShapeFact({
+      windowInfo,
+      ...(tabs ? { tabOrder: tabs.map((tab) => tab.id), activeTabIdKnown: true } : {}),
+      ...(typeof activeTabId === "number" ? { activeTabId } : {}),
+      source: "windowEvent",
+      confidence: "eventLocal",
+      sequence
+    });
   }
 
   recordNativeWindowRemoved(windowId: number): NativeWindowRemovedDecision {
@@ -408,6 +797,7 @@ export class RuntimeFactLedger {
     this.removedTabIds.add(tabId);
     this.commandRestoredTabIds.delete(tabId);
     this.commandRelocatedTabEchoes.delete(tabId);
+    this.structurallyFreshTabIds.delete(tabId);
   }
 
   private markWindowRemoved(windowId: number): void {
@@ -596,6 +986,7 @@ export class RuntimeFactLedger {
     for (const node of selectedNodes(next, candidateNodeIds)) {
       if (isLiveWindowNode(node) && node.restoredFromClosed && previous.nodes[node.id]?.status === "closed") {
         this.removedWindowIds.delete(node.live.windowId);
+        this.commandCreatedWindowIds.add(node.live.windowId);
         this.reconstructedLiveWindowIds.add(node.live.windowId);
         this.reconstructedMaxWindowId = Math.max(this.reconstructedMaxWindowId, node.live.windowId);
       }
@@ -643,6 +1034,9 @@ export class RuntimeFactLedger {
       const existingEcho = this.commandRelocatedTabEchoes.get(previousNode.live.tabId);
       const fromWindowIds = new Set(existingEcho?.fromWindowIds ?? []);
       fromWindowIds.add(previousNode.live.windowId);
+      if (!hasLiveWindowRuntimeId(previous, nextNode.live.windowId)) {
+        this.commandCreatedWindowIds.add(nextNode.live.windowId);
+      }
       this.commandRelocatedTabEchoes.set(previousNode.live.tabId, {
         fromWindowIds,
         toWindowId: nextNode.live.windowId
@@ -654,6 +1048,7 @@ export class RuntimeFactLedger {
     const existingEcho = this.commandRelocatedTabEchoes.get(tabId);
     const fromWindowIds = new Set(existingEcho?.fromWindowIds ?? []);
     fromWindowIds.add(fromWindowId);
+    this.commandCreatedWindowIds.add(toWindowId);
     this.commandRelocatedTabEchoes.set(tabId, { fromWindowIds, toWindowId });
   }
 
@@ -740,6 +1135,10 @@ function liveWindowNodes(state: OutlineState): Array<OutlineNode & { live: { win
   return Object.values(state.nodes).filter(isLiveWindowNode);
 }
 
+function hasLiveWindowRuntimeId(state: OutlineState, windowId: number): boolean {
+  return liveWindowNodes(state).some((node) => node.live.windowId === windowId);
+}
+
 function maxNumericId(ids: ReadonlySet<number>): number {
   let maxId = 0;
   for (const id of ids) {
@@ -791,4 +1190,42 @@ function selectedNodes(state: OutlineState, candidateNodeIds?: readonly NodeId[]
         return node ? [node] : [];
       })
     : Object.values(state.nodes);
+}
+
+function allRuntimeTabEvidenceFields(): ReadonlySet<RuntimeTabEvidenceField> {
+  return new Set<RuntimeTabEvidenceField>([
+    "windowId",
+    "index",
+    "active",
+    "openerTabId",
+    "url",
+    "title",
+    "favIconUrl"
+  ]);
+}
+
+function runtimeTabEvidenceFieldsFromUpdate(changeInfo: Partial<RuntimeTab>): ReadonlySet<RuntimeTabEvidenceField> {
+  const fields = new Set<RuntimeTabEvidenceField>();
+  if (changeInfo.windowId !== undefined) {
+    fields.add("windowId");
+  }
+  if (changeInfo.index !== undefined) {
+    fields.add("index");
+  }
+  if (changeInfo.active !== undefined) {
+    fields.add("active");
+  }
+  if (changeInfo.openerTabId !== undefined) {
+    fields.add("openerTabId");
+  }
+  if (changeInfo.url !== undefined) {
+    fields.add("url");
+  }
+  if (changeInfo.title !== undefined) {
+    fields.add("title");
+  }
+  if (changeInfo.favIconUrl !== undefined) {
+    fields.add("favIconUrl");
+  }
+  return fields;
 }

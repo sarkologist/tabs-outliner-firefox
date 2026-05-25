@@ -899,6 +899,7 @@ function storedOutlineNodesEqual(previous: OutlineNode, next: OutlineNode): bool
     previous.updatedAt === next.updatedAt &&
     previous.closedAt === next.closedAt &&
     previous.restoredFromClosed === next.restoredFromClosed &&
+    previous.runtimeProvenance === next.runtimeProvenance &&
     liveRefsEqual(previous.live, next.live) &&
     restoreRefsEqual(previous.restore, next.restore);
 }

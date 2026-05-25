@@ -76,6 +76,8 @@ function normalizeWindow(windowInfo: RuntimeWindow): RuntimeWindow {
     id: windowInfo.id,
     focused: Boolean(windowInfo.focused),
     incognito: Boolean(windowInfo.incognito),
+    ...(windowInfo.state ? { state: windowInfo.state } : {}),
+    ...(windowInfo.sessionId ? { sessionId: windowInfo.sessionId } : {}),
     ...(windowInfo.tabs ? { tabs: windowInfo.tabs.map(normalizeTab) } : {})
   };
 }

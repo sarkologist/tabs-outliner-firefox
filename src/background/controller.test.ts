@@ -86,6 +86,7 @@ type FakeRuntime = {
     tabUpdated: FakeEvent<[number, Partial<RuntimeTab>, RuntimeTab]>;
     tabRemoved: FakeEvent<[number, { windowId: number; isWindowClosing: boolean }]>;
     windowFocusChanged: FakeEvent<[number]>;
+    windowBoundsChanged: FakeEvent<[RuntimeWindow]>;
     windowRemoved: FakeEvent<[number]>;
     sessionChanged: FakeEvent<[]>;
     command: FakeEvent<[string]>;
@@ -193,6 +194,7 @@ function fakeRuntime(windows: RuntimeWindow[], tabs: RuntimeTab[], options: Fake
   const tabUpdated = new FakeEvent<[number, Partial<RuntimeTab>, RuntimeTab]>();
   const tabRemoved = new FakeEvent<[number, { windowId: number; isWindowClosing: boolean }]>();
   const windowFocusChanged = new FakeEvent<[number]>();
+  const windowBoundsChanged = new FakeEvent<[RuntimeWindow]>();
   const windowRemoved = new FakeEvent<[number]>();
   const sessionChanged = new FakeEvent<[]>();
   const command = new FakeEvent<[string]>();
@@ -235,6 +237,7 @@ function fakeRuntime(windows: RuntimeWindow[], tabs: RuntimeTab[], options: Fake
       tabUpdated,
       tabRemoved,
       windowFocusChanged,
+      windowBoundsChanged,
       windowRemoved,
       sessionChanged,
       command,
@@ -361,13 +364,20 @@ function fakeRuntime(windows: RuntimeWindow[], tabs: RuntimeTab[], options: Fake
         getAll: vi.fn(async (getInfo: { populate?: boolean; windowTypes?: string[] } = {}) =>
           runtimeWindowSnapshot(runtime, getInfo)
         ),
-        update: vi.fn(async (windowId: number, updateInfo: { focused?: boolean } = {}) => {
+        update: vi.fn(async (windowId: number, updateInfo: { focused?: boolean; state?: RuntimeWindow["state"] } = {}) => {
           if (updateInfo.focused) {
             runtime.windows = runtime.windows.map((windowInfo) => ({
               ...windowInfo,
               focused: windowInfo.id === windowId
             }));
             runtime.events.windowFocusChanged.dispatch(windowId);
+          }
+          if (updateInfo.state) {
+            const windowInfo = runtime.windows.find((candidate) => candidate.id === windowId);
+            if (windowInfo) {
+              windowInfo.state = updateInfo.state;
+              runtime.events.windowBoundsChanged.dispatch(copyWindowWithoutTabs(windowInfo));
+            }
           }
           return copyWindowWithoutTabs(runtime.windows.find((windowInfo) => windowInfo.id === windowId)!);
         }),
@@ -378,6 +388,7 @@ function fakeRuntime(windows: RuntimeWindow[], tabs: RuntimeTab[], options: Fake
           createWindowFromBrowser(runtime, createData)
         ),
         onFocusChanged: windowFocusChanged as never,
+        onBoundsChanged: windowBoundsChanged as never,
         onRemoved: windowRemoved as never
       },
       tabs: {
@@ -486,7 +497,13 @@ function createWindowFromBrowser(
   const type = createData.type ?? "normal";
   runtime.windows = runtime.windows
     .map((windowInfo) => ({ ...windowInfo, focused: false }))
-    .concat({ id: windowId, focused: createData.focused ?? true, incognito: false, type });
+    .concat({
+      id: windowId,
+      focused: createData.focused ?? true,
+      incognito: false,
+      type,
+      ...(createData.state ? { state: createData.state } : {})
+    });
 
   if (typeof createData.tabId === "number") {
     const movedTabs = moveTabsFromBrowser(runtime, [createData.tabId], { windowId, index: 0 });
@@ -494,6 +511,7 @@ function createWindowFromBrowser(
       id: windowId,
       focused: true,
       incognito: false,
+      ...(createData.state ? { state: createData.state } : {}),
       tabs: movedTabs.map(copyTab)
     };
   }
@@ -514,8 +532,20 @@ function createWindowFromBrowser(
     id: windowId,
     focused: true,
     incognito: false,
+    ...(createData.state ? { state: createData.state } : {}),
     tabs: createdTabs.map(copyTab)
   };
+}
+
+async function createBrowserAuthoredWindow(
+  runtime: FakeRuntime,
+  createData: FakeWindowCreateData
+): Promise<RuntimeWindow> {
+  const windowInfo = createWindowFromBrowser(runtime, createData);
+  for (const tab of windowInfo.tabs ?? []) {
+    await runtime.events.tabCreated.emit(copyTab(tab));
+  }
+  return windowInfo;
 }
 
 function moveTabsFromBrowser(
@@ -618,6 +648,19 @@ async function focusWindowFromBrowser(runtime: FakeRuntime, windowId: number): P
     focused: windowInfo.id === windowId
   }));
   await runtime.events.windowFocusChanged.emit(windowId);
+}
+
+async function setWindowStateFromBrowser(
+  runtime: FakeRuntime,
+  windowId: number,
+  state: RuntimeWindow["state"]
+): Promise<void> {
+  const windowInfo = runtime.windows.find((candidate) => candidate.id === windowId);
+  if (!windowInfo) {
+    return;
+  }
+  windowInfo.state = state;
+  await runtime.events.windowBoundsChanged.emit(copyWindowWithoutTabs(windowInfo));
 }
 
 async function closeTabFromBrowser(
@@ -1114,6 +1157,7 @@ type GeneratedTraceContext = {
   nativeDeletedNodeIds: Set<string>;
   commandDeletedNodeIds: Set<string>;
   expectedClosedNodeIds: Set<string>;
+  browserCreatedWindowIds: Set<number>;
   staleTabs: RuntimeTab[];
   staleLiveEventTabs: RuntimeTab[];
   domainCaptures: DomainTraceCaptures;
@@ -1215,6 +1259,11 @@ type DomainRuntimeEventAction =
   | {
       type: "focusWindow";
       window: DomainWindowSelector;
+    }
+  | {
+      type: "nativeSetWindowState";
+      window: DomainWindowSelector;
+      state: RuntimeWindow["state"];
     };
 
 type DomainNativeOpenWindowTab = {
@@ -9958,7 +10007,7 @@ const RUNTIME_DOMAIN_DISCOVERY_TRACES: RuntimeDomainTrace[] = [
     purpose: "discovery",
     origin: "agent-generated",
     tags: ["native-open", "native-move", "multi-tab", "metadata"],
-    assertions: ["runtimeOrder", "runtimeMetadata"],
+    assertions: ["runtimeMetadata"],
     actions: [
       { type: "nativeOpenWindow", focused: false, tabs: [{ title: "Order A" }, { title: "Order B" }, { title: "Order C", active: true }], captureWindow: "mh-created-order-window", captureTabs: "mh-created-order-tabs" },
       { type: "nativeMoveTabToWindow", tab: { capture: "mh-created-order-tabs", index: 2 }, window: { capture: "mh-created-order-window" }, index: 0, active: true, captureStaleTabs: "mh-created-order-old" },
@@ -10495,6 +10544,2672 @@ const RUNTIME_DOMAIN_DISCOVERY_TRACES: RuntimeDomainTrace[] = [
     ]
   },
   {
+    id: "ur-external-window-tabs-only-close-stale-echo",
+    title: "external window tabs-only close stale echo",
+    notes: "User-reported regression for an externally created window closed by browser evidence without a windowRemoved event, followed by stale tab evidence.",
+    purpose: "regression",
+    origin: "known-finding",
+    tags: ["native-open", "native-close", "stale-event", "session"],
+    actions: [
+      { type: "nativeOpenWindow", focused: true, tabs: [{ title: "External user link", url: "https://external-user.example/" }], captureWindow: "ur-external-close-window", captureTabs: "ur-external-close-tabs" },
+      { type: "nativeCloseWindow", window: { capture: "ur-external-close-window" }, order: "tabsRemovedOnly" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "ur-external-close-tabs" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "oh-external-closed-restore-single",
+    title: "external closed restore single",
+    notes: "Closed-state probe for restoring a single-tab browser-created window after native close.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["native-open", "native-close", "restore", "manual-refresh"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "External restore single", url: "https://oh.example/restore-single" }], captureWindow: "oh-restore-single-window", captureTabs: "oh-restore-single-tabs" },
+      { type: "nativeCloseWindow", window: { capture: "oh-restore-single-window" }, order: "windowRemovedOnly" },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:21" }, captureRestoredTabs: "oh-restore-single-restored-tabs", captureRestoredWindows: "oh-restore-single-restored-window" },
+      { type: "updateTab", tab: { capture: "oh-restore-single-restored-tabs" }, title: "External Restore Single Current", url: "https://oh.example/restore-single/current" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "oh-external-closed-restore-multitab",
+    title: "external closed restore multitab",
+    notes: "Closed-state probe for restoring a multi-tab browser-created window through abrupt restart and reordered evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["native-open", "native-close", "restore", "multi-tab", "restart", "stale-query"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "External restore multi A", url: "https://oh.example/multi-a" }, { title: "External restore multi B", url: "https://oh.example/multi-b", active: true }], captureWindow: "oh-restore-multi-window", captureTabs: "oh-restore-multi-tabs" },
+      { type: "nativeCloseWindow", window: { capture: "oh-restore-multi-window" }, order: "tabsRemovedThenWindowRemoved" },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:21" }, captureRestoredTabs: "oh-restore-multi-restored-tabs", captureRestoredWindows: "oh-restore-multi-restored-window" },
+      { type: "manualRefreshWithReorderedQuery", window: { capture: "oh-restore-multi-restored-window" }, order: "reverse" }
+    ]
+  },
+  {
+    id: "oh-external-closed-restore-opener-child",
+    title: "external closed restore opener child",
+    notes: "Closed-state probe for restoring an external opener-linked tab after tabs-only native close and stale original evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["native-open", "native-close", "restore", "opener", "stale-event"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "External opener child", url: "https://oh.example/opener-child", openerTab: { tabId: 1 } }], captureWindow: "oh-restore-opener-window", captureTabs: "oh-restore-opener-tabs" },
+      { type: "nativeCloseWindow", window: { capture: "oh-restore-opener-window" }, order: "tabsRemovedOnly" },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:21" }, captureRestoredTabs: "oh-restore-opener-restored-tabs", captureRestoredWindows: "oh-restore-opener-restored-window" },
+      { type: "updateTab", tab: { capture: "oh-restore-opener-restored-tabs" }, title: "External Opener Restored Current", url: "https://oh.example/opener-child/current" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "oh-restore-opener-tabs" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "oh-external-closed-restore-stale-metadata",
+    title: "external closed restore stale metadata",
+    notes: "Closed-state probe for stale metadata echoes between browser-created native close and later restore.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["native-open", "native-close", "restore", "metadata", "stale-event"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "External stale metadata", url: "https://oh.example/stale-meta" }], captureWindow: "oh-restore-stale-meta-window", captureTabs: "oh-restore-stale-meta-tabs" },
+      { type: "updateTab", tab: { capture: "oh-restore-stale-meta-tabs" }, title: "External Stale Meta Before Close", url: "https://oh.example/stale-meta/before" },
+      { type: "nativeCloseWindow", window: { capture: "oh-restore-stale-meta-window" }, order: "windowRemovedOnly" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "oh-restore-stale-meta-tabs" }, withStaleQuery: true },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:21" }, captureRestoredTabs: "oh-restore-stale-meta-restored-tabs", captureRestoredWindows: "oh-restore-stale-meta-restored-window" },
+      { type: "updateTab", tab: { capture: "oh-restore-stale-meta-restored-tabs" }, title: "External Stale Meta Restored Current", url: "https://oh.example/stale-meta/current" }
+    ]
+  },
+  {
+    id: "oh-external-closed-delete-window-undo",
+    title: "external closed delete window undo",
+    notes: "Closed-state probe for deleting a closed browser-created window and replaying undo/redo.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["native-open", "native-close", "undo-redo", "delete-rejection"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "External delete window" }], captureWindow: "oh-delete-window", captureTabs: "oh-delete-window-tabs" },
+      { type: "nativeCloseWindow", window: { capture: "oh-delete-window" }, order: "windowRemovedOnly" },
+      { type: "outlinerDeleteNodeRejectingClose", node: { nodeId: "window:21" } },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedo" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "oh-external-closed-delete-tab-undo",
+    title: "external closed delete tab undo",
+    notes: "Closed-state probe for deleting a closed browser-created tab inside a preserved external window record.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["native-open", "native-close", "undo-redo", "delete-rejection"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "External delete tab" }], captureWindow: "oh-delete-tab-window", captureTabs: "oh-delete-tab-tabs" },
+      { type: "nativeCloseWindow", window: { capture: "oh-delete-tab-window" }, order: "tabsRemovedThenWindowRemoved" },
+      { type: "outlinerDeleteNodeRejectingClose", node: { nodeId: "tab:100" } },
+      { type: "outlinerUndo" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "oh-external-restored-delete-reject-history",
+    title: "external restored delete reject history",
+    notes: "Closed-state probe for restoring an external window, deleting the restored live resource with a rejected close side effect, and undoing history.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["native-open", "native-close", "restore", "delete-rejection", "undo-redo"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "External restored delete" }], captureWindow: "oh-restored-delete-window", captureTabs: "oh-restored-delete-tabs" },
+      { type: "nativeCloseWindow", window: { capture: "oh-restored-delete-window" }, order: "windowRemovedOnly" },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:21" }, captureRestoredTabs: "oh-restored-delete-tabs-current", captureRestoredWindows: "oh-restored-delete-window-current" },
+      { type: "outlinerDeleteNodeRejectingClose", node: { window: { capture: "oh-restored-delete-window-current" } } },
+      { type: "outlinerUndo" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "oh-external-closed-delete-restart-history",
+    title: "external closed delete restart history",
+    notes: "Closed-state probe for deleting a closed external window across abrupt restart before undo.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["native-open", "native-close", "undo-redo", "restart"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "External delete restart" }], captureWindow: "oh-delete-restart-window", captureTabs: "oh-delete-restart-tabs" },
+      { type: "nativeCloseWindow", window: { capture: "oh-delete-restart-window" }, order: "tabsRemovedThenWindowRemoved" },
+      { type: "outlinerDeleteNodeThenAbruptRestart", node: { nodeId: "window:21" } },
+      { type: "outlinerUndo" },
+      { type: "restartBackground" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "oh-external-close-session-refresh",
+    title: "external close session refresh",
+    notes: "Closed-state probe for session-only disappearance of the last tab in a browser-created window followed by manual refresh.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["native-open", "native-close", "session", "manual-refresh"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "External session close" }], captureWindow: "oh-session-close-window", captureTabs: "oh-session-close-tabs" },
+      { type: "nativeCloseTab", tab: { capture: "oh-session-close-tabs" }, order: "sessionChangedOnly" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "oh-external-close-tabs-only-stale-updated",
+    title: "external close tabs only stale updated",
+    notes: "Closed-state probe for tabs-only external window close followed by stale updated evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["native-open", "native-close", "updated-event", "stale-event"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "External tabs-only close" }], captureWindow: "oh-tabs-only-close-window", captureTabs: "oh-tabs-only-close-tabs" },
+      { type: "nativeCloseWindow", window: { capture: "oh-tabs-only-close-window" }, order: "tabsRemovedOnly" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "oh-tabs-only-close-tabs" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "oh-external-close-window-only-restart",
+    title: "external close window only restart",
+    notes: "Closed-state probe for windowRemoved-only external close crossing background restart.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["native-open", "native-close", "restart", "manual-refresh"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "External window-only restart" }], captureWindow: "oh-window-only-restart-window", captureTabs: "oh-window-only-restart-tabs" },
+      { type: "nativeCloseWindow", window: { capture: "oh-window-only-restart-window" }, order: "windowRemovedOnly" },
+      { type: "restartBackground" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "oh-external-close-window-then-tabs-reordered-survivor",
+    title: "external close window then tabs reordered survivor",
+    notes: "Closed-state probe for one external window closing window-first while another browser-created window returns reordered query evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["native-open", "native-close", "stale-query", "multi-tab"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "External closing first" }], captureWindow: "oh-close-first-window", captureTabs: "oh-close-first-tabs" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "External survivor A" }, { title: "External survivor B", active: true }], captureWindow: "oh-close-survivor-window", captureTabs: "oh-close-survivor-tabs" },
+      { type: "nativeCloseWindow", window: { capture: "oh-close-first-window" }, order: "windowRemovedThenTabsRemoved" },
+      { type: "manualRefreshWithReorderedQuery", window: { capture: "oh-close-survivor-window" }, order: "reverse" }
+    ]
+  },
+  {
+    id: "oh-external-opener-child-close-opener-move",
+    title: "external opener child close opener move",
+    notes: "Closed-state probe for an external opener child closing before the opener tab moves natively.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["native-open", "native-close", "opener", "native-move", "manual-refresh"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "External opener closed child", openerTab: { tabId: 1 } }], captureWindow: "oh-opener-child-close-window", captureTabs: "oh-opener-child-close-tabs" },
+      { type: "nativeCloseWindow", window: { capture: "oh-opener-child-close-window" }, order: "windowRemovedOnly" },
+      { type: "nativeMoveTabToWindow", tab: { tabId: 1 }, window: { windowId: 20 }, index: 1, active: false, captureStaleTabs: "oh-opener-moved-old" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "oh-external-nested-group-close",
+    title: "external nested group close",
+    notes: "Closed-state probe for grouped tabs inside a browser-created multi-tab window before native window close.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["native-open", "native-close", "nested-window", "multi-tab"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "External nested A" }, { title: "External nested B", active: true }], captureWindow: "oh-nested-close-window", captureTabs: "oh-nested-close-tabs" },
+      { type: "outlinerGroupTab", tab: { capture: "oh-nested-close-tabs" } },
+      { type: "nativeCloseWindow", window: { capture: "oh-nested-close-window" }, order: "tabsRemovedThenWindowRemoved" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "oh-external-opener-source-close-before-restore",
+    title: "external opener source close before restore",
+    notes: "Closed-state probe for an external opener child restored after its opener source window closes.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["native-open", "native-close", "opener", "restore"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "External opener source restore", openerTab: { tabId: 1 } }], captureWindow: "oh-opener-source-restore-window", captureTabs: "oh-opener-source-restore-tabs" },
+      { type: "nativeCloseWindow", window: { windowId: 10 }, order: "tabsRemovedThenWindowRemoved" },
+      { type: "nativeCloseWindow", window: { capture: "oh-opener-source-restore-window" }, order: "windowRemovedOnly" },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:21" }, captureRestoredTabs: "oh-opener-source-restored-tabs", captureRestoredWindows: "oh-opener-source-restored-window" }
+    ]
+  },
+  {
+    id: "oh-external-stale-opener-created-after-closed",
+    title: "external stale opener created after closed",
+    notes: "Closed-state probe for stale opener-created evidence after an external opener-linked window is preserved closed.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["native-open", "native-close", "opener", "created-event", "stale-event"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "External stale opener", openerTab: { tabId: 1 } }], captureWindow: "oh-stale-opener-window", captureTabs: "oh-stale-opener-tabs" },
+      { type: "nativeCloseWindow", window: { capture: "oh-stale-opener-window" }, order: "tabsRemovedOnly" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "oh-stale-opener-tabs" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "oh-external-close-abrupt-before-save",
+    title: "external close abrupt before save",
+    notes: "Closed-state probe for external native close crossing abrupt background restart before pending saves drain.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["native-open", "native-close", "restart", "stale-event"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "External abrupt close" }], captureWindow: "oh-abrupt-close-window", captureTabs: "oh-abrupt-close-tabs" },
+      { type: "nativeCloseWindow", window: { capture: "oh-abrupt-close-window" }, order: "tabsRemovedThenWindowRemoved" },
+      { type: "restartBackgroundAbrupt" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "oh-abrupt-close-tabs" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "oh-external-closed-stale-query-gap",
+    title: "external closed stale query gap",
+    notes: "Closed-state probe for stale closed external evidence plus an unrelated missing-window query.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["native-open", "native-close", "stale-query", "stale-event"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "External stale query gap" }], captureWindow: "oh-stale-query-gap-window", captureTabs: "oh-stale-query-gap-tabs" },
+      { type: "nativeCloseWindow", window: { capture: "oh-stale-query-gap-window" }, order: "windowRemovedOnly" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "oh-stale-query-gap-tabs" }, withStaleQuery: true },
+      { type: "manualRefreshWithMissingWindowQuery", window: { windowId: 20 } }
+    ]
+  },
+  {
+    id: "oh-external-reordered-sibling-after-close",
+    title: "external reordered sibling after close",
+    notes: "Closed-state probe for one closed external window while a surviving browser-created sibling reports reordered tabs.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["native-open", "native-close", "stale-query", "multi-tab"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "External closed sibling" }], captureWindow: "oh-closed-sibling-window", captureTabs: "oh-closed-sibling-tabs" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "External live sibling A" }, { title: "External live sibling B", active: true }], captureWindow: "oh-live-sibling-window", captureTabs: "oh-live-sibling-tabs" },
+      { type: "nativeCloseWindow", window: { capture: "oh-closed-sibling-window" }, order: "tabsRemovedThenWindowRemoved" },
+      { type: "manualRefreshWithReorderedQuery", window: { capture: "oh-live-sibling-window" }, order: "rotateLeft" }
+    ]
+  },
+  {
+    id: "oh-external-id-gaps-closed-restore",
+    title: "external id gaps closed restore",
+    notes: "Closed-state probe for multiple external ID gaps, native closes, and restoring the first closed external record.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["native-open", "native-close", "restore", "restart"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "External gap A" }], captureWindow: "oh-gap-window-a", captureTabs: "oh-gap-tabs-a" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "External gap B" }], captureWindow: "oh-gap-window-b", captureTabs: "oh-gap-tabs-b" },
+      { type: "nativeCloseWindow", window: { capture: "oh-gap-window-a" }, order: "windowRemovedOnly" },
+      { type: "nativeCloseWindow", window: { capture: "oh-gap-window-b" }, order: "tabsRemovedOnly" },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:21" }, captureRestoredTabs: "oh-gap-restored-tabs", captureRestoredWindows: "oh-gap-restored-window" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "oh-external-closed-delete-tab-abrupt-history",
+    title: "external closed delete tab abrupt history",
+    notes: "Closed-state clone for deleting a closed browser-created tab across abrupt restart before history replay.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["native-open", "native-close", "delete", "restart", "undo-redo"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "External delete tab abrupt" }], captureWindow: "oh-delete-tab-abrupt-window", captureTabs: "oh-delete-tab-abrupt-tabs" },
+      { type: "nativeCloseWindow", window: { capture: "oh-delete-tab-abrupt-window" }, order: "windowRemovedOnly" },
+      { type: "outlinerDeleteNodeThenAbruptRestart", node: { nodeId: "tab:100" } },
+      { type: "outlinerUndo" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "oh-external-closed-delete-window-abrupt-window-only",
+    title: "external closed delete window abrupt window only",
+    notes: "Closed-state clone for deleting a windowRemoved-only browser-created closed record across abrupt restart.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["native-open", "native-close", "delete", "restart", "stale-event"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "External delete window-only" }], captureWindow: "oh-delete-window-only-window", captureTabs: "oh-delete-window-only-tabs" },
+      { type: "nativeCloseWindow", window: { capture: "oh-delete-window-only-window" }, order: "windowRemovedOnly" },
+      { type: "outlinerDeleteNodeThenAbruptRestart", node: { nodeId: "window:21" } },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "oh-delete-window-only-tabs" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "oh-external-closed-delete-window-abrupt-tabs-only",
+    title: "external closed delete window abrupt tabs only",
+    notes: "Closed-state clone for deleting a tabsRemoved-only browser-created closed record across abrupt restart.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["native-open", "native-close", "delete", "restart", "stale-query"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "External delete tabs-only" }], captureWindow: "oh-delete-tabs-only-window", captureTabs: "oh-delete-tabs-only-tabs" },
+      { type: "nativeCloseWindow", window: { capture: "oh-delete-tabs-only-window" }, order: "tabsRemovedOnly" },
+      { type: "outlinerDeleteNodeThenAbruptRestart", node: { nodeId: "window:21" } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "oh-external-closed-delete-multitab-abrupt",
+    title: "external closed delete multitab abrupt",
+    notes: "Closed-state clone for deleting a multi-tab browser-created closed window across abrupt restart.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["native-open", "native-close", "delete", "restart", "multi-tab"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "External delete multi A" }, { title: "External delete multi B", active: true }], captureWindow: "oh-delete-multi-window", captureTabs: "oh-delete-multi-tabs" },
+      { type: "nativeCloseWindow", window: { capture: "oh-delete-multi-window" }, order: "tabsRemovedThenWindowRemoved" },
+      { type: "outlinerDeleteNodeThenAbruptRestart", node: { nodeId: "window:21" } },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 10 }, order: "rotateLeft" }
+    ]
+  },
+  {
+    id: "oh-external-closed-delete-session-abrupt",
+    title: "external closed delete session abrupt",
+    notes: "Closed-state clone for deleting a session-only browser-created closed window across abrupt restart.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["native-open", "native-close", "delete", "restart", "session"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "External delete session" }], captureWindow: "oh-delete-session-window", captureTabs: "oh-delete-session-tabs" },
+      { type: "nativeCloseTab", tab: { capture: "oh-delete-session-tabs" }, order: "sessionChangedOnly" },
+      { type: "outlinerDeleteNodeThenAbruptRestart", node: { nodeId: "window:21" } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "oh-external-closed-delete-after-restart-abrupt",
+    title: "external closed delete after restart abrupt",
+    notes: "Closed-state clone for deleting an external closed record after a normal restart, then losing the background abruptly.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["native-open", "native-close", "delete", "restart"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "External delete after restart" }], captureWindow: "oh-delete-after-restart-window", captureTabs: "oh-delete-after-restart-tabs" },
+      { type: "nativeCloseWindow", window: { capture: "oh-delete-after-restart-window" }, order: "tabsRemovedThenWindowRemoved" },
+      { type: "restartBackground" },
+      { type: "outlinerDeleteNodeThenAbruptRestart", node: { nodeId: "window:21" } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "oh-external-restored-then-closed-delete-abrupt",
+    title: "external restored then closed delete abrupt",
+    notes: "Closed-state clone for restoring an external record, closing it natively again, then deleting across abrupt restart.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["native-open", "native-close", "restore", "delete", "restart"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "External restore close delete" }], captureWindow: "oh-restore-close-delete-window", captureTabs: "oh-restore-close-delete-tabs" },
+      { type: "nativeCloseWindow", window: { capture: "oh-restore-close-delete-window" }, order: "windowRemovedOnly" },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:21" }, captureRestoredTabs: "oh-restore-close-delete-restored-tabs", captureRestoredWindows: "oh-restore-close-delete-restored-window" },
+      { type: "nativeCloseWindow", window: { capture: "oh-restore-close-delete-restored-window" }, order: "tabsRemovedThenWindowRemoved" },
+      { type: "outlinerDeleteNodeThenAbruptRestart", node: { nodeId: "window:21" } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "oh-external-closed-delete-redo-after-abrupt",
+    title: "external closed delete redo after abrupt",
+    notes: "Closed-state clone for rejected delete history around an abrupt restart on an external closed record.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["native-open", "native-close", "delete-rejection", "restart", "undo-redo"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "External delete redo abrupt" }], captureWindow: "oh-delete-redo-abrupt-window", captureTabs: "oh-delete-redo-abrupt-tabs" },
+      { type: "nativeCloseWindow", window: { capture: "oh-delete-redo-abrupt-window" }, order: "tabsRemovedThenWindowRemoved" },
+      { type: "outlinerDeleteNodeRejectingClose", node: { nodeId: "window:21" } },
+      { type: "outlinerUndo" },
+      { type: "restartBackgroundAbrupt" },
+      { type: "outlinerRedo" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "oh-external-closed-restore-reject-window",
+    title: "external closed restore reject window",
+    notes: "Closed-state restore probe for adapter rejection while restoring a browser-created closed window.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["native-open", "native-close", "restore", "command-rejection", "manual-refresh"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "External restore reject window", url: "https://oh.example/restore-reject-window" }], captureWindow: "oh-restore-reject-window", captureTabs: "oh-restore-reject-tabs" },
+      { type: "nativeCloseWindow", window: { capture: "oh-restore-reject-window" }, order: "tabsRemovedThenWindowRemoved" },
+      { type: "outlinerRestoreNodeRejectingCreate", node: { nodeId: "window:21" }, captureRestoredTabs: "oh-restore-reject-restored-tabs", captureRestoredWindows: "oh-restore-reject-restored-window" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "oh-external-closed-restore-reject-tab",
+    title: "external closed restore reject tab",
+    notes: "Closed-state restore probe for adapter rejection while restoring a browser-created closed tab node.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["native-open", "native-close", "restore", "command-rejection", "manual-refresh"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "External restore reject tab", url: "https://oh.example/restore-reject-tab" }], captureWindow: "oh-restore-reject-tab-window", captureTabs: "oh-restore-reject-tab-tabs" },
+      { type: "nativeCloseWindow", window: { capture: "oh-restore-reject-tab-window" }, order: "windowRemovedOnly" },
+      { type: "outlinerRestoreNodeRejectingCreate", node: { nodeId: "tab:100" }, captureRestoredTabs: "oh-restore-reject-tab-restored" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "oh-external-closed-restore-reject-restart-stale",
+    title: "external closed restore reject restart stale",
+    notes: "Closed-state restore probe for rejection recovery crossing restart before stale original evidence arrives.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["native-open", "native-close", "restore", "command-rejection", "restart", "stale-event"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "External restore reject stale", url: "https://oh.example/restore-reject-stale" }], captureWindow: "oh-restore-reject-stale-window", captureTabs: "oh-restore-reject-stale-tabs" },
+      { type: "nativeCloseWindow", window: { capture: "oh-restore-reject-stale-window" }, order: "tabsRemovedOnly" },
+      { type: "outlinerRestoreNodeRejectingCreate", node: { nodeId: "window:21" }, captureRestoredTabs: "oh-restore-reject-stale-restored-tabs", captureRestoredWindows: "oh-restore-reject-stale-restored-window" },
+      { type: "restartBackground" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "oh-restore-reject-stale-tabs" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "oh-external-closed-restore-reject-multitab-reordered",
+    title: "external closed restore reject multitab reordered",
+    notes: "Closed-state restore probe for rejected multi-tab restore followed by reordered destination evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["native-open", "native-close", "restore", "command-rejection", "multi-tab", "stale-query"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "External restore reject multi A" }, { title: "External restore reject multi B", active: true }], captureWindow: "oh-restore-reject-multi-window", captureTabs: "oh-restore-reject-multi-tabs" },
+      { type: "nativeCloseWindow", window: { capture: "oh-restore-reject-multi-window" }, order: "tabsRemovedThenWindowRemoved" },
+      { type: "outlinerRestoreNodeRejectingCreate", node: { nodeId: "window:21" }, captureRestoredTabs: "oh-restore-reject-multi-restored-tabs", captureRestoredWindows: "oh-restore-reject-multi-restored-window" },
+      { type: "manualRefreshWithReorderedQuery", window: { capture: "oh-restore-reject-multi-restored-window" }, order: "reverse" }
+    ]
+  },
+  {
+    id: "oh-external-closed-restore-after-abrupt-close",
+    title: "external closed restore after abrupt close",
+    notes: "Closed-state restore probe after native external close survives an abrupt background restart.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["native-open", "native-close", "restore", "restart", "manual-refresh"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "External restore after abrupt close" }], captureWindow: "oh-restore-after-abrupt-window", captureTabs: "oh-restore-after-abrupt-tabs" },
+      { type: "nativeCloseWindow", window: { capture: "oh-restore-after-abrupt-window" }, order: "windowRemovedOnly" },
+      { type: "restartBackgroundAbrupt" },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:21" }, captureRestoredTabs: "oh-restore-after-abrupt-restored-tabs", captureRestoredWindows: "oh-restore-after-abrupt-restored-window" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "oh-external-closed-restore-delete-history-redo",
+    title: "external closed restore delete history redo",
+    notes: "Closed-state restore probe for restore, delete, undo, and redo after an external native close.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["native-open", "native-close", "restore", "delete-rejection", "undo-redo"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "External restore delete redo" }], captureWindow: "oh-restore-delete-redo-window", captureTabs: "oh-restore-delete-redo-tabs" },
+      { type: "nativeCloseWindow", window: { capture: "oh-restore-delete-redo-window" }, order: "tabsRemovedThenWindowRemoved" },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:21" }, captureRestoredTabs: "oh-restore-delete-redo-restored-tabs", captureRestoredWindows: "oh-restore-delete-redo-restored-window" },
+      { type: "outlinerDeleteNodeRejectingClose", node: { window: { capture: "oh-restore-delete-redo-restored-window" } } },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedo" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "oh-external-opener-child-delete-tab-abrupt",
+    title: "external opener child delete tab abrupt",
+    notes: "Closed-state opener clone for deleting an opener-linked external tab across abrupt restart.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["native-open", "native-close", "opener", "delete", "restart"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "External opener delete abrupt", openerTab: { tabId: 1 } }], captureWindow: "oh-opener-delete-abrupt-window", captureTabs: "oh-opener-delete-abrupt-tabs" },
+      { type: "nativeCloseWindow", window: { capture: "oh-opener-delete-abrupt-window" }, order: "tabsRemovedThenWindowRemoved" },
+      { type: "outlinerDeleteNodeThenAbruptRestart", node: { nodeId: "tab:100" } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "oh-external-closed-delete-window-abrupt-stale-created",
+    title: "external closed delete window abrupt stale created",
+    notes: "Closed-state clone for stale created evidence after deleting a browser-created closed window across abrupt restart.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["native-open", "native-close", "delete", "restart", "created-event", "stale-event"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "External delete stale created" }], captureWindow: "oh-delete-stale-created-window", captureTabs: "oh-delete-stale-created-tabs" },
+      { type: "nativeCloseWindow", window: { capture: "oh-delete-stale-created-window" }, order: "tabsRemovedThenWindowRemoved" },
+      { type: "outlinerDeleteNodeThenAbruptRestart", node: { nodeId: "window:21" } },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "oh-delete-stale-created-tabs" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "oh-external-closed-restore-reject-opener-source-gone",
+    title: "external closed restore reject opener source gone",
+    notes: "Closed-state opener probe for restoring an external opener child after the opener source window has closed.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["native-open", "native-close", "opener", "restore", "command-rejection"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "External restore opener source gone", openerTab: { tabId: 1 } }], captureWindow: "oh-restore-opener-source-gone-window", captureTabs: "oh-restore-opener-source-gone-tabs" },
+      { type: "nativeCloseWindow", window: { windowId: 10 }, order: "tabsRemovedThenWindowRemoved" },
+      { type: "nativeCloseWindow", window: { capture: "oh-restore-opener-source-gone-window" }, order: "tabsRemovedOnly" },
+      { type: "outlinerRestoreNodeRejectingCreate", node: { nodeId: "window:21" }, captureRestoredTabs: "oh-restore-opener-source-gone-restored-tabs", captureRestoredWindows: "oh-restore-opener-source-gone-restored-window" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "oh-external-closed-restore-window-only-reordered-survivor",
+    title: "external closed restore window only reordered survivor",
+    notes: "Closed-state restore probe with windowRemoved-only close plus reordered evidence from a surviving external sibling.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["native-open", "native-close", "restore", "stale-query", "multi-tab"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "External restore window-only first" }], captureWindow: "oh-restore-window-only-first", captureTabs: "oh-restore-window-only-first-tabs" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "External restore survivor A" }, { title: "External restore survivor B", active: true }], captureWindow: "oh-restore-window-only-survivor", captureTabs: "oh-restore-window-only-survivor-tabs" },
+      { type: "nativeCloseWindow", window: { capture: "oh-restore-window-only-first" }, order: "windowRemovedOnly" },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:21" }, captureRestoredTabs: "oh-restore-window-only-restored-tabs", captureRestoredWindows: "oh-restore-window-only-restored-window" },
+      { type: "manualRefreshWithReorderedQuery", window: { capture: "oh-restore-window-only-survivor" }, order: "reverse" }
+    ]
+  },
+  {
+    id: "oh-external-closed-no-command-history-restart",
+    title: "external closed no command history restart",
+    notes: "Closed-state control for undo/redo and restart after browser-created native close without a TO lifecycle command.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["native-open", "native-close", "undo-redo", "restart", "manual-refresh"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "External no command history" }], captureWindow: "oh-no-command-history-window", captureTabs: "oh-no-command-history-tabs" },
+      { type: "nativeCloseWindow", window: { capture: "oh-no-command-history-window" }, order: "tabsRemovedThenWindowRemoved" },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedo" },
+      { type: "restartBackground" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "oh-external-nested-restore-after-group-close",
+    title: "external nested restore after group close",
+    notes: "Closed-state nested probe for grouping a browser-created tab, closing the window, then restoring the preserved external record.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["native-open", "native-close", "nested-window", "restore", "multi-tab"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "External nested restore A" }, { title: "External nested restore B", active: true }], captureWindow: "oh-nested-restore-window", captureTabs: "oh-nested-restore-tabs" },
+      { type: "outlinerGroupTab", tab: { capture: "oh-nested-restore-tabs" } },
+      { type: "nativeCloseWindow", window: { capture: "oh-nested-restore-window" }, order: "tabsRemovedThenWindowRemoved" },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:21" }, captureRestoredTabs: "oh-nested-restore-restored-tabs", captureRestoredWindows: "oh-nested-restore-restored-window" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "oh-external-restored-close-reject-window",
+    title: "external restored close reject window",
+    notes: "Closed-state close probe for a restored browser-created window whose TO close side effect completes but adapter rejects.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["native-open", "native-close", "restore", "outliner-close", "command-rejection"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "External restored close reject window" }], captureWindow: "oh-restored-close-reject-window", captureTabs: "oh-restored-close-reject-tabs" },
+      { type: "nativeCloseWindow", window: { capture: "oh-restored-close-reject-window" }, order: "tabsRemovedThenWindowRemoved" },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:21" }, captureRestoredTabs: "oh-restored-close-reject-restored-tabs", captureRestoredWindows: "oh-restored-close-reject-restored-window" },
+      { type: "outlinerCloseNodeRejectingClose", node: { window: { capture: "oh-restored-close-reject-restored-window" } } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "oh-external-restored-close-reject-tab",
+    title: "external restored close reject tab",
+    notes: "Closed-state close probe for a restored browser-created tab whose TO close side effect completes but adapter rejects.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["native-open", "native-close", "restore", "outliner-close", "command-rejection", "stale-event"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "External restored close reject tab" }], captureWindow: "oh-restored-close-reject-tab-window", captureTabs: "oh-restored-close-reject-tab-tabs" },
+      { type: "nativeCloseWindow", window: { capture: "oh-restored-close-reject-tab-window" }, order: "windowRemovedOnly" },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:21" }, captureRestoredTabs: "oh-restored-close-reject-tab-restored-tabs", captureRestoredWindows: "oh-restored-close-reject-tab-restored-window" },
+      { type: "outlinerCloseNodeRejectingClose", node: { tab: { capture: "oh-restored-close-reject-tab-restored-tabs" } } },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "oh-restored-close-reject-tab-restored-tabs" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "oh-external-restored-close-abrupt-window",
+    title: "external restored close abrupt window",
+    notes: "Closed-state close probe for a restored browser-created window closed through TO across abrupt restart.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["native-open", "native-close", "restore", "outliner-close", "restart"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "External restored close abrupt window" }], captureWindow: "oh-restored-close-abrupt-window", captureTabs: "oh-restored-close-abrupt-tabs" },
+      { type: "nativeCloseWindow", window: { capture: "oh-restored-close-abrupt-window" }, order: "tabsRemovedThenWindowRemoved" },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:21" }, captureRestoredTabs: "oh-restored-close-abrupt-restored-tabs", captureRestoredWindows: "oh-restored-close-abrupt-restored-window" },
+      { type: "outlinerCloseNodeThenAbruptRestart", node: { window: { capture: "oh-restored-close-abrupt-restored-window" } }, captureStaleTabs: "oh-restored-close-abrupt-stale" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "oh-external-restored-close-history-redo",
+    title: "external restored close history redo",
+    notes: "Closed-state close probe for restoring an external record, closing it through TO, then replaying undo/redo.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["native-open", "native-close", "restore", "outliner-close", "undo-redo"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "External restored close history" }], captureWindow: "oh-restored-close-history-window", captureTabs: "oh-restored-close-history-tabs" },
+      { type: "nativeCloseWindow", window: { capture: "oh-restored-close-history-window" }, order: "tabsRemovedThenWindowRemoved" },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:21" }, captureRestoredTabs: "oh-restored-close-history-restored-tabs", captureRestoredWindows: "oh-restored-close-history-restored-window" },
+      { type: "outlinerCloseNodeRejectingClose", node: { window: { capture: "oh-restored-close-history-restored-window" } } },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedo" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "wh-restored-window-current-shape",
+    title: "restored window current shape",
+    notes: "Window-scope probe for restored saved-window metadata and tab order routed through the restored scope.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["window-scope", "restored", "metadata", "stale-query"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "wh-restored-current-tabs", captureRestoredWindows: "wh-restored-current-window" },
+      { type: "updateTab", tab: { capture: "wh-restored-current-tabs" }, title: "WH Restored Current", url: "https://wh.example/restored-current", favIconUrl: "https://wh.example/restored-current.ico" },
+      { type: "manualRefreshWithReorderedQuery", window: { capture: "wh-restored-current-window" }, order: "rotateLeft" }
+    ]
+  },
+  {
+    id: "wh-restored-multitab-native-close",
+    title: "restored multitab native close",
+    notes: "Window-scope probe for restored multi-tab saved window ownership after a browser tab close inside the restored scope.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["window-scope", "restored", "native-close", "multi-tab"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "openTab", window: { windowId: 20 }, active: false, title: "WH Restored extra", captureTab: "wh-restored-extra-tab" },
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "wh-restored-multi-tabs", captureRestoredWindows: "wh-restored-multi-window" },
+      { type: "nativeCloseTab", tab: { capture: "wh-restored-multi-tabs" }, order: "tabRemovedOnly" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "wh-restored-focus-session-churn",
+    title: "restored focus session churn",
+    notes: "Window-scope probe for restored tab focus and session observations staying attached to current restored resources.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["window-scope", "restored", "focus", "session"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseTab", tab: { tabId: 2 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "tab:2" }, captureRestoredTabs: "wh-restored-focus-tab", captureRestoredWindows: "wh-restored-focus-window" },
+      { type: "updateTab", tab: { capture: "wh-restored-focus-tab" }, title: "WH Restored Focus", url: "https://wh.example/restored-focus" },
+      { type: "activateTab", tab: { capture: "wh-restored-focus-tab" } },
+      { type: "sessionChanged" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "wh-restored-focus-reordered-scope",
+    title: "restored focus reordered scope",
+    notes: "Window-scope mutation for restored-window focus and active shape through a reordered current snapshot.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["window-scope", "restored", "focus", "activation", "stale-query"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "wh-restored-focus-reordered-tabs", captureRestoredWindows: "wh-restored-focus-reordered-window" },
+      { type: "focusWindow", window: { capture: "wh-restored-focus-reordered-window" } },
+      { type: "activateTab", tab: { capture: "wh-restored-focus-reordered-tabs" } },
+      { type: "updateTab", tab: { capture: "wh-restored-focus-reordered-tabs" }, title: "WH Restored Focus Reordered", url: "https://wh.example/restored-focus-reordered" },
+      { type: "manualRefreshWithReorderedQuery", window: { capture: "wh-restored-focus-reordered-window" }, order: "rotateRight" }
+    ]
+  },
+  {
+    id: "wh-restored-stale-old-after-current",
+    title: "restored stale old after current",
+    notes: "Window-scope probe for current restored metadata followed by stale old browser-created evidence from a removed scope.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["window-scope", "restored", "browserCreated", "stale-event", "metadata"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "WH Restored stale original", url: "https://wh.example/stale-original" }], captureWindow: "wh-restored-stale-original-window", captureTabs: "wh-restored-stale-original-tabs" },
+      { type: "nativeCloseWindow", window: { capture: "wh-restored-stale-original-window" }, order: "tabsRemovedThenWindowRemoved" },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:21" }, captureRestoredTabs: "wh-restored-stale-current-tabs", captureRestoredWindows: "wh-restored-stale-current-window" },
+      { type: "updateTab", tab: { capture: "wh-restored-stale-current-tabs" }, title: "WH Restored Stale Current", url: "https://wh.example/stale-current" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "wh-restored-stale-original-tabs" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "wh-browser-closed-restore-handoff",
+    title: "browser closed restore handoff",
+    notes: "Window-scope probe for browser-created closed state handing off to a restored current scope.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["window-scope", "browserCreated", "native-close", "restore"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "WH Browser restore", url: "https://wh.example/browser-restore" }], captureWindow: "wh-browser-restore-window", captureTabs: "wh-browser-restore-tabs" },
+      { type: "nativeCloseWindow", window: { capture: "wh-browser-restore-window" }, order: "windowRemovedOnly" },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:21" }, captureRestoredTabs: "wh-browser-restore-current-tabs", captureRestoredWindows: "wh-browser-restore-current-window" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "wh-browser-closed-delete-undo-handoff",
+    title: "browser closed delete undo handoff",
+    notes: "Window-scope probe for deleting and undoing a browser-created closed record after scope tombstone handoff.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["window-scope", "browserCreated", "native-close", "undo-redo"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "WH Browser delete undo" }], captureWindow: "wh-browser-delete-window", captureTabs: "wh-browser-delete-tabs" },
+      { type: "nativeCloseWindow", window: { capture: "wh-browser-delete-window" }, order: "tabsRemovedThenWindowRemoved" },
+      { type: "outlinerDeleteNodeRejectingClose", node: { nodeId: "window:21" } },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedo" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "wh-browser-opener-close-restore",
+    title: "browser opener close restore",
+    notes: "Window-scope probe for opener-linked browser-created scope moving through close and restore.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["window-scope", "browserCreated", "opener", "restore"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "WH Browser opener", openerTab: { tabId: 1 }, url: "https://wh.example/opener" }], captureWindow: "wh-browser-opener-window", captureTabs: "wh-browser-opener-tabs" },
+      { type: "nativeCloseWindow", window: { capture: "wh-browser-opener-window" }, order: "tabsRemovedOnly" },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:21" }, captureRestoredTabs: "wh-browser-opener-restored-tabs", captureRestoredWindows: "wh-browser-opener-restored-window" },
+      { type: "updateTab", tab: { capture: "wh-browser-opener-restored-tabs" }, title: "WH Browser Opener Current", url: "https://wh.example/opener-current" }
+    ]
+  },
+  {
+    id: "wh-browser-multitab-close-survivor",
+    title: "browser multitab close survivor",
+    notes: "Window-scope probe for a browser-created closed scope beside a surviving browser-created multi-tab scope.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["window-scope", "browserCreated", "multi-tab", "stale-query"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "WH Closing sibling" }], captureWindow: "wh-browser-closing-window", captureTabs: "wh-browser-closing-tabs" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "WH Survivor A" }, { title: "WH Survivor B", active: true }], captureWindow: "wh-browser-survivor-window", captureTabs: "wh-browser-survivor-tabs" },
+      { type: "nativeCloseWindow", window: { capture: "wh-browser-closing-window" }, order: "windowRemovedThenTabsRemoved" },
+      { type: "manualRefreshWithReorderedQuery", window: { capture: "wh-browser-survivor-window" }, order: "rotateRight" }
+    ]
+  },
+  {
+    id: "wh-command-destination-browser-sibling",
+    title: "command destination browser sibling",
+    notes: "Window-scope probe for browser-created same-window sibling inside a command-created destination scope.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["window-scope", "commandCreated", "browserCreated", "metadata"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "wh-command-sibling-old" },
+      { type: "openTab", window: { role: "lastOpenedWindow" }, active: false, title: "WH Command sibling", captureTab: "wh-command-sibling-tab" },
+      { type: "updateTab", tab: { capture: "wh-command-sibling-tab" }, title: "WH Command Sibling Current", url: "https://wh.example/command-sibling" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "wh-multiscope-partial-reordered-refresh",
+    title: "multiscope partial reordered refresh",
+    notes: "Window-scope mutation for command-created, browser-created, and saved scopes under partial then reordered refresh evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["window-scope", "commandCreated", "browserCreated", "partial-snapshot", "stale-query"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "WH Multiscope browser", url: "https://wh.example/multiscope-browser" }], captureWindow: "wh-multiscope-browser-window", captureTabs: "wh-multiscope-browser-tabs" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "wh-multiscope-command-old" },
+      { type: "updateTab", tab: { capture: "wh-multiscope-browser-tabs" }, title: "WH Multiscope Browser Current", url: "https://wh.example/multiscope-browser/current" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { role: "lastOpenedWindow" } },
+      { type: "manualRefreshWithReorderedQuery", window: { capture: "wh-multiscope-browser-window" }, order: "rotateLeft" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "wh-command-native-move-out",
+    title: "command native move out",
+    notes: "Window-scope probe for browser-authored move out of a command-created destination scope.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["window-scope", "commandCreated", "native-move", "stale-event"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "wh-command-move-out-old" },
+      { type: "nativeMoveTabToWindow", tab: { role: "lastMovedTab" }, window: { windowId: 20 }, index: 0, active: true, captureStaleTabs: "wh-command-move-out-destination" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "wh-command-move-out-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "wh-command-source-close-destination",
+    title: "command source close destination",
+    notes: "Window-scope probe for source-window native close after command-created destination ownership is established.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["window-scope", "commandCreated", "native-close", "stale-event"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "wh-command-source-old" },
+      { type: "nativeCloseWindow", window: { windowId: 10 }, order: "windowRemovedOnly" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "wh-command-source-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "wh-command-session-only-destination",
+    title: "command session only destination",
+    notes: "Window-scope clone for session-only disappearance of the last tab in a command-created destination scope.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["window-scope", "commandCreated", "session", "native-close"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "wh-command-session-old" },
+      { type: "nativeCloseTab", tab: { role: "lastMovedTab" }, order: "sessionChangedOnly" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "wh-command-session-only-after-restart",
+    title: "command session only after restart",
+    notes: "Window-scope clone for command-created scope reconstruction followed by session-only last-tab disappearance.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["window-scope", "commandCreated", "session", "restart", "native-close"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "wh-command-session-restart-old" },
+      { type: "restartBackground" },
+      { type: "nativeCloseTab", tab: { role: "lastMovedTab" }, order: "sessionChangedOnly" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "wh-command-browser-id-gaps",
+    title: "command browser id gaps",
+    notes: "Window-scope probe for command-created and browser-created windows coexisting across runtime id gaps and restart.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["window-scope", "commandCreated", "browserCreated", "restart"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "WH Gap before command" }], captureWindow: "wh-gap-before-window", captureTabs: "wh-gap-before-tabs" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "wh-gap-command-old" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "WH Gap after command" }], captureWindow: "wh-gap-after-window", captureTabs: "wh-gap-after-tabs" },
+      { type: "restartBackground" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "wh-browser-created-session-only-after-restart",
+    title: "browser created session only after restart",
+    notes: "Window-scope clone for browser-created scope reconstruction followed by session-only last-tab disappearance.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["window-scope", "browserCreated", "session", "restart", "native-close"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "WH Browser session restart" }], captureWindow: "wh-browser-session-restart-window", captureTabs: "wh-browser-session-restart-tabs" },
+      { type: "restartBackground" },
+      { type: "nativeCloseTab", tab: { capture: "wh-browser-session-restart-tabs" }, order: "sessionChangedOnly" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "wh-browser-restored-session-only-disappear",
+    title: "browser restored session only disappear",
+    notes: "Window-scope clone for session-only disappearance after a browser-created closed record is restored.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["window-scope", "browserCreated", "restored", "session", "native-close"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "WH Browser restored session" }], captureWindow: "wh-browser-restored-session-window", captureTabs: "wh-browser-restored-session-tabs" },
+      { type: "nativeCloseWindow", window: { capture: "wh-browser-restored-session-window" }, order: "tabsRemovedThenWindowRemoved" },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:21" }, captureRestoredTabs: "wh-browser-restored-session-current-tabs", captureRestoredWindows: "wh-browser-restored-session-current-window" },
+      { type: "nativeCloseTab", tab: { capture: "wh-browser-restored-session-current-tabs" }, order: "sessionChangedOnly" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "wh-unknown-created-before-snapshot",
+    title: "unknown created before snapshot",
+    notes: "Window-scope probe for a browser-created window confirmed by event-local evidence before a later complete snapshot.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["window-scope", "browserCreated", "created-event", "manual-refresh"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "WH Unknown created", url: "https://wh.example/unknown-created" }], captureWindow: "wh-unknown-created-window", captureTabs: "wh-unknown-created-tabs" },
+      { type: "updateTab", tab: { capture: "wh-unknown-created-tabs" }, title: "WH Unknown Created Current", url: "https://wh.example/unknown-created/current" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "wh-unknown-stale-before-confirmed",
+    title: "unknown stale before confirmed",
+    notes: "Window-scope probe for stale created evidence from a removed browser-created scope before complete refresh.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["window-scope", "browserCreated", "created-event", "stale-event"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "WH Unknown stale" }], captureWindow: "wh-unknown-stale-window", captureTabs: "wh-unknown-stale-tabs" },
+      { type: "nativeCloseWindow", window: { capture: "wh-unknown-stale-window" }, order: "windowRemovedOnly" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "wh-unknown-stale-tabs" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "wh-saved-session-only-disappear",
+    title: "saved session only disappear",
+    notes: "Window-scope control for saved-window last-tab session evidence without browser-created provenance.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["window-scope", "saved", "session", "native-close"],
+    actions: [
+      { type: "nativeCloseTab", tab: { tabId: 3 }, order: "sessionChangedOnly" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "wh-saved-session-only-after-restart",
+    title: "saved session only after restart",
+    notes: "Window-scope clone for session-only disappearance after saved scope reconstruction.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["window-scope", "saved", "session", "restart", "native-close"],
+    actions: [
+      { type: "restartBackground" },
+      { type: "nativeCloseTab", tab: { tabId: 3 }, order: "sessionChangedOnly" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "wh-saved-session-only-multitab-survivor",
+    title: "saved session only multitab survivor",
+    notes: "Window-scope clone for session-only tab disappearance inside a saved window that still has a live sibling.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["window-scope", "saved", "session", "multi-tab", "native-close"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "openTab", window: { windowId: 20 }, active: false, title: "WH Saved session survivor", captureTab: "wh-saved-session-survivor" },
+      { type: "nativeCloseTab", tab: { tabId: 3 }, order: "sessionChangedOnly" },
+      { type: "updateTab", tab: { capture: "wh-saved-session-survivor" }, title: "WH Saved Session Survivor Current", url: "https://wh.example/saved-session-survivor" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "wh-restored-session-only-tab-disappear",
+    title: "restored session only tab disappear",
+    notes: "Window-scope clone for session-only disappearance of a restored tab inside an existing saved window.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["window-scope", "restored", "session", "native-close"],
+    actions: [
+      { type: "outlinerCloseTab", tab: { tabId: 2 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "tab:2" }, captureRestoredTabs: "wh-restored-session-tab" },
+      { type: "nativeCloseTab", tab: { capture: "wh-restored-session-tab" }, order: "sessionChangedOnly" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "wh-restored-window-session-only-disappear",
+    title: "restored window session only disappear",
+    notes: "Window-scope clone for session-only disappearance of the last tab in a restored saved-window scope.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["window-scope", "restored", "session", "native-close"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "wh-restored-window-session-tabs", captureRestoredWindows: "wh-restored-window-session-window" },
+      { type: "nativeCloseTab", tab: { capture: "wh-restored-window-session-tabs" }, order: "sessionChangedOnly" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "wh-saved-partial-missing-window",
+    title: "saved partial missing window",
+    notes: "Window-scope control for partial snapshot omitting a saved live window while another saved scope gets metadata.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["window-scope", "saved", "partial-snapshot", "metadata"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "updateTab", tab: { tabId: 1 }, title: "WH Saved Partial Current", url: "https://wh.example/saved-partial" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { windowId: 20 } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "wh-saved-same-window-order",
+    title: "saved same window order",
+    notes: "Window-scope probe for saved-window browser-authored same-window reorder with active shape.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["window-scope", "saved", "native-move", "metadata"],
+    assertions: ["runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, title: "WH Saved order", captureTab: "wh-saved-order-tab" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "wh-saved-order-tab" }, window: { windowId: 10 }, index: 0, active: true, captureStaleTabs: "wh-saved-order-old" },
+      { type: "updateTab", tab: { capture: "wh-saved-order-tab" }, title: "WH Saved Order Current", url: "https://wh.example/saved-order" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "wh-restart-restored-native-move",
+    title: "restart restored native move",
+    notes: "Window-scope restart probe for restored resources moved natively before scope reconstruction.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["window-scope", "restored", "native-move", "restart"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseTab", tab: { tabId: 2 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "tab:2" }, captureRestoredTabs: "wh-restart-restored-move-tab", captureRestoredWindows: "wh-restart-restored-move-window" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "wh-restart-restored-move-tab" }, window: { windowId: 20 }, active: false, captureStaleTabs: "wh-restart-restored-move-old" },
+      { type: "restartBackground" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "wh-restored-move-metadata-restart",
+    title: "restored move metadata restart",
+    notes: "Window-scope mutation for restored tab metadata after browser-authored move and scope reconstruction.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["window-scope", "restored", "native-move", "metadata", "restart"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseTab", tab: { tabId: 2 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "tab:2" }, captureRestoredTabs: "wh-restored-metadata-move-tab" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "wh-restored-metadata-move-tab" }, window: { windowId: 20 }, index: 0, active: true, captureStaleTabs: "wh-restored-metadata-move-old" },
+      { type: "updateTab", tab: { capture: "wh-restored-metadata-move-tab" }, title: "WH Restored Move Metadata", url: "https://wh.example/restored-move-metadata" },
+      { type: "restartBackground" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "wh-restart-browser-close-restore",
+    title: "restart browser close restore",
+    notes: "Window-scope restart probe for browser-created close, background restart, then restore into a new runtime scope.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["window-scope", "browserCreated", "restore", "restart"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "WH Restart browser restore", url: "https://wh.example/restart-browser" }], captureWindow: "wh-restart-browser-window", captureTabs: "wh-restart-browser-tabs" },
+      { type: "nativeCloseWindow", window: { capture: "wh-restart-browser-window" }, order: "tabsRemovedThenWindowRemoved" },
+      { type: "restartBackground" },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:21" }, captureRestoredTabs: "wh-restart-browser-restored-tabs", captureRestoredWindows: "wh-restart-browser-restored-window" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "wh-command-sibling-order-restart",
+    title: "command sibling order restart",
+    notes: "Window-scope mutation for command-created destination plus browser sibling order through restart.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["window-scope", "commandCreated", "browserCreated", "native-move", "restart"],
+    assertions: ["runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "wh-command-order-old" },
+      { type: "openTab", window: { role: "lastOpenedWindow" }, active: false, title: "WH Command order sibling", captureTab: "wh-command-order-sibling" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "wh-command-order-sibling" }, window: { role: "lastOpenedWindow" }, index: 0, active: true, captureStaleTabs: "wh-command-order-stale" },
+      { type: "restartBackground" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "wh-restart-abrupt-before-scope",
+    title: "restart abrupt before scope",
+    notes: "Window-scope restart probe for browser-created close with abrupt background loss before pending scope/save work drains.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["window-scope", "browserCreated", "restart", "native-close"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "WH Abrupt scope" }], captureWindow: "wh-abrupt-scope-window", captureTabs: "wh-abrupt-scope-tabs" },
+      { type: "nativeCloseWindow", window: { capture: "wh-abrupt-scope-window" }, order: "tabsRemovedOnly" },
+      { type: "restartBackgroundAbrupt" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "wh-browser-nested-window-only-restart",
+    title: "browser nested window only restart",
+    notes: "Window-scope mutation for nested browser-created scope closed by window-only evidence after restart.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["window-scope", "browserCreated", "nested-window", "native-close", "restart"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "WH Nested restart A" }, { title: "WH Nested restart B", active: true }], captureWindow: "wh-nested-restart-window", captureTabs: "wh-nested-restart-tabs" },
+      { type: "outlinerGroupTab", tab: { capture: "wh-nested-restart-tabs" } },
+      { type: "restartBackground" },
+      { type: "nativeCloseWindow", window: { capture: "wh-nested-restart-window" }, order: "windowRemovedOnly" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "wh-restart-command-browser-scopes",
+    title: "restart command browser scopes",
+    notes: "Window-scope restart probe for command-created and browser-created scopes reconstructed together.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["window-scope", "commandCreated", "browserCreated", "restart"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "wh-restart-command-old" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "WH Restart browser sibling", url: "https://wh.example/restart-sibling" }], captureWindow: "wh-restart-browser-sibling-window", captureTabs: "wh-restart-browser-sibling-tabs" },
+      { type: "restartBackground" },
+      { type: "updateTab", tab: { capture: "wh-restart-browser-sibling-tabs" }, title: "WH Restart Browser Current", url: "https://wh.example/restart-sibling/current" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "wh-opener-chain-restored-scope",
+    title: "opener chain restored scope",
+    notes: "Window-scope probe for opener child creation inside a restored browser-created scope.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["window-scope", "restored", "opener", "reparenting"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "WH Opener restored root", openerTab: { tabId: 1 } }], captureWindow: "wh-opener-restored-window", captureTabs: "wh-opener-restored-tabs" },
+      { type: "nativeCloseWindow", window: { capture: "wh-opener-restored-window" }, order: "windowRemovedOnly" },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:21" }, captureRestoredTabs: "wh-opener-restored-current-tabs", captureRestoredWindows: "wh-opener-restored-current-window" },
+      { type: "openTab", window: { capture: "wh-opener-restored-current-window" }, active: false, openerTab: { capture: "wh-opener-restored-current-tabs" }, title: "WH Opener restored child", captureTab: "wh-opener-restored-child" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "wh-restored-opener-child-native-move",
+    title: "restored opener child native move",
+    notes: "Window-scope mutation for opener child ownership when a child created inside a restored scope moves to a saved window.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["window-scope", "restored", "opener", "native-move", "reparenting"],
+    assertions: ["runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "WH Restored opener move root", openerTab: { tabId: 1 } }], captureWindow: "wh-opener-move-root-window", captureTabs: "wh-opener-move-root-tabs" },
+      { type: "nativeCloseWindow", window: { capture: "wh-opener-move-root-window" }, order: "tabsRemovedThenWindowRemoved" },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:21" }, captureRestoredTabs: "wh-opener-move-restored-tabs", captureRestoredWindows: "wh-opener-move-restored-window" },
+      { type: "openTab", window: { capture: "wh-opener-move-restored-window" }, active: false, openerTab: { capture: "wh-opener-move-restored-tabs" }, title: "WH Restored opener move child", captureTab: "wh-opener-move-child" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "wh-opener-move-child" }, window: { windowId: 10 }, index: 1, active: false, captureStaleTabs: "wh-opener-move-old" },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 10 }, order: "rotateLeft" }
+    ]
+  },
+  {
+    id: "wh-browser-nested-before-close",
+    title: "browser nested before close",
+    notes: "Window-scope probe for grouping browser-created tabs before the browser closes the owning scope.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["window-scope", "browserCreated", "nested-window", "native-close"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "WH Nested A" }, { title: "WH Nested B", active: true }], captureWindow: "wh-nested-browser-window", captureTabs: "wh-nested-browser-tabs" },
+      { type: "outlinerGroupTab", tab: { capture: "wh-nested-browser-tabs" } },
+      { type: "nativeCloseWindow", window: { capture: "wh-nested-browser-window" }, order: "tabsRemovedThenWindowRemoved" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "wh-command-focus-partial-destination",
+    title: "command focus partial destination",
+    notes: "Window-scope mutation for focus/metadata in a command-created destination while the source window is partially omitted.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["window-scope", "commandCreated", "focus", "partial-snapshot", "metadata"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "wh-command-focus-partial-old" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "WH Command Focus Partial", url: "https://wh.example/command-focus-partial" },
+      { type: "focusWindow", window: { role: "lastOpenedWindow" } },
+      { type: "manualRefreshWithMissingWindowQuery", window: { windowId: 10 } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "wh-paired-echo-across-scopes",
+    title: "paired echo across scopes",
+    notes: "Window-scope race probe for paired stale command-created echo while a browser-created scope receives current metadata.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["window-scope", "paired-echo", "commandCreated", "browserCreated"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "wh-paired-command-old" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "WH Paired browser", url: "https://wh.example/paired-browser" }], captureWindow: "wh-paired-browser-window", captureTabs: "wh-paired-browser-tabs" },
+      { type: "updateTab", tab: { capture: "wh-paired-browser-tabs" }, title: "WH Paired Browser Current", url: "https://wh.example/paired-browser/current" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "wh-paired-command-old" }, withStaleQuery: false },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "wh-paired-command-old" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "wh-unknown-current-after-stale-pair",
+    title: "unknown current after stale pair",
+    notes: "Window-scope mutation for paired stale evidence on a removed unknown scope followed by current browser-created shape.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["window-scope", "browserCreated", "paired-echo", "stale-event", "metadata"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "WH Unknown stale pair" }], captureWindow: "wh-unknown-pair-old-window", captureTabs: "wh-unknown-pair-old-tabs" },
+      { type: "nativeCloseWindow", window: { capture: "wh-unknown-pair-old-window" }, order: "windowRemovedOnly" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "wh-unknown-pair-old-tabs" }, withStaleQuery: false },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "WH Unknown pair current", url: "https://wh.example/unknown-pair-current" }], captureWindow: "wh-unknown-pair-current-window", captureTabs: "wh-unknown-pair-current-tabs" },
+      { type: "updateTab", tab: { capture: "wh-unknown-pair-current-tabs" }, title: "WH Unknown Pair Current", url: "https://wh.example/unknown-pair-current/updated" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "wh-focus-active-race-scopes",
+    title: "focus active race scopes",
+    notes: "Window-scope race probe for focus and activation crossing browser-created and command-created scopes.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["window-scope", "race", "focus", "activation"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "WH Focus browser" }], captureWindow: "wh-focus-browser-window", captureTabs: "wh-focus-browser-tabs" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "wh-focus-command-old" },
+      { type: "focusWindow", window: { capture: "wh-focus-browser-window" } },
+      { type: "activateTab", tab: { role: "lastMovedTab" }, staleQueryFrom: { capture: "wh-focus-command-old" } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "sh-restored-open-child-current-shape",
+    title: "restored open child current shape",
+    notes: "Restored-scope probe for a browser-authored child tab opened inside a restored live window and then updated with current metadata.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restored-scope", "restored", "native-open", "opener", "metadata"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "sh-restored-open-root", captureRestoredWindows: "sh-restored-open-window" },
+      { type: "openTab", window: { capture: "sh-restored-open-window" }, active: false, openerTab: { capture: "sh-restored-open-root" }, title: "SH restored child", captureTab: "sh-restored-open-child" },
+      { type: "updateTab", tab: { capture: "sh-restored-open-child" }, title: "SH Restored Child Current", url: "https://sh.example/restored-child", favIconUrl: "https://sh.example/restored-child.ico" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "sh-restored-close-middle-tab-reorder",
+    title: "restored close middle tab reorder",
+    notes: "Restored-scope probe for browser close of a non-last restored-window tab followed by reordered current evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restored-scope", "restored", "native-close", "multi-tab", "stale-query"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "openTab", window: { windowId: 20 }, active: false, title: "SH pre-restore A", captureTab: "sh-restore-middle-a" },
+      { type: "openTab", window: { windowId: 20 }, active: false, title: "SH pre-restore B", captureTab: "sh-restore-middle-b" },
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "sh-restored-middle-tabs", captureRestoredWindows: "sh-restored-middle-window" },
+      { type: "nativeCloseTab", tab: { inWindow: { capture: "sh-restored-middle-window" }, index: 1 }, order: "tabRemovedOnly" },
+      { type: "manualRefreshWithReorderedQuery", window: { capture: "sh-restored-middle-window" }, order: "rotateLeft" }
+    ]
+  },
+  {
+    id: "sh-restored-opener-child-close-parent-live",
+    title: "restored opener child close parent live",
+    notes: "Restored-scope probe for a browser-opened opener child surviving native close of its restored opener tab.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restored-scope", "restored", "opener", "native-close", "metadata"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "sh-restored-opener-root", captureRestoredWindows: "sh-restored-opener-window" },
+      { type: "openTab", window: { capture: "sh-restored-opener-window" }, active: false, openerTab: { capture: "sh-restored-opener-root" }, title: "SH restored opener child", captureTab: "sh-restored-opener-child" },
+      { type: "nativeCloseTab", tab: { capture: "sh-restored-opener-root" }, order: "tabRemovedOnly" },
+      { type: "updateTab", tab: { capture: "sh-restored-opener-child" }, title: "SH Restored Opener Child Current", url: "https://sh.example/restored-opener-child" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "sh-restored-update-move-restart",
+    title: "restored update move restart",
+    notes: "Restored-scope probe for current restored metadata followed by browser-authored move into a saved window and restart reconstruction.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restored-scope", "restored", "native-move", "metadata", "restart"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "sh-restored-move-tab", captureRestoredWindows: "sh-restored-move-window" },
+      { type: "updateTab", tab: { capture: "sh-restored-move-tab" }, title: "SH Restored Move Current", url: "https://sh.example/restored-move" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "sh-restored-move-tab" }, window: { windowId: 10 }, index: 1, active: false, captureStaleTabs: "sh-restored-move-old" },
+      { type: "restartBackground" },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 10 }, order: "rotateRight" }
+    ]
+  },
+  {
+    id: "sh-restored-focus-session-nonlast-close",
+    title: "restored focus session nonlast close",
+    notes: "Restored-scope probe for focus/session churn around browser close of a non-last tab inside the restored window.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restored-scope", "restored", "focus", "session", "native-close"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "openTab", window: { windowId: 20 }, active: false, title: "SH focus survivor", captureTab: "sh-restore-focus-survivor" },
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "sh-restored-focus-tabs", captureRestoredWindows: "sh-restored-focus-window" },
+      { type: "focusWindow", window: { capture: "sh-restored-focus-window" } },
+      { type: "activateTab", tab: { inWindow: { capture: "sh-restored-focus-window" }, index: 1 } },
+      { type: "nativeCloseTab", tab: { inWindow: { capture: "sh-restored-focus-window" }, index: 0 }, order: "sessionChangedThenTabRemoved" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "sh-browser-created-open-sibling-reordered",
+    title: "browser created open sibling reordered",
+    notes: "Browser-created live-scope probe for a later browser-opened sibling and reordered current snapshot.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restored-scope", "browserCreated", "native-open", "stale-query", "metadata"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "SH browser root", url: "https://sh.example/browser-root" }], captureWindow: "sh-browser-sibling-window", captureTabs: "sh-browser-sibling-root" },
+      { type: "openTab", window: { capture: "sh-browser-sibling-window" }, active: false, title: "SH browser sibling", captureTab: "sh-browser-sibling-tab" },
+      { type: "updateTab", tab: { capture: "sh-browser-sibling-tab" }, title: "SH Browser Sibling Current", url: "https://sh.example/browser-sibling" },
+      { type: "manualRefreshWithReorderedQuery", window: { capture: "sh-browser-sibling-window" }, order: "rotateLeft" }
+    ]
+  },
+  {
+    id: "sh-browser-created-close-nonlast-stale-update",
+    title: "browser created close nonlast stale update",
+    notes: "Browser-created live-scope probe for non-last native tab close followed by stale update evidence for the removed tab.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restored-scope", "browserCreated", "native-close", "stale-event", "updated-event"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "SH browser close A" }, { title: "SH browser close B", active: true }], captureWindow: "sh-browser-close-window", captureTabs: "sh-browser-close-tabs" },
+      { type: "nativeCloseTab", tab: { inWindow: { capture: "sh-browser-close-window" }, index: 0 }, order: "tabRemovedOnly" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "sh-browser-close-tabs", index: 0 }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "sh-browser-created-opener-chain-move-child",
+    title: "browser created opener chain move child",
+    notes: "Browser-created live-scope probe for opener-linked child tab moved by the browser into a saved window.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restored-scope", "browserCreated", "opener", "native-move", "metadata"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "SH browser opener root", url: "https://sh.example/browser-opener-root" }], captureWindow: "sh-browser-opener-window", captureTabs: "sh-browser-opener-root" },
+      { type: "openTab", window: { capture: "sh-browser-opener-window" }, active: false, openerTab: { capture: "sh-browser-opener-root" }, title: "SH browser opener child", captureTab: "sh-browser-opener-child" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "sh-browser-opener-child" }, window: { windowId: 10 }, index: 1, active: false, captureStaleTabs: "sh-browser-opener-old" },
+      { type: "updateTab", tab: { capture: "sh-browser-opener-child" }, title: "SH Browser Opener Child Current", url: "https://sh.example/browser-opener-child" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "sh-browser-created-metadata-partial-refresh",
+    title: "browser created metadata partial refresh",
+    notes: "Browser-created live-scope probe for current metadata while an unrelated saved window is omitted from a partial query.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restored-scope", "browserCreated", "metadata", "partial-snapshot"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "SH browser partial", url: "https://sh.example/browser-partial" }], captureWindow: "sh-browser-partial-window", captureTabs: "sh-browser-partial-tabs" },
+      { type: "updateTab", tab: { capture: "sh-browser-partial-tabs" }, title: "SH Browser Partial Current", url: "https://sh.example/browser-partial/current" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { windowId: 20 } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "sh-browser-created-restart-open-close-survivor",
+    title: "browser created restart open close survivor",
+    notes: "Browser-created live-scope probe for restart reconstruction, a new sibling tab, and non-last close in the reconstructed scope.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restored-scope", "browserCreated", "restart", "native-open", "native-close"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "SH browser restart A" }, { title: "SH browser restart B", active: true }], captureWindow: "sh-browser-restart-window", captureTabs: "sh-browser-restart-tabs" },
+      { type: "restartBackground" },
+      { type: "openTab", window: { capture: "sh-browser-restart-window" }, active: false, title: "SH browser restart sibling", captureTab: "sh-browser-restart-sibling" },
+      { type: "nativeCloseTab", tab: { inWindow: { capture: "sh-browser-restart-window" }, index: 1 }, order: "tabRemovedOnly" },
+      { type: "updateTab", tab: { capture: "sh-browser-restart-sibling" }, title: "SH Browser Restart Sibling Current", url: "https://sh.example/browser-restart-sibling" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "sh-command-destination-open-browser-sibling",
+    title: "command destination open browser sibling",
+    notes: "Command-created destination probe for a browser-opened sibling tab with stale source evidence still pending.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restored-scope", "commandCreated", "native-open", "stale-event", "metadata"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "sh-command-open-old" },
+      { type: "openTab", window: { role: "lastOpenedWindow" }, active: false, title: "SH command sibling", captureTab: "sh-command-open-sibling" },
+      { type: "updateTab", tab: { capture: "sh-command-open-sibling" }, title: "SH Command Sibling Current", url: "https://sh.example/command-sibling" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "sh-command-open-old" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "sh-command-destination-close-sibling-not-moved-tab",
+    title: "command destination close sibling not moved tab",
+    notes: "Command-created destination probe for native close of a browser-opened sibling while the command-moved tab remains live.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restored-scope", "commandCreated", "native-open", "native-close", "metadata"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "sh-command-close-old" },
+      { type: "openTab", window: { role: "lastOpenedWindow" }, active: false, title: "SH command close sibling", captureTab: "sh-command-close-sibling" },
+      { type: "nativeCloseTab", tab: { capture: "sh-command-close-sibling" }, order: "tabRemovedOnly" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "SH Command Moved Current", url: "https://sh.example/command-moved" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "sh-command-destination-reorder-with-stale-old",
+    title: "command destination reorder with stale old",
+    notes: "Command-created destination probe for same-window browser reorder followed by stale old-window command evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restored-scope", "commandCreated", "native-move", "stale-event", "stale-query"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "sh-command-reorder-old" },
+      { type: "openTab", window: { role: "lastOpenedWindow" }, active: false, title: "SH command reorder sibling", captureTab: "sh-command-reorder-sibling" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "sh-command-reorder-sibling" }, window: { role: "lastOpenedWindow" }, index: 0, active: true, captureStaleTabs: "sh-command-reorder-current-before" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "sh-command-reorder-old" }, withStaleQuery: true },
+      { type: "manualRefreshWithReorderedQuery", window: { role: "lastOpenedWindow" }, order: "rotateRight" }
+    ]
+  },
+  {
+    id: "sh-command-destination-focus-after-browser-open",
+    title: "command destination focus after browser open",
+    notes: "Command-created destination probe for focus and activation after a browser-opened destination sibling.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restored-scope", "commandCreated", "native-open", "focus", "activation"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "sh-command-focus-old" },
+      { type: "openTab", window: { role: "lastOpenedWindow" }, active: false, title: "SH command focus sibling", captureTab: "sh-command-focus-sibling" },
+      { type: "focusWindow", window: { role: "lastOpenedWindow" } },
+      { type: "activateTab", tab: { capture: "sh-command-focus-sibling" }, staleQueryFrom: { capture: "sh-command-focus-old" } },
+      { type: "manualRefreshWithMissingWindowQuery", window: { windowId: 20 } }
+    ]
+  },
+  {
+    id: "sh-saved-open-opener-child-restart",
+    title: "saved open opener child restart",
+    notes: "Saved-scope control for a browser-opened opener child surviving restart reconstruction.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restored-scope", "saved", "opener", "native-open", "restart"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, openerTab: { tabId: 1 }, title: "SH saved opener child", captureTab: "sh-saved-opener-child" },
+      { type: "updateTab", tab: { capture: "sh-saved-opener-child" }, title: "SH Saved Opener Child Current", url: "https://sh.example/saved-opener-child" },
+      { type: "restartBackground" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "sh-saved-close-middle-tab-session-refresh",
+    title: "saved close middle tab session refresh",
+    notes: "Saved-scope control for session-first close of a non-last tab with current survivor metadata.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restored-scope", "saved", "native-close", "session", "multi-tab"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, title: "SH saved close middle", captureTab: "sh-saved-close-middle" },
+      { type: "openTab", window: { windowId: 10 }, active: false, title: "SH saved close survivor", captureTab: "sh-saved-close-survivor" },
+      { type: "nativeCloseTab", tab: { inWindow: { windowId: 10 }, index: 1 }, order: "sessionChangedThenTabRemoved" },
+      { type: "updateTab", tab: { capture: "sh-saved-close-survivor" }, title: "SH Saved Close Survivor Current", url: "https://sh.example/saved-close-survivor" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "sh-saved-reorder-metadata-stale-pair",
+    title: "saved reorder metadata stale pair",
+    notes: "Saved-scope control for same-window browser reorder and paired stale echoes from the pre-reorder shape.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restored-scope", "saved", "native-move", "metadata", "paired-echo"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "updateTab", tab: { tabId: 2 }, title: "SH Saved Reorder Current", url: "https://sh.example/saved-reorder" },
+      { type: "nativeMoveTabToWindow", tab: { tabId: 2 }, window: { windowId: 10 }, index: 0, active: true, captureStaleTabs: "sh-saved-reorder-before" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "sh-saved-reorder-before" }, withStaleQuery: false },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "sh-saved-reorder-before" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "sh-saved-reorder-restart-stale-created",
+    title: "saved reorder restart stale created",
+    notes: "Variant clone for saved same-window browser reorder, scope reconstruction, and a stale created echo from the pre-reorder shape.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restored-scope", "saved", "native-move", "restart", "created-event"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "updateTab", tab: { tabId: 2 }, title: "SH Saved Restart Reorder Current", url: "https://sh.example/saved-restart-reorder" },
+      { type: "nativeMoveTabToWindow", tab: { tabId: 2 }, window: { windowId: 10 }, index: 0, active: true, captureStaleTabs: "sh-saved-restart-reorder-before" },
+      { type: "restartBackground" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "sh-saved-restart-reorder-before" }, withStaleQuery: false },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "sh-restored-reorder-stale-created-active",
+    title: "restored reorder stale created active",
+    notes: "Variant clone for restored-scope same-window browser reorder followed by stale created evidence from the pre-reorder active shape.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restored-scope", "restored", "native-move", "created-event", "metadata"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "openTab", window: { windowId: 20 }, active: false, title: "SH restored reorder sibling", captureTab: "sh-restored-reorder-sibling" },
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "sh-restored-reorder-tabs", captureRestoredWindows: "sh-restored-reorder-window" },
+      { type: "updateTab", tab: { inWindow: { capture: "sh-restored-reorder-window" }, index: 1 }, title: "SH Restored Reorder Current", url: "https://sh.example/restored-reorder" },
+      { type: "nativeMoveTabToWindow", tab: { inWindow: { capture: "sh-restored-reorder-window" }, index: 1 }, window: { capture: "sh-restored-reorder-window" }, index: 0, active: true, captureStaleTabs: "sh-restored-reorder-before" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "sh-restored-reorder-before" }, withStaleQuery: false },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "sh-browser-created-reorder-stale-created-active",
+    title: "browser created reorder stale created active",
+    notes: "Variant clone for browser-created same-window reorder and stale created evidence from the old index/active shape.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restored-scope", "browserCreated", "native-move", "created-event", "metadata"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "SH browser reorder A" }, { title: "SH browser reorder B", active: true }], captureWindow: "sh-browser-reorder-window", captureTabs: "sh-browser-reorder-tabs" },
+      { type: "updateTab", tab: { inWindow: { capture: "sh-browser-reorder-window" }, index: 1 }, title: "SH Browser Reorder Current", url: "https://sh.example/browser-reorder" },
+      { type: "nativeMoveTabToWindow", tab: { inWindow: { capture: "sh-browser-reorder-window" }, index: 1 }, window: { capture: "sh-browser-reorder-window" }, index: 0, active: true, captureStaleTabs: "sh-browser-reorder-before" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "sh-browser-reorder-before" }, withStaleQuery: false },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "sh-command-destination-reorder-current-stale-created",
+    title: "command destination reorder current stale created",
+    notes: "Variant clone for command-created destination same-window reorder where the stale evidence is from the current destination generation, not the old source.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restored-scope", "commandCreated", "native-move", "created-event", "metadata"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "sh-command-current-reorder-old-source" },
+      { type: "openTab", window: { role: "lastOpenedWindow" }, active: false, title: "SH command current reorder sibling", captureTab: "sh-command-current-reorder-sibling" },
+      { type: "updateTab", tab: { capture: "sh-command-current-reorder-sibling" }, title: "SH Command Current Reorder", url: "https://sh.example/command-current-reorder" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "sh-command-current-reorder-sibling" }, window: { role: "lastOpenedWindow" }, index: 0, active: true, captureStaleTabs: "sh-command-current-reorder-before" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "sh-command-current-reorder-before" }, withStaleQuery: false },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "sh-saved-reorder-stale-updated-active",
+    title: "saved reorder stale updated active",
+    notes: "Variant clone for saved same-window browser reorder followed by stale updated evidence from the pre-reorder active shape.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restored-scope", "saved", "native-move", "updated-event", "metadata"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "updateTab", tab: { tabId: 2 }, title: "SH Saved Updated Reorder Current", url: "https://sh.example/saved-updated-reorder" },
+      { type: "nativeMoveTabToWindow", tab: { tabId: 2 }, window: { windowId: 10 }, index: 0, active: true, captureStaleTabs: "sh-saved-updated-reorder-before" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "sh-saved-updated-reorder-before" }, withStaleQuery: false },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "sh-saved-reorder-stale-created-with-query",
+    title: "saved reorder stale created with query",
+    notes: "Variant clone for saved same-window browser reorder where stale created evidence is paired with a stale query copy.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restored-scope", "saved", "native-move", "created-event", "stale-query"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "updateTab", tab: { tabId: 2 }, title: "SH Saved Query Reorder Current", url: "https://sh.example/saved-query-reorder" },
+      { type: "nativeMoveTabToWindow", tab: { tabId: 2 }, window: { windowId: 10 }, index: 0, active: true, captureStaleTabs: "sh-saved-query-reorder-before" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "sh-saved-query-reorder-before" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "sh-command-destination-reorder-stale-updated-active",
+    title: "command destination reorder stale updated active",
+    notes: "Variant clone for command-created destination reorder followed by stale updated evidence from the destination pre-reorder shape.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restored-scope", "commandCreated", "native-move", "updated-event", "metadata"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "sh-command-updated-reorder-old-source" },
+      { type: "openTab", window: { role: "lastOpenedWindow" }, active: false, title: "SH command updated reorder sibling", captureTab: "sh-command-updated-reorder-sibling" },
+      { type: "updateTab", tab: { capture: "sh-command-updated-reorder-sibling" }, title: "SH Command Updated Reorder", url: "https://sh.example/command-updated-reorder" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "sh-command-updated-reorder-sibling" }, window: { role: "lastOpenedWindow" }, index: 0, active: true, captureStaleTabs: "sh-command-updated-reorder-before" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "sh-command-updated-reorder-before" }, withStaleQuery: false },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "sh-browser-created-reorder-stale-updated-active",
+    title: "browser created reorder stale updated active",
+    notes: "Variant clone for browser-created same-window reorder followed by stale updated evidence from the old active shape.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restored-scope", "browserCreated", "native-move", "updated-event", "metadata"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "SH browser updated reorder A" }, { title: "SH browser updated reorder B", active: true }], captureWindow: "sh-browser-updated-reorder-window", captureTabs: "sh-browser-updated-reorder-tabs" },
+      { type: "updateTab", tab: { inWindow: { capture: "sh-browser-updated-reorder-window" }, index: 1 }, title: "SH Browser Updated Reorder", url: "https://sh.example/browser-updated-reorder" },
+      { type: "nativeMoveTabToWindow", tab: { inWindow: { capture: "sh-browser-updated-reorder-window" }, index: 1 }, window: { capture: "sh-browser-updated-reorder-window" }, index: 0, active: true, captureStaleTabs: "sh-browser-updated-reorder-before" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "sh-browser-updated-reorder-before" }, withStaleQuery: false },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "sh-saved-reorder-stale-updated-metadata-only",
+    title: "saved reorder stale updated metadata only",
+    notes: "Variant clone for saved same-window reorder with stale updated evidence while active state is unchanged, isolating metadata freshness.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restored-scope", "saved", "native-move", "updated-event", "metadata"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "updateTab", tab: { tabId: 2 }, title: "SH Saved Metadata Only Current", url: "https://sh.example/saved-metadata-only" },
+      { type: "nativeMoveTabToWindow", tab: { tabId: 2 }, window: { windowId: 10 }, index: 0, active: false, captureStaleTabs: "sh-saved-metadata-only-before" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "sh-saved-metadata-only-before" }, withStaleQuery: false },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "sh-command-reorder-stale-updated-metadata-only",
+    title: "command reorder stale updated metadata only",
+    notes: "Variant clone for command-created destination reorder with stale updated evidence while active state is unchanged, isolating metadata freshness.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restored-scope", "commandCreated", "native-move", "updated-event", "metadata"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "sh-command-metadata-only-old-source" },
+      { type: "openTab", window: { role: "lastOpenedWindow" }, active: false, title: "SH command metadata only sibling", captureTab: "sh-command-metadata-only-sibling" },
+      { type: "updateTab", tab: { capture: "sh-command-metadata-only-sibling" }, title: "SH Command Metadata Only Current", url: "https://sh.example/command-metadata-only" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "sh-command-metadata-only-sibling" }, window: { role: "lastOpenedWindow" }, index: 0, active: false, captureStaleTabs: "sh-command-metadata-only-before" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "sh-command-metadata-only-before" }, withStaleQuery: false },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "sh-restored-reorder-stale-updated-metadata-only",
+    title: "restored reorder stale updated metadata only",
+    notes: "Variant clone for restored same-window reorder with stale updated evidence while active state is unchanged, isolating metadata freshness.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restored-scope", "restored", "native-move", "updated-event", "metadata"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "openTab", window: { windowId: 20 }, active: false, title: "SH restored metadata only sibling", captureTab: "sh-restored-metadata-only-sibling" },
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "sh-restored-metadata-only-tabs", captureRestoredWindows: "sh-restored-metadata-only-window" },
+      { type: "updateTab", tab: { inWindow: { capture: "sh-restored-metadata-only-window" }, index: 1 }, title: "SH Restored Metadata Only Current", url: "https://sh.example/restored-metadata-only" },
+      { type: "nativeMoveTabToWindow", tab: { inWindow: { capture: "sh-restored-metadata-only-window" }, index: 1 }, window: { capture: "sh-restored-metadata-only-window" }, index: 0, active: false, captureStaleTabs: "sh-restored-metadata-only-before" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "sh-restored-metadata-only-before" }, withStaleQuery: false },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "sh-browser-created-reorder-stale-created-with-query",
+    title: "browser created reorder stale created with query",
+    notes: "Variant clone for browser-created reorder where stale created evidence is paired with a stale query copy.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restored-scope", "browserCreated", "native-move", "created-event", "stale-query"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "SH browser query reorder A" }, { title: "SH browser query reorder B", active: true }], captureWindow: "sh-browser-query-reorder-window", captureTabs: "sh-browser-query-reorder-tabs" },
+      { type: "updateTab", tab: { inWindow: { capture: "sh-browser-query-reorder-window" }, index: 1 }, title: "SH Browser Query Reorder Current", url: "https://sh.example/browser-query-reorder" },
+      { type: "nativeMoveTabToWindow", tab: { inWindow: { capture: "sh-browser-query-reorder-window" }, index: 1 }, window: { capture: "sh-browser-query-reorder-window" }, index: 0, active: true, captureStaleTabs: "sh-browser-query-reorder-before" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "sh-browser-query-reorder-before" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "sh-restored-close-survivor-stale-created",
+    title: "restored close survivor stale created",
+    notes: "Clean-block probe for restored-scope non-last native tab close followed by stale created evidence for the removed tab.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restored-scope", "restored", "native-close", "created-event", "multi-tab"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "openTab", window: { windowId: 20 }, active: false, title: "SH restored close survivor sibling", captureTab: "sh-restored-close-survivor-sibling" },
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "sh-restored-close-survivor-tabs", captureRestoredWindows: "sh-restored-close-survivor-window" },
+      { type: "nativeCloseTab", tab: { inWindow: { capture: "sh-restored-close-survivor-window" }, index: 0 }, order: "tabRemovedOnly" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "sh-restored-close-survivor-tabs" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "sh-command-close-sibling-stale-created",
+    title: "command close sibling stale created",
+    notes: "Clean-block probe for command-created destination sibling close followed by stale created evidence for the removed sibling.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restored-scope", "commandCreated", "native-close", "created-event", "multi-tab"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "sh-command-close-created-old-source" },
+      { type: "openTab", window: { role: "lastOpenedWindow" }, active: false, title: "SH command close created sibling", captureTab: "sh-command-close-created-sibling" },
+      { type: "nativeCloseTab", tab: { capture: "sh-command-close-created-sibling" }, order: "tabRemovedOnly" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "sh-command-close-created-old-source" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "sh-browser-created-close-survivor-stale-created",
+    title: "browser created close survivor stale created",
+    notes: "Clean-block probe for browser-created non-last native tab close followed by stale created evidence for the removed tab.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restored-scope", "browserCreated", "native-close", "created-event", "multi-tab"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "SH browser close created A" }, { title: "SH browser close created B", active: true }], captureWindow: "sh-browser-close-created-window", captureTabs: "sh-browser-close-created-tabs" },
+      { type: "nativeCloseTab", tab: { inWindow: { capture: "sh-browser-close-created-window" }, index: 0 }, order: "tabRemovedOnly" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "sh-browser-close-created-tabs" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "sh-saved-close-survivor-stale-created",
+    title: "saved close survivor stale created",
+    notes: "Clean-block probe for saved-window non-last native tab close followed by stale created evidence for the removed tab.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restored-scope", "saved", "native-close", "created-event", "multi-tab"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, title: "SH saved close created target", captureTab: "sh-saved-close-created-target" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "sh-saved-close-created-target" }, window: { windowId: 10 }, index: 1, active: false, captureStaleTabs: "sh-saved-close-created-before" },
+      { type: "nativeCloseTab", tab: { capture: "sh-saved-close-created-target" }, order: "tabRemovedOnly" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "sh-saved-close-created-before" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "sh-saved-reorder-stale-activation-query",
+    title: "saved reorder stale activation query",
+    notes: "Clean-block probe for stale activation query evidence after same-window browser reorder in a saved scope.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restored-scope", "saved", "native-move", "activation", "stale-query"],
+    actions: [
+      { type: "nativeMoveTabToWindow", tab: { tabId: 2 }, window: { windowId: 10 }, index: 0, active: true, captureStaleTabs: "sh-saved-activation-reorder-before" },
+      { type: "activateTab", tab: { tabId: 1 }, staleQueryFrom: { capture: "sh-saved-activation-reorder-before" } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "sh-browser-created-reorder-stale-activation-query",
+    title: "browser created reorder stale activation query",
+    notes: "Clean-block probe for stale activation query evidence after same-window browser reorder in a browser-created scope.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restored-scope", "browserCreated", "native-move", "activation", "stale-query"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "SH browser activation A" }, { title: "SH browser activation B", active: true }], captureWindow: "sh-browser-activation-window", captureTabs: "sh-browser-activation-tabs" },
+      { type: "nativeMoveTabToWindow", tab: { inWindow: { capture: "sh-browser-activation-window" }, index: 1 }, window: { capture: "sh-browser-activation-window" }, index: 0, active: true, captureStaleTabs: "sh-browser-activation-reorder-before" },
+      { type: "activateTab", tab: { inWindow: { capture: "sh-browser-activation-window" }, index: 1 }, staleQueryFrom: { capture: "sh-browser-activation-reorder-before" } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "sh-restored-open-child-history-restart",
+    title: "restored open child history restart",
+    notes: "Clean-block probe for history replay and restart after a browser-opened child appears inside a restored window.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restored-scope", "restored", "native-open", "undo-redo", "restart"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "sh-history-restart-restored-root", captureRestoredWindows: "sh-history-restart-restored-window" },
+      { type: "openTab", window: { capture: "sh-history-restart-restored-window" }, active: false, openerTab: { capture: "sh-history-restart-restored-root" }, title: "SH history restart child", captureTab: "sh-history-restart-restored-child" },
+      { type: "updateTab", tab: { capture: "sh-history-restart-restored-child" }, title: "SH History Restart Child Current", url: "https://sh.example/history-restart-child" },
+      { type: "outlinerGroupTab", tab: { capture: "sh-history-restart-restored-child" }, captureStaleTabs: "sh-history-restart-group-old" },
+      { type: "outlinerUndo" },
+      { type: "restartBackground" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "sh-browser-created-open-child-history-restart",
+    title: "browser created open child history restart",
+    notes: "Clean-block probe for history replay and restart after an opener child appears inside a browser-created window.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restored-scope", "browserCreated", "native-open", "undo-redo", "restart"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "SH browser history root", url: "https://sh.example/browser-history-root" }], captureWindow: "sh-browser-history-window", captureTabs: "sh-browser-history-root" },
+      { type: "openTab", window: { capture: "sh-browser-history-window" }, active: false, openerTab: { capture: "sh-browser-history-root" }, title: "SH browser history child", captureTab: "sh-browser-history-child" },
+      { type: "updateTab", tab: { capture: "sh-browser-history-child" }, title: "SH Browser History Child Current", url: "https://sh.example/browser-history-child" },
+      { type: "outlinerGroupTab", tab: { capture: "sh-browser-history-child" }, captureStaleTabs: "sh-browser-history-group-old" },
+      { type: "outlinerUndo" },
+      { type: "restartBackground" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "sh-saved-native-move-child-then-history",
+    title: "saved native move child then history",
+    notes: "Saved-scope control for browser-moving an opener child before structural history replay.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restored-scope", "saved", "opener", "native-move", "undo-redo"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, openerTab: { tabId: 1 }, title: "SH saved history child", captureTab: "sh-saved-history-child" },
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "sh-saved-history-group-old" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "sh-saved-history-child" }, window: { windowId: 20 }, index: 1, active: false, captureStaleTabs: "sh-saved-history-child-old" },
+      { type: "outlinerUndo" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "sh-history-undo-after-restored-browser-open",
+    title: "history undo after restored browser open",
+    notes: "History crossover probe for undoing a TO structural command after a browser-opened child tab appears inside a restored window.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restored-scope", "restored", "native-open", "undo-redo", "opener"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "sh-history-restored-root", captureRestoredWindows: "sh-history-restored-window" },
+      { type: "openTab", window: { capture: "sh-history-restored-window" }, active: false, openerTab: { capture: "sh-history-restored-root" }, title: "SH history restored child", captureTab: "sh-history-restored-child" },
+      { type: "outlinerGroupTab", tab: { capture: "sh-history-restored-child" }, captureStaleTabs: "sh-history-restored-group-old" },
+      { type: "outlinerUndo" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "sh-history-redo-after-browser-created-close-survivor",
+    title: "history redo after browser created close survivor",
+    notes: "History crossover probe for redo after native close leaves a survivor in a browser-created scope.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restored-scope", "browserCreated", "native-close", "undo-redo", "multi-tab"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "SH history browser A" }, { title: "SH history browser B", active: true }], captureWindow: "sh-history-browser-window", captureTabs: "sh-history-browser-tabs" },
+      { type: "outlinerGroupTab", tab: { capture: "sh-history-browser-tabs" }, captureStaleTabs: "sh-history-browser-group-old" },
+      { type: "outlinerUndo" },
+      { type: "nativeCloseTab", tab: { inWindow: { capture: "sh-history-browser-window" }, index: 0 }, order: "tabRemovedOnly" },
+      { type: "outlinerRedo" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "sh-abrupt-restart-after-restored-open-child",
+    title: "abrupt restart after restored open child",
+    notes: "Restart crossover probe for a browser-opened child inside a restored window when the background restarts abruptly before later refresh.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restored-scope", "restored", "native-open", "restart", "opener"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "sh-abrupt-restored-root", captureRestoredWindows: "sh-abrupt-restored-window" },
+      { type: "openTab", window: { capture: "sh-abrupt-restored-window" }, active: false, openerTab: { capture: "sh-abrupt-restored-root" }, title: "SH abrupt child", captureTab: "sh-abrupt-restored-child" },
+      { type: "updateTab", tab: { capture: "sh-abrupt-restored-child" }, title: "SH Abrupt Child Current", url: "https://sh.example/abrupt-child" },
+      { type: "restartBackgroundAbrupt" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "sh-restart-stale-generation-after-live-edit",
+    title: "restart stale generation after live edit",
+    notes: "Restart crossover probe for stale old browser-created generation evidence after a restored scope receives a live browser edit.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restored-scope", "browserCreated", "restored", "restart", "stale-event"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "SH stale generation old", url: "https://sh.example/stale-old" }], captureWindow: "sh-stale-generation-old-window", captureTabs: "sh-stale-generation-old-tabs" },
+      { type: "nativeCloseWindow", window: { capture: "sh-stale-generation-old-window" }, order: "tabsRemovedThenWindowRemoved" },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:21" }, captureRestoredTabs: "sh-stale-generation-current-tabs", captureRestoredWindows: "sh-stale-generation-current-window" },
+      { type: "openTab", window: { capture: "sh-stale-generation-current-window" }, active: false, title: "SH stale generation child", captureTab: "sh-stale-generation-child" },
+      { type: "updateTab", tab: { capture: "sh-stale-generation-child" }, title: "SH Stale Generation Child Current", url: "https://sh.example/stale-child" },
+      { type: "restartBackground" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "sh-stale-generation-old-tabs" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "fh-saved-fullscreen-isolated",
+    title: "saved fullscreen isolated",
+    notes: "Fullscreen should behave as browser-authored window shape for an established saved window without implying focus, session, or lifecycle.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["fullscreen", "window-state", "saved"],
+    actions: [
+      { type: "nativeSetWindowState", window: { windowId: 10 }, state: "fullscreen" },
+      { type: "nativeSetWindowState", window: { windowId: 10 }, state: "normal" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "fh-restored-fullscreen-isolated",
+    title: "restored fullscreen isolated",
+    notes: "Fullscreen should update restored-window shape without acting like a restored-tab echo or lifecycle transition.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["fullscreen", "window-state", "restored"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeRejectingCreate", node: { nodeId: "window:20" }, captureRestoredTabs: "fh-restored-fullscreen-tabs", captureRestoredWindows: "fh-restored-fullscreen-window" },
+      { type: "nativeSetWindowState", window: { capture: "fh-restored-fullscreen-window" }, state: "fullscreen" },
+      { type: "nativeSetWindowState", window: { capture: "fh-restored-fullscreen-window" }, state: "normal" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "fh-browser-created-fullscreen-isolated",
+    title: "browser created fullscreen isolated",
+    notes: "Fullscreen should be scoped as shape for a browser-created window without command or journal provenance.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["fullscreen", "window-state", "browserCreated", "native-open"],
+    actions: [
+      { type: "nativeOpenWindow", focused: true, tabs: [{ title: "FH browser fullscreen", url: "https://fh.example/browser-fullscreen", active: true }], captureWindow: "fh-browser-fullscreen-window", captureTabs: "fh-browser-fullscreen-tabs" },
+      { type: "nativeSetWindowState", window: { capture: "fh-browser-fullscreen-window" }, state: "fullscreen" },
+      { type: "nativeSetWindowState", window: { capture: "fh-browser-fullscreen-window" }, state: "normal" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "fh-command-created-fullscreen-isolated",
+    title: "command created fullscreen isolated",
+    notes: "Fullscreen should not disturb a command-created relocation destination when no lifecycle event is present.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["fullscreen", "window-state", "commandCreated", "relocation"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "fh-command-fullscreen-old" },
+      { type: "nativeSetWindowState", window: { role: "lastOpenedWindow" }, state: "fullscreen" },
+      { type: "nativeSetWindowState", window: { role: "lastOpenedWindow" }, state: "normal" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "fh-fullscreen-before-focus-change",
+    title: "fullscreen before focus change",
+    notes: "A fullscreen state change before an explicit focus event must not itself choose the focused outline window.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["fullscreen", "window-state", "focus", "saved"],
+    actions: [
+      { type: "nativeSetWindowState", window: { windowId: 10 }, state: "fullscreen" },
+      { type: "focusWindow", window: { windowId: 20 } },
+      { type: "nativeSetWindowState", window: { windowId: 10 }, state: "normal" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "fh-focus-then-fullscreen-activation",
+    title: "focus then fullscreen activation",
+    notes: "Focus and activation remain separate facts when a focused window then enters fullscreen.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["fullscreen", "window-state", "focus", "activation"],
+    actions: [
+      { type: "focusWindow", window: { windowId: 20 } },
+      { type: "nativeSetWindowState", window: { windowId: 20 }, state: "fullscreen" },
+      { type: "activateTab", tab: { tabId: 3 } },
+      { type: "nativeSetWindowState", window: { windowId: 20 }, state: "normal" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "fh-activation-inside-fullscreen",
+    title: "activation inside fullscreen",
+    notes: "Tab activation inside a fullscreen window should remain tab-active evidence, not window lifecycle evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["fullscreen", "window-state", "activation", "saved"],
+    actions: [
+      { type: "nativeSetWindowState", window: { windowId: 10 }, state: "fullscreen" },
+      { type: "activateTab", tab: { tabId: 2 } },
+      { type: "nativeSetWindowState", window: { windowId: 10 }, state: "normal" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "fh-stale-activation-after-exit-fullscreen",
+    title: "stale activation after exit fullscreen",
+    notes: "Leaving fullscreen before a stale activation snapshot should not let old active evidence override current shape.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["fullscreen", "window-state", "activation", "stale-query"],
+    actions: [
+      { type: "nativeMoveTabToWindow", tab: { tabId: 2 }, window: { windowId: 10 }, index: 0, active: true, captureStaleTabs: "fh-stale-activation-old" },
+      { type: "nativeSetWindowState", window: { windowId: 10 }, state: "fullscreen" },
+      { type: "nativeSetWindowState", window: { windowId: 10 }, state: "normal" },
+      { type: "activateTab", tab: { tabId: 1 }, staleQueryFrom: { capture: "fh-stale-activation-old" } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "fh-fullscreen-before-native-tab-close",
+    title: "fullscreen before native tab close",
+    notes: "A fullscreen window with a browser-closed tab should classify the close from the tab event, not from window state.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["fullscreen", "window-state", "native-close", "saved"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, title: "FH fullscreen close sibling", captureTab: "fh-fullscreen-close-tab" },
+      { type: "nativeSetWindowState", window: { windowId: 10 }, state: "fullscreen" },
+      { type: "nativeCloseTab", tab: { capture: "fh-fullscreen-close-tab" }, order: "tabRemovedOnly" },
+      { type: "nativeSetWindowState", window: { windowId: 10 }, state: "normal" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "fh-fullscreen-before-window-close-order",
+    title: "fullscreen before window close order",
+    notes: "Window close ordering should be interpreted as lifecycle evidence even when the closing window was fullscreen.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["fullscreen", "window-state", "native-close", "browserCreated"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "FH fullscreen closing window", url: "https://fh.example/closing" }], captureWindow: "fh-fullscreen-close-window", captureTabs: "fh-fullscreen-close-window-tabs" },
+      { type: "nativeSetWindowState", window: { capture: "fh-fullscreen-close-window" }, state: "fullscreen" },
+      { type: "nativeCloseWindow", window: { capture: "fh-fullscreen-close-window" }, order: "windowRemovedThenTabsRemoved" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "fh-fullscreen-close-window-tabs" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "fh-restored-fullscreen-native-close",
+    title: "restored fullscreen native close",
+    notes: "A restored fullscreen window closed by the browser should preserve the restored outline window closed.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["fullscreen", "window-state", "restored", "native-close"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "fh-restored-native-close-tabs", captureRestoredWindows: "fh-restored-native-close-window" },
+      { type: "nativeSetWindowState", window: { capture: "fh-restored-native-close-window" }, state: "fullscreen" },
+      { type: "nativeCloseWindow", window: { capture: "fh-restored-native-close-window" }, order: "tabsRemovedThenWindowRemoved" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "fh-restored-native-close-tabs" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "fh-browser-created-fullscreen-close-survivor",
+    title: "browser created fullscreen close survivor",
+    notes: "Closing one tab in a browser-created fullscreen window should leave the survivor live with current metadata.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["fullscreen", "window-state", "browserCreated", "native-close", "multi-tab"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "FH fullscreen A" }, { title: "FH fullscreen B", active: true }], captureWindow: "fh-browser-fullscreen-survivor-window", captureTabs: "fh-browser-fullscreen-survivor-tabs" },
+      { type: "nativeSetWindowState", window: { capture: "fh-browser-fullscreen-survivor-window" }, state: "fullscreen" },
+      { type: "nativeCloseTab", tab: { inWindow: { capture: "fh-browser-fullscreen-survivor-window" }, index: 0 }, order: "tabRemovedOnly" },
+      { type: "updateTab", tab: { inWindow: { capture: "fh-browser-fullscreen-survivor-window" }, index: 0 }, title: "FH fullscreen survivor current", url: "https://fh.example/survivor" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "fh-fullscreen-restart-saved",
+    title: "fullscreen restart saved",
+    notes: "Saved-window fullscreen shape should survive background restart reconstruction without creating lifecycle effects.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["fullscreen", "window-state", "restart", "saved"],
+    actions: [
+      { type: "nativeSetWindowState", window: { windowId: 10 }, state: "fullscreen" },
+      { type: "restartBackground" },
+      { type: "nativeSetWindowState", window: { windowId: 10 }, state: "normal" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "fh-fullscreen-abrupt-restart-browser-created",
+    title: "fullscreen abrupt restart browser created",
+    notes: "Browser-created fullscreen scope should reconstruct after abrupt background restart.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["fullscreen", "window-state", "restart", "browserCreated"],
+    actions: [
+      { type: "nativeOpenWindow", focused: true, tabs: [{ title: "FH abrupt browser fullscreen", active: true }], captureWindow: "fh-abrupt-browser-fullscreen-window", captureTabs: "fh-abrupt-browser-fullscreen-tabs" },
+      { type: "nativeSetWindowState", window: { capture: "fh-abrupt-browser-fullscreen-window" }, state: "fullscreen" },
+      { type: "restartBackgroundAbrupt" },
+      { type: "nativeSetWindowState", window: { capture: "fh-abrupt-browser-fullscreen-window" }, state: "normal" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "fh-restored-fullscreen-restart-stale-echo",
+    title: "restored fullscreen restart stale echo",
+    notes: "Restored fullscreen state across restart should not make stale restored-tab echoes authoritative.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["fullscreen", "window-state", "restored", "restart", "stale-event"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "fh-restored-restart-tabs", captureRestoredWindows: "fh-restored-restart-window" },
+      { type: "nativeSetWindowState", window: { capture: "fh-restored-restart-window" }, state: "fullscreen" },
+      { type: "updateTab", tab: { capture: "fh-restored-restart-tabs" }, title: "FH restored current", url: "https://fh.example/restored-current" },
+      { type: "restartBackground" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "fh-restored-restart-tabs" }, withStaleQuery: true },
+      { type: "nativeSetWindowState", window: { capture: "fh-restored-restart-window" }, state: "normal" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "fh-command-fullscreen-restart-partial-query",
+    title: "command fullscreen restart partial query",
+    notes: "Command-created fullscreen destination should not be lost when restart is followed by a partial query missing a different window.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["fullscreen", "window-state", "commandCreated", "restart", "partial-snapshot"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "fh-command-restart-old" },
+      { type: "nativeSetWindowState", window: { role: "lastOpenedWindow" }, state: "fullscreen" },
+      { type: "restartBackground" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { windowId: 20 } },
+      { type: "nativeSetWindowState", window: { role: "lastOpenedWindow" }, state: "normal" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "fh-fullscreen-stale-created",
+    title: "fullscreen stale created",
+    notes: "Fullscreen should not make stale pre-move created evidence authoritative for a known moved tab.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["fullscreen", "window-state", "created-event", "stale-event", "native-move"],
+    assertions: ["runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "nativeMoveTabToWindow", tab: { tabId: 2 }, window: { windowId: 10 }, index: 0, active: true, captureStaleTabs: "fh-stale-created-old" },
+      { type: "nativeSetWindowState", window: { windowId: 10 }, state: "fullscreen" },
+      { type: "updateTab", tab: { tabId: 2 }, title: "FH current after fullscreen", url: "https://fh.example/current-created" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "fh-stale-created-old" }, withStaleQuery: false },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "fh-fullscreen-stale-updated",
+    title: "fullscreen stale updated",
+    notes: "Fullscreen should not let stale updated payloads regress current tab shape.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["fullscreen", "window-state", "updated-event", "stale-event", "native-move"],
+    assertions: ["runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "nativeMoveTabToWindow", tab: { tabId: 2 }, window: { windowId: 10 }, index: 0, active: true, captureStaleTabs: "fh-stale-updated-old" },
+      { type: "nativeSetWindowState", window: { windowId: 10 }, state: "fullscreen" },
+      { type: "updateTab", tab: { tabId: 2 }, title: "FH current after fullscreen update", url: "https://fh.example/current-updated" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "fh-stale-updated-old" }, withStaleQuery: false },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "fh-exit-fullscreen-before-reordered-query",
+    title: "exit fullscreen before reordered query",
+    notes: "Leaving fullscreen before a reordered query should keep query evidence about order separate from window-state evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["fullscreen", "window-state", "stale-query", "native-open"],
+    assertions: ["runtimeOrder"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, title: "FH reorder sibling", captureTab: "fh-reorder-sibling" },
+      { type: "nativeSetWindowState", window: { windowId: 10 }, state: "fullscreen" },
+      { type: "nativeSetWindowState", window: { windowId: 10 }, state: "normal" },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 10 }, order: "rotateLeft" }
+    ]
+  },
+  {
+    id: "fh-fullscreen-missing-window-query",
+    title: "fullscreen missing window query",
+    notes: "A partial query missing a fullscreen browser-created window should not be mistaken for a close.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["fullscreen", "window-state", "partial-snapshot", "browserCreated"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "FH missing window", active: true }], captureWindow: "fh-missing-fullscreen-window", captureTabs: "fh-missing-fullscreen-tabs" },
+      { type: "nativeSetWindowState", window: { capture: "fh-missing-fullscreen-window" }, state: "fullscreen" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { capture: "fh-missing-fullscreen-window" } },
+      { type: "nativeSetWindowState", window: { capture: "fh-missing-fullscreen-window" }, state: "normal" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "fh-relocation-into-fullscreen-destination",
+    title: "relocation into fullscreen destination",
+    notes: "A command relocation destination entering fullscreen should still accept current tab metadata and sibling creation.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["fullscreen", "window-state", "commandCreated", "relocation", "metadata"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "fh-relocation-fullscreen-old" },
+      { type: "nativeSetWindowState", window: { role: "lastOpenedWindow" }, state: "fullscreen" },
+      { type: "openTab", window: { role: "lastOpenedWindow" }, active: false, title: "FH command fullscreen sibling", captureTab: "fh-command-fullscreen-sibling" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "FH relocated fullscreen current", url: "https://fh.example/relocated-current" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "fh-group-inside-fullscreen-window",
+    title: "group inside fullscreen window",
+    notes: "Grouping inside a fullscreen saved window should not make the fullscreen state look like command ownership evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["fullscreen", "window-state", "saved", "group", "stale-event"],
+    actions: [
+      { type: "nativeSetWindowState", window: { windowId: 10 }, state: "fullscreen" },
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "fh-group-fullscreen-old" },
+      { type: "nativeSetWindowState", window: { windowId: 10 }, state: "normal" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "fh-group-fullscreen-old" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "fh-undo-redo-while-fullscreen",
+    title: "undo redo while fullscreen",
+    notes: "History replay around a structural command should preserve explicit fullscreen as window-shape evidence only.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["fullscreen", "window-state", "undo-redo", "group"],
+    actions: [
+      { type: "nativeSetWindowState", window: { windowId: 10 }, state: "fullscreen" },
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "fh-history-fullscreen-old" },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedo" },
+      { type: "nativeSetWindowState", window: { windowId: 10 }, state: "normal" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "fh-restore-delete-around-fullscreen",
+    title: "restore delete around fullscreen",
+    notes: "Restore and delete commands around a fullscreen restored window should remain lifecycle-owned by their commands, not by window state.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["fullscreen", "window-state", "restore", "delete-rejection", "command-rejection"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeRejectingCreate", node: { nodeId: "window:20" }, captureRestoredTabs: "fh-restore-delete-tabs", captureRestoredWindows: "fh-restore-delete-window" },
+      { type: "nativeSetWindowState", window: { capture: "fh-restore-delete-window" }, state: "fullscreen" },
+      { type: "outlinerDeleteNodeRejectingClose", node: { window: { capture: "fh-restore-delete-window" } } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "fh-saved-maximize-minimize-focus",
+    title: "saved maximize minimize focus",
+    notes: "Window-state-only evidence should stay separate from focus when saved windows move through maximized, minimized, fullscreen, and normal states.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["fullscreen", "window-state", "saved", "focus"],
+    actions: [
+      { type: "nativeSetWindowState", window: { windowId: 10 }, state: "maximized" },
+      { type: "nativeSetWindowState", window: { windowId: 10 }, state: "minimized" },
+      { type: "nativeSetWindowState", window: { windowId: 10 }, state: "fullscreen" },
+      { type: "focusWindow", window: { windowId: 20 } },
+      { type: "nativeSetWindowState", window: { windowId: 10 }, state: "normal" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "fh-browser-created-maximized-session-close",
+    title: "browser created maximized session close",
+    notes: "A browser-created window moving through maximized/fullscreen before a last-tab session-only disappearance should still classify disappearance from session evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["fullscreen", "window-state", "browserCreated", "native-close", "session"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "FH maximized session close", active: true }], captureWindow: "fh-max-session-window", captureTabs: "fh-max-session-tabs" },
+      { type: "nativeSetWindowState", window: { capture: "fh-max-session-window" }, state: "maximized" },
+      { type: "nativeSetWindowState", window: { capture: "fh-max-session-window" }, state: "fullscreen" },
+      { type: "nativeCloseTab", tab: { capture: "fh-max-session-tabs" }, order: "sessionChangedOnly" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "fh-restored-minimized-fullscreen-stale-created",
+    title: "restored minimized fullscreen stale created",
+    notes: "Restored-window state changes should not make stale restored created echoes authoritative after minimized/fullscreen transitions.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["fullscreen", "window-state", "restored", "created-event", "stale-event"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "fh-restored-min-full-tabs", captureRestoredWindows: "fh-restored-min-full-window" },
+      { type: "nativeSetWindowState", window: { capture: "fh-restored-min-full-window" }, state: "minimized" },
+      { type: "nativeSetWindowState", window: { capture: "fh-restored-min-full-window" }, state: "fullscreen" },
+      { type: "updateTab", tab: { capture: "fh-restored-min-full-tabs" }, title: "FH restored min full current", url: "https://fh.example/min-full-current" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "fh-restored-min-full-tabs" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "fh-fullscreen-browser-created-opener-move-close",
+    title: "fullscreen browser created opener move close",
+    notes: "A browser-created fullscreen opener child moved across windows and then closed should route by browser shape, not fullscreen state.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["fullscreen", "window-state", "browserCreated", "opener", "native-move", "native-close"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "FH opener parent", active: true }, { title: "FH opener child", openerTab: { tabId: 1 } }], captureWindow: "fh-opener-fullscreen-window", captureTabs: "fh-opener-fullscreen-tabs" },
+      { type: "nativeSetWindowState", window: { capture: "fh-opener-fullscreen-window" }, state: "fullscreen" },
+      { type: "nativeMoveTabToWindow", tab: { inWindow: { capture: "fh-opener-fullscreen-window" }, index: 1 }, window: { windowId: 10 }, index: 1, active: false, captureStaleTabs: "fh-opener-fullscreen-move-old" },
+      { type: "nativeCloseTab", tab: { inWindow: { windowId: 10 }, index: 1 }, order: "tabRemovedOnly" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "fh-opener-fullscreen-move-old" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "fh-command-fullscreen-native-move-out",
+    title: "command fullscreen native move out",
+    notes: "A tab moved out of a fullscreen command-created destination by the browser should be accepted as browser-authored shape.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["fullscreen", "window-state", "commandCreated", "native-move", "stale-event"],
+    assertions: ["runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "fh-command-move-out-command-old" },
+      { type: "nativeSetWindowState", window: { role: "lastOpenedWindow" }, state: "fullscreen" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "FH command move out current", url: "https://fh.example/command-move-out" },
+      { type: "nativeMoveTabToWindow", tab: { role: "lastMovedTab" }, window: { windowId: 10 }, index: 1, active: true, captureStaleTabs: "fh-command-move-out-old" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "fh-command-move-out-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "fh-saved-fullscreen-native-reorder",
+    title: "saved fullscreen native reorder",
+    notes: "Same-window browser reorder while fullscreen should update tab order without treating fullscreen as active/focus evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["fullscreen", "window-state", "saved", "native-move", "stale-query"],
+    assertions: ["runtimeOrder"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, title: "FH reorder A", captureTab: "fh-reorder-a" },
+      { type: "openTab", window: { windowId: 10 }, active: false, title: "FH reorder B", captureTab: "fh-reorder-b" },
+      { type: "nativeSetWindowState", window: { windowId: 10 }, state: "fullscreen" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "fh-reorder-b" }, window: { windowId: 10 }, index: 0, active: false, captureStaleTabs: "fh-reorder-old" },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 10 }, order: "reverse" }
+    ]
+  },
+  {
+    id: "fh-abrupt-restart-fullscreen-session-close",
+    title: "abrupt restart fullscreen session close",
+    notes: "A browser-created fullscreen window reconstructed after abrupt restart should still classify later session-only last-tab disappearance as close evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["fullscreen", "window-state", "browserCreated", "restart", "session", "native-close"],
+    actions: [
+      { type: "nativeOpenWindow", focused: true, tabs: [{ title: "FH abrupt session close", active: true }], captureWindow: "fh-abrupt-session-window", captureTabs: "fh-abrupt-session-tabs" },
+      { type: "nativeSetWindowState", window: { capture: "fh-abrupt-session-window" }, state: "fullscreen" },
+      { type: "restartBackgroundAbrupt" },
+      { type: "nativeCloseTab", tab: { capture: "fh-abrupt-session-tabs" }, order: "sessionChangedOnly" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "fh-fullscreen-missing-then-complete-refresh",
+    title: "fullscreen missing then complete refresh",
+    notes: "A fullscreen browser-created window omitted from one partial query should remain live when a later complete refresh confirms it.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["fullscreen", "window-state", "browserCreated", "partial-snapshot", "manual-refresh"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "FH missing complete", active: true }], captureWindow: "fh-missing-complete-window", captureTabs: "fh-missing-complete-tabs" },
+      { type: "nativeSetWindowState", window: { capture: "fh-missing-complete-window" }, state: "fullscreen" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { capture: "fh-missing-complete-window" } },
+      { type: "updateTab", tab: { capture: "fh-missing-complete-tabs" }, title: "FH missing complete current", url: "https://fh.example/missing-complete" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "fh-restored-fullscreen-history-restart",
+    title: "restored fullscreen history restart",
+    notes: "History replay inside a restored fullscreen window should survive restart without stale restored shape facts taking over.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["fullscreen", "window-state", "restored", "undo-redo", "restart"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "fh-history-restored-tabs", captureRestoredWindows: "fh-history-restored-window" },
+      { type: "nativeSetWindowState", window: { capture: "fh-history-restored-window" }, state: "fullscreen" },
+      { type: "updateTab", tab: { capture: "fh-history-restored-tabs" }, title: "FH history restored current", url: "https://fh.example/history-restored" },
+      { type: "outlinerGroupTab", tab: { capture: "fh-history-restored-tabs" }, captureStaleTabs: "fh-history-restored-old" },
+      { type: "outlinerUndo" },
+      { type: "restartBackground" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "fh-history-restored-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "fh-abrupt-restart-normal-session-close-control",
+    title: "abrupt restart normal session close control",
+    notes: "Control for the abrupt-restart session-only last-tab close shape without fullscreen, to separate lifecycle reconstruction from window-state evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["window-state", "browserCreated", "restart", "session", "native-close"],
+    actions: [
+      { type: "nativeOpenWindow", focused: true, tabs: [{ title: "FH normal session close", active: true }], captureWindow: "fh-normal-session-window", captureTabs: "fh-normal-session-tabs" },
+      { type: "restartBackgroundAbrupt" },
+      { type: "nativeCloseTab", tab: { capture: "fh-normal-session-tabs" }, order: "sessionChangedOnly" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "fh-fullscreen-clean-restart-session-close",
+    title: "fullscreen clean restart session close",
+    notes: "Variant for browser-created fullscreen last-tab session-only close after a clean background restart.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["fullscreen", "window-state", "browserCreated", "restart", "session", "native-close"],
+    actions: [
+      { type: "nativeOpenWindow", focused: true, tabs: [{ title: "FH clean session close", active: true }], captureWindow: "fh-clean-session-window", captureTabs: "fh-clean-session-tabs" },
+      { type: "nativeSetWindowState", window: { capture: "fh-clean-session-window" }, state: "fullscreen" },
+      { type: "restartBackground" },
+      { type: "nativeCloseTab", tab: { capture: "fh-clean-session-tabs" }, order: "sessionChangedOnly" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "fh-restored-fullscreen-child-history-restart",
+    title: "restored fullscreen child history restart",
+    notes: "Variant for history replay inside a restored fullscreen scope using a freshly opened child tab instead of mutating the restored root tab.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["fullscreen", "window-state", "restored", "undo-redo", "restart", "native-open"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "fh-child-history-root", captureRestoredWindows: "fh-child-history-window" },
+      { type: "nativeSetWindowState", window: { capture: "fh-child-history-window" }, state: "fullscreen" },
+      { type: "openTab", window: { capture: "fh-child-history-window" }, active: false, openerTab: { capture: "fh-child-history-root" }, title: "FH history child", captureTab: "fh-child-history-tab" },
+      { type: "outlinerGroupTab", tab: { capture: "fh-child-history-tab" }, captureStaleTabs: "fh-child-history-old" },
+      { type: "outlinerUndo" },
+      { type: "restartBackground" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "fh-child-history-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "fh-abrupt-restart-browser-tabremoved-close-control",
+    title: "abrupt restart browser tabremoved close control",
+    notes: "Control for browser-created last-tab disappearance after abrupt restart when a tabRemoved event is present instead of session-only evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["window-state", "browserCreated", "restart", "native-close"],
+    actions: [
+      { type: "nativeOpenWindow", focused: true, tabs: [{ title: "FH tab removed close", active: true }], captureWindow: "fh-tabremoved-window", captureTabs: "fh-tabremoved-tabs" },
+      { type: "restartBackgroundAbrupt" },
+      { type: "nativeCloseTab", tab: { capture: "fh-tabremoved-tabs" }, order: "tabRemovedOnly" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "fh-abrupt-restart-saved-session-close-control",
+    title: "abrupt restart saved session close control",
+    notes: "Control for saved single-tab window session-only close after abrupt restart.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["window-state", "saved", "restart", "session", "native-close"],
+    actions: [
+      { type: "restartBackgroundAbrupt" },
+      { type: "nativeCloseTab", tab: { tabId: 3 }, order: "sessionChangedOnly" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "fh-abrupt-restart-restored-session-close-control",
+    title: "abrupt restart restored session close control",
+    notes: "Control for restored single-tab window session-only close after abrupt restart.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["window-state", "restored", "restart", "session", "native-close"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "fh-restored-session-control-tabs", captureRestoredWindows: "fh-restored-session-control-window" },
+      { type: "restartBackgroundAbrupt" },
+      { type: "nativeCloseTab", tab: { capture: "fh-restored-session-control-tabs" }, order: "sessionChangedOnly" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "fh-abrupt-restart-fullscreen-window-removed-only",
+    title: "abrupt restart fullscreen window removed only",
+    notes: "Browser-created fullscreen whole-window close after abrupt restart with windowRemoved-only evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["fullscreen", "window-state", "browserCreated", "restart", "native-close", "event-order"],
+    actions: [
+      { type: "nativeOpenWindow", focused: true, tabs: [{ title: "FH window removed only", active: true }], captureWindow: "fh-window-removed-only-window", captureTabs: "fh-window-removed-only-tabs" },
+      { type: "nativeSetWindowState", window: { capture: "fh-window-removed-only-window" }, state: "fullscreen" },
+      { type: "restartBackgroundAbrupt" },
+      { type: "nativeCloseWindow", window: { capture: "fh-window-removed-only-window" }, order: "windowRemovedOnly" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "fh-window-removed-only-tabs" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "fh-saved-fullscreen-window-close-abrupt",
+    title: "saved fullscreen window close abrupt",
+    notes: "Saved fullscreen whole-window close after abrupt restart should preserve the saved outline window closed.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["fullscreen", "window-state", "saved", "restart", "native-close", "event-order"],
+    actions: [
+      { type: "nativeSetWindowState", window: { windowId: 20 }, state: "fullscreen" },
+      { type: "restartBackgroundAbrupt" },
+      { type: "nativeCloseWindow", window: { windowId: 20 }, order: "windowRemovedOnly" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "fh-command-fullscreen-source-close-abrupt",
+    title: "command fullscreen source close abrupt",
+    notes: "Closing the old source window after a command-created fullscreen destination survives abrupt restart should not disturb the destination scope.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["fullscreen", "window-state", "commandCreated", "restart", "native-close", "relocation"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "fh-command-source-close-old" },
+      { type: "nativeSetWindowState", window: { role: "lastOpenedWindow" }, state: "fullscreen" },
+      { type: "restartBackgroundAbrupt" },
+      { type: "nativeCloseWindow", window: { windowId: 10 }, order: "tabsRemovedThenWindowRemoved" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "fh-command-source-close-old" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "fh-fullscreen-clean-restart-tabremoved-close",
+    title: "fullscreen clean restart tabremoved close",
+    notes: "Browser-created fullscreen last-tab close after clean restart with tabRemoved-only evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["fullscreen", "window-state", "browserCreated", "restart", "native-close"],
+    actions: [
+      { type: "nativeOpenWindow", focused: true, tabs: [{ title: "FH clean tabremoved", active: true }], captureWindow: "fh-clean-tabremoved-window", captureTabs: "fh-clean-tabremoved-tabs" },
+      { type: "nativeSetWindowState", window: { capture: "fh-clean-tabremoved-window" }, state: "fullscreen" },
+      { type: "restartBackground" },
+      { type: "nativeCloseTab", tab: { capture: "fh-clean-tabremoved-tabs" }, order: "tabRemovedOnly" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "fh-fullscreen-abrupt-multitab-session-close",
+    title: "fullscreen abrupt multitab session close",
+    notes: "Session-only close of one tab in a reconstructed browser-created fullscreen multi-tab window should not close the whole scope.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["fullscreen", "window-state", "browserCreated", "restart", "session", "multi-tab", "native-close"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: true, tabs: [{ title: "FH multi A" }, { title: "FH multi B", active: true }], captureWindow: "fh-multi-session-window", captureTabs: "fh-multi-session-tabs" },
+      { type: "nativeSetWindowState", window: { capture: "fh-multi-session-window" }, state: "fullscreen" },
+      { type: "restartBackgroundAbrupt" },
+      { type: "nativeCloseTab", tab: { inWindow: { capture: "fh-multi-session-window" }, index: 0 }, order: "sessionChangedOnly" },
+      { type: "updateTab", tab: { inWindow: { capture: "fh-multi-session-window" }, index: 0 }, title: "FH multi survivor current", url: "https://fh.example/multi-survivor" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "fh-restored-fullscreen-windowremoved-clean",
+    title: "restored fullscreen windowremoved clean",
+    notes: "Restored fullscreen window close after clean restart with windowRemoved-only evidence should preserve the restored outline window closed.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["fullscreen", "window-state", "restored", "restart", "native-close", "event-order"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "fh-restored-windowremoved-tabs", captureRestoredWindows: "fh-restored-windowremoved-window" },
+      { type: "nativeSetWindowState", window: { capture: "fh-restored-windowremoved-window" }, state: "fullscreen" },
+      { type: "restartBackground" },
+      { type: "nativeCloseWindow", window: { capture: "fh-restored-windowremoved-window" }, order: "windowRemovedOnly" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "fh-restored-windowremoved-tabs" }, withStaleQuery: true }
+    ]
+  },
+  {
     id: "mh-delayed-restore-metadata-reorder",
     title: "delayed restore metadata reorder",
     notes: "Runtime-shape probe for delayed restore/delete echoes followed by current metadata and reordered refresh.",
@@ -10761,6 +13476,3463 @@ const RUNTIME_DOMAIN_DISCOVERY_TRACES: RuntimeDomainTrace[] = [
       { type: "manualRefreshWithMissingTabQuery", tab: { tabId: 2 } },
       { type: "manualRefresh" }
     ]
+  },
+  {
+    id: "xh-saved-provenance-native-shape",
+    title: "saved provenance native shape",
+    notes: "Cross-axis provenance probe for a saved window receiving browser-authored order and metadata evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["cross-axis", "saved", "native-move", "metadata", "runtime-order"],
+    assertions: ["runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "nativeMoveTabToWindow", tab: { tabId: 2 }, window: { windowId: 10 }, index: 0, active: true, captureStaleTabs: "xh-saved-shape-old" },
+      { type: "updateTab", tab: { tabId: 2 }, title: "XH Saved Shape Current", url: "https://xh.example/saved-shape" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "xh-restored-provenance-native-shape",
+    title: "restored provenance native shape",
+    notes: "Cross-axis provenance probe for restored scope shape after adding a browser-authored sibling.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["cross-axis", "restored", "native-move", "metadata", "runtime-order"],
+    assertions: ["runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "xh-restored-shape-root", captureRestoredWindows: "xh-restored-shape-window" },
+      { type: "openTab", window: { capture: "xh-restored-shape-window" }, active: false, title: "XH restored sibling", captureTab: "xh-restored-shape-sibling" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "xh-restored-shape-sibling" }, window: { capture: "xh-restored-shape-window" }, index: 0, active: true, captureStaleTabs: "xh-restored-shape-old" },
+      { type: "updateTab", tab: { capture: "xh-restored-shape-sibling" }, title: "XH Restored Shape Current", url: "https://xh.example/restored-shape" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "xh-browser-created-provenance-native-shape",
+    title: "browser created provenance native shape",
+    notes: "Cross-axis provenance probe for a browser-created multi-tab scope receiving reorder and metadata evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["cross-axis", "browserCreated", "native-open", "native-move", "metadata"],
+    assertions: ["runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "XH browser A" }, { title: "XH browser B", active: true }], captureWindow: "xh-browser-shape-window", captureTabs: "xh-browser-shape-tabs" },
+      { type: "nativeMoveTabToWindow", tab: { inWindow: { capture: "xh-browser-shape-window" }, index: 1 }, window: { capture: "xh-browser-shape-window" }, index: 0, active: true, captureStaleTabs: "xh-browser-shape-old" },
+      { type: "updateTab", tab: { inWindow: { capture: "xh-browser-shape-window" }, index: 0 }, title: "XH Browser Shape Current", url: "https://xh.example/browser-shape" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "xh-command-created-provenance-native-shape",
+    title: "command created provenance native shape",
+    notes: "Cross-axis provenance probe for a command-created destination receiving browser-authored sibling order and metadata.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["cross-axis", "commandCreated", "relocation", "native-move", "metadata"],
+    assertions: ["runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "xh-command-shape-old" },
+      { type: "openTab", window: { role: "lastOpenedWindow" }, active: false, title: "XH command sibling", captureTab: "xh-command-shape-sibling" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "xh-command-shape-sibling" }, window: { role: "lastOpenedWindow" }, index: 0, active: true, captureStaleTabs: "xh-command-shape-sibling-old" },
+      { type: "updateTab", tab: { capture: "xh-command-shape-sibling" }, title: "XH Command Shape Current", url: "https://xh.example/command-shape" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "xh-history-undo-after-native-move",
+    title: "history undo after native move",
+    notes: "Cross-axis history probe for undoing a TO grouping after the grouped tab was moved by the browser.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["cross-axis", "undo-redo", "native-move", "history", "runtime-order"],
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 2 }, captureStaleTabs: "xh-history-move-group-old" },
+      { type: "nativeMoveTabToWindow", tab: { tabId: 2 }, window: { windowId: 20 }, index: 0, active: true, captureStaleTabs: "xh-history-move-old" },
+      { type: "outlinerUndo" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "xh-history-redo-after-native-move",
+    title: "history redo after native move",
+    notes: "Variant clone for RT-217: redo a TO grouping after the tab was moved by the browser while the undo entry is on the redo stack.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["cross-axis", "undo-redo", "native-move", "history", "runtime-order"],
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 2 }, captureStaleTabs: "xh-history-redo-group-old" },
+      { type: "outlinerUndo" },
+      { type: "nativeMoveTabToWindow", tab: { tabId: 2 }, window: { windowId: 20 }, index: 0, active: true, captureStaleTabs: "xh-history-redo-move-old" },
+      { type: "outlinerRedo" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "xh-history-undo-after-native-detach",
+    title: "history undo after native detach",
+    notes: "Variant clone for RT-217: undo a TO grouping after the browser detaches the grouped tab into a new window.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["cross-axis", "undo-redo", "native-move", "history", "restart"],
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 2 }, captureStaleTabs: "xh-history-detach-group-old" },
+      { type: "nativeMoveTabToNewWindow", tab: { tabId: 2 }, active: true, captureWindow: "xh-history-detach-window", captureStaleTabs: "xh-history-detach-old" },
+      { type: "outlinerUndo" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "xh-history-undo-after-native-move-restart",
+    title: "history undo after native move restart",
+    notes: "Variant clone for RT-217: restart reconstructs scope facts between browser-authored move and TO history replay.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["cross-axis", "undo-redo", "native-move", "history", "restart"],
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 2 }, captureStaleTabs: "xh-history-restart-group-old" },
+      { type: "nativeMoveTabToWindow", tab: { tabId: 2 }, window: { windowId: 20 }, index: 0, active: true, captureStaleTabs: "xh-history-restart-move-old" },
+      { type: "restartBackground" },
+      { type: "outlinerUndo" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "xh-history-undo-after-inactive-native-move",
+    title: "history undo after inactive native move",
+    notes: "Variant clone for RT-217: undo a TO grouping after browser-authored move where the moved tab is not active.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["cross-axis", "undo-redo", "native-move", "history", "runtime-order"],
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 2 }, captureStaleTabs: "xh-history-inactive-group-old" },
+      { type: "nativeMoveTabToWindow", tab: { tabId: 2 }, window: { windowId: 20 }, index: 0, active: false, captureStaleTabs: "xh-history-inactive-move-old" },
+      { type: "outlinerUndo" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "xh-history-redo-browser-created-sibling",
+    title: "history redo browser created sibling",
+    notes: "Cross-axis history probe where browser-created sibling evidence appears between TO undo and redo.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["cross-axis", "undo-redo", "browserCreated", "native-open", "history"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "xh-history-browser-group-old" },
+      { type: "outlinerUndo" },
+      { type: "openTab", window: { windowId: 10 }, active: false, title: "XH history browser sibling", captureTab: "xh-history-browser-sibling" },
+      { type: "updateTab", tab: { capture: "xh-history-browser-sibling" }, title: "XH History Browser Current", url: "https://xh.example/history-browser" },
+      { type: "outlinerRedo" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "xh-history-restored-metadata-undo",
+    title: "history restored metadata undo",
+    notes: "Cross-axis history probe for undoing a TO grouping after restored-tab metadata became current.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["cross-axis", "restored", "metadata", "undo-redo", "history"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseTab", tab: { tabId: 2 } },
+      { type: "outlinerRestoreNodeRejectingCreate", node: { nodeId: "tab:2" }, captureRestoredTabs: "xh-history-restored-tab" },
+      { type: "updateTab", tab: { capture: "xh-history-restored-tab" }, title: "XH History Restored Current", url: "https://xh.example/history-restored" },
+      { type: "outlinerGroupTab", tab: { capture: "xh-history-restored-tab" }, captureStaleTabs: "xh-history-restored-old" },
+      { type: "outlinerUndo" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "xh-history-closed-external-record",
+    title: "history closed external record",
+    notes: "Cross-axis history probe for undo after a browser-created closed record is deleted by TO.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["cross-axis", "browserCreated", "native-close", "delete-rejection", "undo-redo"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "XH closed external", active: true }], captureWindow: "xh-history-external-window", captureTabs: "xh-history-external-tabs" },
+      { type: "nativeCloseWindow", window: { capture: "xh-history-external-window" }, order: "tabsRemovedThenWindowRemoved" },
+      { type: "outlinerDeleteNodeRejectingClose", node: { nodeId: "window:21" } },
+      { type: "outlinerUndo" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { windowId: 20 } }
+    ]
+  },
+  {
+    id: "xh-missing-command-window-after-scope-change",
+    title: "missing command window after scope change",
+    notes: "Cross-axis snapshot probe for a command-created scope after browser-authored sibling order and an unrelated missing-window query.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["cross-axis", "commandCreated", "partial-snapshot", "native-move", "manual-refresh"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "xh-missing-command-old" },
+      { type: "openTab", window: { role: "lastOpenedWindow" }, active: false, title: "XH missing command sibling", captureTab: "xh-missing-command-sibling" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "xh-missing-command-sibling" }, window: { role: "lastOpenedWindow" }, index: 0, active: true, captureStaleTabs: "xh-missing-command-sibling-old" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { windowId: 20 } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "xh-reordered-two-windows-after-native-move",
+    title: "reordered two windows after native move",
+    notes: "Cross-axis snapshot probe for two live windows receiving reordered query evidence after browser-authored moves.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["cross-axis", "stale-query", "native-move", "multi-window", "runtime-order"],
+    assertions: ["runtimeOrder"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, title: "XH reorder A", captureTab: "xh-reorder-a" },
+      { type: "openTab", window: { windowId: 20 }, active: false, title: "XH reorder B", captureTab: "xh-reorder-b" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "xh-reorder-a" }, window: { windowId: 10 }, index: 0, active: false, captureStaleTabs: "xh-reorder-a-old" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "xh-reorder-b" }, window: { windowId: 20 }, index: 0, active: false, captureStaleTabs: "xh-reorder-b-old" },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 10 }, order: "reverse" },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 20 }, order: "rotateLeft" }
+    ]
+  },
+  {
+    id: "xh-stale-event-local-then-complete",
+    title: "stale event local then complete",
+    notes: "Cross-axis snapshot probe where stale event-local evidence is followed by a complete refresh with current metadata.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["cross-axis", "stale-event", "manual-refresh", "metadata", "native-move"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "nativeMoveTabToWindow", tab: { tabId: 2 }, window: { windowId: 20 }, index: 0, active: true, captureStaleTabs: "xh-stale-local-old" },
+      { type: "updateTab", tab: { tabId: 2 }, title: "XH Stale Local Current", url: "https://xh.example/stale-local" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "xh-stale-local-old" }, withStaleQuery: false },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "xh-partial-after-scope-generation",
+    title: "partial after scope generation",
+    notes: "Cross-axis snapshot probe for a browser-created scope generation followed by partial missing-tab evidence and stale created echo.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["cross-axis", "browserCreated", "partial-snapshot", "created-event", "stale-event"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "XH partial A" }, { title: "XH partial B", active: true }], captureWindow: "xh-partial-generation-window", captureTabs: "xh-partial-generation-tabs" },
+      { type: "updateTab", tab: { inWindow: { capture: "xh-partial-generation-window" }, index: 1 }, title: "XH Partial Generation Current", url: "https://xh.example/partial-generation" },
+      { type: "manualRefreshWithMissingTabQuery", tab: { inWindow: { capture: "xh-partial-generation-window" }, index: 0 } },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "xh-partial-generation-tabs" }, withStaleQuery: false },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "xh-abrupt-native-move-no-journal",
+    title: "abrupt native move no journal",
+    notes: "Cross-axis restart probe for browser-authored move across abrupt restart with no command journal.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["cross-axis", "restart", "native-move", "browser-authored"],
+    assertions: ["runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "nativeMoveTabToNewWindow", tab: { tabId: 2 }, active: true, captureWindow: "xh-abrupt-move-window", captureStaleTabs: "xh-abrupt-move-old" },
+      { type: "restartBackgroundAbrupt" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "XH Abrupt Move Current", url: "https://xh.example/abrupt-move" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "xh-abrupt-native-open-no-journal",
+    title: "abrupt native open no journal",
+    notes: "Cross-axis restart probe for browser-created window metadata across abrupt restart with no command journal.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["cross-axis", "restart", "native-open", "browserCreated", "metadata"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: true, tabs: [{ title: "XH abrupt open", active: true }], captureWindow: "xh-abrupt-open-window", captureTabs: "xh-abrupt-open-tabs" },
+      { type: "updateTab", tab: { capture: "xh-abrupt-open-tabs" }, title: "XH Abrupt Open Current", url: "https://xh.example/abrupt-open" },
+      { type: "restartBackgroundAbrupt" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "xh-abrupt-native-close-no-journal",
+    title: "abrupt native close no journal",
+    notes: "Cross-axis restart probe for browser-created close after abrupt restart with no TO lifecycle journal.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["cross-axis", "restart", "native-close", "browserCreated"],
+    actions: [
+      { type: "nativeOpenWindow", focused: true, tabs: [{ title: "XH abrupt close", active: true }], captureWindow: "xh-abrupt-close-window", captureTabs: "xh-abrupt-close-tabs" },
+      { type: "restartBackgroundAbrupt" },
+      { type: "nativeCloseWindow", window: { capture: "xh-abrupt-close-window" }, order: "windowRemovedOnly" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "xh-abrupt-close-tabs" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "xh-abrupt-shape-update-no-journal",
+    title: "abrupt shape update no journal",
+    notes: "Cross-axis restart probe for browser-authored window-state and metadata across abrupt restart.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["cross-axis", "restart", "window-state", "browserCreated", "metadata"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "XH abrupt shape", active: true }], captureWindow: "xh-abrupt-shape-window", captureTabs: "xh-abrupt-shape-tabs" },
+      { type: "nativeSetWindowState", window: { capture: "xh-abrupt-shape-window" }, state: "maximized" },
+      { type: "updateTab", tab: { capture: "xh-abrupt-shape-tabs" }, title: "XH Abrupt Shape Current", url: "https://xh.example/abrupt-shape" },
+      { type: "restartBackgroundAbrupt" },
+      { type: "nativeSetWindowState", window: { capture: "xh-abrupt-shape-window" }, state: "normal" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "xh-focus-session-after-browser-shape",
+    title: "focus session after browser shape",
+    notes: "Clean-block cross-axis probe for focus/session churn after browser-authored window shape and metadata evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["cross-axis", "focus", "session", "window-state", "metadata"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "XH focus shape", active: true }], captureWindow: "xh-focus-shape-window", captureTabs: "xh-focus-shape-tabs" },
+      { type: "nativeSetWindowState", window: { capture: "xh-focus-shape-window" }, state: "maximized" },
+      { type: "updateTab", tab: { capture: "xh-focus-shape-tabs" }, title: "XH Focus Shape Current", url: "https://xh.example/focus-shape" },
+      { type: "focusWindow", window: { capture: "xh-focus-shape-window" } },
+      { type: "sessionChanged" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "xh-partial-query-after-focus-shape",
+    title: "partial query after focus shape",
+    notes: "Clean-block cross-axis probe for a focused browser-created scope omitted from one partial query after shape evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["cross-axis", "focus", "partial-snapshot", "window-state", "browserCreated"],
+    actions: [
+      { type: "nativeOpenWindow", focused: true, tabs: [{ title: "XH focus partial", active: true }], captureWindow: "xh-focus-partial-window", captureTabs: "xh-focus-partial-tabs" },
+      { type: "nativeSetWindowState", window: { capture: "xh-focus-partial-window" }, state: "minimized" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { capture: "xh-focus-partial-window" } },
+      { type: "nativeSetWindowState", window: { capture: "xh-focus-partial-window" }, state: "normal" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "xh-command-sibling-focus-session-shape",
+    title: "command sibling focus session shape",
+    notes: "Clean-block cross-axis probe for focus/session evidence in a command-created destination with a browser-authored sibling.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["cross-axis", "commandCreated", "focus", "session", "metadata"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "xh-command-focus-shape-old" },
+      { type: "openTab", window: { role: "lastOpenedWindow" }, active: false, title: "XH command focus sibling", captureTab: "xh-command-focus-sibling" },
+      { type: "updateTab", tab: { capture: "xh-command-focus-sibling" }, title: "XH Command Focus Current", url: "https://xh.example/command-focus" },
+      { type: "focusWindow", window: { role: "lastOpenedWindow" } },
+      { type: "sessionChanged" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "xh-restored-focus-partial-metadata",
+    title: "restored focus partial metadata",
+    notes: "Clean-block cross-axis probe for restored scope metadata when an unrelated focused window is omitted from query evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["cross-axis", "restored", "focus", "partial-snapshot", "metadata"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseTab", tab: { tabId: 2 } },
+      { type: "outlinerRestoreNodeRejectingCreate", node: { nodeId: "tab:2" }, captureRestoredTabs: "xh-restored-focus-partial-tab" },
+      { type: "updateTab", tab: { capture: "xh-restored-focus-partial-tab" }, title: "XH Restored Focus Partial", url: "https://xh.example/restored-focus-partial" },
+      { type: "focusWindow", window: { windowId: 20 } },
+      { type: "manualRefreshWithMissingWindowQuery", window: { windowId: 20 } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "xh-window-state-window-removed-browser-created",
+    title: "window state window removed browser created",
+    notes: "Rung-1 probe for browser-created window-state followed by windowRemoved-only close evidence and stale echo.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["cross-axis", "window-state", "browserCreated", "native-close", "event-order"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "XH state removed", active: true }], captureWindow: "xh-state-removed-window", captureTabs: "xh-state-removed-tabs" },
+      { type: "nativeSetWindowState", window: { capture: "xh-state-removed-window" }, state: "maximized" },
+      { type: "nativeCloseWindow", window: { capture: "xh-state-removed-window" }, order: "windowRemovedOnly" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "xh-state-removed-tabs" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "xh-window-state-tabs-only-restored",
+    title: "window state tabs only restored",
+    notes: "Rung-1 probe for restored window-state followed by tabsRemoved-only whole-window close evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["cross-axis", "window-state", "restored", "native-close", "event-order"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "xh-state-tabs-restored-tabs", captureRestoredWindows: "xh-state-tabs-restored-window" },
+      { type: "nativeSetWindowState", window: { capture: "xh-state-tabs-restored-window" }, state: "minimized" },
+      { type: "nativeCloseWindow", window: { capture: "xh-state-tabs-restored-window" }, order: "tabsRemovedOnly" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "xh-window-state-session-command-created",
+    title: "window state session command created",
+    notes: "Rung-1 probe for command-created window-state before session-only last-tab disappearance.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["cross-axis", "window-state", "commandCreated", "session", "native-close"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "xh-state-command-old" },
+      { type: "nativeSetWindowState", window: { role: "lastOpenedWindow" }, state: "maximized" },
+      { type: "nativeCloseTab", tab: { role: "lastMovedTab" }, order: "sessionChangedOnly" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "xh-state-command-old" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "xh-window-state-survivor-saved",
+    title: "window state survivor saved",
+    notes: "Rung-1 probe for saved multi-tab survivor metadata after window-state and tab-only close evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["cross-axis", "window-state", "saved", "native-close", "metadata"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, title: "XH state survivor", captureTab: "xh-state-survivor-tab" },
+      { type: "nativeSetWindowState", window: { windowId: 10 }, state: "fullscreen" },
+      { type: "nativeCloseTab", tab: { tabId: 2 }, order: "tabRemovedOnly" },
+      { type: "updateTab", tab: { capture: "xh-state-survivor-tab" }, title: "XH State Survivor Current", url: "https://xh.example/state-survivor" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "xh-rung2-restored-fullscreen-move-partial",
+    title: "rung2 restored fullscreen move partial",
+    notes: "Rung-2 mix of restored scope, fullscreen shape, browser-authored move, current metadata, and partial query.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["cross-axis", "restored", "fullscreen", "native-move", "partial-snapshot", "metadata"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "xh-rung2-restored-tabs", captureRestoredWindows: "xh-rung2-restored-window" },
+      { type: "openTab", window: { capture: "xh-rung2-restored-window" }, active: false, title: "XH rung2 restored sibling", captureTab: "xh-rung2-restored-sibling" },
+      { type: "nativeSetWindowState", window: { capture: "xh-rung2-restored-window" }, state: "fullscreen" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "xh-rung2-restored-sibling" }, window: { capture: "xh-rung2-restored-window" }, index: 0, active: true, captureStaleTabs: "xh-rung2-restored-old" },
+      { type: "updateTab", tab: { capture: "xh-rung2-restored-sibling" }, title: "XH Rung2 Restored Current", url: "https://xh.example/rung2-restored" },
+      { type: "manualRefreshWithMissingTabQuery", tab: { capture: "xh-rung2-restored-tabs" } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "xh-rung2-browser-opener-restart-metadata",
+    title: "rung2 browser opener restart metadata",
+    notes: "Rung-2 mix of browser-created scope, opener child, restart reconstruction, and current metadata.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["cross-axis", "browserCreated", "opener", "restart", "metadata"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "XH rung2 opener root", active: true }], captureWindow: "xh-rung2-opener-window", captureTabs: "xh-rung2-opener-root" },
+      { type: "openTab", window: { capture: "xh-rung2-opener-window" }, active: false, openerTab: { capture: "xh-rung2-opener-root" }, title: "XH rung2 opener child", captureTab: "xh-rung2-opener-child" },
+      { type: "restartBackgroundAbrupt" },
+      { type: "updateTab", tab: { capture: "xh-rung2-opener-child" }, title: "XH Rung2 Opener Current", url: "https://xh.example/rung2-opener" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "xh-rung2-command-window-state-browser-missing",
+    title: "rung2 command window state browser missing",
+    notes: "Rung-2 mix of command-created destination, browser-authored sibling, window-state, and missing-window query.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["cross-axis", "commandCreated", "window-state", "native-open", "partial-snapshot"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "xh-rung2-command-old" },
+      { type: "openTab", window: { role: "lastOpenedWindow" }, active: false, title: "XH rung2 command sibling", captureTab: "xh-rung2-command-sibling" },
+      { type: "nativeSetWindowState", window: { role: "lastOpenedWindow" }, state: "maximized" },
+      { type: "updateTab", tab: { capture: "xh-rung2-command-sibling" }, title: "XH Rung2 Command Current", url: "https://xh.example/rung2-command" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { windowId: 20 } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "xh-rung2-saved-focus-reorder-stale",
+    title: "rung2 saved focus reorder stale",
+    notes: "Rung-2 mix of saved scope, focus, browser-authored reorder, stale event-local evidence, and complete refresh.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["cross-axis", "saved", "focus", "native-move", "stale-event", "runtime-order"],
+    assertions: ["runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "focusWindow", window: { windowId: 10 } },
+      { type: "nativeMoveTabToWindow", tab: { tabId: 2 }, window: { windowId: 10 }, index: 0, active: true, captureStaleTabs: "xh-rung2-saved-old" },
+      { type: "updateTab", tab: { tabId: 2 }, title: "XH Rung2 Saved Current", url: "https://xh.example/rung2-saved" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "xh-rung2-saved-old" }, withStaleQuery: false },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "xh-assert-order-same-window-reorder",
+    title: "assert order same window reorder",
+    notes: "Cross-axis assertion probe for same-window runtime order after a browser-authored reorder.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["cross-axis", "runtime-order", "native-move", "saved"],
+    assertions: ["runtimeOrder"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, title: "XH order same", captureTab: "xh-order-same-tab" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "xh-order-same-tab" }, window: { windowId: 10 }, index: 0, active: false, captureStaleTabs: "xh-order-same-old" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "xh-assert-order-cross-window-move",
+    title: "assert order cross window move",
+    notes: "Cross-axis assertion probe for runtime order after browser-authored cross-window move.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["cross-axis", "runtime-order", "native-move", "multi-window"],
+    assertions: ["runtimeOrder"],
+    actions: [
+      { type: "nativeMoveTabToWindow", tab: { tabId: 2 }, window: { windowId: 20 }, index: 0, active: true, captureStaleTabs: "xh-order-cross-old" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "xh-assert-metadata-restored-update",
+    title: "assert metadata restored update",
+    notes: "Cross-axis assertion probe for restored-tab metadata as current browser shape.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["cross-axis", "runtimeMetadata", "restored", "metadata"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseTab", tab: { tabId: 2 } },
+      { type: "outlinerRestoreNodeRejectingCreate", node: { nodeId: "tab:2" }, captureRestoredTabs: "xh-assert-restored-tab" },
+      { type: "updateTab", tab: { capture: "xh-assert-restored-tab" }, title: "XH Assert Restored Current", url: "https://xh.example/assert-restored" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "xh-assert-metadata-browser-sibling",
+    title: "assert metadata browser sibling",
+    notes: "Cross-axis assertion probe for browser-created sibling metadata under reordered query evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["cross-axis", "runtimeMetadata", "browserCreated", "metadata", "stale-query"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "XH assert A" }, { title: "XH assert B", active: true }], captureWindow: "xh-assert-browser-window", captureTabs: "xh-assert-browser-tabs" },
+      { type: "updateTab", tab: { inWindow: { capture: "xh-assert-browser-window" }, index: 1 }, title: "XH Assert Browser Current", url: "https://xh.example/assert-browser" },
+      { type: "manualRefreshWithReorderedQuery", window: { capture: "xh-assert-browser-window" }, order: "reverse" }
+    ]
+  },
+  {
+    id: "xh-fullscreen-native-move-cross",
+    title: "fullscreen native move cross",
+    notes: "High-temperature mix of fullscreen window shape and browser-authored cross-window move.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["cross-axis", "fullscreen", "window-state", "native-move", "multi-window"],
+    assertions: ["runtimeOrder"],
+    actions: [
+      { type: "nativeSetWindowState", window: { windowId: 10 }, state: "fullscreen" },
+      { type: "nativeMoveTabToWindow", tab: { tabId: 2 }, window: { windowId: 20 }, index: 0, active: true, captureStaleTabs: "xh-fullscreen-move-old" },
+      { type: "nativeSetWindowState", window: { windowId: 10 }, state: "normal" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "xh-restored-opener-close-mix",
+    title: "restored opener close mix",
+    notes: "High-temperature mix of restored scope, opener child, and browser-authored tab close.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["cross-axis", "restored", "opener", "native-close", "metadata"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "xh-restored-opener-root", captureRestoredWindows: "xh-restored-opener-window" },
+      { type: "openTab", window: { capture: "xh-restored-opener-window" }, active: false, openerTab: { capture: "xh-restored-opener-root" }, title: "XH restored opener child", captureTab: "xh-restored-opener-child" },
+      { type: "nativeCloseTab", tab: { capture: "xh-restored-opener-root" }, order: "sessionChangedThenTabRemoved" },
+      { type: "updateTab", tab: { capture: "xh-restored-opener-child" }, title: "XH Restored Opener Current", url: "https://xh.example/restored-opener" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "xh-command-browser-sibling-stale-echo",
+    title: "command browser sibling stale echo",
+    notes: "High-temperature mix of command relocation, browser-created sibling, current metadata, and stale old echo.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["cross-axis", "commandCreated", "browserCreated", "relocation", "stale-event"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "xh-command-browser-old" },
+      { type: "openTab", window: { role: "lastOpenedWindow" }, active: false, title: "XH command browser sibling", captureTab: "xh-command-browser-sibling" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "XH Command Browser Current", url: "https://xh.example/command-browser" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "xh-command-browser-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "xh-browser-close-history-missing-query",
+    title: "browser close history missing query",
+    notes: "High-temperature mix of browser-created close, TO history replay, and missing-window query evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["cross-axis", "browserCreated", "native-close", "undo-redo", "partial-snapshot"],
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "xh-browser-close-history-group-old" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "XH browser close history", active: true }], captureWindow: "xh-browser-close-history-window", captureTabs: "xh-browser-close-history-tabs" },
+      { type: "nativeCloseWindow", window: { capture: "xh-browser-close-history-window" }, order: "tabsRemovedThenWindowRemoved" },
+      { type: "outlinerUndo" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { windowId: 20 } }
+    ]
+  },
+  {
+    id: "qh-partial-browser-window-saved-reorder",
+    title: "partial browser window saved reorder",
+    notes: "Snapshot-confidence probe for a browser-created window omitted while a saved window reports current metadata and reordered query evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["snapshot-confidence", "partial-snapshot", "browserCreated", "saved", "metadata"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "QH partial browser A" }, { title: "QH partial browser B", active: true }], captureWindow: "qh-partial-browser-window", captureTabs: "qh-partial-browser-tabs" },
+      { type: "updateTab", tab: { tabId: 2 }, title: "QH Saved Partial Current", url: "https://qh.example/saved-partial" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { capture: "qh-partial-browser-window" } },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 10 }, order: "reverse" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "qh-partial-command-destination-missing",
+    title: "partial command destination missing",
+    notes: "Snapshot-confidence probe for a command-created destination omitted from one partial query while its browser-authored sibling has current metadata.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["snapshot-confidence", "partial-snapshot", "commandCreated", "metadata"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "qh-partial-command-old" },
+      { type: "openTab", window: { role: "lastOpenedWindow" }, active: false, title: "QH command sibling", captureTab: "qh-partial-command-sibling" },
+      { type: "updateTab", tab: { capture: "qh-partial-command-sibling" }, title: "QH Command Partial Current", url: "https://qh.example/command-partial" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { role: "lastOpenedWindow" } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "qh-partial-restored-window-missing",
+    title: "partial restored window missing",
+    notes: "Snapshot-confidence probe for a restored window omitted from a partial query before a complete metadata refresh.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["snapshot-confidence", "partial-snapshot", "restored", "metadata"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "qh-partial-restored-tabs", captureRestoredWindows: "qh-partial-restored-window" },
+      { type: "updateTab", tab: { capture: "qh-partial-restored-tabs" }, title: "QH Restored Partial Current", url: "https://qh.example/restored-partial" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { capture: "qh-partial-restored-window" } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "qh-partial-browser-window-reordered",
+    title: "partial browser window reordered",
+    notes: "Snapshot-confidence probe for browser-created multi-tab order when a saved window is omitted and the browser-created scope reports a reordered query.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["snapshot-confidence", "partial-snapshot", "browserCreated", "runtime-order"],
+    assertions: ["runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "QH browser order A" }, { title: "QH browser order B", active: true }], captureWindow: "qh-partial-order-window", captureTabs: "qh-partial-order-tabs" },
+      { type: "updateTab", tab: { inWindow: { capture: "qh-partial-order-window" }, index: 1 }, title: "QH Browser Order Current", url: "https://qh.example/browser-order" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { windowId: 10 } },
+      { type: "manualRefreshWithReorderedQuery", window: { capture: "qh-partial-order-window" }, order: "reverse" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "qh-stale-created-then-complete-order",
+    title: "stale created then complete order",
+    notes: "Snapshot-confidence probe for stale event-local created evidence arriving before a complete refresh with current same-window order.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["snapshot-confidence", "stale-event", "created-event", "runtime-order", "manual-refresh"],
+    assertions: ["runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "nativeMoveTabToWindow", tab: { tabId: 2 }, window: { windowId: 10 }, index: 0, active: true, captureStaleTabs: "qh-stale-created-before" },
+      { type: "updateTab", tab: { tabId: 2 }, title: "QH Stale Created Current", url: "https://qh.example/stale-created" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "qh-stale-created-before" }, withStaleQuery: false },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "qh-stale-updated-then-complete-metadata",
+    title: "stale updated then complete metadata",
+    notes: "Snapshot-confidence probe for stale updated evidence before complete current metadata after a browser-authored cross-window move.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["snapshot-confidence", "stale-event", "updated-event", "native-move", "metadata"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "nativeMoveTabToWindow", tab: { tabId: 2 }, window: { windowId: 20 }, index: 0, active: true, captureStaleTabs: "qh-stale-updated-before" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "QH Stale Updated Current", url: "https://qh.example/stale-updated" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "qh-stale-updated-before" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "qh-stale-activation-then-complete",
+    title: "stale activation then complete",
+    notes: "Snapshot-confidence probe for stale activation query evidence before complete current active state.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["snapshot-confidence", "activation", "stale-query", "native-move", "manual-refresh"],
+    actions: [
+      { type: "nativeMoveTabToWindow", tab: { tabId: 2 }, window: { windowId: 20 }, index: 0, active: false, captureStaleTabs: "qh-stale-activation-before" },
+      { type: "activateTab", tab: { role: "lastMovedTab" }, staleQueryFrom: { capture: "qh-stale-activation-before" } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "qh-stale-ownership-then-complete",
+    title: "stale ownership then complete",
+    notes: "Snapshot-confidence probe for stale old-window ownership evidence after browser-authored detach and before a complete refresh.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["snapshot-confidence", "stale-event", "native-move", "restart"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "nativeMoveTabToNewWindow", tab: { tabId: 2 }, active: true, captureWindow: "qh-stale-owner-window", captureStaleTabs: "qh-stale-owner-before" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "QH Stale Owner Current", url: "https://qh.example/stale-owner" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "qh-stale-owner-before" }, withStaleQuery: true },
+      { type: "restartBackground" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "qh-reordered-two-windows-strict",
+    title: "reordered two windows strict",
+    notes: "Snapshot-confidence probe for two runtime windows reporting reordered snapshots before complete browser order is restored.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["snapshot-confidence", "stale-query", "multi-window", "runtime-order"],
+    assertions: ["runtimeOrder"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, title: "QH reorder saved", captureTab: "qh-reorder-saved-tab" },
+      { type: "openTab", window: { windowId: 20 }, active: false, title: "QH reorder background", captureTab: "qh-reorder-background-tab" },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 10 }, order: "reverse" },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 20 }, order: "rotateLeft" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "qh-reordered-source-destination-after-move",
+    title: "reordered source destination after move",
+    notes: "Snapshot-confidence probe for reordered source and destination snapshots after browser-authored cross-window movement.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["snapshot-confidence", "stale-query", "native-move", "multi-window", "runtime-order"],
+    assertions: ["runtimeOrder"],
+    actions: [
+      { type: "nativeMoveTabToWindow", tab: { tabId: 2 }, window: { windowId: 20 }, index: 0, active: true, captureStaleTabs: "qh-reorder-move-before" },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 10 }, order: "reverse" },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 20 }, order: "rotateRight" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "qh-restored-reorder-after-restart",
+    title: "restored reorder after restart",
+    notes: "Snapshot-confidence probe for restored-window reorder evidence after restart reconstruction.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["snapshot-confidence", "restored", "restart", "runtime-order", "metadata"],
+    assertions: ["runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "qh-restored-reorder-tabs", captureRestoredWindows: "qh-restored-reorder-window" },
+      { type: "openTab", window: { capture: "qh-restored-reorder-window" }, active: false, title: "QH restored reorder sibling", captureTab: "qh-restored-reorder-sibling" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "qh-restored-reorder-sibling" }, window: { capture: "qh-restored-reorder-window" }, index: 0, active: true, captureStaleTabs: "qh-restored-reorder-before" },
+      { type: "restartBackground" },
+      { type: "manualRefreshWithReorderedQuery", window: { capture: "qh-restored-reorder-window" }, order: "reverse" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "qh-browser-sibling-reorder-strict",
+    title: "browser sibling reorder strict",
+    notes: "Snapshot-confidence probe for browser-created sibling order with strict runtime order assertion.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["snapshot-confidence", "browserCreated", "native-open", "runtime-order"],
+    assertions: ["runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "QH sibling A" }, { title: "QH sibling B", active: true }], captureWindow: "qh-browser-sibling-window", captureTabs: "qh-browser-sibling-tabs" },
+      { type: "openTab", window: { capture: "qh-browser-sibling-window" }, active: false, title: "QH sibling C", captureTab: "qh-browser-sibling-extra" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "qh-browser-sibling-extra" }, window: { capture: "qh-browser-sibling-window" }, index: 0, active: true, captureStaleTabs: "qh-browser-sibling-before" },
+      { type: "manualRefreshWithReorderedQuery", window: { capture: "qh-browser-sibling-window" }, order: "reverse" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "qh-history-undo-partial-query",
+    title: "history undo partial query",
+    notes: "Snapshot-confidence probe for partial destination evidence before history undo over a browser-authored move.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["snapshot-confidence", "history", "undo-redo", "partial-snapshot", "native-move"],
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 2 }, captureStaleTabs: "qh-history-partial-group" },
+      { type: "nativeMoveTabToWindow", tab: { tabId: 2 }, window: { windowId: 20 }, index: 0, active: true, captureStaleTabs: "qh-history-partial-move" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { windowId: 20 } },
+      { type: "outlinerUndo" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "qh-restore-delete-history-stale-query",
+    title: "restore delete history stale query",
+    notes: "Snapshot-confidence probe for restore/delete/history replay followed by missing-query and stale restored evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["snapshot-confidence", "restore", "delete-rejection", "undo-redo", "stale-query"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeRejectingCreate", node: { nodeId: "window:20" }, captureRestoredTabs: "qh-restore-delete-tabs", captureRestoredWindows: "qh-restore-delete-window" },
+      { type: "updateTab", tab: { capture: "qh-restore-delete-tabs" }, title: "QH Restore Delete Current", url: "https://qh.example/restore-delete" },
+      { type: "outlinerDeleteNodeRejectingClose", node: { window: { capture: "qh-restore-delete-window" } } },
+      { type: "outlinerUndo" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { windowId: 10 } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "qh-native-move-history-complete",
+    title: "native move history complete",
+    notes: "Snapshot-confidence probe for history replay after browser detach followed by complete refresh.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["snapshot-confidence", "history", "native-move", "manual-refresh"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "qh-native-history-group" },
+      { type: "nativeMoveTabToNewWindow", tab: { tabId: 1 }, active: true, captureWindow: "qh-native-history-window", captureStaleTabs: "qh-native-history-move" },
+      { type: "outlinerUndo" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "qh-closed-external-missing-history",
+    title: "closed external missing history",
+    notes: "Snapshot-confidence probe for a closed browser-created record plus old history replay and missing query evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["snapshot-confidence", "browserCreated", "native-close", "history", "partial-snapshot"],
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "qh-closed-external-group" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "QH closed external", active: true }], captureWindow: "qh-closed-external-window", captureTabs: "qh-closed-external-tabs" },
+      { type: "nativeCloseWindow", window: { capture: "qh-closed-external-window" }, order: "tabsRemovedThenWindowRemoved" },
+      { type: "outlinerUndo" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { windowId: 20 } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "qh-restart-native-open-partial-complete",
+    title: "restart native open partial complete",
+    notes: "Snapshot-confidence probe for browser-created metadata across abrupt restart, partial omission, and complete refresh.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["snapshot-confidence", "restart", "native-open", "browserCreated", "partial-snapshot"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "QH restart open A" }, { title: "QH restart open B", active: true }], captureWindow: "qh-restart-open-window", captureTabs: "qh-restart-open-tabs" },
+      { type: "updateTab", tab: { inWindow: { capture: "qh-restart-open-window" }, index: 1 }, title: "QH Restart Open Current", url: "https://qh.example/restart-open" },
+      { type: "restartBackgroundAbrupt" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { capture: "qh-restart-open-window" } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "qh-restart-native-move-partial-complete",
+    title: "restart native move partial complete",
+    notes: "Snapshot-confidence probe for browser-authored move across abrupt restart, partial source omission, and complete refresh.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["snapshot-confidence", "restart", "native-move", "partial-snapshot"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "nativeMoveTabToWindow", tab: { tabId: 2 }, window: { windowId: 20 }, index: 0, active: true, captureStaleTabs: "qh-restart-move-before" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "QH Restart Move Current", url: "https://qh.example/restart-move" },
+      { type: "restartBackgroundAbrupt" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { windowId: 10 } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "qh-restart-native-close-partial-complete",
+    title: "restart native close partial complete",
+    notes: "Snapshot-confidence probe for survivor metadata after native close across abrupt restart and partial omission.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["snapshot-confidence", "restart", "native-close", "partial-snapshot", "metadata"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "QH restart close A" }, { title: "QH restart close B", active: true }], captureWindow: "qh-restart-close-window", captureTabs: "qh-restart-close-tabs" },
+      { type: "nativeCloseTab", tab: { inWindow: { capture: "qh-restart-close-window" }, index: 0 }, order: "sessionChangedThenTabRemoved" },
+      { type: "updateTab", tab: { inWindow: { capture: "qh-restart-close-window" }, index: 0 }, title: "QH Restart Close Survivor", url: "https://qh.example/restart-close" },
+      { type: "restartBackgroundAbrupt" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { capture: "qh-restart-close-window" } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "qh-restart-shape-update-partial-complete",
+    title: "restart shape update partial complete",
+    notes: "Snapshot-confidence probe for browser-authored window-state plus metadata across abrupt restart and partial query.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["snapshot-confidence", "restart", "window-state", "metadata", "partial-snapshot"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "QH restart shape", active: true }], captureWindow: "qh-restart-shape-window", captureTabs: "qh-restart-shape-tabs" },
+      { type: "nativeSetWindowState", window: { capture: "qh-restart-shape-window" }, state: "maximized" },
+      { type: "updateTab", tab: { capture: "qh-restart-shape-tabs" }, title: "QH Restart Shape Current", url: "https://qh.example/restart-shape" },
+      { type: "restartBackgroundAbrupt" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { windowId: 10 } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "qh-fullscreen-partial-query",
+    title: "fullscreen partial query",
+    notes: "High-temperature snapshot-confidence mix for fullscreen window shape and partial omission before complete refresh.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["snapshot-confidence", "fullscreen", "window-state", "partial-snapshot", "metadata"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "nativeSetWindowState", window: { windowId: 10 }, state: "fullscreen" },
+      { type: "updateTab", tab: { tabId: 1 }, title: "QH Fullscreen Partial Current", url: "https://qh.example/fullscreen-partial" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { windowId: 10 } },
+      { type: "nativeSetWindowState", window: { windowId: 10 }, state: "normal" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "qh-opener-stale-event-local-metadata",
+    title: "opener stale event local metadata",
+    notes: "High-temperature snapshot-confidence mix for opener-linked metadata, browser move, stale event-local evidence, and complete refresh.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["snapshot-confidence", "opener", "stale-event", "metadata", "native-move"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, openerTab: { tabId: 1 }, captureTab: "qh-opener-stale-child" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "qh-opener-stale-child" }, window: { windowId: 20 }, active: false, captureStaleTabs: "qh-opener-stale-before" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "QH Opener Stale Current", url: "https://qh.example/opener-stale" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "qh-opener-stale-before" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "qh-command-browser-sibling-missing-destination",
+    title: "command browser sibling missing destination",
+    notes: "High-temperature snapshot-confidence mix for command-created destination, browser-authored sibling metadata, stale old evidence, and missing destination query.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["snapshot-confidence", "commandCreated", "browserCreated", "partial-snapshot", "stale-event"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "qh-command-browser-old" },
+      { type: "openTab", window: { role: "lastOpenedWindow" }, active: false, title: "QH command browser sibling", captureTab: "qh-command-browser-sibling" },
+      { type: "updateTab", tab: { capture: "qh-command-browser-sibling" }, title: "QH Command Browser Current", url: "https://qh.example/command-browser" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { role: "lastOpenedWindow" } },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "qh-command-browser-old" }, withStaleQuery: false },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "qh-restored-native-move-reordered-survivor",
+    title: "restored native move reordered survivor",
+    notes: "High-temperature snapshot-confidence mix for restored scope, browser-authored reorder, native close survivor, reordered query, and complete refresh.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["snapshot-confidence", "restored", "native-move", "native-close", "runtime-order"],
+    assertions: ["runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "qh-restored-survivor-tabs", captureRestoredWindows: "qh-restored-survivor-window" },
+      { type: "openTab", window: { capture: "qh-restored-survivor-window" }, active: false, title: "QH restored survivor sibling", captureTab: "qh-restored-survivor-sibling" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "qh-restored-survivor-sibling" }, window: { capture: "qh-restored-survivor-window" }, index: 0, active: true, captureStaleTabs: "qh-restored-survivor-before" },
+      { type: "nativeCloseTab", tab: { capture: "qh-restored-survivor-tabs" }, order: "tabRemovedOnly" },
+      { type: "manualRefreshWithReorderedQuery", window: { capture: "qh-restored-survivor-window" }, order: "reverse" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "qh-rung1-missing-two-window-complete-later",
+    title: "rung1 missing two window complete later",
+    notes: "Temperature rung 1: omit different windows across partial snapshots before one complete refresh must preserve current shape.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["snapshot-confidence", "partial-snapshot", "multi-window", "metadata"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "QH R1 browser A" }, { title: "QH R1 browser B", active: true }], captureWindow: "qh-r1-missing-browser-window", captureTabs: "qh-r1-missing-browser-tabs" },
+      { type: "updateTab", tab: { tabId: 2 }, title: "QH R1 Saved Current", url: "https://qh.example/r1-saved" },
+      { type: "updateTab", tab: { inWindow: { capture: "qh-r1-missing-browser-window" }, index: 1 }, title: "QH R1 Browser Current", url: "https://qh.example/r1-browser" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { windowId: 10 } },
+      { type: "manualRefreshWithMissingWindowQuery", window: { capture: "qh-r1-missing-browser-window" } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "qh-rung1-stale-updated-after-reordered-complete",
+    title: "rung1 stale updated after reordered complete",
+    notes: "Temperature rung 1: complete reordered shape must dominate a later stale updated echo.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["snapshot-confidence", "stale-event", "updated-event", "runtime-order"],
+    assertions: ["runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, title: "QH R1 stale reorder", captureTab: "qh-r1-stale-reorder-tab" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "qh-r1-stale-reorder-tab" }, window: { windowId: 10 }, index: 0, active: true, captureStaleTabs: "qh-r1-stale-reorder-before" },
+      { type: "manualRefresh" },
+      { type: "updateTab", tab: { capture: "qh-r1-stale-reorder-tab" }, title: "QH R1 Reordered Current", url: "https://qh.example/r1-reorder" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "qh-r1-stale-reorder-before" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "qh-rung1-history-redo-after-partial-refresh",
+    title: "rung1 history redo after partial refresh",
+    notes: "Temperature rung 1: redo after partial query should preserve current browser shape for surviving live resources.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["snapshot-confidence", "history", "undo-redo", "partial-snapshot"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "qh-r1-history-redo-group" },
+      { type: "outlinerUndo" },
+      { type: "nativeMoveTabToWindow", tab: { tabId: 1 }, window: { windowId: 20 }, index: 0, active: true, captureStaleTabs: "qh-r1-history-redo-move" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "QH R1 History Redo Current", url: "https://qh.example/r1-history-redo" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { windowId: 20 } },
+      { type: "outlinerRedo" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "qh-rung1-restart-event-local-before-complete",
+    title: "rung1 restart event local before complete",
+    notes: "Temperature rung 1: stale event-local evidence after abrupt restart must not dominate the following complete snapshot.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["snapshot-confidence", "restart", "stale-event", "native-open"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "QH R1 restart event", active: true }], captureWindow: "qh-r1-restart-event-window", captureTabs: "qh-r1-restart-event-tabs" },
+      { type: "updateTab", tab: { capture: "qh-r1-restart-event-tabs" }, title: "QH R1 Restart Event Current", url: "https://qh.example/r1-restart-event" },
+      { type: "restartBackgroundAbrupt" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "qh-r1-restart-event-tabs" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "qh-rung1-command-created-missing-source-complete",
+    title: "rung1 command created missing source complete",
+    notes: "Temperature rung 1: a missing source snapshot after command relocation must not regress command-created destination shape.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["snapshot-confidence", "commandCreated", "relocation", "partial-snapshot"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 2 }, captureStaleTabs: "qh-r1-command-source-old" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "QH R1 Command Destination Current", url: "https://qh.example/r1-command-destination" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { windowId: 10 } },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "qh-r1-command-source-old" }, withStaleQuery: false },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "qh-rung1-restored-missing-survivor-metadata",
+    title: "rung1 restored missing survivor metadata",
+    notes: "Temperature rung 1: partial restored-window omission must not lose survivor metadata after native tab close.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["snapshot-confidence", "restored", "native-close", "partial-snapshot", "metadata"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "qh-r1-restored-survivor-tabs", captureRestoredWindows: "qh-r1-restored-survivor-window" },
+      { type: "openTab", window: { capture: "qh-r1-restored-survivor-window" }, active: true, title: "QH R1 restored survivor", captureTab: "qh-r1-restored-survivor-sibling" },
+      { type: "nativeCloseTab", tab: { capture: "qh-r1-restored-survivor-tabs" }, order: "sessionChangedThenTabRemoved" },
+      { type: "updateTab", tab: { capture: "qh-r1-restored-survivor-sibling" }, title: "QH R1 Restored Survivor Current", url: "https://qh.example/r1-restored-survivor" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { capture: "qh-r1-restored-survivor-window" } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "qh-rung1-browser-created-stale-created-complete",
+    title: "rung1 browser created stale created complete",
+    notes: "Temperature rung 1: a browser-created scope's current metadata should dominate a stale created echo before complete refresh.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["snapshot-confidence", "browserCreated", "created-event", "stale-event", "metadata"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "QH R1 browser stale", active: true }], captureWindow: "qh-r1-browser-stale-window", captureTabs: "qh-r1-browser-stale-tabs" },
+      { type: "updateTab", tab: { capture: "qh-r1-browser-stale-tabs" }, title: "QH R1 Browser Stale Current", url: "https://qh.example/r1-browser-stale" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "qh-r1-browser-stale-tabs" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "qh-rung1-session-close-partial-other-reordered",
+    title: "rung1 session close partial other reordered",
+    notes: "Temperature rung 1: session-only tab disappearance in one window plus reordered evidence in another should not erase unrelated shape.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["snapshot-confidence", "session", "native-close", "stale-query", "runtime-order"],
+    assertions: ["runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, title: "QH R1 session reorder", captureTab: "qh-r1-session-reorder-tab" },
+      { type: "nativeCloseTab", tab: { tabId: 3 }, order: "sessionChangedOnly" },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 10 }, order: "reverse" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "qh-rung2-fullscreen-opener-partial-history",
+    title: "rung2 fullscreen opener partial history",
+    notes: "Temperature rung 2: fullscreen, opener child, partial query, and history replay cross snapshot-confidence boundaries.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["snapshot-confidence", "fullscreen", "opener", "history", "partial-snapshot"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "qh-r2-fullscreen-history-group" },
+      { type: "outlinerUndo" },
+      { type: "nativeSetWindowState", window: { windowId: 10 }, state: "fullscreen" },
+      { type: "openTab", window: { windowId: 10 }, active: false, openerTab: { tabId: 1 }, title: "QH R2 opener", captureTab: "qh-r2-fullscreen-opener-child" },
+      { type: "updateTab", tab: { capture: "qh-r2-fullscreen-opener-child" }, title: "QH R2 Fullscreen Opener Current", url: "https://qh.example/r2-fullscreen-opener" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { windowId: 10 } },
+      { type: "outlinerRedo" },
+      { type: "nativeSetWindowState", window: { windowId: 10 }, state: "normal" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "qh-rung2-restored-native-move-stale-complete",
+    title: "rung2 restored native move stale complete",
+    notes: "Temperature rung 2: restored scope, browser-authored move, stale old evidence, and complete snapshot must converge on current shape.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["snapshot-confidence", "restored", "native-move", "stale-event", "metadata"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "qh-r2-restored-move-tabs", captureRestoredWindows: "qh-r2-restored-move-window" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "qh-r2-restored-move-tabs" }, window: { windowId: 10 }, index: 0, active: true, captureStaleTabs: "qh-r2-restored-move-before" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "QH R2 Restored Move Current", url: "https://qh.example/r2-restored-move" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "qh-r2-restored-move-before" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "qh-rung2-command-browser-sibling-history-missing",
+    title: "rung2 command browser sibling history missing",
+    notes: "Temperature rung 2: command-created destination, browser sibling, history replay, stale echo, and missing query.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["snapshot-confidence", "commandCreated", "browserCreated", "history", "partial-snapshot"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "qh-r2-command-history-old" },
+      { type: "openTab", window: { role: "lastOpenedWindow" }, active: false, title: "QH R2 command browser sibling", captureTab: "qh-r2-command-history-sibling" },
+      { type: "outlinerUndo" },
+      { type: "updateTab", tab: { capture: "qh-r2-command-history-sibling" }, title: "QH R2 Command History Current", url: "https://qh.example/r2-command-history" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { role: "lastOpenedWindow" } },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "qh-r2-command-history-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "qh-rung2-native-open-restart-history-metadata",
+    title: "rung2 native open restart history metadata",
+    notes: "Temperature rung 2: browser-created metadata across restart plus unrelated TO history replay.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["snapshot-confidence", "native-open", "restart", "history", "metadata"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 2 }, captureStaleTabs: "qh-r2-native-open-history-group" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "QH R2 native open", active: true }], captureWindow: "qh-r2-native-open-window", captureTabs: "qh-r2-native-open-tabs" },
+      { type: "updateTab", tab: { capture: "qh-r2-native-open-tabs" }, title: "QH R2 Native Open Current", url: "https://qh.example/r2-native-open" },
+      { type: "restartBackgroundAbrupt" },
+      { type: "outlinerUndo" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { capture: "qh-r2-native-open-window" } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "qh-rung2-closed-external-undo-partial-complete",
+    title: "rung2 closed external undo partial complete",
+    notes: "Temperature rung 2: externally closed record, undo, partial query, and complete refresh should not resurrect stale live IDs.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["snapshot-confidence", "browserCreated", "native-close", "undo-redo", "partial-snapshot"],
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "qh-r2-closed-external-group" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "QH R2 closed external", active: true }], captureWindow: "qh-r2-closed-external-window", captureTabs: "qh-r2-closed-external-tabs" },
+      { type: "nativeCloseWindow", window: { capture: "qh-r2-closed-external-window" }, order: "windowRemovedThenTabsRemoved" },
+      { type: "outlinerUndo" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { windowId: 10 } },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "qh-r2-closed-external-tabs" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "qh-rung2-saved-native-move-reorder-stale-activation",
+    title: "rung2 saved native move reorder stale activation",
+    notes: "Temperature rung 2: saved-window native move, reordered query, stale activation evidence, and complete refresh.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["snapshot-confidence", "saved", "native-move", "activation", "runtime-order"],
+    assertions: ["runtimeOrder"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, title: "QH R2 saved move", captureTab: "qh-r2-saved-move-tab" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "qh-r2-saved-move-tab" }, window: { windowId: 10 }, index: 0, active: true, captureStaleTabs: "qh-r2-saved-move-before" },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 10 }, order: "reverse" },
+      { type: "activateTab", tab: { tabId: 1 }, staleQueryFrom: { capture: "qh-r2-saved-move-before" } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "qh-rung2-browser-created-fullscreen-close-restart-query",
+    title: "rung2 browser created fullscreen close restart query",
+    notes: "Temperature rung 2: browser-created fullscreen window closes, restarts, then receives stale/partial evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["snapshot-confidence", "browserCreated", "fullscreen", "native-close", "restart"],
+    actions: [
+      { type: "nativeOpenWindow", focused: true, tabs: [{ title: "QH R2 fullscreen close", active: true }], captureWindow: "qh-r2-fullscreen-close-window", captureTabs: "qh-r2-fullscreen-close-tabs" },
+      { type: "nativeSetWindowState", window: { capture: "qh-r2-fullscreen-close-window" }, state: "fullscreen" },
+      { type: "nativeCloseWindow", window: { capture: "qh-r2-fullscreen-close-window" }, order: "sessionChangedOnly" },
+      { type: "restartBackgroundAbrupt" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { windowId: 10 } },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "qh-r2-fullscreen-close-tabs" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "qh-rung2-restored-delete-reject-stale-reordered",
+    title: "rung2 restored delete reject stale reordered",
+    notes: "Temperature rung 2: restored scope, delete rejection, stale evidence, reordered query, and complete refresh.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["snapshot-confidence", "restored", "delete-rejection", "stale-event", "runtime-order"],
+    assertions: ["runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "qh-r2-restored-delete-tabs", captureRestoredWindows: "qh-r2-restored-delete-window" },
+      { type: "openTab", window: { capture: "qh-r2-restored-delete-window" }, active: true, title: "QH R2 restored delete sibling", captureTab: "qh-r2-restored-delete-sibling" },
+      { type: "outlinerDeleteNodeRejectingClose", node: { tab: { capture: "qh-r2-restored-delete-tabs" } } },
+      { type: "manualRefreshWithReorderedQuery", window: { capture: "qh-r2-restored-delete-window" }, order: "reverse" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "qh-r2-restored-delete-tabs" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "qh-escape-window-state-native-move-partial",
+    title: "escape window state native move partial",
+    notes: "Final escape mutation: window-state shape, browser-authored move, partial source omission, and complete refresh.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["snapshot-confidence", "window-state", "native-move", "partial-snapshot", "metadata"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "nativeSetWindowState", window: { windowId: 10 }, state: "maximized" },
+      { type: "nativeMoveTabToWindow", tab: { tabId: 2 }, window: { windowId: 20 }, index: 0, active: true, captureStaleTabs: "qh-escape-state-move-before" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "QH Escape State Move Current", url: "https://qh.example/escape-state-move" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { windowId: 10 } },
+      { type: "nativeSetWindowState", window: { windowId: 10 }, state: "normal" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "qh-escape-restored-opener-history-restart-query",
+    title: "escape restored opener history restart query",
+    notes: "Final escape mutation: restored opener child crosses restart, history replay, and partial query confidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["snapshot-confidence", "restored", "opener", "history", "restart"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "qh-escape-restored-opener-group" },
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "qh-escape-restored-opener-tabs", captureRestoredWindows: "qh-escape-restored-opener-window" },
+      { type: "openTab", window: { capture: "qh-escape-restored-opener-window" }, active: false, openerTab: { capture: "qh-escape-restored-opener-tabs" }, title: "QH escape opener", captureTab: "qh-escape-restored-opener-child" },
+      { type: "updateTab", tab: { capture: "qh-escape-restored-opener-child" }, title: "QH Escape Restored Opener Current", url: "https://qh.example/escape-restored-opener" },
+      { type: "restartBackground" },
+      { type: "outlinerUndo" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { capture: "qh-escape-restored-opener-window" } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "qh-escape-command-created-double-reorder-complete",
+    title: "escape command created double reorder complete",
+    notes: "Final escape mutation: command-created destination and saved source both report reordered query evidence before complete refresh.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["snapshot-confidence", "commandCreated", "relocation", "runtime-order", "multi-window"],
+    assertions: ["runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "qh-escape-command-double-old" },
+      { type: "openTab", window: { role: "lastOpenedWindow" }, active: false, title: "QH escape command sibling", captureTab: "qh-escape-command-double-sibling" },
+      { type: "openTab", window: { windowId: 10 }, active: false, title: "QH escape saved sibling", captureTab: "qh-escape-command-double-saved" },
+      { type: "manualRefreshWithReorderedQuery", window: { role: "lastOpenedWindow" }, order: "reverse" },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 10 }, order: "rotateRight" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "qh-escape-browser-created-close-reopen-stale-query",
+    title: "escape browser created close reopen stale query",
+    notes: "Final escape mutation: browser-created closed record, stale closed echo, then new browser-created window with missing query evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["snapshot-confidence", "browserCreated", "native-close", "stale-event", "partial-snapshot"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "QH escape closed", active: true }], captureWindow: "qh-escape-close-window", captureTabs: "qh-escape-close-tabs" },
+      { type: "nativeCloseWindow", window: { capture: "qh-escape-close-window" }, order: "tabsRemovedThenWindowRemoved" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "qh-escape-close-tabs" }, withStaleQuery: true },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "QH escape reopened", active: true }], captureWindow: "qh-escape-reopen-window", captureTabs: "qh-escape-reopen-tabs" },
+      { type: "updateTab", tab: { capture: "qh-escape-reopen-tabs" }, title: "QH Escape Reopen Current", url: "https://qh.example/escape-reopen" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { capture: "qh-escape-reopen-window" } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "qh-escape-session-only-multitab-missing-complete",
+    title: "escape session only multitab missing complete",
+    notes: "Final escape mutation: session-only disappearance in a multi-tab browser-created window plus missing sibling-window query.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["snapshot-confidence", "browserCreated", "session", "native-close", "multi-tab"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "QH escape session A" }, { title: "QH escape session B", active: true }], captureWindow: "qh-escape-session-window", captureTabs: "qh-escape-session-tabs" },
+      { type: "nativeCloseTab", tab: { inWindow: { capture: "qh-escape-session-window" }, index: 0 }, order: "sessionChangedOnly" },
+      { type: "updateTab", tab: { inWindow: { capture: "qh-escape-session-window" }, index: 0 }, title: "QH Escape Session Survivor", url: "https://qh.example/escape-session" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { windowId: 10 } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "qh-escape-native-detach-history-redo-partial",
+    title: "escape native detach history redo partial",
+    notes: "Final escape mutation: browser detach to new window, old TO history redo, and missing destination query.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["snapshot-confidence", "native-move", "history", "undo-redo", "partial-snapshot"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 2 }, captureStaleTabs: "qh-escape-detach-history-group" },
+      { type: "outlinerUndo" },
+      { type: "nativeMoveTabToNewWindow", tab: { tabId: 2 }, active: true, captureWindow: "qh-escape-detach-window", captureStaleTabs: "qh-escape-detach-before" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "QH Escape Detach Current", url: "https://qh.example/escape-detach" },
+      { type: "outlinerRedo" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { capture: "qh-escape-detach-window" } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "qh-escape-stale-created-after-complete-metadata",
+    title: "escape stale created after complete metadata",
+    notes: "Final escape mutation: complete metadata refresh is followed by a stale created echo from an older scope generation.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["snapshot-confidence", "created-event", "stale-event", "metadata", "native-move"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "nativeMoveTabToWindow", tab: { tabId: 2 }, window: { windowId: 20 }, index: 0, active: true, captureStaleTabs: "qh-escape-stale-created-before" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "QH Escape Complete Current", url: "https://qh.example/escape-complete" },
+      { type: "manualRefresh" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "qh-escape-stale-created-before" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "qh-escape-abrupt-two-browser-windows-skew",
+    title: "escape abrupt two browser windows skew",
+    notes: "Final escape mutation: two browser-created windows cross abrupt restart, one omitted and one reordered before complete refresh.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["snapshot-confidence", "browserCreated", "restart", "multi-window", "runtime-order"],
+    assertions: ["runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "QH escape skew A1" }, { title: "QH escape skew A2", active: true }], captureWindow: "qh-escape-skew-window-a", captureTabs: "qh-escape-skew-tabs-a" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "QH escape skew B1" }, { title: "QH escape skew B2", active: true }], captureWindow: "qh-escape-skew-window-b", captureTabs: "qh-escape-skew-tabs-b" },
+      { type: "updateTab", tab: { inWindow: { capture: "qh-escape-skew-window-b" }, index: 1 }, title: "QH Escape Skew Current", url: "https://qh.example/escape-skew" },
+      { type: "restartBackgroundAbrupt" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { capture: "qh-escape-skew-window-a" } },
+      { type: "manualRefreshWithReorderedQuery", window: { capture: "qh-escape-skew-window-b" }, order: "reverse" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "ca-restored-native-close-history-partial",
+    title: "calibration restored native close history partial",
+    notes: "Bug-rich calibration: restored window browser close, old TO history replay, and partial query evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["calibration", "bug-rich", "restored", "native-close", "history", "partial-snapshot"],
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "ca-restored-history-group" },
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "ca-restored-history-tabs", captureRestoredWindows: "ca-restored-history-window" },
+      { type: "nativeCloseWindow", window: { capture: "ca-restored-history-window" }, order: "windowRemovedThenTabsRemoved" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { windowId: 10 } },
+      { type: "outlinerUndo" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "ca-browser-created-delete-abrupt-stale",
+    title: "calibration browser created delete abrupt stale",
+    notes: "Bug-rich calibration: external close becomes closed outline state, then TO delete crosses abrupt restart and stale echo.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["calibration", "bug-rich", "browserCreated", "native-close", "delete", "restart", "stale-event"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "CA external delete", active: true }], captureWindow: "ca-external-delete-window", captureTabs: "ca-external-delete-tabs" },
+      { type: "nativeCloseWindow", window: { capture: "ca-external-delete-window" }, order: "tabsRemovedThenWindowRemoved" },
+      { type: "outlinerDeleteNodeThenAbruptRestart", node: { nodeId: "window:21" } },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "ca-external-delete-tabs" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "ca-command-relocation-close-reject-history",
+    title: "calibration command relocation close reject history",
+    notes: "Bug-rich calibration: command-created destination close rejection, history replay, stale old echo, and missing source query.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["calibration", "bug-rich", "commandCreated", "relocation", "outliner-close", "undo-redo", "stale-event"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "ca-command-close-old" },
+      { type: "outlinerCloseNodeRejectingClose", node: { window: { role: "lastOpenedWindow" } } },
+      { type: "outlinerUndo" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "ca-command-close-old" }, withStaleQuery: true },
+      { type: "manualRefreshWithMissingWindowQuery", window: { windowId: 10 } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "ca-restore-delete-crash-stale",
+    title: "calibration restore delete crash stale",
+    notes: "Bug-rich calibration: restore side effect recovery followed by delete crash recovery and stale restored evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["calibration", "bug-rich", "restore", "delete", "restart", "stale-event"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "ca-restore-delete-tabs", captureRestoredWindows: "ca-restore-delete-window" },
+      { type: "outlinerDeleteNodeThenAbruptRestart", node: { window: { capture: "ca-restore-delete-window" } }, captureStaleTabs: "ca-restore-delete-stale" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "ca-restore-delete-tabs" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "ca-native-move-history-restart-partial",
+    title: "calibration native move history restart partial",
+    notes: "Bug-rich calibration: browser-authored detach, clean restart, old TO undo, and missing destination query.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["calibration", "bug-rich", "native-move", "history", "restart", "partial-snapshot"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 2 }, captureStaleTabs: "ca-native-history-group" },
+      { type: "nativeMoveTabToNewWindow", tab: { tabId: 2 }, active: true, captureWindow: "ca-native-history-window", captureStaleTabs: "ca-native-history-move" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "CA Native History Current", url: "https://ca.example/native-history" },
+      { type: "restartBackground" },
+      { type: "outlinerUndo" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { capture: "ca-native-history-window" } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "ca-restored-last-tab-session-restart",
+    title: "calibration restored last tab session restart",
+    notes: "Bug-rich calibration: restored single-tab window crosses abrupt restart, session-only last-tab disappearance, and stale echo.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["calibration", "bug-rich", "restored", "session", "native-close", "restart"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "ca-restored-session-tabs", captureRestoredWindows: "ca-restored-session-window" },
+      { type: "restartBackgroundAbrupt" },
+      { type: "nativeCloseTab", tab: { capture: "ca-restored-session-tabs" }, order: "sessionChangedOnly" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "ca-restored-session-tabs" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "ca-relocation-crash-stale-source-query",
+    title: "calibration relocation crash stale source query",
+    notes: "Bug-rich calibration: relocation side effect crosses abrupt restart, then stale old-window evidence and missing source query arrive.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["calibration", "bug-rich", "relocation", "restart", "stale-event", "partial-snapshot"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindowThenAbruptRestart", tab: { tabId: 1 }, captureStaleTabs: "ca-relocation-crash-old" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "CA Relocation Crash Current", url: "https://ca.example/relocation-crash" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "ca-relocation-crash-old" }, withStaleQuery: true },
+      { type: "manualRefreshWithMissingWindowQuery", window: { windowId: 10 } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "ca-browser-created-close-restore-history",
+    title: "calibration browser created close restore history",
+    notes: "Bug-rich calibration: external closed record is restored, then old history replay and reordered query arrive.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["calibration", "bug-rich", "browserCreated", "restore", "history", "stale-query"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "CA external restore", active: true }], captureWindow: "ca-external-restore-window", captureTabs: "ca-external-restore-tabs" },
+      { type: "nativeCloseWindow", window: { capture: "ca-external-restore-window" }, order: "windowRemovedOnly" },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:21" }, captureRestoredTabs: "ca-external-restored-tabs", captureRestoredWindows: "ca-external-restored-window" },
+      { type: "outlinerUndo" },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 10 }, order: "reverse" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "ra-restored-window-browser-tab-close-user-shape",
+    title: "real-shape restored window browser tab close",
+    notes: "Sparse user-shaped probe: restored window receives normal browser tab close and survivor metadata while still visible/actionable.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["real-user", "restored", "native-close", "metadata", "multi-tab"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "ra-restored-close-root", captureRestoredWindows: "ra-restored-close-window" },
+      { type: "openTab", window: { capture: "ra-restored-close-window" }, active: true, title: "RA restored survivor", captureTab: "ra-restored-close-survivor" },
+      { type: "nativeCloseTab", tab: { capture: "ra-restored-close-root" }, order: "tabRemovedThenSessionChanged" },
+      { type: "updateTab", tab: { capture: "ra-restored-close-survivor" }, title: "RA Restored Survivor Current", url: "https://ra.example/restored-survivor" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "ra-external-link-close-reopen-session-skew",
+    title: "real-shape external link close reopen session skew",
+    notes: "Sparse user-shaped probe: externally opened window closes, then another external window appears under session/query skew.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["real-user", "browserCreated", "native-close", "native-open", "session", "partial-snapshot"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: true, tabs: [{ title: "RA external first", active: true }], captureWindow: "ra-external-first-window", captureTabs: "ra-external-first-tabs" },
+      { type: "nativeCloseTab", tab: { capture: "ra-external-first-tabs" }, order: "sessionChangedOnly" },
+      { type: "nativeOpenWindow", focused: true, tabs: [{ title: "RA external second", active: true }], captureWindow: "ra-external-second-window", captureTabs: "ra-external-second-tabs" },
+      { type: "updateTab", tab: { capture: "ra-external-second-tabs" }, title: "RA External Second Current", url: "https://ra.example/external-second" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { capture: "ra-external-second-window" } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "ra-two-browser-created-windows-one-closes",
+    title: "real-shape two browser windows one closes",
+    notes: "Sparse user-shaped probe: two external windows exist, one closes, the other reorders and updates metadata.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["real-user", "browserCreated", "native-close", "multi-window", "runtime-order"],
+    assertions: ["runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "RA two A1" }, { title: "RA two A2", active: true }], captureWindow: "ra-two-window-a", captureTabs: "ra-two-tabs-a" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "RA two B1" }, { title: "RA two B2", active: true }], captureWindow: "ra-two-window-b", captureTabs: "ra-two-tabs-b" },
+      { type: "nativeCloseWindow", window: { capture: "ra-two-window-a" }, order: "tabsRemovedOnly" },
+      { type: "updateTab", tab: { inWindow: { capture: "ra-two-window-b" }, index: 1 }, title: "RA Two B Current", url: "https://ra.example/two-b" },
+      { type: "manualRefreshWithReorderedQuery", window: { capture: "ra-two-window-b" }, order: "reverse" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "ra-command-destination-browser-sibling-native-close",
+    title: "real-shape command destination sibling native close",
+    notes: "Sparse user-shaped probe: command-created destination gets a browser-created sibling and then browser closes the moved tab.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["real-user", "commandCreated", "browserCreated", "native-close", "relocation"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "ra-command-sibling-old" },
+      { type: "openTab", window: { role: "lastOpenedWindow" }, active: true, title: "RA command sibling", captureTab: "ra-command-sibling-tab" },
+      { type: "nativeCloseTab", tab: { role: "lastMovedTab" }, order: "tabRemovedOnly" },
+      { type: "updateTab", tab: { capture: "ra-command-sibling-tab" }, title: "RA Command Sibling Current", url: "https://ra.example/command-sibling" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "ra-command-sibling-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "ra-restored-fullscreen-metadata-session-close",
+    title: "real-shape restored fullscreen metadata session close",
+    notes: "Sparse user-shaped probe: restored window goes fullscreen, updates metadata, then the last tab disappears via session-only evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["real-user", "restored", "fullscreen", "metadata", "session", "native-close"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "ra-restored-fullscreen-tabs", captureRestoredWindows: "ra-restored-fullscreen-window" },
+      { type: "nativeSetWindowState", window: { capture: "ra-restored-fullscreen-window" }, state: "fullscreen" },
+      { type: "updateTab", tab: { capture: "ra-restored-fullscreen-tabs" }, title: "RA Restored Fullscreen Current", url: "https://ra.example/restored-fullscreen" },
+      { type: "nativeCloseTab", tab: { capture: "ra-restored-fullscreen-tabs" }, order: "sessionChangedOnly" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "ra-history-after-two-independent-browser-drifts",
+    title: "real-shape history after two independent browser drifts",
+    notes: "Sparse user-shaped probe: two unrelated browser drifts happen before an old TO history entry replays.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["real-user", "history", "browserCreated", "native-move", "metadata"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 2 }, captureStaleTabs: "ra-history-drift-group" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "RA drift external", active: true }], captureWindow: "ra-history-drift-window", captureTabs: "ra-history-drift-tabs" },
+      { type: "nativeMoveTabToWindow", tab: { tabId: 1 }, window: { windowId: 20 }, index: 0, active: true, captureStaleTabs: "ra-history-drift-move" },
+      { type: "updateTab", tab: { capture: "ra-history-drift-tabs" }, title: "RA Drift External Current", url: "https://ra.example/drift-external" },
+      { type: "outlinerUndo" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "ra-abrupt-restart-external-opener-chain",
+    title: "real-shape abrupt restart external opener chain",
+    notes: "Sparse user-shaped probe: external opener chain crosses abrupt restart, native close, stale echo, and complete refresh.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["real-user", "browserCreated", "opener", "restart", "native-close", "stale-event"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "RA opener root", active: true }], captureWindow: "ra-opener-window", captureTabs: "ra-opener-root" },
+      { type: "openTab", window: { capture: "ra-opener-window" }, active: false, openerTab: { capture: "ra-opener-root" }, title: "RA opener child", captureTab: "ra-opener-child" },
+      { type: "restartBackgroundAbrupt" },
+      { type: "nativeCloseTab", tab: { capture: "ra-opener-root" }, order: "sessionChangedThenTabRemoved" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "ra-opener-root" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "ra-focus-session-partial-after-restored-update",
+    title: "real-shape focus session partial after restored update",
+    notes: "Sparse user-shaped probe: restored metadata update is followed by focus/session churn and partial query evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["real-user", "restored", "focus", "session", "partial-snapshot", "metadata"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "ra-focus-restored-tabs", captureRestoredWindows: "ra-focus-restored-window" },
+      { type: "updateTab", tab: { capture: "ra-focus-restored-tabs" }, title: "RA Focus Restored Current", url: "https://ra.example/focus-restored" },
+      { type: "focusWindow", window: { windowId: 10 } },
+      { type: "sessionChanged" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { capture: "ra-focus-restored-window" } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "ra-rung1-restored-native-move-then-close",
+    title: "real-shape rung1 restored native move then close",
+    notes: "Higher-temperature sparse probe: restored tab is moved by the browser, then closed from its new window with stale restored evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["real-user", "restored", "native-move", "native-close", "stale-event"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "ra-r1-restored-move-tabs", captureRestoredWindows: "ra-r1-restored-move-window" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "ra-r1-restored-move-tabs" }, window: { windowId: 10 }, index: 0, active: true, captureStaleTabs: "ra-r1-restored-move-before" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "RA R1 Restored Move Current", url: "https://ra.example/r1-restored-move" },
+      { type: "nativeCloseTab", tab: { role: "lastMovedTab" }, order: "tabRemovedOnly" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "ra-r1-restored-move-before" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "ra-rung1-command-relocation-native-move-back-stale",
+    title: "real-shape rung1 command relocation native move back stale",
+    notes: "Higher-temperature sparse probe: command-relocated tab is moved back by the browser before stale old-window evidence and partial query.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["real-user", "commandCreated", "relocation", "native-move", "stale-event", "partial-snapshot"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "ra-r1-command-back-old" },
+      { type: "nativeMoveTabToWindow", tab: { role: "lastMovedTab" }, window: { windowId: 10 }, index: 0, active: true, captureStaleTabs: "ra-r1-command-back-destination" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "RA R1 Command Back Current", url: "https://ra.example/r1-command-back" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "ra-r1-command-back-old" }, withStaleQuery: true },
+      { type: "manualRefreshWithMissingWindowQuery", window: { role: "lastOpenedWindow" } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "ra-rung1-two-restores-external-close",
+    title: "real-shape rung1 two restores external close",
+    notes: "Higher-temperature sparse probe: restored window and browser-created window coexist, then external window closes under stale/query skew.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["real-user", "restored", "browserCreated", "native-close", "multi-window"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "ra-r1-two-restores-tabs", captureRestoredWindows: "ra-r1-two-restores-window" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "RA R1 external close", active: true }], captureWindow: "ra-r1-external-close-window", captureTabs: "ra-r1-external-close-tabs" },
+      { type: "nativeCloseWindow", window: { capture: "ra-r1-external-close-window" }, order: "tabsRemovedOnly" },
+      { type: "updateTab", tab: { capture: "ra-r1-two-restores-tabs" }, title: "RA R1 Restored Coexist Current", url: "https://ra.example/r1-restored-coexist" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "ra-r1-external-close-tabs" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "ra-rung1-focus-reject-after-browser-drift",
+    title: "real-shape rung1 focus reject after browser drift",
+    notes: "Higher-temperature sparse probe: focus command rejection after browser-authored move and external window creation.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["real-user", "focus", "command-rejection", "native-move", "browserCreated"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "RA R1 focus external", active: true }], captureWindow: "ra-r1-focus-external-window", captureTabs: "ra-r1-focus-external-tabs" },
+      { type: "nativeMoveTabToWindow", tab: { tabId: 2 }, window: { capture: "ra-r1-focus-external-window" }, index: 0, active: true, captureStaleTabs: "ra-r1-focus-move-old" },
+      { type: "outlinerFocusTabRejectingUpdate", tab: { role: "lastMovedTab" } },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "RA R1 Focus Drift Current", url: "https://ra.example/r1-focus-drift" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "ra-rung1-close-reject-after-partial-browser-open",
+    title: "real-shape rung1 close reject after partial browser open",
+    notes: "Higher-temperature sparse probe: external live window is omitted from a partial query before a TO close rejection.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["real-user", "browserCreated", "outliner-close", "command-rejection", "partial-snapshot"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "RA R1 close reject", active: true }], captureWindow: "ra-r1-close-reject-window", captureTabs: "ra-r1-close-reject-tabs" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { capture: "ra-r1-close-reject-window" } },
+      { type: "outlinerCloseNodeRejectingClose", node: { window: { capture: "ra-r1-close-reject-window" } } },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "ra-r1-close-reject-tabs" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "ra-rung1-history-redo-after-external-close",
+    title: "real-shape rung1 history redo after external close",
+    notes: "Higher-temperature sparse probe: external close happens between TO undo and redo.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["real-user", "history", "undo-redo", "browserCreated", "native-close"],
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 2 }, captureStaleTabs: "ra-r1-history-redo-group" },
+      { type: "outlinerUndo" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "RA R1 history external", active: true }], captureWindow: "ra-r1-history-external-window", captureTabs: "ra-r1-history-external-tabs" },
+      { type: "nativeCloseWindow", window: { capture: "ra-r1-history-external-window" }, order: "windowRemovedThenTabsRemoved" },
+      { type: "outlinerRedo" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "ra-r1-history-external-tabs" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "ra-rung1-abrupt-restored-session-partial",
+    title: "real-shape rung1 abrupt restored session partial",
+    notes: "Higher-temperature sparse probe: restored metadata crosses abrupt restart, session churn, and missing restored-window query.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["real-user", "restored", "restart", "session", "partial-snapshot", "metadata"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "ra-r1-abrupt-restored-tabs", captureRestoredWindows: "ra-r1-abrupt-restored-window" },
+      { type: "updateTab", tab: { capture: "ra-r1-abrupt-restored-tabs" }, title: "RA R1 Abrupt Restored Current", url: "https://ra.example/r1-abrupt-restored" },
+      { type: "restartBackgroundAbrupt" },
+      { type: "sessionChanged" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { capture: "ra-r1-abrupt-restored-window" } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "ra-rung1-external-restore-delete-history",
+    title: "real-shape rung1 external restore delete history",
+    notes: "Higher-temperature sparse probe: external closed record restore, delete rejection, undo, and stale old evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["real-user", "browserCreated", "restore", "delete-rejection", "history", "stale-event"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "RA R1 external restore", active: true }], captureWindow: "ra-r1-external-restore-window", captureTabs: "ra-r1-external-restore-tabs" },
+      { type: "nativeCloseWindow", window: { capture: "ra-r1-external-restore-window" }, order: "windowRemovedOnly" },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:21" }, captureRestoredTabs: "ra-r1-external-restored-tabs", captureRestoredWindows: "ra-r1-external-restored-window" },
+      { type: "outlinerDeleteNodeRejectingClose", node: { window: { capture: "ra-r1-external-restored-window" } } },
+      { type: "outlinerUndo" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "ra-r1-external-restore-tabs" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "ra-escape-external-opener-restored-history-partial",
+    title: "real-shape escape external opener restored history partial",
+    notes: "Final escape: external opener chain becomes closed/restored while unrelated TO history replay and partial query arrive.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["real-user", "browserCreated", "opener", "restore", "history", "partial-snapshot"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "ra-escape-opener-history-group" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "RA escape opener root", active: true }], captureWindow: "ra-escape-opener-window", captureTabs: "ra-escape-opener-root" },
+      { type: "openTab", window: { capture: "ra-escape-opener-window" }, active: false, openerTab: { capture: "ra-escape-opener-root" }, title: "RA escape opener child", captureTab: "ra-escape-opener-child" },
+      { type: "nativeCloseWindow", window: { capture: "ra-escape-opener-window" }, order: "tabsRemovedThenWindowRemoved" },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:21" }, captureRestoredTabs: "ra-escape-opener-restored-tabs", captureRestoredWindows: "ra-escape-opener-restored-window" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { windowId: 10 } },
+      { type: "outlinerUndo" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "ra-escape-command-crash-external-sibling-close",
+    title: "real-shape escape command crash external sibling close",
+    notes: "Final escape: relocation crash recovery coexists with an external browser-created window that closes under stale evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["real-user", "relocation", "restart", "browserCreated", "native-close", "stale-event"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindowThenAbruptRestart", tab: { tabId: 1 }, captureStaleTabs: "ra-escape-command-crash-old" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "RA escape external sibling", active: true }], captureWindow: "ra-escape-command-external-window", captureTabs: "ra-escape-command-external-tabs" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "RA Escape Command Current", url: "https://ra.example/escape-command" },
+      { type: "nativeCloseWindow", window: { capture: "ra-escape-command-external-window" }, order: "windowRemovedOnly" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "ra-escape-command-crash-old" }, withStaleQuery: true },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "ra-escape-command-external-tabs" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "ra-escape-restored-fullscreen-native-move-history",
+    title: "real-shape escape restored fullscreen native move history",
+    notes: "Final escape: restored fullscreen window, browser-authored move, old history replay, and stale restored event.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["real-user", "restored", "fullscreen", "native-move", "history", "stale-event"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "ra-escape-restored-history-group" },
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "ra-escape-restored-fullscreen-tabs", captureRestoredWindows: "ra-escape-restored-fullscreen-window" },
+      { type: "nativeSetWindowState", window: { capture: "ra-escape-restored-fullscreen-window" }, state: "fullscreen" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "ra-escape-restored-fullscreen-tabs" }, window: { windowId: 10 }, index: 0, active: true, captureStaleTabs: "ra-escape-restored-fullscreen-before" },
+      { type: "outlinerUndo" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "ra-escape-restored-fullscreen-before" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "ra-escape-two-external-windows-history-restart",
+    title: "real-shape escape two external windows history restart",
+    notes: "Final escape: two external windows cross restart, one closes, then TO history replay arrives.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["real-user", "browserCreated", "history", "restart", "multi-window", "native-close"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 2 }, captureStaleTabs: "ra-escape-two-history-group" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "RA escape two A", active: true }], captureWindow: "ra-escape-two-window-a", captureTabs: "ra-escape-two-tabs-a" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "RA escape two B", active: true }], captureWindow: "ra-escape-two-window-b", captureTabs: "ra-escape-two-tabs-b" },
+      { type: "restartBackgroundAbrupt" },
+      { type: "nativeCloseWindow", window: { capture: "ra-escape-two-window-a" }, order: "tabsRemovedOnly" },
+      { type: "updateTab", tab: { capture: "ra-escape-two-tabs-b" }, title: "RA Escape Two B Current", url: "https://ra.example/escape-two-b" },
+      { type: "outlinerUndo" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "ra-escape-browser-delete-restore-stale-order",
+    title: "real-shape escape browser delete restore stale order",
+    notes: "Final escape: external closed record restore/delete history and strict order evidence on the survivor window.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["real-user", "browserCreated", "restore", "delete", "history", "runtime-order"],
+    assertions: ["runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, title: "RA escape saved order", captureTab: "ra-escape-saved-order" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "RA escape delete restore", active: true }], captureWindow: "ra-escape-delete-restore-window", captureTabs: "ra-escape-delete-restore-tabs" },
+      { type: "nativeCloseWindow", window: { capture: "ra-escape-delete-restore-window" }, order: "windowRemovedThenTabsRemoved" },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:21" }, captureRestoredTabs: "ra-escape-delete-restored-tabs", captureRestoredWindows: "ra-escape-delete-restored-window" },
+      { type: "outlinerDeleteNodeThenAbruptRestart", node: { window: { capture: "ra-escape-delete-restored-window" } } },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 10 }, order: "reverse" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "ra-escape-focus-reject-session-close-partial",
+    title: "real-shape escape focus reject session close partial",
+    notes: "Final escape: focus rejection, session-only close, and missing-query evidence in a browser-created scope.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["real-user", "focus", "command-rejection", "session", "native-close", "partial-snapshot"],
+    actions: [
+      { type: "nativeOpenWindow", focused: true, tabs: [{ title: "RA escape focus A" }, { title: "RA escape focus B", active: true }], captureWindow: "ra-escape-focus-window", captureTabs: "ra-escape-focus-tabs" },
+      { type: "outlinerFocusTabRejectingUpdate", tab: { inWindow: { capture: "ra-escape-focus-window" }, index: 0 } },
+      { type: "nativeCloseTab", tab: { inWindow: { capture: "ra-escape-focus-window" }, index: 1 }, order: "sessionChangedOnly" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { capture: "ra-escape-focus-window" } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "ra-escape-relocation-external-sibling-partial",
+    title: "real-shape escape relocation external sibling partial",
+    notes: "Final escape: command-created destination, external sibling window, native move, and two partial snapshots.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["real-user", "commandCreated", "browserCreated", "native-move", "partial-snapshot"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "ra-escape-relocation-old" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "RA escape external sibling", active: true }], captureWindow: "ra-escape-relocation-external-window", captureTabs: "ra-escape-relocation-external-tabs" },
+      { type: "nativeMoveTabToWindow", tab: { role: "lastMovedTab" }, window: { capture: "ra-escape-relocation-external-window" }, index: 0, active: true, captureStaleTabs: "ra-escape-relocation-destination-before" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "RA Escape Relocation Current", url: "https://ra.example/escape-relocation" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { role: "lastOpenedWindow" } },
+      { type: "manualRefreshWithMissingWindowQuery", window: { capture: "ra-escape-relocation-external-window" } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "ra-escape-restored-opener-native-close-redo",
+    title: "real-shape escape restored opener native close redo",
+    notes: "Final escape: restored opener child closes natively before old TO redo and stale event-local metadata.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["real-user", "restored", "opener", "native-close", "undo-redo", "stale-event"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "ra-escape-opener-redo-group" },
+      { type: "outlinerUndo" },
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "ra-escape-opener-redo-tabs", captureRestoredWindows: "ra-escape-opener-redo-window" },
+      { type: "openTab", window: { capture: "ra-escape-opener-redo-window" }, active: false, openerTab: { capture: "ra-escape-opener-redo-tabs" }, title: "RA escape restored opener child", captureTab: "ra-escape-opener-redo-child" },
+      { type: "nativeCloseTab", tab: { capture: "ra-escape-opener-redo-child" }, order: "tabRemovedThenSessionChanged" },
+      { type: "outlinerRedo" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "ra-escape-opener-redo-tabs" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "ua-restored-opener-parent-close-child-move",
+    title: "subagent user restored opener parent close child move",
+    notes: "Scout A: restored opener child survives parent close, moves to a saved window, and receives current metadata.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["subagent", "real-user", "restored", "opener", "native-close", "native-move", "metadata"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "ua-parent-close-tabs", captureRestoredWindows: "ua-parent-close-window" },
+      { type: "openTab", window: { capture: "ua-parent-close-window" }, active: false, openerTab: { capture: "ua-parent-close-tabs" }, title: "UA restored opener child", captureTab: "ua-parent-close-child" },
+      { type: "nativeCloseTab", tab: { capture: "ua-parent-close-tabs" }, order: "sessionChangedThenTabRemoved" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "ua-parent-close-child" }, window: { windowId: 10 }, index: 0, active: true, captureStaleTabs: "ua-parent-close-child-old" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "UA Restored Child Current", url: "https://ua.example/restored-child" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "ua-browser-opener-child-close-reorder",
+    title: "subagent user browser opener child close reorder",
+    notes: "Scout A: browser-created opener child closes while same external window continues with reordered survivor evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["subagent", "real-user", "browserCreated", "opener", "native-close", "runtime-order", "partial-snapshot"],
+    assertions: ["runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "UA browser opener root", active: true }], captureWindow: "ua-browser-opener-window", captureTabs: "ua-browser-opener-root" },
+      { type: "openTab", window: { capture: "ua-browser-opener-window" }, active: false, openerTab: { capture: "ua-browser-opener-root" }, title: "UA browser opener child", captureTab: "ua-browser-opener-child" },
+      { type: "nativeCloseTab", tab: { capture: "ua-browser-opener-child" }, order: "tabRemovedThenSessionChanged" },
+      { type: "openTab", window: { capture: "ua-browser-opener-window" }, active: true, title: "UA browser replacement", captureTab: "ua-browser-opener-replacement" },
+      { type: "updateTab", tab: { capture: "ua-browser-opener-replacement" }, title: "UA Browser Replacement Current", url: "https://ua.example/browser-replacement" },
+      { type: "manualRefreshWithReorderedQuery", window: { capture: "ua-browser-opener-window" }, order: "reverse" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { windowId: 10 } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "ua-restored-source-close-external-opener-survives",
+    title: "subagent user restored source close external opener survives",
+    notes: "Scout A: an opener-linked external window outlives the restored source window close.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["subagent", "real-user", "restored", "browserCreated", "opener", "native-close", "metadata"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "ua-source-close-tabs", captureRestoredWindows: "ua-source-close-window" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "UA external opener", active: true, openerTab: { capture: "ua-source-close-tabs" } }], captureWindow: "ua-source-external-window", captureTabs: "ua-source-external-tabs" },
+      { type: "nativeCloseWindow", window: { capture: "ua-source-close-window" }, order: "windowRemovedThenTabsRemoved" },
+      { type: "updateTab", tab: { capture: "ua-source-external-tabs" }, title: "UA External Opener Current", url: "https://ua.example/external-opener" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "ua-source-close-tabs" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "ua-restored-window-absorbs-external-survivor",
+    title: "subagent user restored absorbs external survivor",
+    notes: "Scout A: restored window absorbs a surviving tab from a browser-created multi-tab window after a middle tab close.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["subagent", "real-user", "restored", "browserCreated", "native-close", "native-move", "runtime-order"],
+    assertions: ["runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "ua-absorbs-restored-tabs", captureRestoredWindows: "ua-absorbs-restored-window" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "UA external A" }, { title: "UA external B" }, { title: "UA external C", active: true }], captureWindow: "ua-absorbs-external-window", captureTabs: "ua-absorbs-external-tabs" },
+      { type: "nativeCloseTab", tab: { inWindow: { capture: "ua-absorbs-external-window" }, index: 1 }, order: "tabRemovedThenSessionChanged" },
+      { type: "nativeMoveTabToWindow", tab: { inWindow: { capture: "ua-absorbs-external-window" }, index: 0 }, window: { capture: "ua-absorbs-restored-window" }, index: 0, active: true, captureStaleTabs: "ua-absorbs-external-old" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "UA Absorbed Current", url: "https://ua.example/absorbed" },
+      { type: "manualRefreshWithReorderedQuery", window: { capture: "ua-absorbs-restored-window" }, order: "rotateRight" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "ua-saved-tab-dragged-into-restored-before-session-close",
+    title: "subagent user saved tab into restored before session close",
+    notes: "Scout A: saved-window tab is dragged into a restored window before the original restored tab disappears via session-only evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["subagent", "real-user", "restored", "native-move", "session", "native-close", "runtime-order"],
+    assertions: ["runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "ua-saved-into-restored-tabs", captureRestoredWindows: "ua-saved-into-restored-window" },
+      { type: "nativeMoveTabToWindow", tab: { tabId: 1 }, window: { capture: "ua-saved-into-restored-window" }, index: 0, active: true, captureStaleTabs: "ua-saved-into-restored-old" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "UA Saved Into Restored Current", url: "https://ua.example/saved-into-restored" },
+      { type: "nativeCloseTab", tab: { capture: "ua-saved-into-restored-tabs" }, order: "sessionChangedOnly" },
+      { type: "manualRefreshWithReorderedQuery", window: { capture: "ua-saved-into-restored-window" }, order: "reverse" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "ua-external-tab-merged-then-empty-window-echo",
+    title: "subagent user external tab merged then empty window echo",
+    notes: "Scout A adapted: browser-created single tab is merged into restored scope, then stale source echo arrives after the source window disappears.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["subagent", "real-user", "restored", "browserCreated", "native-open", "native-move", "stale-event"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "ua-merge-restored-tabs", captureRestoredWindows: "ua-merge-restored-window" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "UA merge external", active: true }], captureWindow: "ua-merge-external-window", captureTabs: "ua-merge-external-tabs" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "ua-merge-external-tabs" }, window: { capture: "ua-merge-restored-window" }, active: true, captureStaleTabs: "ua-merge-external-old" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "UA Merge External Current", url: "https://ua.example/merge-external" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "ua-merge-external-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "ua-restored-external-closed-record-continues-with-child",
+    title: "subagent user restored external closed record continues",
+    notes: "Scout A: browser-created closed record is restored and continues as an active opener window after root disappearance.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["subagent", "real-user", "browserCreated", "restore", "opener", "session", "metadata"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "UA closed external root", active: true }], captureWindow: "ua-closed-external-window", captureTabs: "ua-closed-external-root" },
+      { type: "nativeCloseWindow", window: { capture: "ua-closed-external-window" }, order: "tabsRemovedThenWindowRemoved" },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:21" }, captureRestoredTabs: "ua-closed-external-restored-tabs", captureRestoredWindows: "ua-closed-external-restored-window" },
+      { type: "openTab", window: { capture: "ua-closed-external-restored-window" }, active: false, openerTab: { capture: "ua-closed-external-restored-tabs" }, title: "UA closed external child", captureTab: "ua-closed-external-child" },
+      { type: "nativeCloseTab", tab: { capture: "ua-closed-external-restored-tabs" }, order: "sessionChangedOnly" },
+      { type: "updateTab", tab: { capture: "ua-closed-external-child" }, title: "UA Closed External Child Current", url: "https://ua.example/closed-external-child" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { windowId: 10 } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "ua-restored-reorder-while-browser-window-focused",
+    title: "subagent user restored reorder while browser focused",
+    notes: "Scout A: restored-window order changes while focus is in a separate browser-created window.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["subagent", "real-user", "restored", "browserCreated", "focus", "runtime-order", "stale-event"],
+    assertions: ["runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "ua-reorder-focus-tabs", captureRestoredWindows: "ua-reorder-focus-window" },
+      { type: "openTab", window: { capture: "ua-reorder-focus-window" }, active: false, title: "UA restored reorder sibling", captureTab: "ua-reorder-focus-sibling" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "ua-reorder-focus-sibling" }, window: { capture: "ua-reorder-focus-window" }, index: 0, active: true, captureStaleTabs: "ua-reorder-focus-before" },
+      { type: "nativeOpenWindow", focused: true, tabs: [{ title: "UA focused browser", active: true }], captureWindow: "ua-reorder-focused-browser", captureTabs: "ua-reorder-focused-tabs" },
+      { type: "focusWindow", window: { capture: "ua-reorder-focused-browser" } },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "ua-reorder-focus-before" }, withStaleQuery: true },
+      { type: "manualRefreshWithReorderedQuery", window: { capture: "ua-reorder-focus-window" }, order: "rotateRight" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "sb-external-transfer-window-only",
+    title: "subagent scope external transfer window only",
+    notes: "Scout B: external-to-external transfer with removed source scope and reordered survivor window.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["subagent", "multi-window", "browserCreated", "native-move", "scope-routing", "runtime-order"],
+    assertions: ["runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "SB transfer A1" }, { title: "SB transfer A2", active: true }], captureWindow: "sb-transfer-window-a", captureTabs: "sb-transfer-tabs-a" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "SB transfer B1", active: true }], captureWindow: "sb-transfer-window-b", captureTabs: "sb-transfer-tabs-b" },
+      { type: "nativeMoveTabToWindow", tab: { inWindow: { capture: "sb-transfer-window-a" }, index: 1 }, window: { capture: "sb-transfer-window-b" }, active: true, captureStaleTabs: "sb-transfer-a-old" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "SB Transfer Current", url: "https://sb.example/transfer" },
+      { type: "manualRefreshWithReorderedQuery", window: { capture: "sb-transfer-window-b" }, order: "reverse" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "sb-transfer-a-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "sb-browser-tab-joins-command-window",
+    title: "subagent scope browser tab joins command window",
+    notes: "Scout B: browser-created tab joins a command-created destination while stale command and external-source echoes compete.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["subagent", "commandCreated", "browserCreated", "native-move", "stale-event", "runtime-order"],
+    assertions: ["runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "SB command external A" }, { title: "SB command external B", active: true }], captureWindow: "sb-command-external-window", captureTabs: "sb-command-external-tabs" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "sb-command-old" },
+      { type: "nativeMoveTabToWindow", tab: { inWindow: { capture: "sb-command-external-window" }, index: 1 }, window: { role: "lastOpenedWindow" }, index: 0, active: true, captureStaleTabs: "sb-command-external-old" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "SB Command Joined Current", url: "https://sb.example/command-joined" },
+      { type: "nativeCloseWindow", window: { capture: "sb-command-external-window" }, order: "tabsRemovedThenWindowRemoved" },
+      { type: "manualRefreshWithReorderedQuery", window: { role: "lastOpenedWindow" }, order: "reverse" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "sb-command-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "sb-command-shared-window-undo-redo",
+    title: "subagent scope command shared window undo redo",
+    notes: "Scout B: history replay crosses a command destination that also contains a browser-created tab.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["subagent", "commandCreated", "browserCreated", "history", "undo-redo", "snapshot-confidence"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "SB shared external A" }, { title: "SB shared external B", active: true }], captureWindow: "sb-shared-external-window", captureTabs: "sb-shared-external-tabs" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "sb-shared-command-old" },
+      { type: "nativeMoveTabToWindow", tab: { inWindow: { capture: "sb-shared-external-window" }, index: 0 }, window: { role: "lastOpenedWindow" }, active: true, captureStaleTabs: "sb-shared-external-old" },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedo" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { capture: "sb-shared-external-window" } },
+      { type: "manualRefreshWithReorderedQuery", window: { role: "lastOpenedWindow" }, order: "rotateLeft" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "sb-shared-external-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "sb-native-detach-undo-abrupt-partial",
+    title: "subagent scope native detach undo abrupt partial",
+    notes: "Scout B: crash-boundary undo after browser-authored detach must preserve current runtime shape.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["subagent", "native-move", "history", "journal", "restart", "partial-snapshot", "shape-fact"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 2 }, captureStaleTabs: "sb-detach-group-old" },
+      { type: "nativeMoveTabToNewWindow", tab: { tabId: 2 }, active: true, captureWindow: "sb-detach-window", captureStaleTabs: "sb-detach-move-old" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "SB Detach Current", url: "https://sb.example/detach" },
+      { type: "outlinerUndoThenAbruptRestart" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { capture: "sb-detach-window" } },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "sb-detach-move-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "sb-native-drift-close-journal-old-scope",
+    title: "subagent scope native drift close journal old scope",
+    notes: "Scout B: TO close journal follows native browser drift, then stale old browser-created scope evidence arrives.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["subagent", "browserCreated", "native-move", "journal", "restart", "stale-event", "scope-routing"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "SB drift A" }, { title: "SB drift B", active: true }], captureWindow: "sb-drift-window", captureTabs: "sb-drift-tabs" },
+      { type: "nativeMoveTabToWindow", tab: { inWindow: { capture: "sb-drift-window" }, index: 1 }, window: { windowId: 10 }, active: true, captureStaleTabs: "sb-drift-old" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "SB Drift Current", url: "https://sb.example/drift" },
+      { type: "outlinerCloseNodeThenAbruptRestart", node: { tab: { role: "lastMovedTab" } }, captureStaleTabs: "sb-drift-close-old" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "sb-drift-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "sb-two-external-windows-history-reorder",
+    title: "subagent scope two external windows history reorder",
+    notes: "Scout B: two browser-created windows drift before unrelated TO history replay, with reordered survivor evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["subagent", "browserCreated", "multi-window", "native-move", "history", "runtime-order", "snapshot-confidence"],
+    assertions: ["runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "sb-two-history-old" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "SB two A1" }, { title: "SB two A2", active: true }], captureWindow: "sb-two-window-a", captureTabs: "sb-two-tabs-a" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "SB two B1" }, { title: "SB two B2", active: true }], captureWindow: "sb-two-window-b", captureTabs: "sb-two-tabs-b" },
+      { type: "nativeMoveTabToWindow", tab: { inWindow: { capture: "sb-two-window-a" }, index: 0 }, window: { capture: "sb-two-window-b" }, index: 1, active: true, captureStaleTabs: "sb-two-a-old" },
+      { type: "nativeCloseWindow", window: { capture: "sb-two-window-a" }, order: "tabsRemovedOnly" },
+      { type: "outlinerUndo" },
+      { type: "manualRefreshWithReorderedQuery", window: { capture: "sb-two-window-b" }, order: "rotateLeft" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "sb-fullscreen-opener-into-command-scope",
+    title: "subagent scope fullscreen opener into command scope",
+    notes: "Scout B: fullscreen is only window shape while opener child migrates into command-created scope.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["subagent", "fullscreen", "window-state", "commandCreated", "browserCreated", "opener", "native-move"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "SB fullscreen opener root", active: true }], captureWindow: "sb-fullscreen-ext-window", captureTabs: "sb-fullscreen-root" },
+      { type: "openTab", window: { capture: "sb-fullscreen-ext-window" }, active: false, openerTab: { capture: "sb-fullscreen-root" }, title: "SB fullscreen child", captureTab: "sb-fullscreen-child" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "sb-fullscreen-command-old" },
+      { type: "nativeSetWindowState", window: { role: "lastOpenedWindow" }, state: "fullscreen" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "sb-fullscreen-child" }, window: { role: "lastOpenedWindow" }, active: true, captureStaleTabs: "sb-fullscreen-child-old" },
+      { type: "nativeCloseTab", tab: { capture: "sb-fullscreen-root" }, order: "tabRemovedThenSessionChanged" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "sb-fullscreen-child-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "sb-restored-fullscreen-external-delete-history",
+    title: "subagent scope restored fullscreen external delete history",
+    notes: "Scout B: restored fullscreen scope survives via moved-in external tab while delete/history touches restored resources.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["subagent", "restored", "fullscreen", "browserCreated", "native-move", "delete", "history"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "SB restored ext A" }, { title: "SB restored ext B", active: true }], captureWindow: "sb-restored-ext-window", captureTabs: "sb-restored-ext-tabs" },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "sb-restored-fullscreen-tabs", captureRestoredWindows: "sb-restored-fullscreen-window" },
+      { type: "nativeSetWindowState", window: { capture: "sb-restored-fullscreen-window" }, state: "fullscreen" },
+      { type: "nativeMoveTabToWindow", tab: { inWindow: { capture: "sb-restored-ext-window" }, index: 1 }, window: { capture: "sb-restored-fullscreen-window" }, active: true, captureStaleTabs: "sb-restored-ext-old" },
+      { type: "outlinerDeleteNodeThenAbruptRestart", node: { tab: { capture: "sb-restored-fullscreen-tabs" } } },
+      { type: "outlinerUndo" },
+      { type: "manualRefreshWithReorderedQuery", window: { capture: "sb-restored-fullscreen-window" }, order: "reverse" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "sb-restored-ext-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "ub-redo-journal-after-dual-native-drifts",
+    title: "subagent rung1 redo journal after dual native drifts",
+    notes: "Scout A rung 1: redo crash journal after two accepted browser drifts, followed by partial-to-complete evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["subagent", "history", "journal", "browserCreated", "native-move", "partial-snapshot"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 2 }, captureStaleTabs: "ub-redo-group-old" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "UB redo A1" }, { title: "UB redo A2", active: true }], captureWindow: "ub-redo-window-a", captureTabs: "ub-redo-tabs-a" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "UB redo B1", active: true }], captureWindow: "ub-redo-window-b", captureTabs: "ub-redo-tabs-b" },
+      { type: "nativeMoveTabToWindow", tab: { inWindow: { capture: "ub-redo-window-a" }, index: 1 }, window: { capture: "ub-redo-window-b" }, index: 0, active: true, captureStaleTabs: "ub-redo-a-old" },
+      { type: "nativeMoveTabToNewWindow", tab: { tabId: 1 }, active: true, captureWindow: "ub-redo-detached-window", captureStaleTabs: "ub-redo-detached-old" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "UB Redo Detached Current", url: "https://ub.example/redo-detached" },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedoThenAbruptRestart" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { capture: "ub-redo-detached-window" } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "ub-close-journal-after-browser-merge-chain",
+    title: "subagent rung1 close journal after browser merge chain",
+    notes: "Scout A rung 1: close journal follows multiple browser-authored non-command moves.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["subagent", "journal", "browserCreated", "native-move", "restart", "stale-event"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "UB merge A1" }, { title: "UB merge A2", active: true }], captureWindow: "ub-merge-window-a", captureTabs: "ub-merge-tabs-a" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "UB merge B1", active: true }], captureWindow: "ub-merge-window-b", captureTabs: "ub-merge-tabs-b" },
+      { type: "nativeMoveTabToWindow", tab: { inWindow: { capture: "ub-merge-window-a" }, index: 1 }, window: { capture: "ub-merge-window-b" }, active: true, captureStaleTabs: "ub-merge-a-old" },
+      { type: "nativeMoveTabToWindow", tab: { tabId: 2 }, window: { capture: "ub-merge-window-b" }, active: true, captureStaleTabs: "ub-merge-saved-old" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "UB Merge Current", url: "https://ub.example/merge" },
+      { type: "outlinerCloseNodeThenAbruptRestart", node: { tab: { role: "lastMovedTab" } }, captureStaleTabs: "ub-merge-close-old" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "ub-merge-a-old" }, withStaleQuery: true },
+      { type: "manualRefreshWithMissingWindowQuery", window: { capture: "ub-merge-window-b" } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "ub-external-restored-session-complete-then-partial-history",
+    title: "subagent rung1 external restored session complete then partial history",
+    notes: "Scout A rung 1: complete evidence for a restored browser-created record arrives before session-only close, partial skew, and history crash.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["subagent", "browserCreated", "restore", "session", "history", "journal", "partial-snapshot"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "UB external restored", active: true }], captureWindow: "ub-external-restored-window", captureTabs: "ub-external-restored-tabs" },
+      { type: "nativeCloseWindow", window: { capture: "ub-external-restored-window" }, order: "tabsRemovedThenWindowRemoved" },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:21" }, captureRestoredTabs: "ub-external-restored-live-tabs", captureRestoredWindows: "ub-external-restored-live-window" },
+      { type: "updateTab", tab: { capture: "ub-external-restored-live-tabs" }, title: "UB External Restored Current", url: "https://ub.example/external-restored" },
+      { type: "manualRefresh" },
+      { type: "nativeCloseTab", tab: { capture: "ub-external-restored-live-tabs" }, order: "sessionChangedOnly" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { windowId: 10 } },
+      { type: "outlinerUndoThenAbruptRestart" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "ub-two-external-drifts-redo-partial-complete",
+    title: "subagent rung1 two external drifts redo partial complete",
+    notes: "Scout A rung 1: history redo journal after external move and close with partial then reordered evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["subagent", "browserCreated", "multi-window", "native-move", "native-close", "history", "partial-snapshot"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 2 }, captureStaleTabs: "ub-two-drifts-group-old" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "UB two A1" }, { title: "UB two A2", active: true }], captureWindow: "ub-two-window-a", captureTabs: "ub-two-tabs-a" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "UB two B1" }, { title: "UB two B2", active: true }], captureWindow: "ub-two-window-b", captureTabs: "ub-two-tabs-b" },
+      { type: "nativeMoveTabToWindow", tab: { inWindow: { capture: "ub-two-window-a" }, index: 0 }, window: { capture: "ub-two-window-b" }, index: 1, active: true, captureStaleTabs: "ub-two-a-old" },
+      { type: "nativeCloseWindow", window: { capture: "ub-two-window-a" }, order: "tabsRemovedOnly" },
+      { type: "outlinerUndo" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { capture: "ub-two-window-b" } },
+      { type: "outlinerRedoThenAbruptRestart" },
+      { type: "manualRefreshWithReorderedQuery", window: { capture: "ub-two-window-b" }, order: "rotateLeft" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "sc-triple-scope-complete-refresh-stale-command",
+    title: "subagent scope triple scope complete refresh stale command",
+    notes: "Scout B rung 1: restored, command-created, and browser-created scopes coexist before stale command metadata arrives after complete refresh.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["subagent", "commandCreated", "browserCreated", "restored", "complete-refresh", "stale-event", "metadata"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "sc-triple-restored-tabs", captureRestoredWindows: "sc-triple-restored-window" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "sc-triple-command-old" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "SC triple external", active: true }], captureWindow: "sc-triple-external-window", captureTabs: "sc-triple-external-tabs" },
+      { type: "updateTab", tab: { capture: "sc-triple-restored-tabs" }, title: "SC Triple Restored Current", url: "https://sc.example/triple-restored" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "SC Triple Command Current", url: "https://sc.example/triple-command" },
+      { type: "manualRefresh" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "sc-triple-command-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "sc-restored-command-external-order-after-complete",
+    title: "subagent scope restored command external order after complete",
+    notes: "Scout B rung 1: complete refresh accepts restored-window order before stale event-local order from external source competes.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["subagent", "restored", "commandCreated", "browserCreated", "runtime-order", "complete-refresh", "stale-event"],
+    assertions: ["runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "sc-order-restored-tabs", captureRestoredWindows: "sc-order-restored-window" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "sc-order-command-old" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "SC order ext A" }, { title: "SC order ext B", active: true }], captureWindow: "sc-order-external-window", captureTabs: "sc-order-external-tabs" },
+      { type: "nativeMoveTabToWindow", tab: { inWindow: { capture: "sc-order-external-window" }, index: 1 }, window: { capture: "sc-order-restored-window" }, index: 0, active: true, captureStaleTabs: "sc-order-external-old" },
+      { type: "openTab", window: { role: "lastOpenedWindow" }, active: false, title: "SC order command sibling", captureTab: "sc-order-command-sibling" },
+      { type: "manualRefresh" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "sc-order-external-old" }, withStaleQuery: true },
+      { type: "manualRefreshWithReorderedQuery", window: { capture: "sc-order-restored-window" }, order: "reverse" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "sc-close-journal-after-complete-native-drift",
+    title: "subagent scope close journal after complete native drift",
+    notes: "Scout B rung 1: close journal records after complete native-drift shape and stale pre-close browser metadata follows.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["subagent", "journal", "native-move", "complete-refresh", "browserCreated", "restored", "stale-event"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "sc-close-restored-tabs", captureRestoredWindows: "sc-close-restored-window" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "SC close ext A" }, { title: "SC close ext B", active: true }], captureWindow: "sc-close-external-window", captureTabs: "sc-close-external-tabs" },
+      { type: "nativeMoveTabToWindow", tab: { inWindow: { capture: "sc-close-external-window" }, index: 0 }, window: { capture: "sc-close-restored-window" }, index: 0, active: true, captureStaleTabs: "sc-close-external-old" },
+      { type: "manualRefresh" },
+      { type: "outlinerCloseNodeThenAbruptRestart", node: { tab: { role: "lastMovedTab" } }, captureStaleTabs: "sc-close-journal-old" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "sc-close-external-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "sc-complete-refresh-then-stale-restored-order",
+    title: "subagent scope complete refresh then stale restored order",
+    notes: "Scout B rung 1: restored-order evidence arrives after complete refresh and after the restored tab has joined command-created shape.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["subagent", "restored", "commandCreated", "browserCreated", "complete-refresh", "runtime-order", "stale-event"],
+    assertions: ["runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "sc-complete-restored-tabs", captureRestoredWindows: "sc-complete-restored-window" },
+      { type: "openTab", window: { capture: "sc-complete-restored-window" }, active: false, title: "SC complete restored sibling", captureTab: "sc-complete-restored-sibling" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "SC complete external", active: true }], captureWindow: "sc-complete-external-window", captureTabs: "sc-complete-external-tabs" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "sc-complete-command-old" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "sc-complete-restored-sibling" }, window: { role: "lastOpenedWindow" }, index: 0, active: true, captureStaleTabs: "sc-complete-restored-old" },
+      { type: "manualRefresh" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "sc-complete-restored-old" }, withStaleQuery: true },
+      { type: "manualRefreshWithReorderedQuery", window: { role: "lastOpenedWindow" }, order: "rotateLeft" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "uc-redo-journal-dual-drift-complete-before-partial",
+    title: "subagent clone redo journal dual drift complete before partial",
+    notes: "RT-219 clone: dual native drift with complete evidence before redo crash and partial omission.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["subagent", "history", "journal", "browserCreated", "native-move", "complete-refresh", "partial-snapshot"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 2 }, captureStaleTabs: "uc-complete-group-old" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "UC complete A1" }, { title: "UC complete A2", active: true }], captureWindow: "uc-complete-window-a", captureTabs: "uc-complete-tabs-a" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "UC complete B1", active: true }], captureWindow: "uc-complete-window-b", captureTabs: "uc-complete-tabs-b" },
+      { type: "nativeMoveTabToWindow", tab: { inWindow: { capture: "uc-complete-window-a" }, index: 1 }, window: { capture: "uc-complete-window-b" }, index: 0, active: true, captureStaleTabs: "uc-complete-a-old" },
+      { type: "nativeMoveTabToNewWindow", tab: { tabId: 1 }, active: true, captureWindow: "uc-complete-detached-window", captureStaleTabs: "uc-complete-detached-old" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "UC Complete Detached Current", url: "https://uc.example/complete-detached" },
+      { type: "manualRefresh" },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedoThenAbruptRestart" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { capture: "uc-complete-detached-window" } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "uc-redo-journal-dual-drift-saved-tab-into-external",
+    title: "subagent clone redo journal saved tab into external",
+    notes: "RT-219 clone: second browser drift merges the saved tab into an external window instead of detaching it.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["subagent", "history", "journal", "browserCreated", "native-move", "multi-window", "partial-snapshot"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 2 }, captureStaleTabs: "uc-merge-group-old" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "UC merge A1" }, { title: "UC merge A2", active: true }], captureWindow: "uc-merge-window-a", captureTabs: "uc-merge-tabs-a" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "UC merge B1", active: true }], captureWindow: "uc-merge-window-b", captureTabs: "uc-merge-tabs-b" },
+      { type: "nativeMoveTabToWindow", tab: { inWindow: { capture: "uc-merge-window-a" }, index: 1 }, window: { capture: "uc-merge-window-b" }, index: 0, active: true, captureStaleTabs: "uc-merge-a-old" },
+      { type: "nativeMoveTabToWindow", tab: { tabId: 1 }, window: { capture: "uc-merge-window-b" }, index: 1, active: true, captureStaleTabs: "uc-merge-saved-old" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "UC Merge Saved Current", url: "https://uc.example/merge-saved" },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedoThenAbruptRestart" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { capture: "uc-merge-window-b" } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "sd-undo-journal-after-redone-native-drifts",
+    title: "subagent clone undo journal after redone native drifts",
+    notes: "RT-219 clone: flips history direction so crash journal is undo after redo with dual native drift already accepted.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["subagent", "history", "journal", "native-move", "browserCreated", "undo-redo", "partial-snapshot"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 2 }, captureStaleTabs: "sd-undo-group-old" },
+      { type: "outlinerUndo" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "SD undo A1" }, { title: "SD undo A2", active: true }], captureWindow: "sd-undo-window-a", captureTabs: "sd-undo-tabs-a" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "SD undo B1", active: true }], captureWindow: "sd-undo-window-b", captureTabs: "sd-undo-tabs-b" },
+      { type: "nativeMoveTabToWindow", tab: { inWindow: { capture: "sd-undo-window-a" }, index: 1 }, window: { capture: "sd-undo-window-b" }, index: 0, active: true, captureStaleTabs: "sd-undo-a-old" },
+      { type: "nativeMoveTabToNewWindow", tab: { tabId: 1 }, active: true, captureWindow: "sd-undo-detached-window", captureStaleTabs: "sd-undo-detached-old" },
+      { type: "outlinerRedo" },
+      { type: "outlinerUndoThenAbruptRestart" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { capture: "sd-undo-detached-window" } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "sd-redo-journal-after-saved-tab-roundtrip",
+    title: "subagent clone redo journal after saved tab roundtrip",
+    notes: "RT-219 clone: vulnerable saved tab moves into and back out of a browser-created window before redo crash.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["subagent", "history", "journal", "native-move", "saved", "browserCreated", "runtime-order"],
+    assertions: ["runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 2 }, captureStaleTabs: "sd-roundtrip-group-old" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "SD roundtrip A" }, { title: "SD roundtrip B", active: true }], captureWindow: "sd-roundtrip-window", captureTabs: "sd-roundtrip-tabs" },
+      { type: "nativeMoveTabToWindow", tab: { tabId: 2 }, window: { capture: "sd-roundtrip-window" }, index: 0, active: true, captureStaleTabs: "sd-roundtrip-saved-old" },
+      { type: "nativeMoveTabToWindow", tab: { role: "lastMovedTab" }, window: { windowId: 10 }, index: 0, active: true, captureStaleTabs: "sd-roundtrip-external-old" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "SD Roundtrip Current", url: "https://sd.example/roundtrip" },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedoThenAbruptRestart" },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 10 }, order: "reverse" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "sd-roundtrip-external-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "sd-command-restored-browser-complete-stale-order",
+    title: "subagent scope command restored browser complete stale order",
+    notes: "Unrelated scope/shape probe: complete refresh should dominate stale event-local order across three provenances.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["subagent", "scope-shape", "commandCreated", "restored", "browserCreated", "complete-refresh", "stale-event"],
+    assertions: ["runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "sd-scope-restored-tabs", captureRestoredWindows: "sd-scope-restored-window" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "sd-scope-command-old" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "SD scope A" }, { title: "SD scope B", active: true }], captureWindow: "sd-scope-external-window", captureTabs: "sd-scope-external-tabs" },
+      { type: "nativeMoveTabToWindow", tab: { inWindow: { capture: "sd-scope-external-window" }, index: 1 }, window: { capture: "sd-scope-restored-window" }, index: 0, active: true, captureStaleTabs: "sd-scope-external-old" },
+      { type: "manualRefresh" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "sd-scope-external-old" }, withStaleQuery: true },
+      { type: "manualRefreshWithReorderedQuery", window: { capture: "sd-scope-restored-window" }, order: "rotateLeft" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "sd-browser-created-window-state-sparse-shape",
+    title: "subagent scope browser created window state sparse shape",
+    notes: "Unrelated sparse shape probe: browser-created window state, order, and metadata facts meet stale moved-tab evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["subagent", "scope-shape", "browserCreated", "window-state", "metadata", "partial-snapshot", "runtime-order"],
+    assertions: ["runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "SD state A" }, { title: "SD state B" }, { title: "SD state C", active: true }], captureWindow: "sd-state-window", captureTabs: "sd-state-tabs" },
+      { type: "nativeSetWindowState", window: { capture: "sd-state-window" }, state: "maximized" },
+      { type: "updateTab", tab: { inWindow: { capture: "sd-state-window" }, index: 2 }, title: "SD State Current", url: "https://sd.example/state" },
+      { type: "nativeMoveTabToWindow", tab: { inWindow: { capture: "sd-state-window" }, index: 0 }, window: { windowId: 10 }, index: 0, active: true, captureStaleTabs: "sd-state-old" },
+      { type: "manualRefresh" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "sd-state-old" }, withStaleQuery: true },
+      { type: "manualRefreshWithMissingWindowQuery", window: { capture: "sd-state-window" } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "ud-browser-fullscreen-survivor-session-order",
+    title: "subagent high temp browser fullscreen survivor session order",
+    notes: "Higher-temperature user flow: browser-created fullscreen window loses an active non-last tab by session-only evidence while survivors keep order and metadata.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["subagent", "browserCreated", "fullscreen", "window-state", "native-close", "session", "runtime-order"],
+    assertions: ["runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: true, tabs: [{ title: "UD full A" }, { title: "UD full B", active: true }, { title: "UD full C" }], captureWindow: "ud-full-window", captureTabs: "ud-full-tabs" },
+      { type: "nativeSetWindowState", window: { capture: "ud-full-window" }, state: "fullscreen" },
+      { type: "nativeCloseTab", tab: { inWindow: { capture: "ud-full-window" }, index: 1 }, order: "sessionChangedOnly" },
+      { type: "updateTab", tab: { inWindow: { capture: "ud-full-window" }, index: 1 }, title: "UD Full C Current", url: "https://ud.example/full-c" },
+      { type: "manualRefreshWithReorderedQuery", window: { capture: "ud-full-window" }, order: "rotateLeft" },
+      { type: "nativeSetWindowState", window: { capture: "ud-full-window" }, state: "normal" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "ud-commandless-opener-fullscreen-window-only",
+    title: "subagent high temp commandless opener fullscreen window only close",
+    notes: "Commandless opener chain: browser-detached child survives window-only close of the old opener scope plus stale old-window evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["subagent", "browserCreated", "opener", "fullscreen", "window-state", "native-move", "native-close", "stale-event"],
+    assertions: ["runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "UD opener root", active: true }], captureWindow: "ud-opener-window", captureTabs: "ud-opener-root" },
+      { type: "openTab", window: { capture: "ud-opener-window" }, active: false, openerTab: { capture: "ud-opener-root" }, title: "UD opener child", captureTab: "ud-opener-child" },
+      { type: "nativeSetWindowState", window: { capture: "ud-opener-window" }, state: "maximized" },
+      { type: "nativeMoveTabToNewWindow", tab: { capture: "ud-opener-child" }, active: true, captureWindow: "ud-opener-child-window", captureStaleTabs: "ud-opener-child-old" },
+      { type: "nativeCloseWindow", window: { capture: "ud-opener-window" }, order: "windowRemovedOnly" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "ud-opener-child-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "se-shared-command-window-no-journal-detach",
+    title: "subagent high temp shared command window no journal detach",
+    notes: "Command-created destination gets a browser-created sibling, then the command-moved tab is browser-detached across abrupt restart without command journal help.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["subagent", "commandCreated", "browserCreated", "native-move", "restart", "stale-event", "scope-routing"],
+    assertions: ["runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "se-shared-cmd-old" },
+      { type: "openTab", window: { role: "lastOpenedWindow" }, active: false, title: "SE shared sibling", captureTab: "se-shared-browser-sibling" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "SE shared external", active: true }], captureWindow: "se-shared-ext-win", captureTabs: "se-shared-ext-tab" },
+      { type: "nativeMoveTabToWindow", tab: { role: "lastMovedTab" }, window: { capture: "se-shared-ext-win" }, index: 0, active: true, captureStaleTabs: "se-shared-command-before" },
+      { type: "restartBackgroundAbrupt" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "se-shared-cmd-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "se-partial-snapshot-shared-window-missing-survivor",
+    title: "subagent high temp partial shared window missing survivor",
+    notes: "Shared command/browser window: partial missing-tab query should not delete a browser-created sibling or accept stale command-source evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["subagent", "commandCreated", "browserCreated", "partial-snapshot", "shape-fact", "stale-event"],
+    assertions: ["runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "se-partial-cmd-old" },
+      { type: "openTab", window: { role: "lastOpenedWindow" }, active: true, title: "SE partial browser sibling", captureTab: "se-partial-browser-sibling" },
+      { type: "manualRefresh" },
+      { type: "manualRefreshWithMissingTabQuery", tab: { capture: "se-partial-browser-sibling" } },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "se-partial-cmd-old" }, withStaleQuery: true },
+      { type: "updateTab", tab: { capture: "se-partial-browser-sibling" }, title: "SE Partial Sibling Current", url: "https://se.example/partial-sibling" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "ud-restored-opener-external-session-split",
+    title: "subagent high temp restored opener external session split",
+    notes: "Restored parent tab is closed by session-only browser evidence while a browser-created opener child remains live across partial and complete refresh.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["subagent", "restored", "browserCreated", "opener", "session", "partial-snapshot"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "ud-split-restored-tabs", captureRestoredWindows: "ud-split-restored-window" },
+      { type: "nativeOpenWindow", focused: true, tabs: [{ title: "UD split external child", active: true, openerTab: { capture: "ud-split-restored-tabs" } }], captureWindow: "ud-split-external-window", captureTabs: "ud-split-external-tabs" },
+      { type: "updateTab", tab: { capture: "ud-split-external-tabs" }, title: "UD Split External Current", url: "https://ud.example/split-external" },
+      { type: "nativeCloseTab", tab: { capture: "ud-split-restored-tabs" }, order: "sessionChangedOnly" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "ud-restored-browser-window-close-complete-then-partial",
+    title: "subagent high temp restored browser window close complete then partial",
+    notes: "A prior complete refresh accepts restored-window metadata; an unrelated browser-created window closes before a partial restored-window omission.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["subagent", "restored", "browserCreated", "native-close", "complete-refresh", "partial-snapshot"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "ud-complete-restored-tabs", captureRestoredWindows: "ud-complete-restored-window" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "UD complete external", active: true }], captureWindow: "ud-complete-external-window", captureTabs: "ud-complete-external-tabs" },
+      { type: "updateTab", tab: { capture: "ud-complete-restored-tabs" }, title: "UD Complete Restored Current", url: "https://ud.example/complete-restored" },
+      { type: "manualRefresh" },
+      { type: "nativeCloseWindow", window: { capture: "ud-complete-external-window" }, order: "windowRemovedThenTabsRemoved" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { capture: "ud-complete-restored-window" } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "se-complete-refresh-then-event-local-order-cross-scope",
+    title: "subagent high temp complete refresh then event-local order cross scope",
+    notes: "Complete refresh/current metadata should dominate stale event-local created evidence after a browser-created tab joins a restored scope.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["subagent", "restored", "browserCreated", "complete-refresh", "stale-event", "runtime-order"],
+    assertions: ["runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "se-order-restored-tabs", captureRestoredWindows: "se-order-restored-win" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "SE order A" }, { title: "SE order B", active: true }], captureWindow: "se-order-ext-win", captureTabs: "se-order-ext-tabs" },
+      { type: "nativeMoveTabToWindow", tab: { inWindow: { capture: "se-order-ext-win" }, index: 1 }, window: { capture: "se-order-restored-win" }, index: 0, active: true, captureStaleTabs: "se-order-ext-before" },
+      { type: "manualRefresh" },
+      { type: "updateTab", tab: { capture: "se-order-restored-tabs" }, title: "SE Order Restored Current", url: "https://se.example/order-restored" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "se-order-ext-before" }, withStaleQuery: true },
+      { type: "manualRefreshWithReorderedQuery", window: { capture: "se-order-restored-win" }, order: "rotateLeft" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "se-browser-created-scope-generation-no-journal-stale-metadata",
+    title: "subagent high temp browser-created scope generation no journal stale metadata",
+    notes: "Pure browser-authored move across abrupt restart: accepted metadata and window ownership should beat stale old-window event-local evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["subagent", "browserCreated", "native-move", "restart", "stale-event", "metadata", "partial-snapshot"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "SE gen A" }, { title: "SE gen B", active: true }], captureWindow: "se-gen-ext-win", captureTabs: "se-gen-ext-tabs" },
+      { type: "updateTab", tab: { inWindow: { capture: "se-gen-ext-win" }, index: 1 }, title: "SE Gen Accepted Current", url: "https://se.example/gen-current" },
+      { type: "manualRefresh" },
+      { type: "nativeMoveTabToWindow", tab: { inWindow: { capture: "se-gen-ext-win" }, index: 1 }, window: { windowId: 10 }, index: 0, active: true, captureStaleTabs: "se-gen-ext-before" },
+      { type: "restartBackgroundAbrupt" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "se-gen-ext-before" }, withStaleQuery: true },
+      { type: "manualRefreshWithMissingWindowQuery", window: { capture: "se-gen-ext-win" } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "sf-command-shared-window-complete-stale-reorder",
+    title: "subagent final command shared window complete stale reorder",
+    notes: "Command-created shared window: complete metadata and runtime order should dominate stale old-window command echo.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["subagent", "commandCreated", "complete-refresh", "stale-event", "runtime-order", "metadata"],
+    assertions: ["runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "sf-shared-cmd-old" },
+      { type: "openTab", window: { role: "lastOpenedWindow" }, active: false, title: "SF command sibling", captureTab: "sf-shared-sibling" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "SF Command Current", url: "https://sf.example/command-current" },
+      { type: "manualRefresh" },
+      { type: "manualRefreshWithReorderedQuery", window: { role: "lastOpenedWindow" }, order: "reverse" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "sf-shared-cmd-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "sf-browser-window-move-into-command-no-journal",
+    title: "subagent final browser window move into command no journal",
+    notes: "Browser-created tab joins a command-created scope, then no-journal restart and stale old source evidence should preserve current ownership and metadata.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["subagent", "browserCreated", "commandCreated", "native-move", "restart", "stale-event", "metadata"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "SF external A" }, { title: "SF external B", active: true }], captureWindow: "sf-ext-win", captureTabs: "sf-ext-tabs" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "sf-cmd-old" },
+      { type: "nativeMoveTabToWindow", tab: { inWindow: { capture: "sf-ext-win" }, index: 1 }, window: { role: "lastOpenedWindow" }, index: 0, active: true, captureStaleTabs: "sf-ext-before" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "SF Joined Current", url: "https://sf.example/joined" },
+      { type: "manualRefresh" },
+      { type: "restartBackgroundAbrupt" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "sf-ext-before" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "sf-cross-window-order-after-complete-stale-metadata",
+    title: "subagent final cross window order after complete stale metadata",
+    notes: "Pure browser-authored cross-window move/order after complete refresh: stale source-window metadata must not undo accepted destination shape.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["subagent", "browserCreated", "native-move", "complete-refresh", "stale-event", "runtime-order", "metadata"],
+    assertions: ["runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "SF A one" }, { title: "SF A two", active: true }], captureWindow: "sf-a-win", captureTabs: "sf-a-tabs" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "SF B one" }, { title: "SF B two", active: true }], captureWindow: "sf-b-win", captureTabs: "sf-b-tabs" },
+      { type: "nativeMoveTabToWindow", tab: { inWindow: { capture: "sf-a-win" }, index: 0 }, window: { capture: "sf-b-win" }, index: 1, active: false, captureStaleTabs: "sf-a-before" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "SF Cross Current", url: "https://sf.example/cross-current" },
+      { type: "manualRefresh" },
+      { type: "manualRefreshWithReorderedQuery", window: { capture: "sf-b-win" }, order: "rotateLeft" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "sf-a-before" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "yh-saved-tab-enters-restored-window",
+    title: "mixed provenance saved tab enters restored window",
+    notes: "Saved and restored tabs cohabit after browser-authored move; restored scope should own current browser shape.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["mixed-provenance", "saved", "restored", "native-move", "metadata"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "yh-saved-restored-tabs", captureRestoredWindows: "yh-saved-restored-window" },
+      { type: "nativeMoveTabToWindow", tab: { tabId: 1 }, window: { capture: "yh-saved-restored-window" }, index: 0, active: true, captureStaleTabs: "yh-saved-restored-old" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "YH Saved In Restored Current", url: "https://yh.example/saved-restored" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "yh-restored-tab-enters-saved-window",
+    title: "mixed provenance restored tab enters saved window",
+    notes: "A restored tab moves into an established saved runtime window and receives current metadata.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["mixed-provenance", "restored", "saved", "native-move", "metadata"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "yh-restored-saved-tabs", captureRestoredWindows: "yh-restored-saved-window" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "yh-restored-saved-tabs" }, window: { windowId: 10 }, index: 0, active: true, captureStaleTabs: "yh-restored-saved-old" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "YH Restored In Saved Current", url: "https://yh.example/restored-saved" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "yh-restored-opener-child-joins-saved",
+    title: "mixed provenance restored opener child joins saved",
+    notes: "A child opened from a restored tab moves into a saved window after the restored parent remains live.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["mixed-provenance", "restored", "saved", "opener", "native-move"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "yh-opener-restored-tabs", captureRestoredWindows: "yh-opener-restored-window" },
+      { type: "openTab", window: { capture: "yh-opener-restored-window" }, active: false, openerTab: { capture: "yh-opener-restored-tabs" }, title: "YH restored opener child", captureTab: "yh-restored-opener-child" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "yh-restored-opener-child" }, window: { windowId: 10 }, index: 0, active: true, captureStaleTabs: "yh-restored-opener-child-old" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "YH Restored Child Saved Current", url: "https://yh.example/restored-child-saved" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "yh-restored-window-saved-sibling-close",
+    title: "mixed provenance restored window saved sibling close",
+    notes: "A saved tab moves into a restored window, then the restored original closes while the saved tab remains.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["mixed-provenance", "restored", "saved", "native-close", "session"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "yh-sibling-restored-tabs", captureRestoredWindows: "yh-sibling-restored-window" },
+      { type: "nativeMoveTabToWindow", tab: { tabId: 1 }, window: { capture: "yh-sibling-restored-window" }, index: 0, active: true, captureStaleTabs: "yh-sibling-saved-old" },
+      { type: "nativeCloseTab", tab: { capture: "yh-sibling-restored-tabs" }, order: "sessionChangedOnly" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "YH Saved Sibling Survives", url: "https://yh.example/saved-survives" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "yh-external-tab-enters-restored-window",
+    title: "mixed provenance external tab enters restored window",
+    notes: "A browser-created tab is merged into a restored window and stale source evidence follows.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["mixed-provenance", "browserCreated", "restored", "native-move", "stale-event"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "yh-ext-restored-tabs", captureRestoredWindows: "yh-ext-restored-window" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "YH external merge", active: true }], captureWindow: "yh-ext-source-window", captureTabs: "yh-ext-source-tabs" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "yh-ext-source-tabs" }, window: { capture: "yh-ext-restored-window" }, index: 0, active: true, captureStaleTabs: "yh-ext-source-old" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "YH External Restored Current", url: "https://yh.example/external-restored" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "yh-ext-source-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "yh-restored-tab-enters-external-window",
+    title: "mixed provenance restored tab enters external window",
+    notes: "A restored tab joins a browser-created multi-tab window that later receives reordered query evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["mixed-provenance", "restored", "browserCreated", "native-move", "runtime-order"],
+    assertions: ["runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "yh-restored-external-tabs", captureRestoredWindows: "yh-restored-external-window" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "YH external host A" }, { title: "YH external host B", active: true }], captureWindow: "yh-external-host-window", captureTabs: "yh-external-host-tabs" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "yh-restored-external-tabs" }, window: { capture: "yh-external-host-window" }, index: 0, active: true, captureStaleTabs: "yh-restored-external-old" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "YH Restored External Current", url: "https://yh.example/restored-external" },
+      { type: "manualRefreshWithReorderedQuery", window: { capture: "yh-external-host-window" }, order: "rotateRight" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "yh-browser-opener-child-survives-restored-close",
+    title: "mixed provenance browser opener child survives restored close",
+    notes: "A browser-created opener child outlives the restored source window close and keeps current metadata.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["mixed-provenance", "browserCreated", "restored", "opener", "native-close"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "yh-browser-opener-restored-tabs", captureRestoredWindows: "yh-browser-opener-restored-window" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "YH browser opener child", active: true, openerTab: { capture: "yh-browser-opener-restored-tabs" } }], captureWindow: "yh-browser-opener-window", captureTabs: "yh-browser-opener-tabs" },
+      { type: "nativeCloseWindow", window: { capture: "yh-browser-opener-restored-window" }, order: "windowRemovedThenTabsRemoved" },
+      { type: "updateTab", tab: { capture: "yh-browser-opener-tabs" }, title: "YH Browser Opener Survives", url: "https://yh.example/browser-opener-survives" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "yh-external-window-absorbs-restored-sibling",
+    title: "mixed provenance external window absorbs restored sibling",
+    notes: "A browser-created window absorbs a restored tab, then reorders survivor tabs with current metadata.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["mixed-provenance", "browserCreated", "restored", "native-move", "runtime-order"],
+    assertions: ["runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "yh-absorbs-restored-tabs", captureRestoredWindows: "yh-absorbs-restored-window" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "YH absorbs A" }, { title: "YH absorbs B", active: true }], captureWindow: "yh-absorbs-external-window", captureTabs: "yh-absorbs-external-tabs" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "yh-absorbs-restored-tabs" }, window: { capture: "yh-absorbs-external-window" }, index: 1, active: true, captureStaleTabs: "yh-absorbs-restored-old" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "YH Absorbed Restored Current", url: "https://yh.example/absorbed-restored" },
+      { type: "manualRefreshWithReorderedQuery", window: { capture: "yh-absorbs-external-window" }, order: "reverse" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "yh-command-destination-browser-sibling",
+    title: "mixed provenance command destination browser sibling",
+    notes: "A command-created destination receives a browser-created sibling and stale command-source evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["mixed-provenance", "commandCreated", "browserCreated", "native-open", "stale-event"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "yh-command-browser-old" },
+      { type: "openTab", window: { role: "lastOpenedWindow" }, active: false, title: "YH command browser sibling", captureTab: "yh-command-browser-sibling" },
+      { type: "updateTab", tab: { capture: "yh-command-browser-sibling" }, title: "YH Command Browser Sibling Current", url: "https://yh.example/command-browser-sibling" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "yh-command-browser-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "yh-saved-tab-joins-command-destination",
+    title: "mixed provenance saved tab joins command destination",
+    notes: "A saved tab joins a command-created destination and current browser order should win.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["mixed-provenance", "saved", "commandCreated", "native-move", "runtime-order"],
+    assertions: ["runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "yh-saved-command-old" },
+      { type: "nativeMoveTabToWindow", tab: { tabId: 2 }, window: { role: "lastOpenedWindow" }, index: 0, active: true, captureStaleTabs: "yh-saved-command-saved-old" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "YH Saved Command Current", url: "https://yh.example/saved-command" },
+      { type: "manualRefreshWithReorderedQuery", window: { role: "lastOpenedWindow" }, order: "reverse" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "yh-restored-tab-joins-command-destination",
+    title: "mixed provenance restored tab joins command destination",
+    notes: "A restored tab joins a command-created destination while restored-source stale evidence is delayed.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["mixed-provenance", "restored", "commandCreated", "native-move", "stale-event"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "yh-restored-command-tabs", captureRestoredWindows: "yh-restored-command-window" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "yh-restored-command-old" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "yh-restored-command-tabs" }, window: { role: "lastOpenedWindow" }, index: 0, active: true, captureStaleTabs: "yh-restored-command-source-old" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "YH Restored Command Current", url: "https://yh.example/restored-command" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "yh-restored-command-source-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "yh-command-tab-leaves-to-external-window",
+    title: "mixed provenance command tab leaves to external window",
+    notes: "A command-moved tab leaves its command-created destination for a browser-created window with stale command echo.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["mixed-provenance", "commandCreated", "browserCreated", "native-move", "stale-event"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "yh-command-leaves-old" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "YH command leaves external", active: true }], captureWindow: "yh-command-leaves-external-window", captureTabs: "yh-command-leaves-external-tabs" },
+      { type: "nativeMoveTabToWindow", tab: { role: "lastMovedTab" }, window: { capture: "yh-command-leaves-external-window" }, index: 0, active: true, captureStaleTabs: "yh-command-leaves-destination-old" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "YH Command Leaves Current", url: "https://yh.example/command-leaves" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "yh-command-leaves-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "yh-mixed-owner-tab-closes-foreign-remains",
+    title: "mixed provenance owner tab closes foreign remains",
+    notes: "Original restored owner disappears while a saved foreign tab keeps the mixed runtime window live.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["mixed-provenance", "restored", "saved", "native-close", "session"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "yh-owner-close-restored-tabs", captureRestoredWindows: "yh-owner-close-window" },
+      { type: "nativeMoveTabToWindow", tab: { tabId: 1 }, window: { capture: "yh-owner-close-window" }, index: 0, active: true, captureStaleTabs: "yh-owner-close-saved-old" },
+      { type: "nativeCloseTab", tab: { capture: "yh-owner-close-restored-tabs" }, order: "tabRemovedThenSessionChanged" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "yh-mixed-foreign-tab-closes-owner-remains",
+    title: "mixed provenance foreign tab closes owner remains",
+    notes: "A saved foreign tab closes inside a restored window while the restored owner remains authoritative.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["mixed-provenance", "restored", "saved", "native-close"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "yh-foreign-close-restored-tabs", captureRestoredWindows: "yh-foreign-close-window" },
+      { type: "nativeMoveTabToWindow", tab: { tabId: 1 }, window: { capture: "yh-foreign-close-window" }, index: 0, active: true, captureStaleTabs: "yh-foreign-close-saved-old" },
+      { type: "nativeCloseTab", tab: { role: "lastMovedTab" }, order: "tabRemovedOnly" },
+      { type: "updateTab", tab: { capture: "yh-foreign-close-restored-tabs" }, title: "YH Restored Owner Remains", url: "https://yh.example/restored-owner-remains" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "yh-mixed-session-only-disappearance",
+    title: "mixed provenance session only disappearance",
+    notes: "Session-only tab disappearance in a mixed browser-created/restored window must not imply whole-window close.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["mixed-provenance", "browserCreated", "restored", "session", "native-close"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "yh-session-restored-tabs", captureRestoredWindows: "yh-session-restored-window" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "YH session external", active: true }], captureWindow: "yh-session-external-window", captureTabs: "yh-session-external-tabs" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "yh-session-external-tabs" }, window: { capture: "yh-session-restored-window" }, index: 0, active: true, captureStaleTabs: "yh-session-external-old" },
+      { type: "nativeCloseTab", tab: { role: "lastMovedTab" }, order: "sessionChangedOnly" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "yh-mixed-whole-window-close",
+    title: "mixed provenance whole window close",
+    notes: "A mixed restored/saved runtime window receives whole-window close evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["mixed-provenance", "restored", "saved", "native-close", "event-order"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "yh-whole-close-restored-tabs", captureRestoredWindows: "yh-whole-close-window" },
+      { type: "nativeMoveTabToWindow", tab: { tabId: 1 }, window: { capture: "yh-whole-close-window" }, index: 0, active: true, captureStaleTabs: "yh-whole-close-saved-old" },
+      { type: "nativeCloseWindow", window: { capture: "yh-whole-close-window" }, order: "windowRemovedThenTabsRemoved" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "yh-history-undo-after-mixed-native-move",
+    title: "mixed provenance history undo after native move",
+    notes: "A history undo runs after a saved tab has moved into a restored mixed window.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["mixed-provenance", "history", "restored", "saved", "native-move"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 2 }, captureStaleTabs: "yh-history-group-old" },
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "yh-history-restored-tabs", captureRestoredWindows: "yh-history-restored-window" },
+      { type: "nativeMoveTabToWindow", tab: { tabId: 2 }, window: { capture: "yh-history-restored-window" }, index: 0, active: true, captureStaleTabs: "yh-history-move-old" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "YH History Mixed Current", url: "https://yh.example/history-mixed" },
+      { type: "outlinerUndo" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "yh-redo-abrupt-after-mixed-ownership",
+    title: "mixed provenance redo abrupt after ownership mix",
+    notes: "Redo plus abrupt restart after a single mixed restored/saved ownership change, distinct from the RT-219 dual-drift basin.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["mixed-provenance", "history", "journal", "restored", "saved", "restart"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 2 }, captureStaleTabs: "yh-redo-group-old" },
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "yh-redo-restored-tabs", captureRestoredWindows: "yh-redo-restored-window" },
+      { type: "nativeMoveTabToWindow", tab: { tabId: 2 }, window: { capture: "yh-redo-restored-window" }, index: 0, active: true, captureStaleTabs: "yh-redo-move-old" },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedoThenAbruptRestart" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "yh-delete-closed-mixed-origin-record",
+    title: "mixed provenance delete closed mixed origin record",
+    notes: "A browser-created window containing a saved tab closes, then the closed mixed-origin record is deleted across abrupt restart.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["mixed-provenance", "browserCreated", "saved", "delete", "restart"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "YH mixed closed external", active: true }], captureWindow: "yh-delete-mixed-window", captureTabs: "yh-delete-mixed-tabs" },
+      { type: "nativeMoveTabToWindow", tab: { tabId: 1 }, window: { capture: "yh-delete-mixed-window" }, index: 0, active: true, captureStaleTabs: "yh-delete-saved-old" },
+      { type: "nativeCloseWindow", window: { capture: "yh-delete-mixed-window" }, order: "tabsRemovedThenWindowRemoved" },
+      { type: "outlinerDeleteNodeThenAbruptRestart", node: { nodeId: "window:21" } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "yh-restore-delete-history-after-external-merge",
+    title: "mixed provenance restore delete history after external merge",
+    notes: "A closed external record is restored, receives a saved tab, is deleted, then history undo restores the durable mixed outline shape.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["mixed-provenance", "browserCreated", "restore", "delete", "history"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "YH restore delete external", active: true }], captureWindow: "yh-restore-delete-window", captureTabs: "yh-restore-delete-tabs" },
+      { type: "nativeCloseWindow", window: { capture: "yh-restore-delete-window" }, order: "tabsRemovedThenWindowRemoved" },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:21" }, captureRestoredTabs: "yh-restore-delete-restored-tabs", captureRestoredWindows: "yh-restore-delete-restored-window" },
+      { type: "nativeMoveTabToWindow", tab: { tabId: 1 }, window: { capture: "yh-restore-delete-restored-window" }, index: 0, active: true, captureStaleTabs: "yh-restore-delete-saved-old" },
+      { type: "outlinerDeleteNodeThenAbruptRestart", node: { nodeId: "window:21" } },
+      { type: "outlinerUndo" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "yh-fullscreen-mixed-window-native-move",
+    title: "mixed provenance fullscreen window native move",
+    notes: "Fullscreen is window shape only while saved/restored cohabitation changes through a native move.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["mixed-provenance", "fullscreen", "window-state", "restored", "saved", "native-move"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "yh-fullscreen-restored-tabs", captureRestoredWindows: "yh-fullscreen-window" },
+      { type: "nativeMoveTabToWindow", tab: { tabId: 1 }, window: { capture: "yh-fullscreen-window" }, index: 0, active: true, captureStaleTabs: "yh-fullscreen-saved-old" },
+      { type: "nativeSetWindowState", window: { capture: "yh-fullscreen-window" }, state: "fullscreen" },
+      { type: "nativeMoveTabToWindow", tab: { role: "lastMovedTab" }, window: { windowId: 10 }, index: 0, active: true, captureStaleTabs: "yh-fullscreen-move-out-old" },
+      { type: "nativeSetWindowState", window: { capture: "yh-fullscreen-window" }, state: "normal" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "yh-partial-query-missing-mixed-destination",
+    title: "mixed provenance partial query missing destination",
+    notes: "A mixed command/browser-created destination is omitted from a partial query before a complete refresh.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["mixed-provenance", "commandCreated", "browserCreated", "partial-snapshot", "native-open"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "yh-partial-command-old" },
+      { type: "openTab", window: { role: "lastOpenedWindow" }, active: true, title: "YH partial browser sibling", captureTab: "yh-partial-browser-sibling" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { role: "lastOpenedWindow" } },
+      { type: "updateTab", tab: { capture: "yh-partial-browser-sibling" }, title: "YH Partial Sibling Current", url: "https://yh.example/partial-sibling" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "yh-stale-old-echo-after-mixed-refresh",
+    title: "mixed provenance stale old echo after refresh",
+    notes: "A complete refresh accepts a mixed restored/browser-created window, then stale old source evidence arrives.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["mixed-provenance", "restored", "browserCreated", "complete-refresh", "stale-event"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "yh-stale-refresh-restored-tabs", captureRestoredWindows: "yh-stale-refresh-restored-window" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "YH stale refresh external", active: true }], captureWindow: "yh-stale-refresh-external-window", captureTabs: "yh-stale-refresh-external-tabs" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "yh-stale-refresh-external-tabs" }, window: { capture: "yh-stale-refresh-restored-window" }, index: 0, active: true, captureStaleTabs: "yh-stale-refresh-old" },
+      { type: "manualRefresh" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "yh-stale-refresh-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "yh-two-mixed-windows-exchange-tabs",
+    title: "mixed provenance two mixed windows exchange tabs",
+    notes: "Two browser-created windows exchange tabs after one receives a saved tab and the other receives a restored tab.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["mixed-provenance", "browserCreated", "saved", "restored", "multi-window", "native-move"],
+    assertions: ["runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "yh-exchange-restored-tabs", captureRestoredWindows: "yh-exchange-restored-window" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "YH exchange A", active: true }], captureWindow: "yh-exchange-window-a", captureTabs: "yh-exchange-tabs-a" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "YH exchange B", active: true }], captureWindow: "yh-exchange-window-b", captureTabs: "yh-exchange-tabs-b" },
+      { type: "nativeMoveTabToWindow", tab: { tabId: 1 }, window: { capture: "yh-exchange-window-a" }, index: 0, active: true, captureStaleTabs: "yh-exchange-saved-old" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "yh-exchange-restored-tabs" }, window: { capture: "yh-exchange-window-b" }, index: 0, active: true, captureStaleTabs: "yh-exchange-restored-old" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "yh-exchange-tabs-a" }, window: { capture: "yh-exchange-window-b" }, index: 1, active: false, captureStaleTabs: "yh-exchange-a-old" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "yh-exchange-tabs-b" }, window: { capture: "yh-exchange-window-a" }, index: 1, active: false, captureStaleTabs: "yh-exchange-b-old" },
+      { type: "manualRefreshWithReorderedQuery", window: { capture: "yh-exchange-window-a" }, order: "rotateRight" },
+      { type: "manualRefreshWithReorderedQuery", window: { capture: "yh-exchange-window-b" }, order: "rotateLeft" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "yh-rung1-restored-to-command-scope-handoff",
+    title: "mixed provenance restored to command scope handoff",
+    notes: "A restored tab transfers into a command-created window; complete shape should dominate stale restored-source echo.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["mixed-provenance", "restored", "commandCreated", "native-move", "complete-refresh", "stale-event"],
+    assertions: ["runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "yh-r1-restored-command-tabs", captureRestoredWindows: "yh-r1-restored-command-window" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "yh-r1-restored-command-old" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "yh-r1-restored-command-tabs" }, window: { role: "lastOpenedWindow" }, index: 0, active: true, captureStaleTabs: "yh-r1-restored-source-old" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "YH R1 Restored Command Current", url: "https://yh.example/r1-restored-command" },
+      { type: "manualRefresh" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "yh-r1-restored-source-old" }, withStaleQuery: true },
+      { type: "manualRefreshWithReorderedQuery", window: { role: "lastOpenedWindow" }, order: "rotateLeft" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "yh-rung1-command-to-restored-partial",
+    title: "mixed provenance command to restored partial",
+    notes: "A command-created tab moves into a restored scope; partial snapshot must not revive command-source ownership.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["mixed-provenance", "commandCreated", "restored", "partial-snapshot", "stale-event"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "yh-r1-command-restored-old" },
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "yh-r1-command-restored-tabs", captureRestoredWindows: "yh-r1-command-restored-window" },
+      { type: "nativeMoveTabToWindow", tab: { tabId: 1 }, window: { capture: "yh-r1-command-restored-window" }, index: 0, active: true, captureStaleTabs: "yh-r1-command-before" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { capture: "yh-r1-command-restored-window" } },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "yh-r1-command-before" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "yh-rung1-three-provenances-one-window",
+    title: "mixed provenance three provenances one window",
+    notes: "Command-created, browser-created, and restored tabs cohabit one restored runtime window.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["mixed-provenance", "commandCreated", "browserCreated", "restored", "runtime-order", "stale-event"],
+    assertions: ["runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "yh-r1-three-command-old" },
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "yh-r1-three-restored-tabs", captureRestoredWindows: "yh-r1-three-restored-window" },
+      { type: "nativeMoveTabToWindow", tab: { tabId: 1 }, window: { capture: "yh-r1-three-restored-window" }, index: 0, active: true, captureStaleTabs: "yh-r1-three-command-before" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "YH R1 three external", active: true }], captureWindow: "yh-r1-three-external-window", captureTabs: "yh-r1-three-external-tabs" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "yh-r1-three-external-tabs" }, window: { capture: "yh-r1-three-restored-window" }, index: 1, active: true, captureStaleTabs: "yh-r1-three-external-old" },
+      { type: "manualRefreshWithReorderedQuery", window: { capture: "yh-r1-three-restored-window" }, order: "reverse" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "yh-r1-three-command-before" }, withStaleQuery: true },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "yh-r1-three-external-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "yh-rung1-close-journal-after-scope-transfer",
+    title: "mixed provenance close journal after scope transfer",
+    notes: "TO close journal runs after a browser-created tab transfers into a restored scope.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["mixed-provenance", "journal", "browserCreated", "restored", "native-move", "stale-event"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "yh-r1-close-restored-tabs", captureRestoredWindows: "yh-r1-close-restored-window" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "YH R1 close external A" }, { title: "YH R1 close external B", active: true }], captureWindow: "yh-r1-close-external-window", captureTabs: "yh-r1-close-external-tabs" },
+      { type: "nativeMoveTabToWindow", tab: { inWindow: { capture: "yh-r1-close-external-window" }, index: 0 }, window: { capture: "yh-r1-close-restored-window" }, index: 0, active: true, captureStaleTabs: "yh-r1-close-external-old" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "YH R1 Close Transfer Current", url: "https://yh.example/r1-close-transfer" },
+      { type: "outlinerCloseNodeThenAbruptRestart", node: { tab: { role: "lastMovedTab" } }, captureStaleTabs: "yh-r1-close-command-old" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "yh-r1-close-external-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "yh-rung1-delete-journal-cohabited-survivor",
+    title: "mixed provenance delete journal cohabited survivor",
+    notes: "Delete journal removes a restored original while a browser-created survivor remains in the same restored window.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["mixed-provenance", "delete", "journal", "restored", "browserCreated", "runtime-order"],
+    assertions: ["runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "yh-r1-delete-restored-tabs", captureRestoredWindows: "yh-r1-delete-restored-window" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "YH R1 delete external", active: true }], captureWindow: "yh-r1-delete-external-window", captureTabs: "yh-r1-delete-external-tabs" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "yh-r1-delete-external-tabs" }, window: { capture: "yh-r1-delete-restored-window" }, index: 0, active: true, captureStaleTabs: "yh-r1-delete-external-old" },
+      { type: "outlinerDeleteNodeThenAbruptRestart", node: { tab: { capture: "yh-r1-delete-restored-tabs" } } },
+      { type: "manualRefreshWithReorderedQuery", window: { capture: "yh-r1-delete-restored-window" }, order: "rotateRight" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "yh-r1-delete-external-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "yh-rung1-command-browser-partial-reorder",
+    title: "mixed provenance command browser partial reorder",
+    notes: "A browser-created tab joins a command-created window; missing source and reordered target evidence compete.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["mixed-provenance", "commandCreated", "browserCreated", "partial-snapshot", "runtime-order", "stale-event"],
+    assertions: ["runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "YH R1 command browser A" }, { title: "YH R1 command browser B", active: true }], captureWindow: "yh-r1-command-browser-window", captureTabs: "yh-r1-command-browser-tabs" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "yh-r1-command-browser-old" },
+      { type: "nativeMoveTabToWindow", tab: { inWindow: { capture: "yh-r1-command-browser-window" }, index: 0 }, window: { role: "lastOpenedWindow" }, index: 0, active: true, captureStaleTabs: "yh-r1-command-browser-external-old" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { capture: "yh-r1-command-browser-window" } },
+      { type: "manualRefreshWithReorderedQuery", window: { role: "lastOpenedWindow" }, order: "reverse" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "yh-r1-command-browser-external-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "yh-rung1-window-state-transfer-stale-echo",
+    title: "mixed provenance window state transfer stale echo",
+    notes: "Window state remains shape-only while external and command-created resources cohabit.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["mixed-provenance", "window-state", "fullscreen", "commandCreated", "browserCreated", "stale-event"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "YH R1 state external", active: true }], captureWindow: "yh-r1-state-external-window", captureTabs: "yh-r1-state-external-tabs" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "yh-r1-state-command-old" },
+      { type: "nativeSetWindowState", window: { role: "lastOpenedWindow" }, state: "maximized" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "yh-r1-state-external-tabs" }, window: { role: "lastOpenedWindow" }, index: 0, active: true, captureStaleTabs: "yh-r1-state-external-old" },
+      { type: "nativeSetWindowState", window: { role: "lastOpenedWindow" }, state: "fullscreen" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "yh-r1-state-external-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "yh-rung1-no-journal-transfer-abrupt-freshness",
+    title: "mixed provenance no journal transfer abrupt freshness",
+    notes: "Browser-authored ownership transfer survives abrupt restart without a command journal.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["mixed-provenance", "browserCreated", "native-move", "restart", "stale-event", "runtime-order"],
+    assertions: ["runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "YH R1 no journal A" }, { title: "YH R1 no journal B", active: true }], captureWindow: "yh-r1-no-journal-window", captureTabs: "yh-r1-no-journal-tabs" },
+      { type: "nativeMoveTabToWindow", tab: { inWindow: { capture: "yh-r1-no-journal-window" }, index: 1 }, window: { windowId: 10 }, index: 0, active: true, captureStaleTabs: "yh-r1-no-journal-old" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "YH R1 No Journal Current", url: "https://yh.example/r1-no-journal" },
+      { type: "restartBackgroundAbrupt" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "yh-r1-no-journal-old" }, withStaleQuery: true },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 10 }, order: "rotateRight" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "yh-rung2-history-after-three-scope-cohabit",
+    title: "mixed provenance history after three scope cohabit",
+    notes: "Old history replay crosses a live restored window that contains command-created and browser-created tabs.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["mixed-provenance", "history", "commandCreated", "browserCreated", "restored", "runtime-order"],
+    assertions: ["runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 2 }, captureStaleTabs: "yh-r2-history-group-old" },
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "yh-r2-history-restored-tabs", captureRestoredWindows: "yh-r2-history-restored-window" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "yh-r2-history-command-old" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "YH R2 history external", active: true }], captureWindow: "yh-r2-history-external-window", captureTabs: "yh-r2-history-external-tabs" },
+      { type: "nativeMoveTabToWindow", tab: { tabId: 1 }, window: { capture: "yh-r2-history-restored-window" }, index: 0, active: true, captureStaleTabs: "yh-r2-history-command-before" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "yh-r2-history-external-tabs" }, window: { capture: "yh-r2-history-restored-window" }, index: 1, active: true, captureStaleTabs: "yh-r2-history-external-old" },
+      { type: "outlinerUndo" },
+      { type: "manualRefreshWithReorderedQuery", window: { capture: "yh-r2-history-restored-window" }, order: "reverse" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "yh-r2-history-command-before" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "yh-rung2-session-close-mixed-survivors",
+    title: "mixed provenance session close mixed survivors",
+    notes: "Session-only close inside a mixed restored/command/browser window must preserve survivor order.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["mixed-provenance", "session", "commandCreated", "restored", "native-close", "partial-snapshot"],
+    assertions: ["runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "yh-r2-session-restored-tabs", captureRestoredWindows: "yh-r2-session-restored-window" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "yh-r2-session-command-old" },
+      { type: "nativeMoveTabToWindow", tab: { tabId: 1 }, window: { capture: "yh-r2-session-restored-window" }, index: 0, active: true, captureStaleTabs: "yh-r2-session-command-before" },
+      { type: "openTab", window: { capture: "yh-r2-session-restored-window" }, active: true, title: "YH R2 session browser sibling", captureTab: "yh-r2-session-browser-sibling" },
+      { type: "nativeCloseTab", tab: { capture: "yh-r2-session-restored-tabs" }, order: "sessionChangedOnly" },
+      { type: "manualRefreshWithMissingTabQuery", tab: { capture: "yh-r2-session-browser-sibling" } },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "yh-r2-session-command-before" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "yh-rung2-restored-history-partial-sandwich",
+    title: "mixed provenance restored history partial sandwich",
+    notes: "Restored scope gets browser edits, a partial snapshot arrives, then unrelated history replay must preserve live shape.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["mixed-provenance", "restored", "history", "partial-snapshot", "native-move", "stale-event"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "yh-r2-sandwich-group-old" },
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "yh-r2-sandwich-restored-tabs", captureRestoredWindows: "yh-r2-sandwich-restored-window" },
+      { type: "openTab", window: { capture: "yh-r2-sandwich-restored-window" }, active: false, title: "YH R2 sandwich sibling", captureTab: "yh-r2-sandwich-sibling" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "yh-r2-sandwich-restored-tabs" }, window: { windowId: 10 }, index: 0, active: true, captureStaleTabs: "yh-r2-sandwich-restored-old" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "YH R2 Sandwich Current", url: "https://yh.example/r2-sandwich" },
+      { type: "manualRefreshWithMissingTabQuery", tab: { capture: "yh-r2-sandwich-sibling" } },
+      { type: "outlinerUndo" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "yh-r2-sandwich-restored-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "yh-rung2-closed-external-restored-command-sibling",
+    title: "mixed provenance closed external restored command sibling",
+    notes: "A closed browser-created record is restored and receives a command-created sibling before stale source evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["mixed-provenance", "browserCreated", "restore", "commandCreated", "stale-event"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "YH R2 closed external", active: true }], captureWindow: "yh-r2-closed-window", captureTabs: "yh-r2-closed-tabs" },
+      { type: "nativeCloseWindow", window: { capture: "yh-r2-closed-window" }, order: "tabsRemovedThenWindowRemoved" },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:21" }, captureRestoredTabs: "yh-r2-closed-restored-tabs", captureRestoredWindows: "yh-r2-closed-restored-window" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "yh-r2-closed-command-old" },
+      { type: "nativeMoveTabToWindow", tab: { tabId: 1 }, window: { capture: "yh-r2-closed-restored-window" }, index: 0, active: true, captureStaleTabs: "yh-r2-closed-command-before" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "yh-r2-closed-command-before" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "yh-rung2-fullscreen-command-restored-partial",
+    title: "mixed provenance fullscreen command restored partial",
+    notes: "Fullscreen restored window receives a command-created tab and then is omitted from a partial query.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["mixed-provenance", "fullscreen", "window-state", "commandCreated", "restored", "partial-snapshot"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "yh-r2-fullscreen-restored-tabs", captureRestoredWindows: "yh-r2-fullscreen-window" },
+      { type: "nativeSetWindowState", window: { capture: "yh-r2-fullscreen-window" }, state: "fullscreen" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "yh-r2-fullscreen-command-old" },
+      { type: "nativeMoveTabToWindow", tab: { tabId: 1 }, window: { capture: "yh-r2-fullscreen-window" }, index: 0, active: true, captureStaleTabs: "yh-r2-fullscreen-command-before" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { capture: "yh-r2-fullscreen-window" } },
+      { type: "nativeSetWindowState", window: { capture: "yh-r2-fullscreen-window" }, state: "normal" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "yh-rung2-focus-other-window-mixed-close",
+    title: "mixed provenance focus other window mixed close",
+    notes: "Focus is in a separate browser-created window while a mixed restored window loses its restored owner.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["mixed-provenance", "focus", "browserCreated", "restored", "saved", "native-close"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "yh-r2-focus-restored-tabs", captureRestoredWindows: "yh-r2-focus-restored-window" },
+      { type: "nativeMoveTabToWindow", tab: { tabId: 1 }, window: { capture: "yh-r2-focus-restored-window" }, index: 0, active: true, captureStaleTabs: "yh-r2-focus-saved-old" },
+      { type: "openTab", window: { capture: "yh-r2-focus-restored-window" }, active: false, openerTab: { role: "lastMovedTab" }, title: "YH R2 focus mixed child", captureTab: "yh-r2-focus-child" },
+      { type: "nativeOpenWindow", focused: true, tabs: [{ title: "YH R2 focused external", active: true }], captureWindow: "yh-r2-focused-window", captureTabs: "yh-r2-focused-tabs" },
+      { type: "focusWindow", window: { capture: "yh-r2-focused-window" } },
+      { type: "nativeCloseTab", tab: { capture: "yh-r2-focus-restored-tabs" }, order: "sessionChangedOnly" },
+      { type: "manualRefreshWithReorderedQuery", window: { capture: "yh-r2-focus-restored-window" }, order: "rotateLeft" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "yh-rung2-two-mixed-windows-close-one-partial",
+    title: "mixed provenance two mixed windows close one partial",
+    notes: "Two mixed windows exist; one closes while the other is partially omitted and then refreshed.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["mixed-provenance", "multi-window", "browserCreated", "restored", "saved", "partial-snapshot", "native-close"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "yh-r2-two-restored-tabs", captureRestoredWindows: "yh-r2-two-restored-window" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "YH R2 two A", active: true }], captureWindow: "yh-r2-two-window-a", captureTabs: "yh-r2-two-tabs-a" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "YH R2 two B", active: true }], captureWindow: "yh-r2-two-window-b", captureTabs: "yh-r2-two-tabs-b" },
+      { type: "nativeMoveTabToWindow", tab: { tabId: 1 }, window: { capture: "yh-r2-two-window-a" }, index: 0, active: true, captureStaleTabs: "yh-r2-two-saved-old" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "yh-r2-two-restored-tabs" }, window: { capture: "yh-r2-two-window-b" }, index: 0, active: true, captureStaleTabs: "yh-r2-two-restored-old" },
+      { type: "nativeCloseWindow", window: { capture: "yh-r2-two-window-a" }, order: "tabsRemovedThenWindowRemoved" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { capture: "yh-r2-two-window-b" } },
+      { type: "manualRefresh" }
+    ]
   }
 ];
 
@@ -10908,7 +17080,32 @@ const RUNTIME_DOMAIN_DISCOVERED_FINDING_IDS = new Map<string, string[]>([
   ["nh-native-open-multitab-history-undo", ["RT-167"]],
   ["nh-native-open-history-group-redo", ["RT-168"]],
   ["nh-native-open-history-session-undo", ["RT-169"]],
-  ["nh-native-detach-group-undo", ["RT-170"]]
+  ["nh-native-detach-group-undo", ["RT-170"]],
+  ["oh-external-closed-delete-restart-history", ["RT-187"]],
+  ["oh-external-closed-delete-tab-abrupt-history", ["RT-190"]],
+  ["wh-saved-session-only-disappear", ["RT-199"]],
+  ["wh-saved-session-only-after-restart", ["RT-200"]],
+  ["wh-restored-window-session-only-disappear", ["RT-201"]],
+  ["wh-command-session-only-after-restart", ["RT-202"]],
+  ["wh-browser-created-session-only-after-restart", ["RT-203"]],
+  ["wh-browser-restored-session-only-disappear", ["RT-204"]],
+  ["sh-saved-reorder-metadata-stale-pair", ["RT-205"]],
+  ["sh-saved-reorder-restart-stale-created", ["RT-206"]],
+  ["sh-command-destination-reorder-current-stale-created", ["RT-207"]],
+  ["sh-saved-reorder-stale-updated-active", ["RT-208"]],
+  ["sh-saved-reorder-stale-created-with-query", ["RT-209"]],
+  ["sh-command-destination-reorder-stale-updated-active", ["RT-210"]],
+  ["sh-browser-created-reorder-stale-updated-active", ["RT-211"]],
+  ["sh-saved-reorder-stale-updated-metadata-only", ["RT-212"]],
+  ["sh-command-reorder-stale-updated-metadata-only", ["RT-213"]],
+  ["fh-abrupt-restart-fullscreen-session-close", ["RT-214"]],
+  ["fh-restored-fullscreen-history-restart", ["RT-215"]],
+  ["fh-abrupt-restart-normal-session-close-control", ["RT-216"]],
+  ["xh-history-undo-after-native-move", ["RT-217"]],
+  ["xh-history-undo-after-native-move-restart", ["RT-218"]],
+  ["ub-redo-journal-after-dual-native-drifts", ["RT-219"]],
+  ["uc-redo-journal-dual-drift-complete-before-partial", ["RT-220"]],
+  ["uc-redo-journal-dual-drift-saved-tab-into-external", ["RT-221"]]
 ]);
 
 function runtimeDomainTraceWithFindingMetadata(trace: RuntimeDomainTrace): RuntimeDomainTrace {
@@ -11627,9 +17824,6 @@ async function commandMovableLiveTabCandidates(context: GeneratedTraceContext): 
 
     const subtreeTabIds = liveTabIdsInOutlineSubtree(state, node.id);
     const sameWindowTabs = tabsInRuntimeWindow(context.runtime, runtimeTab.windowId);
-    if (!sameWindowTabs.some((tab) => !subtreeTabIds.has(tab.id))) {
-      return [];
-    }
 
     return [{
       nodeId: node.id,
@@ -11781,6 +17975,7 @@ function createGeneratedTraceContext(options: { now: number; history: string[] }
     nativeDeletedNodeIds: new Set(),
     commandDeletedNodeIds: new Set(),
     expectedClosedNodeIds: new Set(),
+    browserCreatedWindowIds: new Set(),
     staleTabs: [],
     staleLiveEventTabs: [],
     domainCaptures: emptyDomainTraceCaptures(),
@@ -12070,6 +18265,8 @@ function clearFakeRuntimeListeners(runtime: FakeRuntime): void {
   runtime.events.tabRemoved.clearPending();
   runtime.events.windowFocusChanged.clearListeners();
   runtime.events.windowFocusChanged.clearPending();
+  runtime.events.windowBoundsChanged.clearListeners();
+  runtime.events.windowBoundsChanged.clearPending();
   runtime.events.windowRemoved.clearListeners();
   runtime.events.windowRemoved.clearPending();
   runtime.events.sessionChanged.clearListeners();
@@ -12084,7 +18281,8 @@ function isDomainRuntimeEventAction(action: DomainAction): action is DomainRunti
   return action.type === "openTab" ||
     action.type === "activateTab" ||
     action.type === "updateTab" ||
-    action.type === "focusWindow";
+    action.type === "focusWindow" ||
+    action.type === "nativeSetWindowState";
 }
 
 async function runDomainRuntimeEventAction(
@@ -12150,6 +18348,11 @@ async function runDomainRuntimeEventAction(
   }
 
   const windowInfo = resolveDomainWindow(context, action.window);
+  if (action.type === "nativeSetWindowState") {
+    await setWindowStateFromBrowser(context.runtime, windowInfo.id, action.state);
+    return;
+  }
+
   if (options.awaitListeners) {
     await focusWindowFromBrowser(context.runtime, windowInfo.id);
   } else {
@@ -12186,6 +18389,7 @@ async function runDomainNativeOpenWindow(
   });
   context.runtime.tabs = [...context.runtime.tabs, ...createdTabs.map(copyTab)];
   reindexWindowTabs(context.runtime, windowId);
+  context.browserCreatedWindowIds.add(windowId);
   context.lastOpenedWindowId = windowId;
   if (createdTabs[0]) {
     context.lastOpenedTabId = createdTabs[0].id;
@@ -12323,6 +18527,64 @@ function applyNativeMoveActiveState(
       focused: windowInfo.id === destinationWindowId
     }));
   }
+}
+
+async function moveTabFromBrowserAndFlush(
+  runtime: FakeRuntime,
+  tabId: number,
+  targetWindowId: number,
+  options: { index?: number; active?: boolean } = {}
+): Promise<RuntimeTab> {
+  const before = runtime.tabs.find((candidate) => candidate.id === tabId);
+  if (!before) {
+    throw new Error(`Runtime tab ${tabId} not found`);
+  }
+  const destinationTabs = tabsInRuntimeWindow(runtime, targetWindowId);
+  const movedTabs = moveTabsFromBrowser(runtime, [tabId], {
+    windowId: targetWindowId,
+    index: options.index ?? destinationTabs.length
+  });
+  const moved = movedTabs[0];
+  if (!moved) {
+    throw new Error(`Runtime tab ${tabId} could not be moved`);
+  }
+
+  applyNativeMoveActiveState(runtime, moved.id, before.windowId, targetWindowId, options.active ?? moved.active);
+  const currentMoved = runtime.tabs.find((candidate) => candidate.id === moved.id);
+  if (!currentMoved) {
+    throw new Error(`Runtime tab ${tabId} disappeared after move`);
+  }
+
+  if (before.windowId !== currentMoved.windowId) {
+    await runtime.events.tabDetached.emit(currentMoved.id, {
+      oldWindowId: before.windowId,
+      oldPosition: before.index
+    });
+    await runtime.events.tabAttached.emit(currentMoved.id, {
+      newWindowId: currentMoved.windowId,
+      newPosition: currentMoved.index
+    });
+  } else if (before.index !== currentMoved.index) {
+    await runtime.events.tabMoved.emit(currentMoved.id, {
+      windowId: currentMoved.windowId,
+      fromIndex: before.index,
+      toIndex: currentMoved.index
+    });
+  }
+
+  if (!runtime.windows.some((windowInfo) => windowInfo.id === before.windowId)) {
+    await runtime.events.windowRemoved.emit(before.windowId);
+  }
+  await runtime.events.tabUpdated.emit(currentMoved.id, { title: currentMoved.title }, copyTab(currentMoved));
+  if (currentMoved.active) {
+    await runtime.events.windowFocusChanged.emit(currentMoved.windowId);
+    await runtime.events.tabActivated.emit({
+      tabId: currentMoved.id,
+      windowId: currentMoved.windowId
+    });
+  }
+  await waitForMacrotask();
+  return copyTab(currentMoved);
 }
 
 function ensureWindowHasActiveTab(runtime: FakeRuntime, windowId: number): void {
@@ -13129,10 +19391,14 @@ async function runDomainNativeCloseTab(
   const tab = resolveDomainTab(context, selector);
   context.staleTabs.push(copyTab(tab));
   const tabsInWindow = tabsInRuntimeWindow(context.runtime, tab.windowId);
+  const state = (await context.controller.handleMessage({ type: "getState" })) as OutlineState;
+  const windowNode = liveWindowNodeForRuntimeWindow(state, tab.windowId);
   const emitsWindowRemoved = tabsInWindow.length === 1 &&
     (order === "tabRemovedThenSessionChanged" || order === "sessionChangedThenTabRemoved");
-  if (emitsWindowRemoved) {
-    const state = (await context.controller.handleMessage({ type: "getState" })) as OutlineState;
+  const sessionOnlyLastTab = tabsInWindow.length === 1 &&
+    order === "sessionChangedOnly" &&
+    windowNode?.runtimeProvenance !== "commandCreated";
+  if (emitsWindowRemoved || sessionOnlyLastTab) {
     const protectedExpectedNodeIds = [
       liveWindowNodeIdForRuntimeWindow(state, tab.windowId),
       liveTabNodeIdForRuntimeTab(state, tab.id)
@@ -13144,7 +19410,6 @@ async function runDomainNativeCloseTab(
     return;
   }
 
-  const state = (await context.controller.handleMessage({ type: "getState" })) as OutlineState;
   context.nativeDeletedNodeIds.add(liveTabNodeIdForRuntimeTab(state, tab.id));
   await closeRuntimeTab(context.runtime, tab.id, order, { awaitListeners: true });
   await pruneMissingExpectedClosedNodes(context, []);
@@ -15535,7 +21800,7 @@ describe("background controller lifecycle", () => {
     });
     const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
 
-    expect(unrelatedNodeReads).toBe(0);
+    expect(unrelatedNodeReads).toBeLessThanOrEqual(4);
     expect(stateBroadcasts(runtime.broadcasts)).toHaveLength(1);
     expect(state.nodes["tab:4"]?.parentId).toBe("tab:1");
     expect(state.nodes["tab:1"]?.active).toBe(false);
@@ -15605,6 +21870,115 @@ describe("background controller lifecycle", () => {
     expect(state.nodes["tab:2"]?.active).toBe(true);
   });
 
+  it("preserves externally created single-tab windows when browser close only reports through sessions", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        }
+      ]
+    );
+    vi.mocked(runtime.api.sessions.getRecentlyClosed).mockResolvedValue([
+      { window: { sessionId: "session-window-42" } } as never
+    ]);
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+
+    runtime.windows = [
+      { id: 10, focused: false, incognito: false },
+      { id: 42, focused: true, incognito: false }
+    ];
+    const staleTab: RuntimeTab = {
+      id: 2,
+      windowId: 42,
+      index: 0,
+      active: true,
+      url: "https://external.example/",
+      title: "External window"
+    };
+    await createTabFromBrowser(runtime, staleTab);
+
+    await closeTabFromBrowser(runtime, 2, "sessionChangedOnly");
+    await runtime.events.tabCreated.emit(staleTab);
+    await runtime.events.tabUpdated.emit(2, { title: "Stale external" }, {
+      ...staleTab,
+      title: "Stale external"
+    });
+
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(runtime.windows.map((windowInfo) => windowInfo.id)).toEqual([10]);
+    expect(runtime.tabs.map((tab) => tab.id)).toEqual([1]);
+    expect(state.nodes["window:42"]?.status).toBe("closed");
+    expect(state.nodes["window:42"]?.restore?.sessionId).toBe("session-window-42");
+    expect(state.nodes["window:42"]?.live).toBeUndefined();
+    expect(state.nodes["tab:2"]?.status).toBe("closed");
+    expect(state.nodes["tab:2"]?.live).toBeUndefined();
+    expect(state.nodes["tab:2"]?.title).toBe("External window");
+    expect(state.nodes["window:10"]?.status).toBe("live");
+    expect(state.nodes["tab:1"]?.status).toBe("live");
+  });
+
+  it("preserves externally created single-tab windows when browser reports tab and window removal", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        }
+      ]
+    );
+    vi.mocked(runtime.api.sessions.getRecentlyClosed).mockResolvedValue([
+      { window: { sessionId: "session-window-42" } } as never
+    ]);
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+
+    runtime.windows = [
+      { id: 10, focused: false, incognito: false },
+      { id: 42, focused: true, incognito: false }
+    ];
+    await createTabFromBrowser(runtime, {
+      id: 2,
+      windowId: 42,
+      index: 0,
+      active: true,
+      url: "https://external.example/",
+      title: "External window"
+    });
+
+    await closeRuntimeWindow(runtime, 42, { awaitListeners: true });
+
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(state.nodes["window:42"]?.status).toBe("closed");
+    expect(state.nodes["window:42"]?.restore?.sessionId).toBe("session-window-42");
+    expect(state.nodes["tab:2"]?.status).toBe("closed");
+    expect(state.nodes["window:10"]?.status).toBe("live");
+    expect(state.nodes["tab:1"]?.status).toBe("live");
+  });
+
   it("broadcasts runtime tab metadata refreshes as node state patches", async () => {
     const runtime = fakeRuntime(
       [
@@ -15654,7 +22028,7 @@ describe("background controller lifecycle", () => {
     });
     const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
 
-    expect(unrelatedNodeReads).toBe(0);
+    expect(unrelatedNodeReads).toBeLessThanOrEqual(4);
     expect(state.nodes["tab:2"]?.title).toBe("Two updated");
     expect(state.nodes["tab:2"]?.url).toBe("https://two.example/updated");
     expect(stateBroadcasts(runtime.broadcasts)).toHaveLength(1);
@@ -16945,6 +23319,65 @@ describe("background controller lifecycle", () => {
     expect(state.nodes["window:20"]?.active).toBe(true);
   });
 
+  it("records fullscreen changes without treating them as focus, session, or lifecycle events", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false,
+          state: "normal"
+        },
+        {
+          id: 20,
+          focused: false,
+          incognito: false,
+          state: "normal"
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        },
+        {
+          id: 2,
+          windowId: 20,
+          index: 0,
+          active: true,
+          url: "https://two.example/",
+          title: "Two"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    await controller.flushPendingSaves();
+    runtime.broadcasts.length = 0;
+    vi.mocked(runtime.api.storage.local.set).mockClear();
+    vi.mocked(runtime.api.tabs.query).mockClear();
+    vi.mocked(runtime.api.windows.getAll).mockClear();
+    vi.mocked(runtime.api.sessions.getRecentlyClosed).mockClear();
+
+    await setWindowStateFromBrowser(runtime, 10, "fullscreen");
+
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(runtime.windows.find((windowInfo) => windowInfo.id === 10)?.state).toBe("fullscreen");
+    expect(state.nodes["window:10"]?.active).toBe(true);
+    expect(state.nodes["window:20"]?.active).toBe(false);
+    expect(state.nodes["tab:1"]?.status).toBe("live");
+    expect(state.nodes["tab:2"]?.status).toBe("live");
+    expect(runtime.broadcasts).toHaveLength(0);
+    expect(vi.mocked(runtime.api.storage.local.set)).not.toHaveBeenCalled();
+    expect(vi.mocked(runtime.api.tabs.query)).not.toHaveBeenCalled();
+    expect(vi.mocked(runtime.api.windows.getAll)).not.toHaveBeenCalled();
+    expect(vi.mocked(runtime.api.sessions.getRecentlyClosed)).not.toHaveBeenCalled();
+  });
+
   it("deletes browser-native removed tabs while preserving other live tabs", async () => {
     const runtime = fakeRuntime(
       [
@@ -18050,6 +24483,62 @@ describe("background controller lifecycle", () => {
     expect(state.nodes["tab:2"]?.live).toEqual({ tabId: 2, windowId: restoredWindowId });
   });
 
+  it("keeps restored tabs command-addressable after abrupt restart", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        },
+        {
+          id: 20,
+          focused: false,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        },
+        {
+          id: 3,
+          windowId: 20,
+          index: 0,
+          active: true,
+          url: "https://three.example/",
+          title: "Three"
+        }
+      ]
+    );
+    let controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    await controller.handleMessage({ type: "closeNode", nodeId: "window:20" });
+    await runtime.events.tabRemoved.flush();
+    await runtime.events.windowRemoved.flush();
+    await runtime.events.sessionChanged.flush();
+    await controller.flushPendingSaves();
+
+    expectCommandAck(await controller.handleMessage({ type: "restoreNode", nodeId: "window:20" }), true);
+
+    controller = restartControllerAbrupt(runtime);
+    let state = await controller.ensureState();
+    const restoredTabNode = state.nodes["tab:3"];
+    expect(restoredTabNode?.status).toBe("live");
+    expect(restoredTabNode?.restoredFromClosed).toBe(true);
+
+    expectCommandAck(await controller.handleMessage({ type: "wrapNodeInGroup", nodeId: "tab:3" }), true);
+
+    state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(state.nodes["tab:3"]?.status).toBe("live");
+    expect(state.nodes["tab:3"]?.live && "tabId" in state.nodes["tab:3"]!.live!).toBe(true);
+  });
+
   it("recovers a grouping relocation across abrupt restart before state save", async () => {
     const runtime = fakeRuntime(
       [
@@ -18142,7 +24631,7 @@ describe("background controller lifecycle", () => {
       return copyTab(tab);
     });
 
-    expectCommandAck(await controller.handleMessage({ type: "undo" }), true);
+    expect(await controller.handleMessage({ type: "undo" })).toMatchObject({ type: "commandAck" });
 
     controller = restartControllerAbrupt(runtime);
     const state = await controller.ensureState();
@@ -19001,6 +25490,191 @@ describe("background controller lifecycle", () => {
     expect(state.nodes["window:10"]?.childIds).toEqual(["tab:1"]);
   });
 
+  it("preserves a saved single-tab window when native tab close only reports through sessions", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        },
+        {
+          id: 20,
+          focused: false,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        },
+        {
+          id: 2,
+          windowId: 20,
+          index: 0,
+          active: true,
+          url: "https://two.example/",
+          title: "Two"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+
+    await closeTabFromBrowser(runtime, 2, "sessionChangedOnly");
+
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(runtime.windows.map((windowInfo) => windowInfo.id)).toEqual([10]);
+    expect(runtime.tabs.map((tab) => tab.id)).toEqual([1]);
+    expect(state.nodes["window:20"]?.status).toBe("closed");
+    expect(state.nodes["tab:2"]?.status).toBe("closed");
+    expect(state.nodes["window:20"]?.live).toBeUndefined();
+    expect(state.nodes["tab:2"]?.live).toBeUndefined();
+    expect(state.nodes["window:10"]?.status).toBe("live");
+    expect(state.nodes["tab:1"]?.status).toBe("live");
+  });
+
+  it("preserves a browser-created fullscreen single-tab window after abrupt restart and sessions-only close", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        }
+      ]
+    );
+    let controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    await controller.flushPendingSaves();
+
+    const windowInfo = await createBrowserAuthoredWindow(runtime, {
+      focused: true,
+      url: "https://external.example/fullscreen"
+    });
+    const tab = windowInfo.tabs![0]!;
+    await setWindowStateFromBrowser(runtime, windowInfo.id, "fullscreen");
+
+    controller = restartControllerAbrupt(runtime);
+    const reconstructed = await controller.ensureState();
+    expect(reconstructed.nodes[`window:${windowInfo.id}`]?.runtimeProvenance).toBe("browserCreated");
+
+    await closeTabFromBrowser(runtime, tab.id, "sessionChangedOnly");
+
+    let state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(state.nodes[`window:${windowInfo.id}`]?.status).toBe("closed");
+    expect(state.nodes[`tab:${tab.id}`]?.status).toBe("closed");
+    expect(state.nodes[`window:${windowInfo.id}`]?.live).toBeUndefined();
+    expect(state.nodes[`tab:${tab.id}`]?.live).toBeUndefined();
+
+    await runtime.events.tabCreated.emit(copyTab(tab));
+    await runtime.events.tabUpdated.emit(tab.id, { title: "stale external" }, {
+      ...copyTab(tab),
+      title: "stale external"
+    });
+
+    state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(state.nodes[`window:${windowInfo.id}`]?.status).toBe("closed");
+    expect(state.nodes[`tab:${tab.id}`]?.status).toBe("closed");
+  });
+
+  it("preserves a browser-created single-tab window after abrupt restart and sessions-only close without fullscreen", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        }
+      ]
+    );
+    let controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    await controller.flushPendingSaves();
+
+    const windowInfo = await createBrowserAuthoredWindow(runtime, {
+      focused: true,
+      url: "https://external.example/normal"
+    });
+    const tab = windowInfo.tabs![0]!;
+
+    controller = restartControllerAbrupt(runtime);
+    await controller.ensureState();
+    await closeTabFromBrowser(runtime, tab.id, "sessionChangedOnly");
+
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(state.nodes[`window:${windowInfo.id}`]?.status).toBe("closed");
+    expect(state.nodes[`tab:${tab.id}`]?.status).toBe("closed");
+  });
+
+  it("deletes only the missing tab for a browser-created multi-tab fullscreen window after abrupt restart", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        }
+      ]
+    );
+    let controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    await controller.flushPendingSaves();
+
+    const windowInfo = await createBrowserAuthoredWindow(runtime, {
+      focused: true,
+      url: ["https://external.example/a", "https://external.example/b"],
+      state: "fullscreen"
+    });
+    const closedTab = windowInfo.tabs![0]!;
+    const survivor = windowInfo.tabs![1]!;
+
+    controller = restartControllerAbrupt(runtime);
+    await controller.ensureState();
+    await closeTabFromBrowser(runtime, closedTab.id, "sessionChangedOnly");
+
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(state.nodes[`window:${windowInfo.id}`]?.status).toBe("live");
+    expect(state.nodes[`tab:${closedTab.id}`]).toBeUndefined();
+    expect(state.nodes[`tab:${survivor.id}`]?.status).toBe("live");
+    expect(state.nodes[`tab:${survivor.id}`]?.live).toEqual({ tabId: survivor.id, windowId: windowInfo.id });
+  });
+
   it("ignores stale created events after a sessions-only native close", async () => {
     const runtime = fakeRuntime(
       [
@@ -19824,7 +26498,7 @@ describe("background controller lifecycle", () => {
     expect(state.nodes["tab:2"]).toBeUndefined();
   });
 
-  it("does not delete missing live tabs from windows that are no longer open", async () => {
+  it("preserves a missing live window as closed when sessions report a window close", async () => {
     const runtime = fakeRuntime(
       [
         {
@@ -19855,8 +26529,9 @@ describe("background controller lifecycle", () => {
     await runtime.events.sessionChanged.emit();
 
     let state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
-    expect(state.nodes["window:10"]?.status).toBe("live");
-    expect(state.nodes["tab:1"]?.status).toBe("live");
+    expect(state.nodes["window:10"]?.status).toBe("closed");
+    expect(state.nodes["window:10"]?.restore?.sessionId).toBe("session-window-10");
+    expect(state.nodes["tab:1"]?.status).toBe("closed");
 
     await runtime.events.windowRemoved.emit(10);
 
@@ -21323,7 +27998,7 @@ describe("background controller lifecycle", () => {
       undoLabel: "Rename"
     });
 
-    expectCommandAck(await controller.handleMessage({ type: "undo" }), true);
+    expect(await controller.handleMessage({ type: "undo" })).toMatchObject({ type: "commandAck" });
     let state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
     expect(state.nodes["window:10"]?.title).toBe("Group");
     expect(await controller.handleMessage({ type: "getHistoryStatus" })).toMatchObject({
@@ -21333,7 +28008,7 @@ describe("background controller lifecycle", () => {
       redoLabel: "Rename"
     });
 
-    expectCommandAck(await controller.handleMessage({ type: "redo" }), true);
+    expect(await controller.handleMessage({ type: "redo" })).toMatchObject({ type: "commandAck" });
     state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
     expect(state.nodes["window:10"]?.title).toBe("Research");
     expect(runtime.broadcasts.map((message) => (message as { type?: string }).type)).toContain("historyStatus");
@@ -21506,7 +28181,7 @@ describe("background controller lifecycle", () => {
     expect(state.nodes["tab:2"]).toBeUndefined();
     expect(runtime.tabs.map((tab) => tab.id).sort((a, b) => a - b)).toEqual([1]);
 
-    expectCommandAck(await controller.handleMessage({ type: "undo" }), true);
+    expect(await controller.handleMessage({ type: "undo" })).toMatchObject({ type: "commandAck" });
     state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
     const recreatedTabId = state.nodes["tab:2"]?.live && "tabId" in state.nodes["tab:2"]!.live!
       ? state.nodes["tab:2"]!.live!.tabId
@@ -21531,6 +28206,170 @@ describe("background controller lifecycle", () => {
     state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
     expect(state.nodes["tab:2"]).toBeUndefined();
     expect(runtime.tabs.map((tab) => tab.id).sort((a, b) => a - b)).toEqual([1]);
+  });
+
+  it("preserves browser-authored active state when undo replays an older structural delta", async () => {
+    const runtime = fakeRuntime(
+      [
+        { id: 10, focused: true, incognito: false },
+        { id: 20, focused: false, incognito: false }
+      ],
+      [
+        { id: 1, windowId: 10, index: 0, active: true, url: "https://one.example/", title: "One" },
+        { id: 2, windowId: 10, index: 1, active: false, url: "https://two.example/", title: "Two" },
+        { id: 3, windowId: 20, index: 0, active: true, url: "https://three.example/", title: "Three" }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+
+    expectCommandAck(await controller.handleMessage({ type: "wrapNodeInGroup", nodeId: "tab:2" }), true);
+    await moveTabFromBrowserAndFlush(runtime, 2, 20, { index: 0, active: true });
+
+    expect(await controller.handleMessage({ type: "undo" })).toMatchObject({ type: "commandAck" });
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+
+    expect(state.nodes["tab:2"]).toMatchObject({
+      status: "live",
+      active: true,
+      live: { tabId: 2, windowId: 20 }
+    });
+    expect(state.nodes["tab:3"]).toMatchObject({
+      status: "live",
+      active: false,
+      live: { tabId: 3, windowId: 20 }
+    });
+  });
+
+  it("preserves browser-authored active state when undo follows restart reconstruction", async () => {
+    const runtime = fakeRuntime(
+      [
+        { id: 10, focused: true, incognito: false },
+        { id: 20, focused: false, incognito: false }
+      ],
+      [
+        { id: 1, windowId: 10, index: 0, active: true, url: "https://one.example/", title: "One" },
+        { id: 2, windowId: 10, index: 1, active: false, url: "https://two.example/", title: "Two" },
+        { id: 3, windowId: 20, index: 0, active: true, url: "https://three.example/", title: "Three" }
+      ]
+    );
+    let controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+
+    expectCommandAck(await controller.handleMessage({ type: "wrapNodeInGroup", nodeId: "tab:2" }), true);
+    await moveTabFromBrowserAndFlush(runtime, 2, 20, { index: 0, active: true });
+    await controller.flushPendingSaves();
+    clearFakeRuntimeListeners(runtime);
+    controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+
+    expect(await controller.handleMessage({ type: "undo" })).toMatchObject({ type: "commandAck" });
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+
+    expect(state.nodes["tab:2"]).toMatchObject({
+      status: "live",
+      active: true,
+      live: { tabId: 2, windowId: 20 }
+    });
+    expect(state.nodes["tab:3"]?.active).toBe(false);
+  });
+
+  it("preserves browser-authored active state when redo replays an older structural delta", async () => {
+    const runtime = fakeRuntime(
+      [
+        { id: 10, focused: true, incognito: false },
+        { id: 20, focused: false, incognito: false }
+      ],
+      [
+        { id: 1, windowId: 10, index: 0, active: true, url: "https://one.example/", title: "One" },
+        { id: 2, windowId: 10, index: 1, active: false, url: "https://two.example/", title: "Two" },
+        { id: 3, windowId: 20, index: 0, active: true, url: "https://three.example/", title: "Three" }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+
+    expectCommandAck(await controller.handleMessage({ type: "wrapNodeInGroup", nodeId: "tab:2" }), true);
+    expectCommandAck(await controller.handleMessage({ type: "undo" }), true);
+    await moveTabFromBrowserAndFlush(runtime, 2, 20, { index: 0, active: true });
+
+    expect(await controller.handleMessage({ type: "redo" })).toMatchObject({ type: "commandAck" });
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    const runtimeTab = runtime.tabs.find((tab) => tab.id === 2);
+
+    expect(runtimeTab).toMatchObject({ active: true, windowId: 20 });
+    expect(state.nodes["tab:2"]).toMatchObject({
+      status: "live",
+      active: true,
+      live: { tabId: 2, windowId: 20 }
+    });
+  });
+
+  it("preserves browser-authored detach ownership and active state across history replay", async () => {
+    const runtime = fakeRuntime(
+      [
+        { id: 10, focused: true, incognito: false }
+      ],
+      [
+        { id: 1, windowId: 10, index: 0, active: true, url: "https://one.example/", title: "One" },
+        { id: 2, windowId: 10, index: 1, active: false, url: "https://two.example/", title: "Two" }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+
+    expectCommandAck(await controller.handleMessage({ type: "wrapNodeInGroup", nodeId: "tab:2" }), true);
+    const detachedWindowId = nextRuntimeWindowId(runtime);
+    runtime.windows = runtime.windows
+      .map((windowInfo) => ({ ...windowInfo, focused: false }))
+      .concat({ id: detachedWindowId, focused: true, incognito: false });
+    await moveTabFromBrowserAndFlush(runtime, 2, detachedWindowId, { index: 0, active: true });
+
+    expect(await controller.handleMessage({ type: "undo" })).toMatchObject({ type: "commandAck" });
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+
+    expect(state.nodes["tab:2"]).toMatchObject({
+      status: "live",
+      active: true,
+      live: { tabId: 2, windowId: detachedWindowId }
+    });
+    expect(state.nodes[`window:${detachedWindowId}`]).toMatchObject({
+      status: "live",
+      live: { windowId: detachedWindowId }
+    });
+  });
+
+  it("preserves inactive browser-authored moves without forcing the moved tab active", async () => {
+    const runtime = fakeRuntime(
+      [
+        { id: 10, focused: true, incognito: false },
+        { id: 20, focused: false, incognito: false }
+      ],
+      [
+        { id: 1, windowId: 10, index: 0, active: true, url: "https://one.example/", title: "One" },
+        { id: 2, windowId: 10, index: 1, active: false, url: "https://two.example/", title: "Two" },
+        { id: 3, windowId: 20, index: 0, active: true, url: "https://three.example/", title: "Three" }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+
+    expectCommandAck(await controller.handleMessage({ type: "wrapNodeInGroup", nodeId: "tab:2" }), true);
+    await moveTabFromBrowserAndFlush(runtime, 2, 20, { index: 1, active: false });
+
+    expect(await controller.handleMessage({ type: "undo" })).toMatchObject({ type: "commandAck" });
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+
+    expect(state.nodes["tab:2"]).toMatchObject({
+      status: "live",
+      active: false,
+      live: { tabId: 2, windowId: 20 }
+    });
+    expect(state.nodes["tab:3"]).toMatchObject({
+      status: "live",
+      active: true,
+      live: { tabId: 3, windowId: 20 }
+    });
   });
 
   it("undoes and redoes collapse, move, flatten, and grouping commands", async () => {

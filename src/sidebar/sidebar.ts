@@ -116,6 +116,7 @@ let projectionState: OutlineState | undefined;
 let projectionQuery: string | undefined;
 let scheduledVirtualRender = false;
 let preserveRenderedRowWindowOnce = false;
+let suppressActiveScrollOnce = false;
 let hoverLineScope: HoverLineScope | undefined;
 let pendingHoverLineScope: HoverLineScope | undefined;
 let pendingHoverGuideApply = false;
@@ -124,6 +125,7 @@ let pendingHoverFeedbackTrace: HoverFeedbackTrace | undefined;
 let scheduledHoverGuideFrame: number | undefined;
 let lastNonEditInteractionAt = Number.NEGATIVE_INFINITY;
 let lastNonEditInteractionBroadcastAt = Number.NEGATIVE_INFINITY;
+let lastSparseViewportScrollIntentAt = Number.NEGATIVE_INFINITY;
 let pendingCutNodeId: NodeId | undefined;
 let currentCutRowRange: CutSubtreeRowRange | undefined;
 let pendingShowInTreeNodeId: NodeId | undefined;
@@ -139,6 +141,7 @@ let pendingSparseWindowRequest:
   | {
       centerRowIndex: number;
       rowLimit: number;
+      retryAttempt: number;
     }
   | undefined;
 const activeTabScrollTracker = createActiveTabScrollTracker();
@@ -398,6 +401,9 @@ function handleBackgroundMessage(message: unknown): unknown {
       return;
     }
     if (isStateUpdated(message)) {
+      const preserveSparseViewport = shouldPreserveSparseViewportScrollIntent();
+      preserveRenderedRowWindowOnce = preserveSparseViewport && currentSparseProjectionIntersectsViewport();
+      suppressActiveScrollOnce = preserveSparseViewport;
       currentState = message.state;
       currentProjectionCoverage = undefined;
       invalidateSidebarWindowActiveTabTargets();
@@ -481,9 +487,12 @@ async function hydrateFullState(): Promise<void> {
         });
       }
       const wasSparseProjection = Boolean(currentProjection && isSparseInitialProjection(currentProjection));
+      const sparseProjectionIntersectedViewport = currentSparseProjectionIntersectsViewport();
+      const preserveSparseViewport = shouldPreserveSparseViewportScrollIntent();
       currentState = nextState;
       currentProjectionCoverage = undefined;
-      preserveRenderedRowWindowOnce = wasSparseProjection;
+      preserveRenderedRowWindowOnce = wasSparseProjection && preserveSparseViewport && sparseProjectionIntersectedViewport;
+      suppressActiveScrollOnce = wasSparseProjection && preserveSparseViewport;
       invalidateSidebarWindowActiveTabTargets();
       hydratingFullState = false;
       updateHydrationControls();
@@ -629,18 +638,30 @@ function requestSparseScrollWindowIfNeeded(): void {
     return;
   }
 
-  pendingSparseWindowRequest = { centerRowIndex, rowLimit };
+  startSparseScrollWindowRequest(centerRowIndex, rowLimit, 0);
+}
+
+function startSparseScrollWindowRequest(centerRowIndex: number, rowLimit: number, retryAttempt: number): void {
+  pendingSparseWindowRequest = { centerRowIndex, rowLimit, retryAttempt };
   const requestId = ++sparseWindowRequestSequence;
+  const rowHeight = currentRowHeight();
+  const viewportRange = currentViewportRowRange(rowHeight);
   perfTrace.mark("sidebar.sparseScrollWindow.request", {
     centerRowIndex,
     rowLimit,
-    viewportStartRow,
-    viewportEndRow
+    retryAttempt,
+    viewportStartRow: viewportRange.start,
+    viewportEndRow: viewportRange.end
   });
-  void loadSparseScrollWindow(centerRowIndex, rowLimit, requestId);
+  void loadSparseScrollWindow(centerRowIndex, rowLimit, requestId, retryAttempt);
 }
 
-async function loadSparseScrollWindow(centerRowIndex: number, rowLimit: number, requestId: number): Promise<void> {
+async function loadSparseScrollWindow(
+  centerRowIndex: number,
+  rowLimit: number,
+  requestId: number,
+  retryAttempt: number
+): Promise<void> {
   try {
     const response = await requestProjectionSlice(centerRowIndex, rowLimit);
     await nextAnimationFrame();
@@ -652,6 +673,8 @@ async function loadSparseScrollWindow(centerRowIndex: number, rowLimit: number, 
         sparseSnapshotCoversCurrentViewport(response)
       ) {
         applySparseScrollWindowSnapshot(response);
+      } else if (isInitialTreeSnapshot(response) && response.hydrating) {
+        mergeProjectionSliceSnapshot(response);
       }
       requestSparseScrollWindowIfNeeded();
       return;
@@ -662,6 +685,13 @@ async function loadSparseScrollWindow(centerRowIndex: number, rowLimit: number, 
       return;
     }
 
+    if (!sparseSnapshotCoversCurrentViewport(response)) {
+      mergeProjectionSliceSnapshot(response);
+      pendingSparseWindowRequest = undefined;
+      requestSparseScrollWindowIfNeeded();
+      return;
+    }
+
     applySparseScrollWindowSnapshot(response);
     pendingSparseWindowRequest = undefined;
     requestSparseScrollWindowIfNeeded();
@@ -669,6 +699,9 @@ async function loadSparseScrollWindow(centerRowIndex: number, rowLimit: number, 
     if (requestId === sparseWindowRequestSequence) {
       pendingSparseWindowRequest = undefined;
       perfTrace.mark("sidebar.sparseScrollWindow.error", { message: commandErrorText(error) });
+      if (retryAttempt < 1 && !currentSparseProjectionCoversViewport()) {
+        startSparseScrollWindowRequest(centerRowIndex, rowLimit, retryAttempt + 1);
+      }
     }
   }
 }
@@ -695,14 +728,55 @@ function sparseProjectionCoversViewport(
 }
 
 function sparseSnapshotCoversCurrentViewport(snapshot: InitialTreeSnapshot): boolean {
-  if (!rootDropSurface) {
+  const rowHeight = currentRowHeight();
+  const viewportRange = currentViewportRowRange(rowHeight);
+  return sparseRowsCoverViewport(snapshot.projection.rows, viewportRange.start, viewportRange.end);
+}
+
+function currentSparseProjectionCoversViewport(): boolean {
+  if (!currentProjection || !isSparseInitialProjection(currentProjection)) {
     return false;
   }
 
   const rowHeight = currentRowHeight();
-  const viewportStartRow = Math.floor(rootDropSurface.scrollTop / rowHeight);
-  const viewportEndRow = Math.ceil((rootDropSurface.scrollTop + rootDropSurface.clientHeight) / rowHeight);
-  return sparseRowsCoverViewport(snapshot.projection.rows, viewportStartRow, viewportEndRow);
+  const viewportRange = currentViewportRowRange(rowHeight);
+  return sparseRowsCoverViewport(currentProjection.rows, viewportRange.start, viewportRange.end);
+}
+
+function currentSparseProjectionIntersectsViewport(): boolean {
+  if (!currentProjection || !isSparseInitialProjection(currentProjection)) {
+    return false;
+  }
+
+  const rowHeight = currentRowHeight();
+  const viewportRange = currentViewportRowRange(rowHeight);
+  return currentProjection.rows.some((row) => row.index >= viewportRange.start && row.index < viewportRange.end);
+}
+
+function noteSparseViewportScrollIntent(): void {
+  if (currentProjection && isSparseInitialProjection(currentProjection) && !currentSparseProjectionIntersectsViewport()) {
+    lastSparseViewportScrollIntentAt = performance.now();
+  }
+}
+
+function shouldPreserveSparseViewportScrollIntent(): boolean {
+  return (
+    currentProjection !== undefined &&
+    isSparseInitialProjection(currentProjection) &&
+    Number.isFinite(lastSparseViewportScrollIntentAt)
+  );
+}
+
+function currentViewportRowRange(rowHeight: number): { start: number; end: number } {
+  if (!rootDropSurface) {
+    return { start: 0, end: 0 };
+  }
+
+  const effectiveRowHeight = Number.isFinite(rowHeight) && rowHeight > 0 ? rowHeight : 1;
+  return {
+    start: Math.floor(rootDropSurface.scrollTop / effectiveRowHeight),
+    end: Math.ceil((rootDropSurface.scrollTop + rootDropSurface.clientHeight) / effectiveRowHeight)
+  };
 }
 
 function sparseRowsCoverViewport(
@@ -1068,6 +1142,7 @@ function registerVirtualViewport(): void {
     "scroll",
     (event) => {
       noteNonEditInteraction();
+      noteSparseViewportScrollIntent();
       recordInputDelay("sidebar.input.scrollDelay", event, {
         event: event.type,
         hydrating: hydratingFullState,
@@ -1291,7 +1366,9 @@ function render(): void {
     currentCutRowRange = cutSubtreeRowRange(projection.rows, pendingCutNodeId);
     resetHoverLineScope();
     updateProjectionChrome(projection);
-    if (!scrollToPendingShowInTreeRow(projection)) {
+    const suppressActiveScroll = suppressActiveScrollOnce;
+    suppressActiveScrollOnce = false;
+    if (!scrollToPendingShowInTreeRow(projection) && !suppressActiveScroll) {
       scrollToObservedActiveTab(projection);
     }
     renderVirtualRows();
@@ -1620,7 +1697,7 @@ function applyNodeStateUpdate(update: NodeStateUpdate): void {
     for (const node of update.updatedNodes) {
       const previous = state.nodes[node.id];
       const nextNode = nodeWithStableRestoredTitle(previous, node);
-      collapsedChanged ||= previous?.collapsed !== nextNode.collapsed;
+      collapsedChanged ||= Boolean(previous && previous.collapsed !== nextNode.collapsed);
       state.nodes[nextNode.id] = nextNode;
       windowActiveChanged ||= nextNode.kind === "window";
     }
@@ -1895,7 +1972,7 @@ function renderVirtualRows(): void {
       VIRTUAL_OVERSCAN_ROWS
     );
     const range = preserveRenderedRowWindowOnce
-      ? currentRenderedRowWindow(currentProjection.rows.length, rowHeight) ?? calculatedRange
+      ? currentRenderedRowWindowIntersectingViewport(currentProjection.rows.length, rowHeight) ?? calculatedRange
       : calculatedRange;
     preserveRenderedRowWindowOnce = false;
 
@@ -1943,6 +2020,25 @@ function currentRenderedRowWindow(rowCount: number, rowHeight: number): {
     offsetTop: start * rowHeight,
     totalHeight: Math.max(0, rowCount) * rowHeight
   };
+}
+
+function currentRenderedRowWindowIntersectingViewport(rowCount: number, rowHeight: number): {
+  start: number;
+  end: number;
+  offsetTop: number;
+  totalHeight: number;
+} | undefined {
+  const rendered = currentRenderedRowWindow(rowCount, rowHeight);
+  if (!rendered) {
+    return undefined;
+  }
+
+  const viewport = currentViewportRowRange(rowHeight);
+  if (viewport.end <= viewport.start) {
+    return rendered;
+  }
+
+  return rendered.end > viewport.start && rendered.start < viewport.end ? rendered : undefined;
 }
 
 function isSparseInitialProjection(projection: VisibleTreeProjection): boolean {

@@ -4,7 +4,7 @@ This file records distinct bugs found by deterministic runtime trace hunts.
 The current adversarial hunt mode defaults to lower-anchoring discovery traces guided by `RUNTIME_TRACE_HUNT_GUIDE.md`; known RT/SS-derived traces are preserved as regression coverage and explicit replay evidence, not as the default mutation prompt.
 The hunt intentionally documents findings before fixes; fix passes update statuses while preserving the original repros.
 
-Fix passes must satisfy both correctness and performance gates before changing a finding to fixed: promoted trace replay, the selected `pnpm perf:runtime-guard` scenarios, and profile-export analysis when a real sluggishness trace is available. Record the selected perf suite, before/after numbers, and any approved budget movement in the relevant fix analysis.
+Fix passes must satisfy both correctness and performance gates before changing a finding to fixed: promoted trace replay and the selected `pnpm perf:runtime-guard` scenarios. Record the selected perf suite, before/after numbers, and any approved budget movement in the relevant fix analysis. Profile-export analysis is optional forensic evidence only when a fresh current-build browser profile exists.
 
 Run the hunt with:
 
@@ -24,18 +24,25 @@ Default hunt bounds:
 
 ## Last Domain Run
 
-- Completed: 2026-05-24T22:16:24Z
-- Strategy: runtime shape integrity fix pass, grouping RT-171 through RT-186 into browser runtime-shape authority fixes
+- Completed: 2026-05-25T18:49:55Z
+- Strategy: Mixed-provenance window cohabitation sweep with neutral `yh-*` traces, Rung 1 architecture mutations, and Rung 2 high-temperature mixes
 - Trace ids: current discovery corpus in `src/background/controller.test.ts` and `scripts/hunt-runtime-traces.mjs`
-- Corpus size after fix: 445 discovery traces, 225 regression traces
-- Distinct runtime-shape findings recorded: RT-171 through RT-186
-- Stop condition: reached after three complete active discovery mutation blocks found no new distinct signatures; runner wait time was not counted as mutation effort.
-- Regression safety replay after the fix: 225 regression traces, 0 failures, 0 new findings at 2026-05-24T22:16:24Z.
-- Status: RT-171 through RT-186 are fixed and promoted to regression coverage.
+- Corpus size after latest corpus edit: 800 discovery traces, 251 regression traces
+- Distinct findings recorded: none.
+- Stop condition: reached after three full active mixed-provenance mutation blocks found no new distinct signatures; discovery runs covered 785, 793, then 800 traces.
+- Regression safety replay after the hunt: 251 regression traces, 0 failures, 0 new findings at 2026-05-25T18:48:56Z.
+- Status: no open runtime findings.
 
 ## Finding Index
 
 - Open recorded findings: none
+- Fixed subagent-orchestrated sweep finding: RT-219; duplicate evidence RT-220 and RT-221 cover the same root fix
+- Fixed cross-axis findings: RT-217 through RT-218
+- Fixed/triaged fullscreen window-state findings: RT-214 through RT-216
+- Fixed shape-fresh runtime fact findings: RT-205 through RT-213
+- Fixed window-scope session-only close findings: RT-199 through RT-204
+- Fixed/triaged browser-created closed-state findings: RT-187 through RT-198
+- Fixed user-reported runtime findings: UR-001
 - Fixed runtime-shape integrity findings: RT-171 through RT-186
 - Fixed browser-authored drift findings: RT-155 through RT-170
 - Fixed lifecycle-journal crash findings: RT-128 through RT-154
@@ -49,6 +56,27 @@ Default hunt bounds:
 - Fixed domain trace adversary findings: RT-009 through RT-021
 - Previous adaptive seed-frontier run: RT-001 through RT-008
 - Recovered pre-adaptive seed sweep: SS-001 through SS-006
+
+## Current Fixed Hunt Analysis
+
+- Mixed-provenance window cohabitation sweep: added 39 neutral `yh-*` discovery traces covering saved/restored/browser-created/command-created tabs sharing, leaving, closing, and outliving the same runtime windows. Rung 1 shifted into command/restored scope handoff, close/delete journal recovery, window-state transfer, and no-journal restart freshness. Rung 2 combined cohabitation with history replay, partial snapshots, focus in another window, fullscreen/window state, and two mixed-window close/skew cases. Three full corpus runs found no new distinct signatures.
+- RT-219 shows a history/journal boundary after two browser-authored drifts: a Tabs Outliner group command is undone, browser-created/native-moved tabs have already changed the runtime shape, then `outlinerRedoThenAbruptRestart` loses live tab `2` from the outline while the browser still has it. The bug is not a stale-metadata/order issue; it is a live-resource preservation failure across history replay plus abrupt restart recovery after browser-authored movement.
+- RT-220 and RT-221 are duplicate evidence for RT-219, not separate root causes. They vary the evidence order and destination shape (`manualRefresh` before the redo crash, and saved tab merged into an external window), but hit the same invariant at the same command boundary.
+- The fix makes history journal recovery follow the same current-runtime-shape discipline as live history replay: remap materialized windows against the complete startup snapshot, preserve current live resources before and after reconciliation, and delete superseded stale history window subtrees when their runtime window no longer exists and their live tabs have already been recovered under current runtime windows.
+- Perf gate for RT-219 through RT-221: `pnpm perf:runtime-guard` passed all 8 scenarios. Key sentinels: close tab-removed-then-session firstBroadcastMs=52 totalWithSaveFlushMs=207 saves=1 broadcasts=1; close session-then-tab-removed firstBroadcastMs=53 totalWithSaveFlushMs=200 saves=1 broadcasts=1; restore transient echo firstBroadcastMs=20 totalWithSaveFlushMs=187 saves=1 broadcasts=1; group-live-leaf firstBroadcastMs=74 totalWithSaveFlushMs=219 saves=1 broadcasts=2; move-leaf firstBroadcastMs=42 totalWithSaveFlushMs=217 saves=1 broadcasts=2; refresh-noop firstBroadcastMs=0 totalWithSaveFlushMs=114 saves=0 broadcasts=0. No budget movement was accepted for this fix.
+
+## Recent Fixed Hunt Analysis
+
+- RT-217 and RT-218 both showed the same history boundary: a browser-authored tab move changed current runtime window/active shape, then TO history undo replayed an older structural delta and left the outline tab's active flag stale. RT-218 confirmed the issue survived a clean restart between browser move and history replay.
+- The fix captures a complete runtime snapshot before history replay can drive browser sync, overlays current runtime `windowId`, `active`, and metadata for surviving live tabs when the old delta would regress browser-authored shape, and then reconciles again after any close/materialize/sync side effects. The overlay deliberately skips delete replay and TO-command-created target/source windows so delete and ordinary structural history commands keep their strict semantics.
+- Perf gate for RT-217 through RT-218: `pnpm perf:runtime-guard` passed all 8 scenarios. Key sentinels: close tab-removed-then-session firstBroadcastMs=47 totalWithSaveFlushMs=196 saves=1 broadcasts=1; close session-then-tab-removed firstBroadcastMs=54 totalWithSaveFlushMs=198 saves=1 broadcasts=1; restore transient echo firstBroadcastMs=18 totalWithSaveFlushMs=177 saves=1 broadcasts=1; group-live-leaf firstBroadcastMs=89 totalWithSaveFlushMs=242 saves=1 broadcasts=2; move-leaf firstBroadcastMs=47 totalWithSaveFlushMs=229 saves=1 broadcasts=2; refresh-noop firstBroadcastMs=0 totalWithSaveFlushMs=139 saves=0 broadcasts=0. No budget movement was accepted for this fix.
+- RT-214 and RT-216 were the same close-classification bug with and without fullscreen: after abrupt restart, a browser-created single-tab window could be reconstructed without actionable provenance, so a later `sessionChangedOnly` disappearance deleted the live record instead of preserving it closed. New runtime windows materialized by reconciliation now carry browser-created provenance, reconstructed ledgers restore durable provenance, and missing whole-window session evidence is classified in the reconciler.
+- RT-215 was a harness/actionability boundary: the restored live tab was a valid command target, but the domain runner required another same-window tab before it would send `wrapNodeInGroup`. The harness now allows single-tab live targets, and focused coverage confirms restored tabs remain command-addressable after abrupt restart.
+- Perf gate for RT-214 through RT-216: `pnpm perf:runtime-guard` passed all 8 scenarios. Key sentinels: close tab-removed-then-session firstBroadcastMs=46 totalWithSaveFlushMs=178 saves=1 broadcasts=1; close session-then-tab-removed firstBroadcastMs=46 totalWithSaveFlushMs=177 saves=1 broadcasts=1; restore transient echo firstBroadcastMs=18 totalWithSaveFlushMs=160 saves=1 broadcasts=1; group-live-leaf firstBroadcastMs=70 totalWithSaveFlushMs=207 saves=1 broadcasts=2; move-leaf firstBroadcastMs=39 totalWithSaveFlushMs=208 saves=1 broadcasts=2; refresh-noop firstBroadcastMs=0 totalWithSaveFlushMs=116 saves=0 broadcasts=0. No budget movement was accepted for this fix.
+- RT-205, RT-206, RT-208, RT-209, and RT-212 showed saved-window scopes accepting stale pre-reorder event-local tab evidence after the browser had already made a newer same-window order/active/metadata change.
+- RT-207, RT-210, and RT-213 showed the same stale evidence problem inside command-created destination scopes after a Tabs Outliner relocation plus browser-authored sibling edit.
+- RT-211 showed the metadata half of the same problem in a browser-created scope.
+- The root was not live-id ownership. The scope index routed the event to the right owner, but the routed fact model was too permissive about raw event-local `created`/`updated` tab snapshots after current same-window shape had changed. The fix separates ownership from freshness with typed tab evidence, field masks, shape-fact generation, and targeted metadata corroboration.
 
 ## Fix Analysis
 
@@ -72,6 +100,9 @@ Default hunt bounds:
 - Restore create rejection side effects: RT-091 through RT-095 were fixed by recording restore `createTab`/`createWindow` attempts, detecting matching browser-created tabs/windows from a complete post-rejection snapshot, restoring the original closed outline nodes from that runtime evidence, and clearing reconstructed tombstones for command-restored resources after restart. The same pass also treats the post-command live outline as authoritative for clearing stale command-owned close guards that would otherwise suppress later runtime evidence for still-live resources.
 - Outliner close rejection side effects: RT-096, RT-098, and RT-103 were fixed by giving `closeNode` the same transaction/recovery discipline as delete/restore: when the browser close side effect completed before adapter rejection, the controller now preserves the affected outline tab/window as closed, records completed outliner close facts, and updates runtime-index candidates for the recovered close.
 - History replay after recovered relocated closes: RT-104 and RT-105 were fixed by preserving closed lifecycle state when old move undo/redo deltas touch a command-closed relocated tab or destination window. History may move the closed outline record, but it must not rematerialize the browser tab/window or synthesize an empty live command-created window.
+- Session-only last-tab close in scoped windows: RT-199 through RT-204 were fixed by detecting complete/corroborated missing live window scopes after `sessions.onChanged`, then applying scoped close policy instead of waiting forever for `tabs.onRemoved` or `windows.onRemoved`. Browser-created/session-backed whole-window disappearance is preserved as a closed outline row, while ordinary/restored/command-created last-tab disappearance is treated as native tab deletion unless window-close evidence says the whole window closed. Durable `runtimeProvenance` on outline window nodes lets startup reconstruct browser-created versus command-created ownership without persisting the ephemeral ledger.
+- Shape-fresh runtime facts: RT-205 through RT-213 were fixed by normalizing tab events into field-masked `RuntimeTabEvidence` before reconciliation and recording scoped runtime shape facts in the ledger. `created` echoes for already-known tabs and stale `updated` payloads with bundled old `active`/`index` now require corroboration, current shape/order facts can dominate older event-local payloads, and metadata-only updates stay on the compact fast path unless they would change a known node after a suspicious same-window shape change.
+- Perf gate for RT-205 through RT-213: `pnpm perf:runtime-guard` passed all 8 scenarios. Sentinels: close tab-removed-then-session firstBroadcastMs=53 totalWithSaveFlushMs=193 saves=1 broadcasts=1; close session-then-tab-removed firstBroadcastMs=49 totalWithSaveFlushMs=187 saves=1 broadcasts=1; restore transient echo firstBroadcastMs=22 totalWithSaveFlushMs=191 saves=1 broadcasts=1; delete last tab firstBroadcastMs=17 totalWithSaveFlushMs=126 saves=1 broadcasts=2; focus last tab firstBroadcastMs=17 totalWithSaveFlushMs=17 saves=0 broadcasts=1; group-live-leaf firstBroadcastMs=75 totalWithSaveFlushMs=221 saves=1 broadcasts=2; move-leaf firstBroadcastMs=43 totalWithSaveFlushMs=218 saves=1 broadcasts=2; refresh-noop firstBroadcastMs=0 totalWithSaveFlushMs=120 saves=0 broadcasts=0. No budget movement was accepted for this fix.
 - History replay after later runtime lifecycle changes: RT-106 through RT-119 and RT-121 through RT-124 were fixed by guarding non-delete history deltas against ledger-removed tab/window targets. Old move/group/top-level undo/redo can still replay outline structure, but if its destination runtime window is tombstoned the current live browser window subtree is preserved, and if its live tab was natively removed the old live node is not rematerialized. A complete runtime reconciliation now runs after history replay so active metadata and live tab/window IDs agree with the browser.
 - Native close of command-restored tabs: RT-120 and RT-125 through RT-127 were fixed by treating missing restored live tabs like ordinary native browser removals instead of preserving the restored outline node as closed. Restore commands still preserve outliner-owned close/restore semantics, but a later native tab disappearance deletes the live restored node and tombstones its runtime id.
 - Durable lifecycle baseline before side effects: RT-128 through RT-140 were fixed by flushing any pending outline/history save before writing lifecycle journal entries and before touching browser runtime resources. A journal entry now has a durable pre-command outline base to replay against if the background dies after the browser side effect.
@@ -79,13 +110,25 @@ Default hunt bounds:
 - Native window-close pending-save recovery: RT-144 through RT-153 were fixed by journaling browser-native window close transitions before applying the model close. Startup consumes the journal only when a complete runtime snapshot confirms the window/tabs are gone, then preserves the closed outline subtree and clears the hint after persistence.
 - Browser-authored native move convergence: RT-155 through RT-164 were fixed by treating same-tab/different-window evidence as a structural browser-authored move instead of an ignorable stale tab event. The controller now listens for native attach/detach/moved signals, cross-window tab events bail to reconciliation, stale event-local mismatches are corroborated before acceptance, and ledger live-id learning accepts browser-observed resources without clearing tombstones.
 - Browser-authored live resource preservation during history replay: RT-165 through RT-170 were fixed by preserving currently live runtime tabs/windows from a complete snapshot when structural undo/redo replays an older outline shape. History replay still applies the requested command delta, but unrelated browser-created or browser-moved resources survive, confirmed live windows can be re-rooted, and the replay result is reconciled against current browser evidence before persistence.
-- Perf gate for RT-155 through RT-170: `pnpm perf:runtime-guard` passed all 8 scenarios. Targeted 50k-tab profiles: group-live-leaf firstBroadcastMs=91 totalWithSaveFlushMs=217 saves=1 broadcasts=2; move-leaf firstBroadcastMs=39 totalWithSaveFlushMs=183 saves=1 broadcasts=2; refresh-noop firstBroadcastMs=0 totalWithSaveFlushMs=76 saves=0 broadcasts=0; focus-last firstBroadcastMs=19 totalWithSaveFlushMs=20 saves=0 broadcasts=1. The existing in-browser profile export was reviewed and still flags the pre-existing repeated initial snapshot, slow save/event, and diagnostics-churn hotspots; no budget movement was accepted for this fix.
+- Perf gate for RT-155 through RT-170: `pnpm perf:runtime-guard` passed all 8 scenarios. Targeted 50k-tab profiles: group-live-leaf firstBroadcastMs=91 totalWithSaveFlushMs=217 saves=1 broadcasts=2; move-leaf firstBroadcastMs=39 totalWithSaveFlushMs=183 saves=1 broadcasts=2; refresh-noop firstBroadcastMs=0 totalWithSaveFlushMs=76 saves=0 broadcasts=0; focus-last firstBroadcastMs=19 totalWithSaveFlushMs=20 saves=0 broadcasts=1. No budget movement was accepted for this fix.
 - Runtime shape authority: RT-171 through RT-176, RT-180, and RT-181 were fixed by treating browser tab order and active fallback as runtime shape facts during reconciliation. Native attached/moved/detached events now force snapshot reconciliation instead of falling through a metadata-only fast path, suspicious reordered snapshots are corroborated once before changing outline preorder, and `reconcileWithWindows` can apply browser tab-index order when invoked from runtime reconciliation while preserving normal user/history outline moves.
 - Browser-authored move-back after command relocation: RT-177 through RT-179 were fixed by recording native attach/move facts in the ledger and clearing command-relocated old-window echo protection when the browser moves the same tab away from the command destination. Stale old-window echoes remain filtered, but a real later browser-authored move back to the source window is accepted.
 - Restored-resource metadata freshness: RT-182 through RT-186 were fixed by keeping restored-tab stale protection long enough to corroborate suspicious metadata echoes. Transient `about:blank`/`New Tab` restore echoes are absorbed without a full snapshot; later restored-tab metadata changes are accepted only when fresh runtime evidence corroborates them, so stale created/updated echoes cannot overwrite current title/url/favicon.
-- Perf gate for RT-171 through RT-186: `pnpm perf:runtime-guard` passed all 8 scenarios. Key 50k-tab sentinels: restore transient echo firstBroadcastMs=17 totalWithSaveFlushMs=153 saves=1 broadcasts=1; group-live-leaf firstBroadcastMs=90 totalWithSaveFlushMs=219 saves=1 broadcasts=2; move-leaf firstBroadcastMs=39 totalWithSaveFlushMs=182 saves=1 broadcasts=2; refresh-noop firstBroadcastMs=0 totalWithSaveFlushMs=94 saves=0 broadcasts=0. The existing in-browser profile export was reviewed and still flags pre-existing repeated initial snapshot, slow save/event, and diagnostics-churn hotspots; no budget movement was accepted for this fix.
+- Perf gate for RT-171 through RT-186: `pnpm perf:runtime-guard` passed all 8 scenarios. Key 50k-tab sentinels: restore transient echo firstBroadcastMs=17 totalWithSaveFlushMs=153 saves=1 broadcasts=1; group-live-leaf firstBroadcastMs=90 totalWithSaveFlushMs=219 saves=1 broadcasts=2; move-leaf firstBroadcastMs=39 totalWithSaveFlushMs=182 saves=1 broadcasts=2; refresh-noop firstBroadcastMs=0 totalWithSaveFlushMs=94 saves=0 broadcasts=0. No budget movement was accepted for this fix.
+- External browser-created window close: UR-001 was fixed by recording browser-created runtime windows in the ephemeral ledger and treating corroborated session-only disappearance as native window-close evidence. The affected outline window/tab subtree is now preserved as closed, native close lifecycle journaling protects the pending save, and removed runtime IDs stay tombstoned so stale created/updated echoes cannot resurrect the live row.
+- Perf gate for UR-001: `pnpm perf:runtime-guard` passed all 8 scenarios. Key sentinels: close tab-removed-then-session firstBroadcastMs=42 totalWithSaveFlushMs=159 saves=1 broadcasts=1; close session-then-tab-removed firstBroadcastMs=43 totalWithSaveFlushMs=163 saves=1 broadcasts=1; refresh-noop firstBroadcastMs=0 totalWithSaveFlushMs=93 saves=0 broadcasts=0. No budget movement was accepted for this fix.
 - Post-recovery harness artifacts: RT-097, RT-099, RT-100, RT-101, and RT-102 were triaged as trace-harness bugs, not runtime model bugs. The harness now avoids stale `lastOpenedWindow`/old restored-tab runtime IDs, treats a foreign live window under a closed source window as intentionally promoted/still live, permits no focused runtime window after destructive history replay by selecting `firstRuntimeWindow` for query skew, and scopes rejecting restore-create mocks to the selected node kind so unused one-shot mocks cannot poison later undo/redo commands.
 - Verification: all listed generated seed repros and promoted domain trace repros pass as of the principled runtime trace fix passes.
+
+## User-Reported Runtime Findings
+
+### UR-001 external browser-created window remains live after browser close
+<!-- signature: external browser-created window/tab remains live after browser-authored close with incomplete close events -->
+
+- First seen: 2026-05-25 during manual browser testing.
+- Repro: externally open a link into a new browser window/tab so Tabs Outliner creates live `window:<id>` and `tab:<id>` nodes; close that window from browser chrome with only session or tabs-removed evidence; stale created/updated tab evidence could leave the outline row live.
+- Regression trace: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=ur-external-window-tabs-only-close-stale-echo pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: fixed in the external browser-created window close pass.
 
 ## Restart-Stress Fix Analysis
 
@@ -5210,3 +5253,1043 @@ action 5: {"type":"staleLiveUpdatedEvent","staleTab":{"capture":"mh-restored-mis
 <!-- hunt-corpus-run: {"at":"2026-05-24T22:12:24.341Z","mode":"agent-corpus-run","profile":"regression","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","history-boundary","journal","known-finding","manual-refresh","metadata","multi-tab","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event"],"firstTraceId":"rt-active-race","lastTraceId":"mh-restored-tab-missing-query-metadata","runs":225,"processRuns":5,"batchSize":50,"batchFailures":0,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
 
 <!-- hunt-corpus-run: {"at":"2026-05-24T22:16:07.240Z","mode":"agent-corpus-run","profile":"regression","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","history-boundary","journal","known-finding","manual-refresh","metadata","multi-tab","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event"],"firstTraceId":"rt-active-race","lastTraceId":"mh-restored-tab-missing-query-metadata","runs":225,"processRuns":5,"batchSize":50,"batchFailures":0,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-25T08:30:20.865Z","mode":"agent-corpus-run","profile":"regression","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","history-boundary","journal","known-finding","manual-refresh","metadata","multi-tab","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event"],"firstTraceId":"rt-active-race","lastTraceId":"ur-external-window-tabs-only-close-stale-echo","runs":226,"processRuns":5,"batchSize":50,"batchFailures":0,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
+
+## Fix Analysis: Runtime Window Scope Routing
+
+- Root cause: externally created resources that had already become closed outline records had no live close plan when the user deleted them, so the durable lifecycle journal skipped the pending delete. If the background died before the state save, startup could reconstruct the closed runtime record from storage and resurrect the command-deleted node.
+- Fix: added an ephemeral `RuntimeWindowScopeIndex` behind `RuntimeFactLedger`, reconstructed from outline/runtime evidence, and made delete journaling treat closed scoped/tombstoned runtime rows as lifecycle work even when there is no browser close left to perform. Scope policy now also exposes restored/browser-created provenance to reconciliation for current-window shape decisions.
+- Coverage: promoted `oh-external-closed-delete-restart-history` as RT-187 and `oh-external-closed-delete-tab-abrupt-history` as RT-190. Duplicate discovery traces RT-191 through RT-198 remain historical evidence and passed the temp discovery smoke.
+- Perf blast radius: runtime event routing, restore, native close, delete, refresh. `pnpm perf:runtime-guard` passed after keeping scope rebuilds off no-op refresh and compact command/event patch paths; no budget movement accepted.
+
+### RT-187 command-deleted node window:21 was resurrected
+<!-- signature: command-deleted node window:<id> was resurrected
+domain trace: oh-external-closed-delete-restart-history
+action: {"type":"outlinerDeleteNodeThenAbruptRestart","node":{"nodeId":"window:<id>"}} -->
+
+- First seen: 2026-05-25T08:56:25.284Z
+- Trace id: `oh-external-closed-delete-restart-history`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=oh-external-closed-delete-restart-history pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: fixed by runtime window scope routing plus empty-plan delete journaling for closed scoped runtime records; promoted to regression coverage.
+
+```text
+domain trace oh-external-closed-delete-restart-history: external closed delete restart history
+action 1: {"type":"nativeOpenWindow","focused":false,"tabs":[{"title":"External delete restart"}],"captureWindow":"oh-delete-restart-window","captureTabs":"oh-delete-restart-tabs"}
+action 2: {"type":"nativeCloseWindow","window":{"capture":"oh-delete-restart-window"},"order":"tabsRemovedThenWindowRemoved"}
+action 3: {"type":"outlinerDeleteNodeThenAbruptRestart","node":{"nodeId":"window:21"}}
+Domain trace: oh-external-closed-delete-restart-history
+Action 3: {"type":"outlinerDeleteNodeThenAbruptRestart","node":{"nodeId":"window:21"}}
+Trace:
+domain trace oh-external-closed-delete-restart-history: external closed delete restart history
+action 1: {"type":"nativeOpenWindow","focused":false,"tabs":[{"title":"External delete restart"}],"captureWindow":"oh-delete-restart-window","captureTabs":"oh-delete-restart-tabs"}
+action 2: {"type":"nativeCloseWindow","window":{"capture":"oh-delete-restart-window"},"order":"tabsRemovedThenWindowRemoved"}
+action 3: {"type":"outlinerDeleteNodeThenAbruptRestart","node":{"nodeId":"window:21"}}
+```
+
+<!-- hunt-corpus-run: {"at":"2026-05-25T08:56:39.734Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["created-event","delete-rejection","manual-refresh","metadata","multi-tab","native-close","native-move","native-open","nested-window","opener","restart","restore","session","stale-event","stale-query","undo-redo","updated-event"],"firstTraceId":"oh-external-closed-restore-single","lastTraceId":"oh-external-id-gaps-closed-restore","runs":20,"processRuns":21,"batchSize":20,"batchFailures":1,"completedCorpus":true,"failures":1,"duplicateFailures":0,"newFindings":1} -->
+
+### RT-188 expected closed node window:21 is missing
+<!-- signature: expected closed node window:<id> is missing
+domain trace: dh-opener-session-only-close
+action: {"type":"nativeCloseTab","tab":{"role":"lastMovedTab"},"order":"sessionChangedOnly"} -->
+
+- First seen: 2026-05-25T08:58:42.214Z
+- Trace id: `dh-opener-session-only-close`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-opener-session-only-close pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: harness artifact, not a product finding. This was caused by an overbroad temporary harness expectation that treated every last-tab `sessionChangedOnly` event as a preserved closed window; narrowed to browser-created external windows only.
+
+```text
+domain trace dh-opener-session-only-close: opener-linked relocation with session-only tab removal
+action 1: {"type":"openTab","window":{"windowId":10},"active":false,"openerTab":{"tabId":1},"captureTab":"session-opener-child"}
+action 2: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"capture":"session-opener-child"},"captureStaleTabs":"session-opener-old-window"}
+action 3: {"type":"nativeCloseTab","tab":{"role":"lastMovedTab"},"order":"sessionChangedOnly"}
+Domain trace: dh-opener-session-only-close
+Action 3: {"type":"nativeCloseTab","tab":{"role":"lastMovedTab"},"order":"sessionChangedOnly"}
+Trace:
+domain trace dh-opener-session-only-close: opener-linked relocation with session-only tab removal
+action 1: {"type":"openTab","window":{"windowId":10},"active":false,"openerTab":{"tabId":1},"captureTab":"session-opener-child"}
+action 2: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"capture":"session-opener-child"},"captureStaleTabs":"session-opener-old-window"}
+action 3: {"type":"nativeCloseTab","tab":{"role":"lastMovedTab"},"order":"sessionChangedOnly"}
+```
+
+### RT-189 expected closed node window:21 is missing
+<!-- signature: expected closed node window:<id> is missing
+domain trace: dh-session-only-close-manual-stale-query
+action: {"type":"nativeCloseTab","tab":{"role":"lastMovedTab"},"order":"sessionChangedOnly"} -->
+
+- First seen: 2026-05-25T08:59:07.975Z
+- Trace id: `dh-session-only-close-manual-stale-query`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-session-only-close-manual-stale-query pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: harness artifact, not a product finding. This was caused by an overbroad temporary harness expectation that treated every last-tab `sessionChangedOnly` event as a preserved closed window; narrowed to browser-created external windows only.
+
+```text
+domain trace dh-session-only-close-manual-stale-query: session-only moved tab close before manual stale query
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"session-only-manual-old"}
+action 2: {"type":"nativeCloseTab","tab":{"role":"lastMovedTab"},"order":"sessionChangedOnly"}
+Domain trace: dh-session-only-close-manual-stale-query
+Action 2: {"type":"nativeCloseTab","tab":{"role":"lastMovedTab"},"order":"sessionChangedOnly"}
+Trace:
+domain trace dh-session-only-close-manual-stale-query: session-only moved tab close before manual stale query
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"session-only-manual-old"}
+action 2: {"type":"nativeCloseTab","tab":{"role":"lastMovedTab"},"order":"sessionChangedOnly"}
+```
+
+### RT-190 command-deleted node tab:100 was resurrected
+<!-- signature: command-deleted node tab:<id> was resurrected
+domain trace: oh-external-closed-delete-tab-abrupt-history
+action: {"type":"outlinerDeleteNodeThenAbruptRestart","node":{"nodeId":"tab:<id>"}} -->
+
+- First seen: 2026-05-25T09:00:23.568Z
+- Trace id: `oh-external-closed-delete-tab-abrupt-history`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=oh-external-closed-delete-tab-abrupt-history pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: fixed by runtime window scope routing plus empty-plan delete journaling for closed scoped runtime records; promoted to regression coverage.
+
+```text
+domain trace oh-external-closed-delete-tab-abrupt-history: external closed delete tab abrupt history
+action 1: {"type":"nativeOpenWindow","focused":false,"tabs":[{"title":"External delete tab abrupt"}],"captureWindow":"oh-delete-tab-abrupt-window","captureTabs":"oh-delete-tab-abrupt-tabs"}
+action 2: {"type":"nativeCloseWindow","window":{"capture":"oh-delete-tab-abrupt-window"},"order":"windowRemovedOnly"}
+action 3: {"type":"outlinerDeleteNodeThenAbruptRestart","node":{"nodeId":"tab:100"}}
+Domain trace: oh-external-closed-delete-tab-abrupt-history
+Action 3: {"type":"outlinerDeleteNodeThenAbruptRestart","node":{"nodeId":"tab:100"}}
+Trace:
+domain trace oh-external-closed-delete-tab-abrupt-history: external closed delete tab abrupt history
+action 1: {"type":"nativeOpenWindow","focused":false,"tabs":[{"title":"External delete tab abrupt"}],"captureWindow":"oh-delete-tab-abrupt-window","captureTabs":"oh-delete-tab-abrupt-tabs"}
+action 2: {"type":"nativeCloseWindow","window":{"capture":"oh-delete-tab-abrupt-window"},"order":"windowRemovedOnly"}
+action 3: {"type":"outlinerDeleteNodeThenAbruptRestart","node":{"nodeId":"tab:100"}}
+```
+
+### RT-191 command-deleted node window:21 was resurrected
+<!-- signature: command-deleted node window:<id> was resurrected
+domain trace: oh-external-closed-delete-window-abrupt-window-only
+action: {"type":"outlinerDeleteNodeThenAbruptRestart","node":{"nodeId":"window:<id>"}} -->
+
+- First seen: 2026-05-25T09:00:24.912Z
+- Trace id: `oh-external-closed-delete-window-abrupt-window-only`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=oh-external-closed-delete-window-abrupt-window-only pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: duplicate repro evidence for the RT-187 external closed-window delete crash-recovery bug; covered by the runtime window scope routing fix and preserved as historical evidence.
+
+```text
+domain trace oh-external-closed-delete-window-abrupt-window-only: external closed delete window abrupt window only
+action 1: {"type":"nativeOpenWindow","focused":false,"tabs":[{"title":"External delete window-only"}],"captureWindow":"oh-delete-window-only-window","captureTabs":"oh-delete-window-only-tabs"}
+action 2: {"type":"nativeCloseWindow","window":{"capture":"oh-delete-window-only-window"},"order":"windowRemovedOnly"}
+action 3: {"type":"outlinerDeleteNodeThenAbruptRestart","node":{"nodeId":"window:21"}}
+Domain trace: oh-external-closed-delete-window-abrupt-window-only
+Action 3: {"type":"outlinerDeleteNodeThenAbruptRestart","node":{"nodeId":"window:21"}}
+Trace:
+domain trace oh-external-closed-delete-window-abrupt-window-only: external closed delete window abrupt window only
+action 1: {"type":"nativeOpenWindow","focused":false,"tabs":[{"title":"External delete window-only"}],"captureWindow":"oh-delete-window-only-window","captureTabs":"oh-delete-window-only-tabs"}
+action 2: {"type":"nativeCloseWindow","window":{"capture":"oh-delete-window-only-window"},"order":"windowRemovedOnly"}
+action 3: {"type":"outlinerDeleteNodeThenAbruptRestart","node":{"nodeId":"window:21"}}
+```
+
+### RT-192 command-deleted node window:21 was resurrected
+<!-- signature: command-deleted node window:<id> was resurrected
+domain trace: oh-external-closed-delete-window-abrupt-tabs-only
+action: {"type":"outlinerDeleteNodeThenAbruptRestart","node":{"nodeId":"window:<id>"}} -->
+
+- First seen: 2026-05-25T09:00:26.186Z
+- Trace id: `oh-external-closed-delete-window-abrupt-tabs-only`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=oh-external-closed-delete-window-abrupt-tabs-only pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: duplicate repro evidence for the RT-187 external closed-window delete crash-recovery bug; covered by the runtime window scope routing fix and preserved as historical evidence.
+
+```text
+domain trace oh-external-closed-delete-window-abrupt-tabs-only: external closed delete window abrupt tabs only
+action 1: {"type":"nativeOpenWindow","focused":false,"tabs":[{"title":"External delete tabs-only"}],"captureWindow":"oh-delete-tabs-only-window","captureTabs":"oh-delete-tabs-only-tabs"}
+action 2: {"type":"nativeCloseWindow","window":{"capture":"oh-delete-tabs-only-window"},"order":"tabsRemovedOnly"}
+action 3: {"type":"outlinerDeleteNodeThenAbruptRestart","node":{"nodeId":"window:21"}}
+Domain trace: oh-external-closed-delete-window-abrupt-tabs-only
+Action 3: {"type":"outlinerDeleteNodeThenAbruptRestart","node":{"nodeId":"window:21"}}
+Trace:
+domain trace oh-external-closed-delete-window-abrupt-tabs-only: external closed delete window abrupt tabs only
+action 1: {"type":"nativeOpenWindow","focused":false,"tabs":[{"title":"External delete tabs-only"}],"captureWindow":"oh-delete-tabs-only-window","captureTabs":"oh-delete-tabs-only-tabs"}
+action 2: {"type":"nativeCloseWindow","window":{"capture":"oh-delete-tabs-only-window"},"order":"tabsRemovedOnly"}
+action 3: {"type":"outlinerDeleteNodeThenAbruptRestart","node":{"nodeId":"window:21"}}
+```
+
+### RT-193 command-deleted node window:21 was resurrected
+<!-- signature: command-deleted node window:<id> was resurrected
+domain trace: oh-external-closed-delete-multitab-abrupt
+action: {"type":"outlinerDeleteNodeThenAbruptRestart","node":{"nodeId":"window:<id>"}} -->
+
+- First seen: 2026-05-25T09:00:27.429Z
+- Trace id: `oh-external-closed-delete-multitab-abrupt`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=oh-external-closed-delete-multitab-abrupt pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: duplicate repro evidence for the RT-187 external closed-window delete crash-recovery bug; covered by the runtime window scope routing fix and preserved as historical evidence.
+
+```text
+domain trace oh-external-closed-delete-multitab-abrupt: external closed delete multitab abrupt
+action 1: {"type":"nativeOpenWindow","focused":false,"tabs":[{"title":"External delete multi A"},{"title":"External delete multi B","active":true}],"captureWindow":"oh-delete-multi-window","captureTabs":"oh-delete-multi-tabs"}
+action 2: {"type":"nativeCloseWindow","window":{"capture":"oh-delete-multi-window"},"order":"tabsRemovedThenWindowRemoved"}
+action 3: {"type":"outlinerDeleteNodeThenAbruptRestart","node":{"nodeId":"window:21"}}
+Domain trace: oh-external-closed-delete-multitab-abrupt
+Action 3: {"type":"outlinerDeleteNodeThenAbruptRestart","node":{"nodeId":"window:21"}}
+Trace:
+domain trace oh-external-closed-delete-multitab-abrupt: external closed delete multitab abrupt
+action 1: {"type":"nativeOpenWindow","focused":false,"tabs":[{"title":"External delete multi A"},{"title":"External delete multi B","active":true}],"captureWindow":"oh-delete-multi-window","captureTabs":"oh-delete-multi-tabs"}
+action 2: {"type":"nativeCloseWindow","window":{"capture":"oh-delete-multi-window"},"order":"tabsRemovedThenWindowRemoved"}
+action 3: {"type":"outlinerDeleteNodeThenAbruptRestart","node":{"nodeId":"window:21"}}
+```
+
+### RT-194 command-deleted node window:21 was resurrected
+<!-- signature: command-deleted node window:<id> was resurrected
+domain trace: oh-external-closed-delete-session-abrupt
+action: {"type":"outlinerDeleteNodeThenAbruptRestart","node":{"nodeId":"window:<id>"}} -->
+
+- First seen: 2026-05-25T09:00:28.644Z
+- Trace id: `oh-external-closed-delete-session-abrupt`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=oh-external-closed-delete-session-abrupt pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: duplicate repro evidence for the RT-187 external closed-window delete crash-recovery bug; covered by the runtime window scope routing fix and preserved as historical evidence.
+
+```text
+domain trace oh-external-closed-delete-session-abrupt: external closed delete session abrupt
+action 1: {"type":"nativeOpenWindow","focused":false,"tabs":[{"title":"External delete session"}],"captureWindow":"oh-delete-session-window","captureTabs":"oh-delete-session-tabs"}
+action 2: {"type":"nativeCloseTab","tab":{"capture":"oh-delete-session-tabs"},"order":"sessionChangedOnly"}
+action 3: {"type":"outlinerDeleteNodeThenAbruptRestart","node":{"nodeId":"window:21"}}
+Domain trace: oh-external-closed-delete-session-abrupt
+Action 3: {"type":"outlinerDeleteNodeThenAbruptRestart","node":{"nodeId":"window:21"}}
+Trace:
+domain trace oh-external-closed-delete-session-abrupt: external closed delete session abrupt
+action 1: {"type":"nativeOpenWindow","focused":false,"tabs":[{"title":"External delete session"}],"captureWindow":"oh-delete-session-window","captureTabs":"oh-delete-session-tabs"}
+action 2: {"type":"nativeCloseTab","tab":{"capture":"oh-delete-session-tabs"},"order":"sessionChangedOnly"}
+action 3: {"type":"outlinerDeleteNodeThenAbruptRestart","node":{"nodeId":"window:21"}}
+```
+
+### RT-195 command-deleted node window:21 was resurrected
+<!-- signature: command-deleted node window:<id> was resurrected
+domain trace: oh-external-closed-delete-after-restart-abrupt
+action: {"type":"outlinerDeleteNodeThenAbruptRestart","node":{"nodeId":"window:<id>"}} -->
+
+- First seen: 2026-05-25T09:00:29.860Z
+- Trace id: `oh-external-closed-delete-after-restart-abrupt`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=oh-external-closed-delete-after-restart-abrupt pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: duplicate repro evidence for the RT-187 external closed-window delete crash-recovery bug; covered by the runtime window scope routing fix and preserved as historical evidence.
+
+```text
+domain trace oh-external-closed-delete-after-restart-abrupt: external closed delete after restart abrupt
+action 1: {"type":"nativeOpenWindow","focused":false,"tabs":[{"title":"External delete after restart"}],"captureWindow":"oh-delete-after-restart-window","captureTabs":"oh-delete-after-restart-tabs"}
+action 2: {"type":"nativeCloseWindow","window":{"capture":"oh-delete-after-restart-window"},"order":"tabsRemovedThenWindowRemoved"}
+action 3: {"type":"restartBackground"}
+action 4: {"type":"outlinerDeleteNodeThenAbruptRestart","node":{"nodeId":"window:21"}}
+Domain trace: oh-external-closed-delete-after-restart-abrupt
+Action 4: {"type":"outlinerDeleteNodeThenAbruptRestart","node":{"nodeId":"window:21"}}
+Trace:
+domain trace oh-external-closed-delete-after-restart-abrupt: external closed delete after restart abrupt
+action 1: {"type":"nativeOpenWindow","focused":false,"tabs":[{"title":"External delete after restart"}],"captureWindow":"oh-delete-after-restart-window","captureTabs":"oh-delete-after-restart-tabs"}
+action 2: {"type":"nativeCloseWindow","window":{"capture":"oh-delete-after-restart-window"},"order":"tabsRemovedThenWindowRemoved"}
+action 3: {"type":"restartBackground"}
+action 4: {"type":"outlinerDeleteNodeThenAbruptRestart","node":{"nodeId":"window:21"}}
+```
+
+### RT-196 command-deleted node window:21 was resurrected
+<!-- signature: command-deleted node window:<id> was resurrected
+domain trace: oh-external-restored-then-closed-delete-abrupt
+action: {"type":"outlinerDeleteNodeThenAbruptRestart","node":{"nodeId":"window:<id>"}} -->
+
+- First seen: 2026-05-25T09:00:31.094Z
+- Trace id: `oh-external-restored-then-closed-delete-abrupt`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=oh-external-restored-then-closed-delete-abrupt pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: duplicate repro evidence for the RT-187 external closed-window delete crash-recovery bug; covered by the runtime window scope routing fix and preserved as historical evidence.
+
+```text
+domain trace oh-external-restored-then-closed-delete-abrupt: external restored then closed delete abrupt
+action 1: {"type":"nativeOpenWindow","focused":false,"tabs":[{"title":"External restore close delete"}],"captureWindow":"oh-restore-close-delete-window","captureTabs":"oh-restore-close-delete-tabs"}
+action 2: {"type":"nativeCloseWindow","window":{"capture":"oh-restore-close-delete-window"},"order":"windowRemovedOnly"}
+action 3: {"type":"outlinerRestoreNodeThenAbruptRestart","node":{"nodeId":"window:21"},"captureRestoredTabs":"oh-restore-close-delete-restored-tabs","captureRestoredWindows":"oh-restore-close-delete-restored-window"}
+action 4: {"type":"nativeCloseWindow","window":{"capture":"oh-restore-close-delete-restored-window"},"order":"tabsRemovedThenWindowRemoved"}
+action 5: {"type":"outlinerDeleteNodeThenAbruptRestart","node":{"nodeId":"window:21"}}
+Domain trace: oh-external-restored-then-closed-delete-abrupt
+Action 5: {"type":"outlinerDeleteNodeThenAbruptRestart","node":{"nodeId":"window:21"}}
+Trace:
+domain trace oh-external-restored-then-closed-delete-abrupt: external restored then closed delete abrupt
+action 1: {"type":"nativeOpenWindow","focused":false,"tabs":[{"title":"External restore close delete"}],"captureWindow":"oh-restore-close-delete-window","captureTabs":"oh-restore-close-delete-tabs"}
+action 2: {"type":"nativeCloseWindow","window":{"capture":"oh-restore-close-delete-window"},"order":"windowRemovedOnly"}
+action 3: {"type":"outlinerRestoreNodeThenAbruptRestart","node":{"nodeId":"window:21"},"captureRestoredTabs":"oh-restore-close-delete-restored-tabs","captureRestoredWindows":"oh-restore-close-delete-restored-window"}
+action 4: {"type":"nativeCloseWindow","window":{"capture":"oh-restore-close-delete-restored-window"},"order":"tabsRemovedThenWindowRemoved"}
+action 5: {"type":"outlinerDeleteNodeThenAbruptRestart","node":{"nodeId":"window:21"}}
+```
+
+<!-- hunt-corpus-run: {"at":"2026-05-25T09:00:32.332Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete","delete-rejection","event-order","focus","fresh-event","history-boundary","journal","manual-refresh","metadata","multi-tab","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"oh-external-closed-delete-redo-after-abrupt","runs":473,"processRuns":97,"batchSize":20,"batchFailures":4,"completedCorpus":true,"failures":10,"duplicateFailures":1,"newFindings":9} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-25T09:05:00.639Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete","delete-rejection","event-order","focus","fresh-event","history-boundary","journal","manual-refresh","metadata","multi-tab","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"oh-external-closed-restore-delete-history-redo","runs":479,"processRuns":63,"batchSize":20,"batchFailures":2,"completedCorpus":true,"failures":8,"duplicateFailures":8,"newFindings":0} -->
+
+### RT-197 command-deleted node tab:100 was resurrected
+<!-- signature: command-deleted node tab:<id> was resurrected
+domain trace: oh-external-opener-child-delete-tab-abrupt
+action: {"type":"outlinerDeleteNodeThenAbruptRestart","node":{"nodeId":"tab:<id>"}} -->
+
+- First seen: 2026-05-25T09:07:52.105Z
+- Trace id: `oh-external-opener-child-delete-tab-abrupt`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=oh-external-opener-child-delete-tab-abrupt pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: duplicate repro evidence for the RT-190 external closed-tab delete crash-recovery bug; covered by the runtime window scope routing fix and preserved as historical evidence.
+
+```text
+domain trace oh-external-opener-child-delete-tab-abrupt: external opener child delete tab abrupt
+action 1: {"type":"nativeOpenWindow","focused":false,"tabs":[{"title":"External opener delete abrupt","openerTab":{"tabId":1}}],"captureWindow":"oh-opener-delete-abrupt-window","captureTabs":"oh-opener-delete-abrupt-tabs"}
+action 2: {"type":"nativeCloseWindow","window":{"capture":"oh-opener-delete-abrupt-window"},"order":"tabsRemovedThenWindowRemoved"}
+action 3: {"type":"outlinerDeleteNodeThenAbruptRestart","node":{"nodeId":"tab:100"}}
+Domain trace: oh-external-opener-child-delete-tab-abrupt
+Action 3: {"type":"outlinerDeleteNodeThenAbruptRestart","node":{"nodeId":"tab:100"}}
+Trace:
+domain trace oh-external-opener-child-delete-tab-abrupt: external opener child delete tab abrupt
+action 1: {"type":"nativeOpenWindow","focused":false,"tabs":[{"title":"External opener delete abrupt","openerTab":{"tabId":1}}],"captureWindow":"oh-opener-delete-abrupt-window","captureTabs":"oh-opener-delete-abrupt-tabs"}
+action 2: {"type":"nativeCloseWindow","window":{"capture":"oh-opener-delete-abrupt-window"},"order":"tabsRemovedThenWindowRemoved"}
+action 3: {"type":"outlinerDeleteNodeThenAbruptRestart","node":{"nodeId":"tab:100"}}
+```
+
+### RT-198 command-deleted node window:21 was resurrected
+<!-- signature: command-deleted node window:<id> was resurrected
+domain trace: oh-external-closed-delete-window-abrupt-stale-created
+action: {"type":"outlinerDeleteNodeThenAbruptRestart","node":{"nodeId":"window:<id>"}} -->
+
+- First seen: 2026-05-25T09:07:54.450Z
+- Trace id: `oh-external-closed-delete-window-abrupt-stale-created`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=oh-external-closed-delete-window-abrupt-stale-created pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: duplicate repro evidence for the RT-187 external closed-window delete crash-recovery bug; covered by the runtime window scope routing fix and preserved as historical evidence.
+
+```text
+domain trace oh-external-closed-delete-window-abrupt-stale-created: external closed delete window abrupt stale created
+action 1: {"type":"nativeOpenWindow","focused":false,"tabs":[{"title":"External delete stale created"}],"captureWindow":"oh-delete-stale-created-window","captureTabs":"oh-delete-stale-created-tabs"}
+action 2: {"type":"nativeCloseWindow","window":{"capture":"oh-delete-stale-created-window"},"order":"tabsRemovedThenWindowRemoved"}
+action 3: {"type":"outlinerDeleteNodeThenAbruptRestart","node":{"nodeId":"window:21"}}
+Domain trace: oh-external-closed-delete-window-abrupt-stale-created
+Action 3: {"type":"outlinerDeleteNodeThenAbruptRestart","node":{"nodeId":"window:21"}}
+Trace:
+domain trace oh-external-closed-delete-window-abrupt-stale-created: external closed delete window abrupt stale created
+action 1: {"type":"nativeOpenWindow","focused":false,"tabs":[{"title":"External delete stale created"}],"captureWindow":"oh-delete-stale-created-window","captureTabs":"oh-delete-stale-created-tabs"}
+action 2: {"type":"nativeCloseWindow","window":{"capture":"oh-delete-stale-created-window"},"order":"tabsRemovedThenWindowRemoved"}
+action 3: {"type":"outlinerDeleteNodeThenAbruptRestart","node":{"nodeId":"window:21"}}
+```
+
+<!-- hunt-corpus-run: {"at":"2026-05-25T09:07:59.114Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete","delete-rejection","event-order","focus","fresh-event","history-boundary","journal","manual-refresh","metadata","multi-tab","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"oh-external-nested-restore-after-group-close","runs":485,"processRuns":70,"batchSize":20,"batchFailures":3,"completedCorpus":true,"failures":10,"duplicateFailures":8,"newFindings":2} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-25T09:11:24.285Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete","delete-rejection","event-order","focus","fresh-event","history-boundary","journal","manual-refresh","metadata","multi-tab","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"oh-external-restored-close-history-redo","runs":489,"processRuns":74,"batchSize":20,"batchFailures":3,"completedCorpus":true,"failures":10,"duplicateFailures":10,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-25T09:12:02.955Z","mode":"agent-corpus-run","profile":"regression","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete-rejection","event-order","focus","fresh-event","history-boundary","journal","known-finding","manual-refresh","metadata","multi-tab","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event"],"firstTraceId":"rt-active-race","lastTraceId":"ur-external-window-tabs-only-close-stale-echo","runs":226,"processRuns":5,"batchSize":50,"batchFailures":0,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-25T09:59:29.156Z","mode":"agent-corpus-run","profile":"regression","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete","delete-rejection","event-order","focus","fresh-event","history-boundary","journal","known-finding","manual-refresh","metadata","multi-tab","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event"],"firstTraceId":"rt-active-race","lastTraceId":"oh-external-closed-delete-tab-abrupt-history","runs":228,"processRuns":5,"batchSize":50,"batchFailures":0,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-25T10:02:20.979Z","mode":"agent-corpus-run","profile":"regression","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete","delete-rejection","event-order","focus","fresh-event","history-boundary","journal","known-finding","manual-refresh","metadata","multi-tab","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event"],"firstTraceId":"rt-active-race","lastTraceId":"oh-external-closed-delete-tab-abrupt-history","runs":228,"processRuns":5,"batchSize":50,"batchFailures":0,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-25T10:24:03.630Z","mode":"agent-corpus-run","profile":"regression","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete","delete-rejection","event-order","focus","fresh-event","history-boundary","journal","known-finding","manual-refresh","metadata","multi-tab","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event"],"firstTraceId":"rt-active-race","lastTraceId":"oh-external-closed-delete-tab-abrupt-history","runs":228,"processRuns":5,"batchSize":50,"batchFailures":0,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
+
+### RT-199 live tab IDs match runtime tabs
+<!-- signature: live tab IDs match runtime tabs
+domain trace: wh-saved-session-only-disappear
+action: {"type":"nativeCloseTab","tab":{"tabId":3},"order":"sessionChangedOnly"} -->
+
+- First seen: 2026-05-25T10:24:49.593Z
+- Trace id: `wh-saved-session-only-disappear`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=wh-saved-session-only-disappear pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: fixed by session-only missing-scope corroboration; promoted to regression coverage.
+
+```text
+domain trace wh-saved-session-only-disappear: saved session only disappear
+action 1: {"type":"nativeCloseTab","tab":{"tabId":3},"order":"sessionChangedOnly"}
+Domain trace: wh-saved-session-only-disappear
+Action 1: {"type":"nativeCloseTab","tab":{"tabId":3},"order":"sessionChangedOnly"}
+Trace:
+domain trace wh-saved-session-only-disappear: saved session only disappear
+action 1: {"type":"nativeCloseTab","tab":{"tabId":3},"order":"sessionChangedOnly"}
+```
+
+<!-- hunt-corpus-run: {"at":"2026-05-25T10:25:01.581Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","browserCreated","command-rejection","commandCreated","created-event","delayed-event","delete","delete-rejection","event-order","focus","fresh-event","history-boundary","journal","manual-refresh","metadata","multi-tab","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","restored","saved","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event","window-scope"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"wh-focus-active-race-scopes","runs":512,"processRuns":38,"batchSize":20,"batchFailures":1,"completedCorpus":true,"failures":1,"duplicateFailures":0,"newFindings":1} -->
+
+### RT-200 live tab IDs match runtime tabs
+<!-- signature: live tab IDs match runtime tabs
+domain trace: wh-saved-session-only-after-restart
+action: {"type":"nativeCloseTab","tab":{"tabId":3},"order":"sessionChangedOnly"} -->
+
+- First seen: 2026-05-25T10:27:30.016Z
+- Trace id: `wh-saved-session-only-after-restart`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=wh-saved-session-only-after-restart pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: fixed by session-only missing-scope corroboration after scope reconstruction; promoted to regression coverage.
+
+```text
+domain trace wh-saved-session-only-after-restart: saved session only after restart
+action 1: {"type":"restartBackground"}
+action 2: {"type":"nativeCloseTab","tab":{"tabId":3},"order":"sessionChangedOnly"}
+Domain trace: wh-saved-session-only-after-restart
+Action 2: {"type":"nativeCloseTab","tab":{"tabId":3},"order":"sessionChangedOnly"}
+Trace:
+domain trace wh-saved-session-only-after-restart: saved session only after restart
+action 1: {"type":"restartBackground"}
+action 2: {"type":"nativeCloseTab","tab":{"tabId":3},"order":"sessionChangedOnly"}
+```
+
+### RT-201 live tab IDs match runtime tabs
+<!-- signature: live tab IDs match runtime tabs
+domain trace: wh-restored-window-session-only-disappear
+action: {"type":"nativeCloseTab","tab":{"capture":"wh-restored-window-session-tabs"},"order":"sessionChangedOnly"} -->
+
+- First seen: 2026-05-25T10:27:33.846Z
+- Trace id: `wh-restored-window-session-only-disappear`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=wh-restored-window-session-only-disappear pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: fixed by session-only missing-scope corroboration for restored scopes; promoted to regression coverage.
+
+```text
+domain trace wh-restored-window-session-only-disappear: restored window session only disappear
+action 1: {"type":"outlinerCloseWindow","window":{"windowId":20}}
+action 2: {"type":"outlinerRestoreNodeThenAbruptRestart","node":{"nodeId":"window:20"},"captureRestoredTabs":"wh-restored-window-session-tabs","captureRestoredWindows":"wh-restored-window-session-window"}
+action 3: {"type":"nativeCloseTab","tab":{"capture":"wh-restored-window-session-tabs"},"order":"sessionChangedOnly"}
+Domain trace: wh-restored-window-session-only-disappear
+Action 3: {"type":"nativeCloseTab","tab":{"capture":"wh-restored-window-session-tabs"},"order":"sessionChangedOnly"}
+Trace:
+domain trace wh-restored-window-session-only-disappear: restored window session only disappear
+action 1: {"type":"outlinerCloseWindow","window":{"windowId":20}}
+action 2: {"type":"outlinerRestoreNodeThenAbruptRestart","node":{"nodeId":"window:20"},"captureRestoredTabs":"wh-restored-window-session-tabs","captureRestoredWindows":"wh-restored-window-session-window"}
+action 3: {"type":"nativeCloseTab","tab":{"capture":"wh-restored-window-session-tabs"},"order":"sessionChangedOnly"}
+```
+
+<!-- hunt-corpus-run: {"at":"2026-05-25T10:27:46.425Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","browserCreated","command-rejection","commandCreated","created-event","delayed-event","delete","delete-rejection","event-order","focus","fresh-event","history-boundary","journal","manual-refresh","metadata","multi-tab","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","restored","saved","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event","window-scope"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"wh-focus-active-race-scopes","runs":516,"processRuns":42,"batchSize":20,"batchFailures":1,"completedCorpus":true,"failures":3,"duplicateFailures":1,"newFindings":2} -->
+
+### RT-202 live tab IDs match runtime tabs
+<!-- signature: live tab IDs match runtime tabs
+domain trace: wh-command-session-only-after-restart
+action: {"type":"nativeCloseTab","tab":{"role":"lastMovedTab"},"order":"sessionChangedOnly"} -->
+
+- First seen: 2026-05-25T10:30:20.983Z
+- Trace id: `wh-command-session-only-after-restart`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=wh-command-session-only-after-restart pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: fixed by durable command-created runtime provenance plus session-only missing-scope deletion policy; promoted to regression coverage.
+
+```text
+domain trace wh-command-session-only-after-restart: command session only after restart
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"wh-command-session-restart-old"}
+action 2: {"type":"restartBackground"}
+action 3: {"type":"nativeCloseTab","tab":{"role":"lastMovedTab"},"order":"sessionChangedOnly"}
+Domain trace: wh-command-session-only-after-restart
+Action 3: {"type":"nativeCloseTab","tab":{"role":"lastMovedTab"},"order":"sessionChangedOnly"}
+Trace:
+domain trace wh-command-session-only-after-restart: command session only after restart
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"wh-command-session-restart-old"}
+action 2: {"type":"restartBackground"}
+action 3: {"type":"nativeCloseTab","tab":{"role":"lastMovedTab"},"order":"sessionChangedOnly"}
+```
+
+### RT-203 live tab IDs match runtime tabs
+<!-- signature: live tab IDs match runtime tabs
+domain trace: wh-browser-created-session-only-after-restart
+action: {"type":"nativeCloseTab","tab":{"capture":"wh-browser-session-restart-tabs"},"order":"sessionChangedOnly"} -->
+
+- First seen: 2026-05-25T10:30:24.603Z
+- Trace id: `wh-browser-created-session-only-after-restart`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=wh-browser-created-session-only-after-restart pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: fixed by durable browser-created runtime provenance plus session-only missing-scope close policy; promoted to regression coverage.
+
+```text
+domain trace wh-browser-created-session-only-after-restart: browser created session only after restart
+action 1: {"type":"nativeOpenWindow","focused":false,"tabs":[{"title":"WH Browser session restart"}],"captureWindow":"wh-browser-session-restart-window","captureTabs":"wh-browser-session-restart-tabs"}
+action 2: {"type":"restartBackground"}
+action 3: {"type":"nativeCloseTab","tab":{"capture":"wh-browser-session-restart-tabs"},"order":"sessionChangedOnly"}
+Domain trace: wh-browser-created-session-only-after-restart
+Action 3: {"type":"nativeCloseTab","tab":{"capture":"wh-browser-session-restart-tabs"},"order":"sessionChangedOnly"}
+Trace:
+domain trace wh-browser-created-session-only-after-restart: browser created session only after restart
+action 1: {"type":"nativeOpenWindow","focused":false,"tabs":[{"title":"WH Browser session restart"}],"captureWindow":"wh-browser-session-restart-window","captureTabs":"wh-browser-session-restart-tabs"}
+action 2: {"type":"restartBackground"}
+action 3: {"type":"nativeCloseTab","tab":{"capture":"wh-browser-session-restart-tabs"},"order":"sessionChangedOnly"}
+```
+
+### RT-204 live tab IDs match runtime tabs
+<!-- signature: live tab IDs match runtime tabs
+domain trace: wh-browser-restored-session-only-disappear
+action: {"type":"nativeCloseTab","tab":{"capture":"wh-browser-restored-session-current-tabs"},"order":"sessionChangedOnly"} -->
+
+- First seen: 2026-05-25T10:30:25.812Z
+- Trace id: `wh-browser-restored-session-only-disappear`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=wh-browser-restored-session-only-disappear pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: fixed by browser-created/restored scope reconstruction plus session-only missing-scope close policy; promoted to regression coverage.
+
+```text
+domain trace wh-browser-restored-session-only-disappear: browser restored session only disappear
+action 1: {"type":"nativeOpenWindow","focused":false,"tabs":[{"title":"WH Browser restored session"}],"captureWindow":"wh-browser-restored-session-window","captureTabs":"wh-browser-restored-session-tabs"}
+action 2: {"type":"nativeCloseWindow","window":{"capture":"wh-browser-restored-session-window"},"order":"tabsRemovedThenWindowRemoved"}
+action 3: {"type":"outlinerRestoreNodeThenAbruptRestart","node":{"nodeId":"window:21"},"captureRestoredTabs":"wh-browser-restored-session-current-tabs","captureRestoredWindows":"wh-browser-restored-session-current-window"}
+action 4: {"type":"nativeCloseTab","tab":{"capture":"wh-browser-restored-session-current-tabs"},"order":"sessionChangedOnly"}
+Domain trace: wh-browser-restored-session-only-disappear
+Action 4: {"type":"nativeCloseTab","tab":{"capture":"wh-browser-restored-session-current-tabs"},"order":"sessionChangedOnly"}
+Trace:
+domain trace wh-browser-restored-session-only-disappear: browser restored session only disappear
+action 1: {"type":"nativeOpenWindow","focused":false,"tabs":[{"title":"WH Browser restored session"}],"captureWindow":"wh-browser-restored-session-window","captureTabs":"wh-browser-restored-session-tabs"}
+action 2: {"type":"nativeCloseWindow","window":{"capture":"wh-browser-restored-session-window"},"order":"tabsRemovedThenWindowRemoved"}
+action 3: {"type":"outlinerRestoreNodeThenAbruptRestart","node":{"nodeId":"window:21"},"captureRestoredTabs":"wh-browser-restored-session-current-tabs","captureRestoredWindows":"wh-browser-restored-session-current-window"}
+action 4: {"type":"nativeCloseTab","tab":{"capture":"wh-browser-restored-session-current-tabs"},"order":"sessionChangedOnly"}
+```
+
+<!-- hunt-corpus-run: {"at":"2026-05-25T10:30:48.305Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","browserCreated","command-rejection","commandCreated","created-event","delayed-event","delete","delete-rejection","event-order","focus","fresh-event","history-boundary","journal","manual-refresh","metadata","multi-tab","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","restored","saved","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event","window-scope"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"wh-focus-active-race-scopes","runs":520,"processRuns":66,"batchSize":20,"batchFailures":2,"completedCorpus":true,"failures":6,"duplicateFailures":3,"newFindings":3} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-25T10:33:19.740Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","browserCreated","command-rejection","commandCreated","created-event","delayed-event","delete","delete-rejection","event-order","focus","fresh-event","history-boundary","journal","manual-refresh","metadata","multi-tab","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","restored","saved","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event","window-scope"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"wh-focus-active-race-scopes","runs":524,"processRuns":67,"batchSize":20,"batchFailures":2,"completedCorpus":true,"failures":6,"duplicateFailures":6,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-25T10:35:28.152Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","browserCreated","command-rejection","commandCreated","created-event","delayed-event","delete","delete-rejection","event-order","focus","fresh-event","history-boundary","journal","manual-refresh","metadata","multi-tab","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","restored","saved","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event","window-scope"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"wh-focus-active-race-scopes","runs":526,"processRuns":67,"batchSize":20,"batchFailures":2,"completedCorpus":true,"failures":6,"duplicateFailures":6,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-25T10:37:22.802Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","browserCreated","command-rejection","commandCreated","created-event","delayed-event","delete","delete-rejection","event-order","focus","fresh-event","history-boundary","journal","manual-refresh","metadata","multi-tab","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","restored","saved","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event","window-scope"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"wh-focus-active-race-scopes","runs":528,"processRuns":47,"batchSize":20,"batchFailures":1,"completedCorpus":true,"failures":6,"duplicateFailures":6,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-25T10:38:03.882Z","mode":"agent-corpus-run","profile":"regression","coverageTags":["activation","breadth","command-rejection","created-event","delayed-event","delete","delete-rejection","event-order","focus","fresh-event","history-boundary","journal","known-finding","manual-refresh","metadata","multi-tab","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","restart","restore","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event"],"firstTraceId":"rt-active-race","lastTraceId":"oh-external-closed-delete-tab-abrupt-history","runs":228,"processRuns":5,"batchSize":50,"batchFailures":0,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-25T11:17:37.409Z","mode":"agent-corpus-run","profile":"regression","coverageTags":["activation","breadth","browserCreated","command-rejection","commandCreated","created-event","delayed-event","delete","delete-rejection","event-order","focus","fresh-event","history-boundary","journal","known-finding","manual-refresh","metadata","multi-tab","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","restart","restore","restored","saved","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event","window-scope"],"firstTraceId":"rt-active-race","lastTraceId":"wh-browser-restored-session-only-disappear","runs":234,"processRuns":5,"batchSize":50,"batchFailures":0,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-25T11:44:57.211Z","mode":"agent-corpus-run","profile":"regression","coverageTags":["activation","breadth","browserCreated","command-rejection","commandCreated","created-event","delayed-event","delete","delete-rejection","event-order","focus","fresh-event","history-boundary","journal","known-finding","manual-refresh","metadata","multi-tab","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","restart","restore","restored","saved","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event","window-scope"],"firstTraceId":"rt-active-race","lastTraceId":"wh-browser-restored-session-only-disappear","runs":234,"processRuns":5,"batchSize":50,"batchFailures":0,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
+
+### RT-205 tab 2 active flag diverged
+<!-- signature: tab <id> active flag diverged
+domain trace: sh-saved-reorder-metadata-stale-pair
+action: {"type":"staleLiveCreatedEvent","staleTab":{"capture":"sh-saved-reorder-before"},"withStaleQuery":false} -->
+
+- First seen: 2026-05-25T11:46:04.852Z
+- Trace id: `sh-saved-reorder-metadata-stale-pair`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=sh-saved-reorder-metadata-stale-pair pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: fixed and promoted to regression coverage.
+
+```text
+domain trace sh-saved-reorder-metadata-stale-pair: saved reorder metadata stale pair
+action 1: {"type":"updateTab","tab":{"tabId":2},"title":"SH Saved Reorder Current","url":"https://sh.example/saved-reorder"}
+action 2: {"type":"nativeMoveTabToWindow","tab":{"tabId":2},"window":{"windowId":10},"index":0,"active":true,"captureStaleTabs":"sh-saved-reorder-before"}
+action 3: {"type":"staleLiveCreatedEvent","staleTab":{"capture":"sh-saved-reorder-before"},"withStaleQuery":false}
+Domain trace: sh-saved-reorder-metadata-stale-pair
+Action 3: {"type":"staleLiveCreatedEvent","staleTab":{"capture":"sh-saved-reorder-before"},"withStaleQuery":false}
+Trace:
+domain trace sh-saved-reorder-metadata-stale-pair: saved reorder metadata stale pair
+action 1: {"type":"updateTab","tab":{"tabId":2},"title":"SH Saved Reorder Current","url":"https://sh.example/saved-reorder"}
+action 2: {"type":"nativeMoveTabToWindow","tab":{"tabId":2},"window":{"windowId":10},"index":0,"active":true,"captureStaleTabs":"sh-saved-reorder-before"}
+action 3: {"type":"staleLiveCreatedEvent","staleTab":{"capture":"sh-saved-reorder-before"},"withStaleQuery":false}
+```
+
+<!-- hunt-corpus-run: {"at":"2026-05-25T11:46:07.504Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","browserCreated","command-rejection","commandCreated","created-event","delayed-event","delete","delete-rejection","event-order","focus","fresh-event","history-boundary","journal","manual-refresh","metadata","multi-tab","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","restored","restored-scope","saved","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event","window-scope"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"sh-restart-stale-generation-after-live-edit","runs":544,"processRuns":48,"batchSize":20,"batchFailures":1,"completedCorpus":true,"failures":1,"duplicateFailures":0,"newFindings":1} -->
+
+### RT-206 tab 2 active flag diverged
+<!-- signature: tab <id> active flag diverged
+domain trace: sh-saved-reorder-restart-stale-created
+action: {"type":"staleLiveCreatedEvent","staleTab":{"capture":"sh-saved-restart-reorder-before"},"withStaleQuery":false} -->
+
+- First seen: 2026-05-25T11:48:35.225Z
+- Trace id: `sh-saved-reorder-restart-stale-created`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=sh-saved-reorder-restart-stale-created pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: fixed and promoted to regression coverage.
+
+```text
+domain trace sh-saved-reorder-restart-stale-created: saved reorder restart stale created
+action 1: {"type":"updateTab","tab":{"tabId":2},"title":"SH Saved Restart Reorder Current","url":"https://sh.example/saved-restart-reorder"}
+action 2: {"type":"nativeMoveTabToWindow","tab":{"tabId":2},"window":{"windowId":10},"index":0,"active":true,"captureStaleTabs":"sh-saved-restart-reorder-before"}
+action 3: {"type":"restartBackground"}
+action 4: {"type":"staleLiveCreatedEvent","staleTab":{"capture":"sh-saved-restart-reorder-before"},"withStaleQuery":false}
+Domain trace: sh-saved-reorder-restart-stale-created
+Action 4: {"type":"staleLiveCreatedEvent","staleTab":{"capture":"sh-saved-restart-reorder-before"},"withStaleQuery":false}
+Trace:
+domain trace sh-saved-reorder-restart-stale-created: saved reorder restart stale created
+action 1: {"type":"updateTab","tab":{"tabId":2},"title":"SH Saved Restart Reorder Current","url":"https://sh.example/saved-restart-reorder"}
+action 2: {"type":"nativeMoveTabToWindow","tab":{"tabId":2},"window":{"windowId":10},"index":0,"active":true,"captureStaleTabs":"sh-saved-restart-reorder-before"}
+action 3: {"type":"restartBackground"}
+action 4: {"type":"staleLiveCreatedEvent","staleTab":{"capture":"sh-saved-restart-reorder-before"},"withStaleQuery":false}
+```
+
+### RT-207 tab 100 active flag diverged
+<!-- signature: tab <id> active flag diverged
+domain trace: sh-command-destination-reorder-current-stale-created
+action: {"type":"staleLiveCreatedEvent","staleTab":{"capture":"sh-command-current-reorder-before"},"withStaleQuery":false} -->
+
+- First seen: 2026-05-25T11:48:40.521Z
+- Trace id: `sh-command-destination-reorder-current-stale-created`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=sh-command-destination-reorder-current-stale-created pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: fixed and promoted to regression coverage.
+
+```text
+domain trace sh-command-destination-reorder-current-stale-created: command destination reorder current stale created
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"sh-command-current-reorder-old-source"}
+action 2: {"type":"openTab","window":{"role":"lastOpenedWindow"},"active":false,"title":"SH command current reorder sibling","captureTab":"sh-command-current-reorder-sibling"}
+action 3: {"type":"updateTab","tab":{"capture":"sh-command-current-reorder-sibling"},"title":"SH Command Current Reorder","url":"https://sh.example/command-current-reorder"}
+action 4: {"type":"nativeMoveTabToWindow","tab":{"capture":"sh-command-current-reorder-sibling"},"window":{"role":"lastOpenedWindow"},"index":0,"active":true,"captureStaleTabs":"sh-command-current-reorder-before"}
+action 5: {"type":"staleLiveCreatedEvent","staleTab":{"capture":"sh-command-current-reorder-before"},"withStaleQuery":false}
+Domain trace: sh-command-destination-reorder-current-stale-created
+Action 5: {"type":"staleLiveCreatedEvent","staleTab":{"capture":"sh-command-current-reorder-before"},"withStaleQuery":false}
+Trace:
+domain trace sh-command-destination-reorder-current-stale-created: command destination reorder current stale created
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"sh-command-current-reorder-old-source"}
+action 2: {"type":"openTab","window":{"role":"lastOpenedWindow"},"active":false,"title":"SH command current reorder sibling","captureTab":"sh-command-current-reorder-sibling"}
+action 3: {"type":"updateTab","tab":{"capture":"sh-command-current-reorder-sibling"},"title":"SH Command Current Reorder","url":"https://sh.example/command-current-reorder"}
+action 4: {"type":"nativeMoveTabToWindow","tab":{"capture":"sh-command-current-reorder-sibling"},"window":{"role":"lastOpenedWindow"},"index":0,"active":true,"captureStaleTabs":"sh-command-current-reorder-before"}
+action 5: {"type":"staleLiveCreatedEvent","staleTab":{"capture":"sh-command-current-reorder-before"},"withStaleQuery":false}
+```
+
+<!-- hunt-corpus-run: {"at":"2026-05-25T11:48:47.045Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","browserCreated","command-rejection","commandCreated","created-event","delayed-event","delete","delete-rejection","event-order","focus","fresh-event","history-boundary","journal","manual-refresh","metadata","multi-tab","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","restored","restored-scope","saved","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event","window-scope"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"sh-restart-stale-generation-after-live-edit","runs":548,"processRuns":56,"batchSize":20,"batchFailures":2,"completedCorpus":true,"failures":3,"duplicateFailures":1,"newFindings":2} -->
+
+### RT-208 tab 2 active flag diverged
+<!-- signature: tab <id> active flag diverged
+domain trace: sh-saved-reorder-stale-updated-active
+action: {"type":"staleLiveUpdatedEvent","staleTab":{"capture":"sh-saved-updated-reorder-before"},"withStaleQuery":false} -->
+
+- First seen: 2026-05-25T11:51:05.925Z
+- Trace id: `sh-saved-reorder-stale-updated-active`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=sh-saved-reorder-stale-updated-active pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: fixed and promoted to regression coverage.
+
+```text
+domain trace sh-saved-reorder-stale-updated-active: saved reorder stale updated active
+action 1: {"type":"updateTab","tab":{"tabId":2},"title":"SH Saved Updated Reorder Current","url":"https://sh.example/saved-updated-reorder"}
+action 2: {"type":"nativeMoveTabToWindow","tab":{"tabId":2},"window":{"windowId":10},"index":0,"active":true,"captureStaleTabs":"sh-saved-updated-reorder-before"}
+action 3: {"type":"staleLiveUpdatedEvent","staleTab":{"capture":"sh-saved-updated-reorder-before"},"withStaleQuery":false}
+Domain trace: sh-saved-reorder-stale-updated-active
+Action 3: {"type":"staleLiveUpdatedEvent","staleTab":{"capture":"sh-saved-updated-reorder-before"},"withStaleQuery":false}
+Trace:
+domain trace sh-saved-reorder-stale-updated-active: saved reorder stale updated active
+action 1: {"type":"updateTab","tab":{"tabId":2},"title":"SH Saved Updated Reorder Current","url":"https://sh.example/saved-updated-reorder"}
+action 2: {"type":"nativeMoveTabToWindow","tab":{"tabId":2},"window":{"windowId":10},"index":0,"active":true,"captureStaleTabs":"sh-saved-updated-reorder-before"}
+action 3: {"type":"staleLiveUpdatedEvent","staleTab":{"capture":"sh-saved-updated-reorder-before"},"withStaleQuery":false}
+```
+
+### RT-209 tab 2 active flag diverged
+<!-- signature: tab <id> active flag diverged
+domain trace: sh-saved-reorder-stale-created-with-query
+action: {"type":"staleLiveCreatedEvent","staleTab":{"capture":"sh-saved-query-reorder-before"},"withStaleQuery":true} -->
+
+- First seen: 2026-05-25T11:51:07.148Z
+- Trace id: `sh-saved-reorder-stale-created-with-query`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=sh-saved-reorder-stale-created-with-query pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: fixed and promoted to regression coverage.
+
+```text
+domain trace sh-saved-reorder-stale-created-with-query: saved reorder stale created with query
+action 1: {"type":"updateTab","tab":{"tabId":2},"title":"SH Saved Query Reorder Current","url":"https://sh.example/saved-query-reorder"}
+action 2: {"type":"nativeMoveTabToWindow","tab":{"tabId":2},"window":{"windowId":10},"index":0,"active":true,"captureStaleTabs":"sh-saved-query-reorder-before"}
+action 3: {"type":"staleLiveCreatedEvent","staleTab":{"capture":"sh-saved-query-reorder-before"},"withStaleQuery":true}
+Domain trace: sh-saved-reorder-stale-created-with-query
+Action 3: {"type":"staleLiveCreatedEvent","staleTab":{"capture":"sh-saved-query-reorder-before"},"withStaleQuery":true}
+Trace:
+domain trace sh-saved-reorder-stale-created-with-query: saved reorder stale created with query
+action 1: {"type":"updateTab","tab":{"tabId":2},"title":"SH Saved Query Reorder Current","url":"https://sh.example/saved-query-reorder"}
+action 2: {"type":"nativeMoveTabToWindow","tab":{"tabId":2},"window":{"windowId":10},"index":0,"active":true,"captureStaleTabs":"sh-saved-query-reorder-before"}
+action 3: {"type":"staleLiveCreatedEvent","staleTab":{"capture":"sh-saved-query-reorder-before"},"withStaleQuery":true}
+```
+
+### RT-210 tab 100 active flag diverged
+<!-- signature: tab <id> active flag diverged
+domain trace: sh-command-destination-reorder-stale-updated-active
+action: {"type":"staleLiveUpdatedEvent","staleTab":{"capture":"sh-command-updated-reorder-before"},"withStaleQuery":false} -->
+
+- First seen: 2026-05-25T11:51:08.918Z
+- Trace id: `sh-command-destination-reorder-stale-updated-active`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=sh-command-destination-reorder-stale-updated-active pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: fixed and promoted to regression coverage.
+
+```text
+domain trace sh-command-destination-reorder-stale-updated-active: command destination reorder stale updated active
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"sh-command-updated-reorder-old-source"}
+action 2: {"type":"openTab","window":{"role":"lastOpenedWindow"},"active":false,"title":"SH command updated reorder sibling","captureTab":"sh-command-updated-reorder-sibling"}
+action 3: {"type":"updateTab","tab":{"capture":"sh-command-updated-reorder-sibling"},"title":"SH Command Updated Reorder","url":"https://sh.example/command-updated-reorder"}
+action 4: {"type":"nativeMoveTabToWindow","tab":{"capture":"sh-command-updated-reorder-sibling"},"window":{"role":"lastOpenedWindow"},"index":0,"active":true,"captureStaleTabs":"sh-command-updated-reorder-before"}
+action 5: {"type":"staleLiveUpdatedEvent","staleTab":{"capture":"sh-command-updated-reorder-before"},"withStaleQuery":false}
+Domain trace: sh-command-destination-reorder-stale-updated-active
+Action 5: {"type":"staleLiveUpdatedEvent","staleTab":{"capture":"sh-command-updated-reorder-before"},"withStaleQuery":false}
+Trace:
+domain trace sh-command-destination-reorder-stale-updated-active: command destination reorder stale updated active
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"sh-command-updated-reorder-old-source"}
+action 2: {"type":"openTab","window":{"role":"lastOpenedWindow"},"active":false,"title":"SH command updated reorder sibling","captureTab":"sh-command-updated-reorder-sibling"}
+action 3: {"type":"updateTab","tab":{"capture":"sh-command-updated-reorder-sibling"},"title":"SH Command Updated Reorder","url":"https://sh.example/command-updated-reorder"}
+action 4: {"type":"nativeMoveTabToWindow","tab":{"capture":"sh-command-updated-reorder-sibling"},"window":{"role":"lastOpenedWindow"},"index":0,"active":true,"captureStaleTabs":"sh-command-updated-reorder-before"}
+action 5: {"type":"staleLiveUpdatedEvent","staleTab":{"capture":"sh-command-updated-reorder-before"},"withStaleQuery":false}
+```
+
+### RT-211 tab 101 title metadata diverged
+<!-- signature: tab <id> title metadata diverged
+domain trace: sh-browser-created-reorder-stale-updated-active
+action: {"type":"staleLiveUpdatedEvent","staleTab":{"capture":"sh-browser-updated-reorder-before"},"withStaleQuery":false} -->
+
+- First seen: 2026-05-25T11:51:10.349Z
+- Trace id: `sh-browser-created-reorder-stale-updated-active`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=sh-browser-created-reorder-stale-updated-active pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: fixed and promoted to regression coverage.
+
+```text
+domain trace sh-browser-created-reorder-stale-updated-active: browser created reorder stale updated active
+action 1: {"type":"nativeOpenWindow","focused":false,"tabs":[{"title":"SH browser updated reorder A"},{"title":"SH browser updated reorder B","active":true}],"captureWindow":"sh-browser-updated-reorder-window","captureTabs":"sh-browser-updated-reorder-tabs"}
+action 2: {"type":"updateTab","tab":{"inWindow":{"capture":"sh-browser-updated-reorder-window"},"index":1},"title":"SH Browser Updated Reorder","url":"https://sh.example/browser-updated-reorder"}
+action 3: {"type":"nativeMoveTabToWindow","tab":{"inWindow":{"capture":"sh-browser-updated-reorder-window"},"index":1},"window":{"capture":"sh-browser-updated-reorder-window"},"index":0,"active":true,"captureStaleTabs":"sh-browser-updated-reorder-before"}
+action 4: {"type":"staleLiveUpdatedEvent","staleTab":{"capture":"sh-browser-updated-reorder-before"},"withStaleQuery":false}
+Domain trace: sh-browser-created-reorder-stale-updated-active
+Action 4: {"type":"staleLiveUpdatedEvent","staleTab":{"capture":"sh-browser-updated-reorder-before"},"withStaleQuery":false}
+Trace:
+domain trace sh-browser-created-reorder-stale-updated-active: browser created reorder stale updated active
+action 1: {"type":"nativeOpenWindow","focused":false,"tabs":[{"title":"SH browser updated reorder A"},{"title":"SH browser updated reorder B","active":true}],"captureWindow":"sh-browser-updated-reorder-window","captureTabs":"sh-browser-updated-reorder-tabs"}
+action 2: {"type":"updateTab","tab":{"inWindow":{"capture":"sh-browser-updated-reorder-window"},"index":1},"title":"SH Browser Updated Reorder","url":"https://sh.example/browser-updated-reorder"}
+action 3: {"type":"nativeMoveTabToWindow","tab":{"inWindow":{"capture":"sh-browser-updated-reorder-window"},"index":1},"window":{"capture":"sh-browser-updated-reorder-window"},"index":0,"active":true,"captureStaleTabs":"sh-browser-updated-reorder-before"}
+action 4: {"type":"staleLiveUpdatedEvent","staleTab":{"capture":"sh-browser-updated-reorder-before"},"withStaleQuery":false}
+```
+
+<!-- hunt-corpus-run: {"at":"2026-05-25T11:51:16.628Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","browserCreated","command-rejection","commandCreated","created-event","delayed-event","delete","delete-rejection","event-order","focus","fresh-event","history-boundary","journal","manual-refresh","metadata","multi-tab","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","restored","restored-scope","saved","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event","window-scope"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"sh-restart-stale-generation-after-live-edit","runs":552,"processRuns":60,"batchSize":20,"batchFailures":2,"completedCorpus":true,"failures":7,"duplicateFailures":3,"newFindings":4} -->
+
+### RT-212 tab 2 title metadata diverged
+<!-- signature: tab <id> title metadata diverged
+domain trace: sh-saved-reorder-stale-updated-metadata-only
+action: {"type":"staleLiveUpdatedEvent","staleTab":{"capture":"sh-saved-metadata-only-before"},"withStaleQuery":false} -->
+
+- First seen: 2026-05-25T11:53:47.380Z
+- Trace id: `sh-saved-reorder-stale-updated-metadata-only`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=sh-saved-reorder-stale-updated-metadata-only pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: fixed and promoted to regression coverage.
+
+```text
+domain trace sh-saved-reorder-stale-updated-metadata-only: saved reorder stale updated metadata only
+action 1: {"type":"updateTab","tab":{"tabId":2},"title":"SH Saved Metadata Only Current","url":"https://sh.example/saved-metadata-only"}
+action 2: {"type":"nativeMoveTabToWindow","tab":{"tabId":2},"window":{"windowId":10},"index":0,"active":false,"captureStaleTabs":"sh-saved-metadata-only-before"}
+action 3: {"type":"staleLiveUpdatedEvent","staleTab":{"capture":"sh-saved-metadata-only-before"},"withStaleQuery":false}
+Domain trace: sh-saved-reorder-stale-updated-metadata-only
+Action 3: {"type":"staleLiveUpdatedEvent","staleTab":{"capture":"sh-saved-metadata-only-before"},"withStaleQuery":false}
+Trace:
+domain trace sh-saved-reorder-stale-updated-metadata-only: saved reorder stale updated metadata only
+action 1: {"type":"updateTab","tab":{"tabId":2},"title":"SH Saved Metadata Only Current","url":"https://sh.example/saved-metadata-only"}
+action 2: {"type":"nativeMoveTabToWindow","tab":{"tabId":2},"window":{"windowId":10},"index":0,"active":false,"captureStaleTabs":"sh-saved-metadata-only-before"}
+action 3: {"type":"staleLiveUpdatedEvent","staleTab":{"capture":"sh-saved-metadata-only-before"},"withStaleQuery":false}
+```
+
+### RT-213 tab 100 title metadata diverged
+<!-- signature: tab <id> title metadata diverged
+domain trace: sh-command-reorder-stale-updated-metadata-only
+action: {"type":"staleLiveUpdatedEvent","staleTab":{"capture":"sh-command-metadata-only-before"},"withStaleQuery":false} -->
+
+- First seen: 2026-05-25T11:53:48.564Z
+- Trace id: `sh-command-reorder-stale-updated-metadata-only`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=sh-command-reorder-stale-updated-metadata-only pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: fixed and promoted to regression coverage.
+
+```text
+domain trace sh-command-reorder-stale-updated-metadata-only: command reorder stale updated metadata only
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"sh-command-metadata-only-old-source"}
+action 2: {"type":"openTab","window":{"role":"lastOpenedWindow"},"active":false,"title":"SH command metadata only sibling","captureTab":"sh-command-metadata-only-sibling"}
+action 3: {"type":"updateTab","tab":{"capture":"sh-command-metadata-only-sibling"},"title":"SH Command Metadata Only Current","url":"https://sh.example/command-metadata-only"}
+action 4: {"type":"nativeMoveTabToWindow","tab":{"capture":"sh-command-metadata-only-sibling"},"window":{"role":"lastOpenedWindow"},"index":0,"active":false,"captureStaleTabs":"sh-command-metadata-only-before"}
+action 5: {"type":"staleLiveUpdatedEvent","staleTab":{"capture":"sh-command-metadata-only-before"},"withStaleQuery":false}
+Domain trace: sh-command-reorder-stale-updated-metadata-only
+Action 5: {"type":"staleLiveUpdatedEvent","staleTab":{"capture":"sh-command-metadata-only-before"},"withStaleQuery":false}
+Trace:
+domain trace sh-command-reorder-stale-updated-metadata-only: command reorder stale updated metadata only
+action 1: {"type":"outlinerMoveTabCommandToNewWindow","tab":{"tabId":1},"captureStaleTabs":"sh-command-metadata-only-old-source"}
+action 2: {"type":"openTab","window":{"role":"lastOpenedWindow"},"active":false,"title":"SH command metadata only sibling","captureTab":"sh-command-metadata-only-sibling"}
+action 3: {"type":"updateTab","tab":{"capture":"sh-command-metadata-only-sibling"},"title":"SH Command Metadata Only Current","url":"https://sh.example/command-metadata-only"}
+action 4: {"type":"nativeMoveTabToWindow","tab":{"capture":"sh-command-metadata-only-sibling"},"window":{"role":"lastOpenedWindow"},"index":0,"active":false,"captureStaleTabs":"sh-command-metadata-only-before"}
+action 5: {"type":"staleLiveUpdatedEvent","staleTab":{"capture":"sh-command-metadata-only-before"},"withStaleQuery":false}
+```
+
+<!-- hunt-corpus-run: {"at":"2026-05-25T11:53:56.847Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","browserCreated","command-rejection","commandCreated","created-event","delayed-event","delete","delete-rejection","event-order","focus","fresh-event","history-boundary","journal","manual-refresh","metadata","multi-tab","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","restored","restored-scope","saved","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event","window-scope"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"sh-restart-stale-generation-after-live-edit","runs":556,"processRuns":64,"batchSize":20,"batchFailures":2,"completedCorpus":true,"failures":9,"duplicateFailures":7,"newFindings":2} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-25T11:57:18.281Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","browserCreated","command-rejection","commandCreated","created-event","delayed-event","delete","delete-rejection","event-order","focus","fresh-event","history-boundary","journal","manual-refresh","metadata","multi-tab","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","restored","restored-scope","saved","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event","window-scope"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"sh-restart-stale-generation-after-live-edit","runs":560,"processRuns":68,"batchSize":20,"batchFailures":2,"completedCorpus":true,"failures":9,"duplicateFailures":9,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-25T11:59:44.469Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","browserCreated","command-rejection","commandCreated","created-event","delayed-event","delete","delete-rejection","event-order","focus","fresh-event","history-boundary","journal","manual-refresh","metadata","multi-tab","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","restored","restored-scope","saved","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event","window-scope"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"sh-restart-stale-generation-after-live-edit","runs":562,"processRuns":69,"batchSize":20,"batchFailures":2,"completedCorpus":true,"failures":9,"duplicateFailures":9,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-25T12:02:06.486Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","browserCreated","command-rejection","commandCreated","created-event","delayed-event","delete","delete-rejection","event-order","focus","fresh-event","history-boundary","journal","manual-refresh","metadata","multi-tab","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","restored","restored-scope","saved","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event","window-scope"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"sh-restart-stale-generation-after-live-edit","runs":564,"processRuns":69,"batchSize":20,"batchFailures":2,"completedCorpus":true,"failures":9,"duplicateFailures":9,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-25T12:02:36.476Z","mode":"agent-corpus-run","profile":"regression","coverageTags":["activation","breadth","browserCreated","command-rejection","commandCreated","created-event","delayed-event","delete","delete-rejection","event-order","focus","fresh-event","history-boundary","journal","known-finding","manual-refresh","metadata","multi-tab","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","restart","restore","restored","saved","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event","window-scope"],"firstTraceId":"rt-active-race","lastTraceId":"wh-browser-restored-session-only-disappear","runs":234,"processRuns":5,"batchSize":50,"batchFailures":0,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-25T12:04:38.203Z","mode":"agent-corpus-run","profile":"regression","coverageTags":["activation","breadth","browserCreated","command-rejection","commandCreated","created-event","delayed-event","delete","delete-rejection","event-order","focus","fresh-event","history-boundary","journal","known-finding","manual-refresh","metadata","multi-tab","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","restart","restore","restored","saved","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event","window-scope"],"firstTraceId":"rt-active-race","lastTraceId":"wh-browser-restored-session-only-disappear","runs":234,"processRuns":5,"batchSize":50,"batchFailures":0,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-25T12:47:43.116Z","mode":"agent-corpus-run","profile":"regression","coverageTags":["activation","breadth","browserCreated","command-rejection","commandCreated","created-event","delayed-event","delete","delete-rejection","event-order","focus","fresh-event","history-boundary","journal","known-finding","manual-refresh","metadata","multi-tab","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","restart","restore","restored","restored-scope","saved","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event","window-scope"],"firstTraceId":"rt-active-race","lastTraceId":"sh-command-reorder-stale-updated-metadata-only","runs":243,"processRuns":5,"batchSize":50,"batchFailures":0,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-25T13:05:11.647Z","mode":"agent-corpus-run","profile":"regression","coverageTags":["activation","breadth","browserCreated","command-rejection","commandCreated","created-event","delayed-event","delete","delete-rejection","event-order","focus","fresh-event","history-boundary","journal","known-finding","manual-refresh","metadata","multi-tab","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","restart","restore","restored","restored-scope","saved","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event","window-scope"],"firstTraceId":"rt-active-race","lastTraceId":"sh-command-reorder-stale-updated-metadata-only","runs":243,"processRuns":5,"batchSize":50,"batchFailures":0,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-25T13:07:50.824Z","mode":"agent-corpus-run","profile":"regression","coverageTags":["activation","breadth","browserCreated","command-rejection","commandCreated","created-event","delayed-event","delete","delete-rejection","event-order","focus","fresh-event","history-boundary","journal","known-finding","manual-refresh","metadata","multi-tab","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","restart","restore","restored","restored-scope","saved","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event","window-scope"],"firstTraceId":"rt-active-race","lastTraceId":"sh-command-reorder-stale-updated-metadata-only","runs":243,"processRuns":5,"batchSize":50,"batchFailures":0,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-25T14:21:07.266Z","mode":"agent-corpus-run","profile":"regression","coverageTags":["activation","breadth","browserCreated","command-rejection","commandCreated","created-event","delayed-event","delete","delete-rejection","event-order","focus","fresh-event","history-boundary","journal","known-finding","manual-refresh","metadata","multi-tab","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","restart","restore","restored","restored-scope","saved","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event","window-scope"],"firstTraceId":"rt-active-race","lastTraceId":"sh-command-reorder-stale-updated-metadata-only","runs":243,"processRuns":5,"batchSize":50,"batchFailures":0,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-25T14:22:03.865Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","browserCreated","command-rejection","commandCreated","created-event","delayed-event","delete","delete-rejection","event-order","focus","fresh-event","fullscreen","group","history-boundary","journal","manual-refresh","metadata","multi-tab","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","restored","restored-scope","saved","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event","window-scope","window-state"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"fh-restore-delete-around-fullscreen","runs":579,"processRuns":29,"batchSize":20,"batchFailures":0,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-25T14:23:47.867Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","browserCreated","command-rejection","commandCreated","created-event","delayed-event","delete","delete-rejection","event-order","focus","fresh-event","fullscreen","group","history-boundary","journal","manual-refresh","metadata","multi-tab","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","restored","restored-scope","saved","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event","window-scope","window-state"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"fh-restored-minimized-fullscreen-stale-created","runs":582,"processRuns":30,"batchSize":20,"batchFailures":0,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-25T14:25:14.768Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","browserCreated","command-rejection","commandCreated","created-event","delayed-event","delete","delete-rejection","event-order","focus","fresh-event","fullscreen","group","history-boundary","journal","manual-refresh","metadata","multi-tab","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","restored","restored-scope","saved","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event","window-scope","window-state"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"fh-saved-fullscreen-native-reorder","runs":585,"processRuns":30,"batchSize":20,"batchFailures":0,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
+
+### RT-214 expected closed node window:21 is missing
+<!-- signature: expected closed node window:<id> is missing
+domain trace: fh-abrupt-restart-fullscreen-session-close
+action: {"type":"nativeCloseTab","tab":{"capture":"fh-abrupt-session-tabs"},"order":"sessionChangedOnly"} -->
+
+- First seen: 2026-05-25T14:26:44.260Z
+- Trace id: `fh-abrupt-restart-fullscreen-session-close`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=fh-abrupt-restart-fullscreen-session-close pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: fixed and promoted to regression coverage.
+
+```text
+domain trace fh-abrupt-restart-fullscreen-session-close: abrupt restart fullscreen session close
+action 1: {"type":"nativeOpenWindow","focused":true,"tabs":[{"title":"FH abrupt session close","active":true}],"captureWindow":"fh-abrupt-session-window","captureTabs":"fh-abrupt-session-tabs"}
+action 2: {"type":"nativeSetWindowState","window":{"capture":"fh-abrupt-session-window"},"state":"fullscreen"}
+action 3: {"type":"restartBackgroundAbrupt"}
+action 4: {"type":"nativeCloseTab","tab":{"capture":"fh-abrupt-session-tabs"},"order":"sessionChangedOnly"}
+Domain trace: fh-abrupt-restart-fullscreen-session-close
+Action 4: {"type":"nativeCloseTab","tab":{"capture":"fh-abrupt-session-tabs"},"order":"sessionChangedOnly"}
+Trace:
+domain trace fh-abrupt-restart-fullscreen-session-close: abrupt restart fullscreen session close
+action 1: {"type":"nativeOpenWindow","focused":true,"tabs":[{"title":"FH abrupt session close","active":true}],"captureWindow":"fh-abrupt-session-window","captureTabs":"fh-abrupt-session-tabs"}
+action 2: {"type":"nativeSetWindowState","window":{"capture":"fh-abrupt-session-window"},"state":"fullscreen"}
+action 3: {"type":"restartBackgroundAbrupt"}
+action 4: {"type":"nativeCloseTab","tab":{"capture":"fh-abrupt-session-tabs"},"order":"sessionChangedOnly"}
+```
+
+### RT-215 No movable live-tab command candidate for runtime tab 3
+<!-- signature: No movable live-tab command candidate for runtime tab <id>
+domain trace: fh-restored-fullscreen-history-restart
+action: {"type":"outlinerGroupTab","tab":{"capture":"fh-history-restored-tabs"},"captureStaleTabs":"fh-history-restored-old"} -->
+
+- First seen: 2026-05-25T14:26:46.715Z
+- Trace id: `fh-restored-fullscreen-history-restart`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=fh-restored-fullscreen-history-restart pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: fixed/triaged and promoted to regression coverage.
+
+```text
+domain trace fh-restored-fullscreen-history-restart: restored fullscreen history restart
+action 1: {"type":"outlinerCloseWindow","window":{"windowId":20}}
+action 2: {"type":"outlinerRestoreNodeThenAbruptRestart","node":{"nodeId":"window:20"},"captureRestoredTabs":"fh-history-restored-tabs","captureRestoredWindows":"fh-history-restored-window"}
+action 3: {"type":"nativeSetWindowState","window":{"capture":"fh-history-restored-window"},"state":"fullscreen"}
+action 4: {"type":"updateTab","tab":{"capture":"fh-history-restored-tabs"},"title":"FH history restored current","url":"https://fh.example/history-restored"}
+action 5: {"type":"outlinerGroupTab","tab":{"capture":"fh-history-restored-tabs"},"captureStaleTabs":"fh-history-restored-old"}
+```
+
+<!-- hunt-corpus-run: {"at":"2026-05-25T14:26:46.716Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","browserCreated","command-rejection","commandCreated","created-event","delayed-event","delete","delete-rejection","event-order","focus","fresh-event","fullscreen","group","history-boundary","journal","manual-refresh","metadata","multi-tab","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","restored","restored-scope","saved","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event","window-scope","window-state"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"fh-restored-fullscreen-history-restart","runs":588,"processRuns":38,"batchSize":20,"batchFailures":1,"completedCorpus":true,"failures":2,"duplicateFailures":0,"newFindings":2} -->
+
+### RT-216 expected closed node window:21 is missing
+<!-- signature: expected closed node window:<id> is missing
+domain trace: fh-abrupt-restart-normal-session-close-control
+action: {"type":"nativeCloseTab","tab":{"capture":"fh-normal-session-tabs"},"order":"sessionChangedOnly"} -->
+
+- First seen: 2026-05-25T14:28:48.906Z
+- Trace id: `fh-abrupt-restart-normal-session-close-control`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=fh-abrupt-restart-normal-session-close-control pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: fixed and promoted to regression coverage.
+
+```text
+domain trace fh-abrupt-restart-normal-session-close-control: abrupt restart normal session close control
+action 1: {"type":"nativeOpenWindow","focused":true,"tabs":[{"title":"FH normal session close","active":true}],"captureWindow":"fh-normal-session-window","captureTabs":"fh-normal-session-tabs"}
+action 2: {"type":"restartBackgroundAbrupt"}
+action 3: {"type":"nativeCloseTab","tab":{"capture":"fh-normal-session-tabs"},"order":"sessionChangedOnly"}
+Domain trace: fh-abrupt-restart-normal-session-close-control
+Action 3: {"type":"nativeCloseTab","tab":{"capture":"fh-normal-session-tabs"},"order":"sessionChangedOnly"}
+Trace:
+domain trace fh-abrupt-restart-normal-session-close-control: abrupt restart normal session close control
+action 1: {"type":"nativeOpenWindow","focused":true,"tabs":[{"title":"FH normal session close","active":true}],"captureWindow":"fh-normal-session-window","captureTabs":"fh-normal-session-tabs"}
+action 2: {"type":"restartBackgroundAbrupt"}
+action 3: {"type":"nativeCloseTab","tab":{"capture":"fh-normal-session-tabs"},"order":"sessionChangedOnly"}
+```
+
+<!-- hunt-corpus-run: {"at":"2026-05-25T14:28:51.455Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","browserCreated","command-rejection","commandCreated","created-event","delayed-event","delete","delete-rejection","event-order","focus","fresh-event","fullscreen","group","history-boundary","journal","manual-refresh","metadata","multi-tab","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","restored","restored-scope","saved","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event","window-scope","window-state"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"fh-restored-fullscreen-child-history-restart","runs":591,"processRuns":41,"batchSize":20,"batchFailures":1,"completedCorpus":true,"failures":3,"duplicateFailures":2,"newFindings":1} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-25T14:30:48.602Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","browserCreated","command-rejection","commandCreated","created-event","delayed-event","delete","delete-rejection","event-order","focus","fresh-event","fullscreen","group","history-boundary","journal","manual-refresh","metadata","multi-tab","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","restored","restored-scope","saved","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event","window-scope","window-state"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"fh-abrupt-restart-restored-session-close-control","runs":594,"processRuns":44,"batchSize":20,"batchFailures":1,"completedCorpus":true,"failures":3,"duplicateFailures":3,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-25T14:37:29.075Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","browserCreated","command-rejection","commandCreated","created-event","delayed-event","delete","delete-rejection","event-order","focus","fresh-event","fullscreen","group","history-boundary","journal","manual-refresh","metadata","multi-tab","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","restored","restored-scope","saved","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event","window-scope","window-state"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"fh-command-fullscreen-source-close-abrupt","runs":597,"processRuns":47,"batchSize":20,"batchFailures":1,"completedCorpus":true,"failures":3,"duplicateFailures":3,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-25T14:39:21.220Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","browserCreated","command-rejection","commandCreated","created-event","delayed-event","delete","delete-rejection","event-order","focus","fresh-event","fullscreen","group","history-boundary","journal","manual-refresh","metadata","multi-tab","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","restored","restored-scope","saved","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event","window-scope","window-state"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"fh-restored-fullscreen-windowremoved-clean","runs":600,"processRuns":50,"batchSize":20,"batchFailures":1,"completedCorpus":true,"failures":3,"duplicateFailures":3,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-25T14:40:39.496Z","mode":"agent-corpus-run","profile":"regression","coverageTags":["activation","breadth","browserCreated","command-rejection","commandCreated","created-event","delayed-event","delete","delete-rejection","event-order","focus","fresh-event","history-boundary","journal","known-finding","manual-refresh","metadata","multi-tab","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","restart","restore","restored","restored-scope","saved","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event","window-scope"],"firstTraceId":"rt-active-race","lastTraceId":"sh-command-reorder-stale-updated-metadata-only","runs":243,"processRuns":5,"batchSize":50,"batchFailures":0,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-25T15:08:34.848Z","mode":"agent-corpus-run","profile":"regression","coverageTags":["activation","breadth","browserCreated","command-rejection","commandCreated","created-event","delayed-event","delete","delete-rejection","event-order","focus","fresh-event","fullscreen","history-boundary","journal","known-finding","manual-refresh","metadata","multi-tab","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","restart","restore","restored","restored-scope","saved","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event","window-scope","window-state"],"firstTraceId":"rt-active-race","lastTraceId":"fh-abrupt-restart-normal-session-close-control","runs":246,"processRuns":5,"batchSize":50,"batchFailures":0,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-25T15:25:56.384Z","mode":"agent-corpus-run","profile":"regression","coverageTags":["activation","breadth","browserCreated","command-rejection","commandCreated","created-event","delayed-event","delete","delete-rejection","event-order","focus","fresh-event","fullscreen","history-boundary","journal","known-finding","manual-refresh","metadata","multi-tab","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","restart","restore","restored","restored-scope","saved","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event","window-scope","window-state"],"firstTraceId":"rt-active-race","lastTraceId":"fh-abrupt-restart-normal-session-close-control","runs":246,"processRuns":5,"batchSize":50,"batchFailures":0,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
+
+### RT-217 tab 2 active flag diverged
+<!-- signature: tab <id> active flag diverged
+domain trace: xh-history-undo-after-native-move
+action: {"type":"outlinerUndo"} -->
+
+- First seen: 2026-05-25T15:28:17.832Z
+- Trace id: `xh-history-undo-after-native-move`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=xh-history-undo-after-native-move pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: fixed by the history replay runtime-shape overlay pass.
+
+```text
+domain trace xh-history-undo-after-native-move: history undo after native move
+action 1: {"type":"outlinerGroupTab","tab":{"tabId":2},"captureStaleTabs":"xh-history-move-group-old"}
+action 2: {"type":"nativeMoveTabToWindow","tab":{"tabId":2},"window":{"windowId":20},"index":0,"active":true,"captureStaleTabs":"xh-history-move-old"}
+action 3: {"type":"outlinerUndo"}
+Domain trace: xh-history-undo-after-native-move
+Action 3: {"type":"outlinerUndo"}
+Trace:
+domain trace xh-history-undo-after-native-move: history undo after native move
+action 1: {"type":"outlinerGroupTab","tab":{"tabId":2},"captureStaleTabs":"xh-history-move-group-old"}
+action 2: {"type":"nativeMoveTabToWindow","tab":{"tabId":2},"window":{"windowId":20},"index":0,"active":true,"captureStaleTabs":"xh-history-move-old"}
+action 3: {"type":"outlinerUndo"}
+```
+
+<!-- hunt-corpus-run: {"at":"2026-05-25T15:28:36.666Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","browser-authored","browserCreated","command-rejection","commandCreated","created-event","cross-axis","delayed-event","delete","delete-rejection","event-order","focus","fresh-event","fullscreen","group","history","history-boundary","journal","manual-refresh","metadata","multi-tab","multi-window","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","restored","restored-scope","runtime-order","runtimeMetadata","saved","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event","window-scope","window-state"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"xh-browser-close-history-missing-query","runs":624,"processRuns":52,"batchSize":20,"batchFailures":1,"completedCorpus":true,"failures":1,"duplicateFailures":0,"newFindings":1} -->
+
+### RT-218 tab 2 active flag diverged
+<!-- signature: tab <id> active flag diverged
+domain trace: xh-history-undo-after-native-move-restart
+action: {"type":"outlinerUndo"} -->
+
+- First seen: 2026-05-25T15:30:42.641Z
+- Trace id: `xh-history-undo-after-native-move-restart`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=xh-history-undo-after-native-move-restart pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: fixed by the history replay runtime-shape overlay pass.
+
+```text
+domain trace xh-history-undo-after-native-move-restart: history undo after native move restart
+action 1: {"type":"outlinerGroupTab","tab":{"tabId":2},"captureStaleTabs":"xh-history-restart-group-old"}
+action 2: {"type":"nativeMoveTabToWindow","tab":{"tabId":2},"window":{"windowId":20},"index":0,"active":true,"captureStaleTabs":"xh-history-restart-move-old"}
+action 3: {"type":"restartBackground"}
+action 4: {"type":"outlinerUndo"}
+Domain trace: xh-history-undo-after-native-move-restart
+Action 4: {"type":"outlinerUndo"}
+Trace:
+domain trace xh-history-undo-after-native-move-restart: history undo after native move restart
+action 1: {"type":"outlinerGroupTab","tab":{"tabId":2},"captureStaleTabs":"xh-history-restart-group-old"}
+action 2: {"type":"nativeMoveTabToWindow","tab":{"tabId":2},"window":{"windowId":20},"index":0,"active":true,"captureStaleTabs":"xh-history-restart-move-old"}
+action 3: {"type":"restartBackground"}
+action 4: {"type":"outlinerUndo"}
+```
+
+<!-- hunt-corpus-run: {"at":"2026-05-25T15:30:58.274Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","browser-authored","browserCreated","command-rejection","commandCreated","created-event","cross-axis","delayed-event","delete","delete-rejection","event-order","focus","fresh-event","fullscreen","group","history","history-boundary","journal","manual-refresh","metadata","multi-tab","multi-window","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","restored","restored-scope","runtime-order","runtimeMetadata","saved","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event","window-scope","window-state"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"xh-browser-close-history-missing-query","runs":628,"processRuns":52,"batchSize":20,"batchFailures":1,"completedCorpus":true,"failures":2,"duplicateFailures":1,"newFindings":1} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-25T15:33:07.344Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","browser-authored","browserCreated","command-rejection","commandCreated","created-event","cross-axis","delayed-event","delete","delete-rejection","event-order","focus","fresh-event","fullscreen","group","history","history-boundary","journal","manual-refresh","metadata","multi-tab","multi-window","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","restored","restored-scope","runtime-order","runtimeMetadata","saved","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event","window-scope","window-state"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"xh-browser-close-history-missing-query","runs":632,"processRuns":52,"batchSize":20,"batchFailures":1,"completedCorpus":true,"failures":2,"duplicateFailures":2,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-25T15:34:58.406Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","browser-authored","browserCreated","command-rejection","commandCreated","created-event","cross-axis","delayed-event","delete","delete-rejection","event-order","focus","fresh-event","fullscreen","group","history","history-boundary","journal","manual-refresh","metadata","multi-tab","multi-window","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","restored","restored-scope","runtime-order","runtimeMetadata","saved","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event","window-scope","window-state"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"xh-browser-close-history-missing-query","runs":636,"processRuns":52,"batchSize":20,"batchFailures":1,"completedCorpus":true,"failures":2,"duplicateFailures":2,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-25T15:36:59.767Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","browser-authored","browserCreated","command-rejection","commandCreated","created-event","cross-axis","delayed-event","delete","delete-rejection","event-order","focus","fresh-event","fullscreen","group","history","history-boundary","journal","manual-refresh","metadata","multi-tab","multi-window","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","restored","restored-scope","runtime-order","runtimeMetadata","saved","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event","window-scope","window-state"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"xh-browser-close-history-missing-query","runs":640,"processRuns":52,"batchSize":20,"batchFailures":1,"completedCorpus":true,"failures":2,"duplicateFailures":2,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-25T15:37:38.932Z","mode":"agent-corpus-run","profile":"regression","coverageTags":["activation","breadth","browserCreated","command-rejection","commandCreated","created-event","delayed-event","delete","delete-rejection","event-order","focus","fresh-event","fullscreen","history-boundary","journal","known-finding","manual-refresh","metadata","multi-tab","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","restart","restore","restored","restored-scope","saved","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event","window-scope","window-state"],"firstTraceId":"rt-active-race","lastTraceId":"fh-abrupt-restart-normal-session-close-control","runs":246,"processRuns":5,"batchSize":50,"batchFailures":0,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-25T16:10:52.126Z","mode":"agent-corpus-run","profile":"regression","coverageTags":["activation","breadth","browserCreated","command-rejection","commandCreated","created-event","cross-axis","delayed-event","delete","delete-rejection","event-order","focus","fresh-event","fullscreen","history","history-boundary","journal","known-finding","manual-refresh","metadata","multi-tab","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","restart","restore","restored","restored-scope","runtime-order","saved","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event","window-scope","window-state"],"firstTraceId":"rt-active-race","lastTraceId":"xh-history-undo-after-native-move-restart","runs":248,"processRuns":5,"batchSize":50,"batchFailures":0,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-25T16:35:39.295Z","mode":"agent-corpus-run","profile":"regression","coverageTags":["activation","breadth","browserCreated","command-rejection","commandCreated","created-event","cross-axis","delayed-event","delete","delete-rejection","event-order","focus","fresh-event","fullscreen","history","history-boundary","journal","known-finding","manual-refresh","metadata","multi-tab","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","restart","restore","restored","restored-scope","runtime-order","saved","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event","window-scope","window-state"],"firstTraceId":"rt-active-race","lastTraceId":"xh-history-undo-after-native-move-restart","runs":248,"processRuns":5,"batchSize":50,"batchFailures":0,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-25T16:36:32.892Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","browser-authored","browserCreated","command-rejection","commandCreated","created-event","cross-axis","delayed-event","delete","delete-rejection","event-order","focus","fresh-event","fullscreen","group","history","history-boundary","journal","manual-refresh","metadata","multi-tab","multi-window","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","restored","restored-scope","runtime-order","runtimeMetadata","saved","session","snapshot-confidence","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event","window-scope","window-state"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"qh-restored-native-move-reordered-survivor","runs":664,"processRuns":34,"batchSize":20,"batchFailures":0,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-25T16:40:10.820Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","browser-authored","browserCreated","command-rejection","commandCreated","created-event","cross-axis","delayed-event","delete","delete-rejection","event-order","focus","fresh-event","fullscreen","group","history","history-boundary","journal","manual-refresh","metadata","multi-tab","multi-window","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","restored","restored-scope","runtime-order","runtimeMetadata","saved","session","snapshot-confidence","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event","window-scope","window-state"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"qh-rung2-restored-delete-reject-stale-reordered","runs":680,"processRuns":34,"batchSize":20,"batchFailures":0,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-25T16:42:29.996Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","browser-authored","browserCreated","command-rejection","commandCreated","created-event","cross-axis","delayed-event","delete","delete-rejection","event-order","focus","fresh-event","fullscreen","group","history","history-boundary","journal","manual-refresh","metadata","multi-tab","multi-window","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","reparenting","restart","restore","restored","restored-scope","runtime-order","runtimeMetadata","saved","session","snapshot-confidence","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event","window-scope","window-state"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"qh-escape-abrupt-two-browser-windows-skew","runs":688,"processRuns":35,"batchSize":20,"batchFailures":0,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-25T16:42:56.828Z","mode":"agent-corpus-run","profile":"regression","coverageTags":["activation","breadth","browserCreated","command-rejection","commandCreated","created-event","cross-axis","delayed-event","delete","delete-rejection","event-order","focus","fresh-event","fullscreen","history","history-boundary","journal","known-finding","manual-refresh","metadata","multi-tab","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","restart","restore","restored","restored-scope","runtime-order","saved","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event","window-scope","window-state"],"firstTraceId":"rt-active-race","lastTraceId":"xh-history-undo-after-native-move-restart","runs":248,"processRuns":5,"batchSize":50,"batchFailures":0,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-25T16:56:35.615Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","browser-authored","browserCreated","bug-rich","calibration","command-rejection","commandCreated","created-event","cross-axis","delayed-event","delete","delete-rejection","event-order","focus","fresh-event","fullscreen","group","history","history-boundary","journal","manual-refresh","metadata","multi-tab","multi-window","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","real-user","reconciliation","relocation","reparenting","restart","restore","restored","restored-scope","runtime-order","runtimeMetadata","saved","session","snapshot-confidence","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event","window-scope","window-state"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"ra-focus-session-partial-after-restored-update","runs":704,"processRuns":36,"batchSize":20,"batchFailures":0,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-25T16:59:09.821Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","browser-authored","browserCreated","bug-rich","calibration","command-rejection","commandCreated","created-event","cross-axis","delayed-event","delete","delete-rejection","event-order","focus","fresh-event","fullscreen","group","history","history-boundary","journal","manual-refresh","metadata","multi-tab","multi-window","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","real-user","reconciliation","relocation","reparenting","restart","restore","restored","restored-scope","runtime-order","runtimeMetadata","saved","session","snapshot-confidence","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event","window-scope","window-state"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"ra-rung1-external-restore-delete-history","runs":712,"processRuns":36,"batchSize":20,"batchFailures":0,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-25T17:03:51.206Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","browser-authored","browserCreated","bug-rich","calibration","command-rejection","commandCreated","created-event","cross-axis","delayed-event","delete","delete-rejection","event-order","focus","fresh-event","fullscreen","group","history","history-boundary","journal","manual-refresh","metadata","multi-tab","multi-window","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","real-user","reconciliation","relocation","reparenting","restart","restore","restored","restored-scope","runtime-order","runtimeMetadata","saved","session","snapshot-confidence","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event","window-scope","window-state"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"ra-escape-restored-opener-native-close-redo","runs":720,"processRuns":36,"batchSize":20,"batchFailures":0,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-25T17:05:08.097Z","mode":"agent-corpus-run","profile":"regression","coverageTags":["activation","breadth","browserCreated","command-rejection","commandCreated","created-event","cross-axis","delayed-event","delete","delete-rejection","event-order","focus","fresh-event","fullscreen","history","history-boundary","journal","known-finding","manual-refresh","metadata","multi-tab","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","restart","restore","restored","restored-scope","runtime-order","saved","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event","window-scope","window-state"],"firstTraceId":"rt-active-race","lastTraceId":"xh-history-undo-after-native-move-restart","runs":248,"processRuns":5,"batchSize":50,"batchFailures":0,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-25T17:11:51.032Z","mode":"agent-corpus-run","profile":"regression","coverageTags":["activation","breadth","browserCreated","command-rejection","commandCreated","created-event","cross-axis","delayed-event","delete","delete-rejection","event-order","focus","fresh-event","fullscreen","history","history-boundary","journal","known-finding","manual-refresh","metadata","multi-tab","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","restart","restore","restored","restored-scope","runtime-order","saved","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event","window-scope","window-state"],"firstTraceId":"rt-active-race","lastTraceId":"xh-history-undo-after-native-move-restart","runs":248,"processRuns":5,"batchSize":50,"batchFailures":0,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-25T17:19:57.466Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","browser-authored","browserCreated","bug-rich","calibration","command-rejection","commandCreated","created-event","cross-axis","delayed-event","delete","delete-rejection","event-order","focus","fresh-event","fullscreen","group","history","history-boundary","journal","manual-refresh","metadata","multi-tab","multi-window","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","real-user","reconciliation","relocation","reparenting","restart","restore","restored","restored-scope","runtime-order","runtimeMetadata","saved","scope-routing","session","shape-fact","snapshot-confidence","stale-event","stale-query","subagent","tombstone","transaction-boundary","undo-redo","updated-event","window-scope","window-state"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"sb-restored-fullscreen-external-delete-history","runs":736,"processRuns":37,"batchSize":20,"batchFailures":0,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
+
+### RT-219 live tab IDs match runtime tabs
+<!-- signature: live tab IDs match runtime tabs
+domain trace: ub-redo-journal-after-dual-native-drifts
+action: {"type":"outlinerRedoThenAbruptRestart"} -->
+
+- First seen: 2026-05-25T17:24:32.616Z
+- Trace id: `ub-redo-journal-after-dual-native-drifts`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=ub-redo-journal-after-dual-native-drifts pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: fixed by history journal materialized-window recovery.
+
+```text
+domain trace ub-redo-journal-after-dual-native-drifts: subagent rung1 redo journal after dual native drifts
+action 1: {"type":"outlinerGroupTab","tab":{"tabId":2},"captureStaleTabs":"ub-redo-group-old"}
+action 2: {"type":"nativeOpenWindow","focused":false,"tabs":[{"title":"UB redo A1"},{"title":"UB redo A2","active":true}],"captureWindow":"ub-redo-window-a","captureTabs":"ub-redo-tabs-a"}
+action 3: {"type":"nativeOpenWindow","focused":false,"tabs":[{"title":"UB redo B1","active":true}],"captureWindow":"ub-redo-window-b","captureTabs":"ub-redo-tabs-b"}
+action 4: {"type":"nativeMoveTabToWindow","tab":{"inWindow":{"capture":"ub-redo-window-a"},"index":1},"window":{"capture":"ub-redo-window-b"},"index":0,"active":true,"captureStaleTabs":"ub-redo-a-old"}
+action 5: {"type":"nativeMoveTabToNewWindow","tab":{"tabId":1},"active":true,"captureWindow":"ub-redo-detached-window","captureStaleTabs":"ub-redo-detached-old"}
+action 6: {"type":"updateTab","tab":{"role":"lastMovedTab"},"title":"UB Redo Detached Current","url":"https://ub.example/redo-detached"}
+action 7: {"type":"outlinerUndo"}
+action 8: {"type":"outlinerRedoThenAbruptRestart"}
+Domain trace: ub-redo-journal-after-dual-native-drifts
+Action 8: {"type":"outlinerRedoThenAbruptRestart"}
+Trace:
+domain trace ub-redo-journal-after-dual-native-drifts: subagent rung1 redo journal after dual native drifts
+action 1: {"type":"outlinerGroupTab","tab":{"tabId":2},"captureStaleTabs":"ub-redo-group-old"}
+action 2: {"type":"nativeOpenWindow","focused":false,"tabs":[{"title":"UB redo A1"},{"title":"UB redo A2","active":true}],"captureWindow":"ub-redo-window-a","captureTabs":"ub-redo-tabs-a"}
+action 3: {"type":"nativeOpenWindow","focused":false,"tabs":[{"title":"UB redo B1","active":true}],"captureWindow":"ub-redo-window-b","captureTabs":"ub-redo-tabs-b"}
+action 4: {"type":"nativeMoveTabToWindow","tab":{"inWindow":{"capture":"ub-redo-window-a"},"index":1},"window":{"capture":"ub-redo-window-b"},"index":0,"active":true,"captureStaleTabs":"ub-redo-a-old"}
+action 5: {"type":"nativeMoveTabToNewWindow","tab":{"tabId":1},"active":true,"captureWindow":"ub-redo-detached-window","captureStaleTabs":"ub-redo-detached-old"}
+action 6: {"type":"updateTab","tab":{"role":"lastMovedTab"},"title":"UB Redo Detached Current","url":"https://ub.example/redo-detached"}
+action 7: {"type":"outlinerUndo"}
+action 8: {"type":"outlinerRedoThenAbruptRestart"}
+```
+
+<!-- hunt-corpus-run: {"at":"2026-05-25T17:24:42.820Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["browserCreated","commandCreated","complete-refresh","history","journal","metadata","multi-window","native-close","native-move","partial-snapshot","restart","restore","restored","runtime-order","session","stale-event","subagent"],"firstTraceId":"ub-redo-journal-after-dual-native-drifts","lastTraceId":"sc-complete-refresh-then-stale-restored-order","runs":8,"processRuns":9,"batchSize":20,"batchFailures":1,"completedCorpus":true,"failures":1,"duplicateFailures":0,"newFindings":1} -->
+
+### RT-220 live tab IDs match runtime tabs
+<!-- signature: live tab IDs match runtime tabs
+domain trace: uc-redo-journal-dual-drift-complete-before-partial
+action: {"type":"outlinerRedoThenAbruptRestart"} -->
+
+- First seen: 2026-05-25T17:29:21.110Z
+- Trace id: `uc-redo-journal-dual-drift-complete-before-partial`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=uc-redo-journal-dual-drift-complete-before-partial pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: duplicate evidence for RT-219; fixed/covered by history journal materialized-window recovery.
+
+```text
+domain trace uc-redo-journal-dual-drift-complete-before-partial: subagent clone redo journal dual drift complete before partial
+action 1: {"type":"outlinerGroupTab","tab":{"tabId":2},"captureStaleTabs":"uc-complete-group-old"}
+action 2: {"type":"nativeOpenWindow","focused":false,"tabs":[{"title":"UC complete A1"},{"title":"UC complete A2","active":true}],"captureWindow":"uc-complete-window-a","captureTabs":"uc-complete-tabs-a"}
+action 3: {"type":"nativeOpenWindow","focused":false,"tabs":[{"title":"UC complete B1","active":true}],"captureWindow":"uc-complete-window-b","captureTabs":"uc-complete-tabs-b"}
+action 4: {"type":"nativeMoveTabToWindow","tab":{"inWindow":{"capture":"uc-complete-window-a"},"index":1},"window":{"capture":"uc-complete-window-b"},"index":0,"active":true,"captureStaleTabs":"uc-complete-a-old"}
+action 5: {"type":"nativeMoveTabToNewWindow","tab":{"tabId":1},"active":true,"captureWindow":"uc-complete-detached-window","captureStaleTabs":"uc-complete-detached-old"}
+action 6: {"type":"updateTab","tab":{"role":"lastMovedTab"},"title":"UC Complete Detached Current","url":"https://uc.example/complete-detached"}
+action 7: {"type":"manualRefresh"}
+action 8: {"type":"outlinerUndo"}
+action 9: {"type":"outlinerRedoThenAbruptRestart"}
+Domain trace: uc-redo-journal-dual-drift-complete-before-partial
+Action 9: {"type":"outlinerRedoThenAbruptRestart"}
+Trace:
+domain trace uc-redo-journal-dual-drift-complete-before-partial: subagent clone redo journal dual drift complete before partial
+action 1: {"type":"outlinerGroupTab","tab":{"tabId":2},"captureStaleTabs":"uc-complete-group-old"}
+action 2: {"type":"nativeOpenWindow","focused":false,"tabs":[{"title":"UC complete A1"},{"title":"UC complete A2","active":true}],"captureWindow":"uc-complete-window-a","captureTabs":"uc-complete-tabs-a"}
+action 3: {"type":"nativeOpenWindow","focused":false,"tabs":[{"title":"UC complete B1","active":true}],"captureWindow":"uc-complete-window-b","captureTabs":"uc-complete-tabs-b"}
+action 4: {"type":"nativeMoveTabToWindow","tab":{"inWindow":{"capture":"uc-complete-window-a"},"index":1},"window":{"capture":"uc-complete-window-b"},"index":0,"active":true,"captureStaleTabs":"uc-complete-a-old"}
+action 5: {"type":"nativeMoveTabToNewWindow","tab":{"tabId":1},"active":true,"captureWindow":"uc-complete-detached-window","captureStaleTabs":"uc-complete-detached-old"}
+action 6: {"type":"updateTab","tab":{"role":"lastMovedTab"},"title":"UC Complete Detached Current","url":"https://uc.example/complete-detached"}
+action 7: {"type":"manualRefresh"}
+action 8: {"type":"outlinerUndo"}
+action 9: {"type":"outlinerRedoThenAbruptRestart"}
+```
+
+### RT-221 live tab IDs match runtime tabs
+<!-- signature: live tab IDs match runtime tabs
+domain trace: uc-redo-journal-dual-drift-saved-tab-into-external
+action: {"type":"outlinerRedoThenAbruptRestart"} -->
+
+- First seen: 2026-05-25T17:29:22.407Z
+- Trace id: `uc-redo-journal-dual-drift-saved-tab-into-external`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=uc-redo-journal-dual-drift-saved-tab-into-external pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: duplicate evidence for RT-219; fixed/covered by history journal materialized-window recovery.
+
+```text
+domain trace uc-redo-journal-dual-drift-saved-tab-into-external: subagent clone redo journal saved tab into external
+action 1: {"type":"outlinerGroupTab","tab":{"tabId":2},"captureStaleTabs":"uc-merge-group-old"}
+action 2: {"type":"nativeOpenWindow","focused":false,"tabs":[{"title":"UC merge A1"},{"title":"UC merge A2","active":true}],"captureWindow":"uc-merge-window-a","captureTabs":"uc-merge-tabs-a"}
+action 3: {"type":"nativeOpenWindow","focused":false,"tabs":[{"title":"UC merge B1","active":true}],"captureWindow":"uc-merge-window-b","captureTabs":"uc-merge-tabs-b"}
+action 4: {"type":"nativeMoveTabToWindow","tab":{"inWindow":{"capture":"uc-merge-window-a"},"index":1},"window":{"capture":"uc-merge-window-b"},"index":0,"active":true,"captureStaleTabs":"uc-merge-a-old"}
+action 5: {"type":"nativeMoveTabToWindow","tab":{"tabId":1},"window":{"capture":"uc-merge-window-b"},"index":1,"active":true,"captureStaleTabs":"uc-merge-saved-old"}
+action 6: {"type":"updateTab","tab":{"role":"lastMovedTab"},"title":"UC Merge Saved Current","url":"https://uc.example/merge-saved"}
+action 7: {"type":"outlinerUndo"}
+action 8: {"type":"outlinerRedoThenAbruptRestart"}
+Domain trace: uc-redo-journal-dual-drift-saved-tab-into-external
+Action 8: {"type":"outlinerRedoThenAbruptRestart"}
+Trace:
+domain trace uc-redo-journal-dual-drift-saved-tab-into-external: subagent clone redo journal saved tab into external
+action 1: {"type":"outlinerGroupTab","tab":{"tabId":2},"captureStaleTabs":"uc-merge-group-old"}
+action 2: {"type":"nativeOpenWindow","focused":false,"tabs":[{"title":"UC merge A1"},{"title":"UC merge A2","active":true}],"captureWindow":"uc-merge-window-a","captureTabs":"uc-merge-tabs-a"}
+action 3: {"type":"nativeOpenWindow","focused":false,"tabs":[{"title":"UC merge B1","active":true}],"captureWindow":"uc-merge-window-b","captureTabs":"uc-merge-tabs-b"}
+action 4: {"type":"nativeMoveTabToWindow","tab":{"inWindow":{"capture":"uc-merge-window-a"},"index":1},"window":{"capture":"uc-merge-window-b"},"index":0,"active":true,"captureStaleTabs":"uc-merge-a-old"}
+action 5: {"type":"nativeMoveTabToWindow","tab":{"tabId":1},"window":{"capture":"uc-merge-window-b"},"index":1,"active":true,"captureStaleTabs":"uc-merge-saved-old"}
+action 6: {"type":"updateTab","tab":{"role":"lastMovedTab"},"title":"UC Merge Saved Current","url":"https://uc.example/merge-saved"}
+action 7: {"type":"outlinerUndo"}
+action 8: {"type":"outlinerRedoThenAbruptRestart"}
+```
+
+<!-- hunt-corpus-run: {"at":"2026-05-25T17:29:27.494Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["browserCreated","commandCreated","complete-refresh","history","journal","metadata","multi-window","native-move","partial-snapshot","restored","runtime-order","saved","scope-shape","stale-event","subagent","undo-redo","window-state"],"firstTraceId":"uc-redo-journal-dual-drift-complete-before-partial","lastTraceId":"sd-browser-created-window-state-sparse-shape","runs":6,"processRuns":7,"batchSize":20,"batchFailures":1,"completedCorpus":true,"failures":2,"duplicateFailures":0,"newFindings":2} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-25T17:34:46.126Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","browser-authored","browserCreated","bug-rich","calibration","command-rejection","commandCreated","complete-refresh","created-event","cross-axis","delayed-event","delete","delete-rejection","event-order","focus","fresh-event","fullscreen","group","history","history-boundary","journal","manual-refresh","metadata","multi-tab","multi-window","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","real-user","reconciliation","relocation","reparenting","restart","restore","restored","restored-scope","runtime-order","runtimeMetadata","saved","scope-routing","scope-shape","session","shape-fact","snapshot-confidence","stale-event","stale-query","subagent","tombstone","transaction-boundary","undo-redo","updated-event","window-scope","window-state"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"se-partial-snapshot-shared-window-missing-survivor","runs":754,"processRuns":72,"batchSize":20,"batchFailures":2,"completedCorpus":true,"failures":3,"duplicateFailures":3,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-25T17:38:16.507Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","browser-authored","browserCreated","bug-rich","calibration","command-rejection","commandCreated","complete-refresh","created-event","cross-axis","delayed-event","delete","delete-rejection","event-order","focus","fresh-event","fullscreen","group","history","history-boundary","journal","manual-refresh","metadata","multi-tab","multi-window","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","real-user","reconciliation","relocation","reparenting","restart","restore","restored","restored-scope","runtime-order","runtimeMetadata","saved","scope-routing","scope-shape","session","shape-fact","snapshot-confidence","stale-event","stale-query","subagent","tombstone","transaction-boundary","undo-redo","updated-event","window-scope","window-state"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"se-browser-created-scope-generation-no-journal-stale-metadata","runs":758,"processRuns":76,"batchSize":20,"batchFailures":2,"completedCorpus":true,"failures":3,"duplicateFailures":3,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-25T17:41:39.719Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","browser-authored","browserCreated","bug-rich","calibration","command-rejection","commandCreated","complete-refresh","created-event","cross-axis","delayed-event","delete","delete-rejection","event-order","focus","fresh-event","fullscreen","group","history","history-boundary","journal","manual-refresh","metadata","multi-tab","multi-window","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","real-user","reconciliation","relocation","reparenting","restart","restore","restored","restored-scope","runtime-order","runtimeMetadata","saved","scope-routing","scope-shape","session","shape-fact","snapshot-confidence","stale-event","stale-query","subagent","tombstone","transaction-boundary","undo-redo","updated-event","window-scope","window-state"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"sf-cross-window-order-after-complete-stale-metadata","runs":761,"processRuns":79,"batchSize":20,"batchFailures":2,"completedCorpus":true,"failures":3,"duplicateFailures":3,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-25T17:42:16.451Z","mode":"agent-corpus-run","profile":"regression","coverageTags":["activation","breadth","browserCreated","command-rejection","commandCreated","created-event","cross-axis","delayed-event","delete","delete-rejection","event-order","focus","fresh-event","fullscreen","history","history-boundary","journal","known-finding","manual-refresh","metadata","multi-tab","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","restart","restore","restored","restored-scope","runtime-order","saved","session","stale-event","stale-query","tombstone","transaction-boundary","undo-redo","updated-event","window-scope","window-state"],"firstTraceId":"rt-active-race","lastTraceId":"xh-history-undo-after-native-move-restart","runs":248,"processRuns":5,"batchSize":50,"batchFailures":0,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-25T18:24:14.666Z","mode":"agent-corpus-run","profile":"regression","coverageTags":["activation","breadth","browserCreated","command-rejection","commandCreated","complete-refresh","created-event","cross-axis","delayed-event","delete","delete-rejection","event-order","focus","fresh-event","fullscreen","history","history-boundary","journal","known-finding","manual-refresh","metadata","multi-tab","multi-window","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","restart","restore","restored","restored-scope","runtime-order","saved","session","stale-event","stale-query","subagent","tombstone","transaction-boundary","undo-redo","updated-event","window-scope","window-state"],"firstTraceId":"rt-active-race","lastTraceId":"uc-redo-journal-dual-drift-saved-tab-into-external","runs":251,"processRuns":6,"batchSize":50,"batchFailures":0,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-25T18:35:08.654Z","mode":"agent-corpus-run","profile":"regression","coverageTags":["activation","breadth","browserCreated","command-rejection","commandCreated","complete-refresh","created-event","cross-axis","delayed-event","delete","delete-rejection","event-order","focus","fresh-event","fullscreen","history","history-boundary","journal","known-finding","manual-refresh","metadata","multi-tab","multi-window","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","restart","restore","restored","restored-scope","runtime-order","saved","session","stale-event","stale-query","subagent","tombstone","transaction-boundary","undo-redo","updated-event","window-scope","window-state"],"firstTraceId":"rt-active-race","lastTraceId":"uc-redo-journal-dual-drift-saved-tab-into-external","runs":251,"processRuns":6,"batchSize":50,"batchFailures":0,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-25T18:41:42.155Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","browser-authored","browserCreated","bug-rich","calibration","command-rejection","commandCreated","complete-refresh","created-event","cross-axis","delayed-event","delete","delete-rejection","event-order","focus","fresh-event","fullscreen","group","history","history-boundary","journal","manual-refresh","metadata","mixed-provenance","multi-tab","multi-window","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","real-user","reconciliation","relocation","reparenting","restart","restore","restored","restored-scope","runtime-order","runtimeMetadata","saved","scope-routing","scope-shape","session","shape-fact","snapshot-confidence","stale-event","stale-query","subagent","tombstone","transaction-boundary","undo-redo","updated-event","window-scope","window-state"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"yh-two-mixed-windows-exchange-tabs","runs":785,"processRuns":40,"batchSize":20,"batchFailures":0,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-25T18:44:54.742Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","browser-authored","browserCreated","bug-rich","calibration","command-rejection","commandCreated","complete-refresh","created-event","cross-axis","delayed-event","delete","delete-rejection","event-order","focus","fresh-event","fullscreen","group","history","history-boundary","journal","manual-refresh","metadata","mixed-provenance","multi-tab","multi-window","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","real-user","reconciliation","relocation","reparenting","restart","restore","restored","restored-scope","runtime-order","runtimeMetadata","saved","scope-routing","scope-shape","session","shape-fact","snapshot-confidence","stale-event","stale-query","subagent","tombstone","transaction-boundary","undo-redo","updated-event","window-scope","window-state"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"yh-rung1-no-journal-transfer-abrupt-freshness","runs":793,"processRuns":40,"batchSize":20,"batchFailures":0,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-25T18:48:20.279Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","browser-authored","browserCreated","bug-rich","calibration","command-rejection","commandCreated","complete-refresh","created-event","cross-axis","delayed-event","delete","delete-rejection","event-order","focus","fresh-event","fullscreen","group","history","history-boundary","journal","manual-refresh","metadata","mixed-provenance","multi-tab","multi-window","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","real-user","reconciliation","relocation","reparenting","restart","restore","restored","restored-scope","runtime-order","runtimeMetadata","saved","scope-routing","scope-shape","session","shape-fact","snapshot-confidence","stale-event","stale-query","subagent","tombstone","transaction-boundary","undo-redo","updated-event","window-scope","window-state"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"yh-rung2-two-mixed-windows-close-one-partial","runs":800,"processRuns":40,"batchSize":20,"batchFailures":0,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-25T18:48:56.139Z","mode":"agent-corpus-run","profile":"regression","coverageTags":["activation","breadth","browserCreated","command-rejection","commandCreated","complete-refresh","created-event","cross-axis","delayed-event","delete","delete-rejection","event-order","focus","fresh-event","fullscreen","history","history-boundary","journal","known-finding","manual-refresh","metadata","multi-tab","multi-window","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","restart","restore","restored","restored-scope","runtime-order","saved","session","stale-event","stale-query","subagent","tombstone","transaction-boundary","undo-redo","updated-event","window-scope","window-state"],"firstTraceId":"rt-active-race","lastTraceId":"uc-redo-journal-dual-drift-saved-tab-into-external","runs":251,"processRuns":6,"batchSize":50,"batchFailures":0,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->

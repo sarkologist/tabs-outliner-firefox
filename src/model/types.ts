@@ -19,12 +19,16 @@ export type RuntimeWindow = {
   id: number;
   focused: boolean;
   incognito: boolean;
+  state?: RuntimeWindowState;
   tabs?: RuntimeTab[];
   sessionId?: string;
 };
 
+export type RuntimeWindowState = "normal" | "minimized" | "maximized" | "fullscreen" | "docked";
+
 export type OutlineNodeKind = "window" | "tab" | "group";
 export type OutlineNodeStatus = "live" | "closed" | "neutral";
+export type RuntimeWindowProvenance = "browserCreated" | "commandCreated";
 
 export type LiveRef =
   | {
@@ -61,6 +65,7 @@ export type OutlineNode = {
   live?: LiveRef;
   restore?: RestoreRef;
   restoredFromClosed?: boolean;
+  runtimeProvenance?: RuntimeWindowProvenance;
 };
 
 export type OutlineState = {

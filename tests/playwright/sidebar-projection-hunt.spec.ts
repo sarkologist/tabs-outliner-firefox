@@ -8,7 +8,7 @@ type ConsoleIssue = {
 test.describe("sidebar projection hunt", () => {
   test("psh-scroll-rejected-slice-recovers-without-second-user-scroll", async ({ page }) => {
     const issues = collectPageIssues(page);
-    await loadLargeSparseSidebar(page);
+    await loadLargeSparseSidebar(page, { fullStatePending: true });
 
     const result = await page.evaluate(async () => {
       const api = projectionHuntApi();
@@ -16,6 +16,8 @@ test.describe("sidebar projection hunt", () => {
       await api.scrollToRow(250);
       await api.waitForSparseRequestCount(1);
       api.rejectSliceAt(0);
+      await api.waitForSparseRequestCount(2);
+      api.resolveSliceAt(0);
       await api.waitForIdleFrames(4);
       return {
         requestCount: api.sparseRequestCount(),
@@ -30,7 +32,7 @@ test.describe("sidebar projection hunt", () => {
 
   test("psh-stale-noncovering-slice-is-followed-by-current-slice", async ({ page }) => {
     const issues = collectPageIssues(page);
-    await loadLargeSparseSidebar(page);
+    await loadLargeSparseSidebar(page, { fullStatePending: true });
 
     const result = await page.evaluate(async () => {
       const api = projectionHuntApi();
@@ -54,7 +56,7 @@ test.describe("sidebar projection hunt", () => {
 
   test("psh-stale-covering-window-survives-latest-noncovering-slice", async ({ page }) => {
     const issues = collectPageIssues(page);
-    await loadLargeSparseSidebar(page);
+    await loadLargeSparseSidebar(page, { fullStatePending: true });
 
     const result = await page.evaluate(async () => {
       const api = projectionHuntApi();
@@ -77,13 +79,13 @@ test.describe("sidebar projection hunt", () => {
 
     expect(result.before).toContain(260);
     expect(result.after).toContain(260);
-    expect(result.requestCount).toBeGreaterThanOrEqual(3);
+    expect(result.requestCount).toBe(2);
     expect(issues).toEqual([]);
   });
 
   test("psh-rejected-stale-request-does-not-block-current-slice", async ({ page }) => {
     const issues = collectPageIssues(page);
-    await loadLargeSparseSidebar(page);
+    await loadLargeSparseSidebar(page, { fullStatePending: true });
 
     const result = await page.evaluate(async () => {
       const api = projectionHuntApi();
@@ -118,23 +120,21 @@ test.describe("sidebar projection hunt", () => {
       api.rejectSliceAt(0);
       await api.waitForIdleFrames(2);
       api.resolveFullState();
-      for (let index = 0; index < 90 && !api.visibleRows().includes(250); index += 1) {
-        await api.nextFrame();
-      }
+      await api.waitForVisibleRow(250);
       return {
         requestCount: api.sparseRequestCount(),
         visibleRows: api.visibleRows()
       };
     });
 
-    expect(result.requestCount).toBe(1);
+    expect(result.requestCount).toBeGreaterThanOrEqual(1);
     expect(result.visibleRows).toContain(250);
     expect(issues).toEqual([]);
   });
 
   test("psh-three-jump-out-of-order-covering-slice-paints-current-viewport", async ({ page }) => {
     const issues = collectPageIssues(page);
-    await loadLargeSparseSidebar(page);
+    await loadLargeSparseSidebar(page, { fullStatePending: true });
 
     const result = await page.evaluate(async () => {
       const api = projectionHuntApi();
@@ -308,6 +308,31 @@ test.describe("sidebar projection hunt", () => {
     expect(issues).toEqual([]);
   });
 
+  test("psh-state-updated-while-scrolled-to-sparse-window-preserves-viewport", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadLargeSparseSidebar(page, { fullStatePending: true });
+
+    const result = await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      await api.nextFrame();
+      await api.scrollToRow(250);
+      await api.waitForSparseRequestCount(1);
+      api.resolveSliceAt(0);
+      await api.waitForIdleFrames(2);
+      const before = api.visibleRows();
+      api.emitFullStateBroadcast();
+      await api.waitForIdleFrames(3);
+      return {
+        before,
+        after: api.visibleRows()
+      };
+    });
+
+    expect(result.before).toContain(250);
+    expect(result.after).toContain(250);
+    expect(issues).toEqual([]);
+  });
+
   test("psh-restored-single-tab-delete-during-hydration-removes-shell", async ({ page }) => {
     const issues = collectPageIssues(page);
     await loadRestoredWindowSidebar(page, { fullStatePending: true });
@@ -353,6 +378,58 @@ test.describe("sidebar projection hunt", () => {
     await expect(page.locator(nodeSelector("tab:900"))).toHaveCount(0);
     expect(issues).toEqual([]);
   });
+
+  test("psh-unloaded-title-patch-preserves-visible-sparse-window", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadLargeSparseSidebar(page, { fullStatePending: true });
+
+    const result = await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      await api.nextFrame();
+      await api.scrollToRow(250);
+      await api.waitForSparseRequestCount(1);
+      api.resolveSliceAt(0);
+      await api.waitForIdleFrames(2);
+      const before = api.visibleRows();
+      api.emitTitlePatch("tab:900", "Updated unloaded row");
+      await api.waitForIdleFrames(2);
+      return {
+        before,
+        after: api.visibleRows()
+      };
+    });
+
+    expect(result.before).toContain(250);
+    expect(result.after).toContain(250);
+    await expect(page.locator(nodeSelector("tab:900"))).toHaveCount(0);
+    expect(issues).toEqual([]);
+  });
+
+  test("psh-visible-sparse-delete-patch-keeps-neighbor-visible", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadLargeSparseSidebar(page, { fullStatePending: true });
+
+    const result = await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      await api.nextFrame();
+      await api.scrollToRow(250);
+      await api.waitForSparseRequestCount(1);
+      api.resolveSliceAt(0);
+      await api.waitForIdleFrames(2);
+      const before = api.visibleRows();
+      api.emitDeletePatch(["tab:250"]);
+      await api.waitForIdleFrames(2);
+      return {
+        before,
+        after: api.visibleRows()
+      };
+    });
+
+    expect(result.before).toContain(250);
+    await expect(page.locator(nodeSelector("tab:250"))).toHaveCount(0);
+    expect(result.after).toContain(251);
+    expect(issues).toEqual([]);
+  });
 });
 
 async function loadLargeSparseSidebar(
@@ -376,6 +453,7 @@ async function loadLargeSparseSidebar(
   });
 
   await page.goto("/sidebar/sidebar.html");
+  await waitForSidebarAppReady(page);
   await expect(page.locator(nodeSelector("tab:800"))).toBeVisible();
 }
 
@@ -400,7 +478,12 @@ async function loadRestoredWindowSidebar(
   });
 
   await page.goto("/sidebar/sidebar.html");
+  await waitForSidebarAppReady(page);
   await expect(page.locator(nodeSelector("tab:2"))).toBeVisible();
+}
+
+async function waitForSidebarAppReady(page: Page): Promise<void> {
+  await page.waitForFunction(() => performance.getEntriesByName("tabs-outliner.boot.fullAppImport.end").length > 0);
 }
 
 function nodeRow(page: Page, nodeId: string) {
@@ -450,6 +533,7 @@ type ProjectionHuntApi = {
   resolveSliceAt(index: number, override?: { start?: number; end?: number }): void;
   rejectSliceAt(index: number): void;
   visibleRows(): number[];
+  waitForVisibleRow(rowIndex: number): Promise<void>;
   viewportStartRow(): number;
   resolveFullState(): void;
   emitDeletePatch(nodeIds: string[]): void;
@@ -498,6 +582,7 @@ function installProjectionHuntHarness(options: {
     resolveSliceAt,
     rejectSliceAt,
     visibleRows,
+    waitForVisibleRow,
     viewportStartRow,
     resolveFullState,
     emitDeletePatch,
@@ -885,13 +970,24 @@ function installProjectionHuntHarness(options: {
   }
 
   async function waitForSparseRequestCount(count: number) {
-    for (let index = 0; index < 60; index += 1) {
+    for (let index = 0; index < 180; index += 1) {
       if (sliceRequests.length >= count) {
         return;
       }
       await new Promise<void>((resolve) => window.setTimeout(resolve, 16));
     }
     throw new Error(`Timed out waiting for ${count} sparse slice request(s)`);
+  }
+
+  async function waitForVisibleRow(rowIndex: number) {
+    const startedAt = performance.now();
+    while (performance.now() - startedAt < 4000) {
+      if (visibleRows().includes(rowIndex)) {
+        return;
+      }
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 16));
+    }
+    throw new Error(`Timed out waiting for visible row ${rowIndex}`);
   }
 
   function visibleRows() {

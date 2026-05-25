@@ -1,6 +1,8 @@
 import type {
   RuntimeFactLedger,
   RuntimeSnapshotConfidence,
+  RuntimeTabEvidence,
+  RuntimeTabEvidenceField,
   WindowClosingTabRemovalDecision
 } from "./runtime-facts.js";
 import { projectLiveTabs, runtimeTitleForOutlineTab } from "../model/outline.js";
@@ -43,13 +45,14 @@ export type SnapshotSuspicionInput = {
 };
 
 export type RuntimeEventTabFilterInput = {
-  eventTabs: RuntimeTab[];
+  eventTabs: Array<RuntimeTabEvidence | RuntimeTab>;
   state: OutlineState;
   index: RuntimeStateIndexForReconciliation;
   ledger: RuntimeFactLedger;
 };
 
 export type MissingLiveTabRemovalDecision = "close-outliner-tab" | "delete-tab";
+export type MissingLiveWindowRemovalDecision = "close-window" | "delete-tabs";
 
 export class RuntimeReconciler {
   classifyWindowClosingTabRemoval(
@@ -199,19 +202,26 @@ export class RuntimeReconciler {
     return liveTabNodeWouldChange(node, tab);
   }
 
-  filterEventTabsForReconciliation(input: RuntimeEventTabFilterInput): RuntimeTab[] {
+  filterEventTabsForReconciliation(input: RuntimeEventTabFilterInput): RuntimeTabEvidence[] {
     return input.eventTabs
-      .filter((tab) => !input.ledger.isTabIgnoredForRefresh(tab.id))
-      .filter((tab) => !input.ledger.isWindowIgnoredForRefresh(tab.windowId))
-      .filter((tab) => !this.consumeCommandRestoredTabEvent(input.state, input.index, input.ledger, tab))
-      .filter((tab) => !this.consumeCommandRelocatedStaleTabEvent(input.state, input.index, input.ledger, tab))
-      .filter((tab) => this.tabEventMayChangeState(input.state, input.index, tab));
+      .map((eventTab) => runtimeTabEvidenceFromInput(eventTab, input.ledger))
+      .filter((evidence) => !input.ledger.isTabIgnoredForRefresh(evidence.tab.id))
+      .filter((evidence) => !input.ledger.isWindowIgnoredForRefresh(evidence.tab.windowId))
+      .filter((evidence) => !this.consumeCommandRestoredTabEvent(input.state, input.index, input.ledger, evidence.tab))
+      .filter((evidence) => !this.consumeCommandRelocatedStaleTabEvent(input.state, input.index, input.ledger, evidence.tab))
+      .filter((evidence) => this.tabEventMayChangeState(input.state, input.index, evidence.tab));
   }
 
   eventTabsNeedShapeCorroboration(input: RuntimeEventTabFilterInput): boolean {
-    return input.eventTabs.some((tab) => {
+    return input.eventTabs.map((eventTab) => runtimeTabEvidenceFromInput(eventTab, input.ledger)).some((evidence) => {
+      const tab = evidence.tab;
       const node = indexedLiveTabNodeByRuntimeId(input.state, input.index, tab.id);
-      return Boolean(node && (node.restoredFromClosed === true || input.ledger.hasCommandRestoredTab(tab.id)));
+      return Boolean(node && (
+        tabEvidenceConflictsWithCurrentShape(input.state, input.index, input.ledger, evidence, node) ||
+        node.restoredFromClosed === true ||
+        input.ledger.hasCommandRestoredTab(tab.id) ||
+        input.ledger.isRestoredRuntimeScopeForTab(tab.id)
+      ));
     });
   }
 
@@ -225,6 +235,39 @@ export class RuntimeReconciler {
     }
 
     return "delete-tab";
+  }
+
+  classifyMissingLiveWindowRemoval(
+    state: OutlineState,
+    ledger: RuntimeFactLedger,
+    input: {
+      windowId: number;
+      hasRecentClosedWindowSession: boolean;
+    }
+  ): MissingLiveWindowRemovalDecision {
+    if (input.hasRecentClosedWindowSession) {
+      return "close-window";
+    }
+
+    const scope = ledger.windowScope(input.windowId);
+    if (
+      scope?.provenance === "browserCreated" ||
+      scope?.provenance === "restored" ||
+      scope?.provenance === "saved"
+    ) {
+      return "close-window";
+    }
+
+    const node = liveWindowNodes(state).find((candidate) => candidate.live.windowId === input.windowId);
+    if (!node) {
+      return "delete-tabs";
+    }
+
+    if (!node.runtimeProvenance || node.restoredFromClosed || node.runtimeProvenance === "browserCreated") {
+      return "close-window";
+    }
+
+    return "delete-tabs";
   }
 
   missingLiveTabIdsInOpenWindows(input: MissingLiveTabsInput): number[] {
@@ -247,6 +290,43 @@ export class RuntimeReconciler {
         return relocationEcho?.toWindowId === node.live.windowId && !input.ledger.isWindowIgnoredForRefresh(node.live.windowId);
       })
       .map((node) => node.live.tabId);
+  }
+
+  missingBrowserCreatedWindowIds(input: MissingLiveTabsInput): number[] {
+    const openWindowIds = new Set(input.windows.map((windowInfo) => windowInfo.id));
+    return liveWindowNodes(input.state)
+      .filter((node) =>
+        !openWindowIds.has(node.live.windowId) &&
+        !input.ledger.isWindowIgnoredForRefresh(node.live.windowId) &&
+        input.ledger.isBrowserCreatedRuntimeWindow(node.live.windowId)
+      )
+      .map((node) => node.live.windowId);
+  }
+
+  missingLiveWindowIds(input: MissingLiveTabsInput): number[] {
+    const openWindowIds = new Set(input.windows.map((windowInfo) => windowInfo.id));
+    const openTabIds = new Set(
+      input.windows.flatMap((windowInfo) => windowInfo.tabs ?? []).map((tab) => tab.id)
+    );
+    const liveTabsByWindowId = new Map<number, LiveTabNode[]>();
+    for (const tabNode of liveTabNodes(input.state)) {
+      const tabs = liveTabsByWindowId.get(tabNode.live.windowId) ?? [];
+      tabs.push(tabNode);
+      liveTabsByWindowId.set(tabNode.live.windowId, tabs);
+    }
+
+    return liveWindowNodes(input.state)
+      .filter((node) => {
+        if (openWindowIds.has(node.live.windowId) || input.ledger.isWindowIgnoredForRefresh(node.live.windowId)) {
+          return false;
+        }
+        const tabNodes = liveTabsByWindowId.get(node.live.windowId) ?? [];
+        return tabNodes.every((tabNode) =>
+          !openTabIds.has(tabNode.live.tabId) &&
+          !input.ledger.isTabIgnoredForRefresh(tabNode.live.tabId)
+        );
+      })
+      .map((node) => node.live.windowId);
   }
 
   mismatchedLiveTabIdsInWindows(input: SnapshotSuspicionInput): number[] {
@@ -286,7 +366,6 @@ export class RuntimeReconciler {
         if (
           node &&
           node.live.windowId === tab.windowId &&
-          (node.restoredFromClosed === true || input.ledger.hasCommandRestoredTab(tab.id)) &&
           liveTabNodeWouldChange(node, tab)
         ) {
           suspiciousTabIds.add(tab.id);
@@ -721,6 +800,127 @@ function indexedLiveWindowNodeByRuntimeId(
   return isLiveWindowNode(node) && node.live.windowId === windowId ? node : undefined;
 }
 
+function runtimeTabEvidenceFromInput(
+  eventTab: RuntimeTabEvidence | RuntimeTab,
+  ledger: RuntimeFactLedger
+): RuntimeTabEvidence {
+  if ("tab" in eventTab) {
+    return eventTab;
+  }
+  return {
+    kind: "updated",
+    tab: eventTab,
+    changedFields: new Set<RuntimeTabEvidenceField>([
+      "windowId",
+      "index",
+      "active",
+      "openerTabId",
+      "url",
+      "title",
+      "favIconUrl"
+    ]),
+    confidence: "eventLocal",
+    scopeGeneration: ledger.currentScopeGeneration(),
+    sequence: 0
+  };
+}
+
+function tabEvidenceConflictsWithCurrentShape(
+  state: OutlineState,
+  index: RuntimeStateIndexForReconciliation,
+  ledger: RuntimeFactLedger,
+  evidence: RuntimeTabEvidence,
+  node: LiveTabNode
+): boolean {
+  const acceptedFact = ledger.acceptedTabShapeFact(evidence.tab.id);
+  if (acceptedFact && acceptedFact.scopeGeneration > evidence.scopeGeneration) {
+    return true;
+  }
+
+  if (evidence.kind === "created") {
+    return true;
+  }
+
+  if (node.live.windowId !== evidence.tab.windowId) {
+    return true;
+  }
+
+  if (
+    ledger.tabNeedsShapeCorroboration(evidence.tab.id) &&
+    tabMetadataEvidenceChanged(evidence) &&
+    liveTabNodeWouldChange(node, evidence.tab)
+  ) {
+    return true;
+  }
+
+  if (
+    acceptedFact &&
+    tabMetadataEvidenceChanged(evidence) &&
+    liveTabNodeWouldChange(node, evidence.tab) &&
+    (
+      acceptedFact.windowId !== evidence.tab.windowId ||
+      (acceptedFact.index !== undefined && acceptedFact.index !== evidence.tab.index) ||
+      (acceptedFact.active !== undefined && acceptedFact.active !== evidence.tab.active)
+    )
+  ) {
+    return true;
+  }
+
+  const projectedIndex = projectedRuntimeTabIndex(state, index, evidence.tab.id, evidence.tab.windowId);
+  if (
+    projectedIndex !== undefined &&
+    !evidence.changedFields.has("index") &&
+    evidence.tab.index !== projectedIndex
+  ) {
+    return true;
+  }
+
+  if (!evidence.changedFields.has("active") && evidence.tab.active !== (node.active === true)) {
+    return true;
+  }
+
+  if (!evidence.changedFields.has("title") && evidence.tab.title !== undefined && evidence.tab.title !== node.title) {
+    return true;
+  }
+
+  if (!evidence.changedFields.has("url") && evidence.tab.url !== undefined && evidence.tab.url !== node.url) {
+    return true;
+  }
+
+  if (
+    !evidence.changedFields.has("favIconUrl") &&
+    evidence.tab.favIconUrl !== undefined &&
+    evidence.tab.favIconUrl !== node.favIconUrl
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+function tabMetadataEvidenceChanged(evidence: RuntimeTabEvidence): boolean {
+  return evidence.changedFields.has("title") ||
+    evidence.changedFields.has("url") ||
+    evidence.changedFields.has("favIconUrl");
+}
+
+function projectedRuntimeTabIndex(
+  state: OutlineState,
+  index: RuntimeStateIndexForReconciliation,
+  tabId: number,
+  windowId: number
+): number | undefined {
+  const windowNode = indexedLiveWindowNodeByRuntimeId(state, index, windowId);
+  if (!windowNode) {
+    return undefined;
+  }
+  const projectedIndex = projectLiveTabs(state, windowNode.id).findIndex((tab) =>
+    tab.windowId === windowId &&
+    tab.tabId === tabId
+  );
+  return projectedIndex >= 0 ? projectedIndex : undefined;
+}
+
 function liveTabNodeWouldChange(node: LiveTabNode, tab: RuntimeTab): boolean {
   const nextTitle = runtimeTitleForOutlineTab(node, tab);
   return node.active !== tab.active ||
@@ -745,4 +945,8 @@ function isLiveWindowNode(node: OutlineNode | undefined): node is LiveWindowNode
 
 function liveTabNodes(state: OutlineState): LiveTabNode[] {
   return Object.values(state.nodes).filter(isLiveTabNode);
+}
+
+function liveWindowNodes(state: OutlineState): LiveWindowNode[] {
+  return Object.values(state.nodes).filter(isLiveWindowNode);
 }

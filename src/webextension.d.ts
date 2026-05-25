@@ -1,4 +1,4 @@
-import type { OutlineState, RuntimeTab, RuntimeWindow } from "./model/types.js";
+import type { OutlineState, RuntimeTab, RuntimeWindow, RuntimeWindowState } from "./model/types.js";
 import type { HistoryStatus } from "./background/history.js";
 
 type Listener<T extends (...args: never[]) => unknown> = {
@@ -55,12 +55,11 @@ type WebExtensionDownloadOptions = {
 };
 
 type WebExtensionWindowType = "normal" | "popup" | "panel";
-type WebExtensionWindowState = "normal" | "minimized" | "maximized" | "fullscreen";
 type WebExtensionWindowCreateData = {
   url?: string | string[];
   tabId?: number;
   type?: WebExtensionWindowType;
-  state?: WebExtensionWindowState;
+  state?: RuntimeWindowState;
   focused?: boolean;
   width?: number;
   height?: number;
@@ -114,10 +113,11 @@ type WebExtensionBrowserApi = {
     getCurrent(getInfo?: { populate?: boolean; windowTypes?: string[] }): Promise<RuntimeWindow>;
     get(windowId: number, getInfo?: { populate?: boolean; windowTypes?: string[] }): Promise<RuntimeWindow>;
     getAll(getInfo?: { populate?: boolean; windowTypes?: string[] }): Promise<RuntimeWindow[]>;
-    update(windowId: number, updateInfo: { focused?: boolean }): Promise<RuntimeWindow>;
+    update(windowId: number, updateInfo: { focused?: boolean; state?: RuntimeWindowState }): Promise<RuntimeWindow>;
     remove(windowId: number): Promise<void>;
     create(createData: WebExtensionWindowCreateData): Promise<RuntimeWindow>;
     onFocusChanged: Listener<(windowId: number) => void | Promise<void>>;
+    onBoundsChanged?: Listener<(window: RuntimeWindow) => void | Promise<void>>;
     onRemoved: Listener<(windowId: number) => void | Promise<void>>;
   };
   tabs: {

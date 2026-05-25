@@ -35,7 +35,7 @@ As of 2026-05-17, the broadly applicable lessons from the accepted performance w
 - Sidebar diagnostics are advisory and coalesced so they do not multiply immediate background work after every patch.
 - Compact patch paths preserve important full-render side effects, especially active-tab auto-scroll.
 - Real extension traces are available through `tabsOutlinerProfile` and should be preferred when synthetic profiles do not match manual QA.
-- Runtime trace fix passes now have a hard performance guard: `pnpm perf:runtime-guard` runs budgeted synthetic profiles, and `node scripts/analyze-profile-export.mjs <profile.json>` summarizes in-browser profile exports before accepting fixes that touched hot paths.
+- Runtime trace fix passes now have a hard performance guard: `pnpm perf:runtime-guard` runs budgeted synthetic profiles. `node scripts/analyze-profile-export.mjs <profile.json>` remains optional forensic tooling for fresh current-build in-browser profiles, not a fix acceptance gate.
 - Sidebar projection/hydration fix passes now have a hard performance guard: `pnpm perf:sidebar-projection-guard` fails on startup hover/action/hydration regressions and sparse scroll-away row-window regressions.
 
 Known follow-up, intentionally not tackled before longer naturalistic QA:
@@ -60,7 +60,7 @@ Update this file as you investigate and implement performance improvements.
 
 - Keep the `Progress Log` section current. Add a new dated entry for each meaningful experiment, design decision, implementation step, or surprising finding.
 - Record commands, benchmark shapes, tree sizes, and before/after numbers when available.
-- For correctness hunt fix passes, record the Perf Blast Radius tags, selected `perf:runtime-guard` scenarios, profile-export summary if available, and whether any budget moved.
+- For correctness hunt fix passes, record the Perf Blast Radius tags, selected `perf:runtime-guard` scenarios, and whether any budget moved. Include profile-export notes only when the export was captured from the current build as part of the investigation.
 - For sidebar projection/hydration fix passes, run `pnpm perf:sidebar-projection-guard`. It wraps the startup hover and sparse scroll-away profile loops as a hard gate, so `guardFailures` or `status: discard` fail the command instead of relying on manual JSON review.
 - Preserve prior findings unless they are clearly wrong; if correcting one, add a note explaining why.
 - Prefer red-green TDD for behavior changes, following `AGENTS.md`.
@@ -136,7 +136,7 @@ Use these as starting targets, not hard promises:
 ### 2026-05-24: Runtime Hunt Perf Guardrails
 
 - Added a budgeted `pnpm perf:runtime-guard` process for correctness fix passes. It checks perceived latency and deferred work: first patch/broadcast time, measured command/event time, save-flush-inclusive time, save/broadcast counts, projection work, runtime query work, and stringified MB.
-- Added `scripts/analyze-profile-export.mjs` for real in-browser `tabsOutlinerProfile` exports. On `dist/tabs-outliner-profile-2026-05-24.json` it flags 413 initial snapshot requests, slow `background.state.save`, slow native window/session/focus handlers, and diagnostics churn.
+- Added `scripts/analyze-profile-export.mjs` for real in-browser `tabsOutlinerProfile` exports. It is diagnostic tooling for fresh current-build profiles; historical exports such as `dist/tabs-outliner-profile-2026-05-24.json` are useful context but must not be treated as acceptance evidence for later fixes.
 - The guard uses accepted historical budgets from the performant close/restore/delete/focus/command profiles. Current degraded lifecycle paths are expected to fail full-size budgets until repaired; smoke budgets exist only to verify the guard wiring cheaply.
 
 ### 2026-05-16: Initial Diagnosis
@@ -835,3 +835,9 @@ Use these as starting targets, not hard promises:
 - Change: requesting the initial sidebar tree snapshot now schedules an undo-history warmup on the next macrotask. The warmup reuses a shared in-flight history load, so the first structural command no longer pays the `outlineHistory` storage read when the user interacts after startup.
 - Added `scripts/profile-delete.mjs --warm-history --history-read-delay-ms N` to make this fixed cost measurable. With a synthetic 25ms history read on a 100-tab middle delete, cold command latency was 28ms; after the startup warmup path, command latency was 2ms and first broadcast was 2ms.
 - Verification: `pnpm exec vitest run src/background/controller.test.ts -t "initial tree snapshot|warms undo history"`, `pnpm build`, `node scripts/profile-delete.mjs --tabs 100 --target middle --count 1 --shape wide --history-read-delay-ms 25`, and `node scripts/profile-delete.mjs --tabs 100 --target middle --count 1 --shape wide --history-read-delay-ms 25 --warm-history` passed.
+
+### 2026-05-25: Runtime Window Scope Routing Guard
+
+- Perf blast radius for the RT-187/RT-190 fix was runtime event routing, restore, native close, delete, and refresh. The first implementation rebuilt runtime scopes on no-op refresh and compact command/event patch paths; `pnpm perf:runtime-guard` caught regressions in close, restore, group-live-leaf, and refresh-noop.
+- Accepted shape: scope reconstruction stays on startup/full runtime rebuild paths, while compact paths rely on existing runtime tombstones and command facts. Closed scoped/tombstoned rows still get durable delete journaling without a full node-table scope rebuild.
+- Final `pnpm perf:runtime-guard` passed: close first broadcast 44-47ms, restore first broadcast 18ms, delete first broadcast 15ms, group-live-leaf first broadcast 100ms, move-leaf first broadcast 39ms, and refresh-noop total 98ms. Counters stayed at accepted budgets: no extra saves, broadcasts, full projections, or storage stringify budget movement.

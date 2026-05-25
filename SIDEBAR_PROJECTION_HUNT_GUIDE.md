@@ -24,9 +24,9 @@ Stress the boundary between a partial projected tree and the real sidebar:
 
 Current projection guard baseline after 2026-05-25 guard hardening:
 
-- `pnpm perf:sidebar-projection-guard` passes with startup hover and sparse scroll-away profiles.
-- Projection discovery corpus has 17 `psh-*` scenarios covering rejected/delayed/out-of-order slices, restored single-tab delete cleanup, hover action stability, sparse full-state hydration, sparse patch stability, and partial action policy.
-- Open findings are frozen: `PT-001` (`psh-scroll-rejected-slice-recovers-without-second-user-scroll`), `PT-002` (`psh-stale-covering-window-survives-latest-noncovering-slice`), and `PT-003` (`psh-full-state-broadcast-recovers-after-rejected-slice`). Clone variants instead of mutating these scenarios.
+- `pnpm perf:sidebar-projection-guard` passes with startup hover and sparse scroll-away profiles. Latest fixed-run guard: startup-hover `firstPaintMaxMs=10.4`, `sparseHoverActionButtonsMin=3`, `hydrationActionButtonsMin=5`; startup-scroll-away `missingViewportRowsMax=0`, `rowsVisibleMsMax=8`, `hydrationRequestsMax=0`.
+- Projection discovery corpus has 20 `psh-*` scenarios covering rejected/delayed/out-of-order slices, restored single-tab delete cleanup, hover action stability, sparse full-state hydration, sparse patch stability, and partial action policy.
+- Fixed findings are preserved as regression coverage in the `psh-*` corpus: `PT-001` through `PT-005`. Do not mutate those scenarios directly during discovery; clone variants with new neutral IDs.
 
 Next sparse cells:
 
