@@ -131,9 +131,12 @@ Runtime/model convergence is now handled through an internal fact ledger and rec
 flowchart LR
   Event["Browser event or command"] --> Controller["Controller orchestration"]
   Controller --> Ledger["RuntimeFactLedger"]
-  Controller --> Snapshot["Runtime snapshot or event-local tab"]
-  Ledger --> Reconciler["RuntimeReconciler"]
-  Snapshot --> Reconciler
+  Controller --> Evidence["Runtime snapshot or typed event evidence"]
+  Ledger --> Scope["RuntimeWindowScopeIndex"]
+  Ledger --> Shape["Scoped shape facts"]
+  Scope --> Reconciler["RuntimeReconciler"]
+  Shape --> Reconciler
+  Evidence --> Reconciler
   Reconciler --> Model["outline.ts model functions"]
   Model --> Controller
   Controller --> Sidebar["Patch broadcast"]
@@ -149,12 +152,40 @@ flowchart LR
 - command-owned close/delete guards;
 - tab/window removal tombstones;
 - restored-tab, focus, grouped-tab, and relocated-tab echo protection.
+- runtime-window scopes and scoped shape facts that separate ownership from freshness.
 
 The ledger is not persisted. On background startup, the durable outline and current browser runtime are loaded again, then reconciliation rebuilds the live truth from those sources. The bounded observation history exists for debugging and deterministic trace failures, not as storage state.
 
 There is one deliberately tiny durability exception: [runtime-lifecycle-journal.ts](./src/background/runtime-lifecycle-journal.ts) stores bounded, versioned recovery hints for in-flight user-visible lifecycle commands. It is not a persisted ledger. It records only intent needed to recover `close`, `delete`, `restore`, relocation, and history replay if the background dies after browser side effects but before outline/history persistence. Startup consumes the journal once against a complete `windows.getAll({ populate: true })` snapshot, applies recovery only when runtime evidence confirms the side effect, then clears the entries.
 
 Command handlers begin a ledger transaction before issuing browser-adapter calls. If the browser reports side effects before a command resolves, the controller records those observed facts and later commits or rejects the transaction. Recovery paths use the command plan plus current runtime facts so a rejected command does not resurrect resources that the browser already moved or removed.
+
+### Runtime Window Scopes
+
+[runtime-window-scope.ts](./src/background/runtime-window-scope.ts) is the ownership index for browser windows. Browser listeners remain global, but observations are routed through a scope keyed by `runtimeWindowId` before they are allowed to mutate outline state.
+
+Each scope records:
+
+- the owning outline window node when one exists;
+- live tab node ids by runtime tab id;
+- current tab order, active tab, and window state when known;
+- provenance: `saved`, `restored`, `browserCreated`, or `commandCreated`;
+- lifecycle: `live`, `closing`, or `removed`.
+
+Scopes are ephemeral and reconstructable. Startup and installed state transitions rebuild them from durable outline nodes plus complete runtime snapshots. Unknown runtime windows from a complete snapshot become `browserCreated` candidates; command-created windows are tracked by command provenance; restored windows keep ownership of their original outline node even when the runtime ids changed.
+
+This is intentionally not a per-group browser subscription model. The browser event stream is still one global stream. The scope index answers "which outline owner does this runtime window currently belong to?" and "what provenance/lifecycle policy applies here?" before the reconciler decides whether an event is close, delete, stale echo, metadata update, or shape refresh.
+
+### Runtime Shape Facts
+
+Ownership is not enough. A tab event can route to the correct scope and still carry stale shape. The ledger therefore stores scoped shape facts for tabs and windows:
+
+- `RuntimeTabShapeFact`: runtime tab id, window id, optional index/active/title/url/favicon, source, confidence, scope generation, and observation sequence.
+- `RuntimeWindowShapeFact`: runtime window id, tab order, optional active tab/focus/window state, source, confidence, scope generation, and observation sequence.
+
+`tabs.onUpdated` evidence is field-masked from `changeInfo`; it may update title/url/favicon when those fields are present, but it does not smuggle stale `active` or `index` values from the event tab payload. `tabs.onActivated` is authoritative for active state. `tabs.onMoved` and `tabs.onAttached` are authoritative for location/order only after destination-window evidence is fetched. `tabs.onCreated` for a known tab is treated as a stale echo unless a current snapshot corroborates it.
+
+Dominance is explicit: complete snapshots dominate event-local facts; newer same-scope facts dominate older payloads; newer scope generations dominate stale event evidence from an old ownership/order shape. Conflicting event-local facts trigger corroboration with a complete or current-window snapshot instead of directly rewriting the outline. The common metadata fast path remains cheap when the event is non-conflicting and field-local.
 
 ### Runtime Reconciler
 
@@ -172,13 +203,16 @@ The current reconciler keeps the following rules centralized:
 - Partial snapshots do not delete live resources unless the ledger already knows the resource was removed or command-deleted.
 - Removed tab/window tombstones filter refresh snapshots until a later live state legitimately reintroduces the resource.
 - Stale old-window echoes for command-relocated tabs are denied while the tab still belongs to the command-created destination window.
-- Fresh current-window tab events may update metadata without clearing old-window stale protection.
+- Fresh current-window tab events may update metadata without clearing old-window stale protection, but only through field-level shape facts.
 - Empty runtime windows are not treated as valid live browser windows.
 - Native close classification is based on event shape plus ledger state: `windows.onRemoved` means a window close, while lone `tabs.onRemoved` means a tab deletion unless a matching window close is in flight.
+- `sessions.onChanged` and complete refresh evidence can classify a missing whole window when no `windows.onRemoved` event arrived, using reconstructed scope provenance to preserve browser-created/restored/saved windows as closed.
+- Browser-authored tab moves are structural runtime changes, not stale echoes, when current evidence proves a known tab moved to another runtime window.
+- History replay may change outline structure, but complete current runtime shape wins for surviving live resources unless the replay intentionally deletes, closes, or restores that resource.
 
 The controller still owns orchestration: command dispatch, adapter calls, scheduling, history, patch selection, persistence, and sidebar broadcasts. The intended direction is that more event meaning and command side-effect recovery moves behind the ledger/reconciler boundary, leaving the controller as plumbing rather than the place where runtime truth is inferred.
 
-Current event handlers record native facts through the ledger and receive domain decisions such as "ignore command-owned tab removal," "handle command focus," or "close this runtime window." Event-local tab filtering, missing-live-tab detection, restored-tab classification, and stale-relocation echo filtering live in the reconciler. The remaining controller branches are mostly the effects around those decisions: reading browser snapshots, applying model operations, updating the warm runtime index, recording history, selecting patches, saving, and broadcasting.
+Current event handlers record native facts through the ledger and receive domain decisions such as "ignore command-owned tab removal," "handle command focus," "close this runtime window," or "corroborate this shape before applying it." Event-local tab filtering, missing-live-tab detection, restored/browser-created scope classification, stale-relocation echo filtering, and shape freshness checks live in the ledger/reconciler path. The remaining controller branches are mostly the effects around those decisions: reading browser snapshots, applying model operations, updating the warm runtime index, recording history, selecting patches, saving, and broadcasting.
 
 ## Message And Patch Contract
 
@@ -329,6 +363,14 @@ User-visible updates are broadcast first. Full persistence is deferred and coale
 
 A command can be fast and still feel slow if the browser echoes it with stale or redundant events. Command ownership, browser-event provenance, tombstones, snapshot confidence, and stale-echo protection are explicit ledger/reconciler data so the next event does not trigger an unnecessary snapshot, save, or broadcast.
 
+### Separate Ownership From Freshness
+
+Runtime-window scopes decide which outline owner and lifecycle policy apply to a browser observation. Shape facts decide whether the observation is fresh enough, field-specific enough, and authoritative enough to update browser shape in the outline. Keeping those concepts separate prevents a correctly routed stale event from regressing tab order, active state, metadata, or window ownership.
+
+### Let Current Runtime Shape Survive History Replay
+
+Undo/redo replays Tabs Outliner structure, not a stale browser universe. Before history replay can synchronize browser resources, the controller captures current complete runtime shape; after applying the outline delta, surviving live tabs/windows are overlaid with current runtime ownership, active state, metadata, and provenance. Delete/close/restore replay remains strict, but unrelated browser-created or browser-moved resources are preserved.
+
 ### Keep Runtime Indexes Warm
 
 The runtime index is now a first-class performance structure, not just a convenience cache. Narrow command/native transitions update the existing index from candidate node ids, and generated traces assert that the warm index matches a rebuilt reference after operations. This keeps common echo filtering and focus updates off whole-node-table scans.
@@ -344,6 +386,8 @@ Fast paths are guarded. If a patch would be ambiguous, whole-tree sized, search-
 - `rootIds` order and each `childIds` order define visible outline order.
 - Live tab/window refs should map to current Firefox runtime resources after reconciliation.
 - Closed nodes should keep enough `restore` data to restore by session id or URL fallback.
+- Runtime-window scopes should be reconstructable from durable outline state plus a complete runtime snapshot.
+- Event-local tab payloads should not overwrite unrelated shape fields; field masks and shape fact dominance decide what can change.
 - The cached `RuntimeStateIndex` should remain warm and match the installed state after narrow command/native transitions.
 - Compact patch application must leave sidebar state equivalent to the next full state for the changed surface.
 - `getState` waits for pending background mutations so callers do not hydrate stale state.
@@ -366,7 +410,7 @@ Most behavior changes should move through these layers:
 - v3 incremental saves greatly reduce repeated save cost, but full v3 hydration is still heavier than the old monolithic read. The initial snapshot hides most of that from first paint.
 - Large structural operations such as flattening a huge window can still produce large history and structure deltas.
 - Runtime fast paths cover common tab/window create/update flows, but full reconciliation remains necessary for ambiguous or restore-candidate cases.
-- The runtime fact ledger/reconciler has absorbed command ownership, native event classification, stale-evidence filtering, and missing-live-tab detection. The controller still intentionally owns orchestration-specific branches for adapter calls, history, patching, persistence, and broadcasts.
+- The runtime fact ledger/reconciler/scope path has absorbed command ownership, native event classification, stale-evidence filtering, missing-live-tab detection, scope provenance, and shape freshness. The controller still intentionally owns orchestration-specific branches for adapter calls, history, patching, persistence, and broadcasts.
 - Opener-created runtime tab placement still walks ancestors to validate ownership; an owner-window index would make that path closer to `O(u + k)`.
 - The scheduler lets high-priority commands overtake queued low-priority runtime refreshes, but it does not interrupt work already in flight.
 - Sidebar projection fast paths are intentionally narrow. Search-active, active-row side effects, and non-local structural patches still need stronger projection indexes before they can avoid broader row scans or full projection rebuilds.
