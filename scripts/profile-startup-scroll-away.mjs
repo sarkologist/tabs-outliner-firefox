@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -10,7 +10,7 @@ const rootDir = dirname(dirname(fileURLToPath(import.meta.url)));
 const defaultResultsPath = join(rootDir, "autoresearch/sidebar-startup-scroll-away/results.tsv");
 const testFile = "tests/playwright/sidebar-startup-scroll-away-profile.spec.ts";
 
-const STARTUP_SCROLL_AWAY_RESULTS_TSV_HEADER = [
+export const STARTUP_SCROLL_AWAY_RESULTS_TSV_HEADER = [
   "timestamp",
   "tag",
   "commit",
@@ -29,7 +29,7 @@ const STARTUP_SCROLL_AWAY_RESULTS_TSV_HEADER = [
   "description"
 ].join("\t");
 
-function parseArgs(argv) {
+export function parseArgs(argv) {
   const options = {
     runs: 5,
     tag: `${localDateTag(new Date())}-scroll-away`,
@@ -65,7 +65,7 @@ function parseArgs(argv) {
   return options;
 }
 
-async function runStartupScrollAwayLoop(options) {
+export async function runStartupScrollAwayLoop(options) {
   const results = [];
   for (let runIndex = 0; runIndex < options.runs; runIndex += 1) {
     results.push(await runProfile(runIndex + 1));
@@ -114,7 +114,7 @@ async function runProfile(run) {
   };
 }
 
-function parseProfile(output) {
+export function parseProfile(output) {
   for (const line of output.split(/\r?\n/)) {
     const match = line.match(/^startup-scroll-away (\{.*\})$/);
     if (!match) {
@@ -125,7 +125,7 @@ function parseProfile(output) {
   throw new Error(`Could not find startup-scroll-away profile output:\n${output}`);
 }
 
-function summarize(results) {
+export function summarize(results) {
   const profiles = results.map((result) => result.profile);
   const targetRows = profiles.map((profile) => profile.targetRowIndex).filter(isFiniteNumber);
   const expectedRows = profiles.map((profile) => profile.expectedViewportRows).filter(isFiniteNumber);
@@ -159,7 +159,7 @@ function summarize(results) {
   return summary;
 }
 
-function startupScrollAwayGuardFailures(summary, profiles) {
+export function startupScrollAwayGuardFailures(summary, profiles) {
   const failures = [];
   if (profiles.length !== summary.runs) {
     failures.push("missing scroll-away profile output");
@@ -265,5 +265,14 @@ function tsvCell(value) {
   return String(value).replace(/[\t\r\n]+/g, " ").trim();
 }
 
-const result = await runStartupScrollAwayLoop(parseArgs(process.argv.slice(2)));
-console.log(JSON.stringify(result, null, 2));
+async function main() {
+  const result = await runStartupScrollAwayLoop(parseArgs(process.argv.slice(2)));
+  console.log(JSON.stringify(result, null, 2));
+}
+
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((error) => {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  });
+}

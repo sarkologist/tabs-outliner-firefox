@@ -18,6 +18,7 @@ RUNTIME_TRACE_HUNT_PROFILE=all pnpm trace-hunt:runtime
 RUNTIME_TRACE_HUNT_TRACE_IDS=dh-focus-session-activation-refresh pnpm trace-hunt:runtime
 RUNTIME_TRACE_HUNT_PROFILE=regression RUNTIME_TRACE_HUNT_BATCH_SIZE=50 pnpm trace-hunt:runtime
 pnpm perf:runtime-guard
+pnpm perf:sidebar-projection-guard
 node scripts/analyze-profile-export.mjs dist/tabs-outliner-profile-2026-05-24.json
 ```
 
@@ -83,6 +84,7 @@ Every correctness fix pass needs a **Perf Blast Radius** before findings are mar
 - If controller/model/storage/sidebar projection code changed, review at least one synthetic profile and one in-browser profile-export summary when a real export is available.
 - A finding is not fixed until correctness regression traces and the selected perf guard pass. If correctness requires moving a full save onto an interaction path, redesign it or explicitly record an accepted perf budget movement.
 - Do not promote traces or update `RUNTIME_TRACE_BUGS.md` fixed statuses while the selected perf guard is red.
+- Projection/sidebar fix passes use `pnpm perf:sidebar-projection-guard` instead of relying on ad hoc profile-loop inspection. The guard hard-fails startup hover/action/hydration regressions and sparse scroll-away row-window regressions, with one confirmation retry for browser timing noise.
 
 ## Threat Model
 

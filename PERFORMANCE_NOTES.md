@@ -36,6 +36,7 @@ As of 2026-05-17, the broadly applicable lessons from the accepted performance w
 - Compact patch paths preserve important full-render side effects, especially active-tab auto-scroll.
 - Real extension traces are available through `tabsOutlinerProfile` and should be preferred when synthetic profiles do not match manual QA.
 - Runtime trace fix passes now have a hard performance guard: `pnpm perf:runtime-guard` runs budgeted synthetic profiles, and `node scripts/analyze-profile-export.mjs <profile.json>` summarizes in-browser profile exports before accepting fixes that touched hot paths.
+- Sidebar projection/hydration fix passes now have a hard performance guard: `pnpm perf:sidebar-projection-guard` fails on startup hover/action/hydration regressions and sparse scroll-away row-window regressions.
 
 Known follow-up, intentionally not tackled before longer naturalistic QA:
 
@@ -60,6 +61,7 @@ Update this file as you investigate and implement performance improvements.
 - Keep the `Progress Log` section current. Add a new dated entry for each meaningful experiment, design decision, implementation step, or surprising finding.
 - Record commands, benchmark shapes, tree sizes, and before/after numbers when available.
 - For correctness hunt fix passes, record the Perf Blast Radius tags, selected `perf:runtime-guard` scenarios, profile-export summary if available, and whether any budget moved.
+- For sidebar projection/hydration fix passes, run `pnpm perf:sidebar-projection-guard`. It wraps the startup hover and sparse scroll-away profile loops as a hard gate, so `guardFailures` or `status: discard` fail the command instead of relying on manual JSON review.
 - Preserve prior findings unless they are clearly wrong; if correcting one, add a note explaining why.
 - Prefer red-green TDD for behavior changes, following `AGENTS.md`.
 - For interleaving-heavy controller/sidebar changes, add deterministic tests that cover duplicate events, stale broadcasts, and repeated renders.
@@ -99,6 +101,13 @@ Use these as starting targets, not hard promises:
 - Existing lifecycle behavior must remain intact for browser-native close, outliner close, delete-owned removals, restore, and stale events.
 
 ## Progress Log
+
+### 2026-05-25: Sidebar Projection Perf Guard
+
+- Added `pnpm perf:sidebar-projection-guard` as the hard gate for sidebar projection/hydration fix passes. It wraps the startup hover and sparse scroll-away profile loops, treats `guardFailures` or `status: discard` as command failures, and allows one confirmation retry for browser timing noise.
+- Kept the profile loops as autoresearch tools: they still emit JSON/TSV summaries without becoming hard gates by themselves.
+- While making the guard hard, it exposed an existing sparse scroll-away slip: scroll events were synchronously re-rendering sparse projection rows even when the viewport needed no DOM update. Skipping that scroll-path render for sparse projections restored the smoke guard from `scrollDelayMaxMs=11.1` to `0.3`, with rows still visible within `4.7ms`.
+- Verification: `pnpm perf:sidebar-projection-guard -- --smoke` passed after `pnpm build`.
 
 ### 2026-05-24: Runtime Lifecycle Perf Recovery
 

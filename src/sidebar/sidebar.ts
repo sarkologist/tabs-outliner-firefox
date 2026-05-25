@@ -643,6 +643,7 @@ function requestSparseScrollWindowIfNeeded(): void {
 async function loadSparseScrollWindow(centerRowIndex: number, rowLimit: number, requestId: number): Promise<void> {
   try {
     const response = await requestProjectionSlice(centerRowIndex, rowLimit);
+    await nextAnimationFrame();
     if (requestId !== sparseWindowRequestSequence) {
       if (
         isInitialTreeSnapshot(response) &&
@@ -1073,7 +1074,9 @@ function registerVirtualViewport(): void {
         rows: currentProjection?.rows.length ?? 0
       });
       clearHoverLineScope({ immediate: true, reason: "scroll" });
-      scheduleCurrentRowsRender();
+      if (!currentProjection || !isSparseInitialProjection(currentProjection)) {
+        scheduleCurrentRowsRender();
+      }
       requestSparseScrollWindowIfNeeded();
     },
     { passive: true }

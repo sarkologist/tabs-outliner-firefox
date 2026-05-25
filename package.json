@@ -11,6 +11,7 @@
     "test:soak": "node scripts/run-generated-soak.mjs",
     "test:watch": "vitest",
     "check": "npm run test && npm run build",
+    "perf:sidebar-projection-guard": "pnpm build && node scripts/perf-sidebar-projection-guard.mjs",
     "profile:tab-open": "node scripts/profile-tab-open.mjs",
     "profile:close": "node scripts/profile-close.mjs",
     "profile:delete": "node scripts/profile-delete.mjs",
