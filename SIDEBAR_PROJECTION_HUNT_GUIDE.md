@@ -2,6 +2,8 @@
 
 This guide is the mutation prompt for sidebar projection/hydration discovery. It is separate from runtime reconciliation trace hunting.
 
+Use [SIDEBAR_PROJECTION_HUNT_RUNBOOK.md](./SIDEBAR_PROJECTION_HUNT_RUNBOOK.md) for the procedure, stop rule, commands, and mutation-block accounting.
+
 ## Scope
 
 - Use neutral `psh-*` scenario IDs for discovery.

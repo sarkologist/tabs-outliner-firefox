@@ -4,6 +4,8 @@ This is the self-contained procedure for running a runtime trace hunt. It is wri
 
 Use [RUNTIME_TRACE_HUNT_GUIDE.md](./RUNTIME_TRACE_HUNT_GUIDE.md) as the data source for DSL details, current coverage, sparse cells, and historical sweep notes. Use [RUNTIME_TRACE_BUGS.md](./RUNTIME_TRACE_BUGS.md) only after a corpus run, for dedupe and evidence.
 
+For sidebar projection/hydration hunts, use [SIDEBAR_PROJECTION_HUNT_RUNBOOK.md](./SIDEBAR_PROJECTION_HUNT_RUNBOOK.md) instead. Projection hunts are Playwright harness work around remote slices, sparse rows, and DOM visibility; they do not use the runtime trace DSL or runner.
+
 ## Goal
 
 Find new runtime/model reconciliation bugs by adding or mutating explicit domain traces. A hunt is not a seed sweep and not repeated replay of the same corpus. The runner executes selected traces and records failures; the adversarial work is the agent's active trace design loop around the runner.
