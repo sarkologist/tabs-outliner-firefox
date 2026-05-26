@@ -19,11 +19,11 @@ pnpm perf:sidebar-projection-guard
 ## Last Projection Run
 
 - Completed: 2026-05-26
-- Strategy: continued remote projection hunt after clarifying stop rules, followed by manual-QA repro capture for sparse delete/refill and sparse edit-control regressions
-- Scenario ids: 43 `psh-*` Playwright discovery/regression scenarios
-- Distinct findings recorded: 13
-- Status: `PT-001` through `PT-013` fixed. Discovery stopped after three clean active mutation blocks following `PT-011`; manual QA then found `PT-012` and `PT-013`, which are now frozen as regression coverage.
-- Perf gate: preflight `pnpm perf:sidebar-projection-guard -- --smoke` passed before discovery. Fix pass ran the full projection corpus and hard projection perf gate; both passed.
+- Strategy: edit/history projection hunt after `PT-013`, with proposal-only scouts for remote requests, viewport/DOM behavior, and background/history ordering. Rung 0 covered sparse cut/undo basics, Rung 1 covered redo, missing coverage, broadcast ordering, and drag/drop, Rung 2 combined undo/search-clear/stale scroll timing, and follow-up blocks covered history-status/show-in-tree ordering.
+- Scenario ids: 69 `psh-*` Playwright discovery/regression scenarios
+- Distinct findings recorded: 15
+- Status: `PT-001` through `PT-015` fixed. Discovery stopped after three clean active mutation blocks after `PT-015`; a suspected `PT-016` toolbar undo/show-in-tree issue was retracted after the repro passed and remains passing coverage.
+- Perf gate: preflight `pnpm perf:sidebar-projection-guard -- --smoke` passed before discovery. The `PT-014`/`PT-015` fix pass converted both repros to required-passing tests and the projection corpus passed with 69 scenarios.
 
 ## Fix Analysis
 
@@ -36,10 +36,11 @@ pnpm perf:sidebar-projection-guard
 - `PT-010` and `PT-011`: cleared-search intent is no longer coupled to the last successful search projection. The sidebar remembers the last accepted non-search projection and restores it when a cleared-search or show-in-tree remote projection request is rejected, so stale search chrome does not survive a failed follow-up request.
 - `PT-012`: visible sparse deletes could locally remove enough rows to expose an unpainted viewport tail. The fix invalidates in-flight sparse slices after local tree-structure patches, forces a current-intent viewport refill after applying the compact patch, and treats a successful show-in-tree response that no longer contains the requested node as stale.
 - `PT-013`: sparse hydrating action gating hid edit controls that can safely begin from covered rows. The fix restores Cut and Move to top level for editable sparse rows; Cut marks the row locally and starts full hydration so placement-dependent Paste/drag affordances can recover with whole-tree state.
+- `PT-014` and `PT-015`: sparse and remote projection responses were compared mostly against the last rendered projection, so older responses could still take visible ownership after the user had changed intent through search or clear-search. The fix captures a sidebar-local projection intent for sparse, search, clear-search, and show-in-tree requests; only current-intent responses can replace the visible projection, while stale responses may still merge safe partial node data. Clear-search also asks for the current outline viewport instead of row zero, so recovery does not depend on a later scroll.
 
 ## Finding Index
 
-- Fixed projection findings: `PT-001`, `PT-002`, `PT-003`, `PT-004`, `PT-005`, `PT-006`, `PT-007`, `PT-008`, `PT-009`, `PT-010`, `PT-011`, `PT-012`, `PT-013`
+- Fixed projection findings: `PT-001`, `PT-002`, `PT-003`, `PT-004`, `PT-005`, `PT-006`, `PT-007`, `PT-008`, `PT-009`, `PT-010`, `PT-011`, `PT-012`, `PT-013`, `PT-014`, `PT-015`
 - Open projection findings: none
 
 ### PT-001 rejected sparse slice leaves viewport blank/no retry
@@ -229,3 +230,33 @@ pnpm exec playwright test tests/playwright/sidebar-projection-hunt.spec.ts --gre
 - Actual before fix: the hydrating sparse action gate hid `Cut`, `Paste`, and `Move to top level`; manual QA noticed the send-to-root and cut buttons were gone.
 - Evidence: the frozen Playwright scenarios hover covered row `tab:800` while full hydration is pending. Before the fix, the `Move to top level` and `Cut` buttons were absent, and keyboard cut did not mark the row.
 - Fix: the sparse action gate now hides only placement-dependent `Paste` while partial. `Cut` is available for editable covered rows, marks the sparse row locally, and starts full hydration so paste/drag placement can recover with whole-tree state. `Move to top level` is available because the background can execute it by node id against authoritative state.
+
+### PT-014 stale scroll slice can render under a newer active search query
+
+- Status: fixed
+- Found by: `psh-undo-stale-scroll-response-after-search-keeps-query`
+- Repro:
+
+```sh
+pnpm exec playwright test tests/playwright/sidebar-projection-hunt.spec.ts --grep "psh-undo-stale-scroll-response-after-search-keeps-query" --reporter=list --workers=1
+```
+
+- Expected: after the user starts a search while an older non-search scroll slice is pending, that stale scroll response must not paint normal outline rows under the active search query.
+- Actual: the search input remains `Tab 900`, but the stale non-search scroll slice can make `tab:250` visible.
+- Evidence: the frozen Playwright scenario scrolls to row `250`, starts a keyboard undo, types `Tab 900`, then resolves the older scroll slice before the search slice. The DOM shows the current search query and a normal scroll row at the same time.
+- Fix: sparse slice rendering now requires the captured request intent and returned snapshot query to still match the current search, outline, or show-in-tree intent. The stale non-search response can merge safe node data, but it cannot paint normal outline rows while a search is active.
+
+### PT-015 temporal undo/search-clear stale ordering can leave cleared outline viewport empty
+
+- Status: fixed
+- Found by: `psh-temporal-heat-undo-scroll-search-clear-stale-order`
+- Repro:
+
+```sh
+pnpm exec playwright test tests/playwright/sidebar-projection-hunt.spec.ts --grep "psh-temporal-heat-undo-scroll-search-clear-stale-order" --reporter=list --workers=1
+```
+
+- Expected: after undo, sparse scroll, search, clear-search, stale response, and a compact background patch interleave, the cleared normal outline should stay painted without requiring another scroll.
+- Actual: the search input is cleared and the count returns to normal outline chrome, but the viewport can remain empty.
+- Evidence: the frozen Playwright scenario resolves the search response, clears search, emits a background title patch, resolves stale and current sparse responses in conflicting order, and observes `visibleRows.length === 0`.
+- Fix: clear-search now invalidates stale sparse admissions, accepts only current outline-intent responses, and requests the current outline viewport instead of row zero so the cleared outline remains painted without needing another scroll.

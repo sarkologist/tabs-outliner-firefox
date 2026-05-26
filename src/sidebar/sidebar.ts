@@ -148,9 +148,16 @@ let pendingSparseWindowRequest:
       rowLimit: number;
       query: string;
       retryAttempt: number;
+      intent: ProjectionRequestIntent;
     }
   | undefined;
 const activeTabScrollTracker = createActiveTabScrollTracker();
+
+type ProjectionRequestIntent = {
+  kind: "outline" | "search" | "showInTree";
+  query: string;
+  targetNodeId?: NodeId;
+};
 
 type RenderedProjectionSession = {
   lastNonSearchProjection?: {
@@ -689,10 +696,15 @@ function requestSparseScrollWindowIfNeeded(options: { force?: boolean } = {}): v
   );
   const rowLimit = sparseScrollWindowRowLimit(viewportEndRow - viewportStartRow);
   const query = currentProjection.query;
+  const intent = sparseWindowRequestIntent(query);
+  if (!projectionRequestIntentMatchesCurrent(intent)) {
+    return;
+  }
   if (
     pendingSparseWindowRequest?.centerRowIndex === centerRowIndex &&
     pendingSparseWindowRequest.rowLimit === rowLimit &&
-    pendingSparseWindowRequest.query === query
+    pendingSparseWindowRequest.query === query &&
+    projectionRequestIntentsEqual(pendingSparseWindowRequest.intent, intent)
   ) {
     return;
   }
@@ -706,7 +718,11 @@ function startSparseScrollWindowRequest(
   query: string,
   retryAttempt: number
 ): void {
-  pendingSparseWindowRequest = { centerRowIndex, rowLimit, query, retryAttempt };
+  const intent = sparseWindowRequestIntent(query);
+  if (!projectionRequestIntentMatchesCurrent(intent)) {
+    return;
+  }
+  pendingSparseWindowRequest = { centerRowIndex, rowLimit, query, retryAttempt, intent };
   const requestId = ++sparseWindowRequestSequence;
   const rowHeight = currentRowHeight();
   const viewportRange = currentViewportRowRange(rowHeight);
@@ -718,7 +734,7 @@ function startSparseScrollWindowRequest(
     viewportStartRow: viewportRange.start,
     viewportEndRow: viewportRange.end
   });
-  void loadSparseScrollWindow(centerRowIndex, rowLimit, query, requestId, retryAttempt);
+  void loadSparseScrollWindow(centerRowIndex, rowLimit, query, requestId, retryAttempt, intent);
 }
 
 async function loadSparseScrollWindow(
@@ -726,12 +742,16 @@ async function loadSparseScrollWindow(
   rowLimit: number,
   query: string,
   requestId: number,
-  retryAttempt: number
+  retryAttempt: number,
+  intent: ProjectionRequestIntent
 ): Promise<void> {
   try {
     const response = await requestProjectionSlice(centerRowIndex, rowLimit, query);
     await nextAnimationFrame();
     if (requestId <= sparseWindowStateChangeCutoff) {
+      if (isInitialTreeSnapshot(response) && response.hydrating && snapshotProjectionMatchesRequestIntent(response, intent)) {
+        mergeProjectionSliceSnapshot(response);
+      }
       requestSparseScrollWindowIfNeeded();
       return;
     }
@@ -740,11 +760,17 @@ async function loadSparseScrollWindow(
         isInitialTreeSnapshot(response) &&
         currentProjection &&
         isSparseInitialProjection(currentProjection) &&
+        projectionRequestIntentMatchesCurrent(intent) &&
+        snapshotProjectionMatchesRequestIntent(response, intent) &&
         sparseSnapshotMatchesCurrentProjection(response) &&
         sparseSnapshotIntersectsCurrentViewport(response)
       ) {
         applySparseScrollWindowSnapshot(response);
-      } else if (isInitialTreeSnapshot(response) && response.hydrating) {
+      } else if (
+        isInitialTreeSnapshot(response) &&
+        response.hydrating &&
+        snapshotProjectionMatchesRequestIntent(response, intent)
+      ) {
         mergeProjectionSliceSnapshot(response);
       }
       requestSparseScrollWindowIfNeeded();
@@ -755,6 +781,8 @@ async function loadSparseScrollWindow(
       !isInitialTreeSnapshot(response) ||
       !currentProjection ||
       !isSparseInitialProjection(currentProjection) ||
+      !projectionRequestIntentMatchesCurrent(intent) ||
+      !snapshotProjectionMatchesRequestIntent(response, intent) ||
       !sparseSnapshotMatchesCurrentProjection(response)
     ) {
       pendingSparseWindowRequest = undefined;
@@ -802,6 +830,74 @@ async function requestProjectionSlice(
   });
 }
 
+function currentProjectionRequestIntent(): ProjectionRequestIntent {
+  const query = currentSearchQuery.trim();
+  if (query) {
+    return { kind: "search", query };
+  }
+  if (pendingShowInTreeNodeId) {
+    return { kind: "showInTree", query: "", targetNodeId: pendingShowInTreeNodeId };
+  }
+  return { kind: "outline", query: "" };
+}
+
+function sparseWindowRequestIntent(query: string): ProjectionRequestIntent {
+  const trimmedQuery = query.trim();
+  return trimmedQuery ? { kind: "search", query: trimmedQuery } : { kind: "outline", query: "" };
+}
+
+function remoteSearchRequestIntent(query: string): ProjectionRequestIntent {
+  const trimmedQuery = query.trim();
+  return trimmedQuery ? { kind: "search", query: trimmedQuery } : { kind: "outline", query: "" };
+}
+
+function remoteSearchProjectionRequestWindow(query: string): { centerRowIndex: number; rowLimit: number } {
+  if (query.trim()) {
+    return { centerRowIndex: 0, rowLimit: INITIAL_TREE_SNAPSHOT_ROW_LIMIT };
+  }
+
+  const rowHeight = currentRowHeight();
+  const viewportRange = currentViewportRowRange(rowHeight);
+  const viewportRows = Math.max(1, viewportRange.end - viewportRange.start);
+  const rowLimit = sparseScrollWindowRowLimit(viewportRows);
+  const fallbackProjection = renderedProjectionSession.lastNonSearchProjection?.projection ?? currentProjection;
+  const totalRowCount = fallbackProjection?.totalRowCount ?? fallbackProjection?.rows.length ?? 0;
+  if (totalRowCount <= 0) {
+    return { centerRowIndex: 0, rowLimit };
+  }
+
+  return {
+    centerRowIndex: Math.max(
+      0,
+      Math.min(totalRowCount - 1, Math.floor((viewportRange.start + viewportRange.end - 1) / 2))
+    ),
+    rowLimit
+  };
+}
+
+function remoteShowInTreeRequestIntent(nodeId: NodeId): ProjectionRequestIntent {
+  return { kind: "showInTree", query: "", targetNodeId: nodeId };
+}
+
+function projectionRequestIntentMatchesCurrent(intent: ProjectionRequestIntent): boolean {
+  return projectionRequestIntentsEqual(intent, currentProjectionRequestIntent());
+}
+
+function projectionRequestIntentsEqual(left: ProjectionRequestIntent, right: ProjectionRequestIntent): boolean {
+  return (
+    left.kind === right.kind &&
+    normalizeSearchQuery(left.query) === normalizeSearchQuery(right.query) &&
+    left.targetNodeId === right.targetNodeId
+  );
+}
+
+function snapshotProjectionMatchesRequestIntent(
+  snapshot: InitialTreeSnapshot,
+  intent: ProjectionRequestIntent
+): boolean {
+  return normalizeSearchQuery(snapshot.projection.query) === normalizeSearchQuery(intent.query);
+}
+
 function sparseScrollWindowRowLimit(viewportRows: number): number {
   const requestedRows = Math.ceil(viewportRows + SPARSE_SCROLL_WINDOW_OVERSCAN_ROWS * 2 + 1);
   return Math.max(1, Math.min(INITIAL_TREE_SNAPSHOT_ROW_LIMIT, requestedRows));
@@ -829,7 +925,13 @@ function sparseSnapshotIntersectsCurrentViewport(snapshot: InitialTreeSnapshot):
 }
 
 function sparseSnapshotMatchesCurrentProjection(snapshot: InitialTreeSnapshot): boolean {
-  return Boolean(currentProjection && snapshot.projection.query === currentProjection.query);
+  if (!currentProjection || pendingShowInTreeNodeId) {
+    return false;
+  }
+  return (
+    normalizeSearchQuery(snapshot.projection.query) === normalizeSearchQuery(currentProjection.query) &&
+    normalizeSearchQuery(snapshot.projection.query) === normalizeSearchQuery(currentSearchQuery)
+  );
 }
 
 function currentSparseProjectionCoversViewport(): boolean {
@@ -1544,6 +1646,7 @@ function cancelPendingRemoteSearchProjection(): void {
 function beginRemoteSearchProjectionRequest(): number {
   const requestId = ++remoteSearchRequestSequence;
   sparseWindowRequestSequence += 1;
+  sparseWindowStateChangeCutoff = sparseWindowRequestSequence;
   pendingSparseWindowRequest = undefined;
   return requestId;
 }
@@ -1563,15 +1666,19 @@ async function loadRemoteSearchProjection(
   }
   const requestId = options.requestId ?? beginRemoteSearchProjectionRequest();
   const trimmedQuery = query.trim();
+  const intent = remoteSearchRequestIntent(query);
+  const requestWindow = remoteSearchProjectionRequestWindow(trimmedQuery);
 
   try {
-    const response = await requestProjectionSlice(0, INITIAL_TREE_SNAPSHOT_ROW_LIMIT, trimmedQuery);
+    const response = await requestProjectionSlice(requestWindow.centerRowIndex, requestWindow.rowLimit, trimmedQuery);
     await nextAnimationFrame();
     if (
       requestId !== remoteSearchRequestSequence ||
       query !== currentSearchQuery ||
+      !projectionRequestIntentMatchesCurrent(intent) ||
       currentStateFullyLoaded ||
-      !isInitialTreeSnapshot(response)
+      !isInitialTreeSnapshot(response) ||
+      !snapshotProjectionMatchesRequestIntent(response, intent)
     ) {
       return;
     }
@@ -1583,7 +1690,11 @@ async function loadRemoteSearchProjection(
   } catch (error) {
     if (requestId === remoteSearchRequestSequence) {
       perfTrace.mark("sidebar.remoteSearchProjection.error", { message: commandErrorText(error) });
-      if (!currentSearchQuery.trim() && restoreLastNonSearchProjectionAfterRemoteFailure()) {
+      if (
+        projectionRequestIntentMatchesCurrent(intent) &&
+        intent.kind === "outline" &&
+        restoreLastNonSearchProjectionAfterRemoteFailure()
+      ) {
         return;
       }
       showDiagnosticsNotice(commandErrorText(error), { error: true });
@@ -1594,6 +1705,7 @@ async function loadRemoteSearchProjection(
 async function loadRemoteShowInTreeProjection(nodeId: NodeId): Promise<void> {
   cancelPendingRemoteSearchProjection();
   const requestId = beginRemoteSearchProjectionRequest();
+  const intent = remoteShowInTreeRequestIntent(nodeId);
 
   try {
     const response = await requestProjectionSlice(0, INITIAL_TREE_SNAPSHOT_ROW_LIMIT, "", { targetNodeId: nodeId });
@@ -1601,8 +1713,10 @@ async function loadRemoteShowInTreeProjection(nodeId: NodeId): Promise<void> {
     if (
       requestId !== remoteSearchRequestSequence ||
       currentSearchQuery.trim() ||
+      !projectionRequestIntentMatchesCurrent(intent) ||
       currentStateFullyLoaded ||
-      !isInitialTreeSnapshot(response)
+      !isInitialTreeSnapshot(response) ||
+      !snapshotProjectionMatchesRequestIntent(response, intent)
     ) {
       return;
     }

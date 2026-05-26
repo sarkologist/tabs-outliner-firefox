@@ -5,6 +5,15 @@ type ConsoleIssue = {
   text: string;
 };
 
+type HarnessHistoryStatus = {
+  canUndo: boolean;
+  canRedo: boolean;
+  undoDepth: number;
+  redoDepth: number;
+  undoLabel?: string;
+  redoLabel?: string;
+};
+
 test.describe("sidebar projection hunt", () => {
   test("psh-scroll-rejected-slice-recovers-without-second-user-scroll", async ({ page }) => {
     const issues = collectPageIssues(page);
@@ -347,6 +356,718 @@ test.describe("sidebar projection hunt", () => {
     expect(issues).toEqual([]);
   });
 
+  test("psh-cut-full-hydration-restores-paste-target", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadLargeSparseSidebar(page, { fullStatePending: true });
+
+    await nodeRow(page, "tab:800").hover();
+    await nodeRow(page, "tab:800").getByRole("button", { name: "Cut", exact: true }).click();
+    await expect(page.locator(nodeSelector("tab:800"))).toHaveClass(/is-cut/);
+    await nodeRow(page, "tab:801").hover();
+    await expect(nodeRow(page, "tab:801").getByRole("button", { name: "Paste", exact: true })).toHaveCount(0);
+
+    await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      api.resolveFullState();
+      await api.waitForIdleFrames(6);
+    });
+
+    await nodeRow(page, "tab:801").hover();
+    await nodeRow(page, "tab:801").getByRole("button", { name: "Paste", exact: true }).click();
+
+    await expect(sentCommands(page)).resolves.toEqual([
+      { type: "moveNode", nodeId: "tab:800", parentId: "window:1", index: 800 }
+    ]);
+    await expect(page.locator(nodeSelector("tab:800"))).not.toHaveClass(/is-cut/);
+    expect(issues).toEqual([]);
+  });
+
+  test("psh-cut-full-hydration-history-status-paste-still-sends-move", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadLargeSparseSidebar(page, {
+      fullStatePending: true,
+      historyStatus: { canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "remote edit" }
+    });
+
+    await nodeRow(page, "tab:800").hover();
+    await nodeRow(page, "tab:800").getByRole("button", { name: "Cut", exact: true }).click();
+    await expect(page.locator(nodeSelector("tab:800"))).toHaveClass(/is-cut/);
+
+    await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      api.emitHistoryStatus({ canUndo: true, canRedo: false, undoDepth: 2, redoDepth: 0, undoLabel: "cut source" });
+      api.resolveFullState();
+      await api.waitForIdleFrames(8);
+    });
+
+    await nodeRow(page, "tab:801").hover();
+    await nodeRow(page, "tab:801").getByRole("button", { name: "Paste", exact: true }).click();
+
+    await expect(sentCommands(page)).resolves.toEqual([
+      { type: "moveNode", nodeId: "tab:800", parentId: "window:1", index: 800 }
+    ]);
+    await expect(page.locator(nodeSelector("tab:800"))).not.toHaveClass(/is-cut/);
+    await expect(page.getByRole("button", { name: "Undo", exact: true })).toBeEnabled();
+    expect(issues).toEqual([]);
+  });
+
+  test("psh-cut-node-deleted-before-hydration-clears-cut", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadLargeSparseSidebar(page, { fullStatePending: true });
+
+    await nodeRow(page, "tab:800").hover();
+    await nodeRow(page, "tab:800").getByRole("button", { name: "Cut", exact: true }).click();
+    await expect(page.locator(nodeSelector("tab:800"))).toHaveClass(/is-cut/);
+
+    const result = await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      api.emitDeletePatch(["tab:800"]);
+      await api.waitForIdleFrames(4);
+      return {
+        visibleRows: api.visibleRows(),
+        commands: api.sentCommands()
+      };
+    });
+
+    await expect(page.locator(nodeSelector("tab:800"))).toHaveCount(0);
+    await nodeRow(page, "tab:801").hover();
+    await expect(nodeRow(page, "tab:801").getByRole("button", { name: "Paste", exact: true })).toHaveCount(0);
+    expect(result.visibleRows).toContain(801);
+    expect(result.commands).toEqual([]);
+    expect(issues).toEqual([]);
+  });
+
+  test("psh-undo-during-sparse-window-preserves-viewport", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadLargeSparseSidebar(page, {
+      fullStatePending: true,
+      historyStatus: { canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "sparse edit" }
+    });
+
+    await expect(page.getByRole("button", { name: "Undo", exact: true })).toBeEnabled();
+    const result = await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      await api.nextFrame();
+      await api.scrollToRow(250);
+      await api.waitForSparseRequestCount(1);
+      api.resolveSliceAt(0);
+      await api.waitForVisibleRow(250);
+      return { before: api.visibleRows() };
+    });
+
+    expect(result.before).toContain(250);
+    await page.getByRole("button", { name: "Undo", exact: true }).click();
+    await page.waitForFunction(() => projectionHuntApi().sentCommands().length === 1);
+
+    const afterUndo = await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      api.emitDeletePatch(Array.from({ length: 28 }, (_value, index) => `tab:${250 + index}`));
+      await api.waitForSparseRequestCount(2);
+      api.resolveSliceAt(0);
+      await api.waitForIdleFrames(4);
+      return {
+        visibleRows: api.visibleRows(),
+        commands: api.sentCommands(),
+        requestCount: api.sparseRequestCount()
+      };
+    });
+
+    expect(afterUndo.commands).toEqual([{ type: "undo" }]);
+    expect(afterUndo.requestCount).toBe(2);
+    expect(afterUndo.visibleRows).toContain(250);
+    expect(afterUndo.visibleRows).not.toContain(249);
+    await expect(page.locator(nodeSelector("tab:250"))).toHaveCount(0);
+    expect(issues).toEqual([]);
+  });
+
+  test("psh-redo-keyboard-during-pending-slice-keeps-intent", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadLargeSparseSidebar(page, {
+      fullStatePending: true,
+      historyStatus: { canUndo: false, canRedo: true, undoDepth: 0, redoDepth: 1, redoLabel: "sparse redo" }
+    });
+
+    await expect(page.getByRole("button", { name: "Redo", exact: true })).toBeEnabled();
+    await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      await api.nextFrame();
+      await api.scrollToRow(250);
+      await api.waitForSparseRequestCount(1);
+    });
+
+    await page.keyboard.press("Control+Shift+Z");
+    await page.waitForFunction(() => projectionHuntApi().sentCommands().length === 1);
+
+    const result = await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      api.resolveSliceAt(0, { start: 700, end: 760 });
+      await api.waitForSparseRequestCount(2);
+      api.resolveSliceAt(0);
+      await api.waitForIdleFrames(4);
+      return {
+        commands: api.sentCommands(),
+        requests: api.projectionRequests(),
+        visibleRows: api.visibleRows()
+      };
+    });
+
+    expect(result.commands).toEqual([{ type: "redo" }]);
+    expect(result.requests).toHaveLength(2);
+    expect(result.visibleRows).toContain(250);
+    await expect(nodeRow(page, "tab:250")).toBeVisible();
+    expect(issues).toEqual([]);
+  });
+
+  test("psh-redo-toolbar-during-pending-slice-keeps-intent", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadLargeSparseSidebar(page, {
+      fullStatePending: true,
+      historyStatus: { canUndo: false, canRedo: true, undoDepth: 0, redoDepth: 1, redoLabel: "toolbar redo" }
+    });
+
+    await expect(page.getByRole("button", { name: "Redo", exact: true })).toBeEnabled();
+    await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      await api.nextFrame();
+      await api.scrollToRow(250);
+      await api.waitForSparseRequestCount(1);
+    });
+
+    await page.getByRole("button", { name: "Redo", exact: true }).click();
+    await page.waitForFunction(() => projectionHuntApi().sentCommands().length === 1);
+
+    const result = await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      api.emitHistoryStatus({ canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "toolbar redo" });
+      api.resolveSliceAt(0, { start: 700, end: 760 });
+      await api.waitForSparseRequestCount(2);
+      api.resolveSliceAt(0);
+      await api.waitForVisibleRow(250);
+      return {
+        commands: api.sentCommands(),
+        requests: api.projectionRequests(),
+        visibleRows: api.visibleRows()
+      };
+    });
+
+    expect(result.commands).toEqual([{ type: "redo" }]);
+    expect(result.requests).toHaveLength(2);
+    expect(result.visibleRows).toContain(250);
+    await expect(page.getByRole("button", { name: "Undo", exact: true })).toBeEnabled();
+    await expect(page.getByRole("button", { name: "Redo", exact: true })).toBeDisabled();
+    await expect(nodeRow(page, "tab:250")).toBeVisible();
+    expect(issues).toEqual([]);
+  });
+
+  test("psh-undo-full-broadcast-beats-stale-scroll-slice", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadLargeSparseSidebar(page, {
+      fullStatePending: true,
+      historyStatus: { canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "sparse edit" }
+    });
+
+    const result = await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      await api.nextFrame();
+      await api.scrollToRow(250);
+      await api.waitForSparseRequestCount(1);
+      return { beforeRequests: api.projectionRequests() };
+    });
+    expect(result.beforeRequests).toHaveLength(1);
+
+    await page.getByRole("button", { name: "Undo", exact: true }).click();
+    await page.waitForFunction(() => projectionHuntApi().sentCommands().length === 1);
+
+    const afterBroadcast = await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      api.emitFullStateBroadcast();
+      await api.waitForVisibleRow(250);
+      const beforeStale = api.visibleRows();
+      api.resolveSliceAt(0, { start: 700, end: 760 });
+      await api.waitForIdleFrames(4);
+      return {
+        beforeStale,
+        afterStale: api.visibleRows(),
+        commands: api.sentCommands(),
+        requests: api.projectionRequests()
+      };
+    });
+
+    expect(afterBroadcast.commands).toEqual([{ type: "undo" }]);
+    expect(afterBroadcast.requests).toHaveLength(1);
+    expect(afterBroadcast.beforeStale).toContain(250);
+    expect(afterBroadcast.afterStale).toContain(250);
+    await expect(nodeRow(page, "tab:250")).toBeVisible();
+    expect(issues).toEqual([]);
+  });
+
+  test("psh-missing-coverage-undo-patch-keeps-row-actions-readonly", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadLargeSparseSidebar(page, {
+      includeCoverage: false,
+      fullStatePending: true,
+      historyStatus: { canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "remote edit" }
+    });
+
+    const row = nodeRow(page, "tab:799");
+    await row.hover();
+    await expect(row.getByRole("button", { name: "Close", exact: true })).toHaveCount(0);
+
+    await page.getByRole("button", { name: "Undo", exact: true }).click();
+    await page.waitForFunction(() => projectionHuntApi().sentCommands().length === 1);
+
+    await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      api.emitTitlePatch("tab:799", "Readonly patched row");
+      await api.waitForIdleFrames(4);
+    });
+
+    await expect(row).toContainText("Readonly patched row");
+    await row.hover();
+    await expect(row.getByRole("button", { name: "Close", exact: true })).toHaveCount(0);
+    await expect(row.getByRole("button", { name: "Move to top level", exact: true })).toHaveCount(0);
+    await expect(sentCommands(page)).resolves.toEqual([{ type: "undo" }]);
+    expect(issues).toEqual([]);
+  });
+
+  test("psh-drag-blocked-while-partial-recovers-after-hydration", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadLargeSparseSidebar(page, { includeCoverage: false, fullStatePending: true });
+
+    await dragAfter(page, "tab:800", "tab:801");
+    const beforeHydration = await page.evaluate(async () => {
+      await projectionHuntApi().waitForIdleFrames(2);
+      return {
+        commands: projectionHuntApi().sentCommands(),
+        visibleRows: projectionHuntApi().visibleRows()
+      };
+    });
+
+    expect(beforeHydration.commands).toEqual([]);
+    expect(beforeHydration.visibleRows).toContain(800);
+
+    await nodeRow(page, "tab:800").hover();
+    await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      api.resolveFullState();
+      await api.waitForIdleFrames(20);
+    });
+    await dragAfter(page, "tab:800", "tab:801");
+    const afterHydration = await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      await api.waitForIdleFrames(2);
+      return {
+        commands: api.sentCommands(),
+        visibleRows: api.visibleRows()
+      };
+    });
+
+    expect(afterHydration.commands).toHaveLength(1);
+    expect(afterHydration.commands[0]).toMatchObject({ type: "moveNode", nodeId: "tab:800" });
+    expect(afterHydration.visibleRows).toContain(800);
+    expect(issues).toEqual([]);
+  });
+
+  test("psh-move-to-root-history-status-stale-slice-keeps-command-and-viewport", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadLargeSparseSidebar(page, {
+      fullStatePending: true,
+      historyStatus: { canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "remote edit" }
+    });
+
+    const row = nodeRow(page, "tab:800");
+    await row.hover();
+    await row.getByRole("button", { name: "Move to top level", exact: true }).click();
+    await page.waitForFunction(() => projectionHuntApi().sentCommands().length === 1);
+
+    const result = await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      await api.scrollToRow(900);
+      await api.waitForSparseRequestCount(1);
+      api.emitHistoryStatus({ canUndo: true, canRedo: false, undoDepth: 2, redoDepth: 0, undoLabel: "move to root" });
+      api.resolveSliceAt(0, { start: 760, end: 840 });
+      await api.waitForSparseRequestCount(2);
+      api.resolveSliceAt(0);
+      await api.waitForVisibleRow(900);
+      return {
+        commands: api.sentCommands(),
+        requests: api.projectionRequests(),
+        visibleRows: api.visibleRows()
+      };
+    });
+
+    expect(result.commands).toEqual([{ type: "moveSubtreeToTopLevel", nodeId: "tab:800" }]);
+    expect(result.requests).toHaveLength(2);
+    expect(result.visibleRows).toContain(900);
+    await expect(nodeRow(page, "tab:900")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Undo", exact: true })).toBeEnabled();
+    expect(issues).toEqual([]);
+  });
+
+  test("psh-drag-after-hydration-baseline-sends-command", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadLargeSparseSidebar(page, { includeCoverage: false, fullStatePending: true });
+
+    await nodeRow(page, "tab:800").hover();
+    await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      api.resolveFullState();
+      await api.waitForIdleFrames(20);
+    });
+    await dragAfter(page, "tab:800", "tab:801");
+
+    await expect(sentCommands(page)).resolves.toHaveLength(1);
+    await expect(sentCommands(page)).resolves.toEqual([
+      expect.objectContaining({ type: "moveNode", nodeId: "tab:800" })
+    ]);
+    expect(issues).toEqual([]);
+  });
+
+  test("psh-drag-after-hydration-history-status-broadcast-keeps-command-and-viewport", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadLargeSparseSidebar(page, {
+      includeCoverage: false,
+      fullStatePending: true,
+      historyStatus: { canUndo: false, canRedo: false, undoDepth: 0, redoDepth: 0 }
+    });
+
+    await nodeRow(page, "tab:800").hover();
+    await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      api.resolveFullState();
+      await api.waitForIdleFrames(20);
+    });
+    await dragAfter(page, "tab:800", "tab:801");
+    await page.waitForFunction(() => projectionHuntApi().sentCommands().length === 1);
+
+    const result = await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      api.emitHistoryStatus({ canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "drag move" });
+      api.emitFullStateBroadcast();
+      await api.waitForIdleFrames(6);
+      return {
+        commands: api.sentCommands(),
+        requests: api.projectionRequests(),
+        visibleRows: api.visibleRows()
+      };
+    });
+
+    expect(result.commands).toHaveLength(1);
+    expect(result.commands[0]).toMatchObject({ type: "moveNode", nodeId: "tab:800" });
+    expect(result.requests).toHaveLength(0);
+    expect(result.visibleRows).toContain(800);
+    await expect(nodeRow(page, "tab:800")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Undo", exact: true })).toBeEnabled();
+    expect(issues).toEqual([]);
+  });
+
+  test("psh-undo-stale-scroll-response-after-search-keeps-query", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadLargeSparseSidebar(page, {
+      fullStatePending: true,
+      historyStatus: { canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "remote edit" }
+    });
+
+    await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      await api.nextFrame();
+      await api.scrollToRow(250);
+      await api.waitForSparseRequestCount(1);
+    });
+    await page.locator("#search").fill("Tab 900");
+    await page.waitForFunction(() => projectionHuntApi().sparseRequestCount() >= 2);
+
+    await page.getByRole("button", { name: "Undo", exact: true }).click();
+    await page.waitForFunction(() => projectionHuntApi().sentCommands().length === 1);
+
+    const result = await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      api.resolveSliceAt(0);
+      await api.waitForIdleFrames(3);
+      const afterStaleScroll = {
+        searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
+        hasScrollRow: Boolean(document.querySelector("[data-node-id='tab:250']")),
+        visibleRows: api.visibleRows()
+      };
+      api.resolveSliceAt(0);
+      await api.waitForIdleFrames(4);
+      return {
+        afterStaleScroll,
+        commands: api.sentCommands(),
+        requests: api.projectionRequests(),
+        searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
+        visibleRows: api.visibleRows(),
+        countText: document.querySelector("#state-count")?.textContent ?? ""
+      };
+    });
+
+    expect(result.commands).toContainEqual({ type: "undo" });
+    expect(result.requests.map((request) => request.query)).toEqual(["", "Tab 900"]);
+    expect(result.afterStaleScroll.searchValue).toBe("Tab 900");
+    expect(result.afterStaleScroll.hasScrollRow).toBe(false);
+    expect(result.searchValue).toBe("Tab 900");
+    expect(result.visibleRows).toContain(1);
+    expect(result.countText).toBe("1 match / 1001 items");
+    await expect(nodeRow(page, "tab:900")).toBeVisible();
+    expect(issues).toEqual([]);
+  });
+
+  test("psh-cut-clear-search-delete-pending-cut-keeps-outline", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadLargeSparseSidebar(page, { fullStatePending: true });
+
+    await nodeRow(page, "tab:800").hover();
+    await nodeRow(page, "tab:800").getByRole("button", { name: "Cut", exact: true }).click();
+    await expect(page.locator(nodeSelector("tab:800"))).toHaveClass(/is-cut/);
+
+    await page.locator("#search").fill("Tab 900");
+    await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      await api.waitForSparseRequestCount(1);
+      api.resolveSliceAt(0);
+      await api.waitForIdleFrames(3);
+    });
+    await expect(nodeRow(page, "tab:900")).toBeVisible();
+
+    await page.locator("#clear-search").click();
+    const result = await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      await api.waitForSparseRequestCount(2);
+      api.emitDeletePatch(["tab:800"]);
+      await api.waitForIdleFrames(2);
+      api.resolveSliceAt(0);
+      await api.waitForIdleFrames(4);
+      return {
+        requests: api.projectionRequests(),
+        commands: api.sentCommands(),
+        searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
+        visibleRows: api.visibleRows(),
+        countText: document.querySelector("#state-count")?.textContent ?? "",
+        cutExists: Boolean(document.querySelector("[data-node-id='tab:800']")),
+        cutMarkers: document.querySelectorAll(".is-cut").length
+      };
+    });
+
+    expect(result.requests.slice(0, 2).map((request) => request.query)).toEqual(["Tab 900", ""]);
+    expect(result.requests.slice(2).every((request) => request.query === "")).toBe(true);
+    expect(result.commands).toEqual([]);
+    expect(result.searchValue).toBe("");
+    expect(result.countText).toMatch(/^100[01] items \/ 0 saved$/);
+    expect(result.visibleRows.length).toBeGreaterThan(0);
+    expect(result.cutExists).toBe(false);
+    expect(result.cutMarkers).toBe(0);
+    expect(issues).toEqual([]);
+  });
+
+  test("psh-temporal-heat-undo-scroll-search-clear-stale-order", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadLargeSparseSidebar(page, {
+      fullStatePending: true,
+      historyStatus: { canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "temporal edit" }
+    });
+
+    await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      await api.nextFrame();
+      await api.scrollToRow(250);
+      await api.waitForSparseRequestCount(1);
+    });
+    await page.locator("#search").fill("Tab 900");
+    await page.waitForFunction(() => projectionHuntApi().sparseRequestCount() >= 2);
+    await page.locator("#clear-search").click();
+    await page.waitForFunction(() => projectionHuntApi().sparseRequestCount() >= 3);
+    await page.getByRole("button", { name: "Undo", exact: true }).click();
+    await page.waitForFunction(() => projectionHuntApi().sentCommands().length === 1);
+
+    const result = await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      api.resolveSliceAt(1);
+      await api.waitForIdleFrames(2);
+      const afterStaleSearch = {
+        searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
+        targetExists: Boolean(document.querySelector("[data-node-id='tab:900']")),
+        visibleRows: api.visibleRows()
+      };
+      api.resolveSliceAt(0, { start: 700, end: 760 });
+      await api.waitForIdleFrames(2);
+      const afterStaleScroll = {
+        searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
+        targetExists: Boolean(document.querySelector("[data-node-id='tab:900']")),
+        visibleRows: api.visibleRows()
+      };
+      api.resolveSliceAt(0);
+      await api.waitForIdleFrames(4);
+      return {
+        afterStaleSearch,
+        afterStaleScroll,
+        commands: api.sentCommands(),
+        requests: api.projectionRequests(),
+        searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
+        visibleRows: api.visibleRows(),
+        countText: document.querySelector("#state-count")?.textContent ?? ""
+      };
+    });
+
+    expect(result.commands).toContainEqual({ type: "undo" });
+    expect(result.requests.slice(0, 3).map((request) => request.query)).toEqual(["", "Tab 900", ""]);
+    expect(result.requests.slice(3).every((request) => request.query === "")).toBe(true);
+    expect(result.afterStaleSearch.searchValue).toBe("");
+    expect(result.afterStaleSearch.targetExists).toBe(false);
+    expect(result.afterStaleScroll.searchValue).toBe("");
+    expect(result.afterStaleScroll.targetExists).toBe(false);
+    expect(result.searchValue).toBe("");
+    expect(result.countText).toBe("1001 items / 0 saved");
+    expect(result.visibleRows.length).toBeGreaterThan(0);
+    expect(issues).toEqual([]);
+  });
+
+  test("psh-undo-history-status-update-while-slice-pending-keeps-viewport", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadLargeSparseSidebar(page, {
+      fullStatePending: true,
+      historyStatus: { canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "pending sparse edit" }
+    });
+
+    await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      await api.nextFrame();
+      await api.scrollToRow(250);
+      await api.waitForSparseRequestCount(1);
+    });
+    await page.getByRole("button", { name: "Undo", exact: true }).click();
+    await page.waitForFunction(() => projectionHuntApi().sentCommands().length === 1);
+
+    const result = await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      api.emitHistoryStatus({ canUndo: false, canRedo: true, undoDepth: 0, redoDepth: 1, redoLabel: "pending sparse edit" });
+      await api.waitForIdleFrames(2);
+      api.resolveSliceAt(0);
+      await api.waitForIdleFrames(4);
+      return {
+        commands: api.sentCommands(),
+        visibleRows: api.visibleRows(),
+        requests: api.projectionRequests()
+      };
+    });
+
+    expect(result.commands).toContainEqual({ type: "undo" });
+    expect(result.requests).toHaveLength(1);
+    expect(result.visibleRows).toContain(250);
+    await expect(page.getByRole("button", { name: "Undo", exact: true })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Redo", exact: true })).toBeEnabled();
+    await expect(nodeRow(page, "tab:250")).toBeVisible();
+    expect(issues).toEqual([]);
+  });
+
+  test("psh-redo-delete-broadcast-during-pending-slice-refills-current-window", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadLargeSparseSidebar(page, {
+      fullStatePending: true,
+      historyStatus: { canUndo: false, canRedo: true, undoDepth: 0, redoDepth: 1, redoLabel: "remote delete" }
+    });
+
+    await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      await api.nextFrame();
+      await api.scrollToRow(250);
+      await api.waitForSparseRequestCount(1);
+      api.resolveSliceAt(0, { start: 250, end: 278 });
+      await api.waitForVisibleRow(250);
+    });
+    await page.getByRole("button", { name: "Redo", exact: true }).click();
+    await page.waitForFunction(() => projectionHuntApi().sentCommands().length === 1);
+
+    const result = await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      api.emitDeletePatch(Array.from({ length: 28 }, (_value, index) => `tab:${250 + index}`));
+      await api.waitForSparseRequestCount(2);
+      api.emitHistoryStatus({ canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "remote delete" });
+      api.resolveSliceAt(0);
+      await api.waitForIdleFrames(4);
+      return {
+        commands: api.sentCommands(),
+        requestCount: api.sparseRequestCount(),
+        visibleRows: api.visibleRows()
+      };
+    });
+
+    expect(result.commands).toEqual([{ type: "redo" }]);
+    expect(result.requestCount).toBe(2);
+    expect(result.visibleRows.length).toBeGreaterThan(0);
+    expect(result.visibleRows).toContain(250);
+    await expect(page.locator(nodeSelector("tab:250"))).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Undo", exact: true })).toBeEnabled();
+    await expect(page.getByRole("button", { name: "Redo", exact: true })).toBeDisabled();
+    expect(issues).toEqual([]);
+  });
+
+  test("psh-cut-undo-delete-broadcast-clears-local-cut-and-keeps-viewport", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadLargeSparseSidebar(page, {
+      fullStatePending: true,
+      historyStatus: { canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "remote edit" }
+    });
+
+    await nodeRow(page, "tab:800").hover();
+    await nodeRow(page, "tab:800").getByRole("button", { name: "Cut", exact: true }).click();
+    await expect(page.locator(nodeSelector("tab:800"))).toHaveClass(/is-cut/);
+
+    await page.getByRole("button", { name: "Undo", exact: true }).click();
+    await page.waitForFunction(() => projectionHuntApi().sentCommands().length === 1);
+
+    const result = await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      api.emitHistoryStatus({ canUndo: false, canRedo: true, undoDepth: 0, redoDepth: 1, redoLabel: "remote edit" });
+      api.emitDeletePatch(["tab:800"]);
+      await api.waitForIdleFrames(4);
+      return {
+        commands: api.sentCommands(),
+        visibleRows: api.visibleRows(),
+        cutMarkers: document.querySelectorAll(".is-cut").length
+      };
+    });
+
+    expect(result.commands).toContainEqual({ type: "undo" });
+    expect(result.visibleRows).toContain(801);
+    expect(result.cutMarkers).toBe(0);
+    await expect(page.locator(nodeSelector("tab:800"))).toHaveCount(0);
+    await nodeRow(page, "tab:801").hover();
+    await expect(nodeRow(page, "tab:801").getByRole("button", { name: "Paste", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Undo", exact: true })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Redo", exact: true })).toBeEnabled();
+    expect(issues).toEqual([]);
+  });
+
+  test("psh-missing-coverage-redo-full-hydration-restores-actions-after-status", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadLargeSparseSidebar(page, {
+      includeCoverage: false,
+      fullStatePending: true,
+      historyStatus: { canUndo: false, canRedo: true, undoDepth: 0, redoDepth: 1, redoLabel: "remote redo" }
+    });
+
+    const row = nodeRow(page, "tab:799");
+    await row.hover();
+    await expect(row.getByRole("button", { name: "Close", exact: true })).toHaveCount(0);
+    await page.getByRole("button", { name: "Redo", exact: true }).click();
+    await page.waitForFunction(() => projectionHuntApi().sentCommands().length === 1);
+
+    await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      api.emitHistoryStatus({ canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "remote redo" });
+      api.resolveFullState();
+      await api.waitForIdleFrames(10);
+    });
+
+    await row.hover();
+    await expect(row.getByRole("button", { name: "Close", exact: true })).toBeVisible();
+    await expect(row.getByRole("button", { name: "Move to top level", exact: true })).toBeVisible();
+    await expect(sentCommands(page)).resolves.toEqual([{ type: "redo" }]);
+    await expect(page.getByRole("button", { name: "Undo", exact: true })).toBeEnabled();
+    await expect(page.getByRole("button", { name: "Redo", exact: true })).toBeDisabled();
+    expect(issues).toEqual([]);
+  });
+
   test("psh-coverage-missing-snapshot-keeps-actions-readonly", async ({ page }) => {
     const issues = collectPageIssues(page);
     await loadLargeSparseSidebar(page, { includeCoverage: false, fullStatePending: true });
@@ -649,8 +1370,9 @@ test.describe("sidebar projection hunt", () => {
       api.resolveSliceAt(0);
       await api.waitForIdleFrames(2);
       api.resolveSliceAt(0);
-      await api.waitForSparseRequestCount(3);
-      api.resolveSliceAt(0);
+      if (api.sparseRequestCount() > 2) {
+        api.resolveSliceAt(0);
+      }
       await api.waitForIdleFrames(3);
 
       return {
@@ -662,7 +1384,7 @@ test.describe("sidebar projection hunt", () => {
     });
 
     expect(result.requests[0]?.query).toBe("Tab 900");
-    expect(result.requests.slice(1).map((request) => request.query)).toEqual(["", ""]);
+    expect(result.requests.slice(1).every((request) => request.query === "")).toBe(true);
     expect(result.searchValue).toBe("");
     expect(result.countText).toBe("1001 items / 0 saved");
     expect(result.visibleRows.length).toBeGreaterThan(0);
@@ -748,6 +1470,51 @@ test.describe("sidebar projection hunt", () => {
     expect(issues.filter((issue) => issue.kind !== "console")).toEqual([]);
   });
 
+  test("psh-clear-search-rejected-after-redo-status-keeps-outline-chrome", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadLargeSparseSidebar(page, {
+      fullStatePending: true,
+      historyStatus: { canUndo: false, canRedo: true, undoDepth: 0, redoDepth: 1, redoLabel: "remote edit" }
+    });
+
+    await page.locator("#search").fill("Tab 900");
+    await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      await api.waitForSparseRequestCount(1);
+      api.resolveSliceAt(0);
+      await api.waitForIdleFrames(3);
+    });
+    await page.locator("#clear-search").click();
+    await page.waitForFunction(() => projectionHuntApi().sparseRequestCount() >= 2);
+    await page.getByRole("button", { name: "Redo", exact: true }).click();
+    await page.waitForFunction(() => projectionHuntApi().sentCommands().length === 1);
+
+    const result = await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      api.emitHistoryStatus({ canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "remote edit" });
+      api.rejectSliceAt(0);
+      await api.waitForIdleFrames(4);
+      return {
+        commands: api.sentCommands(),
+        requests: api.projectionRequests(),
+        searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
+        visibleRows: api.visibleRows(),
+        countText: document.querySelector("#state-count")?.textContent ?? "",
+        targetExists: Boolean(document.querySelector("[data-node-id='tab:900']"))
+      };
+    });
+
+    expect(result.commands).toEqual([{ type: "redo" }]);
+    expect(result.requests.map((request) => request.query)).toEqual(["Tab 900", ""]);
+    expect(result.searchValue).toBe("");
+    expect(result.countText).toBe("1001 items / 0 saved");
+    expect(result.targetExists).toBe(false);
+    expect(result.visibleRows.length).toBeGreaterThan(0);
+    await expect(page.getByRole("button", { name: "Undo", exact: true })).toBeEnabled();
+    await expect(page.getByRole("button", { name: "Redo", exact: true })).toBeDisabled();
+    expect(issues.filter((issue) => issue.kind !== "console")).toEqual([]);
+  });
+
   test("psh-show-in-tree-target-slice-centers-remote-row", async ({ page }) => {
     const issues = collectPageIssues(page);
     await loadLargeSparseSidebar(page, { fullStatePending: true });
@@ -784,6 +1551,258 @@ test.describe("sidebar projection hunt", () => {
     expect(result.visibleRows).toContain(900);
     expect(result.viewportStartRow).toBeGreaterThanOrEqual(880);
     expect(result.viewportStartRow).toBeLessThanOrEqual(920);
+    expect(issues).toEqual([]);
+  });
+
+  test("psh-show-in-tree-undo-status-before-target-slice-keeps-target-intent", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadLargeSparseSidebar(page, {
+      fullStatePending: true,
+      historyStatus: { canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "remote edit" }
+    });
+
+    await page.locator("#search").fill("Tab 900");
+    await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      await api.waitForSparseRequestCount(1);
+      api.resolveSliceAt(0);
+      await api.waitForIdleFrames(3);
+    });
+
+    const row = nodeRow(page, "tab:900");
+    await expect(row).toBeVisible();
+    await row.hover();
+    await row.getByRole("button", { name: "Show in tree", exact: true }).click();
+    await page.waitForFunction(() => projectionHuntApi().sparseRequestCount() >= 2);
+    await expect(page.getByRole("button", { name: "Undo", exact: true })).toBeEnabled();
+    await page.getByRole("button", { name: "Undo", exact: true }).click();
+
+    const result = await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      await api.waitForIdleFrames(4);
+      api.emitHistoryStatus({ canUndo: false, canRedo: true, undoDepth: 0, redoDepth: 1, redoLabel: "remote edit" });
+      await api.waitForIdleFrames(2);
+      api.resolveSliceAt(0);
+      await api.waitForIdleFrames(4);
+      return {
+        commands: api.sentCommands(),
+        requests: api.projectionRequests(),
+        searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
+        visibleRows: api.visibleRows(),
+        viewportStartRow: api.viewportStartRow()
+      };
+    });
+
+    expect(result.commands).toContainEqual({ type: "undo" });
+    expect(result.requests).toContainEqual(expect.objectContaining({ query: "", targetNodeId: "tab:900" }));
+    expect(result.searchValue).toBe("");
+    expect(result.visibleRows).toContain(900);
+    expect(result.viewportStartRow).toBeGreaterThanOrEqual(880);
+    expect(result.viewportStartRow).toBeLessThanOrEqual(920);
+    await expect(page.locator(`${nodeSelector("tab:900")}.is-reveal-highlight`)).toBeVisible();
+    await expect(page.getByRole("button", { name: "Undo", exact: true })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Redo", exact: true })).toBeEnabled();
+    expect(issues).toEqual([]);
+  });
+
+  test("psh-show-in-tree-rejected-target-after-history-status-keeps-outline-painted", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadLargeSparseSidebar(page, {
+      fullStatePending: true,
+      historyStatus: { canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "remote edit" }
+    });
+
+    await page.locator("#search").fill("Tab 900");
+    await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      await api.waitForSparseRequestCount(1);
+      api.resolveSliceAt(0);
+      await api.waitForIdleFrames(3);
+    });
+
+    const row = nodeRow(page, "tab:900");
+    await expect(row).toBeVisible();
+    await row.hover();
+    await row.getByRole("button", { name: "Show in tree", exact: true }).click();
+    await page.waitForFunction(() => projectionHuntApi().sparseRequestCount() >= 2);
+
+    const result = await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      api.emitHistoryStatus({ canUndo: false, canRedo: true, undoDepth: 0, redoDepth: 1, redoLabel: "remote edit" });
+      api.rejectSliceAt(0);
+      await api.waitForIdleFrames(4);
+      return {
+        commands: api.sentCommands(),
+        requests: api.projectionRequests(),
+        searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
+        visibleRows: api.visibleRows(),
+        countText: document.querySelector("#state-count")?.textContent ?? "",
+        hasRevealHighlight: Boolean(document.querySelector(".is-reveal-highlight"))
+      };
+    });
+
+    expect(result.commands).toEqual([{ type: "expandAncestors", nodeId: "tab:900" }]);
+    expect(result.requests).toContainEqual(expect.objectContaining({ query: "", targetNodeId: "tab:900" }));
+    expect(result.searchValue).toBe("");
+    expect(result.countText).toBe("1001 items / 0 saved");
+    expect(result.visibleRows.length).toBeGreaterThan(0);
+    expect(result.hasRevealHighlight).toBe(false);
+    await expect(page.getByRole("button", { name: "Undo", exact: true })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Redo", exact: true })).toBeEnabled();
+    expect(issues.filter((issue) => issue.kind !== "console")).toEqual([]);
+  });
+
+  test("psh-show-in-tree-target-deleted-after-history-status-keeps-outline-painted", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadLargeSparseSidebar(page, {
+      fullStatePending: true,
+      historyStatus: { canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "remote edit" }
+    });
+
+    await page.locator("#search").fill("Tab 900");
+    await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      await api.waitForSparseRequestCount(1);
+      api.resolveSliceAt(0);
+      await api.waitForIdleFrames(3);
+    });
+
+    const row = nodeRow(page, "tab:900");
+    await expect(row).toBeVisible();
+    await row.hover();
+    await row.getByRole("button", { name: "Show in tree", exact: true }).click();
+
+    const result = await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      await api.waitForSparseRequestCount(2);
+      api.emitHistoryStatus({ canUndo: false, canRedo: true, undoDepth: 0, redoDepth: 1, redoLabel: "remote edit" });
+      api.emitDeletePatch(["tab:900"]);
+      await api.waitForIdleFrames(2);
+      api.resolveSliceAt(0);
+      await api.waitForIdleFrames(4);
+      return {
+        commands: api.sentCommands(),
+        requests: api.projectionRequests(),
+        searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
+        visibleRows: api.visibleRows(),
+        targetExists: Boolean(document.querySelector("[data-node-id='tab:900']")),
+        hasRevealHighlight: Boolean(document.querySelector(".is-reveal-highlight"))
+      };
+    });
+
+    expect(result.commands).toEqual([{ type: "expandAncestors", nodeId: "tab:900" }]);
+    expect(result.requests).toContainEqual(expect.objectContaining({ query: "", targetNodeId: "tab:900" }));
+    expect(result.searchValue).toBe("");
+    expect(result.targetExists).toBe(false);
+    expect(result.visibleRows.length).toBeGreaterThan(0);
+    expect(result.hasRevealHighlight).toBe(false);
+    await expect(page.getByRole("button", { name: "Undo", exact: true })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Redo", exact: true })).toBeEnabled();
+    expect(issues).toEqual([]);
+  });
+
+  test("psh-show-in-tree-full-broadcast-after-history-status-keeps-target-intent", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadLargeSparseSidebar(page, {
+      fullStatePending: true,
+      historyStatus: { canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "remote edit" }
+    });
+
+    await page.locator("#search").fill("Tab 900");
+    await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      await api.waitForSparseRequestCount(1);
+      api.resolveSliceAt(0);
+      await api.waitForIdleFrames(3);
+    });
+
+    const row = nodeRow(page, "tab:900");
+    await expect(row).toBeVisible();
+    await row.hover();
+    await row.getByRole("button", { name: "Show in tree", exact: true }).click();
+
+    const result = await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      await api.waitForSparseRequestCount(2);
+      api.emitHistoryStatus({ canUndo: false, canRedo: true, undoDepth: 0, redoDepth: 1, redoLabel: "remote edit" });
+      api.emitFullStateBroadcast();
+      await api.waitForIdleFrames(2);
+      api.resolveSliceAt(0);
+      await api.waitForIdleFrames(4);
+      return {
+        commands: api.sentCommands(),
+        requests: api.projectionRequests(),
+        searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
+        visibleRows: api.visibleRows(),
+        viewportStartRow: api.viewportStartRow(),
+        hasRevealHighlight: Boolean(document.querySelector(".is-reveal-highlight"))
+      };
+    });
+
+    expect(result.commands).toEqual([{ type: "expandAncestors", nodeId: "tab:900" }]);
+    expect(result.requests).toContainEqual(expect.objectContaining({ query: "", targetNodeId: "tab:900" }));
+    expect(result.searchValue).toBe("");
+    expect(result.visibleRows).toContain(900);
+    expect(result.viewportStartRow).toBeGreaterThanOrEqual(880);
+    expect(result.viewportStartRow).toBeLessThanOrEqual(920);
+    expect(result.hasRevealHighlight).toBe(true);
+    await expect(page.getByRole("button", { name: "Undo", exact: true })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Redo", exact: true })).toBeEnabled();
+    expect(issues).toEqual([]);
+  });
+
+  test("psh-show-in-tree-keyboard-undo-before-target-slice-sends-command", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadLargeSparseSidebar(page, {
+      fullStatePending: true,
+      historyStatus: { canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "remote edit" }
+    });
+
+    await page.locator("#search").fill("Tab 900");
+    await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      await api.waitForSparseRequestCount(1);
+      api.resolveSliceAt(0);
+      await api.waitForIdleFrames(3);
+    });
+
+    const row = nodeRow(page, "tab:900");
+    await expect(row).toBeVisible();
+    await row.hover();
+    await row.getByRole("button", { name: "Show in tree", exact: true }).click();
+    await page.waitForFunction(() => projectionHuntApi().sparseRequestCount() >= 2);
+    await row.locator(".node-label").focus();
+    await page.keyboard.press("Control+Z");
+    await page.waitForFunction(() => projectionHuntApi().sentCommands().some((command) => (
+      typeof command === "object" && command !== null && (command as { type?: unknown }).type === "undo"
+    )));
+
+    const result = await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      api.emitHistoryStatus({ canUndo: false, canRedo: true, undoDepth: 0, redoDepth: 1, redoLabel: "remote edit" });
+      api.resolveSliceAt(0);
+      await api.waitForIdleFrames(4);
+      return {
+        commands: api.sentCommands(),
+        requests: api.projectionRequests(),
+        searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
+        visibleRows: api.visibleRows(),
+        viewportStartRow: api.viewportStartRow()
+      };
+    });
+
+    expect(result.commands).toEqual([
+      { type: "expandAncestors", nodeId: "tab:900" },
+      { type: "undo" }
+    ]);
+    expect(result.requests).toContainEqual(expect.objectContaining({ query: "", targetNodeId: "tab:900" }));
+    expect(result.searchValue).toBe("");
+    expect(result.visibleRows).toContain(900);
+    expect(result.viewportStartRow).toBeGreaterThanOrEqual(880);
+    expect(result.viewportStartRow).toBeLessThanOrEqual(920);
+    await expect(page.locator(`${nodeSelector("tab:900")}.is-reveal-highlight`)).toBeVisible();
+    await expect(page.getByRole("button", { name: "Undo", exact: true })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Redo", exact: true })).toBeEnabled();
     expect(issues).toEqual([]);
   });
 
@@ -1029,6 +2048,35 @@ test.describe("sidebar projection hunt", () => {
 
     await expect(nodeRow(page, "tab:900")).toContainText("Tab 900 updated remotely");
     await expect(page.locator("#search")).toHaveValue("Tab 900");
+    expect(issues).toEqual([]);
+  });
+
+  test("psh-search-background-patch-history-status-preserves-results", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadLargeSparseSidebar(page, {
+      fullStatePending: true,
+      historyStatus: { canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "remote edit" }
+    });
+
+    await page.locator("#search").fill("Tab 900");
+    await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      await api.waitForSparseRequestCount(1);
+      api.resolveSliceAt(0);
+      await api.waitForIdleFrames(3);
+      api.emitHistoryStatus({ canUndo: true, canRedo: true, undoDepth: 2, redoDepth: 1, undoLabel: "rename", redoLabel: "rename" });
+      api.emitTitlePatch("tab:900", "Tab 900 history patched");
+      await api.waitForIdleFrames(3);
+      if (api.sparseRequestCount() > 1) {
+        api.resolveSliceAt(0);
+      }
+      await api.waitForIdleFrames(3);
+    });
+
+    await expect(nodeRow(page, "tab:900")).toContainText("Tab 900 history patched");
+    await expect(page.locator("#search")).toHaveValue("Tab 900");
+    await expect(page.getByRole("button", { name: "Undo", exact: true })).toBeEnabled();
+    await expect(page.getByRole("button", { name: "Redo", exact: true })).toBeEnabled();
     expect(issues).toEqual([]);
   });
 
@@ -1290,7 +2338,7 @@ test.describe("sidebar projection hunt", () => {
 
 async function loadLargeSparseSidebar(
   page: Page,
-  options: { fullStatePending?: boolean; includeCoverage?: boolean } = {}
+  options: { fullStatePending?: boolean; includeCoverage?: boolean; historyStatus?: HarnessHistoryStatus } = {}
 ): Promise<void> {
   await page.addInitScript(({ installerSource, harnessOptions }) => {
     const install = (0, eval)(`(${installerSource})`) as typeof installProjectionHuntHarness;
@@ -1304,6 +2352,7 @@ async function loadLargeSparseSidebar(
       activeTabId: 800,
       fullStatePending: Boolean(options.fullStatePending),
       includeCoverage: options.includeCoverage !== false,
+      ...(options.historyStatus ? { historyStatus: options.historyStatus } : {}),
       restoredFixture: false
     }
   });
@@ -1381,6 +2430,37 @@ async function sentCommands(page: Page): Promise<unknown[]> {
   return page.evaluate(() => projectionHuntApi().sentCommands());
 }
 
+async function dragAfter(page: Page, sourceId: string, targetId: string): Promise<void> {
+  const dataTransfer = await page.evaluateHandle(() => new DataTransfer());
+  try {
+    await nodeRow(page, sourceId).dispatchEvent("dragstart", {
+      bubbles: true,
+      cancelable: true,
+      dataTransfer
+    });
+    const clientY = await nodeRow(page, targetId).evaluate((row) => row.getBoundingClientRect().bottom - 1);
+    await nodeRow(page, targetId).dispatchEvent("dragover", {
+      bubbles: true,
+      cancelable: true,
+      clientY,
+      dataTransfer
+    });
+    await nodeRow(page, targetId).dispatchEvent("drop", {
+      bubbles: true,
+      cancelable: true,
+      clientY,
+      dataTransfer
+    });
+    await nodeRow(page, sourceId).dispatchEvent("dragend", {
+      bubbles: true,
+      cancelable: true,
+      dataTransfer
+    });
+  } finally {
+    await dataTransfer.dispose();
+  }
+}
+
 function collectPageIssues(page: Page): ConsoleIssue[] {
   const issues: ConsoleIssue[] = [];
   page.on("console", (message) => {
@@ -1422,6 +2502,7 @@ type ProjectionHuntApi = {
   emitDeletePatch(nodeIds: string[]): void;
   emitTitlePatch(nodeId: string, title: string): void;
   emitFullStateBroadcast(): void;
+  emitHistoryStatus(status: HarnessHistoryStatus): void;
   sentCommands(): unknown[];
   projectionRequests(): Array<{ centerRowIndex: number; rowLimit: number; query: string; targetNodeId?: string }>;
 };
@@ -1451,6 +2532,7 @@ function installProjectionHuntHarness(options: {
   restoredFixture: boolean;
   closedRestoreFixture?: boolean;
   invalidRestoreScope?: boolean;
+  historyStatus?: HarnessHistoryStatus;
 }) {
   const now = 1_700_000_000_000;
   const rowHeight = 18;
@@ -1465,6 +2547,7 @@ function installProjectionHuntHarness(options: {
   let fullState = initialFullState();
   let fullStateResolver: ((value: unknown) => void) | undefined;
   let fullStateResolveQueued = false;
+  let currentHistoryStatus = options.historyStatus ?? { canUndo: false, canRedo: false, undoDepth: 0, redoDepth: 0 };
 
   window.projectionHuntApi = () => ({
     nextFrame,
@@ -1481,6 +2564,7 @@ function installProjectionHuntHarness(options: {
     emitDeletePatch,
     emitTitlePatch,
     emitFullStateBroadcast,
+    emitHistoryStatus,
     sentCommands: () => structuredClone(sentCommands),
     projectionRequests: () => structuredClone(sliceRequests)
   });
@@ -1520,7 +2604,7 @@ function installProjectionHuntHarness(options: {
           return structuredClone(fullState);
         }
         if (type === "getHistoryStatus") {
-          return { type: "historyStatus", canUndo: false, canRedo: false, undoDepth: 0, redoDepth: 0 };
+          return { type: "historyStatus", ...historyStatus() };
         }
         if (
           type === "getDiagnostics" ||
@@ -1614,6 +2698,10 @@ function installProjectionHuntHarness(options: {
     fullStateResolver = undefined;
   }
 
+  function historyStatus(): HarnessHistoryStatus {
+    return currentHistoryStatus;
+  }
+
   function emitDeletePatch(nodeIds: string[]) {
     const previous = structuredClone(fullState);
     for (const nodeId of nodeIds) {
@@ -1640,6 +2728,11 @@ function installProjectionHuntHarness(options: {
 
   function emitFullStateBroadcast() {
     emit({ type: "stateUpdated", state: structuredClone(fullState) });
+  }
+
+  function emitHistoryStatus(status: HarnessHistoryStatus) {
+    currentHistoryStatus = status;
+    emit({ type: "historyStatus", ...status });
   }
 
   function emit(message: unknown) {
