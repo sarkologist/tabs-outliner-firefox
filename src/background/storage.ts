@@ -98,6 +98,33 @@ export type InitialTreeSnapshot = {
   hydrating: boolean;
 };
 
+export type InitialTreeSnapshotOptions = {
+  revision?: number;
+  rowLimit?: number;
+  hydrating?: boolean;
+  centerRowIndex?: number;
+  query?: string;
+};
+
+type InitialTreeProjection = {
+  query: string;
+  rows: InitialTreeRow[];
+  matchingNodeIds: Set<NodeId>;
+  activeTabNodeId?: NodeId;
+  activeTabRowIndex?: number;
+  nodeCount: number;
+  closedCount: number;
+};
+
+export type InitialTreeSnapshotProjector = {
+  snapshotForState(state: OutlineState, options?: InitialTreeSnapshotOptions): InitialTreeSnapshot;
+  clear(): void;
+};
+
+export type InitialTreeSnapshotProjectorOptions = {
+  onProjectionBuilt?: (detail: { query: string; rowCount: number; nodeCount: number; matchCount: number }) => void;
+};
+
 type StateV2Manifest = {
   version: 2;
   revision: number;
@@ -511,11 +538,65 @@ export function outlineStateV3Changes(
 
 export function initialTreeSnapshotForState(
   state: OutlineState,
-  options: { revision?: number; rowLimit?: number; hydrating?: boolean; centerRowIndex?: number; query?: string } = {}
+  options: InitialTreeSnapshotOptions = {}
 ): InitialTreeSnapshot {
-  const revision = options.revision ?? Date.now();
-  const rowLimit = options.rowLimit ?? INITIAL_TREE_SNAPSHOT_ROW_LIMIT;
   const query = normalizeInitialSnapshotQuery(options.query ?? "");
+  return initialTreeSnapshotFromProjection(state, buildInitialTreeProjection(state, query), options);
+}
+
+export function createInitialTreeSnapshotProjector(
+  options: InitialTreeSnapshotProjectorOptions = {}
+): InitialTreeSnapshotProjector {
+  let cachedSearchProjection:
+    | {
+        state: OutlineState;
+        query: string;
+        projection: InitialTreeProjection;
+      }
+    | undefined;
+
+  const projectionForState = (state: OutlineState, rawQuery: string): InitialTreeProjection => {
+    const query = normalizeInitialSnapshotQuery(rawQuery);
+    if (
+      query &&
+      cachedSearchProjection?.state === state &&
+      cachedSearchProjection.query === query
+    ) {
+      return cachedSearchProjection.projection;
+    }
+
+    const projection = buildInitialTreeProjection(state, query);
+    options.onProjectionBuilt?.({
+      query,
+      rowCount: projection.rows.length,
+      nodeCount: projection.nodeCount,
+      matchCount: projection.matchingNodeIds.size
+    });
+    if (query) {
+      cachedSearchProjection = {
+        state,
+        query,
+        projection
+      };
+    }
+    return projection;
+  };
+
+  return {
+    snapshotForState(state: OutlineState, snapshotOptions: InitialTreeSnapshotOptions = {}) {
+      return initialTreeSnapshotFromProjection(
+        state,
+        projectionForState(state, snapshotOptions.query ?? ""),
+        snapshotOptions
+      );
+    },
+    clear() {
+      cachedSearchProjection = undefined;
+    }
+  };
+}
+
+function buildInitialTreeProjection(state: OutlineState, query: string): InitialTreeProjection {
   const allRows: InitialTreeRow[] = [];
   const entries = collectInitialSnapshotOrderEntries(state);
   const matchingNodeIds = new Set<NodeId>();
@@ -593,7 +674,31 @@ export function initialTreeSnapshotForState(
   }
 
   refreshInitialRowStructure(allRows);
-  const rows = initialSnapshotRows(allRows, rowLimit, query ? undefined : activeTabRowIndex, options.centerRowIndex);
+  const nodeValues = Object.values(state.nodes);
+  return {
+    query,
+    rows: allRows,
+    matchingNodeIds,
+    ...(activeTabNodeId ? { activeTabNodeId } : {}),
+    ...(typeof activeTabRowIndex === "number" ? { activeTabRowIndex } : {}),
+    nodeCount: nodeValues.length,
+    closedCount: nodeValues.filter((node) => node.status === "closed").length
+  };
+}
+
+function initialTreeSnapshotFromProjection(
+  state: OutlineState,
+  projection: InitialTreeProjection,
+  options: InitialTreeSnapshotOptions
+): InitialTreeSnapshot {
+  const revision = options.revision ?? Date.now();
+  const rowLimit = options.rowLimit ?? INITIAL_TREE_SNAPSHOT_ROW_LIMIT;
+  const rows = initialSnapshotRows(
+    projection.rows,
+    rowLimit,
+    projection.query ? undefined : projection.activeTabRowIndex,
+    options.centerRowIndex
+  );
   const loadedNodeIds = new Set<NodeId>();
   for (const row of rows) {
     loadedNodeIds.add(row.nodeId);
@@ -610,8 +715,6 @@ export function initialTreeSnapshotForState(
       childIds: node.childIds.filter((childId) => loadedNodeIds.has(childId))
     };
   }
-
-  const nodeValues = Object.values(state.nodes);
   return {
     type: "initialTreeSnapshot",
     version: 1,
@@ -622,19 +725,19 @@ export function initialTreeSnapshotForState(
       nodes: partialNodes
     },
     projection: {
-      query,
-      isSearchActive: Boolean(query),
+      query: projection.query,
+      isSearchActive: Boolean(projection.query),
       rows,
       matchingNodeIds: rows
-        .filter((row) => matchingNodeIds.has(row.nodeId))
+        .filter((row) => projection.matchingNodeIds.has(row.nodeId))
         .map((row) => row.nodeId),
       visibleNodeIds: rows.map((row) => row.nodeId),
-      ...(activeTabNodeId ? { activeTabNodeId } : {}),
-      ...(typeof activeTabRowIndex === "number" ? { activeTabRowIndex } : {}),
-      totalRowCount: allRows.length,
-      nodeCount: nodeValues.length,
-      closedCount: nodeValues.filter((node) => node.status === "closed").length,
-      matchCount: matchingNodeIds.size
+      ...(projection.activeTabNodeId ? { activeTabNodeId: projection.activeTabNodeId } : {}),
+      ...(typeof projection.activeTabRowIndex === "number" ? { activeTabRowIndex: projection.activeTabRowIndex } : {}),
+      totalRowCount: projection.rows.length,
+      nodeCount: projection.nodeCount,
+      closedCount: projection.closedCount,
+      matchCount: projection.matchingNodeIds.size
     },
     coverage,
     hydrating: options.hydrating ?? true

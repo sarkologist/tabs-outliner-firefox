@@ -28,6 +28,7 @@ import { getNormalWindow, getNormalWindows, getNormalWindowsIncludingTabs } from
 import { createStateCache } from "./state-cache.js";
 import {
   INITIAL_TREE_SNAPSHOT_ROW_LIMIT,
+  createInitialTreeSnapshotProjector,
   initialTreeSnapshotForState,
   loadHistory,
   loadInitialTreeSnapshot,
@@ -299,6 +300,16 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   const { api, now = Date.now } = options;
   const adapter = options.adapter ?? createBrowserAdapter(api);
   const perfTrace = createPerformanceTracer("background");
+  const initialTreeSnapshotProjector = createInitialTreeSnapshotProjector({
+    onProjectionBuilt: (detail) => {
+      perfTrace.mark("background.projection.build", {
+        search: Boolean(detail.query),
+        rows: detail.rowCount,
+        nodes: detail.nodeCount,
+        matches: detail.matchCount
+      });
+    }
+  });
   let performanceTracePreferenceLoaded = false;
   const performanceTracePreferenceReady = applyStoredPerformanceTracePreference().finally(() => {
     performanceTracePreferenceLoaded = true;
@@ -1653,12 +1664,18 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       ? Math.floor(message.rowLimit)
       : INITIAL_TREE_SNAPSHOT_ROW_LIMIT;
     const rowLimit = Math.max(1, Math.min(INITIAL_TREE_SNAPSHOT_ROW_LIMIT, requestedRowLimit));
-    const snapshot = initialTreeSnapshotForState(source, {
+    const snapshot = perfTrace.measure("background.projection.slice", {
+      search: typeof message.query === "string" && message.query.trim().length > 0,
       rowLimit,
-      centerRowIndex: message.centerRowIndex,
-      ...(message.query !== undefined ? { query: message.query } : {}),
-      hydrating: true
-    });
+      centerRowIndex: Math.floor(message.centerRowIndex)
+    }, () =>
+      initialTreeSnapshotProjector.snapshotForState(source, {
+        rowLimit,
+        centerRowIndex: message.centerRowIndex,
+        ...(message.query !== undefined ? { query: message.query } : {}),
+        hydrating: true
+      })
+    );
     snapshot.hydrating = initialTreeSnapshotNeedsFullHydration(snapshot);
     return snapshot;
   }
@@ -2968,7 +2985,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
           return false;
         }
         state = fastPath.state;
-        stateCache.replace(state);
+        replaceCachedState(state);
         runtimeIndex = fastPath.index;
         await persistKnownRuntimeFastPathUpdate(fastPath.update, state);
         return true;
@@ -3467,13 +3484,18 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     options: { candidateNodeIds?: readonly NodeId[] | undefined; rebuildRuntimeIndex?: boolean } = {}
   ): void {
     state = next;
-    stateCache.replace(next);
+    replaceCachedState(next);
     if (options.rebuildRuntimeIndex) {
       runtimeIndex = buildRuntimeStateIndex(next);
       runtimeFacts.rebuildWindowScopes(next);
       return;
     }
     runtimeIndex = runtimeIndexForStateTransition(previous, next, runtimeIndex, options.candidateNodeIds);
+  }
+
+  function replaceCachedState(next: OutlineState): void {
+    initialTreeSnapshotProjector.clear();
+    stateCache.replace(next);
   }
 
   async function handleCommandTabActivated(
@@ -3497,7 +3519,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       }
 
       state = current;
-      stateCache.replace(current);
+      replaceCachedState(current);
       runtimeIndex = index;
       await broadcastActiveStateUpdate(activation.updates);
       return true;
@@ -3523,7 +3545,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       }
 
       state = current;
-      stateCache.replace(current);
+      replaceCachedState(current);
       runtimeIndex = index;
       await broadcastActiveStateUpdate(focus.updates);
       return true;

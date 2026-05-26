@@ -11,6 +11,7 @@ import {
   loadStateWithMetadata,
   loadStateV2,
   loadStateV3,
+  createInitialTreeSnapshotProjector,
   initialTreeSnapshotForState,
   outlineStateV2Items,
   outlineStateV3Changes,
@@ -218,6 +219,46 @@ describe("outline state v2 storage", () => {
       "group:closed",
       "tab:hidden",
       "window:10"
+    ]);
+  });
+
+  it("reuses cached query projections for repeated slice windows", () => {
+    const state = makeLargeState(900);
+    const projectionBuilds: Array<{ query: string; rowCount: number }> = [];
+    const projector = createInitialTreeSnapshotProjector({
+      onProjectionBuilt: (detail) => {
+        projectionBuilds.push({
+          query: detail.query,
+          rowCount: detail.rowCount
+        });
+      }
+    });
+
+    const first = projector.snapshotForState(state, {
+      query: "tab",
+      rowLimit: 20,
+      centerRowIndex: 20,
+      hydrating: true
+    });
+    const second = projector.snapshotForState(state, {
+      query: "tab",
+      rowLimit: 20,
+      centerRowIndex: 700,
+      hydrating: true
+    });
+    const third = projector.snapshotForState(state, {
+      query: "tab 7",
+      rowLimit: 20,
+      centerRowIndex: 20,
+      hydrating: true
+    });
+
+    expect(first.projection.rows.some((row) => row.index === 20)).toBe(true);
+    expect(second.projection.rows.some((row) => row.index === 700)).toBe(true);
+    expect(third.projection.query).toBe("tab 7");
+    expect(projectionBuilds).toEqual([
+      { query: "tab", rowCount: 901 },
+      { query: "tab 7", rowCount: 112 }
     ]);
   });
 

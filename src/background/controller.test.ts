@@ -21866,6 +21866,65 @@ describe("background controller lifecycle", () => {
     expect(runtime.api.tabs.query).not.toHaveBeenCalled();
   });
 
+  it("reuses warm search projections across repeated tree slice requests", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      Array.from({ length: 800 }, (_value, index) => ({
+        id: index + 1,
+        windowId: 10,
+        index,
+        active: index === 799,
+        url: `https://example.test/${index + 1}`,
+        title: `Tab ${index + 1}`
+      }))
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    expect(await controller.handleMessage({ type: "setPerformanceTraceEnabled", enabled: true })).toEqual({ ok: true });
+    await controller.ensureState();
+    await controller.handleMessage({ type: "clearPerformanceTrace" });
+
+    const first = await controller.handleMessage({
+      type: "getTreeProjectionSlice",
+      centerRowIndex: 20,
+      rowLimit: 20,
+      query: "tab"
+    }) as { projection?: { rows?: Array<{ index?: number }>; totalRowCount?: number } };
+    const second = await controller.handleMessage({
+      type: "getTreeProjectionSlice",
+      centerRowIndex: 700,
+      rowLimit: 20,
+      query: "tab"
+    }) as { projection?: { rows?: Array<{ index?: number }>; totalRowCount?: number } };
+    const third = await controller.handleMessage({
+      type: "getTreeProjectionSlice",
+      centerRowIndex: 20,
+      rowLimit: 20,
+      query: "tab 7"
+    }) as { projection?: { query?: string; totalRowCount?: number } };
+
+    const trace = await controller.handleMessage({ type: "getPerformanceTrace" }) as {
+      entries?: Array<{ name?: string; detail?: { rows?: number; search?: boolean } }>;
+    };
+    const projectionBuilds = trace.entries?.filter((entry) => entry.name === "background.projection.build") ?? [];
+
+    expect(first.projection?.rows?.some((row) => row.index === 20)).toBe(true);
+    expect(first.projection?.totalRowCount).toBe(801);
+    expect(second.projection?.rows?.some((row) => row.index === 700)).toBe(true);
+    expect(second.projection?.totalRowCount).toBe(801);
+    expect(third.projection?.query).toBe("tab 7");
+    expect(third.projection?.totalRowCount).toBe(112);
+    expect(projectionBuilds.map((entry) => entry.detail)).toEqual([
+      { search: true, rows: 801, nodes: 801, matches: 800 },
+      { search: true, rows: 112, nodes: 801, matches: 111 }
+    ]);
+  });
+
   it("keeps warm initial snapshots hydrating when collapsed descendants are not loaded", async () => {
     const storedState = collapsedHiddenClosedTabState(300);
     const runtime = fakeRuntime(
