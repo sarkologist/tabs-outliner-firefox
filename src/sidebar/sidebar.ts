@@ -3015,6 +3015,11 @@ function handleTreeKeydown(event: KeyboardEvent): void {
   if (shortcutAction && shortcutNodeId) {
     event.preventDefault();
     event.stopPropagation();
+    const shortcutNode = currentState?.nodes[shortcutNodeId];
+    if (!shortcutNode || !canRunHydratingRowAction(shortcutAction, shortcutNode)) {
+      showDiagnosticsNotice("Tree is still loading", { error: true });
+      return;
+    }
     if (shortcutAction === "cut") {
       cutNodeForPaste(shortcutNodeId);
     } else {

@@ -65,6 +65,9 @@ The target is to keep first paint, hover, and scroll-away bounded by sparse snap
   - Covered sparse rows can enter and commit rename while full hydration is still pending.
   - Local edit redraws now re-render the current sparse projection rows instead of invoking the full virtual render path, so no `getState` is needed just to show or clear the rename textbox.
   - Added browser coverage for renaming a covered sparse window during hydration.
+- 2026-05-26: Tightened Phase 4 sparse keyboard command guards.
+  - Cut/paste buttons were already hidden while the sparse projection was partial; keyboard shortcuts now follow the same policy.
+  - Prevented `Accel+X`/`Accel+V` from issuing a local partial-state `moveNode` before full hydration.
 
 ## Verification Log
 
@@ -101,3 +104,9 @@ The target is to keep first paint, hover, and scroll-away bounded by sparse snap
 - 2026-05-26: `pnpm run build`
 - 2026-05-26: `pnpm exec playwright test tests/playwright/sidebar-first-paint.spec.ts --reporter=list`
 - 2026-05-26: `pnpm perf:sidebar-projection-guard` (initial sandbox run failed to bind the local test server; escalated rerun passed)
+- 2026-05-26: `pnpm exec playwright test tests/playwright/sidebar-projection-hunt.spec.ts --grep "psh-cut-paste-shortcuts" --reporter=list` (failed before keyboard sparse action guard)
+- 2026-05-26: `pnpm exec playwright test tests/playwright/sidebar-projection-hunt.spec.ts --grep "psh-cut-paste-shortcuts" --reporter=list`
+- 2026-05-26: `pnpm exec playwright test tests/playwright/sidebar-projection-hunt.spec.ts --reporter=list`
+- 2026-05-26: `pnpm run build`
+- 2026-05-26: `pnpm exec playwright test tests/playwright/sidebar-first-paint.spec.ts --reporter=list`
+- 2026-05-26: `pnpm perf:sidebar-projection-guard` (passed after retry; prior run exceeded the scroll input queue-delay guard)

@@ -260,6 +260,19 @@ test.describe("sidebar projection hunt", () => {
     expect(issues).toEqual([]);
   });
 
+  test("psh-cut-paste-shortcuts-disabled-while-partial", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadLargeSparseSidebar(page, { fullStatePending: true });
+
+    await nodeRow(page, "tab:800").locator(".node-label").focus();
+    await page.keyboard.press("Control+X");
+    await nodeRow(page, "tab:801").locator(".node-label").focus();
+    await page.keyboard.press("Control+V");
+
+    await expect(sentCommands(page)).resolves.toEqual([]);
+    expect(issues).toEqual([]);
+  });
+
   test("psh-coverage-missing-snapshot-keeps-actions-readonly", async ({ page }) => {
     const issues = collectPageIssues(page);
     await loadLargeSparseSidebar(page, { includeCoverage: false, fullStatePending: true });
@@ -656,6 +669,7 @@ function installProjectionHuntHarness(options: {
           type === "closeNode" ||
           type === "deleteNode" ||
           type === "toggleCollapsed" ||
+          type === "moveNode" ||
           type === "wrapNodeInGroup" ||
           type === "renameGroup" ||
           type === "focusNode"
