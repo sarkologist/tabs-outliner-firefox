@@ -1101,8 +1101,8 @@ function registerPortableTreeControls(): void {
   });
 
   importTree?.addEventListener("click", () => {
-    if (hydratingFullState || !currentStateFullyLoaded) {
-      showDiagnosticsNotice("Import unavailable until the full tree loads", { error: true });
+    if (!currentState) {
+      showDiagnosticsNotice("Import unavailable until the tree loads", { error: true });
       return;
     }
     importTreeFile?.click();
@@ -1263,7 +1263,7 @@ async function exportCurrentTree(): Promise<void> {
 }
 
 async function importSelectedTreeFile(): Promise<void> {
-  if (!currentStateFullyLoaded) {
+  if (!currentState) {
     showDiagnosticsNotice("Import unavailable until loaded", { error: true });
     return;
   }
@@ -1694,8 +1694,9 @@ function updateHydrationControls(): void {
     exportTree.title = treeUnavailable ? "Export is available after the tree loads" : "Export tree";
   }
   if (importTree) {
-    importTree.disabled = fullStateUnavailable;
-    importTree.title = fullStateUnavailable ? "Import is available after the full tree loads" : "Import tree";
+    const treeUnavailable = !currentState;
+    importTree.disabled = treeUnavailable;
+    importTree.title = treeUnavailable ? "Import is available after the tree loads" : "Import tree";
   }
 }
 

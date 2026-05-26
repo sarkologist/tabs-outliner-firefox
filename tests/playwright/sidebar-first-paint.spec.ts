@@ -199,7 +199,7 @@ test.describe("sidebar first paint", () => {
     expect(issues).toEqual([]);
   });
 
-  test("exports through the background when a sparse snapshot omits collapsed descendants", async ({ page }) => {
+  test("exports and imports through the background when a sparse snapshot omits collapsed descendants", async ({ page }) => {
     const issues = collectPageIssues(page);
     await page.addInitScript(({ snapshot, fullState }) => {
       const messages: Array<{ type: string; at: number }> = [];
@@ -208,6 +208,7 @@ test.describe("sidebar first paint", () => {
         __sidebarBootMessages?: typeof messages;
         __resolveSidebarGetState?: () => void;
         __lastSidebarDownload?: { filename: string; href: string };
+        __lastSidebarImport?: unknown;
       }, {
         __sidebarBootMessages: messages,
         __resolveSidebarGetState: () => resolveGetState?.(structuredClone(fullState))
@@ -243,6 +244,11 @@ test.describe("sidebar first paint", () => {
                 content: "{\"schema\":\"tabs-outliner-tree\",\"version\":1,\"exportedAt\":\"2026-05-26T00:00:00.000Z\",\"roots\":[]}\n"
               };
             }
+            if (type === "importTree") {
+              (window as typeof window & { __lastSidebarImport?: unknown }).__lastSidebarImport =
+                (message as { tree?: unknown }).tree;
+              return { ok: true };
+            }
             if (
               type === "getDiagnostics" ||
               type === "getPerformanceTrace" ||
@@ -273,7 +279,7 @@ test.describe("sidebar first paint", () => {
     await expect(page.locator(".node[data-node-id='group:hidden']")).toBeVisible();
     await expect(page.locator("#state-count")).toHaveText("103 items / 101 saved");
     await expect(page.locator("#export-tree")).toBeEnabled();
-    await expect(page.locator("#import-tree")).toBeDisabled();
+    await expect(page.locator("#import-tree")).toBeEnabled();
     await page.locator("#export-tree").click();
     await page.waitForFunction(() => {
       const messages = (window as typeof window & { __sidebarBootMessages?: Array<{ type: string }> })
@@ -297,6 +303,55 @@ test.describe("sidebar first paint", () => {
       exportRequests: 1,
       hydrationRequests: 0,
       filename: "tabs-outliner-tree-2026-05-26.json"
+    });
+
+    const importedTree = {
+      schema: "tabs-outliner-tree",
+      version: 1,
+      exportedAt: "2026-05-26T00:00:00.000Z",
+      roots: [
+        {
+          kind: "window",
+          title: "Imported Window",
+          children: [
+            {
+              kind: "tab",
+              title: "Imported Tab",
+              url: "https://imported.example/"
+            }
+          ]
+        }
+      ]
+    };
+    await page.locator("#import-tree-file").setInputFiles({
+      name: "tabs-outliner-tree.json",
+      mimeType: "application/json",
+      buffer: Buffer.from(JSON.stringify(importedTree))
+    });
+    await page.waitForFunction(() => {
+      const messages = (window as typeof window & { __sidebarBootMessages?: Array<{ type: string }> })
+        .__sidebarBootMessages ?? [];
+      return messages.some((message) => message.type === "importTree");
+    });
+
+    const importMetrics = await page.evaluate(() => {
+      const messages = (window as typeof window & { __sidebarBootMessages?: Array<{ type: string }> })
+        .__sidebarBootMessages ?? [];
+      const imported = (window as typeof window & { __lastSidebarImport?: {
+        roots?: Array<{ title?: string; children?: Array<{ title?: string }> }>;
+      } }).__lastSidebarImport;
+      return {
+        importRequests: messages.filter((message) => message.type === "importTree").length,
+        hydrationRequests: messages.filter((message) => message.type === "getState").length,
+        importRootTitle: imported?.roots?.[0]?.title,
+        importTabTitle: imported?.roots?.[0]?.children?.[0]?.title
+      };
+    });
+    expect(importMetrics).toEqual({
+      importRequests: 1,
+      hydrationRequests: 0,
+      importRootTitle: "Imported Window",
+      importTabTitle: "Imported Tab"
     });
     await page.waitForFunction(() => {
       const messages = (window as typeof window & { __sidebarBootMessages?: Array<{ type: string }> })

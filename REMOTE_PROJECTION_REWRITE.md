@@ -48,6 +48,10 @@ The target is to keep first paint, hover, and scroll-away bounded by sparse snap
   - Changed sidebar export to call the background instead of serializing sidebar-local `currentState`.
   - Export is enabled once sparse startup has produced a tree; import/search/full-tree controls still wait for full local hydration.
   - Added controller coverage for authoritative export and Playwright coverage that export works before `getState` hydration.
+- 2026-05-26: Implemented Phase 2, background-backed import readiness.
+  - Kept the existing background `importTree` command as the authoritative mutation path.
+  - Changed sidebar import readiness so a sparse startup tree can submit an import without waiting for `getState`.
+  - Added Playwright coverage that import sends the parsed portable tree before full hydration.
 
 ## Verification Log
 
@@ -55,5 +59,12 @@ The target is to keep first paint, hover, and scroll-away bounded by sparse snap
 - 2026-05-26: `pnpm run build`
 - 2026-05-26: `pnpm exec playwright test tests/playwright/sidebar-first-paint.spec.ts --grep "exports through the background" --reporter=list`
 - 2026-05-26: `pnpm test -- src/background/controller.test.ts`
+- 2026-05-26: `pnpm exec playwright test tests/playwright/sidebar-first-paint.spec.ts --reporter=list`
+- 2026-05-26: `pnpm perf:sidebar-projection-guard`
+- 2026-05-26: `pnpm exec playwright test tests/playwright/sidebar-first-paint.spec.ts --grep "exports through the background" --reporter=list` (failed before Phase 2 gate change)
+- 2026-05-26: `pnpm run build`
+- 2026-05-26: `pnpm exec playwright test tests/playwright/sidebar-first-paint.spec.ts --grep "exports and imports through" --reporter=list`
+- 2026-05-26: `pnpm test -- src/background/controller.test.ts`
+- 2026-05-26: `pnpm run build`
 - 2026-05-26: `pnpm exec playwright test tests/playwright/sidebar-first-paint.spec.ts --reporter=list`
 - 2026-05-26: `pnpm perf:sidebar-projection-guard`
