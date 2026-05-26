@@ -1401,7 +1401,10 @@ async function loadRemoteSearchProjection(
       return;
     }
 
-    applyRemoteProjectionSnapshot(response, { scrollToActive: !trimmedQuery });
+    applyRemoteProjectionSnapshot(response, {
+      scrollToActive: !trimmedQuery,
+      scrollToTop: Boolean(trimmedQuery)
+    });
   } catch (error) {
     if (requestId === remoteSearchRequestSequence) {
       perfTrace.mark("sidebar.remoteSearchProjection.error", { message: commandErrorText(error) });
@@ -1412,7 +1415,7 @@ async function loadRemoteSearchProjection(
 
 function applyRemoteProjectionSnapshot(
   snapshot: InitialTreeSnapshot,
-  options: { scrollToActive?: boolean } = {}
+  options: { scrollToActive?: boolean; scrollToTop?: boolean } = {}
 ): void {
   mergeProjectionSliceSnapshot(snapshot);
   currentProjection = projectionFromInitialTreeSnapshot(snapshot);
@@ -1431,6 +1434,9 @@ function applyRemoteProjectionSnapshot(
     }
     clearDropPreview();
     updateProjectionChrome(currentProjection);
+    if (options.scrollToTop && rootDropSurface) {
+      rootDropSurface.scrollTop = 0;
+    }
     renderSnapshotRows(
       currentProjection,
       options.scrollToActive === undefined ? {} : { scrollToActive: options.scrollToActive }

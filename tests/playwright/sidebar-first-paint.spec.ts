@@ -595,8 +595,8 @@ test.describe("sidebar first paint", () => {
     }, {
       snapshot: fixtureCollapsedPartialSnapshot(100),
       searchSnapshots: [
-        fixtureCollapsedNoMatchSearchSnapshot(100, "hidden 42"),
-        fixtureCollapsedSearchSnapshot(100, 42)
+        fixtureSparseSearchWindowSnapshot("hidden 42", 320, 32, 500),
+        fixtureCollapsedSearchSnapshot(100, 42, { totalRowCount: 500 })
       ]
     });
 
@@ -622,6 +622,9 @@ test.describe("sidebar first paint", () => {
       ).length >= 1;
     });
     await expect(page.locator(".node[data-node-id='hidden:42']")).toHaveCount(0);
+    await page.locator("main").evaluate((element) => {
+      element.scrollTop = 320 * 18;
+    });
 
     const firstSearchRequestCount = await sparseSearchRequestCount(page, "hidden 42");
 
@@ -641,7 +644,7 @@ test.describe("sidebar first paint", () => {
         message.type === "getTreeProjectionSlice" && message.query === "hidden 42"
       ).length > previousCount;
     }, firstSearchRequestCount);
-    await expect(page.locator(".node[data-node-id='hidden:42']")).toBeVisible();
+    await expect(page.locator(".node[data-node-id='hidden:42']")).toBeInViewport();
 
     const metrics = await page.evaluate(() => {
       const messages = (window as typeof window & {
@@ -655,10 +658,9 @@ test.describe("sidebar first paint", () => {
       };
     });
 
-    expect(metrics).toEqual({
-      searchQueries: ["hidden 42", "hidden 42"],
-      hydrationRequests: 0
-    });
+    expect(metrics.hydrationRequests).toBe(0);
+    expect(metrics.searchQueries.every((query) => query === "hidden 42")).toBe(true);
+    expect(metrics.searchQueries.length).toBeGreaterThan(firstSearchRequestCount);
     expect(issues).toEqual([]);
   });
 
@@ -1070,7 +1072,11 @@ function fixtureCollapsedFullState(hiddenTabCount: number) {
   };
 }
 
-function fixtureCollapsedSearchSnapshot(hiddenTabCount: number, matchIndex: number) {
+function fixtureCollapsedSearchSnapshot(
+  hiddenTabCount: number,
+  matchIndex: number,
+  options: { totalRowCount?: number } = {}
+) {
   const now = 1_700_000_000_000;
   const matchNodeId = `hidden:${matchIndex}`;
   return {
@@ -1174,7 +1180,7 @@ function fixtureCollapsedSearchSnapshot(hiddenTabCount: number, matchIndex: numb
       matchingNodeIds: [matchNodeId],
       visibleNodeIds: ["window:1", "group:hidden", matchNodeId],
       activeTabNodeId: "tab:1",
-      totalRowCount: 3,
+      totalRowCount: options.totalRowCount ?? 3,
       nodeCount: hiddenTabCount + 3,
       closedCount: hiddenTabCount + 1,
       matchCount: 1
@@ -1182,7 +1188,29 @@ function fixtureCollapsedSearchSnapshot(hiddenTabCount: number, matchIndex: numb
   };
 }
 
-function fixtureCollapsedNoMatchSearchSnapshot(hiddenTabCount: number, query: string) {
+function fixtureSparseSearchWindowSnapshot(
+  query: string,
+  startRowIndex: number,
+  rowCount: number,
+  totalRowCount: number
+) {
+  const now = 1_700_000_000_000;
+  const rows = Array.from({ length: rowCount }, (_value, index) => {
+    const rowIndex = startRowIndex + index;
+    return {
+      nodeId: `search:${rowIndex}`,
+      depth: 0,
+      index: rowIndex,
+      subtreeEndIndex: rowIndex + 1,
+      childCount: 0,
+      visibleChildCount: 0,
+      expanded: true,
+      searchRevealsCollapsedChildren: false,
+      isSearchMatch: true,
+      isSearchPath: false,
+      insideActiveWindow: true
+    };
+  });
   return {
     type: "initialTreeSnapshot",
     version: 1,
@@ -1190,19 +1218,37 @@ function fixtureCollapsedNoMatchSearchSnapshot(hiddenTabCount: number, query: st
     hydrating: true,
     state: {
       version: 1,
-      rootIds: [],
-      nodes: {}
+      rootIds: rows.map((row) => row.nodeId),
+      nodes: Object.fromEntries(rows.map((row) => [
+        row.nodeId,
+        {
+          id: row.nodeId,
+          kind: "tab",
+          status: "closed",
+          childIds: [],
+          title: `Search result ${row.index}`,
+          url: `https://search.example/${row.index}`,
+          collapsed: false,
+          createdAt: now,
+          updatedAt: now,
+          closedAt: now + row.index,
+          restore: {
+            url: `https://search.example/${row.index}`,
+            title: `Search result ${row.index}`
+          }
+        }
+      ]))
     },
     projection: {
       query,
       isSearchActive: true,
-      rows: [],
-      matchingNodeIds: [],
-      visibleNodeIds: [],
-      totalRowCount: 0,
-      nodeCount: hiddenTabCount + 3,
-      closedCount: hiddenTabCount + 1,
-      matchCount: 0
+      rows,
+      matchingNodeIds: rows.map((row) => row.nodeId),
+      visibleNodeIds: rows.map((row) => row.nodeId),
+      totalRowCount,
+      nodeCount: totalRowCount,
+      closedCount: totalRowCount,
+      matchCount: totalRowCount
     }
   };
 }
