@@ -12,6 +12,7 @@ import { HISTORY_KEY, STATE_KEY, loadStateV2, outlineStateV2Items, outlineStateV
 import { PORTABLE_TREE_SCHEMA } from "../model/portable-tree.js";
 import { runtimeTitleForOutlineTab } from "../model/outline.js";
 import type { OutlineState, RuntimeTab, RuntimeWindow } from "../model/types.js";
+import { PROFILE_STORAGE_KEY } from "../perf/profile.js";
 import { APP_PREFERENCES_STORAGE_KEY, DEFAULT_APP_PREFERENCES } from "../preferences.js";
 import { generatedTraceConfig, generatedTraceTimeoutMs } from "../test/generated-traces.test-support.js";
 
@@ -21305,6 +21306,23 @@ describe("background controller lifecycle", () => {
     expect(await controller.handleMessage({ type: "getPerformanceTrace" })).toMatchObject({
       entries: []
     });
+  });
+
+  it("restores background performance tracing from the profile flag", async () => {
+    const runtime = fakeRuntime([], [], {
+      initialStorage: {
+        [PROFILE_STORAGE_KEY]: true
+      }
+    });
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+
+    await controller.handleMessage({ type: "getState" });
+
+    const snapshot = await controller.handleMessage({ type: "getPerformanceTrace" });
+    expect(snapshot).toMatchObject({
+      enabled: true
+    });
+    expect(traceEntryNames(snapshot)).toContain("background.runtime.message");
   });
 
   it("broadcasts profile start, stop, and reset controls to live sidebars", async () => {

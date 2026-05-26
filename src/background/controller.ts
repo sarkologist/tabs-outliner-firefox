@@ -81,6 +81,7 @@ import { buildOutlineLookup, type OutlineLookup } from "../model/outline-lookup.
 import type { NodeId, OutlineNode, OutlineState, RestoredNode, RuntimeTab, RuntimeWindow } from "../model/types.js";
 import { createPerformanceTracer, type TraceDetail, type TraceSnapshot } from "../perf/trace.js";
 import {
+  PROFILE_STORAGE_KEY,
   isLabeledTraceSnapshot,
   type LabeledTraceSnapshot,
   type PerformanceProfileSnapshot
@@ -285,6 +286,10 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   const { api, now = Date.now } = options;
   const adapter = options.adapter ?? createBrowserAdapter(api);
   const perfTrace = createPerformanceTracer("background");
+  let performanceTracePreferenceLoaded = false;
+  const performanceTracePreferenceReady = applyStoredPerformanceTracePreference().finally(() => {
+    performanceTracePreferenceLoaded = true;
+  });
   const runtimeFacts = new RuntimeFactLedger();
   const runtimeReconciler = new RuntimeReconciler();
 
@@ -629,6 +634,10 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   });
 
   async function handleMessage(message: unknown): Promise<unknown> {
+    if (!performanceTracePreferenceLoaded) {
+      await performanceTracePreferenceReady;
+    }
+
     if (isSidebarPerformanceTraceCollectedMessage(message)) {
       return handleSidebarPerformanceTraceCollected(message);
     }
@@ -4012,6 +4021,30 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     return diagnosticsInFlight;
   }
 
+  async function applyStoredPerformanceTracePreference(): Promise<void> {
+    try {
+      const stored = await api.storage.local.get(PROFILE_STORAGE_KEY);
+      if (stored[PROFILE_STORAGE_KEY] === true) {
+        perfTrace.setEnabled(true);
+        perfTrace.mark("background.profile.enabled.stored");
+      }
+    } catch {
+      // Profile tracing should never block background startup.
+    }
+  }
+
+  async function storePerformanceTracePreference(enabled: boolean): Promise<void> {
+    try {
+      if (enabled) {
+        await api.storage.local.set({ [PROFILE_STORAGE_KEY]: true });
+      } else {
+        await api.storage.local.remove(PROFILE_STORAGE_KEY);
+      }
+    } catch (error) {
+      perfTrace.mark("background.profile.preference.error", { message: errorText(error) });
+    }
+  }
+
   async function handlePerformanceTraceMessage(
     message: PerformanceTraceMessage
   ): Promise<TraceSnapshot | PerformanceProfileSnapshot | { ok: true }> {
@@ -4019,7 +4052,9 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       if (message.enabled) {
         perfTrace.setEnabled(true);
         perfTrace.mark("background.profile.enabled");
+        await storePerformanceTracePreference(true);
       } else {
+        await storePerformanceTracePreference(false);
         perfTrace.mark("background.profile.disabled");
         perfTrace.setEnabled(false);
       }
