@@ -212,6 +212,7 @@ type InitialTreeSnapshotWindowMessage = {
   centerRowIndex: number;
   rowLimit?: number;
   query?: string;
+  targetNodeId?: NodeId;
 };
 
 type OpenSidebarWindowMessage = {
@@ -1667,11 +1668,13 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     const snapshot = perfTrace.measure("background.projection.slice", {
       search: typeof message.query === "string" && message.query.trim().length > 0,
       rowLimit,
-      centerRowIndex: Math.floor(message.centerRowIndex)
+      centerRowIndex: Math.floor(message.centerRowIndex),
+      targetNode: Boolean(message.targetNodeId)
     }, () =>
       initialTreeSnapshotProjector.snapshotForState(source, {
         rowLimit,
         centerRowIndex: message.centerRowIndex,
+        ...(message.targetNodeId !== undefined ? { targetNodeId: message.targetNodeId } : {}),
         ...(message.query !== undefined ? { query: message.query } : {}),
         hydrating: true
       })
@@ -5823,6 +5826,10 @@ function isInitialTreeSnapshotWindowMessage(message: unknown): message is Initia
       ) &&
       typeof (message as { centerRowIndex?: unknown }).centerRowIndex === "number" &&
       Number.isFinite((message as { centerRowIndex?: number }).centerRowIndex) &&
+      (
+        (message as { targetNodeId?: unknown }).targetNodeId === undefined ||
+        typeof (message as { targetNodeId?: unknown }).targetNodeId === "string"
+      ) &&
       (
         (message as { query?: unknown }).query === undefined ||
         typeof (message as { query?: unknown }).query === "string"

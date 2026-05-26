@@ -196,6 +196,7 @@ type TreeProjectionSliceRequest = {
   centerRowIndex: number;
   rowLimit?: number;
   query?: string;
+  targetNodeId?: NodeId;
 };
 
 type OpenSidebarWindowRequest = {
@@ -747,12 +748,18 @@ async function loadSparseScrollWindow(
   }
 }
 
-async function requestProjectionSlice(centerRowIndex: number, rowLimit: number, query = ""): Promise<unknown> {
+async function requestProjectionSlice(
+  centerRowIndex: number,
+  rowLimit: number,
+  query = "",
+  options: { targetNodeId?: NodeId } = {}
+): Promise<unknown> {
   return sendCommand({
     type: "getTreeProjectionSlice",
     centerRowIndex,
     rowLimit,
-    ...(query ? { query } : {})
+    ...(query ? { query } : {}),
+    ...(options.targetNodeId ? { targetNodeId: options.targetNodeId } : {})
   });
 }
 
@@ -1360,14 +1367,18 @@ function isSearchFocusEvent(event: KeyboardEvent): boolean {
   return shortcutMatchesEvent(appPreferences.shortcuts.search, event);
 }
 
-function clearSearchQuery(options: { focus?: boolean } = {}): void {
+function clearSearchQuery(options: { focus?: boolean; targetNodeId?: NodeId } = {}): void {
   currentSearchQuery = "";
   if (searchInput) {
     searchInput.value = "";
   }
   updateSearchControls();
   if (shouldUseRemoteProjectionSearch()) {
-    void loadRemoteSearchProjection(currentSearchQuery);
+    if (options.targetNodeId) {
+      void loadRemoteShowInTreeProjection(options.targetNodeId);
+    } else {
+      void loadRemoteSearchProjection(currentSearchQuery);
+    }
   } else {
     render();
   }
@@ -1477,9 +1488,37 @@ async function loadRemoteSearchProjection(
   }
 }
 
+async function loadRemoteShowInTreeProjection(nodeId: NodeId): Promise<void> {
+  cancelPendingRemoteSearchProjection();
+  const requestId = beginRemoteSearchProjectionRequest();
+
+  try {
+    const response = await requestProjectionSlice(0, INITIAL_TREE_SNAPSHOT_ROW_LIMIT, "", { targetNodeId: nodeId });
+    await nextAnimationFrame();
+    if (
+      requestId !== remoteSearchRequestSequence ||
+      currentSearchQuery.trim() ||
+      currentStateFullyLoaded ||
+      !isInitialTreeSnapshot(response)
+    ) {
+      return;
+    }
+
+    applyRemoteProjectionSnapshot(response, {
+      scrollToActive: false,
+      scrollToPendingShowInTree: true
+    });
+  } catch (error) {
+    if (requestId === remoteSearchRequestSequence) {
+      perfTrace.mark("sidebar.remoteShowInTreeProjection.error", { message: commandErrorText(error) });
+      showDiagnosticsNotice(commandErrorText(error), { error: true });
+    }
+  }
+}
+
 function applyRemoteProjectionSnapshot(
   snapshot: InitialTreeSnapshot,
-  options: { scrollToActive?: boolean; scrollToTop?: boolean } = {}
+  options: { scrollToActive?: boolean; scrollToTop?: boolean; scrollToPendingShowInTree?: boolean } = {}
 ): void {
   mergeProjectionSliceSnapshot(snapshot);
   currentProjection = projectionFromInitialTreeSnapshot(snapshot);
@@ -1501,9 +1540,17 @@ function applyRemoteProjectionSnapshot(
     if (options.scrollToTop && rootDropSurface) {
       rootDropSurface.scrollTop = 0;
     }
+    const scrolledToPendingShowInTree = options.scrollToPendingShowInTree
+      ? scrollToPendingShowInTreeRow(currentProjection)
+      : false;
+    const renderOptions = scrolledToPendingShowInTree
+      ? { scrollToActive: false }
+      : options.scrollToActive === undefined
+        ? {}
+        : { scrollToActive: options.scrollToActive };
     renderSnapshotRows(
       currentProjection,
-      options.scrollToActive === undefined ? {} : { scrollToActive: options.scrollToActive }
+      renderOptions
     );
     revealSidebar();
   });
@@ -3288,7 +3335,7 @@ async function showSearchResultInTree(nodeId: NodeId): Promise<void> {
     return;
   }
 
-  clearSearchQuery();
+  clearSearchQuery({ targetNodeId: nodeId });
 }
 
 function cutNodeForPaste(nodeId: NodeId): void {

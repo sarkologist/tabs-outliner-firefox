@@ -103,6 +103,7 @@ export type InitialTreeSnapshotOptions = {
   rowLimit?: number;
   hydrating?: boolean;
   centerRowIndex?: number;
+  targetNodeId?: NodeId;
   query?: string;
 };
 
@@ -693,11 +694,14 @@ function initialTreeSnapshotFromProjection(
 ): InitialTreeSnapshot {
   const revision = options.revision ?? Date.now();
   const rowLimit = options.rowLimit ?? INITIAL_TREE_SNAPSHOT_ROW_LIMIT;
+  const targetRowIndex = options.targetNodeId
+    ? projection.rows.find((row) => row.nodeId === options.targetNodeId)?.index
+    : undefined;
   const rows = initialSnapshotRows(
     projection.rows,
     rowLimit,
     projection.query ? undefined : projection.activeTabRowIndex,
-    options.centerRowIndex
+    targetRowIndex ?? options.centerRowIndex
   );
   const loadedNodeIds = new Set<NodeId>();
   for (const row of rows) {
