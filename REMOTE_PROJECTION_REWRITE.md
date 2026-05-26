@@ -57,6 +57,10 @@ The target is to keep first paint, hover, and scroll-away bounded by sparse snap
   - Built query-aware initial/projection snapshots from the full background `OutlineState`, including collapsed-match paths.
   - Enabled search once the sparse tree exists; sparse sidebars now request bounded search projections instead of waiting for `getState`.
   - Kept full-hydrated sidebars on the existing local search projection path.
+- 2026-05-26: Fixed sparse search/clear partial-state pruning.
+  - Partial projection snapshots now merge roots and child lists without deleting existing local knowledge unless coverage says the sibling list is complete.
+  - Added unit coverage for incomplete search snapshots preserving known siblings.
+  - Added browser coverage for searching before hydration, clearing search, and recovering the normal sparse outline without `getState`.
 
 ## Verification Log
 
@@ -80,5 +84,10 @@ The target is to keep first paint, hover, and scroll-away bounded by sparse snap
 - 2026-05-26: `pnpm exec playwright test tests/playwright/sidebar-first-paint.spec.ts --grep "exports and imports through" --reporter=list`
 - 2026-05-26: `pnpm test -- src/background/storage-v2.test.ts src/background/controller.test.ts`
 - 2026-05-26: `pnpm run build`
+- 2026-05-26: `pnpm exec playwright test tests/playwright/sidebar-first-paint.spec.ts --reporter=list`
+- 2026-05-26: `pnpm perf:sidebar-projection-guard`
+- 2026-05-26: `pnpm test -- src/sidebar/partial-outline-state.test.ts src/background/storage-v2.test.ts src/background/controller.test.ts`
+- 2026-05-26: `pnpm run build`
+- 2026-05-26: `pnpm exec playwright test tests/playwright/sidebar-first-paint.spec.ts --grep "exports and imports through" --reporter=list`
 - 2026-05-26: `pnpm exec playwright test tests/playwright/sidebar-first-paint.spec.ts --reporter=list`
 - 2026-05-26: `pnpm perf:sidebar-projection-guard`

@@ -258,6 +258,9 @@ test.describe("sidebar first paint", () => {
               return structuredClone((window as typeof window & { __sidebarSearchSnapshot?: unknown })
                 .__sidebarSearchSnapshot);
             }
+            if (type === "getTreeProjectionSlice" && (message as { query?: unknown }).query === undefined) {
+              return structuredClone(snapshot);
+            }
             if (
               type === "getDiagnostics" ||
               type === "getPerformanceTrace" ||
@@ -388,6 +391,35 @@ test.describe("sidebar first paint", () => {
     });
     expect(searchMetrics).toEqual({
       searchRequests: 1,
+      hydrationRequests: 0
+    });
+
+    await page.locator("#clear-search").click();
+    await page.waitForFunction(() => {
+      const messages = (window as typeof window & {
+        __sidebarBootMessages?: Array<{ type: string; query?: string }>;
+      }).__sidebarBootMessages ?? [];
+      return messages.some((message) => message.type === "getTreeProjectionSlice" && message.query === undefined);
+    });
+    await expect(page.locator("#search")).toHaveValue("");
+    await expect(page.locator(".node[data-node-id='tab:1']")).toBeVisible();
+    await expect(page.locator(".node[data-node-id='group:hidden']")).toBeVisible();
+    await expect(page.locator(".node[data-node-id='hidden:42']")).toHaveCount(0);
+    await expect(page.locator("#state-count")).toHaveText("103 items / 101 saved");
+
+    const clearMetrics = await page.evaluate(() => {
+      const messages = (window as typeof window & {
+        __sidebarBootMessages?: Array<{ type: string; query?: string }>;
+      }).__sidebarBootMessages ?? [];
+      return {
+        clearRequests: messages.filter((message) =>
+          message.type === "getTreeProjectionSlice" && message.query === undefined
+        ).length,
+        hydrationRequests: messages.filter((message) => message.type === "getState").length
+      };
+    });
+    expect(clearMetrics).toEqual({
+      clearRequests: 1,
       hydrationRequests: 0
     });
     await page.waitForFunction(() => {

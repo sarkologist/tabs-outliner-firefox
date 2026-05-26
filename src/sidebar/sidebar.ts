@@ -52,6 +52,7 @@ import {
   type DropPreview,
   type DropPreviewConnector
 } from "./drop-preview.js";
+import { mergePartialOutlineState } from "./partial-outline-state.js";
 import { segmentSearchText } from "./search.js";
 import {
   applyInsertTreeStructurePatchToProjection,
@@ -624,11 +625,14 @@ function applySparseScrollWindowSnapshot(snapshot: InitialTreeSnapshot): void {
 }
 
 function mergeProjectionSliceSnapshot(snapshot: InitialTreeSnapshot): void {
-  currentState = mergePartialOutlineState(currentState, snapshot.state);
+  const coverage = projectionCoverageFromSnapshot(snapshot.coverage);
+  currentState = mergePartialOutlineState(currentState, snapshot.state, {
+    ...(coverage ? { completeSiblingParentIds: coverage.completeSiblingParentIds } : {})
+  });
   currentStateFullyLoaded = currentStateHasFullNodeTable(snapshot.projection.nodeCount);
   invalidateSidebarWindowActiveTabTargets();
   hydratingFullState = snapshot.hydrating || !currentStateFullyLoaded;
-  currentProjectionCoverage = mergeProjectionCoverage(currentProjectionCoverage, snapshot.coverage);
+  currentProjectionCoverage = mergeProjectionCoverage(currentProjectionCoverage, coverage);
 }
 
 function requestSparseScrollWindowIfNeeded(): void {
@@ -1552,9 +1556,8 @@ function projectionCoverageFromSnapshot(
 
 function mergeProjectionCoverage(
   current: SidebarProjectionCoverage | undefined,
-  next: ProjectionSliceCoverage | undefined
+  incoming: SidebarProjectionCoverage | undefined
 ): SidebarProjectionCoverage | undefined {
-  const incoming = projectionCoverageFromSnapshot(next);
   if (!current) {
     return incoming;
   }
@@ -1568,26 +1571,6 @@ function mergeProjectionCoverage(
     editableNodeIds: new Set([...current.editableNodeIds, ...incoming.editableNodeIds]),
     completeSubtreeNodeIds: new Set([...current.completeSubtreeNodeIds, ...incoming.completeSubtreeNodeIds]),
     completeSiblingParentIds: new Set([...current.completeSiblingParentIds, ...incoming.completeSiblingParentIds])
-  };
-}
-
-function mergePartialOutlineState(
-  current: OutlineState | undefined,
-  incoming: OutlineState
-): OutlineState {
-  if (!current) {
-    return incoming;
-  }
-
-  const nodes: OutlineState["nodes"] = { ...current.nodes };
-  for (const [nodeId, node] of Object.entries(incoming.nodes)) {
-    nodes[nodeId] = node;
-  }
-
-  return {
-    version: current.version,
-    rootIds: incoming.rootIds.length > 0 ? [...incoming.rootIds] : [...current.rootIds],
-    nodes
   };
 }
 
