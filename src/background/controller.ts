@@ -304,8 +304,10 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   const highPriorityMutations: ScheduledMutation[] = [];
   const lowPriorityMutations: ScheduledMutation[] = [];
   const schedulerIdleResolvers: Array<() => void> = [];
+  const highPrioritySchedulerIdleResolvers: Array<() => void> = [];
   let schedulerRunning = false;
   let schedulerDrainQueued = false;
+  let runningMutationPriority: MutationPriority | undefined;
   const stateCache = createStateCache(initializeState);
   let sessionChangedQueued = false;
   let pendingSessionChangedCount = 0;
@@ -709,7 +711,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     }
 
     if (message.type === "getState") {
-      await waitForSchedulerIdle();
+      await waitForHighPrioritySchedulerIdle();
       return ensureState();
     }
 
@@ -3560,11 +3562,15 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       ...mutationDetail,
       waitMs: Math.round(performance.now() - mutation.queuedAt)
     });
+    runningMutationPriority = mutation.priority;
     try {
       const result = await perfTrace.measureAsync("background.mutation.run", mutationDetail, mutation.operation);
       mutation.resolve(result);
     } catch (error) {
       mutation.reject(error);
+    } finally {
+      runningMutationPriority = undefined;
+      notifyHighPrioritySchedulerIdleIfNeeded();
     }
   }
 
@@ -3578,6 +3584,16 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     });
   }
 
+  function waitForHighPrioritySchedulerIdle(): Promise<void> {
+    if (isHighPrioritySchedulerIdle()) {
+      return Promise.resolve();
+    }
+
+    return new Promise((resolve) => {
+      highPrioritySchedulerIdleResolvers.push(resolve);
+    });
+  }
+
   function isSchedulerIdle(): boolean {
     return !schedulerRunning &&
       !schedulerDrainQueued &&
@@ -3586,12 +3602,27 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       !pendingRuntimeRefresh;
   }
 
+  function isHighPrioritySchedulerIdle(): boolean {
+    return runningMutationPriority !== "high" && highPriorityMutations.length === 0;
+  }
+
   function notifySchedulerIdleIfNeeded(): void {
     if (!isSchedulerIdle() || schedulerIdleResolvers.length === 0) {
       return;
     }
 
     const resolvers = schedulerIdleResolvers.splice(0);
+    for (const resolve of resolvers) {
+      resolve();
+    }
+  }
+
+  function notifyHighPrioritySchedulerIdleIfNeeded(): void {
+    if (!isHighPrioritySchedulerIdle() || highPrioritySchedulerIdleResolvers.length === 0) {
+      return;
+    }
+
+    const resolvers = highPrioritySchedulerIdleResolvers.splice(0);
     for (const resolve of resolvers) {
       resolve();
     }

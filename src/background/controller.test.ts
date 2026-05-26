@@ -22389,7 +22389,7 @@ describe("background controller lifecycle", () => {
     expect(state.nodes["tab:1"]?.active).toBe(false);
   });
 
-  it("waits for pending runtime refreshes before returning state", async () => {
+  it("returns hydrated state before queued runtime refreshes finish", async () => {
     const runtime = fakeRuntime(
       [
         {
@@ -22423,8 +22423,13 @@ describe("background controller lifecycle", () => {
 
     const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
 
-    expect(state.nodes["tab:2"]?.status).toBe("live");
-    expect(state.nodes["tab:2"]?.active).toBe(true);
+    expect(state.nodes["tab:2"]).toBeUndefined();
+
+    await runtime.events.tabCreated.flush();
+    const refreshed = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+
+    expect(refreshed.nodes["tab:2"]?.status).toBe("live");
+    expect(refreshed.nodes["tab:2"]?.active).toBe(true);
   });
 
   it("runs user commands before queued runtime refreshes", async () => {
