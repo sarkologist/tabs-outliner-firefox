@@ -61,6 +61,13 @@ type InitialTreeRow = {
   insideActiveWindow: boolean;
 };
 
+type InitialSnapshotOrderEntry = {
+  nodeId: NodeId;
+  depth: number;
+  hiddenByCollapse: boolean;
+  insideActiveWindow: boolean;
+};
+
 export type ProjectionSliceCoverage = {
   startRowIndex: number;
   endRowIndex: number;
@@ -75,8 +82,8 @@ export type InitialTreeSnapshot = {
   revision: number;
   state: OutlineState;
   projection: {
-    query: "";
-    isSearchActive: false;
+    query: string;
+    isSearchActive: boolean;
     rows: InitialTreeRow[];
     matchingNodeIds: NodeId[];
     visibleNodeIds: NodeId[];
@@ -85,7 +92,7 @@ export type InitialTreeSnapshot = {
     totalRowCount: number;
     nodeCount: number;
     closedCount: number;
-    matchCount: 0;
+    matchCount: number;
   };
   coverage?: ProjectionSliceCoverage;
   hydrating: boolean;
@@ -504,73 +511,90 @@ export function outlineStateV3Changes(
 
 export function initialTreeSnapshotForState(
   state: OutlineState,
-  options: { revision?: number; rowLimit?: number; hydrating?: boolean; centerRowIndex?: number } = {}
+  options: { revision?: number; rowLimit?: number; hydrating?: boolean; centerRowIndex?: number; query?: string } = {}
 ): InitialTreeSnapshot {
   const revision = options.revision ?? Date.now();
   const rowLimit = options.rowLimit ?? INITIAL_TREE_SNAPSHOT_ROW_LIMIT;
+  const query = normalizeInitialSnapshotQuery(options.query ?? "");
   const allRows: InitialTreeRow[] = [];
-  const loadedNodeIds = new Set<NodeId>();
-  const stack = state.rootIds
-    .slice()
-    .reverse()
-    .map((nodeId) => ({
-      nodeId,
-      depth: 0,
-      parentRowIndex: undefined as number | undefined,
-      insideActiveWindow: false
-    }));
+  const entries = collectInitialSnapshotOrderEntries(state);
+  const matchingNodeIds = new Set<NodeId>();
+  const visibleNodeIdSet = new Set<NodeId>();
   let activeTabNodeId: NodeId | undefined;
   let activeTabRowIndex: number | undefined;
 
-  while (stack.length > 0) {
-    const entry = stack.pop()!;
+  for (const entry of entries) {
+    const node = state.nodes[entry.nodeId];
+    if (!node) {
+      continue;
+    }
+    if (
+      !activeTabNodeId &&
+      node.kind === "tab" &&
+      node.active &&
+      entry.insideActiveWindow &&
+      !isOutlinerSidebarNode(node)
+    ) {
+      activeTabNodeId = node.id;
+    }
+    if (query && initialSnapshotNodeMatchesQuery(node, query)) {
+      matchingNodeIds.add(node.id);
+      visibleNodeIdSet.add(node.id);
+    }
+  }
+
+  if (query) {
+    for (let index = entries.length - 1; index >= 0; index -= 1) {
+      const entry = entries[index]!;
+      if (!visibleNodeIdSet.has(entry.nodeId)) {
+        continue;
+      }
+
+      const parentId = state.nodes[entry.nodeId]?.parentId;
+      if (parentId) {
+        visibleNodeIdSet.add(parentId);
+      }
+    }
+  }
+
+  for (const entry of entries) {
     const node = state.nodes[entry.nodeId];
     if (!node) {
       continue;
     }
 
+    const isVisible = query ? visibleNodeIdSet.has(node.id) : !entry.hiddenByCollapse;
+    if (!isVisible) {
+      continue;
+    }
+
+    const visibleChildCount = query
+      ? node.childIds.filter((childId) => visibleNodeIdSet.has(childId)).length
+      : node.collapsed ? 0 : node.childIds.length;
+    const isSearchMatch = query ? matchingNodeIds.has(node.id) : false;
     const index = allRows.length;
-    const insideActiveWindow = entry.insideActiveWindow || Boolean(node.kind === "window" && node.active);
-    if (
-      !activeTabNodeId &&
-      node.kind === "tab" &&
-      node.active &&
-      insideActiveWindow &&
-      !isOutlinerSidebarNode(node)
-    ) {
-      activeTabNodeId = node.id;
+    if (node.id === activeTabNodeId) {
       activeTabRowIndex = index;
     }
+
     allRows.push({
       nodeId: node.id,
       depth: entry.depth,
       index,
-      ...(typeof entry.parentRowIndex === "number" ? { parentRowIndex: entry.parentRowIndex } : {}),
       subtreeEndIndex: index + 1,
       childCount: node.childIds.length,
-      visibleChildCount: node.collapsed ? 0 : node.childIds.length,
-      expanded: !node.collapsed,
-      searchRevealsCollapsedChildren: false,
-      isSearchMatch: false,
-      isSearchPath: false,
-      insideActiveWindow
+      visibleChildCount,
+      expanded: query ? visibleChildCount > 0 : !node.collapsed,
+      searchRevealsCollapsedChildren: Boolean(query && node.collapsed && visibleChildCount > 0),
+      isSearchMatch,
+      isSearchPath: Boolean(query && !isSearchMatch),
+      insideActiveWindow: entry.insideActiveWindow
     });
-
-    if (node.collapsed) {
-      continue;
-    }
-    for (let childIndex = node.childIds.length - 1; childIndex >= 0; childIndex -= 1) {
-      stack.push({
-        nodeId: node.childIds[childIndex]!,
-        depth: entry.depth + 1,
-        parentRowIndex: index,
-        insideActiveWindow
-      });
-    }
   }
 
   refreshInitialRowStructure(allRows);
-  const rows = initialSnapshotRows(allRows, rowLimit, activeTabRowIndex, options.centerRowIndex);
+  const rows = initialSnapshotRows(allRows, rowLimit, query ? undefined : activeTabRowIndex, options.centerRowIndex);
+  const loadedNodeIds = new Set<NodeId>();
   for (const row of rows) {
     loadedNodeIds.add(row.nodeId);
   }
@@ -598,21 +622,79 @@ export function initialTreeSnapshotForState(
       nodes: partialNodes
     },
     projection: {
-      query: "",
-      isSearchActive: false,
+      query,
+      isSearchActive: Boolean(query),
       rows,
-      matchingNodeIds: [],
+      matchingNodeIds: rows
+        .filter((row) => matchingNodeIds.has(row.nodeId))
+        .map((row) => row.nodeId),
       visibleNodeIds: rows.map((row) => row.nodeId),
       ...(activeTabNodeId ? { activeTabNodeId } : {}),
       ...(typeof activeTabRowIndex === "number" ? { activeTabRowIndex } : {}),
       totalRowCount: allRows.length,
       nodeCount: nodeValues.length,
       closedCount: nodeValues.filter((node) => node.status === "closed").length,
-      matchCount: 0
+      matchCount: matchingNodeIds.size
     },
     coverage,
     hydrating: options.hydrating ?? true
   };
+}
+
+function collectInitialSnapshotOrderEntries(state: OutlineState): InitialSnapshotOrderEntry[] {
+  const entries: InitialSnapshotOrderEntry[] = [];
+  const visited = new Set<NodeId>();
+  const stack = state.rootIds
+    .slice()
+    .reverse()
+    .map((nodeId) => ({
+      nodeId,
+      depth: 0,
+      hiddenByCollapse: false,
+      insideActiveWindow: false
+    }));
+
+  while (stack.length > 0) {
+    const entry = stack.pop()!;
+    if (visited.has(entry.nodeId)) {
+      continue;
+    }
+    visited.add(entry.nodeId);
+
+    const node = state.nodes[entry.nodeId];
+    if (!node) {
+      continue;
+    }
+
+    const insideActiveWindow = entry.insideActiveWindow || Boolean(node.kind === "window" && node.active);
+    entries.push({
+      ...entry,
+      insideActiveWindow
+    });
+    const childrenHiddenByCollapse = entry.hiddenByCollapse || node.collapsed;
+    for (let index = node.childIds.length - 1; index >= 0; index -= 1) {
+      stack.push({
+        nodeId: node.childIds[index]!,
+        depth: entry.depth + 1,
+        hiddenByCollapse: childrenHiddenByCollapse,
+        insideActiveWindow
+      });
+    }
+  }
+
+  return entries;
+}
+
+function normalizeInitialSnapshotQuery(query: string): string {
+  return query.trim().toLocaleLowerCase();
+}
+
+function initialSnapshotNodeMatchesQuery(node: OutlineNode, query: string): boolean {
+  return initialSnapshotTextMatchesQuery(node.title, query) || initialSnapshotTextMatchesQuery(node.url, query);
+}
+
+function initialSnapshotTextMatchesQuery(value: string | undefined, query: string): boolean {
+  return Boolean(value?.toLocaleLowerCase().includes(query));
 }
 
 function projectionSliceCoverageForRows(

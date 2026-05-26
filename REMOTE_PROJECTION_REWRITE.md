@@ -52,6 +52,11 @@ The target is to keep first paint, hover, and scroll-away bounded by sparse snap
   - Kept the existing background `importTree` command as the authoritative mutation path.
   - Changed sidebar import readiness so a sparse startup tree can submit an import without waiting for `getState`.
   - Added Playwright coverage that import sends the parsed portable tree before full hydration.
+- 2026-05-26: Implemented the first Phase 3 slice, background-backed sparse search.
+  - Extended projection snapshot requests with an optional search query.
+  - Built query-aware initial/projection snapshots from the full background `OutlineState`, including collapsed-match paths.
+  - Enabled search once the sparse tree exists; sparse sidebars now request bounded search projections instead of waiting for `getState`.
+  - Kept full-hydrated sidebars on the existing local search projection path.
 
 ## Verification Log
 
@@ -65,6 +70,15 @@ The target is to keep first paint, hover, and scroll-away bounded by sparse snap
 - 2026-05-26: `pnpm run build`
 - 2026-05-26: `pnpm exec playwright test tests/playwright/sidebar-first-paint.spec.ts --grep "exports and imports through" --reporter=list`
 - 2026-05-26: `pnpm test -- src/background/controller.test.ts`
+- 2026-05-26: `pnpm run build`
+- 2026-05-26: `pnpm exec playwright test tests/playwright/sidebar-first-paint.spec.ts --reporter=list`
+- 2026-05-26: `pnpm perf:sidebar-projection-guard`
+- 2026-05-26: `pnpm test -- src/background/storage-v2.test.ts -t "builds query projection"` (failed before Phase 3 query snapshots)
+- 2026-05-26: `pnpm exec playwright test tests/playwright/sidebar-first-paint.spec.ts --grep "exports and imports through" --reporter=list` (failed before sparse search enablement)
+- 2026-05-26: `pnpm test -- src/background/storage-v2.test.ts -t "builds query projection"`
+- 2026-05-26: `pnpm run build`
+- 2026-05-26: `pnpm exec playwright test tests/playwright/sidebar-first-paint.spec.ts --grep "exports and imports through" --reporter=list`
+- 2026-05-26: `pnpm test -- src/background/storage-v2.test.ts src/background/controller.test.ts`
 - 2026-05-26: `pnpm run build`
 - 2026-05-26: `pnpm exec playwright test tests/playwright/sidebar-first-paint.spec.ts --reporter=list`
 - 2026-05-26: `pnpm perf:sidebar-projection-guard`

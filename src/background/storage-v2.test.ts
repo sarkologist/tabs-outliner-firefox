@@ -130,6 +130,97 @@ function removeLastOrderPage(state: OutlineState): OutlineState {
 }
 
 describe("outline state v2 storage", () => {
+  it("builds query projection snapshots from the full outline state", () => {
+    const state: OutlineState = {
+      version: 1,
+      rootIds: ["window:10"],
+      nodes: {
+        "window:10": {
+          id: "window:10",
+          kind: "window",
+          status: "live",
+          childIds: ["tab:visible", "group:closed"],
+          title: "Window",
+          active: true,
+          collapsed: false,
+          createdAt: 1000,
+          updatedAt: 1000,
+          live: { windowId: 10 }
+        },
+        "tab:visible": {
+          id: "tab:visible",
+          kind: "tab",
+          status: "live",
+          parentId: "window:10",
+          childIds: [],
+          title: "Visible Tab",
+          url: "https://visible.example/",
+          active: true,
+          collapsed: false,
+          createdAt: 1000,
+          updatedAt: 1000,
+          live: { tabId: 1, windowId: 10 }
+        },
+        "group:closed": {
+          id: "group:closed",
+          kind: "group",
+          status: "closed",
+          parentId: "window:10",
+          childIds: ["tab:hidden"],
+          title: "Closed Group",
+          collapsed: true,
+          createdAt: 1000,
+          updatedAt: 1000,
+          closedAt: 1000
+        },
+        "tab:hidden": {
+          id: "tab:hidden",
+          kind: "tab",
+          status: "closed",
+          parentId: "group:closed",
+          childIds: [],
+          title: "Needle Tab",
+          url: "https://needle.example/",
+          collapsed: false,
+          createdAt: 1000,
+          updatedAt: 1000,
+          closedAt: 1001
+        }
+      }
+    };
+
+    const snapshot = initialTreeSnapshotForState(state, {
+      query: "needle",
+      rowLimit: 10,
+      hydrating: true
+    });
+
+    expect(snapshot.projection.query).toBe("needle");
+    expect(snapshot.projection.isSearchActive).toBe(true);
+    expect(snapshot.projection.matchingNodeIds).toEqual(["tab:hidden"]);
+    expect(snapshot.projection.visibleNodeIds).toEqual(["window:10", "group:closed", "tab:hidden"]);
+    expect(snapshot.projection.rows.map((row) => row.nodeId)).toEqual([
+      "window:10",
+      "group:closed",
+      "tab:hidden"
+    ]);
+    expect(snapshot.projection.rows[1]).toMatchObject({
+      nodeId: "group:closed",
+      expanded: true,
+      searchRevealsCollapsedChildren: true,
+      isSearchPath: true
+    });
+    expect(snapshot.projection.rows[2]).toMatchObject({
+      nodeId: "tab:hidden",
+      isSearchMatch: true
+    });
+    expect(Object.keys(snapshot.state.nodes).sort()).toEqual([
+      "group:closed",
+      "tab:hidden",
+      "window:10"
+    ]);
+  });
+
   it("writes a small manifest snapshot plus chunked node and order pages", () => {
     const state = makeLargeState(INITIAL_TREE_SNAPSHOT_ROW_LIMIT + 20);
     const items = outlineStateV2Items(state, { revision: 123 });

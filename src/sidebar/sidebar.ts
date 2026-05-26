@@ -137,10 +137,12 @@ let sidebarActiveTabTargetsRevision = 0;
 let sidebarActiveTabTargetsCacheRevision = -1;
 let sidebarActiveTabTargetsByWindow = new Map<number, NodeId>();
 let sparseWindowRequestSequence = 0;
+let remoteSearchRequestSequence = 0;
 let pendingSparseWindowRequest:
   | {
       centerRowIndex: number;
       rowLimit: number;
+      query: string;
       retryAttempt: number;
     }
   | undefined;
@@ -190,6 +192,7 @@ type TreeProjectionSliceRequest = {
   type: "getTreeProjectionSlice";
   centerRowIndex: number;
   rowLimit?: number;
+  query?: string;
 };
 
 type OpenSidebarWindowRequest = {
@@ -602,7 +605,7 @@ function applySparseScrollWindowSnapshot(snapshot: InitialTreeSnapshot): void {
   mergeProjectionSliceSnapshot(snapshot);
   currentProjection = projectionFromInitialTreeSnapshot(snapshot);
   projectionState = currentState;
-  projectionQuery = "";
+  projectionQuery = snapshot.projection.query;
   currentCutRowRange = undefined;
   updateHydrationControls();
 
@@ -646,39 +649,48 @@ function requestSparseScrollWindowIfNeeded(): void {
     Math.min(totalRowCount - 1, Math.floor((viewportStartRow + viewportEndRow - 1) / 2))
   );
   const rowLimit = sparseScrollWindowRowLimit(viewportEndRow - viewportStartRow);
+  const query = currentProjection.query;
   if (
     pendingSparseWindowRequest?.centerRowIndex === centerRowIndex &&
-    pendingSparseWindowRequest.rowLimit === rowLimit
+    pendingSparseWindowRequest.rowLimit === rowLimit &&
+    pendingSparseWindowRequest.query === query
   ) {
     return;
   }
 
-  startSparseScrollWindowRequest(centerRowIndex, rowLimit, 0);
+  startSparseScrollWindowRequest(centerRowIndex, rowLimit, query, 0);
 }
 
-function startSparseScrollWindowRequest(centerRowIndex: number, rowLimit: number, retryAttempt: number): void {
-  pendingSparseWindowRequest = { centerRowIndex, rowLimit, retryAttempt };
+function startSparseScrollWindowRequest(
+  centerRowIndex: number,
+  rowLimit: number,
+  query: string,
+  retryAttempt: number
+): void {
+  pendingSparseWindowRequest = { centerRowIndex, rowLimit, query, retryAttempt };
   const requestId = ++sparseWindowRequestSequence;
   const rowHeight = currentRowHeight();
   const viewportRange = currentViewportRowRange(rowHeight);
   perfTrace.mark("sidebar.sparseScrollWindow.request", {
     centerRowIndex,
     rowLimit,
+    search: Boolean(query),
     retryAttempt,
     viewportStartRow: viewportRange.start,
     viewportEndRow: viewportRange.end
   });
-  void loadSparseScrollWindow(centerRowIndex, rowLimit, requestId, retryAttempt);
+  void loadSparseScrollWindow(centerRowIndex, rowLimit, query, requestId, retryAttempt);
 }
 
 async function loadSparseScrollWindow(
   centerRowIndex: number,
   rowLimit: number,
+  query: string,
   requestId: number,
   retryAttempt: number
 ): Promise<void> {
   try {
-    const response = await requestProjectionSlice(centerRowIndex, rowLimit);
+    const response = await requestProjectionSlice(centerRowIndex, rowLimit, query);
     await nextAnimationFrame();
     if (requestId !== sparseWindowRequestSequence) {
       if (
@@ -715,17 +727,18 @@ async function loadSparseScrollWindow(
       pendingSparseWindowRequest = undefined;
       perfTrace.mark("sidebar.sparseScrollWindow.error", { message: commandErrorText(error) });
       if (retryAttempt < 1 && !currentSparseProjectionCoversViewport()) {
-        startSparseScrollWindowRequest(centerRowIndex, rowLimit, retryAttempt + 1);
+        startSparseScrollWindowRequest(centerRowIndex, rowLimit, query, retryAttempt + 1);
       }
     }
   }
 }
 
-async function requestProjectionSlice(centerRowIndex: number, rowLimit: number): Promise<unknown> {
+async function requestProjectionSlice(centerRowIndex: number, rowLimit: number, query = ""): Promise<unknown> {
   return sendCommand({
     type: "getTreeProjectionSlice",
     centerRowIndex,
-    rowLimit
+    rowLimit,
+    ...(query ? { query } : {})
   });
 }
 
@@ -1054,23 +1067,27 @@ function registerZoomShortcuts(): void {
 
 function registerSearchControls(): void {
   searchInput?.addEventListener("input", () => {
-    if (hydratingFullState) {
+    if (!currentState) {
       return;
     }
     currentSearchQuery = searchInput.value;
     updateSearchControls();
+    if (shouldUseRemoteProjectionSearch()) {
+      void loadRemoteSearchProjection(currentSearchQuery);
+      return;
+    }
     render();
   });
 
   clearSearch?.addEventListener("click", () => {
-    if (hydratingFullState) {
+    if (!currentState) {
       return;
     }
     clearSearchQuery({ focus: true });
   });
 
   document.addEventListener("keydown", (event) => {
-    if (hydratingFullState && (isSearchFocusEvent(event) || event.key === "Escape")) {
+    if (!currentState && (isSearchFocusEvent(event) || event.key === "Escape")) {
       return;
     }
     if (isSearchFocusEvent(event)) {
@@ -1306,7 +1323,11 @@ function clearSearchQuery(options: { focus?: boolean } = {}): void {
     searchInput.value = "";
   }
   updateSearchControls();
-  render();
+  if (shouldUseRemoteProjectionSearch()) {
+    void loadRemoteSearchProjection(currentSearchQuery);
+  } else {
+    render();
+  }
   if (options.focus) {
     searchInput?.focus();
   }
@@ -1316,6 +1337,66 @@ function updateSearchControls(): void {
   if (clearSearch) {
     clearSearch.hidden = !currentSearchQuery.trim();
   }
+}
+
+function shouldUseRemoteProjectionSearch(): boolean {
+  return Boolean(currentState && !currentStateFullyLoaded);
+}
+
+async function loadRemoteSearchProjection(query: string): Promise<void> {
+  const requestId = ++remoteSearchRequestSequence;
+  sparseWindowRequestSequence += 1;
+  pendingSparseWindowRequest = undefined;
+  const trimmedQuery = query.trim();
+
+  try {
+    const response = await requestProjectionSlice(0, INITIAL_TREE_SNAPSHOT_ROW_LIMIT, trimmedQuery);
+    await nextAnimationFrame();
+    if (
+      requestId !== remoteSearchRequestSequence ||
+      query !== currentSearchQuery ||
+      currentStateFullyLoaded ||
+      !isInitialTreeSnapshot(response)
+    ) {
+      return;
+    }
+
+    applyRemoteProjectionSnapshot(response, { scrollToActive: !trimmedQuery });
+  } catch (error) {
+    if (requestId === remoteSearchRequestSequence) {
+      perfTrace.mark("sidebar.remoteSearchProjection.error", { message: commandErrorText(error) });
+      showDiagnosticsNotice(commandErrorText(error), { error: true });
+    }
+  }
+}
+
+function applyRemoteProjectionSnapshot(
+  snapshot: InitialTreeSnapshot,
+  options: { scrollToActive?: boolean } = {}
+): void {
+  mergeProjectionSliceSnapshot(snapshot);
+  currentProjection = projectionFromInitialTreeSnapshot(snapshot);
+  projectionState = currentState;
+  projectionQuery = snapshot.projection.query;
+  currentCutRowRange = undefined;
+  updateHydrationControls();
+
+  perfTrace.measure("sidebar.render.remoteProjection", {
+    rows: currentProjection.rows.length,
+    search: currentProjection.isSearchActive,
+    totalRows: currentProjection.totalRowCount ?? currentProjection.rows.length
+  }, () => {
+    if (!tree || !stateCount || !currentProjection) {
+      return;
+    }
+    clearDropPreview();
+    updateProjectionChrome(currentProjection);
+    renderSnapshotRows(
+      currentProjection,
+      options.scrollToActive === undefined ? {} : { scrollToActive: options.scrollToActive }
+    );
+    revealSidebar();
+  });
 }
 
 function isZoomModifierEvent(event: KeyboardEvent | WheelEvent): boolean {
@@ -1680,21 +1761,19 @@ function syncElementAttributes(target: HTMLElement, source: HTMLElement): void {
 }
 
 function updateHydrationControls(): void {
-  const fullStateUnavailable = hydratingFullState || !currentStateFullyLoaded;
+  const treeUnavailable = !currentState;
   if (searchInput) {
-    searchInput.disabled = fullStateUnavailable;
-    searchInput.title = fullStateUnavailable ? "Search is available after the full tree loads" : "";
+    searchInput.disabled = treeUnavailable;
+    searchInput.title = treeUnavailable ? "Search is available after the tree loads" : "";
   }
   if (clearSearch) {
-    clearSearch.disabled = fullStateUnavailable;
+    clearSearch.disabled = treeUnavailable;
   }
   if (exportTree) {
-    const treeUnavailable = !currentState;
     exportTree.disabled = treeUnavailable;
     exportTree.title = treeUnavailable ? "Export is available after the tree loads" : "Export tree";
   }
   if (importTree) {
-    const treeUnavailable = !currentState;
     importTree.disabled = treeUnavailable;
     importTree.title = treeUnavailable ? "Import is available after the tree loads" : "Import tree";
   }

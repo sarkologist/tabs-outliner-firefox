@@ -201,17 +201,19 @@ test.describe("sidebar first paint", () => {
 
   test("exports and imports through the background when a sparse snapshot omits collapsed descendants", async ({ page }) => {
     const issues = collectPageIssues(page);
-    await page.addInitScript(({ snapshot, fullState }) => {
-      const messages: Array<{ type: string; at: number }> = [];
+    await page.addInitScript(({ snapshot, fullState, searchSnapshot }) => {
+      const messages: Array<{ type: string; at: number; query?: string }> = [];
       let resolveGetState: ((state: unknown) => void) | undefined;
       Object.assign(window as typeof window & {
         __sidebarBootMessages?: typeof messages;
         __resolveSidebarGetState?: () => void;
         __lastSidebarDownload?: { filename: string; href: string };
         __lastSidebarImport?: unknown;
+        __sidebarSearchSnapshot?: unknown;
       }, {
         __sidebarBootMessages: messages,
-        __resolveSidebarGetState: () => resolveGetState?.(structuredClone(fullState))
+        __resolveSidebarGetState: () => resolveGetState?.(structuredClone(fullState)),
+        __sidebarSearchSnapshot: searchSnapshot
       });
       const originalAnchorClick = HTMLAnchorElement.prototype.click;
       HTMLAnchorElement.prototype.click = function click() {
@@ -227,7 +229,10 @@ test.describe("sidebar first paint", () => {
         runtime: {
           sendMessage: async (message: unknown) => {
             const type = typeof message === "object" && message ? String((message as { type?: unknown }).type) : "";
-            messages.push({ type, at: performance.now() });
+            const query = typeof message === "object" && message && typeof (message as { query?: unknown }).query === "string"
+              ? (message as { query: string }).query
+              : undefined;
+            messages.push({ type, at: performance.now(), ...(query !== undefined ? { query } : {}) });
             if (type === "getInitialTreeSnapshot") {
               return structuredClone(snapshot);
             }
@@ -248,6 +253,10 @@ test.describe("sidebar first paint", () => {
               (window as typeof window & { __lastSidebarImport?: unknown }).__lastSidebarImport =
                 (message as { tree?: unknown }).tree;
               return { ok: true };
+            }
+            if (type === "getTreeProjectionSlice" && (message as { query?: unknown }).query === "hidden 42") {
+              return structuredClone((window as typeof window & { __sidebarSearchSnapshot?: unknown })
+                .__sidebarSearchSnapshot);
             }
             if (
               type === "getDiagnostics" ||
@@ -272,7 +281,8 @@ test.describe("sidebar first paint", () => {
       };
     }, {
       snapshot: fixtureCollapsedPartialSnapshot(100),
-      fullState: fixtureCollapsedFullState(100)
+      fullState: fixtureCollapsedFullState(100),
+      searchSnapshot: fixtureCollapsedSearchSnapshot(100, 42)
     });
 
     await page.goto("/sidebar/sidebar.html");
@@ -353,6 +363,33 @@ test.describe("sidebar first paint", () => {
       importRootTitle: "Imported Window",
       importTabTitle: "Imported Tab"
     });
+
+    await expect(page.locator("#search")).toBeEnabled();
+    await page.locator("#search").fill("hidden 42");
+    await page.waitForFunction(() => {
+      const messages = (window as typeof window & {
+        __sidebarBootMessages?: Array<{ type: string; query?: string }>;
+      }).__sidebarBootMessages ?? [];
+      return messages.some((message) => message.type === "getTreeProjectionSlice" && message.query === "hidden 42");
+    });
+    await expect(page.locator(".node[data-node-id='hidden:42']")).toBeVisible();
+    await expect(page.locator("#state-count")).toHaveText("1 match / 103 items");
+
+    const searchMetrics = await page.evaluate(() => {
+      const messages = (window as typeof window & {
+        __sidebarBootMessages?: Array<{ type: string; query?: string }>;
+      }).__sidebarBootMessages ?? [];
+      return {
+        searchRequests: messages.filter((message) =>
+          message.type === "getTreeProjectionSlice" && message.query === "hidden 42"
+        ).length,
+        hydrationRequests: messages.filter((message) => message.type === "getState").length
+      };
+    });
+    expect(searchMetrics).toEqual({
+      searchRequests: 1,
+      hydrationRequests: 0
+    });
     await page.waitForFunction(() => {
       const messages = (window as typeof window & { __sidebarBootMessages?: Array<{ type: string }> })
         .__sidebarBootMessages ?? [];
@@ -431,7 +468,7 @@ test.describe("sidebar first paint", () => {
 
     await page.goto("/sidebar/sidebar.html");
     await expect(page.locator(".node[data-node-id='tab:1']")).toBeVisible();
-    await expect(page.locator("#search")).toBeDisabled();
+    await expect(page.locator("#search")).toBeEnabled();
     await page.waitForFunction(() =>
       performance.getEntriesByName("tabs-outliner.sidebar.hydration.complete").length > 0
     );
@@ -780,6 +817,118 @@ function fixtureCollapsedFullState(hiddenTabCount: number) {
           }
         }
       ]))
+    }
+  };
+}
+
+function fixtureCollapsedSearchSnapshot(hiddenTabCount: number, matchIndex: number) {
+  const now = 1_700_000_000_000;
+  const matchNodeId = `hidden:${matchIndex}`;
+  return {
+    type: "initialTreeSnapshot",
+    version: 1,
+    revision: 124,
+    hydrating: true,
+    state: {
+      version: 1,
+      rootIds: ["window:1"],
+      nodes: {
+        "window:1": {
+          id: "window:1",
+          kind: "window",
+          status: "live",
+          childIds: ["group:hidden"],
+          title: "Window",
+          active: true,
+          collapsed: false,
+          createdAt: now,
+          updatedAt: now,
+          live: { windowId: 1 }
+        },
+        "group:hidden": {
+          id: "group:hidden",
+          kind: "group",
+          status: "closed",
+          parentId: "window:1",
+          childIds: [matchNodeId],
+          title: "Hidden saved group",
+          collapsed: true,
+          createdAt: now,
+          updatedAt: now,
+          closedAt: now
+        },
+        [matchNodeId]: {
+          id: matchNodeId,
+          kind: "tab",
+          status: "closed",
+          parentId: "group:hidden",
+          childIds: [],
+          title: `Hidden ${matchIndex}`,
+          url: `https://hidden.example/${matchIndex}`,
+          collapsed: false,
+          createdAt: now,
+          updatedAt: now,
+          closedAt: now + matchIndex,
+          restore: {
+            url: `https://hidden.example/${matchIndex}`,
+            title: `Hidden ${matchIndex}`
+          }
+        }
+      }
+    },
+    projection: {
+      query: `hidden ${matchIndex}`,
+      isSearchActive: true,
+      rows: [
+        {
+          nodeId: "window:1",
+          depth: 0,
+          index: 0,
+          subtreeEndIndex: 3,
+          childCount: 2,
+          visibleChildCount: 1,
+          expanded: true,
+          searchRevealsCollapsedChildren: false,
+          isSearchMatch: false,
+          isSearchPath: true,
+          insideActiveWindow: true
+        },
+        {
+          nodeId: "group:hidden",
+          depth: 1,
+          index: 1,
+          parentRowIndex: 0,
+          subtreeEndIndex: 3,
+          childCount: hiddenTabCount,
+          visibleChildCount: 1,
+          expanded: true,
+          searchRevealsCollapsedChildren: true,
+          isSearchMatch: false,
+          isSearchPath: true,
+          insideActiveWindow: true
+        },
+        {
+          nodeId: matchNodeId,
+          depth: 2,
+          index: 2,
+          parentRowIndex: 1,
+          subtreeEndIndex: 3,
+          childCount: 0,
+          visibleChildCount: 0,
+          expanded: true,
+          searchRevealsCollapsedChildren: false,
+          isSearchMatch: true,
+          isSearchPath: false,
+          insideActiveWindow: true
+        }
+      ],
+      matchingNodeIds: [matchNodeId],
+      visibleNodeIds: ["window:1", "group:hidden", matchNodeId],
+      activeTabNodeId: "tab:1",
+      totalRowCount: 3,
+      nodeCount: hiddenTabCount + 3,
+      closedCount: hiddenTabCount + 1,
+      matchCount: 1
     }
   };
 }

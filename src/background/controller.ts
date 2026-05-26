@@ -210,6 +210,7 @@ type InitialTreeSnapshotWindowMessage = {
   type: "getInitialTreeSnapshotWindow" | "getTreeProjectionSlice";
   centerRowIndex: number;
   rowLimit?: number;
+  query?: string;
 };
 
 type OpenSidebarWindowMessage = {
@@ -1655,6 +1656,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     const snapshot = initialTreeSnapshotForState(source, {
       rowLimit,
       centerRowIndex: message.centerRowIndex,
+      ...(message.query !== undefined ? { query: message.query } : {}),
       hydrating: true
     });
     snapshot.hydrating = initialTreeSnapshotNeedsFullHydration(snapshot);
@@ -5798,7 +5800,11 @@ function isInitialTreeSnapshotWindowMessage(message: unknown): message is Initia
         (message as { type?: unknown }).type === "getTreeProjectionSlice"
       ) &&
       typeof (message as { centerRowIndex?: unknown }).centerRowIndex === "number" &&
-      Number.isFinite((message as { centerRowIndex?: number }).centerRowIndex)
+      Number.isFinite((message as { centerRowIndex?: number }).centerRowIndex) &&
+      (
+        (message as { query?: unknown }).query === undefined ||
+        typeof (message as { query?: unknown }).query === "string"
+      )
   );
 }
 
