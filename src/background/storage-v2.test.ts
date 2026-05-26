@@ -17,7 +17,9 @@ import {
   saveState,
   saveStateAndHistory
 } from "./storage.js";
+import { reconcileWithWindows } from "../model/outline.js";
 import type { OutlineNode, OutlineState } from "../model/types.js";
+import { makeSidebarStartupState } from "../perf/sidebar-startup-shapes.js";
 import { generatedTraceConfig, generatedTraceTimeoutMs } from "../test/generated-traces.test-support.js";
 
 function makeLargeState(tabCount: number, options: { activeTabIndex?: number } = {}): OutlineState {
@@ -382,6 +384,45 @@ describe("outline state v3 storage", () => {
     expect(setKeys.filter((key) => key.includes(":order:")).length).toBeLessThan(60);
     expect(setKeys.length).toBeLessThan(70);
   }, 15_000);
+
+  it("builds dirty v3 node shards in one pass for order-page-heavy startup saves", () => {
+    const previous = makeSidebarStartupState({
+      shape: "order-page-heavy",
+      tabs: 19_433,
+      liveTabs: 50
+    });
+    const tabs = Array.from({ length: 51 }, (_, index) => {
+      const tabId = index < 50 ? index + 1 : 19_434;
+      return {
+        id: tabId,
+        windowId: 10,
+        index,
+        active: index === 50,
+        url: index < 50 ? `https://large.example/${tabId}` : "https://startup.example/",
+        title: index < 50 ? `Tab ${tabId}` : "Startup Tab 2"
+      };
+    });
+    const next = reconcileWithWindows(previous, [
+      {
+        id: 10,
+        incognito: false,
+        focused: true,
+        tabs
+      }
+    ], { now: 2000 }, {
+      closeMissing: false,
+      respectRuntimeTabOrder: true
+    });
+
+    const start = performance.now();
+    const changes = outlineStateV3Changes(next, { previousState: previous, revision: 123 });
+    const durationMs = performance.now() - start;
+    const setKeys = Object.keys(changes.setItems);
+
+    expect(changes.setItems[STATE_V3_MANIFEST_KEY]).toBeDefined();
+    expect(setKeys.filter((key) => key.includes(":nodes:"))).toHaveLength(256);
+    expect(durationMs).toBeLessThan(700);
+  }, 10_000);
 
   it("keeps generated incremental v3 saves loadable as the exact next state", async () => {
     const config = generatedTraceConfig({

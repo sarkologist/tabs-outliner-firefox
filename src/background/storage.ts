@@ -477,9 +477,8 @@ export function outlineStateV3Changes(
     return { setItems, removeKeys };
   }
 
-  for (const shardIndex of changedNodeShardIndexes(options.previousState, state, options.candidateNodeIds)) {
+  for (const [shardIndex, shard] of changedNodeShardItems(options.previousState, state, options.candidateNodeIds)) {
     const key = stateV3NodeShardKey(shardIndex);
-    const shard = stateV3NodeShard(state, shardIndex);
     if (shard.nodes.length === 0) {
       removeKeys.push(key);
     } else {
@@ -830,11 +829,11 @@ function stateV3OrderPagesForNode(node: OutlineNode): StateV3OrderPage[] {
   return pages;
 }
 
-function changedNodeShardIndexes(
+function changedNodeShardItems(
   previous: OutlineState,
   next: OutlineState,
   candidateNodeIds?: readonly NodeId[]
-): number[] {
+): Map<number, StateV3NodeShard> {
   const shardIndexes = new Set<number>();
   for (const nodeId of candidateNodeIds ? uniqueNodeIds(candidateNodeIds) : unionNodeIds(previous, next)) {
     const previousNode = previous.nodes[nodeId];
@@ -847,7 +846,30 @@ function changedNodeShardIndexes(
       shardIndexes.add(stateV3NodeShardIndex(nextNode.id));
     }
   }
-  return [...shardIndexes].sort((left, right) => left - right);
+  if (shardIndexes.size === 0) {
+    return new Map();
+  }
+
+  const nodesByShard = new Map<number, StoredOutlineNode[]>();
+  for (const node of Object.values(next.nodes)) {
+    const shardIndex = stateV3NodeShardIndex(node.id);
+    if (!shardIndexes.has(shardIndex)) {
+      continue;
+    }
+    const nodes = nodesByShard.get(shardIndex) ?? [];
+    nodes.push(nodeToStoredNode(node));
+    nodesByShard.set(shardIndex, nodes);
+  }
+
+  const items = new Map<number, StateV3NodeShard>();
+  for (const shardIndex of [...shardIndexes].sort((left, right) => left - right)) {
+    items.set(shardIndex, {
+      version: 3,
+      shardIndex,
+      nodes: (nodesByShard.get(shardIndex) ?? []).sort((left, right) => left.id.localeCompare(right.id))
+    });
+  }
+  return items;
 }
 
 function changedOrderPages(
