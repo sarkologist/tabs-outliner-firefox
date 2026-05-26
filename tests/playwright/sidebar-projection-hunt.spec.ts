@@ -216,6 +216,64 @@ test.describe("sidebar projection hunt", () => {
     expect(issues).toEqual([]);
   });
 
+  test("psh-close-command-broadcast-removes-visible-row-during-hydration", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadLargeSparseSidebar(page, { fullStatePending: true });
+
+    const row = nodeRow(page, "tab:800");
+    await row.hover();
+    await row.getByRole("button", { name: "Close", exact: true }).click();
+
+    const result = await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      const before = api.visibleRows();
+      api.emitDeletePatch(["tab:800"]);
+      await api.waitForIdleFrames(3);
+      return {
+        before,
+        after: api.visibleRows(),
+        commands: api.sentCommands()
+      };
+    });
+
+    expect(result.commands).toEqual([{ type: "closeNode", nodeId: "tab:800" }]);
+    expect(result.before).toContain(800);
+    await expect(page.locator(nodeSelector("tab:800"))).toHaveCount(0);
+    expect(result.after).toContain(801);
+    expect(issues).toEqual([]);
+  });
+
+  test("psh-close-command-delete-then-full-broadcast-keeps-row-removed", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadLargeSparseSidebar(page, { fullStatePending: true });
+
+    const row = nodeRow(page, "tab:800");
+    await row.hover();
+    await row.getByRole("button", { name: "Close", exact: true }).click();
+
+    const result = await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      api.emitDeletePatch(["tab:800"]);
+      await api.waitForIdleFrames(2);
+      const afterDelete = api.visibleRows();
+      api.emitFullStateBroadcast();
+      await api.waitForIdleFrames(4);
+      return {
+        afterDelete,
+        afterBroadcast: api.visibleRows(),
+        commands: api.sentCommands(),
+        targetExists: Boolean(document.querySelector("[data-node-id='tab:800']"))
+      };
+    });
+
+    expect(result.commands).toEqual([{ type: "closeNode", nodeId: "tab:800" }]);
+    expect(result.afterDelete).toContain(801);
+    expect(result.afterBroadcast).toContain(801);
+    expect(result.targetExists).toBe(false);
+    await expect(page.locator(nodeSelector("tab:800"))).toHaveCount(0);
+    expect(issues).toEqual([]);
+  });
+
   test("psh-toggle-covered-row-works-during-hydration", async ({ page }) => {
     const issues = collectPageIssues(page);
     await loadLargeSparseSidebar(page, { fullStatePending: true });
@@ -283,6 +341,25 @@ test.describe("sidebar projection hunt", () => {
     await expect(row.getByRole("button", { name: "Close", exact: true })).toHaveCount(0);
     await row.locator(".node-label").click();
     await expect(sentCommands(page)).resolves.toEqual([{ type: "focusNode", nodeId: "tab:799" }]);
+    expect(issues).toEqual([]);
+  });
+
+  test("psh-coverage-missing-snapshot-restores-actions-after-full-hydration", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadLargeSparseSidebar(page, { includeCoverage: false, fullStatePending: true });
+
+    const row = nodeRow(page, "tab:799");
+    await row.hover();
+    await expect(row.getByRole("button", { name: "Close", exact: true })).toHaveCount(0);
+
+    await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      api.resolveFullState();
+      await api.waitForIdleFrames(6);
+    });
+
+    await row.hover();
+    await expect(row.getByRole("button", { name: "Close", exact: true })).toBeVisible();
     expect(issues).toEqual([]);
   });
 
@@ -537,6 +614,85 @@ test.describe("sidebar projection hunt", () => {
     expect(issues).toEqual([]);
   });
 
+  test("psh-search-rejected-query-keeps-current-outline-painted", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadLargeSparseSidebar(page, { fullStatePending: true });
+
+    const result = await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      const search = document.querySelector<HTMLInputElement>("#search");
+      if (!search) {
+        throw new Error("Missing search input");
+      }
+
+      search.focus();
+      search.value = "Tab 900";
+      search.dispatchEvent(new InputEvent("input", {
+        bubbles: true,
+        inputType: "insertText",
+        data: "Tab 900"
+      }));
+      await api.waitForSparseRequestCount(1);
+      api.rejectSliceAt(0);
+      await api.waitForIdleFrames(4);
+
+      return {
+        requests: api.projectionRequests(),
+        searchValue: search.value,
+        visibleRows: api.visibleRows(),
+        countText: document.querySelector("#state-count")?.textContent ?? ""
+      };
+    });
+
+    expect(result.requests).toHaveLength(1);
+    expect(result.requests[0]).toMatchObject({ query: "Tab 900" });
+    expect(result.searchValue).toBe("Tab 900");
+    expect(result.countText).toBe("1001 items / 0 saved");
+    expect(result.visibleRows).toContain(800);
+    expect(issues.filter((issue) => issue.kind !== "console")).toEqual([]);
+  });
+
+  test("psh-clear-search-rejected-response-restores-outline-chrome", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadLargeSparseSidebar(page, { fullStatePending: true });
+
+    await page.locator("#search").fill("Tab 900");
+    await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      await api.waitForSparseRequestCount(1);
+      api.resolveSliceAt(0);
+      await api.waitForIdleFrames(3);
+    });
+
+    const result = await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      const clear = document.querySelector<HTMLButtonElement>("#clear-search");
+      if (!clear) {
+        throw new Error("Missing clear search button");
+      }
+
+      clear.click();
+      await api.waitForSparseRequestCount(2);
+      api.rejectSliceAt(0);
+      await api.waitForIdleFrames(4);
+
+      return {
+        requests: api.projectionRequests(),
+        searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
+        visibleRows: api.visibleRows(),
+        countText: document.querySelector("#state-count")?.textContent ?? "",
+        targetExists: Boolean(document.querySelector("[data-node-id='tab:900']"))
+      };
+    });
+
+    expect(result.requests.map((request) => request.query)).toEqual(["Tab 900", ""]);
+    expect(result.searchValue).toBe("");
+    expect(result.countText).toBe("1001 items / 0 saved");
+    expect(result.targetExists).toBe(false);
+    expect(result.visibleRows.length).toBeGreaterThan(0);
+    expect(issues.filter((issue) => issue.kind !== "console")).toEqual([]);
+  });
+
   test("psh-show-in-tree-target-slice-centers-remote-row", async ({ page }) => {
     const issues = collectPageIssues(page);
     await loadLargeSparseSidebar(page, { fullStatePending: true });
@@ -575,6 +731,227 @@ test.describe("sidebar projection hunt", () => {
     expect(issues).toEqual([]);
   });
 
+  test("psh-show-in-tree-target-deleted-before-slice-keeps-viewport-painted", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadLargeSparseSidebar(page, { fullStatePending: true });
+
+    await page.locator("#search").fill("Tab 900");
+    await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      await api.waitForSparseRequestCount(1);
+      api.resolveSliceAt(0);
+      await api.waitForIdleFrames(3);
+    });
+
+    const row = nodeRow(page, "tab:900");
+    await expect(row).toBeVisible();
+    await row.hover();
+    await row.getByRole("button", { name: "Show in tree", exact: true }).click();
+
+    const result = await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      await api.waitForSparseRequestCount(2);
+      api.emitDeletePatch(["tab:900"]);
+      await api.waitForIdleFrames(2);
+      api.resolveSliceAt(0);
+      await api.waitForIdleFrames(4);
+      return {
+        requests: api.projectionRequests(),
+        visibleRows: api.visibleRows(),
+        searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
+        targetExists: Boolean(document.querySelector("[data-node-id='tab:900']"))
+      };
+    });
+
+    expect(result.requests.at(-1)).toMatchObject({ query: "", targetNodeId: "tab:900" });
+    expect(result.searchValue).toBe("");
+    expect(result.targetExists).toBe(false);
+    expect(result.visibleRows.length).toBeGreaterThan(0);
+    expect(issues).toEqual([]);
+  });
+
+  test("psh-show-in-tree-stale-target-response-does-not-overwrite-new-search", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadLargeSparseSidebar(page, { fullStatePending: true });
+
+    await page.locator("#search").fill("Tab 900");
+    await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      await api.waitForSparseRequestCount(1);
+      api.resolveSliceAt(0);
+      await api.waitForIdleFrames(3);
+    });
+
+    const row = nodeRow(page, "tab:900");
+    await expect(row).toBeVisible();
+    await row.hover();
+    await row.getByRole("button", { name: "Show in tree", exact: true }).click();
+
+    const result = await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      const search = document.querySelector<HTMLInputElement>("#search");
+      if (!search) {
+        throw new Error("Missing search input");
+      }
+      await api.waitForSparseRequestCount(2);
+
+      search.focus();
+      search.value = "Tab 91";
+      search.dispatchEvent(new InputEvent("input", {
+        bubbles: true,
+        inputType: "insertText",
+        data: "Tab 91"
+      }));
+      await api.waitForSparseRequestCount(3);
+
+      api.resolveSliceAt(0);
+      await api.waitForIdleFrames(3);
+      const afterStaleTarget = {
+        searchValue: search.value,
+        hasRevealHighlight: Boolean(document.querySelector(".is-reveal-highlight")),
+        visibleRows: api.visibleRows()
+      };
+
+      api.resolveSliceAt(0);
+      await api.waitForIdleFrames(3);
+      return {
+        requests: api.projectionRequests(),
+        afterStaleTarget,
+        finalSearchValue: search.value,
+        finalVisibleRows: api.visibleRows(),
+        countText: document.querySelector("#state-count")?.textContent ?? ""
+      };
+    });
+
+    expect(result.requests.map((request) => ({
+      query: request.query,
+      targetNodeId: request.targetNodeId
+    }))).toEqual([
+      { query: "Tab 900", targetNodeId: undefined },
+      { query: "", targetNodeId: "tab:900" },
+      { query: "Tab 91", targetNodeId: undefined }
+    ]);
+    expect(result.afterStaleTarget.searchValue).toBe("Tab 91");
+    expect(result.afterStaleTarget.hasRevealHighlight).toBe(false);
+    expect(result.finalSearchValue).toBe("Tab 91");
+    expect(result.finalVisibleRows).toContain(1);
+    expect(result.countText).toBe("11 matchs / 1001 items");
+    await expect(nodeRow(page, "tab:91")).toBeVisible();
+    expect(issues).toEqual([]);
+  });
+
+  test("psh-show-in-tree-stale-target-with-state-broadcast-keeps-new-search", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadLargeSparseSidebar(page, { fullStatePending: true });
+
+    await page.locator("#search").fill("Tab 900");
+    await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      await api.waitForSparseRequestCount(1);
+      api.resolveSliceAt(0);
+      await api.waitForIdleFrames(3);
+    });
+
+    const row = nodeRow(page, "tab:900");
+    await expect(row).toBeVisible();
+    await row.hover();
+    await row.getByRole("button", { name: "Show in tree", exact: true }).click();
+
+    const result = await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      const search = document.querySelector<HTMLInputElement>("#search");
+      if (!search) {
+        throw new Error("Missing search input");
+      }
+      await api.waitForSparseRequestCount(2);
+
+      search.focus();
+      search.value = "Tab 91";
+      search.dispatchEvent(new InputEvent("input", {
+        bubbles: true,
+        inputType: "insertText",
+        data: "Tab 91"
+      }));
+      await api.waitForSparseRequestCount(3);
+
+      api.emitFullStateBroadcast();
+      await api.waitForIdleFrames(3);
+      api.resolveSliceAt(0);
+      await api.waitForIdleFrames(3);
+      const afterStaleTarget = {
+        searchValue: search.value,
+        hasRevealHighlight: Boolean(document.querySelector(".is-reveal-highlight")),
+        visibleRows: api.visibleRows(),
+        countText: document.querySelector("#state-count")?.textContent ?? ""
+      };
+
+      api.resolveSliceAt(0);
+      await api.waitForIdleFrames(3);
+      return {
+        requests: api.projectionRequests(),
+        afterStaleTarget,
+        finalSearchValue: search.value,
+        finalVisibleRows: api.visibleRows(),
+        countText: document.querySelector("#state-count")?.textContent ?? ""
+      };
+    });
+
+    expect(result.requests.map((request) => ({
+      query: request.query,
+      targetNodeId: request.targetNodeId
+    }))).toEqual([
+      { query: "Tab 900", targetNodeId: undefined },
+      { query: "", targetNodeId: "tab:900" },
+      { query: "Tab 91", targetNodeId: undefined }
+    ]);
+    expect(result.afterStaleTarget.searchValue).toBe("Tab 91");
+    expect(result.afterStaleTarget.hasRevealHighlight).toBe(false);
+    expect(result.finalSearchValue).toBe("Tab 91");
+    expect(result.finalVisibleRows).toContain(1);
+    expect(result.countText).toBe("11 matchs / 1001 items");
+    await expect(nodeRow(page, "tab:91")).toBeVisible();
+    expect(issues).toEqual([]);
+  });
+
+  test("psh-show-in-tree-rejected-target-response-restores-cleared-outline", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadLargeSparseSidebar(page, { fullStatePending: true });
+
+    await page.locator("#search").fill("Tab 900");
+    await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      await api.waitForSparseRequestCount(1);
+      api.resolveSliceAt(0);
+      await api.waitForIdleFrames(3);
+    });
+
+    const row = nodeRow(page, "tab:900");
+    await expect(row).toBeVisible();
+    await row.hover();
+    await row.getByRole("button", { name: "Show in tree", exact: true }).click();
+
+    const result = await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      await api.waitForSparseRequestCount(2);
+      api.rejectSliceAt(0);
+      await api.waitForIdleFrames(4);
+      return {
+        requests: api.projectionRequests(),
+        visibleRows: api.visibleRows(),
+        searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
+        countText: document.querySelector("#state-count")?.textContent ?? "",
+        targetExists: Boolean(document.querySelector("[data-node-id='tab:900']"))
+      };
+    });
+
+    expect(result.requests.at(-1)).toMatchObject({ query: "", targetNodeId: "tab:900" });
+    expect(result.searchValue).toBe("");
+    expect(result.countText).toBe("1001 items / 0 saved");
+    expect(result.targetExists).toBe(false);
+    expect(result.visibleRows.length).toBeGreaterThan(0);
+    expect(issues.filter((issue) => issue.kind !== "console")).toEqual([]);
+  });
+
   test("psh-search-refreshes-after-background-title-patch", async ({ page }) => {
     const issues = collectPageIssues(page);
     await loadLargeSparseSidebar(page, { fullStatePending: true });
@@ -595,6 +972,171 @@ test.describe("sidebar projection hunt", () => {
 
     await expect(nodeRow(page, "tab:900")).toContainText("Tab 900 updated remotely");
     await expect(page.locator("#search")).toHaveValue("Tab 900");
+    expect(issues).toEqual([]);
+  });
+
+  test("psh-full-state-broadcast-while-search-active-keeps-query-results", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadLargeSparseSidebar(page, { fullStatePending: true });
+
+    await page.locator("#search").fill("Tab 900");
+    await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      await api.waitForSparseRequestCount(1);
+      api.resolveSliceAt(0);
+      await api.waitForIdleFrames(3);
+      api.emitFullStateBroadcast();
+      await api.waitForIdleFrames(4);
+    });
+
+    await expect(page.locator("#search")).toHaveValue("Tab 900");
+    await expect(nodeRow(page, "tab:900")).toBeVisible();
+    await expect(page.locator("#state-count")).toHaveText("1 match / 1001 items");
+    expect(issues).toEqual([]);
+  });
+
+  test("psh-query-replacement-with-state-broadcast-keeps-current-query", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadLargeSparseSidebar(page, { fullStatePending: true });
+
+    const result = await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      const search = document.querySelector<HTMLInputElement>("#search");
+      if (!search) {
+        throw new Error("Missing search input");
+      }
+
+      search.focus();
+      search.value = "Tab 90";
+      search.dispatchEvent(new InputEvent("input", {
+        bubbles: true,
+        inputType: "insertText",
+        data: "Tab 90"
+      }));
+      await api.waitForSparseRequestCount(1);
+
+      search.value = "Tab 900";
+      search.dispatchEvent(new InputEvent("input", {
+        bubbles: true,
+        inputType: "insertText",
+        data: "0"
+      }));
+      await api.waitForSparseRequestCount(2);
+
+      api.resolveSliceAt(0);
+      await api.waitForIdleFrames(2);
+      api.emitFullStateBroadcast();
+      await api.waitForIdleFrames(3);
+      const afterBroadcast = {
+        searchValue: search.value,
+        hasStaleTab90: Boolean(document.querySelector("[data-node-id='tab:90']")),
+        hasCurrentTab900: Boolean(document.querySelector("[data-node-id='tab:900']")),
+        countText: document.querySelector("#state-count")?.textContent ?? ""
+      };
+
+      api.resolveSliceAt(0);
+      await api.waitForIdleFrames(3);
+      return {
+        requests: api.projectionRequests(),
+        afterBroadcast,
+        searchValue: search.value,
+        visibleRows: api.visibleRows(),
+        countText: document.querySelector("#state-count")?.textContent ?? ""
+      };
+    });
+
+    expect(result.requests.map((request) => request.query)).toEqual(["Tab 90", "Tab 900"]);
+    expect(result.afterBroadcast.searchValue).toBe("Tab 900");
+    expect(result.afterBroadcast.hasStaleTab90).toBe(false);
+    expect(result.afterBroadcast.countText).not.toContain("Tab 90");
+    expect(result.searchValue).toBe("Tab 900");
+    expect(result.visibleRows).toContain(1);
+    expect(result.countText).toBe("1 match / 1001 items");
+    await expect(nodeRow(page, "tab:900")).toBeVisible();
+    await expect(page.locator(nodeSelector("tab:90"))).toHaveCount(0);
+    expect(issues).toEqual([]);
+  });
+
+  test("psh-scroll-search-broadcast-clear-resolves-current-outline", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadLargeSparseSidebar(page, { fullStatePending: true });
+
+    const result = await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      const search = document.querySelector<HTMLInputElement>("#search");
+      const clear = document.querySelector<HTMLButtonElement>("#clear-search");
+      if (!search || !clear) {
+        throw new Error("Missing search controls");
+      }
+
+      await api.nextFrame();
+      await api.scrollToRow(250);
+      await api.waitForSparseRequestCount(1);
+
+      search.focus();
+      search.value = "Tab 900";
+      search.dispatchEvent(new InputEvent("input", {
+        bubbles: true,
+        inputType: "insertText",
+        data: "Tab 900"
+      }));
+      await api.waitForSparseRequestCount(2);
+
+      api.emitFullStateBroadcast();
+      await api.waitForIdleFrames(2);
+      let resolvedSlices = 0;
+      api.resolveSliceAt(0);
+      resolvedSlices += 1;
+      await api.waitForIdleFrames(2);
+      const afterStaleScroll = {
+        searchValue: search.value,
+        visibleRows: api.visibleRows(),
+        countText: document.querySelector("#state-count")?.textContent ?? ""
+      };
+
+      api.resolveSliceAt(0);
+      resolvedSlices += 1;
+      await api.waitForIdleFrames(3);
+      const afterSearch = {
+        searchValue: search.value,
+        hasSearchResult: Boolean(document.querySelector("[data-node-id='tab:900']")),
+        countText: document.querySelector("#state-count")?.textContent ?? ""
+      };
+
+      clear.click();
+      await api.waitForSparseRequestCount(3);
+      api.resolveSliceAt(0);
+      resolvedSlices += 1;
+      await api.waitForIdleFrames(4);
+      if (api.sparseRequestCount() > resolvedSlices) {
+        api.resolveSliceAt(0);
+        resolvedSlices += 1;
+        await api.waitForIdleFrames(4);
+      }
+
+      return {
+        requests: api.projectionRequests(),
+        afterStaleScroll,
+        afterSearch,
+        searchValue: search.value,
+        visibleRows: api.visibleRows(),
+        countText: document.querySelector("#state-count")?.textContent ?? "",
+        targetExists: Boolean(document.querySelector("[data-node-id='tab:900']"))
+      };
+    });
+
+    expect(result.requests.slice(0, 2).map((request) => request.query)).toEqual(["", "Tab 900"]);
+    expect(result.requests.slice(2).length).toBeGreaterThanOrEqual(1);
+    expect(result.requests.slice(2).every((request) => request.query === "")).toBe(true);
+    expect(result.afterStaleScroll.searchValue).toBe("Tab 900");
+    expect(result.afterStaleScroll.visibleRows.length).toBeGreaterThan(0);
+    expect(result.afterSearch.searchValue).toBe("Tab 900");
+    expect(result.afterSearch.hasSearchResult).toBe(true);
+    expect(result.afterSearch.countText).toBe("1 match / 1001 items");
+    expect(result.searchValue).toBe("");
+    expect(result.visibleRows.length).toBeGreaterThan(0);
+    expect(result.countText).toBe("1001 items / 0 saved");
+    expect(result.targetExists).toBe(false);
     expect(issues).toEqual([]);
   });
 

@@ -19,11 +19,11 @@ pnpm perf:sidebar-projection-guard
 ## Last Projection Run
 
 - Completed: 2026-05-26
-- Strategy: remote projection freshness discovery, then stopped after a new distinct signature
-- Scenario ids: 29 `psh-*` Playwright discovery scenarios
-- Distinct findings recorded: 8
-- Status: `PT-008` open; `PT-001` through `PT-007` fixed
-- Perf gate: preflight `pnpm perf:sidebar-projection-guard -- --smoke` passed before discovery. Full fix-pass perf gate not run for open `PT-008`.
+- Strategy: continued remote projection hunt after clarifying stop rules; freshness, coverage-transition, rejected-response, broadcast ordering, command/delete broadcast, and temporal scroll/search/clear discovery
+- Scenario ids: 41 `psh-*` Playwright discovery scenarios
+- Distinct findings recorded: 11
+- Status: `PT-008` through `PT-011` open; `PT-001` through `PT-007` fixed. Discovery stopped after three clean active mutation blocks following `PT-011`.
+- Perf gate: preflight `pnpm perf:sidebar-projection-guard -- --smoke` passed before discovery. The final projection corpus pass had 37 green scenarios with the four frozen open failures excluded. Full fix-pass perf gate not run while `PT-008` through `PT-011` remain open.
 
 ## Fix Analysis
 
@@ -32,11 +32,14 @@ pnpm perf:sidebar-projection-guard
 - `PT-006`: sparse tree-structure broadcasts requested a remote projection refresh before applying the visible projection patch. The fix tries compact visible-row projection updates first and only falls back to a background slice when the local patch cannot safely apply.
 - `PT-007`: remote projection application could scroll to an active/reveal target outside the returned sparse rows and then stop, leaving the viewport blank until another scroll. The fix immediately asks for a viewport-covering sparse slice after remote projection rendering changes scroll position.
 - `PT-008`: fix analysis pending. Discovery shows a partial sidebar-local search projection can recompute chrome from the partial node table after a visible match stops matching.
+- `PT-009`: fix analysis pending. Discovery shows a sparse snapshot without coverage metadata can keep visible-row actions readonly even after full hydration resolves.
+- `PT-010`: fix analysis pending. Discovery shows a rejected show-in-tree target slice can leave cleared search input paired with stale search-result chrome.
+- `PT-011`: fix analysis pending. Discovery shows a rejected clear-search projection slice can leave cleared search input paired with stale search-result chrome.
 
 ## Finding Index
 
 - Fixed projection findings: `PT-001`, `PT-002`, `PT-003`, `PT-004`, `PT-005`, `PT-006`, `PT-007`
-- Open projection findings: `PT-008`
+- Open projection findings: `PT-008`, `PT-009`, `PT-010`, `PT-011`
 
 ### PT-001 rejected sparse slice leaves viewport blank/no retry
 
@@ -149,3 +152,45 @@ pnpm exec playwright test tests/playwright/sidebar-projection-hunt.spec.ts --gre
 - Expected: while full hydration is pending, if a visible search result receives a title patch that makes it stop matching, the row should disappear and the search chrome should preserve the authoritative background total: `0 matches / 1001 items`.
 - Actual: the row disappears, but the sidebar falls back to a projection built from its partial local node table and reports `0 matchs / 82 items`.
 - Evidence: the frozen Playwright scenario first resolves a remote search for `Tab 900`, then emits a `nodeStateUpdated` title patch changing that tab to `Renamed away from query`; after idle frames, the DOM no longer contains `tab:900`, but `#state-count` is computed from the sparse sidebar-local state instead of the background-owned projection metadata.
+
+### PT-009 missing coverage snapshot stays readonly after full hydration
+
+- Status: open
+- Found by: `psh-coverage-missing-snapshot-restores-actions-after-full-hydration`
+- Repro:
+
+```sh
+pnpm exec playwright test tests/playwright/sidebar-projection-hunt.spec.ts --grep "psh-coverage-missing-snapshot-restores-actions-after-full-hydration" --reporter=list --workers=1
+```
+
+- Expected: a sparse initial snapshot without coverage metadata should keep actions readonly while full hydration is pending, then restore normal visible-row actions once full `getState` hydration resolves.
+- Actual: after full hydration resolves and the row is hovered again, the visible row still has no `Close` action.
+- Evidence: the frozen Playwright scenario loads a sparse snapshot with `includeCoverage: false`, verifies `tab:799` has no `Close` action while partial, resolves full state, waits idle frames, hovers `tab:799` again, and times out waiting for the `Close` button.
+
+### PT-010 rejected show-in-tree target leaves stale search chrome
+
+- Status: open
+- Found by: `psh-show-in-tree-rejected-target-response-restores-cleared-outline`
+- Repro:
+
+```sh
+pnpm exec playwright test tests/playwright/sidebar-projection-hunt.spec.ts --grep "psh-show-in-tree-rejected-target-response-restores-cleared-outline" --reporter=list --workers=1
+```
+
+- Expected: after clicking `Show in tree`, the search input is cleared. If the target-node projection request rejects, the sidebar should restore or keep a non-search outline projection with normal outline chrome.
+- Actual: the search input is empty, but the sidebar still displays stale search-result chrome: `1 match / 1001 items`.
+- Evidence: the frozen Playwright scenario searches for `Tab 900`, resolves that search result, clicks `Show in tree`, rejects the pending target-node slice, waits idle frames, and observes empty `#search` with search-result count text instead of `1001 items / 0 saved`.
+
+### PT-011 rejected clear-search slice leaves stale search chrome
+
+- Status: open
+- Found by: `psh-clear-search-rejected-response-restores-outline-chrome`
+- Repro:
+
+```sh
+pnpm exec playwright test tests/playwright/sidebar-projection-hunt.spec.ts --grep "psh-clear-search-rejected-response-restores-outline-chrome" --reporter=list --workers=1
+```
+
+- Expected: after clearing search, if the non-search projection slice rejects, the sidebar should still restore or keep non-search outline chrome matching the cleared search input.
+- Actual: the search input is empty, but the sidebar still displays stale search-result chrome: `1 match / 1001 items`.
+- Evidence: the frozen Playwright scenario searches for `Tab 900`, resolves that search result, clicks clear search, rejects the pending non-search projection slice, waits idle frames, and observes empty `#search` with search-result count text instead of `1001 items / 0 saved`.

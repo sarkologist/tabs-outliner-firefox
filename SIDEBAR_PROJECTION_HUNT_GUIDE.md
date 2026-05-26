@@ -29,20 +29,25 @@ Stress the boundary between the background-owned outline and sidebars that now b
 Current projection guard baseline after 2026-05-26 remote-projection work:
 
 - `pnpm perf:sidebar-projection-guard` passes with startup hover and sparse scroll-away profiles. Startup-hover now guards sparse idle behavior with `sparseIdleActionButtonsMin` and `sparseIdleHydrationRequestsMax`; startup-scroll-away still requires viewport row coverage with `hydrationRequestsMax=0`.
-- Projection discovery corpus has 29 `psh-*` scenarios covering rejected/delayed/out-of-order slices, restored single-tab delete cleanup, hover action stability, sparse full-state hydration, sparse patch stability, remote search clear/show-in-tree slices, search query replacement, and partial action policy.
-- Fixed findings are preserved as regression coverage in the `psh-*` corpus: `PT-001` through `PT-007`. `PT-008` is open and frozen. Do not mutate those scenarios directly during discovery; clone variants with new neutral IDs.
+- Projection discovery corpus has 41 `psh-*` scenarios covering rejected/delayed/out-of-order slices, restored single-tab delete cleanup, hover action stability, sparse full-state hydration, sparse patch stability, remote search clear/show-in-tree slices, search query replacement, full-state broadcast freshness, command/delete broadcast ordering, temporal scroll/search/clear ordering, coverage transitions, rejected response handling, and partial action policy.
+- Fixed findings are preserved as regression coverage in the `psh-*` corpus: `PT-001` through `PT-007`. `PT-008` through `PT-011` are open and frozen. Do not mutate those scenarios directly during discovery; clone variants with new neutral IDs.
+- The latest hunt stopped after three clean active mutation blocks following `PT-011`: state-broadcast/query freshness, stale show-in-tree target plus broadcast, close-command/delete/full-broadcast, and a temporal scroll/search/broadcast/clear sequence were sampled clean.
 
 Next sparse cells:
 
 - rejected slice retry/recovery;
 - repeated scrollbar jumps with stale non-covering responses;
 - background broadcasts while scrolled to a fetched projection slice;
-- stale query responses after search clear or query replacement;
+- stale query responses after search clear or query replacement, especially when combined with rejected responses or background patches;
 - partial search result pruning after background patches, especially count/chrome metadata derived from background projection versus sidebar-local state;
 - show-in-tree target slices when the target moved, was deleted, or has an ancestor patched while the request is pending;
+- rejected show-in-tree target slices, especially whether cleared-search intent restores non-search chrome;
+- rejected clear-search slices, especially whether cleared-search intent restores non-search chrome;
 - compact tree-structure patches that can be locally applied before falling back to remote slice refresh;
 - visible in-coverage commands while full hydration is pending;
+- missing-coverage snapshots after full hydration or full broadcasts, especially whether actions and edit affordances become available again;
 - stale patches for hovered rows and deleted rows;
+- undo/redo command ack ordering while only sparse projection state is present;
 - snapshots with missing coverage metadata;
 - search/show-in-tree while slice requests are pending;
 - multi-sidebar startup with no automatic sidebar full hydration.
