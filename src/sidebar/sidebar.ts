@@ -2690,7 +2690,7 @@ function canRenderHydratingNodeAction(action: string, node: OutlineNode): boolea
     return false;
   }
 
-  if (action === "cut" || action === "paste" || action === "move-subtree-to-top-level") {
+  if (action === "paste") {
     return false;
   }
   if (action === "flatten" || action === "promote-children") {
@@ -3572,8 +3572,12 @@ function cutNodeForPaste(nodeId: NodeId): void {
   }
 
   pendingCutNodeId = nodeId;
+  currentCutRowRange = currentProjection ? cutSubtreeRowRange(currentProjection.rows, pendingCutNodeId) : undefined;
+  if (hydratingFullState && currentProjection && isSparseInitialProjection(currentProjection)) {
+    scheduleFullStateHydration(0);
+  }
   showDiagnosticsNotice("Cut subtree");
-  render();
+  renderAfterLocalRowEdit();
 }
 
 async function pasteCutAfter(targetNodeId: NodeId): Promise<void> {

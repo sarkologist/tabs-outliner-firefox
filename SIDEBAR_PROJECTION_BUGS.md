@@ -19,10 +19,10 @@ pnpm perf:sidebar-projection-guard
 ## Last Projection Run
 
 - Completed: 2026-05-26
-- Strategy: continued remote projection hunt after clarifying stop rules, followed by manual-QA repro capture for sparse delete/refill behavior
-- Scenario ids: 42 `psh-*` Playwright discovery/regression scenarios
-- Distinct findings recorded: 12
-- Status: `PT-001` through `PT-012` fixed. Discovery stopped after three clean active mutation blocks following `PT-011`; manual QA then found `PT-012`, which is now frozen as regression coverage.
+- Strategy: continued remote projection hunt after clarifying stop rules, followed by manual-QA repro capture for sparse delete/refill and sparse edit-control regressions
+- Scenario ids: 43 `psh-*` Playwright discovery/regression scenarios
+- Distinct findings recorded: 13
+- Status: `PT-001` through `PT-013` fixed. Discovery stopped after three clean active mutation blocks following `PT-011`; manual QA then found `PT-012` and `PT-013`, which are now frozen as regression coverage.
 - Perf gate: preflight `pnpm perf:sidebar-projection-guard -- --smoke` passed before discovery. Fix pass ran the full projection corpus and hard projection perf gate; both passed.
 
 ## Fix Analysis
@@ -35,10 +35,11 @@ pnpm perf:sidebar-projection-guard
 - `PT-009`: sparse initial snapshots without coverage metadata now keep partial rows readonly without hydrating on startup. If the user asks for coverage-dependent affordances from that snapshot, the sidebar requests full hydration once and restores normal visible-row actions when it resolves.
 - `PT-010` and `PT-011`: cleared-search intent is no longer coupled to the last successful search projection. The sidebar remembers the last accepted non-search projection and restores it when a cleared-search or show-in-tree remote projection request is rejected, so stale search chrome does not survive a failed follow-up request.
 - `PT-012`: visible sparse deletes could locally remove enough rows to expose an unpainted viewport tail. The fix invalidates in-flight sparse slices after local tree-structure patches, forces a current-intent viewport refill after applying the compact patch, and treats a successful show-in-tree response that no longer contains the requested node as stale.
+- `PT-013`: sparse hydrating action gating hid edit controls that can safely begin from covered rows. The fix restores Cut and Move to top level for editable sparse rows; Cut marks the row locally and starts full hydration so placement-dependent Paste/drag affordances can recover with whole-tree state.
 
 ## Finding Index
 
-- Fixed projection findings: `PT-001`, `PT-002`, `PT-003`, `PT-004`, `PT-005`, `PT-006`, `PT-007`, `PT-008`, `PT-009`, `PT-010`, `PT-011`, `PT-012`
+- Fixed projection findings: `PT-001`, `PT-002`, `PT-003`, `PT-004`, `PT-005`, `PT-006`, `PT-007`, `PT-008`, `PT-009`, `PT-010`, `PT-011`, `PT-012`, `PT-013`
 - Open projection findings: none
 
 ### PT-001 rejected sparse slice leaves viewport blank/no retry
@@ -213,3 +214,18 @@ pnpm exec playwright test tests/playwright/sidebar-projection-hunt.spec.ts --gre
 - Actual before fix: the compact delete patch removed the rows that were in the local sparse slice, but the newly exposed part of the viewport stayed blank until the user nudged the scroll position.
 - Evidence: the frozen Playwright scenario scrolls to row `250`, resolves a narrow sparse slice for rows `250..277`, deletes all those visible tab nodes, and waits for a second projection slice. Before the fix, no refill request arrived; after the fix, `tab:278` becomes visible without another scroll.
 - Fix: tree-structure patches now invalidate stale sparse window requests and force a current-viewport refill after local patching, but only for the current user query. Successful show-in-tree slices that no longer contain their requested target are treated as stale and restore the last non-search projection.
+
+### PT-013 covered sparse edit controls disappeared
+
+- Status: fixed
+- Found by: manual QA, frozen as `psh-move-to-top-level-remains-available-while-partial`, `psh-cut-covered-row-marks-sparse-row-while-partial`, and `psh-keyboard-cut-works-and-paste-waits-while-partial`
+- Repro:
+
+```sh
+pnpm exec playwright test tests/playwright/sidebar-projection-hunt.spec.ts --grep "psh-(move-to-top-level-remains-available|cut-covered-row-marks|keyboard-cut-works)" --reporter=list --workers=1
+```
+
+- Expected: covered sparse rows should still expose edit actions that can safely begin from the row itself, especially `Cut` and `Move to top level`.
+- Actual before fix: the hydrating sparse action gate hid `Cut`, `Paste`, and `Move to top level`; manual QA noticed the send-to-root and cut buttons were gone.
+- Evidence: the frozen Playwright scenarios hover covered row `tab:800` while full hydration is pending. Before the fix, the `Move to top level` and `Cut` buttons were absent, and keyboard cut did not mark the row.
+- Fix: the sparse action gate now hides only placement-dependent `Paste` while partial. `Cut` is available for editable covered rows, marks the sparse row locally, and starts full hydration so paste/drag placement can recover with whole-tree state. `Move to top level` is available because the background can execute it by node id against authoritative state.

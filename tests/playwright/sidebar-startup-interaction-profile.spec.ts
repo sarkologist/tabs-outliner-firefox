@@ -198,14 +198,18 @@ test.describe("sidebar startup interaction profile", () => {
       const tree = document.querySelector<HTMLElement>("#tree");
       const viewport = document.querySelector<HTMLElement>("main");
       const target = document.querySelector<HTMLElement>(`.node[data-node-id="${CSS.escape(targetNodeId)}"]`);
-      const actionButtonsAfterHover = target?.querySelectorAll(".node-actions .icon-button").length ?? 0;
+      const actionButtonsAfterHover = target?.querySelectorAll(".node-actions .icon-button") ?? [];
+      const actionButtonLabelsAfterHover = Array.from(actionButtonsAfterHover, (button) =>
+        button instanceof HTMLElement ? button.ariaLabel || button.title : ""
+      );
 
       return {
         targetVisible: Boolean(target && target.offsetParent !== null),
         targetRowIndex: target?.dataset.rowIndex,
         treeHeight: tree?.style.height,
         scrollTop: viewport?.scrollTop ?? 0,
-        actionButtonsAfterHover,
+        actionButtonsAfterHover: actionButtonsAfterHover.length,
+        actionButtonLabelsAfterHover,
         hydrationRequests: messages.filter((message) => message.type === "getState").length,
         initialSnapshotRequests: messages.filter((message) => message.type === "getInitialTreeSnapshot").length,
         pointerOutcomes: pointerEntries.map((entry) => entry.detail?.outcome ?? "none"),
@@ -367,6 +371,10 @@ test.describe("sidebar startup interaction profile", () => {
       const rowAfterIdle = target?.querySelector<HTMLElement>(":scope > .node-row");
       const actionStripAfterIdle = rowAfterIdle?.querySelector<HTMLElement>(".node-actions");
       const closeButtonAfterIdle = rowAfterIdle?.querySelector<HTMLElement>('[data-action="close-node"]');
+      const actionButtonsAfterIdle = target?.querySelectorAll(".node-actions .icon-button") ?? [];
+      const actionButtonLabelsAfterIdle = Array.from(actionButtonsAfterIdle, (button) =>
+        button instanceof HTMLElement ? button.ariaLabel || button.title : ""
+      );
       detachObserver.disconnect();
 
       return {
@@ -374,7 +382,8 @@ test.describe("sidebar startup interaction profile", () => {
         hoverFeedbackDelay: summary?.find((row) => row.name === "sidebar.input.hoverFeedbackDelay"),
         hydration: summary?.find((row) => row.name === "sidebar.hydration"),
         render: summary?.find((row) => row.name === "sidebar.render"),
-        actionButtonsAfterIdle: target?.querySelectorAll(".node-actions .icon-button").length ?? 0,
+        actionButtonsAfterIdle: actionButtonsAfterIdle.length,
+        actionButtonLabelsAfterIdle,
         rowElementPreservedAcrossIdle: rowAfterHover === rowAfterIdle,
         actionStripPreservedAcrossIdle: actionStripAfterHover === actionStripAfterIdle,
         closeButtonPreservedAcrossIdle: closeButtonAfterHover === closeButtonAfterIdle,

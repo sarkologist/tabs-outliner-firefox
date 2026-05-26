@@ -29,9 +29,9 @@ Stress the boundary between the background-owned outline and sidebars that now b
 Current projection guard baseline after 2026-05-26 remote-projection work:
 
 - `pnpm perf:sidebar-projection-guard` passes with startup hover and sparse scroll-away profiles. Startup-hover now guards sparse idle behavior with `sparseIdleActionButtonsMin` and `sparseIdleHydrationRequestsMax`; startup-scroll-away still requires viewport row coverage with `hydrationRequestsMax=0`.
-- Projection discovery corpus has 42 `psh-*` scenarios covering rejected/delayed/out-of-order slices, restored single-tab delete cleanup, hover action stability, sparse full-state hydration, sparse patch stability, sparse delete/refill behavior, remote search clear/show-in-tree slices, search query replacement, full-state broadcast freshness, command/delete broadcast ordering, temporal scroll/search/clear ordering, coverage transitions, rejected response handling, and partial action policy.
-- Fixed findings are preserved as regression coverage in the `psh-*` corpus: `PT-001` through `PT-012`. Do not mutate those scenarios directly during discovery; clone variants with new neutral IDs.
-- The latest hunt stopped after three clean active mutation blocks following `PT-011`: state-broadcast/query freshness, stale show-in-tree target plus broadcast, close-command/delete/full-broadcast, and a temporal scroll/search/broadcast/clear sequence were sampled clean. Manual QA later found `PT-012`, now covered by the sparse delete/refill regression.
+- Projection discovery corpus has 43 `psh-*` scenarios covering rejected/delayed/out-of-order slices, restored single-tab delete cleanup, hover action stability, sparse full-state hydration, sparse patch stability, sparse delete/refill behavior, covered sparse edit controls, remote search clear/show-in-tree slices, search query replacement, full-state broadcast freshness, command/delete broadcast ordering, temporal scroll/search/clear ordering, coverage transitions, rejected response handling, and partial action policy.
+- Fixed findings are preserved as regression coverage in the `psh-*` corpus: `PT-001` through `PT-013`. Do not mutate those scenarios directly during discovery; clone variants with new neutral IDs.
+- The latest hunt stopped after three clean active mutation blocks following `PT-011`: state-broadcast/query freshness, stale show-in-tree target plus broadcast, close-command/delete/full-broadcast, and a temporal scroll/search/broadcast/clear sequence were sampled clean. Manual QA later found `PT-012` and `PT-013`, now covered by sparse delete/refill and edit-control regressions.
 
 Next sparse cells:
 
@@ -45,6 +45,7 @@ Next sparse cells:
 - rejected clear-search slices, especially whether cleared-search intent restores non-search chrome without reusing stale search projection state;
 - compact tree-structure patches that can be locally applied before falling back to remote slice refresh, especially deletes that shrink the current sparse window and must refill exposed viewport rows;
 - visible in-coverage commands while full hydration is pending;
+- covered edit controls while full hydration is pending, especially Cut, Paste, Move to top level, drag/drop, and which ones need background/full-state placement;
 - missing-coverage snapshots after full hydration or full broadcasts, especially whether actions and edit affordances become available again;
 - stale patches for hovered rows and deleted rows;
 - undo/redo command ack ordering while only sparse projection state is present;

@@ -306,24 +306,40 @@ test.describe("sidebar projection hunt", () => {
     expect(issues).toEqual([]);
   });
 
-  test("psh-movement-controls-hidden-while-partial", async ({ page }) => {
+  test("psh-move-to-top-level-remains-available-while-partial", async ({ page }) => {
     const issues = collectPageIssues(page);
     await loadLargeSparseSidebar(page, { fullStatePending: true });
 
     const row = nodeRow(page, "tab:800");
     await row.hover();
+    await expect(row.getByRole("button", { name: "Cut", exact: true })).toBeVisible();
+    await expect(row.getByRole("button", { name: "Paste", exact: true })).toHaveCount(0);
+    await row.getByRole("button", { name: "Move to top level", exact: true }).click();
 
-    await expect(row.getByRole("button", { name: "Move to top level", exact: true })).toHaveCount(0);
-    await expect(row.getByRole("button", { name: "Cut", exact: true })).toHaveCount(0);
+    await expect(sentCommands(page)).resolves.toEqual([{ type: "moveSubtreeToTopLevel", nodeId: "tab:800" }]);
     expect(issues).toEqual([]);
   });
 
-  test("psh-cut-paste-shortcuts-disabled-while-partial", async ({ page }) => {
+  test("psh-cut-covered-row-marks-sparse-row-while-partial", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadLargeSparseSidebar(page, { fullStatePending: true });
+
+    const row = nodeRow(page, "tab:800");
+    await row.hover();
+    await row.getByRole("button", { name: "Cut", exact: true }).click();
+
+    await expect(page.locator(nodeSelector("tab:800"))).toHaveClass(/is-cut/);
+    await expect(sentCommands(page)).resolves.toEqual([]);
+    expect(issues).toEqual([]);
+  });
+
+  test("psh-keyboard-cut-works-and-paste-waits-while-partial", async ({ page }) => {
     const issues = collectPageIssues(page);
     await loadLargeSparseSidebar(page, { fullStatePending: true });
 
     await nodeRow(page, "tab:800").locator(".node-label").focus();
     await page.keyboard.press("Control+X");
+    await expect(page.locator(nodeSelector("tab:800"))).toHaveClass(/is-cut/);
     await nodeRow(page, "tab:801").locator(".node-label").focus();
     await page.keyboard.press("Control+V");
 
@@ -1535,6 +1551,7 @@ function installProjectionHuntHarness(options: {
           type === "toggleCollapsed" ||
           type === "moveNode" ||
           type === "wrapNodeInGroup" ||
+          type === "moveSubtreeToTopLevel" ||
           type === "renameGroup" ||
           type === "focusNode" ||
           type === "expandAncestors" ||

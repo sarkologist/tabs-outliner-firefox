@@ -6,6 +6,7 @@ import {
   parseProjectionGuardArgs,
   selectProjectionGuardScenarios
 } from "../../scripts/perf-sidebar-projection-guard.mjs";
+import { startupHoverGuardFailures } from "../../scripts/profile-startup-hover.mjs";
 
 describe("sidebar projection perf guard", () => {
   it("selects scenarios and supports smoke run defaults", () => {
@@ -62,6 +63,35 @@ describe("sidebar projection perf guard", () => {
     expect(failing.guardFailures).toEqual(["sparse hover must materialize action buttons for the hovered row"]);
     expect(discardOnly.passed).toBe(false);
     expect(discardOnly.guardFailures).toEqual(["profile status is discard"]);
+  });
+
+  it("guards sparse hover action identities, not just button count", () => {
+    const summary = {
+      runs: 1,
+      firstPaintMaxMs: 6,
+      firstPaintActionButtonsMax: 0,
+      sparseHoverActionButtonsMin: 3,
+      sparseIdleActionButtonsMin: 3,
+      sparseHoverFrameMaxMs: 4,
+      sparseHoverFeedbackMaxMs: 0.5,
+      sparseIdleHydrationRequestsMax: 0,
+      remoteIdleHydrationRequestsMax: 0
+    };
+    const profileGroups = {
+      firstPaintProfiles: [{}],
+      sparseHoverProfiles: [{
+        actionButtonLabelsAfterHover: ["Group", "Close", "Delete"]
+      }],
+      sparseIdleProfiles: [{
+        actionButtonLabelsAfterIdle: ["Cut", "Move to top level", "Paste"]
+      }],
+      remoteIdleProfiles: [{}]
+    };
+
+    expect(startupHoverGuardFailures(summary, profileGroups)).toEqual([
+      "sparse hover actions must include Cut and Move to top level",
+      "sparse partial actions must not include Paste"
+    ]);
   });
 
   it("formats a compact hard-gate summary", () => {

@@ -9,6 +9,8 @@ const execFileAsync = promisify(execFile);
 const rootDir = dirname(dirname(fileURLToPath(import.meta.url)));
 const defaultResultsPath = join(rootDir, "autoresearch/sidebar-startup-hover/results.tsv");
 const testFile = "tests/playwright/sidebar-startup-interaction-profile.spec.ts";
+const REQUIRED_SPARSE_HOVER_ACTIONS = ["Cut", "Move to top level"];
+const DISALLOWED_SPARSE_HOVER_ACTIONS = ["Paste"];
 
 export const STARTUP_HOVER_RESULTS_TSV_HEADER = [
   "timestamp",
@@ -198,6 +200,18 @@ export function startupHoverGuardFailures(summary, profiles) {
   if (summary.sparseIdleActionButtonsMin <= 0) {
     failures.push("hovered row actions must survive sparse idle");
   }
+  if (!profilesHaveActionLabels(profiles.sparseHoverProfiles, "actionButtonLabelsAfterHover", REQUIRED_SPARSE_HOVER_ACTIONS)) {
+    failures.push("sparse hover actions must include Cut and Move to top level");
+  }
+  if (!profilesHaveActionLabels(profiles.sparseIdleProfiles, "actionButtonLabelsAfterIdle", REQUIRED_SPARSE_HOVER_ACTIONS)) {
+    failures.push("sparse idle actions must keep Cut and Move to top level");
+  }
+  if (
+    profilesHaveAnyActionLabel(profiles.sparseHoverProfiles, "actionButtonLabelsAfterHover", DISALLOWED_SPARSE_HOVER_ACTIONS) ||
+    profilesHaveAnyActionLabel(profiles.sparseIdleProfiles, "actionButtonLabelsAfterIdle", DISALLOWED_SPARSE_HOVER_ACTIONS)
+  ) {
+    failures.push("sparse partial actions must not include Paste");
+  }
   if (summary.sparseHoverFrameMaxMs >= 8) {
     failures.push("sparse hover frame feedback must stay below 8ms");
   }
@@ -217,6 +231,20 @@ function profileValues(results, label) {
   return results.flatMap((result) => {
     const profile = result.profiles[label];
     return profile ? [profile] : [];
+  });
+}
+
+function profilesHaveActionLabels(profiles, key, labels) {
+  return profiles.length > 0 && profiles.every((profile) => {
+    const values = new Set(Array.isArray(profile[key]) ? profile[key] : []);
+    return labels.every((label) => values.has(label));
+  });
+}
+
+function profilesHaveAnyActionLabel(profiles, key, labels) {
+  return profiles.some((profile) => {
+    const values = new Set(Array.isArray(profile[key]) ? profile[key] : []);
+    return labels.some((label) => values.has(label));
   });
 }
 
