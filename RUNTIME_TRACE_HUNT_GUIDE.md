@@ -1,6 +1,10 @@
 # Runtime Trace Hunt Guide
 
-This guide is the mutation prompt for domain-level runtime discovery. Use it before reading fixed repro histories. Treat `RUNTIME_TRACE_BUGS.md` as a post-run dedupe and evidence log, not as the source of new trace ideas.
+This guide is the data reference for domain-level runtime discovery: corpus roles, DSL summary, invariants, threat model, coverage matrix, sparse targets, and historical sweep notes.
+
+Use [RUNTIME_TRACE_HUNT_RUNBOOK.md](./RUNTIME_TRACE_HUNT_RUNBOOK.md) for the self-contained procedure to run a hunt. The runbook owns the stop rule, five-minute active mutation block definition, temperature ladder, subagent scout contract, runner commands, and fix-pass boundary.
+
+Use this file before reading fixed repro histories. Treat `RUNTIME_TRACE_BUGS.md` as a post-run dedupe and evidence log, not as the source of new trace ideas.
 
 ## Corpus Roles
 
@@ -9,54 +13,16 @@ This guide is the mutation prompt for domain-level runtime discovery. Use it bef
 - `known-finding` origins should not be used as discovery prompts.
 - `threat-model` and `agent-generated` origins are the normal discovery inputs.
 
-## Subagent Scout Structure
+## Procedure Reference
 
-Use subagents as adversarial ideation scouts, not as independent corpus editors. The main thread remains the owner of `src/background/controller.test.ts`, `scripts/hunt-runtime-traces.mjs`, `RUNTIME_TRACE_BUGS.md`, dedupe, replay, and the stop condition.
+Do not infer hunt procedure from older chat context or historical sections in this guide. Use [RUNTIME_TRACE_HUNT_RUNBOOK.md](./RUNTIME_TRACE_HUNT_RUNBOOK.md) for:
 
-Scout inputs:
-
-- Read `RUNTIME_TRACE_HUNT_GUIDE.md`, the current discovery traces, and the relevant controller/reconciler/ledger/scope/shape code for the assigned axis.
-- Do not read fixed repro histories in `RUNTIME_TRACE_BUGS.md` before proposing mutations. Use the bug log only after a run for dedupe/evidence.
-- Do not edit files, run the corpus, promote traces, or record findings. Return candidate trace ideas only.
-
-Scout roles:
-
-- Browser/runtime scout: native open/move/close, tab order, focus/session/fullscreen/window-state, browser event ordering, and partial query evidence.
-- Model/history scout: undo/redo, restore/delete/close, lifecycle journal boundaries, abrupt restart, command rejection, and stale durable state.
-- Sparse/user-behavior scout: restored-window browser actions, external links, opener chains, multi-window skew, sidebar reopen/startup-adjacent runtime drift, and actions users are likely to perform quickly.
-
-Scout output contract:
-
-```text
-- id: <neutral-prefix-candidate>
-- target axes: <3-6 tags>
-- pseudo actions: <DSL-ish ordered list>
-- oracle: <invariant/assertion the trace should stress>
-- novelty: <why this is not just a fixed-basin clone>
-- risk: <possible harness/precondition concern, if any>
-```
-
-Main-thread integration:
-
-- Deduplicate scout ideas against the current corpus and recent fixed basins.
-- Convert only selected ideas into typed `RuntimeDomainTrace` entries with neutral IDs.
-- Replay new traces explicitly before running the discovery profile.
-- If a trace fails from a harness/precondition issue, fix the trace or harness before counting it. If it fails by runtime invariant, freeze it and let the runner record every distinct signature.
-- Keep the mutation temperature ladder in force: after clean active blocks, ask scouts for changed axes instead of local variants.
-
-Run profiles:
-
-```sh
-pnpm trace-hunt:runtime
-RUNTIME_TRACE_HUNT_PROFILE=regression pnpm trace-hunt:runtime
-RUNTIME_TRACE_HUNT_PROFILE=all pnpm trace-hunt:runtime
-RUNTIME_TRACE_HUNT_TRACE_IDS=dh-focus-session-activation-refresh pnpm trace-hunt:runtime
-RUNTIME_TRACE_HUNT_PROFILE=regression RUNTIME_TRACE_HUNT_BATCH_SIZE=50 pnpm trace-hunt:runtime
-pnpm perf:runtime-guard
-pnpm perf:sidebar-projection-guard
-```
-
-The runner batches green corpus replay by default (`RUNTIME_TRACE_HUNT_BATCH_SIZE`, default `20`) so regression sweeps do not spawn one Vitest process per trace. If a batch fails, the runner replays only that batch one trace at a time and records precise findings. Use `RUNTIME_TRACE_HUNT_BATCH_SIZE=1` for the old single-trace execution behavior.
+- subagent scout responsibilities;
+- runner commands and corpus semantics;
+- active five-minute mutation block rules;
+- mutation temperature ladder;
+- stop condition;
+- fix-pass boundary and performance gate.
 
 ## Domain DSL
 
@@ -320,48 +286,6 @@ Restored-scope browser-action discovery started from 234 regression traces and 5
 - Fullscreen note: the domain trace DSL now supports `nativeSetWindowState`; keep old `sh-*` traces frozen and add fresh neutral fullscreen probes in the next sweep.
 - Perf guard is not part of discovery. It applies to the later fix/pass promotion step if this sweep records findings.
 
-## Five-Minute Mutation Block
+## Hunt Procedure
 
-A clean block is measured by wall-clock mutation effort, not by the runner's corpus cap and not by the UI's total turn duration. Start a timer for the block. If a new distinct bug appears, record it, reset the clean-streak count, and start a fresh block. If no new distinct bug appears, keep inspecting sparse coverage cells, editing or adding discovery traces, and rerunning the discovery profile until the block has consumed about five minutes.
-
-Do not count a quick inspect/edit/run cycle as a full clean block just because the selected corpus ran once. The runner executes the current corpus once and may finish quickly; the five-minute budget belongs to the adversarial agent loop around the runner.
-
-Do not count time spent waiting for trace execution as mutation effort. A five-minute block means about five minutes of active adversarial work: inspecting sparse coverage, reading relevant code, designing or cloning traces, editing the corpus, and deduping results. Runner wall-clock time is separate verification time, even when the runner takes longer than five minutes.
-
-If the runner is slow, finish the corpus run so failures are fully recorded, then resume the mutation-effort timer afterward. Do not call a block clean merely because a long corpus run produced no new findings; perform the remaining active mutation work and rerun the selected discovery corpus.
-
-Do not count a corpus run as clean if it stops at the runner safety boundary before completing the selected traces. Increase `RUNTIME_TRACE_HUNT_CORPUS_RUN_MS` or reduce the explicit trace selection when you need a complete sweep of a large corpus.
-
-## Mutation Temperature Ladder
-
-Use this ladder to escape a local basin when a clean block finds no new distinct signature:
-
-- **Rung 0:** start each block with sparse cells from the current hunt target.
-- **Rung 1 after one clean active block:** change one major axis: provenance, event source, event order, snapshot confidence, restart boundary, or assertion type.
-- **Rung 2 after two clean active blocks:** combine two or three semantic axes that have not recently been combined, such as browser-created plus history replay plus partial query, or restored plus fullscreen plus native move.
-- **Temporal heat check before stopping:** at Rung 2, include at least one trace where different clocks disagree across a command or reconciliation boundary. Prefer pre-command runtime evidence, a command-owned echo or rejection, and then a session/query/refresh event. Good axes are command close/session echo coalescing, created/updated/activated/focus events dispatched without awaiting listeners, command relocation fallback, raw-vs-normalized snapshot authority, session-only native closes, and partial/reordered queries.
-- **Rung 3 after three clean active blocks:** stop the hunt. Do not keep replaying or lightly varying the same basin.
-- Within a single five-minute active block, if a discovery run is clean quickly, raise the local rung and keep mutating until the active effort budget is spent.
-
-Mutation block note template:
-
-```md
-- Block:
-- Rung:
-- Axes changed:
-- Temporal boundaries crossed:
-- New/changed trace ids:
-- Runner result:
-- New signatures:
-- Dedupe/result:
-```
-
-1. Read this guide, the current discovery trace definitions, and the relevant controller/model code.
-2. Do not read fixed repro details in `RUNTIME_TRACE_BUGS.md` until after candidate mutations have been written and run.
-3. Choose one or two sparse coverage cells.
-4. Add or mutate `discovery` traces with neutral IDs, threat-model notes, and tags.
-5. Run the discovery profile once. The runner records every distinct failure in that selected corpus.
-6. After the run, use `RUNTIME_TRACE_BUGS.md` only to dedupe signatures and preserve evidence.
-7. Optionally run the regression profile before and after a discovery block for safety; do not mutate regression traces during discovery.
-
-Stop only after three full five-minute discovery mutation blocks fail to uncover a new distinct signature.
+Procedure intentionally lives in [RUNTIME_TRACE_HUNT_RUNBOOK.md](./RUNTIME_TRACE_HUNT_RUNBOOK.md). Keep this guide as data: DSL, invariants, coverage, sparse targets, and historical sweep notes.
