@@ -96,6 +96,26 @@ Examples:
 
 Stop only after three full five-minute active mutation blocks find no new distinct signature.
 
+## Coverage Accounting
+
+A clean hunt result is not the same thing as complete coverage. Bug yield and coverage are separate facts.
+
+When a sparse target finds nothing, update its coverage status based on the traces that were actually added and run, not on the absence of findings.
+
+Use these labels when updating the coverage matrix or hunt notes:
+
+- `unsampled`: no meaningful trace exercises the cell yet.
+- `sampled-clean`: one or a few traces exercised the cell and found no new signature, but important axes remain untested.
+- `moderate`: several qualitatively different traces exercise independent axes inside the cell, such as provenance, event order, snapshot confidence, restart boundary, history replay, rejection, stale echo, or strict shape assertion.
+- `covered/regression-backed`: the cell has broad discovery coverage and known historical failures are promoted to regression, or focused regression tests lock the important behavior.
+
+Do not automatically promote a sparse cell to `moderate` or `covered` because a corpus run was green. A cell can remain sparse after a clean hunt if the new traces were shallow, narrow, mostly one-basin variants, or did not cross the important lifecycle/freshness/history boundaries.
+
+After each clean block, write down both:
+
+- **bug yield:** new signatures, duplicate signatures, or none;
+- **coverage movement:** what qualitative axes were newly sampled and whether the cell remains sparse.
+
 ## Mutation Temperature Ladder
 
 Use the ladder to avoid staying in one local basin.
@@ -157,9 +177,9 @@ Scout output contract:
    pnpm trace-hunt:runtime
    ```
 8. If failures occur, inspect the runner output and [RUNTIME_TRACE_BUGS.md](./RUNTIME_TRACE_BUGS.md) for dedupe/evidence only after the run. Freeze failing traces.
-9. Record a mutation block note.
+9. Record a mutation block note, including both bug yield and coverage movement.
 10. If any new distinct signature appears, reset the clean-block count to zero and start a new active block.
-11. If no new distinct signature appears, continue active mutation work until the block has consumed about five minutes, then increment the clean-block count and raise temperature for the next block.
+11. If no new distinct signature appears, continue active mutation work until the block has consumed about five minutes, then increment the clean-block count and raise temperature for the next block. Do not mark the target covered unless the traces added real qualitative coverage.
 12. Stop only after three complete clean active blocks.
 13. Final safety:
     ```sh
@@ -179,6 +199,7 @@ Scout output contract:
 - Explicit replay result:
 - Discovery runner result:
 - New signatures:
+- Coverage movement:
 - Dedupe/result:
 ```
 
