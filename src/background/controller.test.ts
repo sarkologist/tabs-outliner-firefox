@@ -21269,6 +21269,54 @@ describe("background controller lifecycle", () => {
     });
   });
 
+  it("exports a portable tree from the authoritative background state", async () => {
+    const now = Date.parse("2026-05-19T13:20:00.000Z");
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => now });
+
+    const result = await controller.handleMessage({ type: "exportTree" });
+
+    expect(result).toMatchObject({
+      type: "exportTree",
+      filename: "tabs-outliner-tree-2026-05-19.json",
+      contentType: "application/json"
+    });
+    const payload = JSON.parse((result as { content: string }).content) as { schema?: string; roots?: unknown[] };
+    expect(payload).toMatchObject({
+      schema: PORTABLE_TREE_SCHEMA,
+      roots: [
+        {
+          kind: "window",
+          children: [
+            {
+              kind: "tab",
+              title: "One",
+              url: "https://one.example/"
+            }
+          ]
+        }
+      ]
+    });
+  });
+
   it("opens the full-size sidebar in a focused maximized popup without saving or broadcasting state", async () => {
     const runtime = fakeRuntime(
       [

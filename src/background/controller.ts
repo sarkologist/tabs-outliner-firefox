@@ -78,6 +78,7 @@ import {
   wrapNodeInGroup
 } from "../model/outline.js";
 import { buildOutlineLookup, type OutlineLookup } from "../model/outline-lookup.js";
+import { exportPortableTree, portableTreeFilename, serializePortableTreeFile } from "../model/portable-tree.js";
 import type { NodeId, OutlineNode, OutlineState, RestoredNode, RuntimeTab, RuntimeWindow } from "../model/types.js";
 import { createPerformanceTracer, type TraceDetail, type TraceSnapshot } from "../perf/trace.js";
 import {
@@ -213,6 +214,17 @@ type InitialTreeSnapshotWindowMessage = {
 
 type OpenSidebarWindowMessage = {
   type: "openSidebarWindow";
+};
+
+type ExportTreeMessage = {
+  type: "exportTree";
+};
+
+type ExportTreeResponse = {
+  type: "exportTree";
+  filename: string;
+  contentType: "application/json";
+  content: string;
 };
 
 type SidebarNonEditInteractionMessage = {
@@ -688,6 +700,10 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
     if (isOpenSidebarWindowMessage(message)) {
       return openSidebarWindow();
+    }
+
+    if (isExportTreeMessage(message)) {
+      return exportPortableTreeFromBackground();
     }
 
     if (!isBackgroundCommand(message)) {
@@ -1583,6 +1599,18 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     } finally {
       sidebarWindowCreationInFlight = Math.max(0, sidebarWindowCreationInFlight - 1);
     }
+  }
+
+  async function exportPortableTreeFromBackground(): Promise<ExportTreeResponse> {
+    await waitForHighPrioritySchedulerIdle();
+    const exportedAtMs = now();
+    const payload = exportPortableTree(await ensureState(), { now: exportedAtMs });
+    return {
+      type: "exportTree",
+      filename: portableTreeFilename(new Date(exportedAtMs)),
+      contentType: "application/json",
+      content: serializePortableTreeFile(payload)
+    };
   }
 
   async function shouldIgnoreSidebarWindowFocus(windowId: number): Promise<boolean> {
@@ -5779,6 +5807,14 @@ function isOpenSidebarWindowMessage(message: unknown): message is OpenSidebarWin
     message &&
       typeof message === "object" &&
       (message as { type?: unknown }).type === "openSidebarWindow"
+  );
+}
+
+function isExportTreeMessage(message: unknown): message is ExportTreeMessage {
+  return Boolean(
+    message &&
+      typeof message === "object" &&
+      (message as { type?: unknown }).type === "exportTree"
   );
 }
 

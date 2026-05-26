@@ -8,7 +8,6 @@ import {
   type ProjectionSliceCoverage
 } from "../background/storage.js";
 import { analyzeRestoreScope, runtimeTitleForOutlineTab, type RestoreScope } from "../model/outline.js";
-import { exportPortableTree, portableTreeFilename, serializePortableTreeFile } from "../model/portable-tree.js";
 import { isOutlinerSidebarNode } from "../model/outliner-page.js";
 import type { NodeId, OutlineNode, OutlineState } from "../model/types.js";
 import {
@@ -195,6 +194,17 @@ type TreeProjectionSliceRequest = {
 
 type OpenSidebarWindowRequest = {
   type: "openSidebarWindow";
+};
+
+type ExportTreeRequest = {
+  type: "exportTree";
+};
+
+type ExportTreeResponse = {
+  type: "exportTree";
+  filename: string;
+  contentType: string;
+  content: string;
 };
 
 type SidebarNonEditInteractionMessage = {
@@ -1083,11 +1093,11 @@ function registerSearchControls(): void {
 
 function registerPortableTreeControls(): void {
   exportTree?.addEventListener("click", () => {
-    if (hydratingFullState || !currentStateFullyLoaded) {
-      showDiagnosticsNotice("Export unavailable until the full tree loads", { error: true });
+    if (!currentState) {
+      showDiagnosticsNotice("Export unavailable until the tree loads", { error: true });
       return;
     }
-    exportCurrentTree();
+    void exportCurrentTree();
   });
 
   importTree?.addEventListener("click", () => {
@@ -1222,26 +1232,34 @@ function isEditableHistoryShortcutTarget(target: EventTarget | null): boolean {
   return target instanceof Element && isEditableElement(target);
 }
 
-function exportCurrentTree(): void {
-  if (!currentState || !currentStateFullyLoaded) {
+async function exportCurrentTree(): Promise<void> {
+  if (!currentState) {
     showDiagnosticsNotice("Export unavailable until loaded", { error: true });
     return;
   }
 
-  const payload = exportPortableTree(currentState);
-  const blob = new Blob([serializePortableTreeFile(payload)], {
-    type: "application/json"
-  });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = portableTreeFilename(new Date());
-  link.style.display = "none";
-  document.body.append(link);
-  link.click();
-  link.remove();
-  window.setTimeout(() => URL.revokeObjectURL(url), 0);
-  showDiagnosticsNotice("Exported tree");
+  try {
+    const response = await sendCommand({ type: "exportTree" });
+    if (!isExportTreeResponse(response)) {
+      throw new Error("Export failed");
+    }
+
+    const blob = new Blob([response.content], {
+      type: response.contentType || "application/json"
+    });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = response.filename;
+    link.style.display = "none";
+    document.body.append(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
+    showDiagnosticsNotice("Exported tree");
+  } catch (error) {
+    showDiagnosticsNotice(commandErrorText(error), { error: true });
+  }
 }
 
 async function importSelectedTreeFile(): Promise<void> {
@@ -1671,8 +1689,9 @@ function updateHydrationControls(): void {
     clearSearch.disabled = fullStateUnavailable;
   }
   if (exportTree) {
-    exportTree.disabled = fullStateUnavailable;
-    exportTree.title = fullStateUnavailable ? "Export is available after the full tree loads" : "Export tree";
+    const treeUnavailable = !currentState;
+    exportTree.disabled = treeUnavailable;
+    exportTree.title = treeUnavailable ? "Export is available after the tree loads" : "Export tree";
   }
   if (importTree) {
     importTree.disabled = fullStateUnavailable;
@@ -3582,6 +3601,7 @@ async function sendCommand(
     | InitialTreeSnapshotWindowRequest
     | TreeProjectionSliceRequest
     | OpenSidebarWindowRequest
+    | ExportTreeRequest
 ): Promise<unknown> {
   const response = await perfTrace.measureAsync("sidebar.command", { command: command.type }, () =>
     browser.runtime.sendMessage(command)
@@ -3814,6 +3834,17 @@ function isCommandAck(message: unknown): message is CommandAck {
       typeof message === "object" &&
       (message as { type?: unknown }).type === "commandAck" &&
       typeof (message as { stateChanged?: unknown }).stateChanged === "boolean"
+  );
+}
+
+function isExportTreeResponse(message: unknown): message is ExportTreeResponse {
+  return Boolean(
+    message &&
+      typeof message === "object" &&
+      (message as { type?: unknown }).type === "exportTree" &&
+      typeof (message as { filename?: unknown }).filename === "string" &&
+      typeof (message as { contentType?: unknown }).contentType === "string" &&
+      typeof (message as { content?: unknown }).content === "string"
   );
 }
 

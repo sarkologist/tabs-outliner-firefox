@@ -199,7 +199,7 @@ test.describe("sidebar first paint", () => {
     expect(issues).toEqual([]);
   });
 
-  test("keeps export disabled when a full visible snapshot omits collapsed descendants", async ({ page }) => {
+  test("exports through the background when a sparse snapshot omits collapsed descendants", async ({ page }) => {
     const issues = collectPageIssues(page);
     await page.addInitScript(({ snapshot, fullState }) => {
       const messages: Array<{ type: string; at: number }> = [];
@@ -207,10 +207,21 @@ test.describe("sidebar first paint", () => {
       Object.assign(window as typeof window & {
         __sidebarBootMessages?: typeof messages;
         __resolveSidebarGetState?: () => void;
+        __lastSidebarDownload?: { filename: string; href: string };
       }, {
         __sidebarBootMessages: messages,
         __resolveSidebarGetState: () => resolveGetState?.(structuredClone(fullState))
       });
+      const originalAnchorClick = HTMLAnchorElement.prototype.click;
+      HTMLAnchorElement.prototype.click = function click() {
+        if (this.download) {
+          (window as typeof window & {
+            __lastSidebarDownload?: { filename: string; href: string };
+          }).__lastSidebarDownload = { filename: this.download, href: this.href };
+          return;
+        }
+        return originalAnchorClick.call(this);
+      };
       window.browser = {
         runtime: {
           sendMessage: async (message: unknown) => {
@@ -223,6 +234,14 @@ test.describe("sidebar first paint", () => {
               return new Promise((resolve) => {
                 resolveGetState = resolve;
               });
+            }
+            if (type === "exportTree") {
+              return {
+                type: "exportTree",
+                filename: "tabs-outliner-tree-2026-05-26.json",
+                contentType: "application/json",
+                content: "{\"schema\":\"tabs-outliner-tree\",\"version\":1,\"exportedAt\":\"2026-05-26T00:00:00.000Z\",\"roots\":[]}\n"
+              };
             }
             if (
               type === "getDiagnostics" ||
@@ -253,8 +272,32 @@ test.describe("sidebar first paint", () => {
     await page.goto("/sidebar/sidebar.html");
     await expect(page.locator(".node[data-node-id='group:hidden']")).toBeVisible();
     await expect(page.locator("#state-count")).toHaveText("103 items / 101 saved");
-    await expect(page.locator("#export-tree")).toBeDisabled();
+    await expect(page.locator("#export-tree")).toBeEnabled();
     await expect(page.locator("#import-tree")).toBeDisabled();
+    await page.locator("#export-tree").click();
+    await page.waitForFunction(() => {
+      const messages = (window as typeof window & { __sidebarBootMessages?: Array<{ type: string }> })
+        .__sidebarBootMessages ?? [];
+      return messages.some((message) => message.type === "exportTree");
+    });
+
+    const exportMetrics = await page.evaluate(() => {
+      const messages = (window as typeof window & { __sidebarBootMessages?: Array<{ type: string }> })
+        .__sidebarBootMessages ?? [];
+      const download = (window as typeof window & {
+        __lastSidebarDownload?: { filename: string; href: string };
+      }).__lastSidebarDownload;
+      return {
+        exportRequests: messages.filter((message) => message.type === "exportTree").length,
+        hydrationRequests: messages.filter((message) => message.type === "getState").length,
+        filename: download?.filename
+      };
+    });
+    expect(exportMetrics).toEqual({
+      exportRequests: 1,
+      hydrationRequests: 0,
+      filename: "tabs-outliner-tree-2026-05-26.json"
+    });
     await page.waitForFunction(() => {
       const messages = (window as typeof window & { __sidebarBootMessages?: Array<{ type: string }> })
         .__sidebarBootMessages ?? [];
