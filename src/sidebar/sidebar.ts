@@ -139,6 +139,7 @@ let sidebarActiveTabTargetsCacheRevision = -1;
 let sidebarActiveTabTargetsByWindow = new Map<number, NodeId>();
 let sparseWindowRequestSequence = 0;
 let remoteSearchRequestSequence = 0;
+let pendingRemoteSearchTimer: number | undefined;
 let pendingSparseWindowRequest:
   | {
       centerRowIndex: number;
@@ -158,6 +159,7 @@ const HYDRATION_AFTER_NON_EDIT_INPUT_DELAY_MS = 1000;
 const HYDRATION_RENDER_INPUT_IDLE_MS = 120;
 const HYDRATION_RENDER_INPUT_MAX_DELAY_MS = 1500;
 const NON_EDIT_INTERACTION_BROADCAST_MIN_INTERVAL_MS = 500;
+const REMOTE_SEARCH_DEBOUNCE_MS = 150;
 const SHOW_IN_TREE_HIGHLIGHT_MS = 1200;
 const VIRTUAL_OVERSCAN_ROWS = 32;
 const SPARSE_SCROLL_WINDOW_OVERSCAN_ROWS = VIRTUAL_OVERSCAN_ROWS;
@@ -1069,9 +1071,10 @@ function registerSearchControls(): void {
     currentSearchQuery = searchInput.value;
     updateSearchControls();
     if (shouldUseRemoteProjectionSearch()) {
-      void loadRemoteSearchProjection(currentSearchQuery);
+      scheduleRemoteSearchProjection(currentSearchQuery);
       return;
     }
+    cancelPendingRemoteSearchProjection();
     render();
   });
 
@@ -1339,10 +1342,43 @@ function shouldUseRemoteProjectionSearch(): boolean {
   return Boolean(currentState && !currentStateFullyLoaded);
 }
 
-async function loadRemoteSearchProjection(query: string): Promise<void> {
+function scheduleRemoteSearchProjection(query: string): void {
+  cancelPendingRemoteSearchProjection();
+  if (!query.trim()) {
+    void loadRemoteSearchProjection(query);
+    return;
+  }
+
+  const requestId = beginRemoteSearchProjectionRequest();
+  pendingRemoteSearchTimer = window.setTimeout(() => {
+    pendingRemoteSearchTimer = undefined;
+    void loadRemoteSearchProjection(query, { requestId });
+  }, REMOTE_SEARCH_DEBOUNCE_MS);
+}
+
+function cancelPendingRemoteSearchProjection(): void {
+  if (pendingRemoteSearchTimer === undefined) {
+    return;
+  }
+  window.clearTimeout(pendingRemoteSearchTimer);
+  pendingRemoteSearchTimer = undefined;
+}
+
+function beginRemoteSearchProjectionRequest(): number {
   const requestId = ++remoteSearchRequestSequence;
   sparseWindowRequestSequence += 1;
   pendingSparseWindowRequest = undefined;
+  return requestId;
+}
+
+async function loadRemoteSearchProjection(
+  query: string,
+  options: { requestId?: number } = {}
+): Promise<void> {
+  if (options.requestId === undefined) {
+    cancelPendingRemoteSearchProjection();
+  }
+  const requestId = options.requestId ?? beginRemoteSearchProjectionRequest();
   const trimmedQuery = query.trim();
 
   try {
