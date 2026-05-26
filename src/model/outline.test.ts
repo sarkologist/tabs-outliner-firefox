@@ -24,6 +24,7 @@ import {
 } from "./outline.js";
 import { buildOutlineLookup } from "./outline-lookup.js";
 import type { NodeId, OutlineNode, OutlineState, RuntimeWindow } from "./types.js";
+import { makeSidebarStartupState } from "../perf/sidebar-startup-shapes.js";
 import { generatedTraceConfig, generatedTraceTimeoutMs } from "../test/generated-traces.test-support.js";
 
 const windows: RuntimeWindow[] = [
@@ -1996,6 +1997,44 @@ describe("outline model", () => {
     expect(reconciled.nodes["window:10"]?.childIds).toEqual(["tab:1"]);
     expect(projectLiveTabs(reconciled, "window:10").map((tab) => tab.tabId)).toEqual([1, 2, 3]);
   });
+
+  it("orders live-tab preorder in an order-page-heavy tree without repeated subtree scans", () => {
+    const state = makeSidebarStartupState({
+      shape: "order-page-heavy",
+      tabs: 19_433,
+      liveTabs: 50
+    });
+    const tabs = Array.from({ length: 51 }, (_, index) => {
+      const tabId = index < 50 ? index + 1 : 19_434;
+      return {
+        id: tabId,
+        windowId: 10,
+        index,
+        active: index === 50,
+        url: index < 50 ? `https://large.example/${tabId}` : "https://startup.example/",
+        title: index < 50 ? `Tab ${tabId}` : "Startup Tab"
+      };
+    });
+
+    const start = performance.now();
+    const reconciled = reconcileWithWindows(state, [
+      {
+        id: 10,
+        incognito: false,
+        focused: true,
+        tabs
+      }
+    ], { now: 2000 }, {
+      closeMissing: false,
+      respectRuntimeTabOrder: true
+    });
+    const durationMs = performance.now() - start;
+
+    expect(durationMs).toBeLessThan(1500);
+    expect(reconciled.nodes["tab:19434"]?.parentId).toBe("window:10");
+    expect(reconciled.nodes["tab:19434"]?.active).toBe(true);
+    expect(projectLiveTabs(reconciled, "window:10").map((tab) => tab.tabId).at(-1)).toBe(19_434);
+  }, 25_000);
 
   it("keeps existing parent links during partial event reconciliation", () => {
     const state = bootstrapFromWindows(windows, { now: 1000 });

@@ -1213,14 +1213,58 @@ function reorderLiveTabPreorderInRuntimeWindow(
   now: number
 ): void {
   const rankByRuntimeTabId = new Map(runtimeTabs.map((tab, index) => [tab.id, index]));
-  reorderChildPreorderByRuntimeRank(state, windowNodeId, runtimeWindowId, rankByRuntimeTabId, now, new Set());
+  const rankByNodeId = collectMinimumRuntimeRanksBySubtree(state, windowNodeId, runtimeWindowId, rankByRuntimeTabId);
+  reorderChildPreorderByRuntimeRank(state, windowNodeId, rankByNodeId, now, new Set());
+}
+
+function collectMinimumRuntimeRanksBySubtree(
+  state: OutlineState,
+  rootNodeId: NodeId,
+  runtimeWindowId: number,
+  rankByRuntimeTabId: ReadonlyMap<number, number>
+): Map<NodeId, number> {
+  const rankByNodeId = new Map<NodeId, number>();
+  const visited = new Set<NodeId>();
+  const visiting = new Set<NodeId>();
+
+  function visit(nodeId: NodeId): number | undefined {
+    if (visited.has(nodeId)) {
+      return rankByNodeId.get(nodeId);
+    }
+    if (visiting.has(nodeId)) {
+      return undefined;
+    }
+
+    visiting.add(nodeId);
+    const node = state.nodes[nodeId];
+    let rank = node && isNodeLiveTab(node) && node.live.windowId === runtimeWindowId
+      ? rankByRuntimeTabId.get(node.live.tabId)
+      : undefined;
+
+    for (const childId of node?.childIds ?? []) {
+      const childRank = visit(childId);
+      if (childRank === undefined) {
+        continue;
+      }
+      rank = rank === undefined ? childRank : Math.min(rank, childRank);
+    }
+
+    visiting.delete(nodeId);
+    visited.add(nodeId);
+    if (rank !== undefined) {
+      rankByNodeId.set(nodeId, rank);
+    }
+    return rank;
+  }
+
+  visit(rootNodeId);
+  return rankByNodeId;
 }
 
 function reorderChildPreorderByRuntimeRank(
   state: OutlineState,
   nodeId: NodeId,
-  runtimeWindowId: number,
-  rankByRuntimeTabId: ReadonlyMap<number, number>,
+  rankByNodeId: ReadonlyMap<NodeId, number>,
   now: number,
   visited: Set<NodeId>
 ): void {
@@ -1237,7 +1281,7 @@ function reorderChildPreorderByRuntimeRank(
   const rankedChildren = node.childIds.map((childId, index) => ({
     childId,
     index,
-    rank: minimumRuntimeRankInSubtree(state, childId, runtimeWindowId, rankByRuntimeTabId, new Set(visited))
+    rank: rankByNodeId.get(childId)
   }));
   const sortedChildIds = [...rankedChildren]
     .sort((left, right) => {
@@ -1254,38 +1298,8 @@ function reorderChildPreorderByRuntimeRank(
   }
 
   for (const childId of node.childIds) {
-    reorderChildPreorderByRuntimeRank(state, childId, runtimeWindowId, rankByRuntimeTabId, now, visited);
+    reorderChildPreorderByRuntimeRank(state, childId, rankByNodeId, now, visited);
   }
-}
-
-function minimumRuntimeRankInSubtree(
-  state: OutlineState,
-  nodeId: NodeId,
-  runtimeWindowId: number,
-  rankByRuntimeTabId: ReadonlyMap<number, number>,
-  visited: Set<NodeId>
-): number | undefined {
-  if (visited.has(nodeId)) {
-    return undefined;
-  }
-  visited.add(nodeId);
-
-  const node = state.nodes[nodeId];
-  if (!node) {
-    return undefined;
-  }
-
-  let rank = isNodeLiveTab(node) && node.live.windowId === runtimeWindowId
-    ? rankByRuntimeTabId.get(node.live.tabId)
-    : undefined;
-  for (const childId of node.childIds) {
-    const childRank = minimumRuntimeRankInSubtree(state, childId, runtimeWindowId, rankByRuntimeTabId, visited);
-    if (childRank === undefined) {
-      continue;
-    }
-    rank = rank === undefined ? childRank : Math.min(rank, childRank);
-  }
-  return rank;
 }
 
 function findRestorableClosedTabNode(
