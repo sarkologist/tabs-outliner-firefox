@@ -243,6 +243,39 @@ This sweep started from the `251` regression / `761` discovery baseline after th
 - Completed sweep notes: initial `yh-*` cohabitation traces brought discovery to 785; Rung 1 architecture mutations brought it to 793; Rung 2 high-temperature history/partial/focus/fullscreen mixes brought it to 800. All three corpus runs were clean.
 - Perf guard is not part of discovery. It applies to the later fix/pass promotion step if this sweep records findings.
 
+## Runbook Follow-Up Temporal Hunt
+
+- Block: 1
+- Active effort: about five minutes of sparse-cell selection, trace design, edit, explicit replay, and corpus run review.
+- Rung: 0
+- Axes changed: command-created plus browser-created cohabitation, session-only native close, runtime-order assertion.
+- Temporal boundaries crossed: serial command relocation, browser-authored merge, session-only disappearance, reordered refresh, stale survivor echo.
+- New/changed trace ids: `yh-runbook-r0-command-owner-session-foreign-survivor`
+- Explicit replay result: passed.
+- Discovery runner result: `801` traces, `41` vitest processes, `0` failures, completed corpus.
+- New signatures: none.
+- Dedupe/result: clean block; raise to Rung 1.
+- Block: 2
+- Active effort: about five minutes of event-order mutation, trace edit, explicit replay, and corpus run review.
+- Rung: 1
+- Axes changed: event order/source, created event, command grouping, browser-authored move into command-created destination, strict shape assertions.
+- Temporal boundaries crossed: unawaited created-tab evidence before command grouping, grouped destination reconciliation, reordered refresh, stale pre-command source echo.
+- New/changed trace ids: `yh-runbook-r1-created-race-command-cohabit`
+- Explicit replay result: passed.
+- Discovery runner result: `802` traces, `41` vitest processes, `0` failures, completed corpus.
+- New signatures: none.
+- Dedupe/result: clean block; raise to Rung 2 with temporal heat check.
+- Block: 3
+- Active effort: about five minutes of temporal heat design, harness-precondition correction, explicit replay, and corpus run review.
+- Rung: 2
+- Axes changed: race, command rejection, session-only native close, stale event-local evidence, partial query, metadata assertion.
+- Temporal boundaries crossed: pre-command created-tab evidence, command grouping, close rejection side effects, explicit session refresh, session-only native tab close, missing live-tab query, stale old-window created echo.
+- New/changed trace ids: `yh-runbook-r2-race-close-reject-session-query`
+- Explicit replay result: initial replay exposed a trace precondition issue by asking `manualRefreshWithMissingTabQuery` to omit a closed tab; corrected to omit live `tab:2`, then passed.
+- Discovery runner result: `803` traces, `41` vitest processes, `0` failures, completed corpus.
+- New signatures: none.
+- Dedupe/result: third clean block; stop condition reached.
+
 ## Runtime Shape Integrity Sweep
 
 Runtime-shape discovery started from 209 regression traces and 403 discovery traces after the browser-authored drift fix and expanded to 461 discovery traces. It recorded RT-171 through RT-186 and stopped after three complete active mutation blocks found no new distinct signatures. After the shape fix and the later UR-001 external browser-created close regression promotion, coverage is 226 regression traces and 445 discovery traces. Add future shape probes as fresh neutral IDs and avoid mutating fixed `rt-*`, `bh-*`, `ph-*`, `lh-*`, fixed `hh-*`, fixed `jh-*`, fixed `nh-*`, fixed `mh-*`, or `ur-*` repros. This sweep adds opt-in trace assertions for order and metadata so failures are about browser shape, not only live ID convergence.

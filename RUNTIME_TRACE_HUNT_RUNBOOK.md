@@ -55,7 +55,18 @@ If the runner does not complete the selected corpus, the run is not clean. Incre
 
 ## Five-Minute Active Mutation Block
 
-A clean block is measured by active adversarial effort, not by runner wall-clock time and not by the UI's total turn duration.
+A block is a timed period of active adversarial mutation effort. It is not an add/replay/corpus-review cycle.
+
+One block usually contains multiple cycles like:
+
+1. inspect a sparse cell or code path;
+2. add or clone one or more discovery traces;
+3. replay the new trace ids;
+4. run the discovery corpus;
+5. review/dedupe results;
+6. choose the next mutation while the same timer is still running.
+
+A clean block means the whole timed block found no new distinct signature. Do not count each cycle as a separate clean block.
 
 Start a timer for active work. Active work includes:
 
@@ -72,7 +83,16 @@ Active work excludes:
 - waiting for `pnpm test`, `pnpm build`, or regression replay;
 - idle time.
 
-If a run is clean quickly, keep mutating within the same block until about five minutes of active work have elapsed. If a run is slow, finish the corpus run so findings are complete, pause the active timer while it runs, then resume mutation effort afterward.
+The active timer should be roughly five minutes of thinking/editing/reviewing time. Pause the timer while commands run. Resume the same block after the command finishes.
+
+If a run is clean quickly, that is only one clean cycle inside the current block. Keep mutating within the same block until about five minutes of active work have elapsed. If a run is slow, finish the corpus run so findings are complete, pause the active timer while it runs, then resume mutation effort afterward.
+
+Examples:
+
+- Wrong: add one trace, replay it, run the corpus, see no failure, call that "clean block 1."
+- Right: add one trace, replay it, run the corpus, see no failure, continue using the same active timer to inspect a different sparse cell and add another trace.
+- Wrong: wait eight minutes for the corpus runner and count that as more than one block.
+- Right: wait eight minutes for the corpus runner, count zero mutation minutes during the wait, then resume the same block.
 
 Stop only after three full five-minute active mutation blocks find no new distinct signature.
 
@@ -86,9 +106,11 @@ Use the ladder to avoid staying in one local basin.
 - **Temporal heat check before stopping:** at Rung 2, include at least one trace where different clocks disagree across a command or reconciliation boundary. Prefer pre-command runtime evidence, command-owned echo/rejection, then session/query/refresh evidence.
 - **Rung 3 after three clean active blocks:** stop the hunt. Do not keep replaying or lightly varying the same basin.
 
-## Optional Subagent Scouts
+## Subagent Scouts
 
-Subagents are proposal-only scouts. The main thread owns file edits, explicit replay, corpus runs, dedupe, bug-log updates, and the stop condition.
+Use subagent scouts when the environment supports them to improve mutation diversity. They are not required for the hunt to be valid, because a single main agent can perform the same scout roles inline. Whether scouts are separate agents or simulated by the main agent, their responsibility is proposal-only.
+
+The main thread always owns file edits, explicit replay, corpus runs, dedupe, bug-log updates, and the stop condition.
 
 Scout inputs:
 

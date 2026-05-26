@@ -1067,7 +1067,10 @@ const DISCOVERY_TRACE_IDS = [
   "yh-rung2-closed-external-restored-command-sibling",
   "yh-rung2-fullscreen-command-restored-partial",
   "yh-rung2-focus-other-window-mixed-close",
-  "yh-rung2-two-mixed-windows-close-one-partial"
+  "yh-rung2-two-mixed-windows-close-one-partial",
+  "yh-runbook-r0-command-owner-session-foreign-survivor",
+  "yh-runbook-r1-created-race-command-cohabit",
+  "yh-runbook-r2-race-close-reject-session-query"
 ];
 const ALL_TRACE_IDS = [...REGRESSION_TRACE_IDS, ...DISCOVERY_TRACE_IDS];
 const TRACE_TAGS = new Map([
@@ -1272,6 +1275,9 @@ const TRACE_TAGS = new Map([
   ["yh-rung2-fullscreen-command-restored-partial", ["mixed-provenance", "fullscreen", "window-state", "commandCreated", "restored", "partial-snapshot"]],
   ["yh-rung2-focus-other-window-mixed-close", ["mixed-provenance", "focus", "browserCreated", "restored", "saved", "native-close"]],
   ["yh-rung2-two-mixed-windows-close-one-partial", ["mixed-provenance", "multi-window", "browserCreated", "restored", "saved", "partial-snapshot", "native-close"]],
+  ["yh-runbook-r0-command-owner-session-foreign-survivor", ["mixed-provenance", "commandCreated", "browserCreated", "session", "native-close", "runtime-order"]],
+  ["yh-runbook-r1-created-race-command-cohabit", ["mixed-provenance", "race", "created-event", "commandCreated", "native-move", "runtime-order"]],
+  ["yh-runbook-r2-race-close-reject-session-query", ["mixed-provenance", "race", "command-rejection", "session", "partial-snapshot", "stale-event"]],
   ["dh-restore-delayed-focus-refresh", ["restore", "delayed-event", "focus", "manual-refresh"]],
   ["dh-opener-reparent-refresh", ["opener", "reparenting", "relocation", "manual-refresh"]],
   ["dh-nested-parent-native-close", ["nested-window", "native-close", "relocation", "stale-event"]],

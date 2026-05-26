@@ -16933,6 +16933,82 @@ const RUNTIME_DOMAIN_DISCOVERY_TRACES: RuntimeDomainTrace[] = [
       { type: "manualRefreshWithMissingWindowQuery", window: { capture: "yh-r2-two-window-b" } },
       { type: "manualRefresh" }
     ]
+  },
+  {
+    id: "yh-runbook-r0-command-owner-session-foreign-survivor",
+    title: "runbook command owner session foreign survivor",
+    notes: "Runbook block 1: command-created destination keeps a browser-created survivor after its command-owned tab disappears via session-only evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["mixed-provenance", "commandCreated", "browserCreated", "session", "native-close", "runtime-order"],
+    assertions: ["runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "YH RB R0 external survivor", active: true }], captureWindow: "yh-rb-r0-external-window", captureTabs: "yh-rb-r0-external-tabs" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "yh-rb-r0-command-old" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "yh-rb-r0-external-tabs" }, window: { role: "lastOpenedWindow" }, index: 0, active: true, captureStaleTabs: "yh-rb-r0-external-old" },
+      { type: "nativeCloseTab", tab: { tabId: 1 }, order: "sessionChangedOnly" },
+      { type: "manualRefreshWithReorderedQuery", window: { role: "lastOpenedWindow" }, order: "rotateLeft" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "yh-rb-r0-external-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "yh-runbook-r1-created-race-command-cohabit",
+    title: "runbook created race command cohabit",
+    notes: "Runbook block 2: a browser-created active tab event races a grouping command before that tab joins the command-created destination.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["mixed-provenance", "race", "created-event", "commandCreated", "native-move", "runtime-order"],
+    assertions: ["runtimeOrder", "runtimeMetadata"],
+    actions: [
+      {
+        type: "raceWithOutlinerGroup",
+        event: {
+          type: "openTab",
+          window: { windowId: 10 },
+          active: true,
+          title: "YH RB R1 active race tab",
+          url: "https://yh.example/rb-r1-race",
+          captureTab: "yh-rb-r1-race-tab"
+        },
+        groupTab: { tabId: 1 },
+        captureStaleTabs: "yh-rb-r1-group-old"
+      },
+      { type: "nativeMoveTabToWindow", tab: { capture: "yh-rb-r1-race-tab" }, window: { role: "lastOpenedWindow" }, index: 0, active: true, captureStaleTabs: "yh-rb-r1-race-source-old" },
+      { type: "manualRefreshWithReorderedQuery", window: { role: "lastOpenedWindow" }, order: "reverse" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "yh-rb-r1-group-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "yh-runbook-r2-race-close-reject-session-query",
+    title: "runbook race close reject session query",
+    notes: "Runbook block 3 temporal heat check: pre-command created evidence crosses grouping, close rejection side effects, session-only native close, and stale query evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["mixed-provenance", "race", "command-rejection", "session", "partial-snapshot", "stale-event"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      {
+        type: "raceWithOutlinerGroup",
+        event: {
+          type: "openTab",
+          window: { windowId: 10 },
+          active: true,
+          title: "YH RB R2 pre command active",
+          url: "https://yh.example/rb-r2-pre-command",
+          captureTab: "yh-rb-r2-pre-command-tab"
+        },
+        groupTab: { tabId: 1 },
+        captureStaleTabs: "yh-rb-r2-group-old"
+      },
+      { type: "outlinerCloseNodeRejectingClose", node: { tab: { tabId: 1 } } },
+      { type: "sessionChanged" },
+      { type: "nativeCloseTab", tab: { capture: "yh-rb-r2-pre-command-tab" }, order: "sessionChangedOnly" },
+      { type: "manualRefreshWithMissingTabQuery", tab: { tabId: 2 } },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "yh-rb-r2-group-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
   }
 ];
 
