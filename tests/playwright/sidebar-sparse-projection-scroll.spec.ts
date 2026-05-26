@@ -237,6 +237,61 @@ test.describe("sidebar sparse projection scrolling", () => {
     expect(Math.max(...result.afterFirstResolveRows)).toBeGreaterThanOrEqual(380);
     expect(issues).toEqual([]);
   });
+
+  test("does not refetch forever when the bottom viewport rounds past total rows", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadSidebar(page);
+
+    const result = await page.evaluate(async () => {
+      const viewport = document.querySelector<HTMLElement>("main");
+      if (!viewport) {
+        throw new Error("Missing sidebar viewport");
+      }
+      const rowHeight = (() => {
+        const parsed = Number.parseFloat(
+          window.getComputedStyle(document.documentElement).getPropertyValue("--node-row-height")
+        );
+        return Number.isFinite(parsed) && parsed > 0 ? parsed : 18;
+      })();
+      const waitForSparseRequestCount = async (count: number) => {
+        await (window as typeof window & {
+          __waitForSparseRequestCount?: (count: number) => Promise<void>;
+        }).__waitForSparseRequestCount?.(count);
+      };
+      const resolveSparseSliceAt = (index: number) => {
+        (window as typeof window & { __resolveSparseSliceAt?: (index: number) => void }).__resolveSparseSliceAt?.(index);
+      };
+      const sparseRequestCount = () =>
+        (window as typeof window & { __sparseRequestCount?: () => number }).__sparseRequestCount?.() ?? 0;
+      const nextFrame = async () => {
+        await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+      };
+
+      Object.defineProperty(viewport, "clientHeight", {
+        configurable: true,
+        value: 52 * rowHeight
+      });
+      viewport.scrollTop = (1_001 - 51) * rowHeight;
+      viewport.dispatchEvent(new Event("scroll", { bubbles: true }));
+      await waitForSparseRequestCount(1);
+
+      resolveSparseSliceAt(0);
+      await nextFrame();
+      await nextFrame();
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 80));
+
+      return {
+        requestCount: sparseRequestCount(),
+        visibleRows: [...document.querySelectorAll<HTMLElement>(".node")]
+          .map((node) => Number.parseInt(node.dataset.rowIndex ?? "", 10))
+          .filter((index) => Number.isFinite(index))
+      };
+    });
+
+    expect(result.requestCount).toBe(1);
+    expect(Math.max(...result.visibleRows)).toBe(1_000);
+    expect(issues).toEqual([]);
+  });
 });
 
 async function loadSidebar(page: Page): Promise<void> {

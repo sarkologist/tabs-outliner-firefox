@@ -628,7 +628,7 @@ function mergeProjectionSliceSnapshot(snapshot: InitialTreeSnapshot): void {
   currentState = mergePartialOutlineState(currentState, snapshot.state, {
     ...(coverage ? { completeSiblingParentIds: coverage.completeSiblingParentIds } : {})
   });
-  currentStateFullyLoaded = currentStateHasFullNodeTable(snapshot.projection.nodeCount);
+  currentStateFullyLoaded = !snapshot.hydrating && currentStateHasFullNodeTable(snapshot.projection.nodeCount);
   invalidateSidebarWindowActiveTabTargets();
   hydratingFullState = snapshot.hydrating || !currentStateFullyLoaded;
   currentProjectionCoverage = mergeProjectionCoverage(currentProjectionCoverage, coverage);
@@ -639,9 +639,9 @@ function requestSparseScrollWindowIfNeeded(): void {
     return;
   }
 
-  const rowHeight = currentRowHeight();
-  const viewportStartRow = Math.floor(rootDropSurface.scrollTop / rowHeight);
-  const viewportEndRow = Math.ceil((rootDropSurface.scrollTop + rootDropSurface.clientHeight) / rowHeight);
+  const viewportRange = clampedViewportRowRangeForProjection(currentProjection);
+  const viewportStartRow = viewportRange.start;
+  const viewportEndRow = viewportRange.end;
   if (viewportEndRow <= viewportStartRow || sparseProjectionCoversViewport(currentProjection, viewportStartRow, viewportEndRow)) {
     return;
   }
@@ -770,14 +770,12 @@ function sparseProjectionCoversViewport(
 }
 
 function sparseSnapshotCoversCurrentViewport(snapshot: InitialTreeSnapshot): boolean {
-  const rowHeight = currentRowHeight();
-  const viewportRange = currentViewportRowRange(rowHeight);
+  const viewportRange = clampedViewportRowRangeForProjection(snapshot.projection);
   return sparseRowsCoverViewport(snapshot.projection.rows, viewportRange.start, viewportRange.end);
 }
 
 function sparseSnapshotIntersectsCurrentViewport(snapshot: InitialTreeSnapshot): boolean {
-  const rowHeight = currentRowHeight();
-  const viewportRange = currentViewportRowRange(rowHeight);
+  const viewportRange = clampedViewportRowRangeForProjection(snapshot.projection);
   if (viewportRange.end <= viewportRange.start) {
     return false;
   }
@@ -793,8 +791,7 @@ function currentSparseProjectionCoversViewport(): boolean {
     return false;
   }
 
-  const rowHeight = currentRowHeight();
-  const viewportRange = currentViewportRowRange(rowHeight);
+  const viewportRange = clampedViewportRowRangeForProjection(currentProjection);
   return sparseRowsCoverViewport(currentProjection.rows, viewportRange.start, viewportRange.end);
 }
 
@@ -803,9 +800,27 @@ function currentSparseProjectionIntersectsViewport(): boolean {
     return false;
   }
 
-  const rowHeight = currentRowHeight();
-  const viewportRange = currentViewportRowRange(rowHeight);
+  const viewportRange = clampedViewportRowRangeForProjection(currentProjection);
   return currentProjection.rows.some((row) => row.index >= viewportRange.start && row.index < viewportRange.end);
+}
+
+function clampedViewportRowRangeForProjection(projection: {
+  rows: readonly { index: number }[];
+  totalRowCount?: number;
+}): { start: number; end: number } {
+  const rawRange = currentViewportRowRange(currentRowHeight());
+  if (rawRange.end <= rawRange.start) {
+    return rawRange;
+  }
+
+  const totalRowCount = projection.totalRowCount ?? projection.rows.length;
+  if (totalRowCount <= 0) {
+    return { start: 0, end: 0 };
+  }
+
+  const end = Math.max(0, Math.min(rawRange.end, totalRowCount));
+  const start = Math.max(0, Math.min(rawRange.start, Math.max(0, end - 1)));
+  return { start, end };
 }
 
 function noteSparseViewportScrollIntent(): void {

@@ -535,6 +535,105 @@ test.describe("sidebar first paint", () => {
     expect(issues).toEqual([]);
   });
 
+  test("clears sparse remote search through the background after sparse merges know every node id", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await page.addInitScript(({ snapshot, searchSnapshot }) => {
+      const messages: Array<{ type: string; at: number; query?: string }> = [];
+      Object.assign(window as typeof window & {
+        __sidebarBootMessages?: typeof messages;
+        __sidebarSearchSnapshot?: unknown;
+      }, {
+        __sidebarBootMessages: messages,
+        __sidebarSearchSnapshot: searchSnapshot
+      });
+      window.browser = {
+        runtime: {
+          sendMessage: async (message: unknown) => {
+            const type = typeof message === "object" && message ? String((message as { type?: unknown }).type) : "";
+            const query = typeof message === "object" && message && typeof (message as { query?: unknown }).query === "string"
+              ? (message as { query: string }).query
+              : undefined;
+            messages.push({ type, at: performance.now(), ...(query !== undefined ? { query } : {}) });
+            if (type === "getInitialTreeSnapshot") {
+              return structuredClone(snapshot);
+            }
+            if (type === "getState") {
+              return new Promise(() => undefined);
+            }
+            if (type === "getTreeProjectionSlice" && query === "hidden 1") {
+              return structuredClone((window as typeof window & { __sidebarSearchSnapshot?: unknown })
+                .__sidebarSearchSnapshot);
+            }
+            if (type === "getTreeProjectionSlice" && query === undefined) {
+              return structuredClone(snapshot);
+            }
+            if (
+              type === "getDiagnostics" ||
+              type === "getPerformanceTrace" ||
+              type === "setPerformanceTraceEnabled" ||
+              type === "clearPerformanceTrace"
+            ) {
+              return undefined;
+            }
+            return { ok: true };
+          },
+          onMessage: {
+            addListener: () => undefined
+          }
+        },
+        storage: {
+          local: {
+            get: async () => ({}),
+            set: async () => undefined
+          }
+        }
+      };
+    }, {
+      snapshot: fixtureCollapsedPartialSnapshot(1),
+      searchSnapshot: fixtureCollapsedSearchSnapshot(1, 1)
+    });
+
+    await page.goto("/sidebar/sidebar.html");
+    await expect(page.locator("#search")).toBeEnabled();
+    await page.locator("#search").fill("hidden 1");
+    await page.waitForFunction(() => {
+      const messages = (window as typeof window & {
+        __sidebarBootMessages?: Array<{ type: string; query?: string }>;
+      }).__sidebarBootMessages ?? [];
+      return messages.some((message) => message.type === "getTreeProjectionSlice" && message.query === "hidden 1");
+    });
+    await expect(page.locator(".node[data-node-id='hidden\\:1']")).toBeVisible();
+
+    await page.locator("#clear-search").click();
+    await page.waitForFunction(() => {
+      const messages = (window as typeof window & {
+        __sidebarBootMessages?: Array<{ type: string; query?: string }>;
+      }).__sidebarBootMessages ?? [];
+      return messages.some((message) => message.type === "getTreeProjectionSlice" && message.query === undefined);
+    });
+    await expect(page.locator("#search")).toHaveValue("");
+    await expect(page.locator(".node[data-node-id='tab\\:1']")).toBeVisible();
+    await expect(page.locator("#state-count")).toHaveText("4 items / 2 saved");
+
+    const metrics = await page.evaluate(() => {
+      const messages = (window as typeof window & {
+        __sidebarBootMessages?: Array<{ type: string; query?: string }>;
+      }).__sidebarBootMessages ?? [];
+      return {
+        clearRequests: messages.filter((message) =>
+          message.type === "getTreeProjectionSlice" && message.query === undefined
+        ).length,
+        hydrationRequests: messages.filter((message) => message.type === "getState").length
+      };
+    });
+
+    expect(metrics).toEqual({
+      clearRequests: 1,
+      hydrationRequests: 0
+    });
+    expect(issues).toEqual([]);
+  });
+
   test("refreshes sparse remote search when background updates arrive for the same query", async ({ page }) => {
     const issues = collectPageIssues(page);
     await page.addInitScript(({ snapshot, searchSnapshots }) => {
