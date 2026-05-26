@@ -3565,7 +3565,13 @@ async function restoreNodeWithConfirmation(nodeId: NodeId): Promise<void> {
     return;
   }
 
-  const scope = await restoreScopeForNode(state, nodeId);
+  let scope: RestoreScope;
+  try {
+    scope = await restoreScopeForNode(state, nodeId);
+  } catch (error) {
+    showDiagnosticsNotice(commandErrorText(error), { error: true });
+    return;
+  }
   if (scope.requiresConfirmation && !window.confirm(largeRestoreConfirmationPrompt(scope))) {
     return;
   }
@@ -3579,10 +3585,11 @@ async function restoreNodeWithConfirmation(nodeId: NodeId): Promise<void> {
 
 async function restoreScopeForNode(state: OutlineState, nodeId: NodeId): Promise<RestoreScope> {
   if (shouldAskBackgroundForRestoreScope(nodeId)) {
-    const response = await sendCommand({ type: "analyzeRestoreScope", nodeId }).catch(() => undefined);
+    const response = await sendCommand({ type: "analyzeRestoreScope", nodeId });
     if (isRestoreScope(response)) {
       return response;
     }
+    throw new Error("Restore unavailable until the full tree loads");
   }
 
   return perfTrace.measure("sidebar.restore.scope", () => analyzeRestoreScope(state, nodeId));

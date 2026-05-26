@@ -68,6 +68,10 @@ The target is to keep first paint, hover, and scroll-away bounded by sparse snap
 - 2026-05-26: Tightened Phase 4 sparse keyboard command guards.
   - Cut/paste buttons were already hidden while the sparse projection was partial; keyboard shortcuts now follow the same policy.
   - Prevented `Accel+X`/`Accel+V` from issuing a local partial-state `moveNode` before full hydration.
+- 2026-05-26: Tightened Phase 4 sparse restore preflight.
+  - Incomplete sparse window/group restores now require a valid background `analyzeRestoreScope` response.
+  - Removed the unsafe fallback that analyzed partial sidebar-local state after a failed or invalid background restore-scope response.
+  - Added browser coverage for both invalid-preflight aborts and valid background large-restore confirmation.
 
 ## Verification Log
 
@@ -110,3 +114,9 @@ The target is to keep first paint, hover, and scroll-away bounded by sparse snap
 - 2026-05-26: `pnpm run build`
 - 2026-05-26: `pnpm exec playwright test tests/playwright/sidebar-first-paint.spec.ts --reporter=list`
 - 2026-05-26: `pnpm perf:sidebar-projection-guard` (passed after retry; prior run exceeded the scroll input queue-delay guard)
+- 2026-05-26: `pnpm exec playwright test tests/playwright/sidebar-projection-hunt.spec.ts --grep "psh-incomplete-restore" --reporter=list` (failed before removing partial restore-scope fallback)
+- 2026-05-26: `pnpm exec playwright test tests/playwright/sidebar-projection-hunt.spec.ts --grep "psh-incomplete-restore" --reporter=list`
+- 2026-05-26: `pnpm exec playwright test tests/playwright/sidebar-projection-hunt.spec.ts --reporter=list`
+- 2026-05-26: `pnpm run build`
+- 2026-05-26: `pnpm exec playwright test tests/playwright/sidebar-first-paint.spec.ts --reporter=list`
+- 2026-05-26: `pnpm perf:sidebar-projection-guard`

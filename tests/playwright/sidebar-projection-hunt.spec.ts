@@ -386,6 +386,33 @@ test.describe("sidebar projection hunt", () => {
     expect(issues).toEqual([]);
   });
 
+  test("psh-incomplete-restore-does-not-fallback-to-partial-scope", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadClosedRestoreSidebar(page, { fullStatePending: true, invalidRestoreScope: true });
+
+    await nodeRow(page, "window:30").getByRole("button", { name: "Restore Closed Window", exact: true }).click();
+
+    await expect(sentCommands(page)).resolves.toEqual([{ type: "analyzeRestoreScope", nodeId: "window:30" }]);
+    expect(issues).toEqual([]);
+  });
+
+  test("psh-incomplete-restore-uses-background-scope-confirmation", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadClosedRestoreSidebar(page, { fullStatePending: true });
+
+    page.on("dialog", async (dialog) => {
+      expect(dialog.message()).toContain("Restore 4 restorable closed nodes");
+      await dialog.accept();
+    });
+    await nodeRow(page, "window:30").getByRole("button", { name: "Restore Closed Window", exact: true }).click();
+
+    await expect(sentCommands(page)).resolves.toEqual([
+      { type: "analyzeRestoreScope", nodeId: "window:30" },
+      { type: "restoreNode", nodeId: "window:30", confirmedLargeRestore: true }
+    ]);
+    expect(issues).toEqual([]);
+  });
+
   test("psh-unloaded-delete-patch-preserves-visible-sparse-window", async ({ page }) => {
     const issues = collectPageIssues(page);
     await loadLargeSparseSidebar(page, { fullStatePending: true });
@@ -515,6 +542,33 @@ async function loadRestoredWindowSidebar(
   await expect(page.locator(nodeSelector("tab:2"))).toBeVisible();
 }
 
+async function loadClosedRestoreSidebar(
+  page: Page,
+  options: { fullStatePending?: boolean; invalidRestoreScope?: boolean } = {}
+): Promise<void> {
+  await page.addInitScript(({ installerSource, harnessOptions }) => {
+    const install = (0, eval)(`(${installerSource})`) as typeof installProjectionHuntHarness;
+    install(harnessOptions);
+  }, {
+    installerSource: installProjectionHuntHarness.toString(),
+    harnessOptions: {
+      totalRows: 4,
+      initialStart: 0,
+      initialEnd: 4,
+      activeTabId: 0,
+      fullStatePending: Boolean(options.fullStatePending),
+      includeCoverage: true,
+      restoredFixture: false,
+      closedRestoreFixture: true,
+      invalidRestoreScope: Boolean(options.invalidRestoreScope)
+    }
+  });
+
+  await page.goto("/sidebar/sidebar.html");
+  await waitForSidebarAppReady(page);
+  await expect(page.locator(nodeSelector("window:30"))).toBeVisible();
+}
+
 async function waitForSidebarAppReady(page: Page): Promise<void> {
   await page.waitForFunction(() => performance.getEntriesByName("tabs-outliner.boot.fullAppImport.end").length > 0);
 }
@@ -591,6 +645,8 @@ function installProjectionHuntHarness(options: {
   fullStatePending: boolean;
   includeCoverage: boolean;
   restoredFixture: boolean;
+  closedRestoreFixture?: boolean;
+  invalidRestoreScope?: boolean;
 }) {
   const now = 1_700_000_000_000;
   const rowHeight = 18;
@@ -602,7 +658,7 @@ function installProjectionHuntHarness(options: {
     resolve: (value: unknown) => void;
     reject: (error: Error) => void;
   }> = [];
-  let fullState = options.restoredFixture ? restoredState() : largeState();
+  let fullState = initialFullState();
   let fullStateResolver: ((value: unknown) => void) | undefined;
   let fullStateResolveQueued = false;
 
@@ -629,9 +685,7 @@ function installProjectionHuntHarness(options: {
       sendMessage: async (message: unknown) => {
         const type = typeof message === "object" && message ? String((message as { type?: unknown }).type) : "";
         if (type === "getInitialTreeSnapshot") {
-          return options.restoredFixture
-            ? snapshotFromRows(restoredRows(), { hydrating: true })
-            : snapshotFromRows([windowRow(), ...tabRows(options.initialStart, options.initialEnd)], { hydrating: true });
+          return snapshotFromRows(initialRows(), { hydrating: true });
         }
         if (type === "getTreeProjectionSlice") {
           const centerRowIndex = Number((message as { centerRowIndex?: unknown }).centerRowIndex);
@@ -665,9 +719,24 @@ function installProjectionHuntHarness(options: {
         ) {
           return undefined;
         }
+        if (type === "analyzeRestoreScope") {
+          sentCommands.push(structuredClone(message));
+          if (options.invalidRestoreScope) {
+            return { ok: false };
+          }
+          return {
+            nodeIds: ["window:30", "tab:30", "tab:31", "tab:32"],
+            totalCount: 4,
+            tabCount: 3,
+            windowCount: 1,
+            threshold: 1,
+            requiresConfirmation: true
+          };
+        }
         if (
           type === "closeNode" ||
           type === "deleteNode" ||
+          type === "restoreNode" ||
           type === "toggleCollapsed" ||
           type === "moveNode" ||
           type === "wrapNodeInGroup" ||
@@ -703,7 +772,9 @@ function installProjectionHuntHarness(options: {
       throw new Error(`No sparse slice request at index ${index}`);
     }
     pendingSlices.splice(index, 1);
-    const rows = options.restoredFixture
+    const rows = options.closedRestoreFixture
+      ? closedRestoreRows()
+      : options.restoredFixture
       ? restoredRows()
       : tabRows(
         override.start ?? Math.max(1, Math.floor(pending.request.centerRowIndex - pending.request.rowLimit / 2)),
@@ -784,7 +855,7 @@ function installProjectionHuntHarness(options: {
         .filter(Boolean)
         .map((node) => [node.id, structuredClone(node)])
     );
-    if (!options.restoredFixture) {
+    if (!options.restoredFixture && !options.closedRestoreFixture) {
       nodes["window:1"] = structuredClone(fullState.nodes["window:1"]);
     }
     const indexes = rows.map((row) => row.index);
@@ -804,11 +875,10 @@ function installProjectionHuntHarness(options: {
         rows,
         matchingNodeIds: [],
         visibleNodeIds: rows.map((row) => row.nodeId),
-        activeTabNodeId: `tab:${options.activeTabId}`,
-        activeTabRowIndex: options.activeTabId,
+        ...activeProjectionTarget(),
         totalRowCount: options.totalRows,
         nodeCount: options.totalRows,
-        closedCount: 0,
+        closedCount: options.closedRestoreFixture ? 4 : 0,
         matchCount: 0
       },
       ...(options.includeCoverage
@@ -817,12 +887,55 @@ function installProjectionHuntHarness(options: {
               startRowIndex: Math.min(...indexes),
               endRowIndex: Math.max(...indexes) + 1,
               editableNodeIds: rows.map((row) => row.nodeId),
-              completeSubtreeNodeIds: rows.map((row) => row.nodeId),
-              completeSiblingParentIds: options.restoredFixture ? ["window:10", "window:20"] : ["window:1"]
+              completeSubtreeNodeIds: completeSubtreeNodeIdsForRows(rows),
+              completeSiblingParentIds: completeSiblingParentIdsForRows()
             }
           }
         : {})
     };
+  }
+
+  function initialFullState() {
+    if (options.closedRestoreFixture) {
+      return closedRestoreState();
+    }
+    return options.restoredFixture ? restoredState() : largeState();
+  }
+
+  function initialRows() {
+    if (options.closedRestoreFixture) {
+      return closedRestoreRows();
+    }
+    return options.restoredFixture
+      ? restoredRows()
+      : [windowRow(), ...tabRows(options.initialStart, options.initialEnd)];
+  }
+
+  function activeProjectionTarget() {
+    if (options.closedRestoreFixture) {
+      return {
+        activeTabNodeId: "window:30",
+        activeTabRowIndex: 0
+      };
+    }
+    return options.activeTabId > 0
+      ? {
+          activeTabNodeId: `tab:${options.activeTabId}`,
+          activeTabRowIndex: options.activeTabId
+        }
+      : {};
+  }
+
+  function completeSubtreeNodeIdsForRows(rows: Array<{ nodeId: string }>) {
+    const nodeIds = rows.map((row) => row.nodeId);
+    return options.closedRestoreFixture ? nodeIds.filter((nodeId) => nodeId !== "window:30") : nodeIds;
+  }
+
+  function completeSiblingParentIdsForRows() {
+    if (options.closedRestoreFixture) {
+      return [];
+    }
+    return options.restoredFixture ? ["window:10", "window:20"] : ["window:1"];
   }
 
   function largeState() {
@@ -892,14 +1005,39 @@ function installProjectionHuntHarness(options: {
     };
   }
 
+  function closedRestoreState() {
+    return {
+      version: 1,
+      rootIds: ["window:30"],
+      nodes: {
+        "window:30": {
+          id: "window:30",
+          kind: "window",
+          status: "closed",
+          title: "Closed Window",
+          active: false,
+          collapsed: false,
+          childIds: ["tab:30", "tab:31", "tab:32"],
+          createdAt: now,
+          updatedAt: now,
+          closedAt: now,
+          restore: { sessionId: "session-window-30" }
+        },
+        "tab:30": tabNode(30, { parentId: "window:30", title: "Closed tab 30", active: false, closed: true }),
+        "tab:31": tabNode(31, { parentId: "window:30", title: "Closed tab 31", active: false, closed: true }),
+        "tab:32": tabNode(32, { parentId: "window:30", title: "Closed tab 32", active: false, closed: true })
+      }
+    };
+  }
+
   function tabNode(
     tabId: number,
-    overrides: { parentId?: string; title?: string; active?: boolean; restoredFromClosed?: boolean } = {}
+    overrides: { parentId?: string; title?: string; active?: boolean; restoredFromClosed?: boolean; closed?: boolean } = {}
   ) {
     return {
       id: `tab:${tabId}`,
       kind: "tab",
-      status: "live",
+      status: overrides.closed ? "closed" : "live",
       parentId: overrides.parentId ?? "window:1",
       title: overrides.title ?? `Tab ${tabId}`,
       url: `https://projection.example/${tabId}`,
@@ -908,8 +1046,9 @@ function installProjectionHuntHarness(options: {
       childIds: [],
       createdAt: now,
       updatedAt: now,
+      ...(overrides.closed ? { closedAt: now, restore: { url: `https://projection.example/${tabId}` } } : {}),
       ...(overrides.restoredFromClosed ? { restoredFromClosed: true } : {}),
-      live: { tabId, windowId: overrides.parentId === "window:20" ? 20 : 1 }
+      ...(overrides.closed ? {} : { live: { tabId, windowId: overrides.parentId === "window:20" ? 20 : 1 } })
     };
   }
 
@@ -983,6 +1122,25 @@ function installProjectionHuntHarness(options: {
         insideActiveWindow: false
       },
       { ...tabRow(2), index: 3, parentRowIndex: 2, subtreeEndIndex: 4, insideActiveWindow: true }
+    ];
+  }
+
+  function closedRestoreRows() {
+    return [
+      {
+        nodeId: "window:30",
+        depth: 0,
+        index: 0,
+        subtreeEndIndex: 4,
+        childCount: 3,
+        visibleChildCount: 3,
+        expanded: true,
+        searchRevealsCollapsedChildren: false,
+        isSearchMatch: false,
+        isSearchPath: false,
+        insideActiveWindow: false
+      },
+      { ...tabRow(30), index: 1, parentRowIndex: 0, subtreeEndIndex: 2, insideActiveWindow: false }
     ];
   }
 
