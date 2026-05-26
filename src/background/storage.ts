@@ -707,11 +707,47 @@ function nodeToStoredNode(node: OutlineNode): StoredOutlineNode {
 }
 
 function storedNodeToNode(node: StoredOutlineNode): OutlineNode {
-  const { childCount: _childCount, ...rest } = node;
-  return {
-    ...rest,
-    childIds: []
+  const outlineNode: OutlineNode = {
+    id: node.id,
+    kind: node.kind,
+    status: node.status,
+    childIds: [],
+    title: node.title,
+    collapsed: node.collapsed,
+    createdAt: node.createdAt,
+    updatedAt: node.updatedAt
   };
+  if (node.parentId !== undefined) {
+    outlineNode.parentId = node.parentId;
+  }
+  if (node.customTitle !== undefined) {
+    outlineNode.customTitle = node.customTitle;
+  }
+  if (node.url !== undefined) {
+    outlineNode.url = node.url;
+  }
+  if (node.favIconUrl !== undefined) {
+    outlineNode.favIconUrl = node.favIconUrl;
+  }
+  if (node.active !== undefined) {
+    outlineNode.active = node.active;
+  }
+  if (node.closedAt !== undefined) {
+    outlineNode.closedAt = node.closedAt;
+  }
+  if (node.live !== undefined) {
+    outlineNode.live = node.live;
+  }
+  if (node.restore !== undefined) {
+    outlineNode.restore = node.restore;
+  }
+  if (node.restoredFromClosed !== undefined) {
+    outlineNode.restoredFromClosed = node.restoredFromClosed;
+  }
+  if (node.runtimeProvenance !== undefined) {
+    outlineNode.runtimeProvenance = node.runtimeProvenance;
+  }
+  return outlineNode;
 }
 
 function stateV3ManifestForState(state: OutlineState, revision: number): StateV3Manifest {
