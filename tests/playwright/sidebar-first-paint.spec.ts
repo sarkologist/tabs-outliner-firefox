@@ -494,8 +494,20 @@ test.describe("sidebar first paint", () => {
 
     await page.goto("/sidebar/sidebar.html");
     await expect(page.locator("#search")).toBeEnabled();
-    await page.locator("#search").focus();
-    await page.keyboard.type("hidden 42", { delay: 5 });
+    await expect(page.locator(".node[data-node-id='group:hidden']")).toBeVisible();
+    await page.locator("#search").evaluate((element, query) => {
+      const input = element as HTMLInputElement;
+      input.focus();
+      input.value = "";
+      for (const character of query) {
+        input.value += character;
+        input.dispatchEvent(new InputEvent("input", {
+          bubbles: true,
+          inputType: "insertText",
+          data: character
+        }));
+      }
+    }, "hidden 42");
     await page.waitForFunction(() => {
       const messages = (window as typeof window & {
         __sidebarBootMessages?: Array<{ type: string; query?: string }>;
@@ -518,6 +530,133 @@ test.describe("sidebar first paint", () => {
 
     expect(metrics).toEqual({
       searchQueries: ["hidden 42"],
+      hydrationRequests: 0
+    });
+    expect(issues).toEqual([]);
+  });
+
+  test("refreshes sparse remote search when background updates arrive for the same query", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await page.addInitScript(({ snapshot, searchSnapshots }) => {
+      const messages: Array<{ type: string; at: number; query?: string }> = [];
+      const listeners: Array<(message: unknown) => void> = [];
+      const pendingSearchSnapshots = [...searchSnapshots];
+      Object.assign(window as typeof window & {
+        __sidebarBootMessages?: typeof messages;
+        __emitSidebarMessage?: (message: unknown) => void;
+      }, {
+        __sidebarBootMessages: messages,
+        __emitSidebarMessage: (message: unknown) => {
+          for (const listener of listeners) {
+            listener(structuredClone(message));
+          }
+        }
+      });
+      window.browser = {
+        runtime: {
+          sendMessage: async (message: unknown) => {
+            const type = typeof message === "object" && message ? String((message as { type?: unknown }).type) : "";
+            const query = typeof message === "object" && message && typeof (message as { query?: unknown }).query === "string"
+              ? (message as { query: string }).query
+              : undefined;
+            messages.push({ type, at: performance.now(), ...(query !== undefined ? { query } : {}) });
+            if (type === "getInitialTreeSnapshot") {
+              return structuredClone(snapshot);
+            }
+            if (type === "getState") {
+              return new Promise(() => undefined);
+            }
+            if (type === "getTreeProjectionSlice" && query === "hidden 42") {
+              return structuredClone(pendingSearchSnapshots.shift() ?? pendingSearchSnapshots.at(-1));
+            }
+            if (
+              type === "getDiagnostics" ||
+              type === "getPerformanceTrace" ||
+              type === "setPerformanceTraceEnabled" ||
+              type === "clearPerformanceTrace"
+            ) {
+              return undefined;
+            }
+            return { ok: true };
+          },
+          onMessage: {
+            addListener: (listener: (message: unknown) => void) => {
+              listeners.push(listener);
+            }
+          }
+        },
+        storage: {
+          local: {
+            get: async () => ({}),
+            set: async () => undefined
+          }
+        }
+      };
+    }, {
+      snapshot: fixtureCollapsedPartialSnapshot(100),
+      searchSnapshots: [
+        fixtureCollapsedNoMatchSearchSnapshot(100, "hidden 42"),
+        fixtureCollapsedSearchSnapshot(100, 42)
+      ]
+    });
+
+    await page.goto("/sidebar/sidebar.html");
+    await expect(page.locator("#search")).toBeEnabled();
+    await expect(page.locator(".node[data-node-id='group:hidden']")).toBeVisible();
+    await page.locator("#search").evaluate((element, query) => {
+      const input = element as HTMLInputElement;
+      input.focus();
+      input.value = query;
+      input.dispatchEvent(new InputEvent("input", {
+        bubbles: true,
+        inputType: "insertText",
+        data: query
+      }));
+    }, "hidden 42");
+    await page.waitForFunction(() => {
+      const messages = (window as typeof window & {
+        __sidebarBootMessages?: Array<{ type: string; query?: string }>;
+      }).__sidebarBootMessages ?? [];
+      return messages.filter((message) =>
+        message.type === "getTreeProjectionSlice" && message.query === "hidden 42"
+      ).length >= 1;
+    });
+    await expect(page.locator(".node[data-node-id='hidden:42']")).toHaveCount(0);
+
+    const firstSearchRequestCount = await sparseSearchRequestCount(page, "hidden 42");
+
+    await page.evaluate((node) => {
+      (window as typeof window & { __emitSidebarMessage?: (message: unknown) => void }).__emitSidebarMessage?.({
+        type: "nodeStateUpdated",
+        updatedNodes: [node],
+        closedCountDelta: 0
+      });
+    }, hiddenTabNode(42));
+
+    await page.waitForFunction((previousCount) => {
+      const messages = (window as typeof window & {
+        __sidebarBootMessages?: Array<{ type: string; query?: string }>;
+      }).__sidebarBootMessages ?? [];
+      return messages.filter((message) =>
+        message.type === "getTreeProjectionSlice" && message.query === "hidden 42"
+      ).length > previousCount;
+    }, firstSearchRequestCount);
+    await expect(page.locator(".node[data-node-id='hidden:42']")).toBeVisible();
+
+    const metrics = await page.evaluate(() => {
+      const messages = (window as typeof window & {
+        __sidebarBootMessages?: Array<{ type: string; query?: string }>;
+      }).__sidebarBootMessages ?? [];
+      return {
+        searchQueries: messages
+          .filter((message) => message.type === "getTreeProjectionSlice" && message.query !== undefined)
+          .map((message) => message.query),
+        hydrationRequests: messages.filter((message) => message.type === "getState").length
+      };
+    });
+
+    expect(metrics).toEqual({
+      searchQueries: ["hidden 42", "hidden 42"],
       hydrationRequests: 0
     });
     expect(issues).toEqual([]);
@@ -1043,6 +1182,52 @@ function fixtureCollapsedSearchSnapshot(hiddenTabCount: number, matchIndex: numb
   };
 }
 
+function fixtureCollapsedNoMatchSearchSnapshot(hiddenTabCount: number, query: string) {
+  return {
+    type: "initialTreeSnapshot",
+    version: 1,
+    revision: 124,
+    hydrating: true,
+    state: {
+      version: 1,
+      rootIds: [],
+      nodes: {}
+    },
+    projection: {
+      query,
+      isSearchActive: true,
+      rows: [],
+      matchingNodeIds: [],
+      visibleNodeIds: [],
+      totalRowCount: 0,
+      nodeCount: hiddenTabCount + 3,
+      closedCount: hiddenTabCount + 1,
+      matchCount: 0
+    }
+  };
+}
+
+function hiddenTabNode(index: number) {
+  const now = 1_700_000_000_000;
+  return {
+    id: `hidden:${index}`,
+    kind: "tab",
+    status: "closed",
+    parentId: "group:hidden",
+    childIds: [],
+    title: `Hidden ${index}`,
+    url: `https://hidden.example/${index}`,
+    collapsed: false,
+    createdAt: now,
+    updatedAt: now,
+    closedAt: now + index,
+    restore: {
+      url: `https://hidden.example/${index}`,
+      title: `Hidden ${index}`
+    }
+  };
+}
+
 function fixtureActiveCenteredSnapshot(tabCount: number, activeTabId: number) {
   const now = 1_700_000_000_000;
   const rowLimit = 256;
@@ -1129,4 +1314,15 @@ function collectPageIssues(page: Page): ConsoleIssue[] {
     issues.push({ kind: "requestfailed", text: `${request.url()} ${request.failure()?.errorText ?? ""}` });
   });
   return issues;
+}
+
+async function sparseSearchRequestCount(page: Page, query: string): Promise<number> {
+  return page.evaluate((expectedQuery) => {
+    const messages = (window as typeof window & {
+      __sidebarBootMessages?: Array<{ type: string; query?: string }>;
+    }).__sidebarBootMessages ?? [];
+    return messages.filter((message) =>
+      message.type === "getTreeProjectionSlice" && message.query === expectedQuery
+    ).length;
+  }, query);
 }

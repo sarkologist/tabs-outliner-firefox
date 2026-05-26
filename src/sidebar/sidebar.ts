@@ -1342,6 +1342,14 @@ function shouldUseRemoteProjectionSearch(): boolean {
   return Boolean(currentState && !currentStateFullyLoaded);
 }
 
+function refreshSparseRemoteSearchAfterStateChange(): boolean {
+  if (!currentSearchQuery.trim() || !shouldUseRemoteProjectionSearch()) {
+    return false;
+  }
+  scheduleRemoteSearchProjection(currentSearchQuery);
+  return true;
+}
+
 function scheduleRemoteSearchProjection(query: string): void {
   cancelPendingRemoteSearchProjection();
   if (!query.trim()) {
@@ -1838,6 +1846,10 @@ function applyNodeStateUpdate(update: NodeStateUpdate): void {
     invalidateSidebarWindowActiveTabTargets();
     pendingCutNodeId = nextPendingCutNodeId(state, pendingCutNodeId);
 
+    if (refreshSparseRemoteSearchAfterStateChange()) {
+      return;
+    }
+
     if (!currentProjection || currentProjection.isSearchActive || collapsedChanged) {
       invalidateProjectionCache();
       render();
@@ -1916,6 +1928,10 @@ function applyTreeStructureUpdate(update: TreeStructureUpdate): void {
     pendingCutNodeId = nextPendingCutNodeId(state, pendingCutNodeId);
     if (shouldRescrollActiveTab) {
       resetActiveTabScrollTracker(activeTabScrollTracker);
+    }
+
+    if (refreshSparseRemoteSearchAfterStateChange()) {
+      return;
     }
 
     if (!currentProjection) {
