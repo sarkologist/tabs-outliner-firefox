@@ -99,6 +99,7 @@ const searchInput = document.querySelector<HTMLInputElement>("#search");
 const clearSearch = document.querySelector<HTMLButtonElement>("#clear-search");
 
 let currentState: OutlineState | undefined;
+let currentStateFullyLoaded = false;
 let hydratingFullState = false;
 let pendingFullHydrationTimer: number | undefined;
 let draggedNodeId: NodeId | undefined;
@@ -405,6 +406,7 @@ function handleBackgroundMessage(message: unknown): unknown {
       preserveRenderedRowWindowOnce = preserveSparseViewport && currentSparseProjectionIntersectsViewport();
       suppressActiveScrollOnce = preserveSparseViewport;
       currentState = message.state;
+      currentStateFullyLoaded = true;
       currentProjectionCoverage = undefined;
       invalidateSidebarWindowActiveTabTargets();
       render();
@@ -443,7 +445,7 @@ async function loadState(): Promise<void> {
         return;
       }
       applyInitialTreeSnapshot(bootSnapshot);
-      if (bootSnapshot.hydrating) {
+      if (hydratingFullState) {
         scheduleFullStateHydration();
       } else {
         scheduleDiagnosticsLoad();
@@ -454,7 +456,7 @@ async function loadState(): Promise<void> {
     const initial = await sendCommand({ type: "getInitialTreeSnapshot" });
     if (isInitialTreeSnapshot(initial) && shouldUseInitialTreeSnapshot(initial)) {
       applyInitialTreeSnapshot(initial);
-      if (initial.hydrating) {
+      if (hydratingFullState) {
         scheduleFullStateHydration();
       } else {
         scheduleDiagnosticsLoad();
@@ -490,6 +492,7 @@ async function hydrateFullState(): Promise<void> {
       const sparseProjectionIntersectedViewport = currentSparseProjectionIntersectsViewport();
       const preserveSparseViewport = shouldPreserveSparseViewportScrollIntent();
       currentState = nextState;
+      currentStateFullyLoaded = true;
       currentProjectionCoverage = undefined;
       preserveRenderedRowWindowOnce = wasSparseProjection && preserveSparseViewport && sparseProjectionIntersectedViewport;
       suppressActiveScrollOnce = wasSparseProjection && preserveSparseViewport;
@@ -556,8 +559,9 @@ async function waitForHydrationRenderIdle(): Promise<number> {
 
 function applyInitialTreeSnapshot(snapshot: InitialTreeSnapshot): void {
   currentState = snapshot.state;
+  currentStateFullyLoaded = initialTreeSnapshotHasFullState(snapshot);
   invalidateSidebarWindowActiveTabTargets();
-  hydratingFullState = snapshot.hydrating;
+  hydratingFullState = initialTreeSnapshotNeedsFullHydration(snapshot);
   currentProjection = projectionFromInitialTreeSnapshot(snapshot);
   currentProjectionCoverage = projectionCoverageFromSnapshot(snapshot.coverage);
   projectionState = currentState;
@@ -608,8 +612,9 @@ function applySparseScrollWindowSnapshot(snapshot: InitialTreeSnapshot): void {
 
 function mergeProjectionSliceSnapshot(snapshot: InitialTreeSnapshot): void {
   currentState = mergePartialOutlineState(currentState, snapshot.state);
+  currentStateFullyLoaded = currentStateHasFullNodeTable(snapshot.projection.nodeCount);
   invalidateSidebarWindowActiveTabTargets();
-  hydratingFullState = snapshot.hydrating;
+  hydratingFullState = snapshot.hydrating || !currentStateFullyLoaded;
   currentProjectionCoverage = mergeProjectionCoverage(currentProjectionCoverage, snapshot.coverage);
 }
 
@@ -800,9 +805,21 @@ function sparseRowsCoverViewport(
 function shouldUseInitialTreeSnapshot(snapshot: InitialTreeSnapshot): boolean {
   return (
     !snapshot.hydrating ||
-    snapshot.projection.nodeCount <= snapshot.projection.rows.length ||
+    snapshot.projection.totalRowCount <= snapshot.projection.rows.length ||
     typeof snapshot.projection.activeTabRowIndex === "number"
   );
+}
+
+function initialTreeSnapshotNeedsFullHydration(snapshot: InitialTreeSnapshot): boolean {
+  return snapshot.hydrating || !initialTreeSnapshotHasFullState(snapshot);
+}
+
+function initialTreeSnapshotHasFullState(snapshot: InitialTreeSnapshot): boolean {
+  return Object.keys(snapshot.state.nodes).length >= snapshot.projection.nodeCount;
+}
+
+function currentStateHasFullNodeTable(expectedNodeCount: number): boolean {
+  return Boolean(currentState && Object.keys(currentState.nodes).length >= expectedNodeCount);
 }
 
 async function loadZoomPreference(): Promise<void> {
@@ -1066,7 +1083,7 @@ function registerSearchControls(): void {
 
 function registerPortableTreeControls(): void {
   exportTree?.addEventListener("click", () => {
-    if (hydratingFullState) {
+    if (hydratingFullState || !currentStateFullyLoaded) {
       showDiagnosticsNotice("Export unavailable until the full tree loads", { error: true });
       return;
     }
@@ -1074,7 +1091,7 @@ function registerPortableTreeControls(): void {
   });
 
   importTree?.addEventListener("click", () => {
-    if (hydratingFullState) {
+    if (hydratingFullState || !currentStateFullyLoaded) {
       showDiagnosticsNotice("Import unavailable until the full tree loads", { error: true });
       return;
     }
@@ -1206,7 +1223,7 @@ function isEditableHistoryShortcutTarget(target: EventTarget | null): boolean {
 }
 
 function exportCurrentTree(): void {
-  if (!currentState) {
+  if (!currentState || !currentStateFullyLoaded) {
     showDiagnosticsNotice("Export unavailable until loaded", { error: true });
     return;
   }
@@ -1228,6 +1245,11 @@ function exportCurrentTree(): void {
 }
 
 async function importSelectedTreeFile(): Promise<void> {
+  if (!currentStateFullyLoaded) {
+    showDiagnosticsNotice("Import unavailable until loaded", { error: true });
+    return;
+  }
+
   const file = importTreeFile?.files?.[0];
   if (!file) {
     return;
@@ -1345,6 +1367,7 @@ function render(): void {
     clearDropPreview();
     const state = currentState;
     if (!state) {
+      currentStateFullyLoaded = false;
       currentProjection = undefined;
       currentCutRowRange = undefined;
       resetHoverLineScope();
@@ -1479,7 +1502,7 @@ function renderSnapshotRows(
 
   const rowHeight = currentRowHeight();
   const totalRowCount = projection.totalRowCount ?? projection.rows.length;
-  const includeActions = !hydratingFullState || !isSparseInitialProjection(projection);
+  const includeActions = currentStateFullyLoaded && (!hydratingFullState || !isSparseInitialProjection(projection));
   activeDropPlacement = undefined;
   removeDropPreviewElements();
 
@@ -1639,20 +1662,21 @@ function syncElementAttributes(target: HTMLElement, source: HTMLElement): void {
 }
 
 function updateHydrationControls(): void {
+  const fullStateUnavailable = hydratingFullState || !currentStateFullyLoaded;
   if (searchInput) {
-    searchInput.disabled = hydratingFullState;
-    searchInput.title = hydratingFullState ? "Search is available after the full tree loads" : "";
+    searchInput.disabled = fullStateUnavailable;
+    searchInput.title = fullStateUnavailable ? "Search is available after the full tree loads" : "";
   }
   if (clearSearch) {
-    clearSearch.disabled = hydratingFullState;
+    clearSearch.disabled = fullStateUnavailable;
   }
   if (exportTree) {
-    exportTree.disabled = hydratingFullState;
-    exportTree.title = hydratingFullState ? "Export is available after the full tree loads" : "Export tree";
+    exportTree.disabled = fullStateUnavailable;
+    exportTree.title = fullStateUnavailable ? "Export is available after the full tree loads" : "Export tree";
   }
   if (importTree) {
-    importTree.disabled = hydratingFullState;
-    importTree.title = hydratingFullState ? "Import is available after the full tree loads" : "Import tree";
+    importTree.disabled = fullStateUnavailable;
+    importTree.title = fullStateUnavailable ? "Import is available after the full tree loads" : "Import tree";
   }
 }
 
@@ -3529,6 +3553,7 @@ async function runAndRender(command: BackgroundCommand): Promise<boolean> {
     }
     if (isOutlineState(response)) {
       currentState = response;
+      currentStateFullyLoaded = true;
       currentProjectionCoverage = undefined;
       invalidateSidebarWindowActiveTabTargets();
       render();

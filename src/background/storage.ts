@@ -13,7 +13,7 @@ const STATE_V2_NODE_CHUNK_SIZE = 512;
 const STATE_V2_ORDER_PAGE_SIZE = 1024;
 const STATE_V3_NODE_SHARD_PREFIX = "outlineState:v3:nodes:";
 const STATE_V3_ORDER_PAGE_PREFIX = "outlineState:v3:order:";
-const STATE_V3_NODE_SHARD_COUNT = 256;
+const STATE_V3_NODE_SHARD_COUNT = 32;
 const STATE_V3_ORDER_PAGE_SIZE = 1024;
 export const INITIAL_TREE_SNAPSHOT_ROW_LIMIT = 256;
 
@@ -119,6 +119,7 @@ type StateV3Manifest = {
 export type LoadedOutlineState = {
   state: OutlineState;
   format: "v2" | "v3";
+  requiresFullSave?: boolean;
 };
 
 export type StateLoadPhase = {
@@ -173,7 +174,11 @@ export async function loadStateWithMetadata(
   if (isStateV3Manifest(v3Manifest)) {
     const state = await loadStateV3FromManifest(v3Manifest, api, options);
     if (state) {
-      return { state, format: "v3" };
+      return {
+        state,
+        format: "v3",
+        ...(stateV3ManifestRequiresFullSave(v3Manifest) ? { requiresFullSave: true } : {})
+      };
     }
   }
 
@@ -762,6 +767,11 @@ function stateV3ManifestForState(state: OutlineState, revision: number): StateV3
     orderPageSize: STATE_V3_ORDER_PAGE_SIZE,
     initialSnapshot: initialTreeSnapshotForState(state, { revision, hydrating: true })
   };
+}
+
+function stateV3ManifestRequiresFullSave(manifest: StateV3Manifest): boolean {
+  return manifest.nodeShardCount !== STATE_V3_NODE_SHARD_COUNT ||
+    manifest.orderPageSize !== STATE_V3_ORDER_PAGE_SIZE;
 }
 
 function stateV3NodeShardKeys(state: OutlineState): string[] {

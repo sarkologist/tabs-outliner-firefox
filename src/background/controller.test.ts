@@ -8,7 +8,14 @@ import {
 import { createBackgroundController, type BackgroundController } from "./controller.js";
 import type { CommandAck } from "./commands.js";
 import { RUNTIME_LIFECYCLE_JOURNAL_KEY } from "./runtime-lifecycle-journal.js";
-import { HISTORY_KEY, STATE_KEY, loadStateV2, outlineStateV2Items, outlineStateV3Changes } from "./storage.js";
+import {
+  HISTORY_KEY,
+  STATE_KEY,
+  STATE_V3_MANIFEST_KEY,
+  loadStateV2,
+  outlineStateV2Items,
+  outlineStateV3Changes
+} from "./storage.js";
 import { PORTABLE_TREE_SCHEMA } from "../model/portable-tree.js";
 import { runtimeTitleForOutlineTab } from "../model/outline.js";
 import type { OutlineState, RuntimeTab, RuntimeWindow } from "../model/types.js";
@@ -942,6 +949,76 @@ function wideClosedTabState(tabCount: number): OutlineState {
           restore: {
             url: `https://restore.example/${index + 1}`,
             title: `Saved ${index + 1}`
+          }
+        }
+      ]))
+    }
+  };
+}
+
+function collapsedHiddenClosedTabState(tabCount: number): OutlineState {
+  const rootId = "window:10";
+  const groupId = "group:hidden";
+  const hiddenTabIds = Array.from({ length: tabCount }, (_value, index) => `closed:${index + 1}`);
+  return {
+    version: 1,
+    rootIds: [rootId],
+    nodes: {
+      [rootId]: {
+        id: rootId,
+        kind: "window",
+        status: "live",
+        title: "Window",
+        active: true,
+        collapsed: false,
+        childIds: ["tab:1", groupId],
+        createdAt: 1000,
+        updatedAt: 1000,
+        live: { windowId: 10 }
+      },
+      "tab:1": {
+        id: "tab:1",
+        kind: "tab",
+        status: "live",
+        parentId: rootId,
+        childIds: [],
+        title: "Visible",
+        url: "https://visible.example/",
+        active: true,
+        collapsed: false,
+        createdAt: 1000,
+        updatedAt: 1000,
+        live: { tabId: 1, windowId: 10 }
+      },
+      [groupId]: {
+        id: groupId,
+        kind: "group",
+        status: "closed",
+        parentId: rootId,
+        childIds: hiddenTabIds,
+        title: "Hidden saved group",
+        collapsed: true,
+        createdAt: 1000,
+        updatedAt: 1000,
+        closedAt: 2000
+      },
+      ...Object.fromEntries(hiddenTabIds.map((id, index) => [
+        id,
+        {
+          id,
+          kind: "tab",
+          status: "closed",
+          parentId: groupId,
+          childIds: [],
+          title: `Hidden ${index + 1}`,
+          url: `https://hidden.example/${index + 1}`,
+          collapsed: false,
+          createdAt: 1000,
+          updatedAt: 1000,
+          closedAt: 2001 + index,
+          restore: {
+            url: `https://hidden.example/${index + 1}`,
+            title: `Hidden ${index + 1}`
           }
         }
       ]))
@@ -21488,6 +21565,36 @@ describe("background controller lifecycle", () => {
     expect(vi.mocked(runtime.api.storage.local.set)).not.toHaveBeenCalled();
   });
 
+  it("fully rewrites matching startup state when the v3 shard format changed", async () => {
+    const storedState = wideClosedTabState(1200);
+    const initialStorage = outlineStateV3Changes(storedState).setItems;
+    initialStorage[STATE_V3_MANIFEST_KEY] = {
+      ...(initialStorage[STATE_V3_MANIFEST_KEY] as Record<string, unknown>),
+      nodeShardCount: 256
+    };
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [],
+      { initialStorage }
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+
+    await controller.ensureState();
+    await controller.flushPendingSaves();
+
+    const saved = vi.mocked(runtime.api.storage.local.set).mock.calls.at(-1)?.[0] as
+      | Record<string, unknown>
+      | undefined;
+    expect((saved?.[STATE_V3_MANIFEST_KEY] as { nodeShardCount?: number }).nodeShardCount).toBe(32);
+    expect(Object.keys(saved ?? {}).filter((key) => key.includes(":nodes:"))).toHaveLength(32);
+  });
+
   it("does not clone the persisted v3 node table before returning a matching closed-heavy startup state", async () => {
     const storedState = wideClosedTabState(300);
     const runtime = fakeRuntime(
@@ -21709,6 +21816,52 @@ describe("background controller lifecycle", () => {
     expect(runtime.api.storage.local.get).not.toHaveBeenCalled();
     expect(runtime.api.windows.getAll).not.toHaveBeenCalled();
     expect(runtime.api.tabs.query).not.toHaveBeenCalled();
+  });
+
+  it("keeps warm initial snapshots hydrating when collapsed descendants are not loaded", async () => {
+    const storedState = collapsedHiddenClosedTabState(300);
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://visible.example/",
+          title: "Visible"
+        }
+      ],
+      { initialStorage: outlineStateV3Changes(storedState).setItems }
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+
+    const snapshot = await controller.handleMessage({ type: "getInitialTreeSnapshot" }) as
+      | {
+          type?: string;
+          hydrating?: boolean;
+          state?: OutlineState;
+          projection?: {
+            rows?: unknown[];
+            totalRowCount?: number;
+            nodeCount?: number;
+          };
+        }
+      | undefined;
+
+    expect(snapshot?.type).toBe("initialTreeSnapshot");
+    expect(snapshot?.projection?.rows).toHaveLength(3);
+    expect(snapshot?.projection?.totalRowCount).toBe(3);
+    expect(snapshot?.projection?.nodeCount).toBe(303);
+    expect(Object.keys(snapshot?.state?.nodes ?? {})).toHaveLength(3);
+    expect(snapshot?.hydrating).toBe(true);
   });
 
   it("warms undo history after the initial tree snapshot before the first structural command", async () => {

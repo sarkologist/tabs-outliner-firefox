@@ -1612,7 +1612,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
   function initialTreeSnapshotFromFullState(source: OutlineState, hydrating: boolean): InitialTreeSnapshot {
     const snapshot = initialTreeSnapshotForState(source, { hydrating });
-    snapshot.hydrating = snapshot.projection.totalRowCount > snapshot.projection.rows.length;
+    snapshot.hydrating = initialTreeSnapshotNeedsFullHydration(snapshot);
     return snapshot;
   }
 
@@ -1629,8 +1629,13 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       centerRowIndex: message.centerRowIndex,
       hydrating: true
     });
-    snapshot.hydrating = snapshot.projection.totalRowCount > snapshot.projection.rows.length;
+    snapshot.hydrating = initialTreeSnapshotNeedsFullHydration(snapshot);
     return snapshot;
+  }
+
+  function initialTreeSnapshotNeedsFullHydration(snapshot: InitialTreeSnapshot): boolean {
+    return snapshot.projection.totalRowCount > snapshot.projection.rows.length ||
+      Object.keys(snapshot.state.nodes).length < snapshot.projection.nodeCount;
   }
 
   async function ensureHistory(): Promise<HistoryState> {
@@ -1709,22 +1714,25 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         historyState = lifecycleRecovery.history;
       }
       const startupBase = lifecycleRecovery.state;
+      const loadedRequiresFullSave = loaded.requiresFullSave === true;
       storedRuntimeMatch = runtimeSnapshotMateriallyMatchesState(startupBase, windows);
       if (storedRuntimeMatch.matches) {
-        if (loaded.format === "v3" && !runtimeLifecycleJournalChangedState) {
+        if (loaded.format === "v3" && !runtimeLifecycleJournalChangedState && !loadedRequiresFullSave) {
           deferPersistedStateBaselineClone(startupBase);
         } else {
           lastPersistedState = undefined;
         }
         state = startupBase;
-        if (runtimeLifecycleJournalChangedState || !statesMateriallyEqual(stored, state)) {
+        if (runtimeLifecycleJournalChangedState || !statesMateriallyEqual(stored, state) || loadedRequiresFullSave) {
           scheduleStateSave(state);
         }
       } else {
-        lastPersistedState = loaded.format === "v3" ? cloneOutlineState(stored) : undefined;
+        lastPersistedState = loaded.format === "v3" && !loadedRequiresFullSave
+          ? cloneOutlineState(stored)
+          : undefined;
         const reconciled = reconcileWithWindows(startupBase, windows, { now: now() }, { respectRuntimeTabOrder: true });
         state = statesEqualIgnoringUpdatedAt(startupBase, reconciled) ? startupBase : reconciled;
-        if (!statesMateriallyEqual(stored, state)) {
+        if (!statesMateriallyEqual(stored, state) || loadedRequiresFullSave) {
           scheduleStateSave(state);
         }
       }

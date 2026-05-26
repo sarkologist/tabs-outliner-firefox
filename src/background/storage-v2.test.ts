@@ -311,6 +311,22 @@ describe("outline state v2 storage", () => {
     expect(phases.every((phase) => phase.durationMs >= 0)).toBe(true);
   });
 
+  it("marks v3 stores with a stale shard count for a full rewrite", async () => {
+    const state = makeLargeState(50);
+    const items = outlineStateV3Changes(state).setItems;
+    items[STATE_V3_MANIFEST_KEY] = {
+      ...(items[STATE_V3_MANIFEST_KEY] as Record<string, unknown>),
+      nodeShardCount: 256
+    };
+    const api = fakeApi(items);
+
+    const loaded = await loadStateWithMetadata(api);
+
+    expect(loaded?.state).toEqual(state);
+    expect(loaded?.format).toBe("v3");
+    expect(loaded?.requiresFullSave).toBe(true);
+  });
+
   it("saves state using v3 keys by default", async () => {
     const state = makeLargeState(20);
     const api = fakeApi();
@@ -321,6 +337,7 @@ describe("outline state v2 storage", () => {
     expect(saved?.[STATE_KEY]).toBeUndefined();
     expect(saved?.[STATE_V2_MANIFEST_KEY]).toBeUndefined();
     expect(saved?.[STATE_V3_MANIFEST_KEY]).toBeDefined();
+    expect((saved?.[STATE_V3_MANIFEST_KEY] as { nodeShardCount?: number }).nodeShardCount).toBe(32);
     await expect(loadStateV3(api)).resolves.toEqual(state);
   });
 
@@ -420,7 +437,7 @@ describe("outline state v3 storage", () => {
     const setKeys = Object.keys(changes.setItems);
 
     expect(changes.setItems[STATE_V3_MANIFEST_KEY]).toBeDefined();
-    expect(setKeys.filter((key) => key.includes(":nodes:"))).toHaveLength(256);
+    expect(setKeys.filter((key) => key.includes(":nodes:"))).toHaveLength(32);
     expect(durationMs).toBeLessThan(700);
   }, 10_000);
 
