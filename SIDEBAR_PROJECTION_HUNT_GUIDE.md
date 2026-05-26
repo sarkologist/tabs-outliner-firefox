@@ -9,7 +9,7 @@ Use [SIDEBAR_PROJECTION_HUNT_RUNBOOK.md](./SIDEBAR_PROJECTION_HUNT_RUNBOOK.md) f
 - Use neutral `psh-*` scenario IDs for discovery.
 - Record distinct findings as `PT-*` entries in `SIDEBAR_PROJECTION_BUGS.md`.
 - Do not mutate fixed runtime `rt-*`, `bh-*`, `ph-*`, `lh-*`, `hh-*`, `jh-*`, `nh-*`, or `mh-*` traces.
-- Do not fix bugs during projection discovery.
+- Do not fix bugs during projection discovery. Finding a bug resets the clean-block count; fixes start only after the hunt stops under the usual stop rules.
 
 ## Threat Model
 
@@ -59,7 +59,7 @@ For each mutation block:
 - Record every distinct failure in `SIDEBAR_PROJECTION_BUGS.md` before mutating scenarios again.
 - Freeze failing scenarios; clone variants with new IDs.
 
-Stop only after three full active mutation blocks find no new distinct projection bug.
+Stop only after three full active mutation blocks find no new distinct projection bug. Count those clean blocks after the most recent new finding.
 
 ## Fix Gate
 

@@ -25,7 +25,7 @@ Find new sidebar projection, hydration, and remote-projection protocol bugs by a
 - If a run reveals multiple distinct projection failures, record all of them before changing the corpus.
 - If a failure is a harness or fixture precondition issue, fix the harness/scenario before counting it as a projection finding.
 - If a failure is a sidebar/projection invariant violation, freeze the scenario and record a `PT-*` finding.
-- Do not fix bugs during a hunt. Fixes happen in a later principled fix pass.
+- Do not fix bugs during a hunt. Finding a bug does not end the hunt by itself; freeze and record it, reset the clean-block count, and keep hunting until the normal stop rules say to stop. Fixes happen only after the hunt has stopped.
 - Perf guard is not part of discovery. It is mandatory for the later fix/promote pass.
 
 ## Harness Semantics
@@ -71,6 +71,8 @@ One block usually contains multiple cycles like:
 
 A clean block means the whole timed block found no new distinct projection signature. Do not count each replay as a separate clean block.
 
+If a block finds a new distinct projection signature, the block is not clean. Freeze every failing scenario, record every distinct `PT-*` finding, reset the clean-block count to zero, and continue discovery in a new active block. Do not switch to fixing just because a bug was found.
+
 Start a timer for active work. Active work includes:
 
 - reading this runbook, the projection guide, current `psh-*` scenarios, and relevant sidebar/projection code;
@@ -88,7 +90,7 @@ Active work excludes:
 
 The active timer should be roughly five minutes of thinking/editing/reviewing time. Pause the timer while commands run. Resume the same block after the command finishes.
 
-Stop only after three full five-minute active mutation blocks find no new distinct projection bug.
+Stop only after three full five-minute active mutation blocks find no new distinct projection bug. The three clean blocks are counted after the most recent new finding.
 
 ## Coverage Accounting
 
@@ -169,7 +171,7 @@ Scout output contract:
    ```
 8. If failures occur, inspect the Playwright output and [SIDEBAR_PROJECTION_BUGS.md](./SIDEBAR_PROJECTION_BUGS.md) for dedupe/evidence only after the run. Freeze failing scenarios.
 9. Record a mutation block note, including both bug yield and coverage movement.
-10. If any new distinct signature appears, reset the clean-block count to zero and start a new active block.
+10. If any new distinct signature appears, record it, keep the failing scenario frozen, reset the clean-block count to zero, and start a new active block. Do not start a fix pass yet.
 11. If no new distinct signature appears, continue active mutation work until the block has consumed about five minutes, then increment the clean-block count and raise temperature for the next block. Do not mark the target covered unless the scenarios added real qualitative coverage.
 12. Stop only after three complete clean active blocks.
 13. Final safety:
@@ -198,7 +200,9 @@ Scout output contract:
 
 ## Fix Pass Boundary
 
-After a hunt finds bugs, stop discovery and propose principled fixes. A `PT-*` finding is not fixed until:
+Bug fixing begins only after the hunt has stopped under the normal hunt rules. Finding a bug is not a stop condition; it resets the clean-block count and keeps discovery alive.
+
+After the hunt stops, propose principled fixes for any open `PT-*` findings. A `PT-*` finding is not fixed until:
 
 - failing scenarios are preserved as regression coverage;
 - the focused repro passes;
