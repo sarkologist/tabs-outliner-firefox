@@ -77,6 +77,11 @@ The target is to keep first paint, hover, and scroll-away bounded by sparse snap
   - Full `getState` remains a fallback when the initial sparse snapshot is unusable.
   - Startup hover/profile guards now assert sparse idle keeps `getState` requests at 0 locally and across remote sidebar interaction.
   - Updated sidebar startup synthetics so closed-heavy and real-browser startup do not synthesize default sidebar full hydration.
+- 2026-05-26: Updated the adversarial projection hunt for the remote-projection protocol.
+  - Added captured `query` and `targetNodeId` projection request assertions to the hunt harness.
+  - Added coverage for stale search responses after clear, show-in-tree target slices, and background title patches while search remains active.
+  - Fixed sparse tree-structure patches so visible rows update before falling back to a remote projection refresh.
+  - Fixed remote projection rendering so active/reveal scrolls that land outside the returned sparse rows immediately request the missing viewport slice.
 
 ## Verification Log
 
@@ -141,3 +146,10 @@ The target is to keep first paint, hover, and scroll-away bounded by sparse snap
 - 2026-05-26: `pnpm profile:sidebar-startup -- --shape closed-heavy --tabs 50000 --live-tabs 50 --runs 1 --tag 20260526-no-auto-hydrate --description "closed sparse startup smoke"`
 - 2026-05-26: `pnpm run build`
 - 2026-05-26: `pnpm exec playwright test tests/playwright/sidebar-first-paint.spec.ts --reporter=list`
+- 2026-05-26: `pnpm exec playwright test tests/playwright/sidebar-projection-hunt.spec.ts --grep "psh-patch-delete-hovered-row|psh-visible-sparse-delete|psh-clear-search|psh-show-in-tree|psh-search-refreshes" --reporter=list --workers=1`
+- 2026-05-26: `pnpm exec playwright test tests/playwright/sidebar-projection-hunt.spec.ts --reporter=list --workers=1`
+- 2026-05-26: `pnpm run build`
+- 2026-05-26: `pnpm exec playwright test tests/playwright/sidebar-startup-interaction-profile.spec.ts --reporter=list`
+- 2026-05-26: `pnpm exec playwright test tests/playwright/sidebar-first-paint.spec.ts --grep "refreshes sparse remote search" --reporter=list`
+- 2026-05-26: `pnpm exec playwright test tests/playwright/sidebar-first-paint.spec.ts --grep "clears sparse remote search" --reporter=list`
+- 2026-05-26: `pnpm perf:sidebar-projection-guard -- --smoke`

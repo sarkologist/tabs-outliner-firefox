@@ -1553,6 +1553,9 @@ function applyRemoteProjectionSnapshot(
       renderOptions
     );
     revealSidebar();
+    if (!currentProjection.isSearchActive) {
+      requestSparseScrollWindowIfNeeded();
+    }
   });
 }
 
@@ -2046,11 +2049,10 @@ function applyTreeStructureUpdate(update: TreeStructureUpdate): void {
       resetActiveTabScrollTracker(activeTabScrollTracker);
     }
 
-    if (refreshSparseRemoteProjectionAfterStateChange()) {
-      return;
-    }
-
     if (!currentProjection) {
+      if (refreshSparseRemoteProjectionAfterStateChange()) {
+        return;
+      }
       invalidateProjectionCache();
       render();
       return;
@@ -2075,12 +2077,18 @@ function applyTreeStructureUpdate(update: TreeStructureUpdate): void {
         return;
       }
 
+      if (refreshSparseRemoteProjectionAfterStateChange()) {
+        return;
+      }
       invalidateProjectionCache();
       render();
       return;
     }
 
     if (!applyDeleteTreeStructurePatchToProjection(state, currentProjection, update)) {
+      if (refreshSparseRemoteProjectionAfterStateChange()) {
+        return;
+      }
       invalidateProjectionCache();
       render();
       return;

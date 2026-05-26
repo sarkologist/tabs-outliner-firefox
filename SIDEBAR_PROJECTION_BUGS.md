@@ -20,8 +20,8 @@ pnpm perf:sidebar-projection-guard
 
 - Completed: 2026-05-26
 - Strategy: sidebar projection boundary discovery, followed by viewport-preservation and remote-projection fix passes
-- Scenario ids: 20 `psh-*` Playwright discovery scenarios
-- Distinct findings recorded: 5
+- Scenario ids: 27 `psh-*` Playwright discovery scenarios
+- Distinct findings recorded: 7
 - Status: all recorded projection findings fixed
 - Perf gate: `pnpm perf:sidebar-projection-guard` passes with startup-hover sparse idle guards (`sparseIdleActionButtonsMin`, `sparseIdleHydrationRequestsMax`, `remoteIdleHydrationRequestsMax`) and startup-scroll-away viewport guards (`missingViewportRowsMax`, `rowsVisibleMsMax`, `hydrationRequestsMax`).
 
@@ -29,10 +29,12 @@ pnpm perf:sidebar-projection-guard
 
 - `PT-001` and `PT-002`: sparse slice admission treated any returned slice as renderable and a rejected current request as terminal. The fix only renders sparse slices that cover the current viewport, merges non-covering slices without blanking the visible range, and retries one failed current-viewport request.
 - `PT-003`, `PT-004`, and `PT-005`: sparse viewport ownership was lost when full hydration, full broadcasts, or unloaded-row compact patches rebuilt projection state. The fix records user sparse-scroll intent, suppresses one active-tab recenter on hydration/broadcast, preserves an already rendered row window only when it intersects the current viewport, and ignores unloaded-node collapsed deltas.
+- `PT-006`: sparse tree-structure broadcasts requested a remote projection refresh before applying the visible projection patch. The fix tries compact visible-row projection updates first and only falls back to a background slice when the local patch cannot safely apply.
+- `PT-007`: remote projection application could scroll to an active/reveal target outside the returned sparse rows and then stop, leaving the viewport blank until another scroll. The fix immediately asks for a viewport-covering sparse slice after remote projection rendering changes scroll position.
 
 ## Finding Index
 
-- Fixed projection findings: `PT-001`, `PT-002`, `PT-003`, `PT-004`, `PT-005`
+- Fixed projection findings: `PT-001`, `PT-002`, `PT-003`, `PT-004`, `PT-005`, `PT-006`, `PT-007`
 
 ### PT-001 rejected sparse slice leaves viewport blank/no retry
 
@@ -103,3 +105,31 @@ pnpm exec playwright test tests/playwright/sidebar-projection-hunt.spec.ts --gre
 - Expected: a compact `nodeStateUpdated` patch for an unloaded row should not disturb the currently visible sparse slice.
 - Actual: after the unloaded title patch, the viewport no longer contains row `250` and jumps to a different partial row range.
 - Evidence: before the patch, Playwright observes row `250`; after patching unloaded `tab:900`, visible rows move to roughly `120..`.
+
+### PT-006 sparse tree-structure patch leaves deleted visible row stale
+
+- Status: fixed
+- Found by: `psh-patch-delete-hovered-row-clears-visible-actions` and `psh-visible-sparse-delete-patch-keeps-neighbor-visible`
+- Repro:
+
+```sh
+pnpm exec playwright test tests/playwright/sidebar-projection-hunt.spec.ts --grep "psh-patch-delete-hovered-row|psh-visible-sparse-delete" --reporter=list
+```
+
+- Expected: a `treeStructureUpdated` broadcast for a visible sparse row should remove the deleted row and keep neighboring visible rows painted without waiting for another projection slice.
+- Actual: sparse sidebars requested a remote refresh before applying the compact delete patch, so the deleted visible row stayed in the DOM.
+- Evidence: Playwright observed `tab:800` or `tab:250` still present after the delete broadcast.
+
+### PT-007 clear-search remote projection can blank viewport until next scroll
+
+- Status: fixed
+- Found by: `psh-clear-search-ignores-stale-query-response`
+- Repro:
+
+```sh
+pnpm exec playwright test tests/playwright/sidebar-projection-hunt.spec.ts --grep "psh-clear-search-ignores-stale-query-response" --reporter=list
+```
+
+- Expected: clearing search while a stale query response is pending should leave the search box clear, preserve the normal outline count, and paint the current viewport without a manual nudge.
+- Actual: the cleared non-search projection could render rows near the top, scroll to the active row outside that sparse slice, and stop with no visible rows.
+- Evidence: after resolving the stale query response and the clear-search response, Playwright saw the clear state but no viewport-visible rows until a follow-up sparse request was forced.

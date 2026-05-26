@@ -490,6 +490,113 @@ test.describe("sidebar projection hunt", () => {
     expect(result.after).toContain(251);
     expect(issues).toEqual([]);
   });
+
+  test("psh-clear-search-ignores-stale-query-response", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadLargeSparseSidebar(page, { fullStatePending: true });
+
+    const result = await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      const search = document.querySelector<HTMLInputElement>("#search");
+      const clear = document.querySelector<HTMLButtonElement>("#clear-search");
+      if (!search || !clear) {
+        throw new Error("Missing search controls");
+      }
+
+      search.focus();
+      search.value = "Tab 900";
+      search.dispatchEvent(new InputEvent("input", {
+        bubbles: true,
+        inputType: "insertText",
+        data: "Tab 900"
+      }));
+      await api.waitForSparseRequestCount(1);
+
+      clear.click();
+      await api.waitForSparseRequestCount(2);
+      api.resolveSliceAt(0);
+      await api.waitForIdleFrames(2);
+      api.resolveSliceAt(0);
+      await api.waitForSparseRequestCount(3);
+      api.resolveSliceAt(0);
+      await api.waitForIdleFrames(3);
+
+      return {
+        requests: api.projectionRequests(),
+        searchValue: search.value,
+        countText: document.querySelector("#state-count")?.textContent ?? "",
+        visibleRows: api.visibleRows()
+      };
+    });
+
+    expect(result.requests[0]?.query).toBe("Tab 900");
+    expect(result.requests.slice(1).map((request) => request.query)).toEqual(["", ""]);
+    expect(result.searchValue).toBe("");
+    expect(result.countText).toBe("1001 items / 0 saved");
+    expect(result.visibleRows.length).toBeGreaterThan(0);
+    expect(issues).toEqual([]);
+  });
+
+  test("psh-show-in-tree-target-slice-centers-remote-row", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadLargeSparseSidebar(page, { fullStatePending: true });
+
+    await page.locator("#search").fill("Tab 900");
+    await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      await api.waitForSparseRequestCount(1);
+      api.resolveSliceAt(0);
+      await api.waitForIdleFrames(3);
+    });
+
+    const row = nodeRow(page, "tab:900");
+    await expect(row).toBeVisible();
+    await row.hover();
+    await row.getByRole("button", { name: "Show in tree", exact: true }).click();
+
+    const result = await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      await api.waitForSparseRequestCount(2);
+      api.resolveSliceAt(0);
+      await api.waitForIdleFrames(3);
+      return {
+        requests: api.projectionRequests(),
+        visibleRows: api.visibleRows(),
+        viewportStartRow: api.viewportStartRow()
+      };
+    });
+
+    await expect(page.locator(`${nodeSelector("tab:900")}.is-reveal-highlight`)).toBeVisible();
+    await expect(page.locator("#search")).toHaveValue("");
+    expect(result.requests.at(-1)).toMatchObject({ query: "", targetNodeId: "tab:900" });
+    expect(result.visibleRows).toContain(900);
+    expect(result.viewportStartRow).toBeGreaterThanOrEqual(880);
+    expect(result.viewportStartRow).toBeLessThanOrEqual(920);
+    expect(issues).toEqual([]);
+  });
+
+  test("psh-search-refreshes-after-background-title-patch", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadLargeSparseSidebar(page, { fullStatePending: true });
+
+    await page.locator("#search").fill("Tab 900");
+    await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      await api.waitForSparseRequestCount(1);
+      api.resolveSliceAt(0);
+      await api.waitForIdleFrames(3);
+      api.emitTitlePatch("tab:900", "Tab 900 updated remotely");
+      await api.waitForIdleFrames(3);
+      if (api.sparseRequestCount() > 1) {
+        api.resolveSliceAt(0);
+      }
+      await api.waitForIdleFrames(3);
+    });
+
+    await expect(nodeRow(page, "tab:900")).toContainText("Tab 900 updated remotely");
+    await expect(page.locator("#search")).toHaveValue("Tab 900");
+    expect(issues).toEqual([]);
+  });
 });
 
 async function loadLargeSparseSidebar(
@@ -627,6 +734,14 @@ type ProjectionHuntApi = {
   emitTitlePatch(nodeId: string, title: string): void;
   emitFullStateBroadcast(): void;
   sentCommands(): unknown[];
+  projectionRequests(): Array<{ centerRowIndex: number; rowLimit: number; query: string; targetNodeId?: string }>;
+};
+
+type ProjectionSliceRequest = {
+  centerRowIndex: number;
+  rowLimit: number;
+  query: string;
+  targetNodeId?: string;
 };
 
 function projectionHuntApi(): ProjectionHuntApi {
@@ -652,9 +767,9 @@ function installProjectionHuntHarness(options: {
   const rowHeight = 18;
   const listeners: Array<(message: unknown) => void> = [];
   const sentCommands: unknown[] = [];
-  const sliceRequests: Array<{ centerRowIndex: number; rowLimit: number }> = [];
+  const sliceRequests: ProjectionSliceRequest[] = [];
   const pendingSlices: Array<{
-    request: { centerRowIndex: number; rowLimit: number };
+    request: ProjectionSliceRequest;
     resolve: (value: unknown) => void;
     reject: (error: Error) => void;
   }> = [];
@@ -677,7 +792,8 @@ function installProjectionHuntHarness(options: {
     emitDeletePatch,
     emitTitlePatch,
     emitFullStateBroadcast,
-    sentCommands: () => structuredClone(sentCommands)
+    sentCommands: () => structuredClone(sentCommands),
+    projectionRequests: () => structuredClone(sliceRequests)
   });
 
   window.browser = {
@@ -690,7 +806,13 @@ function installProjectionHuntHarness(options: {
         if (type === "getTreeProjectionSlice") {
           const centerRowIndex = Number((message as { centerRowIndex?: unknown }).centerRowIndex);
           const rowLimit = Number((message as { rowLimit?: unknown }).rowLimit);
-          const request = { centerRowIndex, rowLimit };
+          const query = typeof (message as { query?: unknown }).query === "string"
+            ? (message as { query: string }).query
+            : "";
+          const targetNodeId = typeof (message as { targetNodeId?: unknown }).targetNodeId === "string"
+            ? (message as { targetNodeId: string }).targetNodeId
+            : undefined;
+          const request: ProjectionSliceRequest = { centerRowIndex, rowLimit, query, targetNodeId };
           sliceRequests.push(request);
           return new Promise((resolve, reject) => {
             pendingSlices.push({ request, resolve, reject });
@@ -741,7 +863,10 @@ function installProjectionHuntHarness(options: {
           type === "moveNode" ||
           type === "wrapNodeInGroup" ||
           type === "renameGroup" ||
-          type === "focusNode"
+          type === "focusNode" ||
+          type === "expandAncestors" ||
+          type === "undo" ||
+          type === "redo"
         ) {
           sentCommands.push(structuredClone(message));
           return { type: "commandAck", stateChanged: type !== "focusNode" };
@@ -772,15 +897,13 @@ function installProjectionHuntHarness(options: {
       throw new Error(`No sparse slice request at index ${index}`);
     }
     pendingSlices.splice(index, 1);
-    const rows = options.closedRestoreFixture
-      ? closedRestoreRows()
-      : options.restoredFixture
-      ? restoredRows()
-      : tabRows(
-        override.start ?? Math.max(1, Math.floor(pending.request.centerRowIndex - pending.request.rowLimit / 2)),
-        override.end ?? Math.min(options.totalRows, Math.floor(pending.request.centerRowIndex + pending.request.rowLimit / 2))
-      );
-    pending.resolve(snapshotFromRows(rows, { hydrating: true }));
+    const projection = rowsForProjectionRequest(pending.request, override);
+    pending.resolve(snapshotFromRows(projection.rows, {
+      hydrating: true,
+      query: pending.request.query,
+      totalRowCount: projection.totalRowCount,
+      matchingNodeIds: projection.matchingNodeIds
+    }));
   }
 
   function rejectSliceAt(index: number) {
@@ -848,7 +971,18 @@ function installProjectionHuntHarness(options: {
     };
   }
 
-  function snapshotFromRows(rows: Array<Record<string, unknown> & { nodeId: string; index: number }>, settings: { hydrating: boolean }) {
+  function snapshotFromRows(
+    rows: Array<Record<string, unknown> & { nodeId: string; index: number }>,
+    settings: {
+      hydrating: boolean;
+      query?: string;
+      totalRowCount?: number;
+      matchingNodeIds?: string[];
+    }
+  ) {
+    const query = settings.query ?? "";
+    const totalRowCount = settings.totalRowCount ?? options.totalRows;
+    const matchingNodeIds = settings.matchingNodeIds ?? [];
     const nodes = Object.fromEntries(
       rows
         .map((row) => fullState.nodes[row.nodeId])
@@ -870,22 +1004,22 @@ function installProjectionHuntHarness(options: {
         nodes
       },
       projection: {
-        query: "",
-        isSearchActive: false,
+        query,
+        isSearchActive: query.length > 0,
         rows,
-        matchingNodeIds: [],
+        matchingNodeIds,
         visibleNodeIds: rows.map((row) => row.nodeId),
         ...activeProjectionTarget(),
-        totalRowCount: options.totalRows,
+        totalRowCount,
         nodeCount: options.totalRows,
         closedCount: options.closedRestoreFixture ? 4 : 0,
-        matchCount: 0
+        matchCount: matchingNodeIds.length
       },
       ...(options.includeCoverage
         ? {
             coverage: {
-              startRowIndex: Math.min(...indexes),
-              endRowIndex: Math.max(...indexes) + 1,
+              startRowIndex: indexes.length ? Math.min(...indexes) : 0,
+              endRowIndex: indexes.length ? Math.max(...indexes) + 1 : 0,
               editableNodeIds: rows.map((row) => row.nodeId),
               completeSubtreeNodeIds: completeSubtreeNodeIdsForRows(rows),
               completeSiblingParentIds: completeSiblingParentIdsForRows()
@@ -893,6 +1027,72 @@ function installProjectionHuntHarness(options: {
           }
         : {})
     };
+  }
+
+  function rowsForProjectionRequest(request: ProjectionSliceRequest, override: { start?: number; end?: number }) {
+    if (request.query) {
+      const rows = searchRowsForQuery(request.query);
+      return {
+        rows,
+        matchingNodeIds: rows.filter((row) => row.isSearchMatch).map((row) => row.nodeId),
+        totalRowCount: rows.length
+      };
+    }
+    if (options.closedRestoreFixture) {
+      return { rows: closedRestoreRows(), matchingNodeIds: [], totalRowCount: closedRestoreRows().length };
+    }
+    if (options.restoredFixture) {
+      return { rows: restoredRows(), matchingNodeIds: [], totalRowCount: restoredRows().length };
+    }
+    const centerRowIndex = request.targetNodeId ? rowIndexForNodeId(request.targetNodeId) : request.centerRowIndex;
+    const start = override.start ?? Math.max(1, Math.floor(centerRowIndex - request.rowLimit / 2));
+    const end = override.end ?? Math.min(options.totalRows, Math.floor(centerRowIndex + request.rowLimit / 2));
+    return { rows: tabRows(start, end), matchingNodeIds: [], totalRowCount: options.totalRows };
+  }
+
+  function searchRowsForQuery(query: string) {
+    const normalizedQuery = query.trim().toLocaleLowerCase();
+    if (!normalizedQuery) {
+      return [];
+    }
+    const matches = Object.values(fullState.nodes)
+      .filter((node): node is ReturnType<typeof tabNode> => (
+        node.kind === "tab" &&
+        (
+          String(node.title ?? "").toLocaleLowerCase().includes(normalizedQuery) ||
+          String(node.url ?? "").toLocaleLowerCase().includes(normalizedQuery)
+        )
+      ))
+      .map((node) => Number.parseInt(String(node.id).slice("tab:".length), 10))
+      .filter((tabId) => Number.isFinite(tabId))
+      .sort((left, right) => left - right);
+    if (matches.length === 0) {
+      return [];
+    }
+    return [
+      searchWindowRow(matches.length + 1),
+      ...matches.map((tabId, index) => ({
+        ...tabRow(tabId),
+        index: index + 1,
+        parentRowIndex: 0,
+        subtreeEndIndex: index + 2,
+        isSearchMatch: true,
+        isSearchPath: false
+      }))
+    ];
+  }
+
+  function rowIndexForNodeId(nodeId: string) {
+    if (nodeId === "window:1") {
+      return 0;
+    }
+    if (nodeId.startsWith("tab:")) {
+      const tabId = Number.parseInt(nodeId.slice("tab:".length), 10);
+      if (Number.isFinite(tabId)) {
+        return tabId;
+      }
+    }
+    return 0;
   }
 
   function initialFullState() {
@@ -1065,6 +1265,17 @@ function installProjectionHuntHarness(options: {
       isSearchMatch: false,
       isSearchPath: false,
       insideActiveWindow: false
+    };
+  }
+
+  function searchWindowRow(subtreeEndIndex: number) {
+    return {
+      ...windowRow(),
+      subtreeEndIndex,
+      childCount: subtreeEndIndex - 1,
+      visibleChildCount: subtreeEndIndex - 1,
+      isSearchMatch: false,
+      isSearchPath: true
     };
   }
 
