@@ -228,6 +228,26 @@ test.describe("sidebar projection hunt", () => {
     expect(issues).toEqual([]);
   });
 
+  test("psh-rename-covered-row-works-during-hydration", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadLargeSparseSidebar(page, { fullStatePending: true });
+
+    const row = nodeRow(page, "window:1");
+    await row.hover();
+    await row.getByRole("button", { name: "Rename", exact: true }).click();
+
+    const input = row.getByRole("textbox", { name: "Rename Window", exact: true });
+    await expect(input).toBeVisible();
+    await input.fill("Renamed sparse window");
+    await input.press("Enter");
+
+    await expect(sentCommands(page)).resolves.toEqual([
+      { type: "renameGroup", nodeId: "window:1", title: "Renamed sparse window" }
+    ]);
+    await expect(input).toHaveCount(0);
+    expect(issues).toEqual([]);
+  });
+
   test("psh-movement-controls-hidden-while-partial", async ({ page }) => {
     const issues = collectPageIssues(page);
     await loadLargeSparseSidebar(page, { fullStatePending: true });

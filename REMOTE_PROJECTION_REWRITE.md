@@ -61,6 +61,10 @@ The target is to keep first paint, hover, and scroll-away bounded by sparse snap
   - Partial projection snapshots now merge roots and child lists without deleting existing local knowledge unless coverage says the sibling list is complete.
   - Added unit coverage for incomplete search snapshots preserving known siblings.
   - Added browser coverage for searching before hydration, clearing search, and recovering the normal sparse outline without `getState`.
+- 2026-05-26: Implemented a Phase 4 sparse rename slice.
+  - Covered sparse rows can enter and commit rename while full hydration is still pending.
+  - Local edit redraws now re-render the current sparse projection rows instead of invoking the full virtual render path, so no `getState` is needed just to show or clear the rename textbox.
+  - Added browser coverage for renaming a covered sparse window during hydration.
 
 ## Verification Log
 
@@ -91,3 +95,9 @@ The target is to keep first paint, hover, and scroll-away bounded by sparse snap
 - 2026-05-26: `pnpm exec playwright test tests/playwright/sidebar-first-paint.spec.ts --grep "exports and imports through" --reporter=list`
 - 2026-05-26: `pnpm exec playwright test tests/playwright/sidebar-first-paint.spec.ts --reporter=list`
 - 2026-05-26: `pnpm perf:sidebar-projection-guard`
+- 2026-05-26: `pnpm exec playwright test tests/playwright/sidebar-projection-hunt.spec.ts --grep "psh-rename-covered-row" --reporter=list` (failed before sparse local edit rendering)
+- 2026-05-26: `pnpm exec playwright test tests/playwright/sidebar-projection-hunt.spec.ts --grep "psh-rename-covered-row" --reporter=list`
+- 2026-05-26: `pnpm exec playwright test tests/playwright/sidebar-projection-hunt.spec.ts --reporter=list`
+- 2026-05-26: `pnpm run build`
+- 2026-05-26: `pnpm exec playwright test tests/playwright/sidebar-first-paint.spec.ts --reporter=list`
+- 2026-05-26: `pnpm perf:sidebar-projection-guard` (initial sandbox run failed to bind the local test server; escalated rerun passed)

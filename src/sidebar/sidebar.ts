@@ -2057,6 +2057,14 @@ function scheduleCurrentRowsRender(): void {
   scheduleVirtualRender();
 }
 
+function renderAfterLocalRowEdit(): void {
+  if (currentProjection && isSparseInitialProjection(currentProjection)) {
+    renderSnapshotRows(currentProjection, { scrollToActive: false });
+    return;
+  }
+  render();
+}
+
 function renderVirtualRows(): void {
   perfTrace.measure("sidebar.virtualRows", {
     rows: currentProjection?.rows.length ?? 0,
@@ -3066,7 +3074,7 @@ function startRenameGroup(node: OutlineNode): void {
     nodeId: node.id,
     draft: node.customTitle ?? node.title ?? "Group"
   };
-  render();
+  renderAfterLocalRowEdit();
   focusRenameInput(node.id);
 }
 
@@ -3082,6 +3090,7 @@ async function commitRenameGroup(nodeId: NodeId, title: string): Promise<void> {
   }
 
   activeRename = undefined;
+  renderAfterLocalRowEdit();
   await runAndRender({ type: "renameGroup", nodeId, title });
 }
 
@@ -3091,7 +3100,7 @@ function cancelRenameGroup(nodeId: NodeId): void {
   }
 
   activeRename = undefined;
-  render();
+  renderAfterLocalRowEdit();
 }
 
 function focusRenameInput(nodeId: NodeId): void {
