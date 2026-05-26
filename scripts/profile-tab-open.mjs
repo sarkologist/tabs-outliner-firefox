@@ -3,6 +3,13 @@ import { performance } from "node:perf_hooks";
 import { createBackgroundController } from "../dist/background/controller.js";
 import { outlineStateV3Changes } from "../dist/background/storage.js";
 import {
+  defaultTabsForSidebarStartupShape,
+  isSidebarStartupShape,
+  makeSidebarStartupState,
+  sidebarStartupShapeStats,
+  validateSidebarStartupShapeOptions
+} from "../dist/perf/sidebar-startup-shapes.js";
+import {
   createAlarmApi,
   createPassiveEvent,
   createProfileEvents,
@@ -12,9 +19,22 @@ import {
   resetEventCounts
 } from "./profile-harness.mjs";
 
+const PROFILE_SCENARIOS = [
+  "open-tab-storm",
+  "new-window-storm",
+  "runtime-refresh-backlog",
+  "startup-initial-snapshot",
+  "startup-warm-initial-snapshot",
+  "startup-stored-unchanged",
+  "startup-real-browser-fanout",
+  "noop-update",
+  "metadata-noop-update"
+];
+
 function parseArgs(argv) {
   const options = {
-    tabs: 50_000,
+    shape: "closed-heavy",
+    tabs: undefined,
     liveTabs: undefined,
     updates: 5,
     scenario: "open-tab-storm"
@@ -35,34 +55,24 @@ function parseArgs(argv) {
     } else if (arg === "--scenario" && next) {
       options.scenario = next;
       index += 1;
+    } else if (arg === "--shape" && next) {
+      options.shape = next;
+      index += 1;
     }
   }
 
-  if (!Number.isFinite(options.tabs) || options.tabs < 1) {
-    throw new Error("--tabs must be a positive integer");
+  if (!isSidebarStartupShape(options.shape)) {
+    throw new Error("--shape must be closed-heavy, order-page-heavy, or real-browser-20260526");
   }
+  options.tabs = options.tabs ?? defaultTabsForSidebarStartupShape(options.shape);
   options.liveTabs = options.liveTabs ?? Math.min(50, options.tabs);
-  if (!Number.isFinite(options.liveTabs) || options.liveTabs < 1) {
-    throw new Error("--live-tabs must be a positive integer");
-  }
-  if (options.liveTabs > options.tabs) {
-    throw new Error("--live-tabs must be less than or equal to --tabs");
-  }
+  validateSidebarStartupShapeOptions(options);
   if (!Number.isFinite(options.updates) || options.updates < 0) {
     throw new Error("--updates must be a non-negative integer");
   }
-  if (![
-    "open-tab-storm",
-    "new-window-storm",
-    "runtime-refresh-backlog",
-    "startup-initial-snapshot",
-    "startup-warm-initial-snapshot",
-    "startup-stored-unchanged",
-    "noop-update",
-    "metadata-noop-update"
-  ].includes(options.scenario)) {
+  if (!PROFILE_SCENARIOS.includes(options.scenario)) {
     throw new Error(
-      "--scenario must be open-tab-storm, new-window-storm, runtime-refresh-backlog, startup-initial-snapshot, startup-warm-initial-snapshot, startup-stored-unchanged, noop-update, or metadata-noop-update"
+      `--scenario must be ${PROFILE_SCENARIOS.join(", ")}`
     );
   }
 
@@ -191,78 +201,12 @@ function makeRuntime(tabCount) {
   return runtime;
 }
 
-function makeClosedHeavyStartupRuntime(tabCount, liveTabCount) {
+function makeStartupRuntime(tabCount, liveTabCount, shape) {
   const runtime = makeRuntime(liveTabCount);
-  const state = makeClosedHeavyStartupState(tabCount, liveTabCount);
+  const state = makeSidebarStartupState({ shape, tabs: tabCount, liveTabs: liveTabCount });
+  runtime.startupShapeStats = sidebarStartupShapeStats(state);
   runtime.storage = new Map(Object.entries(outlineStateV3Changes(state).setItems));
   return runtime;
-}
-
-function makeClosedHeavyStartupState(tabCount, liveTabCount) {
-  const root = {
-    id: "window:10",
-    kind: "window",
-    status: "live",
-    childIds: [],
-    title: "Window 10",
-    active: true,
-    collapsed: false,
-    createdAt: 1000,
-    updatedAt: 1000,
-    live: { windowId: 10 }
-  };
-  const state = {
-    version: 1,
-    rootIds: [root.id],
-    nodes: {
-      [root.id]: root
-    }
-  };
-
-  for (let index = 1; index <= tabCount; index += 1) {
-    const id = `tab:${index}`;
-    root.childIds.push(id);
-    if (index <= liveTabCount) {
-      state.nodes[id] = {
-        id,
-        kind: "tab",
-        status: "live",
-        parentId: root.id,
-        childIds: [],
-        title: `Tab ${index}`,
-        url: `https://large.example/${index}`,
-        active: index === 1,
-        collapsed: false,
-        createdAt: 1000,
-        updatedAt: 1000,
-        live: {
-          tabId: index,
-          windowId: 10
-        }
-      };
-      continue;
-    }
-
-    state.nodes[id] = {
-      id,
-      kind: "tab",
-      status: "closed",
-      parentId: root.id,
-      childIds: [],
-      title: `Saved ${index}`,
-      url: `https://restore.example/${index}`,
-      collapsed: false,
-      createdAt: 1000,
-      updatedAt: 1000,
-      closedAt: 2000 + index,
-      restore: {
-        url: `https://restore.example/${index}`,
-        title: `Saved ${index}`
-      }
-    };
-  }
-
-  return state;
 }
 
 function deferred() {
@@ -422,15 +366,18 @@ async function runRuntimeRefreshBacklog(runtime, controller, focusStarted, relea
   };
 }
 
-async function profile({ tabs, liveTabs, updates, scenario }) {
+async function profile({ shape, tabs, liveTabs, updates, scenario }) {
   if (scenario === "startup-stored-unchanged") {
-    return profileStartupStoredUnchanged({ tabs, liveTabs });
+    return profileStartupStoredUnchanged({ shape, tabs, liveTabs });
   }
   if (scenario === "startup-initial-snapshot") {
-    return profileStartupInitialSnapshot({ tabs, liveTabs });
+    return profileStartupInitialSnapshot({ shape, tabs, liveTabs });
   }
   if (scenario === "startup-warm-initial-snapshot") {
-    return profileStartupWarmInitialSnapshot({ tabs, liveTabs });
+    return profileStartupWarmInitialSnapshot({ shape, tabs, liveTabs });
+  }
+  if (scenario === "startup-real-browser-fanout") {
+    return profileStartupRealBrowserFanout({ shape, tabs, liveTabs });
   }
 
   const runtime = makeRuntime(tabs);
@@ -479,6 +426,7 @@ async function profile({ tabs, liveTabs, updates, scenario }) {
 
   return {
     scenario,
+    shape,
     tabs,
     updates: scenario === "open-tab-storm" || scenario === "new-window-storm" ? updates : 0,
     initMs: Math.round(initMs),
@@ -496,8 +444,8 @@ async function profile({ tabs, liveTabs, updates, scenario }) {
   };
 }
 
-async function profileStartupStoredUnchanged({ tabs, liveTabs }) {
-  const runtime = makeClosedHeavyStartupRuntime(tabs, liveTabs);
+async function profileStartupStoredUnchanged({ shape, tabs, liveTabs }) {
+  const runtime = makeStartupRuntime(tabs, liveTabs, shape);
 
   const secondController = createBackgroundController({ api: runtime.api, now: () => 2000 });
   await prepareStartupTrace(secondController, runtime);
@@ -511,6 +459,7 @@ async function profileStartupStoredUnchanged({ tabs, liveTabs }) {
 
   return {
     scenario: "startup-stored-unchanged",
+    shape,
     tabs,
     liveTabs,
     updates: 0,
@@ -525,12 +474,14 @@ async function profileStartupStoredUnchanged({ tabs, liveTabs }) {
     eventCounts: eventCountsSnapshot(runtime.eventCounts),
     eventCount: eventCountsTotal(runtime.eventCounts),
     phaseMs: startupPhaseMsFromTrace(trace),
+    totalNodes: runtime.startupShapeStats.totalNodes,
+    parentsWithChildren: runtime.startupShapeStats.parentsWithChildren,
     nodes: Object.keys(state.nodes).length
   };
 }
 
-async function profileStartupInitialSnapshot({ tabs, liveTabs }) {
-  const runtime = makeClosedHeavyStartupRuntime(tabs, liveTabs);
+async function profileStartupInitialSnapshot({ shape, tabs, liveTabs }) {
+  const runtime = makeStartupRuntime(tabs, liveTabs, shape);
 
   const secondController = createBackgroundController({ api: runtime.api, now: () => 2000 });
   await prepareStartupTrace(secondController, runtime);
@@ -546,6 +497,7 @@ async function profileStartupInitialSnapshot({ tabs, liveTabs }) {
 
   return {
     scenario: "startup-initial-snapshot",
+    shape,
     tabs,
     liveTabs,
     updates: 0,
@@ -565,12 +517,14 @@ async function profileStartupInitialSnapshot({ tabs, liveTabs }) {
     snapshotRows: Array.isArray(snapshot?.projection?.rows) ? snapshot.projection.rows.length : 0,
     snapshotNodes: snapshot?.state?.nodes ? Object.keys(snapshot.state.nodes).length : 0,
     hydrating: Boolean(snapshot?.hydrating),
+    totalNodes: runtime.startupShapeStats.totalNodes,
+    parentsWithChildren: runtime.startupShapeStats.parentsWithChildren,
     nodes: Object.keys(state.nodes).length
   };
 }
 
-async function profileStartupWarmInitialSnapshot({ tabs, liveTabs }) {
-  const runtime = makeClosedHeavyStartupRuntime(tabs, liveTabs);
+async function profileStartupWarmInitialSnapshot({ shape, tabs, liveTabs }) {
+  const runtime = makeStartupRuntime(tabs, liveTabs, shape);
   const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
   await controller.ensureState();
 
@@ -589,6 +543,7 @@ async function profileStartupWarmInitialSnapshot({ tabs, liveTabs }) {
 
   return {
     scenario: "startup-warm-initial-snapshot",
+    shape,
     tabs,
     liveTabs,
     updates: 0,
@@ -607,8 +562,149 @@ async function profileStartupWarmInitialSnapshot({ tabs, liveTabs }) {
     snapshotRows: Array.isArray(snapshot?.projection?.rows) ? snapshot.projection.rows.length : 0,
     snapshotNodes: snapshot?.state?.nodes ? Object.keys(snapshot.state.nodes).length : 0,
     snapshotTotalRows: snapshot?.projection?.totalRowCount ?? 0,
+    totalNodes: runtime.startupShapeStats.totalNodes,
+    parentsWithChildren: runtime.startupShapeStats.parentsWithChildren,
     hydrating: Boolean(snapshot?.hydrating)
   };
+}
+
+async function profileStartupRealBrowserFanout({ shape, tabs, liveTabs }) {
+  const runtime = makeStartupRuntime(tabs, liveTabs, shape);
+  runtime.nextStartupTabId = tabs + 1;
+
+  const controller = createBackgroundController({ api: runtime.api, now: () => 2000 });
+  await prepareStartupTrace(controller, runtime);
+
+  const start = performance.now();
+  const initialSnapshotPromises = Array.from({ length: 8 }, () =>
+    timed(() => controller.handleMessage({ type: "getInitialTreeSnapshot" }))
+  );
+  const initialSnapshots = await Promise.all(initialSnapshotPromises);
+  const projectionSlicePromise = timed(() =>
+    controller.handleMessage({
+      type: "getTreeProjectionSlice",
+      centerRowIndex: 20_000,
+      rowLimit: 256
+    })
+  );
+  const getStatePromises = Array.from({ length: 8 }, () =>
+    timed(() => controller.handleMessage({ type: "getState" }))
+  );
+  const startupEventPromise = runStartupEventBurst(runtime);
+  const [projectionSlice, getStates] = await Promise.all([
+    projectionSlicePromise,
+    Promise.all(getStatePromises)
+  ]);
+  await startupEventPromise;
+  const saveFlushStart = performance.now();
+  await controller.flushPendingSaves();
+  const saveFlushMs = performance.now() - saveFlushStart;
+  const totalMs = performance.now() - start;
+  const trace = await controller.handleMessage({ type: "getPerformanceTrace" });
+  const startupEventDurations = startupEventDurationsFromTrace(trace);
+  const snapshotRows = Math.max(0, ...initialSnapshots.map(({ value }) =>
+    Array.isArray(value?.projection?.rows) ? value.projection.rows.length : 0
+  ));
+  const snapshotNodes = Math.max(0, ...initialSnapshots.map(({ value }) =>
+    value?.state?.nodes ? Object.keys(value.state.nodes).length : 0
+  ));
+  const state = getStates[0]?.value;
+
+  return {
+    scenario: "startup-real-browser-fanout",
+    shape,
+    tabs,
+    liveTabs,
+    updates: 0,
+    initMs: Math.round(medianNumber(initialSnapshots.map((result) => result.ms))),
+    totalMs: Math.round(totalMs),
+    saveFlushMs: Math.round(saveFlushMs),
+    totalWithSaveFlushMs: Math.round(totalMs + saveFlushMs),
+    saves: runtime.saves,
+    broadcasts: runtime.broadcasts,
+    stringifyMs: Math.round(runtime.stringifyMs),
+    mbStringified: Math.round(runtime.bytes / 1024 / 1024),
+    eventCounts: eventCountsSnapshot(runtime.eventCounts),
+    eventCount: eventCountsTotal(runtime.eventCounts),
+    phaseMs: startupPhaseMsFromTrace(trace),
+    initialSnapshotMedianMs: Math.round(medianNumber(initialSnapshots.map((result) => result.ms))),
+    initialSnapshotMaxMs: Math.round(Math.max(0, ...initialSnapshots.map((result) => result.ms))),
+    getStateMedianMs: Math.round(medianNumber(getStates.map((result) => result.ms))),
+    getStateMaxMs: Math.round(Math.max(0, ...getStates.map((result) => result.ms))),
+    projectionSliceMs: Math.round(projectionSlice.ms),
+    startupEventTotalMs: Math.round(startupEventDurations.totalMs),
+    startupEventMaxMs: Math.round(startupEventDurations.maxMs),
+    snapshotRows,
+    snapshotNodes,
+    totalNodes: runtime.startupShapeStats.totalNodes,
+    parentsWithChildren: runtime.startupShapeStats.parentsWithChildren,
+    nodes: state?.nodes ? Object.keys(state.nodes).length : 0
+  };
+}
+
+async function runStartupEventBurst(runtime) {
+  const newTabId = runtime.nextStartupTabId ?? runtime.tabs.length + 1;
+  const newTab = {
+    id: newTabId,
+    windowId: 10,
+    index: runtime.tabs.length,
+    active: true,
+    url: "about:newtab",
+    title: "New Tab"
+  };
+  runtime.windows = runtime.windows.map((windowInfo) =>
+    windowInfo.id === 10 ? { ...windowInfo, focused: true } : { ...windowInfo, focused: false }
+  );
+  runtime.tabs = runtime.tabs.map((tab) => ({ ...tab, active: false })).concat(newTab);
+
+  runtime.events.windowFocusChanged.dispatch(10);
+  runtime.events.tabCreated.dispatch({ ...newTab });
+  runtime.events.tabActivated.dispatch({ tabId: newTabId, windowId: 10, previousTabId: 1 });
+  for (let index = 0; index < 2; index += 1) {
+    const updated = {
+      ...newTab,
+      title: `Startup Tab ${index + 1}`,
+      url: index === 1 ? "https://startup.example/" : newTab.url
+    };
+    runtime.tabs[runtime.tabs.length - 1] = updated;
+    runtime.events.tabUpdated.dispatch(updated.id, { title: updated.title, url: updated.url }, { ...updated });
+  }
+
+  await flushProfileEvents(runtime.events);
+}
+
+async function timed(operation) {
+  const start = performance.now();
+  const value = await operation();
+  return {
+    value,
+    ms: performance.now() - start
+  };
+}
+
+function startupEventDurationsFromTrace(trace) {
+  const durations = (trace?.entries ?? [])
+    .filter((entry) =>
+      typeof entry?.name === "string" &&
+      /^background\.event\.(tabs|windows)\./.test(entry.name) &&
+      typeof entry.durationMs === "number"
+    )
+    .map((entry) => entry.durationMs);
+  return {
+    totalMs: durations.reduce((total, value) => total + value, 0),
+    maxMs: Math.max(0, ...durations)
+  };
+}
+
+function medianNumber(values) {
+  if (values.length === 0) {
+    return 0;
+  }
+  const sorted = [...values].sort((left, right) => left - right);
+  const midpoint = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 1
+    ? sorted[midpoint]
+    : ((sorted[midpoint - 1] ?? 0) + (sorted[midpoint] ?? 0)) / 2;
 }
 
 async function prepareStartupTrace(controller, runtime) {

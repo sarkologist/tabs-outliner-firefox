@@ -7,10 +7,15 @@ import { fileURLToPath } from "node:url";
 
 import {
   SIDEBAR_STARTUP_RESULTS_TSV_HEADER,
-  SIDEBAR_STARTUP_SCENARIOS,
   formatSidebarStartupTsvRow,
+  sidebarStartupScenariosForShape,
   summarizeSidebarStartupProfile
 } from "../dist/perf/sidebar-startup-profile.js";
+import {
+  defaultTabsForSidebarStartupShape,
+  isSidebarStartupShape,
+  validateSidebarStartupShapeOptions
+} from "../dist/perf/sidebar-startup-shapes.js";
 
 const execFileAsync = promisify(execFile);
 const rootDir = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -19,7 +24,8 @@ const defaultResultsPath = join(rootDir, "autoresearch/sidebar-startup/results.t
 
 function parseArgs(argv) {
   const options = {
-    tabs: 50_000,
+    shape: "closed-heavy",
+    tabs: undefined,
     liveTabs: undefined,
     runs: 3,
     tag: localDateTag(new Date()),
@@ -48,6 +54,9 @@ function parseArgs(argv) {
     } else if (arg === "--description" && next) {
       options.description = next;
       index += 1;
+    } else if (arg === "--shape" && next) {
+      options.shape = next;
+      index += 1;
     } else if (arg === "--baseline-ms" && next) {
       options.baselinePrimaryMedianMs = Number.parseFloat(next);
       index += 1;
@@ -62,16 +71,12 @@ function parseArgs(argv) {
     }
   }
 
-  if (!Number.isFinite(options.tabs) || options.tabs < 1) {
-    throw new Error("--tabs must be a positive integer");
+  if (!isSidebarStartupShape(options.shape)) {
+    throw new Error("--shape must be closed-heavy, order-page-heavy, or real-browser-20260526");
   }
+  options.tabs = options.tabs ?? defaultTabsForSidebarStartupShape(options.shape);
   options.liveTabs = options.liveTabs ?? Math.min(50, options.tabs);
-  if (!Number.isFinite(options.liveTabs) || options.liveTabs < 1) {
-    throw new Error("--live-tabs must be a positive integer");
-  }
-  if (options.liveTabs > options.tabs) {
-    throw new Error("--live-tabs must be less than or equal to --tabs");
-  }
+  validateSidebarStartupShapeOptions(options);
   if (!Number.isFinite(options.runs) || options.runs < 1) {
     throw new Error("--runs must be a positive integer");
   }
@@ -87,9 +92,11 @@ function parseArgs(argv) {
 
 async function runStartupMatrix(options) {
   const results = [];
+  const scenarios = sidebarStartupScenariosForShape(options.shape);
   for (let runIndex = 0; runIndex < options.runs; runIndex += 1) {
-    for (const scenario of SIDEBAR_STARTUP_SCENARIOS) {
+    for (const scenario of scenarios) {
       results.push(await runScenario({
+        shape: options.shape,
         tabs: options.tabs,
         liveTabs: options.liveTabs,
         scenario,
@@ -99,6 +106,7 @@ async function runStartupMatrix(options) {
   }
 
   const summary = summarizeSidebarStartupProfile(results, {
+    shape: options.shape,
     ...(options.baselinePrimaryMedianMs !== undefined
       ? { baselinePrimaryMedianMs: options.baselinePrimaryMedianMs }
       : {})
@@ -117,11 +125,13 @@ async function runStartupMatrix(options) {
   }
 
   return {
+    shape: options.shape,
     tabs: options.tabs,
     liveTabs: options.liveTabs,
     runs: options.runs,
     summary,
     guardFailures: summary.guardFailures,
+    guardWarnings: summary.guardWarnings,
     tsvHeader: SIDEBAR_STARTUP_RESULTS_TSV_HEADER,
     tsvRow,
     ...(options.appendResults ? { resultsPath: options.resultsPath } : {}),
@@ -129,9 +139,11 @@ async function runStartupMatrix(options) {
   };
 }
 
-async function runScenario({ tabs, liveTabs, scenario, runIndex }) {
+async function runScenario({ shape, tabs, liveTabs, scenario, runIndex }) {
   const { stdout } = await execFileAsync(process.execPath, [
     profileTabOpenScript,
+    "--shape",
+    shape,
     "--tabs",
     String(tabs),
     "--live-tabs",

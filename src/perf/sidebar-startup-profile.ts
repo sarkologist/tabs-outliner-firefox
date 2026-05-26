@@ -1,28 +1,55 @@
-export const SIDEBAR_STARTUP_SCENARIOS = [
+import type { SidebarStartupShape } from "./sidebar-startup-shapes.js";
+
+export const SIDEBAR_STARTUP_BASE_SCENARIOS = [
   "startup-initial-snapshot",
   "startup-warm-initial-snapshot",
   "startup-stored-unchanged"
 ] as const;
 
+export const SIDEBAR_STARTUP_REAL_BROWSER_SCENARIOS = [
+  "startup-real-browser-fanout"
+] as const;
+
+export const SIDEBAR_STARTUP_SCENARIOS = [
+  ...SIDEBAR_STARTUP_BASE_SCENARIOS,
+  ...SIDEBAR_STARTUP_REAL_BROWSER_SCENARIOS
+] as const;
+
 export const SIDEBAR_STARTUP_SNAPSHOT_LIMIT = 256;
+export const SIDEBAR_STARTUP_REAL_BROWSER_EVENT_COUNT = 5;
 
 export const SIDEBAR_STARTUP_RESULTS_TSV_HEADER = [
   "timestamp",
   "tag",
   "commit",
+  "shape",
+  "primary_scenario",
   "tab_nodes",
   "live_tabs",
+  "total_nodes",
+  "parents_with_children",
   "runs",
   "primary_median_ms",
   "hydration_median_ms",
   "stored_startup_median_ms",
   "warm_snapshot_median_ms",
+  "real_mimic_median_ms",
+  "real_mimic_initial_snapshot_median_ms",
+  "real_mimic_initial_snapshot_max_ms",
+  "real_mimic_get_state_median_ms",
+  "real_mimic_get_state_max_ms",
+  "real_mimic_projection_slice_ms",
+  "real_mimic_startup_event_total_ms",
+  "real_mimic_startup_event_max_ms",
+  "real_mimic_save_flush_ms",
   "snapshot_rows",
   "snapshot_nodes",
   "saves",
   "broadcasts",
   "event_count",
   "status",
+  "warnings",
+  "phase_median_json",
   "description"
 ].join("\t");
 
@@ -32,25 +59,49 @@ export type SidebarStartupProfileResult = {
   scenario: SidebarStartupScenario;
   tabs: number;
   liveTabs?: number;
+  nodes?: number;
+  totalNodes?: number;
+  parentsWithChildren?: number;
   totalMs?: number;
   hydrateMs?: number;
   totalWithHydrationMs?: number;
   phaseMs?: Record<string, number>;
   snapshotRows?: number;
   snapshotNodes?: number;
+  initialSnapshotMedianMs?: number;
+  initialSnapshotMaxMs?: number;
+  getStateMedianMs?: number;
+  getStateMaxMs?: number;
+  projectionSliceMs?: number;
+  startupEventTotalMs?: number;
+  startupEventMaxMs?: number;
+  saveFlushMs?: number;
   saves: number;
   broadcasts: number;
   eventCount: number;
 };
 
 export type SidebarStartupSummary = {
+  shape: SidebarStartupShape;
+  primaryScenario: SidebarStartupScenario;
   tabs: number;
   liveTabs: number;
+  totalNodes: number;
+  parentsWithChildren: number;
   runs: number;
   primaryMedianMs: number;
   hydrationMedianMs: number;
   storedStartupMedianMs: number;
   warmSnapshotMedianMs: number;
+  realMimicMedianMs?: number;
+  realMimicInitialSnapshotMedianMs?: number;
+  realMimicInitialSnapshotMaxMs?: number;
+  realMimicGetStateMedianMs?: number;
+  realMimicGetStateMaxMs?: number;
+  realMimicProjectionSliceMs?: number;
+  realMimicStartupEventTotalMs?: number;
+  realMimicStartupEventMaxMs?: number;
+  realMimicSaveFlushMs?: number;
   snapshotRows: number;
   snapshotNodes: number;
   saves: number;
@@ -61,10 +112,12 @@ export type SidebarStartupSummary = {
   requiredImprovementMs?: number;
   improvementMs?: number;
   guardFailures: string[];
+  guardWarnings: string[];
   status: "keep" | "discard";
 };
 
 export type SidebarStartupSummaryOptions = {
+  shape?: SidebarStartupShape;
   baselinePrimaryMedianMs?: number;
 };
 
@@ -79,39 +132,71 @@ export function summarizeSidebarStartupProfile(
   results: readonly SidebarStartupProfileResult[],
   options: SidebarStartupSummaryOptions = {}
 ): SidebarStartupSummary {
+  const shape = options.shape ?? "closed-heavy";
+  const primaryScenario = primaryScenarioForShape(shape);
+  const expectedScenarios = sidebarStartupScenariosForShape(shape);
   const initial = resultsForScenario(results, "startup-initial-snapshot");
   const warm = resultsForScenario(results, "startup-warm-initial-snapshot");
   const stored = resultsForScenario(results, "startup-stored-unchanged");
-  const primaryMedianMs = median(requiredNumbers(initial, "totalWithHydrationMs"));
+  const realBrowser = resultsForScenario(results, "startup-real-browser-fanout");
+  const primaryMedianMs = shape === "real-browser-20260526"
+    ? median(requiredNumbers(realBrowser, "totalMs"))
+    : median(requiredNumbers(initial, "totalWithHydrationMs"));
   const hydrationValues = numberValues(initial, "hydrateMs");
-  const hydrationMedianMs = median(hydrationValues.length > 0 ? hydrationValues : requiredNumbers(initial, "totalWithHydrationMs"));
-  const storedStartupMedianMs = median(requiredNumbers(stored, "totalMs"));
-  const warmSnapshotMedianMs = median(requiredNumbers(warm, "totalMs"));
-  const snapshotRows = Math.max(0, ...numberValues([...initial, ...warm], "snapshotRows"));
-  const snapshotNodes = Math.max(0, ...numberValues([...initial, ...warm], "snapshotNodes"));
+  const hydrationMedianMs = shape === "real-browser-20260526"
+    ? median(numberValues(realBrowser, "getStateMedianMs"))
+    : median(hydrationValues.length > 0 ? hydrationValues : requiredNumbers(initial, "totalWithHydrationMs"));
+  const storedStartupMedianMs = shape === "real-browser-20260526" ? 0 : median(requiredNumbers(stored, "totalMs"));
+  const warmSnapshotMedianMs = shape === "real-browser-20260526" ? 0 : median(requiredNumbers(warm, "totalMs"));
+  const snapshotRows = Math.max(0, ...numberValues(results, "snapshotRows"));
+  const snapshotNodes = Math.max(0, ...numberValues(results, "snapshotNodes"));
   const saves = sum(results, "saves");
   const broadcasts = sum(results, "broadcasts");
   const eventCount = sum(results, "eventCount");
   const phaseMedianMs = startupPhaseMedianMs(results);
+  const runs = shape === "real-browser-20260526"
+    ? realBrowser.length
+    : Math.min(initial.length, warm.length, stored.length);
   const guardFailures = startupGuardFailures({
-    missingScenarios: SIDEBAR_STARTUP_SCENARIOS.filter((scenario) => resultsForScenario(results, scenario).length === 0),
+    shape,
+    missingScenarios: expectedScenarios.filter((scenario) => resultsForScenario(results, scenario).length === 0),
+    runs,
     saves,
     broadcasts,
     eventCount,
     snapshotRows,
     snapshotNodes
   });
+  const guardWarnings = startupGuardWarnings({ shape, saves });
   const improvement = improvementDetails(options.baselinePrimaryMedianMs, primaryMedianMs);
   const status = guardFailures.length === 0 && improvement.keep ? "keep" : "discard";
+  const totalNodeValues = numberValues(results, "totalNodes");
 
   return {
+    shape,
+    primaryScenario,
     tabs: median(requiredNumbers(results, "tabs")),
     liveTabs: median(numberValues(results, "liveTabs")),
-    runs: Math.min(initial.length, warm.length, stored.length),
+    totalNodes: median(totalNodeValues.length > 0 ? totalNodeValues : numberValues(results, "nodes")),
+    parentsWithChildren: median(numberValues(results, "parentsWithChildren")),
+    runs,
     primaryMedianMs,
     hydrationMedianMs,
     storedStartupMedianMs,
     warmSnapshotMedianMs,
+    ...(shape === "real-browser-20260526"
+      ? {
+          realMimicMedianMs: primaryMedianMs,
+          realMimicInitialSnapshotMedianMs: median(numberValues(realBrowser, "initialSnapshotMedianMs")),
+          realMimicInitialSnapshotMaxMs: median(numberValues(realBrowser, "initialSnapshotMaxMs")),
+          realMimicGetStateMedianMs: median(numberValues(realBrowser, "getStateMedianMs")),
+          realMimicGetStateMaxMs: median(numberValues(realBrowser, "getStateMaxMs")),
+          realMimicProjectionSliceMs: median(numberValues(realBrowser, "projectionSliceMs")),
+          realMimicStartupEventTotalMs: median(numberValues(realBrowser, "startupEventTotalMs")),
+          realMimicStartupEventMaxMs: median(numberValues(realBrowser, "startupEventMaxMs")),
+          realMimicSaveFlushMs: median(numberValues(realBrowser, "saveFlushMs"))
+        }
+      : {}),
     snapshotRows,
     snapshotNodes,
     saves,
@@ -126,6 +211,7 @@ export function summarizeSidebarStartupProfile(
         }
       : {}),
     guardFailures,
+    guardWarnings,
     status
   };
 }
@@ -148,21 +234,48 @@ export function formatSidebarStartupTsvRow(summary: SidebarStartupSummary, field
     fields.timestamp,
     fields.tag,
     fields.commit,
+    summary.shape,
+    summary.primaryScenario,
     summary.tabs,
     summary.liveTabs,
+    summary.totalNodes,
+    summary.parentsWithChildren,
     summary.runs,
     summary.primaryMedianMs,
     summary.hydrationMedianMs,
     summary.storedStartupMedianMs,
     summary.warmSnapshotMedianMs,
+    summary.realMimicMedianMs,
+    summary.realMimicInitialSnapshotMedianMs,
+    summary.realMimicInitialSnapshotMaxMs,
+    summary.realMimicGetStateMedianMs,
+    summary.realMimicGetStateMaxMs,
+    summary.realMimicProjectionSliceMs,
+    summary.realMimicStartupEventTotalMs,
+    summary.realMimicStartupEventMaxMs,
+    summary.realMimicSaveFlushMs,
     summary.snapshotRows,
     summary.snapshotNodes,
     summary.saves,
     summary.broadcasts,
     summary.eventCount,
     summary.status,
+    summary.guardWarnings.join("; "),
+    JSON.stringify(summary.phaseMedianMs),
     fields.description
   ].map(tsvCell).join("\t");
+}
+
+export function sidebarStartupScenariosForShape(shape: SidebarStartupShape): readonly SidebarStartupScenario[] {
+  return shape === "real-browser-20260526"
+    ? SIDEBAR_STARTUP_REAL_BROWSER_SCENARIOS
+    : SIDEBAR_STARTUP_BASE_SCENARIOS;
+}
+
+function primaryScenarioForShape(shape: SidebarStartupShape): SidebarStartupScenario {
+  return shape === "real-browser-20260526"
+    ? "startup-real-browser-fanout"
+    : "startup-initial-snapshot";
 }
 
 function resultsForScenario(
@@ -217,7 +330,9 @@ function startupPhaseMedianMs(results: readonly SidebarStartupProfileResult[]): 
 }
 
 function startupGuardFailures(metrics: {
+  shape: SidebarStartupShape;
   missingScenarios: readonly SidebarStartupScenario[];
+  runs: number;
   saves: number;
   broadcasts: number;
   eventCount: number;
@@ -228,13 +343,18 @@ function startupGuardFailures(metrics: {
   if (metrics.missingScenarios.length > 0) {
     failures.push(`missing startup scenarios: ${metrics.missingScenarios.join(", ")}`);
   }
-  if (metrics.saves > 0) {
+  if (metrics.shape !== "real-browser-20260526" && metrics.saves > 0) {
     failures.push("startup scenarios must not save during measurement");
   }
   if (metrics.broadcasts > 0) {
     failures.push("startup scenarios must not emit broadcasts during measurement");
   }
-  if (metrics.eventCount > 0) {
+  if (metrics.shape === "real-browser-20260526") {
+    const expectedEventCount = metrics.runs * SIDEBAR_STARTUP_REAL_BROWSER_EVENT_COUNT;
+    if (metrics.eventCount !== expectedEventCount) {
+      failures.push(`startup real-browser fanout must process exactly ${expectedEventCount} runtime events`);
+    }
+  } else if (metrics.eventCount > 0) {
     failures.push("startup scenarios must not process runtime events during measurement");
   }
   if (metrics.snapshotRows > SIDEBAR_STARTUP_SNAPSHOT_LIMIT) {
@@ -244,6 +364,17 @@ function startupGuardFailures(metrics: {
     failures.push(`initial snapshot nodes must stay <= ${SIDEBAR_STARTUP_SNAPSHOT_LIMIT}`);
   }
   return failures;
+}
+
+function startupGuardWarnings(metrics: {
+  shape: SidebarStartupShape;
+  saves: number;
+}): string[] {
+  const warnings: string[] = [];
+  if (metrics.shape === "real-browser-20260526" && metrics.saves > 0) {
+    warnings.push("startup real-browser fanout saved during diagnostic measurement");
+  }
+  return warnings;
 }
 
 function improvementDetails(
@@ -263,8 +394,8 @@ function improvementDetails(
   };
 }
 
-function tsvCell(value: string | number): string {
-  return String(value).replace(/[\t\r\n]+/g, " ").trim();
+function tsvCell(value: string | number | undefined): string {
+  return value === undefined ? "" : String(value).replace(/[\t\r\n]+/g, " ").trim();
 }
 
 function round(value: number): number {
