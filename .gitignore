@@ -5,4 +5,8 @@ coverage/
 test-results/
 autoresearch/sidebar-startup/results.tsv
 autoresearch/sidebar-startup/*.log
+autoresearch/sidebar-startup-hover/results.tsv
+autoresearch/sidebar-startup-hover/*.log
+autoresearch/sidebar-startup-scroll-away/results.tsv
+autoresearch/sidebar-startup-scroll-away/*.log
 .DS_Store
