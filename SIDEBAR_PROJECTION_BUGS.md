@@ -19,11 +19,11 @@ pnpm perf:sidebar-projection-guard
 ## Last Projection Run
 
 - Completed: 2026-05-26
-- Strategy: continued remote projection hunt after clarifying stop rules; freshness, coverage-transition, rejected-response, broadcast ordering, command/delete broadcast, and temporal scroll/search/clear discovery
-- Scenario ids: 41 `psh-*` Playwright discovery scenarios
-- Distinct findings recorded: 11
-- Status: `PT-008` through `PT-011` open; `PT-001` through `PT-007` fixed. Discovery stopped after three clean active mutation blocks following `PT-011`.
-- Perf gate: preflight `pnpm perf:sidebar-projection-guard -- --smoke` passed before discovery. The final projection corpus pass had 37 green scenarios with the four frozen open failures excluded. Full fix-pass perf gate not run while `PT-008` through `PT-011` remain open.
+- Strategy: continued remote projection hunt after clarifying stop rules, followed by manual-QA repro capture for sparse delete/refill behavior
+- Scenario ids: 42 `psh-*` Playwright discovery/regression scenarios
+- Distinct findings recorded: 12
+- Status: `PT-001` through `PT-012` fixed. Discovery stopped after three clean active mutation blocks following `PT-011`; manual QA then found `PT-012`, which is now frozen as regression coverage.
+- Perf gate: preflight `pnpm perf:sidebar-projection-guard -- --smoke` passed before discovery. Fix pass ran the full projection corpus and hard projection perf gate; both passed.
 
 ## Fix Analysis
 
@@ -31,15 +31,15 @@ pnpm perf:sidebar-projection-guard
 - `PT-003`, `PT-004`, and `PT-005`: sparse viewport ownership was lost when full hydration, full broadcasts, or unloaded-row compact patches rebuilt projection state. The fix records user sparse-scroll intent, suppresses one active-tab recenter on hydration/broadcast, preserves an already rendered row window only when it intersects the current viewport, and ignores unloaded-node collapsed deltas.
 - `PT-006`: sparse tree-structure broadcasts requested a remote projection refresh before applying the visible projection patch. The fix tries compact visible-row projection updates first and only falls back to a background slice when the local patch cannot safely apply.
 - `PT-007`: remote projection application could scroll to an active/reveal target outside the returned sparse rows and then stop, leaving the viewport blank until another scroll. The fix immediately asks for a viewport-covering sparse slice after remote projection rendering changes scroll position.
-- `PT-008`: fix analysis pending. Discovery shows a partial sidebar-local search projection can recompute chrome from the partial node table after a visible match stops matching.
-- `PT-009`: fix analysis pending. Discovery shows a sparse snapshot without coverage metadata can keep visible-row actions readonly even after full hydration resolves.
-- `PT-010`: fix analysis pending. Discovery shows a rejected show-in-tree target slice can leave cleared search input paired with stale search-result chrome.
-- `PT-011`: fix analysis pending. Discovery shows a rejected clear-search projection slice can leave cleared search input paired with stale search-result chrome.
+- `PT-008`: partial search projection patching now separates the visible row patch from authoritative projection totals. When a visible search result stops matching before full hydration completes, the sidebar prunes rows from the partial state but preserves the last background-owned node and match counts while scheduling a fresh remote search projection.
+- `PT-009`: sparse initial snapshots without coverage metadata now keep partial rows readonly without hydrating on startup. If the user asks for coverage-dependent affordances from that snapshot, the sidebar requests full hydration once and restores normal visible-row actions when it resolves.
+- `PT-010` and `PT-011`: cleared-search intent is no longer coupled to the last successful search projection. The sidebar remembers the last accepted non-search projection and restores it when a cleared-search or show-in-tree remote projection request is rejected, so stale search chrome does not survive a failed follow-up request.
+- `PT-012`: visible sparse deletes could locally remove enough rows to expose an unpainted viewport tail. The fix invalidates in-flight sparse slices after local tree-structure patches, forces a current-intent viewport refill after applying the compact patch, and treats a successful show-in-tree response that no longer contains the requested node as stale.
 
 ## Finding Index
 
-- Fixed projection findings: `PT-001`, `PT-002`, `PT-003`, `PT-004`, `PT-005`, `PT-006`, `PT-007`
-- Open projection findings: `PT-008`, `PT-009`, `PT-010`, `PT-011`
+- Fixed projection findings: `PT-001`, `PT-002`, `PT-003`, `PT-004`, `PT-005`, `PT-006`, `PT-007`, `PT-008`, `PT-009`, `PT-010`, `PT-011`, `PT-012`
+- Open projection findings: none
 
 ### PT-001 rejected sparse slice leaves viewport blank/no retry
 
@@ -141,7 +141,7 @@ pnpm exec playwright test tests/playwright/sidebar-projection-hunt.spec.ts --gre
 
 ### PT-008 search prune falls back to partial sidebar-local counts
 
-- Status: open
+- Status: fixed
 - Found by: `psh-search-prunes-visible-row-after-title-stops-matching`
 - Repro:
 
@@ -150,12 +150,13 @@ pnpm exec playwright test tests/playwright/sidebar-projection-hunt.spec.ts --gre
 ```
 
 - Expected: while full hydration is pending, if a visible search result receives a title patch that makes it stop matching, the row should disappear and the search chrome should preserve the authoritative background total: `0 matches / 1001 items`.
-- Actual: the row disappears, but the sidebar falls back to a projection built from its partial local node table and reports `0 matchs / 82 items`.
-- Evidence: the frozen Playwright scenario first resolves a remote search for `Tab 900`, then emits a `nodeStateUpdated` title patch changing that tab to `Renamed away from query`; after idle frames, the DOM no longer contains `tab:900`, but `#state-count` is computed from the sparse sidebar-local state instead of the background-owned projection metadata.
+- Actual before fix: the row disappeared, but the sidebar fell back to a projection built from its partial local node table and reported `0 matchs / 82 items`.
+- Evidence: the frozen Playwright scenario first resolves a remote search for `Tab 900`, then emits a `nodeStateUpdated` title patch changing that tab to `Renamed away from query`; after idle frames, the DOM no longer contains `tab:900`, but `#state-count` was computed from the sparse sidebar-local state instead of the background-owned projection metadata.
+- Fix: partial search pruning now preserves authoritative background projection totals while scheduling a remote search refresh.
 
 ### PT-009 missing coverage snapshot stays readonly after full hydration
 
-- Status: open
+- Status: fixed
 - Found by: `psh-coverage-missing-snapshot-restores-actions-after-full-hydration`
 - Repro:
 
@@ -164,12 +165,13 @@ pnpm exec playwright test tests/playwright/sidebar-projection-hunt.spec.ts --gre
 ```
 
 - Expected: a sparse initial snapshot without coverage metadata should keep actions readonly while full hydration is pending, then restore normal visible-row actions once full `getState` hydration resolves.
-- Actual: after full hydration resolves and the row is hovered again, the visible row still has no `Close` action.
-- Evidence: the frozen Playwright scenario loads a sparse snapshot with `includeCoverage: false`, verifies `tab:799` has no `Close` action while partial, resolves full state, waits idle frames, hovers `tab:799` again, and times out waiting for the `Close` button.
+- Actual before fix: after full hydration resolved and the row was hovered again, the visible row still had no `Close` action.
+- Evidence: the frozen Playwright scenario loads a sparse snapshot with `includeCoverage: false`, verifies `tab:799` has no `Close` action while partial, resolves full state, waits idle frames, hovers `tab:799` again, and previously timed out waiting for the `Close` button.
+- Fix: missing coverage metadata now schedules full hydration on the first coverage-dependent hover, so full-state actions can recover without forcing startup scroll-away hydration.
 
 ### PT-010 rejected show-in-tree target leaves stale search chrome
 
-- Status: open
+- Status: fixed
 - Found by: `psh-show-in-tree-rejected-target-response-restores-cleared-outline`
 - Repro:
 
@@ -178,12 +180,13 @@ pnpm exec playwright test tests/playwright/sidebar-projection-hunt.spec.ts --gre
 ```
 
 - Expected: after clicking `Show in tree`, the search input is cleared. If the target-node projection request rejects, the sidebar should restore or keep a non-search outline projection with normal outline chrome.
-- Actual: the search input is empty, but the sidebar still displays stale search-result chrome: `1 match / 1001 items`.
-- Evidence: the frozen Playwright scenario searches for `Tab 900`, resolves that search result, clicks `Show in tree`, rejects the pending target-node slice, waits idle frames, and observes empty `#search` with search-result count text instead of `1001 items / 0 saved`.
+- Actual before fix: the search input was empty, but the sidebar still displayed stale search-result chrome: `1 match / 1001 items`.
+- Evidence: the frozen Playwright scenario searches for `Tab 900`, resolves that search result, clicks `Show in tree`, rejects the pending target-node slice, waits idle frames, and previously observed empty `#search` with search-result count text instead of `1001 items / 0 saved`.
+- Fix: rejected target-node projection requests restore the last accepted non-search projection when the current user intent is cleared search.
 
 ### PT-011 rejected clear-search slice leaves stale search chrome
 
-- Status: open
+- Status: fixed
 - Found by: `psh-clear-search-rejected-response-restores-outline-chrome`
 - Repro:
 
@@ -192,5 +195,21 @@ pnpm exec playwright test tests/playwright/sidebar-projection-hunt.spec.ts --gre
 ```
 
 - Expected: after clearing search, if the non-search projection slice rejects, the sidebar should still restore or keep non-search outline chrome matching the cleared search input.
-- Actual: the search input is empty, but the sidebar still displays stale search-result chrome: `1 match / 1001 items`.
-- Evidence: the frozen Playwright scenario searches for `Tab 900`, resolves that search result, clicks clear search, rejects the pending non-search projection slice, waits idle frames, and observes empty `#search` with search-result count text instead of `1001 items / 0 saved`.
+- Actual before fix: the search input was empty, but the sidebar still displayed stale search-result chrome: `1 match / 1001 items`.
+- Evidence: the frozen Playwright scenario searches for `Tab 900`, resolves that search result, clicks clear search, rejects the pending non-search projection slice, waits idle frames, and previously observed empty `#search` with search-result count text instead of `1001 items / 0 saved`.
+- Fix: rejected cleared-search projection requests restore the last accepted non-search projection instead of leaving stale search chrome attached to the cleared input.
+
+### PT-012 visible sparse delete exposes unpainted viewport tail
+
+- Status: fixed
+- Found by: manual QA, frozen as `psh-visible-sparse-delete-refills-exposed-viewport-without-scroll`
+- Repro:
+
+```sh
+pnpm exec playwright test tests/playwright/sidebar-projection-hunt.spec.ts --grep "psh-visible-sparse-delete-refills-exposed-viewport-without-scroll" --reporter=list --workers=1
+```
+
+- Expected: deleting visible nodes from a sparse projection should remove those rows and refill the exposed viewport from background projection state without requiring another scroll event.
+- Actual before fix: the compact delete patch removed the rows that were in the local sparse slice, but the newly exposed part of the viewport stayed blank until the user nudged the scroll position.
+- Evidence: the frozen Playwright scenario scrolls to row `250`, resolves a narrow sparse slice for rows `250..277`, deletes all those visible tab nodes, and waits for a second projection slice. Before the fix, no refill request arrived; after the fix, `tab:278` becomes visible without another scroll.
+- Fix: tree-structure patches now invalidate stale sparse window requests and force a current-viewport refill after local patching, but only for the current user query. Successful show-in-tree slices that no longer contain their requested target are treated as stale and restore the last non-search projection.

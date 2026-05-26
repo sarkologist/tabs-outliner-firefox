@@ -53,7 +53,7 @@ import {
   type DropPreviewConnector
 } from "./drop-preview.js";
 import { mergePartialOutlineState } from "./partial-outline-state.js";
-import { segmentSearchText } from "./search.js";
+import { normalizeSearchQuery, segmentSearchText } from "./search.js";
 import {
   applyInsertTreeStructurePatchToProjection,
   applyDeleteTreeStructurePatchToProjection,
@@ -101,6 +101,7 @@ const clearSearch = document.querySelector<HTMLButtonElement>("#clear-search");
 let currentState: OutlineState | undefined;
 let currentStateFullyLoaded = false;
 let hydratingFullState = false;
+let fullStateHydrationInFlight = false;
 let pendingFullHydrationTimer: number | undefined;
 let draggedNodeId: NodeId | undefined;
 let activeDropPlacement: DropPlacement | undefined;
@@ -138,6 +139,7 @@ let sidebarActiveTabTargetsRevision = 0;
 let sidebarActiveTabTargetsCacheRevision = -1;
 let sidebarActiveTabTargetsByWindow = new Map<number, NodeId>();
 let sparseWindowRequestSequence = 0;
+let sparseWindowStateChangeCutoff = 0;
 let remoteSearchRequestSequence = 0;
 let pendingRemoteSearchTimer: number | undefined;
 let pendingSparseWindowRequest:
@@ -149,6 +151,15 @@ let pendingSparseWindowRequest:
     }
   | undefined;
 const activeTabScrollTracker = createActiveTabScrollTracker();
+
+type RenderedProjectionSession = {
+  lastNonSearchProjection?: {
+    projection: VisibleTreeProjection;
+    coverage?: SidebarProjectionCoverage;
+  };
+};
+
+const renderedProjectionSession: RenderedProjectionSession = {};
 
 const WHEEL_ZOOM_THRESHOLD_PX = 80;
 const DIAGNOSTICS_NOTICE_MS = 4000;
@@ -484,6 +495,10 @@ async function hydrateFullState(): Promise<void> {
     window.clearTimeout(pendingFullHydrationTimer);
     pendingFullHydrationTimer = undefined;
   }
+  if (fullStateHydrationInFlight) {
+    return;
+  }
+  fullStateHydrationInFlight = true;
   try {
     await perfTrace.measureAsync("sidebar.hydration", hydrationTraceDetail(), async () => {
       hydratingFullState = true;
@@ -517,6 +532,8 @@ async function hydrateFullState(): Promise<void> {
     updateHydrationControls();
     revealSidebar();
     showLoadError(error);
+  } finally {
+    fullStateHydrationInFlight = false;
   }
 }
 
@@ -531,7 +548,7 @@ function hydrationTraceDetail(): TraceDetail {
 }
 
 function scheduleFullStateHydration(delayMs = FULL_STATE_HYDRATION_DELAY_MS): void {
-  if (!hydratingFullState || pendingFullHydrationTimer !== undefined) {
+  if (!hydratingFullState || fullStateHydrationInFlight || pendingFullHydrationTimer !== undefined) {
     return;
   }
   pendingFullHydrationTimer = window.setTimeout(() => {
@@ -579,6 +596,7 @@ function applyInitialTreeSnapshot(snapshot: InitialTreeSnapshot): void {
   resetHoverLineScope();
   updateHydrationControls();
   renderInitialTreeSnapshot();
+  applyPendingSearchQueryAfterStateReady();
 }
 
 function renderInitialTreeSnapshot(): void {
@@ -589,8 +607,21 @@ function renderInitialTreeSnapshot(): void {
     clearDropPreview();
     updateProjectionChrome(currentProjection);
     renderSnapshotRows(currentProjection);
+    rememberAcceptedRenderedProjection(currentProjection);
     revealSidebar();
   });
+}
+
+function applyPendingSearchQueryAfterStateReady(): void {
+  updateSearchControls();
+  if (!currentSearchQuery.trim()) {
+    return;
+  }
+  if (shouldUseRemoteProjectionSearch()) {
+    scheduleRemoteSearchProjection(currentSearchQuery);
+    return;
+  }
+  render();
 }
 
 function applySparseScrollWindowSnapshot(snapshot: InitialTreeSnapshot): void {
@@ -608,6 +639,7 @@ function applySparseScrollWindowSnapshot(snapshot: InitialTreeSnapshot): void {
   projectionState = currentState;
   projectionQuery = snapshot.projection.query;
   currentCutRowRange = undefined;
+  rememberAcceptedRenderedProjection(currentProjection);
   updateHydrationControls();
 
   perfTrace.measure("sidebar.render.sparseScrollWindow", {
@@ -635,7 +667,7 @@ function mergeProjectionSliceSnapshot(snapshot: InitialTreeSnapshot): void {
   currentProjectionCoverage = mergeProjectionCoverage(currentProjectionCoverage, coverage);
 }
 
-function requestSparseScrollWindowIfNeeded(): void {
+function requestSparseScrollWindowIfNeeded(options: { force?: boolean } = {}): void {
   if (!rootDropSurface || !currentProjection || !hydratingFullState || !isSparseInitialProjection(currentProjection)) {
     return;
   }
@@ -643,7 +675,10 @@ function requestSparseScrollWindowIfNeeded(): void {
   const viewportRange = clampedViewportRowRangeForProjection(currentProjection);
   const viewportStartRow = viewportRange.start;
   const viewportEndRow = viewportRange.end;
-  if (viewportEndRow <= viewportStartRow || sparseProjectionCoversViewport(currentProjection, viewportStartRow, viewportEndRow)) {
+  if (
+    viewportEndRow <= viewportStartRow ||
+    (!options.force && sparseProjectionCoversViewport(currentProjection, viewportStartRow, viewportEndRow))
+  ) {
     return;
   }
 
@@ -696,6 +731,10 @@ async function loadSparseScrollWindow(
   try {
     const response = await requestProjectionSlice(centerRowIndex, rowLimit, query);
     await nextAnimationFrame();
+    if (requestId <= sparseWindowStateChangeCutoff) {
+      requestSparseScrollWindowIfNeeded();
+      return;
+    }
     if (requestId !== sparseWindowRequestSequence) {
       if (
         isInitialTreeSnapshot(response) &&
@@ -1116,11 +1155,11 @@ function registerZoomShortcuts(): void {
 
 function registerSearchControls(): void {
   searchInput?.addEventListener("input", () => {
+    currentSearchQuery = searchInput.value;
+    updateSearchControls();
     if (!currentState) {
       return;
     }
-    currentSearchQuery = searchInput.value;
-    updateSearchControls();
     if (shouldUseRemoteProjectionSearch()) {
       scheduleRemoteSearchProjection(currentSearchQuery);
       return;
@@ -1425,6 +1464,61 @@ function refreshSparseRemoteProjectionAfterStateChange(): boolean {
   return true;
 }
 
+function refreshPartialSearchProjectionAfterNodeStateUpdate(update: NodeStateUpdate): boolean {
+  if (
+    !currentState ||
+    currentStateFullyLoaded ||
+    !hydratingFullState ||
+    !currentProjection?.isSearchActive ||
+    !currentSearchQuery.trim()
+  ) {
+    return false;
+  }
+
+  const previousProjection = currentProjection;
+  const localProjection = buildVisibleTreeProjection(currentState, currentSearchQuery);
+  const matchingNodeIds = updatedSearchMatchingNodeIds(previousProjection, update);
+  localProjection.nodeCount = previousProjection.nodeCount;
+  localProjection.closedCount = Math.max(0, previousProjection.closedCount + update.closedCountDelta);
+  localProjection.matchingNodeIds = matchingNodeIds;
+  localProjection.matchCount = matchingNodeIds.size;
+  currentProjection = localProjection;
+  projectionState = undefined;
+  projectionQuery = undefined;
+  currentCutRowRange = cutSubtreeRowRange(localProjection.rows, pendingCutNodeId);
+  resetHoverLineScope();
+  updateProjectionChrome(localProjection);
+  renderVirtualRows();
+  scheduleRemoteSearchProjection(currentSearchQuery);
+  return true;
+}
+
+function updatedSearchMatchingNodeIds(
+  projection: VisibleTreeProjection,
+  update: NodeStateUpdate
+): Set<NodeId> {
+  const query = projection.query || currentSearchQuery;
+  const matchingNodeIds = new Set(projection.matchingNodeIds);
+  for (const node of update.updatedNodes) {
+    const isMatch = outlineNodeMatchesSearchQuery(node, query);
+    if (isMatch) {
+      matchingNodeIds.add(node.id);
+    } else {
+      matchingNodeIds.delete(node.id);
+    }
+  }
+  return matchingNodeIds;
+}
+
+function outlineNodeMatchesSearchQuery(node: OutlineNode, rawQuery: string): boolean {
+  const query = normalizeSearchQuery(rawQuery);
+  if (!query) {
+    return false;
+  }
+  return String(node.title ?? "").toLocaleLowerCase().includes(query) ||
+    String(node.url ?? "").toLocaleLowerCase().includes(query);
+}
+
 function scheduleRemoteSearchProjection(query: string): void {
   cancelPendingRemoteSearchProjection();
   if (!query.trim()) {
@@ -1452,6 +1546,12 @@ function beginRemoteSearchProjectionRequest(): number {
   sparseWindowRequestSequence += 1;
   pendingSparseWindowRequest = undefined;
   return requestId;
+}
+
+function invalidateSparseWindowRequestsForStateChange(): void {
+  sparseWindowRequestSequence += 1;
+  sparseWindowStateChangeCutoff = sparseWindowRequestSequence;
+  pendingSparseWindowRequest = undefined;
 }
 
 async function loadRemoteSearchProjection(
@@ -1483,6 +1583,9 @@ async function loadRemoteSearchProjection(
   } catch (error) {
     if (requestId === remoteSearchRequestSequence) {
       perfTrace.mark("sidebar.remoteSearchProjection.error", { message: commandErrorText(error) });
+      if (!currentSearchQuery.trim() && restoreLastNonSearchProjectionAfterRemoteFailure()) {
+        return;
+      }
       showDiagnosticsNotice(commandErrorText(error), { error: true });
     }
   }
@@ -1504,6 +1607,15 @@ async function loadRemoteShowInTreeProjection(nodeId: NodeId): Promise<void> {
       return;
     }
 
+    if (!response.projection.rows.some((row) => row.nodeId === nodeId)) {
+      if (pendingShowInTreeNodeId === nodeId) {
+        pendingShowInTreeNodeId = undefined;
+      }
+      if (restoreLastNonSearchProjectionAfterRemoteFailure()) {
+        return;
+      }
+    }
+
     applyRemoteProjectionSnapshot(response, {
       scrollToActive: false,
       scrollToPendingShowInTree: true
@@ -1511,6 +1623,12 @@ async function loadRemoteShowInTreeProjection(nodeId: NodeId): Promise<void> {
   } catch (error) {
     if (requestId === remoteSearchRequestSequence) {
       perfTrace.mark("sidebar.remoteShowInTreeProjection.error", { message: commandErrorText(error) });
+      if (pendingShowInTreeNodeId === nodeId) {
+        pendingShowInTreeNodeId = undefined;
+      }
+      if (!currentSearchQuery.trim() && restoreLastNonSearchProjectionAfterRemoteFailure()) {
+        return;
+      }
       showDiagnosticsNotice(commandErrorText(error), { error: true });
     }
   }
@@ -1525,6 +1643,7 @@ function applyRemoteProjectionSnapshot(
   projectionState = currentState;
   projectionQuery = snapshot.projection.query;
   currentCutRowRange = undefined;
+  rememberAcceptedRenderedProjection(currentProjection);
   updateHydrationControls();
 
   perfTrace.measure("sidebar.render.remoteProjection", {
@@ -1648,6 +1767,7 @@ function render(): void {
     currentCutRowRange = cutSubtreeRowRange(projection.rows, pendingCutNodeId);
     resetHoverLineScope();
     updateProjectionChrome(projection);
+    rememberAcceptedRenderedProjection(projection);
     const suppressActiveScroll = suppressActiveScrollOnce;
     suppressActiveScrollOnce = false;
     if (!scrollToPendingShowInTreeRow(projection) && !suppressActiveScroll) {
@@ -1728,6 +1848,74 @@ function mergeProjectionCoverage(
     completeSubtreeNodeIds: new Set([...current.completeSubtreeNodeIds, ...incoming.completeSubtreeNodeIds]),
     completeSiblingParentIds: new Set([...current.completeSiblingParentIds, ...incoming.completeSiblingParentIds])
   };
+}
+
+function rememberAcceptedRenderedProjection(projection: VisibleTreeProjection): void {
+  if (projection.isSearchActive) {
+    return;
+  }
+  renderedProjectionSession.lastNonSearchProjection = {
+    projection: cloneVisibleTreeProjection(projection),
+    ...(currentProjectionCoverage ? { coverage: cloneProjectionCoverage(currentProjectionCoverage) } : {})
+  };
+}
+
+function cloneVisibleTreeProjection(projection: VisibleTreeProjection): VisibleTreeProjection {
+  return {
+    query: projection.query,
+    isSearchActive: projection.isSearchActive,
+    rows: projection.rows.map((row) => ({ ...row })),
+    matchingNodeIds: new Set(projection.matchingNodeIds),
+    visibleNodeIds: [...projection.visibleNodeIds],
+    visibleNodeIdSet: new Set(projection.visibleNodeIdSet),
+    ...(projection.activeTabNodeId ? { activeTabNodeId: projection.activeTabNodeId } : {}),
+    ...(typeof projection.activeTabRowIndex === "number" ? { activeTabRowIndex: projection.activeTabRowIndex } : {}),
+    ...(typeof projection.totalRowCount === "number" ? { totalRowCount: projection.totalRowCount } : {}),
+    nodeCount: projection.nodeCount,
+    closedCount: projection.closedCount,
+    matchCount: projection.matchCount
+  };
+}
+
+function cloneProjectionCoverage(coverage: SidebarProjectionCoverage): SidebarProjectionCoverage {
+  return {
+    startRowIndex: coverage.startRowIndex,
+    endRowIndex: coverage.endRowIndex,
+    editableNodeIds: new Set(coverage.editableNodeIds),
+    completeSubtreeNodeIds: new Set(coverage.completeSubtreeNodeIds),
+    completeSiblingParentIds: new Set(coverage.completeSiblingParentIds)
+  };
+}
+
+function restoreLastNonSearchProjectionAfterRemoteFailure(): boolean {
+  const lastNonSearchProjection = renderedProjectionSession.lastNonSearchProjection;
+  if (!currentState || !lastNonSearchProjection) {
+    return false;
+  }
+
+  currentProjection = cloneVisibleTreeProjection(lastNonSearchProjection.projection);
+  currentProjectionCoverage = lastNonSearchProjection.coverage
+    ? cloneProjectionCoverage(lastNonSearchProjection.coverage)
+    : undefined;
+  projectionState = undefined;
+  projectionQuery = undefined;
+  currentCutRowRange = cutSubtreeRowRange(currentProjection.rows, pendingCutNodeId);
+  resetHoverLineScope();
+  updateHydrationControls();
+
+  perfTrace.measure("sidebar.render.remoteProjectionFallback", {
+    rows: currentProjection.rows.length,
+    totalRows: currentProjection.totalRowCount ?? currentProjection.rows.length
+  }, () => {
+    if (!tree || !stateCount || !currentProjection) {
+      return;
+    }
+    clearDropPreview();
+    updateProjectionChrome(currentProjection);
+    renderSnapshotRows(currentProjection);
+    revealSidebar();
+  });
+  return true;
 }
 
 function renderSnapshotRows(
@@ -1967,6 +2155,9 @@ function applyNodeStateUpdate(update: NodeStateUpdate): void {
     pendingCutNodeId = nextPendingCutNodeId(state, pendingCutNodeId);
 
     if (!currentProjection || currentProjection.isSearchActive || collapsedChanged) {
+      if (currentProjection?.isSearchActive && refreshPartialSearchProjectionAfterNodeStateUpdate(update)) {
+        return;
+      }
       if (refreshSparseRemoteProjectionAfterStateChange()) {
         return;
       }
@@ -2032,6 +2223,11 @@ function applyTreeStructureUpdate(update: TreeStructureUpdate): void {
     const shouldRescrollActiveTab = activeScrollNodeId
       ? treeStructureUpdateTouchesNodeOrAncestor(state, update, activeScrollNodeId)
       : false;
+    const shouldRefreshSparseProjectionAfterLocalPatch = Boolean(
+      currentProjection &&
+      hydratingFullState &&
+      isSparseInitialProjection(currentProjection)
+    );
     const deletedNodeIds = new Set(update.deletedNodeIds);
     for (const nodeId of deletedNodeIds) {
       delete state.nodes[nodeId];
@@ -2047,6 +2243,9 @@ function applyTreeStructureUpdate(update: TreeStructureUpdate): void {
     pendingCutNodeId = nextPendingCutNodeId(state, pendingCutNodeId);
     if (shouldRescrollActiveTab) {
       resetActiveTabScrollTracker(activeTabScrollTracker);
+    }
+    if (shouldRefreshSparseProjectionAfterLocalPatch) {
+      invalidateSparseWindowRequestsForStateChange();
     }
 
     if (!currentProjection) {
@@ -2065,6 +2264,7 @@ function applyTreeStructureUpdate(update: TreeStructureUpdate): void {
         scrollToObservedActiveTab(currentProjection);
         clearHoverLineScope();
         scheduleCurrentRowsRender();
+        refreshSparseProjectionAfterLocalTreePatch();
         return;
       }
 
@@ -2074,6 +2274,7 @@ function applyTreeStructureUpdate(update: TreeStructureUpdate): void {
         scrollToObservedActiveTab(currentProjection);
         clearHoverLineScope();
         scheduleCurrentRowsRender();
+        refreshSparseProjectionAfterLocalTreePatch();
         return;
       }
 
@@ -2100,7 +2301,18 @@ function applyTreeStructureUpdate(update: TreeStructureUpdate): void {
     scrollToObservedActiveTab(currentProjection);
     clearHoverLineScope();
     scheduleCurrentRowsRender();
+    refreshSparseProjectionAfterLocalTreePatch();
   });
+}
+
+function refreshSparseProjectionAfterLocalTreePatch(): void {
+  if (!currentProjection || !hydratingFullState || !isSparseInitialProjection(currentProjection)) {
+    return;
+  }
+  if (normalizeSearchQuery(currentProjection.query) !== normalizeSearchQuery(currentSearchQuery)) {
+    return;
+  }
+  requestSparseScrollWindowIfNeeded({ force: true });
 }
 
 function invalidateProjectionCache(): void {
@@ -2178,6 +2390,9 @@ function isRenamableGroup(node: OutlineNode): boolean {
 }
 
 function pluralize(count: number, noun: string): string {
+  if (noun.endsWith("ch") || noun.endsWith("sh")) {
+    return count === 1 ? noun : `${noun}es`;
+  }
   return count === 1 ? noun : `${noun}s`;
 }
 
@@ -2586,6 +2801,11 @@ function materializeSparseRowActions(item: HTMLElement, rowInfo: VisibleTreeRow)
 
   const row = rowForItem(item);
   if (!row || row.querySelector(".node-actions")) {
+    return;
+  }
+
+  if (!currentProjectionCoverage) {
+    scheduleFullStateHydration(0);
     return;
   }
 

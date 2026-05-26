@@ -568,6 +568,45 @@ test.describe("sidebar projection hunt", () => {
     expect(issues).toEqual([]);
   });
 
+  test("psh-visible-sparse-delete-refills-exposed-viewport-without-scroll", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadLargeSparseSidebar(page, { fullStatePending: true });
+
+    const result = await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      await api.nextFrame();
+      await api.scrollToRow(250);
+      await api.waitForSparseRequestCount(1);
+      api.resolveSliceAt(0, { start: 250, end: 278 });
+      await api.waitForIdleFrames(2);
+
+      const before = api.visibleRows();
+      const deletedNodeIds = Array.from({ length: 28 }, (_value, index) => `tab:${250 + index}`);
+      api.emitDeletePatch(deletedNodeIds);
+      await api.waitForSparseRequestCount(2);
+      const afterLocalDelete = api.visibleRows();
+
+      api.resolveSliceAt(0);
+      await api.waitForIdleFrames(4);
+      return {
+        before,
+        afterLocalDelete,
+        afterRefill: api.visibleRows(),
+        requests: api.projectionRequests(),
+        deletedStillRendered: deletedNodeIds.some((nodeId) => Boolean(document.querySelector(`[data-node-id="${nodeId}"]`)))
+      };
+    });
+
+    expect(result.before).toContain(250);
+    expect(result.afterLocalDelete).not.toContain(250);
+    expect(result.requests).toHaveLength(2);
+    expect(result.requests.at(-1)).toMatchObject({ query: "" });
+    expect(result.afterRefill).toContain(250);
+    await expect(nodeRow(page, "tab:278")).toBeVisible();
+    expect(result.deletedStillRendered).toBe(false);
+    expect(issues).toEqual([]);
+  });
+
   test("psh-clear-search-ignores-stale-query-response", async ({ page }) => {
     const issues = collectPageIssues(page);
     await loadLargeSparseSidebar(page, { fullStatePending: true });
@@ -724,7 +763,8 @@ test.describe("sidebar projection hunt", () => {
 
     await expect(page.locator(`${nodeSelector("tab:900")}.is-reveal-highlight`)).toBeVisible();
     await expect(page.locator("#search")).toHaveValue("");
-    expect(result.requests.at(-1)).toMatchObject({ query: "", targetNodeId: "tab:900" });
+    expect(result.requests).toContainEqual(expect.objectContaining({ query: "", targetNodeId: "tab:900" }));
+    expect(result.requests.at(-1)).toMatchObject({ query: "" });
     expect(result.visibleRows).toContain(900);
     expect(result.viewportStartRow).toBeGreaterThanOrEqual(880);
     expect(result.viewportStartRow).toBeLessThanOrEqual(920);
@@ -763,7 +803,8 @@ test.describe("sidebar projection hunt", () => {
       };
     });
 
-    expect(result.requests.at(-1)).toMatchObject({ query: "", targetNodeId: "tab:900" });
+    expect(result.requests).toContainEqual(expect.objectContaining({ query: "", targetNodeId: "tab:900" }));
+    expect(result.requests.at(-1)).toMatchObject({ query: "" });
     expect(result.searchValue).toBe("");
     expect(result.targetExists).toBe(false);
     expect(result.visibleRows.length).toBeGreaterThan(0);
@@ -835,7 +876,7 @@ test.describe("sidebar projection hunt", () => {
     expect(result.afterStaleTarget.hasRevealHighlight).toBe(false);
     expect(result.finalSearchValue).toBe("Tab 91");
     expect(result.finalVisibleRows).toContain(1);
-    expect(result.countText).toBe("11 matchs / 1001 items");
+    expect(result.countText).toBe("11 matches / 1001 items");
     await expect(nodeRow(page, "tab:91")).toBeVisible();
     expect(issues).toEqual([]);
   });
@@ -908,7 +949,7 @@ test.describe("sidebar projection hunt", () => {
     expect(result.afterStaleTarget.hasRevealHighlight).toBe(false);
     expect(result.finalSearchValue).toBe("Tab 91");
     expect(result.finalVisibleRows).toContain(1);
-    expect(result.countText).toBe("11 matchs / 1001 items");
+    expect(result.countText).toBe("11 matches / 1001 items");
     await expect(nodeRow(page, "tab:91")).toBeVisible();
     expect(issues).toEqual([]);
   });
@@ -1678,8 +1719,8 @@ function installProjectionHuntHarness(options: {
     }
     const centerRowIndex = request.targetNodeId ? rowIndexForNodeId(request.targetNodeId) : request.centerRowIndex;
     const start = override.start ?? Math.max(1, Math.floor(centerRowIndex - request.rowLimit / 2));
-    const end = override.end ?? Math.min(options.totalRows, Math.floor(centerRowIndex + request.rowLimit / 2));
-    return { rows: tabRows(start, end), matchingNodeIds: [], totalRowCount: options.totalRows };
+    const end = override.end ?? Math.min(currentTotalRows(), Math.floor(centerRowIndex + request.rowLimit / 2));
+    return { rows: tabRows(start, end), matchingNodeIds: [], totalRowCount: currentTotalRows() };
   }
 
   function searchRowsForQuery(query: string) {
@@ -1885,19 +1926,31 @@ function installProjectionHuntHarness(options: {
   }
 
   function windowRow() {
+    const totalRows = currentTotalRows();
     return {
       nodeId: "window:1",
       depth: 0,
       index: 0,
-      subtreeEndIndex: options.totalRows,
-      childCount: options.totalRows - 1,
-      visibleChildCount: options.totalRows - 1,
+      subtreeEndIndex: totalRows,
+      childCount: totalRows - 1,
+      visibleChildCount: totalRows - 1,
       expanded: true,
       searchRevealsCollapsedChildren: false,
       isSearchMatch: false,
       isSearchPath: false,
       insideActiveWindow: false
     };
+  }
+
+  function currentTotalRows() {
+    if (options.closedRestoreFixture) {
+      return closedRestoreRows().length;
+    }
+    if (options.restoredFixture) {
+      return restoredRows().length;
+    }
+    const window = fullState.nodes["window:1"] as { childIds?: string[] } | undefined;
+    return 1 + (Array.isArray(window?.childIds) ? window.childIds.length : 0);
   }
 
   function searchWindowRow(subtreeEndIndex: number) {
@@ -1912,10 +1965,18 @@ function installProjectionHuntHarness(options: {
   }
 
   function tabRows(startInclusive: number, endExclusive: number) {
+    const window = fullState.nodes["window:1"] as { childIds?: string[] } | undefined;
+    const childIds = Array.isArray(window?.childIds) ? window.childIds : [];
     return Array.from({ length: Math.max(0, endExclusive - startInclusive) }, (_value, index) => {
-      const tabId = startInclusive + index;
-      return tabRow(tabId);
-    });
+      const rowIndex = startInclusive + index;
+      const nodeId = childIds[rowIndex - 1];
+      const tabId = nodeId?.startsWith("tab:")
+        ? Number.parseInt(nodeId.slice("tab:".length), 10)
+        : Number.NaN;
+      return Number.isFinite(tabId)
+        ? { ...tabRow(tabId), index: rowIndex, subtreeEndIndex: rowIndex + 1 }
+        : undefined;
+    }).filter((row): row is ReturnType<typeof tabRow> => Boolean(row));
   }
 
   function tabRow(tabId: number) {
