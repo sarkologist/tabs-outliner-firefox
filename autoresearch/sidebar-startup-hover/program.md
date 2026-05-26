@@ -1,6 +1,6 @@
 # Sidebar Startup Hover Autoresearch
 
-This is the local autoresearch setup for the sparse-startup hover glitch: after first paint, active-centered sparse snapshots show rows whose DOM `data-row-index` can be much larger than `projection.rows.length`, so pointer lookup can miss the visible row and clear hover feedback until full hydration completes.
+This is the local autoresearch setup for sparse-startup hover and sparse idle behavior. Active-centered sparse snapshots show rows whose DOM `data-row-index` can be much larger than `projection.rows.length`, so pointer lookup can miss the visible row and clear hover feedback. Current guards also assert that a valid sparse startup does not automatically request full `getState` hydration after idle.
 
 ## Setup
 
@@ -16,7 +16,7 @@ This is the local autoresearch setup for the sparse-startup hover glitch: after 
 
 Primary score: `clearMissingRowCount` from the `startup-sparse-hover` console JSON emitted by `pnpm profile:startup-hover`.
 
-Target: `clearMissingRowCount === 0` for the visible active sparse row before full hydration.
+Target: `clearMissingRowCount === 0` for the visible active sparse row while the sidebar remains sparse.
 
 For the post-fix margin loop, the primary budgets are:
 
@@ -24,8 +24,8 @@ For the post-fix margin loop, the primary budgets are:
 - `startup-sparse-first-paint.actionButtons === 0`
 - `startup-sparse-hover.hoverFrameDelay.maxMs < 8`
 - `startup-sparse-hover.hoverFeedbackDelay.maxMs < 4`
-- `startup-hover-hydration-defer.hydrationRequestsBeforeIdle === 0`
-- `startup-remote-interaction-hydration-defer.firstHydrationAt - remoteInteractionAt >= 950`
+- `startup-hover-sparse-idle.hydrationRequestsAfterIdle === 0`
+- `startup-remote-interaction-sparse-idle.hydrationRequestsAfterIdle === 0`
 
 Baseline on 2026-05-22 from `cf6df3a` plus this setup:
 
@@ -61,6 +61,12 @@ Fourth accepted experiment on 2026-05-22:
 - Change: sparse hydrating first paint renders only the row label/twisty surface; edit/action buttons appear after full hydration, matching the existing command guards that already block those actions during hydration.
 - Single-run result from `pnpm exec playwright test tests/playwright/sidebar-startup-interaction-profile.spec.ts --grep "sparse first paint"`: `sidebar.render.initialSnapshot.maxMs` moved from 27.7ms with 1,280 action buttons to 6.8ms with 0 action buttons.
 
+Fifth accepted experiment on 2026-05-26:
+
+- Hypothesis: once export/import/search and sparse-safe row commands are background-backed, the sidebar should not pay the old delayed whole-tree hydration cost on every startup.
+- Change: a usable sparse startup snapshot no longer schedules automatic full `getState` hydration. Full hydration remains available for fallback paths where the initial sparse snapshot is unusable.
+- Result from `pnpm exec playwright test tests/playwright/sidebar-first-paint.spec.ts --grep "exports and imports|does not auto-hydrate"`: valid sparse startup, sparse search/clear, export, and import remained available with `hydrationRequests: 0` after the old idle window.
+
 Guard metrics:
 
 - `targetVisible` remains `true`.
@@ -75,7 +81,7 @@ Guard metrics:
 Repeat one hypothesis at a time:
 
 1. Read the current `startup-sparse-hover` JSON and identify the failure mode.
-2. Add or update a failing behavior test first when changing behavior. For the expected fix, that test should assert a visible sparse row can resolve to its `VisibleTreeRow` before full hydration.
+2. Add or update a failing behavior test first when changing behavior. For sparse hover fixes, that test should assert a visible sparse row can resolve to its `VisibleTreeRow` while the sidebar remains sparse.
 3. Make the smallest implementation change.
 4. Run:
    `pnpm run build`
@@ -88,6 +94,6 @@ Repeat one hypothesis at a time:
 ## Safety
 
 - Do not expand the sparse startup snapshot beyond 256 rows/nodes for this fix.
-- Do not start full hydration earlier just to make hover work.
+- Do not start full hydration just to make hover work.
 - Do not add full-state transport, saves, broadcasts, or runtime events to the first-paint path.
 - If this deterministic profile disagrees with an exported real `tabsOutlinerProfile`, trust the real profile and update this target to reproduce the missing behavior.

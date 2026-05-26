@@ -28,7 +28,7 @@ describe("sidebar startup profile helpers", () => {
     ], { baselinePrimaryMedianMs: 650 });
 
     expect(summary.primaryMedianMs).toBe(600);
-    expect(summary.hydrationMedianMs).toBe(598);
+    expect(summary.hydrationMedianMs).toBe(0);
     expect(summary.phaseMedianMs).toEqual({
       "v3.nodeMaterialize": 70,
       "v3.nodeShardRead": 20,
@@ -72,8 +72,8 @@ describe("sidebar startup profile helpers", () => {
         parentsWithChildren: 7_062,
         initialSnapshotMedianMs: 180,
         initialSnapshotMaxMs: 260,
-        getStateMedianMs: 2_300,
-        getStateMaxMs: 2_800,
+        getStateMedianMs: 0,
+        getStateMaxMs: 0,
         projectionSliceMs: 3_900,
         startupEventTotalMs: 6_600,
         startupEventMaxMs: 6_100,
@@ -90,8 +90,8 @@ describe("sidebar startup profile helpers", () => {
     expect(summary.realMimicMedianMs).toBe(3_200);
     expect(summary.realMimicInitialSnapshotMedianMs).toBe(180);
     expect(summary.realMimicInitialSnapshotMaxMs).toBe(260);
-    expect(summary.realMimicGetStateMedianMs).toBe(2_300);
-    expect(summary.realMimicGetStateMaxMs).toBe(2_800);
+    expect(summary.realMimicGetStateMedianMs).toBe(0);
+    expect(summary.realMimicGetStateMaxMs).toBe(0);
     expect(summary.realMimicProjectionSliceMs).toBe(3_900);
     expect(summary.realMimicStartupEventTotalMs).toBe(6_600);
     expect(summary.realMimicStartupEventMaxMs).toBe(6_100);
@@ -119,7 +119,7 @@ describe("sidebar startup profile helpers", () => {
       commit: "abcdef1",
       description: "baseline\twith newline\ntrimmed"
     })).toBe(
-      "2026-05-22T13:00:00.000Z\tmay22\tabcdef1\tclosed-heavy\tstartup-initial-snapshot\t50000\t50\t50001\t1\t1\t600\t598\t610\t38\t\t\t\t\t\t\t\t\t\t256\t256\t0\t0\t0\tkeep\t\t{\"v3.nodeMaterialize\":70,\"v3.nodeShardRead\":20,\"v3.orderPageRead\":40}\tbaseline with newline trimmed"
+      "2026-05-22T13:00:00.000Z\tmay22\tabcdef1\tclosed-heavy\tstartup-initial-snapshot\t50000\t50\t50001\t1\t1\t600\t0\t610\t38\t\t\t\t\t\t\t\t\t\t256\t256\t0\t0\t0\tkeep\t\t{\"v3.nodeMaterialize\":70,\"v3.nodeShardRead\":20,\"v3.orderPageRead\":40}\tbaseline with newline trimmed"
     );
   });
 });
@@ -134,8 +134,8 @@ function startupInitial(
     liveTabs: 50,
     totalNodes: 50_001,
     parentsWithChildren: 1,
-    totalMs: 2,
-    hydrateMs: totalWithHydrationMs - 2,
+    totalMs: totalWithHydrationMs,
+    hydrateMs: 0,
     totalWithHydrationMs,
     phaseMs: {
       "v3.nodeShardRead": 20,

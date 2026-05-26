@@ -14,7 +14,7 @@ This guide is the mutation prompt for sidebar projection/hydration discovery. It
 Stress the boundary between a partial projected tree and the real sidebar:
 
 - delayed, failed, stale, or out-of-order `getTreeProjectionSlice` responses;
-- full `getState` hydration racing scroll, hover, command clicks, and patches;
+- sparse row-window state racing scroll, hover, command clicks, and patches;
 - visible controls that require projection coverage to be truthful;
 - compact patches arriving for rows that are hovered, visible, unloaded, or just deleted;
 - restored or closed rows whose actions need authoritative full-state preflight;
@@ -22,9 +22,9 @@ Stress the boundary between a partial projected tree and the real sidebar:
 
 ## Coverage Targets
 
-Current projection guard baseline after 2026-05-25 guard hardening:
+Current projection guard baseline after 2026-05-26 remote-projection work:
 
-- `pnpm perf:sidebar-projection-guard` passes with startup hover and sparse scroll-away profiles. Latest fixed-run guard: startup-hover `firstPaintMaxMs=10.4`, `sparseHoverActionButtonsMin=3`, `hydrationActionButtonsMin=5`; startup-scroll-away `missingViewportRowsMax=0`, `rowsVisibleMsMax=8`, `hydrationRequestsMax=0`.
+- `pnpm perf:sidebar-projection-guard` passes with startup hover and sparse scroll-away profiles. Startup-hover now guards sparse idle behavior with `sparseIdleActionButtonsMin` and `sparseIdleHydrationRequestsMax`; startup-scroll-away still requires viewport row coverage with `hydrationRequestsMax=0`.
 - Projection discovery corpus has 20 `psh-*` scenarios covering rejected/delayed/out-of-order slices, restored single-tab delete cleanup, hover action stability, sparse full-state hydration, sparse patch stability, and partial action policy.
 - Fixed findings are preserved as regression coverage in the `psh-*` corpus: `PT-001` through `PT-005`. Do not mutate those scenarios directly during discovery; clone variants with new neutral IDs.
 
@@ -32,12 +32,12 @@ Next sparse cells:
 
 - rejected slice retry/recovery;
 - repeated scrollbar jumps with stale non-covering responses;
-- full hydration while scrolled to a fetched projection slice;
+- background broadcasts while scrolled to a fetched projection slice;
 - visible in-coverage commands while full hydration is pending;
 - stale patches for hovered rows and deleted rows;
 - snapshots with missing coverage metadata;
 - search/show-in-tree while slice requests are pending;
-- multi-sidebar interaction deferring hydration.
+- multi-sidebar startup with no automatic sidebar full hydration.
 
 ## Hunt Procedure
 

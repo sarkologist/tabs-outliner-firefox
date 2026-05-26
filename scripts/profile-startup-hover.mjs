@@ -19,11 +19,11 @@ export const STARTUP_HOVER_RESULTS_TSV_HEADER = [
   "first_paint_max_ms",
   "first_paint_action_buttons_max",
   "sparse_hover_action_buttons_min",
-  "hydration_action_buttons_min",
+  "sparse_idle_action_buttons_min",
   "sparse_hover_frame_max_ms",
   "sparse_hover_feedback_max_ms",
-  "hydration_before_idle_max",
-  "remote_hydration_delay_min_ms",
+  "sparse_idle_hydration_requests_max",
+  "remote_idle_hydration_requests_max",
   "status",
   "description"
 ].join("\t");
@@ -128,8 +128,8 @@ export function parseProfileLines(output) {
 export function summarize(results) {
   const firstPaintProfiles = profileValues(results, "startup-sparse-first-paint");
   const sparseHoverProfiles = profileValues(results, "startup-sparse-hover");
-  const hydrationProfiles = profileValues(results, "startup-hover-hydration-defer");
-  const remoteProfiles = profileValues(results, "startup-remote-interaction-hydration-defer");
+  const sparseIdleProfiles = profileValues(results, "startup-hover-sparse-idle");
+  const remoteIdleProfiles = profileValues(results, "startup-remote-interaction-sparse-idle");
 
   const firstPaintDurations = firstPaintProfiles.map((profile) => profile.initialSnapshotRender?.maxMs)
     .filter(isFiniteNumber);
@@ -140,12 +140,12 @@ export function summarize(results) {
     .filter(isFiniteNumber);
   const sparseHoverActionButtons = sparseHoverProfiles.map((profile) => profile.actionButtonsAfterHover)
     .filter(isFiniteNumber);
-  const hydrationActionButtons = hydrationProfiles.map((profile) => profile.actionButtonsAfterHydration)
+  const sparseIdleActionButtons = sparseIdleProfiles.map((profile) => profile.actionButtonsAfterIdle)
     .filter(isFiniteNumber);
-  const hydrationBeforeIdleValues = hydrationProfiles.map((profile) => profile.hydrationRequestsBeforeIdle)
+  const sparseIdleHydrationRequests = sparseIdleProfiles.map((profile) => profile.hydrationRequestsAfterIdle)
     .filter(isFiniteNumber);
-  const remoteHydrationDelayValues = remoteProfiles
-    .map((profile) => profile.firstHydrationAt - profile.remoteInteractionAt)
+  const remoteIdleHydrationRequests = remoteIdleProfiles
+    .map((profile) => profile.hydrationRequestsAfterIdle)
     .filter(isFiniteNumber);
 
   const summary = {
@@ -154,19 +154,19 @@ export function summarize(results) {
     firstPaintMaxMs: max(firstPaintDurations),
     firstPaintActionButtonsMax: max(firstPaintActionButtons),
     sparseHoverActionButtonsMin: min(sparseHoverActionButtons),
-    hydrationActionButtonsMin: min(hydrationActionButtons),
+    sparseIdleActionButtonsMin: min(sparseIdleActionButtons),
     sparseHoverFrameMaxMs: max(sparseHoverFrameMaxValues),
     sparseHoverFeedbackMaxMs: max(sparseHoverFeedbackMaxValues),
-    hydrationBeforeIdleMax: max(hydrationBeforeIdleValues),
-    remoteHydrationDelayMinMs: min(remoteHydrationDelayValues),
+    sparseIdleHydrationRequestsMax: max(sparseIdleHydrationRequests),
+    remoteIdleHydrationRequestsMax: max(remoteIdleHydrationRequests),
     guardFailures: []
   };
 
   summary.guardFailures = startupHoverGuardFailures(summary, {
     firstPaintProfiles,
     sparseHoverProfiles,
-    hydrationProfiles,
-    remoteProfiles
+    sparseIdleProfiles,
+    remoteIdleProfiles
   });
   summary.status = summary.guardFailures.length === 0 ? "keep" : "discard";
   return summary;
@@ -180,11 +180,11 @@ export function startupHoverGuardFailures(summary, profiles) {
   if (profiles.sparseHoverProfiles.length !== summary.runs) {
     failures.push("missing sparse hover profile output");
   }
-  if (profiles.hydrationProfiles.length !== summary.runs) {
-    failures.push("missing hydration deferral profile output");
+  if (profiles.sparseIdleProfiles.length !== summary.runs) {
+    failures.push("missing sparse idle profile output");
   }
-  if (profiles.remoteProfiles.length !== summary.runs) {
-    failures.push("missing remote interaction profile output");
+  if (profiles.remoteIdleProfiles.length !== summary.runs) {
+    failures.push("missing remote sparse idle profile output");
   }
   if (summary.firstPaintMaxMs >= 16) {
     failures.push("sparse initial snapshot render must stay below 16ms");
@@ -195,8 +195,8 @@ export function startupHoverGuardFailures(summary, profiles) {
   if (summary.sparseHoverActionButtonsMin <= 0) {
     failures.push("sparse hover must materialize action buttons for the hovered row");
   }
-  if (summary.hydrationActionButtonsMin <= 0) {
-    failures.push("hovered row actions must survive full hydration");
+  if (summary.sparseIdleActionButtonsMin <= 0) {
+    failures.push("hovered row actions must survive sparse idle");
   }
   if (summary.sparseHoverFrameMaxMs >= 8) {
     failures.push("sparse hover frame feedback must stay below 8ms");
@@ -204,11 +204,11 @@ export function startupHoverGuardFailures(summary, profiles) {
   if (summary.sparseHoverFeedbackMaxMs >= 4) {
     failures.push("sparse hover DOM feedback must stay below 4ms");
   }
-  if (summary.hydrationBeforeIdleMax !== 0) {
-    failures.push("hydration must not start before startup hover idle");
+  if (summary.sparseIdleHydrationRequestsMax !== 0) {
+    failures.push("sparse startup must not auto-hydrate after startup hover idle");
   }
-  if (summary.remoteHydrationDelayMinMs < 950) {
-    failures.push("remote sidebar interaction must defer sibling hydration for about 1000ms");
+  if (summary.remoteIdleHydrationRequestsMax !== 0) {
+    failures.push("remote sidebar interaction must not trigger sibling full hydration");
   }
   return failures;
 }
@@ -230,11 +230,11 @@ function formatTsvRow(summary, fields) {
     summary.firstPaintMaxMs,
     summary.firstPaintActionButtonsMax,
     summary.sparseHoverActionButtonsMin,
-    summary.hydrationActionButtonsMin,
+    summary.sparseIdleActionButtonsMin,
     summary.sparseHoverFrameMaxMs,
     summary.sparseHoverFeedbackMaxMs,
-    summary.hydrationBeforeIdleMax,
-    summary.remoteHydrationDelayMinMs,
+    summary.sparseIdleHydrationRequestsMax,
+    summary.remoteIdleHydrationRequestsMax,
     summary.status,
     fields.description
   ].map(tsvCell).join("\t");

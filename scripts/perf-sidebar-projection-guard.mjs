@@ -10,17 +10,17 @@ const DEFAULT_RETRIES = 1;
 const SCENARIOS = [
   {
     id: "startup-hover",
-    description: "sparse startup hover and hydration deferral",
+    description: "sparse startup hover without automatic full hydration",
     run: runStartupHoverLoop,
     displayMetrics: [
       "firstPaintMaxMs",
       "firstPaintActionButtonsMax",
       "sparseHoverActionButtonsMin",
-      "hydrationActionButtonsMin",
+      "sparseIdleActionButtonsMin",
       "sparseHoverFrameMaxMs",
       "sparseHoverFeedbackMaxMs",
-      "hydrationBeforeIdleMax",
-      "remoteHydrationDelayMinMs"
+      "sparseIdleHydrationRequestsMax",
+      "remoteIdleHydrationRequestsMax"
     ]
   },
   {

@@ -59,7 +59,7 @@ function renderInitialSnapshot(snapshot: InitialTreeSnapshot): void {
 
   if (stateCount) {
     stateCount.textContent = `${snapshot.projection.nodeCount} items / ${snapshot.projection.closedCount} saved`;
-    stateCount.title = snapshot.hydrating ? "Loading full tree..." : "";
+    stateCount.title = snapshot.hydrating ? "Using sparse background-backed tree" : "";
   }
   if (empty) {
     empty.hidden = snapshot.projection.rows.length > 0;

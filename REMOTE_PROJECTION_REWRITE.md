@@ -72,6 +72,11 @@ The target is to keep first paint, hover, and scroll-away bounded by sparse snap
   - Incomplete sparse window/group restores now require a valid background `analyzeRestoreScope` response.
   - Removed the unsafe fallback that analyzed partial sidebar-local state after a failed or invalid background restore-scope response.
   - Added browser coverage for both invalid-preflight aborts and valid background large-restore confirmation.
+- 2026-05-26: Implemented the first Phase 5 slice, sparse startup without default full hydration.
+  - Usable sparse startup snapshots no longer schedule delayed sidebar `getState` hydration.
+  - Full `getState` remains a fallback when the initial sparse snapshot is unusable.
+  - Startup hover/profile guards now assert sparse idle keeps `getState` requests at 0 locally and across remote sidebar interaction.
+  - Updated sidebar startup synthetics so closed-heavy and real-browser startup do not synthesize default sidebar full hydration.
 
 ## Verification Log
 
@@ -120,3 +125,19 @@ The target is to keep first paint, hover, and scroll-away bounded by sparse snap
 - 2026-05-26: `pnpm run build`
 - 2026-05-26: `pnpm exec playwright test tests/playwright/sidebar-first-paint.spec.ts --reporter=list`
 - 2026-05-26: `pnpm perf:sidebar-projection-guard`
+- 2026-05-26: `pnpm exec playwright test tests/playwright/sidebar-first-paint.spec.ts --grep "exports and imports|does not auto-hydrate" --reporter=list` (failed before removing automatic sparse startup hydration)
+- 2026-05-26: `pnpm exec playwright test tests/playwright/sidebar-first-paint.spec.ts --grep "exports and imports|does not auto-hydrate" --reporter=list`
+- 2026-05-26: `pnpm exec playwright test tests/playwright/sidebar-startup-interaction-profile.spec.ts --reporter=list`
+- 2026-05-26: `pnpm test -- src/perf/sidebar-projection-guard.test.ts`
+- 2026-05-26: `pnpm run build`
+- 2026-05-26: `pnpm profile:startup-hover-loop -- --runs 1 --tag 20260526-no-auto-hydrate --description "no auto hydration smoke"` (sandbox web-server bind failed; escalated rerun passed)
+- 2026-05-26: `pnpm exec playwright test tests/playwright/sidebar-first-paint.spec.ts --reporter=list`
+- 2026-05-26: `pnpm exec playwright test tests/playwright/sidebar-projection-hunt.spec.ts --reporter=list` (failed before making the full-state broadcast recovery scenario explicit)
+- 2026-05-26: `pnpm exec playwright test tests/playwright/sidebar-projection-hunt.spec.ts --grep "psh-full-state-broadcast-recovers" --reporter=list`
+- 2026-05-26: `pnpm exec playwright test tests/playwright/sidebar-projection-hunt.spec.ts --reporter=list`
+- 2026-05-26: `pnpm perf:sidebar-projection-guard`
+- 2026-05-26: `pnpm test -- src/perf/sidebar-startup-profile.test.ts`
+- 2026-05-26: `pnpm profile:sidebar-startup -- --shape real-browser-20260526 --runs 1 --tag 20260526-no-auto-hydrate --description "sparse default startup smoke"`
+- 2026-05-26: `pnpm profile:sidebar-startup -- --shape closed-heavy --tabs 50000 --live-tabs 50 --runs 1 --tag 20260526-no-auto-hydrate --description "closed sparse startup smoke"`
+- 2026-05-26: `pnpm run build`
+- 2026-05-26: `pnpm exec playwright test tests/playwright/sidebar-first-paint.spec.ts --reporter=list`

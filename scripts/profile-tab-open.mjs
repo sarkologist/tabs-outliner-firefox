@@ -488,12 +488,8 @@ async function profileStartupInitialSnapshot({ shape, tabs, liveTabs }) {
   const initialStart = performance.now();
   const snapshot = await secondController.handleMessage({ type: "getInitialTreeSnapshot" });
   const initialMs = performance.now() - initialStart;
-  await secondController.handleMessage({ type: "clearPerformanceTrace" });
-  resetRuntimeMeasurement(runtime);
-  const fullStart = performance.now();
-  const state = await secondController.handleMessage({ type: "getState" });
-  const hydrateMs = performance.now() - fullStart;
   const trace = await secondController.handleMessage({ type: "getPerformanceTrace" });
+  const snapshotNodes = snapshot?.state?.nodes ? Object.keys(snapshot.state.nodes).length : 0;
 
   return {
     scenario: "startup-initial-snapshot",
@@ -503,8 +499,8 @@ async function profileStartupInitialSnapshot({ shape, tabs, liveTabs }) {
     updates: 0,
     initMs: Math.round(initialMs),
     totalMs: Math.round(initialMs),
-    hydrateMs: Math.round(hydrateMs),
-    totalWithHydrationMs: Math.round(initialMs + hydrateMs),
+    hydrateMs: 0,
+    totalWithHydrationMs: Math.round(initialMs),
     saveFlushMs: 0,
     totalWithSaveFlushMs: Math.round(initialMs),
     saves: runtime.saves,
@@ -515,11 +511,11 @@ async function profileStartupInitialSnapshot({ shape, tabs, liveTabs }) {
     eventCount: eventCountsTotal(runtime.eventCounts),
     phaseMs: startupPhaseMsFromTrace(trace),
     snapshotRows: Array.isArray(snapshot?.projection?.rows) ? snapshot.projection.rows.length : 0,
-    snapshotNodes: snapshot?.state?.nodes ? Object.keys(snapshot.state.nodes).length : 0,
+    snapshotNodes,
     hydrating: Boolean(snapshot?.hydrating),
     totalNodes: runtime.startupShapeStats.totalNodes,
     parentsWithChildren: runtime.startupShapeStats.parentsWithChildren,
-    nodes: Object.keys(state.nodes).length
+    nodes: snapshot?.projection?.nodeCount ?? snapshotNodes
   };
 }
 
@@ -587,14 +583,8 @@ async function profileStartupRealBrowserFanout({ shape, tabs, liveTabs }) {
       rowLimit: 256
     })
   );
-  const getStatePromises = Array.from({ length: 8 }, () =>
-    timed(() => controller.handleMessage({ type: "getState" }))
-  );
   const startupEventPromise = runStartupEventBurst(runtime);
-  const [projectionSlice, getStates] = await Promise.all([
-    projectionSlicePromise,
-    Promise.all(getStatePromises)
-  ]);
+  const projectionSlice = await projectionSlicePromise;
   await startupEventPromise;
   const saveFlushStart = performance.now();
   await controller.flushPendingSaves();
@@ -608,7 +598,6 @@ async function profileStartupRealBrowserFanout({ shape, tabs, liveTabs }) {
   const snapshotNodes = Math.max(0, ...initialSnapshots.map(({ value }) =>
     value?.state?.nodes ? Object.keys(value.state.nodes).length : 0
   ));
-  const state = getStates[0]?.value;
 
   return {
     scenario: "startup-real-browser-fanout",
@@ -629,8 +618,8 @@ async function profileStartupRealBrowserFanout({ shape, tabs, liveTabs }) {
     phaseMs: startupPhaseMsFromTrace(trace),
     initialSnapshotMedianMs: Math.round(medianNumber(initialSnapshots.map((result) => result.ms))),
     initialSnapshotMaxMs: Math.round(Math.max(0, ...initialSnapshots.map((result) => result.ms))),
-    getStateMedianMs: Math.round(medianNumber(getStates.map((result) => result.ms))),
-    getStateMaxMs: Math.round(Math.max(0, ...getStates.map((result) => result.ms))),
+    getStateMedianMs: 0,
+    getStateMaxMs: 0,
     projectionSliceMs: Math.round(projectionSlice.ms),
     startupEventTotalMs: Math.round(startupEventDurations.totalMs),
     startupEventMaxMs: Math.round(startupEventDurations.maxMs),
@@ -638,7 +627,7 @@ async function profileStartupRealBrowserFanout({ shape, tabs, liveTabs }) {
     snapshotNodes,
     totalNodes: runtime.startupShapeStats.totalNodes,
     parentsWithChildren: runtime.startupShapeStats.parentsWithChildren,
-    nodes: state?.nodes ? Object.keys(state.nodes).length : 0
+    nodes: 0
   };
 }
 

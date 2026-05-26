@@ -18,12 +18,12 @@ pnpm perf:sidebar-projection-guard
 
 ## Last Projection Run
 
-- Completed: 2026-05-25
-- Strategy: sidebar projection boundary discovery, followed by viewport-preservation fix pass
+- Completed: 2026-05-26
+- Strategy: sidebar projection boundary discovery, followed by viewport-preservation and remote-projection fix passes
 - Scenario ids: 20 `psh-*` Playwright discovery scenarios
 - Distinct findings recorded: 5
 - Status: all recorded projection findings fixed
-- Perf gate: `pnpm perf:sidebar-projection-guard` passed: startup-hover `firstPaintMaxMs=10.4`, `sparseHoverActionButtonsMin=3`, `hydrationActionButtonsMin=5`; startup-scroll-away `missingViewportRowsMax=0`, `rowsVisibleMsMax=8`, `hydrationRequestsMax=0`.
+- Perf gate: `pnpm perf:sidebar-projection-guard` passes with startup-hover sparse idle guards (`sparseIdleActionButtonsMin`, `sparseIdleHydrationRequestsMax`, `remoteIdleHydrationRequestsMax`) and startup-scroll-away viewport guards (`missingViewportRowsMax`, `rowsVisibleMsMax`, `hydrationRequestsMax`).
 
 ## Fix Analysis
 

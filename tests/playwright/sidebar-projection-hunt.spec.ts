@@ -119,7 +119,7 @@ test.describe("sidebar projection hunt", () => {
       await api.waitForSparseRequestCount(1);
       api.rejectSliceAt(0);
       await api.waitForIdleFrames(2);
-      api.resolveFullState();
+      api.emitFullStateBroadcast();
       await api.waitForVisibleRow(250);
       return {
         requestCount: api.sparseRequestCount(),

@@ -459,22 +459,14 @@ async function loadState(): Promise<void> {
         return;
       }
       applyInitialTreeSnapshot(bootSnapshot);
-      if (hydratingFullState) {
-        scheduleFullStateHydration();
-      } else {
-        scheduleDiagnosticsLoad();
-      }
+      scheduleDiagnosticsLoad();
       return;
     }
 
     const initial = await sendCommand({ type: "getInitialTreeSnapshot" });
     if (isInitialTreeSnapshot(initial) && shouldUseInitialTreeSnapshot(initial)) {
       applyInitialTreeSnapshot(initial);
-      if (hydratingFullState) {
-        scheduleFullStateHydration();
-      } else {
-        scheduleDiagnosticsLoad();
-      }
+      scheduleDiagnosticsLoad();
       return;
     }
 
@@ -1511,7 +1503,7 @@ function updateProjectionChrome(projection: VisibleTreeProjection): void {
     stateCount.textContent = projection.isSearchActive
       ? `${projection.matchCount} ${pluralize(projection.matchCount, "match")} / ${projection.nodeCount} items`
       : `${projection.nodeCount} items / ${projection.closedCount} saved`;
-    stateCount.title = hydratingFullState ? "Loading full tree..." : "";
+    stateCount.title = hydratingFullState ? "Using sparse background-backed tree" : "";
   }
 
   if (empty) {

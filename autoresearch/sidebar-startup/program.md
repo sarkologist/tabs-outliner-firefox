@@ -14,7 +14,7 @@ This is the local autoresearch setup for optimizing initial sidebar loading lag.
 
 ## Metric
 
-Primary score: median `startup-initial-snapshot.totalWithHydrationMs` from `pnpm profile:sidebar-startup`.
+Primary score: median sparse `startup-initial-snapshot.totalWithHydrationMs` from `pnpm profile:sidebar-startup`. After the 2026-05-26 remote-projection rewrite, default startup does not add a synthetic sidebar `getState`; `hydrateMs` is expected to be `0` unless a fallback path explicitly asks for full state.
 
 The startup matrix models a large saved outline, not a browser with 50k open tabs. `--tabs` is the total number of tab nodes in the stored outline; `--live-tabs` is the small live browser frontier that must match the stored live nodes. The default startup shape is closed-heavy: 50 live tabs and the remaining tab nodes closed under one live window.
 
@@ -22,7 +22,7 @@ Profile shapes:
 
 - `closed-heavy`: the original 50k tab-node startup loop. Use this to preserve comparability with earlier materialization and first-hydration runs.
 - `order-page-heavy`: a nested 2026-05-26-calibrated storage shape with 19,433 tab nodes, 26,495 total nodes, and 7,062 parents with children. Use this before storage-read or order-page fanout experiments.
-- `real-browser-20260526`: the order-page-heavy shape plus eight concurrent simulated sidebar boots, one sparse projection slice, and a five-event startup burst. Use this before accepting changes that might affect real multi-sidebar startup coordination. This scenario is diagnostic: one startup save is reported as a warning, while broadcasts and snapshot limits remain hard guards.
+- `real-browser-20260526`: the order-page-heavy shape plus eight concurrent simulated sparse sidebar boots, one sparse projection slice, and a five-event startup burst. Use this before accepting changes that might affect real multi-sidebar startup coordination. This scenario is diagnostic: startup saves are reported as warnings, while broadcasts and snapshot limits remain hard guards. It no longer simulates default sidebar `getState` hydration.
 
 Guard metrics:
 
@@ -32,7 +32,7 @@ Guard metrics:
 - startup saves, broadcasts, and runtime event count
 - Playwright first visible rows from `tests/playwright/sidebar-first-paint.spec.ts`
 
-Correctness-hardening note: sparse first paint, hover, and scroll-away targets are still bounded by the 256-row snapshot/window contract. Full-tree feature readiness is a different target now: export, search, import, drag/drop, and most row actions must wait until the sidebar has a complete node table, so optimizing that target requires reducing full hydration/storage/transport cost or making those features safely background-backed.
+Correctness-hardening note: sparse first paint, hover, and scroll-away targets are still bounded by the 256-row snapshot/window contract. Full-tree feature readiness is a different target now: default startup should remain sparse/background-backed, and any feature that still needs whole-tree state must either request an explicit fallback or move to a bounded background-backed command.
 
 Keep an experiment only when the primary median improves by at least 10% or by at least 50ms, whichever is smaller, and no guard regresses.
 

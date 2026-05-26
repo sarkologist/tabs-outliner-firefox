@@ -109,7 +109,7 @@ test.describe("sidebar startup interaction profile", () => {
     expect(issues).toEqual([]);
   });
 
-  test("profiles hover feedback against a sparse startup snapshot while hydration is pending", async ({ page }, testInfo) => {
+  test("profiles hover feedback against a sparse startup snapshot", async ({ page }, testInfo) => {
     const issues = collectPageIssues(page);
 
     await page.addInitScript(({ snapshot }) => {
@@ -240,7 +240,7 @@ test.describe("sidebar startup interaction profile", () => {
     expect(issues).toEqual([]);
   });
 
-  test("defers full hydration start during startup hover", async ({ page }, testInfo) => {
+  test("keeps startup hover sparse without automatic full hydration", async ({ page }, testInfo) => {
     test.setTimeout(90_000);
     const issues = collectPageIssues(page);
 
@@ -364,9 +364,9 @@ test.describe("sidebar startup interaction profile", () => {
       const summary = await window.tabsOutlinerProfile?.summary();
       const entries = snapshot?.sidebar.entries ?? [];
       const target = document.querySelector<HTMLElement>(`.node[data-node-id="${CSS.escape(targetNodeId)}"]`);
-      const rowAfterHydration = target?.querySelector<HTMLElement>(":scope > .node-row");
-      const actionStripAfterHydration = rowAfterHydration?.querySelector<HTMLElement>(".node-actions");
-      const closeButtonAfterHydration = rowAfterHydration?.querySelector<HTMLElement>('[data-action="close-node"]');
+      const rowAfterIdle = target?.querySelector<HTMLElement>(":scope > .node-row");
+      const actionStripAfterIdle = rowAfterIdle?.querySelector<HTMLElement>(".node-actions");
+      const closeButtonAfterIdle = rowAfterIdle?.querySelector<HTMLElement>('[data-action="close-node"]');
       detachObserver.disconnect();
 
       return {
@@ -374,11 +374,11 @@ test.describe("sidebar startup interaction profile", () => {
         hoverFeedbackDelay: summary?.find((row) => row.name === "sidebar.input.hoverFeedbackDelay"),
         hydration: summary?.find((row) => row.name === "sidebar.hydration"),
         render: summary?.find((row) => row.name === "sidebar.render"),
-        actionButtonsAfterHydration: target?.querySelectorAll(".node-actions .icon-button").length ?? 0,
-        rowElementPreservedAcrossHydration: rowAfterHover === rowAfterHydration,
-        actionStripPreservedAcrossHydration: actionStripAfterHover === actionStripAfterHydration,
-        closeButtonPreservedAcrossHydration: closeButtonAfterHover === closeButtonAfterHydration,
-        detachedDuringHydration: detachCounts,
+        actionButtonsAfterIdle: target?.querySelectorAll(".node-actions .icon-button").length ?? 0,
+        rowElementPreservedAcrossIdle: rowAfterHover === rowAfterIdle,
+        actionStripPreservedAcrossIdle: actionStripAfterHover === actionStripAfterIdle,
+        closeButtonPreservedAcrossIdle: closeButtonAfterHover === closeButtonAfterIdle,
+        detachedAfterHover: detachCounts,
         hydrationRequestsBeforeIdle,
         hydrationRequestsAfterIdle: messagesAfterIdle.filter((message) => message.type === "getState").length,
         pointerEntries: entries.filter((entry) => entry.name === "sidebar.input.pointerDelay").map((entry) => entry.detail),
@@ -389,27 +389,27 @@ test.describe("sidebar startup interaction profile", () => {
       };
     }, TARGET_NODE_ID);
 
-    await testInfo.attach("startup-hover-hydration-defer-profile.json", {
+    await testInfo.attach("startup-hover-sparse-idle-profile.json", {
       body: JSON.stringify(result, null, 2),
       contentType: "application/json"
     });
-    console.log(`startup-hover-hydration-defer ${JSON.stringify(result)}`);
+    console.log(`startup-hover-sparse-idle ${JSON.stringify(result)}`);
 
     expect(result.hoverFeedbackDelay?.maxMs).toBeLessThan(16);
     expect(result.hoverFrameDelay?.maxMs).toBeLessThan(50);
     expect(result.hydrationRequestsBeforeIdle).toBe(0);
-    expect(result.hydrationRequestsAfterIdle).toBe(1);
-    expect(result.hydration?.count).toBe(1);
-    expect(result.render?.count).toBe(1);
-    expect(result.actionButtonsAfterHydration).toBeGreaterThan(0);
-    expect(result.rowElementPreservedAcrossHydration).toBe(true);
-    expect(result.actionStripPreservedAcrossHydration).toBe(true);
-    expect(result.closeButtonPreservedAcrossHydration).toBe(true);
-    expect(result.detachedDuringHydration).toEqual({ row: 0, actionStrip: 0, closeButton: 0 });
+    expect(result.hydrationRequestsAfterIdle).toBe(0);
+    expect(result.hydration).toBeUndefined();
+    expect(result.render).toBeUndefined();
+    expect(result.actionButtonsAfterIdle).toBeGreaterThan(0);
+    expect(result.rowElementPreservedAcrossIdle).toBe(true);
+    expect(result.actionStripPreservedAcrossIdle).toBe(true);
+    expect(result.closeButtonPreservedAcrossIdle).toBe(true);
+    expect(result.detachedAfterHover).toEqual({ row: 0, actionStrip: 0, closeButton: 0 });
     expect(issues).toEqual([]);
   });
 
-  test("allows closing a covered visible row while full hydration is pending", async ({ page }) => {
+  test("allows closing a covered visible row while the sidebar is sparse", async ({ page }) => {
     const issues = collectPageIssues(page);
 
     await page.addInitScript(({ snapshot, targetNodeId }) => {
@@ -503,7 +503,7 @@ test.describe("sidebar startup interaction profile", () => {
     expect(issues).toEqual([]);
   });
 
-  test("defers sparse startup hydration after another sidebar reports interaction", async ({ page }, testInfo) => {
+  test("keeps sibling sidebar sparse after another sidebar reports interaction", async ({ page }, testInfo) => {
     const issues = collectPageIssues(page);
 
     await page.addInitScript(({ snapshot, fullState }) => {
@@ -608,15 +608,15 @@ test.describe("sidebar startup interaction profile", () => {
       };
     });
 
-    await testInfo.attach("startup-remote-interaction-hydration-defer.json", {
+    await testInfo.attach("startup-remote-interaction-sparse-idle.json", {
       body: JSON.stringify(result, null, 2),
       contentType: "application/json"
     });
-    console.log(`startup-remote-interaction-hydration-defer ${JSON.stringify(result)}`);
+    console.log(`startup-remote-interaction-sparse-idle ${JSON.stringify(result)}`);
 
     expect(result.hydrationRequestsBeforeIdle).toBe(0);
-    expect(result.hydrationRequestsAfterIdle).toBe(1);
-    expect(result.firstHydrationAt).toBeGreaterThanOrEqual(result.remoteInteractionAt + 950);
+    expect(result.hydrationRequestsAfterIdle).toBe(0);
+    expect(result.firstHydrationAt).toBeUndefined();
     expect(issues).toEqual([]);
   });
 });

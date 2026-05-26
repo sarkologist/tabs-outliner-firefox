@@ -6,7 +6,7 @@ type ConsoleIssue = {
 };
 
 test.describe("sidebar first paint", () => {
-  test("paints the initial snapshot before full hydration starts", async ({ page }) => {
+  test("paints the initial sparse snapshot without full hydration", async ({ page }) => {
     const issues = collectPageIssues(page);
     await page.addInitScript((snapshot) => {
       const messages: Array<{ type: string; at: number }> = [];
@@ -141,7 +141,7 @@ test.describe("sidebar first paint", () => {
     expect(issues).toEqual([]);
   });
 
-  test("paints an active-centered sparse snapshot before full hydration", async ({ page }) => {
+  test("paints an active-centered sparse snapshot without full hydration", async ({ page }) => {
     const issues = collectPageIssues(page);
     await page.addInitScript((snapshot) => {
       const messages: Array<{ type: string; at: number }> = [];
@@ -422,11 +422,7 @@ test.describe("sidebar first paint", () => {
       clearRequests: 1,
       hydrationRequests: 0
     });
-    await page.waitForFunction(() => {
-      const messages = (window as typeof window & { __sidebarBootMessages?: Array<{ type: string }> })
-        .__sidebarBootMessages ?? [];
-      return messages.some((message) => message.type === "getState");
-    });
+    await page.waitForTimeout(900);
 
     const beforeHydration = await page.evaluate(() => {
       const messages = (window as typeof window & { __sidebarBootMessages?: Array<{ type: string }> })
@@ -435,17 +431,13 @@ test.describe("sidebar first paint", () => {
         hydrationRequests: messages.filter((message) => message.type === "getState").length
       };
     });
-    expect(beforeHydration.hydrationRequests).toBe(1);
-
-    await page.evaluate(() => {
-      (window as typeof window & { __resolveSidebarGetState?: () => void }).__resolveSidebarGetState?.();
-    });
+    expect(beforeHydration.hydrationRequests).toBe(0);
     await expect(page.locator("#export-tree")).toBeEnabled();
     await expect(page.locator("#import-tree")).toBeEnabled();
     expect(issues).toEqual([]);
   });
 
-  test("hydrates after first paint and exposes startup timing marks", async ({ page }) => {
+  test("does not auto-hydrate after sparse first paint", async ({ page }) => {
     const issues = collectPageIssues(page);
     await page.addInitScript(({ snapshot, fullState }) => {
       window.localStorage.setItem("tabsOutlinerProfileEnabled", "true");
@@ -501,9 +493,10 @@ test.describe("sidebar first paint", () => {
     await page.goto("/sidebar/sidebar.html");
     await expect(page.locator(".node[data-node-id='tab:1']")).toBeVisible();
     await expect(page.locator("#search")).toBeEnabled();
-    await page.waitForFunction(() =>
-      performance.getEntriesByName("tabs-outliner.sidebar.hydration.complete").length > 0
-    );
+    await page.waitForFunction(() => {
+      const fullAppImportEnd = performance.getEntriesByName("tabs-outliner.boot.fullAppImport.end").at(-1)?.startTime;
+      return typeof fullAppImportEnd === "number" && performance.now() - fullAppImportEnd > 900;
+    });
     await expect(page.locator("#search")).toBeEnabled();
     await expect(page.locator("#state-count")).toHaveText("501 items / 0 saved");
 
@@ -528,16 +521,15 @@ test.describe("sidebar first paint", () => {
     });
 
     expect(metrics.initialSnapshotRequests).toBe(1);
-    expect(metrics.hydrationRequests).toBe(1);
+    expect(metrics.hydrationRequests).toBe(0);
     expect(metrics.firstRowsAt).toBeGreaterThan(0);
     expect(metrics.initialSnapshotStart).toBeLessThanOrEqual(metrics.initialSnapshotEnd);
     expect(metrics.initialSnapshotEnd).toBeLessThanOrEqual(metrics.firstRowsAt);
     expect(metrics.firstRowsAt).toBeLessThan(metrics.fullAppImportStart);
     expect(metrics.fullAppImportStart).toBeLessThanOrEqual(metrics.fullAppImportEnd);
-    expect(metrics.fullAppImportEnd).toBeLessThan(metrics.hydrationStart);
-    expect(metrics.hydrationStart).toBeLessThanOrEqual(metrics.hydrationComplete);
-    expect(metrics.hydrationTrace?.count).toBe(1);
-    expect(metrics.hydrationTrace?.maxMs).toBeGreaterThanOrEqual(0);
+    expect(metrics.hydrationStart).toBeUndefined();
+    expect(metrics.hydrationComplete).toBeUndefined();
+    expect(metrics.hydrationTrace).toBeUndefined();
     expect(issues).toEqual([]);
   });
 });
