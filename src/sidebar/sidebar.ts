@@ -1386,11 +1386,31 @@ function shouldUseRemoteProjectionSearch(): boolean {
   return Boolean(currentState && !currentStateFullyLoaded);
 }
 
-function refreshSparseRemoteSearchAfterStateChange(): boolean {
-  if (!currentSearchQuery.trim() || !shouldUseRemoteProjectionSearch()) {
+function refreshSparseRemoteProjectionAfterStateChange(): boolean {
+  if (
+    !currentState ||
+    currentStateFullyLoaded ||
+    !hydratingFullState ||
+    !currentProjection ||
+    !isSparseInitialProjection(currentProjection)
+  ) {
     return false;
   }
-  scheduleRemoteSearchProjection(currentSearchQuery);
+
+  if (currentSearchQuery.trim()) {
+    scheduleRemoteSearchProjection(currentSearchQuery);
+    return true;
+  }
+
+  cancelPendingRemoteSearchProjection();
+  const viewportRange = clampedViewportRowRangeForProjection(currentProjection);
+  const viewportRows = Math.max(1, viewportRange.end - viewportRange.start);
+  const rowLimit = sparseScrollWindowRowLimit(viewportRows);
+  const totalRowCount = currentProjection.totalRowCount ?? currentProjection.rows.length;
+  const centerRowIndex = totalRowCount > 0
+    ? Math.max(0, Math.min(totalRowCount - 1, Math.floor((viewportRange.start + viewportRange.end - 1) / 2)))
+    : 0;
+  startSparseScrollWindowRequest(centerRowIndex, rowLimit, "", 0);
   return true;
 }
 
@@ -1896,11 +1916,10 @@ function applyNodeStateUpdate(update: NodeStateUpdate): void {
     invalidateSidebarWindowActiveTabTargets();
     pendingCutNodeId = nextPendingCutNodeId(state, pendingCutNodeId);
 
-    if (refreshSparseRemoteSearchAfterStateChange()) {
-      return;
-    }
-
     if (!currentProjection || currentProjection.isSearchActive || collapsedChanged) {
+      if (refreshSparseRemoteProjectionAfterStateChange()) {
+        return;
+      }
       invalidateProjectionCache();
       render();
       return;
@@ -1980,7 +1999,7 @@ function applyTreeStructureUpdate(update: TreeStructureUpdate): void {
       resetActiveTabScrollTracker(activeTabScrollTracker);
     }
 
-    if (refreshSparseRemoteSearchAfterStateChange()) {
+    if (refreshSparseRemoteProjectionAfterStateChange()) {
       return;
     }
 

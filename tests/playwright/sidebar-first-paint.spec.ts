@@ -634,6 +634,115 @@ test.describe("sidebar first paint", () => {
     expect(issues).toEqual([]);
   });
 
+  test("refreshes sparse projection through the background after undo before full hydration", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await page.addInitScript(({ snapshot, refreshedSnapshot, undoUpdate }) => {
+      const messages: Array<{ type: string; at: number; centerRowIndex?: number }> = [];
+      const listeners: Array<(message: unknown) => void> = [];
+      Object.assign(window as typeof window & {
+        __sidebarBootMessages?: typeof messages;
+      }, {
+        __sidebarBootMessages: messages
+      });
+      window.browser = {
+        runtime: {
+          sendMessage: async (message: unknown) => {
+            const type = typeof message === "object" && message ? String((message as { type?: unknown }).type) : "";
+            const centerRowIndex = typeof message === "object" && message &&
+              typeof (message as { centerRowIndex?: unknown }).centerRowIndex === "number"
+              ? (message as { centerRowIndex: number }).centerRowIndex
+              : undefined;
+            messages.push({ type, at: performance.now(), ...(centerRowIndex !== undefined ? { centerRowIndex } : {}) });
+            if (type === "getInitialTreeSnapshot") {
+              return structuredClone(snapshot);
+            }
+            if (type === "getHistoryStatus") {
+              return {
+                type: "historyStatus",
+                canUndo: true,
+                canRedo: false,
+                undoDepth: 1,
+                redoDepth: 0,
+                undoLabel: "Move"
+              };
+            }
+            if (type === "undo") {
+              window.queueMicrotask(() => {
+                for (const listener of listeners) {
+                  listener(structuredClone(undoUpdate));
+                }
+              });
+              return { type: "commandAck", stateChanged: true };
+            }
+            if (type === "getTreeProjectionSlice") {
+              return structuredClone(refreshedSnapshot);
+            }
+            if (type === "getState") {
+              return new Promise(() => undefined);
+            }
+            if (
+              type === "getDiagnostics" ||
+              type === "getPerformanceTrace" ||
+              type === "setPerformanceTraceEnabled" ||
+              type === "clearPerformanceTrace"
+            ) {
+              return undefined;
+            }
+            return { ok: true };
+          },
+          onMessage: {
+            addListener: (listener: (message: unknown) => void) => {
+              listeners.push(listener);
+            }
+          }
+        },
+        storage: {
+          local: {
+            get: async () => ({}),
+            set: async () => undefined
+          }
+        }
+      };
+    }, {
+      snapshot: fixtureInitialSnapshot(1_000),
+      refreshedSnapshot: fixtureInitialSnapshot(1_000),
+      undoUpdate: fixtureSparseUnsafeUndoUpdate()
+    });
+
+    await page.goto("/sidebar/sidebar.html");
+    await expect(page.locator(".node[data-node-id='tab\\:1']")).toBeVisible();
+    await expect(page.locator("#undo-history")).toBeEnabled();
+
+    await page.locator("#undo-history").click();
+    await page.waitForFunction(() => {
+      const messages = (window as typeof window & {
+        __sidebarBootMessages?: Array<{ type: string }>;
+      }).__sidebarBootMessages ?? [];
+      return messages.some((message) => message.type === "getTreeProjectionSlice");
+    });
+
+    await expect(page.locator("#state-count")).toHaveText("1001 items / 0 saved");
+    await expect(page.locator(".node")).toHaveCount(256);
+
+    const metrics = await page.evaluate(() => {
+      const messages = (window as typeof window & {
+        __sidebarBootMessages?: Array<{ type: string }>;
+      }).__sidebarBootMessages ?? [];
+      return {
+        undoRequests: messages.filter((message) => message.type === "undo").length,
+        projectionRequests: messages.filter((message) => message.type === "getTreeProjectionSlice").length,
+        hydrationRequests: messages.filter((message) => message.type === "getState").length
+      };
+    });
+
+    expect(metrics).toEqual({
+      undoRequests: 1,
+      projectionRequests: 1,
+      hydrationRequests: 0
+    });
+    expect(issues).toEqual([]);
+  });
+
   test("refreshes sparse remote search when background updates arrive for the same query", async ({ page }) => {
     const issues = collectPageIssues(page);
     await page.addInitScript(({ snapshot, searchSnapshots }) => {
@@ -1284,6 +1393,30 @@ function fixtureCollapsedSearchSnapshot(
       closedCount: hiddenTabCount + 1,
       matchCount: 1
     }
+  };
+}
+
+function fixtureSparseUnsafeUndoUpdate() {
+  const now = 1_700_000_000_000;
+  return {
+    type: "treeStructureUpdated",
+    rootIds: ["window:1"],
+    deletedNodeIds: [],
+    updatedNodes: [
+      {
+        id: "window:1",
+        kind: "window",
+        status: "live",
+        childIds: ["tab:999"],
+        title: "Window",
+        active: true,
+        collapsed: false,
+        createdAt: now,
+        updatedAt: now,
+        live: { windowId: 1 }
+      }
+    ],
+    deletedClosedCount: 0
   };
 }
 
