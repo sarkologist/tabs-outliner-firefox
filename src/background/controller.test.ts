@@ -17583,6 +17583,316 @@ const RUNTIME_DOMAIN_DISCOVERY_TRACES: RuntimeDomainTrace[] = [
       { type: "staleLiveUpdatedEvent", staleTab: { capture: "yh-proper-b3-close-journal-group-old" }, withStaleQuery: true },
       { type: "manualRefresh" }
     ]
+  },
+  {
+    id: "sa-native-reorder-focus-session-partial",
+    title: "subagent native reorder focus session partial",
+    notes: "Subagent-assisted block 1: browser-authored same-window reorder crosses focus/session evidence, partial sibling omission, reordered query, and stale pre-reorder evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["subagent", "browserCreated", "native-move", "focus", "session", "partial-snapshot", "runtime-order"],
+    assertions: ["runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "SA native reorder A" }, { title: "SA native reorder B" }, { title: "SA native reorder C", active: true }], captureWindow: "sa-native-reorder-window", captureTabs: "sa-native-reorder-tabs" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "sa-native-reorder-tabs", index: 2 }, window: { capture: "sa-native-reorder-window" }, index: 0, active: true, captureStaleTabs: "sa-native-reorder-old" },
+      { type: "focusWindow", window: { windowId: 10 } },
+      { type: "sessionChanged" },
+      { type: "manualRefreshWithMissingTabQuery", tab: { inWindow: { capture: "sa-native-reorder-window" }, index: 2 } },
+      { type: "manualRefreshWithReorderedQuery", window: { capture: "sa-native-reorder-window" }, order: "rotateRight" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "sa-native-reorder-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "sa-external-opener-source-windowremovedonly",
+    title: "subagent external opener source window removed only",
+    notes: "Subagent-assisted block 1: browser-created opener child survives native source-window close with windowRemovedOnly evidence and partial sibling-window query skew.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["subagent", "browserCreated", "opener", "native-close", "partial-snapshot", "metadata"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "SA opener child", openerTab: { tabId: 1 } }], captureWindow: "sa-opener-child-window", captureTabs: "sa-opener-child-tabs" },
+      { type: "updateTab", tab: { capture: "sa-opener-child-tabs" }, title: "SA Opener Child Current", url: "https://sa.example/opener-child-current" },
+      { type: "nativeCloseWindow", window: { windowId: 10 }, order: "windowRemovedOnly" },
+      { type: "sessionChanged" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { windowId: 20 } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "sa-fullscreen-native-move-out-partial",
+    title: "subagent fullscreen native move out partial",
+    notes: "Subagent-assisted block 1: browser-created fullscreen source loses a tab to a saved window, then focus and partial evidence must not pull it back.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["subagent", "browserCreated", "saved", "fullscreen", "native-move", "partial-snapshot", "runtime-order"],
+    assertions: ["runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "SA fullscreen move A" }, { title: "SA fullscreen move B", active: true }], captureWindow: "sa-fullscreen-move-window", captureTabs: "sa-fullscreen-move-tabs" },
+      { type: "nativeSetWindowState", window: { capture: "sa-fullscreen-move-window" }, state: "fullscreen" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "sa-fullscreen-move-tabs" }, window: { windowId: 10 }, index: 1, active: true, captureStaleTabs: "sa-fullscreen-move-old" },
+      { type: "focusWindow", window: { capture: "sa-fullscreen-move-window" } },
+      { type: "manualRefreshWithMissingTabQuery", tab: { tabId: 2 } },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "sa-fullscreen-move-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "sa-tabsremovedonly-survivor-reorder",
+    title: "subagent tabs removed only survivor reorder",
+    notes: "Subagent-assisted block 1: browser-created same-window reorder is followed by tabRemovedOnly closure of a sibling, reordered snapshot, and stale pre-close created evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["subagent", "browserCreated", "native-close", "native-move", "event-order", "partial-snapshot", "stale-event"],
+    assertions: ["runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "SA tabs-only A" }, { title: "SA tabs-only B" }, { title: "SA tabs-only C", active: true }], captureWindow: "sa-tabs-only-window", captureTabs: "sa-tabs-only-tabs" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "sa-tabs-only-tabs", index: 2 }, window: { capture: "sa-tabs-only-window" }, index: 0, active: true, captureStaleTabs: "sa-tabs-only-reorder-old" },
+      { type: "nativeCloseTab", tab: { inWindow: { capture: "sa-tabs-only-window" }, index: 2 }, order: "tabRemovedOnly" },
+      { type: "manualRefreshWithReorderedQuery", window: { capture: "sa-tabs-only-window" }, order: "reverse" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "sa-tabs-only-reorder-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "sa-focused-window-partial-state-only",
+    title: "subagent focused window partial state only",
+    notes: "Subagent-assisted block 1: focused maximized browser-created window is temporarily omitted from a partial query, then session and complete refresh reconcile it.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["subagent", "browserCreated", "window-state", "focus", "session", "partial-snapshot"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "SA focused state A", active: true }], captureWindow: "sa-focused-state-a", captureTabs: "sa-focused-state-a-tabs" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "SA focused state B", active: true }], captureWindow: "sa-focused-state-b", captureTabs: "sa-focused-state-b-tabs" },
+      { type: "nativeSetWindowState", window: { capture: "sa-focused-state-a" }, state: "maximized" },
+      { type: "focusWindow", window: { capture: "sa-focused-state-a" } },
+      { type: "manualRefreshWithMissingWindowQuery", window: { capture: "sa-focused-state-a" } },
+      { type: "sessionChanged" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "sa-external-popup-chain-split-missing-source",
+    title: "subagent external popup chain split missing source",
+    notes: "Subagent-assisted block 1: pure browser-created opener chain splits a child into a saved window while partial query omits the external source scope.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["subagent", "browserCreated", "opener", "multi-window", "partial-snapshot", "native-move", "stale-event"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "SA popup source", openerTab: { tabId: 1 } }], captureWindow: "sa-popup-source-window", captureTabs: "sa-popup-source-tabs" },
+      { type: "openTab", window: { capture: "sa-popup-source-window" }, active: true, openerTab: { capture: "sa-popup-source-tabs" }, title: "SA popup child", url: "https://sa.example/popup-child", captureTab: "sa-popup-child" },
+      { type: "focusWindow", window: { windowId: 10 } },
+      { type: "nativeMoveTabToWindow", tab: { capture: "sa-popup-child" }, window: { windowId: 20 }, index: 1, active: true, captureStaleTabs: "sa-popup-child-source-old" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { capture: "sa-popup-source-window" } },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "sa-popup-child-source-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "sa-undo-restored-delete-reject-stale-durable",
+    title: "subagent undo restored delete reject stale durable",
+    notes: "Subagent-assisted block 2: restored-scope materialization crosses ordinary undo, rejecting delete side effects, and stale durable source evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["subagent", "history", "restore", "delete-rejection", "stale-event", "restart"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "sa-undo-restored-tabs", captureRestoredWindows: "sa-undo-restored-window" },
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "sa-undo-restored-group-old" },
+      { type: "outlinerUndo" },
+      { type: "outlinerDeleteNodeRejectingClose", node: { tab: { capture: "sa-undo-restored-tabs" } } },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "sa-undo-restored-group-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "sa-injected-close-journal-history-no-confirm",
+    title: "subagent injected close journal history no confirm",
+    notes: "Subagent-assisted block 2: unconfirmed close journal contaminates history replay while the browser still reports the target tab as live.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["subagent", "journal", "history", "restart", "stale-event", "runtime-order"],
+    assertions: ["runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "sa-injected-journal-group-old" },
+      { type: "injectCloseJournalThenAbruptRestart", node: { tab: { tabId: 2 } } },
+      { type: "outlinerUndo" },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 10 }, order: "reverse" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "sa-injected-journal-group-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "sa-native-close-before-undo-stale-history-save",
+    title: "subagent native close before undo stale history save",
+    notes: "Subagent-assisted block 2: session-only native tab disappearance crosses abrupt restart and undo replay before stale grouped evidence arrives.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["subagent", "native-close", "history", "session", "restart", "stale-event"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "sa-native-close-undo-group-old" },
+      { type: "nativeCloseTab", tab: { tabId: 2 }, order: "sessionChangedOnly" },
+      { type: "restartBackgroundAbrupt" },
+      { type: "outlinerUndo" },
+      { type: "manualRefreshWithMissingTabQuery", tab: { tabId: 1 } },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "sa-native-close-undo-group-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "sa-redo-restore-reject-current-metadata",
+    title: "subagent redo restore reject current metadata",
+    notes: "Subagent-assisted block 2: restore-create rejection side effects receive current metadata, then redo across abrupt restart meets partial restored-window evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["subagent", "history", "restore", "command-rejection", "restart", "partial-snapshot", "metadata"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeRejectingCreate", node: { nodeId: "window:20" }, captureRestoredTabs: "sa-redo-restore-reject-tabs", captureRestoredWindows: "sa-redo-restore-reject-window" },
+      { type: "updateTab", tab: { capture: "sa-redo-restore-reject-tabs" }, title: "SA Redo Restore Reject Current", url: "https://sa.example/redo-restore-reject" },
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "sa-redo-restore-reject-group-old" },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedoThenAbruptRestart" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { capture: "sa-redo-restore-reject-window" } },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "sa-redo-restore-reject-group-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "sa-fast-focus-external-link-restore-history",
+    title: "subagent fast focus external link restore history",
+    notes: "Subagent-assisted block 2: restored-window opener flow creates a focused external popup before undo history replay and partial live-popup evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["subagent", "history", "restore", "opener", "focus", "partial-snapshot", "metadata"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "sa-fast-focus-group-old" },
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "sa-fast-focus-restored-tabs", captureRestoredWindows: "sa-fast-focus-restored-window" },
+      { type: "openTab", window: { capture: "sa-fast-focus-restored-window" }, active: true, openerTab: { capture: "sa-fast-focus-restored-tabs" }, title: "SA restored opener child", captureTab: "sa-fast-focus-restored-child" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "SA external popup", openerTab: { capture: "sa-fast-focus-restored-child" } }], captureWindow: "sa-fast-focus-popup-window", captureTabs: "sa-fast-focus-popup-tabs" },
+      { type: "updateTab", tab: { capture: "sa-fast-focus-popup-tabs" }, title: "SA External Popup Current", url: "https://sa.example/external-popup-current" },
+      { type: "focusWindow", window: { capture: "sa-fast-focus-popup-window" } },
+      { type: "outlinerUndo" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { capture: "sa-fast-focus-popup-window" } },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "sa-fast-focus-group-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "sa-restored-opener-child-detach-owner-session",
+    title: "subagent restored opener child detach owner session",
+    notes: "Subagent-assisted block 3 temporal heat: restored-window opener child detaches to a new browser window before the restored owner closes via session-only evidence and restart.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["subagent", "restored", "opener", "native-move", "session", "restart", "stale-event"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "sa-restored-detach-owner-tabs", captureRestoredWindows: "sa-restored-detach-window" },
+      { type: "openTab", window: { capture: "sa-restored-detach-window" }, active: true, openerTab: { capture: "sa-restored-detach-owner-tabs" }, title: "SA restored detach child", url: "https://sa.example/restored-detach-child", captureTab: "sa-restored-detach-child" },
+      { type: "nativeMoveTabToNewWindow", tab: { capture: "sa-restored-detach-child" }, active: true, captureWindow: "sa-restored-detach-child-window", captureStaleTabs: "sa-restored-detach-child-old" },
+      { type: "updateTab", tab: { capture: "sa-restored-detach-child" }, title: "SA Restored Detached Child Current", url: "https://sa.example/restored-detached-current" },
+      { type: "nativeCloseTab", tab: { capture: "sa-restored-detach-owner-tabs" }, order: "sessionChangedOnly" },
+      { type: "restartBackground" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "sa-restored-detach-child-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "sa-restored-external-two-destination-skew",
+    title: "subagent restored external two destination skew",
+    notes: "Subagent-assisted block 3 temporal heat: one browser-created external source splits tabs into saved and restored destinations while partial source evidence and restored reorder disagree.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["subagent", "restored", "browserCreated", "native-move", "multi-window", "partial-snapshot", "runtime-order"],
+    assertions: ["runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "sa-two-dest-restored-tabs", captureRestoredWindows: "sa-two-dest-restored-window" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "SA two dest A", openerTab: { capture: "sa-two-dest-restored-tabs" } }, { title: "SA two dest B" }, { title: "SA two dest C", active: true }], captureWindow: "sa-two-dest-source-window", captureTabs: "sa-two-dest-source-tabs" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "sa-two-dest-source-tabs" }, window: { windowId: 10 }, index: 1, active: true, captureStaleTabs: "sa-two-dest-first-old" },
+      { type: "updateTab", tab: { capture: "sa-two-dest-source-tabs" }, title: "SA Two Dest Saved Current", url: "https://sa.example/two-dest-saved" },
+      { type: "nativeMoveTabToWindow", tab: { inWindow: { capture: "sa-two-dest-source-window" }, index: 0 }, window: { capture: "sa-two-dest-restored-window" }, index: 1, active: true, captureStaleTabs: "sa-two-dest-second-old" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "SA Two Dest Restored Current", url: "https://sa.example/two-dest-restored" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { capture: "sa-two-dest-source-window" } },
+      { type: "manualRefreshWithReorderedQuery", window: { capture: "sa-two-dest-restored-window" }, order: "reverse" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "sa-two-dest-second-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "sa-redo-close-journal-after-rejected-relocation",
+    title: "subagent redo close journal after rejected relocation",
+    notes: "Subagent-assisted block 3 temporal heat: rejected relocation side effects are followed by close-journal recovery across abrupt restart, redo replay, and stale rejected-source evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["subagent", "redo", "command-rejection", "journal", "restart", "stale-event", "partial-snapshot"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindowRejectingCreate", tab: { tabId: 1 }, captureStaleTabs: "sa-redo-close-reject-old" },
+      { type: "outlinerGroupTab", tab: { tabId: 2 }, captureStaleTabs: "sa-redo-close-group-old" },
+      { type: "outlinerUndo" },
+      { type: "outlinerCloseNodeThenAbruptRestart", node: { tab: { tabId: 1 } }, captureStaleTabs: "sa-redo-close-closed-old" },
+      { type: "outlinerRedo" },
+      { type: "manualRefreshWithMissingTabQuery", tab: { tabId: 2 } },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "sa-redo-close-reject-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "sa-startup-reopen-restored-drift-before-refresh",
+    title: "subagent startup reopen restored drift before refresh",
+    notes: "Subagent-assisted block 3 temporal heat: restored-window startup reconstruction is followed by immediate browser metadata/open/close drift before stale pre-close evidence and refresh.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["subagent", "restored", "restart", "metadata", "session", "stale-event", "startup-adjacent"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "sa-startup-restored-tabs", captureRestoredWindows: "sa-startup-restored-window" },
+      { type: "restartBackground" },
+      { type: "updateTab", tab: { capture: "sa-startup-restored-tabs" }, title: "SA Startup Restored Current", url: "https://sa.example/startup-restored-current" },
+      { type: "openTab", window: { capture: "sa-startup-restored-window" }, active: true, title: "SA startup restored sibling", url: "https://sa.example/startup-restored-sibling", captureTab: "sa-startup-restored-sibling" },
+      { type: "nativeCloseTab", tab: { capture: "sa-startup-restored-tabs" }, order: "tabRemovedThenSessionChanged" },
+      { type: "restartBackground" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "sa-startup-restored-tabs" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "sa-temporal-race-relocation-reject-session-query",
+    title: "subagent temporal race relocation reject session query",
+    notes: "Subagent-assisted block 3 temporal heat: pre-command metadata race crosses relocation create rejection, session refresh, partial destination evidence, and stale source echoes.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["subagent", "race", "command-rejection", "relocation", "session", "partial-snapshot", "stale-event"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      {
+        type: "raceWithOutlinerGroup",
+        event: {
+          type: "updateTab",
+          tab: { tabId: 2 },
+          title: "SA Temporal Race Current",
+          url: "https://sa.example/temporal-race-current"
+        },
+        groupTab: { tabId: 1 },
+        captureStaleTabs: "sa-temporal-race-group-old"
+      },
+      { type: "outlinerMoveTabCommandToNewWindowRejectingCreate", tab: { tabId: 2 }, captureStaleTabs: "sa-temporal-race-reject-old" },
+      { type: "sessionChanged" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { role: "lastOpenedWindow" } },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "sa-temporal-race-reject-old" }, withStaleQuery: true },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "sa-temporal-race-group-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
   }
 ];
 
