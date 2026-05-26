@@ -153,6 +153,90 @@ test.describe("sidebar sparse projection scrolling", () => {
     expect(Math.max(...result.afterFirstResolveRows)).toBeGreaterThanOrEqual(258);
     expect(issues).toEqual([]);
   });
+
+  test("paints an intersecting stale search response during a fast scrollbar jump", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadSidebar(page);
+
+    const result = await page.evaluate(async () => {
+      const viewport = document.querySelector<HTMLElement>("main");
+      const search = document.querySelector<HTMLInputElement>("#search");
+      if (!viewport || !search) {
+        throw new Error("Missing sidebar viewport or search input");
+      }
+      const rowHeight = (() => {
+        const parsed = Number.parseFloat(
+          window.getComputedStyle(document.documentElement).getPropertyValue("--node-row-height")
+        );
+        return Number.isFinite(parsed) && parsed > 0 ? parsed : 18;
+      })();
+      const visibleRows = () => {
+        const viewportTop = viewport.scrollTop;
+        const viewportBottom = viewportTop + viewport.clientHeight;
+        return [...document.querySelectorAll<HTMLElement>(".node")]
+          .map((node) => Number.parseInt(node.dataset.rowIndex ?? "", 10))
+          .filter((index) => Number.isFinite(index))
+          .filter((index) => {
+            const top = index * rowHeight;
+            const bottom = (index + 1) * rowHeight;
+            return bottom > viewportTop && top < viewportBottom;
+          });
+      };
+      const nextFrame = async () => {
+        await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+      };
+      const waitForSparseRequestCount = async (count: number) => {
+        await (window as typeof window & {
+          __waitForSparseRequestCount?: (count: number) => Promise<void>;
+        }).__waitForSparseRequestCount?.(count);
+      };
+      const resolveSparseSliceAt = (index: number) => {
+        (window as typeof window & { __resolveSparseSliceAt?: (index: number) => void }).__resolveSparseSliceAt?.(index);
+      };
+      const sparseRequestCount = () =>
+        (window as typeof window & { __sparseRequestCount?: () => number }).__sparseRequestCount?.() ?? 0;
+
+      search.focus();
+      search.value = "needle";
+      search.dispatchEvent(new InputEvent("input", {
+        bubbles: true,
+        inputType: "insertText",
+        data: "needle"
+      }));
+      await waitForSparseRequestCount(1);
+      resolveSparseSliceAt(0);
+      await nextFrame();
+      await nextFrame();
+      const requestsAfterSearch = sparseRequestCount();
+
+      viewport.scrollTop = 330 * rowHeight;
+      viewport.dispatchEvent(new Event("scroll", { bubbles: true }));
+      await waitForSparseRequestCount(requestsAfterSearch + 1);
+
+      viewport.scrollTop = 380 * rowHeight;
+      viewport.dispatchEvent(new Event("scroll", { bubbles: true }));
+      await waitForSparseRequestCount(requestsAfterSearch + 2);
+      await nextFrame();
+      const beforeResolveRows = visibleRows();
+
+      resolveSparseSliceAt(0);
+      await nextFrame();
+      await nextFrame();
+
+      return {
+        beforeResolveRows,
+        afterFirstResolveRows: visibleRows(),
+        requestsAfterFirstResolve: sparseRequestCount()
+      };
+    });
+
+    expect(result.beforeResolveRows).toEqual([]);
+    expect(result.requestsAfterFirstResolve).toBe(3);
+    expect(result.afterFirstResolveRows.length).toBeGreaterThan(0);
+    expect(Math.min(...result.afterFirstResolveRows)).toBeLessThanOrEqual(380);
+    expect(Math.max(...result.afterFirstResolveRows)).toBeGreaterThanOrEqual(380);
+    expect(issues).toEqual([]);
+  });
 });
 
 async function loadSidebar(page: Page): Promise<void> {
@@ -160,10 +244,10 @@ async function loadSidebar(page: Page): Promise<void> {
     const now = 1_700_000_000_000;
     const totalRows = 1_001;
     const activeTabId = 800;
-    const sparseRequests: Array<{ centerRowIndex: number; rowLimit: number }> = [];
+    const sparseRequests: Array<{ centerRowIndex: number; rowLimit: number; query: string }> = [];
     const runtimeMessages: string[] = [];
     const pendingResponses: Array<{
-      request: { centerRowIndex: number; rowLimit: number };
+      request: { centerRowIndex: number; rowLimit: number; query: string };
       resolve: (value: unknown) => void;
     }> = [];
 
@@ -183,7 +267,7 @@ async function loadSidebar(page: Page): Promise<void> {
       },
       __waitForSparseRequestCount: async (count: number) => {
         for (let index = 0; index < 60; index += 1) {
-          if (sparseRequests.length >= count && pendingResponses.length >= count) {
+          if (sparseRequests.length >= count) {
             return;
           }
           await new Promise<void>((resolve) => window.setTimeout(resolve, 16));
@@ -209,7 +293,7 @@ async function loadSidebar(page: Page): Promise<void> {
           throw new Error(`No sparse slice request at index ${index}`);
         }
         pendingResponses.splice(index, 1);
-        pending.resolve(sliceSnapshot(pending.request.centerRowIndex, pending.request.rowLimit));
+        pending.resolve(sliceSnapshot(pending.request.centerRowIndex, pending.request.rowLimit, pending.request.query));
       }
     });
 
@@ -224,7 +308,10 @@ async function loadSidebar(page: Page): Promise<void> {
           if (type === "getTreeProjectionSlice") {
             const centerRowIndex = Number((message as { centerRowIndex?: unknown }).centerRowIndex);
             const rowLimit = Number((message as { rowLimit?: unknown }).rowLimit);
-            const request = { centerRowIndex, rowLimit };
+            const query = typeof (message as { query?: unknown }).query === "string"
+              ? (message as { query: string }).query
+              : "";
+            const request = { centerRowIndex, rowLimit, query };
             sparseRequests.push(request);
             return new Promise((resolve) => {
               pendingResponses.push({ request, resolve });
@@ -267,14 +354,14 @@ async function loadSidebar(page: Page): Promise<void> {
       return snapshotFromRows(rows);
     }
 
-    function sliceSnapshot(centerRowIndex: number, rowLimit: number) {
+    function sliceSnapshot(centerRowIndex: number, rowLimit: number, query = "") {
       const half = Math.floor(Math.max(1, rowLimit) / 2);
-      const start = Math.max(1, Math.floor(centerRowIndex) - half);
+      const start = Math.max(query ? 0 : 1, Math.floor(centerRowIndex) - half);
       const end = Math.min(totalRows, start + Math.max(1, Math.floor(rowLimit)));
-      return snapshotFromRows(tabRows(start, end));
+      return snapshotFromRows(query ? searchRows(start, end) : tabRows(start, end), query);
     }
 
-    function snapshotFromRows(rows: Array<Record<string, unknown> & { nodeId: string }>) {
+    function snapshotFromRows(rows: Array<Record<string, unknown> & { nodeId: string }>, query = "") {
       return {
         type: "initialTreeSnapshot",
         version: 1,
@@ -286,25 +373,25 @@ async function loadSidebar(page: Page): Promise<void> {
           nodes: Object.fromEntries([
             ["window:1", windowNode()],
             ...rows
-              .filter((row) => row.nodeId.startsWith("tab:"))
+              .filter((row) => row.nodeId.startsWith("tab:") || row.nodeId.startsWith("search:"))
               .map((row) => {
-                const tabId = Number.parseInt(row.nodeId.slice("tab:".length), 10);
-                return [row.nodeId, tabNode(tabId)];
+                const tabId = Number.parseInt(row.nodeId.split(":")[1] ?? "", 10);
+                return [row.nodeId, query ? searchNode(tabId) : tabNode(tabId)];
               })
           ])
         },
         projection: {
-          query: "",
-          isSearchActive: false,
+          query,
+          isSearchActive: Boolean(query),
           rows,
-          matchingNodeIds: [],
+          matchingNodeIds: query ? rows.map((row) => row.nodeId) : [],
           visibleNodeIds: rows.map((row) => row.nodeId),
           activeTabNodeId: `tab:${activeTabId}`,
           activeTabRowIndex: activeTabId,
           totalRowCount: totalRows,
           nodeCount: totalRows,
-          closedCount: 0,
-          matchCount: 0
+          closedCount: query ? totalRows : 0,
+          matchCount: query ? totalRows : 0
         },
         coverage: {
           startRowIndex: Math.min(...rows.map((row) => Number(row.index))),
@@ -348,6 +435,26 @@ async function loadSidebar(page: Page): Promise<void> {
       };
     }
 
+    function searchNode(rowIndex: number) {
+      return {
+        id: `search:${rowIndex}`,
+        kind: "tab",
+        status: "closed",
+        title: `Needle ${rowIndex}`,
+        url: `https://search.example/${rowIndex}`,
+        active: false,
+        collapsed: false,
+        childIds: [],
+        createdAt: now,
+        updatedAt: now,
+        closedAt: now + rowIndex,
+        restore: {
+          url: `https://search.example/${rowIndex}`,
+          title: `Needle ${rowIndex}`
+        }
+      };
+    }
+
     function windowRow() {
       return {
         nodeId: "window:1",
@@ -378,6 +485,25 @@ async function loadSidebar(page: Page): Promise<void> {
           expanded: true,
           searchRevealsCollapsedChildren: false,
           isSearchMatch: false,
+          isSearchPath: false,
+          insideActiveWindow: true
+        };
+      });
+    }
+
+    function searchRows(startInclusive: number, endExclusive: number) {
+      return Array.from({ length: Math.max(0, endExclusive - startInclusive) }, (_value, index) => {
+        const rowIndex = startInclusive + index;
+        return {
+          nodeId: `search:${rowIndex}`,
+          depth: 0,
+          index: rowIndex,
+          subtreeEndIndex: rowIndex + 1,
+          childCount: 0,
+          visibleChildCount: 0,
+          expanded: true,
+          searchRevealsCollapsedChildren: false,
+          isSearchMatch: true,
           isSearchPath: false,
           insideActiveWindow: true
         };

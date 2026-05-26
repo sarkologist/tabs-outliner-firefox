@@ -593,7 +593,12 @@ function renderInitialTreeSnapshot(): void {
 }
 
 function applySparseScrollWindowSnapshot(snapshot: InitialTreeSnapshot): void {
-  if (!currentProjection || !isSparseInitialProjection(currentProjection) || !snapshot.hydrating) {
+  if (
+    !currentProjection ||
+    !isSparseInitialProjection(currentProjection) ||
+    !snapshot.hydrating ||
+    !sparseSnapshotMatchesCurrentProjection(snapshot)
+  ) {
     return;
   }
 
@@ -695,7 +700,8 @@ async function loadSparseScrollWindow(
         isInitialTreeSnapshot(response) &&
         currentProjection &&
         isSparseInitialProjection(currentProjection) &&
-        sparseSnapshotCoversCurrentViewport(response)
+        sparseSnapshotMatchesCurrentProjection(response) &&
+        sparseSnapshotIntersectsCurrentViewport(response)
       ) {
         applySparseScrollWindowSnapshot(response);
       } else if (isInitialTreeSnapshot(response) && response.hydrating) {
@@ -705,13 +711,23 @@ async function loadSparseScrollWindow(
       return;
     }
 
-    if (!isInitialTreeSnapshot(response) || !currentProjection || !isSparseInitialProjection(currentProjection)) {
+    if (
+      !isInitialTreeSnapshot(response) ||
+      !currentProjection ||
+      !isSparseInitialProjection(currentProjection) ||
+      !sparseSnapshotMatchesCurrentProjection(response)
+    ) {
       pendingSparseWindowRequest = undefined;
+      requestSparseScrollWindowIfNeeded();
       return;
     }
 
     if (!sparseSnapshotCoversCurrentViewport(response)) {
-      mergeProjectionSliceSnapshot(response);
+      if (sparseSnapshotIntersectsCurrentViewport(response)) {
+        applySparseScrollWindowSnapshot(response);
+      } else {
+        mergeProjectionSliceSnapshot(response);
+      }
       pendingSparseWindowRequest = undefined;
       requestSparseScrollWindowIfNeeded();
       return;
@@ -757,6 +773,19 @@ function sparseSnapshotCoversCurrentViewport(snapshot: InitialTreeSnapshot): boo
   const rowHeight = currentRowHeight();
   const viewportRange = currentViewportRowRange(rowHeight);
   return sparseRowsCoverViewport(snapshot.projection.rows, viewportRange.start, viewportRange.end);
+}
+
+function sparseSnapshotIntersectsCurrentViewport(snapshot: InitialTreeSnapshot): boolean {
+  const rowHeight = currentRowHeight();
+  const viewportRange = currentViewportRowRange(rowHeight);
+  if (viewportRange.end <= viewportRange.start) {
+    return false;
+  }
+  return snapshot.projection.rows.some((row) => row.index >= viewportRange.start && row.index < viewportRange.end);
+}
+
+function sparseSnapshotMatchesCurrentProjection(snapshot: InitialTreeSnapshot): boolean {
+  return Boolean(currentProjection && snapshot.projection.query === currentProjection.query);
 }
 
 function currentSparseProjectionCoversViewport(): boolean {
