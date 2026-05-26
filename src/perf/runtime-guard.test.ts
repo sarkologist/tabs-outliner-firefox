@@ -11,7 +11,10 @@ import {
 } from "../../scripts/perf-runtime-guard.mjs";
 import {
   analyzePerformanceProfileExport,
-  formatProfileExportAnalysis
+  analyzeStartupStorageFanoutProfileExport,
+  formatProfileExportAnalysis,
+  STARTUP_STORAGE_FANOUT_TSV_HEADER,
+  startupStorageFanoutTsvRow
 } from "../../scripts/profile-export-analysis.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -103,5 +106,35 @@ describe("profile export analysis", () => {
       "diagnostics-defer-churn"
     ]);
     expect(formatProfileExportAnalysis(analysis)).toContain("Initial snapshot requests: 2");
+  });
+
+  it("extracts startup storage fanout metrics for autoresearch TSV rows", () => {
+    const fixturePath = path.join(repoRoot, "src/perf/fixtures/profile-export-small.json");
+    const profile = JSON.parse(readFileSync(fixturePath, "utf8"));
+    const analysis = analyzeStartupStorageFanoutProfileExport(profile);
+
+    expect(analysis.primaryMs).toBe(410);
+    expect(analysis.backgroundStateLoad.maxMs).toBe(310);
+    expect(analysis.nodeShardRead).toMatchObject({
+      maxMs: 200,
+      maxKeys: 256
+    });
+    expect(analysis.orderPageRead).toMatchObject({
+      maxMs: 80,
+      maxKeys: 7062
+    });
+    expect(analysis.sidebarHydration.maxMs).toBe(350);
+    expect(analysis.backgroundGetState.maxMs).toBe(330);
+    expect(analysis.projectionSlice.maxMs).toBe(410);
+    expect(analysis.saveSummary.maxMs).toBe(220);
+
+    const row = startupStorageFanoutTsvRow(analysis, {
+      tag: "20260526-storage",
+      timestamp: "2026-05-26T12:00:00.000Z",
+      description: "fixture"
+    });
+    expect(STARTUP_STORAGE_FANOUT_TSV_HEADER).toContain("node_shard_read_max_ms");
+    expect(row).toContain("20260526-storage");
+    expect(row).toContain("\t410\t310\t200\t256\t80\t7062\t350\t350\t360\t330\t410\t220\t1\tfixture");
   });
 });

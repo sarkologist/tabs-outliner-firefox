@@ -26,6 +26,48 @@
         },
         {
           "source": "background",
+          "name": "background.state.load",
+          "atMs": 2,
+          "durationMs": 310
+        },
+        {
+          "source": "background",
+          "name": "background.state.load.v3.nodeShardRead",
+          "atMs": 2,
+          "detail": {
+            "durationMs": 200,
+            "keys": 256
+          }
+        },
+        {
+          "source": "background",
+          "name": "background.state.load.v3.orderPageRead",
+          "atMs": 2,
+          "detail": {
+            "durationMs": 80,
+            "keys": 7062
+          }
+        },
+        {
+          "source": "background",
+          "name": "background.runtime.message",
+          "atMs": 2,
+          "durationMs": 330,
+          "detail": {
+            "type": "getState"
+          }
+        },
+        {
+          "source": "background",
+          "name": "background.runtime.message",
+          "atMs": 2,
+          "durationMs": 410,
+          "detail": {
+            "type": "getTreeProjectionSlice"
+          }
+        },
+        {
+          "source": "background",
           "name": "background.state.save",
           "atMs": 3,
           "durationMs": 220
@@ -60,6 +102,25 @@
               "name": "sidebar.diagnostics.defer",
               "atMs": 6,
               "durationMs": 900
+            },
+            {
+              "source": "sidebar",
+              "name": "sidebar.hydration",
+              "atMs": 6,
+              "durationMs": 350,
+              "detail": {
+                "rows": 256,
+                "totalRows": 26495
+              }
+            },
+            {
+              "source": "sidebar",
+              "name": "sidebar.command",
+              "atMs": 6,
+              "durationMs": 360,
+              "detail": {
+                "command": "getState"
+              }
             },
             {
               "source": "sidebar",

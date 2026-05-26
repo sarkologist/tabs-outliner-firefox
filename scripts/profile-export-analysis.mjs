@@ -1,4 +1,6 @@
 import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 const DEFAULT_THRESHOLDS = {
   repeatedInitialSnapshotCount: 100,
@@ -7,6 +9,31 @@ const DEFAULT_THRESHOLDS = {
   diagnosticsTotalMs: 500,
   diagnosticsDeferredTotalMs: 1000
 };
+
+export const STARTUP_STORAGE_FANOUT_TSV_HEADER = [
+  "timestamp",
+  "tag",
+  "profile_exported_at",
+  "primary_ms",
+  "background_state_load_max_ms",
+  "node_shard_read_max_ms",
+  "node_shard_read_keys",
+  "order_page_read_max_ms",
+  "order_page_read_keys",
+  "sidebar_hydration_max_ms",
+  "sidebar_hydration_median_ms",
+  "sidebar_get_state_max_ms",
+  "background_get_state_max_ms",
+  "projection_slice_max_ms",
+  "save_max_ms",
+  "save_count",
+  "description"
+].join("\t");
+
+const defaultStartupStorageFanoutResultsPath = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../autoresearch/sidebar-startup-storage-fanout/profile-export-results.tsv"
+);
 
 export function loadProfileExport(filePath) {
   return JSON.parse(fs.readFileSync(filePath, "utf8"));
@@ -120,6 +147,115 @@ export function collectTraceEntries(profile) {
   return entries;
 }
 
+export function analyzeStartupStorageFanoutProfileExport(profile) {
+  const entries = collectTraceEntries(profile);
+  const backgroundStateLoad = summarizeMatchingEntries(entries, (entry) => entry.name === "background.state.load");
+  const nodeShardRead = summarizeLoadPhase(entries, "background.state.load.v3.nodeShardRead");
+  const orderPageRead = summarizeLoadPhase(entries, "background.state.load.v3.orderPageRead");
+  const manifestRead = summarizeLoadPhase(entries, "background.state.load.manifestRead");
+  const nodeMaterialize = summarizeLoadPhase(entries, "background.state.load.v3.nodeMaterialize");
+  const orderAttach = summarizeLoadPhase(entries, "background.state.load.v3.orderAttach");
+  const sidebarHydration = summarizeMatchingEntries(entries, (entry) => entry.name === "sidebar.hydration");
+  const sidebarGetState = summarizeMatchingEntries(entries, (entry) =>
+    entry.name === "sidebar.command" && entry.detail?.command === "getState"
+  );
+  const backgroundGetState = summarizeMatchingEntries(entries, (entry) =>
+    entry.name === "background.runtime.message" && entry.detail?.type === "getState"
+  );
+  const projectionSlice = summarizeMatchingEntries(entries, (entry) =>
+    entry.name === "background.runtime.message" && entry.detail?.type === "getTreeProjectionSlice"
+  );
+  const initialSnapshot = summarizeMatchingEntries(entries, (entry) =>
+    entry.name === "background.runtime.message" && (
+      entry.detail?.type === "getInitialTreeSnapshot" ||
+      entry.detail?.type === "getInitialTreeSnapshotWindow"
+    )
+  );
+  const saveSummary = summarizeMatchingEntries(entries, (entry) => entry.name === "background.state.save");
+  const runtimeEvents = summarizeMatchingEntries(entries, (entry) => /^background\.event\./.test(entry.name));
+  const diagnostics = summarizeMatchingEntries(entries, (entry) =>
+    entry.name === "background.diagnostics" ||
+      entry.name === "sidebar.diagnostics" ||
+      entry.name === "sidebar.diagnostics.defer"
+  );
+  const primaryMs = Math.max(
+    backgroundStateLoad.maxMs,
+    sidebarHydration.maxMs,
+    sidebarGetState.maxMs,
+    backgroundGetState.maxMs,
+    projectionSlice.maxMs
+  );
+
+  return {
+    schema: profile?.schema,
+    exportedAt: profile?.exportedAt,
+    entryCount: entries.length,
+    primaryMs,
+    backgroundStateLoad,
+    manifestRead,
+    nodeShardRead,
+    nodeMaterialize,
+    orderPageRead,
+    orderAttach,
+    sidebarHydration,
+    sidebarGetState,
+    backgroundGetState,
+    projectionSlice,
+    initialSnapshot,
+    saveSummary,
+    runtimeEvents,
+    diagnostics
+  };
+}
+
+export function formatStartupStorageFanoutAnalysis(analysis) {
+  return [
+    `Startup storage fanout profile: ${analysis.exportedAt ?? "(unknown date)"}`,
+    `Primary startup max: ${analysis.primaryMs}ms`,
+    `Background state load: max=${analysis.backgroundStateLoad.maxMs}ms`,
+    `Node shard read: max=${analysis.nodeShardRead.maxMs}ms keys=${analysis.nodeShardRead.maxKeys}`,
+    `Order page read: max=${analysis.orderPageRead.maxMs}ms keys=${analysis.orderPageRead.maxKeys}`,
+    `Sidebar hydration: max=${analysis.sidebarHydration.maxMs}ms median=${analysis.sidebarHydration.medianMs}ms`,
+    `Sidebar getState command: max=${analysis.sidebarGetState.maxMs}ms`,
+    `Background getState: max=${analysis.backgroundGetState.maxMs}ms`,
+    `Projection slice: max=${analysis.projectionSlice.maxMs}ms`,
+    `Saves: count=${analysis.saveSummary.count} max=${analysis.saveSummary.maxMs}ms`
+  ].join("\n") + "\n";
+}
+
+export function startupStorageFanoutTsvRow(
+  analysis,
+  options = {}
+) {
+  return [
+    options.timestamp ?? new Date().toISOString(),
+    options.tag ?? "",
+    analysis.exportedAt ?? "",
+    analysis.primaryMs,
+    analysis.backgroundStateLoad.maxMs,
+    analysis.nodeShardRead.maxMs,
+    analysis.nodeShardRead.maxKeys,
+    analysis.orderPageRead.maxMs,
+    analysis.orderPageRead.maxKeys,
+    analysis.sidebarHydration.maxMs,
+    analysis.sidebarHydration.medianMs,
+    analysis.sidebarGetState.maxMs,
+    analysis.backgroundGetState.maxMs,
+    analysis.projectionSlice.maxMs,
+    analysis.saveSummary.maxMs,
+    analysis.saveSummary.count,
+    options.description ?? ""
+  ].map(tsvCell).join("\t");
+}
+
+export function appendStartupStorageFanoutTsv(resultsPath, row) {
+  fs.mkdirSync(path.dirname(resultsPath), { recursive: true });
+  if (!fs.existsSync(resultsPath) || fs.readFileSync(resultsPath, "utf8").trim() === "") {
+    fs.writeFileSync(resultsPath, `${STARTUP_STORAGE_FANOUT_TSV_HEADER}\n`);
+  }
+  fs.appendFileSync(resultsPath, `${row}\n`);
+}
+
 export function formatProfileExportAnalysis(analysis) {
   const lines = [
     `Profile export: ${analysis.exportedAt ?? "(unknown date)"} (${analysis.entryCount} entries)`,
@@ -195,6 +331,64 @@ function summarizeEntries(entries) {
   };
 }
 
+function summarizeMatchingEntries(entries, predicate) {
+  return summarizeDurationValues(entries
+    .filter(predicate)
+    .map(entryDurationMs)
+    .filter((value) => typeof value === "number" && Number.isFinite(value)));
+}
+
+function summarizeLoadPhase(entries, name) {
+  const phaseEntries = entries.filter((entry) => entry.name === name);
+  const summary = summarizeDurationValues(phaseEntries
+    .map(entryDurationMs)
+    .filter((value) => typeof value === "number" && Number.isFinite(value)));
+  return {
+    ...summary,
+    maxKeys: Math.max(0, ...phaseEntries.map((entry) => numericDetail(entry, "keys")))
+  };
+}
+
+function summarizeDurationValues(values) {
+  if (values.length === 0) {
+    return {
+      count: 0,
+      totalMs: 0,
+      avgMs: 0,
+      medianMs: 0,
+      maxMs: 0
+    };
+  }
+  const sorted = [...values].sort((left, right) => left - right);
+  const total = values.reduce((sum, value) => sum + value, 0);
+  return {
+    count: values.length,
+    totalMs: round(total),
+    avgMs: round(total / values.length),
+    medianMs: round(median(sorted)),
+    maxMs: round(sorted.at(-1) ?? 0)
+  };
+}
+
+function entryDurationMs(entry) {
+  if (typeof entry.durationMs === "number") {
+    return entry.durationMs;
+  }
+  return numericDetail(entry, "durationMs");
+}
+
+function numericDetail(entry, key) {
+  const value = entry.detail?.[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function median(sortedValues) {
+  const midpoint = Math.floor(sortedValues.length / 2);
+  return sortedValues.length % 2 === 1
+    ? sortedValues[midpoint]
+    : ((sortedValues[midpoint - 1] ?? 0) + (sortedValues[midpoint] ?? 0)) / 2;
+}
+
 function totalDuration(entries) {
   return round(entries.reduce((sum, entry) => sum + (entry.durationMs ?? 0), 0));
 }
@@ -209,4 +403,74 @@ function maxEntry(entries) {
 
 function round(value) {
   return Math.round(value * 10) / 10;
+}
+
+function tsvCell(value) {
+  return String(value).replace(/\t|\r?\n/g, " ");
+}
+
+function parseCliArgs(argv) {
+  const options = {
+    profilePath: undefined,
+    tag: "",
+    description: "",
+    resultsPath: defaultStartupStorageFanoutResultsPath,
+    appendResults: false,
+    json: false
+  };
+
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
+    const next = argv[index + 1];
+    if (arg === "--tag" && next) {
+      options.tag = next;
+      index += 1;
+    } else if (arg === "--description" && next) {
+      options.description = next;
+      index += 1;
+    } else if (arg === "--results" && next) {
+      options.resultsPath = next;
+      index += 1;
+    } else if (arg === "--append-results") {
+      options.appendResults = true;
+    } else if (arg === "--json") {
+      options.json = true;
+    } else if (!arg.startsWith("--") && !options.profilePath) {
+      options.profilePath = arg;
+    }
+  }
+
+  if (!options.profilePath) {
+    throw new Error("Usage: node scripts/profile-export-analysis.mjs <profile-export.json> [--tag <tag>] [--description <text>] [--append-results] [--results <path>] [--json]");
+  }
+  return options;
+}
+
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  try {
+    const options = parseCliArgs(process.argv.slice(2));
+    const profile = loadProfileExport(options.profilePath);
+    const analysis = analyzeStartupStorageFanoutProfileExport(profile);
+    const row = startupStorageFanoutTsvRow(analysis, {
+      tag: options.tag,
+      description: options.description
+    });
+    if (options.appendResults) {
+      appendStartupStorageFanoutTsv(options.resultsPath, row);
+    }
+    if (options.json) {
+      console.log(JSON.stringify({
+        analysis,
+        ...(options.appendResults ? { resultsPath: options.resultsPath, tsvRow: row } : {})
+      }, null, 2));
+    } else {
+      console.log(formatStartupStorageFanoutAnalysis(analysis));
+      if (options.appendResults) {
+        console.log(`Appended: ${options.resultsPath}`);
+      }
+    }
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  }
 }
