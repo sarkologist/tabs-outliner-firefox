@@ -19,11 +19,11 @@ pnpm perf:sidebar-projection-guard
 ## Last Projection Run
 
 - Completed: 2026-05-26
-- Strategy: sidebar projection boundary discovery, followed by viewport-preservation and remote-projection fix passes
-- Scenario ids: 27 `psh-*` Playwright discovery scenarios
-- Distinct findings recorded: 7
-- Status: all recorded projection findings fixed
-- Perf gate: `pnpm perf:sidebar-projection-guard` passes with startup-hover sparse idle guards (`sparseIdleActionButtonsMin`, `sparseIdleHydrationRequestsMax`, `remoteIdleHydrationRequestsMax`) and startup-scroll-away viewport guards (`missingViewportRowsMax`, `rowsVisibleMsMax`, `hydrationRequestsMax`).
+- Strategy: remote projection freshness discovery, then stopped after a new distinct signature
+- Scenario ids: 29 `psh-*` Playwright discovery scenarios
+- Distinct findings recorded: 8
+- Status: `PT-008` open; `PT-001` through `PT-007` fixed
+- Perf gate: preflight `pnpm perf:sidebar-projection-guard -- --smoke` passed before discovery. Full fix-pass perf gate not run for open `PT-008`.
 
 ## Fix Analysis
 
@@ -31,10 +31,12 @@ pnpm perf:sidebar-projection-guard
 - `PT-003`, `PT-004`, and `PT-005`: sparse viewport ownership was lost when full hydration, full broadcasts, or unloaded-row compact patches rebuilt projection state. The fix records user sparse-scroll intent, suppresses one active-tab recenter on hydration/broadcast, preserves an already rendered row window only when it intersects the current viewport, and ignores unloaded-node collapsed deltas.
 - `PT-006`: sparse tree-structure broadcasts requested a remote projection refresh before applying the visible projection patch. The fix tries compact visible-row projection updates first and only falls back to a background slice when the local patch cannot safely apply.
 - `PT-007`: remote projection application could scroll to an active/reveal target outside the returned sparse rows and then stop, leaving the viewport blank until another scroll. The fix immediately asks for a viewport-covering sparse slice after remote projection rendering changes scroll position.
+- `PT-008`: fix analysis pending. Discovery shows a partial sidebar-local search projection can recompute chrome from the partial node table after a visible match stops matching.
 
 ## Finding Index
 
 - Fixed projection findings: `PT-001`, `PT-002`, `PT-003`, `PT-004`, `PT-005`, `PT-006`, `PT-007`
+- Open projection findings: `PT-008`
 
 ### PT-001 rejected sparse slice leaves viewport blank/no retry
 
@@ -133,3 +135,17 @@ pnpm exec playwright test tests/playwright/sidebar-projection-hunt.spec.ts --gre
 - Expected: clearing search while a stale query response is pending should leave the search box clear, preserve the normal outline count, and paint the current viewport without a manual nudge.
 - Actual: the cleared non-search projection could render rows near the top, scroll to the active row outside that sparse slice, and stop with no visible rows.
 - Evidence: after resolving the stale query response and the clear-search response, Playwright saw the clear state but no viewport-visible rows until a follow-up sparse request was forced.
+
+### PT-008 search prune falls back to partial sidebar-local counts
+
+- Status: open
+- Found by: `psh-search-prunes-visible-row-after-title-stops-matching`
+- Repro:
+
+```sh
+pnpm exec playwright test tests/playwright/sidebar-projection-hunt.spec.ts --grep "psh-search-prunes-visible-row-after-title-stops-matching" --reporter=list --workers=1
+```
+
+- Expected: while full hydration is pending, if a visible search result receives a title patch that makes it stop matching, the row should disappear and the search chrome should preserve the authoritative background total: `0 matches / 1001 items`.
+- Actual: the row disappears, but the sidebar falls back to a projection built from its partial local node table and reports `0 matchs / 82 items`.
+- Evidence: the frozen Playwright scenario first resolves a remote search for `Tab 900`, then emits a `nodeStateUpdated` title patch changing that tab to `Renamed away from query`; after idle frames, the DOM no longer contains `tab:900`, but `#state-count` is computed from the sparse sidebar-local state instead of the background-owned projection metadata.

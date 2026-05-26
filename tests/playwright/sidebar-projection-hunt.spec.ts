@@ -597,6 +597,96 @@ test.describe("sidebar projection hunt", () => {
     await expect(page.locator("#search")).toHaveValue("Tab 900");
     expect(issues).toEqual([]);
   });
+
+  test("psh-query-replacement-ignores-stale-first-response", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadLargeSparseSidebar(page, { fullStatePending: true });
+
+    const result = await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      const search = document.querySelector<HTMLInputElement>("#search");
+      if (!search) {
+        throw new Error("Missing search input");
+      }
+
+      search.focus();
+      search.value = "Tab 90";
+      search.dispatchEvent(new InputEvent("input", {
+        bubbles: true,
+        inputType: "insertText",
+        data: "Tab 90"
+      }));
+      await api.waitForSparseRequestCount(1);
+
+      search.value = "Tab 900";
+      search.dispatchEvent(new InputEvent("input", {
+        bubbles: true,
+        inputType: "insertText",
+        data: "0"
+      }));
+      await api.waitForSparseRequestCount(2);
+
+      api.resolveSliceAt(0);
+      await api.waitForIdleFrames(3);
+      const afterStale = {
+        hasTab90: Boolean(document.querySelector("[data-node-id='tab:90']")),
+        hasTab900: Boolean(document.querySelector("[data-node-id='tab:900']"))
+      };
+
+      api.resolveSliceAt(0);
+      await api.waitForIdleFrames(3);
+
+      return {
+        requests: api.projectionRequests(),
+        searchValue: search.value,
+        afterStale,
+        visibleRows: api.visibleRows(),
+        countText: document.querySelector("#state-count")?.textContent ?? ""
+      };
+    });
+
+    expect(result.requests.map((request) => request.query)).toEqual(["Tab 90", "Tab 900"]);
+    expect(result.searchValue).toBe("Tab 900");
+    expect(result.afterStale.hasTab90).toBe(false);
+    expect(result.visibleRows).toContain(1);
+    expect(result.countText).toBe("1 match / 1001 items");
+    await expect(nodeRow(page, "tab:900")).toBeVisible();
+    await expect(page.locator(nodeSelector("tab:90"))).toHaveCount(0);
+    expect(issues).toEqual([]);
+  });
+
+  test("psh-search-prunes-visible-row-after-title-stops-matching", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadLargeSparseSidebar(page, { fullStatePending: true });
+
+    await page.locator("#search").fill("Tab 900");
+    await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      await api.waitForSparseRequestCount(1);
+      api.resolveSliceAt(0);
+      await api.waitForIdleFrames(3);
+    });
+
+    await expect(nodeRow(page, "tab:900")).toBeVisible();
+
+    const result = await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      api.emitTitlePatch("tab:900", "Renamed away from query");
+      await api.waitForIdleFrames(3);
+      return {
+        requests: api.projectionRequests(),
+        visibleRows: api.visibleRows(),
+        countText: document.querySelector("#state-count")?.textContent ?? ""
+      };
+    });
+
+    expect(result.requests.map((request) => request.query)).toEqual(["Tab 900"]);
+    expect(result.visibleRows).toEqual([]);
+    expect(result.countText).toBe("0 matches / 1001 items");
+    await expect(page.locator(nodeSelector("tab:900"))).toHaveCount(0);
+    await expect(page.locator("#search")).toHaveValue("Tab 900");
+    expect(issues).toEqual([]);
+  });
 });
 
 async function loadLargeSparseSidebar(

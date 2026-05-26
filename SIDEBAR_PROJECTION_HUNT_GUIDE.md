@@ -29,8 +29,8 @@ Stress the boundary between the background-owned outline and sidebars that now b
 Current projection guard baseline after 2026-05-26 remote-projection work:
 
 - `pnpm perf:sidebar-projection-guard` passes with startup hover and sparse scroll-away profiles. Startup-hover now guards sparse idle behavior with `sparseIdleActionButtonsMin` and `sparseIdleHydrationRequestsMax`; startup-scroll-away still requires viewport row coverage with `hydrationRequestsMax=0`.
-- Projection discovery corpus has 27 `psh-*` scenarios covering rejected/delayed/out-of-order slices, restored single-tab delete cleanup, hover action stability, sparse full-state hydration, sparse patch stability, remote search clear/show-in-tree slices, and partial action policy.
-- Fixed findings are preserved as regression coverage in the `psh-*` corpus: `PT-001` through `PT-007`. Do not mutate those scenarios directly during discovery; clone variants with new neutral IDs.
+- Projection discovery corpus has 29 `psh-*` scenarios covering rejected/delayed/out-of-order slices, restored single-tab delete cleanup, hover action stability, sparse full-state hydration, sparse patch stability, remote search clear/show-in-tree slices, search query replacement, and partial action policy.
+- Fixed findings are preserved as regression coverage in the `psh-*` corpus: `PT-001` through `PT-007`. `PT-008` is open and frozen. Do not mutate those scenarios directly during discovery; clone variants with new neutral IDs.
 
 Next sparse cells:
 
@@ -38,6 +38,7 @@ Next sparse cells:
 - repeated scrollbar jumps with stale non-covering responses;
 - background broadcasts while scrolled to a fetched projection slice;
 - stale query responses after search clear or query replacement;
+- partial search result pruning after background patches, especially count/chrome metadata derived from background projection versus sidebar-local state;
 - show-in-tree target slices when the target moved, was deleted, or has an ancestor patched while the request is pending;
 - compact tree-structure patches that can be locally applied before falling back to remote slice refresh;
 - visible in-coverage commands while full hydration is pending;
