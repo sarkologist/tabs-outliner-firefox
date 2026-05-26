@@ -17009,6 +17009,580 @@ const RUNTIME_DOMAIN_DISCOVERY_TRACES: RuntimeDomainTrace[] = [
       { type: "staleLiveCreatedEvent", staleTab: { capture: "yh-rb-r2-group-old" }, withStaleQuery: true },
       { type: "manualRefresh" }
     ]
+  },
+  {
+    id: "yh-proper-b1-command-foreign-leaves-owner-remains",
+    title: "proper block1 command foreign leaves owner remains",
+    notes: "Proper runbook block 1: browser-created foreign tab joins a command-created destination, then leaves while the command-owned tab remains current.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["mixed-provenance", "commandCreated", "browserCreated", "native-move", "stale-event", "metadata"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "YH proper B1 foreign A" }, { title: "YH proper B1 foreign B", active: true }], captureWindow: "yh-proper-b1-foreign-source-window", captureTabs: "yh-proper-b1-foreign-tabs" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "yh-proper-b1-command-old" },
+      { type: "nativeMoveTabToWindow", tab: { inWindow: { capture: "yh-proper-b1-foreign-source-window" }, index: 0 }, window: { role: "lastOpenedWindow" }, index: 0, active: true, captureStaleTabs: "yh-proper-b1-foreign-source-old" },
+      { type: "nativeMoveTabToNewWindow", tab: { role: "lastMovedTab" }, active: true, captureWindow: "yh-proper-b1-foreign-new-window", captureStaleTabs: "yh-proper-b1-foreign-command-old" },
+      { type: "updateTab", tab: { tabId: 1 }, title: "YH Proper B1 Command Owner Current", url: "https://yh.example/proper-b1-owner" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "yh-proper-b1-foreign-command-old" }, withStaleQuery: true },
+      { type: "manualRefreshWithReorderedQuery", window: { capture: "yh-proper-b1-foreign-new-window" }, order: "reverse" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "yh-proper-b1-restored-owner-leaves-foreign-remains",
+    title: "proper block1 restored owner leaves foreign remains",
+    notes: "Proper runbook block 1: restored owner leaves a mixed restored/browser-created window while the foreign survivor keeps current metadata.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["mixed-provenance", "restored", "browserCreated", "native-move", "metadata", "stale-event"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "yh-proper-b1-restored-owner-tabs", captureRestoredWindows: "yh-proper-b1-restored-window" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "YH proper B1 browser survivor", active: true }], captureWindow: "yh-proper-b1-browser-source-window", captureTabs: "yh-proper-b1-browser-tabs" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "yh-proper-b1-browser-tabs" }, window: { capture: "yh-proper-b1-restored-window" }, index: 0, active: true, captureStaleTabs: "yh-proper-b1-browser-source-old" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "yh-proper-b1-restored-owner-tabs" }, window: { windowId: 10 }, index: 0, active: true, captureStaleTabs: "yh-proper-b1-restored-source-old" },
+      { type: "updateTab", tab: { capture: "yh-proper-b1-browser-tabs" }, title: "YH Proper B1 Browser Survivor Current", url: "https://yh.example/proper-b1-browser-survivor" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "yh-proper-b1-restored-source-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "yh-proper-b1-two-command-destinations-merge",
+    title: "proper block1 two command destinations merge",
+    notes: "Proper runbook block 1: two command-created destinations merge by browser-authored move and current command destination order must remain authoritative.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["commandCreated", "relocation", "native-move", "runtime-order", "stale-event"],
+    assertions: ["runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "yh-proper-b1-first-command-old" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 2 }, captureStaleTabs: "yh-proper-b1-second-command-old" },
+      { type: "nativeMoveTabToWindow", tab: { tabId: 1 }, window: { role: "lastOpenedWindow" }, index: 0, active: true, captureStaleTabs: "yh-proper-b1-first-command-before-merge" },
+      { type: "updateTab", tab: { tabId: 1 }, title: "YH Proper B1 Merged Command Current", url: "https://yh.example/proper-b1-merged-command" },
+      { type: "manualRefreshWithReorderedQuery", window: { role: "lastOpenedWindow" }, order: "reverse" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "yh-proper-b1-first-command-before-merge" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "yh-proper-b1-opener-grandchild-survives-parent-close",
+    title: "proper block1 opener grandchild survives parent close",
+    notes: "Proper runbook block 1: opener grandchild is command-relocated before its opener parent closes in the source window.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["opener", "commandCreated", "native-close", "stale-event", "metadata"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, openerTab: { tabId: 1 }, title: "YH proper B1 opener child", captureTab: "yh-proper-b1-opener-child" },
+      { type: "openTab", window: { windowId: 10 }, active: false, openerTab: { capture: "yh-proper-b1-opener-child" }, title: "YH proper B1 opener grandchild", captureTab: "yh-proper-b1-opener-grandchild" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { capture: "yh-proper-b1-opener-grandchild" }, captureStaleTabs: "yh-proper-b1-opener-grandchild-old" },
+      { type: "nativeCloseTab", tab: { tabId: 1 }, order: "sessionChangedThenTabRemoved" },
+      { type: "updateTab", tab: { capture: "yh-proper-b1-opener-grandchild" }, title: "YH Proper B1 Grandchild Current", url: "https://yh.example/proper-b1-grandchild" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "yh-proper-b1-opener-grandchild-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "yh-proper-b1-window-state-foreign-close",
+    title: "proper block1 window state foreign close",
+    notes: "Proper runbook block 1: fullscreen command-created mixed window loses the browser-created foreign tab while owner shape remains current.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["mixed-provenance", "commandCreated", "browserCreated", "window-state", "native-close", "runtime-order"],
+    assertions: ["runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "YH proper B1 state foreign", active: true }], captureWindow: "yh-proper-b1-state-foreign-window", captureTabs: "yh-proper-b1-state-foreign-tabs" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "yh-proper-b1-state-command-old" },
+      { type: "nativeSetWindowState", window: { role: "lastOpenedWindow" }, state: "fullscreen" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "yh-proper-b1-state-foreign-tabs" }, window: { role: "lastOpenedWindow" }, index: 0, active: true, captureStaleTabs: "yh-proper-b1-state-foreign-old" },
+      { type: "nativeCloseTab", tab: { role: "lastMovedTab" }, order: "tabRemovedOnly" },
+      { type: "nativeSetWindowState", window: { role: "lastOpenedWindow" }, state: "normal" },
+      { type: "manualRefreshWithReorderedQuery", window: { role: "lastOpenedWindow" }, order: "rotateLeft" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "yh-proper-b1-browser-fullscreen-saved-restart",
+    title: "proper block1 browser fullscreen saved restart",
+    notes: "Proper runbook block 1: saved tab joins a browser-created fullscreen window, crosses abrupt restart, then stale source evidence follows current order.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["browserCreated", "saved", "fullscreen", "restart", "runtime-order", "stale-event"],
+    assertions: ["runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "YH proper B1 fullscreen A" }, { title: "YH proper B1 fullscreen B", active: true }], captureWindow: "yh-proper-b1-fullscreen-window", captureTabs: "yh-proper-b1-fullscreen-tabs" },
+      { type: "nativeSetWindowState", window: { capture: "yh-proper-b1-fullscreen-window" }, state: "fullscreen" },
+      { type: "nativeMoveTabToWindow", tab: { tabId: 1 }, window: { capture: "yh-proper-b1-fullscreen-window" }, index: 1, active: true, captureStaleTabs: "yh-proper-b1-fullscreen-saved-old" },
+      { type: "restartBackgroundAbrupt" },
+      { type: "manualRefreshWithReorderedQuery", window: { capture: "yh-proper-b1-fullscreen-window" }, order: "reverse" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "yh-proper-b1-fullscreen-saved-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "yh-proper-b2-update-race-destination-omitted",
+    title: "proper block2 update race destination omitted",
+    notes: "Proper runbook block 2: metadata update races grouping, then partial query omits the command-created destination before stale source evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["race", "updated-event", "commandCreated", "partial-snapshot", "stale-event", "metadata"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      {
+        type: "raceWithOutlinerGroup",
+        event: {
+          type: "updateTab",
+          tab: { tabId: 2 },
+          title: "YH Proper B2 Update Race Current",
+          url: "https://yh.example/proper-b2-update-race"
+        },
+        groupTab: { tabId: 1 },
+        captureStaleTabs: "yh-proper-b2-update-group-old"
+      },
+      { type: "manualRefreshWithMissingWindowQuery", window: { role: "lastOpenedWindow" } },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "yh-proper-b2-update-group-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "yh-proper-b2-focus-race-restored-handoff",
+    title: "proper block2 focus race restored handoff",
+    notes: "Proper runbook block 2: focus evidence for a restored window races grouping before the command-created tab moves into that restored scope.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["race", "focus", "restored", "commandCreated", "native-move", "runtime-order"],
+    assertions: ["runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "yh-proper-b2-focus-restored-tabs", captureRestoredWindows: "yh-proper-b2-focus-restored-window" },
+      {
+        type: "raceWithOutlinerGroup",
+        event: {
+          type: "focusWindow",
+          window: { capture: "yh-proper-b2-focus-restored-window" }
+        },
+        groupTab: { tabId: 1 },
+        captureStaleTabs: "yh-proper-b2-focus-group-old"
+      },
+      { type: "nativeMoveTabToWindow", tab: { tabId: 1 }, window: { capture: "yh-proper-b2-focus-restored-window" }, index: 0, active: true, captureStaleTabs: "yh-proper-b2-focus-command-before" },
+      { type: "manualRefreshWithReorderedQuery", window: { capture: "yh-proper-b2-focus-restored-window" }, order: "rotateLeft" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "yh-proper-b2-focus-command-before" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "yh-proper-b2-stale-activation-race-cross-window",
+    title: "proper block2 stale activation race cross window",
+    notes: "Proper runbook block 2: stale activation/query evidence from a browser-authored move races grouping in another window.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["race", "activation", "stale-query", "native-move", "commandCreated", "runtime-order"],
+    assertions: ["runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "nativeMoveTabToWindow", tab: { tabId: 2 }, window: { windowId: 20 }, index: 0, active: true, captureStaleTabs: "yh-proper-b2-activation-saved-old" },
+      {
+        type: "raceWithOutlinerGroup",
+        event: {
+          type: "activateTab",
+          tab: { tabId: 2 },
+          staleQueryFrom: { capture: "yh-proper-b2-activation-saved-old" }
+        },
+        groupTab: { tabId: 1 },
+        captureStaleTabs: "yh-proper-b2-activation-group-old"
+      },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 20 }, order: "rotateRight" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "yh-proper-b2-activation-group-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "yh-proper-b2-restored-update-race-missing-sibling",
+    title: "proper block2 restored update race missing sibling",
+    notes: "Proper runbook block 2: restored-window metadata update races grouping, then a partial snapshot omits the updated sibling.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["race", "restored", "updated-event", "partial-snapshot", "commandCreated", "metadata"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "yh-proper-b2-restored-update-tabs", captureRestoredWindows: "yh-proper-b2-restored-update-window" },
+      { type: "openTab", window: { capture: "yh-proper-b2-restored-update-window" }, active: false, title: "YH proper B2 restored sibling", captureTab: "yh-proper-b2-restored-sibling" },
+      {
+        type: "raceWithOutlinerGroup",
+        event: {
+          type: "updateTab",
+          tab: { capture: "yh-proper-b2-restored-sibling" },
+          title: "YH Proper B2 Restored Sibling Current",
+          url: "https://yh.example/proper-b2-restored-sibling"
+        },
+        groupTab: { tabId: 1 },
+        captureStaleTabs: "yh-proper-b2-restored-update-group-old"
+      },
+      { type: "manualRefreshWithMissingTabQuery", tab: { capture: "yh-proper-b2-restored-sibling" } },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "yh-proper-b2-restored-update-group-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "yh-proper-b2-focus-race-browser-survivor-order",
+    title: "proper block2 focus race browser survivor order",
+    notes: "Proper runbook block 2: browser-created focus evidence races grouping before one browser tab closes and survivor order refreshes.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["race", "focus", "browserCreated", "native-close", "runtime-order", "stale-event"],
+    assertions: ["runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "YH proper B2 focus A" }, { title: "YH proper B2 focus B", active: true }], captureWindow: "yh-proper-b2-focus-browser-window", captureTabs: "yh-proper-b2-focus-browser-tabs" },
+      {
+        type: "raceWithOutlinerGroup",
+        event: {
+          type: "focusWindow",
+          window: { capture: "yh-proper-b2-focus-browser-window" }
+        },
+        groupTab: { tabId: 1 },
+        captureStaleTabs: "yh-proper-b2-focus-browser-group-old"
+      },
+      { type: "nativeCloseTab", tab: { inWindow: { capture: "yh-proper-b2-focus-browser-window" }, index: 1 }, order: "tabRemovedThenSessionChanged" },
+      { type: "manualRefreshWithReorderedQuery", window: { capture: "yh-proper-b2-focus-browser-window" }, order: "rotateLeft" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "yh-proper-b2-focus-browser-group-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "yh-proper-b2-window-state-race-external-partial",
+    title: "proper block2 window state race external partial",
+    notes: "Proper runbook block 2: browser-created window-state evidence races grouping, then partial evidence omits that external scope.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["race", "window-state", "browserCreated", "commandCreated", "partial-snapshot", "metadata"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "YH proper B2 state external", active: true }], captureWindow: "yh-proper-b2-state-external-window", captureTabs: "yh-proper-b2-state-external-tabs" },
+      {
+        type: "raceWithOutlinerGroup",
+        event: {
+          type: "nativeSetWindowState",
+          window: { capture: "yh-proper-b2-state-external-window" },
+          state: "fullscreen"
+        },
+        groupTab: { tabId: 1 },
+        captureStaleTabs: "yh-proper-b2-state-group-old"
+      },
+      { type: "manualRefreshWithMissingWindowQuery", window: { capture: "yh-proper-b2-state-external-window" } },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "yh-proper-b2-state-group-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "yh-proper-b2-restored-created-race-owner-session",
+    title: "proper block2 restored created race owner session",
+    notes: "Proper runbook block 2: created-tab evidence in a restored scope races grouping before the restored owner disappears via session-only evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["race", "created-event", "restored", "session", "partial-snapshot", "runtime-order"],
+    assertions: ["runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "yh-proper-b2-created-restored-tabs", captureRestoredWindows: "yh-proper-b2-created-restored-window" },
+      {
+        type: "raceWithOutlinerGroup",
+        event: {
+          type: "openTab",
+          window: { capture: "yh-proper-b2-created-restored-window" },
+          active: true,
+          title: "YH proper B2 restored created",
+          url: "https://yh.example/proper-b2-restored-created",
+          captureTab: "yh-proper-b2-restored-created-tab"
+        },
+        groupTab: { tabId: 1 },
+        captureStaleTabs: "yh-proper-b2-created-group-old"
+      },
+      { type: "nativeCloseTab", tab: { capture: "yh-proper-b2-created-restored-tabs" }, order: "sessionChangedOnly" },
+      { type: "manualRefreshWithReorderedQuery", window: { capture: "yh-proper-b2-created-restored-window" }, order: "reverse" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "yh-proper-b2-created-group-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "yh-proper-b2-browser-update-race-missing-window",
+    title: "proper block2 browser update race missing window",
+    notes: "Proper runbook block 2: browser-created metadata update races grouping, then partial evidence omits the browser-created source window.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["race", "browserCreated", "updated-event", "partial-snapshot", "commandCreated", "metadata"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "YH proper B2 browser update", active: true }], captureWindow: "yh-proper-b2-browser-update-window", captureTabs: "yh-proper-b2-browser-update-tabs" },
+      {
+        type: "raceWithOutlinerGroup",
+        event: {
+          type: "updateTab",
+          tab: { capture: "yh-proper-b2-browser-update-tabs" },
+          title: "YH Proper B2 Browser Update Current",
+          url: "https://yh.example/proper-b2-browser-update"
+        },
+        groupTab: { tabId: 1 },
+        captureStaleTabs: "yh-proper-b2-browser-update-group-old"
+      },
+      { type: "manualRefreshWithMissingWindowQuery", window: { capture: "yh-proper-b2-browser-update-window" } },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "yh-proper-b2-browser-update-group-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "yh-proper-b2-browser-created-race-session-close",
+    title: "proper block2 browser created race session close",
+    notes: "Proper runbook block 2: created-tab evidence in a browser-created window races grouping before the created tab closes through session-only evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["race", "created-event", "browserCreated", "session", "partial-snapshot", "runtime-order"],
+    assertions: ["runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "YH proper B2 created host", active: true }], captureWindow: "yh-proper-b2-created-host-window", captureTabs: "yh-proper-b2-created-host-tabs" },
+      {
+        type: "raceWithOutlinerGroup",
+        event: {
+          type: "openTab",
+          window: { capture: "yh-proper-b2-created-host-window" },
+          active: true,
+          title: "YH proper B2 created race",
+          url: "https://yh.example/proper-b2-created-race",
+          captureTab: "yh-proper-b2-created-race-tab"
+        },
+        groupTab: { tabId: 1 },
+        captureStaleTabs: "yh-proper-b2-created-race-group-old"
+      },
+      { type: "nativeCloseTab", tab: { capture: "yh-proper-b2-created-race-tab" }, order: "sessionChangedOnly" },
+      { type: "manualRefreshWithMissingTabQuery", tab: { capture: "yh-proper-b2-created-host-tabs" } },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "yh-proper-b2-created-race-group-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "yh-proper-b3-temporal-race-close-reject-session",
+    title: "proper block3 temporal race close reject session",
+    notes: "Proper runbook block 3 temporal heat: pre-command created evidence crosses grouping, close rejection side effects, explicit session refresh, missing query, and stale echo.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["race", "command-rejection", "created-event", "session", "partial-snapshot", "stale-event"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      {
+        type: "raceWithOutlinerGroup",
+        event: {
+          type: "openTab",
+          window: { windowId: 10 },
+          active: true,
+          title: "YH proper B3 temporal race",
+          url: "https://yh.example/proper-b3-temporal",
+          captureTab: "yh-proper-b3-temporal-race-tab"
+        },
+        groupTab: { tabId: 1 },
+        captureStaleTabs: "yh-proper-b3-temporal-group-old"
+      },
+      { type: "outlinerCloseNodeRejectingClose", node: { tab: { tabId: 1 } } },
+      { type: "sessionChanged" },
+      { type: "manualRefreshWithMissingTabQuery", tab: { tabId: 2 } },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "yh-proper-b3-temporal-group-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "yh-proper-b3-history-command-browser-abrupt-partial",
+    title: "proper block3 history command browser abrupt partial",
+    notes: "Proper runbook block 3: browser-created tab joins a command-created group, then history replay crosses abrupt restart and partial source evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["history", "commandCreated", "browserCreated", "restart", "partial-snapshot", "runtime-order"],
+    assertions: ["runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "YH proper B3 history external", active: true }], captureWindow: "yh-proper-b3-history-external-window", captureTabs: "yh-proper-b3-history-external-tabs" },
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "yh-proper-b3-history-group-old" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "yh-proper-b3-history-external-tabs" }, window: { role: "lastOpenedWindow" }, index: 0, active: true, captureStaleTabs: "yh-proper-b3-history-external-old" },
+      { type: "outlinerUndoThenAbruptRestart" },
+      { type: "manualRefreshWithMissingTabQuery", tab: { tabId: 2 } },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "yh-proper-b3-history-external-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "yh-proper-b3-restored-fullscreen-created-session-restart",
+    title: "proper block3 restored fullscreen created session restart",
+    notes: "Proper runbook block 3: restored fullscreen scope receives raced created evidence, loses owner via session-only close, then restarts before reordered refresh.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restored", "fullscreen", "race", "created-event", "session", "restart"],
+    assertions: ["runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "yh-proper-b3-fullscreen-restored-tabs", captureRestoredWindows: "yh-proper-b3-fullscreen-restored-window" },
+      { type: "nativeSetWindowState", window: { capture: "yh-proper-b3-fullscreen-restored-window" }, state: "fullscreen" },
+      {
+        type: "raceWithOutlinerGroup",
+        event: {
+          type: "openTab",
+          window: { capture: "yh-proper-b3-fullscreen-restored-window" },
+          active: true,
+          title: "YH proper B3 fullscreen created",
+          url: "https://yh.example/proper-b3-fullscreen-created",
+          captureTab: "yh-proper-b3-fullscreen-created-tab"
+        },
+        groupTab: { tabId: 1 },
+        captureStaleTabs: "yh-proper-b3-fullscreen-group-old"
+      },
+      { type: "nativeCloseTab", tab: { capture: "yh-proper-b3-fullscreen-restored-tabs" }, order: "sessionChangedOnly" },
+      { type: "restartBackgroundAbrupt" },
+      { type: "manualRefreshWithReorderedQuery", window: { capture: "yh-proper-b3-fullscreen-restored-window" }, order: "reverse" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "yh-proper-b3-fullscreen-group-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "yh-proper-b3-relocation-reject-session-partial",
+    title: "proper block3 relocation reject session partial",
+    notes: "Proper runbook block 3: relocation create rejection leaves browser side effects that then cross session refresh and partial destination evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["command-rejection", "relocation", "session", "partial-snapshot", "stale-event", "metadata"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindowRejectingCreate", tab: { tabId: 1 }, captureStaleTabs: "yh-proper-b3-reject-command-old" },
+      { type: "sessionChanged" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { role: "lastOpenedWindow" } },
+      { type: "updateTab", tab: { tabId: 1 }, title: "YH Proper B3 Rejected Relocation Current", url: "https://yh.example/proper-b3-rejected-relocation" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "yh-proper-b3-reject-command-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "yh-proper-b3-restore-external-race-partial",
+    title: "proper block3 restore external race partial",
+    notes: "Proper runbook block 3: closed browser-created window is restored, receives raced metadata, and is omitted from partial evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["browserCreated", "restore", "race", "updated-event", "partial-snapshot", "metadata"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "YH proper B3 closed external", active: true }], captureWindow: "yh-proper-b3-closed-external-window", captureTabs: "yh-proper-b3-closed-external-tabs" },
+      { type: "nativeCloseWindow", window: { capture: "yh-proper-b3-closed-external-window" }, order: "tabsRemovedThenWindowRemoved" },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:21" }, captureRestoredTabs: "yh-proper-b3-restored-external-tabs", captureRestoredWindows: "yh-proper-b3-restored-external-window" },
+      {
+        type: "raceWithOutlinerGroup",
+        event: {
+          type: "updateTab",
+          tab: { capture: "yh-proper-b3-restored-external-tabs" },
+          title: "YH Proper B3 Restored External Current",
+          url: "https://yh.example/proper-b3-restored-external"
+        },
+        groupTab: { tabId: 1 },
+        captureStaleTabs: "yh-proper-b3-restored-external-group-old"
+      },
+      { type: "manualRefreshWithMissingWindowQuery", window: { capture: "yh-proper-b3-restored-external-window" } },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "yh-proper-b3-restored-external-group-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "yh-proper-b3-focus-reject-drift-session-query",
+    title: "proper block3 focus reject drift session query",
+    notes: "Proper runbook block 3: browser-authored move is followed by focus command rejection, session refresh, and stale source evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["native-move", "command-rejection", "focus", "session", "stale-query", "runtime-order"],
+    assertions: ["runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "nativeMoveTabToWindow", tab: { tabId: 2 }, window: { windowId: 20 }, index: 0, active: true, captureStaleTabs: "yh-proper-b3-focus-reject-saved-old" },
+      { type: "outlinerFocusTabRejectingUpdate", tab: { tabId: 2 } },
+      { type: "sessionChanged" },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 20 }, order: "reverse" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "yh-proper-b3-focus-reject-saved-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "yh-proper-b3-race-delete-journal-session-partial",
+    title: "proper block3 race delete journal session partial",
+    notes: "Proper runbook block 3: raced metadata is followed by delete journal recovery, session refresh, partial command destination evidence, and stale echo.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["race", "delete", "journal", "session", "partial-snapshot", "stale-event"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      {
+        type: "raceWithOutlinerGroup",
+        event: {
+          type: "updateTab",
+          tab: { tabId: 2 },
+          title: "YH Proper B3 Delete Race Current",
+          url: "https://yh.example/proper-b3-delete-race"
+        },
+        groupTab: { tabId: 1 },
+        captureStaleTabs: "yh-proper-b3-delete-race-group-old"
+      },
+      { type: "outlinerDeleteNodeThenAbruptRestart", node: { tab: { tabId: 2 } }, captureStaleTabs: "yh-proper-b3-delete-race-tab-old" },
+      { type: "sessionChanged" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { role: "lastOpenedWindow" } },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "yh-proper-b3-delete-race-group-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "yh-proper-b3-restore-reject-race-session-partial",
+    title: "proper block3 restore reject race session partial",
+    notes: "Proper runbook block 3: restore create rejection side effects receive raced metadata before session and partial restored-window evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["restore", "command-rejection", "race", "session", "partial-snapshot", "metadata"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeRejectingCreate", node: { nodeId: "window:20" }, captureRestoredTabs: "yh-proper-b3-restore-reject-tabs", captureRestoredWindows: "yh-proper-b3-restore-reject-window" },
+      {
+        type: "raceWithOutlinerGroup",
+        event: {
+          type: "updateTab",
+          tab: { capture: "yh-proper-b3-restore-reject-tabs" },
+          title: "YH Proper B3 Restore Reject Current",
+          url: "https://yh.example/proper-b3-restore-reject"
+        },
+        groupTab: { tabId: 1 },
+        captureStaleTabs: "yh-proper-b3-restore-reject-group-old"
+      },
+      { type: "sessionChanged" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { capture: "yh-proper-b3-restore-reject-window" } },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "yh-proper-b3-restore-reject-group-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "yh-proper-b3-close-journal-browser-race-session",
+    title: "proper block3 close journal browser race session",
+    notes: "Proper runbook block 3: browser-created metadata race crosses command close journal recovery, session refresh, and partial command destination evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["browserCreated", "race", "journal", "session", "partial-snapshot", "commandCreated"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "YH proper B3 close journal external", active: true }], captureWindow: "yh-proper-b3-close-journal-window", captureTabs: "yh-proper-b3-close-journal-tabs" },
+      {
+        type: "raceWithOutlinerGroup",
+        event: {
+          type: "updateTab",
+          tab: { capture: "yh-proper-b3-close-journal-tabs" },
+          title: "YH Proper B3 Close Journal Current",
+          url: "https://yh.example/proper-b3-close-journal"
+        },
+        groupTab: { tabId: 1 },
+        captureStaleTabs: "yh-proper-b3-close-journal-group-old"
+      },
+      { type: "outlinerCloseNodeThenAbruptRestart", node: { window: { capture: "yh-proper-b3-close-journal-window" } }, captureStaleTabs: "yh-proper-b3-close-journal-window-old" },
+      { type: "sessionChanged" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { role: "lastOpenedWindow" } },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "yh-proper-b3-close-journal-group-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
   }
 ];
 

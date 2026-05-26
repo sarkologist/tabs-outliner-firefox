@@ -243,7 +243,9 @@ This sweep started from the `251` regression / `761` discovery baseline after th
 - Completed sweep notes: initial `yh-*` cohabitation traces brought discovery to 785; Rung 1 architecture mutations brought it to 793; Rung 2 high-temperature history/partial/focus/fullscreen mixes brought it to 800. All three corpus runs were clean.
 - Perf guard is not part of discovery. It applies to the later fix/pass promotion step if this sweep records findings.
 
-## Runbook Follow-Up Temporal Hunt
+## Preliminary Runbook Trace Pass
+
+The first runbook follow-up on 2026-05-26 added three useful neutral traces, but it treated each add/replay/corpus-review cycle as a separate block. That does not satisfy the updated runbook's five-minute active mutation block rule. Keep these traces as ordinary discovery coverage; do not count the three entries below as a completed hunt stop condition.
 
 - Block: 1
 - Active effort: about five minutes of sparse-cell selection, trace design, edit, explicit replay, and corpus run review.
@@ -275,6 +277,39 @@ This sweep started from the `251` regression / `761` discovery baseline after th
 - Discovery runner result: `803` traces, `41` vitest processes, `0` failures, completed corpus.
 - New signatures: none.
 - Dedupe/result: third clean block; stop condition reached.
+
+## Proper Runbook Hunt 2026-05-26
+
+- Block: 1
+- Active effort: timed active segments from `09:29:02` to `09:34:50` Europe/London, excluding the first discovery corpus wait; about five minutes of active guide/code inspection, inline scout design, edits, explicit replays, and result review.
+- Rung: 0
+- Axes changed: command-created/browser-created cohabitation, restored/browser-created owner handoff, command destination merge, opener grandchild relocation, fullscreen/window-state browser-created restart, strict order/metadata assertions.
+- Temporal boundaries crossed: serial browser-authored moves after command/restored ownership changes, stale old-window echoes after current metadata/order, abrupt restart after browser-created fullscreen handoff.
+- New/changed trace ids: `yh-proper-b1-command-foreign-leaves-owner-remains`, `yh-proper-b1-restored-owner-leaves-foreign-remains`, `yh-proper-b1-two-command-destinations-merge`, `yh-proper-b1-opener-grandchild-survives-parent-close`, `yh-proper-b1-window-state-foreign-close`, `yh-proper-b1-browser-fullscreen-saved-restart`
+- Explicit replay result: first replay of three traces passed; second replay of two traces passed; final replay of the fullscreen/restart trace passed.
+- Discovery runner result: first in-block corpus cycle `808` traces clean; final block corpus `809` traces, `41` vitest processes, `0` failures, completed corpus.
+- New signatures: none.
+- Dedupe/result: clean active block; raise to Rung 1.
+- Block: 2
+- Active effort: timed active segments from `09:36:42` to `09:45:25` Europe/London, excluding three discovery corpus waits; about five minutes of Rung 1 event-order design, edits, explicit replays, and post-run review.
+- Rung: 1
+- Axes changed: event source/order, update/focus/activation/window-state/created evidence, restored and browser-created sources, partial snapshots, strict shape assertions.
+- Temporal boundaries crossed: unawaited runtime evidence before grouping, stale activation query after browser-authored move, missing-window/missing-tab snapshots after raced evidence, session-only close after created-tab race.
+- New/changed trace ids: `yh-proper-b2-update-race-destination-omitted`, `yh-proper-b2-focus-race-restored-handoff`, `yh-proper-b2-stale-activation-race-cross-window`, `yh-proper-b2-restored-update-race-missing-sibling`, `yh-proper-b2-focus-race-browser-survivor-order`, `yh-proper-b2-window-state-race-external-partial`, `yh-proper-b2-restored-created-race-owner-session`, `yh-proper-b2-browser-update-race-missing-window`, `yh-proper-b2-browser-created-race-session-close`
+- Explicit replay result: three replay batches passed.
+- Discovery runner result: in-block corpus cycles at `812`, `814`, `816`, and `818` traces all completed clean with `0` failures.
+- New signatures: none.
+- Dedupe/result: clean active block; raise to Rung 2 and include temporal heat check before stopping.
+- Block: 3
+- Active effort: timed active segments from `09:47:31` to `09:56:07` Europe/London, excluding three discovery corpus waits; about five minutes of Rung 2 temporal/cross-axis design, harness-precondition correction, explicit replays, and post-run review.
+- Rung: 2
+- Axes changed: command rejection, restore rejection, close/delete journal recovery, history replay, abrupt restart, fullscreen/restored scope, browser-created scope, partial snapshots, session/query/refresh evidence.
+- Temporal boundaries crossed: pre-command created/update evidence before grouping, command close/reject side effects, explicit session refresh, missing tab/window query evidence, stale old-window echoes after current shape, restart after session-only close.
+- New/changed trace ids: `yh-proper-b3-temporal-race-close-reject-session`, `yh-proper-b3-history-command-browser-abrupt-partial`, `yh-proper-b3-restored-fullscreen-created-session-restart`, `yh-proper-b3-relocation-reject-session-partial`, `yh-proper-b3-restore-external-race-partial`, `yh-proper-b3-focus-reject-drift-session-query`, `yh-proper-b3-race-delete-journal-session-partial`, `yh-proper-b3-restore-reject-race-session-partial`, `yh-proper-b3-close-journal-browser-race-session`
+- Explicit replay result: first replay found a harness precondition issue in `yh-proper-b3-history-command-browser-abrupt-partial` by omitting a window after its only tab moved away; corrected to omit live `tab:2`, then three replay batches passed.
+- Discovery runner result: in-block corpus cycles at `822`, `825`, and `827` traces completed clean with `0` failures.
+- New signatures: none.
+- Dedupe/result: third clean active block; stop condition reached.
 
 ## Runtime Shape Integrity Sweep
 
