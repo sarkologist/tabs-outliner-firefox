@@ -1,11 +1,17 @@
 # Sidebar Startup Storage Fanout Autoresearch
 
-This loop targets the gap where synthetic startup profiles are fast but exported real-browser profiles still show slow full hydration. The 2026-05-26 real profile showed the bottleneck in Firefox `storage.local` fanout:
+This loop targets the gap where synthetic startup profiles are fast but exported real-browser profiles still show slow full hydration. The original 2026-05-26 real baseline showed the bottleneck in Firefox `storage.local` fanout:
 
 - `background.state.load.v3.nodeShardRead`: about 2,000ms for 256 keys.
 - `background.state.load.v3.orderPageRead`: about 680ms for 7,062 keys.
 - `background.state.save`: multi-second saves after startup events.
 - Sidebar first paint is already fast; the slow user-visible phase is full hydration/getState after the sparse initial snapshot.
+
+Current accepted state after `8471c09`:
+
+- Future V3 saves use 32 node shards instead of 256.
+- The confirmed real profile `tabs-outliner-profile-2026-05-26 copy 3.json` showed `primary_ms` 2,531ms, `background.state.load` 1,897ms, `v3.nodeShardRead` 1,331ms for 32 keys, `v3.orderPageRead` 510ms for 7,062 keys, and `background.state.save` max 1,102ms.
+- 16-shard and 8-shard follow-up candidates were discarded in the synthetic real-browser mimic because they did not meet the 50ms improvement threshold and were worse than the accepted 32-shard state.
 
 ## Setup
 
@@ -63,12 +69,12 @@ Synthetic guard metrics:
 ## Candidate Order
 
 1. Reduce future node shard read fanout.
-   - Current real profile reads 256 node shard keys.
-   - Try fewer/larger shards first: 32, 16, then 8.
-   - This may change the storage format. Announce that explicitly before implementation.
+   - Accepted: future saves now read 32 node shard keys instead of 256.
+   - Discarded: 16 and 8 shards did not meet the synthetic acceptance threshold.
+   - Revisit only if a fresh real profile shows node shard reads are still dominant and the candidate is not just another lower shard-count retry.
 
 2. Reduce order-page read fanout.
-   - Current real profile reads about 7,062 order page keys.
+   - Current real profile still reads about 7,062 order page keys.
    - Try inline child order for small parents, section-packed order pages, or a compact order index.
    - This may change the storage format.
 

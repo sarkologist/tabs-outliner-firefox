@@ -238,11 +238,12 @@ The full-state broadcast remains an intentional fallback. Compact patches are pr
 Persistence lives in [storage.ts](./src/background/storage.ts). Current saves use the v3 layout:
 
 - A v3 manifest records revision, roots, counts, shard settings, and the bounded initial snapshot.
-- Nodes are stored in 256 stable hash shards.
+- Nodes are stored in 32 stable hash shards.
 - Child order is stored in stable parent/page keys.
 - The initial sidebar snapshot is capped at 256 visible rows and may be centered on the active tab.
 
 `loadStateWithMetadata` prefers v3 and falls back to v2. The older v1 monolithic `outlineState` key is no longer written by default.
+Older v3 manifests with a different physical layout still load, but the controller schedules a full rewrite to the current shard/page layout after startup.
 
 Saves are deferred and coalesced:
 
@@ -260,6 +261,8 @@ The sidebar is optimized around three stages:
 1. [sidebar-boot.ts](./src/sidebar/sidebar-boot.ts) requests `getInitialTreeSnapshot`, paints rows directly when the snapshot is safe to reveal, marks first rows, and then imports the full sidebar app.
 2. [sidebar.ts](./src/sidebar/sidebar.ts) connects a background port, adopts the boot snapshot, disables hydration-sensitive controls, and schedules full `getState` hydration after a short delay.
 3. After hydration, the sidebar owns a full local `OutlineState` copy and responds to compact broadcasts.
+
+The sparse first-paint contract is deliberately narrower than full feature readiness. The sidebar may render and scroll sparse rows before hydration, but export, search, import, drag/drop, and most mutating row actions stay disabled until the local state has the complete node table. This avoids exporting or mutating a sidebar-local partial tree while keeping first paint independent of full hydration.
 
 The sidebar does not render the full DOM for large trees. [visible-tree.ts](./src/sidebar/visible-tree.ts) builds a `VisibleTreeProjection`, and the sidebar renders a virtual range with overscan. Search uses the same projection structure but reveals matching descendants and their ancestor paths, including inside collapsed groups.
 
@@ -407,7 +410,7 @@ Most behavior changes should move through these layers:
 
 ## Current Tradeoffs And Follow-Ups
 
-- v3 incremental saves greatly reduce repeated save cost, but full v3 hydration is still heavier than the old monolithic read. The initial snapshot hides most of that from first paint.
+- v3 incremental saves greatly reduce repeated save cost, but full v3 hydration is still heavier than the old monolithic read. Full hydration reads all node shards and all required parent order pages; real Firefox `storage.local` fanout can dominate even when the synthetic Node profile is fast. The initial snapshot hides most of that from first paint, but not from full-tree feature unlock.
 - Large structural operations such as flattening a huge window can still produce large history and structure deltas.
 - Runtime fast paths cover common tab/window create/update flows, but full reconciliation remains necessary for ambiguous or restore-candidate cases.
 - The runtime fact ledger/reconciler/scope path has absorbed command ownership, native event classification, stale-evidence filtering, missing-live-tab detection, scope provenance, and shape freshness. The controller still intentionally owns orchestration-specific branches for adapter calls, history, patching, persistence, and broadcasts.

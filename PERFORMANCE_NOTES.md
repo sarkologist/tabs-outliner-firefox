@@ -102,6 +102,17 @@ Use these as starting targets, not hard promises:
 
 ## Progress Log
 
+### 2026-05-26: Real-Browser Startup Storage Fanout
+
+- The 2026-05-26 exported real startup profile showed a synthetic/real gap: first paint stayed fast, but full sidebar hydration was dominated by Firefox `storage.local` fanout. Baseline before the accepted fix had `primary_ms` 5,314ms, `background.state.load` 3,343ms, `v3.nodeShardRead` 2,000ms for 256 keys, `v3.orderPageRead` 680ms for 7,062 keys, sidebar hydration max 5,314ms, and save max 6,651ms.
+- Accepted storage format change: future V3 saves now use 32 node shards instead of 256. Existing manifests with stale shard counts still load, then schedule a full rewrite to the current physical layout so incremental baselines do not mix shard schemes.
+- Real browser confirmation from `dist/tabs-outliner-profile-2026-05-26 copy 3.json`: `primary_ms` improved to 2,531ms, `background.state.load` 1,897ms, `v3.nodeShardRead` 1,331ms for 32 keys, `v3.orderPageRead` 510ms for 7,062 keys, sidebar hydration max 2,531ms, and save max 1,102ms.
+- Follow-up bounded shard-count candidates were discarded: 16 shards measured 595ms synthetic real-mimic primary versus the 633ms comparison point, only 38ms better where 50ms was required; 8 shards measured 604ms, worse than 16 and also below the threshold. Both experiments were reverted, leaving 32 shards as the accepted format.
+- Correctness note from the same investigation: the sidebar now tracks whether `currentState` has a full node table before enabling export/search/import/drag/drop and most row actions. This preserves the 256-row sparse first-paint target while preventing partial sidebar-local state from being exported as a complete tree.
+- Theoretical optimum assessment after correctness hardening: first paint, hover, and scroll-away optimums are unchanged because they are intentionally defined on bounded sparse snapshots and sparse row-window fetches. The full-tree-ready optimum did change: any feature that needs a complete local `OutlineState` now has a real lower bound of full background load plus full-state transport/render in each hydrating sidebar. Getting back to the old "everything feels loaded" speed requires either making more features work authoritatively from sparse/background-backed state or changing storage/transport so full hydration is no longer whole-tree fanout per sidebar.
+- Remaining target: real full hydration still reads all node shards and about 7,062 order-page keys for the order-page-heavy shape. The next startup-storage loop should focus on reducing order-page read fanout or making full-tree feature unlock lazier, not simply retrying smaller node shard counts.
+- Verification for the accepted state included `pnpm test`, `pnpm run build`, `pnpm profile:sidebar-startup -- --shape real-browser-20260526 --runs 5`, `pnpm perf:sidebar-projection-guard`, and `pnpm exec playwright test tests/playwright/sidebar-first-paint.spec.ts --reporter=list`.
+
 ### 2026-05-25: Sidebar Projection Perf Guard
 
 - Added `pnpm perf:sidebar-projection-guard` as the hard gate for sidebar projection/hydration fix passes. It wraps the startup hover and sparse scroll-away profile loops, treats `guardFailures` or `status: discard` as command failures, and allows one confirmation retry for browser timing noise.

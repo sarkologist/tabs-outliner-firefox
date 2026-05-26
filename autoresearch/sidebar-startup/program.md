@@ -32,6 +32,8 @@ Guard metrics:
 - startup saves, broadcasts, and runtime event count
 - Playwright first visible rows from `tests/playwright/sidebar-first-paint.spec.ts`
 
+Correctness-hardening note: sparse first paint, hover, and scroll-away targets are still bounded by the 256-row snapshot/window contract. Full-tree feature readiness is a different target now: export, search, import, drag/drop, and most row actions must wait until the sidebar has a complete node table, so optimizing that target requires reducing full hydration/storage/transport cost or making those features safely background-backed.
+
 Keep an experiment only when the primary median improves by at least 10% or by at least 50ms, whichever is smaller, and no guard regresses.
 
 ## Experiment Loop
