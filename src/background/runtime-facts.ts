@@ -95,6 +95,7 @@ export type CommandTransaction = {
 
 export type CommandRelocatedTabEcho = {
   fromWindowIds: Set<number>;
+  sequence: number;
   toWindowId: number;
 };
 
@@ -1039,6 +1040,7 @@ export class RuntimeFactLedger {
       }
       this.commandRelocatedTabEchoes.set(previousNode.live.tabId, {
         fromWindowIds,
+        sequence: this.observationSequence,
         toWindowId: nextNode.live.windowId
       });
     }
@@ -1049,7 +1051,7 @@ export class RuntimeFactLedger {
     const fromWindowIds = new Set(existingEcho?.fromWindowIds ?? []);
     fromWindowIds.add(fromWindowId);
     this.commandCreatedWindowIds.add(toWindowId);
-    this.commandRelocatedTabEchoes.set(tabId, { fromWindowIds, toWindowId });
+    this.commandRelocatedTabEchoes.set(tabId, { fromWindowIds, sequence: this.observationSequence, toWindowId });
   }
 
   commandRelocatedTabEchoCount(): number {

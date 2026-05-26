@@ -22546,6 +22546,17 @@ describe("background controller lifecycle", () => {
     }
   }, generatedTraceTimeoutMs(10_000, 120_000));
 
+  it("keeps session-only native closes when coalesced behind command close session echoes", async () => {
+    await runGeneratedTrace(1277552076, 11);
+  });
+
+  it("preserves active tab state when a created-tab refresh races a grouping command", async () => {
+    await runGeneratedTrace(1277552077, 8, {
+      adversarialRuntimeQueries: true,
+      adversarialConcurrency: true
+    });
+  });
+
   const domainTraceIt = process.env.RUNTIME_DOMAIN_TRACE_HUNT === "1" || process.env.RUNTIME_TRACE_HUNT_TRACE_IDS
     ? it
     : it.skip;

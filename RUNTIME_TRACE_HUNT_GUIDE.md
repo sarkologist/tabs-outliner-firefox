@@ -338,7 +338,8 @@ Use this ladder to escape a local basin when a clean block finds no new distinct
 
 - **Rung 0:** start each block with sparse cells from the current hunt target.
 - **Rung 1 after one clean active block:** change one major axis: provenance, event source, event order, snapshot confidence, restart boundary, or assertion type.
-- **Rung 2 after two clean active blocks:** combine two or three axes that have not recently been combined, such as browser-created plus history replay plus partial query, or restored plus fullscreen plus native move.
+- **Rung 2 after two clean active blocks:** combine two or three semantic axes that have not recently been combined, such as browser-created plus history replay plus partial query, or restored plus fullscreen plus native move.
+- **Temporal heat check before stopping:** at Rung 2, include at least one trace where different clocks disagree across a command or reconciliation boundary. Prefer pre-command runtime evidence, a command-owned echo or rejection, and then a session/query/refresh event. Good axes are command close/session echo coalescing, created/updated/activated/focus events dispatched without awaiting listeners, command relocation fallback, raw-vs-normalized snapshot authority, session-only native closes, and partial/reordered queries.
 - **Rung 3 after three clean active blocks:** stop the hunt. Do not keep replaying or lightly varying the same basin.
 - Within a single five-minute active block, if a discovery run is clean quickly, raise the local rung and keep mutating until the active effort budget is spent.
 
@@ -348,6 +349,7 @@ Mutation block note template:
 - Block:
 - Rung:
 - Axes changed:
+- Temporal boundaries crossed:
 - New/changed trace ids:
 - Runner result:
 - New signatures:

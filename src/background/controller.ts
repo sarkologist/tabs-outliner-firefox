@@ -303,6 +303,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   let schedulerDrainQueued = false;
   const stateCache = createStateCache(initializeState);
   let sessionChangedQueued = false;
+  let pendingSessionChangedCount = 0;
   let pendingRuntimeRefresh: PendingRuntimeRefresh | undefined;
   let pendingSaveState: OutlineState | undefined;
   let pendingSaveHistory: HistoryState | undefined;
@@ -598,21 +599,27 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   api.sessions.onChanged.addListener(async () => {
     await perfTrace.measureAsync("background.event.sessions.onChanged", async () => {
       runtimeFacts.recordNativeSessionChanged();
+      pendingSessionChangedCount += 1;
       if (sessionChangedQueued) {
         return;
       }
       sessionChangedQueued = true;
       await enqueueMutation(async () => {
         try {
-          if (runtimeFacts.consumeOutlinerCloseSessionEcho()) {
-            return;
-          }
-          const reconciled = await reconcileMissingLiveTabsInOpenWindows();
-          if (reconciled) {
-            for (const entry of reconciled.runtimeLifecycleJournalEntries ?? []) {
-              markRuntimeLifecycleJournalEntryForClearAfterSave(entry);
+          while (pendingSessionChangedCount > 0) {
+            const observedSessionChangedCount = pendingSessionChangedCount;
+            pendingSessionChangedCount = 0;
+            if (runtimeFacts.consumeOutlinerCloseSessionEcho()) {
+              pendingSessionChangedCount += Math.max(0, observedSessionChangedCount - 1);
+              continue;
             }
-            await persistWithNodeStateUpdate(reconciled.previous, reconciled.next);
+            const reconciled = await reconcileMissingLiveTabsInOpenWindows();
+            if (reconciled) {
+              for (const entry of reconciled.runtimeLifecycleJournalEntries ?? []) {
+                markRuntimeLifecycleJournalEntryForClearAfterSave(entry);
+              }
+              await persistWithNodeStateUpdate(reconciled.previous, reconciled.next);
+            }
           }
         } finally {
           sessionChangedQueued = false;
@@ -2906,7 +2913,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       options.forceSnapshot !== true &&
       !eventNeedsShapeCorroboration
     ) {
-      const fastPath = await applyRuntimeEventTabsFastPath(current, currentEventTabs, index);
+      const fastPath = await applyRuntimeEventTabsFastPath(current, shapeCheckedEventEvidence, index);
       if (fastPath.handled) {
         if (!fastPath.changed) {
           return false;
@@ -3032,7 +3039,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
   async function applyRuntimeEventTabsFastPath(
     current: OutlineState,
-    eventTabs: RuntimeTab[],
+    eventEvidence: RuntimeTabEvidence[],
     index: RuntimeStateIndex
   ): Promise<RuntimeEventTabsFastPathResult> {
     let structuralChanged = false;
@@ -3190,7 +3197,8 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       activeWindowNodeId = nextActiveWindowNodeId;
     };
 
-    const activateTabForRuntimeFastPath = (windowId: number, activeTabNodeId: NodeId): void => {
+    const activateTabForRuntimeFastPath = (windowId: number, activeTabNodeId: NodeId, eventSequence: number): void => {
+      clearCommandRelocatedActiveTabsFromSourceWindow(windowId, eventSequence);
       const previousActiveTabNodeId = plannedActiveTabNodeId(windowId);
       if (previousActiveTabNodeId && previousActiveTabNodeId !== activeTabNodeId) {
         const previousActiveTab = nodeForPlan(previousActiveTabNodeId);
@@ -3209,6 +3217,30 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         }
       }
       activeTabNodeIdOverrides.set(windowId, activeTabNodeId);
+    };
+
+    const clearCommandRelocatedActiveTabsFromSourceWindow = (sourceWindowId: number, eventSequence: number): void => {
+      for (const [tabId, echo] of runtimeFacts.commandRelocatedTabEchoEntries()) {
+        if (!echo.fromWindowIds.has(sourceWindowId) || eventSequence <= 0 || eventSequence >= echo.sequence) {
+          continue;
+        }
+        const nodeId = plannedLiveTabNodeId(tabId);
+        if (!nodeId) {
+          continue;
+        }
+        const node = nodeForPlan(nodeId);
+        if (!isLiveTabNode(node) || node.active !== true) {
+          continue;
+        }
+        const mutableNode = mutableNodeForPlan(nodeId);
+        if (!mutableNode) {
+          continue;
+        }
+        mutableNode.active = false;
+        if (plannedActiveTabNodeId(node.live.windowId) === nodeId) {
+          activeTabNodeIdOverrides.set(node.live.windowId, undefined);
+        }
+      }
     };
 
     const applyPlannedIndexUpdates = (): void => {
@@ -3253,7 +3285,8 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       }
     };
 
-    for (const tab of eventTabs) {
+    for (const evidence of eventEvidence) {
+      const tab = evidence.tab;
       if (tab.incognito) {
         continue;
       }
@@ -3277,7 +3310,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
           }
         }
         if (tab.active) {
-          activateTabForRuntimeFastPath(tab.windowId, existingTabNodeId);
+          activateTabForRuntimeFastPath(tab.windowId, existingTabNodeId, evidence.sequence);
         } else if (wasActive) {
           return { handled: false };
         }
@@ -3306,7 +3339,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       liveTabNodeIdAdditions.set(tab.id, tabNodeId);
       addPlannedWindowTabNodeId(tab.windowId, tabNodeId);
       if (tab.active) {
-        activateTabForRuntimeFastPath(tab.windowId, tabNodeId);
+        activateTabForRuntimeFastPath(tab.windowId, tabNodeId, evidence.sequence);
       }
     }
 
@@ -4054,8 +4087,9 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   async function reconcileMissingLiveTabsInOpenWindows(): Promise<ReconciledStateChange | undefined> {
     const current = await ensureState();
     const index = runtimeIndexForState(current);
+    const windowSnapshot = await getNormalWindows(api);
     const windows = runtimeReconciler.normalizeSnapshot({
-      windows: await getNormalWindows(api),
+      windows: windowSnapshot,
       state: current,
       index,
       ledger: runtimeFacts,
@@ -4063,7 +4097,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     });
     const missingWindowIds = await corroboratedMissingSessionWindowIds(current, windows);
     const missingLiveTabIds = runtimeReconciler.missingLiveTabIdsInOpenWindows({
-      windows,
+      windows: windowSnapshot,
       state: current,
       ledger: runtimeFacts
     });
