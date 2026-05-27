@@ -17971,6 +17971,264 @@ const RUNTIME_DOMAIN_DISCOVERY_TRACES: RuntimeDomainTrace[] = [
       { type: "staleLiveCreatedEvent", staleTab: { capture: "sa-temporal-race-group-old" }, withStaleQuery: true },
       { type: "manualRefresh" }
     ]
+  },
+  {
+    id: "sk-b1-repeated-relocation-source-activation",
+    title: "soak complement block1 repeated relocation source activation",
+    notes: "Soak-complement block 1: repeated command relocation accumulates old source echoes while active evidence from the original source window and partial destination evidence interleave.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["soak-complement", "race", "relocation", "activation", "commandCreated", "partial-snapshot", "stale-query"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "sk-b1-repeat-active-first-old" },
+      { type: "openTab", window: { role: "lastOpenedWindow" }, active: false, title: "SK B1 relocation filler", captureTab: "sk-b1-repeat-active-filler" },
+      { type: "focusWindow", window: { windowId: 10 } },
+      { type: "activateTab", tab: { tabId: 2 }, staleQueryFrom: { capture: "sk-b1-repeat-active-first-old" } },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { role: "lastMovedTab" }, captureStaleTabs: "sk-b1-repeat-active-second-old" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { role: "lastOpenedWindow" } },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "sk-b1-repeat-active-first-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "sk-b1-group-race-source-focus-stale-query",
+    title: "soak complement block1 group race source focus stale query",
+    notes: "Soak-complement block 1: source-window focus and metadata evidence race a grouping command before stale old-window query evidence and source reorder arrive.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["soak-complement", "race", "focus", "updated-event", "commandCreated", "stale-query", "runtime-order"],
+    assertions: ["runtimeOrder", "runtimeMetadata"],
+    actions: [
+      {
+        type: "raceWithOutlinerGroup",
+        event: {
+          type: "updateTab",
+          tab: { tabId: 2 },
+          title: "SK B1 Source Current",
+          url: "https://sk.example/b1-source-current"
+        },
+        groupTab: { tabId: 1 },
+        captureStaleTabs: "sk-b1-group-race-old"
+      },
+      { type: "focusWindow", window: { windowId: 10 } },
+      { type: "activateTab", tab: { tabId: 2 }, staleQueryFrom: { capture: "sk-b1-group-race-old" } },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 10 }, order: "reverse" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "sk-b1-group-race-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "sk-b1-command-destination-browser-sibling",
+    title: "soak complement block1 command destination browser sibling",
+    notes: "Soak-complement block 1: a browser-created sibling joins a command-created destination before stale source echoes and partial source evidence arrive.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["soak-complement", "commandCreated", "browserCreated", "native-move", "partial-snapshot", "stale-event", "runtime-order"],
+    assertions: ["runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "SK B1 external sibling" }, { title: "SK B1 external survivor", active: true }], captureWindow: "sk-b1-command-sibling-window", captureTabs: "sk-b1-command-sibling-tabs" },
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "sk-b1-command-sibling-group-old" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "sk-b1-command-sibling-tabs" }, window: { role: "lastOpenedWindow" }, index: 0, active: true, captureStaleTabs: "sk-b1-command-sibling-external-old" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "SK B1 External Sibling Current", url: "https://sk.example/b1-command-sibling" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { capture: "sk-b1-command-sibling-window" } },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "sk-b1-command-sibling-group-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "sk-b1-repeated-top-level-source-close",
+    title: "soak complement block1 repeated top level source close",
+    notes: "Soak-complement block 1: repeated top-level command moves cross a source close and delayed stale echoes from both old command sources.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["soak-complement", "relocation", "outliner-close", "native-close", "stale-event", "commandCreated", "session"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerMoveSubtreeToTopLevel", tab: { tabId: 1 }, captureStaleTabs: "sk-b1-top-first-old" },
+      { type: "openTab", window: { role: "lastOpenedWindow" }, active: false, title: "SK B1 top filler", captureTab: "sk-b1-top-filler" },
+      { type: "outlinerMoveSubtreeToTopLevel", tab: { role: "lastMovedTab" }, captureStaleTabs: "sk-b1-top-second-old" },
+      { type: "nativeCloseWindow", window: { windowId: 10 }, order: "windowRemovedOnly" },
+      { type: "sessionChanged" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "sk-b1-top-first-old" }, withStaleQuery: true },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "sk-b1-top-second-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "sk-b2-focus-native-move-stale-active-partial",
+    title: "soak complement block2 focus native move stale active partial",
+    notes: "Soak-complement block 2: browser-authored active tab movement crosses stale active evidence and partial source/destination snapshots.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["soak-complement", "browserCreated", "native-move", "activation", "partial-snapshot", "runtime-order"],
+    assertions: ["runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "SK B2 source survivor" }, { title: "SK B2 moving active", active: true }], captureWindow: "sk-b2-native-source-window", captureTabs: "sk-b2-native-source-tabs" },
+      { type: "nativeOpenWindow", focused: true, tabs: [{ title: "SK B2 destination active", active: true }], captureWindow: "sk-b2-native-destination-window", captureTabs: "sk-b2-native-destination-tabs" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "sk-b2-native-source-tabs", index: 1 }, window: { capture: "sk-b2-native-destination-window" }, index: 0, active: true, captureStaleTabs: "sk-b2-native-source-old" },
+      { type: "activateTab", tab: { capture: "sk-b2-native-destination-tabs" }, staleQueryFrom: { capture: "sk-b2-native-source-old" } },
+      { type: "manualRefreshWithMissingWindowQuery", window: { capture: "sk-b2-native-source-window" } },
+      { type: "manualRefreshWithReorderedQuery", window: { capture: "sk-b2-native-destination-window" }, order: "rotateLeft" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "sk-b2-command-owner-close-reject-foreign-survivor",
+    title: "soak complement block2 command owner close reject foreign survivor",
+    notes: "Soak-complement block 2: a browser-created tab joins a command-created destination, then the command-owned tab close rejects after browser side effects.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["soak-complement", "commandCreated", "browserCreated", "command-rejection", "focus", "runtime-order"],
+    assertions: ["runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "SK B2 foreign A" }, { title: "SK B2 foreign survivor", active: true }], captureWindow: "sk-b2-foreign-source-window", captureTabs: "sk-b2-foreign-source-tabs" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "sk-b2-owner-close-old" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "sk-b2-foreign-source-tabs" }, window: { role: "lastOpenedWindow" }, index: 0, active: true, captureStaleTabs: "sk-b2-foreign-source-old" },
+      { type: "outlinerCloseNodeRejectingClose", node: { tab: { tabId: 1 } } },
+      { type: "focusWindow", window: { role: "lastOpenedWindow" } },
+      { type: "manualRefreshWithReorderedQuery", window: { role: "lastOpenedWindow" }, order: "reverse" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "sk-b2-owner-close-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "sk-b2-focus-reject-after-native-detach-reordered",
+    title: "soak complement block2 focus reject after native detach reordered",
+    notes: "Soak-complement block 2: browser-authored detach and current metadata are followed by a rejecting focus command, reordered destination evidence, and stale source echo.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["soak-complement", "native-move", "command-rejection", "focus", "stale-query", "metadata"],
+    assertions: ["runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "nativeMoveTabToNewWindow", tab: { tabId: 2 }, active: false, captureWindow: "sk-b2-detached-window", captureStaleTabs: "sk-b2-detached-old" },
+      { type: "openTab", window: { capture: "sk-b2-detached-window" }, active: true, title: "SK B2 detached sibling", captureTab: "sk-b2-detached-sibling" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "SK B2 Detached Current", url: "https://sk.example/b2-detached-current" },
+      { type: "outlinerFocusTabRejectingUpdate", tab: { role: "lastMovedTab" } },
+      { type: "manualRefreshWithReorderedQuery", window: { capture: "sk-b2-detached-window" }, order: "reverse" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "sk-b2-detached-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "sk-b2-opener-source-windowremoved-survivor",
+    title: "soak complement block2 opener source window removed survivor",
+    notes: "Soak-complement block 2: browser-created opener child escapes its source before windowRemovedOnly source close and low-confidence missing-child evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["soak-complement", "browserCreated", "opener", "native-close", "partial-snapshot", "stale-event"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "SK B2 opener parent", openerTab: { tabId: 1 } }], captureWindow: "sk-b2-opener-source-window", captureTabs: "sk-b2-opener-parent" },
+      { type: "openTab", window: { capture: "sk-b2-opener-source-window" }, openerTab: { capture: "sk-b2-opener-parent" }, active: true, title: "SK B2 opener child", captureTab: "sk-b2-opener-child" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "sk-b2-opener-child" }, window: { windowId: 20 }, index: 1, active: true, captureStaleTabs: "sk-b2-opener-source-old" },
+      { type: "focusWindow", window: { windowId: 20 } },
+      { type: "nativeCloseWindow", window: { capture: "sk-b2-opener-source-window" }, order: "windowRemovedOnly" },
+      { type: "manualRefreshWithMissingTabQuery", tab: { capture: "sk-b2-opener-child" } },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "sk-b2-opener-source-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "sk-b2-reject-relocation-focus-side-effect",
+    title: "soak complement block2 reject relocation focus side effect",
+    notes: "Soak-complement block 2: relocation create rejection is followed by focus-command rejection, activation evidence, partial destination evidence, and stale old-window echo.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["soak-complement", "command-rejection", "relocation", "focus", "activation", "partial-snapshot"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindowRejectingCreate", tab: { tabId: 1 }, captureStaleTabs: "sk-b2-reject-relocation-old" },
+      { type: "outlinerFocusTabRejectingUpdate", tab: { tabId: 1 } },
+      { type: "sessionChanged" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { role: "lastOpenedWindow" } },
+      { type: "activateTab", tab: { tabId: 1 }, staleQueryFrom: { capture: "sk-b2-reject-relocation-old" } },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "sk-b2-reject-relocation-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "sk-b3-close-journal-restored-foreign-survivor",
+    title: "soak complement block3 close journal restored foreign survivor",
+    notes: "Soak-complement block 3 temporal heat: close-journal recovery in a restored window must close only the restored owner while a browser-created survivor remains live.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["soak-complement", "journal", "restored", "browserCreated", "restart", "partial-snapshot"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "sk-b3-close-restored-tabs", captureRestoredWindows: "sk-b3-close-restored-window" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "SK B3 foreign survivor A" }, { title: "SK B3 foreign survivor B", active: true }], captureWindow: "sk-b3-close-foreign-window", captureTabs: "sk-b3-close-foreign-tabs" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "sk-b3-close-foreign-tabs" }, window: { capture: "sk-b3-close-restored-window" }, index: 1, active: true, captureStaleTabs: "sk-b3-close-foreign-old" },
+      { type: "outlinerCloseNodeThenAbruptRestart", node: { tab: { capture: "sk-b3-close-restored-tabs" } }, captureStaleTabs: "sk-b3-close-restored-old" },
+      { type: "sessionChanged" },
+      { type: "manualRefreshWithMissingTabQuery", tab: { capture: "sk-b3-close-foreign-tabs" } },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "sk-b3-close-foreign-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "sk-b3-undo-abrupt-restored-browser-swap",
+    title: "soak complement block3 undo abrupt restored browser swap",
+    notes: "Soak-complement block 3 temporal heat: restored and browser-created tabs swap runtime windows before undo crash recovery and stale old-window evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["soak-complement", "history", "restored", "browserCreated", "native-move", "restart"],
+    assertions: ["runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "sk-b3-swap-restored-tabs", captureRestoredWindows: "sk-b3-swap-restored-window" },
+      { type: "openTab", window: { capture: "sk-b3-swap-restored-window" }, active: false, title: "SK B3 restored survivor", captureTab: "sk-b3-swap-restored-survivor" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "SK B3 browser swap A" }, { title: "SK B3 browser swap B", active: true }], captureWindow: "sk-b3-swap-browser-window", captureTabs: "sk-b3-swap-browser-tabs" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "sk-b3-swap-restored-tabs" }, window: { capture: "sk-b3-swap-browser-window" }, index: 1, active: true, captureStaleTabs: "sk-b3-swap-restored-old" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "sk-b3-swap-browser-tabs" }, window: { capture: "sk-b3-swap-restored-window" }, index: 1, active: true, captureStaleTabs: "sk-b3-swap-browser-old" },
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "sk-b3-swap-group-old" },
+      { type: "outlinerUndoThenAbruptRestart" },
+      { type: "manualRefreshWithReorderedQuery", window: { capture: "sk-b3-swap-restored-window" }, order: "reverse" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "sk-b3-swap-restored-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "sk-b3-redo-restore-reject-browser-opener",
+    title: "soak complement block3 redo restore reject browser opener",
+    notes: "Soak-complement block 3 temporal heat: restore-create rejection side effects gain a browser-created opener child before redo crash recovery and partial opener evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["soak-complement", "redo", "restore", "command-rejection", "browserCreated", "restart"],
+    assertions: ["runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeRejectingCreate", node: { nodeId: "window:20" }, captureRestoredTabs: "sk-b3-redo-restore-tabs", captureRestoredWindows: "sk-b3-redo-restore-window" },
+      { type: "updateTab", tab: { capture: "sk-b3-redo-restore-tabs" }, title: "SK B3 Restored Current", url: "https://sk.example/b3-restored-current" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "SK B3 restored opener child", openerTab: { capture: "sk-b3-redo-restore-tabs" } }], captureWindow: "sk-b3-redo-opener-window", captureTabs: "sk-b3-redo-opener-tabs" },
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "sk-b3-redo-group-old" },
+      { type: "outlinerUndo" },
+      { type: "restartBackgroundAbrupt" },
+      { type: "outlinerRedoThenAbruptRestart" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { capture: "sk-b3-redo-opener-window" } },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "sk-b3-redo-group-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "sk-b3-injected-journal-history-browser-drift",
+    title: "soak complement block3 injected journal history browser drift",
+    notes: "Soak-complement block 3 temporal heat: an unconfirmed close journal arrives after history replay and browser-authored movement of a browser-created tab.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["soak-complement", "journal", "history", "browserCreated", "native-move", "stale-query"],
+    assertions: ["runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "SK B3 journal browser A" }, { title: "SK B3 journal browser B", active: true }], captureWindow: "sk-b3-journal-browser-window", captureTabs: "sk-b3-journal-browser-tabs" },
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "sk-b3-journal-group-old" },
+      { type: "outlinerUndo" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "sk-b3-journal-browser-tabs" }, window: { windowId: 10 }, index: 1, active: true, captureStaleTabs: "sk-b3-journal-browser-old" },
+      { type: "injectCloseJournalThenAbruptRestart", node: { tab: { capture: "sk-b3-journal-browser-tabs" } } },
+      { type: "manualRefreshWithStaleQuery", staleTab: { capture: "sk-b3-journal-browser-old" } },
+      { type: "outlinerRedo" },
+      { type: "manualRefresh" }
+    ]
   }
 ];
 
