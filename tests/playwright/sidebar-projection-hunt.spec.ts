@@ -9017,6 +9017,358 @@ test.describe("sidebar projection hunt", () => {
     }
   });
 
+  test("psh-collapsed-parent-inside-drop-missing-child-order-refills", async ({ page }) => {
+    test.fail(true, "PT-036: collapsed-parent missing child-order coverage blocks drop without requesting recovery.");
+    const issues = collectPageIssues(page);
+    await loadCollapsedBoundarySidebar(page, {
+      includeCoverage: true,
+      fullStatePending: true,
+      coverCollapsedParent: false
+    });
+
+    await dragInside(page, "tab:10", "group:collapsed");
+
+    const result = await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      await api.waitForSparseRequestCount(1);
+      await api.waitForIdleFrames(3);
+      const marker = document.querySelector<HTMLElement>("[data-testid='drop-marker']");
+      return {
+        commands: api.sentCommands(),
+        requests: api.projectionRequests(),
+        stateRequests: api.stateRequestCount(),
+        visibleRows: api.visibleRows(),
+        hasHiddenChild: Boolean(document.querySelector("[data-node-id='tab:50']")),
+        markerClassName: marker?.className ?? ""
+      };
+    });
+
+    expect(result.commands).toEqual([]);
+    expect(result.requests).toEqual([expect.objectContaining({ query: "", targetNodeId: undefined })]);
+    expect(result.stateRequests).toBe(0);
+    expect(result.visibleRows).toEqual([0, 1, 2, 3]);
+    expect(result.hasHiddenChild).toBe(false);
+    expect(result.markerClassName).not.toMatch(/drop-root|drop-before|drop-after|drop-inside/);
+    expect(issues).toEqual([]);
+  });
+
+  test("psh-collapsed-parent-inside-drop-covered-child-order-sends-command", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadCollapsedBoundarySidebar(page, {
+      includeCoverage: true,
+      fullStatePending: true,
+      coverCollapsedParent: true
+    });
+
+    await dragInside(page, "tab:10", "group:collapsed");
+
+    const result = await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      await api.waitForIdleFrames(3);
+      const marker = document.querySelector<HTMLElement>("[data-testid='drop-marker']");
+      return {
+        commands: api.sentCommands(),
+        requests: api.projectionRequests(),
+        stateRequests: api.stateRequestCount(),
+        visibleRows: api.visibleRows(),
+        hasHiddenChild: Boolean(document.querySelector("[data-node-id='tab:50']")),
+        markerClassName: marker?.className ?? ""
+      };
+    });
+
+    expect(result.commands).toEqual([{ type: "moveNode", nodeId: "tab:10", parentId: "group:collapsed", index: 2 }]);
+    expect(result.requests).toEqual([]);
+    expect(result.stateRequests).toBe(0);
+    expect(result.visibleRows).toEqual([0, 1, 2, 3]);
+    expect(result.hasHiddenChild).toBe(false);
+    expect(result.markerClassName).not.toMatch(/drop-root|drop-before|drop-after|drop-inside/);
+    expect(issues).toEqual([]);
+  });
+
+  test("psh-collapsed-parent-covered-drop-move-patch-keeps-children-hidden", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadCollapsedBoundarySidebar(page, {
+      includeCoverage: true,
+      fullStatePending: true,
+      coverCollapsedParent: true
+    });
+
+    await dragInside(page, "tab:10", "group:collapsed");
+
+    const result = await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      api.emitMovePatch("tab:10", "group:collapsed", 2);
+      await api.waitForIdleFrames(6);
+      const marker = document.querySelector<HTMLElement>("[data-testid='drop-marker']");
+      return {
+        commands: api.sentCommands(),
+        requests: api.projectionRequests(),
+        stateRequests: api.stateRequestCount(),
+        visibleRows: api.visibleRows(),
+        hasSource: Boolean(document.querySelector("[data-node-id='tab:10']")),
+        hasCollapsedParent: Boolean(document.querySelector("[data-node-id='group:collapsed']")),
+        hasTail: Boolean(document.querySelector("[data-node-id='tab:90']")),
+        hasHiddenChild: Boolean(document.querySelector("[data-node-id='tab:50']")),
+        markerClassName: marker?.className ?? ""
+      };
+    });
+
+    expect(result.commands).toEqual([{ type: "moveNode", nodeId: "tab:10", parentId: "group:collapsed", index: 2 }]);
+    expect(result.stateRequests).toBe(0);
+    expect(result.visibleRows).toContain(0);
+    expect(result.hasSource).toBe(false);
+    expect(result.hasCollapsedParent).toBe(true);
+    expect(result.hasTail).toBe(true);
+    expect(result.hasHiddenChild).toBe(false);
+    expect(result.markerClassName).not.toMatch(/drop-root|drop-before|drop-after|drop-inside/);
+    expect(issues).toEqual([]);
+  });
+
+  test("psh-collapsed-search-hidden-child-missing-order-refills-without-command", async ({ page }) => {
+    test.fail(true, "PT-036 duplicate: search-visible hidden child missing sibling-order coverage does not request recovery.");
+    const issues = collectPageIssues(page);
+    await loadCollapsedBoundarySidebar(page, {
+      includeCoverage: true,
+      fullStatePending: true,
+      coverCollapsedParent: false
+    });
+    await page.locator("#search").fill("Hidden child");
+    await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      await api.waitForProjectionRequest("Hidden child");
+      api.resolveSliceForQuery("Hidden child");
+      await api.waitForVisibleRow(2);
+      await api.waitForIdleFrames(3);
+    });
+
+    await dragAfter(page, "tab:50", "tab:51");
+
+    const result = await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      await api.waitForSparseRequestCount(2);
+      await api.waitForIdleFrames(3);
+      const marker = document.querySelector<HTMLElement>("[data-testid='drop-marker']");
+      return {
+        commands: api.sentCommands(),
+        requests: api.projectionRequests(),
+        stateRequests: api.stateRequestCount(),
+        searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
+        visibleRows: api.visibleRows(),
+        hasHiddenChild50: Boolean(document.querySelector("[data-node-id='tab:50']")),
+        hasHiddenChild51: Boolean(document.querySelector("[data-node-id='tab:51']")),
+        markerClassName: marker?.className ?? ""
+      };
+    });
+
+    expect(result.commands).toEqual([]);
+    expect(result.requests).toEqual([
+      expect.objectContaining({ query: "Hidden child", targetNodeId: undefined }),
+      expect.objectContaining({ query: "Hidden child", targetNodeId: undefined })
+    ]);
+    expect(result.stateRequests).toBe(0);
+    expect(result.searchValue).toBe("Hidden child");
+    expect(result.visibleRows).toContain(2);
+    expect(result.hasHiddenChild50).toBe(true);
+    expect(result.hasHiddenChild51).toBe(true);
+    expect(result.markerClassName).not.toMatch(/drop-root|drop-before|drop-after|drop-inside/);
+    expect(issues).toEqual([]);
+  });
+
+  test("psh-collapsed-search-hidden-child-covered-order-sends-command", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadCollapsedBoundarySidebar(page, {
+      includeCoverage: true,
+      fullStatePending: true,
+      coverCollapsedParent: true
+    });
+    await page.locator("#search").fill("Hidden child");
+    await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      await api.waitForProjectionRequest("Hidden child");
+      api.resolveSliceForQuery("Hidden child");
+      await api.waitForVisibleRow(2);
+      await api.waitForIdleFrames(3);
+    });
+
+    await dragAfter(page, "tab:50", "tab:51");
+
+    const result = await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      await api.waitForIdleFrames(3);
+      const marker = document.querySelector<HTMLElement>("[data-testid='drop-marker']");
+      return {
+        commands: api.sentCommands(),
+        requests: api.projectionRequests(),
+        stateRequests: api.stateRequestCount(),
+        searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
+        visibleRows: api.visibleRows(),
+        markerClassName: marker?.className ?? ""
+      };
+    });
+
+    expect(result.commands).toEqual([{ type: "moveNode", nodeId: "tab:50", parentId: "group:collapsed", index: 1 }]);
+    expect(result.requests).toEqual([expect.objectContaining({ query: "Hidden child", targetNodeId: undefined })]);
+    expect(result.stateRequests).toBe(0);
+    expect(result.searchValue).toBe("Hidden child");
+    expect(result.visibleRows).toContain(2);
+    expect(result.markerClassName).not.toMatch(/drop-root|drop-before|drop-after|drop-inside/);
+    expect(issues).toEqual([]);
+  });
+
+  test("psh-two-sidebars-collapsed-search-drop-and-outline-stay-independent", async ({ page }) => {
+    const issuesA = collectPageIssues(page);
+    await loadCollapsedBoundarySidebar(page, {
+      includeCoverage: true,
+      fullStatePending: true,
+      coverCollapsedParent: true
+    });
+
+    const pageB = await page.context().newPage();
+    const issuesB = collectPageIssues(pageB);
+    try {
+      await loadCollapsedBoundarySidebar(pageB, {
+        includeCoverage: true,
+        fullStatePending: true,
+        coverCollapsedParent: false
+      });
+      await page.locator("#search").fill("Hidden child");
+      await page.evaluate(async () => {
+        const api = projectionHuntApi();
+        await api.waitForProjectionRequest("Hidden child");
+        api.resolveSliceForQuery("Hidden child");
+        await api.waitForVisibleRow(2);
+        await api.waitForIdleFrames(3);
+      });
+
+      await dragAfter(page, "tab:50", "tab:51");
+
+      const [resultA, resultB] = await Promise.all([
+        page.evaluate(async () => {
+          const api = projectionHuntApi();
+          api.emitMovePatch("tab:50", "group:collapsed", 1);
+          await api.waitForIdleFrames(6);
+          return {
+            commands: api.sentCommands(),
+            requests: api.projectionRequests(),
+            stateRequests: api.stateRequestCount(),
+            searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
+            visibleRows: api.visibleRows(),
+            hasHiddenChild50: Boolean(document.querySelector("[data-node-id='tab:50']")),
+            hasHiddenChild51: Boolean(document.querySelector("[data-node-id='tab:51']"))
+          };
+        }),
+        pageB.evaluate(async () => {
+          const api = projectionHuntApi();
+          api.emitMovePatch("tab:50", "group:collapsed", 1);
+          await api.waitForIdleFrames(6);
+          return {
+            commands: api.sentCommands(),
+            requests: api.projectionRequests(),
+            stateRequests: api.stateRequestCount(),
+            searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
+            visibleRows: api.visibleRows(),
+            hasHiddenChild50: Boolean(document.querySelector("[data-node-id='tab:50']")),
+            hasCollapsedParent: Boolean(document.querySelector("[data-node-id='group:collapsed']"))
+          };
+        })
+      ]);
+
+      expect(resultA.commands).toEqual([{ type: "moveNode", nodeId: "tab:50", parentId: "group:collapsed", index: 1 }]);
+      expect(resultA.requests).toEqual([expect.objectContaining({ query: "Hidden child", targetNodeId: undefined })]);
+      expect(resultA.stateRequests).toBe(0);
+      expect(resultA.searchValue).toBe("Hidden child");
+      expect(resultA.visibleRows).toContain(2);
+      expect(resultA.hasHiddenChild50).toBe(true);
+      expect(resultA.hasHiddenChild51).toBe(true);
+
+      expect(resultB.commands).toEqual([]);
+      expect(resultB.requests).toEqual([]);
+      expect(resultB.stateRequests).toBe(0);
+      expect(resultB.searchValue).toBe("");
+      expect(resultB.visibleRows).toEqual([0, 1, 2, 3]);
+      expect(resultB.hasHiddenChild50).toBe(false);
+      expect(resultB.hasCollapsedParent).toBe(true);
+      expect(issuesA).toEqual([]);
+      expect(issuesB).toEqual([]);
+    } finally {
+      await pageB.close();
+    }
+  });
+
+  test("psh-collapsed-parent-expand-patch-refills-hidden-children", async ({ page }) => {
+    test.fail(true, "PT-037: collapsed-parent expand patch does not request hidden child rows.");
+    const issues = collectPageIssues(page);
+    await loadCollapsedBoundarySidebar(page, {
+      includeCoverage: true,
+      fullStatePending: true,
+      coverCollapsedParent: false
+    });
+
+    await nodeRow(page, "group:collapsed").getByRole("button", { name: "Expand", exact: true }).click();
+
+    const result = await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      api.emitCollapsedPatch("group:collapsed", false);
+      await api.waitForSparseRequestCount(1);
+      api.resolveSliceAt(0, { includeCoverage: true });
+      await api.waitForVisibleRow(3);
+      await api.waitForIdleFrames(4);
+      return {
+        commands: api.sentCommands(),
+        requests: api.projectionRequests(),
+        stateRequests: api.stateRequestCount(),
+        visibleRows: api.visibleRows(),
+        hasHiddenChild50: Boolean(document.querySelector("[data-node-id='tab:50']")),
+        hasHiddenChild51: Boolean(document.querySelector("[data-node-id='tab:51']")),
+        groupExpanded: Boolean(document.querySelector("[data-node-id='group:collapsed'] [title='Collapse']"))
+      };
+    });
+
+    expect(result.commands).toEqual([{ type: "toggleCollapsed", nodeId: "group:collapsed" }]);
+    expect(result.requests).toEqual([expect.objectContaining({ query: "", targetNodeId: undefined })]);
+    expect(result.stateRequests).toBe(0);
+    expect(result.visibleRows).toContain(3);
+    expect(result.hasHiddenChild50).toBe(true);
+    expect(result.hasHiddenChild51).toBe(true);
+    expect(result.groupExpanded).toBe(true);
+    expect(issues).toEqual([]);
+  });
+
+  test("psh-collapsed-parent-collapse-patch-hides-loaded-children", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadCollapsedBoundarySidebar(page, {
+      includeCoverage: true,
+      fullStatePending: true,
+      coverCollapsedParent: true,
+      startExpanded: true
+    });
+
+    await nodeRow(page, "group:collapsed").getByRole("button", { name: "Collapse", exact: true }).click();
+
+    const result = await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      api.emitCollapsedPatch("group:collapsed", true);
+      await api.waitForIdleFrames(6);
+      return {
+        commands: api.sentCommands(),
+        requests: api.projectionRequests(),
+        stateRequests: api.stateRequestCount(),
+        visibleRows: api.visibleRows(),
+        hasHiddenChild50: Boolean(document.querySelector("[data-node-id='tab:50']")),
+        hasHiddenChild51: Boolean(document.querySelector("[data-node-id='tab:51']")),
+        groupCollapsed: Boolean(document.querySelector("[data-node-id='group:collapsed'] [title='Expand']"))
+      };
+    });
+
+    expect(result.commands).toEqual([{ type: "toggleCollapsed", nodeId: "group:collapsed" }]);
+    expect(result.stateRequests).toBe(0);
+    expect(result.visibleRows).toEqual([0, 1, 2, 3]);
+    expect(result.hasHiddenChild50).toBe(false);
+    expect(result.hasHiddenChild51).toBe(false);
+    expect(result.groupCollapsed).toBe(true);
+    expect(issues).toEqual([]);
+  });
+
   test("psh-restored-tab-root-drop-creates-window-before-hydration", async ({ page }) => {
     const issues = collectPageIssues(page);
     await loadRestoredWindowSidebar(page, { fullStatePending: true });
@@ -9165,6 +9517,46 @@ async function loadClosedRestoreSidebar(
   await expect(page.locator(nodeSelector("window:30"))).toBeVisible();
 }
 
+async function loadCollapsedBoundarySidebar(
+  page: Page,
+  options: {
+    fullStatePending?: boolean;
+    includeCoverage?: boolean;
+    coverCollapsedParent?: boolean;
+    startExpanded?: boolean;
+  } = {}
+): Promise<void> {
+  await page.addInitScript(({ installerSource, harnessOptions }) => {
+    const install = (0, eval)(`(${installerSource})`) as typeof installProjectionHuntHarness;
+    install(harnessOptions);
+  }, {
+    installerSource: installProjectionHuntHarness.toString(),
+    harnessOptions: {
+      totalRows: options.startExpanded ? 6 : 4,
+      initialStart: 0,
+      initialEnd: options.startExpanded ? 6 : 4,
+      activeTabId: 10,
+      fullStatePending: Boolean(options.fullStatePending),
+      includeCoverage: options.includeCoverage !== false,
+      restoredFixture: false,
+      collapsedBoundaryFixture: true,
+      collapsedBoundaryInitiallyExpanded: Boolean(options.startExpanded),
+      coveredSiblingParentIds: options.coverCollapsedParent
+        ? ["window:1", "group:collapsed"]
+        : ["window:1"]
+    }
+  });
+
+  await page.goto("/sidebar/sidebar.html");
+  await waitForSidebarAppReady(page);
+  await expect(page.locator(nodeSelector("group:collapsed"))).toBeVisible();
+  if (options.startExpanded) {
+    await expect(page.locator(nodeSelector("tab:50"))).toBeVisible();
+  } else {
+    await expect(page.locator(nodeSelector("tab:50"))).toHaveCount(0);
+  }
+}
+
 async function waitForSidebarAppReady(page: Page): Promise<void> {
   await page.waitForFunction(() => performance.getEntriesByName("tabs-outliner.boot.fullAppImport.end").length > 0);
 }
@@ -9190,6 +9582,40 @@ async function dragAfter(page: Page, sourceId: string, targetId: string): Promis
       dataTransfer
     });
     const clientY = await nodeRow(page, targetId).evaluate((row) => row.getBoundingClientRect().bottom - 1);
+    await nodeRow(page, targetId).dispatchEvent("dragover", {
+      bubbles: true,
+      cancelable: true,
+      clientY,
+      dataTransfer
+    });
+    await nodeRow(page, targetId).dispatchEvent("drop", {
+      bubbles: true,
+      cancelable: true,
+      clientY,
+      dataTransfer
+    });
+    await nodeRow(page, sourceId).dispatchEvent("dragend", {
+      bubbles: true,
+      cancelable: true,
+      dataTransfer
+    });
+  } finally {
+    await dataTransfer.dispose();
+  }
+}
+
+async function dragInside(page: Page, sourceId: string, targetId: string): Promise<void> {
+  const dataTransfer = await page.evaluateHandle(() => new DataTransfer());
+  try {
+    await nodeRow(page, sourceId).dispatchEvent("dragstart", {
+      bubbles: true,
+      cancelable: true,
+      dataTransfer
+    });
+    const clientY = await nodeRow(page, targetId).evaluate((row) => {
+      const rect = row.getBoundingClientRect();
+      return rect.top + rect.height / 2;
+    });
     await nodeRow(page, targetId).dispatchEvent("dragover", {
       bubbles: true,
       cancelable: true,
@@ -9287,6 +9713,7 @@ type ProjectionHuntApi = {
   resolveFullState(): void;
   emitDeletePatch(nodeIds: string[]): void;
   emitMovePatch(nodeId: string, parentId: string, index: number): void;
+  emitCollapsedPatch(nodeId: string, collapsed: boolean): void;
   emitTitlePatch(nodeId: string, title: string): void;
   emitFullStateBroadcast(): void;
   emitHistoryStatus(status: HarnessHistoryStatus): void;
@@ -9319,6 +9746,9 @@ function installProjectionHuntHarness(options: {
   includeCoverage: boolean;
   restoredFixture: boolean;
   closedRestoreFixture?: boolean;
+  collapsedBoundaryFixture?: boolean;
+  collapsedBoundaryInitiallyExpanded?: boolean;
+  coveredSiblingParentIds?: string[];
   invalidRestoreScope?: boolean;
   delayRestoreScope?: boolean;
   historyStatus?: HarnessHistoryStatus;
@@ -9359,6 +9789,7 @@ function installProjectionHuntHarness(options: {
     resolveFullState,
     emitDeletePatch,
     emitMovePatch,
+    emitCollapsedPatch,
     emitTitlePatch,
     emitFullStateBroadcast,
     emitHistoryStatus,
@@ -9576,6 +10007,16 @@ function installProjectionHuntHarness(options: {
     emit(treeStructureUpdate(previous, fullState, []));
   }
 
+  function emitCollapsedPatch(nodeId: string, collapsed: boolean) {
+    const node = fullState.nodes[nodeId];
+    if (!node) {
+      throw new Error(`Missing node ${nodeId}`);
+    }
+    node.collapsed = collapsed;
+    node.updatedAt = now + 1;
+    emit({ type: "nodeStateUpdated", updatedNodes: [structuredClone(node)], closedCountDelta: 0 });
+  }
+
   function emitTitlePatch(nodeId: string, title: string) {
     const node = fullState.nodes[nodeId];
     if (!node) {
@@ -9656,7 +10097,7 @@ function installProjectionHuntHarness(options: {
         visibleNodeIds: rows.map((row) => row.nodeId),
         ...activeProjectionTarget(),
         totalRowCount,
-        nodeCount: options.totalRows,
+        nodeCount: options.collapsedBoundaryFixture ? currentNodeCount() : options.totalRows,
         closedCount: options.closedRestoreFixture ? 4 : 0,
         matchCount: matchingNodeIds.length
       },
@@ -9689,6 +10130,13 @@ function installProjectionHuntHarness(options: {
     if (options.restoredFixture) {
       return { rows: restoredRows(), matchingNodeIds: [], totalRowCount: restoredRows().length };
     }
+    if (options.collapsedBoundaryFixture) {
+      const centerRowIndex = request.targetNodeId ? rowIndexForNodeId(request.targetNodeId) : request.centerRowIndex;
+      const start = override.start ?? Math.max(1, Math.floor(centerRowIndex - request.rowLimit / 2));
+      const end = override.end ?? Math.min(currentTotalRows(), Math.floor(centerRowIndex + request.rowLimit / 2));
+      const rows = collapsedBoundaryRows().filter((row) => row.index >= start && row.index < end);
+      return { rows, matchingNodeIds: [], totalRowCount: currentTotalRows() };
+    }
     const centerRowIndex = request.targetNodeId ? rowIndexForNodeId(request.targetNodeId) : request.centerRowIndex;
     const start = override.start ?? Math.max(1, Math.floor(centerRowIndex - request.rowLimit / 2));
     const end = override.end ?? Math.min(currentTotalRows(), Math.floor(centerRowIndex + request.rowLimit / 2));
@@ -9699,6 +10147,9 @@ function installProjectionHuntHarness(options: {
     const normalizedQuery = query.trim().toLocaleLowerCase();
     if (!normalizedQuery) {
       return [];
+    }
+    if (options.collapsedBoundaryFixture) {
+      return collapsedBoundarySearchRowsForQuery(normalizedQuery);
     }
     const matches = Object.values(fullState.nodes)
       .filter((node): node is ReturnType<typeof tabNode> => (
@@ -9727,7 +10178,64 @@ function installProjectionHuntHarness(options: {
     ];
   }
 
+  function collapsedBoundarySearchRowsForQuery(normalizedQuery: string) {
+    const group = fullState.nodes["group:collapsed"] as { childIds?: string[] } | undefined;
+    const childIds = Array.isArray(group?.childIds) ? group.childIds : [];
+    const matches = childIds
+      .map((nodeId) => fullState.nodes[nodeId])
+      .filter((node): node is ReturnType<typeof tabNode> => (
+        Boolean(node) &&
+        node.kind === "tab" &&
+        (
+          String(node.title ?? "").toLocaleLowerCase().includes(normalizedQuery) ||
+          String(node.url ?? "").toLocaleLowerCase().includes(normalizedQuery)
+        )
+      ))
+      .map((node) => Number.parseInt(String(node.id).slice("tab:".length), 10))
+      .filter((tabId) => Number.isFinite(tabId))
+      .sort((left, right) => left - right);
+    if (matches.length === 0) {
+      return [];
+    }
+    const subtreeEndIndex = matches.length + 2;
+    return [
+      {
+        ...searchWindowRow(subtreeEndIndex),
+        visibleChildCount: 1
+      },
+      {
+        nodeId: "group:collapsed",
+        depth: 1,
+        index: 1,
+        parentRowIndex: 0,
+        subtreeEndIndex,
+        childCount: childIds.length,
+        visibleChildCount: matches.length,
+        expanded: true,
+        searchRevealsCollapsedChildren: true,
+        isSearchMatch: false,
+        isSearchPath: true,
+        insideActiveWindow: false
+      },
+      ...matches.map((tabId, index) => ({
+        ...tabRow(tabId),
+        depth: 2,
+        index: index + 2,
+        parentRowIndex: 1,
+        subtreeEndIndex: index + 3,
+        isSearchMatch: true,
+        isSearchPath: false
+      }))
+    ];
+  }
+
   function rowIndexForNodeId(nodeId: string) {
+    if (options.collapsedBoundaryFixture) {
+      const row = collapsedBoundaryRows().find((candidate) => candidate.nodeId === nodeId);
+      if (row) {
+        return row.index;
+      }
+    }
     if (nodeId === "window:1") {
       return 0;
     }
@@ -9749,12 +10257,18 @@ function installProjectionHuntHarness(options: {
     if (options.closedRestoreFixture) {
       return closedRestoreState();
     }
+    if (options.collapsedBoundaryFixture) {
+      return collapsedBoundaryState();
+    }
     return options.restoredFixture ? restoredState() : largeState();
   }
 
   function initialRows() {
     if (options.closedRestoreFixture) {
       return closedRestoreRows();
+    }
+    if (options.collapsedBoundaryFixture) {
+      return collapsedBoundaryRows();
     }
     return options.restoredFixture
       ? restoredRows()
@@ -9784,6 +10298,9 @@ function installProjectionHuntHarness(options: {
   function completeSiblingParentIdsForRows() {
     if (options.closedRestoreFixture) {
       return [];
+    }
+    if (options.coveredSiblingParentIds) {
+      return options.coveredSiblingParentIds;
     }
     return options.restoredFixture ? ["window:10", "window:20"] : ["window:1"];
   }
@@ -9880,6 +10397,43 @@ function installProjectionHuntHarness(options: {
     };
   }
 
+  function collapsedBoundaryState() {
+    return {
+      version: 1,
+      rootIds: ["window:1"],
+      nodes: {
+        "window:1": {
+          id: "window:1",
+          kind: "window",
+          status: "live",
+          title: "Window",
+          active: true,
+          collapsed: false,
+          childIds: ["tab:10", "group:collapsed", "tab:90"],
+          createdAt: now,
+          updatedAt: now,
+          live: { windowId: 1 }
+        },
+        "tab:10": tabNode(10, { parentId: "window:1", title: "Boundary source", active: true }),
+        "group:collapsed": {
+          id: "group:collapsed",
+          kind: "group",
+          status: "neutral",
+          parentId: "window:1",
+          title: "Collapsed saved group",
+          active: false,
+          collapsed: !options.collapsedBoundaryInitiallyExpanded,
+          childIds: ["tab:50", "tab:51"],
+          createdAt: now,
+          updatedAt: now
+        },
+        "tab:50": tabNode(50, { parentId: "group:collapsed", title: "Hidden child 50", active: false }),
+        "tab:51": tabNode(51, { parentId: "group:collapsed", title: "Hidden child 51", active: false }),
+        "tab:90": tabNode(90, { parentId: "window:1", title: "Boundary tail", active: false })
+      }
+    };
+  }
+
   function tabNode(
     tabId: number,
     overrides: { parentId?: string; title?: string; active?: boolean; restoredFromClosed?: boolean; closed?: boolean } = {}
@@ -9923,11 +10477,18 @@ function installProjectionHuntHarness(options: {
     if (options.closedRestoreFixture) {
       return closedRestoreRows().length;
     }
+    if (options.collapsedBoundaryFixture) {
+      return collapsedBoundaryRows().length;
+    }
     if (options.restoredFixture) {
       return restoredRows().length;
     }
     const window = fullState.nodes["window:1"] as { childIds?: string[] } | undefined;
     return 1 + (Array.isArray(window?.childIds) ? window.childIds.length : 0);
+  }
+
+  function currentNodeCount() {
+    return Object.keys(fullState.nodes).length;
   }
 
   function searchWindowRow(subtreeEndIndex: number) {
@@ -10022,6 +10583,52 @@ function installProjectionHuntHarness(options: {
         insideActiveWindow: false
       },
       { ...tabRow(30), index: 1, parentRowIndex: 0, subtreeEndIndex: 2, insideActiveWindow: false }
+    ];
+  }
+
+  function collapsedBoundaryRows() {
+    const group = fullState.nodes["group:collapsed"] as { collapsed?: boolean; childIds?: string[] } | undefined;
+    const groupCollapsed = group?.collapsed !== false;
+    const totalRows = groupCollapsed ? 4 : 6;
+    const groupEndIndex = groupCollapsed ? 3 : 5;
+    return [
+      {
+        nodeId: "window:1",
+        depth: 0,
+        index: 0,
+        subtreeEndIndex: totalRows,
+        childCount: 3,
+        visibleChildCount: 3,
+        expanded: true,
+        searchRevealsCollapsedChildren: false,
+        isSearchMatch: false,
+        isSearchPath: false,
+        insideActiveWindow: false
+      },
+      { ...tabRow(10), index: 1, parentRowIndex: 0, subtreeEndIndex: 2, insideActiveWindow: true },
+      {
+        nodeId: "group:collapsed",
+        depth: 1,
+        index: 2,
+        parentRowIndex: 0,
+        subtreeEndIndex: groupEndIndex,
+        childCount: 2,
+        visibleChildCount: groupCollapsed ? 0 : 2,
+        expanded: !groupCollapsed,
+        searchRevealsCollapsedChildren: false,
+        isSearchMatch: false,
+        isSearchPath: false,
+        insideActiveWindow: false
+      },
+      ...(
+        groupCollapsed
+          ? []
+          : [
+              { ...tabRow(50), depth: 2, index: 3, parentRowIndex: 2, subtreeEndIndex: 4, insideActiveWindow: false },
+              { ...tabRow(51), depth: 2, index: 4, parentRowIndex: 2, subtreeEndIndex: 5, insideActiveWindow: false }
+            ]
+      ),
+      { ...tabRow(90), index: groupCollapsed ? 3 : 5, parentRowIndex: 0, subtreeEndIndex: totalRows, insideActiveWindow: false }
     ];
   }
 

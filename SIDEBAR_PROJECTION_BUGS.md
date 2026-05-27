@@ -19,12 +19,12 @@ pnpm perf:sidebar-projection-guard
 ## Last Projection Run
 
 - Started: 2026-05-27
-- Strategy: boundary/restore/temporal hunt after the restore/keyboard fix, focused on drag/drop coverage boundaries, closed restore/reopen workflows under partial coverage, keyboard/query/target replacement, and multi-sidebar sparse startup.
-- Last completed run scenario ids: 184 `psh-*` Playwright discovery/regression scenarios
-- Distinct findings recorded: 34
-- Status: `PT-001` through `PT-031` and `PT-033` through `PT-035` are fixed. The sparse action follow-up hunt suspected `PT-032` around rename/search replacement, but the follow-up fix pass retracted it as a harness-ordering false positive and kept the corrected scenarios as required-passing coverage.
-- Clean blocks after latest finding: after `PT-035`, block 1 sampled direct closed-tab restore after search refill and drag/drop-triggered stale outline refill crossing search/show-in-tree target ownership; block 2 sampled two-sidebar closed-tab restore/delete fanout crossing show-in-tree target ownership plus restored-tab root-drop crossing local search replacement; block 3 sampled delayed restore confirmation dismissal across history-status updates and two-sidebar restored root-drop plus delayed restore prompt independence. The full 184-scenario projection corpus passed with no new distinct signature after block 3, so this hunt stopped by the normal three-clean-block rule.
-- Verification: preflight `pnpm run build`, the 176-scenario projection corpus, and `pnpm perf:sidebar-projection-guard -- --smoke` passed before this hunt. Block 1 added a passing stale drag-refill cleanup scenario and froze `PT-035` from `psh-delayed-restore-scope-child-delete-invalidates-prompt`. Block 2 added two passing restore/drag target-owner scenarios and passed the full 182-scenario corpus. Block 3 added two passing restore-boundary scenarios and passed the full 184-scenario corpus.
+- Strategy: collapsed-boundary hunt after the PT-035 fix, focused on drag/drop and local action coverage across collapsed ancestors, hidden children, and non-visible sibling order without automatic full hydration.
+- Last completed run scenario ids: 184 `psh-*` Playwright discovery/regression scenarios before this hunt; this discovery checkpoint adds 8 more `psh-*` scenarios for 192 total.
+- Distinct findings recorded: 36
+- Status: `PT-001` through `PT-031` and `PT-033` through `PT-035` are fixed; `PT-036` and `PT-037` are open from the active collapsed-boundary hunt. The sparse action follow-up hunt suspected `PT-032` around rename/search replacement, but the follow-up fix pass retracted it as a harness-ordering false positive and kept the corrected scenarios as required-passing coverage.
+- Clean blocks after latest finding: 0 after `PT-037`. Discovery must continue until three full active mutation blocks find no new distinct projection signature.
+- Verification: preflight `pnpm run build`, the 184-scenario projection corpus, and `pnpm perf:sidebar-projection-guard -- --smoke` passed before this hunt. Block 0 added collapsed-parent inside-drop coverage; `psh-collapsed-parent-inside-drop-covered-child-order-sends-command` passed, while `psh-collapsed-parent-inside-drop-missing-child-order-refills` exposed `PT-036`. Block 1 added search-visible hidden-child drag/drop and multi-sidebar coverage; covered cases passed and the missing-coverage case duplicated `PT-036`. Block 2 added collapsed-boundary expand/collapse patch coverage; collapse of already loaded children passed, while expansion exposed `PT-037`. After freezing the findings, `pnpm run build`, the full 192-scenario projection corpus, and `pnpm perf:sidebar-projection-guard -- --smoke` passed.
 
 ## Fix Analysis
 
@@ -48,7 +48,7 @@ pnpm perf:sidebar-projection-guard
 ## Finding Index
 
 - Fixed projection findings: `PT-001`, `PT-002`, `PT-003`, `PT-004`, `PT-005`, `PT-006`, `PT-007`, `PT-008`, `PT-009`, `PT-010`, `PT-011`, `PT-012`, `PT-013`, `PT-014`, `PT-015`, `PT-016`, `PT-017`, `PT-018`, `PT-019`, `PT-020`, `PT-021`, `PT-022`, `PT-023`, `PT-024`, `PT-025`, `PT-026`, `PT-027`, `PT-028`, `PT-029`, `PT-030`, `PT-031`, `PT-033`, `PT-034`, `PT-035`
-- Open projection findings: none
+- Open projection findings: `PT-036`, `PT-037`
 - Retracted projection suspicions: `PT-032`
 
 ### PT-001 rejected sparse slice leaves viewport blank/no retry
@@ -557,3 +557,31 @@ pnpm exec playwright test tests/playwright/sidebar-projection-hunt.spec.ts --gre
 - Actual before fix: after deleting `tab:30`, the sidebar updates the visible closed count to `3 items / 3 saved`, but resolving the old scope still opens the confirmation dialog for `4 restorable closed nodes (3 tabs, 1 window)`.
 - Evidence: the frozen scenario delays `analyzeRestoreScope`, clicks `Restore Closed Window`, emits history status plus a `treeStructureUpdated` delete patch for only `tab:30`, then resolves the old scope response. Playwright observes the stale large-restore confirmation prompt while `tab:30` is already absent, `window:30` remains visible, and no full `getState` occurs.
 - Fix: restore-scope validity now snapshots the node ids locally known before the async scope request. Missing scoped nodes that were never present in the sparse sidebar can remain unknown, but a scoped node that was known at request time and is later deleted or changed away from `closed` invalidates the delayed scope response.
+
+### PT-036 collapsed-parent missing child-order coverage does not request recovery
+
+- Status: open
+- Found by: `psh-collapsed-parent-inside-drop-missing-child-order-refills`
+- Repro:
+
+```sh
+pnpm exec playwright test tests/playwright/sidebar-projection-hunt.spec.ts --grep "psh-collapsed-parent-inside-drop-missing-child-order-refills" --reporter=list --workers=1
+```
+
+- Expected: when a sparse sidebar knows a visible collapsed parent but lacks coverage proving that parent's hidden child order, dropping a covered visible row inside that collapsed parent should be blocked, clear preview state, avoid full `getState`, and request a background projection/coverage refill for the current outline intent.
+- Actual: the drop is blocked and no command is sent, but no `getTreeProjectionSlice` request is made either. The user has no recovery path from the attempted local drop unless another interaction happens to request coverage.
+- Evidence: the frozen scenario loads a four-row outline with `window:1`, a covered source row, a visible collapsed group whose hidden children are not rendered, and a trailing sibling. Coverage proves only `window:1` sibling order, not `group:collapsed`. Dragging `tab:10` inside `group:collapsed` times out waiting for any sparse projection request; the paired covered-child-order scenario passes and sends `moveNode` with `parentId: "group:collapsed"` and `index: 2`.
+
+### PT-037 collapsed-parent expansion does not request hidden child rows
+
+- Status: open
+- Found by: `psh-collapsed-parent-expand-patch-refills-hidden-children`
+- Repro:
+
+```sh
+pnpm exec playwright test tests/playwright/sidebar-projection-hunt.spec.ts --grep "psh-collapsed-parent-expand-patch-refills-hidden-children" --reporter=list --workers=1
+```
+
+- Expected: when a sparse sidebar has a collapsed parent whose child nodes are absent locally, expanding that parent and receiving a collapsed-state patch should request a current outline projection/coverage refill so the newly visible child rows can be painted without full `getState`.
+- Actual: the `toggleCollapsed` command is sent and the collapsed patch is applied locally, but no `getTreeProjectionSlice` request is made. The parent can become expanded while the hidden child rows remain absent.
+- Evidence: the frozen scenario loads `window:1 -> tab:10, group:collapsed, tab:90` with `tab:50` and `tab:51` present only in the background fixture. It clicks `Expand`, emits a `nodeStateUpdated` patch setting `group:collapsed.collapsed = false`, then times out waiting for any sparse projection request. The paired `psh-collapsed-parent-collapse-patch-hides-loaded-children` scenario starts with those children loaded and verifies collapse hides them locally without full hydration.
