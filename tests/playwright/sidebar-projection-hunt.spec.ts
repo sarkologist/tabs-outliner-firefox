@@ -6633,6 +6633,166 @@ test.describe("sidebar projection hunt", () => {
     expect(issues).toEqual([]);
   });
 
+  test("psh-closed-restore-search-clear-keeps-local-restore-actions", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadClosedRestoreSidebar(page, { fullStatePending: true, invalidRestoreScope: true });
+
+    await nodeRow(page, "window:30").getByRole("button", { name: "Restore Closed Window", exact: true }).click();
+    await page.waitForFunction(() => projectionHuntApi().sentCommands().length === 1);
+    await page.locator("#search").fill("Closed tab 30");
+    await expect(nodeRow(page, "tab:30")).toBeVisible();
+    await page.locator("#clear-search").click();
+
+    const result = await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      api.emitHistoryStatus({ canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "restore check" });
+      await api.waitForIdleFrames(4);
+      return {
+        commands: api.sentCommands(),
+        requests: api.projectionRequests(),
+        stateRequests: api.stateRequestCount(),
+        searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
+        visibleRows: api.visibleRows(),
+        closedWindowExists: Boolean(document.querySelector("[data-node-id='window:30']")),
+        closedTabExists: Boolean(document.querySelector("[data-node-id='tab:30']")),
+        countText: document.querySelector("#state-count")?.textContent ?? ""
+      };
+    });
+
+    expect(result.commands).toEqual([{ type: "analyzeRestoreScope", nodeId: "window:30" }]);
+    expect(result.requests).toEqual([expect.objectContaining({ query: "", targetNodeId: undefined })]);
+    expect(result.stateRequests).toBe(0);
+    expect(result.searchValue).toBe("");
+    expect(result.visibleRows).toContain(0);
+    expect(result.closedWindowExists).toBe(true);
+    expect(result.closedTabExists).toBe(true);
+    expect(result.countText).toBe("4 items / 4 saved");
+    await expect(nodeRow(page, "window:30").getByRole("button", { name: "Restore Closed Window", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Undo", exact: true })).toBeEnabled();
+    expect(issues).toEqual([]);
+  });
+
+  test("psh-restore-scope-response-after-delete-does-not-prompt-stale-restore", async ({ page }) => {
+    test.fail(true, "PT-033: delayed closed-restore scope can prompt after the restore target was deleted.");
+    const issues = collectPageIssues(page);
+    const dialogMessages: string[] = [];
+    page.on("dialog", async (dialog) => {
+      dialogMessages.push(dialog.message());
+      await dialog.dismiss();
+    });
+    await loadClosedRestoreSidebar(page, { fullStatePending: true, delayRestoreScope: true });
+
+    await nodeRow(page, "window:30").getByRole("button", { name: "Restore Closed Window", exact: true }).click();
+    await page.waitForFunction(() => projectionHuntApi().sentCommands().length === 1);
+
+    const result = await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      api.emitHistoryStatus({ canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "delete closed window" });
+      api.emitDeletePatch(["window:30", "tab:30", "tab:31", "tab:32"]);
+      api.resolveRestoreScope();
+      await api.waitForIdleFrames(8);
+      return {
+        commands: api.sentCommands(),
+        stateRequests: api.stateRequestCount(),
+        visibleRows: api.visibleRows(),
+        closedWindowExists: Boolean(document.querySelector("[data-node-id='window:30']")),
+        closedTabExists: Boolean(document.querySelector("[data-node-id='tab:30']")),
+        undoEnabled: !document.querySelector<HTMLButtonElement>("#undo")?.disabled
+      };
+    });
+
+    expect(result.commands).toEqual([{ type: "analyzeRestoreScope", nodeId: "window:30" }]);
+    expect(result.stateRequests).toBe(0);
+    expect(result.visibleRows).toEqual([]);
+    expect(result.closedWindowExists).toBe(false);
+    expect(result.closedTabExists).toBe(false);
+    expect(result.undoEnabled).toBe(true);
+    expect(dialogMessages).toEqual([]);
+    expect(issues).toEqual([]);
+  });
+
+  test("psh-restored-delete-neighbor-title-patch-before-tree-patch-keeps-live-actions", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadRestoredWindowSidebar(page, { fullStatePending: true });
+
+    await nodeRow(page, "tab:2").hover();
+    await nodeRow(page, "tab:2").getByRole("button", { name: "Delete", exact: true }).click();
+    await page.waitForFunction(() => projectionHuntApi().sentCommands().length === 1);
+
+    const result = await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      api.emitTitlePatch("tab:1", "Existing tab patched before restored delete");
+      api.emitHistoryStatus({ canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "delete restored tab" });
+      api.emitDeletePatch(["tab:2", "window:20"]);
+      await api.waitForIdleFrames(5);
+      return {
+        commands: api.sentCommands(),
+        stateRequests: api.stateRequestCount(),
+        visibleRows: api.visibleRows(),
+        restoredTabExists: Boolean(document.querySelector("[data-node-id='tab:2']")),
+        restoredWindowExists: Boolean(document.querySelector("[data-node-id='window:20']")),
+        liveTabText: document.querySelector("[data-node-id='tab:1']")?.textContent ?? "",
+        countText: document.querySelector("#state-count")?.textContent ?? ""
+      };
+    });
+
+    expect(result.commands).toEqual([{ type: "deleteNode", nodeId: "tab:2" }]);
+    expect(result.stateRequests).toBe(0);
+    expect(result.visibleRows).toContain(1);
+    expect(result.restoredTabExists).toBe(false);
+    expect(result.restoredWindowExists).toBe(false);
+    expect(result.liveTabText).toContain("Existing tab patched before restored delete");
+    expect(result.countText).toBe("2 items / 0 saved");
+    await expect(nodeRow(page, "tab:1")).toBeVisible();
+    await expect(nodeRow(page, "tab:1")).toContainText("Existing tab patched before restored delete");
+    await nodeRow(page, "tab:1").hover();
+    await expect(nodeRow(page, "tab:1").getByRole("button", { name: "Close", exact: true })).toBeVisible();
+    await expect(nodeRow(page, "tab:1").getByRole("button", { name: "Cut", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Undo", exact: true })).toBeEnabled();
+    expect(issues).toEqual([]);
+  });
+
+  test("psh-restored-delete-command-search-replacement-keeps-query-owner", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadRestoredWindowSidebar(page, { fullStatePending: true });
+
+    await nodeRow(page, "tab:2").hover();
+    await nodeRow(page, "tab:2").getByRole("button", { name: "Delete", exact: true }).click();
+    await page.waitForFunction(() => projectionHuntApi().sentCommands().length === 1);
+    await page.locator("#search").fill("Existing");
+
+    const result = await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      api.emitHistoryStatus({ canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "delete restored tab" });
+      api.emitDeletePatch(["tab:2", "window:20"]);
+      await api.waitForVisibleRow(1);
+      await api.waitForIdleFrames(4);
+      return {
+        commands: api.sentCommands(),
+        requests: api.projectionRequests(),
+        stateRequests: api.stateRequestCount(),
+        searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
+        visibleRows: api.visibleRows(),
+        restoredTabExists: Boolean(document.querySelector("[data-node-id='tab:2']")),
+        liveTabExists: Boolean(document.querySelector("[data-node-id='tab:1']")),
+        countText: document.querySelector("#state-count")?.textContent ?? ""
+      };
+    });
+
+    expect(result.commands).toEqual([{ type: "deleteNode", nodeId: "tab:2" }]);
+    expect(result.requests).toEqual([]);
+    expect(result.stateRequests).toBe(0);
+    expect(result.searchValue).toBe("Existing");
+    expect(result.visibleRows).toContain(1);
+    expect(result.restoredTabExists).toBe(false);
+    expect(result.liveTabExists).toBe(true);
+    expect(result.countText).toBe("2 matches / 2 items");
+    await expect(nodeRow(page, "tab:1")).toBeVisible();
+    await expect(nodeRow(page, "tab:1")).toContainText("Existing tab");
+    await expect(page.getByRole("button", { name: "Undo", exact: true })).toBeEnabled();
+    expect(issues).toEqual([]);
+  });
+
   test("psh-drag-preview-search-replacement-clears-preview-without-command", async ({ page }) => {
     const issues = collectPageIssues(page);
     await loadLargeSparseSidebar(page, { includeCoverage: true, fullStatePending: true });
@@ -6691,6 +6851,139 @@ test.describe("sidebar projection hunt", () => {
     expect(result.markerClassName).not.toMatch(/drop-root|drop-before|drop-after|drop-inside/);
     expect(result.rootDropTarget).toBe(false);
     expect(result.hasSearchRow).toBe(true);
+    expect(issues).toEqual([]);
+  });
+
+  test("psh-drag-preview-keyboard-undo-search-replacement-clears-preview", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadLargeSparseSidebar(page, {
+      includeCoverage: true,
+      fullStatePending: true,
+      historyStatus: { canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "remote edit" }
+    });
+
+    const dataTransfer = await page.evaluateHandle(() => new DataTransfer());
+    try {
+      await nodeRow(page, "tab:800").dispatchEvent("dragstart", {
+        bubbles: true,
+        cancelable: true,
+        dataTransfer
+      });
+      const clientY = await nodeRow(page, "tab:801").evaluate((row) => row.getBoundingClientRect().bottom - 1);
+      await nodeRow(page, "tab:801").dispatchEvent("dragover", {
+        bubbles: true,
+        cancelable: true,
+        clientY,
+        dataTransfer
+      });
+      await expect(page.locator("[data-testid='drop-marker']")).toHaveClass(/drop-after/);
+
+      await page.keyboard.press("Control+Z");
+      await page.waitForFunction(() => projectionHuntApi().sentCommands().length === 1);
+      await page.locator("#search").fill("Tab 900");
+      await nodeRow(page, "tab:800").dispatchEvent("dragend", {
+        bubbles: true,
+        cancelable: true,
+        dataTransfer
+      });
+    } finally {
+      await dataTransfer.dispose();
+    }
+
+    const result = await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      api.emitHistoryStatus({ canUndo: false, canRedo: true, undoDepth: 0, redoDepth: 1, redoLabel: "remote edit" });
+      await api.waitForProjectionRequest("Tab 900");
+      api.resolveSliceForQuery("Tab 900");
+      await api.waitForVisibleRow(1);
+      await api.waitForIdleFrames(4);
+      const marker = document.querySelector<HTMLElement>("[data-testid='drop-marker']");
+      const root = document.querySelector<HTMLElement>("main");
+      return {
+        commands: api.sentCommands(),
+        requests: api.projectionRequests(),
+        stateRequests: api.stateRequestCount(),
+        searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
+        visibleRows: api.visibleRows(),
+        markerClassName: marker?.className ?? "",
+        rootDropTarget: root?.classList.contains("root-drop-target") ?? false,
+        hasSearchRow: Boolean(document.querySelector("[data-node-id='tab:900']"))
+      };
+    });
+
+    expect(result.commands).toEqual([{ type: "undo" }]);
+    expect(result.requests).toEqual([expect.objectContaining({ query: "Tab 900", targetNodeId: undefined })]);
+    expect(result.stateRequests).toBe(0);
+    expect(result.searchValue).toBe("Tab 900");
+    expect(result.visibleRows).toContain(1);
+    expect(result.markerClassName).not.toMatch(/drop-root|drop-before|drop-after|drop-inside/);
+    expect(result.rootDropTarget).toBe(false);
+    expect(result.hasSearchRow).toBe(true);
+    await expect(page.getByRole("button", { name: "Undo", exact: true })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Redo", exact: true })).toBeEnabled();
+    expect(issues).toEqual([]);
+  });
+
+  test("psh-keyboard-cut-query-replacement-undo-keeps-current-search", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadLargeSparseSidebar(page, {
+      includeCoverage: true,
+      fullStatePending: true,
+      historyStatus: { canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "remote edit" }
+    });
+
+    await nodeRow(page, "tab:800").locator(".node-label").focus();
+    await page.keyboard.press("Control+X");
+    await expect(page.locator(nodeSelector("tab:800"))).toHaveClass(/is-cut/);
+    await page.locator("#search").fill("Tab 90");
+    await page.evaluate(async () => {
+      await projectionHuntApi().waitForProjectionRequest("Tab 90");
+    });
+    await page.locator("#search").fill("Tab 91");
+    await page.evaluate(async () => {
+      await projectionHuntApi().waitForProjectionRequest("Tab 91");
+    });
+    await nodeRow(page, "tab:800").locator(".node-label").focus();
+    await page.keyboard.press("Control+Z");
+    await page.waitForFunction(() => projectionHuntApi().sentCommands().some((command) => (
+      typeof command === "object" && command !== null && (command as { type?: unknown }).type === "undo"
+    )));
+
+    const result = await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      api.emitHistoryStatus({ canUndo: false, canRedo: true, undoDepth: 0, redoDepth: 1, redoLabel: "remote edit" });
+      api.resolveSliceForQuery("Tab 90");
+      await api.waitForIdleFrames(2);
+      api.resolveSliceForQuery("Tab 91");
+      await api.waitForVisibleRow(1);
+      await api.waitForIdleFrames(4);
+      return {
+        commands: api.sentCommands(),
+        requests: api.projectionRequests(),
+        stateRequests: api.stateRequestCount(),
+        searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
+        visibleRows: api.visibleRows(),
+        cutMarkers: document.querySelectorAll(".is-cut").length,
+        hasTab91: Boolean(document.querySelector("[data-node-id='tab:91']")),
+        hasTab90: Boolean(document.querySelector("[data-node-id='tab:90']")),
+        countText: document.querySelector("#state-count")?.textContent ?? ""
+      };
+    });
+
+    expect(result.commands).toEqual([{ type: "undo" }]);
+    expect(result.requests).toEqual([
+      expect.objectContaining({ query: "Tab 90", targetNodeId: undefined }),
+      expect.objectContaining({ query: "Tab 91", targetNodeId: undefined })
+    ]);
+    expect(result.stateRequests).toBe(1);
+    expect(result.searchValue).toBe("Tab 91");
+    expect(result.visibleRows).toContain(1);
+    expect(result.cutMarkers).toBe(0);
+    expect(result.hasTab91).toBe(true);
+    expect(result.hasTab90).toBe(false);
+    expect(result.countText).toBe("11 matches / 1001 items");
+    await expect(page.getByRole("button", { name: "Undo", exact: true })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Redo", exact: true })).toBeEnabled();
     expect(issues).toEqual([]);
   });
 
@@ -6893,6 +7186,203 @@ test.describe("sidebar projection hunt", () => {
       expect(resultB.visibleRows).toContain(900);
       expect(resultB.hasRevealHighlight).toBe(true);
       expect(resultB.hasTarget).toBe(true);
+      expect(issuesA).toEqual([]);
+      expect(issuesB).toEqual([]);
+    } finally {
+      await pageB.close();
+    }
+  });
+
+  test("psh-two-sidebars-keyboard-undo-and-target-stale-scroll-stay-independent", async ({ page }) => {
+    test.fail(true, "PT-034: pending show-in-tree target can be lost after a history/title patch before the target response.");
+    const issuesA = collectPageIssues(page);
+    await loadLargeSparseSidebar(page, {
+      includeCoverage: true,
+      fullStatePending: true,
+      historyStatus: { canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "sidebar A edit" }
+    });
+
+    await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      await api.scrollToRow(250);
+      await api.waitForSparseRequestCount(1);
+    });
+
+    const pageB = await page.context().newPage();
+    const issuesB = collectPageIssues(pageB);
+    try {
+      await loadLargeSparseSidebar(pageB, {
+        includeCoverage: true,
+        fullStatePending: true,
+        historyStatus: { canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "sidebar B edit" }
+      });
+      await pageB.locator("#search").fill("Tab 900");
+      await pageB.evaluate(async () => {
+        const api = projectionHuntApi();
+        await api.waitForProjectionRequest("Tab 900");
+        api.resolveSliceForQuery("Tab 900");
+        await api.waitForVisibleRow(1);
+      });
+      await nodeRow(pageB, "tab:900").hover();
+      await nodeRow(pageB, "tab:900").getByRole("button", { name: "Show in tree", exact: true }).click();
+      await pageB.waitForFunction(() => projectionHuntApi().projectionRequests().some((request) => request.targetNodeId === "tab:900"));
+
+      await page.keyboard.press("Control+Z");
+      await page.waitForFunction(() => projectionHuntApi().sentCommands().some((command) => (
+        typeof command === "object" && command !== null && (command as { type?: unknown }).type === "undo"
+      )));
+
+      const [resultA, resultB] = await Promise.all([
+        page.evaluate(async () => {
+          const api = projectionHuntApi();
+          api.emitHistoryStatus({ canUndo: false, canRedo: true, undoDepth: 0, redoDepth: 1, redoLabel: "sidebar A edit" });
+          api.emitTitlePatch("tab:250", "Tab 250 stale scroll patched");
+          api.resolveSliceAt(0, { start: 240, end: 310 });
+          await api.waitForVisibleRow(250);
+          await api.waitForIdleFrames(4);
+          return {
+            commands: api.sentCommands(),
+            requests: api.projectionRequests(),
+            stateRequests: api.stateRequestCount(),
+            searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
+            visibleRows: api.visibleRows(),
+            rowText: document.querySelector("[data-node-id='tab:250']")?.textContent ?? ""
+          };
+        }),
+        pageB.evaluate(async () => {
+          const api = projectionHuntApi();
+          api.emitHistoryStatus({ canUndo: false, canRedo: true, undoDepth: 0, redoDepth: 1, redoLabel: "sidebar B edit" });
+          api.emitTitlePatch("tab:900", "Tab 900 target temporal patched");
+          api.resolveSliceForTarget("tab:900", { start: 880, end: 940 });
+          await api.waitForVisibleRow(900);
+          await api.waitForIdleFrames(4);
+          return {
+            commands: api.sentCommands(),
+            requests: api.projectionRequests(),
+            stateRequests: api.stateRequestCount(),
+            searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
+            visibleRows: api.visibleRows(),
+            hasTargetHighlight: Boolean(document.querySelector("[data-node-id='tab:900'].is-reveal-highlight")),
+            targetText: document.querySelector("[data-node-id='tab:900']")?.textContent ?? ""
+          };
+        })
+      ]);
+
+      expect(resultA.commands).toEqual([{ type: "undo" }]);
+      expect(resultA.requests).toEqual([expect.objectContaining({ query: "", targetNodeId: undefined })]);
+      expect(resultA.stateRequests).toBe(0);
+      expect(resultA.searchValue).toBe("");
+      expect(resultA.visibleRows).toContain(250);
+      expect(resultA.rowText).toContain("Tab 250 stale scroll patched");
+      await expect(page.getByRole("button", { name: "Undo", exact: true })).toBeDisabled();
+      await expect(page.getByRole("button", { name: "Redo", exact: true })).toBeEnabled();
+
+      expect(resultB.commands).toEqual([{ type: "expandAncestors", nodeId: "tab:900" }]);
+      expect(resultB.requests).toContainEqual(expect.objectContaining({ query: "Tab 900", targetNodeId: undefined }));
+      expect(resultB.requests).toContainEqual(expect.objectContaining({ query: "", targetNodeId: "tab:900" }));
+      expect(resultB.stateRequests).toBe(0);
+      expect(resultB.searchValue).toBe("");
+      expect(resultB.visibleRows).toContain(900);
+      expect(resultB.hasTargetHighlight).toBe(true);
+      expect(resultB.targetText).toContain("Tab 900 target temporal patched");
+      await expect(pageB.getByRole("button", { name: "Undo", exact: true })).toBeDisabled();
+      await expect(pageB.getByRole("button", { name: "Redo", exact: true })).toBeEnabled();
+      expect(issuesA).toEqual([]);
+      expect(issuesB).toEqual([]);
+    } finally {
+      await pageB.close();
+    }
+  });
+
+  test("psh-two-sidebars-keyboard-undo-and-target-history-only-stay-independent", async ({ page }) => {
+    const issuesA = collectPageIssues(page);
+    await loadLargeSparseSidebar(page, {
+      includeCoverage: true,
+      fullStatePending: true,
+      historyStatus: { canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "sidebar A edit" }
+    });
+
+    await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      await api.scrollToRow(250);
+      await api.waitForSparseRequestCount(1);
+    });
+
+    const pageB = await page.context().newPage();
+    const issuesB = collectPageIssues(pageB);
+    try {
+      await loadLargeSparseSidebar(pageB, {
+        includeCoverage: true,
+        fullStatePending: true,
+        historyStatus: { canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "sidebar B edit" }
+      });
+      await pageB.locator("#search").fill("Tab 900");
+      await pageB.evaluate(async () => {
+        const api = projectionHuntApi();
+        await api.waitForProjectionRequest("Tab 900");
+        api.resolveSliceForQuery("Tab 900");
+        await api.waitForVisibleRow(1);
+      });
+      await nodeRow(pageB, "tab:900").hover();
+      await nodeRow(pageB, "tab:900").getByRole("button", { name: "Show in tree", exact: true }).click();
+      await pageB.waitForFunction(() => projectionHuntApi().projectionRequests().some((request) => request.targetNodeId === "tab:900"));
+
+      await page.keyboard.press("Control+Z");
+      await page.waitForFunction(() => projectionHuntApi().sentCommands().some((command) => (
+        typeof command === "object" && command !== null && (command as { type?: unknown }).type === "undo"
+      )));
+
+      const [resultA, resultB] = await Promise.all([
+        page.evaluate(async () => {
+          const api = projectionHuntApi();
+          api.emitHistoryStatus({ canUndo: false, canRedo: true, undoDepth: 0, redoDepth: 1, redoLabel: "sidebar A edit" });
+          api.resolveSliceAt(0, { start: 240, end: 310 });
+          await api.waitForVisibleRow(250);
+          await api.waitForIdleFrames(4);
+          return {
+            commands: api.sentCommands(),
+            requests: api.projectionRequests(),
+            stateRequests: api.stateRequestCount(),
+            searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
+            visibleRows: api.visibleRows()
+          };
+        }),
+        pageB.evaluate(async () => {
+          const api = projectionHuntApi();
+          api.emitHistoryStatus({ canUndo: false, canRedo: true, undoDepth: 0, redoDepth: 1, redoLabel: "sidebar B edit" });
+          api.resolveSliceForTarget("tab:900", { start: 880, end: 940 });
+          await api.waitForVisibleRow(900);
+          await api.waitForIdleFrames(4);
+          return {
+            commands: api.sentCommands(),
+            requests: api.projectionRequests(),
+            stateRequests: api.stateRequestCount(),
+            searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
+            visibleRows: api.visibleRows(),
+            hasTargetHighlight: Boolean(document.querySelector("[data-node-id='tab:900'].is-reveal-highlight")),
+            hasSearchRow: Boolean(document.querySelector("[data-node-id='tab:900'].is-search-match"))
+          };
+        })
+      ]);
+
+      expect(resultA.commands).toEqual([{ type: "undo" }]);
+      expect(resultA.requests).toEqual([expect.objectContaining({ query: "", targetNodeId: undefined })]);
+      expect(resultA.stateRequests).toBe(0);
+      expect(resultA.searchValue).toBe("");
+      expect(resultA.visibleRows).toContain(250);
+      await expect(page.getByRole("button", { name: "Undo", exact: true })).toBeDisabled();
+      await expect(page.getByRole("button", { name: "Redo", exact: true })).toBeEnabled();
+
+      expect(resultB.commands).toEqual([{ type: "expandAncestors", nodeId: "tab:900" }]);
+      expect(resultB.requests).toContainEqual(expect.objectContaining({ query: "Tab 900", targetNodeId: undefined }));
+      expect(resultB.requests).toContainEqual(expect.objectContaining({ query: "", targetNodeId: "tab:900" }));
+      expect(resultB.stateRequests).toBe(0);
+      expect(resultB.searchValue).toBe("");
+      expect(resultB.visibleRows).toContain(900);
+      expect(resultB.hasTargetHighlight).toBe(true);
+      expect(resultB.hasSearchRow).toBe(false);
+      await expect(pageB.getByRole("button", { name: "Undo", exact: true })).toBeDisabled();
+      await expect(pageB.getByRole("button", { name: "Redo", exact: true })).toBeEnabled();
       expect(issuesA).toEqual([]);
       expect(issuesB).toEqual([]);
     } finally {
@@ -7555,6 +8045,427 @@ test.describe("sidebar projection hunt", () => {
     expect(issues).toEqual([]);
   });
 
+  test("psh-keyboard-paste-during-pending-show-in-tree-target-waits", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadLargeSparseSidebar(page, { includeCoverage: true, fullStatePending: true });
+
+    await nodeRow(page, "tab:800").locator(".node-label").focus();
+    await page.keyboard.press("Control+X");
+    await expect(page.locator(nodeSelector("tab:800"))).toHaveClass(/is-cut/);
+
+    await page.locator("#search").fill("Tab 900");
+    await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      await api.waitForProjectionRequest("Tab 900");
+      api.resolveSliceForQuery("Tab 900");
+      await api.waitForVisibleRow(1);
+    });
+
+    await nodeRow(page, "tab:900").hover();
+    await nodeRow(page, "tab:900").getByRole("button", { name: "Show in tree", exact: true }).click();
+    await page.waitForFunction(() => projectionHuntApi().projectionRequests().some((request) => request.targetNodeId === "tab:900"));
+    await nodeRow(page, "tab:900").locator(".node-label").focus();
+    await page.keyboard.press("Control+V");
+
+    const result = await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      api.resolveSliceForTarget("tab:900", { start: 880, end: 940 });
+      await api.waitForVisibleRow(900);
+      await api.waitForIdleFrames(4);
+      return {
+        commands: api.sentCommands(),
+        requests: api.projectionRequests(),
+        stateRequests: api.stateRequestCount(),
+        searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
+        visibleRows: api.visibleRows(),
+        cutMarkers: document.querySelectorAll(".is-cut").length,
+        hasTargetHighlight: Boolean(document.querySelector("[data-node-id='tab:900'].is-reveal-highlight")),
+        hasSearchRow: Boolean(document.querySelector("[data-node-id='tab:900'].is-search-match"))
+      };
+    });
+
+    expect(result.commands).toEqual([{ type: "expandAncestors", nodeId: "tab:900" }]);
+    expect(result.requests).toContainEqual(expect.objectContaining({ query: "Tab 900", targetNodeId: undefined }));
+    expect(result.requests).toContainEqual(expect.objectContaining({ query: "", targetNodeId: "tab:900" }));
+    expect(result.stateRequests).toBe(1);
+    expect(result.searchValue).toBe("");
+    expect(result.visibleRows).toContain(900);
+    expect(result.cutMarkers).toBe(0);
+    expect(result.hasTargetHighlight).toBe(true);
+    expect(result.hasSearchRow).toBe(false);
+    await nodeRow(page, "tab:900").hover();
+    await expect(nodeRow(page, "tab:900").getByRole("button", { name: "Paste", exact: true })).toHaveCount(0);
+    expect(issues).toEqual([]);
+  });
+
+  test("psh-delayed-restore-scope-search-input-keeps-local-restore-after-dismiss", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    const dialogMessages: string[] = [];
+    page.on("dialog", async (dialog) => {
+      dialogMessages.push(dialog.message());
+      await dialog.dismiss();
+    });
+    await loadClosedRestoreSidebar(page, { fullStatePending: true, delayRestoreScope: true });
+
+    await nodeRow(page, "window:30").getByRole("button", { name: "Restore Closed Window", exact: true }).click();
+    await page.waitForFunction(() => projectionHuntApi().sentCommands().length === 1);
+    await page.locator("#search").fill("Closed tab 30");
+    await expect(nodeRow(page, "tab:30")).toBeVisible();
+
+    const result = await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      api.emitHistoryStatus({ canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "restore check" });
+      api.resolveRestoreScope();
+      await api.waitForIdleFrames(8);
+      return {
+        commands: api.sentCommands(),
+        stateRequests: api.stateRequestCount(),
+        searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
+        visibleRows: api.visibleRows(),
+        closedTabExists: Boolean(document.querySelector("[data-node-id='tab:30']")),
+        countText: document.querySelector("#state-count")?.textContent ?? ""
+      };
+    });
+
+    expect(result.commands).toEqual([{ type: "analyzeRestoreScope", nodeId: "window:30" }]);
+    expect(result.stateRequests).toBe(0);
+    expect(result.searchValue).toBe("Closed tab 30");
+    expect(result.visibleRows).toContain(1);
+    expect(result.closedTabExists).toBe(true);
+    expect(result.countText).toBe("4 items / 4 saved");
+    expect(dialogMessages).toHaveLength(1);
+    expect(dialogMessages[0]).toContain("Restore 4 restorable closed nodes");
+    expect(issues).toEqual([]);
+  });
+
+  test("psh-keyboard-redo-query-replacement-keeps-current-search", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadLargeSparseSidebar(page, {
+      includeCoverage: true,
+      fullStatePending: true,
+      historyStatus: { canUndo: false, canRedo: true, undoDepth: 0, redoDepth: 1, redoLabel: "remote edit" }
+    });
+
+    await page.locator("#search").fill("Tab 90");
+    await page.evaluate(async () => {
+      await projectionHuntApi().waitForProjectionRequest("Tab 90");
+    });
+    await page.locator("#search").fill("Tab 91");
+    await page.evaluate(async () => {
+      await projectionHuntApi().waitForProjectionRequest("Tab 91");
+    });
+    await nodeRow(page, "tab:800").locator(".node-label").focus();
+    await page.keyboard.press("Control+Shift+Z");
+    await page.waitForFunction(() => projectionHuntApi().sentCommands().some((command) => (
+      typeof command === "object" && command !== null && (command as { type?: unknown }).type === "redo"
+    )));
+
+    const result = await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      api.emitHistoryStatus({ canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "remote edit" });
+      api.resolveSliceForQuery("Tab 90");
+      await api.waitForIdleFrames(2);
+      api.resolveSliceForQuery("Tab 91");
+      await api.waitForVisibleRow(1);
+      await api.waitForIdleFrames(4);
+      return {
+        commands: api.sentCommands(),
+        requests: api.projectionRequests(),
+        stateRequests: api.stateRequestCount(),
+        searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
+        visibleRows: api.visibleRows(),
+        hasTab91: Boolean(document.querySelector("[data-node-id='tab:91']")),
+        hasTab90: Boolean(document.querySelector("[data-node-id='tab:90']")),
+        countText: document.querySelector("#state-count")?.textContent ?? ""
+      };
+    });
+
+    expect(result.commands).toEqual([{ type: "redo" }]);
+    expect(result.requests).toEqual([
+      expect.objectContaining({ query: "Tab 90", targetNodeId: undefined }),
+      expect.objectContaining({ query: "Tab 91", targetNodeId: undefined })
+    ]);
+    expect(result.stateRequests).toBe(0);
+    expect(result.searchValue).toBe("Tab 91");
+    expect(result.visibleRows).toContain(1);
+    expect(result.hasTab91).toBe(true);
+    expect(result.hasTab90).toBe(false);
+    expect(result.countText).toBe("11 matches / 1001 items");
+    await expect(page.getByRole("button", { name: "Undo", exact: true })).toBeEnabled();
+    await expect(page.getByRole("button", { name: "Redo", exact: true })).toBeDisabled();
+    expect(issues).toEqual([]);
+  });
+
+  test("psh-two-sidebars-restore-dialog-and-target-owner-stay-independent", async ({ page }) => {
+    const issuesA = collectPageIssues(page);
+    const dialogMessages: string[] = [];
+    page.on("dialog", async (dialog) => {
+      dialogMessages.push(dialog.message());
+      await dialog.dismiss();
+    });
+    await loadClosedRestoreSidebar(page, { fullStatePending: true, delayRestoreScope: true });
+    await nodeRow(page, "window:30").getByRole("button", { name: "Restore Closed Window", exact: true }).click();
+    await page.waitForFunction(() => projectionHuntApi().sentCommands().length === 1);
+
+    const pageB = await page.context().newPage();
+    const issuesB = collectPageIssues(pageB);
+    try {
+      await loadLargeSparseSidebar(pageB, { includeCoverage: true, fullStatePending: true });
+      await pageB.locator("#search").fill("Tab 900");
+      await pageB.evaluate(async () => {
+        const api = projectionHuntApi();
+        await api.waitForProjectionRequest("Tab 900");
+        api.resolveSliceForQuery("Tab 900");
+        await api.waitForVisibleRow(1);
+      });
+      await nodeRow(pageB, "tab:900").hover();
+      await nodeRow(pageB, "tab:900").getByRole("button", { name: "Show in tree", exact: true }).click();
+      await pageB.waitForFunction(() => projectionHuntApi().projectionRequests().some((request) => request.targetNodeId === "tab:900"));
+
+      const [resultA, resultB] = await Promise.all([
+        page.evaluate(async () => {
+          const api = projectionHuntApi();
+          api.emitHistoryStatus({ canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "restore check" });
+          api.resolveRestoreScope();
+          await api.waitForIdleFrames(8);
+          return {
+            commands: api.sentCommands(),
+            stateRequests: api.stateRequestCount(),
+            visibleRows: api.visibleRows(),
+            closedWindowExists: Boolean(document.querySelector("[data-node-id='window:30']"))
+          };
+        }),
+        pageB.evaluate(async () => {
+          const api = projectionHuntApi();
+          api.emitHistoryStatus({ canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "target check" });
+          api.resolveSliceForTarget("tab:900", { start: 880, end: 940 });
+          await api.waitForVisibleRow(900);
+          await api.waitForIdleFrames(4);
+          return {
+            commands: api.sentCommands(),
+            requests: api.projectionRequests(),
+            stateRequests: api.stateRequestCount(),
+            searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
+            visibleRows: api.visibleRows(),
+            hasTargetHighlight: Boolean(document.querySelector("[data-node-id='tab:900'].is-reveal-highlight")),
+            hasSearchRow: Boolean(document.querySelector("[data-node-id='tab:900'].is-search-match"))
+          };
+        })
+      ]);
+
+      expect(resultA.commands).toEqual([{ type: "analyzeRestoreScope", nodeId: "window:30" }]);
+      expect(resultA.stateRequests).toBe(0);
+      expect(resultA.visibleRows).toContain(0);
+      expect(resultA.closedWindowExists).toBe(true);
+      expect(dialogMessages).toHaveLength(1);
+      expect(dialogMessages[0]).toContain("Restore 4 restorable closed nodes");
+
+      expect(resultB.commands).toEqual([{ type: "expandAncestors", nodeId: "tab:900" }]);
+      expect(resultB.requests).toContainEqual(expect.objectContaining({ query: "Tab 900", targetNodeId: undefined }));
+      expect(resultB.requests).toContainEqual(expect.objectContaining({ query: "", targetNodeId: "tab:900" }));
+      expect(resultB.stateRequests).toBe(0);
+      expect(resultB.searchValue).toBe("");
+      expect(resultB.visibleRows).toContain(900);
+      expect(resultB.hasTargetHighlight).toBe(true);
+      expect(resultB.hasSearchRow).toBe(false);
+      expect(issuesA).toEqual([]);
+      expect(issuesB).toEqual([]);
+    } finally {
+      await pageB.close();
+    }
+  });
+
+  test("psh-delayed-restore-scope-search-clear-keeps-local-restore-after-dismiss", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    const dialogMessages: string[] = [];
+    page.on("dialog", async (dialog) => {
+      dialogMessages.push(dialog.message());
+      await dialog.dismiss();
+    });
+    await loadClosedRestoreSidebar(page, { fullStatePending: true, delayRestoreScope: true });
+
+    await nodeRow(page, "window:30").getByRole("button", { name: "Restore Closed Window", exact: true }).click();
+    await page.waitForFunction(() => projectionHuntApi().sentCommands().length === 1);
+    await page.locator("#search").fill("Closed tab 30");
+    await expect(nodeRow(page, "tab:30")).toBeVisible();
+    await page.locator("#clear-search").click();
+
+    const result = await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      api.emitHistoryStatus({ canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "restore check" });
+      api.resolveRestoreScope();
+      await api.waitForIdleFrames(8);
+      return {
+        commands: api.sentCommands(),
+        requests: api.projectionRequests(),
+        stateRequests: api.stateRequestCount(),
+        searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
+        visibleRows: api.visibleRows(),
+        closedWindowExists: Boolean(document.querySelector("[data-node-id='window:30']")),
+        closedTabExists: Boolean(document.querySelector("[data-node-id='tab:30']")),
+        countText: document.querySelector("#state-count")?.textContent ?? ""
+      };
+    });
+
+    expect(result.commands).toEqual([{ type: "analyzeRestoreScope", nodeId: "window:30" }]);
+    expect(result.requests).toEqual([expect.objectContaining({ query: "", targetNodeId: undefined })]);
+    expect(result.stateRequests).toBe(0);
+    expect(result.searchValue).toBe("");
+    expect(result.visibleRows).toContain(0);
+    expect(result.closedWindowExists).toBe(true);
+    expect(result.closedTabExists).toBe(true);
+    expect(result.countText).toBe("4 items / 4 saved");
+    expect(dialogMessages).toHaveLength(1);
+    expect(dialogMessages[0]).toContain("Restore 4 restorable closed nodes");
+    expect(issues).toEqual([]);
+  });
+
+  test("psh-keyboard-redo-during-pending-show-in-tree-target-keeps-target-owner", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadLargeSparseSidebar(page, {
+      includeCoverage: true,
+      fullStatePending: true,
+      historyStatus: { canUndo: false, canRedo: true, undoDepth: 0, redoDepth: 1, redoLabel: "target redo" }
+    });
+
+    await page.locator("#search").fill("Tab 900");
+    await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      await api.waitForProjectionRequest("Tab 900");
+      api.resolveSliceForQuery("Tab 900");
+      await api.waitForVisibleRow(1);
+    });
+    await nodeRow(page, "tab:900").hover();
+    await nodeRow(page, "tab:900").getByRole("button", { name: "Show in tree", exact: true }).click();
+    await page.waitForFunction(() => projectionHuntApi().projectionRequests().some((request) => request.targetNodeId === "tab:900"));
+    await nodeRow(page, "tab:900").locator(".node-label").focus();
+    await page.keyboard.press("Control+Shift+Z");
+    await page.waitForFunction(() => projectionHuntApi().sentCommands().some((command) => (
+      typeof command === "object" && command !== null && (command as { type?: unknown }).type === "redo"
+    )));
+
+    const result = await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      api.emitHistoryStatus({ canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "target redo" });
+      api.resolveSliceForTarget("tab:900", { start: 880, end: 940 });
+      await api.waitForVisibleRow(900);
+      await api.waitForIdleFrames(4);
+      return {
+        commands: api.sentCommands(),
+        requests: api.projectionRequests(),
+        stateRequests: api.stateRequestCount(),
+        searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
+        visibleRows: api.visibleRows(),
+        hasTargetHighlight: Boolean(document.querySelector("[data-node-id='tab:900'].is-reveal-highlight")),
+        hasSearchRow: Boolean(document.querySelector("[data-node-id='tab:900'].is-search-match"))
+      };
+    });
+
+    expect(result.commands).toEqual([
+      { type: "expandAncestors", nodeId: "tab:900" },
+      { type: "redo" }
+    ]);
+    expect(result.requests).toContainEqual(expect.objectContaining({ query: "Tab 900", targetNodeId: undefined }));
+    expect(result.requests).toContainEqual(expect.objectContaining({ query: "", targetNodeId: "tab:900" }));
+    expect(result.stateRequests).toBe(0);
+    expect(result.searchValue).toBe("");
+    expect(result.visibleRows).toContain(900);
+    expect(result.hasTargetHighlight).toBe(true);
+    expect(result.hasSearchRow).toBe(false);
+    await expect(page.getByRole("button", { name: "Undo", exact: true })).toBeEnabled();
+    await expect(page.getByRole("button", { name: "Redo", exact: true })).toBeDisabled();
+    expect(issues).toEqual([]);
+  });
+
+  test("psh-two-sidebars-restore-dialog-and-redo-query-stay-independent", async ({ page }) => {
+    const issuesA = collectPageIssues(page);
+    const dialogMessages: string[] = [];
+    page.on("dialog", async (dialog) => {
+      dialogMessages.push(dialog.message());
+      await dialog.dismiss();
+    });
+    await loadClosedRestoreSidebar(page, { fullStatePending: true, delayRestoreScope: true });
+    await nodeRow(page, "window:30").getByRole("button", { name: "Restore Closed Window", exact: true }).click();
+    await page.waitForFunction(() => projectionHuntApi().sentCommands().length === 1);
+
+    const pageB = await page.context().newPage();
+    const issuesB = collectPageIssues(pageB);
+    try {
+      await loadLargeSparseSidebar(pageB, {
+        includeCoverage: true,
+        fullStatePending: true,
+        historyStatus: { canUndo: false, canRedo: true, undoDepth: 0, redoDepth: 1, redoLabel: "remote edit" }
+      });
+      await pageB.locator("#search").fill("Tab 90");
+      await pageB.evaluate(async () => {
+        await projectionHuntApi().waitForProjectionRequest("Tab 90");
+      });
+      await pageB.locator("#search").fill("Tab 91");
+      await pageB.evaluate(async () => {
+        await projectionHuntApi().waitForProjectionRequest("Tab 91");
+      });
+      await nodeRow(pageB, "tab:800").locator(".node-label").focus();
+      await pageB.keyboard.press("Control+Shift+Z");
+      await pageB.waitForFunction(() => projectionHuntApi().sentCommands().some((command) => (
+        typeof command === "object" && command !== null && (command as { type?: unknown }).type === "redo"
+      )));
+
+      const [resultA, resultB] = await Promise.all([
+        page.evaluate(async () => {
+          const api = projectionHuntApi();
+          api.resolveRestoreScope();
+          await api.waitForIdleFrames(8);
+          return {
+            commands: api.sentCommands(),
+            stateRequests: api.stateRequestCount(),
+            visibleRows: api.visibleRows(),
+            closedWindowExists: Boolean(document.querySelector("[data-node-id='window:30']"))
+          };
+        }),
+        pageB.evaluate(async () => {
+          const api = projectionHuntApi();
+          api.emitHistoryStatus({ canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "remote edit" });
+          api.resolveSliceForQuery("Tab 90");
+          await api.waitForIdleFrames(2);
+          api.resolveSliceForQuery("Tab 91");
+          await api.waitForVisibleRow(1);
+          await api.waitForIdleFrames(4);
+          return {
+            commands: api.sentCommands(),
+            requests: api.projectionRequests(),
+            stateRequests: api.stateRequestCount(),
+            searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
+            visibleRows: api.visibleRows(),
+            hasTab91: Boolean(document.querySelector("[data-node-id='tab:91']")),
+            hasTab90: Boolean(document.querySelector("[data-node-id='tab:90']"))
+          };
+        })
+      ]);
+
+      expect(resultA.commands).toEqual([{ type: "analyzeRestoreScope", nodeId: "window:30" }]);
+      expect(resultA.stateRequests).toBe(0);
+      expect(resultA.visibleRows).toContain(0);
+      expect(resultA.closedWindowExists).toBe(true);
+      expect(dialogMessages).toHaveLength(1);
+      expect(dialogMessages[0]).toContain("Restore 4 restorable closed nodes");
+
+      expect(resultB.commands).toEqual([{ type: "redo" }]);
+      expect(resultB.requests).toEqual([
+        expect.objectContaining({ query: "Tab 90", targetNodeId: undefined }),
+        expect.objectContaining({ query: "Tab 91", targetNodeId: undefined })
+      ]);
+      expect(resultB.stateRequests).toBe(0);
+      expect(resultB.searchValue).toBe("Tab 91");
+      expect(resultB.visibleRows).toContain(1);
+      expect(resultB.hasTab91).toBe(true);
+      expect(resultB.hasTab90).toBe(false);
+      expect(issuesA).toEqual([]);
+      expect(issuesB).toEqual([]);
+    } finally {
+      await pageB.close();
+    }
+  });
+
   test("psh-drag-boundary-target-uses-covered-sibling-order-before-hydration", async ({ page }) => {
     const issues = collectPageIssues(page);
     await loadLargeSparseSidebar(page, { includeCoverage: true, fullStatePending: true });
@@ -7807,7 +8718,7 @@ async function loadRestoredWindowSidebar(
 
 async function loadClosedRestoreSidebar(
   page: Page,
-  options: { fullStatePending?: boolean; invalidRestoreScope?: boolean } = {}
+  options: { fullStatePending?: boolean; invalidRestoreScope?: boolean; delayRestoreScope?: boolean } = {}
 ): Promise<void> {
   await page.addInitScript(({ installerSource, harnessOptions }) => {
     const install = (0, eval)(`(${installerSource})`) as typeof installProjectionHuntHarness;
@@ -7823,7 +8734,8 @@ async function loadClosedRestoreSidebar(
       includeCoverage: true,
       restoredFixture: false,
       closedRestoreFixture: true,
-      invalidRestoreScope: Boolean(options.invalidRestoreScope)
+      invalidRestoreScope: Boolean(options.invalidRestoreScope),
+      delayRestoreScope: Boolean(options.delayRestoreScope)
     }
   });
 
@@ -7946,6 +8858,7 @@ type ProjectionHuntApi = {
   resolveSliceAt(index: number, override?: { start?: number; end?: number; includeCoverage?: boolean }): void;
   resolveSliceForQuery(query: string, override?: { start?: number; end?: number; includeCoverage?: boolean }): void;
   resolveSliceForTarget(targetNodeId: string, override?: { start?: number; end?: number; includeCoverage?: boolean }): void;
+  resolveRestoreScope(): void;
   rejectSliceAt(index: number): void;
   visibleRows(): number[];
   waitForVisibleRow(rowIndex: number): Promise<void>;
@@ -7986,6 +8899,7 @@ function installProjectionHuntHarness(options: {
   restoredFixture: boolean;
   closedRestoreFixture?: boolean;
   invalidRestoreScope?: boolean;
+  delayRestoreScope?: boolean;
   historyStatus?: HarnessHistoryStatus;
 }) {
   const now = 1_700_000_000_000;
@@ -8002,6 +8916,7 @@ function installProjectionHuntHarness(options: {
   let fullState = initialFullState();
   let fullStateResolver: ((value: unknown) => void) | undefined;
   let fullStateResolveQueued = false;
+  let restoreScopeResolver: ((value: unknown) => void) | undefined;
   let currentHistoryStatus = options.historyStatus ?? { canUndo: false, canRedo: false, undoDepth: 0, redoDepth: 0 };
 
   window.projectionHuntApi = () => ({
@@ -8015,6 +8930,7 @@ function installProjectionHuntHarness(options: {
     resolveSliceAt,
     resolveSliceForQuery,
     resolveSliceForTarget,
+    resolveRestoreScope,
     rejectSliceAt,
     visibleRows,
     waitForVisibleRow,
@@ -8078,17 +8994,13 @@ function installProjectionHuntHarness(options: {
         }
         if (type === "analyzeRestoreScope") {
           sentCommands.push(structuredClone(message));
-          if (options.invalidRestoreScope) {
-            return { ok: false };
+          const response = restoreScopeResponse();
+          if (options.delayRestoreScope) {
+            return new Promise((resolve) => {
+              restoreScopeResolver = resolve;
+            });
           }
-          return {
-            nodeIds: ["window:30", "tab:30", "tab:31", "tab:32"],
-            totalCount: 4,
-            tabCount: 3,
-            windowCount: 1,
-            threshold: 1,
-            requiresConfirmation: true
-          };
+          return response;
         }
         if (
           type === "closeNode" ||
@@ -8182,6 +9094,28 @@ function installProjectionHuntHarness(options: {
     }
     fullStateResolver(structuredClone(fullState));
     fullStateResolver = undefined;
+  }
+
+  function resolveRestoreScope() {
+    if (!restoreScopeResolver) {
+      throw new Error("No pending restore scope request");
+    }
+    restoreScopeResolver(restoreScopeResponse());
+    restoreScopeResolver = undefined;
+  }
+
+  function restoreScopeResponse() {
+    if (options.invalidRestoreScope) {
+      return { ok: false };
+    }
+    return {
+      nodeIds: ["window:30", "tab:30", "tab:31", "tab:32"],
+      totalCount: 4,
+      tabCount: 3,
+      windowCount: 1,
+      threshold: 1,
+      requiresConfirmation: true
+    };
   }
 
   function historyStatus(): HarnessHistoryStatus {

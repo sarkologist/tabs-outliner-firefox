@@ -19,12 +19,12 @@ pnpm perf:sidebar-projection-guard
 ## Last Projection Run
 
 - Completed: 2026-05-27
-- Strategy: sparse boundary hunt after the `PT-032` retraction, focused on remaining weak edges around coverage-aware drag/drop, missing-coverage refill recovery, restored/root drops, rename-to-show-in-tree replacement, and multi-sidebar independence while one sidebar owns a local boundary drag and another owns a target reveal.
-- Scenario ids: 161 `psh-*` Playwright discovery/regression scenarios
-- Distinct findings recorded: 31
-- Status: `PT-001` through `PT-031` fixed; no open projection findings. The sparse action follow-up hunt suspected `PT-032` around rename/search replacement, but the follow-up fix pass retracted it as a harness-ordering false positive and kept the corrected scenarios as required-passing coverage.
-- Clean blocks after latest finding: block 1 sampled covered boundary row drag/drop, missing-coverage drag/drop refill, and restored-tab root drop before hydration; block 2 sampled rename Escape/Enter crossing search-to-show-in-tree target replacement; block 3 sampled missing-coverage drag recovery after a covered sparse refill plus two-sidebar boundary drag/target independence. Each clean block passed targeted replay and full-corpus replay without a new distinct projection signature.
-- Perf gate: preflight `pnpm perf:sidebar-projection-guard -- --smoke` passed after a sandbox/web-server retry. The sparse boundary hunt corpus passed `pnpm exec playwright test tests/playwright/sidebar-projection-hunt.spec.ts --reporter=list --workers=1` with 161 scenarios. Final safety passed `pnpm run build` and `pnpm perf:sidebar-projection-guard`; the perf guard needed the usual outside-sandbox rerun for the local Playwright web server bind.
+- Strategy: restore/keyboard/temporal hunt after sparse boundary coverage, focused on closed-restore prompts, restored/delete shells, keyboard cut/paste/undo/redo across query and show-in-tree replacement, and multi-sidebar independence while one sidebar owns local keyboard/restore state and another owns search/target projection state.
+- Last completed run scenario ids: 176 `psh-*` Playwright discovery/regression scenarios
+- Distinct findings recorded: 33
+- Status: `PT-001` through `PT-031` fixed; `PT-033` and `PT-034` are open from the active restore/keyboard/temporal hunt. The sparse action follow-up hunt suspected `PT-032` around rename/search replacement, but the follow-up fix pass retracted it as a harness-ordering false positive and kept the corrected scenarios as required-passing coverage.
+- Clean blocks after latest finding: after `PT-034`, block 1 sampled history-only target preservation plus the existing restore/keyboard corpus and passed the full corpus at 170 scenarios; block 2 sampled delayed restore-scope search input, keyboard redo/query replacement, and two-sidebar restore-dialog/target independence and passed the full corpus at 173 scenarios; block 3 sampled delayed restore-scope search clear, keyboard redo during pending show-in-tree, and two-sidebar restore-dialog/redo-query independence and passed the full corpus at 176 scenarios. No new distinct projection signature appeared in those three complete active mutation blocks.
+- Verification: targeted clean-block replays passed, and `pnpm exec playwright test tests/playwright/sidebar-projection-hunt.spec.ts --reporter=list --workers=1` passed with 176 scenarios. Because `PT-033` and `PT-034` remain open discovery findings, the final fix-gate build/perf suite is deferred to the follow-up fix pass.
 
 ## Fix Analysis
 
@@ -45,7 +45,7 @@ pnpm perf:sidebar-projection-guard
 ## Finding Index
 
 - Fixed projection findings: `PT-001`, `PT-002`, `PT-003`, `PT-004`, `PT-005`, `PT-006`, `PT-007`, `PT-008`, `PT-009`, `PT-010`, `PT-011`, `PT-012`, `PT-013`, `PT-014`, `PT-015`, `PT-016`, `PT-017`, `PT-018`, `PT-019`, `PT-020`, `PT-021`, `PT-022`, `PT-023`, `PT-024`, `PT-025`, `PT-026`, `PT-027`, `PT-028`, `PT-029`, `PT-030`, `PT-031`
-- Open projection findings: none
+- Open projection findings: `PT-033`, `PT-034`
 - Retracted projection suspicions: `PT-032`
 
 ### PT-001 rejected sparse slice leaves viewport blank/no retry
@@ -509,3 +509,31 @@ pnpm exec playwright test tests/playwright/sidebar-projection-hunt.spec.ts --gre
 - Expected: after a sparse sidebar enters rename mode and then the user searches, the current search owner should win whether rename was canceled, explicitly committed, or committed by blur; `#search = "Tab 900"` should render the `Tab 900` search result and search count chrome without full hydration.
 - Original suspicion: the visible projection remained normal outline rows and the count stayed `1001 items / 0 saved` while the search input contained `Tab 900`.
 - Retraction: the failing repro was resolving an older outline refill request created when the test scrolled to the window row to start rename, then it never resolved the later debounced search request. The corrected scenarios deliberately resolve that stale outline slice first, wait for the `Tab 900` search request, resolve it, and pass without product changes. The coverage remains useful because it proves rename blur, Escape cancel, and Enter commit do not block current search ownership once the current search response arrives.
+
+### PT-033 delayed closed-restore scope can prompt after target deletion
+
+- Status: open
+- Found by: `psh-restore-scope-response-after-delete-does-not-prompt-stale-restore`
+- Repro:
+
+```sh
+pnpm exec playwright test tests/playwright/sidebar-projection-hunt.spec.ts --grep "psh-restore-scope-response-after-delete-does-not-prompt-stale-restore" --reporter=list --workers=1
+```
+
+- Expected: if the closed restore target is deleted before a delayed `analyzeRestoreScope` response resolves, that stale scope response should not prompt the user or send a restore for the removed subtree.
+- Actual: after the compact delete patch removes `window:30` and its closed children, resolving the old scope response still opens the large-restore confirmation dialog for the deleted subtree.
+- Evidence: the frozen scenario delays `analyzeRestoreScope`, clicks `Restore Closed Window`, emits history status plus a `treeStructureUpdated` delete patch for `window:30`, `tab:30`, `tab:31`, and `tab:32`, then resolves the old scope response. Playwright observes the confirmation dialog text `Restore 4 restorable closed nodes...`; the row shell is already absent and no full `getState` occurs.
+
+### PT-034 pending target reveal can be lost by history/title patch before target response
+
+- Status: open
+- Found by: `psh-two-sidebars-keyboard-undo-and-target-stale-scroll-stay-independent`
+- Repro:
+
+```sh
+pnpm exec playwright test tests/playwright/sidebar-projection-hunt.spec.ts --grep "psh-two-sidebars-keyboard-undo-and-target-stale-scroll-stay-independent" --reporter=list --workers=1
+```
+
+- Expected: when one sidebar has a current show-in-tree target request pending, a concurrent history-status/title patch should not demote that target owner; resolving the target slice should reveal `tab:900` with the search box cleared.
+- Actual: after the history/title patch arrives before the target slice resolves, the target response does not paint row `900`; the sidebar falls back to normal outline rows around the previous sparse window.
+- Evidence: the frozen multi-sidebar scenario keeps sidebar A on a pending sparse scroll plus keyboard undo, while sidebar B searches `Tab 900`, starts `Show in tree`, receives a history status and title patch for `tab:900`, then resolves the pending target slice. Sidebar B times out waiting for visible row `900`, with outline chrome and rows around `760..800` instead of the reveal target.
