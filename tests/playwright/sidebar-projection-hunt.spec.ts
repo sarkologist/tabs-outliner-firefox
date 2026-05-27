@@ -1846,6 +1846,1201 @@ test.describe("sidebar projection hunt", () => {
     expect(issues).toEqual([]);
   });
 
+  test("psh-show-in-tree-noncovering-target-response-restores-outline", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadLargeSparseSidebar(page, { fullStatePending: true });
+
+    await page.locator("#search").fill("Tab 900");
+    await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      await api.waitForSparseRequestCount(1);
+      api.resolveSliceAt(0);
+      await api.waitForIdleFrames(3);
+    });
+
+    const row = nodeRow(page, "tab:900");
+    await expect(row).toBeVisible();
+    await row.hover();
+    await row.getByRole("button", { name: "Show in tree", exact: true }).click();
+
+    const result = await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      await api.waitForSparseRequestCount(2);
+      api.resolveSliceAt(0, { start: 200, end: 230 });
+      await api.waitForIdleFrames(4);
+      return {
+        requests: api.projectionRequests(),
+        visibleRows: api.visibleRows(),
+        searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
+        countText: document.querySelector("#state-count")?.textContent ?? "",
+        hasRevealHighlight: Boolean(document.querySelector(".is-reveal-highlight")),
+        targetExists: Boolean(document.querySelector("[data-node-id='tab:900']"))
+      };
+    });
+
+    expect(result.requests.at(-1)).toMatchObject({ query: "", targetNodeId: "tab:900" });
+    expect(result.searchValue).toBe("");
+    expect(result.countText).toBe("1001 items / 0 saved");
+    expect(result.visibleRows).toContain(800);
+    expect(result.visibleRows).not.toContain(200);
+    expect(result.targetExists).toBe(false);
+    expect(result.hasRevealHighlight).toBe(false);
+    expect(issues).toEqual([]);
+  });
+
+  test("psh-rapid-show-in-tree-last-target-wins-highlight", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadLargeSparseSidebar(page, { fullStatePending: true });
+
+    await page.locator("#search").fill("Tab 90");
+    await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      await api.waitForSparseRequestCount(1);
+      api.resolveSliceAt(0);
+      await api.waitForIdleFrames(3);
+    });
+
+    await expect(nodeRow(page, "tab:900")).toBeVisible();
+    await expect(nodeRow(page, "tab:901")).toBeVisible();
+    await nodeRow(page, "tab:900").hover();
+    await nodeRow(page, "tab:900").getByRole("button", { name: "Show in tree", exact: true }).click();
+    await page.waitForFunction(() => projectionHuntApi().sparseRequestCount() >= 2);
+
+    await page.locator("#search").fill("Tab 901");
+    await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      await api.waitForSparseRequestCount(3);
+      api.resolveSliceAt(1);
+      await api.waitForIdleFrames(3);
+    });
+
+    await expect(nodeRow(page, "tab:901")).toBeVisible();
+    await nodeRow(page, "tab:901").hover();
+    await nodeRow(page, "tab:901").getByRole("button", { name: "Show in tree", exact: true }).click();
+
+    const result = await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      await api.waitForSparseRequestCount(4);
+      api.resolveSliceAt(0);
+      await api.waitForIdleFrames(3);
+      const afterStaleFirstTarget = {
+        visibleRows: api.visibleRows(),
+        hasTab900Highlight: Boolean(document.querySelector("[data-node-id='tab:900'].is-reveal-highlight")),
+        hasTab901Highlight: Boolean(document.querySelector("[data-node-id='tab:901'].is-reveal-highlight")),
+        searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? ""
+      };
+
+      api.resolveSliceAt(0);
+      await api.waitForVisibleRow(901);
+      await api.waitForIdleFrames(3);
+      return {
+        requests: api.projectionRequests(),
+        afterStaleFirstTarget,
+        finalVisibleRows: api.visibleRows(),
+        finalSearchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
+        finalViewportStartRow: api.viewportStartRow(),
+        hasTab900Highlight: Boolean(document.querySelector("[data-node-id='tab:900'].is-reveal-highlight")),
+        hasTab901Highlight: Boolean(document.querySelector("[data-node-id='tab:901'].is-reveal-highlight"))
+      };
+    });
+
+    expect(result.requests.map((request) => ({
+      query: request.query,
+      targetNodeId: request.targetNodeId
+    }))).toEqual([
+      { query: "Tab 90", targetNodeId: undefined },
+      { query: "", targetNodeId: "tab:900" },
+      { query: "Tab 901", targetNodeId: undefined },
+      { query: "", targetNodeId: "tab:901" }
+    ]);
+    expect(result.afterStaleFirstTarget.searchValue).toBe("");
+    expect(result.afterStaleFirstTarget.hasTab900Highlight).toBe(false);
+    expect(result.finalSearchValue).toBe("");
+    expect(result.finalVisibleRows).toContain(901);
+    expect(result.finalViewportStartRow).toBeGreaterThanOrEqual(881);
+    expect(result.finalViewportStartRow).toBeLessThanOrEqual(921);
+    expect(result.hasTab900Highlight).toBe(false);
+    expect(result.hasTab901Highlight).toBe(true);
+    await expect(page.locator(`${nodeSelector("tab:901")}.is-reveal-highlight`)).toBeVisible();
+    expect(issues).toEqual([]);
+  });
+
+  test("psh-show-in-tree-hover-controls-survive-background-refill", async ({ page }) => {
+    test.fail(true, "PT-017: show-in-tree target reveal can lose its target after background refill");
+    const issues = collectPageIssues(page);
+    await loadLargeSparseSidebar(page, { fullStatePending: true });
+
+    await page.locator("#search").fill("Tab 900");
+    await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      await api.waitForSparseRequestCount(1);
+      api.resolveSliceAt(0);
+      await api.waitForIdleFrames(3);
+    });
+
+    await expect(nodeRow(page, "tab:900")).toBeVisible();
+    await nodeRow(page, "tab:900").hover();
+    await nodeRow(page, "tab:900").getByRole("button", { name: "Show in tree", exact: true }).click();
+
+    await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      await api.waitForSparseRequestCount(2);
+      api.resolveSliceAt(0);
+      await api.waitForVisibleRow(900);
+      await api.waitForIdleFrames(3);
+    });
+
+    const targetRow = nodeRow(page, "tab:900");
+    await expect(targetRow).toBeVisible();
+    await expect(page.locator(`${nodeSelector("tab:900")}.is-reveal-highlight`)).toBeVisible();
+    await targetRow.hover();
+    await expect(targetRow.getByRole("button", { name: "Cut", exact: true })).toBeVisible();
+    await expect(targetRow.getByRole("button", { name: "Move to top level", exact: true })).toBeVisible();
+    await expect(targetRow.getByRole("button", { name: "Close", exact: true })).toBeVisible();
+    await expect(targetRow.getByRole("button", { name: "Delete", exact: true })).toBeVisible();
+
+    const result = await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      api.emitDeletePatch(Array.from({ length: 28 }, (_value, index) => `tab:${901 + index}`));
+      await api.waitForIdleFrames(3);
+      if (api.sparseRequestCount() > 2) {
+        api.resolveSliceAt(0);
+        await api.waitForIdleFrames(4);
+      }
+      return {
+        requests: api.projectionRequests(),
+        searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
+        visibleRows: api.visibleRows(),
+        hasRevealHighlight: Boolean(document.querySelector("[data-node-id='tab:900'].is-reveal-highlight")),
+        deletedStillRendered: Array.from({ length: 28 }, (_value, index) => (
+          Boolean(document.querySelector(`[data-node-id="tab:${901 + index}"]`))
+        )).some(Boolean)
+      };
+    });
+
+    expect(result.searchValue).toBe("");
+    expect(result.visibleRows).toContain(900);
+    expect(result.hasRevealHighlight).toBe(true);
+    expect(result.deletedStillRendered).toBe(false);
+    await targetRow.hover();
+    await expect(targetRow.getByRole("button", { name: "Cut", exact: true })).toBeVisible();
+    await expect(targetRow.getByRole("button", { name: "Move to top level", exact: true })).toBeVisible();
+    await expect(targetRow.getByRole("button", { name: "Close", exact: true })).toBeVisible();
+    await expect(result.requests).toContainEqual(expect.objectContaining({ query: "", targetNodeId: "tab:900" }));
+    expect(issues).toEqual([]);
+  });
+
+  test("psh-target-response-after-rejected-new-query-does-not-reveal-stale-target", async ({ page }) => {
+    test.fail(true, "PT-016: rejected newer search can leave older search projection under the current query");
+    const issues = collectPageIssues(page);
+    await loadLargeSparseSidebar(page, { fullStatePending: true });
+
+    await page.locator("#search").fill("Tab 900");
+    await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      await api.waitForSparseRequestCount(1);
+      api.resolveSliceAt(0);
+      await api.waitForIdleFrames(3);
+    });
+
+    const row = nodeRow(page, "tab:900");
+    await expect(row).toBeVisible();
+    await row.hover();
+    await row.getByRole("button", { name: "Show in tree", exact: true }).click();
+    await page.waitForFunction(() => projectionHuntApi().sparseRequestCount() >= 2);
+
+    await page.locator("#search").fill("Tab 91");
+
+    const result = await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      await api.waitForSparseRequestCount(3);
+      api.rejectSliceAt(1);
+      await api.waitForIdleFrames(3);
+      api.resolveSliceAt(0);
+      await api.waitForIdleFrames(4);
+      return {
+        requests: api.projectionRequests(),
+        searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
+        countText: document.querySelector("#state-count")?.textContent ?? "",
+        visibleRows: api.visibleRows(),
+        hasRevealHighlight: Boolean(document.querySelector(".is-reveal-highlight")),
+        hasTab900: Boolean(document.querySelector("[data-node-id='tab:900']")),
+        hasTab91: Boolean(document.querySelector("[data-node-id='tab:91']"))
+      };
+    });
+
+    expect(result.requests.map((request) => ({
+      query: request.query,
+      targetNodeId: request.targetNodeId
+    }))).toEqual([
+      { query: "Tab 900", targetNodeId: undefined },
+      { query: "", targetNodeId: "tab:900" },
+      { query: "Tab 91", targetNodeId: undefined }
+    ]);
+    expect(result.searchValue).toBe("Tab 91");
+    expect(result.countText).toBe("1001 items / 0 saved");
+    expect(result.visibleRows).toContain(800);
+    expect(result.hasRevealHighlight).toBe(false);
+    expect(result.hasTab900).toBe(false);
+    expect(result.hasTab91).toBe(false);
+    expect(issues.filter((issue) => issue.kind !== "console")).toEqual([]);
+  });
+
+  test("psh-show-in-tree-stale-target-after-search-clear-keeps-outline", async ({ page }) => {
+    test.fail(true, "PT-018: stale target response can restore old search chrome after clear-search");
+    const issues = collectPageIssues(page);
+    await loadLargeSparseSidebar(page, { fullStatePending: true });
+
+    await page.locator("#search").fill("Tab 900");
+    await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      await api.waitForSparseRequestCount(1);
+      api.resolveSliceAt(0);
+      await api.waitForIdleFrames(3);
+    });
+
+    await expect(nodeRow(page, "tab:900")).toBeVisible();
+    await nodeRow(page, "tab:900").hover();
+    await nodeRow(page, "tab:900").getByRole("button", { name: "Show in tree", exact: true }).click();
+    await page.waitForFunction(() => projectionHuntApi().sparseRequestCount() >= 2);
+
+    await page.locator("#search").fill("Tab 91");
+    await page.waitForFunction(() => projectionHuntApi().sparseRequestCount() >= 3);
+    await page.locator("#clear-search").click();
+
+    const result = await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      await api.waitForSparseRequestCount(4);
+
+      api.resolveSliceAt(0);
+      await api.waitForIdleFrames(3);
+      const afterStaleTarget = {
+        searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
+        countText: document.querySelector("#state-count")?.textContent ?? "",
+        visibleRows: api.visibleRows(),
+        hasRevealHighlight: Boolean(document.querySelector(".is-reveal-highlight")),
+        hasTab900: Boolean(document.querySelector("[data-node-id='tab:900']"))
+      };
+
+      api.resolveSliceAt(0);
+      await api.waitForIdleFrames(3);
+      const afterStaleSearch = {
+        searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
+        countText: document.querySelector("#state-count")?.textContent ?? "",
+        visibleRows: api.visibleRows(),
+        hasTab91: Boolean(document.querySelector("[data-node-id='tab:91']"))
+      };
+
+      api.resolveSliceAt(0);
+      await api.waitForIdleFrames(4);
+      return {
+        requests: api.projectionRequests(),
+        afterStaleTarget,
+        afterStaleSearch,
+        searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
+        countText: document.querySelector("#state-count")?.textContent ?? "",
+        visibleRows: api.visibleRows(),
+        hasRevealHighlight: Boolean(document.querySelector(".is-reveal-highlight")),
+        hasTab900: Boolean(document.querySelector("[data-node-id='tab:900']")),
+        hasTab91: Boolean(document.querySelector("[data-node-id='tab:91']"))
+      };
+    });
+
+    expect(result.requests.map((request) => ({
+      query: request.query,
+      targetNodeId: request.targetNodeId
+    }))).toEqual([
+      { query: "Tab 900", targetNodeId: undefined },
+      { query: "", targetNodeId: "tab:900" },
+      { query: "Tab 91", targetNodeId: undefined },
+      { query: "", targetNodeId: undefined }
+    ]);
+    expect(result.afterStaleTarget.searchValue).toBe("");
+    expect(result.afterStaleTarget.countText).toBe("1001 items / 0 saved");
+    expect(result.afterStaleTarget.visibleRows).toContain(800);
+    expect(result.afterStaleTarget.hasRevealHighlight).toBe(false);
+    expect(result.afterStaleTarget.hasTab900).toBe(false);
+    expect(result.afterStaleSearch.searchValue).toBe("");
+    expect(result.afterStaleSearch.countText).toBe("1001 items / 0 saved");
+    expect(result.afterStaleSearch.visibleRows).toContain(800);
+    expect(result.afterStaleSearch.hasTab91).toBe(false);
+    expect(result.searchValue).toBe("");
+    expect(result.countText).toBe("1001 items / 0 saved");
+    expect(result.visibleRows.length).toBeGreaterThan(0);
+    expect(result.hasRevealHighlight).toBe(false);
+    expect(result.hasTab900).toBe(false);
+    expect(result.hasTab91).toBe(false);
+    expect(issues).toEqual([]);
+  });
+
+  test("psh-show-in-tree-missing-coverage-restores-actions-after-hydration", async ({ page }) => {
+    test.fail(true, "PT-019: target projection without coverage can expose edit actions while hydrating");
+    const issues = collectPageIssues(page);
+    await loadLargeSparseSidebar(page, { includeCoverage: false, fullStatePending: true });
+
+    await page.locator("#search").fill("Tab 900");
+    await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      await api.waitForSparseRequestCount(1);
+      api.resolveSliceAt(0);
+      await api.waitForIdleFrames(3);
+    });
+
+    await expect(nodeRow(page, "tab:900")).toBeVisible();
+    await nodeRow(page, "tab:900").hover();
+    await nodeRow(page, "tab:900").getByRole("button", { name: "Show in tree", exact: true }).click();
+
+    await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      await api.waitForSparseRequestCount(2);
+      api.resolveSliceAt(0);
+      await api.waitForVisibleRow(900);
+      await api.waitForIdleFrames(3);
+    });
+
+    const targetRow = nodeRow(page, "tab:900");
+    await expect(targetRow).toBeVisible();
+    await expect(page.locator(`${nodeSelector("tab:900")}.is-reveal-highlight`)).toBeVisible();
+    await targetRow.hover();
+    await expect(targetRow.getByRole("button", { name: "Cut", exact: true })).toHaveCount(0);
+    await expect(targetRow.getByRole("button", { name: "Move to top level", exact: true })).toHaveCount(0);
+    await expect(targetRow.getByRole("button", { name: "Close", exact: true })).toHaveCount(0);
+
+    const result = await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      api.resolveFullState();
+      await api.waitForIdleFrames(20);
+      return {
+        requests: api.projectionRequests(),
+        visibleRows: api.visibleRows(),
+        searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
+        hasRevealHighlight: Boolean(document.querySelector("[data-node-id='tab:900'].is-reveal-highlight"))
+      };
+    });
+
+    expect(result.requests.map((request) => ({
+      query: request.query,
+      targetNodeId: request.targetNodeId
+    }))).toEqual([
+      { query: "Tab 900", targetNodeId: undefined },
+      { query: "", targetNodeId: "tab:900" }
+    ]);
+    expect(result.searchValue).toBe("");
+    expect(result.visibleRows).toContain(900);
+    expect(result.hasRevealHighlight).toBe(true);
+    await targetRow.hover();
+    await expect(targetRow.getByRole("button", { name: "Cut", exact: true })).toBeVisible();
+    await expect(targetRow.getByRole("button", { name: "Move to top level", exact: true })).toBeVisible();
+    await expect(targetRow.getByRole("button", { name: "Close", exact: true })).toBeVisible();
+    expect(issues).toEqual([]);
+  });
+
+  test("psh-two-sidebars-target-and-search-intents-survive-shared-title-patch", async ({ page }) => {
+    test.fail(true, "Duplicate PT-017: background patch can dislodge a target reveal");
+    const issuesA = collectPageIssues(page);
+    await loadLargeSparseSidebar(page, { fullStatePending: true });
+
+    const pageB = await page.context().newPage();
+    const issuesB = collectPageIssues(pageB);
+    try {
+      await loadLargeSparseSidebar(pageB, { fullStatePending: true });
+
+      await page.locator("#search").fill("Tab 900");
+      await page.evaluate(async () => {
+        const api = projectionHuntApi();
+        await api.waitForSparseRequestCount(1);
+        api.resolveSliceAt(0);
+        await api.waitForIdleFrames(3);
+      });
+
+      await pageB.locator("#search").fill("Tab 91");
+      await pageB.evaluate(async () => {
+        const api = projectionHuntApi();
+        await api.waitForSparseRequestCount(1);
+        api.resolveSliceAt(0);
+        await api.waitForIdleFrames(3);
+      });
+
+      await expect(nodeRow(page, "tab:900")).toBeVisible();
+      await expect(nodeRow(pageB, "tab:91")).toBeVisible();
+      await nodeRow(page, "tab:900").hover();
+      await nodeRow(page, "tab:900").getByRole("button", { name: "Show in tree", exact: true }).click();
+
+      await page.evaluate(async () => {
+        const api = projectionHuntApi();
+        await api.waitForSparseRequestCount(2);
+        api.resolveSliceAt(0);
+        await api.waitForVisibleRow(900);
+        await api.waitForIdleFrames(3);
+      });
+
+      const [resultA, resultB] = await Promise.all([
+        page.evaluate(async () => {
+          const api = projectionHuntApi();
+          api.emitTitlePatch("tab:91", "Tab 91 patched from shared background");
+          await api.waitForIdleFrames(4);
+          return {
+            commands: api.sentCommands(),
+            requests: api.projectionRequests(),
+            searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
+            visibleRows: api.visibleRows(),
+            hasTab900Highlight: Boolean(document.querySelector("[data-node-id='tab:900'].is-reveal-highlight")),
+            hasTab91: Boolean(document.querySelector("[data-node-id='tab:91']"))
+          };
+        }),
+        pageB.evaluate(async () => {
+          const api = projectionHuntApi();
+          api.emitTitlePatch("tab:91", "Tab 91 patched from shared background");
+          await api.waitForIdleFrames(4);
+          if (api.sparseRequestCount() > 1) {
+            api.resolveSliceAt(0);
+            await api.waitForIdleFrames(4);
+          }
+          return {
+            commands: api.sentCommands(),
+            requests: api.projectionRequests(),
+            searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
+            countText: document.querySelector("#state-count")?.textContent ?? "",
+            visibleRows: api.visibleRows(),
+            tab91Text: document.querySelector("[data-node-id='tab:91']")?.textContent ?? ""
+          };
+        })
+      ]);
+
+      expect(resultA.commands).toContainEqual({ type: "expandAncestors", nodeId: "tab:900" });
+      expect(resultA.requests.map((request) => ({
+        query: request.query,
+        targetNodeId: request.targetNodeId
+      }))).toEqual([
+        { query: "Tab 900", targetNodeId: undefined },
+        { query: "", targetNodeId: "tab:900" }
+      ]);
+      expect(resultA.searchValue).toBe("");
+      expect(resultA.visibleRows).toContain(900);
+      expect(resultA.hasTab900Highlight).toBe(true);
+      expect(resultA.hasTab91).toBe(false);
+
+      expect(resultB.commands).toEqual([]);
+      expect(resultB.requests.map((request) => request.query)).toContain("Tab 91");
+      expect(resultB.searchValue).toBe("Tab 91");
+      expect(resultB.countText).toBe("11 matches / 1001 items");
+      expect(resultB.visibleRows).toContain(1);
+      expect(resultB.tab91Text).toContain("Tab 91 patched from shared background");
+      await expect(page.locator(`${nodeSelector("tab:900")}.is-reveal-highlight`)).toBeVisible();
+      await expect(nodeRow(pageB, "tab:91")).toContainText("Tab 91 patched from shared background");
+      expect(issuesA).toEqual([]);
+      expect(issuesB).toEqual([]);
+    } finally {
+      await pageB.close();
+    }
+  });
+
+  test("psh-two-sidebars-search-and-scroll-intents-survive-shared-title-patch", async ({ page }) => {
+    const issuesA = collectPageIssues(page);
+    await loadLargeSparseSidebar(page, { fullStatePending: true });
+
+    const pageB = await page.context().newPage();
+    const issuesB = collectPageIssues(pageB);
+    try {
+      await loadLargeSparseSidebar(pageB, { fullStatePending: true });
+
+      await page.locator("#search").fill("Tab 91");
+      await page.evaluate(async () => {
+        const api = projectionHuntApi();
+        await api.waitForSparseRequestCount(1);
+        api.resolveSliceAt(0);
+        await api.waitForIdleFrames(3);
+      });
+
+      await pageB.evaluate(async () => {
+        const api = projectionHuntApi();
+        await api.scrollToRow(250);
+        await api.waitForSparseRequestCount(1);
+        api.resolveSliceAt(0);
+        await api.waitForVisibleRow(250);
+        await api.waitForIdleFrames(3);
+      });
+
+      await expect(nodeRow(page, "tab:91")).toBeVisible();
+      await expect(nodeRow(pageB, "tab:250")).toBeVisible();
+
+      const [resultA, resultB] = await Promise.all([
+        page.evaluate(async () => {
+          const api = projectionHuntApi();
+          api.emitTitlePatch("tab:91", "Tab 91 patched from shared background");
+          await api.waitForIdleFrames(4);
+          if (api.sparseRequestCount() > 1) {
+            api.resolveSliceAt(0);
+            await api.waitForIdleFrames(4);
+          }
+          return {
+            commands: api.sentCommands(),
+            requests: api.projectionRequests(),
+            searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
+            countText: document.querySelector("#state-count")?.textContent ?? "",
+            visibleRows: api.visibleRows(),
+            tab91Text: document.querySelector("[data-node-id='tab:91']")?.textContent ?? ""
+          };
+        }),
+        pageB.evaluate(async () => {
+          const api = projectionHuntApi();
+          api.emitTitlePatch("tab:91", "Tab 91 patched from shared background");
+          await api.waitForIdleFrames(4);
+          return {
+            commands: api.sentCommands(),
+            requests: api.projectionRequests(),
+            searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
+            countText: document.querySelector("#state-count")?.textContent ?? "",
+            visibleRows: api.visibleRows(),
+            hasTab91: Boolean(document.querySelector("[data-node-id='tab:91']"))
+          };
+        })
+      ]);
+
+      expect(resultA.commands).toEqual([]);
+      expect(resultA.requests.map((request) => request.query)).toContain("Tab 91");
+      expect(resultA.searchValue).toBe("Tab 91");
+      expect(resultA.countText).toBe("11 matches / 1001 items");
+      expect(resultA.visibleRows).toContain(1);
+      expect(resultA.tab91Text).toContain("Tab 91 patched from shared background");
+
+      expect(resultB.commands).toEqual([]);
+      expect(resultB.requests.map((request) => request.query)).toEqual([""]);
+      expect(resultB.searchValue).toBe("");
+      expect(resultB.countText).toBe("1001 items / 0 saved");
+      expect(resultB.visibleRows).toContain(250);
+      expect(resultB.hasTab91).toBe(false);
+      await expect(nodeRow(page, "tab:91")).toContainText("Tab 91 patched from shared background");
+      await expect(nodeRow(pageB, "tab:250")).toBeVisible();
+      expect(issuesA).toEqual([]);
+      expect(issuesB).toEqual([]);
+    } finally {
+      await pageB.close();
+    }
+  });
+
+  test("psh-two-sidebars-independent-searches-survive-shared-history-patch", async ({ page }) => {
+    const issuesA = collectPageIssues(page);
+    await loadLargeSparseSidebar(page, {
+      fullStatePending: true,
+      historyStatus: { canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "remote edit" }
+    });
+
+    const pageB = await page.context().newPage();
+    const issuesB = collectPageIssues(pageB);
+    try {
+      await loadLargeSparseSidebar(pageB, {
+        fullStatePending: true,
+        historyStatus: { canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "remote edit" }
+      });
+
+      await page.locator("#search").fill("Tab 91");
+      await page.evaluate(async () => {
+        const api = projectionHuntApi();
+        await api.waitForSparseRequestCount(1);
+        api.resolveSliceAt(0);
+        await api.waitForIdleFrames(3);
+      });
+
+      await pageB.locator("#search").fill("Tab 900");
+      await pageB.evaluate(async () => {
+        const api = projectionHuntApi();
+        await api.waitForSparseRequestCount(1);
+        api.resolveSliceAt(0);
+        await api.waitForIdleFrames(3);
+      });
+
+      await expect(nodeRow(page, "tab:91")).toBeVisible();
+      await expect(nodeRow(pageB, "tab:900")).toBeVisible();
+
+      const [resultA, resultB] = await Promise.all([
+        page.evaluate(async () => {
+          const api = projectionHuntApi();
+          api.emitHistoryStatus({ canUndo: false, canRedo: true, undoDepth: 0, redoDepth: 1, redoLabel: "remote edit" });
+          api.emitTitlePatch("tab:91", "Tab 91 shared history patched");
+          await api.waitForIdleFrames(4);
+          if (api.sparseRequestCount() > 1) {
+            api.resolveSliceAt(0);
+            await api.waitForIdleFrames(4);
+          }
+          return {
+            commands: api.sentCommands(),
+            requests: api.projectionRequests(),
+            stateRequestCount: api.stateRequestCount(),
+            searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
+            countText: document.querySelector("#state-count")?.textContent ?? "",
+            visibleRows: api.visibleRows(),
+            tab91Text: document.querySelector("[data-node-id='tab:91']")?.textContent ?? "",
+            hasTab900: Boolean(document.querySelector("[data-node-id='tab:900']"))
+          };
+        }),
+        pageB.evaluate(async () => {
+          const api = projectionHuntApi();
+          api.emitHistoryStatus({ canUndo: false, canRedo: true, undoDepth: 0, redoDepth: 1, redoLabel: "remote edit" });
+          api.emitTitlePatch("tab:900", "Tab 900 shared history patched");
+          await api.waitForIdleFrames(4);
+          if (api.sparseRequestCount() > 1) {
+            api.resolveSliceAt(0);
+            await api.waitForIdleFrames(4);
+          }
+          return {
+            commands: api.sentCommands(),
+            requests: api.projectionRequests(),
+            stateRequestCount: api.stateRequestCount(),
+            searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
+            countText: document.querySelector("#state-count")?.textContent ?? "",
+            visibleRows: api.visibleRows(),
+            tab900Text: document.querySelector("[data-node-id='tab:900']")?.textContent ?? "",
+            hasTab91: Boolean(document.querySelector("[data-node-id='tab:91']"))
+          };
+        })
+      ]);
+
+      expect(resultA.commands).toEqual([]);
+      expect(resultA.requests.every((request) => request.query === "Tab 91")).toBe(true);
+      expect(resultA.stateRequestCount).toBe(0);
+      expect(resultA.searchValue).toBe("Tab 91");
+      expect(resultA.countText).toBe("11 matches / 1001 items");
+      expect(resultA.visibleRows).toContain(1);
+      expect(resultA.tab91Text).toContain("Tab 91 shared history patched");
+      expect(resultA.hasTab900).toBe(false);
+
+      expect(resultB.commands).toEqual([]);
+      expect(resultB.requests.every((request) => request.query === "Tab 900")).toBe(true);
+      expect(resultB.stateRequestCount).toBe(0);
+      expect(resultB.searchValue).toBe("Tab 900");
+      expect(resultB.countText).toBe("1 match / 1001 items");
+      expect(resultB.visibleRows).toContain(1);
+      expect(resultB.tab900Text).toContain("Tab 900 shared history patched");
+      expect(resultB.hasTab91).toBe(false);
+      await expect(page.getByRole("button", { name: "Undo", exact: true })).toBeDisabled();
+      await expect(page.getByRole("button", { name: "Redo", exact: true })).toBeEnabled();
+      await expect(pageB.getByRole("button", { name: "Undo", exact: true })).toBeDisabled();
+      await expect(pageB.getByRole("button", { name: "Redo", exact: true })).toBeEnabled();
+      await expect(nodeRow(page, "tab:91")).toContainText("Tab 91 shared history patched");
+      await expect(nodeRow(pageB, "tab:900")).toContainText("Tab 900 shared history patched");
+      expect(issuesA).toEqual([]);
+      expect(issuesB).toEqual([]);
+    } finally {
+      await pageB.close();
+    }
+  });
+
+  test("psh-clear-search-in-one-sidebar-preserves-other-sidebar-search", async ({ page }) => {
+    const issuesA = collectPageIssues(page);
+    await loadLargeSparseSidebar(page, { fullStatePending: true });
+
+    const pageB = await page.context().newPage();
+    const issuesB = collectPageIssues(pageB);
+    try {
+      await loadLargeSparseSidebar(pageB, { fullStatePending: true });
+
+      await page.locator("#search").fill("Tab 91");
+      await page.evaluate(async () => {
+        const api = projectionHuntApi();
+        await api.waitForSparseRequestCount(1);
+        api.resolveSliceAt(0);
+        await api.waitForIdleFrames(3);
+      });
+
+      await pageB.locator("#search").fill("Tab 900");
+      await pageB.evaluate(async () => {
+        const api = projectionHuntApi();
+        await api.waitForSparseRequestCount(1);
+        api.resolveSliceAt(0);
+        await api.waitForIdleFrames(3);
+      });
+
+      await page.locator("#clear-search").click();
+
+      const [resultA, resultB] = await Promise.all([
+        page.evaluate(async () => {
+          const api = projectionHuntApi();
+          await api.waitForSparseRequestCount(2);
+          api.emitFullStateBroadcast();
+          await api.waitForIdleFrames(2);
+          api.resolveSliceAt(0);
+          await api.waitForIdleFrames(5);
+          if (api.sparseRequestCount() > 2) {
+            api.resolveSliceAt(0);
+            await api.waitForIdleFrames(4);
+          }
+          return {
+            commands: api.sentCommands(),
+            requests: api.projectionRequests(),
+            stateRequestCount: api.stateRequestCount(),
+            searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
+            countText: document.querySelector("#state-count")?.textContent ?? "",
+            visibleRows: api.visibleRows(),
+            hasSearchResult: Boolean(document.querySelector("[data-node-id='tab:91']")),
+            hasRevealHighlight: Boolean(document.querySelector(".is-reveal-highlight"))
+          };
+        }),
+        pageB.evaluate(async () => {
+          const api = projectionHuntApi();
+          api.emitFullStateBroadcast();
+          await api.waitForIdleFrames(4);
+          if (api.sparseRequestCount() > 1) {
+            api.resolveSliceAt(0);
+            await api.waitForIdleFrames(4);
+          }
+          return {
+            commands: api.sentCommands(),
+            requests: api.projectionRequests(),
+            stateRequestCount: api.stateRequestCount(),
+            searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
+            countText: document.querySelector("#state-count")?.textContent ?? "",
+            visibleRows: api.visibleRows(),
+            hasTab900: Boolean(document.querySelector("[data-node-id='tab:900']")),
+            hasRevealHighlight: Boolean(document.querySelector(".is-reveal-highlight"))
+          };
+        })
+      ]);
+
+      expect(resultA.commands).toEqual([]);
+      expect(resultA.requests.map((request) => request.query)).toEqual(["Tab 91", ""]);
+      expect(resultA.stateRequestCount).toBe(0);
+      expect(resultA.searchValue).toBe("");
+      expect(resultA.countText).toBe("1001 items / 0 saved");
+      expect(resultA.visibleRows.length).toBeGreaterThan(0);
+      expect(resultA.hasSearchResult).toBe(false);
+      expect(resultA.hasRevealHighlight).toBe(false);
+
+      expect(resultB.commands).toEqual([]);
+      expect(resultB.requests.every((request) => request.query === "Tab 900")).toBe(true);
+      expect(resultB.stateRequestCount).toBe(0);
+      expect(resultB.searchValue).toBe("Tab 900");
+      expect(resultB.countText).toBe("1 match / 1001 items");
+      expect(resultB.visibleRows).toContain(1);
+      expect(resultB.hasTab900).toBe(true);
+      expect(resultB.hasRevealHighlight).toBe(false);
+      await expect(page.locator("#search")).toHaveValue("");
+      await expect(pageB.locator("#search")).toHaveValue("Tab 900");
+      await expect(nodeRow(pageB, "tab:900")).toBeVisible();
+      expect(issuesA).toEqual([]);
+      expect(issuesB).toEqual([]);
+    } finally {
+      await pageB.close();
+    }
+  });
+
+  test("psh-two-sidebars-query-replacement-keeps-other-search-independent", async ({ page }) => {
+    const issuesA = collectPageIssues(page);
+    await loadLargeSparseSidebar(page, {
+      fullStatePending: true,
+      historyStatus: { canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "remote edit" }
+    });
+
+    const pageB = await page.context().newPage();
+    const issuesB = collectPageIssues(pageB);
+    try {
+      await loadLargeSparseSidebar(pageB, {
+        fullStatePending: true,
+        historyStatus: { canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "remote edit" }
+      });
+
+      await page.evaluate(async () => {
+        const api = projectionHuntApi();
+        const search = document.querySelector<HTMLInputElement>("#search");
+        if (!search) {
+          throw new Error("Missing search input");
+        }
+
+        search.focus();
+        search.value = "Tab 90";
+        search.dispatchEvent(new InputEvent("input", {
+          bubbles: true,
+          inputType: "insertText",
+          data: "Tab 90"
+        }));
+        await api.waitForSparseRequestCount(1);
+
+        search.value = "Tab 91";
+        search.dispatchEvent(new InputEvent("input", {
+          bubbles: true,
+          inputType: "insertReplacementText",
+          data: "Tab 91"
+        }));
+        await api.waitForSparseRequestCount(2);
+      });
+
+      await pageB.locator("#search").fill("Tab 900");
+      await pageB.evaluate(async () => {
+        const api = projectionHuntApi();
+        await api.waitForSparseRequestCount(1);
+        api.resolveSliceAt(0);
+        await api.waitForIdleFrames(3);
+      });
+      await expect(nodeRow(pageB, "tab:900")).toBeVisible();
+
+      const [resultA, resultB] = await Promise.all([
+        page.evaluate(async () => {
+          const api = projectionHuntApi();
+          api.emitHistoryStatus({ canUndo: false, canRedo: true, undoDepth: 0, redoDepth: 1, redoLabel: "remote edit" });
+          api.resolveSliceAt(0);
+          await api.waitForIdleFrames(3);
+          const afterStale = {
+            hasTab90: Boolean(document.querySelector("[data-node-id='tab:90']")),
+            hasTab900: Boolean(document.querySelector("[data-node-id='tab:900']")),
+            searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
+            countText: document.querySelector("#state-count")?.textContent ?? ""
+          };
+
+          api.resolveSliceAt(0);
+          await api.waitForIdleFrames(4);
+          return {
+            commands: api.sentCommands(),
+            requests: api.projectionRequests(),
+            stateRequestCount: api.stateRequestCount(),
+            afterStale,
+            searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
+            countText: document.querySelector("#state-count")?.textContent ?? "",
+            visibleRows: api.visibleRows(),
+            hasTab91: Boolean(document.querySelector("[data-node-id='tab:91']")),
+            hasTab900: Boolean(document.querySelector("[data-node-id='tab:900']"))
+          };
+        }),
+        pageB.evaluate(async () => {
+          const api = projectionHuntApi();
+          api.emitHistoryStatus({ canUndo: false, canRedo: true, undoDepth: 0, redoDepth: 1, redoLabel: "remote edit" });
+          api.emitTitlePatch("tab:900", "Tab 900 independent query patched");
+          await api.waitForIdleFrames(4);
+          if (api.sparseRequestCount() > 1) {
+            api.resolveSliceAt(0);
+            await api.waitForIdleFrames(4);
+          }
+          return {
+            commands: api.sentCommands(),
+            requests: api.projectionRequests(),
+            stateRequestCount: api.stateRequestCount(),
+            searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
+            countText: document.querySelector("#state-count")?.textContent ?? "",
+            visibleRows: api.visibleRows(),
+            tab900Text: document.querySelector("[data-node-id='tab:900']")?.textContent ?? "",
+            hasTab91: Boolean(document.querySelector("[data-node-id='tab:91']"))
+          };
+        })
+      ]);
+
+      expect(resultA.commands).toEqual([]);
+      expect(resultA.requests.map((request) => request.query)).toEqual(["Tab 90", "Tab 91"]);
+      expect(resultA.stateRequestCount).toBe(0);
+      expect(resultA.afterStale.searchValue).toBe("Tab 91");
+      expect(resultA.afterStale.hasTab90).toBe(false);
+      expect(resultA.afterStale.hasTab900).toBe(false);
+      expect(resultA.searchValue).toBe("Tab 91");
+      expect(resultA.countText).toBe("11 matches / 1001 items");
+      expect(resultA.visibleRows).toContain(1);
+      expect(resultA.hasTab91).toBe(true);
+      expect(resultA.hasTab900).toBe(false);
+
+      expect(resultB.commands).toEqual([]);
+      expect(resultB.requests.every((request) => request.query === "Tab 900")).toBe(true);
+      expect(resultB.stateRequestCount).toBe(0);
+      expect(resultB.searchValue).toBe("Tab 900");
+      expect(resultB.countText).toBe("1 match / 1001 items");
+      expect(resultB.visibleRows).toContain(1);
+      expect(resultB.tab900Text).toContain("Tab 900 independent query patched");
+      expect(resultB.hasTab91).toBe(false);
+      await expect(page.locator("#search")).toHaveValue("Tab 91");
+      await expect(pageB.locator("#search")).toHaveValue("Tab 900");
+      await expect(nodeRow(page, "tab:91")).toBeVisible();
+      await expect(nodeRow(pageB, "tab:900")).toContainText("Tab 900 independent query patched");
+      expect(issuesA).toEqual([]);
+      expect(issuesB).toEqual([]);
+    } finally {
+      await pageB.close();
+    }
+  });
+
+  test("psh-two-sidebars-clear-search-and-painted-scroll-stay-independent", async ({ page }) => {
+    const issuesA = collectPageIssues(page);
+    await loadLargeSparseSidebar(page, { fullStatePending: true });
+
+    const pageB = await page.context().newPage();
+    const issuesB = collectPageIssues(pageB);
+    try {
+      await loadLargeSparseSidebar(pageB, { fullStatePending: true });
+
+      await page.locator("#search").fill("Tab 900");
+      await page.evaluate(async () => {
+        const api = projectionHuntApi();
+        await api.waitForSparseRequestCount(1);
+        api.resolveSliceAt(0);
+        await api.waitForIdleFrames(3);
+      });
+      await expect(nodeRow(page, "tab:900")).toBeVisible();
+
+      await pageB.evaluate(async () => {
+        const api = projectionHuntApi();
+        await api.scrollToRow(320);
+        await api.waitForSparseRequestCount(1);
+        api.resolveSliceAt(0, { start: 300, end: 360 });
+        await api.waitForVisibleRow(320);
+        await api.waitForIdleFrames(3);
+      });
+      await expect(nodeRow(pageB, "tab:320")).toBeVisible();
+
+      await page.locator("#clear-search").click();
+
+      const [resultA, resultB] = await Promise.all([
+        page.evaluate(async () => {
+          const api = projectionHuntApi();
+          await api.waitForSparseRequestCount(2);
+          api.emitFullStateBroadcast();
+          await api.waitForIdleFrames(2);
+          api.resolveSliceAt(0);
+          await api.waitForIdleFrames(5);
+          if (api.sparseRequestCount() > 2) {
+            api.resolveSliceAt(0);
+            await api.waitForIdleFrames(4);
+          }
+          return {
+            commands: api.sentCommands(),
+            requests: api.projectionRequests(),
+            stateRequestCount: api.stateRequestCount(),
+            searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
+            countText: document.querySelector("#state-count")?.textContent ?? "",
+            visibleRows: api.visibleRows(),
+            hasTab900: Boolean(document.querySelector("[data-node-id='tab:900']")),
+            hasRevealHighlight: Boolean(document.querySelector(".is-reveal-highlight"))
+          };
+        }),
+        pageB.evaluate(async () => {
+          const api = projectionHuntApi();
+          api.emitFullStateBroadcast();
+          await api.waitForIdleFrames(5);
+          if (api.sparseRequestCount() > 1) {
+            api.resolveSliceAt(0, { start: 300, end: 360 });
+            await api.waitForIdleFrames(4);
+          }
+          return {
+            commands: api.sentCommands(),
+            requests: api.projectionRequests(),
+            stateRequestCount: api.stateRequestCount(),
+            searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
+            countText: document.querySelector("#state-count")?.textContent ?? "",
+            visibleRows: api.visibleRows(),
+            hasTab320: Boolean(document.querySelector("[data-node-id='tab:320']")),
+            hasTab900: Boolean(document.querySelector("[data-node-id='tab:900']")),
+            hasRevealHighlight: Boolean(document.querySelector(".is-reveal-highlight"))
+          };
+        })
+      ]);
+
+      expect(resultA.commands).toEqual([]);
+      expect(resultA.requests.map((request) => request.query)).toEqual(["Tab 900", ""]);
+      expect(resultA.stateRequestCount).toBe(0);
+      expect(resultA.searchValue).toBe("");
+      expect(resultA.countText).toBe("1001 items / 0 saved");
+      expect(resultA.visibleRows.length).toBeGreaterThan(0);
+      expect(resultA.hasTab900).toBe(false);
+      expect(resultA.hasRevealHighlight).toBe(false);
+
+      expect(resultB.commands).toEqual([]);
+      expect(resultB.requests.length).toBeGreaterThanOrEqual(1);
+      expect(resultB.requests.every((request) => request.query === "" && request.targetNodeId === undefined)).toBe(true);
+      expect(resultB.stateRequestCount).toBe(0);
+      expect(resultB.searchValue).toBe("");
+      expect(resultB.countText).toBe("1001 items / 0 saved");
+      expect(resultB.visibleRows).toContain(320);
+      expect(resultB.hasTab320).toBe(true);
+      expect(resultB.hasTab900).toBe(false);
+      expect(resultB.hasRevealHighlight).toBe(false);
+      await expect(page.locator("#search")).toHaveValue("");
+      await expect(pageB.locator("#search")).toHaveValue("");
+      await expect(nodeRow(pageB, "tab:320")).toBeVisible();
+      expect(issuesA).toEqual([]);
+      expect(issuesB).toEqual([]);
+    } finally {
+      await pageB.close();
+    }
+  });
+
+  test("psh-two-sidebars-independent-scrolls-ignore-stale-cross-slices", async ({ page }) => {
+    test.fail(true, "PT-021: background patch while a sparse scroll slice is pending can strand the scroll intent");
+    const issuesA = collectPageIssues(page);
+    await loadLargeSparseSidebar(page, { fullStatePending: true });
+
+    const pageB = await page.context().newPage();
+    const issuesB = collectPageIssues(pageB);
+    try {
+      await loadLargeSparseSidebar(pageB, { fullStatePending: true });
+
+      await Promise.all([
+        page.evaluate(async () => {
+          const api = projectionHuntApi();
+          await api.scrollToRow(250);
+          await api.waitForSparseRequestCount(1);
+          await api.scrollToRow(260);
+          await api.waitForSparseRequestCount(2);
+        }),
+        pageB.evaluate(async () => {
+          const api = projectionHuntApi();
+          await api.scrollToRow(900);
+          await api.waitForSparseRequestCount(1);
+        })
+      ]);
+
+      const [resultA, resultB] = await Promise.all([
+        page.evaluate(async () => {
+          const api = projectionHuntApi();
+          api.emitTitlePatch("tab:900", "Tab 900 cross scroll patched");
+          await api.waitForIdleFrames(2);
+          api.resolveSliceAt(0, { start: 700, end: 760 });
+          await api.waitForIdleFrames(2);
+          const afterStale = api.visibleRows();
+          api.resolveSliceAt(0, { start: 240, end: 310 });
+          await api.waitForVisibleRow(260);
+          await api.waitForIdleFrames(3);
+          return {
+            commands: api.sentCommands(),
+            requests: api.projectionRequests(),
+            stateRequestCount: api.stateRequestCount(),
+            afterStale,
+            visibleRows: api.visibleRows(),
+            searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
+            countText: document.querySelector("#state-count")?.textContent ?? "",
+            hasTab900: Boolean(document.querySelector("[data-node-id='tab:900']"))
+          };
+        }),
+        pageB.evaluate(async () => {
+          const api = projectionHuntApi();
+          api.emitTitlePatch("tab:900", "Tab 900 cross scroll patched");
+          await api.waitForIdleFrames(2);
+          api.resolveSliceAt(0, { start: 880, end: 940 });
+          await api.waitForIdleFrames(5);
+          return {
+            commands: api.sentCommands(),
+            requests: api.projectionRequests(),
+            stateRequestCount: api.stateRequestCount(),
+            visibleRows: api.visibleRows(),
+            searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
+            countText: document.querySelector("#state-count")?.textContent ?? "",
+            tab900Text: document.querySelector("[data-node-id='tab:900']")?.textContent ?? ""
+          };
+        })
+      ]);
+
+      expect(resultA.commands).toEqual([]);
+      expect(resultA.requests).toHaveLength(2);
+      expect(resultA.requests.every((request) => request.query === "" && request.targetNodeId === undefined)).toBe(true);
+      expect(resultA.stateRequestCount).toBe(0);
+      expect(resultA.afterStale.length).toBeGreaterThan(0);
+      expect(resultA.searchValue).toBe("");
+      expect(resultA.countText).toBe("1001 items / 0 saved");
+      expect(resultA.visibleRows).toContain(260);
+      expect(resultA.hasTab900).toBe(false);
+
+      expect(resultB.commands).toEqual([]);
+      expect(resultB.requests).toHaveLength(1);
+      expect(resultB.requests.every((request) => request.query === "" && request.targetNodeId === undefined)).toBe(true);
+      expect(resultB.stateRequestCount).toBe(0);
+      expect(resultB.searchValue).toBe("");
+      expect(resultB.countText).toBe("1001 items / 0 saved");
+      expect(resultB.visibleRows).toContain(900);
+      expect(resultB.tab900Text).toContain("Tab 900 cross scroll patched");
+      await expect(nodeRow(page, "tab:260")).toBeVisible();
+      await expect(nodeRow(pageB, "tab:900")).toContainText("Tab 900 cross scroll patched");
+      expect(issuesA).toEqual([]);
+      expect(issuesB).toEqual([]);
+    } finally {
+      await pageB.close();
+    }
+  });
+
+  test("psh-temporal-two-sidebars-search-scroll-undo-patch-keeps-intents", async ({ page }) => {
+    test.fail(true, "PT-020: undo/history ordering can strand a pending scroll intent on the old slice");
+    const issuesA = collectPageIssues(page);
+    await loadLargeSparseSidebar(page, {
+      fullStatePending: true,
+      historyStatus: { canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "remote edit" }
+    });
+
+    const pageB = await page.context().newPage();
+    const issuesB = collectPageIssues(pageB);
+    try {
+      await loadLargeSparseSidebar(pageB, {
+        fullStatePending: true,
+        historyStatus: { canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "remote edit" }
+      });
+
+      await page.locator("#search").fill("Tab 91");
+      await page.waitForFunction(() => projectionHuntApi().sparseRequestCount() >= 1);
+
+      await pageB.evaluate(async () => {
+        const api = projectionHuntApi();
+        await api.scrollToRow(250);
+        await api.waitForSparseRequestCount(1);
+        await api.scrollToRow(260);
+        await api.waitForSparseRequestCount(2);
+      });
+
+      await pageB.getByRole("button", { name: "Undo", exact: true }).click();
+      await pageB.waitForFunction(() => projectionHuntApi().sentCommands().length === 1);
+
+      const [resultA, resultB] = await Promise.all([
+        page.evaluate(async () => {
+          const api = projectionHuntApi();
+          api.emitHistoryStatus({ canUndo: false, canRedo: true, undoDepth: 0, redoDepth: 1, redoLabel: "remote edit" });
+          api.emitTitlePatch("tab:91", "Tab 91 temporal patched");
+          api.resolveSliceAt(0);
+          await api.waitForIdleFrames(5);
+          return {
+            commands: api.sentCommands(),
+            requests: api.projectionRequests(),
+            searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
+            countText: document.querySelector("#state-count")?.textContent ?? "",
+            visibleRows: api.visibleRows(),
+            tab91Text: document.querySelector("[data-node-id='tab:91']")?.textContent ?? ""
+          };
+        }),
+        pageB.evaluate(async () => {
+          const api = projectionHuntApi();
+          api.emitHistoryStatus({ canUndo: false, canRedo: true, undoDepth: 0, redoDepth: 1, redoLabel: "remote edit" });
+          api.emitTitlePatch("tab:91", "Tab 91 temporal patched");
+          api.resolveSliceAt(0, { start: 240, end: 310 });
+          await api.waitForIdleFrames(2);
+          const afterFirstSlice = api.visibleRows();
+          api.resolveSliceAt(0, { start: 700, end: 760 });
+          await api.waitForIdleFrames(5);
+          return {
+            commands: api.sentCommands(),
+            requests: api.projectionRequests(),
+            searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
+            countText: document.querySelector("#state-count")?.textContent ?? "",
+            afterFirstSlice,
+            visibleRows: api.visibleRows(),
+            hasTab91: Boolean(document.querySelector("[data-node-id='tab:91']"))
+          };
+        })
+      ]);
+
+      expect(resultA.commands).toEqual([]);
+      expect(resultA.requests.map((request) => request.query)).toEqual(["Tab 91"]);
+      expect(resultA.searchValue).toBe("Tab 91");
+      expect(resultA.countText).toBe("11 matches / 1001 items");
+      expect(resultA.visibleRows).toContain(1);
+      expect(resultA.tab91Text).toContain("Tab 91 temporal patched");
+
+      expect(resultB.commands).toEqual([{ type: "undo" }]);
+      expect(resultB.requests.map((request) => request.query)).toEqual(["", ""]);
+      expect(resultB.searchValue).toBe("");
+      expect(resultB.countText).toBe("1001 items / 0 saved");
+      expect(resultB.afterFirstSlice).toContain(260);
+      expect(resultB.visibleRows).toContain(260);
+      expect(resultB.hasTab91).toBe(false);
+      await expect(page.getByRole("button", { name: "Undo", exact: true })).toBeDisabled();
+      await expect(page.getByRole("button", { name: "Redo", exact: true })).toBeEnabled();
+      await expect(pageB.getByRole("button", { name: "Undo", exact: true })).toBeDisabled();
+      await expect(pageB.getByRole("button", { name: "Redo", exact: true })).toBeEnabled();
+      expect(issuesA).toEqual([]);
+      expect(issuesB).toEqual([]);
+    } finally {
+      await pageB.close();
+    }
+  });
+
   test("psh-show-in-tree-stale-target-response-does-not-overwrite-new-search", async ({ page }) => {
     const issues = collectPageIssues(page);
     await loadLargeSparseSidebar(page, { fullStatePending: true });
@@ -2504,6 +3699,7 @@ type ProjectionHuntApi = {
   emitFullStateBroadcast(): void;
   emitHistoryStatus(status: HarnessHistoryStatus): void;
   sentCommands(): unknown[];
+  stateRequestCount(): number;
   projectionRequests(): Array<{ centerRowIndex: number; rowLimit: number; query: string; targetNodeId?: string }>;
 };
 
@@ -2538,6 +3734,7 @@ function installProjectionHuntHarness(options: {
   const rowHeight = 18;
   const listeners: Array<(message: unknown) => void> = [];
   const sentCommands: unknown[] = [];
+  const stateRequests: unknown[] = [];
   const sliceRequests: ProjectionSliceRequest[] = [];
   const pendingSlices: Array<{
     request: ProjectionSliceRequest;
@@ -2566,6 +3763,7 @@ function installProjectionHuntHarness(options: {
     emitFullStateBroadcast,
     emitHistoryStatus,
     sentCommands: () => structuredClone(sentCommands),
+    stateRequestCount: () => stateRequests.length,
     projectionRequests: () => structuredClone(sliceRequests)
   });
 
@@ -2592,6 +3790,7 @@ function installProjectionHuntHarness(options: {
           });
         }
         if (type === "getState") {
+          stateRequests.push(structuredClone(message));
           if (fullStateResolveQueued) {
             fullStateResolveQueued = false;
             return structuredClone(fullState);
