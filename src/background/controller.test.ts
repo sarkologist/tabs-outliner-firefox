@@ -20939,7 +20939,11 @@ function assertRuntimeProjectionInvariants(state: OutlineState, context: Generat
     const node = liveTabNodeForRuntimeTab(state, runtimeTab.id);
     invariant(Boolean(node), `runtime tab ${runtimeTab.id} has no live node`, context.history);
     invariant(node?.live?.windowId === runtimeTab.windowId, `tab ${runtimeTab.id} has wrong live window`, context.history);
-    invariant(node?.active === runtimeTab.active, `tab ${runtimeTab.id} active flag diverged`, context.history);
+    invariant(
+      node?.active === runtimeTab.active,
+      `tab ${runtimeTab.id} active flag diverged (outline=${String(node?.active)}, runtime=${String(runtimeTab.active)}, outlineWindow=${String(node?.live?.windowId)}, runtimeWindow=${runtimeTab.windowId})`,
+      context.history
+    );
   }
 
   for (const node of Object.values(state.nodes)) {
@@ -23795,6 +23799,13 @@ describe("background controller lifecycle", () => {
 
   it("preserves active tab state when a created-tab refresh races a grouping command", async () => {
     await runGeneratedTrace(1277552077, 8, {
+      adversarialRuntimeQueries: true,
+      adversarialConcurrency: true
+    });
+  });
+
+  it("preserves active tab state across stale relocation concurrency", async () => {
+    await runGeneratedTrace(141616461, 7, {
       adversarialRuntimeQueries: true,
       adversarialConcurrency: true
     });

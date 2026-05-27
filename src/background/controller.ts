@@ -3290,7 +3290,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
     const clearCommandRelocatedActiveTabsFromSourceWindow = (sourceWindowId: number, eventSequence: number): void => {
       for (const [tabId, echo] of runtimeFacts.commandRelocatedTabEchoEntries()) {
-        if (!echo.fromWindowIds.has(sourceWindowId) || eventSequence <= 0 || eventSequence >= echo.sequence) {
+        if (echo.sourceWindowId !== sourceWindowId || eventSequence <= 0 || eventSequence >= echo.sequence) {
           continue;
         }
         const nodeId = plannedLiveTabNodeId(tabId);
