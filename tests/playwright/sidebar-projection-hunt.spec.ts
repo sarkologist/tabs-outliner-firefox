@@ -630,21 +630,78 @@ test.describe("sidebar projection hunt", () => {
     expect(issues).toEqual([]);
   });
 
-  test("psh-drag-blocked-while-partial-recovers-after-hydration", async ({ page }) => {
+  test("psh-covered-sparse-drag-drop-sends-command-before-hydration", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadLargeSparseSidebar(page, { includeCoverage: true, fullStatePending: true });
+
+    await dragAfter(page, "tab:800", "tab:801");
+    const result = await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      await api.waitForIdleFrames(2);
+      return {
+        commands: api.sentCommands(),
+        stateRequests: api.stateRequestCount(),
+        visibleRows: api.visibleRows()
+      };
+    });
+
+    expect(result.commands).toEqual([
+      expect.objectContaining({ type: "moveNode", nodeId: "tab:800", parentId: "window:1", index: 800 })
+    ]);
+    expect(result.stateRequests).toBe(0);
+    expect(result.visibleRows).toContain(800);
+    expect(issues).toEqual([]);
+  });
+
+  test("psh-missing-coverage-drag-drop-requests-sparse-refill-without-hydration", async ({ page }) => {
     const issues = collectPageIssues(page);
     await loadLargeSparseSidebar(page, { includeCoverage: false, fullStatePending: true });
 
     await dragAfter(page, "tab:800", "tab:801");
-    const beforeHydration = await page.evaluate(async () => {
-      await projectionHuntApi().waitForIdleFrames(2);
+    const result = await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      await api.waitForIdleFrames(2);
       return {
-        commands: projectionHuntApi().sentCommands(),
-        visibleRows: projectionHuntApi().visibleRows()
+        commands: api.sentCommands(),
+        stateRequests: api.stateRequestCount(),
+        sparseRequests: api.sparseRequestCount(),
+        visibleRows: api.visibleRows()
       };
     });
 
-    expect(beforeHydration.commands).toEqual([]);
-    expect(beforeHydration.visibleRows).toContain(800);
+    expect(result.commands).toEqual([]);
+    expect(result.stateRequests).toBe(0);
+    expect(result.sparseRequests).toBeGreaterThan(0);
+    expect(result.visibleRows).toContain(800);
+    expect(issues).toEqual([]);
+  });
+
+  test("psh-covered-sparse-root-drag-drop-sends-command-before-hydration", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadLargeSparseSidebar(page, { includeCoverage: true, fullStatePending: true });
+
+    await dragToRoot(page, "tab:800");
+    const result = await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      await api.waitForIdleFrames(2);
+      return {
+        commands: api.sentCommands(),
+        stateRequests: api.stateRequestCount(),
+        visibleRows: api.visibleRows()
+      };
+    });
+
+    expect(result.commands).toEqual([
+      expect.objectContaining({ type: "moveNodeToNewWindow", nodeId: "tab:800", index: 1 })
+    ]);
+    expect(result.stateRequests).toBe(0);
+    expect(result.visibleRows).toContain(800);
+    expect(issues).toEqual([]);
+  });
+
+  test("psh-drag-after-hydration-baseline-sends-command", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadLargeSparseSidebar(page, { includeCoverage: false, fullStatePending: true });
 
     await nodeRow(page, "tab:800").hover();
     await page.evaluate(async () => {
@@ -701,25 +758,6 @@ test.describe("sidebar projection hunt", () => {
     expect(result.visibleRows).toContain(900);
     await expect(nodeRow(page, "tab:900")).toBeVisible();
     await expect(page.getByRole("button", { name: "Undo", exact: true })).toBeEnabled();
-    expect(issues).toEqual([]);
-  });
-
-  test("psh-drag-after-hydration-baseline-sends-command", async ({ page }) => {
-    const issues = collectPageIssues(page);
-    await loadLargeSparseSidebar(page, { includeCoverage: false, fullStatePending: true });
-
-    await nodeRow(page, "tab:800").hover();
-    await page.evaluate(async () => {
-      const api = projectionHuntApi();
-      api.resolveFullState();
-      await api.waitForIdleFrames(20);
-    });
-    await dragAfter(page, "tab:800", "tab:801");
-
-    await expect(sentCommands(page)).resolves.toHaveLength(1);
-    await expect(sentCommands(page)).resolves.toEqual([
-      expect.objectContaining({ type: "moveNode", nodeId: "tab:800" })
-    ]);
     expect(issues).toEqual([]);
   });
 
@@ -5940,6 +5978,36 @@ async function dragAfter(page: Page, sourceId: string, targetId: string): Promis
   }
 }
 
+async function dragToRoot(page: Page, sourceId: string): Promise<void> {
+  const dataTransfer = await page.evaluateHandle(() => new DataTransfer());
+  try {
+    await nodeRow(page, sourceId).dispatchEvent("dragstart", {
+      bubbles: true,
+      cancelable: true,
+      dataTransfer
+    });
+    await page.locator("main").dispatchEvent("dragover", {
+      bubbles: true,
+      cancelable: true,
+      clientY: 500,
+      dataTransfer
+    });
+    await page.locator("main").dispatchEvent("drop", {
+      bubbles: true,
+      cancelable: true,
+      clientY: 500,
+      dataTransfer
+    });
+    await nodeRow(page, sourceId).dispatchEvent("dragend", {
+      bubbles: true,
+      cancelable: true,
+      dataTransfer
+    });
+  } finally {
+    await dataTransfer.dispose();
+  }
+}
+
 function collectPageIssues(page: Page): ConsoleIssue[] {
   const issues: ConsoleIssue[] = [];
   page.on("console", (message) => {
@@ -6119,6 +6187,7 @@ function installProjectionHuntHarness(options: {
           type === "restoreNode" ||
           type === "toggleCollapsed" ||
           type === "moveNode" ||
+          type === "moveNodeToNewWindow" ||
           type === "wrapNodeInGroup" ||
           type === "moveSubtreeToTopLevel" ||
           type === "renameGroup" ||

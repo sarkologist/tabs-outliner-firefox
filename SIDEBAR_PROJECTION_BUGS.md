@@ -20,11 +20,11 @@ pnpm perf:sidebar-projection-guard
 
 - Completed: 2026-05-27
 - Strategy: patch/refill owner fanout hunt after the `PT-016`..`PT-021` owner/coverage fix, with proposal-only scouts for remote request freshness, viewport/DOM behavior, and background patch fanout. Rung 0 started with visible search delete/refill, moved show-in-tree target admission, and owner replacement coverage/action truth. Later blocks varied target delete/reject ordering, patched search clear, visible sparse delete plus stale scroll refill, multi-sidebar undo/full-broadcast fanout, search patch/full-broadcast ordering, move/reorder patches, focus commands, rejected search recovery after outline moves, post-move history/full-broadcast fanout, missing-coverage action truth, title-patch/search-response ordering, active-outline history/full-broadcasts, stale outline refills losing to search, show-in-tree history/title churn, multi-sidebar delete/history fanout, and target-neighbor delete refills.
-- Scenario ids: 120 `psh-*` Playwright discovery/regression scenarios
-- Distinct findings recorded: 30
-- Status: `PT-001` through `PT-030` fixed. Discovery for `PT-022` through `PT-030` stopped after three complete clean active mutation blocks following `PT-030`; the follow-up fix pass closed those findings with a sidebar-local projection-frame admission boundary.
+- Scenario ids: 122 `psh-*` Playwright discovery/regression scenarios
+- Distinct findings recorded: 31
+- Status: `PT-001` through `PT-031` fixed. Discovery for `PT-022` through `PT-030` stopped after three complete clean active mutation blocks following `PT-030`; the follow-up fix pass closed those findings with a sidebar-local projection-frame admission boundary. `PT-031` was found by manual QA after sparse-by-default sidebars made the old full-hydration drag/drop guard user-visible.
 - Clean blocks after latest finding: block 1 added `psh-active-outline-history-status-full-broadcast-keeps-actions` and `psh-two-sidebars-active-broadcast-and-scroll-patch-stay-independent`; block 2 added `psh-move-refill-search-ignores-stale-scroll-response` and `psh-show-in-tree-history-status-title-patch-keeps-reveal-actions`; block 3 added `psh-two-sidebars-delete-search-result-history-broadcast-keeps-owners` and `psh-show-in-tree-neighbor-delete-refill-keeps-target-actions`. Each block passed targeted replay and full-corpus replay without a new distinct projection signature.
-- Perf gate: preflight `pnpm perf:sidebar-projection-guard -- --smoke` passed before the patch/refill owner fanout hunt after a sandbox/web-server retry. Final safety passed `pnpm run build`, the full `pnpm exec playwright test tests/playwright/sidebar-projection-hunt.spec.ts --reporter=list --workers=1` corpus with 120 scenarios, and `pnpm perf:sidebar-projection-guard -- --smoke` after a sandbox/web-server retry.
+- Perf gate: preflight `pnpm perf:sidebar-projection-guard -- --smoke` passed before the patch/refill owner fanout hunt after a sandbox/web-server retry. Final safety for the drag/drop follow-up passed `pnpm run build`, the full `pnpm exec playwright test tests/playwright/sidebar-projection-hunt.spec.ts --reporter=list --workers=1` corpus with 122 scenarios, `pnpm exec playwright test tests/playwright/sidebar-drop-preview.spec.ts --reporter=list`, `pnpm exec playwright test tests/playwright/sidebar-drag-drop-performance.spec.ts --reporter=list`, and `pnpm perf:sidebar-projection-guard` after a sandbox/web-server retry.
 
 ## Fix Analysis
 
@@ -40,10 +40,11 @@ pnpm perf:sidebar-projection-guard
 - `PT-014` and `PT-015`: sparse and remote projection responses were compared mostly against the last rendered projection, so older responses could still take visible ownership after the user had changed intent through search or clear-search. The fix captures a sidebar-local projection intent for sparse, search, clear-search, and show-in-tree requests; only current-intent responses can replace the visible projection, while stale responses may still merge safe partial node data. Clear-search also asks for the current outline viewport instead of row zero, so recovery does not depend on a later scroll.
 - `PT-016` through `PT-021`: target-node, search, clear-search, and sparse-scroll flows still shared too much "last rendered rows" state. The fix gives each visible projection a sidebar-local owner (`outline`, `search`, or `showInTree`) with normalized query/target semantics; only responses captured under the current owner may own the visible projection. Accepted show-in-tree reveals keep an active reveal target across background refills, outline fallback memory excludes target-centered slices, sparse scroll intent suppresses active-tab recentering, and hover action preservation now requires current coverage proof so old action strips cannot leak across owner changes.
 - `PT-022` through `PT-030`: owner identity was guarded, but rows, viewport anchor, chrome metadata, coverage, and outline fallback memory could still drift independently during compact patches, refills, and clear/search/show-in-tree transitions. The fix admits projection updates as coherent frames: current-owner responses may replace visible rows and frame metadata, stale responses only merge safe node data, owner/frame changes replace coverage rather than inheriting it, same-owner sparse expansions are the only path that merges coverage, outline fallback excludes search/target frames, and missing-coverage hydrating rows stay edit-readonly until coverage or full hydration proves action authority.
+- `PT-031`: drag/drop still had a pre-sparse-rewrite blanket full-hydration guard, so covered local rows were draggable in the DOM but rejected by the event handlers while `hydratingFullState` remained true. The fix makes drag/drop admission coverage-aware: covered local source/target/root placements can send the background move command without full hydration, while missing coverage blocks the attempt and requests a sparse refill instead of `getState`.
 
 ## Finding Index
 
-- Fixed projection findings: `PT-001`, `PT-002`, `PT-003`, `PT-004`, `PT-005`, `PT-006`, `PT-007`, `PT-008`, `PT-009`, `PT-010`, `PT-011`, `PT-012`, `PT-013`, `PT-014`, `PT-015`, `PT-016`, `PT-017`, `PT-018`, `PT-019`, `PT-020`, `PT-021`, `PT-022`, `PT-023`, `PT-024`, `PT-025`, `PT-026`, `PT-027`, `PT-028`, `PT-029`, `PT-030`
+- Fixed projection findings: `PT-001`, `PT-002`, `PT-003`, `PT-004`, `PT-005`, `PT-006`, `PT-007`, `PT-008`, `PT-009`, `PT-010`, `PT-011`, `PT-012`, `PT-013`, `PT-014`, `PT-015`, `PT-016`, `PT-017`, `PT-018`, `PT-019`, `PT-020`, `PT-021`, `PT-022`, `PT-023`, `PT-024`, `PT-025`, `PT-026`, `PT-027`, `PT-028`, `PT-029`, `PT-030`, `PT-031`
 - Open projection findings: none
 
 ### PT-001 rejected sparse slice leaves viewport blank/no retry
@@ -479,3 +480,17 @@ pnpm exec playwright test tests/playwright/sidebar-projection-hunt.spec.ts --gre
 - Expected: when a sidebar has a current search projection, receives a compact title patch for that search result, and the user clears search, the sidebar should return to normal outline chrome while other sidebars keep their independent scroll owners.
 - Actual: the clearing sidebar's search input is empty, but its count text remains `1 match / 1001 items`.
 - Evidence: the frozen multi-sidebar scenario searches `Tab 900` in sidebar A, scrolls sidebar B around row `250`, patches `tab:260` in B and `tab:900` in A, then clears A's search. Sidebar B remains on its scrolled owner, but sidebar A reports stale search count chrome under an empty search input with no full `getState`.
+
+### PT-031 covered sparse drag/drop blocked by full-hydration guard
+
+- Status: fixed
+- Found by: manual QA, frozen as `psh-covered-sparse-drag-drop-sends-command-before-hydration`
+- Repro:
+
+```sh
+pnpm exec playwright test tests/playwright/sidebar-projection-hunt.spec.ts --grep "psh-covered-sparse-drag-drop-sends-command-before-hydration" --reporter=list --workers=1
+```
+
+- Expected: covered visible sparse rows can drag/drop locally and send the background `moveNode` command without full hydration; missing coverage requests a sparse refill and still avoids `getState`.
+- Actual: rows were marked draggable, but `dragstart`, `dragover`, `drop`, and root drop handlers returned while `hydratingFullState` was true, so sparse-by-default sidebars effectively lost drag/drop.
+- Evidence: the frozen scenarios cover row-to-row drag/drop, root drag/drop, and missing-coverage drag/drop before full hydration. The fixed path sends `moveNode`/`moveNodeToNewWindow` for covered placements, keeps `stateRequestCount()` at `0`, and requests `getTreeProjectionSlice` when coverage is absent.

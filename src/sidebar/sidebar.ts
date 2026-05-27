@@ -366,9 +366,6 @@ openSidebarWindow?.addEventListener("click", () => {
 });
 
 rootDropSurface?.addEventListener("dragover", (event) => {
-  if (hydratingFullState) {
-    return;
-  }
   if (isNodeRowEvent(event) || isNestedTreeEvent(event)) {
     if (activeDropPlacement) {
       event.preventDefault();
@@ -379,6 +376,10 @@ rootDropSurface?.addEventListener("dragover", (event) => {
   const placement = currentState && draggedNodeId ? dropPlacementForRoot(currentState, draggedNodeId) : undefined;
   if (!placement) {
     clearDropPreview();
+    return;
+  }
+  if (!canUseDropPlacement(placement)) {
+    requestSparseDragDropCoverage();
     return;
   }
 
@@ -395,10 +396,6 @@ rootDropSurface?.addEventListener("dragleave", (event) => {
 });
 
 rootDropSurface?.addEventListener("drop", (event) => {
-  if (hydratingFullState) {
-    clearDragState();
-    return;
-  }
   if (isNodeRowEvent(event)) {
     return;
   }
@@ -407,6 +404,11 @@ rootDropSurface?.addEventListener("drop", (event) => {
     activeDropPlacement ??
     (currentState && draggedNodeId ? dropPlacementForRoot(currentState, draggedNodeId) : undefined);
   if (!placement) {
+    clearDragState();
+    return;
+  }
+  if (!canUseDropPlacement(placement)) {
+    requestSparseDragDropCoverage();
     clearDragState();
     return;
   }
@@ -3780,7 +3782,12 @@ function handleTreeDragStart(event: DragEvent): void {
   const row = rowForEventTarget(event.target);
   const item = row ? nodeItemForTarget(row) : undefined;
   const nodeId = item?.dataset.nodeId;
-  if (hydratingFullState || !state || !row || !nodeId || activeRename?.nodeId === nodeId) {
+  if (!state || !row || !nodeId || activeRename?.nodeId === nodeId) {
+    event.preventDefault();
+    return;
+  }
+  if (!canStartDragForNode(nodeId)) {
+    requestSparseDragDropCoverage();
     event.preventDefault();
     return;
   }
@@ -3796,13 +3803,17 @@ function handleTreeDragOver(event: DragEvent): void {
   const row = rowForEventTarget(event.target);
   const item = row ? nodeItemForTarget(row) : undefined;
   const targetId = item?.dataset.nodeId;
-  if (hydratingFullState || !state || !row || !targetId) {
+  if (!state || !row || !targetId) {
     return;
   }
 
   const placement = dropPlacementForRowEvent(state, targetId, event.clientY, row);
   if (!placement) {
     clearDropPreview();
+    return;
+  }
+  if (!canUseDropPlacement(placement)) {
+    requestSparseDragDropCoverage();
     return;
   }
 
@@ -3817,7 +3828,7 @@ function handleTreeDrop(event: DragEvent): void {
   const item = row ? nodeItemForTarget(row) : undefined;
   const targetId = item?.dataset.nodeId;
   const sourceId = draggedNodeId;
-  if (hydratingFullState || !state || !row || !targetId || !sourceId) {
+  if (!state || !row || !targetId || !sourceId) {
     clearDragState();
     return;
   }
@@ -3832,10 +3843,60 @@ function handleTreeDrop(event: DragEvent): void {
     clearDragState();
     return;
   }
+  if (!canUseDropPlacement(placement)) {
+    requestSparseDragDropCoverage();
+    clearDragState();
+    return;
+  }
 
   event.preventDefault();
   event.stopPropagation();
   performDrop(placement);
+}
+
+function canStartDragForNode(nodeId: NodeId): boolean {
+  if (!projectionRequiresHydrationCoverage(currentProjection)) {
+    return true;
+  }
+  return Boolean(
+    currentProjection?.visibleNodeIdSet.has(nodeId) &&
+    currentProjectionCoverage?.editableNodeIds.has(nodeId)
+  );
+}
+
+function canUseDropPlacement(placement: DropPlacement): boolean {
+  if (!projectionRequiresHydrationCoverage(currentProjection)) {
+    return true;
+  }
+
+  const coverage = currentProjectionCoverage;
+  if (!currentProjection || !coverage?.editableNodeIds.has(placement.sourceId)) {
+    return false;
+  }
+
+  if (placement.kind === "root") {
+    return rootOrderKnownForHydratingDrop();
+  }
+
+  if (!currentProjection.visibleNodeIdSet.has(placement.targetId)) {
+    return false;
+  }
+
+  if (!placement.parentId) {
+    return rootOrderKnownForHydratingDrop();
+  }
+
+  return coverage.completeSiblingParentIds.has(placement.parentId);
+}
+
+function rootOrderKnownForHydratingDrop(): boolean {
+  const state = currentState;
+  return Boolean(state && state.rootIds.every((nodeId) => Boolean(state.nodes[nodeId])));
+}
+
+function requestSparseDragDropCoverage(): void {
+  clearDropPreview();
+  requestSparseScrollWindowIfNeeded({ force: true });
 }
 
 function handleTreeInput(event: Event): void {
