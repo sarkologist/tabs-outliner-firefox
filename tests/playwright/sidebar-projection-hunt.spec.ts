@@ -965,6 +965,54 @@ test.describe("sidebar projection hunt", () => {
     expect(issues).toEqual([]);
   });
 
+  test("psh-root-drop-stale-refill-after-dragend-does-not-resurrect-preview", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadLargeSparseSidebar(page, { includeCoverage: false, fullStatePending: true });
+
+    await dragToRoot(page, "tab:800");
+    const afterAbandonedDrag = await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      await api.waitForSparseRequestCount(1);
+      api.resolveSliceAt(0, { start: 780, end: 840, includeCoverage: true });
+      await api.waitForIdleFrames(4);
+      const marker = document.querySelector<HTMLElement>("[data-testid='drop-marker']");
+      const root = document.querySelector<HTMLElement>("main");
+      return {
+        commands: api.sentCommands(),
+        requests: api.projectionRequests(),
+        stateRequests: api.stateRequestCount(),
+        markerClassName: marker?.className ?? "",
+        rootDropTarget: root?.classList.contains("root-drop-target") ?? false,
+        visibleRows: api.visibleRows()
+      };
+    });
+
+    expect(afterAbandonedDrag.commands).toEqual([]);
+    expect(afterAbandonedDrag.requests).toHaveLength(1);
+    expect(afterAbandonedDrag.stateRequests).toBe(0);
+    expect(afterAbandonedDrag.markerClassName).not.toMatch(/drop-root|drop-before|drop-after|drop-inside/);
+    expect(afterAbandonedDrag.rootDropTarget).toBe(false);
+    expect(afterAbandonedDrag.visibleRows).toContain(800);
+
+    await dragToRoot(page, "tab:800");
+    const afterFreshDrag = await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      await api.waitForIdleFrames(2);
+      return {
+        commands: api.sentCommands(),
+        stateRequests: api.stateRequestCount(),
+        visibleRows: api.visibleRows()
+      };
+    });
+
+    expect(afterFreshDrag.commands).toEqual([
+      expect.objectContaining({ type: "moveNodeToNewWindow", nodeId: "tab:800", index: 1 })
+    ]);
+    expect(afterFreshDrag.stateRequests).toBe(0);
+    expect(afterFreshDrag.visibleRows).toContain(800);
+    expect(issues).toEqual([]);
+  });
+
   test("psh-two-sidebars-drag-and-search-stay-independent-after-shared-move", async ({ page }) => {
     const issuesA = collectPageIssues(page);
     await loadLargeSparseSidebar(page, { includeCoverage: true, fullStatePending: true });
@@ -1902,6 +1950,247 @@ test.describe("sidebar projection hunt", () => {
       { type: "restoreNode", nodeId: "window:30", confirmedLargeRestore: true }
     ]);
     expect(issues).toEqual([]);
+  });
+
+  test("psh-delayed-restore-dismiss-after-history-status-keeps-outline", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    const dialogMessages: string[] = [];
+    page.on("dialog", async (dialog) => {
+      dialogMessages.push(dialog.message());
+      await dialog.dismiss();
+    });
+    await loadClosedRestoreSidebar(page, { fullStatePending: true, delayRestoreScope: true });
+
+    await nodeRow(page, "window:30").getByRole("button", { name: "Restore Closed Window", exact: true }).click();
+    await page.waitForFunction(() => projectionHuntApi().sentCommands().length === 1);
+
+    const result = await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      api.emitHistoryStatus({
+        canUndo: true,
+        canRedo: false,
+        undoDepth: 1,
+        redoDepth: 0,
+        undoLabel: "restore prompt peer edit"
+      });
+      api.resolveRestoreScope();
+      await api.waitForIdleFrames(8);
+      return {
+        commands: api.sentCommands(),
+        stateRequests: api.stateRequestCount(),
+        visibleRows: api.visibleRows(),
+        closedWindowExists: Boolean(document.querySelector("[data-node-id='window:30']")),
+        closedTabExists: Boolean(document.querySelector("[data-node-id='tab:30']")),
+        undoEnabled: !document.querySelector<HTMLButtonElement>("#undo")?.disabled,
+        countText: document.querySelector("#state-count")?.textContent ?? ""
+      };
+    });
+
+    expect(result.commands).toEqual([{ type: "analyzeRestoreScope", nodeId: "window:30" }]);
+    expect(result.stateRequests).toBe(0);
+    expect(result.visibleRows).toContain(0);
+    expect(result.closedWindowExists).toBe(true);
+    expect(result.closedTabExists).toBe(true);
+    expect(result.undoEnabled).toBe(true);
+    expect(result.countText).toContain("saved");
+    expect(dialogMessages).toHaveLength(1);
+    expect(dialogMessages[0]).toContain("Restore 4 restorable closed nodes");
+    expect(issues).toEqual([]);
+  });
+
+  test("psh-closed-tab-direct-restore-after-search-refill-skips-window-scope", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadClosedRestoreSidebar(page, { fullStatePending: true });
+
+    await page.locator("#search").fill("Closed tab 30");
+    await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      await api.waitForProjectionRequest("Closed tab 30");
+      api.resolveSliceForQuery("Closed tab 30");
+      await api.waitForVisibleRow(1);
+    });
+    await nodeRow(page, "tab:30").getByRole("button", { name: /Restore Closed tab 30/ }).click();
+
+    const result = await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      api.emitDeletePatch(["tab:30"]);
+      await api.waitForIdleFrames(4);
+      return {
+        commands: api.sentCommands(),
+        requests: api.projectionRequests(),
+        stateRequests: api.stateRequestCount(),
+        searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
+        visibleRows: api.visibleRows(),
+        closedWindowExists: Boolean(document.querySelector("[data-node-id='window:30']")),
+        closedTabExists: Boolean(document.querySelector("[data-node-id='tab:30']")),
+        countText: document.querySelector("#state-count")?.textContent ?? ""
+      };
+    });
+
+    expect(result.commands).toEqual([{ type: "restoreNode", nodeId: "tab:30" }]);
+    expect(result.requests).toContainEqual(expect.objectContaining({ query: "Closed tab 30", targetNodeId: undefined }));
+    expect(result.requests.every((request) => request.query === "Closed tab 30" && request.targetNodeId === undefined))
+      .toBe(true);
+    expect(result.stateRequests).toBe(0);
+    expect(result.searchValue).toBe("Closed tab 30");
+    expect(result.closedWindowExists).toBe(false);
+    expect(result.closedTabExists).toBe(false);
+    expect(result.countText).toBe("0 matches / 3 items");
+    expect(issues).toEqual([]);
+  });
+
+  test("psh-two-sidebars-closed-tab-restore-and-target-owner-stay-independent", async ({ page }) => {
+    const issuesA = collectPageIssues(page);
+    await loadClosedRestoreSidebar(page, { fullStatePending: true });
+    await nodeRow(page, "tab:30").getByRole("button", { name: /Restore Closed tab 30/ }).click();
+
+    const pageB = await page.context().newPage();
+    const issuesB = collectPageIssues(pageB);
+    try {
+      await loadLargeSparseSidebar(pageB, { includeCoverage: true, fullStatePending: true });
+      await pageB.locator("#search").fill("Tab 900");
+      await pageB.evaluate(async () => {
+        const api = projectionHuntApi();
+        await api.waitForProjectionRequest("Tab 900");
+        api.resolveSliceForQuery("Tab 900");
+        await api.waitForVisibleRow(1);
+      });
+      await nodeRow(pageB, "tab:900").hover();
+      await nodeRow(pageB, "tab:900").getByRole("button", { name: "Show in tree", exact: true }).click();
+      await pageB.waitForFunction(() => projectionHuntApi().projectionRequests().some((request) => request.targetNodeId === "tab:900"));
+
+      const [resultA, resultB] = await Promise.all([
+        page.evaluate(async () => {
+          const api = projectionHuntApi();
+          api.emitHistoryStatus({ canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "restore closed tab" });
+          api.emitDeletePatch(["tab:30"]);
+          await api.waitForIdleFrames(4);
+          return {
+            commands: api.sentCommands(),
+            stateRequests: api.stateRequestCount(),
+            visibleRows: api.visibleRows(),
+            closedWindowExists: Boolean(document.querySelector("[data-node-id='window:30']")),
+            closedTabExists: Boolean(document.querySelector("[data-node-id='tab:30']")),
+            countText: document.querySelector("#state-count")?.textContent ?? ""
+          };
+        }),
+        pageB.evaluate(async () => {
+          const api = projectionHuntApi();
+          api.emitHistoryStatus({ canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "peer restore" });
+          api.resolveSliceForTarget("tab:900", { start: 880, end: 940 });
+          await api.waitForVisibleRow(900);
+          await api.waitForIdleFrames(4);
+          return {
+            commands: api.sentCommands(),
+            requests: api.projectionRequests(),
+            stateRequests: api.stateRequestCount(),
+            searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
+            visibleRows: api.visibleRows(),
+            hasTargetHighlight: Boolean(document.querySelector("[data-node-id='tab:900'].is-reveal-highlight")),
+            hasSearchRow: Boolean(document.querySelector("[data-node-id='tab:900'].is-search-match"))
+          };
+        })
+      ]);
+
+      expect(resultA.commands).toEqual([{ type: "restoreNode", nodeId: "tab:30" }]);
+      expect(resultA.stateRequests).toBe(0);
+      expect(resultA.visibleRows).toContain(0);
+      expect(resultA.closedWindowExists).toBe(true);
+      expect(resultA.closedTabExists).toBe(false);
+      expect(resultA.countText).toBe("3 items / 3 saved");
+
+      expect(resultB.commands).toEqual([{ type: "expandAncestors", nodeId: "tab:900" }]);
+      expect(resultB.requests).toContainEqual(expect.objectContaining({ query: "Tab 900", targetNodeId: undefined }));
+      expect(resultB.requests).toContainEqual(expect.objectContaining({ query: "", targetNodeId: "tab:900" }));
+      expect(resultB.stateRequests).toBe(0);
+      expect(resultB.searchValue).toBe("");
+      expect(resultB.visibleRows).toContain(900);
+      expect(resultB.hasTargetHighlight).toBe(true);
+      expect(resultB.hasSearchRow).toBe(false);
+      expect(issuesA).toEqual([]);
+      expect(issuesB).toEqual([]);
+    } finally {
+      await pageB.close();
+    }
+  });
+
+  test("psh-two-sidebars-root-drop-and-delayed-restore-prompt-stay-independent", async ({ page }) => {
+    const issuesA = collectPageIssues(page);
+    await loadRestoredWindowSidebar(page, { fullStatePending: true });
+    await dragToRoot(page, "tab:2");
+
+    const pageB = await page.context().newPage();
+    const issuesB = collectPageIssues(pageB);
+    const dialogMessagesB: string[] = [];
+    pageB.on("dialog", async (dialog) => {
+      dialogMessagesB.push(dialog.message());
+      await dialog.dismiss();
+    });
+    try {
+      await loadClosedRestoreSidebar(pageB, { fullStatePending: true, delayRestoreScope: true });
+      await nodeRow(pageB, "window:30").getByRole("button", { name: "Restore Closed Window", exact: true }).click();
+      await pageB.waitForFunction(() => projectionHuntApi().sentCommands().length === 1);
+
+      const [resultA, resultB] = await Promise.all([
+        page.evaluate(async () => {
+          const api = projectionHuntApi();
+          api.emitHistoryStatus({ canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "root drop" });
+          await api.waitForIdleFrames(4);
+          const marker = document.querySelector<HTMLElement>("[data-testid='drop-marker']");
+          const root = document.querySelector<HTMLElement>("main");
+          return {
+            commands: api.sentCommands(),
+            requests: api.projectionRequests(),
+            stateRequests: api.stateRequestCount(),
+            visibleRows: api.visibleRows(),
+            markerClassName: marker?.className ?? "",
+            rootDropTarget: root?.classList.contains("root-drop-target") ?? false
+          };
+        }),
+        pageB.evaluate(async () => {
+          const api = projectionHuntApi();
+          api.emitHistoryStatus({
+            canUndo: true,
+            canRedo: false,
+            undoDepth: 1,
+            redoDepth: 0,
+            undoLabel: "peer root drop"
+          });
+          api.resolveRestoreScope();
+          await api.waitForIdleFrames(8);
+          return {
+            commands: api.sentCommands(),
+            requests: api.projectionRequests(),
+            stateRequests: api.stateRequestCount(),
+            visibleRows: api.visibleRows(),
+            closedWindowExists: Boolean(document.querySelector("[data-node-id='window:30']")),
+            closedTabExists: Boolean(document.querySelector("[data-node-id='tab:30']")),
+            undoEnabled: !document.querySelector<HTMLButtonElement>("#undo")?.disabled
+          };
+        })
+      ]);
+
+      expect(resultA.commands).toEqual([{ type: "moveNodeToNewWindow", nodeId: "tab:2", index: 2 }]);
+      expect(resultA.requests).toEqual([]);
+      expect(resultA.stateRequests).toBe(0);
+      expect(resultA.visibleRows).toContain(3);
+      expect(resultA.markerClassName).not.toMatch(/drop-root|drop-before|drop-after|drop-inside/);
+      expect(resultA.rootDropTarget).toBe(false);
+
+      expect(resultB.commands).toEqual([{ type: "analyzeRestoreScope", nodeId: "window:30" }]);
+      expect(resultB.requests).toEqual([]);
+      expect(resultB.stateRequests).toBe(0);
+      expect(resultB.visibleRows).toContain(0);
+      expect(resultB.closedWindowExists).toBe(true);
+      expect(resultB.closedTabExists).toBe(true);
+      expect(resultB.undoEnabled).toBe(true);
+      expect(dialogMessagesB).toHaveLength(1);
+      expect(dialogMessagesB[0]).toContain("Restore 4 restorable closed nodes");
+      expect(issuesA).toEqual([]);
+      expect(issuesB).toEqual([]);
+    } finally {
+      await pageB.close();
+    }
   });
 
   test("psh-unloaded-delete-patch-preserves-visible-sparse-window", async ({ page }) => {
@@ -6710,6 +6999,47 @@ test.describe("sidebar projection hunt", () => {
     expect(issues).toEqual([]);
   });
 
+  test("psh-delayed-restore-scope-child-delete-invalidates-prompt", async ({ page }) => {
+    test.fail(true, "PT-035: delayed closed-restore scope can prompt after a scoped child was deleted.");
+    const issues = collectPageIssues(page);
+    const dialogMessages: string[] = [];
+    page.on("dialog", async (dialog) => {
+      dialogMessages.push(dialog.message());
+      await dialog.dismiss();
+    });
+    await loadClosedRestoreSidebar(page, { fullStatePending: true, delayRestoreScope: true });
+
+    await nodeRow(page, "window:30").getByRole("button", { name: "Restore Closed Window", exact: true }).click();
+    await page.waitForFunction(() => projectionHuntApi().sentCommands().length === 1);
+
+    const result = await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      api.emitHistoryStatus({ canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "delete closed tab" });
+      api.emitDeletePatch(["tab:30"]);
+      api.resolveRestoreScope();
+      await api.waitForIdleFrames(8);
+      return {
+        commands: api.sentCommands(),
+        stateRequests: api.stateRequestCount(),
+        visibleRows: api.visibleRows(),
+        closedWindowExists: Boolean(document.querySelector("[data-node-id='window:30']")),
+        deletedClosedTabExists: Boolean(document.querySelector("[data-node-id='tab:30']")),
+        undoEnabled: !document.querySelector<HTMLButtonElement>("#undo")?.disabled,
+        countText: document.querySelector("#state-count")?.textContent ?? ""
+      };
+    });
+
+    expect(result.commands).toEqual([{ type: "analyzeRestoreScope", nodeId: "window:30" }]);
+    expect(result.stateRequests).toBe(0);
+    expect(result.visibleRows).toContain(0);
+    expect(result.closedWindowExists).toBe(true);
+    expect(result.deletedClosedTabExists).toBe(false);
+    expect(result.undoEnabled).toBe(true);
+    expect(result.countText).toBe("3 items / 3 saved");
+    expect(dialogMessages).toEqual([]);
+    expect(issues).toEqual([]);
+  });
+
   test("psh-restored-delete-neighbor-title-patch-before-tree-patch-keeps-live-actions", async ({ page }) => {
     const issues = collectPageIssues(page);
     await loadRestoredWindowSidebar(page, { fullStatePending: true });
@@ -6920,6 +7250,62 @@ test.describe("sidebar projection hunt", () => {
     expect(result.hasSearchRow).toBe(true);
     await expect(page.getByRole("button", { name: "Undo", exact: true })).toBeDisabled();
     await expect(page.getByRole("button", { name: "Redo", exact: true })).toBeEnabled();
+    expect(issues).toEqual([]);
+  });
+
+  test("psh-drag-refill-target-owner-stale-response-keeps-target", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadLargeSparseSidebar(page, { includeCoverage: false, fullStatePending: true });
+
+    await dragAfter(page, "tab:800", "tab:839");
+    await page.evaluate(async () => {
+      await projectionHuntApi().waitForSparseRequestCount(1);
+    });
+    await page.locator("#search").fill("Tab 900");
+    await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      await api.waitForProjectionRequest("Tab 900");
+      api.resolveSliceForQuery("Tab 900");
+      await api.waitForVisibleRow(1);
+    });
+    await nodeRow(page, "tab:900").hover();
+    await nodeRow(page, "tab:900").getByRole("button", { name: "Show in tree", exact: true }).click();
+
+    const result = await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      await api.waitForTargetProjectionRequest("tab:900");
+      api.emitMovePatch("tab:801", "window:1", 800);
+      api.resolveSliceAt(0, { start: 780, end: 840, includeCoverage: true });
+      await api.waitForIdleFrames(3);
+      api.resolveSliceForTarget("tab:900");
+      await api.waitForVisibleRow(900);
+      await api.waitForIdleFrames(4);
+      const marker = document.querySelector<HTMLElement>("[data-testid='drop-marker']");
+      const root = document.querySelector<HTMLElement>("main");
+      return {
+        commands: api.sentCommands(),
+        requests: api.projectionRequests(),
+        stateRequests: api.stateRequestCount(),
+        searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
+        visibleRows: api.visibleRows(),
+        hasTarget: Boolean(document.querySelector("[data-node-id='tab:900']")),
+        hasTargetHighlight: Boolean(document.querySelector("[data-node-id='tab:900'].is-reveal-highlight")),
+        markerClassName: marker?.className ?? "",
+        rootDropTarget: root?.classList.contains("root-drop-target") ?? false
+      };
+    });
+
+    expect(result.commands).toEqual([{ type: "expandAncestors", nodeId: "tab:900" }]);
+    expect(result.requests).toContainEqual(expect.objectContaining({ query: "", targetNodeId: undefined }));
+    expect(result.requests).toContainEqual(expect.objectContaining({ query: "Tab 900", targetNodeId: undefined }));
+    expect(result.requests).toContainEqual(expect.objectContaining({ query: "", targetNodeId: "tab:900" }));
+    expect(result.stateRequests).toBe(0);
+    expect(result.searchValue).toBe("");
+    expect(result.visibleRows).toContain(900);
+    expect(result.hasTarget).toBe(true);
+    expect(result.hasTargetHighlight).toBe(true);
+    expect(result.markerClassName).not.toMatch(/drop-root|drop-before|drop-after|drop-inside/);
+    expect(result.rootDropTarget).toBe(false);
     expect(issues).toEqual([]);
   });
 
@@ -8661,6 +9047,44 @@ test.describe("sidebar projection hunt", () => {
     expect(result.rootDropTarget).toBe(false);
     expect(issues).toEqual([]);
   });
+
+  test("psh-restored-tab-root-drop-search-replacement-keeps-query-owner", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadRestoredWindowSidebar(page, { fullStatePending: true });
+
+    await dragToRoot(page, "tab:2");
+    await page.locator("#search").fill("Existing tab");
+
+    const result = await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      api.emitHistoryStatus({ canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "root drop" });
+      await api.waitForIdleFrames(4);
+      const marker = document.querySelector<HTMLElement>("[data-testid='drop-marker']");
+      const root = document.querySelector<HTMLElement>("main");
+      return {
+        commands: api.sentCommands(),
+        requests: api.projectionRequests(),
+        stateRequests: api.stateRequestCount(),
+        searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
+        visibleRows: api.visibleRows(),
+        hasExistingTab: Boolean(document.querySelector("[data-node-id='tab:1']")),
+        hasRestoredTab: Boolean(document.querySelector("[data-node-id='tab:2']")),
+        markerClassName: marker?.className ?? "",
+        rootDropTarget: root?.classList.contains("root-drop-target") ?? false
+      };
+    });
+
+    expect(result.commands).toEqual([{ type: "moveNodeToNewWindow", nodeId: "tab:2", index: 2 }]);
+    expect(result.requests).toEqual([]);
+    expect(result.stateRequests).toBe(0);
+    expect(result.searchValue).toBe("Existing tab");
+    expect(result.visibleRows).toContain(1);
+    expect(result.hasExistingTab).toBe(true);
+    expect(result.hasRestoredTab).toBe(false);
+    expect(result.markerClassName).not.toMatch(/drop-root|drop-before|drop-after|drop-inside/);
+    expect(result.rootDropTarget).toBe(false);
+    expect(issues).toEqual([]);
+  });
 });
 
 async function loadLargeSparseSidebar(
@@ -9182,12 +9606,13 @@ function installProjectionHuntHarness(options: {
     const updatedNodes = Object.keys(next.nodes)
       .filter((nodeId) => JSON.stringify(previous.nodes[nodeId]) !== JSON.stringify(next.nodes[nodeId]))
       .map((nodeId) => structuredClone(next.nodes[nodeId]));
+    const deletedClosedCount = deletedNodeIds.filter((nodeId) => previous.nodes[nodeId]?.status === "closed").length;
     return {
       type: "treeStructureUpdated",
       deletedNodeIds,
       updatedNodes,
       rootIds: [...next.rootIds],
-      deletedClosedCount: 0
+      deletedClosedCount
     };
   }
 
