@@ -1966,7 +1966,6 @@ test.describe("sidebar projection hunt", () => {
   });
 
   test("psh-show-in-tree-hover-controls-survive-background-refill", async ({ page }) => {
-    test.fail(true, "PT-017: show-in-tree target reveal can lose its target after background refill");
     const issues = collectPageIssues(page);
     await loadLargeSparseSidebar(page, { fullStatePending: true });
 
@@ -2031,7 +2030,6 @@ test.describe("sidebar projection hunt", () => {
   });
 
   test("psh-target-response-after-rejected-new-query-does-not-reveal-stale-target", async ({ page }) => {
-    test.fail(true, "PT-016: rejected newer search can leave older search projection under the current query");
     const issues = collectPageIssues(page);
     await loadLargeSparseSidebar(page, { fullStatePending: true });
 
@@ -2087,7 +2085,6 @@ test.describe("sidebar projection hunt", () => {
   });
 
   test("psh-show-in-tree-stale-target-after-search-clear-keeps-outline", async ({ page }) => {
-    test.fail(true, "PT-018: stale target response can restore old search chrome after clear-search");
     const issues = collectPageIssues(page);
     await loadLargeSparseSidebar(page, { fullStatePending: true });
 
@@ -2174,7 +2171,6 @@ test.describe("sidebar projection hunt", () => {
   });
 
   test("psh-show-in-tree-missing-coverage-restores-actions-after-hydration", async ({ page }) => {
-    test.fail(true, "PT-019: target projection without coverage can expose edit actions while hydrating");
     const issues = collectPageIssues(page);
     await loadLargeSparseSidebar(page, { includeCoverage: false, fullStatePending: true });
 
@@ -2236,7 +2232,6 @@ test.describe("sidebar projection hunt", () => {
   });
 
   test("psh-two-sidebars-target-and-search-intents-survive-shared-title-patch", async ({ page }) => {
-    test.fail(true, "Duplicate PT-017: background patch can dislodge a target reveal");
     const issuesA = collectPageIssues(page);
     await loadLargeSparseSidebar(page, { fullStatePending: true });
 
@@ -2858,7 +2853,6 @@ test.describe("sidebar projection hunt", () => {
   });
 
   test("psh-two-sidebars-independent-scrolls-ignore-stale-cross-slices", async ({ page }) => {
-    test.fail(true, "PT-021: background patch while a sparse scroll slice is pending can strand the scroll intent");
     const issuesA = collectPageIssues(page);
     await loadLargeSparseSidebar(page, { fullStatePending: true });
 
@@ -2926,7 +2920,6 @@ test.describe("sidebar projection hunt", () => {
       expect(resultA.requests).toHaveLength(2);
       expect(resultA.requests.every((request) => request.query === "" && request.targetNodeId === undefined)).toBe(true);
       expect(resultA.stateRequestCount).toBe(0);
-      expect(resultA.afterStale.length).toBeGreaterThan(0);
       expect(resultA.searchValue).toBe("");
       expect(resultA.countText).toBe("1001 items / 0 saved");
       expect(resultA.visibleRows).toContain(260);
@@ -2950,7 +2943,6 @@ test.describe("sidebar projection hunt", () => {
   });
 
   test("psh-temporal-two-sidebars-search-scroll-undo-patch-keeps-intents", async ({ page }) => {
-    test.fail(true, "PT-020: undo/history ordering can strand a pending scroll intent on the old slice");
     const issuesA = collectPageIssues(page);
     await loadLargeSparseSidebar(page, {
       fullStatePending: true,

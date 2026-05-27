@@ -131,6 +131,7 @@ let lastSparseViewportScrollIntentAt = Number.NEGATIVE_INFINITY;
 let pendingCutNodeId: NodeId | undefined;
 let currentCutRowRange: CutSubtreeRowRange | undefined;
 let pendingShowInTreeNodeId: NodeId | undefined;
+let activeRevealTargetNodeId: NodeId | undefined;
 let revealHighlightNodeId: NodeId | undefined;
 let revealHighlightTimer: number | undefined;
 let sidebarWindowId: number | undefined;
@@ -141,6 +142,7 @@ let sidebarActiveTabTargetsByWindow = new Map<number, NodeId>();
 let sparseWindowRequestSequence = 0;
 let sparseWindowStateChangeCutoff = 0;
 let remoteSearchRequestSequence = 0;
+let projectionOwnerRevision = 0;
 let pendingRemoteSearchTimer: number | undefined;
 let pendingSparseWindowRequest:
   | {
@@ -159,14 +161,19 @@ type ProjectionRequestIntent = {
   targetNodeId?: NodeId;
 };
 
+type ProjectionOwner = ProjectionRequestIntent & {
+  revision: number;
+};
+
 type RenderedProjectionSession = {
-  lastNonSearchProjection?: {
+  lastOutlineProjection?: {
     projection: VisibleTreeProjection;
     coverage?: SidebarProjectionCoverage;
   };
 };
 
 const renderedProjectionSession: RenderedProjectionSession = {};
+let currentProjectionOwner: ProjectionOwner = { kind: "outline", query: "", revision: projectionOwnerRevision };
 
 const WHEEL_ZOOM_THRESHOLD_PX = 80;
 const DIAGNOSTICS_NOTICE_MS = 4000;
@@ -591,6 +598,7 @@ async function waitForHydrationRenderIdle(): Promise<number> {
 }
 
 function applyInitialTreeSnapshot(snapshot: InitialTreeSnapshot): void {
+  setCurrentProjectionOwner(remoteSearchRequestIntent(currentSearchQuery));
   currentState = snapshot.state;
   currentStateFullyLoaded = initialTreeSnapshotHasFullState(snapshot);
   invalidateSidebarWindowActiveTabTargets();
@@ -641,7 +649,7 @@ function applySparseScrollWindowSnapshot(snapshot: InitialTreeSnapshot): void {
     return;
   }
 
-  mergeProjectionSliceSnapshot(snapshot);
+  mergeProjectionSliceSnapshot(snapshot, { coverageMode: "merge" });
   currentProjection = projectionFromInitialTreeSnapshot(snapshot);
   projectionState = currentState;
   projectionQuery = snapshot.projection.query;
@@ -663,7 +671,10 @@ function applySparseScrollWindowSnapshot(snapshot: InitialTreeSnapshot): void {
   });
 }
 
-function mergeProjectionSliceSnapshot(snapshot: InitialTreeSnapshot): void {
+function mergeProjectionSliceSnapshot(
+  snapshot: InitialTreeSnapshot,
+  options: { coverageMode?: "merge" | "replace" | "none" } = {}
+): void {
   const coverage = projectionCoverageFromSnapshot(snapshot.coverage);
   currentState = mergePartialOutlineState(currentState, snapshot.state, {
     ...(coverage ? { completeSiblingParentIds: coverage.completeSiblingParentIds } : {})
@@ -671,7 +682,11 @@ function mergeProjectionSliceSnapshot(snapshot: InitialTreeSnapshot): void {
   currentStateFullyLoaded = !snapshot.hydrating && currentStateHasFullNodeTable(snapshot.projection.nodeCount);
   invalidateSidebarWindowActiveTabTargets();
   hydratingFullState = snapshot.hydrating || !currentStateFullyLoaded;
-  currentProjectionCoverage = mergeProjectionCoverage(currentProjectionCoverage, coverage);
+  if (options.coverageMode === "replace") {
+    currentProjectionCoverage = coverage;
+  } else if (options.coverageMode !== "none") {
+    currentProjectionCoverage = mergeProjectionCoverage(currentProjectionCoverage, coverage);
+  }
 }
 
 function requestSparseScrollWindowIfNeeded(options: { force?: boolean } = {}): void {
@@ -750,7 +765,7 @@ async function loadSparseScrollWindow(
     await nextAnimationFrame();
     if (requestId <= sparseWindowStateChangeCutoff) {
       if (isInitialTreeSnapshot(response) && response.hydrating && snapshotProjectionMatchesRequestIntent(response, intent)) {
-        mergeProjectionSliceSnapshot(response);
+        mergeProjectionSliceSnapshot(response, { coverageMode: "none" });
       }
       requestSparseScrollWindowIfNeeded();
       return;
@@ -771,7 +786,7 @@ async function loadSparseScrollWindow(
         response.hydrating &&
         snapshotProjectionMatchesRequestIntent(response, intent)
       ) {
-        mergeProjectionSliceSnapshot(response);
+        mergeProjectionSliceSnapshot(response, { coverageMode: "none" });
       }
       requestSparseScrollWindowIfNeeded();
       return;
@@ -794,7 +809,7 @@ async function loadSparseScrollWindow(
       if (sparseSnapshotIntersectsCurrentViewport(response)) {
         applySparseScrollWindowSnapshot(response);
       } else {
-        mergeProjectionSliceSnapshot(response);
+        mergeProjectionSliceSnapshot(response, { coverageMode: "merge" });
       }
       pendingSparseWindowRequest = undefined;
       requestSparseScrollWindowIfNeeded();
@@ -831,14 +846,7 @@ async function requestProjectionSlice(
 }
 
 function currentProjectionRequestIntent(): ProjectionRequestIntent {
-  const query = currentSearchQuery.trim();
-  if (query) {
-    return { kind: "search", query };
-  }
-  if (pendingShowInTreeNodeId) {
-    return { kind: "showInTree", query: "", targetNodeId: pendingShowInTreeNodeId };
-  }
-  return { kind: "outline", query: "" };
+  return projectionIntentFromOwner(currentProjectionOwner);
 }
 
 function sparseWindowRequestIntent(query: string): ProjectionRequestIntent {
@@ -860,7 +868,7 @@ function remoteSearchProjectionRequestWindow(query: string): { centerRowIndex: n
   const viewportRange = currentViewportRowRange(rowHeight);
   const viewportRows = Math.max(1, viewportRange.end - viewportRange.start);
   const rowLimit = sparseScrollWindowRowLimit(viewportRows);
-  const fallbackProjection = renderedProjectionSession.lastNonSearchProjection?.projection ?? currentProjection;
+  const fallbackProjection = renderedProjectionSession.lastOutlineProjection?.projection ?? currentProjection;
   const totalRowCount = fallbackProjection?.totalRowCount ?? fallbackProjection?.rows.length ?? 0;
   if (totalRowCount <= 0) {
     return { centerRowIndex: 0, rowLimit };
@@ -879,15 +887,56 @@ function remoteShowInTreeRequestIntent(nodeId: NodeId): ProjectionRequestIntent 
   return { kind: "showInTree", query: "", targetNodeId: nodeId };
 }
 
+function projectionIntentFromOwner(owner: ProjectionOwner): ProjectionRequestIntent {
+  return {
+    kind: owner.kind,
+    query: owner.query,
+    ...(owner.targetNodeId ? { targetNodeId: owner.targetNodeId } : {})
+  };
+}
+
+function setCurrentProjectionOwner(intent: ProjectionRequestIntent): ProjectionOwner {
+  const nextOwner = {
+    ...normalizedProjectionRequestIntent(intent),
+    revision: ++projectionOwnerRevision
+  };
+  currentProjectionOwner = nextOwner;
+  if (nextOwner.kind !== "showInTree") {
+    pendingShowInTreeNodeId = undefined;
+    activeRevealTargetNodeId = undefined;
+    clearRevealHighlightTimer();
+    revealHighlightNodeId = undefined;
+  } else if (activeRevealTargetNodeId && activeRevealTargetNodeId !== nextOwner.targetNodeId) {
+    activeRevealTargetNodeId = undefined;
+    clearRevealHighlightTimer();
+    revealHighlightNodeId = undefined;
+  }
+  if (nextOwner.kind !== "outline") {
+    lastSparseViewportScrollIntentAt = Number.NEGATIVE_INFINITY;
+  }
+  return nextOwner;
+}
+
+function normalizedProjectionRequestIntent(intent: ProjectionRequestIntent): ProjectionRequestIntent {
+  const query = intent.query.trim();
+  return {
+    kind: intent.kind,
+    query,
+    ...(intent.targetNodeId ? { targetNodeId: intent.targetNodeId } : {})
+  };
+}
+
 function projectionRequestIntentMatchesCurrent(intent: ProjectionRequestIntent): boolean {
   return projectionRequestIntentsEqual(intent, currentProjectionRequestIntent());
 }
 
 function projectionRequestIntentsEqual(left: ProjectionRequestIntent, right: ProjectionRequestIntent): boolean {
+  const normalizedLeft = normalizedProjectionRequestIntent(left);
+  const normalizedRight = normalizedProjectionRequestIntent(right);
   return (
-    left.kind === right.kind &&
-    normalizeSearchQuery(left.query) === normalizeSearchQuery(right.query) &&
-    left.targetNodeId === right.targetNodeId
+    normalizedLeft.kind === normalizedRight.kind &&
+    normalizeSearchQuery(normalizedLeft.query) === normalizeSearchQuery(normalizedRight.query) &&
+    normalizedLeft.targetNodeId === normalizedRight.targetNodeId
   );
 }
 
@@ -973,6 +1022,9 @@ function clampedViewportRowRangeForProjection(projection: {
 
 function noteSparseViewportScrollIntent(): void {
   if (currentProjection && isSparseInitialProjection(currentProjection) && !currentSparseProjectionIntersectsViewport()) {
+    if (currentProjectionOwner.kind === "showInTree") {
+      setCurrentProjectionOwner(remoteSearchRequestIntent(currentSearchQuery));
+    }
     lastSparseViewportScrollIntentAt = performance.now();
   }
 }
@@ -1258,6 +1310,7 @@ function registerZoomShortcuts(): void {
 function registerSearchControls(): void {
   searchInput?.addEventListener("input", () => {
     currentSearchQuery = searchInput.value;
+    setCurrentProjectionOwner(remoteSearchRequestIntent(currentSearchQuery));
     updateSearchControls();
     if (!currentState) {
       return;
@@ -1513,8 +1566,14 @@ function clearSearchQuery(options: { focus?: boolean; targetNodeId?: NodeId } = 
   if (searchInput) {
     searchInput.value = "";
   }
+  setCurrentProjectionOwner(options.targetNodeId
+    ? remoteShowInTreeRequestIntent(options.targetNodeId)
+    : remoteSearchRequestIntent(currentSearchQuery));
   updateSearchControls();
   if (shouldUseRemoteProjectionSearch()) {
+    if (!options.targetNodeId) {
+      restoreLastOutlineProjectionAfterRemoteFailure();
+    }
     if (options.targetNodeId) {
       void loadRemoteShowInTreeProjection(options.targetNodeId);
     } else {
@@ -1555,6 +1614,11 @@ function refreshSparseRemoteProjectionAfterStateChange(): boolean {
   }
 
   cancelPendingRemoteSearchProjection();
+  if (currentProjectionOwner.kind === "showInTree" && activeRevealTargetNodeId) {
+    void loadRemoteShowInTreeProjection(activeRevealTargetNodeId);
+    return true;
+  }
+
   const viewportRange = clampedViewportRowRangeForProjection(currentProjection);
   const viewportRows = Math.max(1, viewportRange.end - viewportRange.start);
   const rowLimit = sparseScrollWindowRowLimit(viewportRows);
@@ -1692,8 +1756,7 @@ async function loadRemoteSearchProjection(
       perfTrace.mark("sidebar.remoteSearchProjection.error", { message: commandErrorText(error) });
       if (
         projectionRequestIntentMatchesCurrent(intent) &&
-        intent.kind === "outline" &&
-        restoreLastNonSearchProjectionAfterRemoteFailure()
+        restoreLastOutlineProjectionAfterRemoteFailure()
       ) {
         return;
       }
@@ -1704,6 +1767,7 @@ async function loadRemoteSearchProjection(
 
 async function loadRemoteShowInTreeProjection(nodeId: NodeId): Promise<void> {
   cancelPendingRemoteSearchProjection();
+  pendingShowInTreeNodeId = nodeId;
   const requestId = beginRemoteSearchProjectionRequest();
   const intent = remoteShowInTreeRequestIntent(nodeId);
 
@@ -1725,7 +1789,10 @@ async function loadRemoteShowInTreeProjection(nodeId: NodeId): Promise<void> {
       if (pendingShowInTreeNodeId === nodeId) {
         pendingShowInTreeNodeId = undefined;
       }
-      if (restoreLastNonSearchProjectionAfterRemoteFailure()) {
+      if (projectionRequestIntentMatchesCurrent(intent)) {
+        setCurrentProjectionOwner(remoteSearchRequestIntent(""));
+      }
+      if (restoreLastOutlineProjectionAfterRemoteFailure()) {
         return;
       }
     }
@@ -1740,7 +1807,10 @@ async function loadRemoteShowInTreeProjection(nodeId: NodeId): Promise<void> {
       if (pendingShowInTreeNodeId === nodeId) {
         pendingShowInTreeNodeId = undefined;
       }
-      if (!currentSearchQuery.trim() && restoreLastNonSearchProjectionAfterRemoteFailure()) {
+      if (!currentSearchQuery.trim() && projectionRequestIntentMatchesCurrent(intent)) {
+        setCurrentProjectionOwner(remoteSearchRequestIntent(""));
+      }
+      if (!currentSearchQuery.trim() && restoreLastOutlineProjectionAfterRemoteFailure()) {
         return;
       }
       showDiagnosticsNotice(commandErrorText(error), { error: true });
@@ -1752,7 +1822,7 @@ function applyRemoteProjectionSnapshot(
   snapshot: InitialTreeSnapshot,
   options: { scrollToActive?: boolean; scrollToTop?: boolean; scrollToPendingShowInTree?: boolean } = {}
 ): void {
-  mergeProjectionSliceSnapshot(snapshot);
+  mergeProjectionSliceSnapshot(snapshot, { coverageMode: "replace" });
   currentProjection = projectionFromInitialTreeSnapshot(snapshot);
   projectionState = currentState;
   projectionQuery = snapshot.projection.query;
@@ -1965,10 +2035,10 @@ function mergeProjectionCoverage(
 }
 
 function rememberAcceptedRenderedProjection(projection: VisibleTreeProjection): void {
-  if (projection.isSearchActive) {
+  if (projection.isSearchActive || currentProjectionOwner.kind !== "outline") {
     return;
   }
-  renderedProjectionSession.lastNonSearchProjection = {
+  renderedProjectionSession.lastOutlineProjection = {
     projection: cloneVisibleTreeProjection(projection),
     ...(currentProjectionCoverage ? { coverage: cloneProjectionCoverage(currentProjectionCoverage) } : {})
   };
@@ -2001,15 +2071,15 @@ function cloneProjectionCoverage(coverage: SidebarProjectionCoverage): SidebarPr
   };
 }
 
-function restoreLastNonSearchProjectionAfterRemoteFailure(): boolean {
-  const lastNonSearchProjection = renderedProjectionSession.lastNonSearchProjection;
-  if (!currentState || !lastNonSearchProjection) {
+function restoreLastOutlineProjectionAfterRemoteFailure(): boolean {
+  const lastOutlineProjection = renderedProjectionSession.lastOutlineProjection;
+  if (!currentState || !lastOutlineProjection) {
     return false;
   }
 
-  currentProjection = cloneVisibleTreeProjection(lastNonSearchProjection.projection);
-  currentProjectionCoverage = lastNonSearchProjection.coverage
-    ? cloneProjectionCoverage(lastNonSearchProjection.coverage)
+  currentProjection = cloneVisibleTreeProjection(lastOutlineProjection.projection);
+  currentProjectionCoverage = lastOutlineProjection.coverage
+    ? cloneProjectionCoverage(lastOutlineProjection.coverage)
     : undefined;
   projectionState = undefined;
   projectionQuery = undefined;
@@ -2080,7 +2150,10 @@ function reconcileTreeRows(items: HTMLElement[], totalHeight: number): void {
 }
 
 function reconcileNodeItem(existing: HTMLElement, next: HTMLElement): HTMLElement {
-  const canPreserveActions = nodeStatusClass(existing) === nodeStatusClass(next);
+  const canPreserveActions = (
+    nodeStatusClass(existing) === nodeStatusClass(next) &&
+    shouldPreserveExistingActionsForNextItem(existing, next)
+  );
   const existingRow = rowForItem(existing);
   const nextRow = rowForItem(next);
   const activeElement = document.activeElement instanceof HTMLElement && existing.contains(document.activeElement)
@@ -2099,6 +2172,43 @@ function reconcileNodeItem(existing: HTMLElement, next: HTMLElement): HTMLElemen
     existing.querySelector<HTMLElement>(`[data-action="${cssEscape(activeAction)}"]`)?.focus({ preventScroll: true });
   }
   return existing;
+}
+
+function shouldPreserveExistingActionsForNextItem(existing: HTMLElement, next: HTMLElement): boolean {
+  const existingRow = rowForItem(existing);
+  const existingActions = existingRow ? directRowActions(existingRow) : undefined;
+  if (!existingActions) {
+    return true;
+  }
+
+  const nextRow = rowForItem(next);
+  if (nextRow && directRowActions(nextRow)) {
+    return true;
+  }
+
+  if (!hydratingFullState || !currentProjection || !isSparseInitialProjection(currentProjection)) {
+    return true;
+  }
+
+  const nodeId = next.dataset.nodeId as NodeId | undefined;
+  const node = nodeId ? currentState?.nodes[nodeId] : undefined;
+  if (!node || !currentProjectionCoverage) {
+    return false;
+  }
+
+  for (const action of Array.from(existingActions.querySelectorAll<HTMLElement>("[data-action]"))) {
+    const actionName = action.dataset.action;
+    if (!actionName) {
+      continue;
+    }
+    if (actionName === "show-in-tree" && !next.classList.contains("is-search-match")) {
+      return false;
+    }
+    if (!canRenderHydratingNodeAction(actionName, node)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function reconcileNodeRow(
@@ -3901,6 +4011,9 @@ function cssEscape(value: string): string {
 }
 
 function scrollToObservedActiveTab(projection: VisibleTreeProjection): void {
+  if (shouldSuppressObservedActiveScroll()) {
+    return;
+  }
   const rowHeight = currentRowHeight();
   prepareVirtualScrollSurface(projection, rowHeight);
   scrollActiveTabIntoView(
@@ -3909,6 +4022,10 @@ function scrollToObservedActiveTab(projection: VisibleTreeProjection): void {
     rootDropSurface ?? undefined,
     rowHeight
   );
+}
+
+function shouldSuppressObservedActiveScroll(): boolean {
+  return currentProjectionOwner.kind === "showInTree" || shouldPreserveSparseViewportScrollIntent();
 }
 
 function activeScrollNodeIdForSidebarWindow(projection: VisibleTreeProjection): NodeId | undefined {
@@ -3997,21 +4114,21 @@ function scrollToPendingShowInTreeRow(projection: VisibleTreeProjection): boolea
   const row = projection.rows.find((candidate) => candidate.nodeId === targetNodeId);
   pendingShowInTreeNodeId = undefined;
   if (!row) {
+    activeRevealTargetNodeId = undefined;
     return false;
   }
 
   const rowHeight = currentRowHeight();
   prepareVirtualScrollSurface(projection, rowHeight);
   centerRowInViewport(row.index, rootDropSurface ?? undefined, rowHeight);
+  activeRevealTargetNodeId = targetNodeId;
   startRevealHighlight(targetNodeId);
   return true;
 }
 
 function startRevealHighlight(nodeId: NodeId): void {
   revealHighlightNodeId = nodeId;
-  if (revealHighlightTimer !== undefined) {
-    window.clearTimeout(revealHighlightTimer);
-  }
+  clearRevealHighlightTimer();
 
   revealHighlightTimer = window.setTimeout(() => {
     revealHighlightTimer = undefined;
@@ -4020,6 +4137,13 @@ function startRevealHighlight(nodeId: NodeId): void {
       scheduleCurrentRowsRender();
     }
   }, SHOW_IN_TREE_HIGHLIGHT_MS);
+}
+
+function clearRevealHighlightTimer(): void {
+  if (revealHighlightTimer !== undefined) {
+    window.clearTimeout(revealHighlightTimer);
+    revealHighlightTimer = undefined;
+  }
 }
 
 function isRevealHighlighted(nodeId: NodeId): boolean {
