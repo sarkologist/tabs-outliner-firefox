@@ -1644,9 +1644,14 @@ function refreshSparseRemoteProjectionAfterStateChange(): boolean {
   }
 
   cancelPendingRemoteSearchProjection();
-  if (currentProjectionOwner.kind === "showInTree" && activeRevealTargetNodeId) {
-    void loadRemoteShowInTreeProjection(activeRevealTargetNodeId);
-    return true;
+  if (currentProjectionOwner.kind === "showInTree") {
+    if (pendingShowInTreeNodeId) {
+      return true;
+    }
+    if (activeRevealTargetNodeId) {
+      void loadRemoteShowInTreeProjection(activeRevealTargetNodeId);
+      return true;
+    }
   }
 
   if (!currentProjection || !isSparseInitialProjection(currentProjection)) {
@@ -4485,7 +4490,13 @@ async function restoreNodeWithConfirmation(nodeId: NodeId): Promise<void> {
     showDiagnosticsNotice(commandErrorText(error), { error: true });
     return;
   }
+  if (!restoreScopeStillApplies(nodeId, scope)) {
+    return;
+  }
   if (scope.requiresConfirmation && !window.confirm(largeRestoreConfirmationPrompt(scope))) {
+    return;
+  }
+  if (!restoreScopeStillApplies(nodeId, scope)) {
     return;
   }
 
@@ -4506,6 +4517,24 @@ async function restoreScopeForNode(state: OutlineState, nodeId: NodeId): Promise
   }
 
   return perfTrace.measure("sidebar.restore.scope", () => analyzeRestoreScope(state, nodeId));
+}
+
+function restoreScopeStillApplies(nodeId: NodeId, scope: RestoreScope): boolean {
+  const state = currentState;
+  const target = state?.nodes[nodeId];
+  if (!state || !target || target.status !== "closed") {
+    return false;
+  }
+  if (scope.nodeIds.length > 0 && !scope.nodeIds.includes(nodeId)) {
+    return false;
+  }
+  for (const scopeNodeId of scope.nodeIds) {
+    const node = state.nodes[scopeNodeId];
+    if (node && node.status !== "closed") {
+      return false;
+    }
+  }
+  return true;
 }
 
 function shouldAskBackgroundForRestoreScope(nodeId: NodeId): boolean {

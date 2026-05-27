@@ -22,9 +22,9 @@ pnpm perf:sidebar-projection-guard
 - Strategy: restore/keyboard/temporal hunt after sparse boundary coverage, focused on closed-restore prompts, restored/delete shells, keyboard cut/paste/undo/redo across query and show-in-tree replacement, and multi-sidebar independence while one sidebar owns local keyboard/restore state and another owns search/target projection state.
 - Last completed run scenario ids: 176 `psh-*` Playwright discovery/regression scenarios
 - Distinct findings recorded: 33
-- Status: `PT-001` through `PT-031` fixed; `PT-033` and `PT-034` are open from the active restore/keyboard/temporal hunt. The sparse action follow-up hunt suspected `PT-032` around rename/search replacement, but the follow-up fix pass retracted it as a harness-ordering false positive and kept the corrected scenarios as required-passing coverage.
+- Status: `PT-001` through `PT-031`, `PT-033`, and `PT-034` are fixed. The sparse action follow-up hunt suspected `PT-032` around rename/search replacement, but the follow-up fix pass retracted it as a harness-ordering false positive and kept the corrected scenarios as required-passing coverage.
 - Clean blocks after latest finding: after `PT-034`, block 1 sampled history-only target preservation plus the existing restore/keyboard corpus and passed the full corpus at 170 scenarios; block 2 sampled delayed restore-scope search input, keyboard redo/query replacement, and two-sidebar restore-dialog/target independence and passed the full corpus at 173 scenarios; block 3 sampled delayed restore-scope search clear, keyboard redo during pending show-in-tree, and two-sidebar restore-dialog/redo-query independence and passed the full corpus at 176 scenarios. No new distinct projection signature appeared in those three complete active mutation blocks.
-- Verification: targeted clean-block replays passed, and `pnpm exec playwright test tests/playwright/sidebar-projection-hunt.spec.ts --reporter=list --workers=1` passed with 176 scenarios. Because `PT-033` and `PT-034` remain open discovery findings, the final fix-gate build/perf suite is deferred to the follow-up fix pass.
+- Verification: the follow-up fix pass converted the `PT-033` and `PT-034` repros to required-passing tests. Targeted repros, the related restore/keyboard/show-in-tree slice, the full 176-scenario projection corpus, sparse-scroll, first-paint, startup-interaction profile, `pnpm run build`, and `pnpm perf:sidebar-projection-guard` pass.
 
 ## Fix Analysis
 
@@ -41,11 +41,13 @@ pnpm perf:sidebar-projection-guard
 - `PT-016` through `PT-021`: target-node, search, clear-search, and sparse-scroll flows still shared too much "last rendered rows" state. The fix gives each visible projection a sidebar-local owner (`outline`, `search`, or `showInTree`) with normalized query/target semantics; only responses captured under the current owner may own the visible projection. Accepted show-in-tree reveals keep an active reveal target across background refills, outline fallback memory excludes target-centered slices, sparse scroll intent suppresses active-tab recentering, and hover action preservation now requires current coverage proof so old action strips cannot leak across owner changes.
 - `PT-022` through `PT-030`: owner identity was guarded, but rows, viewport anchor, chrome metadata, coverage, and outline fallback memory could still drift independently during compact patches, refills, and clear/search/show-in-tree transitions. The fix admits projection updates as coherent frames: current-owner responses may replace visible rows and frame metadata, stale responses only merge safe node data, owner/frame changes replace coverage rather than inheriting it, same-owner sparse expansions are the only path that merges coverage, outline fallback excludes search/target frames, and missing-coverage hydrating rows stay edit-readonly until coverage or full hydration proves action authority.
 - `PT-031`: drag/drop still had a pre-sparse-rewrite blanket full-hydration guard, so covered local rows were draggable in the DOM but rejected by the event handlers while `hydratingFullState` remained true. The fix makes drag/drop admission coverage-aware: covered local source/target/root placements can send the background move command without full hydration, while missing coverage blocks the attempt and requests a sparse refill instead of `getState`.
+- `PT-033`: delayed closed-restore scope responses lacked a post-await validity check against current sidebar state. The fix admits a restore scope only while the target still exists, is still closed, and any known scoped rows are still closed; the same check runs again after the confirmation prompt before sending the restore command.
+- `PT-034`: state-change refresh after a history/title patch could demote a pending show-in-tree owner into a generic outline sparse refill before the target response arrived. The fix treats a pending show-in-tree request as the current projection owner during state-change refresh, so unrelated patches do not steal visible ownership before the target slice settles.
 
 ## Finding Index
 
-- Fixed projection findings: `PT-001`, `PT-002`, `PT-003`, `PT-004`, `PT-005`, `PT-006`, `PT-007`, `PT-008`, `PT-009`, `PT-010`, `PT-011`, `PT-012`, `PT-013`, `PT-014`, `PT-015`, `PT-016`, `PT-017`, `PT-018`, `PT-019`, `PT-020`, `PT-021`, `PT-022`, `PT-023`, `PT-024`, `PT-025`, `PT-026`, `PT-027`, `PT-028`, `PT-029`, `PT-030`, `PT-031`
-- Open projection findings: `PT-033`, `PT-034`
+- Fixed projection findings: `PT-001`, `PT-002`, `PT-003`, `PT-004`, `PT-005`, `PT-006`, `PT-007`, `PT-008`, `PT-009`, `PT-010`, `PT-011`, `PT-012`, `PT-013`, `PT-014`, `PT-015`, `PT-016`, `PT-017`, `PT-018`, `PT-019`, `PT-020`, `PT-021`, `PT-022`, `PT-023`, `PT-024`, `PT-025`, `PT-026`, `PT-027`, `PT-028`, `PT-029`, `PT-030`, `PT-031`, `PT-033`, `PT-034`
+- Open projection findings: none
 - Retracted projection suspicions: `PT-032`
 
 ### PT-001 rejected sparse slice leaves viewport blank/no retry
@@ -512,7 +514,7 @@ pnpm exec playwright test tests/playwright/sidebar-projection-hunt.spec.ts --gre
 
 ### PT-033 delayed closed-restore scope can prompt after target deletion
 
-- Status: open
+- Status: fixed
 - Found by: `psh-restore-scope-response-after-delete-does-not-prompt-stale-restore`
 - Repro:
 
@@ -521,12 +523,13 @@ pnpm exec playwright test tests/playwright/sidebar-projection-hunt.spec.ts --gre
 ```
 
 - Expected: if the closed restore target is deleted before a delayed `analyzeRestoreScope` response resolves, that stale scope response should not prompt the user or send a restore for the removed subtree.
-- Actual: after the compact delete patch removes `window:30` and its closed children, resolving the old scope response still opens the large-restore confirmation dialog for the deleted subtree.
+- Actual before fix: after the compact delete patch removes `window:30` and its closed children, resolving the old scope response still opens the large-restore confirmation dialog for the deleted subtree.
 - Evidence: the frozen scenario delays `analyzeRestoreScope`, clicks `Restore Closed Window`, emits history status plus a `treeStructureUpdated` delete patch for `window:30`, `tab:30`, `tab:31`, and `tab:32`, then resolves the old scope response. Playwright observes the confirmation dialog text `Restore 4 restorable closed nodes...`; the row shell is already absent and no full `getState` occurs.
+- Fix: restore-scope results are checked against current sidebar state after the async scope request and again after any confirmation prompt. Stale scope responses are dropped if the target no longer exists, is no longer closed, or known scoped rows no longer remain closed.
 
 ### PT-034 pending target reveal can be lost by history/title patch before target response
 
-- Status: open
+- Status: fixed
 - Found by: `psh-two-sidebars-keyboard-undo-and-target-stale-scroll-stay-independent`
 - Repro:
 
@@ -535,5 +538,6 @@ pnpm exec playwright test tests/playwright/sidebar-projection-hunt.spec.ts --gre
 ```
 
 - Expected: when one sidebar has a current show-in-tree target request pending, a concurrent history-status/title patch should not demote that target owner; resolving the target slice should reveal `tab:900` with the search box cleared.
-- Actual: after the history/title patch arrives before the target slice resolves, the target response does not paint row `900`; the sidebar falls back to normal outline rows around the previous sparse window.
+- Actual before fix: after the history/title patch arrives before the target slice resolves, the target response does not paint row `900`; the sidebar falls back to normal outline rows around the previous sparse window.
 - Evidence: the frozen multi-sidebar scenario keeps sidebar A on a pending sparse scroll plus keyboard undo, while sidebar B searches `Tab 900`, starts `Show in tree`, receives a history status and title patch for `tab:900`, then resolves the pending target slice. Sidebar B times out waiting for visible row `900`, with outline chrome and rows around `760..800` instead of the reveal target.
+- Fix: state-change refresh now preserves pending show-in-tree ownership. While `pendingShowInTreeNodeId` is set, compact patches do not start a generic outline refill that can race ahead of the current target response.

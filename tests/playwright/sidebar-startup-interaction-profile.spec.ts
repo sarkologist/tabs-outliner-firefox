@@ -65,6 +65,7 @@ test.describe("sidebar startup interaction profile", () => {
 
     await page.goto("/sidebar/sidebar.html");
     await expect(page.locator(`.node[data-node-id='${TARGET_NODE_ID}'].is-active`)).toBeVisible();
+    await waitForProfileSummaryRow(page, "sidebar.render.initialSnapshot");
 
     const result = await page.evaluate(async (targetNodeId) => {
       const snapshot = await window.tabsOutlinerProfile?.snapshot();
@@ -774,4 +775,17 @@ function collectPageIssues(page: Page): ConsoleIssue[] {
     issues.push({ kind: "requestfailed", text: `${request.url()} ${request.failure()?.errorText ?? ""}` });
   });
   return issues;
+}
+
+async function waitForProfileSummaryRow(page: Page, rowName: string): Promise<void> {
+  await expect.poll(async () => page.evaluate(async (name) => {
+    const summary = await window.tabsOutlinerProfile?.summary();
+    return summary?.some((row) =>
+      row.name === name &&
+      typeof row.maxMs === "number" &&
+      Number.isFinite(row.maxMs)
+    ) ?? false;
+  }, rowName), {
+    message: `profile summary should include ${rowName}`
+  }).toBe(true);
 }

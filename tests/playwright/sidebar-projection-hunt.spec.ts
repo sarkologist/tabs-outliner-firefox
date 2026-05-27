@@ -6673,7 +6673,6 @@ test.describe("sidebar projection hunt", () => {
   });
 
   test("psh-restore-scope-response-after-delete-does-not-prompt-stale-restore", async ({ page }) => {
-    test.fail(true, "PT-033: delayed closed-restore scope can prompt after the restore target was deleted.");
     const issues = collectPageIssues(page);
     const dialogMessages: string[] = [];
     page.on("dialog", async (dialog) => {
@@ -7194,7 +7193,6 @@ test.describe("sidebar projection hunt", () => {
   });
 
   test("psh-two-sidebars-keyboard-undo-and-target-stale-scroll-stay-independent", async ({ page }) => {
-    test.fail(true, "PT-034: pending show-in-tree target can be lost after a history/title patch before the target response.");
     const issuesA = collectPageIssues(page);
     await loadLargeSparseSidebar(page, {
       includeCoverage: true,
