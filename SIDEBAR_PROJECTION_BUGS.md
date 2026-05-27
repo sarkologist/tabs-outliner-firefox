@@ -21,10 +21,10 @@ pnpm perf:sidebar-projection-guard
 - Completed: 2026-05-27
 - Strategy: sparse action follow-up hunt after the `PT-031` drag/drop fix, with proposal-only scouts for local command ownership, search/show-in-tree replacement, restore workflows, and multi-sidebar projection fanout. The hunt sampled cut/paste recovery after sparse full hydration, move-to-root stale refills, restore/delete shells, drag-preview cleanup across search replacement, rename/search crossings, close/search crossings, closed/restored delete fanout, and two-sidebar target/search/clear-search independence.
 - Scenario ids: 154 `psh-*` Playwright discovery/regression scenarios
-- Distinct findings recorded: 32
-- Status: `PT-001` through `PT-031` fixed; `PT-032` open. This sparse action follow-up hunt found one new distinct projection finding: rename interaction can strand active search on outline rows.
-- Clean blocks after latest finding: block 1 recorded `PT-032` from rename blur/search replacement and then found only duplicate rename escape/enter variants while neighboring close and move-to-root search replacement scenarios passed; block 2 added command/search-clear and restored-delete/search independence scenarios with no new distinct signature; block 3 added close-to-show-in-tree target replacement, two-sidebar target/clear-search independence, and cut/search/clear paste gating scenarios with no new distinct signature. Each clean block passed targeted replay and full-corpus replay.
-- Perf gate: preflight `pnpm perf:sidebar-projection-guard -- --smoke` passed before the sparse-local interaction hunt after a sandbox/web-server retry. The sparse action follow-up corpus passed `pnpm exec playwright test tests/playwright/sidebar-projection-hunt.spec.ts --reporter=list --workers=1` with 154 scenarios, including the frozen expected-failing `PT-032` repros. Final safety passed `pnpm run build` and `pnpm perf:sidebar-projection-guard` after rerunning the guard outside the sandbox because the local Playwright web server bind was blocked.
+- Distinct findings recorded: 31
+- Status: `PT-001` through `PT-031` fixed; no open projection findings. The sparse action follow-up hunt suspected `PT-032` around rename/search replacement, but the follow-up fix pass retracted it as a harness-ordering false positive and kept the corrected scenarios as required-passing coverage.
+- Clean blocks after latest finding: block 1 sampled rename blur/escape/enter around search replacement plus neighboring close and move-to-root search replacement scenarios; block 2 added command/search-clear and restored-delete/search independence scenarios; block 3 added close-to-show-in-tree target replacement, two-sidebar target/clear-search independence, and cut/search/clear paste gating scenarios. Each clean block passed targeted replay and full-corpus replay without a new distinct projection signature.
+- Perf gate: preflight `pnpm perf:sidebar-projection-guard -- --smoke` passed before the sparse-local interaction hunt after a sandbox/web-server retry. The sparse action follow-up corpus passed `pnpm exec playwright test tests/playwright/sidebar-projection-hunt.spec.ts --reporter=list --workers=1` with 154 scenarios. Final safety passed `pnpm run build` and `pnpm perf:sidebar-projection-guard` after rerunning the guard outside the sandbox because the local Playwright web server bind was blocked.
 
 ## Fix Analysis
 
@@ -45,7 +45,8 @@ pnpm perf:sidebar-projection-guard
 ## Finding Index
 
 - Fixed projection findings: `PT-001`, `PT-002`, `PT-003`, `PT-004`, `PT-005`, `PT-006`, `PT-007`, `PT-008`, `PT-009`, `PT-010`, `PT-011`, `PT-012`, `PT-013`, `PT-014`, `PT-015`, `PT-016`, `PT-017`, `PT-018`, `PT-019`, `PT-020`, `PT-021`, `PT-022`, `PT-023`, `PT-024`, `PT-025`, `PT-026`, `PT-027`, `PT-028`, `PT-029`, `PT-030`, `PT-031`
-- Open projection findings: `PT-032`
+- Open projection findings: none
+- Retracted projection suspicions: `PT-032`
 
 ### PT-001 rejected sparse slice leaves viewport blank/no retry
 
@@ -497,7 +498,7 @@ pnpm exec playwright test tests/playwright/sidebar-projection-hunt.spec.ts --gre
 
 ### PT-032 rename interaction can strand active search on outline rows
 
-- Status: open
+- Status: retracted
 - Found by: `psh-rename-blur-search-replacement-keeps-query-owner`, `psh-rename-escape-search-replacement-keeps-query-owner`, and `psh-rename-enter-then-search-keeps-query-owner`
 - Repro:
 
@@ -506,5 +507,5 @@ pnpm exec playwright test tests/playwright/sidebar-projection-hunt.spec.ts --gre
 ```
 
 - Expected: after a sparse sidebar enters rename mode and then the user searches, the current search owner should win whether rename was canceled, explicitly committed, or committed by blur; `#search = "Tab 900"` should render the `Tab 900` search result and search count chrome without full hydration.
-- Actual: the visible projection remains normal outline rows and the count remains `1001 items / 0 saved` while the search input still contains `Tab 900`.
-- Evidence: the frozen Playwright scenarios cover canceling rename with Escape, committing with Enter, and committing by blur into the search box. In each failing variant, the pending projection slice is resolved but Playwright times out waiting for the search row. The failure screenshots show active `Tab 900` search text over outline rows `760..` and normal outline count chrome. Neighboring scenarios for `Close` and `Move to top level` followed by search pass, so the signature is rename-specific rather than a general command/search handoff failure.
+- Original suspicion: the visible projection remained normal outline rows and the count stayed `1001 items / 0 saved` while the search input contained `Tab 900`.
+- Retraction: the failing repro was resolving an older outline refill request created when the test scrolled to the window row to start rename, then it never resolved the later debounced search request. The corrected scenarios deliberately resolve that stale outline slice first, wait for the `Tab 900` search request, resolve it, and pass without product changes. The coverage remains useful because it proves rename blur, Escape cancel, and Enter commit do not block current search ownership once the current search response arrives.

@@ -6694,7 +6694,7 @@ test.describe("sidebar projection hunt", () => {
     expect(issues).toEqual([]);
   });
 
-  test.fail("psh-rename-blur-search-replacement-keeps-query-owner", async ({ page }) => {
+  test("psh-rename-blur-search-replacement-keeps-query-owner", async ({ page }) => {
     const issues = collectPageIssues(page);
     await loadLargeSparseSidebar(page, { includeCoverage: true, fullStatePending: true });
 
@@ -6711,7 +6711,12 @@ test.describe("sidebar projection hunt", () => {
     const result = await page.evaluate(async () => {
       const api = projectionHuntApi();
       await api.waitForSparseRequestCount(1);
-      api.resolveSliceAt(0);
+      if (api.projectionRequests()[0]?.query !== "Tab 900") {
+        api.resolveSliceAt(0);
+        await api.waitForIdleFrames(2);
+      }
+      await api.waitForProjectionRequest("Tab 900");
+      api.resolveSliceForQuery("Tab 900");
       await api.waitForVisibleRow(1);
       await api.waitForIdleFrames(4);
       return {
@@ -6729,7 +6734,8 @@ test.describe("sidebar projection hunt", () => {
     expect(result.commands).toEqual([
       { type: "renameGroup", nodeId: "window:1", title: "Renamed during search replacement" }
     ]);
-    expect(result.requests).toEqual([expect.objectContaining({ query: "Tab 900", targetNodeId: undefined })]);
+    expect(result.requests).toContainEqual(expect.objectContaining({ query: "Tab 900", targetNodeId: undefined }));
+    expect(result.requests.at(-1)).toMatchObject({ query: "Tab 900", targetNodeId: undefined });
     expect(result.stateRequests).toBe(0);
     expect(result.searchValue).toBe("Tab 900");
     expect(result.visibleRows).toContain(1);
@@ -6894,7 +6900,7 @@ test.describe("sidebar projection hunt", () => {
     }
   });
 
-  test.fail("psh-rename-escape-search-replacement-keeps-query-owner", async ({ page }) => {
+  test("psh-rename-escape-search-replacement-keeps-query-owner", async ({ page }) => {
     const issues = collectPageIssues(page);
     await loadLargeSparseSidebar(page, { includeCoverage: true, fullStatePending: true });
 
@@ -6911,7 +6917,12 @@ test.describe("sidebar projection hunt", () => {
     const result = await page.evaluate(async () => {
       const api = projectionHuntApi();
       await api.waitForSparseRequestCount(1);
-      api.resolveSliceAt(0);
+      if (api.projectionRequests()[0]?.query !== "Tab 900") {
+        api.resolveSliceAt(0);
+        await api.waitForIdleFrames(2);
+      }
+      await api.waitForProjectionRequest("Tab 900");
+      api.resolveSliceForQuery("Tab 900");
       await api.waitForVisibleRow(1);
       await api.waitForIdleFrames(3);
       return {
@@ -6927,7 +6938,8 @@ test.describe("sidebar projection hunt", () => {
     });
 
     expect(result.commands).toEqual([]);
-    expect(result.requests).toEqual([expect.objectContaining({ query: "Tab 900", targetNodeId: undefined })]);
+    expect(result.requests).toContainEqual(expect.objectContaining({ query: "Tab 900", targetNodeId: undefined }));
+    expect(result.requests.at(-1)).toMatchObject({ query: "Tab 900", targetNodeId: undefined });
     expect(result.stateRequests).toBe(0);
     expect(result.searchValue).toBe("Tab 900");
     expect(result.visibleRows).toContain(1);
@@ -6937,7 +6949,7 @@ test.describe("sidebar projection hunt", () => {
     expect(issues).toEqual([]);
   });
 
-  test.fail("psh-rename-enter-then-search-keeps-query-owner", async ({ page }) => {
+  test("psh-rename-enter-then-search-keeps-query-owner", async ({ page }) => {
     const issues = collectPageIssues(page);
     await loadLargeSparseSidebar(page, { includeCoverage: true, fullStatePending: true });
 
@@ -6954,7 +6966,12 @@ test.describe("sidebar projection hunt", () => {
     const result = await page.evaluate(async () => {
       const api = projectionHuntApi();
       await api.waitForSparseRequestCount(1);
-      api.resolveSliceAt(0);
+      if (api.projectionRequests()[0]?.query !== "Tab 900") {
+        api.resolveSliceAt(0);
+        await api.waitForIdleFrames(2);
+      }
+      await api.waitForProjectionRequest("Tab 900");
+      api.resolveSliceForQuery("Tab 900");
       await api.waitForVisibleRow(1);
       await api.waitForIdleFrames(3);
       return {
@@ -6972,7 +6989,8 @@ test.describe("sidebar projection hunt", () => {
     expect(result.commands).toEqual([
       { type: "renameGroup", nodeId: "window:1", title: "Committed before search" }
     ]);
-    expect(result.requests).toEqual([expect.objectContaining({ query: "Tab 900", targetNodeId: undefined })]);
+    expect(result.requests).toContainEqual(expect.objectContaining({ query: "Tab 900", targetNodeId: undefined }));
+    expect(result.requests.at(-1)).toMatchObject({ query: "Tab 900", targetNodeId: undefined });
     expect(result.stateRequests).toBe(0);
     expect(result.searchValue).toBe("Tab 900");
     expect(result.visibleRows).toContain(1);
@@ -7599,8 +7617,10 @@ type ProjectionHuntApi = {
   waitForIdleFrames(count: number): Promise<void>;
   scrollToRow(rowIndex: number): Promise<void>;
   waitForSparseRequestCount(count: number): Promise<void>;
+  waitForProjectionRequest(query: string): Promise<void>;
   sparseRequestCount(): number;
   resolveSliceAt(index: number, override?: { start?: number; end?: number; includeCoverage?: boolean }): void;
+  resolveSliceForQuery(query: string, override?: { start?: number; end?: number; includeCoverage?: boolean }): void;
   rejectSliceAt(index: number): void;
   visibleRows(): number[];
   waitForVisibleRow(rowIndex: number): Promise<void>;
@@ -7664,8 +7684,10 @@ function installProjectionHuntHarness(options: {
     waitForIdleFrames,
     scrollToRow,
     waitForSparseRequestCount,
+    waitForProjectionRequest,
     sparseRequestCount: () => sliceRequests.length,
     resolveSliceAt,
+    resolveSliceForQuery,
     rejectSliceAt,
     visibleRows,
     waitForVisibleRow,
@@ -7793,6 +7815,17 @@ function installProjectionHuntHarness(options: {
       matchingNodeIds: projection.matchingNodeIds,
       ...(typeof override.includeCoverage === "boolean" ? { includeCoverage: override.includeCoverage } : {})
     }));
+  }
+
+  function resolveSliceForQuery(
+    query: string,
+    override: { start?: number; end?: number; includeCoverage?: boolean } = {}
+  ) {
+    const index = pendingSlices.findIndex((pending) => pending.request.query === query);
+    if (index < 0) {
+      throw new Error(`No pending sparse slice request for query ${JSON.stringify(query)}`);
+    }
+    resolveSliceAt(index, override);
   }
 
   function rejectSliceAt(index: number) {
@@ -8323,6 +8356,16 @@ function installProjectionHuntHarness(options: {
       await new Promise<void>((resolve) => window.setTimeout(resolve, 16));
     }
     throw new Error(`Timed out waiting for ${count} sparse slice request(s)`);
+  }
+
+  async function waitForProjectionRequest(query: string) {
+    for (let index = 0; index < 180; index += 1) {
+      if (sliceRequests.some((request) => request.query === query)) {
+        return;
+      }
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 16));
+    }
+    throw new Error(`Timed out waiting for sparse slice request with query ${JSON.stringify(query)}`);
   }
 
   async function waitForVisibleRow(rowIndex: number) {
