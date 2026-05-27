@@ -26,6 +26,7 @@ Find new sidebar projection, hydration, and remote-projection protocol bugs by a
 - If a failure is a harness or fixture precondition issue, fix the harness/scenario before counting it as a projection finding.
 - If a failure is a sidebar/projection invariant violation, freeze the scenario and record a `PT-*` finding.
 - Do not fix bugs during a hunt. Finding a bug does not end the hunt by itself; freeze and record it, reset the clean-block count, and keep hunting until the normal stop rules say to stop. Fixes happen only after the hunt has stopped.
+- If you used subagent scouts, close/remove those subagent threads when their proposals are collected or when the hunt stops.
 - Perf guard is not part of discovery. It is mandatory for the later fix/promote pass.
 
 ## Harness Semantics
@@ -149,6 +150,8 @@ Scout output contract:
 - risk: <possible harness/precondition concern, if any>
 ```
 
+After collecting scout output, close/remove those subagent threads. Do not leave proposal-only scouts running after the main thread has moved on, and include cleanup in the final hunt accounting if subagents were used.
+
 ## Main Thread Procedure
 
 1. Preflight when starting a new hunt:
@@ -174,7 +177,8 @@ Scout output contract:
 10. If any new distinct signature appears, record it, keep the failing scenario frozen, reset the clean-block count to zero, and start a new active block. Do not start a fix pass yet.
 11. If no new distinct signature appears, continue active mutation work until the block has consumed about five minutes, then increment the clean-block count and raise temperature for the next block. Do not mark the target covered unless the scenarios added real qualitative coverage.
 12. Stop only after three complete clean active blocks.
-13. Final safety:
+13. Close/remove any subagent scouts that were used for the hunt.
+14. Final safety:
     ```sh
     pnpm run build
     pnpm exec playwright test tests/playwright/sidebar-projection-hunt.spec.ts --reporter=list --workers=1

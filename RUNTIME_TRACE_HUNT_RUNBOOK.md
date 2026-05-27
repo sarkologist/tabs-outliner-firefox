@@ -27,7 +27,8 @@ Find new runtime/model reconciliation bugs by adding or mutating explicit domain
 - If a corpus run reveals multiple distinct signatures, record all of them before changing the corpus.
 - If a trace fails because of a harness/precondition issue, fix the trace or harness before counting it as a runtime finding.
 - If a trace fails by runtime invariant, freeze it and let the runner record the finding.
-- Do not fix bugs during a hunt. Fixes happen in a later principled fix pass.
+- Do not fix bugs during a hunt. Finding a bug does not end the hunt by itself; freeze and record it, reset the clean-block count, and keep hunting until the normal stop rules say to stop. Fixes happen only after the hunt has stopped.
+- If you used subagent scouts, close/remove those subagent threads when their proposals are collected or when the hunt stops.
 - Perf guard is not part of discovery. It is mandatory for the later fix/promote pass.
 
 ## Runner Semantics
@@ -157,6 +158,8 @@ Scout output contract:
 - risk: <possible harness/precondition concern, if any>
 ```
 
+After collecting scout output, close/remove those subagent threads. Do not leave proposal-only scouts running after the main thread has moved on, and include cleanup in the final hunt accounting if subagents were used.
+
 ## Main Thread Procedure
 
 1. Preflight when starting a new hunt:
@@ -183,7 +186,8 @@ Scout output contract:
 10. If any new distinct signature appears, reset the clean-block count to zero and start a new active block.
 11. If no new distinct signature appears, continue active mutation work until the block has consumed about five minutes, then increment the clean-block count and raise temperature for the next block. Do not mark the target covered unless the traces added real qualitative coverage.
 12. Stop only after three complete clean active blocks.
-13. Final safety:
+13. Close/remove any subagent scouts that were used for the hunt.
+14. Final safety:
     ```sh
     RUNTIME_TRACE_HUNT_PROFILE=regression RUNTIME_TRACE_HUNT_BATCH_SIZE=50 pnpm trace-hunt:runtime
     RUNTIME_TRACE_BUGS_FILE=/private/tmp/runtime-discovery-smoke.md RUNTIME_TRACE_HUNT_PROFILE=discovery RUNTIME_TRACE_HUNT_STOP_AFTER_CLEAN=1 pnpm trace-hunt:runtime
@@ -207,7 +211,9 @@ Scout output contract:
 
 ## Fix Pass Boundary
 
-After a hunt finds bugs, stop discovery and propose principled fixes. A finding is not fixed until:
+Bug fixing begins only after the hunt has stopped under the normal hunt rules. Finding a bug is not a stop condition; it resets the clean-block count and keeps discovery alive.
+
+After the hunt stops, propose principled fixes for any open `RT-*` findings. A finding is not fixed until:
 
 - failing traces are promoted to regression or otherwise covered by focused regression tests;
 - correctness checks pass;
