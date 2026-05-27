@@ -9018,7 +9018,6 @@ test.describe("sidebar projection hunt", () => {
   });
 
   test("psh-collapsed-parent-inside-drop-missing-child-order-refills", async ({ page }) => {
-    test.fail(true, "PT-036: collapsed-parent missing child-order coverage blocks drop without requesting recovery.");
     const issues = collectPageIssues(page);
     await loadCollapsedBoundarySidebar(page, {
       includeCoverage: true,
@@ -9125,7 +9124,6 @@ test.describe("sidebar projection hunt", () => {
   });
 
   test("psh-collapsed-search-hidden-child-missing-order-refills-without-command", async ({ page }) => {
-    test.fail(true, "PT-036 duplicate: search-visible hidden child missing sibling-order coverage does not request recovery.");
     const issues = collectPageIssues(page);
     await loadCollapsedBoundarySidebar(page, {
       includeCoverage: true,
@@ -9296,7 +9294,6 @@ test.describe("sidebar projection hunt", () => {
   });
 
   test("psh-collapsed-parent-expand-patch-refills-hidden-children", async ({ page }) => {
-    test.fail(true, "PT-037: collapsed-parent expand patch does not request hidden child rows.");
     const issues = collectPageIssues(page);
     await loadCollapsedBoundarySidebar(page, {
       includeCoverage: true,
@@ -10861,7 +10858,7 @@ function installProjectionHuntHarness(options: {
     }
     if (options.collapsedBoundaryFixture) {
       const centerRowIndex = request.targetNodeId ? rowIndexForNodeId(request.targetNodeId) : request.centerRowIndex;
-      const start = override.start ?? Math.max(1, Math.floor(centerRowIndex - request.rowLimit / 2));
+      const start = override.start ?? Math.max(0, Math.floor(centerRowIndex - request.rowLimit / 2));
       const end = override.end ?? Math.min(currentTotalRows(), Math.floor(centerRowIndex + request.rowLimit / 2));
       const rows = collapsedBoundaryRows().filter((row) => row.index >= start && row.index < end);
       return { rows, matchingNodeIds: [], totalRowCount: currentTotalRows() };

@@ -650,7 +650,7 @@ function applyPendingSearchQueryAfterStateReady(): void {
 function applySparseScrollWindowSnapshot(snapshot: InitialTreeSnapshot): void {
   if (
     !currentProjection ||
-    !isSparseInitialProjection(currentProjection) ||
+    !canUseHydratingProjectionSlice(currentProjection) ||
     !snapshot.hydrating ||
     !sparseSnapshotMatchesCurrentProjection(snapshot)
   ) {
@@ -704,7 +704,13 @@ function mergeProjectionSliceSnapshot(
 }
 
 function requestSparseScrollWindowIfNeeded(options: { force?: boolean } = {}): void {
-  if (!rootDropSurface || !currentProjection || !hydratingFullState || !isSparseInitialProjection(currentProjection)) {
+  if (!rootDropSurface || !currentProjection || !hydratingFullState) {
+    return;
+  }
+  if (
+    !isSparseInitialProjection(currentProjection) &&
+    (!options.force || !projectionRequiresHydrationCoverage(currentProjection))
+  ) {
     return;
   }
 
@@ -787,8 +793,7 @@ async function loadSparseScrollWindow(
     if (requestId !== sparseWindowRequestSequence) {
       if (
         isInitialTreeSnapshot(response) &&
-        currentProjection &&
-        isSparseInitialProjection(currentProjection) &&
+        canUseHydratingProjectionSlice(currentProjection) &&
         projectionRequestIntentMatchesCurrent(intent) &&
         snapshotProjectionMatchesRequestIntent(response, intent) &&
         sparseSnapshotMatchesCurrentProjection(response) &&
@@ -809,7 +814,7 @@ async function loadSparseScrollWindow(
     if (
       !isInitialTreeSnapshot(response) ||
       !currentProjection ||
-      !isSparseInitialProjection(currentProjection) ||
+      !canUseHydratingProjectionSlice(currentProjection) ||
       !projectionRequestIntentMatchesCurrent(intent) ||
       !snapshotProjectionMatchesRequestIntent(response, intent) ||
       !sparseSnapshotMatchesCurrentProjection(response)
@@ -1629,7 +1634,9 @@ function shouldUseRemoteProjectionSearch(): boolean {
   return Boolean(currentState && !currentStateFullyLoaded);
 }
 
-function refreshSparseRemoteProjectionAfterStateChange(): boolean {
+function refreshSparseRemoteProjectionAfterStateChange(
+  options: { allowHydratingPartialProjection?: boolean } = {}
+): boolean {
   if (
     !currentState ||
     currentStateFullyLoaded ||
@@ -1654,7 +1661,16 @@ function refreshSparseRemoteProjectionAfterStateChange(): boolean {
     }
   }
 
-  if (!currentProjection || !isSparseInitialProjection(currentProjection)) {
+  if (
+    !currentProjection ||
+    (
+      !isSparseInitialProjection(currentProjection) &&
+      !(
+        options.allowHydratingPartialProjection &&
+        canUseHydratingProjectionSlice(currentProjection)
+      )
+    )
+  ) {
     return false;
   }
 
@@ -2467,7 +2483,9 @@ function applyNodeStateUpdate(update: NodeStateUpdate): void {
       if (currentProjection?.isSearchActive && refreshPartialSearchProjectionAfterNodeStateUpdate(update)) {
         return;
       }
-      if (refreshSparseRemoteProjectionAfterStateChange()) {
+      if (refreshSparseRemoteProjectionAfterStateChange({
+        allowHydratingPartialProjection: collapsedChanged,
+      })) {
         return;
       }
       invalidateProjectionCache();
@@ -2957,6 +2975,16 @@ function currentRenderedRowWindowIntersectingViewport(rowCount: number, rowHeigh
 
 function isSparseInitialProjection(projection: VisibleTreeProjection): boolean {
   return typeof projection.totalRowCount === "number" && projection.totalRowCount !== projection.rows.length;
+}
+
+function canUseHydratingProjectionSlice(
+  projection: VisibleTreeProjection | undefined
+): projection is VisibleTreeProjection {
+  return Boolean(
+    projection &&
+    hydratingFullState &&
+    (isSparseInitialProjection(projection) || !currentStateFullyLoaded)
+  );
 }
 
 function projectionRequiresHydrationCoverage(projection: VisibleTreeProjection | undefined): boolean {

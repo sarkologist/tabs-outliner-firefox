@@ -22,9 +22,9 @@ pnpm perf:sidebar-projection-guard
 - Strategy: collapsed-boundary hunt after the PT-035 fix, focused on drag/drop and local action coverage across collapsed ancestors, hidden children, and non-visible sibling order without automatic full hydration.
 - Last completed run scenario ids: 184 `psh-*` Playwright discovery/regression scenarios before this hunt; this discovery checkpoint adds 21 more `psh-*` scenarios for 205 total.
 - Distinct findings recorded: 36
-- Status: `PT-001` through `PT-031` and `PT-033` through `PT-035` are fixed; `PT-036` and `PT-037` are open from the active collapsed-boundary hunt. The sparse action follow-up hunt suspected `PT-032` around rename/search replacement, but the follow-up fix pass retracted it as a harness-ordering false positive and kept the corrected scenarios as required-passing coverage.
-- Clean blocks after latest finding: 3 after `PT-037`; the collapsed-boundary discovery stop condition was reached. Next work is a separate fix pass for `PT-036` and `PT-037`.
-- Verification: preflight `pnpm run build`, the 184-scenario projection corpus, and `pnpm perf:sidebar-projection-guard -- --smoke` passed before this hunt. Block 0 added collapsed-parent inside-drop coverage; `psh-collapsed-parent-inside-drop-covered-child-order-sends-command` passed, while `psh-collapsed-parent-inside-drop-missing-child-order-refills` exposed `PT-036`. Block 1 added search-visible hidden-child drag/drop and multi-sidebar coverage; covered cases passed and the missing-coverage case duplicated `PT-036`. Block 2 added collapsed-boundary expand/collapse patch coverage; collapse of already loaded children passed, while expansion exposed `PT-037`. Clean block 1 after `PT-037` added hidden-child show-in-tree, stale clear-search, hidden-child title/delete, and hover cleanup variants with no new distinct finding. Clean block 2 added parent-delete, clear-search action cleanup, mid-drag collapse cleanup, and two-sidebar collapse/search independence with no new distinct finding. Clean block 3 added expanded-child delete, search/target full-broadcast preservation, and hidden-child move-before-target-response coverage with no new distinct finding. After freezing the findings, proposal scouts were closed/removed, `pnpm run build`, the full 205-scenario projection corpus, and `pnpm perf:sidebar-projection-guard -- --smoke` passed.
+- Status: `PT-001` through `PT-031` and `PT-033` through `PT-037` are fixed. The sparse action follow-up hunt suspected `PT-032` around rename/search replacement, but the follow-up fix pass retracted it as a harness-ordering false positive and kept the corrected scenarios as required-passing coverage.
+- Clean blocks after latest finding: 3 after `PT-037`; the collapsed-boundary discovery stop condition was reached before the fix pass.
+- Verification: preflight `pnpm run build`, the 184-scenario projection corpus, and `pnpm perf:sidebar-projection-guard -- --smoke` passed before this hunt. Block 0 added collapsed-parent inside-drop coverage; `psh-collapsed-parent-inside-drop-covered-child-order-sends-command` passed, while `psh-collapsed-parent-inside-drop-missing-child-order-refills` exposed `PT-036`. Block 1 added search-visible hidden-child drag/drop and multi-sidebar coverage; covered cases passed and the missing-coverage case duplicated `PT-036`. Block 2 added collapsed-boundary expand/collapse patch coverage; collapse of already loaded children passed, while expansion exposed `PT-037`. Clean block 1 after `PT-037` added hidden-child show-in-tree, stale clear-search, hidden-child title/delete, and hover cleanup variants with no new distinct finding. Clean block 2 added parent-delete, clear-search action cleanup, mid-drag collapse cleanup, and two-sidebar collapse/search independence with no new distinct finding. Clean block 3 added expanded-child delete, search/target full-broadcast preservation, and hidden-child move-before-target-response coverage with no new distinct finding. After freezing the findings, proposal scouts were closed/removed, `pnpm run build`, the full 205-scenario projection corpus, and `pnpm perf:sidebar-projection-guard -- --smoke` passed. The follow-up fix pass converted the `PT-036` and `PT-037` repros to required-passing tests; targeted collapsed coverage, the full 205-scenario projection corpus, sparse scroll, first-paint, build, and `pnpm perf:sidebar-projection-guard` passed.
 
 ## Fix Analysis
 
@@ -44,11 +44,12 @@ pnpm perf:sidebar-projection-guard
 - `PT-033`: delayed closed-restore scope responses lacked a post-await validity check against current sidebar state. The fix admits a restore scope only while the target still exists, is still closed, and any known scoped rows are still closed; the same check runs again after the confirmation prompt before sending the restore command.
 - `PT-034`: state-change refresh after a history/title patch could demote a pending show-in-tree owner into a generic outline sparse refill before the target response arrived. The fix treats a pending show-in-tree request as the current projection owner during state-change refresh, so unrelated patches do not steal visible ownership before the target slice settles.
 - `PT-035`: the `PT-033` restore-scope guard still treated all missing scoped nodes as merely unknown sparse data. The fix snapshots the node ids known to the sidebar before the async restore-scope request starts; if a node that was locally known at request time is missing or no longer closed when the delayed scope resolves, the scope is stale and no confirmation prompt or restore command is allowed.
+- `PT-036` and `PT-037`: collapsed-boundary refills assumed a visible projection with `rows.length === totalRowCount` was complete, even while the sidebar state was still sparse and hidden child rows or child-order coverage were missing. The fix allows forced current-owner sparse slice requests for hydrating partial projections when coverage is missing or a collapsed-state expansion exposes absent children, while keeping tree-structure patches on the local render path so covered moves still hide collapsed descendants without a remote refill.
 
 ## Finding Index
 
-- Fixed projection findings: `PT-001`, `PT-002`, `PT-003`, `PT-004`, `PT-005`, `PT-006`, `PT-007`, `PT-008`, `PT-009`, `PT-010`, `PT-011`, `PT-012`, `PT-013`, `PT-014`, `PT-015`, `PT-016`, `PT-017`, `PT-018`, `PT-019`, `PT-020`, `PT-021`, `PT-022`, `PT-023`, `PT-024`, `PT-025`, `PT-026`, `PT-027`, `PT-028`, `PT-029`, `PT-030`, `PT-031`, `PT-033`, `PT-034`, `PT-035`
-- Open projection findings: `PT-036`, `PT-037`
+- Fixed projection findings: `PT-001`, `PT-002`, `PT-003`, `PT-004`, `PT-005`, `PT-006`, `PT-007`, `PT-008`, `PT-009`, `PT-010`, `PT-011`, `PT-012`, `PT-013`, `PT-014`, `PT-015`, `PT-016`, `PT-017`, `PT-018`, `PT-019`, `PT-020`, `PT-021`, `PT-022`, `PT-023`, `PT-024`, `PT-025`, `PT-026`, `PT-027`, `PT-028`, `PT-029`, `PT-030`, `PT-031`, `PT-033`, `PT-034`, `PT-035`, `PT-036`, `PT-037`
+- Open projection findings: none
 - Retracted projection suspicions: `PT-032`
 
 ### PT-001 rejected sparse slice leaves viewport blank/no retry
@@ -560,7 +561,7 @@ pnpm exec playwright test tests/playwright/sidebar-projection-hunt.spec.ts --gre
 
 ### PT-036 collapsed-parent missing child-order coverage does not request recovery
 
-- Status: open
+- Status: fixed
 - Found by: `psh-collapsed-parent-inside-drop-missing-child-order-refills`
 - Repro:
 
@@ -569,12 +570,13 @@ pnpm exec playwright test tests/playwright/sidebar-projection-hunt.spec.ts --gre
 ```
 
 - Expected: when a sparse sidebar knows a visible collapsed parent but lacks coverage proving that parent's hidden child order, dropping a covered visible row inside that collapsed parent should be blocked, clear preview state, avoid full `getState`, and request a background projection/coverage refill for the current outline intent.
-- Actual: the drop is blocked and no command is sent, but no `getTreeProjectionSlice` request is made either. The user has no recovery path from the attempted local drop unless another interaction happens to request coverage.
+- Actual before fix: the drop is blocked and no command is sent, but no `getTreeProjectionSlice` request is made either. The user has no recovery path from the attempted local drop unless another interaction happens to request coverage.
 - Evidence: the frozen scenario loads a four-row outline with `window:1`, a covered source row, a visible collapsed group whose hidden children are not rendered, and a trailing sibling. Coverage proves only `window:1` sibling order, not `group:collapsed`. Dragging `tab:10` inside `group:collapsed` times out waiting for any sparse projection request; the paired covered-child-order scenario passes and sends `moveNode` with `parentId: "group:collapsed"` and `index: 2`.
+- Fix: forced sparse refill requests now work for hydrating partial projections, not only projections whose row count advertises a sparse window. Missing child-order coverage blocks the local drop, clears preview state, avoids full `getState`, and requests a current-owner projection slice with coverage.
 
 ### PT-037 collapsed-parent expansion does not request hidden child rows
 
-- Status: open
+- Status: fixed
 - Found by: `psh-collapsed-parent-expand-patch-refills-hidden-children`
 - Repro:
 
@@ -583,5 +585,6 @@ pnpm exec playwright test tests/playwright/sidebar-projection-hunt.spec.ts --gre
 ```
 
 - Expected: when a sparse sidebar has a collapsed parent whose child nodes are absent locally, expanding that parent and receiving a collapsed-state patch should request a current outline projection/coverage refill so the newly visible child rows can be painted without full `getState`.
-- Actual: the `toggleCollapsed` command is sent and the collapsed patch is applied locally, but no `getTreeProjectionSlice` request is made. The parent can become expanded while the hidden child rows remain absent.
+- Actual before fix: the `toggleCollapsed` command is sent and the collapsed patch is applied locally, but no `getTreeProjectionSlice` request is made. The parent can become expanded while the hidden child rows remain absent.
 - Evidence: the frozen scenario loads `window:1 -> tab:10, group:collapsed, tab:90` with `tab:50` and `tab:51` present only in the background fixture. It clicks `Expand`, emits a `nodeStateUpdated` patch setting `group:collapsed.collapsed = false`, then times out waiting for any sparse projection request. The paired `psh-collapsed-parent-collapse-patch-hides-loaded-children` scenario starts with those children loaded and verifies collapse hides them locally without full hydration.
+- Fix: collapsed-state node patches may explicitly request a current-owner sparse slice even when the visible projection rows equal the visible total. Tree-structure patch fallbacks stay strict, so covered collapsed move/delete patches still update locally without replacing hidden-child visibility with a broader remote refill.
