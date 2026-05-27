@@ -4482,6 +4482,7 @@ async function restoreNodeWithConfirmation(nodeId: NodeId): Promise<void> {
   if (!state) {
     return;
   }
+  const locallyKnownNodeIdsAtRequest = new Set<NodeId>(Object.keys(state.nodes));
 
   let scope: RestoreScope;
   try {
@@ -4490,13 +4491,18 @@ async function restoreNodeWithConfirmation(nodeId: NodeId): Promise<void> {
     showDiagnosticsNotice(commandErrorText(error), { error: true });
     return;
   }
-  if (!restoreScopeStillApplies(nodeId, scope)) {
+  const locallyKnownScopeNodeIds = new Set<NodeId>(
+    scope.nodeIds.filter((scopeNodeId) => locallyKnownNodeIdsAtRequest.has(scopeNodeId))
+  );
+  locallyKnownScopeNodeIds.add(nodeId);
+
+  if (!restoreScopeStillApplies(nodeId, scope, locallyKnownScopeNodeIds)) {
     return;
   }
   if (scope.requiresConfirmation && !window.confirm(largeRestoreConfirmationPrompt(scope))) {
     return;
   }
-  if (!restoreScopeStillApplies(nodeId, scope)) {
+  if (!restoreScopeStillApplies(nodeId, scope, locallyKnownScopeNodeIds)) {
     return;
   }
 
@@ -4519,7 +4525,11 @@ async function restoreScopeForNode(state: OutlineState, nodeId: NodeId): Promise
   return perfTrace.measure("sidebar.restore.scope", () => analyzeRestoreScope(state, nodeId));
 }
 
-function restoreScopeStillApplies(nodeId: NodeId, scope: RestoreScope): boolean {
+function restoreScopeStillApplies(
+  nodeId: NodeId,
+  scope: RestoreScope,
+  locallyKnownScopeNodeIds: ReadonlySet<NodeId>
+): boolean {
   const state = currentState;
   const target = state?.nodes[nodeId];
   if (!state || !target || target.status !== "closed") {
@@ -4530,6 +4540,9 @@ function restoreScopeStillApplies(nodeId: NodeId, scope: RestoreScope): boolean 
   }
   for (const scopeNodeId of scope.nodeIds) {
     const node = state.nodes[scopeNodeId];
+    if (!node && locallyKnownScopeNodeIds.has(scopeNodeId)) {
+      return false;
+    }
     if (node && node.status !== "closed") {
       return false;
     }

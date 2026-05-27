@@ -7000,7 +7000,6 @@ test.describe("sidebar projection hunt", () => {
   });
 
   test("psh-delayed-restore-scope-child-delete-invalidates-prompt", async ({ page }) => {
-    test.fail(true, "PT-035: delayed closed-restore scope can prompt after a scoped child was deleted.");
     const issues = collectPageIssues(page);
     const dialogMessages: string[] = [];
     page.on("dialog", async (dialog) => {
