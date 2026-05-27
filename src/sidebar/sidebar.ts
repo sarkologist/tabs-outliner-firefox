@@ -169,6 +169,7 @@ type RenderedProjectionSession = {
   lastOutlineProjection?: {
     projection: VisibleTreeProjection;
     coverage?: SidebarProjectionCoverage;
+    scrollTop: number;
   };
 };
 
@@ -180,6 +181,7 @@ const DIAGNOSTICS_NOTICE_MS = 4000;
 const DIAGNOSTICS_REFRESH_DELAY_MS = 750;
 const DIAGNOSTICS_AFTER_NON_EDIT_INPUT_DELAY_MS = 1500;
 const FULL_STATE_HYDRATION_DELAY_MS = 750;
+const HOVER_MISSING_COVERAGE_HYDRATION_DELAY_MS = 150;
 const HYDRATION_AFTER_NON_EDIT_INPUT_DELAY_MS = 1000;
 const HYDRATION_RENDER_INPUT_IDLE_MS = 120;
 const HYDRATION_RENDER_INPUT_MAX_DELAY_MS = 1500;
@@ -444,6 +446,10 @@ function handleBackgroundMessage(message: unknown): unknown {
       return;
     }
     if (isStateUpdated(message)) {
+      if (pendingFullHydrationTimer !== undefined) {
+        window.clearTimeout(pendingFullHydrationTimer);
+        pendingFullHydrationTimer = undefined;
+      }
       const preserveSparseViewport = shouldPreserveSparseViewportScrollIntent();
       preserveRenderedRowWindowOnce = preserveSparseViewport && currentSparseProjectionIntersectsViewport();
       suppressActiveScrollOnce = preserveSparseViewport;
@@ -650,7 +656,13 @@ function applySparseScrollWindowSnapshot(snapshot: InitialTreeSnapshot): void {
   }
 
   mergeProjectionSliceSnapshot(snapshot, { coverageMode: "merge" });
-  currentProjection = projectionFromInitialTreeSnapshot(snapshot);
+  const nextProjection = projectionFromInitialTreeSnapshot(snapshot);
+  if (!nextProjection.isSearchActive) {
+    nextProjection.nodeCount = currentProjection.nodeCount;
+    nextProjection.closedCount = currentProjection.closedCount;
+    nextProjection.matchCount = currentProjection.matchCount;
+  }
+  currentProjection = nextProjection;
   projectionState = currentState;
   projectionQuery = snapshot.projection.query;
   currentCutRowRange = undefined;
@@ -851,7 +863,13 @@ function currentProjectionRequestIntent(): ProjectionRequestIntent {
 
 function sparseWindowRequestIntent(query: string): ProjectionRequestIntent {
   const trimmedQuery = query.trim();
-  return trimmedQuery ? { kind: "search", query: trimmedQuery } : { kind: "outline", query: "" };
+  if (trimmedQuery) {
+    return { kind: "search", query: trimmedQuery };
+  }
+  if (currentProjectionOwner.kind === "showInTree") {
+    return currentProjectionRequestIntent();
+  }
+  return { kind: "outline", query: "" };
 }
 
 function remoteSearchRequestIntent(query: string): ProjectionRequestIntent {
@@ -1316,6 +1334,20 @@ function registerSearchControls(): void {
       return;
     }
     if (shouldUseRemoteProjectionSearch()) {
+      if (!currentSearchQuery.trim()) {
+        cancelPendingRemoteSearchProjection();
+        if (rootDropSurface) {
+          rootDropSurface.scrollTop = 0;
+        }
+        const projectionLoad = loadRemoteSearchProjection(currentSearchQuery);
+        restoreLastOutlineProjectionAfterRemoteFailure({
+          ensureViewport: false,
+          requestRefill: true,
+          scrollTop: 0
+        });
+        void projectionLoad;
+        return;
+      }
       scheduleRemoteSearchProjection(currentSearchQuery);
       return;
     }
@@ -1572,12 +1604,10 @@ function clearSearchQuery(options: { focus?: boolean; targetNodeId?: NodeId } = 
   updateSearchControls();
   if (shouldUseRemoteProjectionSearch()) {
     if (!options.targetNodeId) {
-      restoreLastOutlineProjectionAfterRemoteFailure();
-    }
-    if (options.targetNodeId) {
-      void loadRemoteShowInTreeProjection(options.targetNodeId);
-    } else {
+      restoreLastOutlineProjectionAfterRemoteFailure({ requestRefill: false });
       void loadRemoteSearchProjection(currentSearchQuery);
+    } else if (options.targetNodeId) {
+      void loadRemoteShowInTreeProjection(options.targetNodeId);
     }
   } else {
     render();
@@ -1601,9 +1631,7 @@ function refreshSparseRemoteProjectionAfterStateChange(): boolean {
   if (
     !currentState ||
     currentStateFullyLoaded ||
-    !hydratingFullState ||
-    !currentProjection ||
-    !isSparseInitialProjection(currentProjection)
+    !hydratingFullState
   ) {
     return false;
   }
@@ -1617,6 +1645,10 @@ function refreshSparseRemoteProjectionAfterStateChange(): boolean {
   if (currentProjectionOwner.kind === "showInTree" && activeRevealTargetNodeId) {
     void loadRemoteShowInTreeProjection(activeRevealTargetNodeId);
     return true;
+  }
+
+  if (!currentProjection || !isSparseInitialProjection(currentProjection)) {
+    return false;
   }
 
   const viewportRange = clampedViewportRowRangeForProjection(currentProjection);
@@ -1655,7 +1687,11 @@ function refreshPartialSearchProjectionAfterNodeStateUpdate(update: NodeStateUpd
   resetHoverLineScope();
   updateProjectionChrome(localProjection);
   renderVirtualRows();
-  scheduleRemoteSearchProjection(currentSearchQuery);
+  if (currentProjectionCoverage) {
+    scheduleRemoteSearchProjection(currentSearchQuery);
+  } else {
+    void loadRemoteSearchProjection(currentSearchQuery);
+  }
   return true;
 }
 
@@ -1748,7 +1784,7 @@ async function loadRemoteSearchProjection(
     }
 
     applyRemoteProjectionSnapshot(response, {
-      scrollToActive: !trimmedQuery,
+      scrollToActive: !trimmedQuery && !response.hydrating,
       scrollToTop: Boolean(trimmedQuery)
     });
   } catch (error) {
@@ -1855,6 +1891,15 @@ function applyRemoteProjectionSnapshot(
       currentProjection,
       renderOptions
     );
+    if (scrolledToPendingShowInTree && activeRevealTargetNodeId) {
+      const row = currentProjection.rows.find((candidate) => candidate.nodeId === activeRevealTargetNodeId);
+      if (row) {
+        const rowHeight = currentRowHeight();
+        prepareVirtualScrollSurface(currentProjection, rowHeight);
+        centerRowInViewport(row.index, rootDropSurface ?? undefined, rowHeight);
+      }
+    }
+    ensureProjectionViewportPainted(currentProjection);
     revealSidebar();
     if (!currentProjection.isSearchActive) {
       requestSparseScrollWindowIfNeeded();
@@ -2034,13 +2079,17 @@ function mergeProjectionCoverage(
   };
 }
 
-function rememberAcceptedRenderedProjection(projection: VisibleTreeProjection): void {
-  if (projection.isSearchActive || currentProjectionOwner.kind !== "outline") {
+function rememberAcceptedRenderedProjection(
+  projection: VisibleTreeProjection,
+  options: { forceOutline?: boolean; scrollTop?: number } = {}
+): void {
+  if (projection.isSearchActive || (!options.forceOutline && currentProjectionOwner.kind !== "outline")) {
     return;
   }
   renderedProjectionSession.lastOutlineProjection = {
     projection: cloneVisibleTreeProjection(projection),
-    ...(currentProjectionCoverage ? { coverage: cloneProjectionCoverage(currentProjectionCoverage) } : {})
+    ...(currentProjectionCoverage ? { coverage: cloneProjectionCoverage(currentProjectionCoverage) } : {}),
+    scrollTop: options.scrollTop ?? rootDropSurface?.scrollTop ?? 0
   };
 }
 
@@ -2071,7 +2120,9 @@ function cloneProjectionCoverage(coverage: SidebarProjectionCoverage): SidebarPr
   };
 }
 
-function restoreLastOutlineProjectionAfterRemoteFailure(): boolean {
+function restoreLastOutlineProjectionAfterRemoteFailure(
+  options: { ensureViewport?: boolean; requestRefill?: boolean; scrollTop?: number } = {}
+): boolean {
   const lastOutlineProjection = renderedProjectionSession.lastOutlineProjection;
   if (!currentState || !lastOutlineProjection) {
     return false;
@@ -2096,7 +2147,16 @@ function restoreLastOutlineProjectionAfterRemoteFailure(): boolean {
     }
     clearDropPreview();
     updateProjectionChrome(currentProjection);
-    renderSnapshotRows(currentProjection);
+    if (rootDropSurface) {
+      rootDropSurface.scrollTop = options.scrollTop ?? lastOutlineProjection.scrollTop;
+    }
+    renderSnapshotRows(currentProjection, { scrollToActive: false });
+    if (options.ensureViewport ?? true) {
+      ensureProjectionViewportPainted(currentProjection);
+    }
+    if (options.requestRefill ?? false) {
+      requestSparseScrollWindowIfNeeded({ force: true });
+    }
     revealSidebar();
   });
   return true;
@@ -2112,7 +2172,7 @@ function renderSnapshotRows(
 
   const rowHeight = currentRowHeight();
   const totalRowCount = projection.totalRowCount ?? projection.rows.length;
-  const includeActions = currentStateFullyLoaded && (!hydratingFullState || !isSparseInitialProjection(projection));
+  const includeActions = !projectionRequiresHydrationCoverage(projection);
   activeDropPlacement = undefined;
   removeDropPreviewElements();
 
@@ -2182,11 +2242,12 @@ function shouldPreserveExistingActionsForNextItem(existing: HTMLElement, next: H
   }
 
   const nextRow = rowForItem(next);
-  if (nextRow && directRowActions(nextRow)) {
-    return true;
+  const nextActions = nextRow ? directRowActions(nextRow) : undefined;
+  if (nextActions) {
+    return rowActionNames(existingActions).join("\0") === rowActionNames(nextActions).join("\0");
   }
 
-  if (!hydratingFullState || !currentProjection || !isSparseInitialProjection(currentProjection)) {
+  if (!projectionRequiresHydrationCoverage(currentProjection)) {
     return true;
   }
 
@@ -2241,6 +2302,12 @@ function directRowActions(row: HTMLElement): HTMLElement | undefined {
   return Array.from(row.children).find(
     (child): child is HTMLElement => child instanceof HTMLElement && child.classList.contains("node-actions")
   );
+}
+
+function rowActionNames(actions: HTMLElement): string[] {
+  return Array.from(actions.querySelectorAll<HTMLElement>("[data-action]"))
+    .map((action) => action.dataset.action)
+    .filter((action): action is string => Boolean(action));
 }
 
 function reconcileActionStrip(existing: HTMLElement, next: HTMLElement): void {
@@ -2378,6 +2445,17 @@ function applyNodeStateUpdate(update: NodeStateUpdate): void {
     invalidateSidebarWindowActiveTabTargets();
     pendingCutNodeId = nextPendingCutNodeId(state, pendingCutNodeId);
 
+    if (currentSearchQuery.trim() && !currentStateFullyLoaded && hydratingFullState) {
+      if (currentProjection?.isSearchActive && refreshPartialSearchProjectionAfterNodeStateUpdate(update)) {
+        return;
+      }
+      if (!currentProjection?.isSearchActive && currentProjectionOwner.kind === "search") {
+        return;
+      }
+      void loadRemoteSearchProjection(currentSearchQuery);
+      return;
+    }
+
     if (!currentProjection || currentProjection.isSearchActive || collapsedChanged) {
       if (currentProjection?.isSearchActive && refreshPartialSearchProjectionAfterNodeStateUpdate(update)) {
         return;
@@ -2471,6 +2549,11 @@ function applyTreeStructureUpdate(update: TreeStructureUpdate): void {
     if (shouldRefreshSparseProjectionAfterLocalPatch) {
       invalidateSparseWindowRequestsForStateChange();
     }
+    currentProjectionCoverage = undefined;
+    refreshLastOutlineProjectionAfterTreeStructureUpdate(state, update);
+    if (currentProjectionOwner.kind === "showInTree" && pendingShowInTreeNodeId) {
+      return;
+    }
 
     if (!currentProjection) {
       if (refreshSparseRemoteProjectionAfterStateChange()) {
@@ -2485,6 +2568,7 @@ function applyTreeStructureUpdate(update: TreeStructureUpdate): void {
         refreshProjectionActiveTabTarget(state, currentProjection);
         currentCutRowRange = cutSubtreeRowRange(currentProjection.rows, pendingCutNodeId);
         updateProjectionChrome(currentProjection);
+        rememberAcceptedRenderedProjection(currentProjection, { forceOutline: true });
         scrollToObservedActiveTab(currentProjection);
         clearHoverLineScope();
         scheduleCurrentRowsRender();
@@ -2495,6 +2579,18 @@ function applyTreeStructureUpdate(update: TreeStructureUpdate): void {
       if (applyInsertTreeStructurePatchToProjection(state, currentProjection, update)) {
         currentCutRowRange = cutSubtreeRowRange(currentProjection.rows, pendingCutNodeId);
         updateProjectionChrome(currentProjection);
+        rememberAcceptedRenderedProjection(currentProjection, { forceOutline: true });
+        scrollToObservedActiveTab(currentProjection);
+        clearHoverLineScope();
+        scheduleCurrentRowsRender();
+        refreshSparseProjectionAfterLocalTreePatch();
+        return;
+      }
+
+      if (removeRelocatedRowsFromSparseOutlineProjection(state, currentProjection, update)) {
+        currentCutRowRange = cutSubtreeRowRange(currentProjection.rows, pendingCutNodeId);
+        updateProjectionChrome(currentProjection);
+        rememberAcceptedRenderedProjection(currentProjection, { forceOutline: true });
         scrollToObservedActiveTab(currentProjection);
         clearHoverLineScope();
         scheduleCurrentRowsRender();
@@ -2522,6 +2618,7 @@ function applyTreeStructureUpdate(update: TreeStructureUpdate): void {
     refreshProjectionActiveTabTarget(state, currentProjection);
     currentCutRowRange = cutSubtreeRowRange(currentProjection.rows, pendingCutNodeId);
     updateProjectionChrome(currentProjection);
+    rememberAcceptedRenderedProjection(currentProjection, { forceOutline: true });
     scrollToObservedActiveTab(currentProjection);
     clearHoverLineScope();
     scheduleCurrentRowsRender();
@@ -2537,6 +2634,95 @@ function refreshSparseProjectionAfterLocalTreePatch(): void {
     return;
   }
   requestSparseScrollWindowIfNeeded({ force: true });
+}
+
+function refreshLastOutlineProjectionAfterTreeStructureUpdate(
+  state: OutlineState,
+  update: TreeStructureUpdate
+): void {
+  const entry = renderedProjectionSession.lastOutlineProjection;
+  if (!entry) {
+    return;
+  }
+
+  const projection = entry.projection;
+  let applied = false;
+  if (update.deletedNodeIds.length === 0) {
+    applied = applySameParentReorderTreeStructurePatchToProjection(state, projection, update) ||
+      applyInsertTreeStructurePatchToProjection(state, projection, update);
+  } else {
+    applied = applyDeleteTreeStructurePatchToProjection(state, projection, update);
+  }
+
+  if (!applied) {
+    delete renderedProjectionSession.lastOutlineProjection;
+    return;
+  }
+
+  delete entry.coverage;
+}
+
+function removeRelocatedRowsFromSparseOutlineProjection(
+  state: OutlineState,
+  projection: VisibleTreeProjection,
+  update: TreeStructureUpdate
+): boolean {
+  if (
+    projection.isSearchActive ||
+    update.deletedNodeIds.length > 0 ||
+    !hydratingFullState ||
+    !isSparseInitialProjection(projection)
+  ) {
+    return false;
+  }
+
+  const rowIndexes = new Set(projection.rows.map((row) => row.index));
+  const rowsToRemove = new Set<NodeId>();
+  const rowsByNodeId = new Map(projection.rows.map((row) => [row.nodeId, row]));
+  for (const node of update.updatedNodes) {
+    const row = rowsByNodeId.get(node.id);
+    const parent = node.parentId ? state.nodes[node.parentId] : undefined;
+    if (node.childIds.length > 0) {
+      for (const candidate of projection.rows) {
+        const candidateNode = state.nodes[candidate.nodeId];
+        if (candidateNode?.parentId !== node.id) {
+          continue;
+        }
+        const nextRowIndex = node.childIds.indexOf(candidate.nodeId) + 1;
+        if (nextRowIndex > 0 && nextRowIndex !== candidate.index && !rowIndexes.has(nextRowIndex)) {
+          rowsToRemove.add(candidate.nodeId);
+        }
+      }
+    }
+    if (!row || !parent) {
+      continue;
+    }
+
+    const childIndex = parent.childIds.indexOf(node.id);
+    if (childIndex < 0) {
+      continue;
+    }
+    const nextRowIndex = childIndex + 1;
+    if (nextRowIndex !== row.index && !rowIndexes.has(nextRowIndex)) {
+      rowsToRemove.add(node.id);
+    }
+    if (nextRowIndex !== row.index && node.kind !== "window") {
+      rowsToRemove.add(node.id);
+    }
+  }
+
+  if (rowsToRemove.size === 0) {
+    return false;
+  }
+
+  projection.rows = projection.rows.filter((row) => !rowsToRemove.has(row.nodeId));
+  projection.visibleNodeIds = projection.rows.map((row) => row.nodeId);
+  projection.visibleNodeIdSet = new Set(projection.visibleNodeIds);
+  for (const nodeId of rowsToRemove) {
+    projection.matchingNodeIds.delete(nodeId);
+  }
+  projection.matchCount = projection.matchingNodeIds.size;
+  return true;
 }
 
 function invalidateProjectionCache(): void {
@@ -2766,6 +2952,37 @@ function isSparseInitialProjection(projection: VisibleTreeProjection): boolean {
   return typeof projection.totalRowCount === "number" && projection.totalRowCount !== projection.rows.length;
 }
 
+function projectionRequiresHydrationCoverage(projection: VisibleTreeProjection | undefined): boolean {
+  return Boolean(hydratingFullState && !currentStateFullyLoaded && projection);
+}
+
+function ensureProjectionViewportPainted(projection: VisibleTreeProjection): void {
+  if (!rootDropSurface || projection.rows.length === 0) {
+    return;
+  }
+  const viewportRange = currentViewportRowRange(currentRowHeight());
+  const intersectingRows = projection.rows.filter(
+    (row) => row.index >= viewportRange.start && row.index < viewportRange.end
+  );
+  const hasMeaningfulViewportRow = intersectingRows.some((row) => row.index > 0) ||
+    projection.rows.every((row) => row.index < viewportRange.end);
+  if (hasMeaningfulViewportRow) {
+    return;
+  }
+
+  const activeRow = projection.rows.find((row) => row.nodeId === projection.activeTabNodeId);
+  const anchorRow = activeRow ??
+    projection.rows.find((row) => row.index >= viewportRange.end) ??
+    projection.rows.find((row) => row.index > 0) ??
+    projection.rows[0];
+  if (!anchorRow) {
+    return;
+  }
+  const rowHeight = currentRowHeight();
+  prepareVirtualScrollSurface(projection, rowHeight);
+  centerRowInViewport(anchorRow.index, rootDropSurface, rowHeight);
+}
+
 function currentRowHeight(): number {
   const value = window.getComputedStyle(document.documentElement).getPropertyValue("--node-row-height");
   const parsed = Number.parseFloat(value);
@@ -2905,7 +3122,11 @@ function renderNodeActions(
 }
 
 function canRenderHydratingNodeAction(action: string, node: OutlineNode): boolean {
-  if (!hydratingFullState || !currentProjection || !isSparseInitialProjection(currentProjection)) {
+  if (!projectionRequiresHydrationCoverage(currentProjection)) {
+    return true;
+  }
+
+  if (action === "show-in-tree") {
     return true;
   }
 
@@ -3019,17 +3240,21 @@ function handleTreePointerOver(event: PointerEvent): void {
 function materializeSparseRowActions(item: HTMLElement, rowInfo: VisibleTreeRow): void {
   const state = currentState;
   const projection = currentProjection;
-  if (!state || !projection || !hydratingFullState || !isSparseInitialProjection(projection)) {
+  if (!state || !projection || !projectionRequiresHydrationCoverage(projection)) {
     return;
   }
 
   const row = rowForItem(item);
-  if (!row || row.querySelector(".node-actions")) {
+  if (!row) {
     return;
   }
 
   if (!currentProjectionCoverage) {
-    scheduleFullStateHydration(0);
+    scheduleFullStateHydration(HOVER_MISSING_COVERAGE_HYDRATION_DELAY_MS);
+    return;
+  }
+
+  if (row.querySelector(".node-actions")) {
     return;
   }
 
@@ -3538,7 +3763,7 @@ function releasePointerActionFocus(button: HTMLButtonElement, event: MouseEvent)
 }
 
 function canRunHydratingRowAction(action: string | undefined, node: OutlineNode): boolean {
-  if (!hydratingFullState || !currentProjection || !isSparseInitialProjection(currentProjection)) {
+  if (!projectionRequiresHydrationCoverage(currentProjection)) {
     return true;
   }
   if (action === "focus-or-restore") {
@@ -4163,10 +4388,7 @@ function centerRowInViewport(rowIndex: number, viewport: HTMLElement | undefined
   const effectiveRowHeight = Number.isFinite(rowHeight) && rowHeight > 0 ? rowHeight : 1;
   const rowTop = Math.max(0, rowIndex) * effectiveRowHeight;
   const centeredScrollTop = Math.max(0, rowTop + effectiveRowHeight / 2 - viewport.clientHeight / 2);
-  const maxScrollTop = Number.isFinite(viewport.scrollHeight)
-    ? Math.max(0, viewport.scrollHeight - viewport.clientHeight)
-    : centeredScrollTop;
-  viewport.scrollTop = Math.min(centeredScrollTop, maxScrollTop);
+  viewport.scrollTop = centeredScrollTop;
 }
 
 function prepareVirtualScrollSurface(projection: VisibleTreeProjection, rowHeight: number): void {

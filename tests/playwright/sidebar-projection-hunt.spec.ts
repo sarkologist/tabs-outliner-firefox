@@ -3570,7 +3570,6 @@ test.describe("sidebar projection hunt", () => {
   });
 
   test("psh-show-in-tree-target-moved-before-slice-keeps-reveal-current", async ({ page }) => {
-    test.fail(true, "PT-022: moved show-in-tree target can be highlighted without scrolling into view");
     const issues = collectPageIssues(page);
     await loadLargeSparseSidebar(page, { fullStatePending: true });
 
@@ -3691,7 +3690,6 @@ test.describe("sidebar projection hunt", () => {
   });
 
   test("psh-show-in-tree-deleted-target-rejected-response-restores-outline", async ({ page }) => {
-    test.fail(true, "PT-023: rejected show-in-tree response after target delete restores stale outline count");
     const issues = collectPageIssues(page);
     await loadLargeSparseSidebar(page, { fullStatePending: true });
 
@@ -3807,7 +3805,6 @@ test.describe("sidebar projection hunt", () => {
   });
 
   test("psh-visible-delete-stale-scroll-response-refills-current-window", async ({ page }) => {
-    test.fail(true, "PT-024: visible sparse delete/refill can leave stale outline count metadata");
     const issues = collectPageIssues(page);
     await loadLargeSparseSidebar(page, { fullStatePending: true });
 
@@ -4072,7 +4069,6 @@ test.describe("sidebar projection hunt", () => {
   });
 
   test("psh-two-sidebars-move-patch-preserves-search-and-scroll-owners", async ({ page }) => {
-    test.fail(true, "PT-025: move patch for matching search row can fall back to partial search count");
     const issuesA = collectPageIssues(page);
     await loadLargeSparseSidebar(page, { fullStatePending: true });
 
@@ -4218,7 +4214,6 @@ test.describe("sidebar projection hunt", () => {
   });
 
   test("psh-rejected-search-after-outline-move-patch-keeps-scroll-owner", async ({ page }) => {
-    test.fail(true, "PT-026: rejected search after outline move patch can restore stale moved row");
     const issues = collectPageIssues(page);
     await loadLargeSparseSidebar(page, { fullStatePending: true });
 
@@ -4409,7 +4404,6 @@ test.describe("sidebar projection hunt", () => {
   });
 
   test("psh-search-missing-coverage-title-patch-restores-actions-after-hydration", async ({ page }) => {
-    test.fail(true, "PT-027: title patch can be lost behind an older missing-coverage search response");
     const issues = collectPageIssues(page);
     await loadLargeSparseSidebar(page, { fullStatePending: true });
 
@@ -4668,7 +4662,6 @@ test.describe("sidebar projection hunt", () => {
   });
 
   test("psh-search-missing-coverage-full-broadcast-restores-actions", async ({ page }) => {
-    test.fail(true, "PT-028: search projection without coverage can expose edit actions while hydrating");
     const issues = collectPageIssues(page);
     await loadLargeSparseSidebar(page, { fullStatePending: true });
 
@@ -5009,7 +5002,6 @@ test.describe("sidebar projection hunt", () => {
   });
 
   test("psh-clear-search-after-covered-title-patch-keeps-outline-window", async ({ page }) => {
-    test.fail(true, "PT-029: clear-search after covered title patch can restore outline chrome with an empty viewport");
     const issues = collectPageIssues(page);
     await loadLargeSparseSidebar(page, { fullStatePending: true });
 
@@ -5256,7 +5248,6 @@ test.describe("sidebar projection hunt", () => {
   });
 
   test("psh-two-sidebars-title-patch-clear-search-preserves-other-scroll", async ({ page }) => {
-    test.fail(true, "PT-030: clear-search after title-patched search can leave stale search chrome");
     const issuesA = collectPageIssues(page);
     await loadLargeSparseSidebar(page, { fullStatePending: true });
 

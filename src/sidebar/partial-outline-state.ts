@@ -1,4 +1,4 @@
-import type { NodeId, OutlineState } from "../model/types.js";
+import type { NodeId, OutlineNode, OutlineState } from "../model/types.js";
 
 export function mergePartialOutlineState(
   current: OutlineState | undefined,
@@ -13,18 +13,33 @@ export function mergePartialOutlineState(
   const nodes: OutlineState["nodes"] = { ...current.nodes };
   for (const [nodeId, node] of Object.entries(incoming.nodes)) {
     const currentNode = current.nodes[nodeId];
-    nodes[nodeId] = currentNode && !completeSiblingParentIds.has(nodeId)
-      ? {
-          ...node,
-          childIds: mergeKnownNodeIds(currentNode.childIds, node.childIds)
-        }
-      : node;
+    nodes[nodeId] = mergePartialOutlineNode(currentNode, node, completeSiblingParentIds.has(nodeId));
   }
 
   return {
     version: current.version,
     rootIds: mergeKnownNodeIds(current.rootIds, incoming.rootIds),
     nodes
+  };
+}
+
+function mergePartialOutlineNode(
+  currentNode: OutlineNode | undefined,
+  incomingNode: OutlineNode,
+  incomingSiblingsComplete: boolean
+): OutlineNode {
+  if (!currentNode) {
+    return incomingNode;
+  }
+
+  const baseNode = currentNode.updatedAt > incomingNode.updatedAt ? currentNode : incomingNode;
+  if (incomingSiblingsComplete) {
+    return baseNode;
+  }
+
+  return {
+    ...baseNode,
+    childIds: mergeKnownNodeIds(currentNode.childIds, incomingNode.childIds)
   };
 }
 
