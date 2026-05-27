@@ -19,12 +19,12 @@ pnpm perf:sidebar-projection-guard
 ## Last Projection Run
 
 - Completed: 2026-05-27
-- Strategy: sparse local interaction hunt after the `PT-031` drag/drop fix, with proposal-only scouts for local hover/action inventory, drag/drop coverage, keyboard/rename state, and multi-sidebar interaction fanout. The hunt sampled covered and missing-coverage hover actions, rename keyboard isolation, cut/delete/stale-refill cleanup, drag/drop/root-drop preview cleanup, focus and close/delete/history ordering, and two-sidebar combinations with search and show-in-tree owners.
-- Scenario ids: 136 `psh-*` Playwright discovery/regression scenarios
-- Distinct findings recorded: 31
-- Status: `PT-001` through `PT-031` fixed. This sparse-local interaction hunt found no new distinct projection findings.
-- Clean blocks after latest finding: block 1 added covered hover inventory, rename/undo isolation, cut/delete stale-refill cleanup, missing-coverage drag refill, root-drop missing-coverage rejection, two-sidebar drag/search independence, and rename-vs-drag coverage; block 2 added covered row-drop patch cleanup, focus/delete stale refill, keyboard cut/delete cleanup, and two-sidebar keyboard/search independence; block 3 added close/delete/history stale refill, root-drop history/full-broadcast cleanup, and two-sidebar root-drag/show-in-tree independence. Each block passed targeted replay and full-corpus replay without a new distinct projection signature.
-- Perf gate: preflight `pnpm perf:sidebar-projection-guard -- --smoke` passed before the sparse-local interaction hunt after a sandbox/web-server retry. Final safety passed `pnpm run build`, the full `pnpm exec playwright test tests/playwright/sidebar-projection-hunt.spec.ts --reporter=list --workers=1` corpus with 136 scenarios, `pnpm exec playwright test tests/playwright/sidebar-drop-preview.spec.ts --reporter=list`, `pnpm exec playwright test tests/playwright/sidebar-drag-drop-performance.spec.ts --reporter=list`, `pnpm exec playwright test tests/playwright/sidebar-first-paint.spec.ts --reporter=list`, `pnpm exec playwright test tests/playwright/sidebar-startup-interaction-profile.spec.ts --reporter=list`, and `pnpm perf:sidebar-projection-guard` after a sandbox/web-server retry.
+- Strategy: sparse action follow-up hunt after the `PT-031` drag/drop fix, with proposal-only scouts for local command ownership, search/show-in-tree replacement, restore workflows, and multi-sidebar projection fanout. The hunt sampled cut/paste recovery after sparse full hydration, move-to-root stale refills, restore/delete shells, drag-preview cleanup across search replacement, rename/search crossings, close/search crossings, closed/restored delete fanout, and two-sidebar target/search/clear-search independence.
+- Scenario ids: 154 `psh-*` Playwright discovery/regression scenarios
+- Distinct findings recorded: 32
+- Status: `PT-001` through `PT-031` fixed; `PT-032` open. This sparse action follow-up hunt found one new distinct projection finding: rename interaction can strand active search on outline rows.
+- Clean blocks after latest finding: block 1 recorded `PT-032` from rename blur/search replacement and then found only duplicate rename escape/enter variants while neighboring close and move-to-root search replacement scenarios passed; block 2 added command/search-clear and restored-delete/search independence scenarios with no new distinct signature; block 3 added close-to-show-in-tree target replacement, two-sidebar target/clear-search independence, and cut/search/clear paste gating scenarios with no new distinct signature. Each clean block passed targeted replay and full-corpus replay.
+- Perf gate: preflight `pnpm perf:sidebar-projection-guard -- --smoke` passed before the sparse-local interaction hunt after a sandbox/web-server retry. The sparse action follow-up corpus passed `pnpm exec playwright test tests/playwright/sidebar-projection-hunt.spec.ts --reporter=list --workers=1` with 154 scenarios, including the frozen expected-failing `PT-032` repros. Final safety passed `pnpm run build` and `pnpm perf:sidebar-projection-guard` after rerunning the guard outside the sandbox because the local Playwright web server bind was blocked.
 
 ## Fix Analysis
 
@@ -45,7 +45,7 @@ pnpm perf:sidebar-projection-guard
 ## Finding Index
 
 - Fixed projection findings: `PT-001`, `PT-002`, `PT-003`, `PT-004`, `PT-005`, `PT-006`, `PT-007`, `PT-008`, `PT-009`, `PT-010`, `PT-011`, `PT-012`, `PT-013`, `PT-014`, `PT-015`, `PT-016`, `PT-017`, `PT-018`, `PT-019`, `PT-020`, `PT-021`, `PT-022`, `PT-023`, `PT-024`, `PT-025`, `PT-026`, `PT-027`, `PT-028`, `PT-029`, `PT-030`, `PT-031`
-- Open projection findings: none
+- Open projection findings: `PT-032`
 
 ### PT-001 rejected sparse slice leaves viewport blank/no retry
 
@@ -494,3 +494,17 @@ pnpm exec playwright test tests/playwright/sidebar-projection-hunt.spec.ts --gre
 - Expected: covered visible sparse rows can drag/drop locally and send the background `moveNode` command without full hydration; missing coverage requests a sparse refill and still avoids `getState`.
 - Actual: rows were marked draggable, but `dragstart`, `dragover`, `drop`, and root drop handlers returned while `hydratingFullState` was true, so sparse-by-default sidebars effectively lost drag/drop.
 - Evidence: the frozen scenarios cover row-to-row drag/drop, root drag/drop, and missing-coverage drag/drop before full hydration. The fixed path sends `moveNode`/`moveNodeToNewWindow` for covered placements, keeps `stateRequestCount()` at `0`, and requests `getTreeProjectionSlice` when coverage is absent.
+
+### PT-032 rename interaction can strand active search on outline rows
+
+- Status: open
+- Found by: `psh-rename-blur-search-replacement-keeps-query-owner`, `psh-rename-escape-search-replacement-keeps-query-owner`, and `psh-rename-enter-then-search-keeps-query-owner`
+- Repro:
+
+```sh
+pnpm exec playwright test tests/playwright/sidebar-projection-hunt.spec.ts --grep "psh-(rename-blur-search-replacement-keeps-query-owner|rename-escape-search-replacement-keeps-query-owner|rename-enter-then-search-keeps-query-owner)" --reporter=list --workers=1
+```
+
+- Expected: after a sparse sidebar enters rename mode and then the user searches, the current search owner should win whether rename was canceled, explicitly committed, or committed by blur; `#search = "Tab 900"` should render the `Tab 900` search result and search count chrome without full hydration.
+- Actual: the visible projection remains normal outline rows and the count remains `1001 items / 0 saved` while the search input still contains `Tab 900`.
+- Evidence: the frozen Playwright scenarios cover canceling rename with Escape, committing with Enter, and committing by blur into the search box. In each failing variant, the pending projection slice is resolved but Playwright times out waiting for the search row. The failure screenshots show active `Tab 900` search text over outline rows `760..` and normal outline count chrome. Neighboring scenarios for `Close` and `Move to top level` followed by search pass, so the signature is rename-specific rather than a general command/search handoff failure.
