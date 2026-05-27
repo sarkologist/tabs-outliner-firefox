@@ -595,6 +595,7 @@ test.describe("sidebar first paint", () => {
 
     await page.goto("/sidebar/sidebar.html");
     await expect(page.locator("#search")).toBeEnabled();
+    await expect(page.locator(".node[data-node-id='group:hidden']")).toBeVisible();
     await page.locator("#search").fill("hidden 1");
     await page.waitForFunction(() => {
       const messages = (window as typeof window & {

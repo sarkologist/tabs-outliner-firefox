@@ -26,37 +26,24 @@ Stress the boundary between the background-owned outline and sidebars that now b
 
 ## Coverage Targets
 
-Current projection guard baseline after 2026-05-26 remote-projection work:
+Current projection guard baseline after 2026-05-27 sparse-local interaction work:
 
 - `pnpm perf:sidebar-projection-guard` passes with startup hover and sparse scroll-away profiles. Startup-hover now guards sparse idle behavior with `sparseIdleActionButtonsMin` and `sparseIdleHydrationRequestsMax`; startup-scroll-away still requires viewport row coverage with `hydrationRequestsMax=0`.
-- Projection discovery corpus has 83 `psh-*` scenarios covering rejected/delayed/out-of-order slices, restored single-tab delete cleanup, hover action stability, sparse full-state hydration, sparse patch stability, sparse delete/refill behavior, covered sparse edit controls, remote search clear/show-in-tree slices, search query replacement, full-state broadcast freshness, command/delete broadcast ordering, temporal scroll/search/clear ordering, coverage transitions, rejected response handling, partial action policy, edit/history command ordering, drag/drop while partial, stale search/scroll timing, history-status/show-in-tree ordering, full-hydration edit recovery, rejected response recovery, background patch updates during active search, target-node/show-in-tree intent replacement, rejected current target/query responses, missing target coverage metadata, and multi-sidebar search/scroll independence.
-- Fixed findings are preserved as regression coverage in the `psh-*` corpus: `PT-001` through `PT-021`. Do not mutate those scenarios directly during discovery; clone variants with new neutral IDs.
+- Projection discovery corpus has 136 `psh-*` scenarios covering rejected/delayed/out-of-order slices, sparse full-state hydration, compact patch/refill behavior, covered and missing-coverage action truth, remote search clear/show-in-tree slices, owner replacement, target-node freshness, stale search/scroll timing, edit/history command ordering, multi-sidebar owner independence, covered sparse drag/drop before full hydration, and sparse-local hover/rename/keyboard/drag/drop/focus/close/delete interactions.
+- Fixed findings are preserved as regression coverage in the `psh-*` corpus: `PT-001` through `PT-031`. Do not mutate those scenarios directly during discovery; clone variants with new neutral IDs.
 - The 2026-05-26 edit/history hunt stopped after three clean active mutation blocks following `PT-015`; a toolbar undo/show-in-tree suspicion was retracted when the repro passed and stayed as coverage. The `PT-014`/`PT-015` fix pass converted both stale-intent repros to required-passing tests, so later hunts should treat those exact signatures as duplicate fixed regressions.
 - The 2026-05-26 target-intent hunt recorded findings `PT-016` through `PT-021`, then stopped after three clean active mutation blocks following `PT-021`. The follow-up owner/coverage fix pass converted those repros to required-passing tests. The final clean discovery blocks sampled clear-search in one sidebar while another keeps search, rapid query replacement in one sidebar while another keeps search, and clear-search plus an already-painted sparse scroll in separate sidebars.
+- The 2026-05-27 patch/refill owner-fanout hunt recorded `PT-022` through `PT-030`; the follow-up projection-frame fix closed row, owner, chrome metadata, coverage, and fallback-memory drift. Manual QA then found `PT-031`, where the old full-hydration drag/drop guard blocked covered local drag/drop; the follow-up fix made row/root drag/drop coverage-aware and missing coverage request a sparse refill instead of `getState`.
+- The 2026-05-27 sparse-local interaction hunt added 14 scenarios across hover/action inventory, rename isolation, keyboard cut, drag/drop/root-drop preview cleanup, focus/close/delete stale refills, and two-sidebar search/show-in-tree fanout. It stopped after three clean active mutation blocks with no new `PT-*` findings.
 
 Next sparse cells:
 
-- variants around the fixed target-intent owner model, especially owner replacement during rejected target/query responses, reveal target preservation after refills, missing coverage action gating, and background-patch handling while sparse scroll is pending;
-- rejected slice retry/recovery;
-- repeated scrollbar jumps with stale non-covering responses;
-- background broadcasts while scrolled to a fetched projection slice;
-- stale query responses after search clear or query replacement, especially when combined with rejected responses, background patches, remembered non-search projection fallback, or a newer projection intent;
-- partial search result pruning after background patches, especially count/chrome metadata derived from background projection versus sidebar-local state;
-- show-in-tree target slices when the target moved, was deleted, or has an ancestor patched while the request is pending, especially successful responses that no longer contain the requested target;
-- rejected show-in-tree target slices, especially whether cleared-search intent restores non-search chrome without reusing stale search projection state;
-- rejected clear-search slices, especially whether cleared-search intent restores non-search chrome without reusing stale search projection state;
-- compact tree-structure patches that can be locally applied before falling back to remote slice refresh, especially deletes that shrink the current sparse window and must refill exposed viewport rows;
-- visible in-coverage commands while full hydration is pending;
-- covered edit controls while full hydration is pending, especially Cut, Paste, Move to top level, drag/drop, and which ones need background/full-state placement;
-- missing-coverage snapshots after full hydration or full broadcasts, especially whether actions and edit affordances become available again;
-- stale patches for hovered rows and deleted rows;
-- undo/redo command ack ordering while only sparse projection state is present;
-- stale non-search scroll slices racing newer search intent, target-node intent, or rapid query replacement;
-- temporal undo/search/clear/background-patch ordering near the fixed `PT-014`/`PT-015` signatures, especially variants involving rejected current-intent responses or target-node projection requests;
-- toolbar history commands while show-in-tree target projection requests are pending;
-- snapshots with missing coverage metadata;
-- search/show-in-tree while slice requests are pending;
-- multi-sidebar startup with no automatic sidebar full hydration.
+- paste and move-to-root follow-up after sparse cut starts full hydration, especially command ack/broadcast ordering and stale sparse refill cleanup;
+- restore/reopen workflows for closed rows while coverage is partial or recently refilled;
+- drag/drop across collapsed ancestors, unloaded children, and non-visible sibling boundaries where the sidebar must decide whether local placement is covered;
+- keyboard shortcuts crossing search/show-in-tree replacement while rename, drag, or cut state is active;
+- multi-sidebar startup with no automatic sidebar full hydration, especially one sidebar editing locally while another owns search/show-in-tree/scroll;
+- temporal heat across local action, stale sparse response, compact patch, command ack/history status, full broadcast, and follow-up viewport refill.
 
 ## Hunt Procedure
 
