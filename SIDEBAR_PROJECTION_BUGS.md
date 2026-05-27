@@ -18,13 +18,13 @@ pnpm perf:sidebar-projection-guard
 
 ## Last Projection Run
 
-- Completed: 2026-05-26
-- Strategy: target-node/show-in-tree intent hunt after the `PT-014`/`PT-015` intent-guard fix, with proposal-only scouts for remote request freshness, viewport/DOM behavior, and background/multi-sidebar fanout. Rung 0 covered target-node response replacement by search, clear-search, and another target; Rung 1 covered rejected current responses, missing coverage metadata, stale normal scroll slices, and background patches; Rung 2 covered temporal heat and multi-sidebar independence.
-- Scenario ids: 83 `psh-*` Playwright discovery/regression scenarios
-- Distinct findings recorded: 21
-- Status: `PT-001` through `PT-021` fixed. Discovery stopped after three complete clean active mutation blocks following `PT-021`; the follow-up fix pass converted the target-intent repros to required-passing tests.
-- Clean blocks after latest finding: `psh-clear-search-in-one-sidebar-preserves-other-sidebar-search`, `psh-two-sidebars-query-replacement-keeps-other-search-independent`, and `psh-two-sidebars-clear-search-and-painted-scroll-stay-independent` each passed targeted replay and full-corpus replay without a new distinct projection signature.
-- Perf gate: preflight `pnpm perf:sidebar-projection-guard -- --smoke --json` passed before the target-intent hunt after a sandbox/web-server retry. The `PT-014`/`PT-015` fix pass converted both repros to required-passing tests and the projection corpus passed with 69 scenarios. The `PT-016`..`PT-021` fix pass converted the target-intent repros to required-passing tests; the full 83-scenario projection corpus, sparse scroll suite, first-paint suite, and `pnpm perf:sidebar-projection-guard` passed.
+- Completed: 2026-05-27
+- Strategy: patch/refill owner fanout hunt after the `PT-016`..`PT-021` owner/coverage fix, with proposal-only scouts for remote request freshness, viewport/DOM behavior, and background patch fanout. Rung 0 started with visible search delete/refill, moved show-in-tree target admission, and owner replacement coverage/action truth. Later blocks varied target delete/reject ordering, patched search clear, visible sparse delete plus stale scroll refill, multi-sidebar undo/full-broadcast fanout, search patch/full-broadcast ordering, move/reorder patches, focus commands, rejected search recovery after outline moves, post-move history/full-broadcast fanout, missing-coverage action truth, title-patch/search-response ordering, active-outline history/full-broadcasts, stale outline refills losing to search, show-in-tree history/title churn, multi-sidebar delete/history fanout, and target-neighbor delete refills.
+- Scenario ids: 120 `psh-*` Playwright discovery/regression scenarios
+- Distinct findings recorded: 30
+- Status: `PT-001` through `PT-021` fixed. `PT-022` through `PT-030` are open; discovery stopped after three complete clean active mutation blocks following `PT-030`. The next step is a separate fix pass for the open projection findings.
+- Clean blocks after latest finding: block 1 added `psh-active-outline-history-status-full-broadcast-keeps-actions` and `psh-two-sidebars-active-broadcast-and-scroll-patch-stay-independent`; block 2 added `psh-move-refill-search-ignores-stale-scroll-response` and `psh-show-in-tree-history-status-title-patch-keeps-reveal-actions`; block 3 added `psh-two-sidebars-delete-search-result-history-broadcast-keeps-owners` and `psh-show-in-tree-neighbor-delete-refill-keeps-target-actions`. Each block passed targeted replay and full-corpus replay without a new distinct projection signature.
+- Perf gate: preflight `pnpm perf:sidebar-projection-guard -- --smoke` passed before the patch/refill owner fanout hunt after a sandbox/web-server retry. Final safety passed `pnpm run build`, the full `pnpm exec playwright test tests/playwright/sidebar-projection-hunt.spec.ts --reporter=list --workers=1` corpus with 120 scenarios, and `pnpm perf:sidebar-projection-guard -- --smoke` after a sandbox/web-server retry.
 
 ## Fix Analysis
 
@@ -43,7 +43,7 @@ pnpm perf:sidebar-projection-guard
 ## Finding Index
 
 - Fixed projection findings: `PT-001`, `PT-002`, `PT-003`, `PT-004`, `PT-005`, `PT-006`, `PT-007`, `PT-008`, `PT-009`, `PT-010`, `PT-011`, `PT-012`, `PT-013`, `PT-014`, `PT-015`, `PT-016`, `PT-017`, `PT-018`, `PT-019`, `PT-020`, `PT-021`
-- Open projection findings: none
+- Open projection findings: `PT-022`, `PT-023`, `PT-024`, `PT-025`, `PT-026`, `PT-027`, `PT-028`, `PT-029`, `PT-030`
 
 ### PT-001 rejected sparse slice leaves viewport blank/no retry
 
@@ -352,3 +352,129 @@ pnpm exec playwright test tests/playwright/sidebar-projection-hunt.spec.ts --gre
 - Actual: the patched sidebar stays on the old active-window slice after the covering `880..940` response resolves, so `tab:900` remains absent.
 - Evidence: the frozen scenario scrolls one sidebar to `260` and the second to `900`, emits a shared title patch for `tab:900`, resolves a stale/non-covering slice in the first sidebar and a covering slice in the second. Playwright observes the first sidebar recovered to `260`, but the second sidebar still lacks row `900`.
 - Fix: sparse owner state is sidebar-local, so shared background patches do not collapse independent scroll owners. Older same-owner covering/intersecting slices may paint after a patch; stale non-covering slices only merge safe node data and prompt a current-owner viewport refill.
+
+### PT-022 moved show-in-tree target can be highlighted without scrolling into view
+
+- Status: open
+- Found by: `psh-show-in-tree-target-moved-before-slice-keeps-reveal-current`
+- Repro:
+
+```sh
+pnpm exec playwright test tests/playwright/sidebar-projection-hunt.spec.ts --grep "psh-show-in-tree-target-moved-before-slice-keeps-reveal-current" --reporter=list --workers=1
+```
+
+- Expected: if a show-in-tree target moves before its target-node projection response resolves, the accepted current target response should scroll to and reveal the moved target row.
+- Actual: the row receives reveal ownership/highlight, but the visible viewport remains near the previous top rows and does not include the moved target row.
+- Evidence: the frozen scenario searches `Tab 900`, clicks `Show in tree`, moves `tab:900` under `window:1` at row `120`, then resolves the current target slice. Playwright observes cleared search and outline chrome with the reveal highlight set, but `visibleRows` does not contain row `120`.
+
+### PT-023 rejected show-in-tree response after target delete restores stale outline count
+
+- Status: open
+- Found by: `psh-show-in-tree-deleted-target-rejected-response-restores-outline`
+- Repro:
+
+```sh
+pnpm exec playwright test tests/playwright/sidebar-projection-hunt.spec.ts --grep "psh-show-in-tree-deleted-target-rejected-response-restores-outline" --reporter=list --workers=1
+```
+
+- Expected: if the target node is deleted while its show-in-tree target slice is pending, and that target response then rejects, the sidebar should restore the current outline owner with the deleted node absent and the outline total reduced.
+- Actual: the deleted row is gone and reveal state is cleared, but the outline count is restored from stale fallback metadata as `1001 items / 0 saved` instead of `1000 items / 0 saved`.
+- Evidence: the frozen scenario searches `Tab 900`, clicks `Show in tree`, emits a compact delete patch for `tab:900`, then rejects the pending target slice. Playwright observes no `tab:900`, no reveal highlight, no full `getState`, and stale outline chrome/count text.
+
+### PT-024 visible sparse delete/refill can leave stale outline count metadata
+
+- Status: open
+- Found by: `psh-visible-delete-stale-scroll-response-refills-current-window`
+- Repro:
+
+```sh
+pnpm exec playwright test tests/playwright/sidebar-projection-hunt.spec.ts --grep "psh-visible-delete-stale-scroll-response-refills-current-window" --reporter=list --workers=1
+```
+
+- Expected: after compact delete removes visible sparse outline rows and a current-viewport refill paints the exposed rows, outline chrome should reflect the reduced total row count.
+- Actual: the deleted rows are absent and the viewport is refilled, but the count text remains `1001 items / 0 saved` instead of `973 items / 0 saved`.
+- Evidence: the frozen scenario paints rows `250..277`, creates a pending stale scroll response, deletes those 28 visible rows, resolves the stale response, then resolves the current refill. Playwright observes `tab:278` visible and no deleted `tab:250`, but stale outline count metadata remains.
+
+### PT-025 move patch for matching search row can fall back to partial search count
+
+- Status: open
+- Found by: `psh-two-sidebars-move-patch-preserves-search-and-scroll-owners`
+- Repro:
+
+```sh
+pnpm exec playwright test tests/playwright/sidebar-projection-hunt.spec.ts --grep "psh-two-sidebars-move-patch-preserves-search-and-scroll-owners" --reporter=list --workers=1
+```
+
+- Expected: when a compact move patch reorders a node that is also a current search result, the search owner should keep background-owned search metadata while preserving the matching row.
+- Actual: the moved search result stays visible, but search chrome falls back to partial sidebar-local totals: `1 match / 82 items` instead of `1 match / 1001 items`.
+- Evidence: the frozen multi-sidebar scenario searches `Tab 260` in one sidebar, paints row `260` in another, then emits the same move patch in both. The outline sidebar keeps its scrolled owner, but the search sidebar keeps `tab:260` visible with stale partial count metadata and no full `getState`.
+
+### PT-026 rejected search after outline move patch can restore stale moved row
+
+- Status: open
+- Found by: `psh-rejected-search-after-outline-move-patch-keeps-scroll-owner`
+- Repro:
+
+```sh
+pnpm exec playwright test tests/playwright/sidebar-projection-hunt.spec.ts --grep "psh-rejected-search-after-outline-move-patch-keeps-scroll-owner" --reporter=list --workers=1
+```
+
+- Expected: when an outline row is moved while a search request is pending, and that search request rejects, the sidebar should keep the outline scroll owner but not resurrect the moved row at its old viewport position.
+- Actual: the rejected search restores outline chrome and the scrolled viewport, but the moved `tab:260` remains visible in the old sparse window after it was moved to row `900`.
+- Evidence: the frozen scenario paints rows around `250`, starts a search for `Tab 260`, emits a move patch relocating `tab:260` under `window:1` near row `900`, rejects the pending search slice, and observes `tab:260` still rendered in the old viewport with no full `getState`.
+
+### PT-027 title patch can be lost behind an older missing-coverage search response
+
+- Status: open
+- Found by: `psh-search-missing-coverage-title-patch-restores-actions-after-hydration`
+- Repro:
+
+```sh
+pnpm exec playwright test tests/playwright/sidebar-projection-hunt.spec.ts --grep "psh-search-missing-coverage-title-patch-restores-actions-after-hydration" --reporter=list --workers=1
+```
+
+- Expected: if a compact title patch arrives after a search projection response is resolved but before the sidebar has admitted/rendered it, the later patch should remain visible and the missing-coverage row should stay readonly until full hydration restores edit actions.
+- Actual: the search result row remains visible under the current query, but it renders the older title from the sparse response instead of the later patched title.
+- Evidence: the frozen scenario starts search `Tab 900`, resolves that sparse search response without coverage, immediately emits a `nodeStateUpdated` title patch for `tab:900`, and waits idle frames. Playwright observes the row still titled `Tab 900` instead of `Tab 900 search coverage patched`, with no full `getState`.
+
+### PT-028 search projection without coverage can expose edit actions while hydrating
+
+- Status: open
+- Found by: `psh-search-missing-coverage-full-broadcast-restores-actions`
+- Repro:
+
+```sh
+pnpm exec playwright test tests/playwright/sidebar-projection-hunt.spec.ts --grep "psh-search-missing-coverage-full-broadcast-restores-actions" --reporter=list --workers=1
+```
+
+- Expected: while full hydration is pending, a search projection that omits coverage metadata should render its rows readonly until a full-state broadcast or full hydration proves editability.
+- Actual: the search result row immediately exposes `Cut`, `Move to top level`, and `Close` despite the accepted projection snapshot having no coverage metadata.
+- Evidence: the frozen scenario starts search `Tab 900`, resolves the search projection with `includeCoverage: false`, hovers the visible search result before any full `getState` or full `stateUpdated` broadcast, and Playwright finds the `Cut` button present.
+
+### PT-029 clear-search after covered title patch can restore outline chrome with an empty viewport
+
+- Status: open
+- Found by: `psh-clear-search-after-covered-title-patch-keeps-outline-window`
+- Repro:
+
+```sh
+pnpm exec playwright test tests/playwright/sidebar-projection-hunt.spec.ts --grep "psh-clear-search-after-covered-title-patch-keeps-outline-window" --reporter=list --workers=1
+```
+
+- Expected: after a visible outline window receives a compact title patch, the user searches and then clears search, the sidebar should restore the current outline owner with the same covered window painted.
+- Actual: the search input is empty and outline chrome/counts return, but the viewport has no visible rows until another refill/scroll occurs.
+- Evidence: the frozen scenario scrolls to rows around `250`, resolves covered outline rows, patches `tab:260`, searches `Tab 900`, clears search, and resolves outline refill requests. Playwright observes `1001 items / 0 saved`, no reveal highlight, no full `getState`, but `visibleRows` is `[]`.
+
+### PT-030 clear-search after title-patched search can leave stale search chrome
+
+- Status: open
+- Found by: `psh-two-sidebars-title-patch-clear-search-preserves-other-scroll`
+- Repro:
+
+```sh
+pnpm exec playwright test tests/playwright/sidebar-projection-hunt.spec.ts --grep "psh-two-sidebars-title-patch-clear-search-preserves-other-scroll" --reporter=list --workers=1
+```
+
+- Expected: when a sidebar has a current search projection, receives a compact title patch for that search result, and the user clears search, the sidebar should return to normal outline chrome while other sidebars keep their independent scroll owners.
+- Actual: the clearing sidebar's search input is empty, but its count text remains `1 match / 1001 items`.
+- Evidence: the frozen multi-sidebar scenario searches `Tab 900` in sidebar A, scrolls sidebar B around row `250`, patches `tab:260` in B and `tab:900` in A, then clears A's search. Sidebar B remains on its scrolled owner, but sidebar A reports stale search count chrome under an empty search input with no full `getState`.
