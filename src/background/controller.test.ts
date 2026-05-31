@@ -18741,6 +18741,191 @@ const RUNTIME_DOMAIN_DISCOVERY_TRACES: RuntimeDomainTrace[] = [
       { type: "manualRefreshWithReorderedQuery", window: { capture: "oc-b4-focus-window" }, order: "reverse" },
       { type: "manualRefresh" }
     ]
+  },
+  {
+    id: "hs-b1-opener-history-native-reorder-restart",
+    title: "history strict shape block1 opener native reorder restart",
+    notes: "History/strict-shape block 1: a saved-window opener child crosses TO history replay, browser-authored same-window reorder, reordered refresh, and abrupt redo replay.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["history-strict-shape", "saved", "opener", "history", "native-move", "stale-query", "restart", "side-effects"],
+    assertions: ["runtimeSideEffects", "runtimeMetadata"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, openerTab: { tabId: 1 }, active: false, title: "HS B1 opener child", url: "https://hs.example/b1-opener-child", captureTab: "hs-b1-opener-child" },
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "hs-b1-opener-group-old" },
+      { type: "outlinerUndo" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "hs-b1-opener-child" }, window: { windowId: 10 }, index: 0, active: true, captureStaleTabs: "hs-b1-opener-child-old" },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 10 }, order: "rotateRight" },
+      { type: "outlinerRedoThenAbruptRestart" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "hs-b1-opener-group-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "hs-b1-browser-native-order-history-refresh",
+    title: "history strict shape block1 browser native order history refresh",
+    notes: "History/strict-shape block 1: browser-authored multitab order changes in a native window are kept current across undo/redo and stale reordered query evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["history-strict-shape", "browserCreated", "native-open", "native-move", "history", "stale-query", "runtime-order", "side-effects"],
+    assertions: ["runtimeSideEffects", "runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "HS B1 native A" }, { title: "HS B1 native B" }, { title: "HS B1 native C", active: true }], captureWindow: "hs-b1-native-window", captureTabs: "hs-b1-native-tabs" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "hs-b1-native-tabs", index: 2 }, window: { capture: "hs-b1-native-window" }, index: 0, active: true, captureStaleTabs: "hs-b1-native-old" },
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "hs-b1-native-group-old" },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedo" },
+      { type: "manualRefreshWithReorderedQuery", window: { capture: "hs-b1-native-window" }, order: "reverse" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "hs-b1-native-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "hs-b1-saved-native-detach-delete-replay",
+    title: "history strict shape block1 saved native detach delete replay",
+    notes: "History/strict-shape block 1: a saved tab is browser-detached, command history replays around delete rejection, and stale source evidence must not dominate current browser order.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["history-strict-shape", "saved", "native-move", "delete-rejection", "history", "stale-event", "side-effects"],
+    assertions: ["runtimeSideEffects", "runtimeMetadata"],
+    actions: [
+      { type: "nativeMoveTabToNewWindow", tab: { tabId: 2 }, active: true, captureWindow: "hs-b1-detached-window", captureStaleTabs: "hs-b1-detached-old" },
+      { type: "openTab", window: { capture: "hs-b1-detached-window" }, active: false, title: "HS B1 detached sibling", url: "https://hs.example/b1-detached-sibling", captureTab: "hs-b1-detached-sibling" },
+      { type: "outlinerDeleteNodeRejectingClose", node: { tab: { role: "lastMovedTab" } } },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedoThenAbruptRestart" },
+      { type: "manualRefreshWithReorderedQuery", window: { capture: "hs-b1-detached-window" }, order: "reverse" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "hs-b1-detached-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "hs-b2-restored-delete-history-stale-order",
+    title: "history strict shape block2 restored delete history stale order",
+    notes: "History/strict-shape block 2: a restored window absorbs a browser-created sibling, then delete rejection, undo/redo, reordered snapshot, and stale echo compete with live scope order.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["history-strict-shape", "restored", "browserCreated", "delete-rejection", "history", "native-move", "stale-event", "side-effects"],
+    assertions: ["runtimeSideEffects", "runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "hs-b2-restored-tabs", captureRestoredWindows: "hs-b2-restored-window" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "HS B2 external A" }, { title: "HS B2 external B", active: true }], captureWindow: "hs-b2-external-window", captureTabs: "hs-b2-external-tabs" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "hs-b2-external-tabs" }, window: { capture: "hs-b2-restored-window" }, index: 1, active: true, captureStaleTabs: "hs-b2-external-old" },
+      { type: "outlinerDeleteNodeRejectingClose", node: { tab: { capture: "hs-b2-restored-tabs" } } },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedo" },
+      { type: "manualRefreshWithReorderedQuery", window: { capture: "hs-b2-restored-window" }, order: "rotateLeft" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "hs-b2-external-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "hs-b2-restore-reject-promoted-child-history",
+    title: "history strict shape block2 restore reject promoted child history",
+    notes: "History/strict-shape block 2: restore-create recovery gains a browser-created child, command history replays, and missing/reordered evidence must not misorder the restored scope.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["history-strict-shape", "restore", "command-rejection", "browserCreated", "history", "partial-snapshot", "runtime-order", "side-effects"],
+    assertions: ["runtimeSideEffects", "runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeRejectingCreate", node: { nodeId: "window:20" }, captureRestoredTabs: "hs-b2-reject-restored-tabs", captureRestoredWindows: "hs-b2-reject-restored-window" },
+      { type: "openTab", window: { capture: "hs-b2-reject-restored-window" }, active: false, title: "HS B2 restored child", url: "https://hs.example/b2-restored-child", captureTab: "hs-b2-reject-child" },
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "hs-b2-reject-group-old" },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedo" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { capture: "hs-b2-reject-restored-window" } },
+      { type: "manualRefreshWithReorderedQuery", window: { capture: "hs-b2-reject-restored-window" }, order: "rotateRight" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "hs-b2-reject-group-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "hs-b2-command-owner-close-redo-stale",
+    title: "history strict shape block2 command owner close redo stale",
+    notes: "History/strict-shape block 2: a command-created destination shares scope with a browser-created tab while close rejection and redo replay race stale old-window evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["history-strict-shape", "commandCreated", "browserCreated", "command-rejection", "history", "stale-event", "runtime-order", "side-effects"],
+    assertions: ["runtimeSideEffects", "runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "HS B2 command guest" }, { title: "HS B2 command survivor", active: true }], captureWindow: "hs-b2-command-source", captureTabs: "hs-b2-command-tabs" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "hs-b2-command-owner-old" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "hs-b2-command-tabs" }, window: { role: "lastOpenedWindow" }, index: 0, active: true, captureStaleTabs: "hs-b2-command-guest-old" },
+      { type: "outlinerCloseNodeRejectingClose", node: { tab: { tabId: 1 } } },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedo" },
+      { type: "manualRefreshWithReorderedQuery", window: { role: "lastOpenedWindow" }, order: "reverse" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "hs-b2-command-owner-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "hs-b3-mixed-provenance-partial-history-restart",
+    title: "history strict shape block3 mixed provenance partial history restart",
+    notes: "History/strict-shape block 3: restored, browser-created, and command-created scopes cohabit before partial/reordered snapshots and abrupt history replay.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["history-strict-shape", "mixed-provenance", "commandCreated", "browserCreated", "restored", "history", "partial-snapshot", "restart", "runtime-order", "side-effects"],
+    assertions: ["runtimeSideEffects", "runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "hs-b3-mixed-restored-tabs", captureRestoredWindows: "hs-b3-mixed-restored-window" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "HS B3 browser A" }, { title: "HS B3 browser B", active: true }], captureWindow: "hs-b3-mixed-browser-window", captureTabs: "hs-b3-mixed-browser-tabs" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "hs-b3-mixed-command-old" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "hs-b3-mixed-browser-tabs" }, window: { role: "lastOpenedWindow" }, index: 0, active: false, captureStaleTabs: "hs-b3-mixed-browser-old" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "hs-b3-mixed-restored-tabs" }, window: { role: "lastOpenedWindow" }, index: 1, active: true, captureStaleTabs: "hs-b3-mixed-restored-old" },
+      { type: "outlinerUndo" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { capture: "hs-b3-mixed-browser-window" } },
+      { type: "outlinerRedoThenAbruptRestart" },
+      { type: "manualRefreshWithReorderedQuery", window: { role: "lastOpenedWindow" }, order: "reverse" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "hs-b3-mixed-command-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "hs-b3-abrupt-two-browser-windows-history-shape",
+    title: "history strict shape block3 abrupt two browser windows history shape",
+    notes: "History/strict-shape block 3: two browser-created windows drift across command history and abrupt restart while stale partial order evidence targets the destination window.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["history-strict-shape", "browserCreated", "multi-window", "history", "native-move", "partial-snapshot", "restart", "runtime-order", "side-effects"],
+    assertions: ["runtimeSideEffects", "runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "HS B3 shape A1" }, { title: "HS B3 shape A2", active: true }], captureWindow: "hs-b3-shape-window-a", captureTabs: "hs-b3-shape-tabs-a" },
+      { type: "nativeOpenWindow", focused: true, tabs: [{ title: "HS B3 shape B1" }, { title: "HS B3 shape B2", active: true }], captureWindow: "hs-b3-shape-window-b", captureTabs: "hs-b3-shape-tabs-b" },
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "hs-b3-shape-group-old" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "hs-b3-shape-tabs-a" }, window: { capture: "hs-b3-shape-window-b" }, index: 0, active: true, captureStaleTabs: "hs-b3-shape-source-old" },
+      { type: "restartBackgroundAbrupt" },
+      { type: "outlinerUndo" },
+      { type: "manualRefreshWithMissingTabQuery", tab: { role: "lastMovedTab" } },
+      { type: "outlinerRedo" },
+      { type: "manualRefreshWithReorderedQuery", window: { capture: "hs-b3-shape-window-b" }, order: "rotateLeft" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "hs-b3-shape-group-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "hs-b3-restored-window-state-history-stale",
+    title: "history strict shape block3 restored window state history stale",
+    notes: "History/strict-shape block 3: restored-window state and browser-created cohabitation survive undo crash replay, stale echoes, and a reordered restored-window refresh.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["history-strict-shape", "restored", "browserCreated", "window-state", "history", "restart", "stale-event", "runtime-order", "side-effects"],
+    assertions: ["runtimeSideEffects", "runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "hs-b3-state-restored-tabs", captureRestoredWindows: "hs-b3-state-restored-window" },
+      { type: "nativeSetWindowState", window: { capture: "hs-b3-state-restored-window" }, state: "fullscreen" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "HS B3 state foreign" }, { title: "HS B3 state survivor", active: true }], captureWindow: "hs-b3-state-browser-window", captureTabs: "hs-b3-state-browser-tabs" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "hs-b3-state-browser-tabs" }, window: { capture: "hs-b3-state-restored-window" }, index: 0, active: true, captureStaleTabs: "hs-b3-state-browser-old" },
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "hs-b3-state-group-old" },
+      { type: "outlinerUndoThenAbruptRestart" },
+      { type: "manualRefreshWithReorderedQuery", window: { capture: "hs-b3-state-restored-window" }, order: "reverse" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "hs-b3-state-browser-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
   }
 ];
 
