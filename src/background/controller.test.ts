@@ -1381,6 +1381,7 @@ type RuntimeDomainTracePurpose = "regression" | "discovery";
 type RuntimeDomainTraceOrigin = "known-finding" | "threat-model" | "agent-generated";
 type RuntimeDomainTraceAssertion =
   | "runtimeOrder"
+  | "runtimeScopeOrder"
   | "runtimeMetadata"
   | "runtimeSideEffects"
   | "closedSubtreePersistence";
@@ -18748,8 +18749,8 @@ const RUNTIME_DOMAIN_DISCOVERY_TRACES: RuntimeDomainTrace[] = [
     notes: "History/strict-shape block 1: a saved-window opener child crosses TO history replay, browser-authored same-window reorder, reordered refresh, and abrupt redo replay.",
     purpose: "discovery",
     origin: "agent-generated",
-    tags: ["history-strict-shape", "saved", "opener", "history", "native-move", "stale-query", "restart", "side-effects"],
-    assertions: ["runtimeSideEffects", "runtimeMetadata"],
+    tags: ["history-strict-shape", "saved", "opener", "history", "native-move", "stale-query", "restart", "runtime-scope-order", "side-effects"],
+    assertions: ["runtimeSideEffects", "runtimeScopeOrder", "runtimeMetadata"],
     actions: [
       { type: "openTab", window: { windowId: 10 }, openerTab: { tabId: 1 }, active: false, title: "HS B1 opener child", url: "https://hs.example/b1-opener-child", captureTab: "hs-b1-opener-child" },
       { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "hs-b1-opener-group-old" },
@@ -18767,8 +18768,8 @@ const RUNTIME_DOMAIN_DISCOVERY_TRACES: RuntimeDomainTrace[] = [
     notes: "History/strict-shape block 1: browser-authored multitab order changes in a native window are kept current across undo/redo and stale reordered query evidence.",
     purpose: "discovery",
     origin: "agent-generated",
-    tags: ["history-strict-shape", "browserCreated", "native-open", "native-move", "history", "stale-query", "runtime-order", "side-effects"],
-    assertions: ["runtimeSideEffects", "runtimeOrder", "runtimeMetadata"],
+    tags: ["history-strict-shape", "browserCreated", "native-open", "native-move", "history", "stale-query", "runtime-order", "runtime-scope-order", "side-effects"],
+    assertions: ["runtimeSideEffects", "runtimeOrder", "runtimeScopeOrder", "runtimeMetadata"],
     actions: [
       { type: "nativeOpenWindow", focused: false, tabs: [{ title: "HS B1 native A" }, { title: "HS B1 native B" }, { title: "HS B1 native C", active: true }], captureWindow: "hs-b1-native-window", captureTabs: "hs-b1-native-tabs" },
       { type: "nativeMoveTabToWindow", tab: { capture: "hs-b1-native-tabs", index: 2 }, window: { capture: "hs-b1-native-window" }, index: 0, active: true, captureStaleTabs: "hs-b1-native-old" },
@@ -18786,8 +18787,8 @@ const RUNTIME_DOMAIN_DISCOVERY_TRACES: RuntimeDomainTrace[] = [
     notes: "History/strict-shape block 1: a saved tab is browser-detached, command history replays around delete rejection, and stale source evidence must not dominate current browser order.",
     purpose: "discovery",
     origin: "agent-generated",
-    tags: ["history-strict-shape", "saved", "native-move", "delete-rejection", "history", "stale-event", "side-effects"],
-    assertions: ["runtimeSideEffects", "runtimeMetadata"],
+    tags: ["history-strict-shape", "saved", "native-move", "delete-rejection", "history", "stale-event", "runtime-scope-order", "side-effects"],
+    assertions: ["runtimeSideEffects", "runtimeScopeOrder", "runtimeMetadata"],
     actions: [
       { type: "nativeMoveTabToNewWindow", tab: { tabId: 2 }, active: true, captureWindow: "hs-b1-detached-window", captureStaleTabs: "hs-b1-detached-old" },
       { type: "openTab", window: { capture: "hs-b1-detached-window" }, active: false, title: "HS B1 detached sibling", url: "https://hs.example/b1-detached-sibling", captureTab: "hs-b1-detached-sibling" },
@@ -18805,8 +18806,8 @@ const RUNTIME_DOMAIN_DISCOVERY_TRACES: RuntimeDomainTrace[] = [
     notes: "History/strict-shape block 2: a restored window absorbs a browser-created sibling, then delete rejection, undo/redo, reordered snapshot, and stale echo compete with live scope order.",
     purpose: "discovery",
     origin: "agent-generated",
-    tags: ["history-strict-shape", "restored", "browserCreated", "delete-rejection", "history", "native-move", "stale-event", "side-effects"],
-    assertions: ["runtimeSideEffects", "runtimeMetadata"],
+    tags: ["history-strict-shape", "restored", "browserCreated", "delete-rejection", "history", "native-move", "stale-event", "runtime-scope-order", "side-effects"],
+    assertions: ["runtimeSideEffects", "runtimeScopeOrder", "runtimeMetadata"],
     actions: [
       { type: "outlinerCloseWindow", window: { windowId: 20 } },
       { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "hs-b2-restored-tabs", captureRestoredWindows: "hs-b2-restored-window" },
@@ -18826,8 +18827,8 @@ const RUNTIME_DOMAIN_DISCOVERY_TRACES: RuntimeDomainTrace[] = [
     notes: "History/strict-shape block 2: restore-create recovery gains a browser-created child, command history replays, and missing/reordered evidence must not misorder the restored scope.",
     purpose: "discovery",
     origin: "agent-generated",
-    tags: ["history-strict-shape", "restore", "command-rejection", "browserCreated", "history", "partial-snapshot", "runtime-order", "side-effects"],
-    assertions: ["runtimeSideEffects", "runtimeOrder", "runtimeMetadata"],
+    tags: ["history-strict-shape", "restore", "command-rejection", "browserCreated", "history", "partial-snapshot", "runtime-order", "runtime-scope-order", "side-effects"],
+    assertions: ["runtimeSideEffects", "runtimeOrder", "runtimeScopeOrder", "runtimeMetadata"],
     actions: [
       { type: "outlinerCloseWindow", window: { windowId: 20 } },
       { type: "outlinerRestoreNodeRejectingCreate", node: { nodeId: "window:20" }, captureRestoredTabs: "hs-b2-reject-restored-tabs", captureRestoredWindows: "hs-b2-reject-restored-window" },
@@ -18847,8 +18848,8 @@ const RUNTIME_DOMAIN_DISCOVERY_TRACES: RuntimeDomainTrace[] = [
     notes: "History/strict-shape block 2: a command-created destination shares scope with a browser-created tab while close rejection and redo replay race stale old-window evidence.",
     purpose: "discovery",
     origin: "agent-generated",
-    tags: ["history-strict-shape", "commandCreated", "browserCreated", "command-rejection", "history", "stale-event", "runtime-order", "side-effects"],
-    assertions: ["runtimeSideEffects", "runtimeOrder", "runtimeMetadata"],
+    tags: ["history-strict-shape", "commandCreated", "browserCreated", "command-rejection", "history", "stale-event", "runtime-order", "runtime-scope-order", "side-effects"],
+    assertions: ["runtimeSideEffects", "runtimeOrder", "runtimeScopeOrder", "runtimeMetadata"],
     actions: [
       { type: "nativeOpenWindow", focused: false, tabs: [{ title: "HS B2 command guest" }, { title: "HS B2 command survivor", active: true }], captureWindow: "hs-b2-command-source", captureTabs: "hs-b2-command-tabs" },
       { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "hs-b2-command-owner-old" },
@@ -18867,8 +18868,8 @@ const RUNTIME_DOMAIN_DISCOVERY_TRACES: RuntimeDomainTrace[] = [
     notes: "History/strict-shape block 3: restored, browser-created, and command-created scopes cohabit before partial/reordered snapshots and abrupt history replay.",
     purpose: "discovery",
     origin: "agent-generated",
-    tags: ["history-strict-shape", "mixed-provenance", "commandCreated", "browserCreated", "restored", "history", "partial-snapshot", "restart", "runtime-order", "side-effects"],
-    assertions: ["runtimeSideEffects", "runtimeOrder", "runtimeMetadata"],
+    tags: ["history-strict-shape", "mixed-provenance", "commandCreated", "browserCreated", "restored", "history", "partial-snapshot", "restart", "runtime-order", "runtime-scope-order", "side-effects"],
+    assertions: ["runtimeSideEffects", "runtimeOrder", "runtimeScopeOrder", "runtimeMetadata"],
     actions: [
       { type: "outlinerCloseWindow", window: { windowId: 20 } },
       { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "hs-b3-mixed-restored-tabs", captureRestoredWindows: "hs-b3-mixed-restored-window" },
@@ -18890,8 +18891,8 @@ const RUNTIME_DOMAIN_DISCOVERY_TRACES: RuntimeDomainTrace[] = [
     notes: "History/strict-shape block 3: two browser-created windows drift across command history and abrupt restart while stale partial order evidence targets the destination window.",
     purpose: "discovery",
     origin: "agent-generated",
-    tags: ["history-strict-shape", "browserCreated", "multi-window", "history", "native-move", "partial-snapshot", "restart", "runtime-order", "side-effects"],
-    assertions: ["runtimeSideEffects", "runtimeOrder", "runtimeMetadata"],
+    tags: ["history-strict-shape", "browserCreated", "multi-window", "history", "native-move", "partial-snapshot", "restart", "runtime-order", "runtime-scope-order", "side-effects"],
+    assertions: ["runtimeSideEffects", "runtimeOrder", "runtimeScopeOrder", "runtimeMetadata"],
     actions: [
       { type: "nativeOpenWindow", focused: false, tabs: [{ title: "HS B3 shape A1" }, { title: "HS B3 shape A2", active: true }], captureWindow: "hs-b3-shape-window-a", captureTabs: "hs-b3-shape-tabs-a" },
       { type: "nativeOpenWindow", focused: true, tabs: [{ title: "HS B3 shape B1" }, { title: "HS B3 shape B2", active: true }], captureWindow: "hs-b3-shape-window-b", captureTabs: "hs-b3-shape-tabs-b" },
@@ -18912,8 +18913,8 @@ const RUNTIME_DOMAIN_DISCOVERY_TRACES: RuntimeDomainTrace[] = [
     notes: "History/strict-shape block 3: restored-window state and browser-created cohabitation survive undo crash replay, stale echoes, and a reordered restored-window refresh.",
     purpose: "discovery",
     origin: "agent-generated",
-    tags: ["history-strict-shape", "restored", "browserCreated", "window-state", "history", "restart", "stale-event", "runtime-order", "side-effects"],
-    assertions: ["runtimeSideEffects", "runtimeOrder", "runtimeMetadata"],
+    tags: ["history-strict-shape", "restored", "browserCreated", "window-state", "history", "restart", "stale-event", "runtime-order", "runtime-scope-order", "side-effects"],
+    assertions: ["runtimeSideEffects", "runtimeOrder", "runtimeScopeOrder", "runtimeMetadata"],
     actions: [
       { type: "outlinerCloseWindow", window: { windowId: 20 } },
       { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "hs-b3-state-restored-tabs", captureRestoredWindows: "hs-b3-state-restored-window" },
@@ -22041,6 +22042,9 @@ async function assertDomainTraceAssertions(trace: RuntimeDomainTrace, context: G
   if (trace.assertions.includes("runtimeOrder")) {
     assertRuntimeOrderAssertion(state, context);
   }
+  if (trace.assertions.includes("runtimeScopeOrder")) {
+    assertRuntimeScopeOrderAssertion(context);
+  }
   if (trace.assertions.includes("runtimeMetadata")) {
     assertRuntimeMetadataAssertion(state, context);
   }
@@ -22279,6 +22283,44 @@ function assertRuntimeOrderAssertion(state: OutlineState, context: GeneratedTrac
       `runtime tab order for window ${runtimeWindow.id} matches outline preorder`,
       context.history
     );
+  }
+}
+
+function assertRuntimeScopeOrderAssertion(context: GeneratedTraceContext): void {
+  const cache = context.controller.__debugRuntimeCacheSnapshot();
+  const liveScopes = cache.ledger.windowScopes.filter((scope) => scope.lifecycle === "live");
+  for (const runtimeWindow of context.runtime.windows.filter((windowInfo) => !windowInfo.incognito)) {
+    const runtimeTabIds = tabsInRuntimeWindow(context.runtime, runtimeWindow.id).map((tab) => tab.id);
+    const scope = liveScopes.find((candidate) => candidate.runtimeWindowId === runtimeWindow.id);
+    invariant(Boolean(scope), `runtime scope-order window ${runtimeWindow.id} has no live scope`, context.history);
+    if (scope) {
+      invariantEqual(
+        scope.tabOrder,
+        runtimeTabIds,
+        `runtime scope tab order for window ${runtimeWindow.id} matches browser order`,
+        context.history
+      );
+    }
+
+    const acceptedFact = cache.ledger.acceptedWindowShapeFacts.find((fact) => fact.windowId === runtimeWindow.id);
+    invariant(
+      Boolean(acceptedFact),
+      `runtime scope-order window ${runtimeWindow.id} has no accepted window shape fact`,
+      context.history
+    );
+    if (acceptedFact) {
+      const sortedAcceptedTabIds = [...acceptedFact.tabOrder].sort((left, right) => left - right);
+      const sortedRuntimeTabIds = [...runtimeTabIds].sort((left, right) => left - right);
+      const acceptedFactHasCurrentMembership = sortedAcceptedTabIds.join(",") === sortedRuntimeTabIds.join(",");
+      if (acceptedFactHasCurrentMembership) {
+        invariantEqual(
+          acceptedFact.tabOrder,
+          runtimeTabIds,
+          `runtime accepted window fact tab order for window ${runtimeWindow.id} matches browser order`,
+          context.history
+        );
+      }
+    }
   }
 }
 
@@ -23188,6 +23230,39 @@ describe("background controller lifecycle", () => {
       scope.provenance === "commandCreated" &&
       scope.tabOrder.includes(2)
     )).toBe(true);
+  });
+
+  it("asserts command-owned history scope order without requiring outline preorder", async () => {
+    const context = createGeneratedTraceContext({
+      now: 1000,
+      history: ["command-owned history scope order"]
+    });
+    await context.controller.ensureState();
+
+    await runDomainAction(context, {
+      type: "nativeMoveTabToNewWindow",
+      tab: { tabId: 2 },
+      active: true,
+      captureWindow: "history-scope-window",
+      captureStaleTabs: "history-scope-old"
+    });
+    await runDomainAction(context, {
+      type: "openTab",
+      window: { capture: "history-scope-window" },
+      active: false,
+      title: "history scope sibling",
+      url: "https://hs.example/history-scope-sibling",
+      captureTab: "history-scope-sibling"
+    });
+    await runDomainAction(context, {
+      type: "outlinerDeleteNodeRejectingClose",
+      node: { tab: { role: "lastMovedTab" } }
+    });
+    await runDomainAction(context, { type: "outlinerUndo" });
+
+    const state = (await context.controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(() => assertRuntimeOrderAssertion(state, context)).toThrow(/runtime tab order/);
+    expect(() => assertRuntimeScopeOrderAssertion(context)).not.toThrow();
   });
 
   it("corroborates no-event reordered snapshots against accepted runtime order", async () => {
