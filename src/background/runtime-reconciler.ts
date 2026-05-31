@@ -101,8 +101,6 @@ export class RuntimeReconciler {
         ignoredTabIds,
         ignoredWindowIds
       ),
-      input.state,
-      input.index,
       input.activationByWindowId
     );
   }
@@ -698,8 +696,6 @@ function addMissingCommandRelocatedTabsFromCurrentState(
 
 function applyActivationOverridesToWindows(
   windows: RuntimeWindow[],
-  state: OutlineState,
-  index: RuntimeStateIndexForReconciliation,
   activationByWindowId?: ReadonlyMap<number, number>
 ): RuntimeWindow[] {
   if (!activationByWindowId || activationByWindowId.size === 0) {
@@ -709,15 +705,18 @@ function applyActivationOverridesToWindows(
   let changed = false;
   const nextWindows = windows.map((windowInfo) => {
     const activeTabId = activationByWindowId.get(windowInfo.id);
+    if (typeof activeTabId !== "number") {
+      return windowInfo;
+    }
+
     const tabs = windowInfo.tabs ?? [];
+    let windowChanged = false;
     const nextTabs = tabs.map((tab) => {
-      const currentNode = indexedLiveTabNodeByRuntimeId(state, index, tab.id);
-      const active = typeof activeTabId === "number"
-        ? tab.id === activeTabId
-        : currentNode?.active ?? tab.active;
+      const active = tab.id === activeTabId;
       if (tab.active === active) {
         return tab;
       }
+      windowChanged = true;
       changed = true;
       return {
         ...tab,
@@ -725,7 +724,7 @@ function applyActivationOverridesToWindows(
       };
     });
 
-    return changed
+    return windowChanged
       ? {
           ...windowInfo,
           tabs: nextTabs

@@ -24069,6 +24069,20 @@ describe("background controller lifecycle", () => {
     });
   });
 
+  it("preserves active tab state when activation races a later grouping command", async () => {
+    await runGeneratedTrace(910720204, 21, {
+      adversarialRuntimeQueries: true,
+      adversarialConcurrency: true
+    });
+  });
+
+  it("preserves active tab state when activation races grouping after source-window churn", async () => {
+    await runGeneratedTrace(1338200851, 8, {
+      adversarialRuntimeQueries: true,
+      adversarialConcurrency: true
+    });
+  });
+
   const domainTraceIt = process.env.RUNTIME_DOMAIN_TRACE_HUNT === "1" || process.env.RUNTIME_TRACE_HUNT_TRACE_IDS
     ? it
     : it.skip;
