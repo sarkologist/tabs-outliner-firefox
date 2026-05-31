@@ -3158,14 +3158,28 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       confidence: currentEventTabs.length > 0 ? "eventLocal" : closeMissing ? "complete" : "partial",
       activationByWindowId: options.activationByWindowId
     });
-    if (currentEventTabs.length > 0 || (closeMissing && currentEventTabs.length === 0)) {
-      windows = await corroborateMissingOrMismatchedLiveTabs(current, index, windows);
+    const noEventOrderConflictWindowIds = eventTabs.length === 0 &&
+      currentEventTabs.length === 0 &&
+      closeMissing &&
+      options.forceSnapshot !== true
+      ? noEventSnapshotOrderConflictWindowIds(current, index, windows)
+      : [];
+    let noEventOrderCorroborated = false;
+    if (noEventOrderConflictWindowIds.length > 0) {
+      windows = await corroborateNoEventSnapshotOrder(current, index, windows, noEventOrderConflictWindowIds);
+      noEventOrderCorroborated = true;
     }
-    const acceptedRuntimeWindowsForEvent = currentEventTabs.length > 0 || options.forceSnapshot === true
+    if (currentEventTabs.length > 0 || (closeMissing && currentEventTabs.length === 0)) {
+      windows = await corroborateMissingOrMismatchedLiveTabs(current, index, windows, {
+        includeOrderMismatches: !noEventOrderCorroborated
+      });
+    }
+    const acceptedRuntimeWindowsForRefresh =
+      currentEventTabs.length > 0 || options.forceSnapshot === true || noEventOrderCorroborated
       ? windows
       : undefined;
     if (runtimeSnapshotMateriallyMatchesState(current, windows).matches) {
-      runtimeFacts.rebuildWindowScopes(current, acceptedRuntimeWindowsForEvent);
+      runtimeFacts.rebuildWindowScopes(current, acceptedRuntimeWindowsForRefresh);
       return false;
     }
     const next = reconcileRuntimeTruth(current, windows, {
@@ -3174,12 +3188,12 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     });
     alignKnownRuntimeWindowProvenance(next);
     if (statesMateriallyEqual(current, next)) {
-      runtimeFacts.rebuildWindowScopes(next, acceptedRuntimeWindowsForEvent);
+      runtimeFacts.rebuildWindowScopes(next, acceptedRuntimeWindowsForRefresh);
       return false;
     }
     installStateTransition(current, next, {
       rebuildRuntimeIndex: true,
-      runtimeWindows: acceptedRuntimeWindowsForEvent ?? windows
+      runtimeWindows: acceptedRuntimeWindowsForRefresh ?? windows
     });
     await persistWithBestEffortPatch(current, next, { diffMode: "material" });
     await flushRuntimeTruthSaveIfNeeded(current, next);
@@ -3189,8 +3203,10 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   async function corroborateMissingOrMismatchedLiveTabs(
     current: OutlineState,
     index: RuntimeStateIndex,
-    windows: RuntimeWindow[]
+    windows: RuntimeWindow[],
+    options: { includeOrderMismatches?: boolean } = {}
   ): Promise<RuntimeWindow[]> {
+    const includeOrderMismatches = options.includeOrderMismatches ?? true;
     const missingTabIds = runtimeReconciler.missingLiveTabIdsInOpenWindows({
       windows,
       state: current,
@@ -3208,12 +3224,14 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       index,
       ledger: runtimeFacts
     });
-    const orderMismatchedWindowIds = runtimeReconciler.orderMismatchedWindowIdsInWindows({
-      windows,
-      state: current,
-      index,
-      ledger: runtimeFacts
-    });
+    const orderMismatchedWindowIds = includeOrderMismatches
+      ? runtimeReconciler.orderMismatchedWindowIdsInWindows({
+          windows,
+          state: current,
+          index,
+          ledger: runtimeFacts
+        })
+      : [];
     if (
       missingTabIds.length === 0 &&
       mismatchedTabIds.length === 0 &&
@@ -3253,18 +3271,103 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       index,
       ledger: runtimeFacts
     }));
-    const corroboratedOrderMismatchedWindowIds = new Set(runtimeReconciler.orderMismatchedWindowIdsInWindows({
-      windows: corroboratingWindows,
-      state: current,
-      index,
-      ledger: runtimeFacts
-    }));
+    const corroboratedOrderMismatchedWindowIds = includeOrderMismatches
+      ? new Set(runtimeReconciler.orderMismatchedWindowIdsInWindows({
+          windows: corroboratingWindows,
+          state: current,
+          index,
+          ledger: runtimeFacts
+        }))
+      : new Set<number>();
     const contradicted = missingTabIds.some((tabId) => !corroboratedMissingTabIds.has(tabId)) ||
       mismatchedTabIds.some((tabId) => !corroboratedMismatchedTabIds.has(tabId)) ||
       suspiciousShapeTabIds.some((tabId) => !corroboratedSuspiciousShapeTabIds.has(tabId)) ||
       orderMismatchedWindowIds.some((windowId) => !corroboratedOrderMismatchedWindowIds.has(windowId));
 
     return contradicted ? corroboratingWindows : windows;
+  }
+
+  async function corroborateNoEventSnapshotOrder(
+    current: OutlineState,
+    index: RuntimeStateIndex,
+    windows: RuntimeWindow[],
+    conflictWindowIds: readonly number[]
+  ): Promise<RuntimeWindow[]> {
+    const corroboratingSnapshot = await perfTrace.measureAsync("background.runtime.getWindows.corroborateOrder", {
+      orderConflictWindowCount: conflictWindowIds.length
+    }, () => getNormalWindows(api));
+    const corroboratingWindows = runtimeReconciler.normalizeSnapshot({
+      windows: corroboratingSnapshot,
+      state: current,
+      index,
+      ledger: runtimeFacts,
+      confidence: "complete"
+    });
+
+    return runtimeWindowOrdersMatch(windows, corroboratingWindows, conflictWindowIds)
+      ? windows
+      : corroboratingWindows;
+  }
+
+  function noEventSnapshotOrderConflictWindowIds(
+    current: OutlineState,
+    index: RuntimeStateIndex,
+    windows: RuntimeWindow[]
+  ): number[] {
+    const snapshotWindows = windows.filter((windowInfo) =>
+      !windowInfo.incognito && !runtimeFacts.isWindowIgnoredForRefresh(windowInfo.id)
+    );
+    const snapshotWindowIds = snapshotWindows.map((windowInfo) => windowInfo.id);
+    const liveWindowIds = [...index.liveWindowNodeIdsByRuntimeId.keys()]
+      .filter((windowId) => !runtimeFacts.isWindowIgnoredForRefresh(windowId));
+    if (!sameNumberSet(snapshotWindowIds, liveWindowIds)) {
+      return [];
+    }
+
+    const liveTabIdsByWindowId = new Map<number, number[]>();
+    for (const tabNode of liveTabNodes(current)) {
+      if (
+        runtimeFacts.isWindowIgnoredForRefresh(tabNode.live.windowId) ||
+        runtimeFacts.isTabIgnoredForRefresh(tabNode.live.tabId)
+      ) {
+        continue;
+      }
+      const tabIds = liveTabIdsByWindowId.get(tabNode.live.windowId) ?? [];
+      tabIds.push(tabNode.live.tabId);
+      liveTabIdsByWindowId.set(tabNode.live.windowId, tabIds);
+    }
+
+    const windowsById = new Map(snapshotWindows.map((windowInfo) => [windowInfo.id, windowInfo]));
+    const conflictWindowIds: number[] = [];
+    for (const windowId of liveWindowIds) {
+      const windowInfo = windowsById.get(windowId);
+      if (!windowInfo) {
+        return [];
+      }
+      const snapshotOrder = runtimeWindowTabOrder(windowInfo)
+        .filter((tabId) => !runtimeFacts.isTabIgnoredForRefresh(tabId));
+      const liveTabIds = liveTabIdsByWindowId.get(windowId) ?? [];
+      if (!sameNumberSet(snapshotOrder, liveTabIds)) {
+        return [];
+      }
+
+      const liveTabIdSet = new Set(liveTabIds);
+      const scope = runtimeFacts.windowScope(windowId);
+      if (!scope || scope.lifecycle !== "live") {
+        continue;
+      }
+      const scopeOrder = scope.tabOrder.filter((tabId) =>
+        liveTabIdSet.has(tabId) && !runtimeFacts.isTabIgnoredForRefresh(tabId)
+      );
+      if (!sameNumberSet(scopeOrder, snapshotOrder)) {
+        continue;
+      }
+      if (!sameNumberList(scopeOrder, snapshotOrder)) {
+        conflictWindowIds.push(windowId);
+      }
+    }
+
+    return conflictWindowIds;
   }
 
   async function applyRuntimeEventTabsFastPath(
@@ -5627,6 +5730,41 @@ function nodeChangedForPatch(previous: OutlineNode, next: OutlineNode, diffMode:
 
 function sameNodeIdList(previous: NodeId[], next: NodeId[]): boolean {
   return previous.length === next.length && previous.every((nodeId, index) => nodeId === next[index]);
+}
+
+function sameNumberList(previous: readonly number[], next: readonly number[]): boolean {
+  return previous.length === next.length && previous.every((value, index) => next[index] === value);
+}
+
+function sameNumberSet(previous: readonly number[], next: readonly number[]): boolean {
+  if (previous.length !== next.length) {
+    return false;
+  }
+  const values = new Set(previous);
+  return next.every((value) => values.has(value));
+}
+
+function runtimeWindowOrdersMatch(
+  previous: readonly RuntimeWindow[],
+  next: readonly RuntimeWindow[],
+  windowIds: readonly number[]
+): boolean {
+  const previousById = new Map(previous.map((windowInfo) => [windowInfo.id, windowInfo]));
+  const nextById = new Map(next.map((windowInfo) => [windowInfo.id, windowInfo]));
+  return windowIds.every((windowId) => {
+    const previousWindow = previousById.get(windowId);
+    const nextWindow = nextById.get(windowId);
+    return previousWindow &&
+      nextWindow &&
+      sameNumberList(runtimeWindowTabOrder(previousWindow), runtimeWindowTabOrder(nextWindow));
+  });
+}
+
+function runtimeWindowTabOrder(windowInfo: RuntimeWindow): number[] {
+  return [...(windowInfo.tabs ?? [])]
+    .filter((tab) => !tab.incognito)
+    .sort((left, right) => left.index - right.index)
+    .map((tab) => tab.id);
 }
 
 function statesMateriallyEqual(previous: OutlineState, next: OutlineState): boolean {

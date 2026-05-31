@@ -23005,6 +23005,100 @@ describe("background controller lifecycle", () => {
     )).toBe(true);
   });
 
+  it("corroborates no-event reordered snapshots against accepted runtime order", async () => {
+    const context = createGeneratedTraceContext({
+      now: 1000,
+      history: ["no-event reordered snapshot corroboration"]
+    });
+    await context.controller.ensureState();
+    await runDomainAction(context, {
+      type: "openTab",
+      window: { windowId: 10 },
+      active: false,
+      openerTab: { tabId: 1 },
+      captureTab: "scope-order-child"
+    });
+    await runDomainAction(context, {
+      type: "openTab",
+      window: { windowId: 10 },
+      active: false,
+      openerTab: { capture: "scope-order-child" },
+      captureTab: "scope-order-grandchild"
+    });
+    await runDomainAction(context, {
+      type: "nativeMoveTabToWindow",
+      tab: { capture: "scope-order-grandchild" },
+      window: { windowId: 10 },
+      index: 0,
+      active: false,
+      captureStaleTabs: "scope-order-grandchild-old"
+    });
+
+    vi.mocked(context.runtime.api.tabs.query).mockClear();
+    context.runtime.queueTabQueryResult(snapshotReorderedWindowTabs(context.runtime.tabs, 10, "rotateLeft"));
+    try {
+      const result = await context.controller.handleMessage({ type: "refresh" });
+      expect((result as CommandAck).type).toBe("commandAck");
+    } finally {
+      context.runtime.clearNextTabQueryResult();
+    }
+
+    const expectedOrder = context.truthModel.refresh(context).windows.find((windowInfo) =>
+      windowInfo.windowId === 10
+    )?.tabIds;
+    const snapshot = context.controller.__debugRuntimeCacheSnapshot();
+    const scope = snapshot.ledger.windowScopes.find((candidate) =>
+      candidate.runtimeWindowId === 10 && candidate.lifecycle === "live"
+    );
+    const acceptedFact = snapshot.ledger.acceptedWindowShapeFacts.find((fact) => fact.windowId === 10);
+
+    expect(vi.mocked(context.runtime.api.tabs.query)).toHaveBeenCalledTimes(2);
+    expect(scope?.tabOrder).toEqual(expectedOrder);
+    expect(acceptedFact?.tabOrder).toEqual(expectedOrder);
+  });
+
+  it("accepts no-event order changes when consecutive snapshots agree", async () => {
+    const context = createGeneratedTraceContext({
+      now: 1000,
+      history: ["corroborated browser order change"]
+    });
+    await context.controller.ensureState();
+    await runDomainAction(context, {
+      type: "openTab",
+      window: { windowId: 10 },
+      active: false,
+      openerTab: { tabId: 1 },
+      captureTab: "browser-order-child"
+    });
+    await runDomainAction(context, {
+      type: "openTab",
+      window: { windowId: 10 },
+      active: false,
+      openerTab: { capture: "browser-order-child" },
+      captureTab: "browser-order-grandchild"
+    });
+    const beforeOrder = tabsInRuntimeWindow(context.runtime, 10).map((tab) => tab.id);
+    moveTabsFromBrowser(context.runtime, beforeOrder[0]!, {
+      windowId: 10,
+      index: beforeOrder.length - 1
+    });
+
+    vi.mocked(context.runtime.api.tabs.query).mockClear();
+    const result = await context.controller.handleMessage({ type: "refresh" });
+    expect((result as CommandAck).type).toBe("commandAck");
+
+    const expectedOrder = tabsInRuntimeWindow(context.runtime, 10).map((tab) => tab.id);
+    const snapshot = context.controller.__debugRuntimeCacheSnapshot();
+    const scope = snapshot.ledger.windowScopes.find((candidate) =>
+      candidate.runtimeWindowId === 10 && candidate.lifecycle === "live"
+    );
+    const acceptedFact = snapshot.ledger.acceptedWindowShapeFacts.find((fact) => fact.windowId === 10);
+
+    expect(vi.mocked(context.runtime.api.tabs.query)).toHaveBeenCalledTimes(2);
+    expect(scope?.tabOrder).toEqual(expectedOrder);
+    expect(acceptedFact?.tabOrder).toEqual(expectedOrder);
+  });
+
   it("defers fresh bootstrap persistence until an explicit save flush", async () => {
     const runtime = fakeRuntime(
       [

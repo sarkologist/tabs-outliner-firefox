@@ -289,7 +289,8 @@ const REGRESSION_TRACE_IDS = [
   "sk-b3-redo-restore-reject-browser-opener",
   "oh-external-closed-restore-reject-restart-stale",
   "sb-restored-fullscreen-external-delete-history",
-  "sk-b3-undo-abrupt-restored-browser-swap"
+  "sk-b3-undo-abrupt-restored-browser-swap",
+  "mh-opener-chain-native-reorder"
 ];
 const DISCOVERY_TRACE_IDS = [
   "dh-restore-delayed-focus-refresh",
@@ -703,7 +704,6 @@ const DISCOVERY_TRACE_IDS = [
   "mh-moved-current-metadata-stale-old",
   "mh-metadata-missing-reordered-query",
   "mh-opener-parent-native-move-child",
-  "mh-opener-chain-native-reorder",
   "mh-cross-window-opener-creation",
   "mh-opener-source-close-stale-created",
   "mh-paired-created-updated-after-native-move",
