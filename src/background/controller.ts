@@ -569,8 +569,12 @@ export function createBackgroundController(options: BackgroundControllerOptions)
           await ensureDurableRuntimeLifecycleBase();
           await appendRuntimeLifecycleJournalEntry(api, runtimeLifecycleJournalEntry);
         }
+        const runtimeWindowsAfterRemoval = removal === "delete-tab"
+          ? await getNormalWindows(api).catch(() => undefined)
+          : undefined;
         installStateTransition(current, next, {
-          candidateNodeIds: runtimeIndexCandidateNodeIdsForTabRemoval(current, next, runtimeIndexForState(current), tabId)
+          candidateNodeIds: runtimeIndexCandidateNodeIdsForTabRemoval(current, next, runtimeIndexForState(current), tabId),
+          ...(runtimeWindowsAfterRemoval ? { runtimeWindows: runtimeWindowsAfterRemoval } : {})
         });
         markCompletedOutlinerCloseJournalEntriesForClearAfterSave({
           tabIds: [tabId],
@@ -946,6 +950,9 @@ export function createBackgroundController(options: BackgroundControllerOptions)
           ...(restorePatchNodeIds ? { restorePatchNodeIds } : {})
         }
       );
+      const runtimeWindowsForCommandInstall = message.type === "restoreNode"
+        ? await getNormalWindows(api).catch(() => undefined)
+        : undefined;
       runtimeFacts.clearRemovalTombstonesForLiveState(result.state, runtimeIndexCandidateNodeIds);
       if (runtimeCommandRelocatesLiveTabs(message.type)) {
         runtimeFacts.recordCommandRelocatedTabs(current, result.state, runtimeIndexCandidateNodeIds);
@@ -953,7 +960,10 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       if (message.type === "restoreNode") {
         runtimeFacts.recordCommandRestoredTabs(current, result.state, runtimeIndexCandidateNodeIds);
       }
-      installStateTransition(current, result.state, { candidateNodeIds: runtimeIndexCandidateNodeIds });
+      installStateTransition(current, result.state, {
+        candidateNodeIds: runtimeIndexCandidateNodeIds,
+        ...(runtimeWindowsForCommandInstall ? { runtimeWindows: runtimeWindowsForCommandInstall } : {})
+      });
       if (runtimeCommandRelocatesLiveTabs(message.type)) {
         absorbCommandOwnedFocusRefresh(current, result.state, runtimeIndexCandidateNodeIds);
       }
@@ -1809,7 +1819,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
           : undefined;
         runtimeFacts.reconstructFromState(startupBase, windows);
         alignKnownRuntimeWindowProvenance(startupBase);
-        const reconciled = reconcileWithWindows(startupBase, windows, { now: now() }, { respectRuntimeTabOrder: true });
+        const reconciled = reconcileRuntimeTruth(startupBase, windows, { respectRuntimeTabOrder: true });
         alignKnownRuntimeWindowProvenance(reconciled);
         state = statesEqualIgnoringUpdatedAt(startupBase, reconciled) ? startupBase : reconciled;
         if (!statesMateriallyEqual(stored, state) || loadedRequiresFullSave) {
@@ -2309,13 +2319,15 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     if (!transaction) {
       return commandAck(false);
     }
+    let applied: HistoryRuntimeApplication;
     let next: OutlineState;
     try {
-      next = await applyHistoryDeltaWithRuntime(
+      applied = await applyHistoryDeltaWithRuntime(
         current,
         delta,
         popped.entry.commandType
       );
+      next = applied.state;
       runtimeFacts.recordCommandObserved(transaction.id);
     } catch (error) {
       runtimeFacts.rejectCommand(transaction.id);
@@ -2324,6 +2336,9 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     }
     runtimeFacts.clearRemovalTombstonesForLiveState(next);
     if (statesMateriallyEqual(current, next)) {
+      if (applied.runtimeWindows) {
+        runtimeFacts.rebuildWindowScopes(next, applied.runtimeWindows);
+      }
       historyState = popped.history;
       scheduleHistorySave(historyState, saveSchedule);
       broadcastHistoryStatusSoon(historyState);
@@ -2333,7 +2348,10 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     }
 
     runtimeFacts.recordCommandRelocatedTabs(current, next);
-    installStateTransition(current, next, { rebuildRuntimeIndex: true });
+    installStateTransition(current, next, {
+      rebuildRuntimeIndex: true,
+      ...(applied.runtimeWindows ? { runtimeWindows: applied.runtimeWindows } : {})
+    });
     const activePreferences = await ensurePreferences();
     historyState = direction === "undo"
       ? pushRedoEntry(popped.history, popped.entry, activePreferences.undoHistoryLimit)
@@ -2375,11 +2393,16 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     broadcastHistoryStatusSoon(historyState);
   }
 
+  type HistoryRuntimeApplication = {
+    state: OutlineState;
+    runtimeWindows?: RuntimeWindow[];
+  };
+
   async function applyHistoryDeltaWithRuntime(
     current: OutlineState,
     delta: OutlineDelta,
     commandType: TrackableHistoryCommandType
-  ): Promise<OutlineState> {
+  ): Promise<HistoryRuntimeApplication> {
     const windowsBeforeReplay = await getNormalWindows(api);
     let next = preserveClosedNodesDuringHistoryReplay(current, applyOutlineDelta(current, delta));
     if (historyReplayMayDropCurrentLiveRuntimeResources(current, next, delta)) {
@@ -2403,7 +2426,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       new Set(windowsBeforeReplay.map((windowInfo) => windowInfo.id))
     );
     if (closedRuntimeResources || materializedRuntimeResources) {
-      next = await reconcileHistoryReplayResultWithRuntime(next);
+      next = (await reconcileHistoryReplayResultWithRuntime(next)).state;
     }
     if (closedRuntimeResources || materializedRuntimeResources || liveStructureChanged(current, next)) {
       await syncBrowserOrder(next, adapter);
@@ -2411,12 +2434,15 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     return reconcileHistoryReplayResultWithRuntime(next);
   }
 
-  async function reconcileHistoryReplayResultWithRuntime(next: OutlineState): Promise<OutlineState> {
+  async function reconcileHistoryReplayResultWithRuntime(next: OutlineState): Promise<HistoryRuntimeApplication> {
     const windowsSnapshot = await getNormalWindows(api);
-    return reconcileHistoryReplayResultWithRuntimeSnapshot(next, windowsSnapshot, {
-      closeMissing: true,
-      respectRuntimeTabOrder: false
-    });
+    return {
+      state: reconcileHistoryReplayResultWithRuntimeSnapshot(next, windowsSnapshot, {
+        closeMissing: true,
+        respectRuntimeTabOrder: false
+      }),
+      runtimeWindows: windowsSnapshot
+    };
   }
 
   function reconcileHistoryReplayResultWithRuntimeSnapshot(
@@ -2432,12 +2458,20 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       ledger: runtimeFacts,
       confidence: "complete"
     });
-    const reconciled = reconcileWithWindows(next, windows, { now: now() }, {
+    const reconciled = reconcileRuntimeTruth(next, windows, {
       closeMissing: options.closeMissing,
       respectRuntimeTabOrder: options.respectRuntimeTabOrder
     });
     alignKnownRuntimeWindowProvenance(reconciled);
     return statesMateriallyEqual(next, reconciled) ? next : reconciled;
+  }
+
+  function reconcileRuntimeTruth(
+    current: OutlineState,
+    windows: RuntimeWindow[],
+    options: { closeMissing?: boolean; respectRuntimeTabOrder?: boolean } = {}
+  ): OutlineState {
+    return reconcileWithWindows(current, windows, { now: now() }, options);
   }
 
   function alignKnownRuntimeWindowProvenance(next: OutlineState): void {
@@ -2650,6 +2684,24 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
       if ((!isLiveTabNode(currentNode) || currentNode.live.tabId !== node.live.tabId) && tabRemoved) {
         deleteHistoryReplayTabNode(mutable(), node.id);
+      }
+    }
+
+    for (const node of Object.values(next.nodes)) {
+      if (node.kind !== "tab" || current.nodes[node.id]) {
+        continue;
+      }
+      if (runtimeFacts.nodeTouchesRemovedRuntimeScope(next, node.id)) {
+        deleteHistoryReplayTabNode(mutable(), node.id);
+      }
+    }
+
+    for (const node of Object.values(next.nodes)) {
+      if (node.kind !== "window" || current.nodes[node.id]) {
+        continue;
+      }
+      if (runtimeFacts.nodeTouchesRemovedRuntimeScope(next, node.id)) {
+        deleteHistoryReplayContainerNode(mutable(), node.id);
       }
     }
 
@@ -3109,20 +3161,26 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     if (currentEventTabs.length > 0 || (closeMissing && currentEventTabs.length === 0)) {
       windows = await corroborateMissingOrMismatchedLiveTabs(current, index, windows);
     }
+    const acceptedRuntimeWindowsForEvent = currentEventTabs.length > 0 || options.forceSnapshot === true
+      ? windows
+      : undefined;
     if (runtimeSnapshotMateriallyMatchesState(current, windows).matches) {
-      runtimeFacts.rebuildWindowScopes(current);
+      runtimeFacts.rebuildWindowScopes(current, acceptedRuntimeWindowsForEvent);
       return false;
     }
-    const next = reconcileWithWindows(current, windows, { now: now() }, {
+    const next = reconcileRuntimeTruth(current, windows, {
       closeMissing,
       respectRuntimeTabOrder: true
     });
     alignKnownRuntimeWindowProvenance(next);
     if (statesMateriallyEqual(current, next)) {
-      runtimeFacts.rebuildWindowScopes(next);
+      runtimeFacts.rebuildWindowScopes(next, acceptedRuntimeWindowsForEvent);
       return false;
     }
-    installStateTransition(current, next, { rebuildRuntimeIndex: true });
+    installStateTransition(current, next, {
+      rebuildRuntimeIndex: true,
+      runtimeWindows: acceptedRuntimeWindowsForEvent ?? windows
+    });
     await persistWithBestEffortPatch(current, next, { diffMode: "material" });
     await flushRuntimeTruthSaveIfNeeded(current, next);
     return state !== current;
@@ -3625,17 +3683,21 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   function installStateTransition(
     previous: OutlineState,
     next: OutlineState,
-    options: { candidateNodeIds?: readonly NodeId[] | undefined; rebuildRuntimeIndex?: boolean } = {}
+    options: {
+      candidateNodeIds?: readonly NodeId[] | undefined;
+      rebuildRuntimeIndex?: boolean;
+      runtimeWindows?: readonly RuntimeWindow[];
+    } = {}
   ): void {
     state = next;
     replaceCachedState(next);
     if (options.rebuildRuntimeIndex) {
       runtimeIndex = buildRuntimeStateIndex(next);
-      runtimeFacts.rebuildWindowScopes(next);
+      runtimeFacts.rebuildWindowScopes(next, options.runtimeWindows);
       return;
     }
     runtimeIndex = runtimeIndexForStateTransition(previous, next, runtimeIndex, options.candidateNodeIds);
-    runtimeFacts.rebuildWindowScopes(next);
+    runtimeFacts.rebuildWindowScopes(next, options.runtimeWindows);
   }
 
   function seedRuntimeWindowProvenanceFromCurrentState(windowId: number | undefined): void {
@@ -4544,6 +4606,14 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         hasRecentClosedWindowSession: Boolean(recent?.window?.sessionId)
       });
       if (removal === "delete-tabs") {
+        for (const tabId of liveTabIds) {
+          const runtimeLifecycleJournalEntry = runtimeLifecycleJournalEntryForNativeTabClose(next, tabId, windowId);
+          if (runtimeLifecycleJournalEntry) {
+            await ensureDurableRuntimeLifecycleBase();
+            await appendRuntimeLifecycleJournalEntry(api, runtimeLifecycleJournalEntry);
+            runtimeLifecycleJournalEntries.push(runtimeLifecycleJournalEntry);
+          }
+        }
         runtimeFacts.recordClosedRuntimeWindow(windowId, liveTabIds);
         for (const tabId of liveTabIds) {
           next = deleteLiveTabNodeByTabId(next, tabId);
@@ -4583,11 +4653,21 @@ export function createBackgroundController(options: BackgroundControllerOptions)
           ...(recent?.tab?.sessionId ? { sessionId: recent.tab.sessionId } : {})
         });
       } else {
+        const runtimeLifecycleJournalEntry = runtimeLifecycleJournalEntryForNativeTabClose(
+          next,
+          tabId,
+          liveTabNodeByRuntimeId(next, tabId)?.live.windowId
+        );
+        if (runtimeLifecycleJournalEntry) {
+          await ensureDurableRuntimeLifecycleBase();
+          await appendRuntimeLifecycleJournalEntry(api, runtimeLifecycleJournalEntry);
+          runtimeLifecycleJournalEntries.push(runtimeLifecycleJournalEntry);
+        }
         next = deleteLiveTabNodeByTabId(next, tabId);
       }
     }
 
-    installStateTransition(current, next, { rebuildRuntimeIndex: true });
+    installStateTransition(current, next, { rebuildRuntimeIndex: true, runtimeWindows: windows });
     return next !== current
       ? {
           previous: current,
@@ -5838,6 +5918,15 @@ function liveWindowNodeByRuntimeId(
         node.live.windowId === windowId
     );
   });
+}
+
+function liveTabNodeByRuntimeId(
+  state: OutlineState,
+  tabId: number
+): (OutlineNode & { live: { tabId: number; windowId: number } }) | undefined {
+  return Object.values(state.nodes).find((node): node is OutlineNode & { live: { tabId: number; windowId: number } } =>
+    isLiveTabNode(node) && node.live.tabId === tabId
+  );
 }
 
 function liveTabIdsInWindow(state: OutlineState, windowId: number): number[] {

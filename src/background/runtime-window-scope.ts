@@ -298,12 +298,22 @@ export class RuntimeWindowScopeIndex {
         continue;
       }
       if (node.kind === "window") {
+        if (
+          [...this.scopes.values()].some((scope) =>
+            scope.lifecycle === "removed" && scope.outlineWindowNodeId === node.id
+          )
+        ) {
+          return true;
+        }
         const runtimeWindowId = canonicalRuntimeIdFromNodeId(node.id, "window");
         if (runtimeWindowId !== undefined && this.scopes.get(runtimeWindowId)?.lifecycle === "removed") {
           return true;
         }
       }
       if (node.kind === "tab") {
+        if ([...this.removedTabNodeIdsByRuntimeId.values()].includes(node.id)) {
+          return true;
+        }
         const runtimeTabId = canonicalRuntimeIdFromNodeId(node.id, "tab");
         if (runtimeTabId !== undefined && this.removedTabNodeIdsByRuntimeId.has(runtimeTabId)) {
           return true;

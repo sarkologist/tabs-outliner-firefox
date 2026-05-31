@@ -286,7 +286,10 @@ const REGRESSION_TRACE_IDS = [
   "yh-proper-b3-history-command-browser-abrupt-partial",
   "yh-proper-b3-race-delete-journal-session-partial",
   "sa-restored-opener-child-detach-owner-session",
-  "sk-b3-redo-restore-reject-browser-opener"
+  "sk-b3-redo-restore-reject-browser-opener",
+  "oh-external-closed-restore-reject-restart-stale",
+  "sb-restored-fullscreen-external-delete-history",
+  "sk-b3-undo-abrupt-restored-browser-swap"
 ];
 const DISCOVERY_TRACE_IDS = [
   "dh-restore-delayed-focus-refresh",
@@ -760,7 +763,6 @@ const DISCOVERY_TRACE_IDS = [
   "oh-external-closed-delete-redo-after-abrupt",
   "oh-external-closed-restore-reject-window",
   "oh-external-closed-restore-reject-tab",
-  "oh-external-closed-restore-reject-restart-stale",
   "oh-external-closed-restore-reject-multitab-reordered",
   "oh-external-closed-restore-after-abrupt-close",
   "oh-external-closed-restore-delete-history-redo",
@@ -1011,7 +1013,6 @@ const DISCOVERY_TRACE_IDS = [
   "sb-native-drift-close-journal-old-scope",
   "sb-two-external-windows-history-reorder",
   "sb-fullscreen-opener-into-command-scope",
-  "sb-restored-fullscreen-external-delete-history",
   "ub-redo-journal-after-dual-native-drifts",
   "ub-close-journal-after-browser-merge-chain",
   "ub-external-restored-session-complete-then-partial-history",
@@ -1122,7 +1123,6 @@ const DISCOVERY_TRACE_IDS = [
   "sk-b2-opener-source-windowremoved-survivor",
   "sk-b2-reject-relocation-focus-side-effect",
   "sk-b3-close-journal-restored-foreign-survivor",
-  "sk-b3-undo-abrupt-restored-browser-swap",
   "sk-b3-injected-journal-history-browser-drift",
   "oc-b1-native-open-move-stale-refresh",
   "oc-b1-native-detach-close-source-stale",

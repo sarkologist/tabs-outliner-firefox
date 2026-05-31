@@ -1092,6 +1092,9 @@ export function restoreNodes(state: OutlineState, restoredNodes: RestoredNode[])
 
     if (node.kind === "window") {
       node.live = { windowId: restored.windowId };
+      if (wasClosed) {
+        node.runtimeProvenance = "commandCreated";
+      }
       if (typeof restored.active === "boolean") {
         node.active = restored.active;
         if (restored.active) {

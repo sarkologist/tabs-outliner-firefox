@@ -257,6 +257,59 @@ describe("runtime reconciliation ledger", () => {
     expect(ledger.tabNeedsShapeCorroboration(2)).toBe(false);
   });
 
+  it("keeps installed-state tab order ahead of stale accepted window shape order", () => {
+    const state = bootstrapFromWindows([windowInfo(10, [tabOne, tabTwo])], { now: 1000 });
+    const ledger = new RuntimeFactLedger();
+    ledger.reconstructFromState(state, [windowInfo(10, [tabOne, tabTwo])]);
+
+    ledger.recordObservation({
+      source: "snapshot",
+      confidence: "partial",
+      windows: [
+        windowInfo(10, [
+          { ...tabTwo, index: 0 },
+          { ...tabOne, index: 1 }
+        ])
+      ]
+    });
+
+    expect(ledger.acceptedWindowShapeFact(10)?.tabOrder).toEqual([2, 1]);
+
+    ledger.reconstructFromState(state, [windowInfo(10, [tabOne, tabTwo])]);
+
+    expect(ledger.acceptedWindowShapeFact(10)?.tabOrder).toEqual([1, 2]);
+    expect(ledger.windowScope(10)?.tabOrder).toEqual([1, 2]);
+  });
+
+  it("rebuilds synthetic windows from outline order while preserving accepted window metadata", () => {
+    const state = bootstrapFromWindows([windowInfo(10, [tabOne, tabTwo])], { now: 1000 });
+    const ledger = new RuntimeFactLedger();
+    ledger.reconstructFromState(state, [windowInfo(10, [tabOne, tabTwo])]);
+
+    ledger.recordObservation({
+      source: "snapshot",
+      confidence: "partial",
+      windows: [
+        {
+          ...windowInfo(10, [
+            { ...tabTwo, index: 0 },
+            { ...tabOne, index: 1 }
+          ]),
+          state: "fullscreen"
+        }
+      ]
+    });
+    ledger.rebuildWindowScopes(state);
+
+    expect(ledger.windowScope(10)?.tabOrder).toEqual([1, 2]);
+    expect(ledger.acceptedWindowShapeFact(10)).toMatchObject({
+      windowId: 10,
+      tabOrder: [1, 2],
+      activeTabId: 1,
+      state: "fullscreen"
+    });
+  });
+
   it("reconstructs restart tombstones for old canonical runtime ids", () => {
     const state = closeTab(bootstrapFromWindows([windowInfo(10, [tabOne, tabTwo])], { now: 1000 }), 1, { now: 2000 });
     const ledger = new RuntimeFactLedger();
@@ -764,6 +817,40 @@ describe("runtime window scope index", () => {
     expect(scopes.scopeForWindow(10)?.tabOrder).toEqual([1]);
     expect(scopes.scopeForTab(2)).toBeUndefined();
     expect(scopes.nodeTouchesRemovedRuntimeScope(state, "tab:2")).toBe(true);
+  });
+
+  it("recognizes removed restored tabs by outline node id after runtime id reassignment", () => {
+    const restoredTab = { ...tabOne, id: 4, windowId: 22 };
+    const state = bootstrapFromWindows([windowInfo(22, [restoredTab])], { now: 1000 });
+    const restoredNodeState = {
+      ...state,
+      nodes: {
+        ...state.nodes,
+        "window:100": {
+          ...state.nodes["window:22"]!,
+          id: "window:100",
+          childIds: ["tab:100"]
+        },
+        "tab:100": {
+          ...state.nodes["tab:4"]!,
+          id: "tab:100",
+          parentId: "window:100"
+        }
+      },
+      rootIds: ["window:100"]
+    };
+    delete restoredNodeState.nodes["window:22"];
+    delete restoredNodeState.nodes["tab:4"];
+
+    const scopes = new RuntimeWindowScopeIndex();
+    scopes.rebuild({
+      state: restoredNodeState,
+      windows: [windowInfo(22, [restoredTab])]
+    });
+
+    scopes.markTabRemoved(4);
+
+    expect(scopes.nodeTouchesRemovedRuntimeScope(restoredNodeState, "tab:100")).toBe(true);
   });
 
   it("records browser-created provenance when a native attach targets a previously unknown window", () => {

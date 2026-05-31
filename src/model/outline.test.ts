@@ -1346,6 +1346,48 @@ describe("outline model", () => {
     expect(restored.nodes["tab:1"]?.restoredFromClosed).toBe(true);
   });
 
+  it("updates stale browser-created provenance when a closed window is restored live", () => {
+    const browserCreated = bootstrapFromWindows([
+      {
+        id: 21,
+        incognito: false,
+        focused: true,
+        tabs: [
+          {
+            id: 100,
+            windowId: 21,
+            index: 0,
+            active: true,
+            url: "https://external.example/",
+            title: "External"
+          }
+        ]
+      }
+    ], { now: 1000 });
+    browserCreated.nodes["window:21"]!.runtimeProvenance = "browserCreated";
+    const state = closeWindow(browserCreated, 21, { now: 2000 });
+
+    const restored = restoreNodes(state, [
+      {
+        nodeId: "window:21",
+        windowId: 22,
+        active: true
+      },
+      {
+        nodeId: "tab:100",
+        tabId: 101,
+        windowId: 22,
+        active: true,
+        url: "https://external.example/",
+        title: "External"
+      }
+    ]);
+
+    expect(restored.nodes["window:21"]?.status).toBe("live");
+    expect(restored.nodes["window:21"]?.restoredFromClosed).toBe(true);
+    expect(restored.nodes["window:21"]?.runtimeProvenance).toBe("commandCreated");
+  });
+
   it("marks restored focused windows active and clears the previous active window", () => {
     const state = closeWindow(bootstrapFromWindows([
       {

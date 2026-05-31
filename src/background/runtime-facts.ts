@@ -286,7 +286,11 @@ export class RuntimeFactLedger {
     });
   }
 
-  private recordInstalledStateShape(state: OutlineState, nodes?: readonly OutlineNode[]): void {
+  private recordInstalledStateShape(
+    state: OutlineState,
+    nodes?: readonly OutlineNode[],
+    options: { preserveInstalledOrder?: boolean } = {}
+  ): void {
     const scopeSnapshots = this.windowScopes.snapshots();
     const signature = scopeSnapshots
       .filter((scope) => scope.lifecycle === "live")
@@ -309,7 +313,8 @@ export class RuntimeFactLedger {
     for (const scope of scopeSnapshots) {
       const previousWindowFact = this.windowShapeFacts.get(scope.runtimeWindowId);
       const currentTabOrder = scope.tabOrder.filter((tabId) => !this.isTabIgnoredForRefresh(tabId));
-      const tabOrder = previousWindowFact
+      const tabOrder = previousWindowFact &&
+        runtimeWindowShapeFactCanOrderInstalledState(previousWindowFact, options)
         ? runtimeOrderPreservingKnownTabs(previousWindowFact.tabOrder, currentTabOrder)
         : currentTabOrder;
       if (scope.lifecycle === "live") {
@@ -458,6 +463,7 @@ export class RuntimeFactLedger {
     windows?: readonly RuntimeWindow[],
     nodes?: readonly OutlineNode[]
   ): void {
+    const hasExplicitRuntimeWindows = windows !== undefined;
     const scopeWindows = windows ?? this.windowsFromAcceptedShapeFacts(state);
     this.windowScopes.rebuild({
       state,
@@ -470,7 +476,7 @@ export class RuntimeFactLedger {
       resolveProvenance: (input) => this.resolveRuntimeWindowScopeProvenance(input)
     });
     this.reconcileWindowScopeActiveTabs(state, nodes);
-    this.recordInstalledStateShape(state, nodes);
+    this.recordInstalledStateShape(state, nodes, { preserveInstalledOrder: !hasExplicitRuntimeWindows });
     this.syncWindowScopeActiveTabsFromShapeFacts();
   }
 
@@ -522,16 +528,15 @@ export class RuntimeFactLedger {
     return liveWindowNodes(state).filter((windowNode) => !this.isWindowIgnoredForRefresh(windowNode.live.windowId)).map((windowNode): RuntimeWindow => {
       const windowId = windowNode.live.windowId;
       const windowFact = this.windowShapeFacts.get(windowId);
-      const tabOrderIndex = new Map((windowFact?.tabOrder ?? []).map((tabId, index) => [tabId, index]));
-      const tabs = liveTabs
-        .filter((tabNode) => tabNode.live.windowId === windowId)
-        .map((tabNode): RuntimeTab => {
+      const currentScopeOrder = this.windowScopes.scopeForWindow(windowId)?.tabOrder;
+      const tabs = currentOrOutlineOrderedLiveTabsForRuntimeWindow(state, windowNode, liveTabs, currentScopeOrder)
+        .map((tabNode, index): RuntimeTab => {
           const tabFact = this.tabShapeFacts.get(tabNode.live.tabId);
           const scopedTabFact = tabFact?.windowId === windowId ? tabFact : undefined;
           return {
             id: tabNode.live.tabId,
             windowId,
-            index: tabOrderIndex.get(tabNode.live.tabId) ?? scopedTabFact?.index ?? 0,
+            index,
             active: typeof scopedTabFact?.active === "boolean" && scopedTabFact.source !== "installedState"
               ? scopedTabFact.active
               : tabNode.active === true,
@@ -539,8 +544,7 @@ export class RuntimeFactLedger {
             title: tabNode.title,
             ...(tabNode.favIconUrl !== undefined ? { favIconUrl: tabNode.favIconUrl } : {})
           };
-        })
-        .sort((left, right) => left.index - right.index);
+        });
       return {
         id: windowId,
         focused: windowNode.active === true,
@@ -562,7 +566,8 @@ export class RuntimeFactLedger {
       }
 
       const windowFact = this.windowShapeFacts.get(snapshot.runtimeWindowId);
-      const scopedTabOrder = windowFact
+      const scopedTabOrder = windowFact &&
+        runtimeWindowShapeFactCanOrderInstalledState(windowFact, { preserveInstalledOrder: true })
         ? runtimeOrderPreservingKnownTabs(windowFact.tabOrder, snapshot.tabOrder)
         : snapshot.tabOrder;
       const acceptedTabOrder = scopedTabOrder.filter((tabId) => !this.isTabIgnoredForRefresh(tabId));
@@ -1622,6 +1627,64 @@ function liveWindowNodes(state: OutlineState): Array<OutlineNode & { live: { win
   return Object.values(state.nodes).filter(isLiveWindowNode);
 }
 
+function currentOrOutlineOrderedLiveTabsForRuntimeWindow(
+  state: OutlineState,
+  windowNode: OutlineNode & { live: { windowId: number } },
+  liveTabs: readonly LiveTabNode[],
+  currentTabOrder: readonly number[] | undefined
+): LiveTabNode[] {
+  const windowId = windowNode.live.windowId;
+  const remaining = new Map(
+    liveTabs
+      .filter((tabNode) => tabNode.live.windowId === windowId)
+      .map((tabNode) => [tabNode.live.tabId, tabNode])
+  );
+  if (currentTabOrder && currentTabOrder.length === remaining.size) {
+    const orderedFromCurrentScope: LiveTabNode[] = [];
+    const seen = new Set<number>();
+    for (const tabId of currentTabOrder) {
+      const tabNode = remaining.get(tabId);
+      if (!tabNode || seen.has(tabId)) {
+        orderedFromCurrentScope.length = 0;
+        break;
+      }
+      orderedFromCurrentScope.push(tabNode);
+      seen.add(tabId);
+    }
+    if (orderedFromCurrentScope.length === remaining.size) {
+      return orderedFromCurrentScope;
+    }
+  }
+
+  const ordered: LiveTabNode[] = [];
+  const visited = new Set<NodeId>();
+
+  const visit = (nodeId: NodeId): void => {
+    if (visited.has(nodeId)) {
+      return;
+    }
+    visited.add(nodeId);
+    const node = state.nodes[nodeId];
+    if (!node) {
+      return;
+    }
+    if (node.id !== windowNode.id && isLiveWindowNode(node) && node.live.windowId !== windowId) {
+      return;
+    }
+    if (isLiveTabNode(node) && node.live.windowId === windowId && remaining.has(node.live.tabId)) {
+      ordered.push(node);
+      remaining.delete(node.live.tabId);
+    }
+    for (const childId of node.childIds) {
+      visit(childId);
+    }
+  };
+
+  visit(windowNode.id);
+  ordered.push(...remaining.values());
+  return ordered;
+}
+
 function hasLiveWindowRuntimeId(state: OutlineState, windowId: number): boolean {
   return liveWindowNodes(state).some((node) => node.live.windowId === windowId);
 }
@@ -1664,6 +1727,16 @@ function runtimeOrderPreservingKnownTabs(
     ...preservedKnownOrder,
     ...currentOrder.filter((tabId) => !preservedTabIds.has(tabId))
   ];
+}
+
+function runtimeWindowShapeFactCanOrderInstalledState(
+  fact: RuntimeWindowShapeFact,
+  options: { preserveInstalledOrder?: boolean } = {}
+): boolean {
+  if (fact.source === "snapshot") {
+    return false;
+  }
+  return fact.source !== "installedState" || options.preserveInstalledOrder === true;
 }
 
 function canonicalRuntimeIdFromNodeId(nodeId: NodeId, kind: "tab" | "window"): number | undefined {
