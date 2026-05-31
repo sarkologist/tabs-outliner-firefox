@@ -2414,6 +2414,12 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         respectRuntimeTabOrder: false
       });
     }
+    if (historyCommandPreservesRuntimePlacement(commandType)) {
+      next = reconcileHistoryReplayResultWithRuntimeSnapshot(next, windowsBeforeReplay, {
+        closeMissing: true,
+        respectRuntimeTabOrder: true
+      });
+    }
     next = guardHistoryReplayRuntimeLifecycle(
       current,
       next,
@@ -2524,6 +2530,12 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     }
 
     return false;
+  }
+
+  function historyCommandPreservesRuntimePlacement(commandType: TrackableHistoryCommandType): boolean {
+    return commandType === "toggleCollapsed" ||
+      commandType === "expandAncestors" ||
+      commandType === "renameGroup";
   }
 
   function preserveClosedNodesDuringHistoryReplay(current: OutlineState, next: OutlineState): OutlineState {
