@@ -406,6 +406,17 @@ This hunt starts from the `251` regression / `856` discovery baseline after trut
 - New signatures: RT-222 through RT-242, clustered around browser-created/command-restored provenance loss after no-journal restart and native-deleted restored-tab resurrection after session-only close.
 - Coverage movement: oracle coverage moved from unsampled to sampled-clean for the four new `oc-b1-*` traces; the wider corpus is not clean because the new truth-cache oracle exposed open runtime bugs in older discovery traces.
 - Dedupe/result: clean-block count reset to 0; continue the oracle hunt without fixing behavior.
+- Block: 2
+- Active effort: about five minutes of Rung 1 scope-mix design, trace edits, explicit replay, duplicate-failure corpus review, and evidence-log update; corpus wait time excluded.
+- Rung: 1
+- Axes changed: command-created/restored/browser-created cohabitation, partial and reordered snapshots, clean restart boundaries, runtime side-effect assertions, short mixed-window closed-subtree persistence.
+- Temporal boundaries crossed: restored materialization before command relocation, browser-created tabs joining command/restored scopes before partial evidence, source native close before restart, mixed command destination close before persistence reload.
+- New/changed trace ids: `oc-b2-three-scope-command-destination-restart`, `oc-b2-restored-browser-partial-reordered`, `oc-b2-command-browser-close-partial-restart`, `oc-b2-mixed-command-close-persistence`
+- Explicit replay result: four-trace replay passed.
+- Discovery runner result: `864` traces, `304` vitest processes, `21` duplicate failures, `0` new findings, completed corpus.
+- New signatures: none.
+- Coverage movement: sampled-clean for the new Rung 1 oracle scope-mix traces; open RT-222 through RT-242 still dominate full-corpus failure output.
+- Dedupe/result: first clean active block after the Block 1 reset; raise to Rung 2 temporal heat.
 
 ## Runtime Shape Integrity Sweep
 

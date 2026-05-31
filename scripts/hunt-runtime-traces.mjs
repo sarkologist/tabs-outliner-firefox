@@ -1127,7 +1127,11 @@ const DISCOVERY_TRACE_IDS = [
   "oc-b1-native-open-move-stale-refresh",
   "oc-b1-native-detach-close-source-stale",
   "oc-b1-native-reorder-partial-stale-complete",
-  "oc-b1-native-close-persistence"
+  "oc-b1-native-close-persistence",
+  "oc-b2-three-scope-command-destination-restart",
+  "oc-b2-restored-browser-partial-reordered",
+  "oc-b2-command-browser-close-partial-restart",
+  "oc-b2-mixed-command-close-persistence"
 ];
 const ALL_TRACE_IDS = [...REGRESSION_TRACE_IDS, ...DISCOVERY_TRACE_IDS];
 const TRACE_TAGS = new Map([
@@ -1136,6 +1140,10 @@ const TRACE_TAGS = new Map([
   ["oc-b1-native-detach-close-source-stale", ["oracle-hunt", "browserCreated", "native-move", "native-close", "stale-event", "stale-query", "side-effects"]],
   ["oc-b1-native-reorder-partial-stale-complete", ["oracle-hunt", "browserCreated", "native-move", "partial-snapshot", "stale-event", "side-effects", "runtime-order"]],
   ["oc-b1-native-close-persistence", ["oracle-hunt", "browserCreated", "native-close", "closed-subtree", "persistence", "side-effects"]],
+  ["oc-b2-three-scope-command-destination-restart", ["oracle-hunt", "commandCreated", "restored", "browserCreated", "native-move", "restart", "partial-snapshot", "runtime-order", "side-effects"]],
+  ["oc-b2-restored-browser-partial-reordered", ["oracle-hunt", "restored", "browserCreated", "native-move", "partial-snapshot", "restart", "stale-event", "side-effects"]],
+  ["oc-b2-command-browser-close-partial-restart", ["oracle-hunt", "commandCreated", "browserCreated", "native-close", "partial-snapshot", "restart", "stale-event", "side-effects"]],
+  ["oc-b2-mixed-command-close-persistence", ["oracle-hunt", "commandCreated", "browserCreated", "outliner-close", "closed-subtree", "persistence", "side-effects"]],
   ["xh-saved-provenance-native-shape", ["cross-axis", "saved", "native-move", "metadata", "runtime-order"]],
   ["xh-restored-provenance-native-shape", ["cross-axis", "restored", "native-move", "metadata", "runtime-order"]],
   ["xh-browser-created-provenance-native-shape", ["cross-axis", "browserCreated", "native-open", "native-move", "metadata"]],

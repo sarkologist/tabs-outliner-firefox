@@ -18495,6 +18495,81 @@ const RUNTIME_DOMAIN_DISCOVERY_TRACES: RuntimeDomainTrace[] = [
       { type: "nativeOpenWindow", focused: false, tabs: [{ title: "OC B1 close A" }, { title: "OC B1 close B", active: true }], captureWindow: "oc-b1-close-window", captureTabs: "oc-b1-close-tabs" },
       { type: "nativeCloseWindow", window: { capture: "oc-b1-close-window" }, order: "tabsRemovedThenWindowRemoved" }
     ]
+  },
+  {
+    id: "oc-b2-three-scope-command-destination-restart",
+    title: "oracle block2 three scope command destination restart",
+    notes: "Runtime-oracle block 2: restored and browser-created tabs move into a command-created destination, then reordered evidence and restart exercise scope/provenance cache truth.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["oracle-hunt", "commandCreated", "restored", "browserCreated", "native-move", "restart", "partial-snapshot", "runtime-order", "side-effects"],
+    assertions: ["runtimeSideEffects", "runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "oc-b2-three-restored-tabs", captureRestoredWindows: "oc-b2-three-restored-window" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "OC B2 browser A" }, { title: "OC B2 browser B", active: true }], captureWindow: "oc-b2-three-browser-window", captureTabs: "oc-b2-three-browser-tabs" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "oc-b2-three-command-old" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "oc-b2-three-browser-tabs" }, window: { role: "lastOpenedWindow" }, index: 0, active: false, captureStaleTabs: "oc-b2-three-browser-old" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "oc-b2-three-restored-tabs" }, window: { role: "lastOpenedWindow" }, index: 1, active: true, captureStaleTabs: "oc-b2-three-restored-old" },
+      { type: "manualRefreshWithReorderedQuery", window: { role: "lastOpenedWindow" }, order: "reverse" },
+      { type: "restartBackground" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "oc-b2-three-restored-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "oc-b2-restored-browser-partial-reordered",
+    title: "oracle block2 restored browser partial reordered",
+    notes: "Runtime-oracle block 2: browser-created sibling joins a restored window, then partial source evidence, restart, and reordered restored-window evidence test scope freshness.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["oracle-hunt", "restored", "browserCreated", "native-move", "partial-snapshot", "restart", "stale-event", "side-effects"],
+    assertions: ["runtimeSideEffects", "runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "oc-b2-partial-restored-tabs", captureRestoredWindows: "oc-b2-partial-restored-window" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "OC B2 source survivor" }, { title: "OC B2 restored guest", active: true }], captureWindow: "oc-b2-partial-browser-window", captureTabs: "oc-b2-partial-browser-tabs" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "oc-b2-partial-browser-tabs", index: 1 }, window: { capture: "oc-b2-partial-restored-window" }, index: 1, active: true, captureStaleTabs: "oc-b2-partial-browser-old" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { capture: "oc-b2-partial-browser-window" } },
+      { type: "restartBackground" },
+      { type: "manualRefreshWithReorderedQuery", window: { capture: "oc-b2-partial-restored-window" }, order: "rotateLeft" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "oc-b2-partial-browser-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "oc-b2-command-browser-close-partial-restart",
+    title: "oracle block2 command browser close partial restart",
+    notes: "Runtime-oracle block 2: a browser-created tab cohabits a command-created group destination, its source closes, and partial/restart evidence must preserve current scope truth.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["oracle-hunt", "commandCreated", "browserCreated", "native-close", "partial-snapshot", "restart", "stale-event", "side-effects"],
+    assertions: ["runtimeSideEffects", "runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "OC B2 command guest" }, { title: "OC B2 source survivor", active: true }], captureWindow: "oc-b2-command-browser-source", captureTabs: "oc-b2-command-browser-tabs" },
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "oc-b2-command-browser-command-old" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "oc-b2-command-browser-tabs" }, window: { role: "lastOpenedWindow" }, index: 0, active: true, captureStaleTabs: "oc-b2-command-browser-old" },
+      { type: "nativeCloseWindow", window: { capture: "oc-b2-command-browser-source" }, order: "windowRemovedOnly" },
+      { type: "manualRefreshWithMissingTabQuery", tab: { role: "lastMovedTab" } },
+      { type: "restartBackground" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "oc-b2-command-browser-command-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "oc-b2-mixed-command-close-persistence",
+    title: "oracle block2 mixed command close persistence",
+    notes: "Runtime-oracle block 2: a short mixed command-created/browser-created destination closes at the final action and must persist as a closed subtree.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["oracle-hunt", "commandCreated", "browserCreated", "outliner-close", "closed-subtree", "persistence", "side-effects"],
+    assertions: ["runtimeSideEffects", "closedSubtreePersistence"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "OC B2 mixed foreign" }, { title: "OC B2 mixed survivor", active: true }], captureWindow: "oc-b2-mixed-source", captureTabs: "oc-b2-mixed-tabs" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "oc-b2-mixed-command-old" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "oc-b2-mixed-tabs" }, window: { role: "lastOpenedWindow" }, index: 0, active: true, captureStaleTabs: "oc-b2-mixed-browser-old" },
+      { type: "outlinerCloseWindow", window: { role: "lastOpenedWindow" } }
+    ]
   }
 ];
 

@@ -24,12 +24,12 @@ Default hunt bounds:
 
 ## Last Domain Run
 
-- Completed: 2026-05-31T12:03:27Z
-- Strategy: Runtime oracle hunt Block 1 with neutral `oc-b1-*` traces, focused on browser-authored native open/move/close actions, stale refresh evidence, runtime side-effect assertions, and a short closed-subtree persistence probe.
+- Completed: 2026-05-31T12:14:19Z
+- Strategy: Runtime oracle hunt Block 2 with neutral `oc-b2-*` traces, focused on command-created/restored/browser-created scope mixes, partial/reordered snapshots, restart boundaries, runtime side-effect assertions, and a short mixed closed-subtree persistence probe.
 - Trace ids: current discovery corpus in `src/background/controller.test.ts` and `scripts/hunt-runtime-traces.mjs`
-- Corpus size after latest corpus edit: 860 discovery traces, 251 regression traces
-- Distinct findings recorded: RT-222 through RT-242.
-- Stop condition: not reached; Block 1 found new distinct signatures, so the clean-block count resets to 0.
+- Corpus size after latest corpus edit: 864 discovery traces, 251 regression traces
+- Distinct findings recorded: none new in Block 2; RT-222 through RT-242 remain open.
+- Stop condition: not reached; clean-block count is 1 after the Block 1 reset.
 - Regression preflight replay before the hunt: 251 regression traces, 0 failures, 0 new findings at 2026-05-31T11:53:42Z.
 - Status: open runtime findings from the oracle hunt, not fixed.
 
@@ -6956,3 +6956,5 @@ Recent side effects: []
 ```
 
 <!-- hunt-corpus-run: {"at":"2026-05-31T12:03:27.087Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","browser-authored","browserCreated","bug-rich","calibration","closed-subtree","command-rejection","commandCreated","complete-refresh","created-event","cross-axis","delayed-event","delete","delete-rejection","event-order","focus","fresh-event","fullscreen","group","history","history-boundary","journal","manual-refresh","metadata","mixed-provenance","multi-tab","multi-window","native-close","native-move","native-open","nested","nested-window","opener","oracle-hunt","outliner-close","paired-echo","partial-close","partial-snapshot","persistence","post-recovery","race","real-user","reconciliation","redo","relocation","reparenting","restart","restore","restored","restored-scope","runtime-order","runtimeMetadata","saved","scope-routing","scope-shape","session","shape-fact","side-effects","snapshot-confidence","soak-complement","stale-event","stale-query","startup-adjacent","subagent","tombstone","transaction-boundary","undo-redo","updated-event","window-scope","window-state"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"oc-b1-native-close-persistence","runs":860,"processRuns":303,"batchSize":20,"batchFailures":13,"completedCorpus":true,"failures":21,"duplicateFailures":0,"newFindings":21} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-31T12:14:19.010Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","browser-authored","browserCreated","bug-rich","calibration","closed-subtree","command-rejection","commandCreated","complete-refresh","created-event","cross-axis","delayed-event","delete","delete-rejection","event-order","focus","fresh-event","fullscreen","group","history","history-boundary","journal","manual-refresh","metadata","mixed-provenance","multi-tab","multi-window","native-close","native-move","native-open","nested","nested-window","opener","oracle-hunt","outliner-close","paired-echo","partial-close","partial-snapshot","persistence","post-recovery","race","real-user","reconciliation","redo","relocation","reparenting","restart","restore","restored","restored-scope","runtime-order","runtimeMetadata","saved","scope-routing","scope-shape","session","shape-fact","side-effects","snapshot-confidence","soak-complement","stale-event","stale-query","startup-adjacent","subagent","tombstone","transaction-boundary","undo-redo","updated-event","window-scope","window-state"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"oc-b2-mixed-command-close-persistence","runs":864,"processRuns":304,"batchSize":20,"batchFailures":13,"completedCorpus":true,"failures":21,"duplicateFailures":21,"newFindings":0} -->
