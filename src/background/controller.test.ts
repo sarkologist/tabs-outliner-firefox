@@ -18678,6 +18678,69 @@ const RUNTIME_DOMAIN_DISCOVERY_TRACES: RuntimeDomainTrace[] = [
       { type: "staleLiveUpdatedEvent", staleTab: { capture: "oc-b3-close-browser-old" }, withStaleQuery: true },
       { type: "manualRefresh" }
     ]
+  },
+  {
+    id: "oc-b4-browser-events-side-effect-escape",
+    title: "oracle block4 browser events side effect escape",
+    notes: "Runtime-oracle block 4: pure browser-authored update/focus/window-state/reordered-refresh/restart coverage checks side-effect silence outside command ownership.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["oracle-hunt", "browserCreated", "updated-event", "focus", "window-state", "manual-refresh", "restart", "side-effects"],
+    assertions: ["runtimeSideEffects", "runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "OC B4 event A" }, { title: "OC B4 event B", active: true }], captureWindow: "oc-b4-event-window", captureTabs: "oc-b4-event-tabs" },
+      { type: "updateTab", tab: { capture: "oc-b4-event-tabs" }, title: "OC B4 Event Current", url: "https://oc.example/b4-event-current" },
+      { type: "focusWindow", window: { capture: "oc-b4-event-window" } },
+      { type: "nativeSetWindowState", window: { capture: "oc-b4-event-window" }, state: "fullscreen" },
+      { type: "manualRefreshWithReorderedQuery", window: { capture: "oc-b4-event-window" }, order: "rotateRight" },
+      { type: "restartBackground" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "oc-b4-short-tab-close-persistence",
+    title: "oracle block4 short tab close persistence",
+    notes: "Runtime-oracle block 4: a short final tab close checks closed-subtree persistence without adding a larger scenario basin.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["oracle-hunt", "outliner-close", "closed-subtree", "persistence", "side-effects"],
+    assertions: ["runtimeSideEffects", "closedSubtreePersistence"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, title: "OC B4 close leaf", url: "https://oc.example/b4-close-leaf", captureTab: "oc-b4-close-leaf" },
+      { type: "outlinerCloseTab", tab: { capture: "oc-b4-close-leaf" } }
+    ]
+  },
+  {
+    id: "oc-b4-history-side-effect-replay",
+    title: "oracle block4 history side effect replay",
+    notes: "Runtime-oracle block 4: undo/redo around stale command evidence checks side-effect oracles on history replay without adding new browser drift.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["oracle-hunt", "history", "stale-query", "manual-refresh", "side-effects", "metadata"],
+    assertions: ["runtimeSideEffects", "runtimeMetadata"],
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "oc-b4-history-group-old" },
+      { type: "outlinerUndo" },
+      { type: "manualRefreshWithStaleQuery", staleTab: { capture: "oc-b4-history-group-old" } },
+      { type: "outlinerRedo" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "oc-b4-focus-reject-metadata-order",
+    title: "oracle block4 focus reject metadata order",
+    notes: "Runtime-oracle block 4: current browser metadata and order survive a rejecting focus command and reordered refresh while side effects stay command-scoped.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["oracle-hunt", "browserCreated", "command-rejection", "focus", "metadata", "runtime-order", "side-effects"],
+    assertions: ["runtimeSideEffects", "runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "OC B4 focus A" }, { title: "OC B4 focus B", active: true }], captureWindow: "oc-b4-focus-window", captureTabs: "oc-b4-focus-tabs" },
+      { type: "updateTab", tab: { capture: "oc-b4-focus-tabs" }, title: "OC B4 Focus Current", url: "https://oc.example/b4-focus-current" },
+      { type: "outlinerFocusTabRejectingUpdate", tab: { capture: "oc-b4-focus-tabs" } },
+      { type: "manualRefreshWithReorderedQuery", window: { capture: "oc-b4-focus-window" }, order: "reverse" },
+      { type: "manualRefresh" }
+    ]
   }
 ];
 

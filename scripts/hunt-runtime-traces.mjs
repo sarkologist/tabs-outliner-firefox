@@ -1135,7 +1135,11 @@ const DISCOVERY_TRACE_IDS = [
   "oc-b3-race-relocation-reject-session-stale",
   "oc-b3-history-browser-drift-partial-stale",
   "oc-b3-restore-reject-created-session-stale",
-  "oc-b3-close-reject-browser-partial-stale"
+  "oc-b3-close-reject-browser-partial-stale",
+  "oc-b4-browser-events-side-effect-escape",
+  "oc-b4-short-tab-close-persistence",
+  "oc-b4-history-side-effect-replay",
+  "oc-b4-focus-reject-metadata-order"
 ];
 const ALL_TRACE_IDS = [...REGRESSION_TRACE_IDS, ...DISCOVERY_TRACE_IDS];
 const TRACE_TAGS = new Map([
@@ -1152,6 +1156,10 @@ const TRACE_TAGS = new Map([
   ["oc-b3-history-browser-drift-partial-stale", ["oracle-hunt", "history", "browserCreated", "native-move", "partial-snapshot", "stale-event", "restart", "side-effects"]],
   ["oc-b3-restore-reject-created-session-stale", ["oracle-hunt", "restore", "command-rejection", "created-event", "session", "partial-snapshot", "stale-event", "side-effects"]],
   ["oc-b3-close-reject-browser-partial-stale", ["oracle-hunt", "race", "browserCreated", "commandCreated", "command-rejection", "session", "partial-snapshot", "stale-event", "side-effects"]],
+  ["oc-b4-browser-events-side-effect-escape", ["oracle-hunt", "browserCreated", "updated-event", "focus", "window-state", "manual-refresh", "restart", "side-effects"]],
+  ["oc-b4-short-tab-close-persistence", ["oracle-hunt", "outliner-close", "closed-subtree", "persistence", "side-effects"]],
+  ["oc-b4-history-side-effect-replay", ["oracle-hunt", "history", "stale-query", "manual-refresh", "side-effects", "metadata"]],
+  ["oc-b4-focus-reject-metadata-order", ["oracle-hunt", "browserCreated", "command-rejection", "focus", "metadata", "runtime-order", "side-effects"]],
   ["xh-saved-provenance-native-shape", ["cross-axis", "saved", "native-move", "metadata", "runtime-order"]],
   ["xh-restored-provenance-native-shape", ["cross-axis", "restored", "native-move", "metadata", "runtime-order"]],
   ["xh-browser-created-provenance-native-shape", ["cross-axis", "browserCreated", "native-open", "native-move", "metadata"]],
