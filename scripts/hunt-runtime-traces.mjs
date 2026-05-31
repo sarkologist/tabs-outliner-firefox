@@ -1151,7 +1151,10 @@ const DISCOVERY_TRACE_IDS = [
   "hs-b3-restored-window-state-history-stale",
   "so-b1-recovered-delete-nested-scope-order",
   "so-b1-restore-replay-promoted-child-scope-order",
-  "so-b1-command-destination-undo-redo-scope-order"
+  "so-b1-command-destination-undo-redo-scope-order",
+  "so-b2-partial-window-scope-order",
+  "so-b2-real-browser-reorder-scope-order",
+  "so-b2-session-close-history-scope-order"
 ];
 const ALL_TRACE_IDS = [...REGRESSION_TRACE_IDS, ...DISCOVERY_TRACE_IDS];
 const TRACE_TAGS = new Map([
@@ -1184,6 +1187,9 @@ const TRACE_TAGS = new Map([
   ["so-b1-recovered-delete-nested-scope-order", ["scope-order-hunt", "commandCreated", "delete-rejection", "history", "native-move", "nested", "stale-event", "stale-query", "runtime-scope-order", "side-effects", "metadata"]],
   ["so-b1-restore-replay-promoted-child-scope-order", ["scope-order-hunt", "restored", "browserCreated", "restore", "command-rejection", "history", "native-move", "stale-event", "stale-query", "runtime-scope-order", "side-effects", "metadata"]],
   ["so-b1-command-destination-undo-redo-scope-order", ["scope-order-hunt", "commandCreated", "browserCreated", "history", "native-move", "stale-event", "stale-query", "runtime-scope-order", "side-effects", "metadata"]],
+  ["so-b2-partial-window-scope-order", ["scope-order-hunt", "commandCreated", "browserCreated", "history", "partial-snapshot", "stale-query", "runtime-scope-order", "side-effects"]],
+  ["so-b2-real-browser-reorder-scope-order", ["scope-order-hunt", "commandCreated", "history", "native-move", "stale-event", "manual-refresh", "runtime-scope-order", "side-effects", "metadata"]],
+  ["so-b2-session-close-history-scope-order", ["scope-order-hunt", "commandCreated", "browserCreated", "history", "native-close", "session", "partial-snapshot", "stale-event", "runtime-scope-order", "side-effects"]],
   ["xh-saved-provenance-native-shape", ["cross-axis", "saved", "native-move", "metadata", "runtime-order"]],
   ["xh-restored-provenance-native-shape", ["cross-axis", "restored", "native-move", "metadata", "runtime-order"]],
   ["xh-browser-created-provenance-native-shape", ["cross-axis", "browserCreated", "native-open", "native-move", "metadata"]],

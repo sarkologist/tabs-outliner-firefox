@@ -18987,6 +18987,65 @@ const RUNTIME_DOMAIN_DISCOVERY_TRACES: RuntimeDomainTrace[] = [
       { type: "manualRefreshWithReorderedQuery", window: { role: "lastOpenedWindow" }, order: "reverse" },
       { type: "manualRefresh" }
     ]
+  },
+  {
+    id: "so-b2-partial-window-scope-order",
+    title: "scope order block2 partial window scope order",
+    notes: "Scope-order block 2: command-created destination scope survives missing-window and reordered-query evidence before a complete refresh restores the accepted browser shape.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["scope-order-hunt", "commandCreated", "browserCreated", "history", "partial-snapshot", "stale-query", "runtime-scope-order", "side-effects"],
+    assertions: ["runtimeScopeOrder", "runtimeSideEffects"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "SO B2 partial guest" }, { title: "SO B2 partial survivor", active: true }], captureWindow: "so-b2-partial-source", captureTabs: "so-b2-partial-tabs" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "so-b2-partial-owner-old" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "so-b2-partial-tabs" }, window: { role: "lastOpenedWindow" }, index: 0, active: true, captureStaleTabs: "so-b2-partial-guest-old" },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedo" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { role: "lastOpenedWindow" } },
+      { type: "manualRefreshWithReorderedQuery", window: { role: "lastOpenedWindow" }, order: "rotateLeft" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "so-b2-real-browser-reorder-scope-order",
+    title: "scope order block2 real browser reorder scope order",
+    notes: "Scope-order block 2: a real browser-authored same-window reorder after command-owned history replay must become live scope truth rather than being mistaken for stale query order.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["scope-order-hunt", "commandCreated", "history", "native-move", "stale-event", "manual-refresh", "runtime-scope-order", "side-effects", "metadata"],
+    assertions: ["runtimeScopeOrder", "runtimeSideEffects", "runtimeMetadata"],
+    actions: [
+      { type: "nativeMoveTabToNewWindow", tab: { tabId: 2 }, active: true, captureWindow: "so-b2-reorder-window", captureStaleTabs: "so-b2-reorder-source-old" },
+      { type: "openTab", window: { capture: "so-b2-reorder-window" }, active: false, title: "SO B2 reorder sibling", url: "https://so.example/b2-reorder-sibling", captureTab: "so-b2-reorder-sibling" },
+      { type: "outlinerGroupTab", tab: { role: "lastMovedTab" }, captureStaleTabs: "so-b2-reorder-group-old" },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedo" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "so-b2-reorder-sibling" }, window: { capture: "so-b2-reorder-window" }, index: 0, active: true, captureStaleTabs: "so-b2-reorder-sibling-old" },
+      { type: "manualRefresh" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "so-b2-reorder-sibling-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "so-b2-session-close-history-scope-order",
+    title: "scope order block2 session close history scope order",
+    notes: "Scope-order block 2: session-only native close evidence after command-owned undo/redo must tombstone the closed tab without reordering or resurrecting the live destination scope.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["scope-order-hunt", "commandCreated", "browserCreated", "history", "native-close", "session", "partial-snapshot", "stale-event", "runtime-scope-order", "side-effects"],
+    assertions: ["runtimeScopeOrder", "runtimeSideEffects"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "SO B2 session guest" }, { title: "SO B2 session survivor", active: true }], captureWindow: "so-b2-session-source", captureTabs: "so-b2-session-tabs" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "so-b2-session-owner-old" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "so-b2-session-tabs" }, window: { role: "lastOpenedWindow" }, index: 0, active: true, captureStaleTabs: "so-b2-session-guest-old" },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedo" },
+      { type: "nativeCloseTab", tab: { capture: "so-b2-session-tabs" }, order: "sessionChangedOnly" },
+      { type: "manualRefreshWithMissingTabQuery", tab: { tabId: 1 } },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "so-b2-session-guest-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
   }
 ];
 
