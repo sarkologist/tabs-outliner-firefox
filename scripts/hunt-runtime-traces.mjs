@@ -1123,11 +1123,19 @@ const DISCOVERY_TRACE_IDS = [
   "sk-b3-close-journal-restored-foreign-survivor",
   "sk-b3-undo-abrupt-restored-browser-swap",
   "sk-b3-redo-restore-reject-browser-opener",
-  "sk-b3-injected-journal-history-browser-drift"
+  "sk-b3-injected-journal-history-browser-drift",
+  "oc-b1-native-open-move-stale-refresh",
+  "oc-b1-native-detach-close-source-stale",
+  "oc-b1-native-reorder-partial-stale-complete",
+  "oc-b1-native-close-persistence"
 ];
 const ALL_TRACE_IDS = [...REGRESSION_TRACE_IDS, ...DISCOVERY_TRACE_IDS];
 const TRACE_TAGS = new Map([
   ...REGRESSION_TRACE_IDS.map((traceId) => [traceId, ["known-finding"]]),
+  ["oc-b1-native-open-move-stale-refresh", ["oracle-hunt", "browserCreated", "native-open", "native-move", "stale-query", "side-effects", "runtime-order", "metadata"]],
+  ["oc-b1-native-detach-close-source-stale", ["oracle-hunt", "browserCreated", "native-move", "native-close", "stale-event", "stale-query", "side-effects"]],
+  ["oc-b1-native-reorder-partial-stale-complete", ["oracle-hunt", "browserCreated", "native-move", "partial-snapshot", "stale-event", "side-effects", "runtime-order"]],
+  ["oc-b1-native-close-persistence", ["oracle-hunt", "browserCreated", "native-close", "closed-subtree", "persistence", "side-effects"]],
   ["xh-saved-provenance-native-shape", ["cross-axis", "saved", "native-move", "metadata", "runtime-order"]],
   ["xh-restored-provenance-native-shape", ["cross-axis", "restored", "native-move", "metadata", "runtime-order"]],
   ["xh-browser-created-provenance-native-shape", ["cross-axis", "browserCreated", "native-open", "native-move", "metadata"]],

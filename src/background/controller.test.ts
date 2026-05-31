@@ -18433,6 +18433,68 @@ const RUNTIME_DOMAIN_DISCOVERY_TRACES: RuntimeDomainTrace[] = [
       { type: "outlinerRedo" },
       { type: "manualRefresh" }
     ]
+  },
+  {
+    id: "oc-b1-native-open-move-stale-refresh",
+    title: "oracle block1 native open move stale refresh",
+    notes: "Runtime-oracle block 1: browser-authored open and cross-window move are followed by stale event-local/query evidence; the controller must not issue mutating browser APIs while reconciling.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["oracle-hunt", "browserCreated", "native-open", "native-move", "stale-query", "side-effects", "runtime-order", "metadata"],
+    assertions: ["runtimeSideEffects", "runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "OC B1 source survivor" }, { title: "OC B1 moving tab", active: true }], captureWindow: "oc-b1-open-move-source", captureTabs: "oc-b1-open-move-tabs" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "oc-b1-open-move-tabs", index: 1 }, window: { windowId: 10 }, index: 0, active: true, captureStaleTabs: "oc-b1-open-move-old" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "OC B1 Current Moved", url: "https://oc.example/b1-current-moved" },
+      { type: "manualRefreshWithStaleQuery", staleTab: { capture: "oc-b1-open-move-old" } },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "oc-b1-open-move-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "oc-b1-native-detach-close-source-stale",
+    title: "oracle block1 native detach source close stale",
+    notes: "Runtime-oracle block 1: a browser-authored detach survives a source-window native close plus delayed stale old-window evidence without controller-authored browser side effects.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["oracle-hunt", "browserCreated", "native-move", "native-close", "stale-event", "stale-query", "side-effects"],
+    assertions: ["runtimeSideEffects", "runtimeMetadata"],
+    actions: [
+      { type: "nativeMoveTabToNewWindow", tab: { tabId: 2 }, active: true, captureWindow: "oc-b1-detached-window", captureStaleTabs: "oc-b1-detached-old" },
+      { type: "nativeCloseWindow", window: { windowId: 10 }, order: "windowRemovedOnly" },
+      { type: "manualRefreshWithStaleQuery", staleTab: { capture: "oc-b1-detached-old" } },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "oc-b1-detached-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "oc-b1-native-reorder-partial-stale-complete",
+    title: "oracle block1 native reorder partial stale complete",
+    notes: "Runtime-oracle block 1: same-window browser-authored reorder crosses a missing-tab refresh and stale pre-reorder event before a complete refresh.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["oracle-hunt", "browserCreated", "native-move", "partial-snapshot", "stale-event", "side-effects", "runtime-order"],
+    assertions: ["runtimeSideEffects", "runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: true, tabs: [{ title: "OC B1 order A" }, { title: "OC B1 order B" }, { title: "OC B1 order C", active: true }], captureWindow: "oc-b1-order-window", captureTabs: "oc-b1-order-tabs" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "oc-b1-order-tabs", index: 2 }, window: { capture: "oc-b1-order-window" }, index: 0, active: true, captureStaleTabs: "oc-b1-order-old" },
+      { type: "manualRefreshWithMissingTabQuery", tab: { role: "lastMovedTab" } },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "oc-b1-order-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "oc-b1-native-close-persistence",
+    title: "oracle block1 native close persistence",
+    notes: "Runtime-oracle block 1: a short browser-created window native-close trace checks that closed subtree persistence survives save flush and restart.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["oracle-hunt", "browserCreated", "native-close", "closed-subtree", "persistence", "side-effects"],
+    assertions: ["runtimeSideEffects", "closedSubtreePersistence"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "OC B1 close A" }, { title: "OC B1 close B", active: true }], captureWindow: "oc-b1-close-window", captureTabs: "oc-b1-close-tabs" },
+      { type: "nativeCloseWindow", window: { capture: "oc-b1-close-window" }, order: "tabsRemovedThenWindowRemoved" }
+    ]
   }
 ];
 
