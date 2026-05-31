@@ -593,10 +593,29 @@ test.describe("sidebar first paint", () => {
       searchSnapshot: fixtureCollapsedSearchSnapshot(1, 1)
     });
 
+    let releaseSidebarImport: () => void = () => undefined;
+    const sidebarImportRelease = new Promise<void>((resolve) => {
+      releaseSidebarImport = resolve;
+    });
+    let resolveSidebarImportPaused: () => void = () => undefined;
+    const sidebarImportPaused = new Promise<void>((resolve) => {
+      resolveSidebarImportPaused = resolve;
+    });
+    await page.route("**/sidebar/sidebar.js", async (route) => {
+      resolveSidebarImportPaused();
+      await sidebarImportRelease;
+      await route.continue();
+    });
+
     await page.goto("/sidebar/sidebar.html");
     await expect(page.locator("#search")).toBeEnabled();
     await expect(page.locator(".node[data-node-id='group:hidden']")).toBeVisible();
+    await sidebarImportPaused;
     await page.locator("#search").fill("hidden 1");
+    releaseSidebarImport();
+    await page.waitForFunction(() =>
+      performance.getEntriesByName("tabs-outliner.boot.fullAppImport.end").length > 0
+    );
     await page.waitForFunction(() => {
       const messages = (window as typeof window & {
         __sidebarBootMessages?: Array<{ type: string; query?: string }>;

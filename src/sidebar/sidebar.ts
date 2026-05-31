@@ -1342,6 +1342,11 @@ function registerZoomShortcuts(): void {
 }
 
 function registerSearchControls(): void {
+  if (searchInput) {
+    currentSearchQuery = searchInput.value;
+    setCurrentProjectionOwner(remoteSearchRequestIntent(currentSearchQuery));
+  }
+
   searchInput?.addEventListener("input", () => {
     currentSearchQuery = searchInput.value;
     setCurrentProjectionOwner(remoteSearchRequestIntent(currentSearchQuery));

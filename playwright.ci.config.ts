@@ -5,7 +5,6 @@ import baseConfig from "./playwright.config";
 export default defineConfig({
   ...baseConfig,
   forbidOnly: true,
-  retries: 1,
   workers: 1,
   testIgnore: [
     "**/sidebar-drag-drop-performance.spec.ts",
