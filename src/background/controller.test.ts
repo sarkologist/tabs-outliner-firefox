@@ -18570,6 +18570,114 @@ const RUNTIME_DOMAIN_DISCOVERY_TRACES: RuntimeDomainTrace[] = [
       { type: "nativeMoveTabToWindow", tab: { capture: "oc-b2-mixed-tabs" }, window: { role: "lastOpenedWindow" }, index: 0, active: true, captureStaleTabs: "oc-b2-mixed-browser-old" },
       { type: "outlinerCloseWindow", window: { role: "lastOpenedWindow" } }
     ]
+  },
+  {
+    id: "oc-b3-race-relocation-reject-session-stale",
+    title: "oracle block3 race relocation reject session stale",
+    notes: "Runtime-oracle block 3 temporal heat: pre-command update evidence crosses grouping, relocation-create rejection, session refresh, missing destination evidence, and stale echoes.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["oracle-hunt", "race", "command-rejection", "relocation", "session", "partial-snapshot", "stale-event", "side-effects"],
+    assertions: ["runtimeSideEffects", "runtimeMetadata"],
+    actions: [
+      {
+        type: "raceWithOutlinerGroup",
+        event: {
+          type: "updateTab",
+          tab: { tabId: 2 },
+          title: "OC B3 Precommand Current",
+          url: "https://oc.example/b3-precommand-current"
+        },
+        groupTab: { tabId: 1 },
+        captureStaleTabs: "oc-b3-race-group-old"
+      },
+      { type: "outlinerMoveTabCommandToNewWindowRejectingCreate", tab: { tabId: 2 }, captureStaleTabs: "oc-b3-race-reject-old" },
+      { type: "sessionChanged" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { role: "lastOpenedWindow" } },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "oc-b3-race-group-old" }, withStaleQuery: true },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "oc-b3-race-reject-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "oc-b3-history-browser-drift-partial-stale",
+    title: "oracle block3 history browser drift partial stale",
+    notes: "Runtime-oracle block 3 temporal heat: browser-created drift and partial query evidence land between TO history replay and stale old command evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["oracle-hunt", "history", "browserCreated", "native-move", "partial-snapshot", "stale-event", "restart", "side-effects"],
+    assertions: ["runtimeSideEffects", "runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "OC B3 history browser A" }, { title: "OC B3 history browser B", active: true }], captureWindow: "oc-b3-history-browser-window", captureTabs: "oc-b3-history-browser-tabs" },
+      { type: "updateTab", tab: { capture: "oc-b3-history-browser-tabs" }, title: "OC B3 Browser Current", url: "https://oc.example/b3-browser-current" },
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "oc-b3-history-group-old" },
+      { type: "outlinerUndo" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "oc-b3-history-browser-tabs" }, window: { windowId: 10 }, index: 1, active: true, captureStaleTabs: "oc-b3-history-browser-old" },
+      { type: "sessionChanged" },
+      { type: "manualRefreshWithMissingTabQuery", tab: { role: "lastMovedTab" } },
+      { type: "outlinerRedoThenAbruptRestart" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "oc-b3-history-group-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "oc-b3-restore-reject-created-session-stale",
+    title: "oracle block3 restore reject created session stale",
+    notes: "Runtime-oracle block 3 temporal heat: pre-command created evidence crosses grouping, restore-create rejection, restored metadata, session refresh, and stale group evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["oracle-hunt", "restore", "command-rejection", "created-event", "session", "partial-snapshot", "stale-event", "side-effects"],
+    assertions: ["runtimeSideEffects", "runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      {
+        type: "raceWithOutlinerGroup",
+        event: {
+          type: "openTab",
+          window: { windowId: 10 },
+          title: "OC B3 raced created",
+          url: "https://oc.example/b3-raced-created",
+          captureTab: "oc-b3-raced-created-tab"
+        },
+        groupTab: { tabId: 1 },
+        captureStaleTabs: "oc-b3-restore-group-old"
+      },
+      { type: "outlinerRestoreNodeRejectingCreate", node: { nodeId: "window:20" }, captureRestoredTabs: "oc-b3-restore-tabs", captureRestoredWindows: "oc-b3-restore-window" },
+      { type: "updateTab", tab: { capture: "oc-b3-restore-tabs" }, title: "OC B3 Restored Current", url: "https://oc.example/b3-restored-current" },
+      { type: "sessionChanged" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { capture: "oc-b3-restore-window" } },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "oc-b3-restore-group-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "oc-b3-close-reject-browser-partial-stale",
+    title: "oracle block3 close reject browser partial stale",
+    notes: "Runtime-oracle block 3 temporal heat: pre-command metadata, browser-created cohabitation, close rejection side effects, session evidence, partial query, and stale browser echo interleave.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["oracle-hunt", "race", "browserCreated", "commandCreated", "command-rejection", "session", "partial-snapshot", "stale-event", "side-effects"],
+    assertions: ["runtimeSideEffects", "runtimeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "OC B3 close foreign" }, { title: "OC B3 close survivor", active: true }], captureWindow: "oc-b3-close-source", captureTabs: "oc-b3-close-tabs" },
+      {
+        type: "raceWithOutlinerGroup",
+        event: {
+          type: "updateTab",
+          tab: { tabId: 2 },
+          title: "OC B3 Close Race Current",
+          url: "https://oc.example/b3-close-race-current"
+        },
+        groupTab: { tabId: 1 },
+        captureStaleTabs: "oc-b3-close-command-old"
+      },
+      { type: "nativeMoveTabToWindow", tab: { capture: "oc-b3-close-tabs" }, window: { role: "lastOpenedWindow" }, index: 0, active: true, captureStaleTabs: "oc-b3-close-browser-old" },
+      { type: "outlinerCloseNodeRejectingClose", node: { window: { role: "lastOpenedWindow" } } },
+      { type: "sessionChanged" },
+      { type: "manualRefreshWithMissingTabQuery", tab: { inWindow: { capture: "oc-b3-close-source" } } },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "oc-b3-close-browser-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
   }
 ];
 

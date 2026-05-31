@@ -1131,7 +1131,11 @@ const DISCOVERY_TRACE_IDS = [
   "oc-b2-three-scope-command-destination-restart",
   "oc-b2-restored-browser-partial-reordered",
   "oc-b2-command-browser-close-partial-restart",
-  "oc-b2-mixed-command-close-persistence"
+  "oc-b2-mixed-command-close-persistence",
+  "oc-b3-race-relocation-reject-session-stale",
+  "oc-b3-history-browser-drift-partial-stale",
+  "oc-b3-restore-reject-created-session-stale",
+  "oc-b3-close-reject-browser-partial-stale"
 ];
 const ALL_TRACE_IDS = [...REGRESSION_TRACE_IDS, ...DISCOVERY_TRACE_IDS];
 const TRACE_TAGS = new Map([
@@ -1144,6 +1148,10 @@ const TRACE_TAGS = new Map([
   ["oc-b2-restored-browser-partial-reordered", ["oracle-hunt", "restored", "browserCreated", "native-move", "partial-snapshot", "restart", "stale-event", "side-effects"]],
   ["oc-b2-command-browser-close-partial-restart", ["oracle-hunt", "commandCreated", "browserCreated", "native-close", "partial-snapshot", "restart", "stale-event", "side-effects"]],
   ["oc-b2-mixed-command-close-persistence", ["oracle-hunt", "commandCreated", "browserCreated", "outliner-close", "closed-subtree", "persistence", "side-effects"]],
+  ["oc-b3-race-relocation-reject-session-stale", ["oracle-hunt", "race", "command-rejection", "relocation", "session", "partial-snapshot", "stale-event", "side-effects"]],
+  ["oc-b3-history-browser-drift-partial-stale", ["oracle-hunt", "history", "browserCreated", "native-move", "partial-snapshot", "stale-event", "restart", "side-effects"]],
+  ["oc-b3-restore-reject-created-session-stale", ["oracle-hunt", "restore", "command-rejection", "created-event", "session", "partial-snapshot", "stale-event", "side-effects"]],
+  ["oc-b3-close-reject-browser-partial-stale", ["oracle-hunt", "race", "browserCreated", "commandCreated", "command-rejection", "session", "partial-snapshot", "stale-event", "side-effects"]],
   ["xh-saved-provenance-native-shape", ["cross-axis", "saved", "native-move", "metadata", "runtime-order"]],
   ["xh-restored-provenance-native-shape", ["cross-axis", "restored", "native-move", "metadata", "runtime-order"]],
   ["xh-browser-created-provenance-native-shape", ["cross-axis", "browserCreated", "native-open", "native-move", "metadata"]],

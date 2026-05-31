@@ -417,6 +417,17 @@ This hunt starts from the `251` regression / `856` discovery baseline after trut
 - New signatures: none.
 - Coverage movement: sampled-clean for the new Rung 1 oracle scope-mix traces; open RT-222 through RT-242 still dominate full-corpus failure output.
 - Dedupe/result: first clean active block after the Block 1 reset; raise to Rung 2 temporal heat.
+- Block: 3
+- Active effort: about five minutes of Rung 2 temporal-heat design, one harness-precondition correction, explicit replay, duplicate-failure corpus review, and evidence-log update; corpus wait time excluded.
+- Rung: 2
+- Axes changed: pre-command runtime evidence, command rejection, history replay, session/query evidence, stale echoes, browser-created drift, restored metadata, runtime side-effect assertions.
+- Temporal boundaries crossed: raced update before grouping, relocation rejection before session/missing-destination evidence, browser drift before redo crash recovery, restore-create rejection before session/missing-window evidence, close rejection before partial browser-created survivor evidence.
+- New/changed trace ids: `oc-b3-race-relocation-reject-session-stale`, `oc-b3-history-browser-drift-partial-stale`, `oc-b3-restore-reject-created-session-stale`, `oc-b3-close-reject-browser-partial-stale`
+- Explicit replay result: initial replay found a harness precondition in `oc-b3-close-reject-browser-partial-stale` by omitting a tab closed by the rejected close side effect; corrected to omit the still-live browser-created survivor, then replay passed.
+- Discovery runner result: `868` traces, `304` vitest processes, `21` duplicate failures, `0` new findings, completed corpus.
+- New signatures: none.
+- Coverage movement: sampled-clean for temporal oracle heat across command rejection/history/session/query/stale-echo combinations; open RT-222 through RT-242 remain the only discovery failures.
+- Dedupe/result: second clean active block after the Block 1 reset; one more clean block is required for the stop condition.
 
 ## Runtime Shape Integrity Sweep
 
