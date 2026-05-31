@@ -212,8 +212,9 @@ export function reconcileWithWindows(
 
   for (const win of windows.filter((windowInfo) => !windowInfo.incognito)) {
     openWindowIds.add(win.id);
-    const winId = lookup.liveWindowNodeIdsByRuntimeId.get(win.id) ?? windowNodeId(win.id);
-    const existingWindow = next.nodes[winId];
+    const existingLiveWindowId = lookup.liveWindowNodeIdsByRuntimeId.get(win.id);
+    const winId = existingLiveWindowId ?? uniqueNodeId(next, windowNodeId(win.id), clock.now);
+    const existingWindow = existingLiveWindowId ? next.nodes[existingLiveWindowId] : undefined;
 
     if (existingWindow) {
       existingWindow.status = "live";

@@ -2206,6 +2206,66 @@ describe("outline model", () => {
     expect(reconciled.nodes["tab:5"]?.status).toBe("live");
   });
 
+  it("does not reuse a closed window node when a new runtime window has the same id", () => {
+    const closed = closeWindow(
+      bootstrapFromWindows([
+        {
+          id: 10,
+          incognito: false,
+          focused: true,
+          tabs: [
+            {
+              id: 1,
+              windowId: 10,
+              index: 0,
+              active: true,
+              url: "https://saved.example/",
+              title: "Saved"
+            }
+          ]
+        }
+      ], { now: 1000 }),
+      10,
+      { now: 1500 }
+    );
+
+    const reconciled = reconcileWithWindows(
+      closed,
+      [
+        {
+          id: 10,
+          incognito: false,
+          focused: true,
+          tabs: [
+            {
+              id: 1,
+              windowId: 10,
+              index: 0,
+              active: true,
+              url: "https://current.example/",
+              title: "Current"
+            }
+          ]
+        }
+      ],
+      { now: 2000 }
+    );
+
+    expect(reconciled.nodes["window:10"]?.status).toBe("closed");
+    expect(reconciled.nodes["tab:1"]?.status).toBe("closed");
+    expect(reconciled.nodes["window:10:2000"]).toMatchObject({
+      kind: "window",
+      status: "live",
+      live: { windowId: 10 },
+      childIds: ["tab:1:2000"]
+    });
+    expect(reconciled.nodes["tab:1:2000"]).toMatchObject({
+      kind: "tab",
+      status: "live",
+      live: { tabId: 1, windowId: 10 }
+    });
+  });
+
   it("repairs orphaned parent cycles into reachable roots", () => {
     const state = bootstrapFromWindows(windows, { now: 1000 });
     state.rootIds = ["window:10"];
