@@ -491,6 +491,28 @@ describe("runtime reconciliation ledger", () => {
       windowId: 20,
       hasRecentClosedWindowSession: false
     })).toBe("close-window");
+
+    const commandRestoredState = {
+      ...state,
+      nodes: {
+        ...state.nodes,
+        "window:20": {
+          ...state.nodes["window:20"]!,
+          restoredFromClosed: true,
+          runtimeProvenance: "commandCreated" as const
+        }
+      }
+    };
+    const commandRestoredLedger = new RuntimeFactLedger();
+    commandRestoredLedger.reconstructFromState(commandRestoredState, [
+      windowInfo(10, [tabOne]),
+      windowInfo(20, [tabThree], false)
+    ]);
+
+    expect(reconciler.classifyMissingLiveWindowRemoval(commandRestoredState, commandRestoredLedger, {
+      windowId: 20,
+      hasRecentClosedWindowSession: false
+    })).toBe("delete-tabs");
   });
 
   it("finds live tabs that appear in the wrong runtime window snapshot", () => {
@@ -580,6 +602,76 @@ describe("runtime reconciliation ledger", () => {
       }
     ]);
   });
+
+  it("resolves durable and runtime-only window provenance before canonical fallback", () => {
+    const state = bootstrapFromWindows([windowInfo(21, [{ ...tabOne, windowId: 21 }])], { now: 1000 });
+    const explicitBrowserNode = {
+      ...state.nodes["window:21"]!,
+      runtimeProvenance: "browserCreated" as const
+    };
+    const explicitCommandNode = {
+      ...state.nodes["window:21"]!,
+      runtimeProvenance: "commandCreated" as const
+    };
+    const restoredNode = {
+      ...state.nodes["window:21"]!,
+      restoredFromClosed: true
+    };
+    const nestedCanonicalNode = {
+      ...state.nodes["window:21"]!,
+      parentId: "window:10"
+    };
+    const ledger = new RuntimeFactLedger();
+
+    expect(ledger.resolveRuntimeWindowScopeProvenance({
+      runtimeWindowId: 21,
+      outlineWindowNode: explicitBrowserNode,
+      hasRuntimeWindow: true,
+      runtimeOnly: false
+    })).toBe("browserCreated");
+    expect(ledger.resolveRuntimeWindowScopeProvenance({
+      runtimeWindowId: 21,
+      outlineWindowNode: explicitCommandNode,
+      hasRuntimeWindow: true,
+      runtimeOnly: false
+    })).toBe("commandCreated");
+    expect(ledger.resolveRuntimeWindowScopeProvenance({
+      runtimeWindowId: 21,
+      outlineWindowNode: restoredNode,
+      hasRuntimeWindow: true,
+      runtimeOnly: false
+    })).toBe("restored");
+    expect(ledger.resolveRuntimeWindowScopeProvenance({
+      runtimeWindowId: 22,
+      hasRuntimeWindow: true,
+      runtimeOnly: true
+    })).toBe("browserCreated");
+    expect(ledger.resolveRuntimeWindowScopeProvenance({
+      runtimeWindowId: 21,
+      outlineWindowNode: nestedCanonicalNode,
+      hasRuntimeWindow: true,
+      runtimeOnly: false
+    })).toBe("commandCreated");
+  });
+
+  it("keeps removed tab tombstones ahead of installed-state rebuilds", () => {
+    const state = bootstrapFromWindows([windowInfo(10, [tabOne, tabTwo])], { now: 1000 });
+    const ledger = new RuntimeFactLedger();
+    ledger.reconstructFromState(state, [windowInfo(10, [tabOne, tabTwo])]);
+
+    expect(ledger.acceptedTabShapeFact(2)).toBeDefined();
+
+    ledger.recordNativeTabRemoved(2, 10);
+
+    expect(ledger.acceptedTabShapeFact(2)).toBeUndefined();
+    expect(ledger.acceptedWindowShapeFact(10)?.tabOrder).toEqual([1]);
+
+    ledger.rebuildWindowScopes(state);
+
+    expect(ledger.acceptedTabShapeFact(2)).toBeUndefined();
+    expect(ledger.acceptedWindowShapeFact(10)?.tabOrder).toEqual([1]);
+    expect(ledger.windowScopeForTab(2)).toBeUndefined();
+  });
 });
 
 describe("runtime window scope index", () => {
@@ -654,6 +746,24 @@ describe("runtime window scope index", () => {
     });
     expect(scopes.scopeForWindow(21)?.outlineWindowNodeId).toBeUndefined();
     expect(scopes.scopeForTab(30)?.runtimeWindowId).toBe(21);
+  });
+
+  it("filters ignored runtime ids while rebuilding scopes", () => {
+    const state = bootstrapFromWindows([windowInfo(10, [tabOne, tabTwo])], { now: 1000 });
+    const scopes = new RuntimeWindowScopeIndex();
+
+    scopes.rebuild({
+      state,
+      windows: [windowInfo(10, [tabOne, tabTwo])],
+      ignoredTabIds: new Set([2]),
+      ignoredWindowIds: new Set<number>(),
+      resolveProvenance: ({ runtimeOnly, outlineWindowNode }) =>
+        runtimeOnly ? "browserCreated" : outlineWindowNode?.runtimeProvenance ?? "saved"
+    });
+
+    expect(scopes.scopeForWindow(10)?.tabOrder).toEqual([1]);
+    expect(scopes.scopeForTab(2)).toBeUndefined();
+    expect(scopes.nodeTouchesRemovedRuntimeScope(state, "tab:2")).toBe(true);
   });
 
   it("records browser-created provenance when a native attach targets a previously unknown window", () => {

@@ -432,6 +432,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
   api.tabs.onCreated.addListener(async (tab) => {
     await perfTrace.measureAsync("background.event.tabs.onCreated", { tabId: tab.id }, () => {
+      seedRuntimeWindowProvenanceFromCurrentState(tab.windowId);
       const evidence = runtimeFacts.recordNativeTabCreated(tab);
       return queueRuntimeRefresh([evidence]);
     });
@@ -446,6 +447,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
   api.tabs.onAttached?.addListener(async (tabId, attachInfo) => {
     await perfTrace.measureAsync("background.event.tabs.onAttached", { tabId, windowId: attachInfo.newWindowId }, () => {
+      seedRuntimeWindowProvenanceFromCurrentState(attachInfo.newWindowId);
       runtimeFacts.recordNativeTabAttached(tabId, attachInfo.newWindowId);
       return queueRuntimeRefresh([], { closeMissing: false, forceSnapshot: true });
     });
@@ -463,6 +465,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       if (!hasOutlineRelevantTabUpdate(changeInfo)) {
         return;
       }
+      seedRuntimeWindowProvenanceFromCurrentState(tab.windowId);
       const record = runtimeFacts.recordNativeTabUpdated(tab, changeInfo);
       if (record.decision === "command-focus-active") {
         await handleCommandTabActivated({ tabId: tab.id, windowId: tab.windowId }, { consumeTabEcho: false });
@@ -641,6 +644,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       if (fullSizeOutlinerWindowIds.has(windowInfo.id)) {
         return;
       }
+      seedRuntimeWindowProvenanceFromCurrentState(windowInfo.id);
       runtimeFacts.recordNativeWindowBoundsChanged(windowInfo);
     });
   });
@@ -654,6 +658,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       }
       sessionChangedQueued = true;
       await enqueueMutation(async () => {
+        const pausedSaveSchedule = pausePendingSaveTimers();
         try {
           while (pendingSessionChangedCount > 0) {
             const observedSessionChangedCount = pendingSessionChangedCount;
@@ -672,6 +677,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
           }
         } finally {
           sessionChangedQueued = false;
+          resumePendingSaveTimers(pausedSaveSchedule);
         }
       }, { reason: "sessions.onChanged" });
     });
@@ -968,6 +974,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       }
       if (message.type === "restoreNode") {
         await persistWithNodeStateUpdate(current, result.state, restorePatchNodeIds, { saveSchedule });
+        await flushRuntimeProvenanceSaveIfChanged(current, result.state);
         if (commandTransaction) {
           runtimeFacts.commitCommand(commandTransaction.id);
         }
@@ -980,6 +987,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         );
         await broadcastTreeStructureUpdate(update);
         scheduleStateSave(result.state, saveSchedule, deletePatchNodeIds ?? [message.nodeId]);
+        await flushRuntimeTruthSaveIfPresent(result.state);
         if (commandTransaction) {
           runtimeFacts.commitCommand(commandTransaction.id);
         }
@@ -998,6 +1006,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         );
         await broadcastTreeStructureUpdate(update);
         scheduleStateSave(result.state, saveSchedule, runtimeIndexCandidateNodeIds);
+        await flushRuntimeProvenanceSaveIfChanged(current, result.state);
         if (commandTransaction) {
           runtimeFacts.commitCommand(commandTransaction.id);
         }
@@ -1026,6 +1035,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         return commandAck(true);
       }
       await persistWithBestEffortPatch(current, result.state, { saveSchedule });
+      await flushRuntimeProvenanceSaveIfChanged(current, result.state);
       if (commandTransaction) {
         runtimeFacts.commitCommand(commandTransaction.id);
       }
@@ -1797,7 +1807,10 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         lastPersistedState = loaded.format === "v3" && !loadedRequiresFullSave
           ? cloneOutlineState(stored)
           : undefined;
+        runtimeFacts.reconstructFromState(startupBase, windows);
+        alignKnownRuntimeWindowProvenance(startupBase);
         const reconciled = reconcileWithWindows(startupBase, windows, { now: now() }, { respectRuntimeTabOrder: true });
+        alignKnownRuntimeWindowProvenance(reconciled);
         state = statesEqualIgnoringUpdatedAt(startupBase, reconciled) ? startupBase : reconciled;
         if (!statesMateriallyEqual(stored, state) || loadedRequiresFullSave) {
           scheduleStateSave(state);
@@ -2035,9 +2048,11 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     }
     let replayed = preserveClosedNodesDuringHistoryReplay(current, applyOutlineDelta(current, entry.delta));
     replayed = remapHistoryReplayMaterializedWindowsFromSnapshot(replayed, windows);
+    replayed = collapseSupersededHistoryReplayWindows(replayed, entry.delta, windows);
     if (historyReplayMayDropCurrentLiveRuntimeResources(current, replayed, entry.delta)) {
       replayed = preserveCurrentLiveRuntimeResourcesDuringHistoryReplay(current, replayed, entry.delta, windows);
       replayed = remapHistoryReplayMaterializedWindowsFromSnapshot(replayed, windows);
+      replayed = collapseSupersededHistoryReplayWindows(replayed, entry.delta, windows);
     }
     if (entry.entry.commandType !== "deleteNode" && historyReplayNeedsCurrentRuntimeShapeOverlay(current, replayed, entry.delta)) {
       replayed = reconcileHistoryReplayResultWithRuntimeSnapshot(replayed, windows, {
@@ -2132,6 +2147,57 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     }
 
     return remapped ? repairState(remapped) : next;
+  }
+
+  function collapseSupersededHistoryReplayWindows(
+    state: OutlineState,
+    delta: OutlineDelta,
+    windows: RuntimeWindow[]
+  ): OutlineState {
+    const runtimeWindowsById = new Map(windows.map((windowInfo) => [windowInfo.id, windowInfo]));
+    let collapsed: OutlineState | undefined;
+    const mutable = (): OutlineState => {
+      collapsed ??= cloneOutlineState(state);
+      return collapsed;
+    };
+
+    for (const deltaNode of delta.updatedNodes) {
+      if (!isLiveWindowNode(deltaNode) || runtimeWindowsById.has(deltaNode.live.windowId)) {
+        continue;
+      }
+      const node = state.nodes[deltaNode.id];
+      if (!isLiveWindowNode(node) || !runtimeWindowsById.has(node.live.windowId) || !node.parentId) {
+        continue;
+      }
+      const parent = state.nodes[node.parentId];
+      if (!isLiveWindowNode(parent) || runtimeWindowsById.has(parent.live.windowId)) {
+        continue;
+      }
+      const runtimeWindow = runtimeWindowsById.get(node.live.windowId);
+      const runtimeTabIds = new Set((runtimeWindow?.tabs ?? []).map((tab) => tab.id));
+      const tabNodes = liveTabNodesInSubtree(state, node.id);
+      if (tabNodes.length === 0 || tabNodes.some((tabNode) => !runtimeTabIds.has(tabNode.live.tabId))) {
+        continue;
+      }
+
+      const next = mutable();
+      const nextNode = next.nodes[node.id];
+      const nextParent = cloneNodeForHistoryMutation(next, parent.id);
+      if (!isLiveWindowNode(nextNode) || !isLiveWindowNode(nextParent)) {
+        continue;
+      }
+      nextParent.live = { windowId: nextNode.live.windowId };
+      if (nextNode.runtimeProvenance === "commandCreated") {
+        nextParent.runtimeProvenance = "commandCreated";
+        runtimeFacts.recordCommandCreatedRuntimeWindow(nextNode.live.windowId);
+      }
+      for (const tabNode of liveTabNodesInSubtree(next, nextNode.id)) {
+        updateLiveTabRef(next, tabNode.id, tabNode.live.tabId, nextNode.live.windowId);
+      }
+      deleteHistoryReplayTabNode(next, nextNode.id);
+    }
+
+    return collapsed ? repairState(collapsed) : state;
   }
 
   function deleteSupersededHistoryReplayWindows(
@@ -2376,11 +2442,10 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
   function alignKnownRuntimeWindowProvenance(next: OutlineState): void {
     for (const node of liveWindowNodes(next)) {
-      const provenance = runtimeFacts.runtimeProvenanceForRecoveredWindow(node.live.windowId);
+      const provenance = runtimeFacts.runtimeWindowProvenanceMarker(node.live.windowId) ??
+        (node.runtimeProvenance ? undefined : runtimeFacts.runtimeProvenanceForRecoveredWindow(node.live.windowId));
       if (provenance) {
         node.runtimeProvenance = provenance;
-      } else {
-        delete node.runtimeProvenance;
       }
     }
   }
@@ -3018,11 +3083,13 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         if (!fastPath.changed) {
           return false;
         }
+        const fastPathCandidateNodeIds = candidateNodeIdsForPatch(fastPath.update);
         state = fastPath.state;
         replaceCachedState(state);
         runtimeIndex = fastPath.index;
         runtimeFacts.recordAcceptedRuntimeTabScopeUpdates(fastPath.runtimeScopeUpdates);
         await persistKnownRuntimeFastPathUpdate(fastPath.update, state);
+        await flushRuntimeTruthFastPathSaveIfNeeded(state, fastPath.update, fastPathCandidateNodeIds);
         return true;
       }
     }
@@ -3057,6 +3124,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     }
     installStateTransition(current, next, { rebuildRuntimeIndex: true });
     await persistWithBestEffortPatch(current, next, { diffMode: "material" });
+    await flushRuntimeTruthSaveIfNeeded(current, next);
     return state !== current;
   }
 
@@ -3570,6 +3638,150 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     runtimeFacts.rebuildWindowScopes(next);
   }
 
+  function seedRuntimeWindowProvenanceFromCurrentState(windowId: number | undefined): void {
+    if (typeof windowId !== "number") {
+      return;
+    }
+    const current = state;
+    if (!current) {
+      return;
+    }
+    if (runtimeFacts.runtimeWindowProvenanceMarker(windowId) === undefined) {
+      const scope = runtimeFacts.windowScope(windowId);
+      if (scope?.provenance === "saved") {
+        return;
+      }
+    }
+    const windowNodeId = runtimeIndexForState(current).liveWindowNodeIdsByRuntimeId.get(windowId);
+    const windowNode = windowNodeId ? current.nodes[windowNodeId] : undefined;
+    if (isLiveWindowNode(windowNode) && windowNode.runtimeProvenance === "commandCreated") {
+      runtimeFacts.recordCommandCreatedRuntimeWindow(windowId);
+    } else if (isLiveWindowNode(windowNode) && windowNode.runtimeProvenance === "browserCreated") {
+      runtimeFacts.recordBrowserCreatedRuntimeWindow(windowId);
+    }
+  }
+
+  async function flushRuntimeProvenanceSaveIfChanged(
+    previous: OutlineState,
+    next: OutlineState,
+    candidateNodeIds?: readonly NodeId[]
+  ): Promise<void> {
+    if (!runtimeProvenanceChanged(previous, next, candidateNodeIds)) {
+      return;
+    }
+    await flushPendingSaves();
+  }
+
+  async function flushRuntimeTruthSaveIfNeeded(
+    previous: OutlineState,
+    next: OutlineState,
+    candidateNodeIds?: readonly NodeId[]
+  ): Promise<void> {
+    if (
+      !runtimeProvenanceChanged(previous, next, candidateNodeIds) &&
+      !liveRuntimePlacementChanged(previous, next, candidateNodeIds)
+    ) {
+      return;
+    }
+    await flushPendingSaves();
+  }
+
+  async function flushRuntimeTruthFastPathSaveIfNeeded(
+    next: OutlineState,
+    update: TreeStructureUpdate | NodeStateUpdate,
+    candidateNodeIds: readonly NodeId[]
+  ): Promise<void> {
+    if (!runtimeTruthFastPathUpdateNeedsCheckpoint(next, update, candidateNodeIds)) {
+      return;
+    }
+    await flushPendingSaves();
+  }
+
+  async function flushRuntimeTruthSaveIfPresent(next: OutlineState): Promise<void> {
+    if (!Object.values(next.nodes).some(runtimeTruthWindowNeedsCheckpoint)) {
+      return;
+    }
+    await flushPendingSaves();
+  }
+
+  function runtimeTruthFastPathUpdateNeedsCheckpoint(
+    next: OutlineState,
+    update: TreeStructureUpdate | NodeStateUpdate,
+    candidateNodeIds: readonly NodeId[]
+  ): boolean {
+    if (update.type === "nodeStateUpdated") {
+      return update.updatedNodes.some((node) => isLiveWindowNode(node) && runtimeTruthWindowNeedsCheckpoint(node));
+    }
+    return candidateNodeIds.some((nodeId) => {
+      const node = next.nodes[nodeId];
+      if (isLiveWindowNode(node)) {
+        return runtimeTruthWindowNeedsCheckpoint(node);
+      }
+      if (!isLiveTabNode(node)) {
+        return false;
+      }
+      const windowNodeId = runtimeIndexForState(next).liveWindowNodeIdsByRuntimeId.get(node.live.windowId);
+      const windowNode = windowNodeId ? next.nodes[windowNodeId] : undefined;
+      return runtimeTruthWindowNeedsCheckpoint(windowNode);
+    });
+  }
+
+  function runtimeProvenanceChanged(
+    previous: OutlineState,
+    next: OutlineState,
+    candidateNodeIds?: readonly NodeId[]
+  ): boolean {
+    const nodes = candidateNodeIds
+      ? candidateNodeIds.flatMap((nodeId) => {
+          const node = next.nodes[nodeId];
+          return node ? [node] : [];
+        })
+      : Object.values(next.nodes);
+    return nodes.some((node) =>
+      isLiveWindowNode(node) &&
+      previous.nodes[node.id]?.runtimeProvenance !== node.runtimeProvenance &&
+      node.runtimeProvenance !== undefined
+    );
+  }
+
+  function liveRuntimePlacementChanged(
+    previous: OutlineState,
+    next: OutlineState,
+    candidateNodeIds?: readonly NodeId[]
+  ): boolean {
+    const nodes = candidateNodeIds
+      ? candidateNodeIds.flatMap((nodeId) => {
+          const node = next.nodes[nodeId];
+          return node ? [node] : [];
+        })
+      : Object.values(next.nodes);
+    return nodes.some((node) => {
+      const previousNode = previous.nodes[node.id];
+      if (isLiveWindowNode(node)) {
+        return (
+          !isLiveWindowNode(previousNode) ||
+          previousNode.live.windowId !== node.live.windowId
+        ) && runtimeTruthWindowNeedsCheckpoint(node);
+      }
+      if (isLiveTabNode(node)) {
+        const placementChanged = !isLiveTabNode(previousNode) ||
+          previousNode.live.tabId !== node.live.tabId ||
+          previousNode.live.windowId !== node.live.windowId;
+        if (!placementChanged) {
+          return false;
+        }
+        const windowNodeId = runtimeIndexForState(next).liveWindowNodeIdsByRuntimeId.get(node.live.windowId);
+        const windowNode = windowNodeId ? next.nodes[windowNodeId] : undefined;
+        return runtimeTruthWindowNeedsCheckpoint(windowNode);
+      }
+      return false;
+    });
+  }
+
+  function runtimeTruthWindowNeedsCheckpoint(node: OutlineNode | undefined): boolean {
+    return isLiveWindowNode(node) && (node.runtimeProvenance !== undefined || node.restoredFromClosed === true);
+  }
+
   function replaceCachedState(next: OutlineState): void {
     initialTreeSnapshotProjector.clear();
     stateCache.replace(next);
@@ -4068,6 +4280,19 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     pendingSaveBatchStartedAt = undefined;
     pendingSaveMaxDelayMs = undefined;
     pendingSaveSchedule = undefined;
+  }
+
+  function pausePendingSaveTimers(): SaveSchedule | undefined {
+    const pausedSchedule = pendingSaveSchedule;
+    clearSaveTimers();
+    return pausedSchedule;
+  }
+
+  function resumePendingSaveTimers(schedule: SaveSchedule | undefined): void {
+    if (!pendingSaveState && !pendingSaveHistory) {
+      return;
+    }
+    schedulePendingSave(schedule ?? "normal");
   }
 
   function saveScheduleTiming(schedule: SaveSchedule): { quietDelayMs: number; maxDelayMs: number } {

@@ -243,11 +243,16 @@ export class RuntimeReconciler {
       hasRecentClosedWindowSession: boolean;
     }
   ): MissingLiveWindowRemovalDecision {
+    const node = liveWindowNodes(state).find((candidate) => candidate.live.windowId === input.windowId);
+    const scope = ledger.windowScope(input.windowId);
+    if (node?.runtimeProvenance === "commandCreated" || scope?.provenance === "commandCreated") {
+      return "delete-tabs";
+    }
+
     if (input.hasRecentClosedWindowSession) {
       return "close-window";
     }
 
-    const scope = ledger.windowScope(input.windowId);
     if (
       scope?.provenance === "browserCreated" ||
       scope?.provenance === "restored" ||
@@ -256,7 +261,6 @@ export class RuntimeReconciler {
       return "close-window";
     }
 
-    const node = liveWindowNodes(state).find((candidate) => candidate.live.windowId === input.windowId);
     if (!node) {
       return "delete-tabs";
     }

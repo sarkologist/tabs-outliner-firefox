@@ -2,6 +2,7 @@ import type { BackgroundCommand, RuntimeClosePlan } from "./commands.js";
 import {
   RuntimeWindowScopeIndex,
   type RuntimeWindowScope,
+  type RuntimeWindowScopeProvenanceResolverInput,
   type RuntimeWindowScopeSnapshot
 } from "./runtime-window-scope.js";
 import type { NodeId, OutlineNode, OutlineState, RuntimeTab, RuntimeWindow, RuntimeWindowProvenance } from "../model/types.js";
@@ -340,6 +341,10 @@ export class RuntimeFactLedger {
       if (!isLiveTabNode(node)) {
         continue;
       }
+      if (this.isTabIgnoredForRefresh(node.live.tabId)) {
+        this.tabShapeFacts.delete(node.live.tabId);
+        continue;
+      }
       this.tabShapeFacts.set(node.live.tabId, {
         tabId: node.live.tabId,
         windowId: node.live.windowId,
@@ -459,7 +464,10 @@ export class RuntimeFactLedger {
       ...(nodes ? { nodes } : {}),
       windows: scopeWindows,
       browserCreatedWindowIds: this.browserCreatedWindowIds,
-      commandCreatedWindowIds: this.commandCreatedWindowIds
+      commandCreatedWindowIds: this.commandCreatedWindowIds,
+      ignoredTabIds: this.ignoredTabIdsForRefresh(),
+      ignoredWindowIds: this.ignoredWindowIdsForRefresh(),
+      resolveProvenance: (input) => this.resolveRuntimeWindowScopeProvenance(input)
     });
     this.reconcileWindowScopeActiveTabs(state, nodes);
     this.recordInstalledStateShape(state, nodes);
@@ -510,8 +518,8 @@ export class RuntimeFactLedger {
   }
 
   private windowsFromAcceptedShapeFacts(state: OutlineState): RuntimeWindow[] {
-    const liveTabs = liveTabNodes(state);
-    return liveWindowNodes(state).map((windowNode): RuntimeWindow => {
+    const liveTabs = liveTabNodes(state).filter((tabNode) => !this.isTabIgnoredForRefresh(tabNode.live.tabId));
+    return liveWindowNodes(state).filter((windowNode) => !this.isWindowIgnoredForRefresh(windowNode.live.windowId)).map((windowNode): RuntimeWindow => {
       const windowId = windowNode.live.windowId;
       const windowFact = this.windowShapeFacts.get(windowId);
       const tabOrderIndex = new Map((windowFact?.tabOrder ?? []).map((tabId, index) => [tabId, index]));
@@ -599,6 +607,33 @@ export class RuntimeFactLedger {
 
   windowScopeForTab(tabId: number): RuntimeWindowScope | undefined {
     return this.windowScopes.scopeForTab(tabId);
+  }
+
+  resolveRuntimeWindowScopeProvenance(
+    input: RuntimeWindowScopeProvenanceResolverInput
+  ): RuntimeWindowScope["provenance"] {
+    if (this.commandCreatedWindowIds.has(input.runtimeWindowId)) {
+      return "commandCreated";
+    }
+    if (this.browserCreatedWindowIds.has(input.runtimeWindowId)) {
+      return "browserCreated";
+    }
+
+    const node = input.outlineWindowNode;
+    if (isLiveWindowNode(node)) {
+      if (node.runtimeProvenance) {
+        return node.runtimeProvenance;
+      }
+      if (node.restoredFromClosed) {
+        return "restored";
+      }
+      if (node.parentId) {
+        return "commandCreated";
+      }
+      return canonicalRuntimeIdFromNodeId(node.id, "window") === input.runtimeWindowId ? "saved" : "commandCreated";
+    }
+
+    return input.runtimeOnly || input.hasRuntimeWindow ? "browserCreated" : "commandCreated";
   }
 
   windowScopeSnapshots(): RuntimeWindowScopeSnapshot[] {
@@ -721,7 +756,11 @@ export class RuntimeFactLedger {
   }
 
   recordNativeTabCreated(tab: RuntimeTab): RuntimeTabEvidence {
-    if (!this.reconstructedLiveWindowIds.has(tab.windowId) && !this.isWindowIgnoredForRefresh(tab.windowId)) {
+    if (
+      !this.commandCreatedWindowIds.has(tab.windowId) &&
+      !this.reconstructedLiveWindowIds.has(tab.windowId) &&
+      !this.isWindowIgnoredForRefresh(tab.windowId)
+    ) {
       this.browserCreatedWindowIds.add(tab.windowId);
     }
     this.observeLiveTabIfAccepted(tab);
@@ -747,17 +786,30 @@ export class RuntimeFactLedger {
   }
 
   isBrowserCreatedRuntimeWindow(windowId: number): boolean {
+    if (this.commandCreatedWindowIds.has(windowId)) {
+      return false;
+    }
     return this.browserCreatedWindowIds.has(windowId) ||
       this.windowScopes.scopeForWindow(windowId)?.provenance === "browserCreated";
   }
 
-  runtimeProvenanceForRecoveredWindow(windowId: number): RuntimeWindowProvenance | undefined {
-    if (this.isBrowserCreatedRuntimeWindow(windowId)) {
+  runtimeWindowProvenanceMarker(windowId: number): RuntimeWindowProvenance | undefined {
+    if (this.commandCreatedWindowIds.has(windowId)) {
+      return "commandCreated";
+    }
+    if (this.browserCreatedWindowIds.has(windowId)) {
       return "browserCreated";
     }
+    return undefined;
+  }
+
+  runtimeProvenanceForRecoveredWindow(windowId: number): RuntimeWindowProvenance | undefined {
     const scope = this.windowScopes.scopeForWindow(windowId);
     if (this.commandCreatedWindowIds.has(windowId) || scope?.provenance === "commandCreated" || scope?.provenance === "restored") {
       return "commandCreated";
+    }
+    if (this.isBrowserCreatedRuntimeWindow(windowId)) {
+      return "browserCreated";
     }
     return this.reconstructedLiveWindowIds.has(windowId) ? undefined : "browserCreated";
   }
@@ -929,19 +981,28 @@ export class RuntimeFactLedger {
     runtimeWindowId: number,
     outlineWindowNodeId: NodeId | undefined
   ): RuntimeWindowScope["provenance"] {
-    if (this.browserCreatedWindowIds.has(runtimeWindowId)) {
-      return "browserCreated";
-    }
-    if (this.commandCreatedWindowIds.has(runtimeWindowId)) {
-      return "commandCreated";
-    }
     const existing = this.windowScopes.scopeForWindow(runtimeWindowId);
     if (existing) {
       return existing.provenance;
     }
-    return outlineWindowNodeId && canonicalRuntimeIdFromNodeId(outlineWindowNodeId, "window") === runtimeWindowId
-      ? "saved"
-      : "commandCreated";
+    return this.resolveRuntimeWindowScopeProvenance({
+      runtimeWindowId,
+      hasRuntimeWindow: true,
+      runtimeOnly: false,
+      ...(outlineWindowNodeId ? {
+        outlineWindowNode: {
+          id: outlineWindowNodeId,
+          kind: "window",
+          status: "live",
+          childIds: [],
+          title: "Group",
+          collapsed: false,
+          createdAt: 0,
+          updatedAt: 0,
+          live: { windowId: runtimeWindowId }
+        }
+      } : {})
+    });
   }
 
   debugSnapshot(): RuntimeFactLedgerDebugSnapshot {
@@ -1009,12 +1070,15 @@ export class RuntimeFactLedger {
   recordNativeTabAttached(tabId: number, newWindowId: number | undefined): void {
     if (
       typeof newWindowId === "number" &&
+      !this.commandCreatedWindowIds.has(newWindowId) &&
       !this.reconstructedLiveWindowIds.has(newWindowId) &&
       !this.isWindowIgnoredForRefresh(newWindowId)
     ) {
       this.browserCreatedWindowIds.add(newWindowId);
-      this.commandCreatedWindowIds.delete(newWindowId);
       this.observeLiveWindowIfAccepted(newWindowId);
+    }
+    if (typeof newWindowId === "number" && this.browserCreatedWindowIds.has(newWindowId)) {
+      this.commandCreatedWindowIds.delete(newWindowId);
     }
     this.observeLiveTabIdIfAccepted(tabId, newWindowId);
     this.structurallyFreshTabIds.add(tabId);
@@ -1071,7 +1135,11 @@ export class RuntimeFactLedger {
   }
 
   recordNativeWindowBoundsChanged(windowInfo: RuntimeWindow): void {
-    if (!this.reconstructedLiveWindowIds.has(windowInfo.id) && !this.isWindowIgnoredForRefresh(windowInfo.id)) {
+    if (
+      !this.commandCreatedWindowIds.has(windowInfo.id) &&
+      !this.reconstructedLiveWindowIds.has(windowInfo.id) &&
+      !this.isWindowIgnoredForRefresh(windowInfo.id)
+    ) {
       this.browserCreatedWindowIds.add(windowInfo.id);
     }
     this.observeLiveWindowIfAccepted(windowInfo.id);
@@ -1195,8 +1263,8 @@ export class RuntimeFactLedger {
     this.commandRestoredTabIds.delete(tabId);
     this.commandRelocatedTabEchoes.delete(tabId);
     this.structurallyFreshTabIds.delete(tabId);
-    const fact = this.tabShapeFacts.get(tabId);
-    if (fact) {
+    this.tabShapeFacts.delete(tabId);
+    for (const fact of [...this.windowShapeFacts.values()]) {
       this.removeTabFromWindowShapeFact(fact.windowId, tabId);
     }
     this.windowScopes.markTabRemoved(tabId);
@@ -1256,6 +1324,13 @@ export class RuntimeFactLedger {
         this.reconstructedMaxTabId = Math.max(this.reconstructedMaxTabId, node.live.tabId);
       }
       if (isLiveWindowNode(node)) {
+        if (node.runtimeProvenance === "commandCreated") {
+          this.commandCreatedWindowIds.add(node.live.windowId);
+          this.browserCreatedWindowIds.delete(node.live.windowId);
+        } else if (node.runtimeProvenance === "browserCreated") {
+          this.browserCreatedWindowIds.add(node.live.windowId);
+          this.commandCreatedWindowIds.delete(node.live.windowId);
+        }
         this.removedWindowIds.delete(node.live.windowId);
         this.deleteOwnedClosingWindowIds.delete(node.live.windowId);
         this.outlinerClosingWindowIds.delete(node.live.windowId);

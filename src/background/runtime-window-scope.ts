@@ -18,6 +18,17 @@ export type RuntimeWindowScopeSnapshot = Omit<RuntimeWindowScope, "tabNodeIdsByR
   tabNodeIdsByRuntimeId: Array<[number, NodeId]>;
 };
 
+export type RuntimeWindowScopeProvenanceResolverInput = {
+  runtimeWindowId: number;
+  outlineWindowNode?: OutlineNode;
+  hasRuntimeWindow: boolean;
+  runtimeOnly: boolean;
+};
+
+export type RuntimeWindowScopeProvenanceResolver = (
+  input: RuntimeWindowScopeProvenanceResolverInput
+) => RuntimeWindowScopeProvenance;
+
 export class RuntimeWindowScopeIndex {
   private readonly scopes = new Map<number, RuntimeWindowScope>();
   private readonly tabWindowIds = new Map<number, number>();
@@ -133,11 +144,18 @@ export class RuntimeWindowScopeIndex {
     windows?: readonly RuntimeWindow[];
     browserCreatedWindowIds?: ReadonlySet<number>;
     commandCreatedWindowIds?: ReadonlySet<number>;
+    ignoredTabIds?: ReadonlySet<number>;
+    ignoredWindowIds?: ReadonlySet<number>;
+    resolveProvenance?: RuntimeWindowScopeProvenanceResolver;
   }): void {
     this.scopes.clear();
     this.tabWindowIds.clear();
     this.removedTabNodeIdsByRuntimeId.clear();
 
+    const resolveProvenance = input.resolveProvenance ?? ((context: RuntimeWindowScopeProvenanceResolverInput) =>
+      scopeProvenance(context, input.browserCreatedWindowIds, input.commandCreatedWindowIds));
+    const ignoredTabIds = input.ignoredTabIds ?? new Set<number>();
+    const ignoredWindowIds = input.ignoredWindowIds ?? new Set<number>();
     const windowsById = new Map((input.windows ?? []).map((windowInfo) => [windowInfo.id, windowInfo]));
     const hasSnapshot = Boolean(input.windows);
     const nodes = input.nodes ?? Object.values(input.state.nodes);
@@ -146,8 +164,19 @@ export class RuntimeWindowScopeIndex {
     for (const windowNode of liveWindowNodes(nodes)) {
       const runtimeWindowId = windowNode.live.windowId;
       const windowInfo = windowsById.get(runtimeWindowId);
-      const tabNodes = liveTabsByWindowId.get(runtimeWindowId) ?? [];
-      const runtimeTabs = windowInfo?.tabs ?? [];
+      const ignoredWindow = ignoredWindowIds.has(runtimeWindowId);
+      const allTabNodes = liveTabsByWindowId.get(runtimeWindowId) ?? [];
+      for (const tabNode of allTabNodes) {
+        if (ignoredWindow || ignoredTabIds.has(tabNode.live.tabId)) {
+          this.removedTabNodeIdsByRuntimeId.set(tabNode.live.tabId, tabNode.id);
+        }
+      }
+      const tabNodes = ignoredWindow
+        ? []
+        : allTabNodes.filter((node) => !ignoredTabIds.has(node.live.tabId));
+      const runtimeTabs = ignoredWindow
+        ? []
+        : (windowInfo?.tabs ?? []).filter((tab) => !ignoredTabIds.has(tab.id));
       const runtimeTabNodeIds = new Map(tabNodes.map((node) => [node.live.tabId, node.id]));
       const tabOrder = runtimeTabs.length > 0
         ? runtimeTabs
@@ -167,27 +196,37 @@ export class RuntimeWindowScopeIndex {
         tabOrder,
         ...(activeTabId !== undefined ? { activeTabId } : {}),
         ...(windowInfo?.state ? { state: windowInfo.state } : {}),
-        provenance: scopeProvenance(windowNode, runtimeWindowId, input.browserCreatedWindowIds, input.commandCreatedWindowIds),
-        lifecycle: hasSnapshot && !windowsById.has(runtimeWindowId) ? "removed" : "live"
+        provenance: resolveProvenance({
+          runtimeWindowId,
+          outlineWindowNode: windowNode,
+          hasRuntimeWindow: Boolean(windowInfo) && !ignoredWindow,
+          runtimeOnly: false
+        }),
+        lifecycle: ignoredWindow || (hasSnapshot && !windowsById.has(runtimeWindowId)) ? "removed" : "live"
       });
     }
 
     for (const windowInfo of input.windows ?? []) {
-      if (this.scopes.has(windowInfo.id)) {
+      if (this.scopes.has(windowInfo.id) || ignoredWindowIds.has(windowInfo.id)) {
         continue;
       }
       const tabNodeIdsByRuntimeId = new Map<number, NodeId>();
-      for (const tab of windowInfo.tabs ?? []) {
+      for (const tab of (windowInfo.tabs ?? []).filter((candidate) => !ignoredTabIds.has(candidate.id))) {
         this.tabWindowIds.set(tab.id, windowInfo.id);
       }
-      const activeTabId = windowInfo.tabs?.find((tab) => tab.active)?.id;
+      const runtimeTabs = (windowInfo.tabs ?? []).filter((tab) => !ignoredTabIds.has(tab.id));
+      const activeTabId = runtimeTabs.find((tab) => tab.active)?.id;
       this.scopes.set(windowInfo.id, {
         runtimeWindowId: windowInfo.id,
         tabNodeIdsByRuntimeId,
-        tabOrder: [...(windowInfo.tabs ?? [])].sort((left, right) => left.index - right.index).map((tab) => tab.id),
+        tabOrder: [...runtimeTabs].sort((left, right) => left.index - right.index).map((tab) => tab.id),
         ...(activeTabId !== undefined ? { activeTabId } : {}),
         ...(windowInfo.state ? { state: windowInfo.state } : {}),
-        provenance: input.commandCreatedWindowIds?.has(windowInfo.id) ? "commandCreated" : "browserCreated",
+        provenance: resolveProvenance({
+          runtimeWindowId: windowInfo.id,
+          hasRuntimeWindow: true,
+          runtimeOnly: true
+        }),
         lifecycle: "live"
       });
     }
@@ -280,24 +319,30 @@ type LiveTabNode = OutlineNode & { live: { tabId: number; windowId: number } };
 type LiveWindowNode = OutlineNode & { live: { windowId: number } };
 
 function scopeProvenance(
-  node: LiveWindowNode,
-  runtimeWindowId: number,
+  input: RuntimeWindowScopeProvenanceResolverInput,
   browserCreatedWindowIds: ReadonlySet<number> | undefined,
   commandCreatedWindowIds: ReadonlySet<number> | undefined
 ): RuntimeWindowScopeProvenance {
-  if (node.restoredFromClosed) {
-    return "restored";
+  const node = input.outlineWindowNode;
+  if (commandCreatedWindowIds?.has(input.runtimeWindowId)) {
+    return "commandCreated";
   }
-  if (browserCreatedWindowIds?.has(runtimeWindowId)) {
+  if (browserCreatedWindowIds?.has(input.runtimeWindowId)) {
     return "browserCreated";
   }
-  if (commandCreatedWindowIds?.has(runtimeWindowId)) {
-    return "commandCreated";
+  if (!node) {
+    return input.runtimeOnly ? "browserCreated" : "commandCreated";
   }
   if (node.runtimeProvenance) {
     return node.runtimeProvenance;
   }
-  return canonicalRuntimeIdFromNodeId(node.id, "window") === runtimeWindowId ? "saved" : "commandCreated";
+  if (node.restoredFromClosed) {
+    return "restored";
+  }
+  if (node.parentId) {
+    return "commandCreated";
+  }
+  return canonicalRuntimeIdFromNodeId(node.id, "window") === input.runtimeWindowId ? "saved" : "commandCreated";
 }
 
 function liveTabNodesByWindowId(nodes: readonly OutlineNode[]): Map<number, LiveTabNode[]> {

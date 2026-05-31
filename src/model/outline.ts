@@ -325,7 +325,9 @@ export function reconcileWithWindows(
       .filter((node) => isNodeLiveWindow(node) && !openWindowIds.has(node.live.windowId))
       .map((node) => node.id);
     for (const nodeId of missingWindowNodeIds) {
-      if (next.nodes[nodeId]) {
+      const node = next.nodes[nodeId];
+      if (node && isNodeLiveWindow(node)) {
+        promoteForeignLiveWindowsAfterClosingWindow(next, next, nodeId, node.live.windowId);
         markClosedSubtree(next, nodeId, { now: clock.now });
       }
     }

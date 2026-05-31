@@ -24,18 +24,19 @@ Default hunt bounds:
 
 ## Last Domain Run
 
-- Completed: 2026-05-31T12:35:03Z
-- Strategy: Runtime oracle hunt Block 4 with neutral `oc-b4-*` escape traces, focused on pure browser-event side-effect silence, short close persistence, history side-effect replay, and focus-rejection metadata/order.
-- Trace ids: current discovery corpus in `src/background/controller.test.ts` and `scripts/hunt-runtime-traces.mjs`
-- Corpus size after latest corpus edit: 872 discovery traces, 251 regression traces
-- Distinct findings recorded: none new in Block 4; RT-222 through RT-242 remain open.
-- Stop condition: reached after three clean active blocks following the Block 1 reset.
+- Completed: 2026-05-31T14:13:27Z
+- Strategy: Runtime truth cleanup targeted replay for RT-222 through RT-242, followed by final regression/discovery safety runs.
+- Trace ids: RT-222 through RT-242 promoted from discovery to regression in `scripts/hunt-runtime-traces.mjs`; discovery smoke also froze RT-243 through RT-245 without fixing.
+- Corpus size after latest corpus edit: 851 discovery traces, 272 regression traces
+- Distinct findings recorded: none new in the targeted RT replay or 272-trace regression run; final 851-trace discovery smoke found 3 new out-of-scope signatures, frozen as RT-243 through RT-245.
+- Stop condition: targeted RT replay and regression safety passed; discovery smoke completed but was not clean because RT-243 through RT-245 were newly recorded.
 - Regression preflight replay before the hunt: 251 regression traces, 0 failures, 0 new findings at 2026-05-31T11:53:42Z.
-- Status: open runtime findings from the oracle hunt, not fixed.
+- Status: runtime truth cleanup fix pass in verification.
 
 ## Finding Index
 
-- Open recorded findings: RT-222 through RT-242 from the runtime oracle hunt
+- Open post-cleanup discovery findings: RT-243 through RT-245
+- Fixed runtime truth cleanup findings: RT-222 through RT-242
 - Fixed subagent-orchestrated sweep finding: RT-219; duplicate evidence RT-220 and RT-221 cover the same root fix
 - Fixed cross-axis findings: RT-217 through RT-218
 - Fixed/triaged fullscreen window-state findings: RT-214 through RT-216
@@ -59,6 +60,10 @@ Default hunt bounds:
 
 ## Current Fixed Hunt Analysis
 
+- RT-222 through RT-242 were exposed by the 2026-05-31 runtime oracle hunt after truth-cache and side-effect oracle expansion. The failures split into two runtime truth ownership classes: no-journal/browser-created vs command/restored provenance loss, and native-deleted tab resurrection through stale installed-state facts/scopes.
+- The cleanup keeps the existing architecture but makes authority explicit. Durable `runtimeProvenance` owns long-lived window origin, `RuntimeFactLedger` owns short-lived command/browser evidence, current snapshots own browser shape, and removal tombstones dominate installed-state reconstruction. Scope rebuilds now call one ledger provenance resolver and filter ignored runtime ids.
+- The fix also checkpoints runtime truth when accepted runtime events create or move live runtime resources, seeds startup reconciliation from durable provenance before reconciling stale storage, preserves foreign live child windows when a missing parent window is closed by reconciliation, and prevents stale saves/session-only echoes from resurrecting deleted native tabs.
+- Promotion evidence: `pnpm exec vitest run src/background/runtime-reconciler.test.ts --reporter=dot`, explicit RT-222 through RT-242 replay, `pnpm test`, `pnpm build`, `node --check scripts/hunt-runtime-traces.mjs`, and 272-trace regression replay passed on 2026-05-31. The final discovery smoke completed and froze RT-243 through RT-245 as separate out-of-scope findings.
 - Mixed-provenance window cohabitation sweep: added 39 neutral `yh-*` discovery traces covering saved/restored/browser-created/command-created tabs sharing, leaving, closing, and outliving the same runtime windows. Rung 1 shifted into command/restored scope handoff, close/delete journal recovery, window-state transfer, and no-journal restart freshness. Rung 2 combined cohabitation with history replay, partial snapshots, focus in another window, fullscreen/window state, and two mixed-window close/skew cases. Three full corpus runs found no new distinct signatures.
 - RT-219 shows a history/journal boundary after two browser-authored drifts: a Tabs Outliner group command is undone, browser-created/native-moved tabs have already changed the runtime shape, then `outlinerRedoThenAbruptRestart` loses live tab `2` from the outline while the browser still has it. The bug is not a stale-metadata/order issue; it is a live-resource preservation failure across history replay plus abrupt restart recovery after browser-authored movement.
 - RT-220 and RT-221 are duplicate evidence for RT-219, not separate root causes. They vary the evidence order and destination shape (`manualRefresh` before the redo crash, and saved tab merged into an external window), but hit the same invariant at the same command boundary.
@@ -6366,7 +6371,7 @@ action: {"type":"restartBackgroundAbrupt"} -->
 - First seen: 2026-05-31T11:56:54.062Z
 - Trace id: `nh-native-detach-abrupt-session-refresh`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=nh-native-detach-abrupt-session-refresh pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in runtime truth cleanup and promoted to regression.
 
 ```text
 domain trace nh-native-detach-abrupt-session-refresh: native detach abrupt session refresh
@@ -6391,7 +6396,7 @@ action: {"type":"restartBackgroundAbrupt"} -->
 - First seen: 2026-05-31T11:57:11.903Z
 - Trace id: `nh-native-open-many-abrupt-refresh`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=nh-native-open-many-abrupt-refresh pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in runtime truth cleanup and promoted to regression.
 
 ```text
 domain trace nh-native-open-many-abrupt-refresh: native open many abrupt refresh
@@ -6418,7 +6423,7 @@ action: {"type":"restartBackgroundAbrupt"} -->
 - First seen: 2026-05-31T11:57:56.003Z
 - Trace id: `fh-fullscreen-abrupt-multitab-session-close`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=fh-fullscreen-abrupt-multitab-session-close pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in runtime truth cleanup and promoted to regression.
 
 ```text
 domain trace fh-fullscreen-abrupt-multitab-session-close: fullscreen abrupt multitab session close
@@ -6445,7 +6450,7 @@ action: {"type":"restartBackgroundAbrupt"} -->
 - First seen: 2026-05-31T11:58:23.846Z
 - Trace id: `xh-abrupt-native-move-no-journal`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=xh-abrupt-native-move-no-journal pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in runtime truth cleanup and promoted to regression.
 
 ```text
 domain trace xh-abrupt-native-move-no-journal: abrupt native move no journal
@@ -6470,7 +6475,7 @@ action: {"type":"restartBackgroundAbrupt"} -->
 - First seen: 2026-05-31T11:58:25.318Z
 - Trace id: `xh-abrupt-native-open-no-journal`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=xh-abrupt-native-open-no-journal pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in runtime truth cleanup and promoted to regression.
 
 ```text
 domain trace xh-abrupt-native-open-no-journal: abrupt native open no journal
@@ -6497,7 +6502,7 @@ action: {"type":"restartBackgroundAbrupt"} -->
 - First seen: 2026-05-31T11:58:26.817Z
 - Trace id: `xh-abrupt-native-close-no-journal`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=xh-abrupt-native-close-no-journal pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in runtime truth cleanup and promoted to regression.
 
 ```text
 domain trace xh-abrupt-native-close-no-journal: abrupt native close no journal
@@ -6522,7 +6527,7 @@ action: {"type":"restartBackgroundAbrupt"} -->
 - First seen: 2026-05-31T11:58:28.279Z
 - Trace id: `xh-abrupt-shape-update-no-journal`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=xh-abrupt-shape-update-no-journal pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in runtime truth cleanup and promoted to regression.
 
 ```text
 domain trace xh-abrupt-shape-update-no-journal: abrupt shape update no journal
@@ -6551,7 +6556,7 @@ action: {"type":"restartBackgroundAbrupt"} -->
 - First seen: 2026-05-31T11:58:44.309Z
 - Trace id: `xh-rung2-browser-opener-restart-metadata`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=xh-rung2-browser-opener-restart-metadata pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in runtime truth cleanup and promoted to regression.
 
 ```text
 domain trace xh-rung2-browser-opener-restart-metadata: rung2 browser opener restart metadata
@@ -6578,7 +6583,7 @@ action: {"type":"restartBackgroundAbrupt"} -->
 - First seen: 2026-05-31T11:59:25.485Z
 - Trace id: `qh-restart-native-open-partial-complete`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=qh-restart-native-open-partial-complete pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in runtime truth cleanup and promoted to regression.
 
 ```text
 domain trace qh-restart-native-open-partial-complete: restart native open partial complete
@@ -6605,7 +6610,7 @@ action: {"type":"restartBackgroundAbrupt"} -->
 - First seen: 2026-05-31T11:59:29.671Z
 - Trace id: `qh-restart-shape-update-partial-complete`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=qh-restart-shape-update-partial-complete pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in runtime truth cleanup and promoted to regression.
 
 ```text
 domain trace qh-restart-shape-update-partial-complete: restart shape update partial complete
@@ -6634,7 +6639,7 @@ action: {"type":"restartBackgroundAbrupt"} -->
 - First seen: 2026-05-31T11:59:42.135Z
 - Trace id: `qh-rung1-restart-event-local-before-complete`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=qh-rung1-restart-event-local-before-complete pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in runtime truth cleanup and promoted to regression.
 
 ```text
 domain trace qh-rung1-restart-event-local-before-complete: rung1 restart event local before complete
@@ -6661,7 +6666,7 @@ action: {"type":"restartBackgroundAbrupt"} -->
 - First seen: 2026-05-31T12:00:12.697Z
 - Trace id: `qh-escape-abrupt-two-browser-windows-skew`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=qh-escape-abrupt-two-browser-windows-skew pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in runtime truth cleanup and promoted to regression.
 
 ```text
 domain trace qh-escape-abrupt-two-browser-windows-skew: escape abrupt two browser windows skew
@@ -6690,7 +6695,7 @@ action: {"type":"nativeCloseTab","tab":{"capture":"ra-restored-fullscreen-tabs"}
 - First seen: 2026-05-31T12:00:32.932Z
 - Trace id: `ra-restored-fullscreen-metadata-session-close`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=ra-restored-fullscreen-metadata-session-close pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in runtime truth cleanup and promoted to regression.
 
 ```text
 domain trace ra-restored-fullscreen-metadata-session-close: real-shape restored fullscreen metadata session close
@@ -6721,7 +6726,7 @@ action: {"type":"restartBackgroundAbrupt"} -->
 - First seen: 2026-05-31T12:01:19.722Z
 - Trace id: `se-shared-command-window-no-journal-detach`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=se-shared-command-window-no-journal-detach pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in runtime truth cleanup and promoted to regression.
 
 ```text
 domain trace se-shared-command-window-no-journal-detach: subagent high temp shared command window no journal detach
@@ -6752,7 +6757,7 @@ action: {"type":"restartBackgroundAbrupt"} -->
 - First seen: 2026-05-31T12:01:26.382Z
 - Trace id: `se-browser-created-scope-generation-no-journal-stale-metadata`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=se-browser-created-scope-generation-no-journal-stale-metadata pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in runtime truth cleanup and promoted to regression.
 
 ```text
 domain trace se-browser-created-scope-generation-no-journal-stale-metadata: subagent high temp browser-created scope generation no journal stale metadata
@@ -6783,7 +6788,7 @@ action: {"type":"restartBackgroundAbrupt"} -->
 - First seen: 2026-05-31T12:01:49.635Z
 - Trace id: `yh-rung1-no-journal-transfer-abrupt-freshness`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=yh-rung1-no-journal-transfer-abrupt-freshness pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in runtime truth cleanup and promoted to regression.
 
 ```text
 domain trace yh-rung1-no-journal-transfer-abrupt-freshness: mixed provenance no journal transfer abrupt freshness
@@ -6812,7 +6817,7 @@ action: {"type":"restartBackgroundAbrupt"} -->
 - First seen: 2026-05-31T12:02:12.413Z
 - Trace id: `yh-proper-b1-browser-fullscreen-saved-restart`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=yh-proper-b1-browser-fullscreen-saved-restart pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in runtime truth cleanup and promoted to regression.
 
 ```text
 domain trace yh-proper-b1-browser-fullscreen-saved-restart: proper block1 browser fullscreen saved restart
@@ -6841,7 +6846,7 @@ action: {"type":"outlinerUndoThenAbruptRestart"} -->
 - First seen: 2026-05-31T12:02:26.914Z
 - Trace id: `yh-proper-b3-history-command-browser-abrupt-partial`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=yh-proper-b3-history-command-browser-abrupt-partial pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in runtime truth cleanup and promoted to regression.
 
 ```text
 domain trace yh-proper-b3-history-command-browser-abrupt-partial: proper block3 history command browser abrupt partial
@@ -6870,7 +6875,7 @@ action: {"type":"outlinerDeleteNodeThenAbruptRestart","node":{"tab":{"tabId":2}}
 - First seen: 2026-05-31T12:02:35.101Z
 - Trace id: `yh-proper-b3-race-delete-journal-session-partial`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=yh-proper-b3-race-delete-journal-session-partial pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in runtime truth cleanup and promoted to regression.
 
 ```text
 domain trace yh-proper-b3-race-delete-journal-session-partial: proper block3 race delete journal session partial
@@ -6895,7 +6900,7 @@ action: {"type":"nativeCloseTab","tab":{"capture":"sa-restored-detach-owner-tabs
 - First seen: 2026-05-31T12:02:55.153Z
 - Trace id: `sa-restored-opener-child-detach-owner-session`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=sa-restored-opener-child-detach-owner-session pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in runtime truth cleanup and promoted to regression.
 
 ```text
 domain trace sa-restored-opener-child-detach-owner-session: subagent restored opener child detach owner session
@@ -6928,7 +6933,7 @@ action: {"type":"restartBackgroundAbrupt"} -->
 - First seen: 2026-05-31T12:03:19.923Z
 - Trace id: `sk-b3-redo-restore-reject-browser-opener`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=sk-b3-redo-restore-reject-browser-opener pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed in runtime truth cleanup and promoted to regression.
 
 ```text
 domain trace sk-b3-redo-restore-reject-browser-opener: soak complement block3 redo restore reject browser opener
@@ -6964,3 +6969,58 @@ Recent side effects: []
 <!-- hunt-corpus-run: {"at":"2026-05-31T12:35:03.296Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","browser-authored","browserCreated","bug-rich","calibration","closed-subtree","command-rejection","commandCreated","complete-refresh","created-event","cross-axis","delayed-event","delete","delete-rejection","event-order","focus","fresh-event","fullscreen","group","history","history-boundary","journal","manual-refresh","metadata","mixed-provenance","multi-tab","multi-window","native-close","native-move","native-open","nested","nested-window","opener","oracle-hunt","outliner-close","paired-echo","partial-close","partial-snapshot","persistence","post-recovery","race","real-user","reconciliation","redo","relocation","reparenting","restart","restore","restored","restored-scope","runtime-order","runtimeMetadata","saved","scope-routing","scope-shape","session","shape-fact","side-effects","snapshot-confidence","soak-complement","stale-event","stale-query","startup-adjacent","subagent","tombstone","transaction-boundary","undo-redo","updated-event","window-scope","window-state"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"oc-b4-focus-reject-metadata-order","runs":872,"processRuns":304,"batchSize":20,"batchFailures":13,"completedCorpus":true,"failures":21,"duplicateFailures":21,"newFindings":0} -->
 
 <!-- hunt-corpus-run: {"at":"2026-05-31T12:38:14.533Z","mode":"agent-corpus-run","profile":"regression","coverageTags":["activation","breadth","browserCreated","command-rejection","commandCreated","complete-refresh","created-event","cross-axis","delayed-event","delete","delete-rejection","event-order","focus","fresh-event","fullscreen","history","history-boundary","journal","known-finding","manual-refresh","metadata","multi-tab","multi-window","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","reconciliation","relocation","restart","restore","restored","restored-scope","runtime-order","saved","session","stale-event","stale-query","subagent","tombstone","transaction-boundary","undo-redo","updated-event","window-scope","window-state"],"firstTraceId":"rt-active-race","lastTraceId":"uc-redo-journal-dual-drift-saved-tab-into-external","runs":251,"processRuns":6,"batchSize":50,"batchFailures":0,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-05-31T14:10:55.024Z","mode":"agent-corpus-run","profile":"regression","coverageTags":["activation","breadth","browser-authored","browserCreated","command-rejection","commandCreated","complete-refresh","created-event","cross-axis","delayed-event","delete","delete-rejection","event-order","focus","fresh-event","fullscreen","history","history-boundary","journal","known-finding","manual-refresh","metadata","mixed-provenance","multi-tab","multi-window","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","real-user","reconciliation","redo","relocation","restart","restore","restored","restored-scope","runtime-order","saved","scope-routing","session","snapshot-confidence","soak-complement","stale-event","stale-query","subagent","tombstone","transaction-boundary","undo-redo","updated-event","window-scope","window-state"],"firstTraceId":"rt-active-race","lastTraceId":"sk-b3-redo-restore-reject-browser-opener","runs":272,"processRuns":6,"batchSize":50,"batchFailures":0,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
+
+### RT-243 runtime fact command/restored window 22 has provenance browserCreated
+<!-- signature: runtime fact command/restored window <id> has provenance browserCreated
+domain trace: oh-external-closed-restore-reject-restart-stale
+action: {"type":"restartBackground"} -->
+
+- First seen: 2026-05-31T14:11:52.592Z during runtime truth cleanup discovery smoke.
+- Trace id: `oh-external-closed-restore-reject-restart-stale`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=oh-external-closed-restore-reject-restart-stale pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace oh-external-closed-restore-reject-restart-stale: external closed restore reject restart stale
+action 1: native open external window
+action 2: native close window with tabsRemovedOnly evidence
+action 3: outliner restore node with rejecting create side effect
+action 4: restartBackground
+failure: runtime fact command/restored window 22 has provenance browserCreated
+```
+
+### RT-244 runtime fact tab order matches truth window 22
+<!-- signature: runtime fact tab order matches truth window <id>
+domain trace: sb-restored-fullscreen-external-delete-history
+action: {"type":"manualRefreshWithReorderedQuery","window":{"capture":"sb-restored-fullscreen-window"},"order":"reverse"} -->
+
+- First seen: 2026-05-31T14:12:27.348Z during runtime truth cleanup discovery smoke.
+- Trace id: `sb-restored-fullscreen-external-delete-history`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=sb-restored-fullscreen-external-delete-history pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace sb-restored-fullscreen-external-delete-history: subagent scope restored fullscreen external delete history
+action 8: manualRefreshWithReorderedQuery for restored fullscreen window
+failure: runtime fact tab order for window 22 was [102,101] while truth order was [101,102]
+```
+
+### RT-245 runtime fact tab order matches truth window 22
+<!-- signature: runtime fact tab order matches truth window <id>
+domain trace: sk-b3-undo-abrupt-restored-browser-swap
+action: {"type":"outlinerUndoThenAbruptRestart"} -->
+
+- First seen: 2026-05-31T14:13:18.059Z during runtime truth cleanup discovery smoke.
+- Trace id: `sk-b3-undo-abrupt-restored-browser-swap`
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=sk-b3-undo-abrupt-restored-browser-swap pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Status: documented, not fixed.
+
+```text
+domain trace sk-b3-undo-abrupt-restored-browser-swap: soak complement block3 undo abrupt restored browser swap
+action 8: outlinerUndoThenAbruptRestart after restored/browser-created tab swap
+failure: runtime fact tab order for browser-created window 22 was [102,3] while truth order was [3,102]
+```
+
+<!-- hunt-corpus-run: {"at":"2026-05-31T14:13:27.777Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","browserCreated","bug-rich","calibration","closed-subtree","command-rejection","commandCreated","complete-refresh","created-event","cross-axis","delayed-event","delete","delete-rejection","event-order","focus","fresh-event","fullscreen","group","history","history-boundary","journal","manual-refresh","metadata","mixed-provenance","multi-tab","multi-window","native-close","native-move","native-open","nested","nested-window","opener","oracle-hunt","outliner-close","paired-echo","partial-close","partial-snapshot","persistence","post-recovery","race","real-user","reconciliation","redo","relocation","reparenting","restart","restore","restored","restored-scope","runtime-order","runtimeMetadata","saved","scope-routing","scope-shape","session","shape-fact","side-effects","snapshot-confidence","soak-complement","stale-event","stale-query","startup-adjacent","subagent","tombstone","transaction-boundary","undo-redo","updated-event","window-scope","window-state"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"oc-b4-focus-reject-metadata-order","runs":851,"processRuns":103,"batchSize":20,"batchFailures":3,"completedCorpus":true,"failures":3,"duplicateFailures":0,"newFindings":3} -->
