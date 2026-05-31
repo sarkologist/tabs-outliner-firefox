@@ -19046,6 +19046,67 @@ const RUNTIME_DOMAIN_DISCOVERY_TRACES: RuntimeDomainTrace[] = [
       { type: "staleLiveUpdatedEvent", staleTab: { capture: "so-b2-session-guest-old" }, withStaleQuery: true },
       { type: "manualRefresh" }
     ]
+  },
+  {
+    id: "so-b3-abrupt-restore-delete-redo-scope-order",
+    title: "scope order block3 abrupt restore delete redo scope order",
+    notes: "Scope-order block 3: restored-window materialization, browser-created cohabitation, recovered delete, undo crash replay, redo, reordered query, and stale echo compete with live scope order.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["scope-order-hunt", "restored", "browserCreated", "delete-rejection", "history", "restart", "native-move", "stale-event", "stale-query", "runtime-scope-order", "side-effects", "metadata"],
+    assertions: ["runtimeScopeOrder", "runtimeSideEffects", "runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "so-b3-abrupt-restored-tabs", captureRestoredWindows: "so-b3-abrupt-restored-window" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "SO B3 abrupt external A" }, { title: "SO B3 abrupt external B", active: true }], captureWindow: "so-b3-abrupt-external-window", captureTabs: "so-b3-abrupt-external-tabs" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "so-b3-abrupt-external-tabs" }, window: { capture: "so-b3-abrupt-restored-window" }, index: 0, active: true, captureStaleTabs: "so-b3-abrupt-external-old" },
+      { type: "outlinerDeleteNodeRejectingClose", node: { tab: { capture: "so-b3-abrupt-restored-tabs" } } },
+      { type: "outlinerUndoThenAbruptRestart" },
+      { type: "outlinerRedo" },
+      { type: "manualRefreshWithReorderedQuery", window: { capture: "so-b3-abrupt-restored-window" }, order: "reverse" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "so-b3-abrupt-external-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "so-b3-three-provenance-scope-order",
+    title: "scope order block3 three provenance scope order",
+    notes: "Scope-order block 3: saved, restored, browser-created, and command-created scopes cohabit before partial snapshot, abrupt redo replay, reordered evidence, and stale command echo.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["scope-order-hunt", "saved", "restored", "browserCreated", "commandCreated", "mixed-provenance", "history", "partial-snapshot", "restart", "native-move", "stale-event", "runtime-scope-order", "side-effects", "metadata"],
+    assertions: ["runtimeScopeOrder", "runtimeSideEffects", "runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "so-b3-provenance-restored-tabs", captureRestoredWindows: "so-b3-provenance-restored-window" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "SO B3 provenance browser A" }, { title: "SO B3 provenance browser B", active: true }], captureWindow: "so-b3-provenance-browser-window", captureTabs: "so-b3-provenance-browser-tabs" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "so-b3-provenance-command-old" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "so-b3-provenance-browser-tabs" }, window: { role: "lastOpenedWindow" }, index: 0, active: false, captureStaleTabs: "so-b3-provenance-browser-old" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "so-b3-provenance-restored-tabs" }, window: { role: "lastOpenedWindow" }, index: 1, active: true, captureStaleTabs: "so-b3-provenance-restored-old" },
+      { type: "outlinerUndo" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { capture: "so-b3-provenance-browser-window" } },
+      { type: "outlinerRedoThenAbruptRestart" },
+      { type: "manualRefreshWithReorderedQuery", window: { role: "lastOpenedWindow" }, order: "rotateRight" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "so-b3-provenance-command-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "so-b3-short-final-close-persistence-scope-order",
+    title: "scope order block3 short final close persistence scope order",
+    notes: "Scope-order block 3: a short command-history scope-order trace ends with an outliner window close so closed-subtree persistence is asserted only after the final expected close.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["scope-order-hunt", "commandCreated", "history", "native-move", "outliner-close", "closed-subtree", "persistence", "runtime-scope-order", "side-effects"],
+    assertions: ["runtimeScopeOrder", "runtimeSideEffects", "closedSubtreePersistence"],
+    actions: [
+      { type: "nativeMoveTabToNewWindow", tab: { tabId: 2 }, active: true, captureWindow: "so-b3-close-window", captureStaleTabs: "so-b3-close-source-old" },
+      { type: "openTab", window: { capture: "so-b3-close-window" }, active: false, title: "SO B3 close sibling", url: "https://so.example/b3-close-sibling", captureTab: "so-b3-close-sibling" },
+      { type: "outlinerGroupTab", tab: { role: "lastMovedTab" }, captureStaleTabs: "so-b3-close-group-old" },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedo" },
+      { type: "outlinerCloseWindow", window: { capture: "so-b3-close-window" } }
+    ]
   }
 ];
 
