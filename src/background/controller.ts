@@ -3324,6 +3324,34 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       return [];
     }
 
+    const windowsById = new Map(snapshotWindows.map((windowInfo) => [windowInfo.id, windowInfo]));
+    const conflictWindowIds: number[] = [];
+    for (const windowId of liveWindowIds) {
+      const windowInfo = windowsById.get(windowId);
+      if (!windowInfo) {
+        return [];
+      }
+      const snapshotOrder = runtimeWindowTabOrder(windowInfo)
+        .filter((tabId) => !runtimeFacts.isTabIgnoredForRefresh(tabId));
+      const scope = runtimeFacts.windowScope(windowId);
+      if (!scope || scope.lifecycle !== "live") {
+        continue;
+      }
+      const snapshotTabIds = new Set(snapshotOrder);
+      const scopeOrder = scope.tabOrder.filter((tabId) =>
+        snapshotTabIds.has(tabId) && !runtimeFacts.isTabIgnoredForRefresh(tabId)
+      );
+      if (!sameNumberSet(scopeOrder, snapshotOrder)) {
+        continue;
+      }
+      if (!sameNumberList(scopeOrder, snapshotOrder)) {
+        conflictWindowIds.push(windowId);
+      }
+    }
+    if (conflictWindowIds.length === 0) {
+      return [];
+    }
+
     const liveTabIdsByWindowId = new Map<number, number[]>();
     for (const tabNode of liveTabNodes(current)) {
       if (
@@ -3337,8 +3365,6 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       liveTabIdsByWindowId.set(tabNode.live.windowId, tabIds);
     }
 
-    const windowsById = new Map(snapshotWindows.map((windowInfo) => [windowInfo.id, windowInfo]));
-    const conflictWindowIds: number[] = [];
     for (const windowId of liveWindowIds) {
       const windowInfo = windowsById.get(windowId);
       if (!windowInfo) {
@@ -3349,21 +3375,6 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       const liveTabIds = liveTabIdsByWindowId.get(windowId) ?? [];
       if (!sameNumberSet(snapshotOrder, liveTabIds)) {
         return [];
-      }
-
-      const liveTabIdSet = new Set(liveTabIds);
-      const scope = runtimeFacts.windowScope(windowId);
-      if (!scope || scope.lifecycle !== "live") {
-        continue;
-      }
-      const scopeOrder = scope.tabOrder.filter((tabId) =>
-        liveTabIdSet.has(tabId) && !runtimeFacts.isTabIgnoredForRefresh(tabId)
-      );
-      if (!sameNumberSet(scopeOrder, snapshotOrder)) {
-        continue;
-      }
-      if (!sameNumberList(scopeOrder, snapshotOrder)) {
-        conflictWindowIds.push(windowId);
       }
     }
 
