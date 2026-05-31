@@ -18927,6 +18927,66 @@ const RUNTIME_DOMAIN_DISCOVERY_TRACES: RuntimeDomainTrace[] = [
       { type: "staleLiveCreatedEvent", staleTab: { capture: "hs-b3-state-browser-old" }, withStaleQuery: true },
       { type: "manualRefresh" }
     ]
+  },
+  {
+    id: "so-b1-recovered-delete-nested-scope-order",
+    title: "scope order block1 recovered delete nested scope order",
+    notes: "Scope-order block 1: command nesting, recovered delete, undo, stale old-window echo, and reordered query exercise ledger scope order where outline preorder is intentionally not the tab strip.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["scope-order-hunt", "commandCreated", "delete-rejection", "history", "native-move", "nested", "stale-event", "stale-query", "runtime-scope-order", "side-effects", "metadata"],
+    assertions: ["runtimeScopeOrder", "runtimeSideEffects", "runtimeMetadata"],
+    actions: [
+      { type: "nativeMoveTabToNewWindow", tab: { tabId: 2 }, active: true, captureWindow: "so-b1-delete-window", captureStaleTabs: "so-b1-delete-source-old" },
+      { type: "openTab", window: { capture: "so-b1-delete-window" }, active: false, title: "SO B1 delete sibling", url: "https://so.example/b1-delete-sibling", captureTab: "so-b1-delete-sibling" },
+      { type: "outlinerGroupTab", tab: { role: "lastMovedTab" }, captureStaleTabs: "so-b1-delete-group-old" },
+      { type: "outlinerUndo" },
+      { type: "outlinerDeleteNodeRejectingClose", node: { tab: { role: "lastMovedTab" } } },
+      { type: "outlinerUndo" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "so-b1-delete-group-old" }, withStaleQuery: true },
+      { type: "manualRefreshWithReorderedQuery", window: { capture: "so-b1-delete-window" }, order: "reverse" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "so-b1-restore-replay-promoted-child-scope-order",
+    title: "scope order block1 restore replay promoted child scope order",
+    notes: "Scope-order block 1: restored-window recovery gains a browser-created child, command history replays nested shape, then browser reorder and stale created evidence test live scope order.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["scope-order-hunt", "restored", "browserCreated", "restore", "command-rejection", "history", "native-move", "stale-event", "stale-query", "runtime-scope-order", "side-effects", "metadata"],
+    assertions: ["runtimeScopeOrder", "runtimeSideEffects", "runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeRejectingCreate", node: { nodeId: "window:20" }, captureRestoredTabs: "so-b1-restore-tabs", captureRestoredWindows: "so-b1-restore-window" },
+      { type: "openTab", window: { capture: "so-b1-restore-window" }, active: false, title: "SO B1 restored child", url: "https://so.example/b1-restored-child", captureTab: "so-b1-restore-child" },
+      { type: "outlinerGroupTab", tab: { capture: "so-b1-restore-child" }, captureStaleTabs: "so-b1-restore-group-old" },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedo" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "so-b1-restore-child" }, window: { capture: "so-b1-restore-window" }, index: 0, active: true, captureStaleTabs: "so-b1-restore-child-old" },
+      { type: "manualRefreshWithReorderedQuery", window: { capture: "so-b1-restore-window" }, order: "rotateLeft" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "so-b1-restore-group-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "so-b1-command-destination-undo-redo-scope-order",
+    title: "scope order block1 command destination undo redo scope order",
+    notes: "Scope-order block 1: command-created destination absorbs a browser-created tab at a non-outline strip index, then undo/redo and stale command echo compete with ledger scope order.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["scope-order-hunt", "commandCreated", "browserCreated", "history", "native-move", "stale-event", "stale-query", "runtime-scope-order", "side-effects", "metadata"],
+    assertions: ["runtimeScopeOrder", "runtimeSideEffects", "runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "SO B1 command guest" }, { title: "SO B1 command survivor", active: true }], captureWindow: "so-b1-command-source", captureTabs: "so-b1-command-tabs" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "so-b1-command-owner-old" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "so-b1-command-tabs" }, window: { role: "lastOpenedWindow" }, index: 0, active: false, captureStaleTabs: "so-b1-command-guest-old" },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedo" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "so-b1-command-owner-old" }, withStaleQuery: true },
+      { type: "manualRefreshWithReorderedQuery", window: { role: "lastOpenedWindow" }, order: "reverse" },
+      { type: "manualRefresh" }
+    ]
   }
 ];
 
