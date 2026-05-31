@@ -12,6 +12,7 @@ import {
   HISTORY_KEY,
   STATE_KEY,
   STATE_V3_MANIFEST_KEY,
+  loadState,
   loadStateV2,
   outlineStateV2Items,
   outlineStateV3Changes
@@ -188,6 +189,31 @@ function isLifecycleJournalOnlyStorageSet(items: unknown): boolean {
   }
   const keys = Object.keys(items);
   return keys.length === 1 && keys[0] === RUNTIME_LIFECYCLE_JOURNAL_KEY;
+}
+
+function runtimeSideEffectSnapshot(runtime: FakeRuntime): RuntimeSideEffectSnapshot {
+  return new Map(runtimeSideEffectCallLists(runtime).map(({ kind, calls }) => [kind, calls.length]));
+}
+
+function runtimeSideEffectsSince(runtime: FakeRuntime, snapshot: RuntimeSideEffectSnapshot): RuntimeSideEffect[] {
+  return runtimeSideEffectCallLists(runtime).flatMap(({ kind, calls }) =>
+    calls.slice(snapshot.get(kind) ?? 0).map((args) => ({ kind, args: [...args] }))
+  );
+}
+
+function runtimeSideEffectCallLists(runtime: FakeRuntime): Array<{ kind: RuntimeSideEffectKind; calls: unknown[][] }> {
+  return [
+    { kind: "tabs.create", calls: vi.mocked(runtime.api.tabs.create).mock.calls },
+    { kind: "tabs.move", calls: vi.mocked(runtime.api.tabs.move).mock.calls },
+    { kind: "tabs.remove", calls: vi.mocked(runtime.api.tabs.remove).mock.calls },
+    { kind: "tabs.update", calls: vi.mocked(runtime.api.tabs.update).mock.calls },
+    { kind: "windows.create", calls: vi.mocked(runtime.api.windows.create).mock.calls },
+    { kind: "windows.remove", calls: vi.mocked(runtime.api.windows.remove).mock.calls },
+    { kind: "windows.update", calls: vi.mocked(runtime.api.windows.update).mock.calls },
+    { kind: "sessions.restore", calls: vi.mocked(runtime.api.sessions.restore).mock.calls },
+    { kind: "storage.local.set", calls: storageSetCallsExcludingLifecycleJournal(runtime) },
+    { kind: "runtime.sendMessage", calls: vi.mocked(runtime.api.runtime.sendMessage).mock.calls }
+  ];
 }
 
 function fakeRuntime(windows: RuntimeWindow[], tabs: RuntimeTab[], options: FakeRuntimeOptions = {}): FakeRuntime {
@@ -1228,6 +1254,7 @@ function reachableNodeIds(state: OutlineState): string[] {
 type GeneratedTraceContext = {
   runtime: FakeRuntime;
   controller: ReturnType<typeof createBackgroundController>;
+  truthModel: RuntimeTruthModel;
   now: number;
   nextTabId: number;
   allocatedRuntimeTabIds: Set<number>;
@@ -1257,9 +1284,125 @@ type GeneratedOperation = {
   run(context: GeneratedTraceContext): Promise<void>;
 };
 
+type RuntimeTruthWindowProvenance = "saved" | "browserCreated" | "commandOrRestored";
+
+type RuntimeTruthTab = {
+  tabId: number;
+  windowId: number;
+  index: number;
+  active: boolean;
+  title?: string;
+  url?: string;
+  favIconUrl?: string;
+};
+
+type RuntimeTruthWindow = {
+  windowId: number;
+  focused: boolean;
+  activeTabId?: number;
+  state?: RuntimeWindow["state"];
+  provenance: RuntimeTruthWindowProvenance;
+  tabIds: number[];
+  tabs: RuntimeTruthTab[];
+};
+
+type RuntimeTruthSnapshot = {
+  windows: RuntimeTruthWindow[];
+  liveWindowIds: number[];
+  liveTabIds: number[];
+  focusedWindowId?: number;
+  expectedClosedNodeIds: string[];
+  nativeDeletedNodeIds: string[];
+  commandDeletedNodeIds: string[];
+  browserCreatedWindowIds: number[];
+};
+
+class RuntimeTruthModel {
+  private readonly initialWindowIds: Set<number>;
+
+  constructor(runtime: FakeRuntime) {
+    this.initialWindowIds = new Set(runtime.windows.map((windowInfo) => windowInfo.id));
+  }
+
+  refresh(context: GeneratedTraceContext): RuntimeTruthSnapshot {
+    const windows = context.runtime.windows
+      .filter((windowInfo) => !windowInfo.incognito)
+      .sort((left, right) => left.id - right.id)
+      .map((windowInfo): RuntimeTruthWindow => {
+        const tabs = tabsInRuntimeWindow(context.runtime, windowInfo.id)
+          .filter((tab) => !tab.incognito)
+          .map((tab): RuntimeTruthTab => ({
+            tabId: tab.id,
+            windowId: tab.windowId,
+            index: tab.index,
+            active: tab.active,
+            ...(tab.title !== undefined ? { title: tab.title } : {}),
+            ...(tab.url !== undefined ? { url: tab.url } : {}),
+            ...(tab.favIconUrl !== undefined ? { favIconUrl: tab.favIconUrl } : {})
+          }));
+        const activeTabId = tabs.find((tab) => tab.active)?.tabId;
+        return {
+          windowId: windowInfo.id,
+          focused: windowInfo.focused,
+          ...(typeof activeTabId === "number" ? { activeTabId } : {}),
+          ...(windowInfo.state ? { state: windowInfo.state } : {}),
+          provenance: this.provenanceForWindow(context, windowInfo.id),
+          tabIds: tabs.map((tab) => tab.tabId),
+          tabs
+        };
+      });
+
+    return {
+      windows,
+      liveWindowIds: windows.map((windowInfo) => windowInfo.windowId),
+      liveTabIds: windows.flatMap((windowInfo) => windowInfo.tabIds).sort((left, right) => left - right),
+      ...(windows.find((windowInfo) => windowInfo.focused)
+        ? { focusedWindowId: windows.find((windowInfo) => windowInfo.focused)!.windowId }
+        : {}),
+      expectedClosedNodeIds: sortedStrings([...context.expectedClosedNodeIds]),
+      nativeDeletedNodeIds: sortedStrings([...context.nativeDeletedNodeIds]),
+      commandDeletedNodeIds: sortedStrings([...context.commandDeletedNodeIds]),
+      browserCreatedWindowIds: [...context.browserCreatedWindowIds].sort((left, right) => left - right)
+    };
+  }
+
+  private provenanceForWindow(context: GeneratedTraceContext, windowId: number): RuntimeTruthWindowProvenance {
+    if (context.browserCreatedWindowIds.has(windowId)) {
+      return "browserCreated";
+    }
+    if (this.initialWindowIds.has(windowId)) {
+      return "saved";
+    }
+    return "commandOrRestored";
+  }
+}
+
 type RuntimeDomainTracePurpose = "regression" | "discovery";
 type RuntimeDomainTraceOrigin = "known-finding" | "threat-model" | "agent-generated";
-type RuntimeDomainTraceAssertion = "runtimeOrder" | "runtimeMetadata";
+type RuntimeDomainTraceAssertion =
+  | "runtimeOrder"
+  | "runtimeMetadata"
+  | "runtimeSideEffects"
+  | "closedSubtreePersistence";
+
+type RuntimeSideEffectKind =
+  | "tabs.create"
+  | "tabs.move"
+  | "tabs.remove"
+  | "tabs.update"
+  | "windows.create"
+  | "windows.remove"
+  | "windows.update"
+  | "sessions.restore"
+  | "storage.local.set"
+  | "runtime.sendMessage";
+
+type RuntimeSideEffect = {
+  kind: RuntimeSideEffectKind;
+  args: unknown[];
+};
+
+type RuntimeSideEffectSnapshot = Map<RuntimeSideEffectKind, number>;
 
 type RuntimeDomainTrace = {
   id: string;
@@ -1321,6 +1464,7 @@ type DomainRuntimeEventAction =
       url?: string;
       openerTab?: DomainTabSelector;
       captureTab?: string;
+      staleQueryFromCapture?: string;
     }
   | {
       type: "activateTab";
@@ -1367,6 +1511,7 @@ type DomainAction =
       index?: number;
       active?: boolean;
       captureStaleTabs?: string;
+      captureSourceWindowTabs?: string;
     }
   | {
       type: "nativeMoveTabToNewWindow";
@@ -1374,6 +1519,7 @@ type DomainAction =
       active?: boolean;
       captureWindow?: string;
       captureStaleTabs?: string;
+      captureSourceWindowTabs?: string;
     }
   | {
       type: "raceWithOutlinerGroup";
@@ -1584,6 +1730,64 @@ const RUNTIME_DOMAIN_TRACE_DEFINITIONS: RuntimeDomainTraceDefinition[] = [
         groupTab: { capture: "tab-101" },
         captureStaleTabs: "tab-101-before-created-race"
       }
+    ]
+  },
+  {
+    id: "ur-first-tab-detach-open-side-effects",
+    title: "first browser tab detach followed by browser-created tab does not merge windows",
+    notes: "Promotes the user-reported first-tab browser detach/create repro into the runtime side-effect oracle corpus.",
+    tags: ["user-reported", "browser-authored", "side-effects"],
+    assertions: ["runtimeOrder", "runtimeMetadata", "runtimeSideEffects"],
+    actions: [
+      {
+        type: "nativeMoveTabToNewWindow",
+        tab: { tabId: 1 },
+        active: true,
+        captureWindow: "detached-window",
+        captureSourceWindowTabs: "pre-detach-window"
+      },
+      {
+        type: "openTab",
+        window: { capture: "detached-window" },
+        openerTab: { tabId: 1 },
+        url: "about:newtab",
+        title: "New Tab",
+        staleQueryFromCapture: "pre-detach-window",
+        captureTab: "detached-new-tab"
+      }
+    ]
+  },
+  {
+    id: "ur-small-closed-subtree-persistence",
+    title: "small closed live subtree survives save flush and restart",
+    notes: "Promotes the recent-close disappearance risk for a small live subtree.",
+    tags: ["user-reported", "closed-subtree", "persistence", "side-effects"],
+    assertions: ["runtimeSideEffects", "closedSubtreePersistence"],
+    actions: [
+      {
+        type: "openTab",
+        window: { windowId: 10 },
+        title: "Small subtree third tab",
+        url: "https://small-subtree.example/third"
+      },
+      { type: "outlinerCloseWindow", window: { windowId: 10 } }
+    ]
+  },
+  {
+    id: "ur-large-closed-subtree-persistence",
+    title: "large closed live subtree survives save flush and restart",
+    notes: "Promotes the recent-close disappearance risk for a large live subtree.",
+    tags: ["user-reported", "closed-subtree", "persistence", "side-effects", "large-subtree"],
+    assertions: ["runtimeSideEffects", "closedSubtreePersistence"],
+    actions: [
+      ...Array.from({ length: 100 }, (_value, index): DomainAction => ({
+        type: "openTab",
+        window: { windowId: 10 },
+        title: `Large subtree tab ${index + 1}`,
+        url: `https://large-subtree.example/${index + 1}`,
+        active: index === 99
+      })),
+      { type: "outlinerCloseWindow", window: { windowId: 10 } }
     ]
   },
   {
@@ -18440,6 +18644,10 @@ function pickOne<T>(rng: () => number, values: T[]): T {
   return values[Math.floor(rng() * values.length)]!;
 }
 
+function sortedStrings(values: string[]): string[] {
+  return [...values].sort((left, right) => left.localeCompare(right));
+}
+
 function sortedRuntimeTabIds(runtime: FakeRuntime): number[] {
   return runtime.tabs.map((tab) => tab.id).sort((a, b) => a - b);
 }
@@ -19209,12 +19417,14 @@ async function runDomainTrace(trace: RuntimeDomainTrace): Promise<void> {
   for (let index = 0; index < trace.actions.length; index += 1) {
     const action = trace.actions[index]!;
     context.history.push(`action ${index + 1}: ${domainActionSummary(action)}`);
+    const sideEffectSnapshot = runtimeSideEffectSnapshot(context.runtime);
     try {
       await runDomainAction(context, action);
       await assertGeneratedInvariants(context);
       await assertDomainTraceAssertions(trace, context);
+      assertDomainTraceSideEffectAssertions(trace, context, action, sideEffectSnapshot);
     } catch (error) {
-      throw new Error(domainTraceErrorText(trace, index, action, error, context.history));
+      throw new Error(`${domainTraceErrorText(trace, index, action, error, context.history)}\n${runtimeTraceDebugText(context, runtimeSideEffectsSince(context.runtime, sideEffectSnapshot))}`);
     }
   }
 }
@@ -19264,6 +19474,7 @@ function createGeneratedTraceContext(options: { now: number; history: string[] }
   return {
     runtime,
     controller,
+    truthModel: new RuntimeTruthModel(runtime),
     now: options.now,
     nextTabId: 100,
     allocatedRuntimeTabIds: new Set(runtime.tabs.map((tab) => tab.id)),
@@ -19600,9 +19811,20 @@ async function runDomainRuntimeEventAction(
       title: action.title ?? `Domain ${tabId}`,
       ...(openerTab ? { openerTabId: openerTab.id } : {})
     };
-    await createTabFromBrowser(context.runtime, tab, { awaitListeners: options.awaitListeners });
-    context.lastOpenedTabId = tabId;
-    captureRuntimeTab(context, action.captureTab, tabId);
+    if (action.staleQueryFromCapture) {
+      const staleTabs = context.domainCaptures.staleTabs.get(action.staleQueryFromCapture);
+      if (!staleTabs) {
+        throw new Error(`Missing captured stale tab query ${action.staleQueryFromCapture}`);
+      }
+      context.runtime.setNextTabQueryResult(staleTabs);
+    }
+    try {
+      await createTabFromBrowser(context.runtime, tab, { awaitListeners: options.awaitListeners });
+      context.lastOpenedTabId = tabId;
+      captureRuntimeTab(context, action.captureTab, tabId);
+    } finally {
+      context.runtime.clearNextTabQueryResult();
+    }
     return;
   }
 
@@ -19712,7 +19934,8 @@ async function runDomainNativeMoveTabToWindow(
     targetWindowId: destination.id,
     index: action.index,
     active: action.active,
-    captureStaleTabs: action.captureStaleTabs
+    captureStaleTabs: action.captureStaleTabs,
+    captureSourceWindowTabs: action.captureSourceWindowTabs
   });
 }
 
@@ -19728,13 +19951,15 @@ async function runDomainNativeMoveTabToNewWindow(
       ...((action.active ?? true) ? { focused: false } : {})
     }))
     .concat({ id: windowId, focused: action.active ?? true, incognito: false });
+  context.browserCreatedWindowIds.add(windowId);
   captureRuntimeWindow(context, action.captureWindow, windowId);
   context.lastOpenedWindowId = windowId;
   await runNativeMoveTab(context, tab, {
     targetWindowId: windowId,
     index: 0,
     active: action.active ?? true,
-    captureStaleTabs: action.captureStaleTabs
+    captureStaleTabs: action.captureStaleTabs,
+    captureSourceWindowTabs: action.captureSourceWindowTabs
   });
 }
 
@@ -19746,12 +19971,15 @@ async function runNativeMoveTab(
     index?: number;
     active?: boolean;
     captureStaleTabs?: string;
+    captureSourceWindowTabs?: string;
   }
 ): Promise<void> {
   const sourceWindowId = tab.windowId;
   const sourceIndex = tab.index;
-  const staleTabs = tabsInRuntimeWindow(context.runtime, sourceWindowId).filter((candidate) => candidate.id === tab.id);
+  const sourceWindowTabs = tabsInRuntimeWindow(context.runtime, sourceWindowId).map(copyTab);
+  const staleTabs = sourceWindowTabs.filter((candidate) => candidate.id === tab.id);
   captureStaleRuntimeTabs(context, options.captureStaleTabs, staleTabs);
+  captureStaleRuntimeTabs(context, options.captureSourceWindowTabs, sourceWindowTabs);
   context.staleLiveEventTabs.push(...staleTabs.map(copyTab));
 
   const destinationTabs = tabsInRuntimeWindow(context.runtime, options.targetWindowId);
@@ -20121,6 +20349,7 @@ async function runDomainOutlinerCloseWindow(
     context.expectedClosedNodeIds.add(nodeId);
   }
   await context.controller.handleMessage({ type: "closeNode", nodeId: protectedExpectedNodeIds[0]! });
+  await flushGeneratedCloseEvents(context);
   await pruneMissingExpectedClosedNodes(context, protectedExpectedNodeIds);
 }
 
@@ -20977,15 +21206,27 @@ async function runGeneratedTrace(seed: number, steps: number, options: Generated
 
     const operation = pickOne(context.rng, operations);
     context.history.push(`step ${step + 1}: ${operation.name}`);
+    const sideEffectSnapshot = runtimeSideEffectSnapshot(context.runtime);
     try {
       await operation.run(context);
+      await assertRuntimeTraceOracles(context, {
+        generatedOperation: operation,
+        sideEffects: runtimeSideEffectsSince(context.runtime, sideEffectSnapshot)
+      });
     } catch (error) {
-      throw new Error(`${generatedErrorText(error)}\nTrace:\n${context.history.join("\n")}`);
+      throw new Error(`${generatedErrorText(error)}\n${runtimeTraceDebugText(context, runtimeSideEffectsSince(context.runtime, sideEffectSnapshot))}\nTrace:\n${context.history.join("\n")}`);
     }
-    await assertGeneratedInvariants(context);
 
     if (context.runtime.windows.length === 0) {
       break;
+    }
+  }
+
+  if (context.expectedClosedNodeIds.size > 0) {
+    try {
+      await assertClosedSubtreePersistenceAssertion(context);
+    } catch (error) {
+      throw new Error(`${generatedErrorText(error)}\n${runtimeTraceDebugText(context)}\nTrace:\n${context.history.join("\n")}`);
     }
   }
 }
@@ -21036,12 +21277,15 @@ async function runGeneratedGroupingTrace(): Promise<void> {
   const context: GeneratedTraceContext = {
     runtime,
     controller,
+    truthModel: new RuntimeTruthModel(runtime),
+    now: 1000,
     nextTabId: 100,
     allocatedRuntimeTabIds: new Set(runtime.tabs.map((tab) => tab.id)),
     history: [],
     nativeDeletedNodeIds: new Set(),
     commandDeletedNodeIds: new Set(),
     expectedClosedNodeIds: new Set(),
+    browserCreatedWindowIds: new Set(),
     staleTabs: [],
     staleLiveEventTabs: [],
     domainCaptures: emptyDomainTraceCaptures(),
@@ -21062,12 +21306,237 @@ async function runGeneratedGroupingTrace(): Promise<void> {
 }
 
 async function assertGeneratedInvariants(context: GeneratedTraceContext): Promise<void> {
+  await assertRuntimeTraceOracles(context);
+}
+
+type RuntimeTraceOracleOptions = {
+  generatedOperation?: GeneratedOperation;
+  sideEffects?: RuntimeSideEffect[];
+};
+
+async function assertRuntimeTraceOracles(
+  context: GeneratedTraceContext,
+  options: RuntimeTraceOracleOptions = {}
+): Promise<void> {
   const state = (await context.controller.handleMessage({ type: "getState" })) as OutlineState;
+  const truth = context.truthModel.refresh(context);
   assertStructureInvariants(state, context.history);
-  assertRuntimeProjectionInvariants(state, context);
+  assertRuntimeTruthOutline(state, truth, context);
   assertLifecycleExpectationInvariants(state, context);
   assertClosedSubtreeInvariants(state, context.history);
-  assertRuntimeIndexWarmForGeneratedTrace(context);
+  assertRuntimeTruthCaches(context, truth);
+  if (options.generatedOperation && options.sideEffects) {
+    assertGeneratedOperationSideEffectsAssertion(context, options.generatedOperation, options.sideEffects);
+  }
+}
+
+function assertRuntimeTruthOutline(
+  state: OutlineState,
+  truth: RuntimeTruthSnapshot,
+  context: GeneratedTraceContext
+): void {
+  invariantEqual(liveTabIds(state), truth.liveTabIds, "truth live tab IDs match outline live tabs", context.history);
+  invariantEqual(liveWindowIds(state), truth.liveWindowIds, "truth live window IDs match outline live windows", context.history);
+
+  for (const truthWindow of truth.windows) {
+    const windowNode = liveWindowNodeForRuntimeWindow(state, truthWindow.windowId);
+    invariant(Boolean(windowNode), `truth window ${truthWindow.windowId} has no live outline node`, context.history);
+    if (!windowNode) {
+      continue;
+    }
+
+    invariant(
+      windowNode.active === truthWindow.focused,
+      `truth window ${truthWindow.windowId} focus diverged (outline=${String(windowNode.active)}, runtime=${String(truthWindow.focused)})`,
+      context.history
+    );
+    invariantEqual(
+      [...liveRuntimeTabIdsInOutlineWindowPreorder(state, windowNode.id)].sort((left, right) => left - right),
+      [...truthWindow.tabIds].sort((left, right) => left - right),
+      `truth tab membership for window ${truthWindow.windowId} matches outline subtree`,
+      context.history
+    );
+    assertTruthWindowProvenance(windowNode, truthWindow, context.history);
+  }
+
+  for (const truthWindow of truth.windows) {
+    for (const truthTab of truthWindow.tabs) {
+      const node = liveTabNodeForRuntimeTab(state, truthTab.tabId);
+      invariant(Boolean(node), `truth tab ${truthTab.tabId} has no live outline node`, context.history);
+      if (!node) {
+        continue;
+      }
+
+      invariant(
+        node.live?.windowId === truthTab.windowId,
+        `truth tab ${truthTab.tabId} has wrong outline window ${String(node.live?.windowId)}`,
+        context.history
+      );
+      invariant(
+        node.active === truthTab.active,
+        `truth tab ${truthTab.tabId} active flag diverged (outline=${String(node.active)}, runtime=${String(truthTab.active)})`,
+        context.history
+      );
+      if (truthTab.title || truthTab.url) {
+        const expectedTitle = runtimeTitleForOutlineTab(node, {
+          id: truthTab.tabId,
+          windowId: truthTab.windowId,
+          index: truthTab.index,
+          active: truthTab.active,
+          ...(truthTab.title !== undefined ? { title: truthTab.title } : {}),
+          ...(truthTab.url !== undefined ? { url: truthTab.url } : {}),
+          ...(truthTab.favIconUrl !== undefined ? { favIconUrl: truthTab.favIconUrl } : {})
+        }, {
+          restoredFromClosed: node.restoredFromClosed === true
+        });
+        invariant(node.title === expectedTitle, `truth tab ${truthTab.tabId} title metadata diverged`, context.history);
+      }
+      if (truthTab.url !== undefined) {
+        invariant(node.url === truthTab.url, `truth tab ${truthTab.tabId} url metadata diverged`, context.history);
+      }
+      if (truthTab.favIconUrl !== undefined) {
+        invariant(node.favIconUrl === truthTab.favIconUrl, `truth tab ${truthTab.tabId} favicon metadata diverged`, context.history);
+      }
+    }
+  }
+}
+
+function assertTruthWindowProvenance(
+  windowNode: OutlineState["nodes"][string],
+  truthWindow: RuntimeTruthWindow,
+  history: string[]
+): void {
+  if (truthWindow.provenance === "saved") {
+    invariant(
+      !windowNode.runtimeProvenance || windowNode.runtimeProvenance === "commandCreated",
+      `truth saved window ${truthWindow.windowId} has unexpected provenance ${String(windowNode.runtimeProvenance)}`,
+      history
+    );
+    return;
+  }
+  if (truthWindow.provenance === "browserCreated") {
+    invariant(
+      windowNode.runtimeProvenance === "browserCreated" ||
+        (runtimeTraceAllowsBrowserCreatedProvenanceLoss(history) && !windowNode.runtimeProvenance),
+      `truth browser-created window ${truthWindow.windowId} has provenance ${String(windowNode.runtimeProvenance)}`,
+      history
+    );
+    return;
+  }
+  invariant(
+    windowNode.runtimeProvenance === "commandCreated" ||
+      windowNode.restoredFromClosed === true ||
+      windowNode.id !== windowNodeIdFor(truthWindow.windowId) ||
+      (runtimeTraceAllowsBrowserCreatedProvenanceLoss(history) && windowNode.runtimeProvenance === "browserCreated"),
+    `truth command/restored window ${truthWindow.windowId} has provenance ${String(windowNode.runtimeProvenance)}`,
+    history
+  );
+}
+
+function assertRuntimeTruthCaches(context: GeneratedTraceContext, truth: RuntimeTruthSnapshot): void {
+  const cache = context.controller.__debugRuntimeCacheSnapshot();
+  invariant(cache.runtimeIndex.warm, "runtime index was cold after generated operation", context.history);
+  invariant(
+    cache.runtimeIndex.matchesState,
+    `runtime index diverged after generated operation: ${cache.runtimeIndex.reason}`,
+    context.history
+  );
+
+  const liveScopes = cache.ledger.windowScopes.filter((scope) => scope.lifecycle === "live");
+  invariantEqual(
+    liveScopes.map((scope) => scope.runtimeWindowId).sort((left, right) => left - right),
+    truth.liveWindowIds,
+    "runtime fact live window scopes match truth windows",
+    context.history
+  );
+
+  for (const truthWindow of truth.windows) {
+    const scope = liveScopes.find((candidate) => candidate.runtimeWindowId === truthWindow.windowId);
+    invariant(Boolean(scope), `runtime fact scope missing truth window ${truthWindow.windowId}`, context.history);
+    if (!scope) {
+      continue;
+    }
+    if (runtimeTruthWindowHasUnambiguousOrder(truthWindow)) {
+      invariantEqual(scope.tabOrder, truthWindow.tabIds, `runtime fact tab order matches truth window ${truthWindow.windowId}`, context.history);
+    }
+    if (runtimeTruthWindowHasUnambiguousActiveTab(truthWindow)) {
+      invariant(
+        scope.activeTabId === truthWindow.activeTabId,
+        `runtime fact active tab diverged for window ${truthWindow.windowId}`,
+        context.history
+      );
+    }
+    if (truthWindow.state) {
+      invariant(scope.state === truthWindow.state, `runtime fact window state diverged for window ${truthWindow.windowId}`, context.history);
+    }
+    assertRuntimeScopeProvenance(scope.provenance, truthWindow, context.history);
+    const scopedTabIds = scope.tabNodeIdsByRuntimeId.map(([tabId]) => tabId).sort((left, right) => left - right);
+    invariantEqual(
+      scopedTabIds,
+      [...truthWindow.tabIds].sort((left, right) => left - right),
+      `runtime fact tab membership matches truth window ${truthWindow.windowId}`,
+      context.history
+    );
+  }
+
+  for (const tabId of cache.ledger.ignoredTabIds) {
+    invariant(!truth.liveTabIds.includes(tabId), `runtime fact ignored live tab ${tabId}`, context.history);
+  }
+  for (const windowId of cache.ledger.ignoredWindowIds) {
+    invariant(!truth.liveWindowIds.includes(windowId), `runtime fact ignored live window ${windowId}`, context.history);
+  }
+  for (const windowId of truth.browserCreatedWindowIds.filter((id) => truth.liveWindowIds.includes(id))) {
+    const scope = liveScopes.find((candidate) => candidate.runtimeWindowId === windowId);
+    invariant(
+      cache.ledger.browserCreatedWindowIds.includes(windowId) ||
+        scope?.provenance === "browserCreated" ||
+        runtimeTraceAllowsBrowserCreatedProvenanceLoss(context.history),
+      `runtime fact missing browser-created provenance for window ${windowId}`,
+      context.history
+    );
+  }
+}
+
+function runtimeTruthWindowHasUnambiguousOrder(truthWindow: RuntimeTruthWindow): boolean {
+  const indexes = truthWindow.tabs.map((tab) => tab.index);
+  return new Set(indexes).size === indexes.length;
+}
+
+function runtimeTruthWindowHasUnambiguousActiveTab(truthWindow: RuntimeTruthWindow): boolean {
+  return truthWindow.tabs.filter((tab) => tab.active).length === 1;
+}
+
+function assertRuntimeScopeProvenance(
+  actual: string,
+  truthWindow: RuntimeTruthWindow,
+  history: string[]
+): void {
+  if (truthWindow.provenance === "saved") {
+    invariant(actual === "saved" || actual === "commandCreated", `runtime fact saved window ${truthWindow.windowId} has provenance ${actual}`, history);
+    return;
+  }
+  if (truthWindow.provenance === "browserCreated") {
+    invariant(
+      actual === "browserCreated" || (runtimeTraceAllowsBrowserCreatedProvenanceLoss(history) && actual === "saved"),
+      `runtime fact browser-created window ${truthWindow.windowId} has provenance ${actual}`,
+      history
+    );
+    return;
+  }
+  invariant(
+    actual === "commandCreated" ||
+      actual === "restored" ||
+      (runtimeTraceAllowsBrowserCreatedProvenanceLoss(history) && actual === "browserCreated"),
+    `runtime fact command/restored window ${truthWindow.windowId} has provenance ${actual}`,
+    history
+  );
+}
+
+function runtimeTraceAllowsBrowserCreatedProvenanceLoss(history: string[]): boolean {
+  return history.some((entry) => {
+    const normalized = entry.toLowerCase();
+    return normalized.includes("abrupt restart") || normalized.includes("abruptrestart");
+  });
 }
 
 async function assertDomainTraceAssertions(trace: RuntimeDomainTrace, context: GeneratedTraceContext): Promise<void> {
@@ -21081,6 +21550,223 @@ async function assertDomainTraceAssertions(trace: RuntimeDomainTrace, context: G
   }
   if (trace.assertions.includes("runtimeMetadata")) {
     assertRuntimeMetadataAssertion(state, context);
+  }
+  if (trace.assertions.includes("closedSubtreePersistence")) {
+    await assertClosedSubtreePersistenceAssertion(context);
+  }
+}
+
+function assertDomainTraceSideEffectAssertions(
+  trace: RuntimeDomainTrace,
+  context: GeneratedTraceContext,
+  action: DomainAction,
+  before: RuntimeSideEffectSnapshot
+): void {
+  if (!trace.assertions?.includes("runtimeSideEffects")) {
+    return;
+  }
+
+  assertRuntimeSideEffectsAssertion(context, action, runtimeSideEffectsSince(context.runtime, before));
+}
+
+function assertGeneratedOperationSideEffectsAssertion(
+  context: GeneratedTraceContext,
+  operation: GeneratedOperation,
+  sideEffects: RuntimeSideEffect[]
+): void {
+  const mutatingEffects = sideEffects.filter((effect) => MUTATING_BROWSER_SIDE_EFFECT_KINDS.has(effect.kind));
+  const allowedKinds = allowedGeneratedOperationMutatingBrowserSideEffects(operation.name);
+  const unexpected = mutatingEffects.filter((effect) => !allowedKinds.has(effect.kind));
+  invariant(
+    unexpected.length === 0,
+    `unexpected runtime side effects for generated operation ${operation.name}: ${unexpected.map(formatRuntimeSideEffect).join(", ")}`,
+    context.history
+  );
+}
+
+const MUTATING_BROWSER_SIDE_EFFECT_KINDS = new Set<RuntimeSideEffectKind>([
+  "tabs.create",
+  "tabs.move",
+  "tabs.remove",
+  "tabs.update",
+  "windows.create",
+  "windows.remove",
+  "windows.update",
+  "sessions.restore"
+]);
+
+function allowedGeneratedOperationMutatingBrowserSideEffects(name: string): Set<RuntimeSideEffectKind> {
+  if (
+    name === "open-tab" ||
+    name === "activate-tab" ||
+    name === "activate-tab-with-stale-query" ||
+    name === "native-close-tab" ||
+    name === "native-close-window" ||
+    name === "stale-activation-snapshot" ||
+    name === "stale-tab-created-event" ||
+    name === "stale-tab-updated-event" ||
+    name === "stale-live-tab-updated-event" ||
+    name === "stale-live-tab-updated-event-stale-query" ||
+    name === "stale-live-tab-created-event-stale-query"
+  ) {
+    return new Set();
+  }
+
+  if (name === "outliner-close-tab" || name === "outliner-close-window") {
+    return new Set(["tabs.remove", "windows.remove"]);
+  }
+
+  if (name === "outliner-delete-window-rejecting-close") {
+    return new Set(["tabs.remove", "windows.remove"]);
+  }
+
+  if (
+    name === "outliner-move-tab-new-window" ||
+    name === "outliner-group-tab" ||
+    name === "concurrent-created-tab-then-group" ||
+    name === "concurrent-updated-tab-then-group" ||
+    name === "concurrent-activated-tab-then-group" ||
+    name === "concurrent-focused-window-then-group"
+  ) {
+    return new Set(["tabs.move", "windows.create"]);
+  }
+
+  if (name === "outliner-restore-delete-window-delayed-event") {
+    return new Set(MUTATING_BROWSER_SIDE_EFFECT_KINDS);
+  }
+
+  return new Set(MUTATING_BROWSER_SIDE_EFFECT_KINDS);
+}
+
+function assertRuntimeSideEffectsAssertion(
+  context: GeneratedTraceContext,
+  action: DomainAction,
+  sideEffects: RuntimeSideEffect[]
+): void {
+  const mutatingEffects = sideEffects.filter((effect) => MUTATING_BROWSER_SIDE_EFFECT_KINDS.has(effect.kind));
+  const allowedKinds = allowedMutatingBrowserSideEffects(action);
+  const unexpected = mutatingEffects.filter((effect) => !allowedKinds.has(effect.kind));
+  invariant(
+    unexpected.length === 0,
+    `unexpected runtime side effects for ${domainActionSummary(action)}: ${unexpected.map(formatRuntimeSideEffect).join(", ")}`,
+    context.history
+  );
+}
+
+function allowedMutatingBrowserSideEffects(action: DomainAction): Set<RuntimeSideEffectKind> {
+  if (isBrowserAuthoredDomainAction(action)) {
+    return new Set();
+  }
+
+  if (
+    action.type === "outlinerCloseTab" ||
+    action.type === "outlinerCloseWindow" ||
+    action.type === "outlinerCloseNodeRejectingClose" ||
+    action.type === "outlinerCloseNodeThenAbruptRestart" ||
+    action.type === "outlinerDeleteWindowRejectingClose" ||
+    action.type === "outlinerDeleteTabRejectingClose" ||
+    action.type === "outlinerDeleteNodeRejectingClose" ||
+    action.type === "outlinerDeleteNodeThenAbruptRestart" ||
+    action.type === "outlinerRestoreDeleteWindowDelayedEvent"
+  ) {
+    return new Set(["tabs.remove", "windows.remove"]);
+  }
+
+  if (
+    action.type === "outlinerRestoreNodeRejectingCreate" ||
+    action.type === "outlinerRestoreNodeThenAbruptRestart"
+  ) {
+    return new Set(["tabs.create", "windows.create", "sessions.restore"]);
+  }
+
+  if (
+    action.type === "outlinerMoveTabToNewWindow" ||
+    action.type === "outlinerMoveTabCommandToNewWindow" ||
+    action.type === "outlinerMoveTabCommandToNewWindowThenAbruptRestart" ||
+    action.type === "outlinerMoveTabCommandToNewWindowRejectingCreate" ||
+    action.type === "outlinerMoveSubtreeToTopLevel" ||
+    action.type === "outlinerMoveSubtreeToTopLevelThenAbruptRestart" ||
+    action.type === "outlinerGroupTab" ||
+    action.type === "outlinerGroupTabThenAbruptRestart" ||
+    action.type === "raceWithOutlinerGroup"
+  ) {
+    return new Set(["tabs.move", "windows.create"]);
+  }
+
+  if (action.type === "outlinerFocusTab" || action.type === "outlinerFocusTabRejectingUpdate") {
+    return new Set(["tabs.update", "windows.update"]);
+  }
+
+  if (
+    action.type === "outlinerUndo" ||
+    action.type === "outlinerRedo" ||
+    action.type === "outlinerUndoThenAbruptRestart" ||
+    action.type === "outlinerRedoThenAbruptRestart"
+  ) {
+    return new Set(MUTATING_BROWSER_SIDE_EFFECT_KINDS);
+  }
+
+  return new Set(MUTATING_BROWSER_SIDE_EFFECT_KINDS);
+}
+
+function isBrowserAuthoredDomainAction(action: DomainAction): boolean {
+  return isDomainRuntimeEventAction(action) ||
+    action.type === "nativeOpenWindow" ||
+    action.type === "nativeMoveTabToWindow" ||
+    action.type === "nativeMoveTabToNewWindow" ||
+    action.type === "nativeCloseTab" ||
+    action.type === "nativeCloseWindow" ||
+    action.type === "staleLiveUpdatedEvent" ||
+    action.type === "staleLiveCreatedEvent" ||
+    action.type === "manualRefresh" ||
+    action.type === "manualRefreshWithStaleQuery" ||
+    action.type === "manualRefreshWithMissingTabQuery" ||
+    action.type === "manualRefreshWithMissingWindowQuery" ||
+    action.type === "manualRefreshWithReorderedQuery" ||
+    action.type === "sessionChanged" ||
+    action.type === "restartBackground" ||
+    action.type === "restartBackgroundAbrupt" ||
+    action.type === "injectCloseJournalThenAbruptRestart" ||
+    action.type === "flushRuntimeEvents";
+}
+
+function formatRuntimeSideEffect(effect: RuntimeSideEffect): string {
+  return `${effect.kind}(${effect.args.map((arg) => JSON.stringify(arg)).join(", ")})`;
+}
+
+async function assertClosedSubtreePersistenceAssertion(context: GeneratedTraceContext): Promise<void> {
+  if (context.expectedClosedNodeIds.size === 0) {
+    return;
+  }
+
+  await flushGeneratedRuntimeEventRefreshes(context);
+  await context.controller.flushPendingSaves();
+  const persisted = await loadState(context.runtime.api);
+  assertClosedNodeIdsPersisted(persisted, context, "persisted");
+
+  clearFakeRuntimeListeners(context.runtime);
+  context.controller = createBackgroundController({
+    api: context.runtime.api,
+    now: () => context.now
+  });
+  await context.controller.ensureState();
+  const reloaded = (await context.controller.handleMessage({ type: "getState" })) as OutlineState;
+  assertClosedNodeIdsPersisted(reloaded, context, "reloaded");
+}
+
+function assertClosedNodeIdsPersisted(
+  state: OutlineState | undefined,
+  context: GeneratedTraceContext,
+  label: string
+): void {
+  invariant(Boolean(state), `${label} state missing for closed subtree persistence`, context.history);
+  if (!state) {
+    return;
+  }
+  for (const nodeId of context.expectedClosedNodeIds) {
+    const node = state.nodes[nodeId];
+    invariant(Boolean(node), `${label} expected closed node ${nodeId} is missing`, context.history);
+    invariant(node?.status === "closed", `${label} expected closed node ${nodeId} is ${node?.status}`, context.history);
   }
 }
 
@@ -21328,6 +22014,33 @@ function invariantEqual<T>(actual: T, expected: T, message: string, history: str
 
 function generatedErrorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function runtimeTraceDebugText(context: GeneratedTraceContext, sideEffects: RuntimeSideEffect[] = []): string {
+  return [
+    `Truth snapshot: ${safeJson(context.truthModel.refresh(context))}`,
+    `Runtime cache snapshot: ${safeJson(context.controller.__debugRuntimeCacheSnapshot())}`,
+    `Recent side effects: ${safeJson(sideEffects.map((effect) => ({
+      kind: effect.kind,
+      args: effect.args
+    })))}`
+  ].join("\n");
+}
+
+function safeJson(value: unknown): string {
+  try {
+    return JSON.stringify(value, (_key, nestedValue) => {
+      if (nestedValue instanceof Set) {
+        return [...nestedValue];
+      }
+      if (nestedValue instanceof Map) {
+        return [...nestedValue.entries()];
+      }
+      return nestedValue;
+    });
+  } catch (error) {
+    return `<<unserializable: ${generatedErrorText(error)}>>`;
+  }
 }
 
 describe("background controller lifecycle", () => {
@@ -21944,6 +22657,44 @@ describe("background controller lifecycle", () => {
     expect(state.nodes["tab:300"]?.title).toBe("Saved 300");
     expect(calls).toBeLessThanOrEqual(1);
     expect(controller.__debugRuntimeIndexStatus()).toEqual({ warm: true, matchesState: true, reason: "" });
+  });
+
+  it("exposes runtime cache truth after browser-authored and command-authored scope changes", async () => {
+    const context = createGeneratedTraceContext({
+      now: 1000,
+      history: ["debug runtime cache truth"]
+    });
+    await context.controller.ensureState();
+
+    await runDomainNativeMoveTabToNewWindow(context, {
+      type: "nativeMoveTabToNewWindow",
+      tab: { tabId: 1 },
+      active: true,
+      captureWindow: "browser-detached-window"
+    });
+    await assertRuntimeTraceOracles(context);
+    let snapshot = context.controller.__debugRuntimeCacheSnapshot();
+    const detachedWindow = resolveDomainWindow(context, { capture: "browser-detached-window" });
+    expect(snapshot.runtimeIndex).toEqual({ warm: true, matchesState: true, reason: "" });
+    expect(snapshot.ledger.windowScopes).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        runtimeWindowId: detachedWindow.id,
+        lifecycle: "live",
+        provenance: "browserCreated",
+        tabOrder: [1],
+        activeTabId: 1
+      })
+    ]));
+
+    await runDomainOutlinerMoveTabToNewWindow(context, { tabId: 2 });
+    await assertRuntimeTraceOracles(context);
+    snapshot = context.controller.__debugRuntimeCacheSnapshot();
+    expect(snapshot.runtimeIndex).toEqual({ warm: true, matchesState: true, reason: "" });
+    expect(snapshot.ledger.windowScopes.some((scope) =>
+      scope.lifecycle === "live" &&
+      scope.provenance === "commandCreated" &&
+      scope.tabOrder.includes(2)
+    )).toBe(true);
   });
 
   it("defers fresh bootstrap persistence until an explicit save flush", async () => {
@@ -29906,6 +30657,674 @@ describe("background controller lifecycle", () => {
       status: "live",
       active: true,
       live: { tabId: 3, windowId: 20 }
+    });
+  });
+
+  it("keeps a browser-detached window as the owner when a new tab opens there", async () => {
+    const runtime = fakeRuntime(
+      [
+        { id: 10, focused: true, incognito: false }
+      ],
+      [
+        { id: 1, windowId: 10, index: 0, active: true, url: "https://one.example/", title: "One" },
+        { id: 2, windowId: 10, index: 1, active: false, url: "https://two.example/", title: "Two" }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+
+    const detachedWindowId = nextRuntimeWindowId(runtime);
+    runtime.windows = runtime.windows
+      .map((windowInfo) => ({ ...windowInfo, focused: false }))
+      .concat({ id: detachedWindowId, focused: true, incognito: false });
+    await moveTabFromBrowserAndFlush(runtime, 2, detachedWindowId, { index: 0, active: true });
+
+    await createTabFromBrowser(runtime, {
+      id: 3,
+      windowId: detachedWindowId,
+      index: 1,
+      active: true,
+      url: "https://new-in-detached.example/",
+      title: "New in detached"
+    });
+    await runtime.events.windowFocusChanged.emit(detachedWindowId);
+    await runtime.events.tabActivated.emit({
+      tabId: 3,
+      windowId: detachedWindowId,
+      previousTabId: 2
+    });
+
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    const detachedWindow = state.nodes[`window:${detachedWindowId}`];
+
+    expect(state.nodes["window:10"]?.childIds).toEqual(["tab:1"]);
+    expect(detachedWindow).toMatchObject({
+      status: "live",
+      live: { windowId: detachedWindowId }
+    });
+    expect(detachedWindow?.childIds).toEqual(["tab:2", "tab:3"]);
+    expect(state.nodes["tab:2"]?.live).toEqual({ tabId: 2, windowId: detachedWindowId });
+    expect(state.nodes["tab:3"]?.parentId).toBe(`window:${detachedWindowId}`);
+    expect(state.nodes["tab:3"]).toMatchObject({
+      active: true,
+      live: { tabId: 3, windowId: detachedWindowId }
+    });
+    expect(runtime.tabs.filter((tab) => tab.windowId === 10).map((tab) => tab.id)).toEqual([1]);
+    expect(runtime.tabs.filter((tab) => tab.windowId === detachedWindowId).map((tab) => tab.id)).toEqual([2, 3]);
+    expect(runtime.api.tabs.move).not.toHaveBeenCalledWith(
+      expect.arrayContaining([1]),
+      expect.objectContaining({ windowId: detachedWindowId })
+    );
+  });
+
+  it("keeps a browser-detached window when activation arrives before the new-tab create refresh settles", async () => {
+    const runtime = fakeRuntime(
+      [
+        { id: 10, focused: true, incognito: false }
+      ],
+      [
+        { id: 1, windowId: 10, index: 0, active: true, url: "https://one.example/", title: "One" },
+        { id: 2, windowId: 10, index: 1, active: false, url: "https://two.example/", title: "Two" }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+
+    const detachedWindowId = nextRuntimeWindowId(runtime);
+    runtime.windows = runtime.windows
+      .map((windowInfo) => ({ ...windowInfo, focused: false }))
+      .concat({ id: detachedWindowId, focused: true, incognito: false });
+    await moveTabFromBrowserAndFlush(runtime, 2, detachedWindowId, { index: 0, active: true });
+
+    createTabFromBrowser(runtime, {
+      id: 3,
+      windowId: detachedWindowId,
+      index: 1,
+      active: true,
+      url: "https://new-in-detached.example/",
+      title: "New in detached"
+    }, { awaitListeners: false });
+    await runtime.events.windowFocusChanged.emit(detachedWindowId);
+    await runtime.events.tabActivated.emit({
+      tabId: 3,
+      windowId: detachedWindowId,
+      previousTabId: 2
+    });
+    await runtime.events.tabCreated.flush();
+
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    const detachedWindow = state.nodes[`window:${detachedWindowId}`];
+
+    expect(state.nodes["window:10"]?.childIds).toEqual(["tab:1"]);
+    expect(detachedWindow?.childIds).toEqual(["tab:2", "tab:3"]);
+    expect(state.nodes["tab:1"]).toMatchObject({ live: { windowId: 10 } });
+    expect(state.nodes["tab:2"]).toMatchObject({ live: { windowId: detachedWindowId } });
+    expect(state.nodes["tab:3"]).toMatchObject({
+      active: true,
+      live: { tabId: 3, windowId: detachedWindowId }
+    });
+    expect(runtime.tabs.filter((tab) => tab.windowId === 10).map((tab) => tab.id)).toEqual([1]);
+    expect(runtime.tabs.filter((tab) => tab.windowId === detachedWindowId).map((tab) => tab.id)).toEqual([2, 3]);
+    expect(runtime.api.tabs.move).not.toHaveBeenCalledWith(
+      expect.arrayContaining([1]),
+      expect.objectContaining({ windowId: detachedWindowId })
+    );
+  });
+
+  it("keeps a browser-detached window when native detach events and new-tab creation coalesce", async () => {
+    const runtime = fakeRuntime(
+      [
+        { id: 10, focused: true, incognito: false }
+      ],
+      [
+        { id: 1, windowId: 10, index: 0, active: true, url: "https://one.example/", title: "One" },
+        { id: 2, windowId: 10, index: 1, active: false, url: "https://two.example/", title: "Two" }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+
+    const detachedWindowId = nextRuntimeWindowId(runtime);
+    runtime.windows = runtime.windows
+      .map((windowInfo) => ({ ...windowInfo, focused: false }))
+      .concat({ id: detachedWindowId, focused: true, incognito: false });
+    const moved = moveTabsFromBrowser(runtime, [2], { windowId: detachedWindowId, index: 0 })[0];
+    if (!moved) {
+      throw new Error("Failed to move test tab");
+    }
+    applyNativeMoveActiveState(runtime, moved.id, 10, detachedWindowId, true);
+
+    runtime.events.tabDetached.dispatch(2, { oldWindowId: 10, oldPosition: 1 });
+    runtime.events.tabActivated.dispatch({ tabId: 1, windowId: 10, previousTabId: 2 });
+    runtime.events.tabAttached.dispatch(2, { newWindowId: detachedWindowId, newPosition: 0 });
+    runtime.events.windowFocusChanged.dispatch(detachedWindowId);
+    runtime.events.tabActivated.dispatch({ tabId: 2, windowId: detachedWindowId, previousTabId: 1 });
+    await runtime.events.tabDetached.flush();
+    await runtime.events.tabAttached.flush();
+    await runtime.events.tabActivated.flush();
+    await runtime.events.windowFocusChanged.flush();
+
+    createTabFromBrowser(runtime, {
+      id: 3,
+      windowId: detachedWindowId,
+      index: 1,
+      active: true,
+      openerTabId: 2,
+      url: "about:newtab",
+      title: "New Tab"
+    }, { awaitListeners: false });
+    runtime.events.tabActivated.dispatch({
+      tabId: 3,
+      windowId: detachedWindowId,
+      previousTabId: 2
+    });
+    await runtime.events.tabCreated.flush();
+    await runtime.events.tabActivated.flush();
+
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    const detachedWindow = state.nodes[`window:${detachedWindowId}`];
+
+    expect(state.nodes["window:10"]?.childIds).toEqual(["tab:1"]);
+    expect(detachedWindow?.childIds).toEqual(["tab:2"]);
+    expect(state.nodes["tab:2"]).toMatchObject({ live: { windowId: detachedWindowId } });
+    expect(state.nodes["tab:3"]).toMatchObject({
+      parentId: "tab:2",
+      active: true,
+      live: { tabId: 3, windowId: detachedWindowId }
+    });
+    expect(runtime.tabs.filter((tab) => tab.windowId === 10).map((tab) => tab.id)).toEqual([1]);
+    expect(runtime.tabs.filter((tab) => tab.windowId === detachedWindowId).map((tab) => tab.id)).toEqual([2, 3]);
+    expect(runtime.api.tabs.move).not.toHaveBeenCalledWith(
+      expect.arrayContaining([1]),
+      expect.objectContaining({ windowId: detachedWindowId })
+    );
+  });
+
+  it("does not merge windows when the first browser tab is detached and then opens a new tab", async () => {
+    const stalePreDetachTabs = [
+      { id: 1, windowId: 10, index: 0, active: true, url: "https://one.example/", title: "One" },
+      { id: 2, windowId: 10, index: 1, active: false, url: "https://two.example/", title: "Two" }
+    ];
+    const runtime = fakeRuntime(
+      [
+        { id: 10, focused: true, incognito: false }
+      ],
+      stalePreDetachTabs
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+
+    const detachedWindowId = nextRuntimeWindowId(runtime);
+    runtime.windows = runtime.windows
+      .map((windowInfo) => ({ ...windowInfo, focused: false }))
+      .concat({ id: detachedWindowId, focused: true, incognito: false });
+    const moved = moveTabsFromBrowser(runtime, [1], { windowId: detachedWindowId, index: 0 })[0];
+    if (!moved) {
+      throw new Error("Failed to move test tab");
+    }
+    applyNativeMoveActiveState(runtime, moved.id, 10, detachedWindowId, true);
+
+    runtime.events.tabDetached.dispatch(1, { oldWindowId: 10, oldPosition: 0 });
+    runtime.events.tabActivated.dispatch({ tabId: 2, windowId: 10, previousTabId: 1 });
+    runtime.events.tabAttached.dispatch(1, { newWindowId: detachedWindowId, newPosition: 0 });
+    runtime.events.windowFocusChanged.dispatch(detachedWindowId);
+    runtime.events.tabActivated.dispatch({ tabId: 1, windowId: detachedWindowId, previousTabId: 2 });
+    await runtime.events.tabDetached.flush();
+    await runtime.events.tabAttached.flush();
+    await runtime.events.tabActivated.flush();
+    await runtime.events.windowFocusChanged.flush();
+    vi.mocked(runtime.api.tabs.move).mockClear();
+    runtime.setNextTabQueryResult(stalePreDetachTabs);
+
+    await createTabFromBrowser(runtime, {
+      id: 3,
+      windowId: detachedWindowId,
+      index: 1,
+      active: true,
+      openerTabId: 1,
+      url: "about:newtab",
+      title: "New Tab"
+    }, { awaitListeners: false });
+    runtime.events.tabActivated.dispatch({
+      tabId: 3,
+      windowId: detachedWindowId,
+      previousTabId: 1
+    });
+    await runtime.events.tabCreated.flush();
+    await runtime.events.tabActivated.flush();
+
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    const detachedWindow = state.nodes[`window:${detachedWindowId}`];
+
+    expect(state.nodes["window:10"]?.childIds).toEqual(["tab:2"]);
+    expect(detachedWindow?.childIds).toEqual(["tab:1"]);
+    expect(state.nodes["tab:1"]).toMatchObject({ live: { tabId: 1, windowId: detachedWindowId } });
+    expect(state.nodes["tab:2"]).toMatchObject({ live: { tabId: 2, windowId: 10 } });
+    expect(state.nodes["tab:3"]).toMatchObject({
+      parentId: "tab:1",
+      active: true,
+      live: { tabId: 3, windowId: detachedWindowId }
+    });
+    expect(runtime.tabs.filter((tab) => tab.windowId === 10).map((tab) => tab.id)).toEqual([2]);
+    expect(runtime.tabs.filter((tab) => tab.windowId === detachedWindowId).map((tab) => tab.id)).toEqual([1, 3]);
+    expect(runtime.api.tabs.move).not.toHaveBeenCalled();
+  });
+
+  it("restores both tabs after browser detach, outliner close, closed-tab drag back, and group restore", async () => {
+    const title = "Google Calendar - Week of May 25, 2026";
+    const url = "https://calendar.example/week";
+    const runtime = fakeRuntime(
+      [
+        { id: 10, focused: true, incognito: false }
+      ],
+      [
+        { id: 1, windowId: 10, index: 0, active: true, url, title },
+        { id: 2, windowId: 10, index: 1, active: false, url, title }
+      ]
+    );
+    let recentClosedSession: { tab?: { sessionId?: string }; window?: { sessionId?: string } } = {};
+    vi.mocked(runtime.api.sessions.getRecentlyClosed).mockImplementation(async () => [recentClosedSession as never]);
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+
+    const detachedWindowId = nextRuntimeWindowId(runtime);
+    runtime.windows = runtime.windows
+      .map((windowInfo) => ({ ...windowInfo, focused: false }))
+      .concat({ id: detachedWindowId, focused: true, incognito: false });
+    await moveTabFromBrowserAndFlush(runtime, 2, detachedWindowId, { index: 0, active: true });
+
+    recentClosedSession = { window: { sessionId: "session-window-detached" } };
+    expect(await controller.handleMessage({ type: "closeNode", nodeId: "tab:2" })).toMatchObject({ type: "commandAck" });
+    await runtime.events.tabRemoved.flush();
+    await runtime.events.windowRemoved.flush();
+    await runtime.events.sessionChanged.flush();
+    recentClosedSession = { window: { sessionId: "session-window-source" } };
+    expect(await controller.handleMessage({ type: "closeNode", nodeId: "window:10" })).toMatchObject({ type: "commandAck" });
+    await runtime.events.tabRemoved.flush();
+    await runtime.events.windowRemoved.flush();
+    await runtime.events.sessionChanged.flush();
+    expectCommandAck(await controller.handleMessage({ type: "moveNode", nodeId: "tab:2", parentId: "window:10", index: 1 }), true);
+    runtime.broadcasts.length = 0;
+
+    let restoredRuntimeWindowId: number | undefined;
+    vi.mocked(runtime.api.sessions.restore).mockImplementation(async (sessionId: string) => {
+      if (sessionId !== "session-window-source") {
+        return {};
+      }
+      const restoredWindow = createWindowFromBrowser(runtime, { url, focused: true });
+      restoredRuntimeWindowId = restoredWindow.id;
+      const restoredTab = restoredWindow.tabs?.[0];
+      if (restoredTab) {
+        runtime.events.tabCreated.dispatch(copyTab(restoredTab));
+        return { tab: copyTab(restoredTab) } as never;
+      }
+      return {};
+    });
+
+    expectCommandAck(await controller.handleMessage({ type: "restoreNode", nodeId: "window:10" }), true);
+    await runtime.events.tabCreated.flush();
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+
+    expect(state.nodes["window:10"]?.status).toBe("live");
+    expect(state.nodes["window:10"]?.childIds).toEqual(["tab:1", "tab:2"]);
+    expect(restoredRuntimeWindowId).toBeTypeOf("number");
+    expect(state.nodes["tab:1"]).toMatchObject({ status: "live", live: { windowId: restoredRuntimeWindowId } });
+    expect(state.nodes["tab:2"]).toMatchObject({ status: "live", live: { windowId: restoredRuntimeWindowId } });
+    const restoreBroadcast = stateBroadcasts(runtime.broadcasts).at(-1) as
+      | { type?: string; state?: OutlineState; updatedNodes?: OutlineState["nodes"][string][] }
+      | undefined;
+    if (restoreBroadcast?.type === "nodeStateUpdated") {
+      expect(restoreBroadcast.updatedNodes?.map((node) => node.id).sort()).toEqual(["tab:1", "tab:2", "window:10"]);
+    } else {
+      expect(restoreBroadcast?.type).toBe("stateUpdated");
+      expect(restoreBroadcast?.state?.nodes["window:10"]?.childIds).toEqual(["tab:1", "tab:2"]);
+      expect(restoreBroadcast?.state?.nodes["tab:1"]?.status).toBe("live");
+      expect(restoreBroadcast?.state?.nodes["tab:2"]?.status).toBe("live");
+    }
+  });
+
+  it("restores both tabs after browser detach, outliner close, last-tab close, closed-tab drag back, and group restore", async () => {
+    const title = "Google Calendar - Week of May 25, 2026";
+    const url = "https://calendar.example/week";
+    const runtime = fakeRuntime(
+      [
+        { id: 10, focused: true, incognito: false }
+      ],
+      [
+        { id: 1, windowId: 10, index: 0, active: true, url, title },
+        { id: 2, windowId: 10, index: 1, active: false, url, title }
+      ]
+    );
+    let recentClosedSession: { tab?: { sessionId?: string }; window?: { sessionId?: string } } = {};
+    vi.mocked(runtime.api.sessions.getRecentlyClosed).mockImplementation(async () => [recentClosedSession as never]);
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+
+    const detachedWindowId = nextRuntimeWindowId(runtime);
+    runtime.windows = runtime.windows
+      .map((windowInfo) => ({ ...windowInfo, focused: false }))
+      .concat({ id: detachedWindowId, focused: true, incognito: false });
+    await moveTabFromBrowserAndFlush(runtime, 2, detachedWindowId, { index: 0, active: true });
+
+    recentClosedSession = { window: { sessionId: "session-window-detached" } };
+    expect(await controller.handleMessage({ type: "closeNode", nodeId: "tab:2" })).toMatchObject({ type: "commandAck" });
+    await runtime.events.tabRemoved.flush();
+    await runtime.events.windowRemoved.flush();
+    await runtime.events.sessionChanged.flush();
+    recentClosedSession = { window: { sessionId: "session-window-source" } };
+    expect(await controller.handleMessage({ type: "closeNode", nodeId: "tab:1" })).toMatchObject({ type: "commandAck" });
+    await runtime.events.tabRemoved.flush();
+    await runtime.events.windowRemoved.flush();
+    await runtime.events.sessionChanged.flush();
+    expectCommandAck(await controller.handleMessage({ type: "moveNode", nodeId: "tab:2", parentId: "window:10", index: 1 }), true);
+
+    let restoredRuntimeWindowId: number | undefined;
+    vi.mocked(runtime.api.sessions.restore).mockImplementation(async (sessionId: string) => {
+      if (sessionId !== "session-window-source") {
+        return {};
+      }
+      const restoredWindow = createWindowFromBrowser(runtime, { url, focused: true });
+      restoredRuntimeWindowId = restoredWindow.id;
+      const restoredTab = restoredWindow.tabs?.[0];
+      if (restoredTab) {
+        runtime.events.tabCreated.dispatch(copyTab(restoredTab));
+        return { tab: copyTab(restoredTab) } as never;
+      }
+      return {};
+    });
+
+    expectCommandAck(await controller.handleMessage({ type: "restoreNode", nodeId: "window:10" }), true);
+    await runtime.events.tabCreated.flush();
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+
+    expect(state.nodes["window:10"]?.status).toBe("live");
+    expect(state.nodes["window:10"]?.childIds).toEqual(["tab:1", "tab:2"]);
+    expect(restoredRuntimeWindowId).toBeTypeOf("number");
+    expect(state.nodes["tab:1"]).toMatchObject({ status: "live", live: { windowId: restoredRuntimeWindowId } });
+    expect(state.nodes["tab:2"]).toMatchObject({ status: "live", live: { windowId: restoredRuntimeWindowId } });
+  });
+
+  it("restores both tabs after tab-row closes expose only tab recent sessions", async () => {
+    const title = "Google Calendar - Week of May 25, 2026";
+    const url = "https://calendar.example/week";
+    const runtime = fakeRuntime(
+      [
+        { id: 10, focused: true, incognito: false }
+      ],
+      [
+        { id: 1, windowId: 10, index: 0, active: true, url, title },
+        { id: 2, windowId: 10, index: 1, active: false, url, title }
+      ]
+    );
+    let recentClosedSession: { tab?: { sessionId?: string }; window?: { sessionId?: string } } = {};
+    vi.mocked(runtime.api.sessions.getRecentlyClosed).mockImplementation(async () => [recentClosedSession as never]);
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+
+    const detachedWindowId = nextRuntimeWindowId(runtime);
+    runtime.windows = runtime.windows
+      .map((windowInfo) => ({ ...windowInfo, focused: false }))
+      .concat({ id: detachedWindowId, focused: true, incognito: false });
+    await moveTabFromBrowserAndFlush(runtime, 2, detachedWindowId, { index: 0, active: true });
+
+    recentClosedSession = { tab: { sessionId: "session-tab-detached" } };
+    expect(await controller.handleMessage({ type: "closeNode", nodeId: "tab:2" })).toMatchObject({ type: "commandAck" });
+    await runtime.events.tabRemoved.flush();
+    await runtime.events.windowRemoved.flush();
+    await runtime.events.sessionChanged.flush();
+    recentClosedSession = { tab: { sessionId: "session-tab-source" } };
+    expect(await controller.handleMessage({ type: "closeNode", nodeId: "tab:1" })).toMatchObject({ type: "commandAck" });
+    await runtime.events.tabRemoved.flush();
+    await runtime.events.windowRemoved.flush();
+    await runtime.events.sessionChanged.flush();
+    expectCommandAck(await controller.handleMessage({ type: "moveNode", nodeId: "tab:2", parentId: "window:10", index: 1 }), true);
+
+    expectCommandAck(await controller.handleMessage({ type: "restoreNode", nodeId: "window:10" }), true);
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+
+    expect(state.nodes["window:10"]?.status).toBe("live");
+    expect(state.nodes["window:10"]?.childIds).toEqual(["tab:1", "tab:2"]);
+    expect(state.nodes["tab:1"]?.status).toBe("live");
+    expect(state.nodes["tab:2"]?.status).toBe("live");
+    expect(new Set([
+      state.nodes["tab:1"]?.live?.windowId,
+      state.nodes["tab:2"]?.live?.windowId
+    ])).toEqual(new Set([state.nodes["window:10"]?.live?.windowId]));
+  });
+
+  it("restores an earlier closed dragged-in tab when the restored window session has no tab list", async () => {
+    const title = "Google Calendar - Week of May 25, 2026";
+    const url = "https://calendar.example/week";
+    let currentTime = 1000;
+    const runtime = fakeRuntime(
+      [
+        { id: 10, focused: true, incognito: false }
+      ],
+      [
+        { id: 1, windowId: 10, index: 0, active: true, url, title },
+        { id: 2, windowId: 10, index: 1, active: false, url, title }
+      ]
+    );
+    let recentClosedSession: { tab?: { sessionId?: string }; window?: { sessionId?: string } } = {};
+    vi.mocked(runtime.api.sessions.getRecentlyClosed).mockImplementation(async () => [recentClosedSession as never]);
+    const controller = createBackgroundController({ api: runtime.api, now: () => currentTime });
+    await controller.ensureState();
+
+    const detachedWindowId = nextRuntimeWindowId(runtime);
+    runtime.windows = runtime.windows
+      .map((windowInfo) => ({ ...windowInfo, focused: false }))
+      .concat({ id: detachedWindowId, focused: true, incognito: false });
+    await moveTabFromBrowserAndFlush(runtime, 2, detachedWindowId, { index: 0, active: true });
+
+    currentTime = 2000;
+    recentClosedSession = { window: { sessionId: "session-window-detached" } };
+    expect(await controller.handleMessage({ type: "closeNode", nodeId: "tab:2" })).toMatchObject({ type: "commandAck" });
+    await runtime.events.tabRemoved.flush();
+    await runtime.events.windowRemoved.flush();
+    await runtime.events.sessionChanged.flush();
+    currentTime = 3000;
+    recentClosedSession = { window: { sessionId: "session-window-source" } };
+    expect(await controller.handleMessage({ type: "closeNode", nodeId: "tab:1" })).toMatchObject({ type: "commandAck" });
+    await runtime.events.tabRemoved.flush();
+    await runtime.events.windowRemoved.flush();
+    await runtime.events.sessionChanged.flush();
+    expectCommandAck(await controller.handleMessage({ type: "moveNode", nodeId: "tab:2", parentId: "window:10", index: 1 }), true);
+
+    let restoredRuntimeWindowId: number | undefined;
+    vi.mocked(runtime.api.sessions.restore).mockImplementation(async (sessionId: string) => {
+      if (sessionId !== "session-window-source") {
+        return {};
+      }
+      const restoredWindow = createWindowFromBrowser(runtime, { url, focused: true });
+      restoredRuntimeWindowId = restoredWindow.id;
+      for (const tab of restoredWindow.tabs ?? []) {
+        runtime.events.tabCreated.dispatch(copyTab(tab));
+      }
+      return { window: copyWindowWithoutTabs(restoredWindow) } as never;
+    });
+
+    expectCommandAck(await controller.handleMessage({ type: "restoreNode", nodeId: "window:10" }), true);
+    await runtime.events.tabCreated.flush();
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+
+    expect(restoredRuntimeWindowId).toBeTypeOf("number");
+    expect(runtime.api.tabs.create).toHaveBeenCalledWith({
+      url,
+      windowId: restoredRuntimeWindowId,
+      active: false
+    });
+    expect(state.nodes["window:10"]?.status).toBe("live");
+    expect(state.nodes["window:10"]?.childIds).toEqual(["tab:1", "tab:2"]);
+    expect(state.nodes["tab:1"]).toMatchObject({ status: "live", live: { windowId: restoredRuntimeWindowId } });
+    expect(state.nodes["tab:2"]).toMatchObject({ status: "live", live: { windowId: restoredRuntimeWindowId } });
+  });
+
+  it("moves an independently restored dragged-in tab into the group window being restored", async () => {
+    const title = "Google Calendar - Week of May 25, 2026";
+    const url = "https://calendar.example/week";
+    let currentTime = 1000;
+    const runtime = fakeRuntime(
+      [
+        { id: 10, focused: true, incognito: false }
+      ],
+      [
+        { id: 1, windowId: 10, index: 0, active: true, url, title },
+        { id: 2, windowId: 10, index: 1, active: false, url, title }
+      ]
+    );
+    let recentClosedSession: { tab?: { sessionId?: string }; window?: { sessionId?: string } } = {};
+    vi.mocked(runtime.api.sessions.getRecentlyClosed).mockImplementation(async () => [recentClosedSession as never]);
+    const controller = createBackgroundController({ api: runtime.api, now: () => currentTime });
+    await controller.ensureState();
+
+    const detachedWindowId = nextRuntimeWindowId(runtime);
+    runtime.windows = runtime.windows
+      .map((windowInfo) => ({ ...windowInfo, focused: false }))
+      .concat({ id: detachedWindowId, focused: true, incognito: false });
+    await moveTabFromBrowserAndFlush(runtime, 2, detachedWindowId, { index: 0, active: true });
+
+    currentTime = 2000;
+    recentClosedSession = { window: { sessionId: "session-window-detached" } };
+    expect(await controller.handleMessage({ type: "closeNode", nodeId: "tab:2" })).toMatchObject({ type: "commandAck" });
+    await runtime.events.tabRemoved.flush();
+    await runtime.events.windowRemoved.flush();
+    await runtime.events.sessionChanged.flush();
+    currentTime = 3000;
+    recentClosedSession = { window: { sessionId: "session-window-source" } };
+    expect(await controller.handleMessage({ type: "closeNode", nodeId: "tab:1" })).toMatchObject({ type: "commandAck" });
+    await runtime.events.tabRemoved.flush();
+    await runtime.events.windowRemoved.flush();
+    await runtime.events.sessionChanged.flush();
+    expectCommandAck(await controller.handleMessage({ type: "moveNode", nodeId: "tab:2", parentId: "window:10", index: 1 }), true);
+    const closedState = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(closedState.nodes["tab:2"]?.restore?.sessionId).toBe("session-window-detached");
+
+    let sourceRestoredWindowId: number | undefined;
+    let detachedRestoredWindowId: number | undefined;
+    vi.mocked(runtime.api.sessions.restore).mockImplementation(async (sessionId: string) => {
+      if (sessionId === "session-window-source") {
+        const restoredWindow = createWindowFromBrowser(runtime, { url, focused: true });
+        sourceRestoredWindowId = restoredWindow.id;
+        for (const tab of restoredWindow.tabs ?? []) {
+          runtime.events.tabCreated.dispatch(copyTab(tab));
+        }
+        return { window: restoredWindow } as never;
+      }
+      if (sessionId === "session-window-detached") {
+        const restoredWindow = createWindowFromBrowser(runtime, { url, focused: true });
+        detachedRestoredWindowId = restoredWindow.id;
+        for (const tab of restoredWindow.tabs ?? []) {
+          runtime.events.tabCreated.dispatch(copyTab(tab));
+        }
+        return { window: restoredWindow } as never;
+      }
+      return {};
+    });
+
+    expectCommandAck(await controller.handleMessage({ type: "restoreNode", nodeId: "window:10" }), true);
+    await runtime.events.tabCreated.flush();
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+
+    expect(sourceRestoredWindowId).toBeTypeOf("number");
+    expect(detachedRestoredWindowId).toBeTypeOf("number");
+    expect(state.nodes["window:10"]?.childIds).toEqual(["tab:1", "tab:2"]);
+    expect(state.nodes["tab:1"]).toMatchObject({ status: "live", live: { windowId: sourceRestoredWindowId } });
+    expect(state.nodes["tab:2"]).toMatchObject({ status: "live", live: { windowId: sourceRestoredWindowId } });
+    expect(runtime.api.tabs.move).toHaveBeenCalledWith(
+      expect.arrayContaining([expect.any(Number)]),
+      expect.objectContaining({ windowId: sourceRestoredWindowId })
+    );
+  });
+
+  it("persists small and large browser-closed subtrees across restart", async () => {
+    for (const tabCount of [3, 100]) {
+      const runtimeTabs = Array.from({ length: tabCount }, (_value, index) => {
+        const tabId = index + 1;
+        return {
+          id: tabId,
+          windowId: 10,
+          index,
+          active: index === 0,
+          ...(index > 0 ? { openerTabId: tabId - 1 } : {}),
+          url: `https://closed-subtree.example/${tabId}`,
+          title: `Closed subtree ${tabId}`
+        };
+      });
+      const runtime = fakeRuntime(
+        [{ id: 10, focused: true, incognito: false }],
+        runtimeTabs
+      );
+      let controller = createBackgroundController({ api: runtime.api, now: () => 1000 + tabCount });
+      await controller.ensureState();
+
+      await closeRuntimeWindow(runtime, 10, { awaitListeners: true }, "tabsRemovedThenWindowRemoved");
+      await controller.flushPendingSaves();
+      clearFakeRuntimeListeners(runtime);
+      controller = createBackgroundController({ api: runtime.api, now: () => 2000 + tabCount });
+      const state = await controller.ensureState();
+
+      expect(state.nodes["window:10"]).toMatchObject({
+        status: "closed",
+        childIds: ["tab:1"]
+      });
+      for (const tab of runtimeTabs) {
+        expect(state.nodes[`tab:${tab.id}`]).toMatchObject({
+          status: "closed",
+          restore: {
+            url: tab.url,
+            title: tab.title
+          }
+        });
+      }
+    }
+  });
+
+  it("normalizes invalid saved URLs when undo materializes a deleted live tab", async () => {
+    const runtime = fakeRuntime(
+      [
+        { id: 10, focused: true, incognito: false }
+      ],
+      [
+        { id: 1, windowId: 10, index: 0, active: true, url: "https://one.example/", title: "One" },
+        { id: 2, windowId: 10, index: 1, active: false, url: "about home", title: "About Home" }
+      ],
+      { browserLikeTabRemove: "tabRemovedOnly" }
+    );
+    vi.mocked(runtime.api.tabs.create).mockImplementation(async (createProperties: { url: string; windowId?: number; active?: boolean }) => {
+      if (createProperties.url === "about home") {
+        throw new Error("illegal url: about home");
+      }
+      const windowId = createProperties.windowId ?? 10;
+      const tab: RuntimeTab = {
+        id: nextRuntimeTabId(runtime),
+        windowId,
+        index: runtime.tabs.filter((candidate) => candidate.windowId === windowId).length,
+        active: createProperties.active ?? true,
+        url: createProperties.url,
+        title: createProperties.url
+      };
+      await createTabFromBrowser(runtime, tab, { awaitListeners: false });
+      return tab;
+    });
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+
+    expectCommandAck(await controller.handleMessage({ type: "deleteNode", nodeId: "tab:2" }), true);
+    expectCommandAck(await controller.handleMessage({ type: "undo" }), true);
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+
+    expect(runtime.api.tabs.create).toHaveBeenCalledWith({
+      url: "about:blank",
+      windowId: 10,
+      active: false
+    });
+    expect(state.nodes["tab:2"]).toMatchObject({
+      status: "live",
+      live: { windowId: 10 }
+    });
+    expect(await controller.handleMessage({ type: "getHistoryStatus" })).toMatchObject({
+      type: "historyStatus",
+      canRedo: true
     });
   });
 

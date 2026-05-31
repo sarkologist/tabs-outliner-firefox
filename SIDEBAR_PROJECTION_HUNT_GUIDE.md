@@ -56,7 +56,9 @@ For each mutation block:
 - Spend about five minutes of active adversarial work; runner wait time does not count.
 - Read only this guide, current projection tests, and relevant sidebar/projection code before adding scenarios.
 - Add or clone neutral `psh-*` Playwright scenarios.
-- Prefer protocol-level assertions when testing remote projection behavior: captured `query`, `targetNodeId`, request order, DOM visibility, and absence of unexpected `getState` hydration.
+- Prefer protocol-level assertions when testing remote projection behavior: captured `query`, `targetNodeId`, request order, DOM visibility, preserved `scrollTop` / viewport row window, and absence of unexpected commands or `getState` hydration.
+- Treat scroll, focus, command sends, and full-state hydration as side-effect oracles. Passive sparse hydration, stale slice replacement, and remote patch/broadcast handling must not move the viewport unless the action explicitly requested reveal/show-in-tree/active-tab reveal.
+- Browser active-tab create/duplicate/detach scenarios should assert the requested target row and final `scrollTop`, not only that the row eventually appears.
 - Run `pnpm exec playwright test tests/playwright/sidebar-projection-hunt.spec.ts --reporter=list`.
 - Record every distinct failure in `SIDEBAR_PROJECTION_BUGS.md` before mutating scenarios again.
 - Freeze failing scenarios; clone variants with new IDs.

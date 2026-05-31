@@ -1,4 +1,5 @@
 import type { BrowserAdapter, RestoredSession } from "./adapter.js";
+import { normalizeRestorableBrowserCreateUrl } from "./browser-create-url.js";
 import {
   analyzeRestoreScope,
   deleteNode,
@@ -443,6 +444,7 @@ async function restoreNode(
   let next = state;
   const plans = planRestore(state, nodeId);
   const restoredWindowNodeIds = new Set<NodeId>();
+  const coveredNodeIds = new Set<NodeId>();
   const pendingNodeIds = new Set<NodeId>();
   let pendingRestoredNodes: RestoredNode[] = [];
 
@@ -467,19 +469,31 @@ async function restoreNode(
 
   for (let index = 0; index < plans.length; index += 1) {
     const plan = plans[index]!;
-    if (pendingNodeIds.has(plan.nodeId) || next.nodes[plan.nodeId]?.status !== "closed") {
+    if (
+      pendingNodeIds.has(plan.nodeId) ||
+      coveredNodeIds.has(plan.nodeId) ||
+      next.nodes[plan.nodeId]?.status !== "closed"
+    ) {
       continue;
     }
     if (hasAncestor(plan.nodeId, restoredWindowNodeIds, next)) {
       continue;
     }
 
-    const urlBatch = closedWindowUrlBatchPlans(next, plans, index, pendingNodeIds, restoredWindowNodeIds);
+    const urlBatch = closedWindowUrlBatchPlans(next, plans, index, pendingNodeIds, coveredNodeIds, restoredWindowNodeIds);
     if (urlBatch.length > 1 && plan.windowNodeId) {
       const restoredNodes = await restoreClosedWindowUrlBatch(adapter, plan.windowNodeId, urlBatch, restoreObserver);
       if (restoredNodes.length > 0) {
         appendRestoredNodes(restoredNodes);
-        restoredWindowNodeIds.add(plan.windowNodeId);
+        const coverage = restoredWindowDescendantCoverage(next, plan.windowNodeId, plans, restoredNodes);
+        if (coverage.coveredWindowDescendants) {
+          restoredWindowNodeIds.add(plan.windowNodeId);
+        } else {
+          for (const coveredNodeId of coverage.coveredNodeIds) {
+            coveredNodeIds.add(coveredNodeId);
+          }
+          flushRestoredNodes();
+        }
         continue;
       }
     }
@@ -489,7 +503,15 @@ async function restoreNode(
     if (restoredNodes.length > 0) {
       appendRestoredNodes(restoredNodes);
       if (planNodeIsWindow && restoredNodes.some((restored) => restored.nodeId === plan.nodeId)) {
-        restoredWindowNodeIds.add(plan.nodeId);
+        const coverage = restoredWindowDescendantCoverage(next, plan.nodeId, plans, restoredNodes);
+        if (coverage.coveredWindowDescendants) {
+          restoredWindowNodeIds.add(plan.nodeId);
+        } else {
+          for (const coveredNodeId of coverage.coveredNodeIds) {
+            coveredNodeIds.add(coveredNodeId);
+          }
+          flushRestoredNodes();
+        }
       }
     }
   }
@@ -498,18 +520,94 @@ async function restoreNode(
   return next;
 }
 
+function restoredWindowDescendantCoverage(
+  state: OutlineState,
+  windowNodeId: NodeId,
+  plans: RestorePlan[],
+  restoredNodes: RestoredNode[]
+): { coveredWindowDescendants: boolean; coveredNodeIds: NodeId[] } {
+  if (restoredWindowCoversPlannedScope(state, windowNodeId, plans, restoredNodes)) {
+    return { coveredWindowDescendants: true, coveredNodeIds: [] };
+  }
+  if (restoredWindowRestoredAnyPlannedDescendant(state, windowNodeId, restoredNodes)) {
+    return { coveredWindowDescendants: false, coveredNodeIds: [] };
+  }
+
+  return {
+    coveredWindowDescendants: false,
+    coveredNodeIds: restoredWindowShellCoveredDescendantNodeIds(state, windowNodeId, plans)
+  };
+}
+
+function restoredWindowCoversPlannedScope(
+  state: OutlineState,
+  windowNodeId: NodeId,
+  plans: RestorePlan[],
+  restoredNodes: RestoredNode[]
+): boolean {
+  const restoredNodeIds = new Set(restoredNodes.map((restored) => restored.nodeId));
+  if (!restoredNodeIds.has(windowNodeId)) {
+    return false;
+  }
+
+  for (const plan of plans) {
+    if (plan.nodeId === windowNodeId || !isDescendantOfNode(state, plan.nodeId, windowNodeId)) {
+      continue;
+    }
+    if (state.nodes[plan.nodeId]?.status !== "closed") {
+      continue;
+    }
+    if (!restoredNodeIds.has(plan.nodeId)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function restoredWindowRestoredAnyPlannedDescendant(
+  state: OutlineState,
+  windowNodeId: NodeId,
+  restoredNodes: RestoredNode[]
+): boolean {
+  return restoredNodes.some((restored) =>
+    restored.nodeId !== windowNodeId && isDescendantOfNode(state, restored.nodeId, windowNodeId)
+  );
+}
+
+function restoredWindowShellCoveredDescendantNodeIds(
+  state: OutlineState,
+  windowNodeId: NodeId,
+  plans: RestorePlan[]
+): NodeId[] {
+  const windowNode = state.nodes[windowNodeId];
+  if (windowNode?.kind !== "window" || windowNode.status !== "closed" || typeof windowNode.closedAt !== "number") {
+    return [];
+  }
+
+  const coveredNodeIds: NodeId[] = [];
+  for (const plan of plans) {
+    if (plan.nodeId === windowNodeId || !isDescendantOfNode(state, plan.nodeId, windowNodeId)) {
+      continue;
+    }
+
+    const node = state.nodes[plan.nodeId];
+    if (node?.status === "closed" && node.closedAt === windowNode.closedAt) {
+      coveredNodeIds.push(plan.nodeId);
+    }
+  }
+  return coveredNodeIds;
+}
+
 function closedWindowUrlBatchPlans(
   state: OutlineState,
   plans: RestorePlan[],
   startIndex: number,
   pendingNodeIds: Set<NodeId>,
+  coveredNodeIds: Set<NodeId>,
   restoredWindowNodeIds: Set<NodeId>
 ): WindowUrlBatchPlan[] {
   const firstPlan = tabUrlBatchPlanFromRestorePlan(state, plans[startIndex]);
-  if (
-    !firstPlan ||
-    isPrivilegedAboutUrl(firstPlan.url)
-  ) {
+  if (!firstPlan) {
     return [];
   }
 
@@ -527,8 +625,8 @@ function closedWindowUrlBatchPlans(
     if (
       !candidate ||
       candidate.windowNodeId !== firstPlan.windowNodeId ||
-      isPrivilegedAboutUrl(candidate.url) ||
       pendingNodeIds.has(candidate.nodeId) ||
+      coveredNodeIds.has(candidate.nodeId) ||
       state.nodes[candidate.nodeId]?.status !== "closed" ||
       hasAncestor(candidate.nodeId, restoredWindowNodeIds, state)
     ) {
@@ -549,7 +647,8 @@ function tabUrlBatchPlanFromRestorePlan(
   }
 
   const url = plan.kind === "url" ? plan.url : plan.fallbackUrl;
-  return url ? { nodeId: plan.nodeId, url, windowNodeId: plan.windowNodeId } : undefined;
+  const createUrl = normalizeRestorableBrowserCreateUrl(url);
+  return createUrl ? { nodeId: plan.nodeId, url: createUrl, windowNodeId: plan.windowNodeId } : undefined;
 }
 
 async function restoreClosedWindowUrlBatch(
@@ -615,7 +714,7 @@ async function runRestorePlan(
       const restoredSession = await adapter.restoreSession(plan.sessionId);
       const restored = restoredFromSession(state, plan, restoredSession);
       if (restored.length > 0) {
-        return restored;
+        return moveRestoredTabsIntoPlannedLiveWindow(state, adapter, plan, restored);
       }
     } catch {
       // Fall through to URL fallback below.
@@ -628,6 +727,57 @@ async function runRestorePlan(
   }
 
   return tryCreateFallbackTab(state, adapter, plan.nodeId, plan.url, plan.windowNodeId, restoreObserver);
+}
+
+async function moveRestoredTabsIntoPlannedLiveWindow(
+  state: OutlineState,
+  adapter: BrowserAdapter,
+  plan: RestorePlan,
+  restoredNodes: RestoredNode[]
+): Promise<RestoredNode[]> {
+  if (!plan.windowNodeId) {
+    return restoredNodes;
+  }
+
+  const plannedWindow = state.nodes[plan.windowNodeId];
+  if (!isLiveWindow(plannedWindow)) {
+    return restoredNodes;
+  }
+
+  const movedNodes: RestoredNode[] = [];
+  for (const restored of restoredNodes) {
+    if (typeof restored.tabId !== "number") {
+      if (restored.nodeId !== plan.windowNodeId) {
+        movedNodes.push(restored);
+      }
+      continue;
+    }
+
+    if (restored.windowId === plannedWindow.live.windowId) {
+      movedNodes.push(restored);
+      continue;
+    }
+
+    await adapter.moveTabs([restored.tabId], {
+      windowId: plannedWindow.live.windowId,
+      index: restoredTabTargetIndex(state, plannedWindow.id, restored.nodeId)
+    });
+    movedNodes.push({
+      ...restored,
+      windowId: plannedWindow.live.windowId
+    });
+  }
+
+  return movedNodes;
+}
+
+function restoredTabTargetIndex(state: OutlineState, windowNodeId: NodeId, nodeId: NodeId): number {
+  const tabNodeIds = collectSubtreeEntries(state, windowNodeId)
+    .map((entry) => entry.node)
+    .filter((node) => node.kind === "tab")
+    .map((node) => node.id);
+  const index = tabNodeIds.indexOf(nodeId);
+  return index >= 0 ? index : tabNodeIds.length;
 }
 
 async function restoreSessionIntoClosedWindowDestination(
@@ -707,8 +857,12 @@ async function createFallbackTab(
 ): Promise<RestoredNode[]> {
   const plannedWindow = windowNodeId ? state.nodes[windowNodeId] : undefined;
   if (isLiveWindow(plannedWindow)) {
+    const createUrl = normalizeRestorableBrowserCreateUrl(url);
+    if (!createUrl) {
+      return [];
+    }
     const createProperties = {
-      url,
+      url: createUrl,
       windowId: plannedWindow.live.windowId,
       active: false
     };
@@ -730,12 +884,16 @@ async function createFallbackTab(
       return sessionRestored;
     }
 
-    const createData = { url };
+    const createUrl = normalizeRestorableBrowserCreateUrl(url);
+    if (!createUrl) {
+      return [];
+    }
+    const createData = { url: createUrl };
     await restoreObserver?.recordCreateAttempt({
       kind: "window",
       windowNodeId,
       tabNodeIds: [nodeId],
-      urls: [url],
+      urls: [createUrl],
       createData
     });
     const createdWindow = await adapter.createWindow(createData);
@@ -761,8 +919,12 @@ async function createFallbackTab(
   }
 
   const parentWindow = nearestLiveWindow(state, nodeId);
+  const createUrl = normalizeRestorableBrowserCreateUrl(url);
+  if (!createUrl) {
+    return [];
+  }
   const createProperties = {
-    url,
+    url: createUrl,
     ...(parentWindow ? { windowId: parentWindow.live.windowId } : {}),
     active: false
   };
@@ -785,19 +947,7 @@ async function tryCreateFallbackTab(
   windowNodeId?: NodeId,
   restoreObserver?: RestoreObserver
 ): Promise<RestoredNode[]> {
-  try {
-    return await createFallbackTab(state, adapter, nodeId, url, windowNodeId, restoreObserver);
-  } catch (error) {
-    if (isPrivilegedAboutUrl(url)) {
-      return [];
-    }
-    throw error;
-  }
-}
-
-function isPrivilegedAboutUrl(url: string): boolean {
-  const lowerUrl = url.toLocaleLowerCase();
-  return lowerUrl.startsWith("about:") && lowerUrl !== "about:blank" && lowerUrl !== "about:newtab";
+  return createFallbackTab(state, adapter, nodeId, url, windowNodeId, restoreObserver);
 }
 
 async function moveNodeToNewWindow(
@@ -928,6 +1078,16 @@ function restoredFromSession(
   session: RestoredSession
 ): RestoredNode[] {
   if (session.tab) {
+    const plannedNode = state.nodes[plan.nodeId];
+    if (plannedNode?.kind === "window") {
+      return [
+        {
+          nodeId: plannedNode.id,
+          windowId: session.tab.windowId
+        },
+        ...restoredTabsFromWindowSession(state, plan, plannedNode.id, [session.tab])
+      ];
+    }
     return [restoredTabFromRuntime(plan.nodeId, session.tab)];
   }
 
@@ -1045,6 +1205,21 @@ function closedWindowHasOnlyTab(state: OutlineState, windowNodeId: NodeId, tabNo
   return tabNodeIds.length === 1 && tabNodeIds[0] === tabNodeId;
 }
 
+function isDescendantOfNode(state: OutlineState, nodeId: NodeId, ancestorId: NodeId): boolean {
+  let current = state.nodes[nodeId];
+  const seen = new Set<NodeId>();
+
+  while (current?.parentId && !seen.has(current.id)) {
+    seen.add(current.id);
+    if (current.parentId === ancestorId) {
+      return true;
+    }
+    current = state.nodes[current.parentId];
+  }
+
+  return false;
+}
+
 function hasAncestor(nodeId: NodeId, ancestorIds: Set<NodeId>, state: OutlineState): boolean {
   let current = state.nodes[nodeId];
   const seen = new Set<NodeId>();
@@ -1073,15 +1248,46 @@ export async function syncBrowserOrder(state: OutlineState, adapter: BrowserAdap
       continue;
     }
 
-    const projection = projectLiveTabs(state, root.id);
-    const tabIds = projection
-      .filter((tab) => tab.windowId === root.live.windowId)
-      .map((tab) => tab.tabId);
+    const tabIds = liveTabIdsAlreadyInRuntimeWindow(state, root.id, root.live.windowId);
 
     if (tabIds.length > 0) {
       await adapter.moveTabs(tabIds, { windowId: root.live.windowId, index: 0 });
     }
   }
+}
+
+function liveTabIdsAlreadyInRuntimeWindow(
+  state: OutlineState,
+  windowNodeId: NodeId,
+  runtimeWindowId: number
+): number[] {
+  const tabIds: number[] = [];
+  const visited = new Set<NodeId>();
+  const stack = [...(state.nodes[windowNodeId]?.childIds ?? [])].reverse();
+
+  while (stack.length > 0) {
+    const currentId = stack.pop()!;
+    if (visited.has(currentId)) {
+      continue;
+    }
+    visited.add(currentId);
+
+    const node = state.nodes[currentId];
+    if (!node) {
+      continue;
+    }
+    if (isLiveWindow(node)) {
+      continue;
+    }
+    if (isLiveTab(node) && node.live.windowId === runtimeWindowId) {
+      tabIds.push(node.live.tabId);
+    }
+    for (let index = node.childIds.length - 1; index >= 0; index -= 1) {
+      stack.push(node.childIds[index]!);
+    }
+  }
+
+  return tabIds;
 }
 
 async function syncMovedSubtreeBrowserOrder(

@@ -11,10 +11,18 @@ import {
   type AutomaticBackupStatus
 } from "./backups.js";
 import { createBrowserAdapter } from "./browser-adapter.js";
+import { normalizeBrowserCreateUrl } from "./browser-create-url.js";
 import { computeDiagnostics, type OutlineDiagnostics } from "./diagnostics.js";
 import { isBackgroundCommand, planLiveSubtreeClose, runCommand, syncBrowserOrder } from "./commands.js";
 import type { BackgroundCommand, CommandAck, RestoreCreateAttempt, RuntimeClosePlan } from "./commands.js";
-import { RuntimeFactLedger, runtimeCommandRelocatesLiveTabs, type RuntimeTabEvidence, type RuntimeTabEvidenceField } from "./runtime-facts.js";
+import {
+  RuntimeFactLedger,
+  runtimeCommandRelocatesLiveTabs,
+  type RuntimeAcceptedTabScopeUpdate,
+  type RuntimeFactLedgerDebugSnapshot,
+  type RuntimeTabEvidence,
+  type RuntimeTabEvidenceField
+} from "./runtime-facts.js";
 import {
   appendRuntimeLifecycleJournalEntry,
   clearRuntimeLifecycleJournalEntries,
@@ -95,6 +103,12 @@ export type BackgroundController = {
   refreshFromRuntime(eventTabs?: RuntimeTab[], options?: RefreshOptions): Promise<boolean>;
   flushPendingSaves(): Promise<void>;
   __debugRuntimeIndexStatus(): { warm: boolean; matchesState: boolean; reason: string };
+  __debugRuntimeCacheSnapshot(): RuntimeCacheDebugSnapshot;
+};
+
+export type RuntimeCacheDebugSnapshot = {
+  runtimeIndex: { warm: boolean; matchesState: boolean; reason: string };
+  ledger: RuntimeFactLedgerDebugSnapshot;
 };
 
 type RefreshOptions = {
@@ -279,6 +293,9 @@ type RuntimeEventTabsFastPathResult =
       state: OutlineState;
       index: RuntimeStateIndex;
       update: TreeStructureUpdate | NodeStateUpdate;
+      structuralChanged: boolean;
+      runtimeScopeChanged: boolean;
+      runtimeScopeUpdates: RuntimeAcceptedTabScopeUpdate[];
     };
 
 export type BackgroundControllerOptions = {
@@ -2353,7 +2370,19 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       closeMissing: options.closeMissing,
       respectRuntimeTabOrder: options.respectRuntimeTabOrder
     });
+    alignKnownRuntimeWindowProvenance(reconciled);
     return statesMateriallyEqual(next, reconciled) ? next : reconciled;
+  }
+
+  function alignKnownRuntimeWindowProvenance(next: OutlineState): void {
+    for (const node of liveWindowNodes(next)) {
+      const provenance = runtimeFacts.runtimeProvenanceForRecoveredWindow(node.live.windowId);
+      if (provenance) {
+        node.runtimeProvenance = provenance;
+      } else {
+        delete node.runtimeProvenance;
+      }
+    }
   }
 
   function historyReplayNeedsCurrentRuntimeShapeOverlay(
@@ -2637,6 +2666,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
           continue;
         }
         const createdWindow = await adapter.createWindow({ tabId: currentTab.live.tabId });
+        runtimeFacts.recordCommandCreatedRuntimeWindow(createdWindow.id);
         replaceLiveWindowIdInSubtree(next, windowNode.id, createdWindow.id);
         changed = true;
         continue;
@@ -2648,6 +2678,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       const createdWindow = await adapter.createWindow({
         url: firstMissingTab ? historyNodeUrl(firstMissingTab) : "about:blank"
       });
+      runtimeFacts.recordCommandCreatedRuntimeWindow(createdWindow.id);
       replaceLiveWindowIdInSubtree(next, windowNode.id, createdWindow.id);
       const createdTab = createdWindow.tabs?.[0];
       if (firstMissingTab && createdTab) {
@@ -2990,6 +3021,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         state = fastPath.state;
         replaceCachedState(state);
         runtimeIndex = fastPath.index;
+        runtimeFacts.recordAcceptedRuntimeTabScopeUpdates(fastPath.runtimeScopeUpdates);
         await persistKnownRuntimeFastPathUpdate(fastPath.update, state);
         return true;
       }
@@ -3011,13 +3043,16 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       windows = await corroborateMissingOrMismatchedLiveTabs(current, index, windows);
     }
     if (runtimeSnapshotMateriallyMatchesState(current, windows).matches) {
+      runtimeFacts.rebuildWindowScopes(current);
       return false;
     }
     const next = reconcileWithWindows(current, windows, { now: now() }, {
       closeMissing,
       respectRuntimeTabOrder: true
     });
+    alignKnownRuntimeWindowProvenance(next);
     if (statesMateriallyEqual(current, next)) {
+      runtimeFacts.rebuildWindowScopes(next);
       return false;
     }
     installStateTransition(current, next, { rebuildRuntimeIndex: true });
@@ -3119,6 +3154,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     const liveTabNodeIdsByWindowAdditions = new Map<number, Set<NodeId>>();
     const activeTabNodeIdOverrides = new Map<number, NodeId | undefined>();
     const fetchedWindows = new Map<number, RuntimeWindow | undefined>();
+    const runtimeScopeUpdates: RuntimeAcceptedTabScopeUpdate[] = [];
     let plannedRootIds: NodeId[] | undefined;
     let activeWindowNodeId = index.activeWindowNodeId;
     let activeWindowNodeIdChanged = false;
@@ -3219,6 +3255,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       }
 
       const windowNodeId = uniqueRuntimeNodeIdForPlan(windowNodeIdForRuntime(windowInfo.id));
+      const runtimeProvenance = runtimeFacts.runtimeProvenanceForRecoveredWindow(windowInfo.id);
       plannedNodes.set(windowNodeId, {
         id: windowNodeId,
         kind: "window",
@@ -3229,7 +3266,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         collapsed: false,
         createdAt: now(),
         updatedAt: now(),
-        runtimeProvenance: "browserCreated",
+        ...(runtimeProvenance ? { runtimeProvenance } : {}),
         live: { windowId: windowInfo.id }
       });
       changedNodeIds.add(windowNodeId);
@@ -3237,7 +3274,9 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       rootIdsForPlan().push(windowNodeId);
       liveWindowNodeIdAdditions.set(windowInfo.id, windowNodeId);
       liveTabNodeIdsByWindowAdditions.set(windowInfo.id, new Set());
-      runtimeFacts.recordBrowserCreatedRuntimeWindow(windowInfo.id);
+      if (runtimeProvenance === "browserCreated") {
+        runtimeFacts.recordBrowserCreatedRuntimeWindow(windowInfo.id);
+      }
       if (windowInfo.focused) {
         clearActiveWindowForRuntimeFastPath(windowNodeId);
       }
@@ -3276,6 +3315,25 @@ export function createBackgroundController(options: BackgroundControllerOptions)
           if (mutablePreviousActiveTab) {
             mutablePreviousActiveTab.active = false;
           }
+        }
+        if (isLiveTabNode(previousActiveTab)) {
+          const previousFact = runtimeFacts.acceptedTabShapeFact(previousActiveTab.live.tabId);
+          const previousWindowNodeId = plannedLiveWindowNodeId(windowId);
+          runtimeScopeUpdates.push({
+            tab: {
+              id: previousActiveTab.live.tabId,
+              windowId: previousActiveTab.live.windowId,
+              index: previousFact?.index ?? 0,
+              active: false,
+              title: previousActiveTab.title,
+              ...(previousActiveTab.url !== undefined ? { url: previousActiveTab.url } : {}),
+              ...(previousActiveTab.favIconUrl !== undefined ? { favIconUrl: previousActiveTab.favIconUrl } : {})
+            },
+            tabNodeId: previousActiveTabNodeId,
+            ...(previousWindowNodeId ? { windowNodeId: previousWindowNodeId } : {}),
+            sequence: eventSequence,
+            preserveOrder: true
+          });
         }
       }
       const activeTab = nodeForPlan(activeTabNodeId);
@@ -3383,6 +3441,12 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         } else if (wasActive) {
           return { handled: false };
         }
+        runtimeScopeUpdates.push({
+          tab,
+          tabNodeId: existingTabNodeId,
+          windowNodeId,
+          sequence: evidence.sequence
+        });
         continue;
       }
 
@@ -3410,6 +3474,12 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       if (tab.active) {
         activateTabForRuntimeFastPath(tab.windowId, tabNodeId, evidence.sequence);
       }
+      runtimeScopeUpdates.push({
+        tab,
+        tabNodeId,
+        windowNodeId,
+        sequence: evidence.sequence
+      });
     }
 
     if (plannedNodes.size === 0 && !plannedRootIds) {
@@ -3443,7 +3513,10 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       changed: true,
       state: current,
       index,
-      update
+      update,
+      structuralChanged,
+      runtimeScopeChanged: structuralChanged || activeTabNodeIdOverrides.size > 0 || activeWindowNodeIdChanged,
+      runtimeScopeUpdates
     };
   }
 
@@ -3494,6 +3567,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       return;
     }
     runtimeIndex = runtimeIndexForStateTransition(previous, next, runtimeIndex, options.candidateNodeIds);
+    runtimeFacts.rebuildWindowScopes(next);
   }
 
   function replaceCachedState(next: OutlineState): void {
@@ -3524,6 +3598,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       state = current;
       replaceCachedState(current);
       runtimeIndex = index;
+      runtimeFacts.recordInstalledActiveTab(activeInfo.tabId, activeInfo.windowId, activeInfo.previousTabId);
       await broadcastActiveStateUpdate(activation.updates);
       return true;
     }, { reason: "commandFocusActivation" });
@@ -4338,6 +4413,17 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     refreshFromRuntime,
     flushPendingSaves,
     __debugRuntimeIndexStatus(): { warm: boolean; matchesState: boolean; reason: string } {
+      return debugRuntimeIndexStatus();
+    },
+    __debugRuntimeCacheSnapshot(): RuntimeCacheDebugSnapshot {
+      return {
+        runtimeIndex: debugRuntimeIndexStatus(),
+        ledger: runtimeFacts.debugSnapshot()
+      };
+    }
+  };
+
+  function debugRuntimeIndexStatus(): { warm: boolean; matchesState: boolean; reason: string } {
       if (!state || !runtimeIndex) {
         return { warm: false, matchesState: false, reason: "missing state or index" };
       }
@@ -4347,8 +4433,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       const expected = buildRuntimeStateIndex(state);
       const reason = runtimeStateIndexMismatchReason(runtimeIndex, expected);
       return { warm: true, matchesState: !reason, reason: reason ?? "" };
-    }
-  };
+  }
 }
 
 function commandAck(stateChanged: boolean): CommandAck {
@@ -5785,7 +5870,7 @@ function nearestLiveWindowId(state: OutlineState, nodeId: NodeId): number | unde
 }
 
 function historyNodeUrl(node: OutlineNode): string {
-  return node.url ?? node.restore?.url ?? "about:blank";
+  return normalizeBrowserCreateUrl(node.url ?? node.restore?.url);
 }
 
 function isLiveWindowNode(node: OutlineNode | undefined): node is OutlineNode & { live: { windowId: number } } {

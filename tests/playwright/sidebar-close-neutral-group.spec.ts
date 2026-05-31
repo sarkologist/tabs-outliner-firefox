@@ -46,6 +46,39 @@ test.describe("sidebar neutral group close action", () => {
     await expect(sentSidebarCommands(page)).resolves.toEqual([{ type: "restoreNode", nodeId: "window:closed-parent" }]);
     expect(issues).toEqual([]);
   });
+
+  test("restores an imported closed group through its descendant restore scope", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadSidebar(page);
+
+    const importedGroup = nodeRow(page, "window:imported-group");
+    await importedGroup.getByRole("button", { name: "Restore Imported group", exact: true }).click();
+
+    await expect(sentSidebarCommands(page)).resolves.toEqual([{ type: "restoreNode", nodeId: "window:imported-group" }]);
+    expect(issues).toEqual([]);
+  });
+
+  test("offers restore for live containers that still have closed descendants", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadSidebar(page);
+
+    const partiallyRestored = nodeRow(page, "window:1");
+    await partiallyRestored.hover();
+    await partiallyRestored.getByRole("button", { name: "Restore", exact: true }).click();
+
+    await expect(sentSidebarCommands(page)).resolves.toEqual([{ type: "restoreNode", nodeId: "window:1" }]);
+    expect(issues).toEqual([]);
+  });
+
+  test("restores mixed live containers from the row label", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadSidebar(page);
+
+    await nodeRow(page, "window:1").getByRole("button", { name: "Restore Window", exact: true }).click();
+
+    await expect(sentSidebarCommands(page)).resolves.toEqual([{ type: "restoreNode", nodeId: "window:1" }]);
+    expect(issues).toEqual([]);
+  });
 });
 
 async function loadSidebar(page: Page): Promise<void> {
@@ -111,7 +144,7 @@ async function loadSidebar(page: Page): Promise<void> {
   }, fixtureState());
 
   await page.goto("/sidebar/sidebar.html");
-  await expect(page.getByRole("treeitem")).toHaveCount(10);
+  await expect(page.getByRole("treeitem")).toHaveCount(14);
 }
 
 function nodeRow(page: Page, nodeId: string) {
@@ -155,7 +188,7 @@ function fixtureState() {
   const now = 1_700_000_000_000;
   return {
     version: 1,
-    rootIds: ["group:outer", "window:closed-parent", "group:closed-only"],
+    rootIds: ["group:outer", "window:closed-parent", "group:closed-only", "window:imported-group"],
     nodes: {
       "group:outer": {
         id: "group:outer",
@@ -184,7 +217,7 @@ function fixtureState() {
         status: "live",
         parentId: "group:inner",
         title: "Window",
-        childIds: ["tab:1"],
+        childIds: ["tab:1", "tab:partially-restored-closed"],
         active: true,
         collapsed: false,
         createdAt: now,
@@ -204,6 +237,20 @@ function fixtureState() {
         createdAt: now,
         updatedAt: now,
         live: { tabId: 1, windowId: 1 }
+      },
+      "tab:partially-restored-closed": {
+        id: "tab:partially-restored-closed",
+        kind: "tab",
+        status: "closed",
+        parentId: "window:1",
+        title: "Still closed",
+        url: "https://partially-restored.example/",
+        childIds: [],
+        collapsed: false,
+        createdAt: now,
+        updatedAt: now,
+        closedAt: now,
+        restore: { url: "https://partially-restored.example/", title: "Still closed" }
       },
       "window:closed-parent": {
         id: "window:closed-parent",
@@ -276,6 +323,45 @@ function fixtureState() {
         updatedAt: now,
         closedAt: now,
         restore: { url: "https://closed.example/", title: "Closed" }
+      },
+      "window:imported-group": {
+        id: "window:imported-group",
+        kind: "window",
+        status: "closed",
+        title: "Imported group",
+        childIds: ["tab:imported-a", "tab:imported-b"],
+        collapsed: false,
+        createdAt: now,
+        updatedAt: now,
+        closedAt: now
+      },
+      "tab:imported-a": {
+        id: "tab:imported-a",
+        kind: "tab",
+        status: "closed",
+        parentId: "window:imported-group",
+        title: "Imported A",
+        url: "https://imported.example/a",
+        childIds: [],
+        collapsed: false,
+        createdAt: now,
+        updatedAt: now,
+        closedAt: now,
+        restore: { url: "https://imported.example/a", title: "Imported A" }
+      },
+      "tab:imported-b": {
+        id: "tab:imported-b",
+        kind: "tab",
+        status: "closed",
+        parentId: "window:imported-group",
+        title: "Imported B",
+        url: "https://imported.example/b",
+        childIds: [],
+        collapsed: false,
+        createdAt: now,
+        updatedAt: now,
+        closedAt: now,
+        restore: { url: "https://imported.example/b", title: "Imported B" }
       }
     }
   };

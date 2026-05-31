@@ -618,6 +618,9 @@ export function applyInsertTreeStructurePatchToProjection(
   if (!removalRanges) {
     return false;
   }
+  if (!projectionPatchIndexesFitRenderedRows(projection, orderedInsertions, removalRanges)) {
+    return false;
+  }
 
   for (const insertion of orderedInsertions) {
     if (insertionIndexSplitsRemovalRange(insertion.index, removalRanges)) {
@@ -648,6 +651,20 @@ export function applyInsertTreeStructurePatchToProjection(
   projection.visibleNodeIds = projection.rows.map((row) => row.nodeId);
   projection.visibleNodeIdSet = new Set(projection.visibleNodeIds);
   return true;
+}
+
+function projectionPatchIndexesFitRenderedRows(
+  projection: VisibleTreeProjection,
+  insertions: readonly { index: number }[],
+  removalRanges: readonly RowRemovalRange[]
+): boolean {
+  if (!projection.rows.every((row, index) => row.index === index)) {
+    return false;
+  }
+
+  const rowCount = projection.rows.length;
+  return insertions.every((insertion) => insertion.index >= 0 && insertion.index <= rowCount) &&
+    removalRanges.every((range) => range.start >= 0 && range.end <= rowCount);
 }
 
 function normalizedRemovalRanges(ranges: RowRemovalRange[]): RowRemovalRange[] | undefined {

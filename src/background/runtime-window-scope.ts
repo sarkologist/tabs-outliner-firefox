@@ -23,6 +23,110 @@ export class RuntimeWindowScopeIndex {
   private readonly tabWindowIds = new Map<number, number>();
   private readonly removedTabNodeIdsByRuntimeId = new Map<number, NodeId>();
 
+  upsertLiveWindow(input: {
+    runtimeWindowId: number;
+    outlineWindowNodeId?: NodeId;
+    state?: RuntimeWindow["state"];
+    provenance: RuntimeWindowScopeProvenance;
+  }): void {
+    const previous = this.scopes.get(input.runtimeWindowId);
+    const outlineWindowNodeId = input.outlineWindowNodeId ?? previous?.outlineWindowNodeId;
+    const state = input.state ?? previous?.state;
+    this.scopes.set(input.runtimeWindowId, {
+      runtimeWindowId: input.runtimeWindowId,
+      ...(outlineWindowNodeId ? { outlineWindowNodeId } : {}),
+      tabNodeIdsByRuntimeId: previous?.tabNodeIdsByRuntimeId ?? new Map<number, NodeId>(),
+      tabOrder: previous ? [...previous.tabOrder] : [],
+      ...(typeof previous?.activeTabId === "number" ? { activeTabId: previous.activeTabId } : {}),
+      ...(state ? { state } : {}),
+      provenance: input.provenance,
+      lifecycle: "live"
+    });
+  }
+
+  upsertLiveTab(input: {
+    runtimeWindowId: number;
+    tabId: number;
+    tabNodeId: NodeId;
+    index?: number;
+    active?: boolean;
+  }): void {
+    const previousWindowId = this.tabWindowIds.get(input.tabId);
+    if (typeof previousWindowId === "number" && previousWindowId !== input.runtimeWindowId) {
+      const previousScope = this.scopes.get(previousWindowId);
+      if (previousScope) {
+        previousScope.tabNodeIdsByRuntimeId.delete(input.tabId);
+        previousScope.tabOrder = previousScope.tabOrder.filter((tabId) => tabId !== input.tabId);
+        if (previousScope.activeTabId === input.tabId) {
+          delete previousScope.activeTabId;
+        }
+      }
+    }
+
+    const scope = this.scopes.get(input.runtimeWindowId);
+    if (!scope) {
+      return;
+    }
+
+    scope.tabNodeIdsByRuntimeId.set(input.tabId, input.tabNodeId);
+    scope.tabOrder = runtimeOrderWithTabAtIndex(scope.tabOrder, input.tabId, input.index);
+    this.tabWindowIds.set(input.tabId, input.runtimeWindowId);
+    this.removedTabNodeIdsByRuntimeId.delete(input.tabId);
+    if (input.active === true) {
+      scope.activeTabId = input.tabId;
+    } else if (input.active === false && scope.activeTabId === input.tabId) {
+      delete scope.activeTabId;
+    }
+  }
+
+  syncLiveWindowOrder(
+    runtimeWindowId: number,
+    tabOrder: readonly number[],
+    options: { pruneMissing?: boolean } = {}
+  ): void {
+    const scope = this.scopes.get(runtimeWindowId);
+    if (!scope || scope.lifecycle !== "live") {
+      return;
+    }
+    const knownTabIds = new Set(scope.tabNodeIdsByRuntimeId.keys());
+    const orderedKnownTabs = tabOrder.filter((tabId) => knownTabIds.has(tabId));
+    const orderedSet = new Set(orderedKnownTabs);
+    if (options.pruneMissing === true) {
+      scope.tabOrder = orderedKnownTabs;
+      for (const tabId of [...scope.tabNodeIdsByRuntimeId.keys()]) {
+        if (!orderedSet.has(tabId)) {
+          scope.tabNodeIdsByRuntimeId.delete(tabId);
+          this.tabWindowIds.delete(tabId);
+        }
+      }
+      return;
+    }
+    scope.tabOrder = [
+      ...orderedKnownTabs,
+      ...scope.tabOrder.filter((tabId) => knownTabIds.has(tabId) && !orderedSet.has(tabId))
+    ];
+  }
+
+  markTabRemoved(tabId: number): void {
+    const windowId = this.tabWindowIds.get(tabId);
+    if (typeof windowId !== "number") {
+      return;
+    }
+    const scope = this.scopes.get(windowId);
+    const nodeId = scope?.tabNodeIdsByRuntimeId.get(tabId);
+    if (scope) {
+      scope.tabNodeIdsByRuntimeId.delete(tabId);
+      scope.tabOrder = scope.tabOrder.filter((candidate) => candidate !== tabId);
+      if (scope.activeTabId === tabId) {
+        delete scope.activeTabId;
+      }
+    }
+    this.tabWindowIds.delete(tabId);
+    if (nodeId) {
+      this.removedTabNodeIdsByRuntimeId.set(tabId, nodeId);
+    }
+  }
+
   rebuild(input: {
     state: OutlineState;
     nodes?: readonly OutlineNode[];
@@ -184,14 +288,14 @@ function scopeProvenance(
   if (node.restoredFromClosed) {
     return "restored";
   }
-  if (node.runtimeProvenance) {
-    return node.runtimeProvenance;
-  }
   if (browserCreatedWindowIds?.has(runtimeWindowId)) {
     return "browserCreated";
   }
   if (commandCreatedWindowIds?.has(runtimeWindowId)) {
     return "commandCreated";
+  }
+  if (node.runtimeProvenance) {
+    return node.runtimeProvenance;
   }
   return canonicalRuntimeIdFromNodeId(node.id, "window") === runtimeWindowId ? "saved" : "commandCreated";
 }
@@ -207,6 +311,22 @@ function liveTabNodesByWindowId(nodes: readonly OutlineNode[]): Map<number, Live
     tabsByWindowId.set(node.live.windowId, existing);
   }
   return tabsByWindowId;
+}
+
+function runtimeOrderWithTabAtIndex(tabOrder: readonly number[], tabId: number, index: number | undefined): number[] {
+  if (typeof index !== "number" && tabOrder.includes(tabId)) {
+    return [...tabOrder];
+  }
+  const withoutTab = tabOrder.filter((candidate) => candidate !== tabId);
+  if (typeof index !== "number") {
+    return [...withoutTab, tabId];
+  }
+  const insertionIndex = Math.max(0, Math.min(index, withoutTab.length));
+  return [
+    ...withoutTab.slice(0, insertionIndex),
+    tabId,
+    ...withoutTab.slice(insertionIndex)
+  ];
 }
 
 function descendantTabNodes(state: OutlineState, nodeId: NodeId): OutlineNode[] {

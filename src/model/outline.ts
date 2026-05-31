@@ -620,6 +620,7 @@ export function moveNode(state: OutlineState, nodeId: NodeId, target: MoveTarget
 
   const next = copyStateForNodeTableMutation(state);
   const moving = cloneNodeForMutation(next, nodeId);
+  const singleTabSourceWindow = closedSingleTabSourceWindow(state, nodeId);
   const oldParentId = moving.parentId;
   const oldSiblings = oldParentId
     ? cloneNodeForMutation(next, oldParentId).childIds
@@ -640,11 +641,31 @@ export function moveNode(state: OutlineState, nodeId: NodeId, target: MoveTarget
   if (typeof target.now === "number") {
     moving.updatedAt = target.now;
   }
+  inheritSingleTabWindowRestoreSession(moving, singleTabSourceWindow);
 
   if (oldParentId) {
     mutableRootIds(next, state);
   }
   return removeEmptyWindowNodesFrom(next, oldParentId);
+}
+
+function inheritSingleTabWindowRestoreSession(
+  node: OutlineNode,
+  sourceWindow: OutlineNode | undefined
+): void {
+  if (
+    node.kind !== "tab" ||
+    node.status !== "closed" ||
+    node.restore?.sessionId ||
+    !sourceWindow?.restore?.sessionId
+  ) {
+    return;
+  }
+
+  node.restore = {
+    ...node.restore,
+    sessionId: sourceWindow.restore.sessionId
+  };
 }
 
 export function flattenSubtreeOneLevel(state: OutlineState, nodeId: NodeId): OutlineState {

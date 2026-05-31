@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { BrowserAdapter } from "./adapter.js";
-import { isBackgroundCommand, runCommand } from "./commands.js";
+import { isBackgroundCommand, runCommand, syncBrowserOrder } from "./commands.js";
 import type { BackgroundCommand, RestoreCreateAttempt } from "./commands.js";
 import {
   LARGE_RESTORE_NODE_THRESHOLD,
@@ -390,6 +390,44 @@ describe("background commands", () => {
     ]);
   });
 
+  it("normalizes invalid restore fallback URLs before creating tabs", async () => {
+    const state = closeTab(bootstrapFromWindows(runtimeWindows, { now: 1000 }), 2, {
+      now: 2000,
+      sessionId: "session-tab-2"
+    });
+    const closedTab = state.nodes["tab:2"];
+    if (closedTab?.restore) {
+      closedTab.restore.url = "about home";
+    }
+    const adapter = fakeAdapter({
+      restoreSession: vi.fn(async () => {
+        throw new Error("expired");
+      }),
+      createTab: vi.fn(async ({ url, windowId = 10 }) => {
+        if (url === "about home") {
+          throw new Error("illegal url: about home");
+        }
+        return {
+          id: 24,
+          windowId,
+          index: 2,
+          active: false,
+          url,
+          title: url
+        };
+      })
+    });
+
+    const result = await runCommand(state, adapter, { type: "restoreNode", nodeId: "tab:2" });
+
+    expect(adapter.createTab).toHaveBeenCalledWith({
+      url: "about:blank",
+      windowId: 10,
+      active: false
+    });
+    expect(result.state.nodes["tab:2"]?.live).toEqual({ tabId: 24, windowId: 10 });
+  });
+
   it("records restore window create attempts for command-side recovery", async () => {
     const state = closeWindow(bootstrapFromWindows([
       ...runtimeWindows,
@@ -536,6 +574,59 @@ describe("background commands", () => {
         }
       }
     ]);
+  });
+
+  it("does not use broad order sync to pull browser-detached tabs across windows", async () => {
+    const state = moveNode(bootstrapFromWindows([
+      {
+        id: 10,
+        focused: true,
+        incognito: false,
+        tabs: [
+          {
+            id: 1,
+            windowId: 10,
+            index: 0,
+            active: true,
+            url: "https://source.example/one",
+            title: "Source One"
+          },
+          {
+            id: 2,
+            windowId: 10,
+            index: 1,
+            active: false,
+            url: "https://source.example/two",
+            title: "Source Two"
+          }
+        ]
+      },
+      {
+        id: 20,
+        focused: false,
+        incognito: false,
+        tabs: [
+          {
+            id: 3,
+            windowId: 20,
+            index: 0,
+            active: true,
+            url: "https://detached.example/",
+            title: "Detached"
+          }
+        ]
+      }
+    ], { now: 1000 }), "tab:2", { parentId: "window:20", index: 1 });
+    const adapter = fakeAdapter();
+
+    await syncBrowserOrder(state, adapter);
+
+    expect(adapter.moveTabs).toHaveBeenCalledWith([1], { windowId: 10, index: 0 });
+    expect(adapter.moveTabs).toHaveBeenCalledWith([3], { windowId: 20, index: 0 });
+    expect(adapter.moveTabs).not.toHaveBeenCalledWith(
+      expect.arrayContaining([2]),
+      expect.objectContaining({ windowId: 20 })
+    );
   });
 
   it("refuses large restores that have not been confirmed", async () => {
@@ -686,6 +777,325 @@ describe("background commands", () => {
     expect(result.state.nodes[groupId]?.customTitle).toBe("voyager trackpad");
     expect(result.state.nodes["tab:1"]?.live).toEqual({ tabId: 200, windowId: 42 });
     expect(result.state.nodes["tab:2"]?.live).toEqual({ tabId: 201, windowId: 42 });
+  });
+
+  it("restores a closed tab moved into a previously closed window after that window session", async () => {
+    let state = bootstrapFromWindows([
+      {
+        id: 10,
+        focused: true,
+        incognito: false,
+        tabs: [
+          {
+            id: 1,
+            windowId: 10,
+            index: 0,
+            active: true,
+            url: "https://original.example/",
+            title: "Original"
+          }
+        ]
+      },
+      {
+        id: 20,
+        focused: false,
+        incognito: false,
+        tabs: [
+          {
+            id: 2,
+            windowId: 20,
+            index: 0,
+            active: true,
+            url: "https://detached.example/",
+            title: "Detached"
+          }
+        ]
+      }
+    ], { now: 1000 });
+    state = closeWindow(state, 20, { now: 2000, sessionId: "session-window-20" });
+    state = closeWindow(state, 10, { now: 3000, sessionId: "session-window-10" });
+    state = moveNode(state, "tab:2", { parentId: "window:10", index: 1 });
+    const adapter = fakeAdapter({
+      restoreSession: vi.fn(async (sessionId) => {
+        if (sessionId !== "session-window-10") {
+          return {};
+        }
+        return {
+          window: {
+            id: 42,
+            focused: true,
+            incognito: false,
+            tabs: [
+              {
+                id: 200,
+                windowId: 42,
+                index: 0,
+                active: true,
+                url: "https://original.example/",
+                title: "Original"
+              }
+            ]
+          }
+        };
+      }),
+      createTab: vi.fn(async ({ url, windowId = 10 }) => ({
+        id: 201,
+        windowId,
+        index: 1,
+        active: false,
+        url,
+        title: url
+      }))
+    });
+
+    const result = await runCommand(state, adapter, { type: "restoreNode", nodeId: "window:10" });
+
+    expect(adapter.restoreSession).toHaveBeenCalledWith("session-window-10");
+    expect(adapter.createWindow).not.toHaveBeenCalled();
+    expect(adapter.createTab).toHaveBeenCalledWith({
+      url: "https://detached.example/",
+      windowId: 42,
+      active: false
+    });
+    expect(result.state.nodes["window:10"]?.live).toEqual({ windowId: 42 });
+    expect(result.state.nodes["tab:1"]?.live).toEqual({ tabId: 200, windowId: 42 });
+    expect(result.state.nodes["tab:2"]?.live).toEqual({ tabId: 201, windowId: 42 });
+  });
+
+  it("restores an earlier closed tab moved into a window session that returns no tab list", async () => {
+    let state = bootstrapFromWindows([
+      {
+        id: 10,
+        focused: true,
+        incognito: false,
+        tabs: [
+          {
+            id: 1,
+            windowId: 10,
+            index: 0,
+            active: true,
+            url: "https://calendar.example/week",
+            title: "Google Calendar - Week of May 25, 2026"
+          }
+        ]
+      },
+      {
+        id: 20,
+        focused: false,
+        incognito: false,
+        tabs: [
+          {
+            id: 2,
+            windowId: 20,
+            index: 0,
+            active: true,
+            url: "https://calendar.example/week",
+            title: "Google Calendar - Week of May 25, 2026"
+          }
+        ]
+      }
+    ], { now: 1000 });
+    state = closeWindow(state, 20, { now: 2000, sessionId: "session-window-20" });
+    state = closeWindow(state, 10, { now: 3000, sessionId: "session-window-10" });
+    state = moveNode(state, "tab:2", { parentId: "window:10", index: 1 });
+    const adapter = fakeAdapter({
+      restoreSession: vi.fn(async (sessionId) => {
+        if (sessionId !== "session-window-10") {
+          return {};
+        }
+        return {
+          window: {
+            id: 42,
+            focused: true,
+            incognito: false
+          }
+        };
+      }),
+      createTab: vi.fn(async ({ url, windowId = 10 }) => ({
+        id: 201,
+        windowId,
+        index: 1,
+        active: false,
+        url,
+        title: url
+      }))
+    });
+
+    const result = await runCommand(state, adapter, { type: "restoreNode", nodeId: "window:10" });
+
+    expect(adapter.restoreSession).toHaveBeenCalledWith("session-window-10");
+    expect(adapter.createTab).toHaveBeenCalledTimes(1);
+    expect(adapter.createTab).toHaveBeenCalledWith({
+      url: "https://calendar.example/week",
+      windowId: 42,
+      active: false
+    });
+    expect(result.state.nodes["window:10"]?.live).toEqual({ windowId: 42 });
+    expect(result.state.nodes["tab:2"]?.live).toEqual({ tabId: 201, windowId: 42 });
+  });
+
+  it("restores a single-tab closed window when the browser returns a tab session", async () => {
+    let state = bootstrapFromWindows([
+      {
+        id: 10,
+        focused: true,
+        incognito: false,
+        tabs: [
+          {
+            id: 1,
+            windowId: 10,
+            index: 0,
+            active: true,
+            url: "https://calendar.example/week",
+            title: "Google Calendar - Week of May 25, 2026"
+          }
+        ]
+      }
+    ], { now: 1000 });
+    state = closeWindow(state, 10, { now: 2000, sessionId: "session-window-10" });
+    const adapter = fakeAdapter({
+      restoreSession: vi.fn(async () => ({
+        tab: {
+          id: 201,
+          windowId: 42,
+          index: 0,
+          active: true,
+          url: "https://calendar.example/week",
+          title: "Google Calendar - Week of May 25, 2026"
+        }
+      }))
+    });
+
+    const result = await runCommand(state, adapter, { type: "restoreNode", nodeId: "window:10" });
+
+    expect(result.state.nodes["window:10"]?.live).toEqual({ windowId: 42 });
+    expect(result.state.nodes["tab:1"]?.live).toEqual({ tabId: 201, windowId: 42 });
+    expect(result.state.nodes["window:10"]?.childIds).toEqual(["tab:1"]);
+  });
+
+  it("moves a restored tab session into its current outline window", async () => {
+    let state = bootstrapFromWindows([
+      {
+        id: 10,
+        focused: true,
+        incognito: false,
+        tabs: [
+          {
+            id: 1,
+            windowId: 10,
+            index: 0,
+            active: true,
+            url: "https://calendar.example/week",
+            title: "Google Calendar - Week of May 25, 2026"
+          }
+        ]
+      },
+      {
+        id: 20,
+        focused: false,
+        incognito: false,
+        tabs: [
+          {
+            id: 2,
+            windowId: 20,
+            index: 0,
+            active: true,
+            url: "https://calendar.example/week",
+            title: "Google Calendar - Week of May 25, 2026"
+          }
+        ]
+      }
+    ], { now: 1000 });
+    state = closeTab(state, 2, { now: 2000, sessionId: "session-tab-2" });
+    state = closeTab(state, 1, { now: 3000, sessionId: "session-tab-1" });
+    state = moveNode(state, "tab:2", { parentId: "window:10", index: 1 });
+    const adapter = fakeAdapter({
+      restoreSession: vi.fn(async (sessionId) => ({
+        tab: {
+          id: sessionId === "session-tab-1" ? 201 : 202,
+          windowId: sessionId === "session-tab-1" ? 10 : 20,
+          index: 0,
+          active: false,
+          url: "https://calendar.example/week",
+          title: "Google Calendar - Week of May 25, 2026"
+        }
+      }))
+    });
+
+    const result = await runCommand(state, adapter, { type: "restoreNode", nodeId: "window:10" });
+
+    expect(adapter.restoreSession).toHaveBeenCalledWith("session-tab-1");
+    expect(adapter.restoreSession).toHaveBeenCalledWith("session-tab-2");
+    expect(adapter.moveTabs).toHaveBeenCalledWith([202], { windowId: 10, index: 1 });
+    expect(result.state.nodes["tab:1"]?.live).toEqual({ tabId: 201, windowId: 10 });
+    expect(result.state.nodes["tab:2"]?.live).toEqual({ tabId: 202, windowId: 10 });
+    expect(result.state.nodes["window:10"]?.childIds).toEqual(["tab:1", "tab:2"]);
+  });
+
+  it("restores a nested closed detached window moved under a previously closed group", async () => {
+    let state = bootstrapFromWindows([
+      {
+        id: 10,
+        focused: true,
+        incognito: false,
+        tabs: [
+          {
+            id: 1,
+            windowId: 10,
+            index: 0,
+            active: true,
+            url: "https://calendar.example/week",
+            title: "Google Calendar - Week of May 25, 2026"
+          }
+        ]
+      },
+      {
+        id: 20,
+        focused: false,
+        incognito: false,
+        tabs: [
+          {
+            id: 2,
+            windowId: 20,
+            index: 0,
+            active: true,
+            url: "https://calendar.example/week",
+            title: "Google Calendar - Week of May 25, 2026"
+          }
+        ]
+      }
+    ], { now: 1000 });
+    state = closeWindow(state, 20, { now: 2000, sessionId: "session-window-20" });
+    state = closeWindow(state, 10, { now: 3000, sessionId: "session-window-10" });
+    state = moveNode(state, "window:20", { parentId: "window:10", index: 1 });
+    const adapter = fakeAdapter({
+      restoreSession: vi.fn(async (sessionId) => ({
+        window: {
+          id: sessionId === "session-window-10" ? 42 : 43,
+          focused: sessionId === "session-window-10",
+          incognito: false,
+          tabs: [
+            {
+              id: sessionId === "session-window-10" ? 201 : 202,
+              windowId: sessionId === "session-window-10" ? 42 : 43,
+              index: 0,
+              active: true,
+              url: "https://calendar.example/week",
+              title: "Google Calendar - Week of May 25, 2026"
+            }
+          ]
+        }
+      }))
+    });
+
+    const result = await runCommand(state, adapter, { type: "restoreNode", nodeId: "window:10" });
+
+    expect(adapter.restoreSession).toHaveBeenCalledWith("session-window-10");
+    expect(adapter.restoreSession).toHaveBeenCalledWith("session-window-20");
+    expect(result.state.nodes["window:10"]?.live).toEqual({ windowId: 42 });
+    expect(result.state.nodes["tab:1"]?.live).toEqual({ tabId: 201, windowId: 42 });
+    expect(result.state.nodes["window:20"]?.live).toEqual({ windowId: 43 });
+    expect(result.state.nodes["tab:2"]?.live).toEqual({ tabId: 202, windowId: 43 });
   });
 
   it("uses the owning closed window session when restoring its only tab", async () => {
@@ -1244,7 +1654,7 @@ describe("background commands", () => {
 
     const debugging = Object.values(restored.state.nodes).find((node) => node.title === "Debugging");
     const restorable = Object.values(restored.state.nodes).find((node) => node.title === "Restorable");
-    expect(adapter.createWindow).toHaveBeenCalledWith({ url: "about:debugging#/runtime/this-firefox" });
+    expect(adapter.createWindow).not.toHaveBeenCalledWith({ url: "about:debugging#/runtime/this-firefox" });
     expect(adapter.createWindow).toHaveBeenCalledWith({ url: "https://restorable.example/" });
     expect(debugging?.status).toBe("closed");
     expect(debugging?.restore?.url).toBe("about:debugging#/runtime/this-firefox");

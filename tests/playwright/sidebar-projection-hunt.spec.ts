@@ -92,6 +92,41 @@ test.describe("sidebar projection hunt", () => {
     expect(issues).toEqual([]);
   });
 
+  test("psh-passive-slice-resolution-preserves-scroll-and-side-effects", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadLargeSparseSidebar(page, { fullStatePending: true });
+
+    const result = await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      await api.nextFrame();
+      await api.scrollToRow(250);
+      await api.waitForSparseRequestCount(1);
+      const beforeScrollTop = api.scrollTop();
+      const scrollTopHistoryBefore = api.scrollTopHistory();
+      const stateRequestsBefore = api.stateRequestCount();
+      api.resolveSliceAt(0);
+      await api.waitForIdleFrames(4);
+      return {
+        beforeScrollTop,
+        afterScrollTop: api.scrollTop(),
+        scrollTopHistoryBefore,
+        scrollTopHistory: api.scrollTopHistory(),
+        commands: api.sentCommands(),
+        stateRequestsBefore,
+        stateRequestsAfter: api.stateRequestCount(),
+        visibleRows: api.visibleRows(),
+        expectedVisibleRows: api.expectedVisibleRows()
+      };
+    });
+
+    expectScrollTopPreserved(result.afterScrollTop, result.beforeScrollTop);
+    expect(result.scrollTopHistory).toEqual(result.scrollTopHistoryBefore);
+    expect(result.visibleRows).toEqual(result.expectedVisibleRows);
+    expect(result.visibleRows).toContain(250);
+    expectPassiveProjectionSideEffects(result);
+    expect(issues).toEqual([]);
+  });
+
   test("psh-rejected-stale-request-does-not-block-current-slice", async ({ page }) => {
     const issues = collectPageIssues(page);
     await loadLargeSparseSidebar(page, { fullStatePending: true });
@@ -179,17 +214,32 @@ test.describe("sidebar projection hunt", () => {
       api.resolveSliceAt(0);
       await api.waitForIdleFrames(2);
       const before = api.visibleRows();
+      const beforeScrollTop = api.scrollTop();
+      const scrollTopHistoryBefore = api.scrollTopHistory();
+      const stateRequestsBefore = api.stateRequestCount();
       api.resolveFullState();
       await api.waitForIdleFrames(6);
       return {
         before,
         after: api.visibleRows(),
-        scrollRow: api.viewportStartRow()
+        beforeScrollTop,
+        afterScrollTop: api.scrollTop(),
+        scrollTopHistoryBefore,
+        scrollTopHistory: api.scrollTopHistory(),
+        scrollRow: api.viewportStartRow(),
+        commands: api.sentCommands(),
+        stateRequestsBefore,
+        stateRequestsAfter: api.stateRequestCount(),
+        expectedVisibleRows: api.expectedVisibleRows()
       };
     });
 
     expect(result.before).toContain(250);
     expect(result.after).toContain(250);
+    expect(result.after).toEqual(result.expectedVisibleRows);
+    expectScrollTopPreserved(result.afterScrollTop, result.beforeScrollTop);
+    expect(result.scrollTopHistory).toEqual(result.scrollTopHistoryBefore);
+    expectPassiveProjectionSideEffects(result);
     expect(result.scrollRow).toBeGreaterThanOrEqual(245);
     expect(result.scrollRow).toBeLessThanOrEqual(255);
     expect(issues).toEqual([]);
@@ -10299,6 +10349,19 @@ async function sentCommands(page: Page): Promise<unknown[]> {
   return page.evaluate(() => projectionHuntApi().sentCommands());
 }
 
+function expectScrollTopPreserved(actual: number, expected: number): void {
+  expect(Math.abs(actual - expected)).toBeLessThanOrEqual(1);
+}
+
+function expectPassiveProjectionSideEffects(result: {
+  commands: unknown[];
+  stateRequestsBefore: number;
+  stateRequestsAfter: number;
+}): void {
+  expect(result.commands).toEqual([]);
+  expect(result.stateRequestsAfter).toBe(result.stateRequestsBefore);
+}
+
 async function dragAfter(page: Page, sourceId: string, targetId: string): Promise<void> {
   const dataTransfer = await page.evaluateHandle(() => new DataTransfer());
   try {
@@ -10427,6 +10490,8 @@ type ProjectionHuntApi = {
   waitForSparseRequestCount(count: number): Promise<void>;
   waitForProjectionRequest(query: string): Promise<void>;
   waitForTargetProjectionRequest(targetNodeId: string): Promise<void>;
+  scrollTop(): number;
+  scrollTopHistory(): number[];
   sparseRequestCount(): number;
   resolveSliceAt(index: number, override?: { start?: number; end?: number; includeCoverage?: boolean }): void;
   resolveSliceForQuery(query: string, override?: { start?: number; end?: number; includeCoverage?: boolean }): void;
@@ -10434,6 +10499,7 @@ type ProjectionHuntApi = {
   resolveRestoreScope(): void;
   rejectSliceAt(index: number): void;
   visibleRows(): number[];
+  expectedVisibleRows(): number[];
   waitForVisibleRow(rowIndex: number): Promise<void>;
   viewportStartRow(): number;
   resolveFullState(): void;
@@ -10485,6 +10551,7 @@ function installProjectionHuntHarness(options: {
   const sentCommands: unknown[] = [];
   const stateRequests: unknown[] = [];
   const sliceRequests: ProjectionSliceRequest[] = [];
+  const scrollTopSamples: number[] = [];
   const pendingSlices: Array<{
     request: ProjectionSliceRequest;
     resolve: (value: unknown) => void;
@@ -10503,6 +10570,8 @@ function installProjectionHuntHarness(options: {
     waitForSparseRequestCount,
     waitForProjectionRequest,
     waitForTargetProjectionRequest,
+    scrollTop,
+    scrollTopHistory,
     sparseRequestCount: () => sliceRequests.length,
     resolveSliceAt,
     resolveSliceForQuery,
@@ -10510,6 +10579,7 @@ function installProjectionHuntHarness(options: {
     resolveRestoreScope,
     rejectSliceAt,
     visibleRows,
+    expectedVisibleRows,
     waitForVisibleRow,
     viewportStartRow,
     resolveFullState,
@@ -11401,6 +11471,7 @@ function installProjectionHuntHarness(options: {
 
   async function nextFrame() {
     await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+    recordScrollTop();
   }
 
   async function waitForIdleFrames(count: number) {
@@ -11412,8 +11483,19 @@ function installProjectionHuntHarness(options: {
   async function scrollToRow(rowIndex: number) {
     const viewport = viewportElement();
     viewport.scrollTop = rowIndex * rowHeight;
+    recordScrollTop();
     viewport.dispatchEvent(new Event("scroll", { bubbles: true }));
     await nextFrame();
+  }
+
+  function scrollTop() {
+    recordScrollTop();
+    return viewportElement().scrollTop;
+  }
+
+  function scrollTopHistory() {
+    recordScrollTop();
+    return [...scrollTopSamples];
   }
 
   async function waitForSparseRequestCount(count: number) {
@@ -11471,8 +11553,45 @@ function installProjectionHuntHarness(options: {
       });
   }
 
+  function expectedVisibleRows() {
+    const viewport = viewportElement();
+    const viewportTop = viewport.scrollTop;
+    const viewportBottom = viewportTop + viewport.clientHeight;
+    return allCurrentRows()
+      .map((row) => row.index)
+      .filter((index) => {
+        const top = index * rowHeight;
+        const bottom = (index + 1) * rowHeight;
+        return bottom > viewportTop && top < viewportBottom;
+      });
+  }
+
+  function allCurrentRows() {
+    if (options.closedRestoreFixture) {
+      return closedRestoreRows();
+    }
+    if (options.collapsedBoundaryFixture) {
+      return collapsedBoundaryRows();
+    }
+    if (options.restoredFixture) {
+      return restoredRows();
+    }
+    return [windowRow(), ...tabRows(1, currentTotalRows())];
+  }
+
   function viewportStartRow() {
     return Math.floor(viewportElement().scrollTop / rowHeight);
+  }
+
+  function recordScrollTop() {
+    const viewport = document.querySelector<HTMLElement>("main");
+    if (!viewport) {
+      return;
+    }
+    const current = viewport.scrollTop;
+    if (scrollTopSamples.at(-1) !== current) {
+      scrollTopSamples.push(current);
+    }
   }
 
   function viewportElement() {

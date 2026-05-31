@@ -656,6 +656,16 @@ describe("runtime window scope index", () => {
     expect(scopes.scopeForTab(30)?.runtimeWindowId).toBe(21);
   });
 
+  it("records browser-created provenance when a native attach targets a previously unknown window", () => {
+    const state = bootstrapFromWindows([windowInfo(10, [tabOne, tabTwo])], { now: 1000 });
+    const ledger = new RuntimeFactLedger();
+    ledger.reconstructFromState(state, [windowInfo(10, [tabOne, tabTwo])]);
+
+    ledger.recordNativeTabAttached(2, 20);
+
+    expect(ledger.isBrowserCreatedRuntimeWindow(20)).toBe(true);
+  });
+
   it("marks closed canonical runtime records as removed scope lifecycle", () => {
     const base = bootstrapFromWindows([windowInfo(20, [tabTwo])], { now: 1000 });
     const closed = closeWindow(base, 20, { now: 2000 });

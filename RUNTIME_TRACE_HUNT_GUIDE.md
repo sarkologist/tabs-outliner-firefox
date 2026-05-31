@@ -193,6 +193,8 @@ Cross-axis discovery started from the `246` regression / `600` discovery baselin
 
 - Target one meta-boundary: avoid local variants of the last fullscreen/session-close basin by combining recent architectural axes that were previously tested mostly in isolation.
 - Prefer browser-created or restored scopes plus later TO history replay; command-created destinations plus browser-authored move/reorder/metadata; native close or session-only disappearance after non-close window-shape changes; partial or reordered snapshots after scope generation changes; abrupt restart after browser-authored drift with no command journal; and opt-in `runtimeOrder` / `runtimeMetadata` assertions when browser shape is authoritative.
+- Add `runtimeSideEffects` whenever a trace crosses the browser-authored/TO-authored boundary. Browser-authored actions should not call mutating browser APIs; TO commands should only call the browser API families expected for that command.
+- Add `closedSubtreePersistence` for close/recent-close traces where the failure mode could be a saved-state or restart disappearance, not just an immediate in-memory shape bug.
 - Initial sparse cells: provenance crossing, history crossover, snapshot confidence, restart/no-journal, strict shape assertions, and high-temperature mixes.
 - Fullscreen/window-state evidence remains shape-only. Add explicit focus, session, close, restore, history, or refresh actions when those facts are part of the trace.
 - Fixed cluster: TO history replay after browser-authored tab movement used to regress the moved tab's active state, including after restart reconstruction. Future discovery should avoid cloning only that active-history basin unless adding a materially different browser-shape axis.
@@ -205,6 +207,8 @@ Snapshot-confidence discovery started from the `248` regression / `640` discover
 - Target one boundary: partial, stale-suspect, event-local, and complete runtime evidence must not regress current browser shape or resurrect/erase live resources across multiple windows.
 - Prefer multi-window query confidence stress: one window omitted while another is reordered or metadata-updated, event-local stale evidence followed by complete refresh, and restart/no-journal reconstruction followed by partial then complete snapshots.
 - Use `assertions: ["runtimeOrder"]` only when the browser tab index order is authoritative for that trace. Use `runtimeMetadata` when current browser title/url/favicon should dominate stale event-local or partial query evidence.
+- Use `runtimeSideEffects` as the default oracle for browser-authored native open/move/close, duplicate/create, stale event, refresh, and restart traces that previously only asserted final outline state.
+- Use `closedSubtreePersistence` when expected closed nodes must survive a pending-save flush and background restart; this is required for small and large recent-close subtree hunts.
 - Initial sparse cells: multi-window partial snapshots, event-local then complete refresh, reordered-query strict-shape checks, history plus query-confidence, restart/no-journal query recovery, and high-temperature mixes with fullscreen, opener, command-created, browser-created, and restored scopes.
 - Runner wait time does not count as mutation effort. Use the mutation temperature ladder after clean active blocks; do not call a quick clean corpus replay a full clean block.
 - Perf guard is not part of discovery. It applies to the later fix/pass promotion step if this sweep records findings.

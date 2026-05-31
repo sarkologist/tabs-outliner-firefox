@@ -25,6 +25,7 @@ import {
 } from "../perf/profile.js";
 import {
   createActiveTabScrollTracker,
+  findActiveTabNodeId,
   resetActiveTabScrollTracker,
   scrollActiveTabIntoView,
   type ActiveTabScrollProjection
@@ -312,7 +313,8 @@ type IconName =
   | "root-outdent"
   | "pencil"
   | "trash"
-  | "locate";
+  | "locate"
+  | "refresh";
 
 const dropMarker = document.createElement("li");
 dropMarker.className = "drop-marker";
@@ -1060,6 +1062,13 @@ function shouldPreserveSparseViewportScrollIntent(): boolean {
     isSparseInitialProjection(currentProjection) &&
     Number.isFinite(lastSparseViewportScrollIntentAt)
   );
+}
+
+function shouldPreserveSparseViewportForProjection(projection: VisibleTreeProjection): boolean {
+  if (!shouldPreserveSparseViewportScrollIntent()) {
+    return false;
+  }
+  return !projection.rows.some((row) => row.nodeId === projection.activeTabNodeId);
 }
 
 function currentViewportRowRange(rowHeight: number): { start: number; end: number } {
@@ -1905,11 +1914,17 @@ function applyRemoteProjectionSnapshot(
     const scrolledToPendingShowInTree = options.scrollToPendingShowInTree
       ? scrollToPendingShowInTreeRow(currentProjection)
       : false;
-    const renderOptions = scrolledToPendingShowInTree
-      ? { scrollToActive: false }
-      : options.scrollToActive === undefined
-        ? {}
-        : { scrollToActive: options.scrollToActive };
+    const preserveSparseViewport = !options.scrollToTop &&
+      !scrolledToPendingShowInTree &&
+      shouldPreserveSparseViewportForProjection(currentProjection);
+    let renderOptions: { scrollToActive?: boolean };
+    if (scrolledToPendingShowInTree || preserveSparseViewport) {
+      renderOptions = { scrollToActive: false };
+    } else if (options.scrollToActive === undefined) {
+      renderOptions = {};
+    } else {
+      renderOptions = { scrollToActive: options.scrollToActive };
+    }
     renderSnapshotRows(
       currentProjection,
       renderOptions
@@ -1922,7 +1937,9 @@ function applyRemoteProjectionSnapshot(
         centerRowInViewport(row.index, rootDropSurface ?? undefined, rowHeight);
       }
     }
-    ensureProjectionViewportPainted(currentProjection);
+    if (!preserveSparseViewport) {
+      ensureProjectionViewportPainted(currentProjection);
+    }
     revealSidebar();
     if (!currentProjection.isSearchActive) {
       requestSparseScrollWindowIfNeeded();
@@ -2200,9 +2217,12 @@ function renderSnapshotRows(
   removeDropPreviewElements();
 
   const hasLiveDescendant = includeActions ? createLiveDescendantChecker(currentState) : () => false;
+  const hasRestorableDescendant = includeActions ? createRestorableDescendantChecker(currentState) : () => false;
   const items: HTMLElement[] = [];
   for (const row of projection.rows) {
-    items.push(renderRow(currentState, row, rowHeight, projection.query, hasLiveDescendant, { includeActions }));
+    items.push(renderRow(currentState, row, rowHeight, projection.query, hasLiveDescendant, hasRestorableDescendant, {
+      includeActions
+    }));
   }
   reconcileTreeRows(items, totalRowCount * rowHeight);
   if (options.scrollToActive ?? true) {
@@ -2428,22 +2448,30 @@ function applyActiveStateUpdate(updates: ActiveStateUpdate[]): void {
     }
 
     let windowActiveChanged = false;
+    const activatedNodeIds = new Set<NodeId>();
     for (const update of updates) {
       const node = state.nodes[update.nodeId];
       if (!node) {
         continue;
       }
       node.active = update.active;
+      if (update.active) {
+        activatedNodeIds.add(update.nodeId);
+      }
       windowActiveChanged ||= node.kind === "window";
     }
     invalidateSidebarWindowActiveTabTargets();
+    const activeRevealNodeId = activeScrollNodeIdFromState(state);
+    const shouldRevealActivatedNode = Boolean(activeRevealNodeId && activatedNodeIds.has(activeRevealNodeId));
 
     if (windowActiveChanged && currentProjection) {
       refreshProjectionActiveWindowFlags(state, currentProjection);
     }
     if (currentProjection) {
       refreshProjectionActiveTabTarget(state, currentProjection);
-      scrollToObservedActiveTab(currentProjection);
+      scrollToObservedActiveTab(currentProjection, {
+        ignoreSparseViewportIntent: shouldRevealActivatedNode
+      });
     }
     scheduleCurrentRowsRender();
   });
@@ -2576,6 +2604,7 @@ function applyTreeStructureUpdate(update: TreeStructureUpdate): void {
     }
     currentProjectionCoverage = undefined;
     refreshLastOutlineProjectionAfterTreeStructureUpdate(state, update);
+    const activeRevealNodeId = activeRevealNodeIdForTreeStructureUpdate(state, update);
     if (currentProjectionOwner.kind === "showInTree" && pendingShowInTreeNodeId) {
       return;
     }
@@ -2594,7 +2623,9 @@ function applyTreeStructureUpdate(update: TreeStructureUpdate): void {
         currentCutRowRange = cutSubtreeRowRange(currentProjection.rows, pendingCutNodeId);
         updateProjectionChrome(currentProjection);
         rememberAcceptedRenderedProjection(currentProjection, { forceOutline: true });
-        scrollToObservedActiveTab(currentProjection);
+        scrollToObservedActiveTab(currentProjection, {
+          ignoreSparseViewportIntent: Boolean(activeRevealNodeId)
+        });
         clearHoverLineScope();
         scheduleCurrentRowsRender();
         refreshSparseProjectionAfterLocalTreePatch();
@@ -2605,7 +2636,9 @@ function applyTreeStructureUpdate(update: TreeStructureUpdate): void {
         currentCutRowRange = cutSubtreeRowRange(currentProjection.rows, pendingCutNodeId);
         updateProjectionChrome(currentProjection);
         rememberAcceptedRenderedProjection(currentProjection, { forceOutline: true });
-        scrollToObservedActiveTab(currentProjection);
+        scrollToObservedActiveTab(currentProjection, {
+          ignoreSparseViewportIntent: Boolean(activeRevealNodeId)
+        });
         clearHoverLineScope();
         scheduleCurrentRowsRender();
         refreshSparseProjectionAfterLocalTreePatch();
@@ -2613,16 +2646,25 @@ function applyTreeStructureUpdate(update: TreeStructureUpdate): void {
       }
 
       if (removeRelocatedRowsFromSparseOutlineProjection(state, currentProjection, update)) {
+        refreshProjectionActiveTabTarget(state, currentProjection);
         currentCutRowRange = cutSubtreeRowRange(currentProjection.rows, pendingCutNodeId);
         updateProjectionChrome(currentProjection);
         rememberAcceptedRenderedProjection(currentProjection, { forceOutline: true });
-        scrollToObservedActiveTab(currentProjection);
+        if (revealSparseActiveNodeRemotelyIfNeeded(activeRevealNodeId)) {
+          return;
+        }
+        scrollToObservedActiveTab(currentProjection, {
+          ignoreSparseViewportIntent: Boolean(activeRevealNodeId)
+        });
         clearHoverLineScope();
         scheduleCurrentRowsRender();
         refreshSparseProjectionAfterLocalTreePatch();
         return;
       }
 
+      if (revealSparseActiveNodeRemotelyIfNeeded(activeRevealNodeId)) {
+        return;
+      }
       if (refreshSparseRemoteProjectionAfterStateChange()) {
         return;
       }
@@ -2632,6 +2674,9 @@ function applyTreeStructureUpdate(update: TreeStructureUpdate): void {
     }
 
     if (!applyDeleteTreeStructurePatchToProjection(state, currentProjection, update)) {
+      if (revealSparseActiveNodeRemotelyIfNeeded(activeRevealNodeId)) {
+        return;
+      }
       if (refreshSparseRemoteProjectionAfterStateChange()) {
         return;
       }
@@ -2644,11 +2689,73 @@ function applyTreeStructureUpdate(update: TreeStructureUpdate): void {
     currentCutRowRange = cutSubtreeRowRange(currentProjection.rows, pendingCutNodeId);
     updateProjectionChrome(currentProjection);
     rememberAcceptedRenderedProjection(currentProjection, { forceOutline: true });
-    scrollToObservedActiveTab(currentProjection);
+    scrollToObservedActiveTab(currentProjection, {
+      ignoreSparseViewportIntent: Boolean(activeRevealNodeId)
+    });
     clearHoverLineScope();
     scheduleCurrentRowsRender();
     refreshSparseProjectionAfterLocalTreePatch();
   });
+}
+
+function activeRevealNodeIdForTreeStructureUpdate(
+  state: OutlineState,
+  update: TreeStructureUpdate
+): NodeId | undefined {
+  const updatedActiveTabs = update.updatedNodes.filter((node) =>
+    node.kind === "tab" &&
+    node.status === "live" &&
+    node.active &&
+    !isOutlinerSidebarNode(node)
+  );
+  if (updatedActiveTabs.length === 0) {
+    return undefined;
+  }
+  if (typeof sidebarWindowId === "number") {
+    return updatedActiveTabs.find((node) => node.live?.windowId === sidebarWindowId)?.id;
+  }
+
+  const activeNodeId = activeScrollNodeIdFromState(state);
+  if (activeNodeId && updatedActiveTabs.some((node) => node.id === activeNodeId)) {
+    return activeNodeId;
+  }
+
+  return updatedActiveTabs.find((node) => tabNodeIsInsideActiveWindow(state, node))?.id;
+}
+
+function tabNodeIsInsideActiveWindow(state: OutlineState, node: OutlineNode): boolean {
+  const seen = new Set<NodeId>();
+  let currentParentId = node.parentId;
+
+  while (currentParentId && !seen.has(currentParentId)) {
+    seen.add(currentParentId);
+    const parent = state.nodes[currentParentId];
+    if (!parent) {
+      return false;
+    }
+    if (parent.kind === "window") {
+      return Boolean(parent.active);
+    }
+    currentParentId = parent.parentId;
+  }
+  return false;
+}
+
+function revealSparseActiveNodeRemotelyIfNeeded(nodeId: NodeId | undefined): boolean {
+  if (
+    !nodeId ||
+    !currentProjection ||
+    currentStateFullyLoaded ||
+    !hydratingFullState ||
+    currentSearchQuery.trim() ||
+    currentProjection.visibleNodeIdSet.has(nodeId)
+  ) {
+    return false;
+  }
+
+  setCurrentProjectionOwner(remoteShowInTreeRequestIntent(nodeId));
+  void loadRemoteShowInTreeProjection(nodeId);
+  return true;
 }
 
 function refreshSparseProjectionAfterLocalTreePatch(): void {
@@ -2912,11 +3019,12 @@ function renderVirtualRows(): void {
     removeDropPreviewElements();
 
     const hasLiveDescendant = createLiveDescendantChecker(currentState);
+    const hasRestorableDescendant = createRestorableDescendantChecker(currentState);
     const items: HTMLElement[] = [];
     for (let index = range.start; index < range.end; index += 1) {
       const row = currentProjection.rows[index];
       if (row) {
-        items.push(renderRow(currentState, row, rowHeight, currentProjection.query, hasLiveDescendant));
+        items.push(renderRow(currentState, row, rowHeight, currentProjection.query, hasLiveDescendant, hasRestorableDescendant));
       }
     }
     reconcileTreeRows(items, range.totalHeight);
@@ -3030,6 +3138,7 @@ function renderRow(
   rowHeight: number,
   searchQuery: string,
   hasLiveDescendant: (nodeId: NodeId) => boolean,
+  hasRestorableDescendant: (nodeId: NodeId) => boolean,
   options: { includeActions?: boolean } = {}
 ): HTMLElement {
   const node = state.nodes[rowInfo.nodeId];
@@ -3086,9 +3195,10 @@ function renderRow(
     label.className = "node-label";
     label.type = "button";
     const labelText = node.url ? `${titleText} - ${node.url}` : titleText;
-    label.title = node.status === "closed" ? `Restore ${labelText}` : node.url ?? titleText;
-    label.ariaLabel = node.status === "closed" ? `Restore ${labelText}` : labelText;
-    label.dataset.action = "focus-or-restore";
+    const labelRestores = node.status === "closed" || labelRestoresMixedDescendants(node, hasLiveDescendant, hasRestorableDescendant);
+    label.title = labelRestores ? `Restore ${labelText}` : node.url ?? titleText;
+    label.ariaLabel = labelRestores ? `Restore ${labelText}` : labelText;
+    label.dataset.action = labelRestores ? "restore-node" : "focus-or-restore";
 
     const title = document.createElement("span");
     title.className = "node-title";
@@ -3099,7 +3209,7 @@ function renderRow(
   }
 
   if (options.includeActions ?? true) {
-    const actions = renderNodeActions(state, node, rowInfo, hasLiveDescendant);
+    const actions = renderNodeActions(state, node, rowInfo, hasLiveDescendant, hasRestorableDescendant);
     if (actions.childElementCount > 0) {
       row.append(actions);
     }
@@ -3114,7 +3224,8 @@ function renderNodeActions(
   state: OutlineState,
   node: OutlineNode,
   rowInfo: VisibleTreeRow,
-  hasLiveDescendant: (nodeId: NodeId) => boolean
+  hasLiveDescendant: (nodeId: NodeId) => boolean,
+  hasRestorableDescendant: (nodeId: NodeId) => boolean
 ): HTMLSpanElement {
   const actions = document.createElement("span");
   actions.className = "node-actions";
@@ -3138,6 +3249,15 @@ function renderNodeActions(
     actions.append(actionButton("Close", "close-node", "close-circle"));
   }
 
+  if (
+    node.status !== "closed" &&
+    (node.status === "live" || hasLiveDescendant(node.id)) &&
+    hasRestorableDescendant(node.id) &&
+    canRenderHydratingNodeAction("restoreNode", node)
+  ) {
+    actions.append(actionButton("Restore", "restore-node", "refresh"));
+  }
+
   if (canFlattenSubtree(state, node) && canRenderHydratingNodeAction("flatten", node)) {
     actions.append(actionButton("Flatten", "flatten", "flatten"));
   }
@@ -3154,6 +3274,17 @@ function renderNodeActions(
     actions.append(actionButton("Delete", "delete", "trash"));
   }
   return actions;
+}
+
+function labelRestoresMixedDescendants(
+  node: OutlineNode,
+  hasLiveDescendant: (nodeId: NodeId) => boolean,
+  hasRestorableDescendant: (nodeId: NodeId) => boolean
+): boolean {
+  return node.kind !== "tab" &&
+    node.status !== "closed" &&
+    (node.status === "live" || hasLiveDescendant(node.id)) &&
+    hasRestorableDescendant(node.id);
 }
 
 function canRenderHydratingNodeAction(action: string, node: OutlineNode): boolean {
@@ -3206,6 +3337,41 @@ function createLiveDescendantChecker(state: OutlineState): (nodeId: NodeId) => b
     visiting.delete(nodeId);
     memo.set(nodeId, hasLiveChild);
     return hasLiveChild;
+  };
+
+  return check;
+}
+
+function createRestorableDescendantChecker(state: OutlineState): (nodeId: NodeId) => boolean {
+  const memo = new Map<NodeId, boolean>();
+  const visiting = new Set<NodeId>();
+
+  const isRestorable = (node: OutlineNode): boolean =>
+    node.status === "closed" && Boolean(node.restore?.sessionId || (node.kind === "tab" && node.restore?.url));
+
+  const check = (nodeId: NodeId): boolean => {
+    const cached = memo.get(nodeId);
+    if (cached !== undefined) {
+      return cached;
+    }
+    if (visiting.has(nodeId)) {
+      return false;
+    }
+
+    const node = state.nodes[nodeId];
+    if (!node) {
+      memo.set(nodeId, false);
+      return false;
+    }
+
+    visiting.add(nodeId);
+    const hasRestorableChild = node.childIds.some((childId) => {
+      const child = state.nodes[childId];
+      return Boolean(child && (isRestorable(child) || check(childId)));
+    });
+    visiting.delete(nodeId);
+    memo.set(nodeId, hasRestorableChild);
+    return hasRestorableChild;
   };
 
   return check;
@@ -3298,7 +3464,13 @@ function materializeSparseRowActions(item: HTMLElement, rowInfo: VisibleTreeRow)
     return;
   }
 
-  const actions = renderNodeActions(state, node, rowInfo, createLiveDescendantChecker(state));
+  const actions = renderNodeActions(
+    state,
+    node,
+    rowInfo,
+    createLiveDescendantChecker(state),
+    createRestorableDescendantChecker(state)
+  );
   if (actions.childElementCount > 0) {
     row.append(actions);
   }
@@ -3741,6 +3913,11 @@ function handleTreeClick(event: MouseEvent): void {
     return;
   }
 
+  if (action === "restore-node") {
+    void restoreNodeWithConfirmation(node.id);
+    return;
+  }
+
   if (action === "show-in-tree") {
     void showSearchResultInTree(node.id);
     return;
@@ -3803,6 +3980,9 @@ function canRunHydratingRowAction(action: string | undefined, node: OutlineNode)
   }
   if (action === "focus-or-restore") {
     return node.status === "live" || canRenderHydratingNodeAction("restoreNode", node);
+  }
+  if (action === "restore-node") {
+    return canRenderHydratingNodeAction("restoreNode", node);
   }
   if (action === "toggle") {
     return canRenderHydratingNodeAction("toggle", node);
@@ -4329,8 +4509,11 @@ function cssEscape(value: string): string {
   return typeof CSS !== "undefined" && CSS.escape ? CSS.escape(value) : value.replaceAll('"', '\\"');
 }
 
-function scrollToObservedActiveTab(projection: VisibleTreeProjection): void {
-  if (shouldSuppressObservedActiveScroll()) {
+function scrollToObservedActiveTab(
+  projection: VisibleTreeProjection,
+  options: { ignoreSparseViewportIntent?: boolean } = {}
+): void {
+  if (shouldSuppressObservedActiveScroll(options)) {
     return;
   }
   const rowHeight = currentRowHeight();
@@ -4343,16 +4526,19 @@ function scrollToObservedActiveTab(projection: VisibleTreeProjection): void {
   );
 }
 
-function shouldSuppressObservedActiveScroll(): boolean {
-  return currentProjectionOwner.kind === "showInTree" || shouldPreserveSparseViewportScrollIntent();
+function shouldSuppressObservedActiveScroll(options: { ignoreSparseViewportIntent?: boolean } = {}): boolean {
+  return (
+    currentProjectionOwner.kind === "showInTree" ||
+    (!options.ignoreSparseViewportIntent && shouldPreserveSparseViewportScrollIntent())
+  );
 }
 
 function activeScrollNodeIdForSidebarWindow(projection: VisibleTreeProjection): NodeId | undefined {
-  return activeTabNodeIdForSidebarWindow(currentState, sidebarWindowId) ?? projection.activeTabNodeId;
+  return activeScrollNodeIdFromState(currentState) ?? projection.activeTabNodeId;
 }
 
 function activeScrollProjectionForSidebarWindow(projection: VisibleTreeProjection): ActiveTabScrollProjection {
-  const scopedActiveTabNodeId = activeTabNodeIdForSidebarWindow(currentState, sidebarWindowId);
+  const scopedActiveTabNodeId = activeScrollNodeIdFromState(currentState);
   if (!scopedActiveTabNodeId) {
     return projection;
   }
@@ -4367,6 +4553,13 @@ function activeScrollProjectionForSidebarWindow(projection: VisibleTreeProjectio
     ...(row ? { activeTabRowIndex: row.index } : {}),
     visibleNodeIdSet: projection.visibleNodeIdSet
   };
+}
+
+function activeScrollNodeIdFromState(state: OutlineState | undefined): NodeId | undefined {
+  if (!state) {
+    return undefined;
+  }
+  return activeTabNodeIdForSidebarWindow(state, sidebarWindowId) ?? findActiveTabNodeId(state);
 }
 
 function invalidateSidebarWindowActiveTabTargets(): void {
@@ -4560,10 +4753,10 @@ function restoreScopeStillApplies(
 ): boolean {
   const state = currentState;
   const target = state?.nodes[nodeId];
-  if (!state || !target || target.status !== "closed") {
+  if (!state || !target) {
     return false;
   }
-  if (scope.nodeIds.length > 0 && !scope.nodeIds.includes(nodeId)) {
+  if (!restoreScopeTargetsNodeOrDescendants(state, nodeId, scope, locallyKnownScopeNodeIds)) {
     return false;
   }
   for (const scopeNodeId of scope.nodeIds) {
@@ -4576,6 +4769,48 @@ function restoreScopeStillApplies(
     }
   }
   return true;
+}
+
+function restoreScopeTargetsNodeOrDescendants(
+  state: OutlineState,
+  nodeId: NodeId,
+  scope: RestoreScope,
+  locallyKnownScopeNodeIds: ReadonlySet<NodeId>
+): boolean {
+  if (scope.nodeIds.includes(nodeId)) {
+    return true;
+  }
+  if (scope.totalCount <= 0 || scope.nodeIds.length === 0) {
+    return false;
+  }
+
+  for (const scopeNodeId of scope.nodeIds) {
+    const node = state.nodes[scopeNodeId];
+    if (!node) {
+      if (locallyKnownScopeNodeIds.has(scopeNodeId)) {
+        return false;
+      }
+      continue;
+    }
+    if (!isDescendantOfNode(state, scopeNodeId, nodeId)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function isDescendantOfNode(state: OutlineState, nodeId: NodeId, ancestorId: NodeId): boolean {
+  const seen = new Set<NodeId>();
+  let current = state.nodes[nodeId];
+
+  while (current?.parentId && !seen.has(current.id)) {
+    seen.add(current.id);
+    if (current.parentId === ancestorId) {
+      return true;
+    }
+    current = state.nodes[current.parentId];
+  }
+  return false;
 }
 
 function shouldAskBackgroundForRestoreScope(nodeId: NodeId): boolean {

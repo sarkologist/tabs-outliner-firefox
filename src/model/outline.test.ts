@@ -452,6 +452,53 @@ describe("outline model", () => {
     ]);
   });
 
+  it("keeps a closed single-tab window session with its tab when the tab is moved out", () => {
+    const state = bootstrapFromWindows([
+      {
+        id: 10,
+        incognito: false,
+        focused: true,
+        tabs: [
+          {
+            id: 1,
+            windowId: 10,
+            index: 0,
+            active: true,
+            url: "https://source.example/",
+            title: "Source"
+          }
+        ]
+      },
+      {
+        id: 20,
+        incognito: false,
+        focused: false,
+        tabs: [
+          {
+            id: 2,
+            windowId: 20,
+            index: 0,
+            active: true,
+            url: "https://target.example/",
+            title: "Target"
+          }
+        ]
+      }
+    ], { now: 1000 });
+    const closedSource = closeWindow(state, 10, { now: 2000, sessionId: "source-window-session" });
+    const closedTarget = closeWindow(closedSource, 20, { now: 3000, sessionId: "target-window-session" });
+
+    const moved = moveNode(closedTarget, "tab:1", { parentId: "window:20", index: 1 });
+
+    expect(moved.nodes["window:10"]).toBeUndefined();
+    expect(moved.nodes["tab:1"]?.restore).toMatchObject({
+      sessionId: "source-window-session",
+      url: "https://source.example/",
+      title: "Source"
+    });
+    expect(moved.nodes["window:20"]?.childIds).toEqual(["tab:2", "tab:1"]);
+  });
+
   it("projects live tabs with a caller-provided lookup without rebuilding it", () => {
     const state = bootstrapFromWindows(windows, { now: 1000 });
     const moved = moveNode(state, "tab:3", {
