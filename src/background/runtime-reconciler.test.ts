@@ -11,6 +11,7 @@ import {
   closeTab,
   closeWindow,
   deleteLiveTabNodeByTabId,
+  moveNode,
   moveTabToNewLiveWindow
 } from "../model/outline.js";
 import type { RuntimeTab, RuntimeWindow } from "../model/types.js";
@@ -724,6 +725,36 @@ describe("runtime reconciliation ledger", () => {
     expect(ledger.acceptedTabShapeFact(2)).toBeUndefined();
     expect(ledger.acceptedWindowShapeFact(10)?.tabOrder).toEqual([1]);
     expect(ledger.windowScopeForTab(2)).toBeUndefined();
+  });
+
+  it("matches accepted window scopes against unchanged runtime snapshots without a rebuild", () => {
+    const state = bootstrapFromWindows([windowInfo(10, [tabOne, tabTwo])], { now: 1000 });
+    const ledger = new RuntimeFactLedger();
+    ledger.reconstructFromState(state, [windowInfo(10, [tabOne, tabTwo])]);
+
+    expect(ledger.windowScopesMatchRuntimeWindows([windowInfo(10, [tabOne, tabTwo])])).toBe(true);
+    expect(ledger.windowScopesMatchRuntimeWindows([windowInfo(10, [
+      { ...tabTwo, index: 0 },
+      { ...tabOne, index: 1 }
+    ])])).toBe(false);
+  });
+
+  it("updates touched installed-state window scopes without rebuilding unrelated scopes", () => {
+    const state = bootstrapFromWindows([windowInfo(10, [tabOne, tabTwo])], { now: 1000 });
+    const moved = moveNode(state, "tab:2", { parentId: "window:10", index: 0, now: 2000 });
+    const ledger = new RuntimeFactLedger();
+    ledger.reconstructFromState(state, [windowInfo(10, [tabOne, tabTwo])]);
+
+    expect(ledger.updateWindowScopesFromStateTransition(state, moved, ["tab:2", "window:10"])).toBe(true);
+
+    expect(ledger.windowScope(10)?.tabOrder).toEqual([2, 1]);
+    expect(ledger.acceptedWindowShapeFact(10)?.tabOrder).toEqual([2, 1]);
+    expect(ledger.acceptedTabShapeFact(2)).toMatchObject({
+      tabId: 2,
+      windowId: 10,
+      index: 0,
+      source: "installedState"
+    });
   });
 });
 

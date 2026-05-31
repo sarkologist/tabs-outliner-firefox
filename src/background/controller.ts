@@ -3169,6 +3169,21 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       windows = await corroborateNoEventSnapshotOrder(current, index, windows, noEventOrderConflictWindowIds);
       noEventOrderCorroborated = true;
     }
+    if (
+      eventTabs.length === 0 &&
+      currentEventTabs.length === 0 &&
+      closeMissing &&
+      options.forceSnapshot !== true &&
+      !noEventOrderCorroborated
+    ) {
+      const match = runtimeSnapshotMateriallyMatchesState(current, windows);
+      if (match.matches) {
+        if (!runtimeFacts.windowScopesMatchRuntimeWindows(windows)) {
+          runtimeFacts.rebuildWindowScopes(current, windows);
+        }
+        return false;
+      }
+    }
     if (currentEventTabs.length > 0 || (closeMissing && currentEventTabs.length === 0)) {
       windows = await corroborateMissingOrMismatchedLiveTabs(current, index, windows, {
         includeOrderMismatches: !noEventOrderCorroborated
@@ -3811,6 +3826,9 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       return;
     }
     runtimeIndex = runtimeIndexForStateTransition(previous, next, runtimeIndex, options.candidateNodeIds);
+    if (runtimeFacts.updateWindowScopesFromStateTransition(previous, next, options.candidateNodeIds, options.runtimeWindows)) {
+      return;
+    }
     runtimeFacts.rebuildWindowScopes(next, options.runtimeWindows);
   }
 

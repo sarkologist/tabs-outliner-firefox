@@ -480,6 +480,194 @@ export class RuntimeFactLedger {
     this.syncWindowScopeActiveTabsFromShapeFacts();
   }
 
+  windowScopesMatchRuntimeWindows(windows: readonly RuntimeWindow[]): boolean {
+    return this.windowScopes.matchesLiveRuntimeWindows(windows, {
+      ignoredTabIds: this.ignoredTabIdsForRefresh(),
+      ignoredWindowIds: this.ignoredWindowIdsForRefresh()
+    });
+  }
+
+  updateWindowScopesFromStateTransition(
+    previous: OutlineState,
+    next: OutlineState,
+    candidateNodeIds?: readonly NodeId[],
+    windows?: readonly RuntimeWindow[]
+  ): boolean {
+    if (!candidateNodeIds) {
+      return false;
+    }
+
+    const affectedWindowIds = affectedRuntimeWindowIdsForStateTransition(previous, next, candidateNodeIds);
+    if (affectedWindowIds.size === 0) {
+      return true;
+    }
+    const closedRuntimeTabIds = closedRuntimeTabIdsForStateTransition(previous, next, candidateNodeIds);
+    if (
+      closedRuntimeTabIds.size > 0 &&
+      !candidateTransitionHasLiveTabInsertOrMove(previous, next, candidateNodeIds) &&
+      [...closedRuntimeTabIds].every((tabId) => !this.windowScopes.scopeForTab(tabId))
+    ) {
+      for (const windowId of affectedWindowIds) {
+        const previousScope = this.windowScopes.scopeForWindow(windowId);
+        if (
+          previousScope?.lifecycle === "live" &&
+          !liveWindowNodeForRuntimeId(next, windowId, candidateNodeIds, previousScope.outlineWindowNodeId)
+        ) {
+          this.windowScopes.markWindowRemoved(windowId);
+        }
+      }
+      this.removeInstalledShapeFactsForClosedCandidateTabs(previous, next, candidateNodeIds);
+      return true;
+    }
+
+    const candidateRuntimeTabIds = runtimeTabIdsForCandidateNodes(previous, next, candidateNodeIds);
+    const runtimeWindowsById = new Map((windows ?? []).map((windowInfo) => [windowInfo.id, windowInfo]));
+    let advancedGeneration = false;
+    const advanceGeneration = (): void => {
+      if (advancedGeneration) {
+        return;
+      }
+      this.scopeGeneration += 1;
+      this.installedShapeSignature = "";
+      advancedGeneration = true;
+    };
+
+    for (const windowId of affectedWindowIds) {
+      const previousScope = this.windowScopes.scopeForWindow(windowId);
+      const windowNode = liveWindowNodeForRuntimeId(next, windowId, candidateNodeIds, previousScope?.outlineWindowNodeId);
+      if (!windowNode) {
+        if (previousScope?.lifecycle === "live") {
+          advanceGeneration();
+          this.windowScopes.markWindowRemoved(windowId);
+        }
+        continue;
+      }
+
+      const runtimeWindow = runtimeWindowsById.get(windowId);
+      const orderCandidateTabNodes = candidateLiveTabNodesAffectingRuntimeOrder(previous, next, windowId, candidateNodeIds);
+      const tabNodes = runtimeWindow
+        ? liveTabNodesFromRuntimeWindowOrder(next, runtimeWindow, candidateNodeIds, previousScope)
+        : previousScope && closedRuntimeTabIds.size > 0
+        ? liveTabNodesFromExistingScopeOrder(next, windowId, previousScope)
+        : (previousScope?.tabOrder.length ?? 0) === 0 && orderCandidateTabNodes.length > 0
+        ? orderCandidateTabNodes
+        : previousScope && orderCandidateTabNodes.length === 0
+          ? liveTabNodesFromExistingScopeOrder(next, windowId, previousScope)
+          : outlineOrderedLiveTabNodesForRuntimeWindow(next, windowNode);
+      const tabOrder = tabNodes.map((tabNode) => tabNode.live.tabId);
+      const activeTabId = tabNodes.find((tabNode) => tabNode.active === true)?.live.tabId;
+      const previousWindowFact = this.windowShapeFacts.get(windowId);
+      const state = runtimeWindow?.state ?? previousWindowFact?.state ?? previousScope?.state;
+      const provenance = this.resolveRuntimeWindowScopeProvenance({
+        runtimeWindowId: windowId,
+        outlineWindowNode: windowNode,
+        hasRuntimeWindow: true,
+        runtimeOnly: false
+      });
+      if (
+        !previousScope ||
+        previousScope.lifecycle !== "live" ||
+        previousScope.outlineWindowNodeId !== windowNode.id ||
+        previousScope.provenance !== provenance ||
+        previousScope.activeTabId !== activeTabId ||
+        !sameNumberList(previousScope.tabOrder, tabOrder) ||
+        previousScope.state !== state
+      ) {
+        advanceGeneration();
+      }
+
+      this.windowScopes.upsertLiveWindow({
+        runtimeWindowId: windowId,
+        outlineWindowNodeId: windowNode.id,
+        ...(state ? { state } : {}),
+        provenance
+      });
+      this.windowScopes.replaceLiveWindowTabs({
+        runtimeWindowId: windowId,
+        tabNodeIdsByRuntimeId: new Map(tabNodes.map((tabNode) => [tabNode.live.tabId, tabNode.id])),
+        tabOrder,
+        ...(typeof activeTabId === "number" ? { activeTabId } : {})
+      });
+      this.recordInstalledStateShapeForWindow(windowNode, tabNodes, candidateRuntimeTabIds);
+    }
+
+    this.removeInstalledShapeFactsForClosedCandidateTabs(previous, next, candidateNodeIds);
+    return true;
+  }
+
+  private recordInstalledStateShapeForWindow(
+    windowNode: OutlineNode & { live: { windowId: number } },
+    tabNodes: readonly LiveTabNode[],
+    candidateRuntimeTabIds: ReadonlySet<number>
+  ): void {
+    const windowId = windowNode.live.windowId;
+    const scope = this.windowScopes.scopeForWindow(windowId);
+    if (!scope || scope.lifecycle !== "live") {
+      return;
+    }
+
+    const tabOrder = scope.tabOrder.filter((tabId) => !this.isTabIgnoredForRefresh(tabId));
+    const previousWindowFact = this.windowShapeFacts.get(windowId);
+    this.reconstructedLiveWindowIds.add(windowId);
+    for (const tabId of tabOrder) {
+      this.reconstructedLiveTabIds.add(tabId);
+    }
+    this.windowShapeFacts.set(windowId, {
+      windowId,
+      tabOrder,
+      ...(typeof scope.activeTabId === "number" ? { activeTabId: scope.activeTabId } : {}),
+      focused: windowNode.active === true,
+      ...(scope.state ? { state: scope.state } : previousWindowFact?.state ? { state: previousWindowFact.state } : {}),
+      source: "installedState",
+      confidence: "installedState",
+      scopeGeneration: this.scopeGeneration,
+      sequence: this.observationSequence
+    });
+
+    const indexByRuntimeId = new Map(tabOrder.map((tabId, index) => [tabId, index]));
+    for (const tabNode of tabNodes) {
+      if (
+        !candidateRuntimeTabIds.has(tabNode.live.tabId) &&
+        this.tabShapeFacts.has(tabNode.live.tabId)
+      ) {
+        continue;
+      }
+      if (this.isTabIgnoredForRefresh(tabNode.live.tabId)) {
+        this.tabShapeFacts.delete(tabNode.live.tabId);
+        continue;
+      }
+      this.tabShapeFacts.set(tabNode.live.tabId, {
+        tabId: tabNode.live.tabId,
+        windowId,
+        ...(indexByRuntimeId.has(tabNode.live.tabId) ? { index: indexByRuntimeId.get(tabNode.live.tabId)! } : {}),
+        active: tabNode.active === true,
+        title: tabNode.title,
+        ...(tabNode.url !== undefined ? { url: tabNode.url } : {}),
+        ...(tabNode.favIconUrl !== undefined ? { favIconUrl: tabNode.favIconUrl } : {}),
+        source: "installedState",
+        confidence: "installedState",
+        scopeGeneration: this.scopeGeneration,
+        sequence: this.observationSequence
+      });
+    }
+  }
+
+  private removeInstalledShapeFactsForClosedCandidateTabs(
+    previous: OutlineState,
+    next: OutlineState,
+    candidateNodeIds: readonly NodeId[]
+  ): void {
+    for (const nodeId of candidateNodeIds) {
+      const previousNode = previous.nodes[nodeId];
+      const nextNode = next.nodes[nodeId];
+      if (!isLiveTabNode(previousNode) || isLiveTabNode(nextNode)) {
+        continue;
+      }
+      this.tabShapeFacts.delete(previousNode.live.tabId);
+      this.removeTabFromWindowShapeFact(previousNode.live.windowId, previousNode.live.tabId);
+    }
+  }
+
   private reconcileWindowScopeActiveTabs(state: OutlineState, nodes?: readonly OutlineNode[]): void {
     const tabsByWindowId = new Map<number, LiveTabNode[]>();
     for (const node of nodes ?? Object.values(state.nodes)) {
@@ -1780,6 +1968,228 @@ function selectedNodes(state: OutlineState, candidateNodeIds?: readonly NodeId[]
         return node ? [node] : [];
       })
     : Object.values(state.nodes);
+}
+
+function affectedRuntimeWindowIdsForStateTransition(
+  previous: OutlineState,
+  next: OutlineState,
+  candidateNodeIds: readonly NodeId[]
+): Set<number> {
+  const windowIds = new Set<number>();
+  for (const nodeId of candidateNodeIds) {
+    const previousNode = previous.nodes[nodeId];
+    const nextNode = next.nodes[nodeId];
+    if (isLiveTabNode(previousNode)) {
+      windowIds.add(previousNode.live.windowId);
+    }
+    if (isLiveWindowNode(previousNode)) {
+      windowIds.add(previousNode.live.windowId);
+    }
+    if (isLiveTabNode(nextNode)) {
+      windowIds.add(nextNode.live.windowId);
+    }
+    if (isLiveWindowNode(nextNode)) {
+      windowIds.add(nextNode.live.windowId);
+    }
+  }
+  return windowIds;
+}
+
+function runtimeTabIdsForCandidateNodes(
+  previous: OutlineState,
+  next: OutlineState,
+  candidateNodeIds: readonly NodeId[]
+): Set<number> {
+  const tabIds = new Set<number>();
+  for (const nodeId of candidateNodeIds) {
+    const previousNode = previous.nodes[nodeId];
+    const nextNode = next.nodes[nodeId];
+    if (isLiveTabNode(previousNode)) {
+      tabIds.add(previousNode.live.tabId);
+    }
+    if (isLiveTabNode(nextNode)) {
+      tabIds.add(nextNode.live.tabId);
+    }
+  }
+  return tabIds;
+}
+
+function closedRuntimeTabIdsForStateTransition(
+  previous: OutlineState,
+  next: OutlineState,
+  candidateNodeIds: readonly NodeId[]
+): Set<number> {
+  const tabIds = new Set<number>();
+  for (const nodeId of candidateNodeIds) {
+    const previousNode = previous.nodes[nodeId];
+    const nextNode = next.nodes[nodeId];
+    if (isLiveTabNode(previousNode) && !isLiveTabNode(nextNode)) {
+      tabIds.add(previousNode.live.tabId);
+    }
+  }
+  return tabIds;
+}
+
+function candidateTransitionHasLiveTabInsertOrMove(
+  previous: OutlineState,
+  next: OutlineState,
+  candidateNodeIds: readonly NodeId[]
+): boolean {
+  for (const nodeId of candidateNodeIds) {
+    const previousNode = previous.nodes[nodeId];
+    const nextNode = next.nodes[nodeId];
+    if (!isLiveTabNode(nextNode)) {
+      continue;
+    }
+    if (!isLiveTabNode(previousNode)) {
+      return true;
+    }
+    if (
+      previousNode.live.tabId !== nextNode.live.tabId ||
+      previousNode.live.windowId !== nextNode.live.windowId ||
+      previousNode.parentId !== nextNode.parentId
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function liveWindowNodeForRuntimeId(
+  state: OutlineState,
+  runtimeWindowId: number,
+  candidateNodeIds: readonly NodeId[],
+  scopedNodeId?: NodeId
+): (OutlineNode & { live: { windowId: number } }) | undefined {
+  for (const nodeId of candidateNodeIds) {
+    const node = state.nodes[nodeId];
+    if (isLiveWindowNode(node) && node.live.windowId === runtimeWindowId) {
+      return node;
+    }
+  }
+
+  const scopedNode = scopedNodeId ? state.nodes[scopedNodeId] : undefined;
+  if (isLiveWindowNode(scopedNode) && scopedNode.live.windowId === runtimeWindowId) {
+    return scopedNode;
+  }
+
+  const canonicalNode = state.nodes[`window:${runtimeWindowId}`];
+  return isLiveWindowNode(canonicalNode) && canonicalNode.live.windowId === runtimeWindowId
+    ? canonicalNode
+    : undefined;
+}
+
+function candidateLiveTabNodesAffectingRuntimeOrder(
+  previous: OutlineState,
+  next: OutlineState,
+  runtimeWindowId: number,
+  candidateNodeIds: readonly NodeId[]
+): LiveTabNode[] {
+  return candidateNodeIds
+    .flatMap((nodeId) => {
+      const previousNode = previous.nodes[nodeId];
+      const nextNode = next.nodes[nodeId];
+      return isLiveTabNode(nextNode) &&
+        nextNode.live.windowId === runtimeWindowId &&
+        candidateLiveTabAffectsRuntimeOrder(previous, next, previousNode, nextNode)
+        ? [nextNode]
+        : [];
+    })
+    .sort((left, right) => outlineSiblingIndex(next, left) - outlineSiblingIndex(next, right));
+}
+
+function candidateLiveTabAffectsRuntimeOrder(
+  previous: OutlineState,
+  next: OutlineState,
+  previousNode: OutlineNode | undefined,
+  nextNode: LiveTabNode
+): boolean {
+  if (!isLiveTabNode(previousNode)) {
+    return true;
+  }
+  if (
+    previousNode.live.tabId !== nextNode.live.tabId ||
+    previousNode.live.windowId !== nextNode.live.windowId ||
+    previousNode.parentId !== nextNode.parentId
+  ) {
+    return true;
+  }
+  return outlineSiblingIndex(previous, previousNode) !== outlineSiblingIndex(next, nextNode);
+}
+
+function liveTabNodesFromExistingScopeOrder(
+  state: OutlineState,
+  runtimeWindowId: number,
+  scope: RuntimeWindowScope
+): LiveTabNode[] {
+  return scope.tabOrder.flatMap((tabId) => {
+    const nodeId = scope.tabNodeIdsByRuntimeId.get(tabId);
+    const node = nodeId ? state.nodes[nodeId] : undefined;
+    return isLiveTabNode(node) && node.live.windowId === runtimeWindowId ? [node] : [];
+  });
+}
+
+function liveTabNodesFromRuntimeWindowOrder(
+  state: OutlineState,
+  windowInfo: RuntimeWindow,
+  candidateNodeIds: readonly NodeId[],
+  scope: RuntimeWindowScope | undefined
+): LiveTabNode[] {
+  const candidateTabNodeIdsByRuntimeId = new Map<number, NodeId>();
+  for (const nodeId of candidateNodeIds) {
+    const node = state.nodes[nodeId];
+    if (isLiveTabNode(node)) {
+      candidateTabNodeIdsByRuntimeId.set(node.live.tabId, node.id);
+    }
+  }
+
+  return [...(windowInfo.tabs ?? [])]
+    .filter((tab) => !tab.incognito)
+    .sort((left, right) => left.index - right.index)
+    .flatMap((tab) => {
+      const nodeId = candidateTabNodeIdsByRuntimeId.get(tab.id) ?? scope?.tabNodeIdsByRuntimeId.get(tab.id);
+      const node = nodeId ? state.nodes[nodeId] : undefined;
+      return isLiveTabNode(node) && node.live.windowId === windowInfo.id ? [node] : [];
+    });
+}
+
+function outlineSiblingIndex(state: OutlineState, node: OutlineNode): number {
+  const siblings = node.parentId ? state.nodes[node.parentId]?.childIds : state.rootIds;
+  const index = siblings?.indexOf(node.id) ?? -1;
+  return index < 0 ? Number.MAX_SAFE_INTEGER : index;
+}
+
+function outlineOrderedLiveTabNodesForRuntimeWindow(
+  state: OutlineState,
+  windowNode: OutlineNode & { live: { windowId: number } }
+): LiveTabNode[] {
+  const ordered: LiveTabNode[] = [];
+  const visited = new Set<NodeId>();
+  const visit = (nodeId: NodeId): void => {
+    if (visited.has(nodeId)) {
+      return;
+    }
+    visited.add(nodeId);
+    const node = state.nodes[nodeId];
+    if (!node) {
+      return;
+    }
+    if (node.id !== windowNode.id && isLiveWindowNode(node) && node.live.windowId !== windowNode.live.windowId) {
+      return;
+    }
+    if (isLiveTabNode(node) && node.live.windowId === windowNode.live.windowId) {
+      ordered.push(node);
+    }
+    for (const childId of node.childIds) {
+      visit(childId);
+    }
+  };
+  visit(windowNode.id);
+  return ordered;
+}
+
+function sameNumberList(left: readonly number[], right: readonly number[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
 function allRuntimeTabEvidenceFields(): ReadonlySet<RuntimeTabEvidenceField> {

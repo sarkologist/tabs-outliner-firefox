@@ -118,6 +118,92 @@ export class RuntimeWindowScopeIndex {
     ];
   }
 
+  replaceLiveWindowTabs(input: {
+    runtimeWindowId: number;
+    tabNodeIdsByRuntimeId: Map<number, NodeId>;
+    tabOrder: readonly number[];
+    activeTabId?: number;
+  }): void {
+    const scope = this.scopes.get(input.runtimeWindowId);
+    if (!scope || scope.lifecycle !== "live") {
+      return;
+    }
+
+    for (const tabId of scope.tabNodeIdsByRuntimeId.keys()) {
+      if (this.tabWindowIds.get(tabId) === input.runtimeWindowId) {
+        this.tabWindowIds.delete(tabId);
+      }
+    }
+
+    scope.tabNodeIdsByRuntimeId = new Map(input.tabNodeIdsByRuntimeId);
+    scope.tabOrder = [...input.tabOrder];
+    if (typeof input.activeTabId === "number") {
+      scope.activeTabId = input.activeTabId;
+    } else {
+      delete scope.activeTabId;
+    }
+
+    for (const tabId of scope.tabNodeIdsByRuntimeId.keys()) {
+      this.tabWindowIds.set(tabId, input.runtimeWindowId);
+      this.removedTabNodeIdsByRuntimeId.delete(tabId);
+    }
+  }
+
+  matchesLiveRuntimeWindows(
+    windows: readonly RuntimeWindow[],
+    options: {
+      ignoredTabIds?: ReadonlySet<number>;
+      ignoredWindowIds?: ReadonlySet<number>;
+    } = {}
+  ): boolean {
+    const ignoredTabIds = options.ignoredTabIds ?? new Set<number>();
+    const ignoredWindowIds = options.ignoredWindowIds ?? new Set<number>();
+    const expectedWindowIds = new Set<number>();
+
+    for (const windowInfo of windows) {
+      if (windowInfo.incognito || ignoredWindowIds.has(windowInfo.id)) {
+        continue;
+      }
+      expectedWindowIds.add(windowInfo.id);
+      const scope = this.scopes.get(windowInfo.id);
+      if (!scope || scope.lifecycle !== "live") {
+        return false;
+      }
+      if (windowInfo.state !== undefined && scope.state !== windowInfo.state) {
+        return false;
+      }
+
+      const tabs = [...(windowInfo.tabs ?? [])]
+        .filter((tab) => !tab.incognito && !ignoredTabIds.has(tab.id))
+        .sort((left, right) => left.index - right.index);
+      if (scope.tabOrder.length !== tabs.length) {
+        return false;
+      }
+      for (let index = 0; index < tabs.length; index += 1) {
+        if (scope.tabOrder[index] !== tabs[index]?.id) {
+          return false;
+        }
+      }
+
+      const activeTabId = tabs.find((tab) => tab.active)?.id;
+      if (activeTabId !== undefined ? scope.activeTabId !== activeTabId : scope.activeTabId !== undefined) {
+        return false;
+      }
+    }
+
+    for (const scope of this.scopes.values()) {
+      if (
+        scope.lifecycle === "live" &&
+        !ignoredWindowIds.has(scope.runtimeWindowId) &&
+        !expectedWindowIds.has(scope.runtimeWindowId)
+      ) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
   markTabRemoved(tabId: number): void {
     const windowId = this.tabWindowIds.get(tabId);
     if (typeof windowId !== "number") {
@@ -136,6 +222,26 @@ export class RuntimeWindowScopeIndex {
     if (nodeId) {
       this.removedTabNodeIdsByRuntimeId.set(tabId, nodeId);
     }
+  }
+
+  markWindowRemoved(windowId: number): void {
+    const scope = this.scopes.get(windowId);
+    if (!scope) {
+      return;
+    }
+    scope.lifecycle = "removed";
+    for (const tabId of scope.tabOrder) {
+      if (this.tabWindowIds.get(tabId) === windowId) {
+        this.tabWindowIds.delete(tabId);
+      }
+      const nodeId = scope.tabNodeIdsByRuntimeId.get(tabId);
+      if (nodeId) {
+        this.removedTabNodeIdsByRuntimeId.set(tabId, nodeId);
+      }
+    }
+    scope.tabNodeIdsByRuntimeId.clear();
+    scope.tabOrder = [];
+    delete scope.activeTabId;
   }
 
   rebuild(input: {
