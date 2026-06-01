@@ -38,6 +38,15 @@ export type VirtualRange = {
   totalHeight: number;
 };
 
+export type SameParentReorderPatchInfo = {
+  parentId: NodeId;
+  movedNodeId: NodeId;
+  movedStart: number;
+  movedEnd: number;
+  movedSize: number;
+  insertionIndex: number;
+};
+
 export type DeleteTreeStructurePatch = {
   deletedNodeIds: NodeId[];
   updatedNodes: OutlineNode[];
@@ -277,27 +286,46 @@ export function applySameParentReorderTreeStructurePatchToProjection(
   projection: VisibleTreeProjection,
   patch: InsertTreeStructurePatch
 ): boolean {
-  if (projection.isSearchActive || patch.deletedNodeIds.length > 0) {
+  const info = sameParentReorderTreeStructurePatchInfo(state, projection, patch);
+  if (!info) {
     return false;
+  }
+
+  const movedRows = projection.rows.splice(info.movedStart, info.movedSize);
+  projection.rows.splice(info.insertionIndex, 0, ...movedRows);
+  const movedVisibleNodeIds = projection.visibleNodeIds.splice(info.movedStart, info.movedSize);
+  projection.visibleNodeIds.splice(info.insertionIndex, 0, ...movedVisibleNodeIds);
+  refreshVisibleRowStructure(projection.rows);
+  refreshRowsFromUpdatedNodes(state, projection, patch.updatedNodes);
+  return true;
+}
+
+export function sameParentReorderTreeStructurePatchInfo(
+  state: OutlineState,
+  projection: VisibleTreeProjection,
+  patch: InsertTreeStructurePatch
+): SameParentReorderPatchInfo | undefined {
+  if (projection.isSearchActive || patch.deletedNodeIds.length > 0) {
+    return undefined;
   }
 
   const updatedNodeIds = new Set(patch.updatedNodes.map((node) => node.id));
   const movedNodes = patch.updatedNodes.filter((node) => node.parentId && updatedNodeIds.has(node.parentId));
   if (movedNodes.length !== 1) {
-    return false;
+    return undefined;
   }
 
   const movedNode = movedNodes[0];
   const parentId = movedNode?.parentId;
   const parentNode = parentId ? state.nodes[parentId] : undefined;
   if (!movedNode || !parentId || !parentNode) {
-    return false;
+    return undefined;
   }
 
   const parentRow = projection.rows.find((row) => row.nodeId === parentId);
   const movedRow = projection.rows.find((row) => row.nodeId === movedNode.id);
   if (!parentRow || !movedRow || !parentRow.expanded || movedRow.parentRowIndex !== parentRow.index) {
-    return false;
+    return undefined;
   }
 
   const targetChildOffset = parentNode.childIds.indexOf(movedNode.id);
@@ -305,7 +333,7 @@ export function applySameParentReorderTreeStructurePatchToProjection(
     targetChildOffset < 0 ||
     directChildCountForRow(projection.rows, parentRow) !== parentNode.childIds.length
   ) {
-    return false;
+    return undefined;
   }
 
   const movedStart = movedRow.index;
@@ -318,7 +346,7 @@ export function applySameParentReorderTreeStructurePatchToProjection(
       ? projection.rows.find((row) => row.nodeId === previousSiblingId)
       : undefined;
     if (!previousSiblingRow || previousSiblingRow.parentRowIndex !== parentRow.index) {
-      return false;
+      return undefined;
     }
     insertionIndex = previousSiblingRow.subtreeEndIndex;
   }
@@ -326,13 +354,14 @@ export function applySameParentReorderTreeStructurePatchToProjection(
     insertionIndex -= movedSize;
   }
 
-  const movedRows = projection.rows.splice(movedStart, movedSize);
-  projection.rows.splice(insertionIndex, 0, ...movedRows);
-  const movedVisibleNodeIds = projection.visibleNodeIds.splice(movedStart, movedSize);
-  projection.visibleNodeIds.splice(insertionIndex, 0, ...movedVisibleNodeIds);
-  refreshVisibleRowStructure(projection.rows);
-  refreshRowsFromUpdatedNodes(state, projection, patch.updatedNodes);
-  return true;
+  return {
+    parentId,
+    movedNodeId: movedNode.id,
+    movedStart,
+    movedEnd,
+    movedSize,
+    insertionIndex
+  };
 }
 
 function directChildCountForRow(rows: readonly VisibleTreeRow[], parentRow: VisibleTreeRow): number {

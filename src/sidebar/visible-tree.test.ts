@@ -9,6 +9,7 @@ import {
   buildVisibleTreeProjection,
   calculateVirtualRange,
   refreshVisibleRowStructure,
+  sameParentReorderTreeStructurePatchInfo,
   type VisibleTreeProjection
 } from "./visible-tree.js";
 
@@ -281,6 +282,34 @@ describe("visible tree projection", () => {
       index: 2,
       parentRowIndex: 0,
       subtreeEndIndex: 3
+    });
+  });
+
+  it("describes same-parent leaf reorder ranges for sidebar DOM reuse", () => {
+    const state = wideState(LARGE_NODE_COUNT, { activeTabIndex: 1 });
+    const projection = buildVisibleTreeProjection(state, "");
+    const movedNodeId = "tab:40";
+    const next = cloneOutlineStateForTest(state);
+    const root = next.nodes["window:1"]!;
+    root.childIds = root.childIds.filter((childId) => childId !== movedNodeId);
+    root.childIds.splice(0, 0, movedNodeId);
+    next.nodes[movedNodeId] = {
+      ...next.nodes[movedNodeId]!,
+      childIds: [...next.nodes[movedNodeId]!.childIds]
+    };
+
+    expect(sameParentReorderTreeStructurePatchInfo(next, projection, {
+      deletedNodeIds: [],
+      updatedNodes: [root, next.nodes[movedNodeId]!],
+      rootIds: ["window:1"],
+      deletedClosedCount: 0
+    })).toEqual({
+      parentId: "window:1",
+      movedNodeId,
+      movedStart: 40,
+      movedEnd: 41,
+      movedSize: 1,
+      insertionIndex: 1
     });
   });
 

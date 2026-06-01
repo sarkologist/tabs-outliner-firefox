@@ -61,6 +61,9 @@ import {
   applySameParentReorderTreeStructurePatchToProjection,
   buildVisibleTreeProjection,
   calculateVirtualRange,
+  sameParentReorderTreeStructurePatchInfo,
+  type SameParentReorderPatchInfo,
+  type VirtualRange,
   type VisibleTreeProjection,
   type VisibleTreeRow
 } from "./visible-tree.js";
@@ -2623,6 +2626,9 @@ function applyTreeStructureUpdate(update: TreeStructureUpdate): void {
       return;
     }
     if (deletedNodeIds.size === 0) {
+      const sameParentReorderInfo = currentProjection
+        ? sameParentReorderTreeStructurePatchInfo(state, currentProjection, update)
+        : undefined;
       if (applySameParentReorderTreeStructurePatchToProjection(state, currentProjection, update)) {
         refreshProjectionActiveTabTarget(state, currentProjection);
         currentCutRowRange = cutSubtreeRowRange(currentProjection.rows, pendingCutNodeId);
@@ -2632,7 +2638,9 @@ function applyTreeStructureUpdate(update: TreeStructureUpdate): void {
           ignoreSparseViewportIntent: Boolean(activeRevealNodeId)
         });
         clearHoverLineScope();
-        scheduleCurrentRowsRender();
+        if (!renderSameParentReorderWithExistingRows(currentProjection, sameParentReorderInfo)) {
+          scheduleCurrentRowsRender();
+        }
         refreshSparseProjectionAfterLocalTreePatch();
         return;
       }
@@ -3036,6 +3044,109 @@ function renderVirtualRows(): void {
   });
 }
 
+function renderSameParentReorderWithExistingRows(
+  projection: VisibleTreeProjection,
+  reorderInfo: SameParentReorderPatchInfo | undefined
+): boolean {
+  if (!tree || !currentState || !reorderInfo || isSparseInitialProjection(projection)) {
+    return false;
+  }
+
+  const state = currentState;
+  return perfTrace.measure("sidebar.virtualRows", {
+    rows: projection.rows.length,
+    hoverGuideActive: isRenderableHoverLineScope(hoverLineScope),
+    fastPath: "same-parent-reorder"
+  }, () => {
+    const rowHeight = currentRowHeight();
+    const range = currentVirtualRenderRange(projection, rowHeight);
+    const desiredRows = projection.rows.slice(range.start, range.end);
+    if (!renderedRowsCoverSameParentReorder(desiredRows, reorderInfo)) {
+      return false;
+    }
+
+    const existingByNodeId = new Map<NodeId, HTMLElement>();
+    for (const child of Array.from(tree.children)) {
+      if (child instanceof HTMLElement && child.dataset.nodeId) {
+        existingByNodeId.set(child.dataset.nodeId, child);
+      }
+    }
+
+    const desiredItems: HTMLElement[] = [];
+    for (const row of desiredRows) {
+      const item = existingByNodeId.get(row.nodeId);
+      const node = state.nodes[row.nodeId];
+      if (!item || !node) {
+        return false;
+      }
+      updateExistingItemForProjectionRow(item, node, row, rowHeight);
+      desiredItems.push(item);
+    }
+
+    activeDropPlacement = undefined;
+    removeDropPreviewElements();
+    tree.style.height = `${range.totalHeight}px`;
+    syncChildNodes(tree, desiredItems);
+    return true;
+  });
+}
+
+function currentVirtualRenderRange(projection: VisibleTreeProjection, rowHeight: number): VirtualRange {
+  const calculatedRange = calculateVirtualRange(
+    projection.rows.length,
+    rootDropSurface?.scrollTop ?? 0,
+    rootDropSurface?.clientHeight ?? window.innerHeight,
+    rowHeight,
+    VIRTUAL_OVERSCAN_ROWS
+  );
+  const range = preserveRenderedRowWindowOnce
+    ? currentRenderedRowWindowIntersectingViewport(projection.rows.length, rowHeight) ?? calculatedRange
+    : calculatedRange;
+  preserveRenderedRowWindowOnce = false;
+  return range;
+}
+
+function renderedRowsCoverSameParentReorder(
+  desiredRows: readonly VisibleTreeRow[],
+  reorderInfo: SameParentReorderPatchInfo
+): boolean {
+  if (desiredRows.length === 0) {
+    return false;
+  }
+
+  const start = desiredRows[0]?.index ?? 0;
+  const end = (desiredRows.at(-1)?.index ?? start) + 1;
+  const changedStart = Math.min(reorderInfo.movedStart, reorderInfo.insertionIndex);
+  const changedEnd = Math.max(reorderInfo.movedEnd, reorderInfo.insertionIndex + reorderInfo.movedSize);
+  return start <= changedStart && end >= changedEnd;
+}
+
+function updateExistingItemForProjectionRow(
+  item: HTMLElement,
+  node: OutlineNode,
+  rowInfo: VisibleTreeRow,
+  rowHeight: number
+): void {
+  item.className = nodeItemClassName(node, rowInfo);
+  item.dataset.nodeId = node.id;
+  item.dataset.rowIndex = String(rowInfo.index);
+  item.setAttribute("role", "treeitem");
+  item.setAttribute("aria-level", String(rowInfo.depth + 1));
+  if (rowInfo.childCount > 0) {
+    item.setAttribute("aria-expanded", String(rowInfo.expanded));
+  } else {
+    item.removeAttribute("aria-expanded");
+  }
+  item.style.transform = `translateY(${rowInfo.index * rowHeight}px)`;
+
+  const row = rowForItem(item);
+  if (!row) {
+    return;
+  }
+  row.style.setProperty("--depth", String(rowInfo.depth));
+  applyHoverLineClasses(row, rowInfo);
+}
+
 function currentRenderedRowWindow(rowCount: number, rowHeight: number): {
   start: number;
   end: number;
@@ -3151,16 +3262,9 @@ function renderRow(
     return document.createElement("li");
   }
 
-  const isActiveWindow = node.kind === "window" && Boolean(node.active);
-  const isActiveTab = node.kind === "tab" && Boolean(node.active) && rowInfo.insideActiveWindow;
   const isRenaming = activeRename?.nodeId === node.id && isRenamableGroup(node);
   const item = document.createElement("li");
-  item.className = `node node-${node.kind} is-${node.status}${isActiveWindow || isActiveTab ? " is-active" : ""}${
-    rowInfo.isSearchMatch ? " is-search-match" : ""
-  }${rowInfo.isSearchPath ? " is-search-path" : ""}${
-    isRowInCutSubtree(rowInfo, currentCutRowRange) ? " is-cut" : ""
-  }${isRevealHighlighted(node.id) ? " is-reveal-highlight" : ""
-  }`;
+  item.className = nodeItemClassName(node, rowInfo);
   item.dataset.nodeId = node.id;
   item.dataset.rowIndex = String(rowInfo.index);
   item.setAttribute("role", "treeitem");
@@ -3223,6 +3327,17 @@ function renderRow(
   item.append(row);
 
   return item;
+}
+
+function nodeItemClassName(node: OutlineNode, rowInfo: VisibleTreeRow): string {
+  const isActiveWindow = node.kind === "window" && Boolean(node.active);
+  const isActiveTab = node.kind === "tab" && Boolean(node.active) && rowInfo.insideActiveWindow;
+  return `node node-${node.kind} is-${node.status}${isActiveWindow || isActiveTab ? " is-active" : ""}${
+    rowInfo.isSearchMatch ? " is-search-match" : ""
+  }${rowInfo.isSearchPath ? " is-search-path" : ""}${
+    isRowInCutSubtree(rowInfo, currentCutRowRange) ? " is-cut" : ""
+  }${isRevealHighlighted(node.id) ? " is-reveal-highlight" : ""
+  }`;
 }
 
 function renderNodeActions(
