@@ -21,6 +21,7 @@
     "profile:restore": "node scripts/profile-restore.mjs",
     "profile:diagnostics": "node scripts/profile-diagnostics.mjs",
     "profile:command": "node scripts/profile-command.mjs",
+    "profile:drag-drop": "node scripts/profile-drag-drop.mjs",
     "profile:sidebar-startup": "node scripts/profile-sidebar-startup.mjs",
     "analyze:profile-export": "node scripts/profile-export-analysis.mjs",
     "profile:startup-hover": "playwright test tests/playwright/sidebar-startup-interaction-profile.spec.ts --reporter=list",

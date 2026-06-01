@@ -9,6 +9,8 @@ autoresearch/sidebar-startup-hover/results.tsv
 autoresearch/sidebar-startup-hover/*.log
 autoresearch/sidebar-startup-scroll-away/results.tsv
 autoresearch/sidebar-startup-scroll-away/*.log
+autoresearch/sidebar-drag-drop/results.tsv
+autoresearch/sidebar-drag-drop/*.log
 autoresearch/sidebar-startup-storage-fanout/*.tsv
 autoresearch/sidebar-startup-storage-fanout/*.log
 .DS_Store
