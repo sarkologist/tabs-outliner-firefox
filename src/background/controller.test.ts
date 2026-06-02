@@ -32279,13 +32279,12 @@ describe("background controller lifecycle", () => {
     });
     expect(state.nodes[secondTabId!]?.status).toBe("closed");
 
-    recentClosedSession = { window: { sessionId: "session-imported-first" } };
-    await closeRuntimeWindow(runtime, firstRestoredWindowId!, { awaitListeners: true });
+    recentClosedSession = { tab: { sessionId: "session-imported-first" } };
+    const firstRestoredTabId = state.nodes[firstTabId!]?.live?.tabId;
+    expect(typeof firstRestoredTabId).toBe("number");
+    await closeRuntimeTab(runtime, firstRestoredTabId!, "tabRemovedThenSessionChanged", { awaitListeners: true });
     state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
-    expect(state.nodes[importedGroupId!]).toMatchObject({
-      status: "closed",
-      restore: expect.objectContaining({ sessionId: "session-imported-first" })
-    });
+    expect(state.nodes[importedGroupId!]?.status).toBe("closed");
     expect(state.nodes[firstTabId!]?.status).toBe("closed");
     expect(state.nodes[secondTabId!]?.status).toBe("closed");
 
@@ -32293,7 +32292,16 @@ describe("background controller lifecycle", () => {
       if (sessionId !== "session-imported-first") {
         return {};
       }
-      return { window: createWindowFromBrowser(runtime, { url: importedUrl, focused: true }) } as never;
+      const restoredTab: RuntimeTab = {
+        id: nextRuntimeTabId(runtime),
+        windowId: 10,
+        index: runtime.tabs.filter((tab) => tab.windowId === 10).length,
+        active: true,
+        url: importedUrl,
+        title: "First imported"
+      };
+      createTabFromBrowser(runtime, restoredTab, { awaitListeners: false });
+      return { tab: copyTab(restoredTab) } as never;
     });
 
     expectCommandAck(await controller.handleMessage({ type: "restoreNode", nodeId: importedGroupId! }), true);

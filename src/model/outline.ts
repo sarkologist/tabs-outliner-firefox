@@ -1011,17 +1011,26 @@ export function planRestore(state: OutlineState, nodeId: NodeId): RestorePlan[] 
       return;
     }
 
-    if (current.kind === "tab" && current.restore?.url) {
+    const restoreUrl = current.kind === "tab" ? restorableClosedTabUrl(current) : undefined;
+    if (restoreUrl) {
       plans.push({
         kind: "url",
         nodeId: current.id,
-        url: current.restore.url,
+        url: restoreUrl,
         ...(parentWindow ? { windowNodeId: parentWindow.id } : {})
       });
     }
   });
 
   return plans;
+}
+
+function restorableClosedTabUrl(node: OutlineNode): string | undefined {
+  return node.restore?.url ?? (isImportedNodeId(node.id) ? node.url : undefined);
+}
+
+function isImportedNodeId(nodeId: NodeId): boolean {
+  return nodeId.startsWith("imported:");
 }
 
 export function analyzeRestoreScope(

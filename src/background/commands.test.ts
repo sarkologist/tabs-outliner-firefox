@@ -2052,6 +2052,10 @@ describe("background commands", () => {
             ...firstTab.restore,
             sessionId: "session-imported-first"
           }
+        },
+        [secondTab.id]: {
+          ...secondTab,
+          restore: undefined
         }
       }
     };
