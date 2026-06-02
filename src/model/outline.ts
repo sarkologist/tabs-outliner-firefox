@@ -1530,6 +1530,13 @@ function markClosedSubtree(state: OutlineState, nodeId: NodeId, context: CloseCo
 
 function markClosedNode(state: OutlineState, nodeId: NodeId, context: CloseContext): void {
   const node = requireNode(state, nodeId);
+  if (node.status === "closed") {
+    delete node.live;
+    delete node.active;
+    delete node.restoredFromClosed;
+    return;
+  }
+
   const restore = {
     ...(context.sessionId ? { sessionId: context.sessionId } : {}),
     ...(node.url ? { url: node.url } : {}),

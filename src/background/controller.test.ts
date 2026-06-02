@@ -32322,6 +32322,119 @@ describe("background controller lifecycle", () => {
       .map((tab) => tab.url)).toEqual([importedUrl, importedUrl]);
   });
 
+  it("restores a whole imported group after a later restored child closes as a window session", async () => {
+    let currentTime = 1000;
+    const importedUrls = [
+      "https://images.example/first.jpg",
+      "https://images.example/second.jpg",
+      "https://images.example/third.jpg"
+    ];
+    const runtime = fakeRuntime(
+      [
+        { id: 10, focused: true, incognito: false }
+      ],
+      [
+        { id: 1, windowId: 10, index: 0, active: true, url: "https://one.example/", title: "One" }
+      ]
+    );
+    let recentClosedSession: { tab?: { sessionId?: string }; window?: { sessionId?: string } } = {};
+    vi.mocked(runtime.api.sessions.getRecentlyClosed).mockImplementation(async () => [recentClosedSession as never]);
+    const controller = createBackgroundController({ api: runtime.api, now: () => currentTime });
+    await controller.ensureState();
+
+    expectCommandAck(await controller.handleMessage({
+      type: "importTree",
+      tree: {
+        schema: PORTABLE_TREE_SCHEMA,
+        version: 1,
+        exportedAt: "2026-05-18T12:00:00.000Z",
+        roots: [
+          {
+            kind: "window",
+            title: "Imported group",
+            children: importedUrls.map((url, index) => ({
+              kind: "tab" as const,
+              title: `Imported ${index + 1}`,
+              url,
+              children: []
+            }))
+          }
+        ]
+      }
+    }), true);
+
+    let state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    const importedGroupId = Object.values(state.nodes)
+      .find((node) => node.kind === "window" && node.title === "Imported group")?.id;
+    const importedTabIds = [1, 2, 3].map((index) =>
+      Object.values(state.nodes).find((node) => node.kind === "tab" && node.title === `Imported ${index}`)?.id
+    );
+    expect(importedGroupId).toBeDefined();
+    expect(importedTabIds.every(Boolean)).toBe(true);
+    const laterTabId = importedTabIds[1]!;
+    const firstImportedClosedAt = state.nodes[importedTabIds[0]!]?.closedAt;
+
+    expectCommandAck(await controller.handleMessage({ type: "restoreNode", nodeId: laterTabId }), true);
+    state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    const firstRestoredWindowId = state.nodes[importedGroupId!]?.live?.windowId;
+    expect(typeof firstRestoredWindowId).toBe("number");
+    expect(state.nodes[laterTabId]).toMatchObject({
+      status: "live",
+      live: { windowId: firstRestoredWindowId }
+    });
+
+    currentTime = 2000;
+    recentClosedSession = { window: { sessionId: "session-imported-window" } };
+    const laterRuntimeTabId = state.nodes[laterTabId]?.live?.tabId;
+    expect(typeof laterRuntimeTabId).toBe("number");
+    await closeRuntimeTab(runtime, laterRuntimeTabId!, "tabRemovedThenSessionChanged", { awaitListeners: true });
+    state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(state.nodes[importedGroupId!]?.status).toBe("closed");
+    expect(state.nodes[importedGroupId!]?.restore?.sessionId).toBe("session-imported-window");
+    expect(state.nodes[importedTabIds[0]!]?.closedAt).toBe(firstImportedClosedAt);
+    expect(state.nodes[laterTabId]?.closedAt).toBe(2000);
+    for (const tabId of importedTabIds) {
+      expect(state.nodes[tabId!]?.active).toBeUndefined();
+    }
+
+    let restoredRuntimeWindowId: number | undefined;
+    vi.mocked(runtime.api.sessions.restore).mockImplementation(async (sessionId: string) => {
+      if (sessionId !== "session-imported-window") {
+        return {};
+      }
+      restoredRuntimeWindowId = nextRuntimeWindowId(runtime);
+      runtime.windows = runtime.windows
+        .map((windowInfo) => ({ ...windowInfo, focused: false }))
+        .concat({ id: restoredRuntimeWindowId, focused: true, incognito: false });
+      return {
+        window: {
+          id: restoredRuntimeWindowId,
+          focused: true,
+          incognito: false,
+          tabs: []
+        }
+      } as never;
+    });
+
+    expectCommandAck(await controller.handleMessage({ type: "restoreNode", nodeId: importedGroupId! }), true);
+    state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(restoredRuntimeWindowId).toBeTypeOf("number");
+    expect(state.nodes[importedGroupId!]).toMatchObject({
+      status: "live",
+      live: { windowId: restoredRuntimeWindowId }
+    });
+    for (const tabId of importedTabIds) {
+      expect(state.nodes[tabId!]).toMatchObject({
+        status: "live",
+        live: { windowId: restoredRuntimeWindowId }
+      });
+    }
+    expect(runtime.tabs
+      .filter((tab) => tab.windowId === restoredRuntimeWindowId)
+      .sort((left, right) => left.index - right.index)
+      .map((tab) => tab.url)).toEqual(importedUrls);
+  });
+
   it("restores an earlier closed dragged-in tab when the restored window session has no tab list", async () => {
     const title = "Google Calendar - Week of May 25, 2026";
     const url = "https://calendar.example/week";

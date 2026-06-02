@@ -591,11 +591,15 @@ function restoredWindowShellCoveredDescendantNodeIds(
     }
 
     const node = state.nodes[plan.nodeId];
-    if (node?.status === "closed" && node.closedAt === windowNode.closedAt) {
+    if (node?.status === "closed" && node.closedAt === windowNode.closedAt && !isImportedNodeId(node.id)) {
       coveredNodeIds.push(plan.nodeId);
     }
   }
   return coveredNodeIds;
+}
+
+function isImportedNodeId(nodeId: NodeId): boolean {
+  return nodeId.startsWith("imported:");
 }
 
 function closedWindowUrlBatchPlans(

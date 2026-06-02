@@ -2128,6 +2128,110 @@ describe("background commands", () => {
     expect(restored.state.nodes[secondTab.id]?.live).toEqual({ tabId: 22, windowId: 42 });
   });
 
+  it("restores imported url descendants after a reclosed group window session reports no tabs yet", async () => {
+    const imported = await runCommand(bootstrapFromWindows(runtimeWindows, { now: 1000 }), fakeAdapter(), {
+      type: "importTree",
+      tree: {
+        schema: PORTABLE_TREE_SCHEMA,
+        version: 1,
+        exportedAt: "2026-05-18T12:00:00.000Z",
+        roots: [
+          {
+            kind: "window",
+            title: "Imported group",
+            children: [
+              {
+                kind: "tab",
+                title: "First imported",
+                url: "https://images.example/first.jpg",
+                children: []
+              },
+              {
+                kind: "tab",
+                title: "Second imported",
+                url: "https://images.example/second.jpg",
+                children: []
+              },
+              {
+                kind: "tab",
+                title: "Third imported",
+                url: "https://images.example/third.jpg",
+                children: []
+              }
+            ]
+          }
+        ]
+      }
+    });
+    const importedGroup = Object.values(imported.state.nodes)
+      .find((node) => node.kind === "window" && node.title === "Imported group")!;
+    const importedTabs = ["First imported", "Second imported", "Third imported"].map((title) =>
+      Object.values(imported.state.nodes).find((node) => node.kind === "tab" && node.title === title)!
+    );
+    const restampedNodes: OutlineState["nodes"] = {
+      ...imported.state.nodes,
+      [importedGroup.id]: {
+        ...importedGroup,
+        updatedAt: 2000,
+        closedAt: 2000,
+        restore: { sessionId: "session-imported-window" }
+      }
+    };
+    for (const tab of importedTabs) {
+      restampedNodes[tab.id] = {
+        ...tab,
+        updatedAt: 2000,
+        closedAt: 2000
+      };
+    }
+    const state: OutlineState = {
+      ...imported.state,
+      nodes: restampedNodes
+    };
+    let nextTabId = 200;
+    const adapter = fakeAdapter({
+      restoreSession: vi.fn(async (sessionId) => {
+        if (sessionId !== "session-imported-window") {
+          return {};
+        }
+        return {
+          window: {
+            id: 42,
+            focused: true,
+            incognito: false,
+            tabs: []
+          }
+        };
+      }),
+      createTab: vi.fn(async ({ url, windowId = 10, active = false }) => ({
+        id: nextTabId++,
+        windowId,
+        index: nextTabId - 201,
+        active,
+        url,
+        title: url
+      }))
+    });
+
+    const restored = await runCommand(state, adapter, { type: "restoreNode", nodeId: importedGroup.id });
+
+    expect(adapter.restoreSession).toHaveBeenCalledWith("session-imported-window");
+    expect(adapter.createWindow).not.toHaveBeenCalled();
+    expect(adapter.createTab).toHaveBeenCalledTimes(3);
+    for (const tab of importedTabs) {
+      expect(adapter.createTab).toHaveBeenCalledWith({
+        url: tab.url,
+        windowId: 42,
+        active: false
+      });
+      expect(restored.state.nodes[tab.id]).toMatchObject({
+        status: "live",
+        live: { windowId: 42 }
+      });
+    }
+    expect(restored.state.nodes[importedGroup.id]?.live).toEqual({ windowId: 42 });
+  });
+
   it("falls back to urls when restoring a closed placeholder window without a session match", async () => {
     const state = closeTab(bootstrapFromWindows(runtimeWindows, { now: 1000 }), 1, {
       now: 2000,

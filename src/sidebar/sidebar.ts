@@ -2504,6 +2504,10 @@ function applyActiveStateUpdate(updates: ActiveStateUpdate[]): void {
       if (!node) {
         continue;
       }
+      if (node.status !== "live") {
+        delete node.active;
+        continue;
+      }
       node.active = update.active;
       if (update.active) {
         activatedNodeIds.add(update.nodeId);
@@ -2966,7 +2970,8 @@ function refreshProjectionActiveWindowFlags(state: OutlineState, projection: Vis
     const parentInsideActiveWindow = row.depth > 0 ? activeByDepth[row.depth - 1] === true : false;
     const node = state.nodes[row.nodeId];
     row.insideActiveWindow = parentInsideActiveWindow;
-    activeByDepth[row.depth] = parentInsideActiveWindow || Boolean(node?.kind === "window" && node.active);
+    activeByDepth[row.depth] = parentInsideActiveWindow ||
+      Boolean(node?.kind === "window" && node.status === "live" && node.active);
   }
 }
 
@@ -2978,6 +2983,7 @@ function refreshProjectionActiveTabTarget(state: OutlineState, projection: Visib
     const node = state.nodes[row.nodeId];
     if (
       node?.kind === "tab" &&
+      node.status === "live" &&
       node.active &&
       row.insideActiveWindow &&
       !isOutlinerSidebarNode(node)
@@ -3412,8 +3418,8 @@ function renderRow(
 }
 
 function nodeItemClassName(node: OutlineNode, rowInfo: VisibleTreeRow): string {
-  const isActiveWindow = node.kind === "window" && Boolean(node.active);
-  const isActiveTab = node.kind === "tab" && Boolean(node.active) && rowInfo.insideActiveWindow;
+  const isActiveWindow = node.kind === "window" && node.status === "live" && Boolean(node.active);
+  const isActiveTab = node.kind === "tab" && node.status === "live" && Boolean(node.active) && rowInfo.insideActiveWindow;
   return `node node-${node.kind} is-${node.status}${isActiveWindow || isActiveTab ? " is-active" : ""}${
     rowInfo.isSearchMatch ? " is-search-match" : ""
   }${rowInfo.isSearchPath ? " is-search-path" : ""}${

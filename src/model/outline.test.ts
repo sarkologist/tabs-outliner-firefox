@@ -345,6 +345,88 @@ describe("outline model", () => {
     expect(next.nodes["window:10"]?.restore?.sessionId).toBe("session-window-10");
   });
 
+  it("does not restamp already closed descendants when a restored window closes", () => {
+    const state: OutlineState = {
+      version: 1,
+      rootIds: ["imported:window:1000:1"],
+      nodes: {
+        "imported:window:1000:1": {
+          id: "imported:window:1000:1",
+          kind: "window",
+          status: "live",
+          childIds: ["imported:tab:1000:2", "imported:tab:1000:3"],
+          title: "Group",
+          active: true,
+          collapsed: false,
+          createdAt: 1000,
+          updatedAt: 2000,
+          live: { windowId: 42 }
+        },
+        "imported:tab:1000:2": {
+          id: "imported:tab:1000:2",
+          kind: "tab",
+          status: "live",
+          parentId: "imported:window:1000:1",
+          childIds: [],
+          title: "Restored imported",
+          url: "https://images.example/restored.jpg",
+          active: true,
+          collapsed: false,
+          createdAt: 1000,
+          updatedAt: 2000,
+          live: { tabId: 21, windowId: 42 },
+          restoredFromClosed: true
+        },
+        "imported:tab:1000:3": {
+          id: "imported:tab:1000:3",
+          kind: "tab",
+          status: "closed",
+          parentId: "imported:window:1000:1",
+          childIds: [],
+          title: "Never restored imported",
+          url: "https://images.example/closed.jpg",
+          active: true,
+          collapsed: false,
+          createdAt: 1000,
+          updatedAt: 1000,
+          closedAt: 1000,
+          restore: {
+            url: "https://images.example/closed.jpg",
+            title: "Never restored imported"
+          }
+        }
+      }
+    };
+
+    const next = closeWindow(state, 42, {
+      now: 3000,
+      sessionId: "session-restored-imported-window"
+    });
+
+    expect(next.nodes["imported:window:1000:1"]).toMatchObject({
+      status: "closed",
+      closedAt: 3000,
+      restore: { sessionId: "session-restored-imported-window" }
+    });
+    expect(next.nodes["imported:tab:1000:2"]).toMatchObject({
+      status: "closed",
+      closedAt: 3000,
+      restore: {
+        url: "https://images.example/restored.jpg",
+        title: "Restored imported"
+      }
+    });
+    expect(next.nodes["imported:tab:1000:3"]).toMatchObject({
+      status: "closed",
+      closedAt: 1000,
+      restore: {
+        url: "https://images.example/closed.jpg",
+        title: "Never restored imported"
+      }
+    });
+    expect(next.nodes["imported:tab:1000:3"]?.active).toBeUndefined();
+  });
+
   it("promotes nested foreign live windows when their outline parent window closes", () => {
     const state = wrapNodeInGroup(bootstrapFromWindows(windows, { now: 1000 }), "tab:1", {
       now: 2000,
