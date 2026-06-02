@@ -178,6 +178,7 @@ type RenderedProjectionSession = {
 };
 
 const renderedProjectionSession: RenderedProjectionSession = {};
+let pendingRememberAcceptedRenderedProjectionTimer: number | undefined;
 let currentProjectionOwner: ProjectionOwner = { kind: "outline", query: "", revision: projectionOwnerRevision };
 
 const WHEEL_ZOOM_THRESHOLD_PX = 80;
@@ -2136,6 +2137,7 @@ function rememberAcceptedRenderedProjection(
   projection: VisibleTreeProjection,
   options: { forceOutline?: boolean; scrollTop?: number } = {}
 ): void {
+  clearPendingRememberAcceptedRenderedProjection();
   if (projection.isSearchActive || (!options.forceOutline && currentProjectionOwner.kind !== "outline")) {
     return;
   }
@@ -2144,6 +2146,32 @@ function rememberAcceptedRenderedProjection(
     ...(currentProjectionCoverage ? { coverage: cloneProjectionCoverage(currentProjectionCoverage) } : {}),
     scrollTop: options.scrollTop ?? rootDropSurface?.scrollTop ?? 0
   };
+}
+
+function rememberAcceptedRenderedProjectionSoon(
+  projection: VisibleTreeProjection,
+  options: { forceOutline?: boolean; scrollTop?: number } = {}
+): void {
+  clearPendingRememberAcceptedRenderedProjection();
+  if (projection.isSearchActive || (!options.forceOutline && currentProjectionOwner.kind !== "outline")) {
+    return;
+  }
+
+  const ownerRevision = currentProjectionOwner.revision;
+  const scrollTop = options.scrollTop ?? rootDropSurface?.scrollTop ?? 0;
+  pendingRememberAcceptedRenderedProjectionTimer = window.setTimeout(() => {
+    pendingRememberAcceptedRenderedProjectionTimer = undefined;
+    if (currentProjection === projection && currentProjectionOwner.revision === ownerRevision) {
+      rememberAcceptedRenderedProjection(projection, { ...options, scrollTop });
+    }
+  }, 0);
+}
+
+function clearPendingRememberAcceptedRenderedProjection(): void {
+  if (pendingRememberAcceptedRenderedProjectionTimer !== undefined) {
+    window.clearTimeout(pendingRememberAcceptedRenderedProjectionTimer);
+    pendingRememberAcceptedRenderedProjectionTimer = undefined;
+  }
 }
 
 function cloneVisibleTreeProjection(projection: VisibleTreeProjection): VisibleTreeProjection {
@@ -2638,7 +2666,7 @@ function applyTreeStructureUpdate(update: TreeStructureUpdate): void {
         refreshProjectionActiveTabTarget(state, currentProjection);
         currentCutRowRange = cutSubtreeRowRange(currentProjection.rows, pendingCutNodeId);
         updateProjectionChrome(currentProjection);
-        rememberAcceptedRenderedProjection(currentProjection, { forceOutline: true });
+        rememberAcceptedRenderedProjectionSoon(currentProjection, { forceOutline: true });
         scrollToObservedActiveTab(currentProjection, {
           ignoreSparseViewportIntent: Boolean(activeRevealNodeId)
         });
