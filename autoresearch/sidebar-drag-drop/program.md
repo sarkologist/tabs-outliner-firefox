@@ -15,7 +15,9 @@ This is the local autoresearch setup for improving large-outline drag/drop laten
 
 ## Metric
 
-Primary score: median `drag-drop-50k-drop.elapsedMs` from `tests/playwright/sidebar-drag-drop-performance.spec.ts`.
+Primary score: median `drag-drop-50k-drop.dropDispatchToVisibleMs` from `tests/playwright/sidebar-drag-drop-performance.spec.ts`.
+
+`drag-drop-50k-drop.elapsedMs` is retained only as a diagnostic total that includes dragover setup time; do not use it as the primary keep/discard score.
 
 The Playwright profile drives the real sidebar with a 50,000-tab fixture, starts a drag, drops a leaf before the first visible tab, waits for the visible row order to update, and reads `tabsOutlinerProfile` summary rows.
 
@@ -32,6 +34,17 @@ Target budgets:
 
 Keep an experiment only when all guards pass and the median drop latency improves by at least 10% or 5ms from the supplied baseline, whichever is smaller. Baseline runs without `--baseline-ms` are kept if the guards pass.
 
+## Stop Rule
+
+Do not stop the autoresearch loop after a single experiment, a single discard, or a single keep. Continue running one hypothesis at a time until the whole-loop stop condition is met.
+
+The whole-loop stop condition is **3 consecutive discarded experiments after the latest kept baseline or kept experiment**.
+
+- A `keep` resets the discard streak to 0 and becomes the new baseline for subsequent experiments.
+- A `discard` increments the discard streak by 1 after its experiment changes are reverted.
+- Stop only when the discard streak reaches 3, or when the user explicitly asks to stop or pause.
+- If a request says to run or implement the next autoresearch plan, treat that as continuing this loop, not as permission to stop after one bounded run.
+
 ## Experiment Loop
 
 Repeat one hypothesis at a time:
@@ -43,8 +56,8 @@ Repeat one hypothesis at a time:
    `pnpm test -- src/perf/drag-drop-profile.test.ts`
    `pnpm run build`
    `pnpm profile:drag-drop -- --runs 5 --tag <tag> --baseline-ms <baseline-drop-median-ms> --description "<short idea>" --append-results`
-5. If the result is `keep`, commit the code change with the metric summary.
-6. If the result is `discard`, revert only the experiment changes, leave the TSV row, and try the next hypothesis.
+5. If the result is `keep`, commit the code change with the metric summary, reset the discard streak, update the baseline median, and continue with the next hypothesis.
+6. If the result is `discard`, revert only the experiment changes, leave the TSV row, increment the discard streak, and try the next hypothesis unless the streak has reached 3.
 
 First experiment order:
 
