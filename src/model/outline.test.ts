@@ -2266,6 +2266,75 @@ describe("outline model", () => {
     });
   });
 
+  it("does not reattach tabs from a closed window whose root was temporarily omitted", () => {
+    const closed = closeWindow(
+      bootstrapFromWindows([
+        {
+          id: 10,
+          incognito: false,
+          focused: true,
+          tabs: [
+            {
+              id: 1,
+              windowId: 10,
+              index: 0,
+              active: true,
+              url: "https://saved.example/",
+              title: "Saved"
+            }
+          ]
+        }
+      ], { now: 1000 }),
+      10,
+      { now: 1500 }
+    );
+    closed.rootIds = [];
+
+    const reconciled = reconcileWithWindows(
+      closed,
+      [
+        {
+          id: 20,
+          incognito: false,
+          focused: true,
+          tabs: [
+            {
+              id: 5,
+              windowId: 20,
+              index: 0,
+              active: true,
+              url: "https://saved.example/",
+              title: "Current"
+            }
+          ]
+        }
+      ],
+      { now: 2000 }
+    );
+
+    expect(reconciled.rootIds).toEqual(["window:20", "window:10"]);
+    expect(reconciled.nodes["window:10"]).toMatchObject({
+      kind: "window",
+      status: "closed",
+      childIds: ["tab:1"]
+    });
+    expect(reconciled.nodes["tab:1"]).toMatchObject({
+      kind: "tab",
+      status: "closed",
+      parentId: "window:10",
+      restore: {
+        url: "https://saved.example/",
+        title: "Saved"
+      }
+    });
+    expect(reconciled.nodes["tab:5"]).toMatchObject({
+      kind: "tab",
+      status: "live",
+      parentId: "window:20",
+      live: { tabId: 5, windowId: 20 }
+    });
+  });
+
   it("repairs orphaned parent cycles into reachable roots", () => {
     const state = bootstrapFromWindows(windows, { now: 1000 });
     state.rootIds = ["window:10"];

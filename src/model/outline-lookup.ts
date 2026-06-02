@@ -84,7 +84,40 @@ function collectOwnerWindowScan(state: OutlineState): OwnerWindowScan {
   for (let index = state.rootIds.length - 1; index >= 0; index -= 1) {
     stack.push({ nodeId: state.rootIds[index]! });
   }
+  drainOwnerWindowScanStack(state, stack, visited, {
+    ownerWindowNodeIdsByNodeId,
+    liveTabProjectionsByWindowNodeId,
+    closedRestoreCandidateCountsByWindowNodeId,
+    windowNodeIdsWithClosedRestoreCandidates
+  });
 
+  for (const nodeId of Object.keys(state.nodes)) {
+    if (visited.has(nodeId)) {
+      continue;
+    }
+    stack.push({ nodeId: unvisitedComponentRootId(state, nodeId, visited) });
+    drainOwnerWindowScanStack(state, stack, visited, {
+      ownerWindowNodeIdsByNodeId,
+      liveTabProjectionsByWindowNodeId,
+      closedRestoreCandidateCountsByWindowNodeId,
+      windowNodeIdsWithClosedRestoreCandidates
+    });
+  }
+
+  return {
+    ownerWindowNodeIdsByNodeId,
+    liveTabProjectionsByWindowNodeId,
+    closedRestoreCandidateCountsByWindowNodeId,
+    windowNodeIdsWithClosedRestoreCandidates
+  };
+}
+
+function drainOwnerWindowScanStack(
+  state: OutlineState,
+  stack: Array<{ nodeId: NodeId; ownerWindowNodeId?: NodeId }>,
+  visited: Set<NodeId>,
+  scan: OwnerWindowScan
+): void {
   while (stack.length > 0) {
     const entry = stack.pop()!;
     if (visited.has(entry.nodeId)) {
@@ -99,20 +132,20 @@ function collectOwnerWindowScan(state: OutlineState): OwnerWindowScan {
 
     const ownerWindowNodeId = node.kind === "window" ? node.id : entry.ownerWindowNodeId;
     if (ownerWindowNodeId) {
-      ownerWindowNodeIdsByNodeId.set(node.id, ownerWindowNodeId);
-      if (node.kind === "window" && !liveTabProjectionsByWindowNodeId.has(node.id)) {
-        liveTabProjectionsByWindowNodeId.set(node.id, []);
+      scan.ownerWindowNodeIdsByNodeId.set(node.id, ownerWindowNodeId);
+      if (node.kind === "window" && !scan.liveTabProjectionsByWindowNodeId.has(node.id)) {
+        scan.liveTabProjectionsByWindowNodeId.set(node.id, []);
       }
       if (node.id !== ownerWindowNodeId && node.kind === "tab") {
         if (node.status === "closed") {
-          const count = closedRestoreCandidateCountsByWindowNodeId.get(ownerWindowNodeId) ?? 0;
-          closedRestoreCandidateCountsByWindowNodeId.set(ownerWindowNodeId, count + 1);
-          windowNodeIdsWithClosedRestoreCandidates.add(ownerWindowNodeId);
+          const count = scan.closedRestoreCandidateCountsByWindowNodeId.get(ownerWindowNodeId) ?? 0;
+          scan.closedRestoreCandidateCountsByWindowNodeId.set(ownerWindowNodeId, count + 1);
+          scan.windowNodeIdsWithClosedRestoreCandidates.add(ownerWindowNodeId);
         } else if (isLiveTabNode(node)) {
           const ownerWindow = state.nodes[ownerWindowNodeId];
           const targetWindowId =
             ownerWindow?.live && "windowId" in ownerWindow.live ? ownerWindow.live.windowId : node.live.windowId;
-          liveTabProjectionsByWindowNodeId.get(ownerWindowNodeId)?.push({
+          scan.liveTabProjectionsByWindowNodeId.get(ownerWindowNodeId)?.push({
             tabId: node.live.tabId,
             windowId: targetWindowId
           });
@@ -127,13 +160,25 @@ function collectOwnerWindowScan(state: OutlineState): OwnerWindowScan {
       });
     }
   }
+}
 
-  return {
-    ownerWindowNodeIdsByNodeId,
-    liveTabProjectionsByWindowNodeId,
-    closedRestoreCandidateCountsByWindowNodeId,
-    windowNodeIdsWithClosedRestoreCandidates
-  };
+function unvisitedComponentRootId(
+  state: OutlineState,
+  nodeId: NodeId,
+  visited: ReadonlySet<NodeId>
+): NodeId {
+  let currentId = nodeId;
+  const seen = new Set<NodeId>();
+
+  while (true) {
+    const current = state.nodes[currentId];
+    const parentId = current?.parentId;
+    if (!parentId || !state.nodes[parentId] || visited.has(parentId) || seen.has(parentId)) {
+      return currentId;
+    }
+    seen.add(currentId);
+    currentId = parentId;
+  }
 }
 
 function isLiveTabNode(node: OutlineNode): node is OutlineNode & { live: { tabId: number; windowId: number } } {
