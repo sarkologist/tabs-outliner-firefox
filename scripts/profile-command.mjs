@@ -54,12 +54,13 @@ function parseArgs(argv) {
     "toggle-window",
     "move-leaf",
     "group-live-leaf",
+    "move-top-level-live-leaf",
     "flatten-window",
     "import-small",
     "refresh-noop"
   ].includes(options.scenario)) {
     throw new Error(
-      "--scenario must be rename-window, toggle-window, move-leaf, group-live-leaf, flatten-window, import-small, or refresh-noop"
+      "--scenario must be rename-window, toggle-window, move-leaf, group-live-leaf, move-top-level-live-leaf, flatten-window, import-small, or refresh-noop"
     );
   }
 
@@ -327,6 +328,9 @@ function commandForScenario(scenario, tabCount) {
   if (scenario === "group-live-leaf") {
     return { type: "wrapNodeInGroup", nodeId: "tab:1" };
   }
+  if (scenario === "move-top-level-live-leaf") {
+    return { type: "moveSubtreeToTopLevel", nodeId: `tab:${tabCount}` };
+  }
   if (scenario === "flatten-window") {
     return { type: "flattenSubtree", nodeId: "window:10" };
   }
@@ -485,9 +489,10 @@ async function profile(options) {
     moveTabsMs: Math.round(runtime.moveTabsMs),
     eventCounts: eventCountsSnapshot(runtime.eventCounts),
     eventCount: eventCountsTotal(runtime.eventCounts),
-    ...(traceBackground ? { trace: summarizeTrace(trace) } : {}),
+    ...(traceBackground ? { trace: summarizeTrace(trace), traceSummary: summarizeTraceSummary(trace) } : {}),
     ack: command.value,
-    nodes: Object.keys(current.nodes).length
+    nodes: Object.keys(current.nodes).length,
+    rootShape: summarizeRootShape(current)
   };
 }
 
@@ -505,4 +510,69 @@ function summarizeTrace(trace) {
     }))
     .sort((left, right) => right.durationMs - left.durationMs)
     .slice(0, 20);
+}
+
+function summarizeTraceSummary(trace) {
+  const entries = Array.isArray(trace?.entries) ? trace.entries : [];
+  const measured = entries.filter((entry) => typeof entry.durationMs === "number");
+  return {
+    byName: Object.fromEntries(summarizeBy(measured, (entry) => entry.name).map((row) => [row.name, row])),
+    runtimeMessageTypes: Object.fromEntries(
+      summarizeBy(
+        measured.filter((entry) => entry.name === "background.runtime.message"),
+        (entry) => entry.detail?.type ?? "(unknown)"
+      ).map((row) => [row.name, row])
+    ),
+    mutationRuns: Object.fromEntries(
+      summarizeBy(
+        measured.filter((entry) => entry.name === "background.mutation.run"),
+        (entry) => [
+          entry.detail?.reason ?? "",
+          entry.detail?.command ?? "",
+          entry.detail?.source ?? "",
+          entry.detail?.priority ?? ""
+        ].join("/")
+      ).map((row) => [row.name, row])
+    )
+  };
+}
+
+function summarizeBy(entries, keyFn) {
+  const byKey = new Map();
+  for (const entry of entries) {
+    const name = keyFn(entry);
+    const row = byKey.get(name) ?? {
+      name,
+      count: 0,
+      totalMs: 0,
+      avgMs: 0,
+      maxMs: 0
+    };
+    row.count += 1;
+    row.totalMs += entry.durationMs;
+    row.maxMs = Math.max(row.maxMs, entry.durationMs);
+    byKey.set(name, row);
+  }
+  return [...byKey.values()]
+    .map((row) => ({
+      ...row,
+      totalMs: Math.round(row.totalMs),
+      avgMs: Math.round(row.totalMs / row.count),
+      maxMs: Math.round(row.maxMs)
+    }))
+    .sort((left, right) => right.totalMs - left.totalMs);
+}
+
+function summarizeRootShape(state) {
+  const rootIds = Array.isArray(state?.rootIds) ? state.rootIds : [];
+  const roots = rootIds.map((nodeId) => state.nodes?.[nodeId]);
+  return {
+    rootCount: rootIds.length,
+    missingRootCount: roots.filter((node) => !node).length,
+    windowRootCount: roots.filter((node) => node?.kind === "window").length,
+    liveWindowRootCount: roots.filter((node) => node?.kind === "window" && node.status === "live").length,
+    tabRootCount: roots.filter((node) => node?.kind === "tab").length,
+    groupRootCount: roots.filter((node) => node?.kind === "group").length,
+    childCounts: roots.map((node) => node?.childIds?.length ?? 0)
+  };
 }

@@ -57,7 +57,12 @@ export function createBroadcastMetrics() {
   return {
     broadcasts: 0,
     stateBroadcasts: 0,
-    statusBroadcasts: 0
+    statusBroadcasts: 0,
+    fullStateBroadcasts: 0,
+    sameParentReorderBroadcasts: 0,
+    treeStructureBroadcasts: 0,
+    nodeStateBroadcasts: 0,
+    activeStateBroadcasts: 0
   };
 }
 
@@ -67,10 +72,22 @@ export function resetBroadcastMetrics(runtime) {
 
 export function recordProfileBroadcast(runtime, message) {
   runtime.broadcasts += 1;
-  if (message?.type === "historyStatus") {
+  const type = message?.type;
+  if (type === "historyStatus") {
     runtime.statusBroadcasts += 1;
   } else {
     runtime.stateBroadcasts += 1;
+  }
+  if (type === "stateUpdated") {
+    runtime.fullStateBroadcasts += 1;
+  } else if (type === "sameParentReorderUpdated") {
+    runtime.sameParentReorderBroadcasts += 1;
+  } else if (type === "treeStructureUpdated") {
+    runtime.treeStructureBroadcasts += 1;
+  } else if (type === "nodeStateUpdated") {
+    runtime.nodeStateBroadcasts += 1;
+  } else if (type === "activeStateUpdated") {
+    runtime.activeStateBroadcasts += 1;
   }
 }
 
@@ -78,7 +95,12 @@ export function broadcastMetricsResult(runtime) {
   return {
     broadcasts: runtime.broadcasts,
     stateBroadcasts: runtime.stateBroadcasts,
-    statusBroadcasts: runtime.statusBroadcasts
+    statusBroadcasts: runtime.statusBroadcasts,
+    fullStateBroadcasts: runtime.fullStateBroadcasts,
+    sameParentReorderBroadcasts: runtime.sameParentReorderBroadcasts,
+    treeStructureBroadcasts: runtime.treeStructureBroadcasts,
+    nodeStateBroadcasts: runtime.nodeStateBroadcasts,
+    activeStateBroadcasts: runtime.activeStateBroadcasts
   };
 }
 
