@@ -313,6 +313,31 @@ describe("visible tree projection", () => {
     });
   });
 
+  it("rejects same-parent reorder ranges when full projection child metadata is stale", () => {
+    const state = wideState(LARGE_NODE_COUNT, { activeTabIndex: 1 });
+    const projection = buildVisibleTreeProjection(state, "");
+    projection.rows[0] = {
+      ...projection.rows[0]!,
+      visibleChildCount: LARGE_NODE_COUNT - 1
+    };
+    const movedNodeId = "tab:40";
+    const next = cloneOutlineStateForTest(state);
+    const root = next.nodes["window:1"]!;
+    root.childIds = root.childIds.filter((childId) => childId !== movedNodeId);
+    root.childIds.splice(0, 0, movedNodeId);
+    next.nodes[movedNodeId] = {
+      ...next.nodes[movedNodeId]!,
+      childIds: [...next.nodes[movedNodeId]!.childIds]
+    };
+
+    expect(sameParentReorderTreeStructurePatchInfo(next, projection, {
+      deletedNodeIds: [],
+      updatedNodes: [root, next.nodes[movedNodeId]!],
+      rootIds: ["window:1"],
+      deletedClosedCount: 0
+    })).toBeUndefined();
+  });
+
   it("applies active-search delete patches without rebuilding the projection", () => {
     const state = outlineState([
       windowNode("window:1", ["tab:parent", "tab:other"], { active: true }),

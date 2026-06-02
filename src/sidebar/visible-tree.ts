@@ -329,10 +329,7 @@ export function sameParentReorderTreeStructurePatchInfo(
   }
 
   const targetChildOffset = parentNode.childIds.indexOf(movedNode.id);
-  if (
-    targetChildOffset < 0 ||
-    directChildCountForRow(projection.rows, parentRow) !== parentNode.childIds.length
-  ) {
+  if (targetChildOffset < 0 || !projectionHasAllDirectChildren(projection, parentRow, parentNode.childIds.length)) {
     return undefined;
   }
 
@@ -362,6 +359,17 @@ export function sameParentReorderTreeStructurePatchInfo(
     movedSize,
     insertionIndex
   };
+}
+
+function projectionHasAllDirectChildren(
+  projection: VisibleTreeProjection,
+  parentRow: VisibleTreeRow,
+  childCount: number
+): boolean {
+  if (typeof projection.totalRowCount !== "number" || projection.totalRowCount === projection.rows.length) {
+    return parentRow.visibleChildCount === childCount;
+  }
+  return directChildCountForRow(projection.rows, parentRow) === childCount;
 }
 
 function directChildCountForRow(rows: readonly VisibleTreeRow[], parentRow: VisibleTreeRow): number {
