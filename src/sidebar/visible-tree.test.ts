@@ -305,6 +305,7 @@ describe("visible tree projection", () => {
       deletedClosedCount: 0
     })).toEqual({
       parentId: "window:1",
+      parentRowIndex: 0,
       movedNodeId,
       movedStart: 40,
       movedEnd: 41,

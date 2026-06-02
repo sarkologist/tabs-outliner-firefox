@@ -40,6 +40,7 @@ export type VirtualRange = {
 
 export type SameParentReorderPatchInfo = {
   parentId: NodeId;
+  parentRowIndex: number;
   movedNodeId: NodeId;
   movedStart: number;
   movedEnd: number;
@@ -295,7 +296,9 @@ export function applySameParentReorderTreeStructurePatchToProjection(
   projection.rows.splice(info.insertionIndex, 0, ...movedRows);
   const movedVisibleNodeIds = projection.visibleNodeIds.splice(info.movedStart, info.movedSize);
   projection.visibleNodeIds.splice(info.insertionIndex, 0, ...movedVisibleNodeIds);
-  refreshVisibleRowStructure(projection.rows);
+  if (!refreshLeafSameParentReorderRows(projection.rows, info)) {
+    refreshVisibleRowStructure(projection.rows);
+  }
   refreshRowsFromUpdatedNodes(state, projection, patch.updatedNodes);
   return true;
 }
@@ -353,12 +356,50 @@ export function sameParentReorderTreeStructurePatchInfo(
 
   return {
     parentId,
+    parentRowIndex: parentRow.index,
     movedNodeId: movedNode.id,
     movedStart,
     movedEnd,
     movedSize,
     insertionIndex
   };
+}
+
+function refreshLeafSameParentReorderRows(
+  rows: VisibleTreeRow[],
+  info: SameParentReorderPatchInfo
+): boolean {
+  if (info.movedSize !== 1) {
+    return false;
+  }
+
+  const parentRow = rows[info.parentRowIndex];
+  if (!parentRow || parentRow.nodeId !== info.parentId) {
+    return false;
+  }
+
+  const changedStart = Math.min(info.movedStart, info.insertionIndex);
+  const changedEnd = Math.max(info.movedEnd, info.insertionIndex + info.movedSize);
+  const childDepth = parentRow.depth + 1;
+  for (let index = changedStart; index < changedEnd; index += 1) {
+    const row = rows[index];
+    if (
+      !row ||
+      row.depth !== childDepth ||
+      row.parentRowIndex !== parentRow.index ||
+      row.subtreeEndIndex !== row.index + 1
+    ) {
+      return false;
+    }
+  }
+
+  for (let index = changedStart; index < changedEnd; index += 1) {
+    const row = rows[index]!;
+    row.index = index;
+    row.parentRowIndex = parentRow.index;
+    row.subtreeEndIndex = index + 1;
+  }
+  return true;
 }
 
 function projectionHasAllDirectChildren(
