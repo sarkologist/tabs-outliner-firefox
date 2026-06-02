@@ -32214,6 +32214,106 @@ describe("background controller lifecycle", () => {
     ])).toEqual(new Set([state.nodes["window:10"]?.live?.windowId]));
   });
 
+  it("restores a whole imported group after one restored child is browser-closed", async () => {
+    const importedUrl = "https://calendar.example/week";
+    const runtime = fakeRuntime(
+      [
+        { id: 10, focused: true, incognito: false }
+      ],
+      [
+        { id: 1, windowId: 10, index: 0, active: true, url: "https://one.example/", title: "One" }
+      ]
+    );
+    let recentClosedSession: { tab?: { sessionId?: string }; window?: { sessionId?: string } } = {};
+    vi.mocked(runtime.api.sessions.getRecentlyClosed).mockImplementation(async () => [recentClosedSession as never]);
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+
+    expectCommandAck(await controller.handleMessage({
+      type: "importTree",
+      tree: {
+        schema: PORTABLE_TREE_SCHEMA,
+        version: 1,
+        exportedAt: "2026-05-18T12:00:00.000Z",
+        roots: [
+          {
+            kind: "window",
+            title: "Imported group",
+            children: [
+              {
+                kind: "tab",
+                title: "First imported",
+                url: importedUrl,
+                children: []
+              },
+              {
+                kind: "tab",
+                title: "Second imported",
+                url: importedUrl,
+                children: []
+              }
+            ]
+          }
+        ]
+      }
+    }), true);
+
+    let state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    const importedGroupId = Object.values(state.nodes)
+      .find((node) => node.kind === "window" && node.title === "Imported group")?.id;
+    const firstTabId = Object.values(state.nodes)
+      .find((node) => node.kind === "tab" && node.title === "First imported")?.id;
+    const secondTabId = Object.values(state.nodes)
+      .find((node) => node.kind === "tab" && node.title === "Second imported")?.id;
+    expect(importedGroupId).toBeDefined();
+    expect(firstTabId).toBeDefined();
+    expect(secondTabId).toBeDefined();
+
+    expectCommandAck(await controller.handleMessage({ type: "restoreNode", nodeId: firstTabId! }), true);
+    state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    const firstRestoredWindowId = state.nodes[importedGroupId!]?.live?.windowId;
+    expect(typeof firstRestoredWindowId).toBe("number");
+    expect(state.nodes[firstTabId!]).toMatchObject({
+      status: "live",
+      live: { windowId: firstRestoredWindowId }
+    });
+    expect(state.nodes[secondTabId!]?.status).toBe("closed");
+
+    recentClosedSession = { window: { sessionId: "session-imported-first" } };
+    await closeRuntimeWindow(runtime, firstRestoredWindowId!, { awaitListeners: true });
+    state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(state.nodes[importedGroupId!]).toMatchObject({
+      status: "closed",
+      restore: expect.objectContaining({ sessionId: "session-imported-first" })
+    });
+    expect(state.nodes[firstTabId!]?.status).toBe("closed");
+    expect(state.nodes[secondTabId!]?.status).toBe("closed");
+
+    vi.mocked(runtime.api.sessions.restore).mockImplementation(async (sessionId: string) => {
+      if (sessionId !== "session-imported-first") {
+        return {};
+      }
+      return { window: createWindowFromBrowser(runtime, { url: importedUrl, focused: true }) } as never;
+    });
+
+    expectCommandAck(await controller.handleMessage({ type: "restoreNode", nodeId: importedGroupId! }), true);
+    state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    const restoredGroupWindowId = state.nodes[importedGroupId!]?.live?.windowId;
+    expect(typeof restoredGroupWindowId).toBe("number");
+    expect(state.nodes[firstTabId!]).toMatchObject({
+      status: "live",
+      live: { windowId: restoredGroupWindowId }
+    });
+    expect(state.nodes[secondTabId!]).toMatchObject({
+      status: "live",
+      live: { windowId: restoredGroupWindowId }
+    });
+    expect(runtime.tabs
+      .filter((tab) => tab.windowId === restoredGroupWindowId)
+      .sort((left, right) => left.index - right.index)
+      .map((tab) => tab.url)).toEqual([importedUrl, importedUrl]);
+  });
+
   it("restores an earlier closed dragged-in tab when the restored window session has no tab list", async () => {
     const title = "Google Calendar - Week of May 25, 2026";
     const url = "https://calendar.example/week";

@@ -2005,6 +2005,125 @@ describe("background commands", () => {
     expect(restored.state.nodes["tab:2"]?.live).toEqual({ tabId: 2, windowId: 10 });
   });
 
+  it("restores url siblings into a closed imported group window created by a child tab session", async () => {
+    const sessionOnlyUrl = "about:debugging#/runtime/this-firefox";
+    const siblingUrl = "https://calendar.example/week";
+    const imported = await runCommand(bootstrapFromWindows(runtimeWindows, { now: 1000 }), fakeAdapter(), {
+      type: "importTree",
+      tree: {
+        schema: PORTABLE_TREE_SCHEMA,
+        version: 1,
+        exportedAt: "2026-05-18T12:00:00.000Z",
+        roots: [
+          {
+            kind: "window",
+            title: "Imported group",
+            children: [
+              {
+                kind: "tab",
+                title: "First imported",
+                url: sessionOnlyUrl,
+                children: []
+              },
+              {
+                kind: "tab",
+                title: "Second imported",
+                url: siblingUrl,
+                children: []
+              }
+            ]
+          }
+        ]
+      }
+    });
+    const importedGroup = Object.values(imported.state.nodes)
+      .find((node) => node.kind === "window" && node.title === "Imported group")!;
+    const firstTab = Object.values(imported.state.nodes)
+      .find((node) => node.kind === "tab" && node.title === "First imported")!;
+    const secondTab = Object.values(imported.state.nodes)
+      .find((node) => node.kind === "tab" && node.title === "Second imported")!;
+    const state: OutlineState = {
+      ...imported.state,
+      nodes: {
+        ...imported.state.nodes,
+        [firstTab.id]: {
+          ...firstTab,
+          restore: {
+            ...firstTab.restore,
+            sessionId: "session-imported-first"
+          }
+        }
+      }
+    };
+    const adapter = fakeAdapter({
+      restoreSession: vi.fn(async () => ({
+        tab: {
+          id: 21,
+          windowId: 10,
+          index: 1,
+          active: true,
+          url: sessionOnlyUrl,
+          title: "First imported"
+        }
+      })),
+      createWindow: vi.fn(async ({ tabId, url }) => {
+        if (typeof tabId === "number") {
+          return {
+            id: 42,
+            focused: true,
+            incognito: false,
+            tabs: [
+              {
+                id: tabId,
+                windowId: 42,
+                index: 0,
+                active: true,
+                url: sessionOnlyUrl,
+                title: "First imported"
+              }
+            ]
+          };
+        }
+        const urls = Array.isArray(url) ? url : url ? [url] : [];
+        return {
+          id: 43,
+          focused: true,
+          incognito: false,
+          tabs: urls.map((tabUrl, index) => ({
+            id: 200 + index,
+            windowId: 43,
+            index,
+            active: index === 0,
+            url: tabUrl,
+            title: tabUrl
+          }))
+        };
+      }),
+      createTab: vi.fn(async ({ url, windowId = 10 }) => ({
+        id: 22,
+        windowId,
+        index: 1,
+        active: false,
+        url,
+        title: "Second imported"
+      }))
+    });
+
+    const restored = await runCommand(state, adapter, { type: "restoreNode", nodeId: importedGroup.id });
+
+    expect(adapter.restoreSession).toHaveBeenCalledWith("session-imported-first");
+    expect(adapter.createWindow).toHaveBeenCalledTimes(1);
+    expect(adapter.createWindow).toHaveBeenCalledWith({ tabId: 21 });
+    expect(adapter.createTab).toHaveBeenCalledWith({
+      url: siblingUrl,
+      windowId: 42,
+      active: false
+    });
+    expect(restored.state.nodes[importedGroup.id]?.live).toEqual({ windowId: 42 });
+    expect(restored.state.nodes[firstTab.id]?.live).toEqual({ tabId: 21, windowId: 42 });
+    expect(restored.state.nodes[secondTab.id]?.live).toEqual({ tabId: 22, windowId: 42 });
+  });
+
   it("falls back to urls when restoring a closed placeholder window without a session match", async () => {
     const state = closeTab(bootstrapFromWindows(runtimeWindows, { now: 1000 }), 1, {
       now: 2000,

@@ -498,14 +498,14 @@ async function restoreNode(
       }
     }
 
-    const planNodeIsWindow = next.nodes[plan.nodeId]?.kind === "window";
     const restoredNodes = await runRestorePlan(next, adapter, plan, restoreObserver);
     if (restoredNodes.length > 0) {
       appendRestoredNodes(restoredNodes);
-      if (planNodeIsWindow && restoredNodes.some((restored) => restored.nodeId === plan.nodeId)) {
-        const coverage = restoredWindowDescendantCoverage(next, plan.nodeId, plans, restoredNodes);
+      const restoredWindowNodeId = restoredNodes.find((restored) => next.nodes[restored.nodeId]?.kind === "window")?.nodeId;
+      if (restoredWindowNodeId) {
+        const coverage = restoredWindowDescendantCoverage(next, restoredWindowNodeId, plans, restoredNodes);
         if (coverage.coveredWindowDescendants) {
-          restoredWindowNodeIds.add(plan.nodeId);
+          restoredWindowNodeIds.add(restoredWindowNodeId);
         } else {
           for (const coveredNodeId of coverage.coveredNodeIds) {
             coveredNodeIds.add(coveredNodeId);
