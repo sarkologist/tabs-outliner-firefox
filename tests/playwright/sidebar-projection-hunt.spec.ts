@@ -1259,6 +1259,40 @@ test.describe("sidebar projection hunt", () => {
     expect(issues).toEqual([]);
   });
 
+  test("psh-sparse-append-delete-before-hydration-keeps-global-count", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadLargeSparseSidebar(page, { fullStatePending: true });
+
+    const result = await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      const countText = () => document.querySelector("#state-count")?.textContent ?? "";
+      const before = countText();
+      api.emitAppendTabPatch(2000);
+      await api.waitForSparseRequestCount(1);
+      api.resolveSliceAt(0);
+      await api.waitForIdleFrames(4);
+      const afterAppend = countText();
+      api.emitDeletePatch(["tab:2000"]);
+      await api.waitForSparseRequestCount(2);
+      api.resolveSliceAt(0);
+      await api.waitForIdleFrames(4);
+      return {
+        before,
+        afterAppend,
+        afterDelete: countText(),
+        requests: api.projectionRequests(),
+        stateRequests: api.stateRequestCount()
+      };
+    });
+
+    expect(result.before).toBe("1001 items / 0 saved");
+    expect(result.afterAppend).toBe("1002 items / 0 saved");
+    expect(result.afterDelete).toBe("1001 items / 0 saved");
+    expect(result.requests).toHaveLength(2);
+    expect(result.stateRequests).toBe(0);
+    expect(issues).toEqual([]);
+  });
+
   test("psh-keyboard-cut-delete-patch-stale-refill-clears-local-cut-before-paste", async ({ page }) => {
     const issues = collectPageIssues(page);
     await loadLargeSparseSidebar(page, { fullStatePending: true });
@@ -10503,6 +10537,7 @@ type ProjectionHuntApi = {
   waitForVisibleRow(rowIndex: number): Promise<void>;
   viewportStartRow(): number;
   resolveFullState(): void;
+  emitAppendTabPatch(tabId: number): void;
   emitDeletePatch(nodeIds: string[]): void;
   emitMovePatch(nodeId: string, parentId: string, index: number): void;
   emitCollapsedPatch(nodeId: string, collapsed: boolean): void;
@@ -10583,6 +10618,7 @@ function installProjectionHuntHarness(options: {
     waitForVisibleRow,
     viewportStartRow,
     resolveFullState,
+    emitAppendTabPatch,
     emitDeletePatch,
     emitMovePatch,
     emitCollapsedPatch,
@@ -10744,6 +10780,18 @@ function installProjectionHuntHarness(options: {
     fullStateResolver = undefined;
   }
 
+  function emitAppendTabPatch(tabId: number) {
+    const previous = structuredClone(fullState);
+    const nodeId = `tab:${tabId}`;
+    const parent = fullState.nodes["window:1"] as { childIds?: string[] } | undefined;
+    if (!parent || !Array.isArray(parent.childIds)) {
+      throw new Error("Cannot append tab without window:1");
+    }
+    parent.childIds.push(nodeId);
+    fullState.nodes[nodeId] = tabNode(tabId);
+    emit(treeStructureUpdate(previous, fullState, []));
+  }
+
   function resolveRestoreScope() {
     if (!restoreScopeResolver) {
       throw new Error("No pending restore scope request");
@@ -10893,7 +10941,7 @@ function installProjectionHuntHarness(options: {
         visibleNodeIds: rows.map((row) => row.nodeId),
         ...activeProjectionTarget(),
         totalRowCount,
-        nodeCount: options.collapsedBoundaryFixture ? currentNodeCount() : options.totalRows,
+        nodeCount: currentNodeCount(),
         closedCount: options.closedRestoreFixture ? 4 : 0,
         matchCount: matchingNodeIds.length
       },

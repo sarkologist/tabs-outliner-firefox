@@ -155,9 +155,12 @@ let pendingSparseWindowRequest:
       query: string;
       retryAttempt: number;
       intent: ProjectionRequestIntent;
+      countMode: SparseProjectionCountMode;
     }
   | undefined;
 const activeTabScrollTracker = createActiveTabScrollTracker();
+
+type SparseProjectionCountMode = "preserve" | "snapshot";
 
 type ProjectionRequestIntent = {
   kind: "outline" | "search" | "showInTree";
@@ -658,7 +661,10 @@ function applyPendingSearchQueryAfterStateReady(): void {
   render();
 }
 
-function applySparseScrollWindowSnapshot(snapshot: InitialTreeSnapshot): void {
+function applySparseScrollWindowSnapshot(
+  snapshot: InitialTreeSnapshot,
+  options: { countMode?: SparseProjectionCountMode } = {}
+): void {
   if (
     !currentProjection ||
     !canUseHydratingProjectionSlice(currentProjection) ||
@@ -670,7 +676,7 @@ function applySparseScrollWindowSnapshot(snapshot: InitialTreeSnapshot): void {
 
   mergeProjectionSliceSnapshot(snapshot, { coverageMode: "merge" });
   const nextProjection = projectionFromInitialTreeSnapshot(snapshot);
-  if (!nextProjection.isSearchActive) {
+  if (!nextProjection.isSearchActive && options.countMode !== "snapshot") {
     nextProjection.nodeCount = currentProjection.nodeCount;
     nextProjection.closedCount = currentProjection.closedCount;
     nextProjection.matchCount = currentProjection.matchCount;
@@ -762,13 +768,15 @@ function startSparseScrollWindowRequest(
   centerRowIndex: number,
   rowLimit: number,
   query: string,
-  retryAttempt: number
+  retryAttempt: number,
+  options: { countMode?: SparseProjectionCountMode } = {}
 ): void {
   const intent = sparseWindowRequestIntent(query);
   if (!projectionRequestIntentMatchesCurrent(intent)) {
     return;
   }
-  pendingSparseWindowRequest = { centerRowIndex, rowLimit, query, retryAttempt, intent };
+  const countMode = options.countMode ?? "preserve";
+  pendingSparseWindowRequest = { centerRowIndex, rowLimit, query, retryAttempt, intent, countMode };
   const requestId = ++sparseWindowRequestSequence;
   const rowHeight = currentRowHeight();
   const viewportRange = currentViewportRowRange(rowHeight);
@@ -780,7 +788,7 @@ function startSparseScrollWindowRequest(
     viewportStartRow: viewportRange.start,
     viewportEndRow: viewportRange.end
   });
-  void loadSparseScrollWindow(centerRowIndex, rowLimit, query, requestId, retryAttempt, intent);
+  void loadSparseScrollWindow(centerRowIndex, rowLimit, query, requestId, retryAttempt, intent, countMode);
 }
 
 async function loadSparseScrollWindow(
@@ -789,7 +797,8 @@ async function loadSparseScrollWindow(
   query: string,
   requestId: number,
   retryAttempt: number,
-  intent: ProjectionRequestIntent
+  intent: ProjectionRequestIntent,
+  countMode: SparseProjectionCountMode
 ): Promise<void> {
   try {
     const response = await requestProjectionSlice(centerRowIndex, rowLimit, query);
@@ -810,7 +819,7 @@ async function loadSparseScrollWindow(
         sparseSnapshotMatchesCurrentProjection(response) &&
         sparseSnapshotIntersectsCurrentViewport(response)
       ) {
-        applySparseScrollWindowSnapshot(response);
+        applySparseScrollWindowSnapshot(response, { countMode });
       } else if (
         isInitialTreeSnapshot(response) &&
         response.hydrating &&
@@ -837,7 +846,7 @@ async function loadSparseScrollWindow(
 
     if (!sparseSnapshotCoversCurrentViewport(response)) {
       if (sparseSnapshotIntersectsCurrentViewport(response)) {
-        applySparseScrollWindowSnapshot(response);
+        applySparseScrollWindowSnapshot(response, { countMode });
       } else {
         mergeProjectionSliceSnapshot(response, { coverageMode: "merge" });
       }
@@ -846,7 +855,7 @@ async function loadSparseScrollWindow(
       return;
     }
 
-    applySparseScrollWindowSnapshot(response);
+    applySparseScrollWindowSnapshot(response, { countMode });
     pendingSparseWindowRequest = undefined;
     requestSparseScrollWindowIfNeeded();
   } catch (error) {
@@ -854,7 +863,7 @@ async function loadSparseScrollWindow(
       pendingSparseWindowRequest = undefined;
       perfTrace.mark("sidebar.sparseScrollWindow.error", { message: commandErrorText(error) });
       if (retryAttempt < 1 && !currentSparseProjectionCoversViewport()) {
-        startSparseScrollWindowRequest(centerRowIndex, rowLimit, query, retryAttempt + 1);
+        startSparseScrollWindowRequest(centerRowIndex, rowLimit, query, retryAttempt + 1, { countMode });
       }
     }
   }
@@ -1704,7 +1713,7 @@ function refreshSparseRemoteProjectionAfterStateChange(
   const centerRowIndex = totalRowCount > 0
     ? Math.max(0, Math.min(totalRowCount - 1, Math.floor((viewportRange.start + viewportRange.end - 1) / 2)))
     : 0;
-  startSparseScrollWindowRequest(centerRowIndex, rowLimit, "", 0);
+  startSparseScrollWindowRequest(centerRowIndex, rowLimit, "", 0, { countMode: "snapshot" });
   return true;
 }
 
