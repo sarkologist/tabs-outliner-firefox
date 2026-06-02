@@ -22,7 +22,9 @@ const goodProfiles = {
     p95Ms: 4.2
   },
   "drag-drop-50k-drop": {
-    elapsedMs: 52.5,
+    elapsedMs: 82.5,
+    dragoverSetupMs: 30,
+    dropDispatchToVisibleMs: 52.5,
     summary: [
       { name: "sidebar.patch.treeStructure", count: 1, totalMs: 3.1, avgMs: 3.1, maxMs: 3.1 },
       { name: "sidebar.virtualRows", count: 1, totalMs: 10.2, avgMs: 10.2, maxMs: 10.2 }
@@ -55,7 +57,9 @@ describe("drag/drop autoresearch profile", () => {
           ...goodProfiles,
           "drag-drop-50k-drop": {
             ...goodProfiles["drag-drop-50k-drop"],
-            elapsedMs: 57.5
+            elapsedMs: 107.5,
+            dragoverSetupMs: 50,
+            dropDispatchToVisibleMs: 57.5
           }
         }
       }
@@ -65,6 +69,8 @@ describe("drag/drop autoresearch profile", () => {
       runs: 2,
       dropMedianMs: 55,
       dropMaxMs: 57.5,
+      dropTotalMaxMs: 107.5,
+      dragoverSetupMaxMs: 50,
       dropTreePatchMaxMs: 3.1,
       dropVirtualRowsMaxMs: 10.2,
       dropProjectionBuildCount: 0,
@@ -96,7 +102,9 @@ describe("drag/drop autoresearch profile", () => {
       ...goodProfiles,
       "drag-drop-50k": { p95Ms: 9 },
       "drag-drop-50k-drop": {
-        elapsedMs: 95,
+        elapsedMs: 125,
+        dragoverSetupMs: 30,
+        dropDispatchToVisibleMs: 95,
         summary: [
           { name: "sidebar.patch.treeStructure", count: 1, totalMs: 14, avgMs: 14, maxMs: 14 },
           { name: "sidebar.virtualRows", count: 1, totalMs: 18, avgMs: 18, maxMs: 18 },
@@ -124,6 +132,20 @@ describe("drag/drop autoresearch profile", () => {
       "large hover guide work must stay below 8ms",
       "hover-scroll virtual rows must stay below 16ms"
     ]);
+  });
+
+  it("requires corrected drop dispatch-to-visible timing", () => {
+    const missingDropOnlyTiming = {
+      ...goodProfiles,
+      "drag-drop-50k-drop": {
+        ...goodProfiles["drag-drop-50k-drop"],
+        dropDispatchToVisibleMs: undefined
+      }
+    };
+    const summary = summarizeDragDropRuns([{ run: 1, profiles: missingDropOnlyTiming }]);
+
+    expect(summary.status).toBe("discard");
+    expect(summary.guardFailures).toContain("missing drop dispatch-to-visible timing");
   });
 
   it("marks nonzero Playwright runs as discardable profile failures", () => {

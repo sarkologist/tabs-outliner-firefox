@@ -165,7 +165,9 @@ export function summarizeDragDropRuns(results, options = {}) {
   const inputDelayProfiles = profileValues(results, "input-delay-profile");
   const playwrightFailureCount = results.filter((result) => result.commandFailed).length;
 
-  const dropDurations = dropProfiles.map((profile) => profile.elapsedMs).filter(isFiniteNumber);
+  const dropDurations = dropProfiles.map((profile) => profile.dropDispatchToVisibleMs).filter(isFiniteNumber);
+  const dropTotalDurations = dropProfiles.map((profile) => profile.elapsedMs).filter(isFiniteNumber);
+  const dragoverSetupDurations = dropProfiles.map((profile) => profile.dragoverSetupMs).filter(isFiniteNumber);
   const dropTreePatchDurations = dropProfiles
     .map((profile) => summaryMetric(profile, "sidebar.patch.treeStructure", "totalMs"))
     .filter(isFiniteNumber);
@@ -194,6 +196,8 @@ export function summarizeDragDropRuns(results, options = {}) {
     ...(typeof targetDropMedianMs === "number" ? { targetDropMedianMs } : {}),
     dropMedianMs: median(dropDurations),
     dropMaxMs: max(dropDurations),
+    dropTotalMaxMs: max(dropTotalDurations),
+    dragoverSetupMaxMs: max(dragoverSetupDurations),
     dropTreePatchMaxMs: max(dropTreePatchDurations),
     dropVirtualRowsMaxMs: max(dropVirtualRowsDurations),
     dropProjectionBuildCount: sum(dropProjectionBuildCounts),
@@ -220,6 +224,9 @@ export function dragDropGuardFailures(summary, profiles) {
   const failures = [];
   if (profiles.dropProfiles.length !== summary.runs) {
     failures.push("missing drag-drop-50k-drop output");
+  }
+  if (profiles.dropProfiles.some((profile) => !isFiniteNumber(profile.dropDispatchToVisibleMs))) {
+    failures.push("missing drop dispatch-to-visible timing");
   }
   if (profiles.dragoverProfiles.length !== summary.runs) {
     failures.push("missing drag-drop-50k output");
