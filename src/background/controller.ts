@@ -1010,7 +1010,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         );
         await broadcastTreeStructureUpdate(update);
         scheduleStateSave(result.state, saveSchedule, deletePatchNodeIds ?? [message.nodeId]);
-        await flushRuntimeTruthSaveIfPresent(result.state);
+        await flushRuntimeTruthSaveIfNeeded(current, result.state, deletePatchNodeIds ?? [message.nodeId]);
         if (commandTransaction) {
           runtimeFacts.commitCommand(commandTransaction.id);
         }
@@ -3989,7 +3989,8 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   ): Promise<void> {
     if (
       !runtimeProvenanceChanged(previous, next, candidateNodeIds) &&
-      !liveRuntimePlacementChanged(previous, next, candidateNodeIds)
+      !liveRuntimePlacementChanged(previous, next, candidateNodeIds) &&
+      !liveRuntimeRemovalTouchedRuntimeTruth(previous, next, candidateNodeIds)
     ) {
       return;
     }
@@ -4002,13 +4003,6 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     candidateNodeIds: readonly NodeId[]
   ): Promise<void> {
     if (!runtimeTruthFastPathUpdateNeedsCheckpoint(next, update, candidateNodeIds)) {
-      return;
-    }
-    await flushPendingSaves();
-  }
-
-  async function flushRuntimeTruthSaveIfPresent(next: OutlineState): Promise<void> {
-    if (!Object.values(next.nodes).some(runtimeTruthWindowNeedsCheckpoint)) {
       return;
     }
     await flushPendingSaves();
@@ -4085,6 +4079,31 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         return runtimeTruthWindowNeedsCheckpoint(windowNode);
       }
       return false;
+    });
+  }
+
+  function liveRuntimeRemovalTouchedRuntimeTruth(
+    previous: OutlineState,
+    next: OutlineState,
+    candidateNodeIds?: readonly NodeId[]
+  ): boolean {
+    const nodeIds = candidateNodeIds ?? Object.keys(previous.nodes);
+    return nodeIds.some((nodeId) => {
+      if (next.nodes[nodeId]) {
+        return false;
+      }
+
+      const previousNode = previous.nodes[nodeId];
+      if (isLiveWindowNode(previousNode)) {
+        return runtimeTruthWindowNeedsCheckpoint(previousNode);
+      }
+      if (!isLiveTabNode(previousNode)) {
+        return false;
+      }
+
+      const windowNodeId = runtimeIndexForState(previous).liveWindowNodeIdsByRuntimeId.get(previousNode.live.windowId);
+      const windowNode = windowNodeId ? previous.nodes[windowNodeId] : undefined;
+      return runtimeTruthWindowNeedsCheckpoint(windowNode);
     });
   }
 
