@@ -106,6 +106,7 @@ export type CommandTransaction = {
 export type CommandRelocatedTabEcho = {
   fromWindowIds: Set<number>;
   sequence: number;
+  sourceIndex?: number | undefined;
   sourceWindowId: number;
   toWindowId: number;
 };
@@ -122,6 +123,7 @@ export type RuntimeFactLedgerDebugSnapshot = {
     tabId: number;
     fromWindowIds: number[];
     sequence: number;
+    sourceIndex?: number | undefined;
     sourceWindowId: number;
     toWindowId: number;
   }>;
@@ -491,13 +493,19 @@ export class RuntimeFactLedger {
     previous: OutlineState,
     next: OutlineState,
     candidateNodeIds?: readonly NodeId[],
-    windows?: readonly RuntimeWindow[]
+    options: {
+      runtimeWindows?: readonly RuntimeWindow[];
+      outlineSyncedRuntimeWindowIds?: readonly number[];
+    } = {}
   ): boolean {
     if (!candidateNodeIds) {
       return false;
     }
 
     const affectedWindowIds = affectedRuntimeWindowIdsForStateTransition(previous, next, candidateNodeIds);
+    for (const windowId of options.outlineSyncedRuntimeWindowIds ?? []) {
+      affectedWindowIds.add(windowId);
+    }
     if (affectedWindowIds.size === 0) {
       return true;
     }
@@ -521,7 +529,8 @@ export class RuntimeFactLedger {
     }
 
     const candidateRuntimeTabIds = runtimeTabIdsForCandidateNodes(previous, next, candidateNodeIds);
-    const runtimeWindowsById = new Map((windows ?? []).map((windowInfo) => [windowInfo.id, windowInfo]));
+    const runtimeWindowsById = new Map((options.runtimeWindows ?? []).map((windowInfo) => [windowInfo.id, windowInfo]));
+    const outlineSyncedWindowIds = new Set(options.outlineSyncedRuntimeWindowIds ?? []);
     let advancedGeneration = false;
     const advanceGeneration = (): void => {
       if (advancedGeneration) {
@@ -544,16 +553,21 @@ export class RuntimeFactLedger {
       }
 
       const runtimeWindow = runtimeWindowsById.get(windowId);
-      const orderCandidateTabNodes = candidateLiveTabNodesAffectingRuntimeOrder(previous, next, windowId, candidateNodeIds);
-      const tabNodes = runtimeWindow
-        ? liveTabNodesFromRuntimeWindowOrder(next, runtimeWindow, candidateNodeIds, previousScope)
-        : previousScope && closedRuntimeTabIds.size > 0
-        ? liveTabNodesFromExistingScopeOrder(next, windowId, previousScope)
-        : (previousScope?.tabOrder.length ?? 0) === 0 && orderCandidateTabNodes.length > 0
-        ? orderCandidateTabNodes
-        : previousScope && orderCandidateTabNodes.length === 0
-          ? liveTabNodesFromExistingScopeOrder(next, windowId, previousScope)
-          : outlineOrderedLiveTabNodesForRuntimeWindow(next, windowNode);
+      const orderCandidateTabNodes = candidateLiveTabNodesAffectingRuntimeOrder(previous, next, windowNode, candidateNodeIds);
+      let tabNodes: LiveTabNode[];
+      if (runtimeWindow) {
+        tabNodes = liveTabNodesFromRuntimeWindowOrder(next, runtimeWindow, candidateNodeIds, previousScope);
+      } else if (outlineSyncedWindowIds.has(windowId)) {
+        tabNodes = outlineOrderedLiveTabNodesForRuntimeWindow(next, windowNode);
+      } else if (previousScope && closedRuntimeTabIds.size > 0) {
+        tabNodes = liveTabNodesFromExistingScopeOrder(next, windowId, previousScope);
+      } else if ((previousScope?.tabOrder.length ?? 0) === 0 && orderCandidateTabNodes.length > 0) {
+        tabNodes = orderCandidateTabNodes;
+      } else if (previousScope && orderCandidateTabNodes.length === 0) {
+        tabNodes = liveTabNodesFromExistingScopeOrder(next, windowId, previousScope);
+      } else {
+        tabNodes = outlineOrderedLiveTabNodesForRuntimeWindow(next, windowNode);
+      }
       const tabOrder = tabNodes.map((tabNode) => tabNode.live.tabId);
       const activeTabId = tabNodes.find((tabNode) => tabNode.active === true)?.live.tabId;
       const previousWindowFact = this.windowShapeFacts.get(windowId);
@@ -1712,6 +1726,9 @@ export class RuntimeFactLedger {
       this.commandRelocatedTabEchoes.set(previousNode.live.tabId, {
         fromWindowIds,
         sequence: this.observationSequence,
+        sourceIndex: this.tabShapeFacts.get(previousNode.live.tabId)?.windowId === previousNode.live.windowId
+          ? this.tabShapeFacts.get(previousNode.live.tabId)?.index
+          : undefined,
         sourceWindowId: previousNode.live.windowId,
         toWindowId: nextNode.live.windowId
       });
@@ -1727,6 +1744,9 @@ export class RuntimeFactLedger {
     this.commandRelocatedTabEchoes.set(tabId, {
       fromWindowIds,
       sequence: this.observationSequence,
+      sourceIndex: this.tabShapeFacts.get(tabId)?.windowId === fromWindowId
+        ? this.tabShapeFacts.get(tabId)?.index
+        : undefined,
       sourceWindowId: fromWindowId,
       toWindowId
     });
@@ -2082,20 +2102,24 @@ function liveWindowNodeForRuntimeId(
 function candidateLiveTabNodesAffectingRuntimeOrder(
   previous: OutlineState,
   next: OutlineState,
-  runtimeWindowId: number,
+  windowNode: OutlineNode & { live: { windowId: number } },
   candidateNodeIds: readonly NodeId[]
 ): LiveTabNode[] {
-  return candidateNodeIds
-    .flatMap((nodeId) => {
-      const previousNode = previous.nodes[nodeId];
-      const nextNode = next.nodes[nodeId];
-      return isLiveTabNode(nextNode) &&
-        nextNode.live.windowId === runtimeWindowId &&
-        candidateLiveTabAffectsRuntimeOrder(previous, next, previousNode, nextNode)
-        ? [nextNode]
-        : [];
-    })
-    .sort((left, right) => outlineSiblingIndex(next, left) - outlineSiblingIndex(next, right));
+  const affectedNodeIds = new Set<NodeId>();
+  for (const nodeId of candidateNodeIds) {
+    const previousNode = previous.nodes[nodeId];
+    const nextNode = next.nodes[nodeId];
+    if (
+      isLiveTabNode(nextNode) &&
+      nextNode.live.windowId === windowNode.live.windowId &&
+      candidateLiveTabAffectsRuntimeOrder(previous, next, previousNode, nextNode)
+    ) {
+      affectedNodeIds.add(nextNode.id);
+    }
+  }
+  return outlineOrderedLiveTabNodesForRuntimeWindow(next, windowNode).filter((tabNode) =>
+    affectedNodeIds.has(tabNode.id)
+  );
 }
 
 function candidateLiveTabAffectsRuntimeOrder(

@@ -610,12 +610,13 @@ function moveTabsFromBrowser(
     windowId: targetWindowId
   }));
   targetTabs.splice(boundedIndex, 0, ...movedTabs);
+  const reindexedTargetTabs = targetTabs.map((tab, index) => ({ ...tab, index }));
 
   runtime.tabs = [
     ...remainingTabs.filter((tab) => tab.windowId !== targetWindowId).map(copyTab),
-    ...targetTabs
+    ...reindexedTargetTabs
   ];
-  for (const windowId of affectedWindowIds) {
+  for (const windowId of [...affectedWindowIds].filter((windowId) => windowId !== targetWindowId)) {
     reindexWindowTabs(runtime, windowId);
   }
   removeEmptyRuntimeWindows(runtime, [...affectedWindowIds].filter((windowId) => windowId !== targetWindowId));
@@ -23412,7 +23413,7 @@ describe("background controller lifecycle", () => {
     )).toBe(true);
   });
 
-  it("asserts command-owned history scope order without requiring outline preorder", async () => {
+  it("tracks command-owned history scope order after browser-order sync", async () => {
     const context = createGeneratedTraceContext({
       now: 1000,
       history: ["command-owned history scope order"]
@@ -23441,7 +23442,7 @@ describe("background controller lifecycle", () => {
     await runDomainAction(context, { type: "outlinerUndo" });
 
     const state = (await context.controller.handleMessage({ type: "getState" })) as OutlineState;
-    expect(() => assertRuntimeOrderAssertion(state, context)).toThrow(/runtime tab order/);
+    expect(() => assertRuntimeOrderAssertion(state, context)).not.toThrow();
     expect(() => assertRuntimeScopeOrderAssertion(context)).not.toThrow();
   });
 
@@ -25664,6 +25665,20 @@ describe("background controller lifecycle", () => {
 
   it("preserves active tab state when activation races a later grouping command", async () => {
     await runGeneratedTrace(910720204, 21, {
+      adversarialRuntimeQueries: true,
+      adversarialConcurrency: true
+    });
+  });
+
+  it("preserves runtime order when a created-tab event races grouping out-of-order child tabs", async () => {
+    await runGeneratedTrace(1546021748, 4, {
+      adversarialRuntimeQueries: true,
+      adversarialConcurrency: true
+    });
+  });
+
+  it("preserves tab metadata when an update races grouping relocation", async () => {
+    await runGeneratedTrace(422754531, 2, {
       adversarialRuntimeQueries: true,
       adversarialConcurrency: true
     });

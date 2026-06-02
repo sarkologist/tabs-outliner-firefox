@@ -206,7 +206,10 @@ export class RuntimeReconciler {
       .filter((evidence) => !input.ledger.isTabIgnoredForRefresh(evidence.tab.id))
       .filter((evidence) => !input.ledger.isWindowIgnoredForRefresh(evidence.tab.windowId))
       .filter((evidence) => !this.consumeCommandRestoredTabEvent(input.state, input.index, input.ledger, evidence.tab))
-      .filter((evidence) => !this.consumeCommandRelocatedStaleTabEvent(input.state, input.index, input.ledger, evidence.tab))
+      .map((evidence) => commandRelocatedMetadataEvidenceForCurrentScope(input.state, input.index, input.ledger, evidence) ?? evidence)
+      .filter((evidence) =>
+        !this.consumeCommandRelocatedStaleTabEvent(input.state, input.index, input.ledger, evidence.tab)
+      )
       .filter((evidence) => this.tabEventMayChangeState(input.state, input.index, evidence.tab));
   }
 
@@ -825,6 +828,40 @@ function runtimeTabEvidenceFromInput(
     confidence: "eventLocal",
     scopeGeneration: ledger.currentScopeGeneration(),
     sequence: 0
+  };
+}
+
+function commandRelocatedMetadataEvidenceForCurrentScope(
+  state: OutlineState,
+  index: RuntimeStateIndexForReconciliation,
+  ledger: RuntimeFactLedger,
+  evidence: RuntimeTabEvidence
+): RuntimeTabEvidence | undefined {
+  if (!tabMetadataEvidenceChanged(evidence)) {
+    return undefined;
+  }
+
+  const echo = ledger.commandRelocatedTabEcho(evidence.tab.id);
+  if (!echo || !echo.fromWindowIds.has(evidence.tab.windowId)) {
+    return undefined;
+  }
+  if (evidence.sequence <= 0 || evidence.sequence >= echo.sequence) {
+    return undefined;
+  }
+
+  const node = indexedLiveTabNodeByRuntimeId(state, index, evidence.tab.id);
+  if (!node || node.live.windowId !== echo.toWindowId) {
+    return undefined;
+  }
+
+  return {
+    ...evidence,
+    tab: {
+      ...evidence.tab,
+      windowId: node.live.windowId,
+      index: projectedRuntimeTabIndex(state, index, evidence.tab.id, node.live.windowId) ?? evidence.tab.index,
+      active: node.active === true
+    }
   };
 }
 

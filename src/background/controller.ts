@@ -953,6 +953,9 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       const runtimeWindowsForCommandInstall = message.type === "restoreNode"
         ? await getNormalWindows(api).catch(() => undefined)
         : undefined;
+      const outlineSyncedRuntimeWindowIds = commandRunsFullBrowserOrderSync(message, current)
+        ? liveWindowNodes(result.state).map((node) => node.live.windowId)
+        : undefined;
       runtimeFacts.clearRemovalTombstonesForLiveState(result.state, runtimeIndexCandidateNodeIds);
       if (runtimeCommandRelocatesLiveTabs(message.type)) {
         runtimeFacts.recordCommandRelocatedTabs(current, result.state, runtimeIndexCandidateNodeIds);
@@ -962,7 +965,8 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       }
       installStateTransition(current, result.state, {
         candidateNodeIds: runtimeIndexCandidateNodeIds,
-        ...(runtimeWindowsForCommandInstall ? { runtimeWindows: runtimeWindowsForCommandInstall } : {})
+        ...(runtimeWindowsForCommandInstall ? { runtimeWindows: runtimeWindowsForCommandInstall } : {}),
+        ...(outlineSyncedRuntimeWindowIds ? { outlineSyncedRuntimeWindowIds } : {})
       });
       if (runtimeCommandRelocatesLiveTabs(message.type)) {
         absorbCommandOwnedFocusRefresh(current, result.state, runtimeIndexCandidateNodeIds);
@@ -3637,6 +3641,65 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       }
     };
 
+    const firstRuntimeIndexInPlannedSubtree = (nodeId: NodeId, runtimeWindowId: number): number | undefined => {
+      const visited = new Set<NodeId>();
+      const stack = [nodeId];
+      let firstIndex: number | undefined;
+      while (stack.length > 0) {
+        const currentNodeId = stack.pop()!;
+        if (visited.has(currentNodeId)) {
+          continue;
+        }
+        visited.add(currentNodeId);
+        const node = nodeForPlan(currentNodeId);
+        if (!node) {
+          continue;
+        }
+        if (node.id !== nodeId && isLiveWindowNode(node) && node.live.windowId !== runtimeWindowId) {
+          continue;
+        }
+        if (isLiveTabNode(node) && node.live.windowId === runtimeWindowId) {
+          const factIndex = runtimeFacts.acceptedTabShapeFact(node.live.tabId)?.index;
+          const candidateIndex = factIndex ?? Number.MAX_SAFE_INTEGER;
+          firstIndex = firstIndex === undefined ? candidateIndex : Math.min(firstIndex, candidateIndex);
+        }
+        for (let index = node.childIds.length - 1; index >= 0; index -= 1) {
+          stack.push(node.childIds[index]!);
+        }
+      }
+      return firstIndex;
+    };
+
+    const insertRuntimeTabChildForFastPath = (parentNode: OutlineNode, tabNodeId: NodeId, tab: RuntimeTab): void => {
+      const insertAt = parentNode.childIds.findIndex((childId) => {
+        const childIndex = firstRuntimeIndexInPlannedSubtree(childId, tab.windowId);
+        return childIndex !== undefined && childIndex >= tab.index;
+      });
+      if (insertAt >= 0) {
+        parentNode.childIds.splice(insertAt, 0, tabNodeId);
+        return;
+      }
+      parentNode.childIds.push(tabNodeId);
+    };
+
+    const tabWithCommandRelocationAdjustedIndex = (tab: RuntimeTab, eventSequence: number): RuntimeTab => {
+      if (eventSequence <= 0) {
+        return tab;
+      }
+      let adjustedIndex = tab.index;
+      for (const [, echo] of runtimeFacts.commandRelocatedTabEchoEntries()) {
+        if (
+          echo.sourceWindowId === tab.windowId &&
+          eventSequence < echo.sequence &&
+          typeof echo.sourceIndex === "number" &&
+          echo.sourceIndex < adjustedIndex
+        ) {
+          adjustedIndex -= 1;
+        }
+      }
+      return adjustedIndex === tab.index ? tab : { ...tab, index: adjustedIndex };
+    };
+
     const applyPlannedIndexUpdates = (): void => {
       for (const [windowId, nodeId] of liveWindowNodeIdAdditions) {
         index.liveWindowNodeIdsByRuntimeId.set(windowId, nodeId);
@@ -3732,8 +3795,9 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       if (!parentNode) {
         return { handled: false };
       }
-      parentNode.childIds.push(tabNodeId);
+      const scopeTab = tabWithCommandRelocationAdjustedIndex(tab, evidence.sequence);
       plannedNodes.set(tabNodeId, runtimeTabNodeForFastPath(tab, tabNodeId, parentId, now()));
+      insertRuntimeTabChildForFastPath(parentNode, tabNodeId, scopeTab);
       changedNodeIds.add(tabNodeId);
       structuralChanged = true;
       liveTabNodeIdAdditions.set(tab.id, tabNodeId);
@@ -3742,7 +3806,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         activateTabForRuntimeFastPath(tab.windowId, tabNodeId, evidence.sequence);
       }
       runtimeScopeUpdates.push({
-        tab,
+        tab: scopeTab,
         tabNodeId,
         windowNodeId,
         sequence: evidence.sequence
@@ -3828,6 +3892,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       candidateNodeIds?: readonly NodeId[] | undefined;
       rebuildRuntimeIndex?: boolean;
       runtimeWindows?: readonly RuntimeWindow[];
+      outlineSyncedRuntimeWindowIds?: readonly number[];
     } = {}
   ): void {
     state = next;
@@ -3838,10 +3903,23 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       return;
     }
     runtimeIndex = runtimeIndexForStateTransition(previous, next, runtimeIndex, options.candidateNodeIds);
-    if (runtimeFacts.updateWindowScopesFromStateTransition(previous, next, options.candidateNodeIds, options.runtimeWindows)) {
+    if (runtimeFacts.updateWindowScopesFromStateTransition(previous, next, options.candidateNodeIds, {
+      ...(options.runtimeWindows ? { runtimeWindows: options.runtimeWindows } : {}),
+      ...(options.outlineSyncedRuntimeWindowIds ? { outlineSyncedRuntimeWindowIds: options.outlineSyncedRuntimeWindowIds } : {})
+    })) {
       return;
     }
     runtimeFacts.rebuildWindowScopes(next, options.runtimeWindows);
+  }
+
+  function commandRunsFullBrowserOrderSync(command: BackgroundCommand, current: OutlineState): boolean {
+    if (command.type === "moveNodeToNewWindow") {
+      return isLiveTabNode(current.nodes[command.nodeId]);
+    }
+    if (command.type === "moveNode" && !command.parentId) {
+      return isLiveTabNode(current.nodes[command.nodeId]);
+    }
+    return false;
   }
 
   function seedRuntimeWindowProvenanceFromCurrentState(windowId: number | undefined): void {
