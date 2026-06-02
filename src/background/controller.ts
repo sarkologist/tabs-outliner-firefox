@@ -190,6 +190,15 @@ type TreeStructureUpdate = {
   deletedClosedCount: number;
 };
 
+type SameParentReorderUpdate = {
+  type: "sameParentReorderUpdated";
+  parentId: NodeId;
+  movedNodeId: NodeId;
+  fromIndex: number;
+  toIndex: number;
+  rootIds: NodeId[];
+};
+
 type NodeStateUpdate = {
   type: "nodeStateUpdated";
   updatedNodes: OutlineNode[];
@@ -1047,6 +1056,19 @@ export function createBackgroundController(options: BackgroundControllerOptions)
           runtimeFacts.commitCommand(commandTransaction.id);
         }
         return commandAck(true);
+      }
+      if (message.type === "moveNode") {
+        const sameParentReorder = sameParentReorderUpdateForMoveCommand(current, result.state, message);
+        if (sameParentReorder) {
+          await broadcastSameParentReorderUpdate(sameParentReorder);
+          scheduleStateSave(result.state, saveSchedule, [sameParentReorder.parentId, sameParentReorder.movedNodeId]);
+          await flushRuntimeProvenanceSaveIfChanged(current, result.state);
+          if (commandTransaction) {
+            runtimeFacts.commitCommand(commandTransaction.id);
+          }
+          markRuntimeLifecycleJournalEntryForClearAfterSave(runtimeLifecycleJournalEntry);
+          return commandAck(true);
+        }
       }
       await persistWithBestEffortPatch(current, result.state, { saveSchedule });
       await flushRuntimeProvenanceSaveIfChanged(current, result.state);
@@ -4405,6 +4427,10 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     await broadcastWithTrace(update);
   }
 
+  async function broadcastSameParentReorderUpdate(update: SameParentReorderUpdate): Promise<void> {
+    await broadcastWithTrace(update);
+  }
+
   async function broadcastNodeStateUpdate(update: NodeStateUpdate): Promise<void> {
     if (update.updatedNodes.length === 0) {
       return;
@@ -5647,6 +5673,55 @@ function treeStructureUpdateFromStateChange(
     updatedNodes,
     rootIds: next.rootIds,
     deletedClosedCount
+  };
+}
+
+function sameParentReorderUpdateForMoveCommand(
+  previous: OutlineState,
+  next: OutlineState,
+  command: Extract<BackgroundCommand, { type: "moveNode" }>
+): SameParentReorderUpdate | undefined {
+  if (!command.parentId || !sameNodeIdList(previous.rootIds, next.rootIds)) {
+    return undefined;
+  }
+
+  const previousNode = previous.nodes[command.nodeId];
+  const nextNode = next.nodes[command.nodeId];
+  const previousParent = previous.nodes[command.parentId];
+  const nextParent = next.nodes[command.parentId];
+  if (
+    !previousNode ||
+    !nextNode ||
+    !previousParent ||
+    !nextParent ||
+    previousNode.parentId !== command.parentId ||
+    nextNode.parentId !== command.parentId ||
+    previousParent.childIds.length !== nextParent.childIds.length ||
+    !nodesMateriallyEqual(previousNode, nextNode)
+  ) {
+    return undefined;
+  }
+
+  const fromIndex = previousParent.childIds.indexOf(command.nodeId);
+  const toIndex = nextParent.childIds.indexOf(command.nodeId);
+  if (fromIndex < 0 || toIndex < 0 || fromIndex === toIndex) {
+    return undefined;
+  }
+
+  const expectedChildIds = [...previousParent.childIds];
+  expectedChildIds.splice(fromIndex, 1);
+  expectedChildIds.splice(toIndex, 0, command.nodeId);
+  if (!sameNodeIdList(expectedChildIds, nextParent.childIds)) {
+    return undefined;
+  }
+
+  return {
+    type: "sameParentReorderUpdated",
+    parentId: command.parentId,
+    movedNodeId: command.nodeId,
+    fromIndex,
+    toIndex,
+    rootIds: next.rootIds
   };
 }
 

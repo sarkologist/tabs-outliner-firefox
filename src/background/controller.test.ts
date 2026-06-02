@@ -30414,7 +30414,7 @@ describe("background controller lifecycle", () => {
     expect(lastBroadcast?.state).toBeUndefined();
   });
 
-  it("broadcasts move commands as tree structure patches", async () => {
+  it("broadcasts same-parent move commands as compact reorders", async () => {
     const runtime = fakeRuntime(
       [
         {
@@ -30465,7 +30465,10 @@ describe("background controller lifecycle", () => {
     const lastBroadcast = runtime.broadcasts.at(-1) as
       | {
           type?: string;
-          updatedNodes?: OutlineState["nodes"][string][];
+          parentId?: string;
+          movedNodeId?: string;
+          fromIndex?: number;
+          toIndex?: number;
           rootIds?: string[];
           state?: OutlineState;
         }
@@ -30473,8 +30476,13 @@ describe("background controller lifecycle", () => {
 
     expectCommandAck(result, true);
     expect(moved.nodes["window:10"]?.childIds).toEqual(["tab:3", "tab:1", "tab:2"]);
-    expect(lastBroadcast?.type).toBe("treeStructureUpdated");
-    expect(lastBroadcast?.updatedNodes?.map((node) => node.id).sort()).toEqual(["tab:3", "window:10"]);
+    expect(lastBroadcast?.type).toBe("sameParentReorderUpdated");
+    expect(lastBroadcast).toMatchObject({
+      parentId: "window:10",
+      movedNodeId: "tab:3",
+      fromIndex: 2,
+      toIndex: 0
+    });
     expect(lastBroadcast?.rootIds).toEqual(["window:10"]);
     expect(lastBroadcast?.state).toBeUndefined();
     await controller.flushPendingSaves();

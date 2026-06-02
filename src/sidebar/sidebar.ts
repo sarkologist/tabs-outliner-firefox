@@ -482,6 +482,11 @@ function handleBackgroundMessage(message: unknown): unknown {
       scheduleDiagnosticsLoad();
       return;
     }
+    if (isSameParentReorderUpdated(message)) {
+      applySameParentReorderUpdate(message);
+      scheduleDiagnosticsLoad();
+      return;
+    }
     if (isHistoryStatus(message)) {
       updateHistoryControls(message);
     }
@@ -2708,6 +2713,36 @@ function applyTreeStructureUpdate(update: TreeStructureUpdate): void {
     clearHoverLineScope();
     scheduleCurrentRowsRender();
     refreshSparseProjectionAfterLocalTreePatch();
+  });
+}
+
+function applySameParentReorderUpdate(update: SameParentReorderUpdate): void {
+  const state = currentState;
+  const parent = state?.nodes[update.parentId];
+  const movedNode = state?.nodes[update.movedNodeId];
+  if (!state || !parent || !movedNode) {
+    void hydrateFullState();
+    return;
+  }
+
+  if (update.fromIndex < 0 || parent.childIds[update.fromIndex] !== update.movedNodeId) {
+    void hydrateFullState();
+    return;
+  }
+
+  const childIds = [...parent.childIds];
+  const [movedNodeId] = childIds.splice(update.fromIndex, 1);
+  const toIndex = Math.max(0, Math.min(update.toIndex, childIds.length));
+  childIds.splice(toIndex, 0, movedNodeId!);
+  applyTreeStructureUpdate({
+    type: "treeStructureUpdated",
+    deletedNodeIds: [],
+    updatedNodes: [
+      { ...parent, childIds },
+      movedNode.parentId === update.parentId ? movedNode : { ...movedNode, parentId: update.parentId }
+    ],
+    rootIds: [...update.rootIds],
+    deletedClosedCount: 0
   });
 }
 
@@ -5175,6 +5210,15 @@ type TreeStructureUpdate = {
   deletedClosedCount: number;
 };
 
+type SameParentReorderUpdate = {
+  type: "sameParentReorderUpdated";
+  parentId: NodeId;
+  movedNodeId: NodeId;
+  fromIndex: number;
+  toIndex: number;
+  rootIds: NodeId[];
+};
+
 type NodeStateUpdate = {
   type: "nodeStateUpdated";
   updatedNodes: OutlineNode[];
@@ -5235,6 +5279,20 @@ function isTreeStructureUpdated(message: unknown): message is TreeStructureUpdat
       Array.isArray((message as { rootIds?: unknown }).rootIds) &&
       (message as { rootIds: unknown[] }).rootIds.every((nodeId) => typeof nodeId === "string") &&
       typeof (message as { deletedClosedCount?: unknown }).deletedClosedCount === "number"
+  );
+}
+
+function isSameParentReorderUpdated(message: unknown): message is SameParentReorderUpdate {
+  return Boolean(
+    message &&
+      typeof message === "object" &&
+      (message as { type?: unknown }).type === "sameParentReorderUpdated" &&
+      typeof (message as { parentId?: unknown }).parentId === "string" &&
+      typeof (message as { movedNodeId?: unknown }).movedNodeId === "string" &&
+      typeof (message as { fromIndex?: unknown }).fromIndex === "number" &&
+      typeof (message as { toIndex?: unknown }).toIndex === "number" &&
+      Array.isArray((message as { rootIds?: unknown }).rootIds) &&
+      (message as { rootIds: unknown[] }).rootIds.every((nodeId) => typeof nodeId === "string")
   );
 }
 

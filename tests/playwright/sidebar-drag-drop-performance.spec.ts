@@ -426,15 +426,22 @@ async function loadLargeSidebar(page: Page, tabCount: number): Promise<void> {
             newParent.childIds.splice(boundedIndex, 0, command.nodeId);
             node.parentId = command.parentId;
 
-            const update = {
-              type: "treeStructureUpdated",
-              deletedNodeIds: [],
-              updatedNodes: oldParent.id === newParent.id
-                ? [structuredClone(newParent), structuredClone(node)]
-                : [structuredClone(oldParent), structuredClone(newParent), structuredClone(node)],
-              rootIds: [...state.rootIds],
-              deletedClosedCount: 0
-            };
+            const update = oldParent.id === newParent.id
+              ? {
+                  type: "sameParentReorderUpdated",
+                  parentId: newParent.id,
+                  movedNodeId: command.nodeId,
+                  fromIndex: sourceIndex,
+                  toIndex: boundedIndex,
+                  rootIds: [...state.rootIds]
+                }
+              : {
+                  type: "treeStructureUpdated",
+                  deletedNodeIds: [],
+                  updatedNodes: [structuredClone(oldParent), structuredClone(newParent), structuredClone(node)],
+                  rootIds: [...state.rootIds],
+                  deletedClosedCount: 0
+                };
             for (const listener of listeners) {
               listener(structuredClone(update));
             }
