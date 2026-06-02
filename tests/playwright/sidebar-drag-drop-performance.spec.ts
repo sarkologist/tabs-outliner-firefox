@@ -311,15 +311,47 @@ test.describe("sidebar drag/drop performance", () => {
     const totalStartedAt = await page.evaluate(() => performance.now());
     await dragOverBefore(page, "tab:1");
     const dropClientY = await rowClientY(page, "tab:1", "before");
-    const dropStartedAt = await page.evaluate(() => performance.now());
-    await page.locator(nodeRowSelector("tab:1")).dispatchEvent("drop", {
-      bubbles: true,
-      cancelable: true,
-      clientY: dropClientY
-    });
-    await expect(page.locator(".node[data-node-id='tab\\:40']")).toHaveAttribute("data-row-index", "1");
-    const result = await page.evaluate(async ({ totalStart, dropStart }) => {
-      const finishedAt = performance.now();
+    const result = await page.locator(nodeRowSelector("tab:1")).evaluate(async (row, { clientY, totalStart }) => {
+      const movedNode = document.querySelector<HTMLElement>(".node[data-node-id='tab:40']");
+      if (!movedNode) {
+        throw new Error("Missing moved row for tab:40");
+      }
+
+      const rowIndexIsUpdated = () => movedNode.getAttribute("data-row-index") === "1";
+      const waitForVisibleUpdate = async (): Promise<number> => {
+        if (rowIndexIsUpdated()) {
+          return performance.now();
+        }
+        await new Promise<void>((resolve, reject) => {
+          const observer = new MutationObserver(() => {
+            if (rowIndexIsUpdated()) {
+              window.clearTimeout(timeout);
+              observer.disconnect();
+              resolve();
+            }
+          });
+          const timeout = window.setTimeout(() => {
+            observer.disconnect();
+            reject(new Error("Timed out waiting for dropped row to become visible at row index 1"));
+          }, 5000);
+          observer.observe(document.body, {
+            childList: true,
+            subtree: true,
+            attributes: true,
+            attributeFilter: ["data-row-index"]
+          });
+        });
+        return performance.now();
+      };
+
+      const dropStart = performance.now();
+      row.dispatchEvent(new DragEvent("drop", {
+        bubbles: true,
+        cancelable: true,
+        clientY,
+        dataTransfer: new DataTransfer()
+      }));
+      const finishedAt = await waitForVisibleUpdate();
       const profile = (window as typeof window & { __lastMoveProfile?: unknown }).__lastMoveProfile;
       const summary = await window.tabsOutlinerProfile?.summary();
       return {
@@ -329,7 +361,8 @@ test.describe("sidebar drag/drop performance", () => {
         profile,
         summary
       };
-    }, { totalStart: totalStartedAt, dropStart: dropStartedAt });
+    }, { clientY: dropClientY, totalStart: totalStartedAt });
+    await expect(page.locator(".node[data-node-id='tab\\:40']")).toHaveAttribute("data-row-index", "1");
 
     await testInfo.attach("drag-drop-50k-drop-profile.json", {
       body: JSON.stringify(result, null, 2),
