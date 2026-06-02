@@ -57,10 +57,11 @@ function parseArgs(argv) {
     "move-top-level-live-leaf",
     "flatten-window",
     "import-small",
+    "import-large",
     "refresh-noop"
   ].includes(options.scenario)) {
     throw new Error(
-      "--scenario must be rename-window, toggle-window, move-leaf, group-live-leaf, move-top-level-live-leaf, flatten-window, import-small, or refresh-noop"
+      "--scenario must be rename-window, toggle-window, move-leaf, group-live-leaf, move-top-level-live-leaf, flatten-window, import-small, import-large, or refresh-noop"
     );
   }
 
@@ -335,24 +336,42 @@ function commandForScenario(scenario, tabCount) {
     return { type: "flattenSubtree", nodeId: "window:10" };
   }
   if (scenario === "import-small") {
-    return {
-      type: "importTree",
-      tree: {
-        schema: "tabs-outliner-tree",
-        version: 1,
-        exportedAt: "2026-05-16T12:00:00.000Z",
-        roots: [
-          {
-            kind: "tab",
-            title: "Imported Tab",
-            url: "https://imported.example/",
-            children: []
-          }
-        ]
+    return importTreeCommand([
+      {
+        kind: "tab",
+        title: "Imported Tab",
+        url: "https://imported.example/",
+        children: []
       }
-    };
+    ]);
+  }
+  if (scenario === "import-large") {
+    return importTreeCommand([
+      {
+        kind: "window",
+        title: "Imported Large Window",
+        children: Array.from({ length: tabCount }, (_value, index) => ({
+          kind: "tab",
+          title: `Imported Tab ${index + 1}`,
+          url: `https://imported.example/${index + 1}`,
+          children: []
+        }))
+      }
+    ]);
   }
   return { type: "refresh" };
+}
+
+function importTreeCommand(roots) {
+  return {
+    type: "importTree",
+    tree: {
+      schema: "tabs-outliner-tree",
+      version: 1,
+      exportedAt: "2026-05-16T12:00:00.000Z",
+      roots
+    }
+  };
 }
 
 function measure(fn) {

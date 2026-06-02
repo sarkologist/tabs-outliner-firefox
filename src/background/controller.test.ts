@@ -31270,7 +31270,72 @@ describe("background controller lifecycle", () => {
     expect(undone.nodes["window:10"]?.title).toBe("Group");
   });
 
-  it("persists imports before acknowledging the command", async () => {
+  it("does not wait for storage persistence before acknowledging imports", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    await controller.flushPendingSaves();
+    vi.mocked(runtime.api.storage.local.set).mockClear();
+    runtime.broadcasts.length = 0;
+
+    const blockedSave = deferred<void>();
+    const saveImplementation = vi.mocked(runtime.api.storage.local.set).getMockImplementation();
+    vi.mocked(runtime.api.storage.local.set).mockImplementationOnce(async (items: Record<string, unknown>) => {
+      await blockedSave.promise;
+      await saveImplementation?.(items);
+    });
+
+    const response = await Promise.race([
+      controller.handleMessage({
+        type: "importTree",
+        tree: {
+          schema: PORTABLE_TREE_SCHEMA,
+          version: 1,
+          exportedAt: "2026-05-18T12:00:00.000Z",
+          roots: [
+            {
+              kind: "tab",
+              title: "Imported",
+              url: "https://imported.example/",
+              children: []
+            }
+          ]
+        }
+      }),
+      waitForMacrotask().then(() => "blocked")
+    ]);
+
+    expectCommandAck(response, true);
+    expect(vi.mocked(runtime.api.storage.local.set)).not.toHaveBeenCalled();
+    const broadcasts = stateBroadcasts(runtime.broadcasts);
+    expect(broadcasts.map((message) => (message as { type?: unknown }).type)).toContain("treeStructureUpdated");
+    expect(broadcasts.map((message) => (message as { type?: unknown }).type)).not.toContain("stateUpdated");
+
+    const flush = controller.flushPendingSaves();
+    expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
+    blockedSave.resolve();
+    await flush;
+  });
+
+  it("persists imports after an explicit deferred save flush", async () => {
     const runtime = fakeRuntime(
       [
         {
@@ -31293,6 +31358,7 @@ describe("background controller lifecycle", () => {
     let controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
     await controller.ensureState();
     await controller.flushPendingSaves();
+    vi.mocked(runtime.api.storage.local.set).mockClear();
 
     expectCommandAck(await controller.handleMessage({
       type: "importTree",
@@ -31310,6 +31376,10 @@ describe("background controller lifecycle", () => {
         ]
       }
     }), true);
+    expect(vi.mocked(runtime.api.storage.local.set)).not.toHaveBeenCalled();
+
+    await controller.flushPendingSaves();
+    expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
 
     controller = restartControllerAbrupt(runtime);
     const reloaded = await controller.ensureState();

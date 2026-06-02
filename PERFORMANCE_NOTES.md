@@ -102,6 +102,13 @@ Use these as starting targets, not hard promises:
 
 ## Progress Log
 
+### 2026-06-02: Visible-First Large Imports
+
+- Diagnosed real profile `dist/tabs-outliner-profile-2026-06-02 copy.json`: app-side import append was tiny, but `importTree` waited on an import-only `flushPendingSaves()`, producing `background.state.save` max 44,133ms and `background.runtime.message(importTree)` 44,255ms. Sidebar patch/render/diagnostics were secondary residual costs after the visible tree update.
+- Change: `importTree` now follows the structural edit durability model: broadcast the visible patch and acknowledge immediately, then let state/history persistence remain deferred and coalesced. The sidebar success notice now says the tree is saving in the background.
+- Added a `profile-command` `import-large` scenario, modeling a large imported window with `--tabs` imported tabs appended to a same-sized live tree.
+- After `pnpm build`, `node scripts/profile-command.mjs --scenario import-large --tabs 26460` reported `commandMs` 440ms, `firstBroadcastMs` 322ms, `saveFlushMs` 281ms, `totalWithSaveFlushMs` 721ms, 0 full state broadcasts, 1 tree-structure broadcast, and 1 state save. Synthetic ack latency is under the 2s residual-work gate; any remaining real-browser delay should be checked with a fresh in-browser export before changing bulk import transport.
+
 ### 2026-05-26: Real-Browser Startup Storage Fanout
 
 - The 2026-05-26 exported real startup profile showed a synthetic/real gap: first paint stayed fast, but full sidebar hydration was dominated by Firefox `storage.local` fanout. Baseline before the accepted fix had `primary_ms` 5,314ms, `background.state.load` 3,343ms, `v3.nodeShardRead` 2,000ms for 256 keys, `v3.orderPageRead` 680ms for 7,062 keys, sidebar hydration max 5,314ms, and save max 6,651ms.

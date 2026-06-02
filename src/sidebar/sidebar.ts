@@ -1599,7 +1599,7 @@ async function importSelectedTreeFile(): Promise<void> {
   try {
     const payload = JSON.parse(await file.text()) as unknown;
     await runAndRender({ type: "importTree", tree: payload });
-    showDiagnosticsNotice("Imported tree");
+    showDiagnosticsNotice("Imported tree; saving in background");
   } catch (error) {
     showDiagnosticsNotice(importErrorText(error), { error: true });
   } finally {
