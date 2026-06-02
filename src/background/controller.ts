@@ -2111,7 +2111,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         respectRuntimeTabOrder: false
       });
     }
-    reconciled = deleteSupersededHistoryReplayWindows(reconciled, entry.delta, windows);
+    reconciled = deleteSupersededHistoryReplayWindows(current, reconciled, entry.delta, windows);
     if (statesMateriallyEqual(current, reconciled)) {
       return { state: current };
     }
@@ -2237,6 +2237,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   }
 
   function deleteSupersededHistoryReplayWindows(
+    current: OutlineState,
     state: OutlineState,
     delta: OutlineDelta,
     windows: RuntimeWindow[]
@@ -2250,6 +2251,9 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
     for (const deltaNode of delta.updatedNodes) {
       if (!isLiveWindowNode(deltaNode) || runtimeWindowIds.has(deltaNode.live.windowId)) {
+        continue;
+      }
+      if (current.nodes[deltaNode.id]?.status === "closed") {
         continue;
       }
       const node = state.nodes[deltaNode.id];

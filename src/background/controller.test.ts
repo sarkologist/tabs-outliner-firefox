@@ -27792,6 +27792,67 @@ describe("background controller lifecycle", () => {
     });
   });
 
+  it("preserves a closed window after a live root when replaying an older live history delta", async () => {
+    const runtime = fakeRuntime(
+      [
+        { id: 20, focused: true, incognito: false },
+        { id: 10, focused: false, incognito: false }
+      ],
+      [
+        {
+          id: 2,
+          windowId: 20,
+          index: 0,
+          active: true,
+          url: "https://live.example/",
+          title: "Live"
+        },
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://saved.example/",
+          title: "Saved"
+        }
+      ]
+    );
+    let controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    expectCommandAck(await controller.handleMessage({
+      type: "renameGroup",
+      nodeId: "window:10",
+      title: "Saved renamed"
+    }), true);
+    await closeRuntimeWindow(runtime, 10, { awaitListeners: true });
+    await controller.flushPendingSaves();
+
+    let state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(state.rootIds).toEqual(["window:20", "window:10"]);
+    expect(state.nodes["window:10"]).toMatchObject({
+      status: "closed",
+      childIds: ["tab:1"]
+    });
+
+    expectCommandAck(await controller.handleMessage({ type: "undo" }), false);
+    controller = restartControllerAbrupt(runtime);
+    state = await controller.ensureState();
+
+    expect(state.rootIds).toEqual(["window:20", "window:10"]);
+    expect(state.nodes["window:10"]).toMatchObject({
+      status: "closed",
+      childIds: ["tab:1"],
+      title: "Saved renamed"
+    });
+    expect(state.nodes["tab:1"]).toMatchObject({
+      status: "closed",
+      restore: {
+        url: "https://saved.example/",
+        title: "Saved"
+      }
+    });
+  });
+
   it("restores one closed tab without traversing unrelated closed siblings", async () => {
     const storedState = wideClosedTabState(100);
     const runtime = fakeRuntime(
