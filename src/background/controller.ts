@@ -1071,6 +1071,9 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         }
       }
       await persistWithBestEffortPatch(current, result.state, { saveSchedule });
+      if (message.type === "importTree") {
+        await flushPendingSaves();
+      }
       await flushRuntimeProvenanceSaveIfChanged(current, result.state);
       if (commandTransaction) {
         runtimeFacts.commitCommand(commandTransaction.id);

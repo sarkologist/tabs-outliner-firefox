@@ -31270,6 +31270,53 @@ describe("background controller lifecycle", () => {
     expect(undone.nodes["window:10"]?.title).toBe("Group");
   });
 
+  it("persists imports before acknowledging the command", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        }
+      ]
+    );
+    let controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    await controller.flushPendingSaves();
+
+    expectCommandAck(await controller.handleMessage({
+      type: "importTree",
+      tree: {
+        schema: PORTABLE_TREE_SCHEMA,
+        version: 1,
+        exportedAt: "2026-05-18T12:00:00.000Z",
+        roots: [
+          {
+            kind: "tab",
+            title: "Imported",
+            url: "https://imported.example/",
+            children: []
+          }
+        ]
+      }
+    }), true);
+
+    controller = restartControllerAbrupt(runtime);
+    const reloaded = await controller.ensureState();
+
+    expect(Object.values(reloaded.nodes).some((node) => node.title === "Imported")).toBe(true);
+  });
+
   it("trims loaded undo history when the history length preference changes", async () => {
     const runtime = fakeRuntime(
       [
