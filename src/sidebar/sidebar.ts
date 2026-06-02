@@ -2644,7 +2644,20 @@ function applyTreeStructureUpdate(update: TreeStructureUpdate): void {
       invalidateSparseWindowRequestsForStateChange();
     }
     currentProjectionCoverage = undefined;
-    refreshLastOutlineProjectionAfterTreeStructureUpdate(state, update);
+    const sameParentReorderInfo = currentProjection && update.deletedNodeIds.length === 0
+      ? sameParentReorderTreeStructurePatchInfo(state, currentProjection, update)
+      : undefined;
+    const shouldDeferLastOutlineProjectionRefresh = Boolean(
+      sameParentReorderInfo &&
+      currentProjectionOwner.kind === "outline" &&
+      currentProjection &&
+      !currentProjection.isSearchActive
+    );
+    if (shouldDeferLastOutlineProjectionRefresh) {
+      delete renderedProjectionSession.lastOutlineProjection;
+    } else {
+      refreshLastOutlineProjectionAfterTreeStructureUpdate(state, update);
+    }
     const activeRevealNodeId = activeRevealNodeIdForTreeStructureUpdate(state, update);
     if (currentProjectionOwner.kind === "showInTree" && pendingShowInTreeNodeId) {
       return;
@@ -2659,9 +2672,6 @@ function applyTreeStructureUpdate(update: TreeStructureUpdate): void {
       return;
     }
     if (deletedNodeIds.size === 0) {
-      const sameParentReorderInfo = currentProjection
-        ? sameParentReorderTreeStructurePatchInfo(state, currentProjection, update)
-        : undefined;
       if (applySameParentReorderTreeStructurePatchToProjection(state, currentProjection, update)) {
         refreshProjectionActiveTabTarget(state, currentProjection);
         currentCutRowRange = cutSubtreeRowRange(currentProjection.rows, pendingCutNodeId);
