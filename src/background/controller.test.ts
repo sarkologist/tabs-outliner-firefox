@@ -1,3 +1,5 @@
+import { createRequire } from "node:module";
+
 import { describe, expect, it, vi } from "vitest";
 
 import type { BrowserAdapter } from "./adapter.js";
@@ -23,6 +25,8 @@ import type { OutlineState, RuntimeTab, RuntimeWindow } from "../model/types.js"
 import { PROFILE_STORAGE_KEY } from "../perf/profile.js";
 import { APP_PREFERENCES_STORAGE_KEY, DEFAULT_APP_PREFERENCES } from "../preferences.js";
 import { generatedTraceConfig, generatedTraceTimeoutMs } from "../test/generated-traces.test-support.js";
+
+const require = createRequire(import.meta.url);
 
 type Listener<TArgs extends unknown[]> = (...args: TArgs) => unknown | Promise<unknown>;
 
@@ -1401,7 +1405,8 @@ type RuntimeDomainTraceAssertion =
   | "runtimeScopeOrder"
   | "runtimeMetadata"
   | "runtimeSideEffects"
-  | "closedSubtreePersistence";
+  | "closedSubtreePersistence"
+  | "purescriptOracle";
 
 type RuntimeSideEffectKind =
   | "tabs.create"
@@ -1714,6 +1719,14 @@ type DomainAction =
     };
 
 const RUNTIME_DOMAIN_TRACE_DEFINITIONS: RuntimeDomainTraceDefinition[] = [
+  {
+    id: "po-bootstrap",
+    title: "PureScript oracle mirrors initial bootstrap",
+    notes: "First PureScript runtime-laws oracle smoke trace.",
+    tags: ["purescript-oracle"],
+    assertions: ["purescriptOracle"],
+    actions: []
+  },
   {
     id: "rt-active-race",
     title: "activation event races a live-tab grouping command",
@@ -20799,10 +20812,17 @@ async function runDomainTrace(trace: RuntimeDomainTrace): Promise<void> {
     now: 10_000,
     history: [`domain trace ${trace.id}: ${trace.title}`]
   });
+  const oracleInput = trace.assertions?.includes("purescriptOracle")
+    ? pureScriptOracleInput(trace, context)
+    : undefined;
+  const oracleSnapshots: PureScriptOracleSnapshot[] = [];
 
   await context.controller.ensureState();
   await assertGeneratedInvariants(context);
   await assertDomainTraceAssertions(trace, context);
+  if (oracleInput) {
+    oracleSnapshots.push(await pureScriptOracleSnapshot(context));
+  }
 
   for (let index = 0; index < trace.actions.length; index += 1) {
     const action = trace.actions[index]!;
@@ -20812,11 +20832,224 @@ async function runDomainTrace(trace: RuntimeDomainTrace): Promise<void> {
       await runDomainAction(context, action);
       await assertGeneratedInvariants(context);
       await assertDomainTraceAssertions(trace, context);
+      if (oracleInput) {
+        oracleSnapshots.push(await pureScriptOracleSnapshot(context));
+      }
       assertNoAboutNewtabCreateSideEffects(context.history, runtimeSideEffectsSince(context.runtime, sideEffectSnapshot));
       assertDomainTraceSideEffectAssertions(trace, context, action, sideEffectSnapshot);
     } catch (error) {
       throw new Error(`${domainTraceErrorText(trace, index, action, error, context.history)}\n${runtimeTraceDebugText(context, runtimeSideEffectsSince(context.runtime, sideEffectSnapshot))}`);
     }
+  }
+
+  if (oracleInput) {
+    assertPureScriptOracleSnapshots(trace, oracleInput, oracleSnapshots, context.history);
+  }
+}
+
+type PureScriptOracleModule = {
+  evaluateRuntimeTraceJson(inputJson: string): string;
+};
+
+type PureScriptOracleInput = {
+  version: 1;
+  initial: {
+    now: number;
+    windows: RuntimeWindow[];
+    tabs: RuntimeTab[];
+  };
+  trace: {
+    id: string;
+    actions: DomainAction[];
+  };
+};
+
+type PureScriptOracleResult =
+  | {
+      version: 1;
+      ok: true;
+      snapshots: PureScriptOracleSnapshot[];
+    }
+  | {
+      version: 1;
+      ok: false;
+      error: {
+        step?: number;
+        code: string;
+        message: string;
+      };
+    };
+
+type PureScriptOracleSnapshot = {
+  outline: {
+    rootIds: string[];
+    nodes: PureScriptOracleNode[];
+  };
+  runtime: {
+    windows: PureScriptOracleRuntimeWindow[];
+    tabs: PureScriptOracleRuntimeTab[];
+  };
+};
+
+type PureScriptOracleNode = {
+  id: string;
+  kind: string;
+  status: string;
+  parentId: string | null;
+  childIds: string[];
+  title: string;
+  url: string | null;
+  favIconUrl: string | null;
+  active: boolean | null;
+  live: {
+    windowId: number | null;
+    tabId: number | null;
+  };
+  restore: {
+    sessionId: string | null;
+    url: string | null;
+    title: string | null;
+    favIconUrl: string | null;
+  };
+  runtimeProvenance: string | null;
+};
+
+type PureScriptOracleRuntimeWindow = {
+  id: number;
+  focused: boolean;
+  incognito: boolean;
+  state: string | null;
+  tabIds: number[];
+};
+
+type PureScriptOracleRuntimeTab = {
+  id: number;
+  windowId: number;
+  index: number;
+  active: boolean;
+  openerTabId: number | null;
+  url: string | null;
+  title: string | null;
+  favIconUrl: string | null;
+  incognito: boolean;
+};
+
+function pureScriptOracleInput(trace: RuntimeDomainTrace, context: GeneratedTraceContext): PureScriptOracleInput {
+  return {
+    version: 1,
+    initial: {
+      now: context.now,
+      windows: context.runtime.windows.map(copyWindowWithoutTabs),
+      tabs: context.runtime.tabs.map(copyTab)
+    },
+    trace: {
+      id: trace.id,
+      actions: JSON.parse(JSON.stringify(trace.actions)) as DomainAction[]
+    }
+  };
+}
+
+async function pureScriptOracleSnapshot(context: GeneratedTraceContext): Promise<PureScriptOracleSnapshot> {
+  const state = (await context.controller.handleMessage({ type: "getState" })) as OutlineState;
+  return {
+    outline: {
+      rootIds: [...state.rootIds],
+      nodes: Object.values(state.nodes)
+        .map(pureScriptOracleNode)
+        .sort((left, right) => left.id.localeCompare(right.id))
+    },
+    runtime: {
+      windows: context.runtime.windows
+        .map((windowInfo): PureScriptOracleRuntimeWindow => ({
+          id: windowInfo.id,
+          focused: windowInfo.focused,
+          incognito: windowInfo.incognito,
+          state: windowInfo.state ?? null,
+          tabIds: tabsInRuntimeWindow(context.runtime, windowInfo.id).map((tab) => tab.id)
+        }))
+        .sort((left, right) => left.id - right.id),
+      tabs: context.runtime.tabs
+        .map((tab): PureScriptOracleRuntimeTab => ({
+          id: tab.id,
+          windowId: tab.windowId,
+          index: tab.index,
+          active: tab.active,
+          openerTabId: tab.openerTabId ?? null,
+          url: tab.url ?? null,
+          title: tab.title ?? null,
+          favIconUrl: tab.favIconUrl ?? null,
+          incognito: tab.incognito ?? false
+        }))
+        .sort((left, right) =>
+          left.windowId - right.windowId ||
+          left.index - right.index ||
+          left.id - right.id
+        )
+    }
+  };
+}
+
+function pureScriptOracleNode(node: OutlineState["nodes"][string]): PureScriptOracleNode {
+  const live = node.live;
+  const restore = node.restore;
+  return {
+    id: node.id,
+    kind: node.kind,
+    status: node.status,
+    parentId: node.parentId ?? null,
+    childIds: [...node.childIds],
+    title: node.title,
+    url: node.url ?? null,
+    favIconUrl: node.favIconUrl ?? null,
+    active: node.active ?? null,
+    live: {
+      windowId: live && "windowId" in live ? live.windowId : null,
+      tabId: live && "tabId" in live ? live.tabId : null
+    },
+    restore: {
+      sessionId: restore?.sessionId ?? null,
+      url: restore?.url ?? null,
+      title: restore?.title ?? null,
+      favIconUrl: restore?.favIconUrl ?? null
+    },
+    runtimeProvenance: node.runtimeProvenance ?? null
+  };
+}
+
+function assertPureScriptOracleSnapshots(
+  trace: RuntimeDomainTrace,
+  input: PureScriptOracleInput,
+  actualSnapshots: PureScriptOracleSnapshot[],
+  history: string[]
+): void {
+  const result = evaluatePureScriptOracle(input);
+  if (!result.ok) {
+    throw new Error(
+      `PureScript oracle rejected trace ${trace.id}: ${result.error.code}: ${result.error.message}` +
+        `${typeof result.error.step === "number" ? ` at step ${result.error.step}` : ""}\nTrace:\n${history.join("\n")}`
+    );
+  }
+
+  try {
+    expect(actualSnapshots).toEqual(result.snapshots);
+  } catch (error) {
+    throw new Error(`${generatedErrorText(error)}\nPureScript oracle mismatch for ${trace.id}\nTrace:\n${history.join("\n")}`);
+  }
+}
+
+function evaluatePureScriptOracle(input: PureScriptOracleInput): PureScriptOracleResult {
+  const module = loadPureScriptOracleModule();
+  const rawResult = module.evaluateRuntimeTraceJson(JSON.stringify(input));
+  return JSON.parse(rawResult) as PureScriptOracleResult;
+}
+
+function loadPureScriptOracleModule(): PureScriptOracleModule {
+  try {
+    return require("../../oracle/purescript/output/TabsOutliner.Oracle") as PureScriptOracleModule;
+  } catch (error) {
+    throw new Error(
+      `PureScript oracle output is missing. Run pnpm run oracle:build before purescriptOracle traces.\n${generatedErrorText(error)}`
+    );
   }
 }
 
