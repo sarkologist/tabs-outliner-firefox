@@ -32,6 +32,8 @@ Target budgets:
 - `hoverScrollVirtualRowsMaxMs < 16`
 - no console errors, page errors, or failed requests in the underlying Playwright tests
 
+Use [../CORRECTNESS_GUARDS.md](../CORRECTNESS_GUARDS.md) before accepting any experiment. Sidebar-only drag/drop rendering changes normally use the sparse projection lane. Experiments that touch background `moveNode`, `moveNodeToNewWindow`, command-created windows, browser tab movement, or runtime echo absorption must also use the runtime/background lane.
+
 Keep an experiment only when all guards pass and the median drop latency improves by at least 10% or 5ms from the supplied baseline, whichever is smaller. Baseline runs without `--baseline-ms` are kept if the guards pass.
 
 ## Stop Rule
@@ -72,4 +74,5 @@ First experiment order:
 - Keep `pnpm profile:command -- --tabs 50000 --scenario move-leaf` as a synthetic cross-check only.
 - Do not add this heavy browser loop to the default sidebar projection guard until it proves stable.
 - Do not reintroduce full `stateUpdated` transport or full sidebar projection rebuilds on the common same-window leaf drop path.
+- Do not accept a faster drop path that skips row/coverage authority checks or leaves outline order inconsistent with the runtime order for live tabs.
 - If synthetic results disagree with exported `tabsOutlinerProfile` traces, trust the real browser trace and update this target to reproduce the missing behavior.

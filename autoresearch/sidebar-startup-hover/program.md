@@ -27,6 +27,8 @@ For the post-fix margin loop, the primary budgets are:
 - `startup-hover-sparse-idle.hydrationRequestsAfterIdle === 0`
 - `startup-remote-interaction-sparse-idle.hydrationRequestsAfterIdle === 0`
 
+Use [../CORRECTNESS_GUARDS.md](../CORRECTNESS_GUARDS.md) before accepting any experiment. Hover-only rendering changes normally use the sparse projection lane when they affect row coverage, action visibility, hydration timing, or compact patch rendering; pure pointer-measurement changes can record why no extra projection corpus was needed.
+
 Baseline on 2026-05-22 from `cf6df3a` plus this setup:
 
 - `targetVisible: true`
@@ -96,4 +98,5 @@ Repeat one hypothesis at a time:
 - Do not expand the sparse startup snapshot beyond 256 rows/nodes for this fix.
 - Do not start full hydration just to make hover work.
 - Do not add full-state transport, saves, broadcasts, or runtime events to the first-paint path.
+- Do not hide row actions or defer hydration in a way that bypasses sparse command authority checks; action visibility and command guards must remain covered by projection scenarios.
 - If this deterministic profile disagrees with an exported real `tabsOutlinerProfile`, trust the real profile and update this target to reproduce the missing behavior.

@@ -32,6 +32,8 @@ Guard metrics:
 - startup saves, broadcasts, and runtime event count
 - Playwright first visible rows from `tests/playwright/sidebar-first-paint.spec.ts`
 
+Use [../CORRECTNESS_GUARDS.md](../CORRECTNESS_GUARDS.md) before accepting any experiment. Startup sparse, remote projection, search, row action, hydration, or compact patch changes must satisfy the sparse projection lane; storage layout or startup save changes must also satisfy the storage/import lane.
+
 Correctness-hardening note: sparse first paint, hover, and scroll-away targets are still bounded by the 256-row snapshot/window contract. Full-tree feature readiness is a different target now: default startup should remain sparse/background-backed, and any feature that still needs whole-tree state must either request an explicit fallback or move to a bounded background-backed command.
 
 Keep an experiment only when the primary median improves by at least 10% or by at least 50ms, whichever is smaller, and no guard regresses.
@@ -57,4 +59,5 @@ Repeat one hypothesis at a time:
 - Do not add startup saves, broadcasts, or runtime events to the startup scenarios.
 - The `real-browser-20260526` shape intentionally processes five runtime events and may report startup saves as warnings; do not treat those warnings as acceptance for non-diagnostic shapes.
 - Do not introduce full-state `stateUpdated` transport for first paint.
+- Do not keep an experiment that preserves sparse startup speed by weakening restore, search, import/export, drag/drop, or row-action authority checks.
 - If synthetic results disagree with real sidebar Playwright behavior or exported `tabsOutlinerProfile` traces, trust the real sidebar evidence.

@@ -66,6 +66,8 @@ Synthetic guard metrics:
 - `snapshot_rows` and `snapshot_nodes`
 - broadcasts and runtime event counts
 
+Use [../CORRECTNESS_GUARDS.md](../CORRECTNESS_GUARDS.md) before accepting any experiment. This loop always uses the storage/import lane. If the candidate can affect imported closed trees, startup save ordering, history recovery, or closed/restorable nodes, also run the runtime/background lane and focused sparse projection scenarios for imported/closed rows.
+
 ## Candidate Order
 
 1. Reduce future node shard read fanout.
@@ -116,6 +118,7 @@ Keep a candidate when:
 - First-paint snapshot rows/nodes stay `<= 256`.
 - Broadcasts stay `0` in synthetic startup.
 - Playwright first-paint and projection guard pass.
+- Any storage format, import fallback, or startup save-order change preserves TO-known closed/restorable nodes across save flush and restart.
 
 Stop when:
 

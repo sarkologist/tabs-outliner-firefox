@@ -34,6 +34,8 @@ Do not stop the overall autoresearch loop after one discard. Continue to the nex
 
 ## Guards
 
+Use [../CORRECTNESS_GUARDS.md](../CORRECTNESS_GUARDS.md) before accepting any experiment. This loop always touches the runtime/background lane; run the runtime regression trace corpus, and run focused trace IDs first when the experiment changes command-created windows, browser-created tabs, relocation, close/restore, history, restart, or runtime ordering.
+
 - `ack.stateChanged === true` for every structural command.
 - Expected node count/root shape per scenario.
 - No full `stateUpdated` broadcast for structural patch scenarios.
@@ -61,3 +63,5 @@ PROFILE_BACKGROUND_TRACE=1 pnpm profile:command -- --tabs 50000 --scenario move-
 ```
 
 Before and after kept app changes, parse the latest exported profile, especially `dist/tabs-outliner-profile-2026-06-02.json`, and report totals for `background.state.save`, `refreshFromRuntime`, `background.runtime.getWindows`, runtime events, and sidebar fanout.
+
+Do not keep a runtime fast-path optimization solely because the background reconciliation profile improves. If a focused runtime replay fails in the touched blast radius, fix that finding or discard/move the optimization.

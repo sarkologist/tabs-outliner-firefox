@@ -26,6 +26,8 @@ Target budgets:
 - `followOnSparseWindowRequestsMax === 0`
 - `scrollDelayMaxMs < 8`
 
+Use [../CORRECTNESS_GUARDS.md](../CORRECTNESS_GUARDS.md) before accepting any experiment. This loop usually touches the sparse projection lane; changes to sparse window requests, row coverage, target-node ownership, compact patches, search state, or hydration timing must replay focused projection scenarios before the full corpus.
+
 Baseline on 2026-05-22 before sparse row-window paging is expected to be `discard`: visible rows after scroll are `0`, missing viewport rows remain nonzero, and `rowsVisibleMsMax` is absent because no row appears within the two-frame window.
 
 ## Experiment Loop
@@ -57,4 +59,5 @@ Repeat one hypothesis at a time:
 - Do not trigger full `getState` just to fill the scrolled viewport.
 - Do not expand the initial startup snapshot beyond 256 rows/nodes for this target.
 - Do not add saves, full-state broadcasts, or runtime-event processing to the scroll-away path.
+- Do not accept a sparse-window speedup that lets stale query, target, or delete-patch responses overwrite the current projection owner.
 - Keep the hover/startup interaction budgets green; the fix should add coverage, not bring back startup hover jank.
