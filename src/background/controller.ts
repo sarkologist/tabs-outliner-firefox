@@ -12,6 +12,10 @@ import {
 } from "./backups.js";
 import { createBrowserAdapter } from "./browser-adapter.js";
 import { normalizeBrowserCreateUrl } from "./browser-create-url.js";
+import {
+  preserveClosedSubtreesAcrossNonDestructiveTransition,
+  type ClosedSubtreeGuardResult
+} from "./closed-subtree-guard.js";
 import { computeDiagnostics, type OutlineDiagnostics } from "./diagnostics.js";
 import { isBackgroundCommand, planLiveSubtreeClose, runCommand, syncBrowserOrder } from "./commands.js";
 import type { BackgroundCommand, CommandAck, RestoreCreateAttempt, RuntimeClosePlan } from "./commands.js";
@@ -1864,7 +1868,8 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         alignKnownRuntimeWindowProvenance(startupBase);
         const reconciled = reconcileRuntimeTruth(startupBase, windows, { respectRuntimeTabOrder: true });
         alignKnownRuntimeWindowProvenance(reconciled);
-        state = statesEqualIgnoringUpdatedAt(startupBase, reconciled) ? startupBase : reconciled;
+        const guarded = preserveClosedSubtreesForRuntimeTransition(startupBase, reconciled, { source: "startup" });
+        state = statesEqualIgnoringUpdatedAt(startupBase, guarded.state) ? startupBase : guarded.state;
         if (!statesMateriallyEqual(stored, state) || loadedRequiresFullSave) {
           scheduleStateSave(state);
         }
@@ -3274,11 +3279,13 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       runtimeFacts.rebuildWindowScopes(current, acceptedRuntimeWindowsForRefresh);
       return false;
     }
-    const next = reconcileRuntimeTruth(current, windows, {
+    let next = reconcileRuntimeTruth(current, windows, {
       closeMissing,
       respectRuntimeTabOrder: true
     });
     alignKnownRuntimeWindowProvenance(next);
+    const guarded = preserveClosedSubtreesForRuntimeTransition(current, next, { source: "refreshSnapshot" });
+    next = guarded.state;
     if (statesMateriallyEqual(current, next)) {
       runtimeFacts.rebuildWindowScopes(next, acceptedRuntimeWindowsForRefresh);
       return false;
@@ -4024,6 +4031,21 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       return;
     }
     runtimeFacts.rebuildWindowScopes(next, options.runtimeWindows);
+  }
+
+  function preserveClosedSubtreesForRuntimeTransition(
+    previous: OutlineState,
+    next: OutlineState,
+    detail: TraceDetail
+  ): ClosedSubtreeGuardResult {
+    const guarded = preserveClosedSubtreesAcrossNonDestructiveTransition(previous, next);
+    if (guarded.restoredNodeIds.length > 0) {
+      perfTrace.mark("background.closedSubtreeGuard.restore", {
+        ...detail,
+        restoredNodeCount: guarded.restoredNodeIds.length
+      });
+    }
+    return guarded;
   }
 
   function commandRunsFullBrowserOrderSync(command: BackgroundCommand, current: OutlineState): boolean {
