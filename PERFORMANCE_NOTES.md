@@ -102,6 +102,13 @@ Use these as starting targets, not hard promises:
 
 ## Progress Log
 
+### 2026-06-03: Restore Transient Echo A/B After Data-Loss Fix
+
+- Checked whether `ccf984c` regressed `restore-last-transient-echo` after the RT-247/RT-248 runtime-order correctness fix. The A/B used detached `/private/tmp` worktrees at baseline `7740671` and fix `ccf984c`, 3 warmups per commit, then 15 alternating measured runs per commit.
+- Command: `node scripts/profile-restore.mjs --scenario controller-event-echo --tabs 50000 --target last --echo transient-separated`.
+- Result: no meaningful regression by the accepted threshold. Baseline `firstBroadcastMs` median/p90/max was `33/41/44`; `ccf984c` was `33/42/56`, with one fix-side outlier. `commandMs` median improved from `49` to `47`; `totalMeasuredMs` median improved from `51` to `49`; `totalWithSaveFlushMs` median improved from `134` to `131`.
+- Interpretation: both commits were already above the guard's `23ms` first-broadcast limit, so the current `restore-last-transient-echo` timing miss is not introduced by the data-loss fix. No runtime perf budget movement accepted, and no code change made from this A/B.
+
 ### 2026-06-02: Visible-First Large Imports
 
 - Diagnosed real profile `dist/tabs-outliner-profile-2026-06-02 copy.json`: app-side import append was tiny, but `importTree` waited on an import-only `flushPendingSaves()`, producing `background.state.save` max 44,133ms and `background.runtime.message(importTree)` 44,255ms. Sidebar patch/render/diagnostics were secondary residual costs after the visible tree update.
