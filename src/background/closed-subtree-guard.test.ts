@@ -139,4 +139,64 @@ describe("preserveClosedSubtreesAcrossNonDestructiveTransition", () => {
     expect(guarded.restoredNodeIds).toEqual([]);
     expect(guarded.state).toBe(deleted);
   });
+
+  it("checks reachable closed nodes in linear time", () => {
+    const previous = closedChainState(25_000);
+    const next: OutlineState = {
+      version: 1,
+      rootIds: [...previous.rootIds],
+      nodes: Object.fromEntries(
+        Object.entries(previous.nodes).map(([nodeId, node]) => [nodeId, cloneOutlineNode(node)])
+      )
+    };
+
+    const startedAt = performance.now();
+    const guarded = preserveClosedSubtreesAcrossNonDestructiveTransition(previous, next);
+    const durationMs = performance.now() - startedAt;
+
+    expect(guarded.restoredNodeIds).toEqual([]);
+    expect(guarded.state).toBe(next);
+    expect(durationMs).toBeLessThan(700);
+  });
+
+  it("restores a large lost closed subtree without recursive copying", () => {
+    const previous = closedChainState(10_000);
+    const next: OutlineState = {
+      version: 1,
+      rootIds: [],
+      nodes: {}
+    };
+
+    const guarded = preserveClosedSubtreesAcrossNonDestructiveTransition(previous, next);
+
+    expect(guarded.restoredNodeIds).toHaveLength(10_000);
+    expect(guarded.state.rootIds).toEqual(["closed:0"]);
+    expect(guarded.state.nodes["closed:9999"]?.parentId).toBe("closed:9998");
+  });
 });
+
+function closedChainState(count: number): OutlineState {
+  const rootId = "closed:0";
+  const nodes: OutlineState["nodes"] = {};
+  for (let index = 0; index < count; index += 1) {
+    const nodeId = `closed:${index}`;
+    nodes[nodeId] = {
+      id: nodeId,
+      kind: index === 0 ? "window" : "tab",
+      status: "closed",
+      ...(index > 0 ? { parentId: `closed:${index - 1}` } : {}),
+      childIds: index + 1 < count ? [`closed:${index + 1}`] : [],
+      title: `Closed ${index}`,
+      collapsed: false,
+      createdAt: 1000 + index,
+      updatedAt: 2000 + index,
+      closedAt: 3000 + index
+    };
+  }
+
+  return {
+    version: 1,
+    rootIds: [rootId],
+    nodes
+  };
+}

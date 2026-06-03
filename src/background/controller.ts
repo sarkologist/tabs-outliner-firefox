@@ -4038,7 +4038,9 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     next: OutlineState,
     detail: TraceDetail
   ): ClosedSubtreeGuardResult {
-    const guarded = preserveClosedSubtreesAcrossNonDestructiveTransition(previous, next);
+    const guarded = perfTrace.measure("background.closedSubtreeGuard", detail, () =>
+      preserveClosedSubtreesAcrossNonDestructiveTransition(previous, next)
+    );
     if (guarded.restoredNodeIds.length > 0) {
       perfTrace.mark("background.closedSubtreeGuard.restore", {
         ...detail,
