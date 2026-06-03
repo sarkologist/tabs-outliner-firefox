@@ -1,5 +1,4 @@
 import type { BrowserAdapter, RestoredSession } from "./adapter.js";
-import { normalizeRestorableBrowserCreateUrl } from "./browser-create-url.js";
 import {
   analyzeRestoreScope,
   deleteNode,
@@ -17,7 +16,7 @@ import {
 } from "../model/outline.js";
 import { appendPortableTree } from "../model/portable-tree.js";
 import type { RestoreScope } from "../model/outline.js";
-import type { NodeId, OutlineNode, OutlineState, RestoredNode, RestorePlan, RuntimeTab } from "../model/types.js";
+import type { NodeId, OutlineNode, OutlineState, RestoreCreateTarget, RestoredNode, RestorePlan, RuntimeTab } from "../model/types.js";
 
 export type BackgroundCommand =
   | {
@@ -145,7 +144,9 @@ export type RuntimeClosePlan = {
   tabIds: number[];
 };
 
-type WindowUrlBatchPlan = {
+const BLANK_RESTORE_CREATE_URL = "about:blank";
+
+type WindowCreateBatchPlan = {
   nodeId: NodeId;
   url: string;
   windowNodeId: NodeId;
@@ -480,9 +481,9 @@ async function restoreNode(
       continue;
     }
 
-    const urlBatch = closedWindowUrlBatchPlans(next, plans, index, pendingNodeIds, coveredNodeIds, restoredWindowNodeIds);
-    if (urlBatch.length > 1 && plan.windowNodeId) {
-      const restoredNodes = await restoreClosedWindowUrlBatch(adapter, plan.windowNodeId, urlBatch, restoreObserver);
+    const createBatch = closedWindowCreateBatchPlans(next, plans, index, pendingNodeIds, coveredNodeIds, restoredWindowNodeIds);
+    if (createBatch.length > 1 && plan.windowNodeId) {
+      const restoredNodes = await restoreClosedWindowCreateBatch(adapter, plan.windowNodeId, createBatch, restoreObserver);
       if (restoredNodes.length > 0) {
         appendRestoredNodes(restoredNodes);
         const coverage = restoredWindowDescendantCoverage(next, plan.windowNodeId, plans, restoredNodes);
@@ -602,15 +603,15 @@ function isImportedNodeId(nodeId: NodeId): boolean {
   return nodeId.startsWith("imported:");
 }
 
-function closedWindowUrlBatchPlans(
+function closedWindowCreateBatchPlans(
   state: OutlineState,
   plans: RestorePlan[],
   startIndex: number,
   pendingNodeIds: Set<NodeId>,
   coveredNodeIds: Set<NodeId>,
   restoredWindowNodeIds: Set<NodeId>
-): WindowUrlBatchPlan[] {
-  const firstPlan = tabUrlBatchPlanFromRestorePlan(state, plans[startIndex]);
+): WindowCreateBatchPlan[] {
+  const firstPlan = tabCreateBatchPlanFromRestorePlan(state, plans[startIndex]);
   if (!firstPlan) {
     return [];
   }
@@ -623,9 +624,9 @@ function closedWindowUrlBatchPlans(
     return [];
   }
 
-  const batch: WindowUrlBatchPlan[] = [];
+  const batch: WindowCreateBatchPlan[] = [];
   for (let index = startIndex; index < plans.length; index += 1) {
-    const candidate = tabUrlBatchPlanFromRestorePlan(state, plans[index]);
+    const candidate = tabCreateBatchPlanFromRestorePlan(state, plans[index]);
     if (
       !candidate ||
       candidate.windowNodeId !== firstPlan.windowNodeId ||
@@ -642,23 +643,24 @@ function closedWindowUrlBatchPlans(
   return batch;
 }
 
-function tabUrlBatchPlanFromRestorePlan(
+function tabCreateBatchPlanFromRestorePlan(
   state: OutlineState,
   plan: RestorePlan | undefined
-): WindowUrlBatchPlan | undefined {
+): WindowCreateBatchPlan | undefined {
   if (!plan?.windowNodeId || state.nodes[plan.nodeId]?.kind !== "tab") {
     return undefined;
   }
 
-  const url = plan.kind === "url" ? plan.url : plan.fallbackUrl;
-  const createUrl = normalizeRestorableBrowserCreateUrl(url);
-  return createUrl ? { nodeId: plan.nodeId, url: createUrl, windowNodeId: plan.windowNodeId } : undefined;
+  const target = plan.kind === "create" ? plan.target : plan.fallbackTarget;
+  return target
+    ? { nodeId: plan.nodeId, url: createUrlForRestoreTarget(target), windowNodeId: plan.windowNodeId }
+    : undefined;
 }
 
-async function restoreClosedWindowUrlBatch(
+async function restoreClosedWindowCreateBatch(
   adapter: BrowserAdapter,
   windowNodeId: NodeId,
-  plans: WindowUrlBatchPlan[],
+  plans: WindowCreateBatchPlan[],
   restoreObserver?: RestoreObserver
 ): Promise<RestoredNode[]> {
   try {
@@ -724,13 +726,13 @@ async function runRestorePlan(
       // Fall through to URL fallback below.
     }
 
-    if (plan.fallbackUrl) {
-      return tryCreateFallbackTab(state, adapter, plan.nodeId, plan.fallbackUrl, plan.windowNodeId, restoreObserver);
+    if (plan.fallbackTarget) {
+      return tryCreateFallbackTab(state, adapter, plan.nodeId, plan.fallbackTarget, plan.windowNodeId, restoreObserver);
     }
     return [];
   }
 
-  return tryCreateFallbackTab(state, adapter, plan.nodeId, plan.url, plan.windowNodeId, restoreObserver);
+  return tryCreateFallbackTab(state, adapter, plan.nodeId, plan.target, plan.windowNodeId, restoreObserver);
 }
 
 async function moveRestoredTabsIntoPlannedLiveWindow(
@@ -831,8 +833,8 @@ async function restoreSessionIntoClosedWindowDestination(
     }
   }
 
-  return plan.fallbackUrl
-    ? tryCreateFallbackTab(state, adapter, plan.nodeId, plan.fallbackUrl, plan.windowNodeId, restoreObserver)
+  return plan.fallbackTarget
+    ? tryCreateFallbackTab(state, adapter, plan.nodeId, plan.fallbackTarget, plan.windowNodeId, restoreObserver)
     : [];
 }
 
@@ -855,16 +857,13 @@ async function createFallbackTab(
   state: OutlineState,
   adapter: BrowserAdapter,
   nodeId: NodeId,
-  url: string,
+  target: RestoreCreateTarget,
   windowNodeId?: NodeId,
   restoreObserver?: RestoreObserver
 ): Promise<RestoredNode[]> {
   const plannedWindow = windowNodeId ? state.nodes[windowNodeId] : undefined;
   if (isLiveWindow(plannedWindow)) {
-    const createUrl = normalizeRestorableBrowserCreateUrl(url);
-    if (!createUrl) {
-      return [];
-    }
+    const createUrl = createUrlForRestoreTarget(target);
     const createProperties = {
       url: createUrl,
       windowId: plannedWindow.live.windowId,
@@ -888,10 +887,7 @@ async function createFallbackTab(
       return sessionRestored;
     }
 
-    const createUrl = normalizeRestorableBrowserCreateUrl(url);
-    if (!createUrl) {
-      return [];
-    }
+    const createUrl = createUrlForRestoreTarget(target);
     const createData = { url: createUrl };
     await restoreObserver?.recordCreateAttempt({
       kind: "window",
@@ -923,10 +919,7 @@ async function createFallbackTab(
   }
 
   const parentWindow = nearestLiveWindow(state, nodeId);
-  const createUrl = normalizeRestorableBrowserCreateUrl(url);
-  if (!createUrl) {
-    return [];
-  }
+  const createUrl = createUrlForRestoreTarget(target);
   const createProperties = {
     url: createUrl,
     ...(parentWindow ? { windowId: parentWindow.live.windowId } : {}),
@@ -947,11 +940,15 @@ async function tryCreateFallbackTab(
   state: OutlineState,
   adapter: BrowserAdapter,
   nodeId: NodeId,
-  url: string,
+  target: RestoreCreateTarget,
   windowNodeId?: NodeId,
   restoreObserver?: RestoreObserver
 ): Promise<RestoredNode[]> {
-  return createFallbackTab(state, adapter, nodeId, url, windowNodeId, restoreObserver);
+  return createFallbackTab(state, adapter, nodeId, target, windowNodeId, restoreObserver);
+}
+
+function createUrlForRestoreTarget(target: RestoreCreateTarget): string {
+  return target.kind === "blank" ? BLANK_RESTORE_CREATE_URL : target.url;
 }
 
 async function moveNodeToNewWindow(
@@ -1171,14 +1168,24 @@ function restoredTabsFromWindowSession(
     .filter((node) => node.kind === "tab" && node.status === "closed");
   const availableTabs = [...tabs];
   const restored: RestoredNode[] = [];
+  const unmatchedNodes: OutlineNode[] = [];
 
   for (const node of tabNodes) {
     const matchIndex = matchingRestoredTabIndex(node, availableTabs);
     if (matchIndex < 0) {
+      unmatchedNodes.push(node);
       continue;
     }
 
     const [tab] = availableTabs.splice(matchIndex, 1);
+    if (tab) {
+      restored.push(restoredTabFromRuntime(node.id, tab));
+    }
+  }
+
+  // Restored session tabs may report a post-login/final URL; keep the closed window's original order as fallback.
+  for (const node of unmatchedNodes) {
+    const tab = availableTabs.shift();
     if (tab) {
       restored.push(restoredTabFromRuntime(node.id, tab));
     }

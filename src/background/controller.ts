@@ -84,6 +84,7 @@ import {
   repairState,
   restoreNodes,
   runtimeTitleForOutlineTab,
+  shouldUseRuntimeOpenerParent,
   wrapNodeInGroup
 } from "../model/outline.js";
 import { buildOutlineLookup, type OutlineLookup } from "../model/outline-lookup.js";
@@ -3522,7 +3523,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       tab: RuntimeTab,
       fallbackWindowNodeId: NodeId
     ): NodeId => {
-      if (typeof tab.openerTabId !== "number") {
+      if (!shouldUseRuntimeOpenerParent(tab)) {
         return fallbackWindowNodeId;
       }
 

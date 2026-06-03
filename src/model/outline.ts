@@ -6,6 +6,7 @@ import type {
   NodeId,
   OutlineNode,
   OutlineState,
+  RestoreCreateTarget,
   RestorePlan,
   RestoredNode,
   ReconcileOptions,
@@ -179,7 +180,7 @@ export function bootstrapFromWindows(windows: RuntimeWindow[], clock: Clock): Ou
     for (const tab of tabs) {
       const id = tabNodeId(tab.id);
       const openerId =
-        typeof tab.openerTabId === "number" && tabIdsInWindow.has(tab.openerTabId)
+        shouldUseRuntimeOpenerParent(tab) && tabIdsInWindow.has(tab.openerTabId)
           ? tabNodeId(tab.openerTabId)
           : undefined;
       const parentId = openerId && state.nodes[openerId] ? openerId : winId;
@@ -1001,22 +1002,40 @@ export function planRestore(state: OutlineState, nodeId: NodeId): RestorePlan[] 
 
     const parentWindow = nearestWindow(state, current.id);
     if (current.restore?.sessionId) {
+      const fallbackTarget = current.restore.url ? restoreCreateTargetForUrl(current.restore.url) : undefined;
       plans.push({
         kind: "session",
         nodeId: current.id,
         sessionId: current.restore.sessionId,
-        ...(current.restore.url ? { fallbackUrl: current.restore.url } : {}),
+        ...(fallbackTarget ? { fallbackTarget } : {}),
         ...(parentWindow ? { windowNodeId: parentWindow.id } : {})
       });
       return;
     }
 
     const restoreUrl = current.kind === "tab" ? restorableClosedTabUrl(current) : undefined;
-    if (restoreUrl) {
+    const singleTabSourceWindow = current.kind === "tab" ? closedSingleTabSourceWindow(state, current.id) : undefined;
+    const sourceWindowAlreadyInRequestedScope = singleTabSourceWindow
+      ? singleTabSourceWindow.id === nodeId || isDescendant(state, singleTabSourceWindow.id, nodeId)
+      : false;
+    if (singleTabSourceWindow?.restore?.sessionId && !sourceWindowAlreadyInRequestedScope) {
+      const fallbackTarget = restoreCreateTargetForUrl(restoreUrl);
       plans.push({
-        kind: "url",
+        kind: "session",
         nodeId: current.id,
-        url: restoreUrl,
+        sessionId: singleTabSourceWindow.restore.sessionId,
+        ...(fallbackTarget ? { fallbackTarget } : {}),
+        windowNodeId: singleTabSourceWindow.id
+      });
+      return;
+    }
+
+    const target = restoreCreateTargetForUrl(restoreUrl);
+    if (target) {
+      plans.push({
+        kind: "create",
+        nodeId: current.id,
+        target,
         ...(parentWindow ? { windowNodeId: parentWindow.id } : {})
       });
     }
@@ -1027,6 +1046,29 @@ export function planRestore(state: OutlineState, nodeId: NodeId): RestorePlan[] 
 
 function restorableClosedTabUrl(node: OutlineNode): string | undefined {
   return node.restore?.url ?? (isImportedNodeId(node.id) ? node.url : undefined);
+}
+
+function restoreCreateTargetForUrl(url: string | undefined): RestoreCreateTarget | undefined {
+  const trimmed = url?.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+
+  const lowerUrl = trimmed.toLocaleLowerCase();
+  if (lowerUrl === "about:blank" || lowerUrl === "about:newtab") {
+    return { kind: "blank" };
+  }
+
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol === "http:" || parsed.protocol === "https:" || parsed.protocol === "file:") {
+      return { kind: "url", url: parsed.href };
+    }
+  } catch {
+    return undefined;
+  }
+
+  return undefined;
 }
 
 function isImportedNodeId(nodeId: NodeId): boolean {
@@ -1345,7 +1387,11 @@ function findRestorableClosedTabNode(
   windowNodeIdForTab: NodeId,
   alreadyMatched: Set<NodeId>
 ): NodeId | undefined {
-  if (!tab.url || isBlankUrl(tab.url)) {
+  if (isBlankRuntimeTabUrl(tab.url)) {
+    return findRestorableClosedBlankTabNode(state, lookup, windowNodeIdForTab, alreadyMatched);
+  }
+
+  if (!tab.url) {
     return undefined;
   }
 
@@ -1363,6 +1409,34 @@ function findRestorableClosedTabNode(
       node.restore?.url === tab.url &&
       !alreadyMatched.has(node.id) &&
       isInCompatibleWindow(state, lookup, node, tab.windowId, windowNodeIdForTab)
+    ) {
+      return node.id;
+    }
+  }
+
+  return undefined;
+}
+
+function findRestorableClosedBlankTabNode(
+  state: OutlineState,
+  lookup: OutlineLookup,
+  windowNodeIdForTab: NodeId,
+  alreadyMatched: Set<NodeId>
+): NodeId | undefined {
+  const owner = state.nodes[windowNodeIdForTab];
+  if (owner?.kind !== "window" || owner.status !== "live" || owner.restoredFromClosed !== true) {
+    return undefined;
+  }
+
+  for (const nodeId of collectSubtreeIds(state, windowNodeIdForTab)) {
+    const node = state.nodes[nodeId];
+    if (
+      node &&
+      node.kind === "tab" &&
+      node.status === "closed" &&
+      !alreadyMatched.has(node.id) &&
+      lookup.ownerWindowNodeIdsByNodeId.get(node.id) === windowNodeIdForTab &&
+      isBlankRuntimeTabUrl(node.restore?.url ?? node.url)
     ) {
       return node.id;
     }
@@ -1400,7 +1474,11 @@ function isLikelyDuplicateOfLiveTab(state: OutlineState, lookup: OutlineLookup, 
 }
 
 function isBlankUrl(url: string): boolean {
-  return url === "about:blank" || url === "about:newtab";
+  return isBlankRuntimeTabUrl(url);
+}
+
+function isBlankRuntimeTabUrl(url: string | undefined): boolean {
+  return !url || url === "about:blank" || url === "about:newtab";
 }
 
 function isProvisionalLiveTabNode(node: OutlineNode): boolean {
@@ -1455,7 +1533,7 @@ function parentForNewRuntimeTab(
   tab: RuntimeTab,
   fallbackWindowNodeId: NodeId
 ): NodeId {
-  if (typeof tab.openerTabId !== "number") {
+  if (!shouldUseRuntimeOpenerParent(tab)) {
     return fallbackWindowNodeId;
   }
 
@@ -1465,6 +1543,12 @@ function parentForNewRuntimeTab(
   }
 
   return isUnderRuntimeWindow(state, openerNodeId, tab.windowId) ? openerNodeId : fallbackWindowNodeId;
+}
+
+export function shouldUseRuntimeOpenerParent(
+  tab: Pick<RuntimeTab, "openerTabId" | "url">
+): tab is Pick<RuntimeTab, "openerTabId" | "url"> & { openerTabId: number } {
+  return typeof tab.openerTabId === "number" && !isBlankRuntimeTabUrl(tab.url);
 }
 
 function isUnderRuntimeWindow(state: OutlineState, nodeId: NodeId, runtimeWindowId: number): boolean {

@@ -390,7 +390,7 @@ describe("background commands", () => {
     ]);
   });
 
-  it("normalizes invalid restore fallback URLs before creating tabs", async () => {
+  it("skips invalid restore fallback URLs instead of creating browser tabs", async () => {
     const state = closeTab(bootstrapFromWindows(runtimeWindows, { now: 1000 }), 2, {
       now: 2000,
       sessionId: "session-tab-2"
@@ -420,12 +420,8 @@ describe("background commands", () => {
 
     const result = await runCommand(state, adapter, { type: "restoreNode", nodeId: "tab:2" });
 
-    expect(adapter.createTab).toHaveBeenCalledWith({
-      url: "about:blank",
-      windowId: 10,
-      active: false
-    });
-    expect(result.state.nodes["tab:2"]?.live).toEqual({ tabId: 24, windowId: 10 });
+    expect(adapter.createTab).not.toHaveBeenCalled();
+    expect(result.state.nodes["tab:2"]?.status).toBe("closed");
   });
 
   it("records restore window create attempts for command-side recovery", async () => {
@@ -1191,6 +1187,83 @@ describe("background commands", () => {
     expect(result.state.nodes["window:20"]?.childIds).toEqual(["tab:5"]);
     expect(result.state.nodes["tab:5"]?.parentId).toBe("window:20");
     expect(result.state.nodes["tab:5"]?.live).toEqual({ tabId: 200, windowId: 42 });
+  });
+
+  it("restores a closed new-tab node in a live window as browser-safe about blank", async () => {
+    const state = closeTab(bootstrapFromWindows([
+      {
+        id: 10,
+        focused: true,
+        incognito: false,
+        tabs: [
+          {
+            id: 1,
+            windowId: 10,
+            index: 0,
+            active: true,
+            url: "https://example.com/",
+            title: "Example"
+          },
+          {
+            id: 2,
+            windowId: 10,
+            index: 1,
+            active: false,
+            url: "about:newtab",
+            title: "New Tab"
+          }
+        ]
+      }
+    ], { now: 1000 }), 2, { now: 2000 });
+    const adapter = fakeAdapter();
+
+    const result = await runCommand(state, adapter, { type: "restoreNode", nodeId: "tab:2" });
+
+    expect(adapter.createTab).toHaveBeenCalledWith({
+      url: "about:blank",
+      windowId: 10,
+      active: false
+    });
+    expect(adapter.createTab).not.toHaveBeenCalledWith(expect.objectContaining({ url: "about:newtab" }));
+    expect(result.state.nodes["tab:2"]?.status).toBe("live");
+    expect(result.state.nodes["tab:2"]?.live).toEqual({ tabId: 99, windowId: 10 });
+  });
+
+  it("restores a closed blank-only window with browser-safe about blank urls", async () => {
+    const state = closeWindow(bootstrapFromWindows([
+      {
+        id: 20,
+        focused: true,
+        incognito: false,
+        tabs: [
+          {
+            id: 5,
+            windowId: 20,
+            index: 0,
+            active: true,
+            url: "about:newtab",
+            title: "New Tab"
+          },
+          {
+            id: 6,
+            windowId: 20,
+            index: 1,
+            active: false,
+            url: "about:blank",
+            title: "New Tab"
+          }
+        ]
+      }
+    ], { now: 1000 }), 20, { now: 2000 });
+    const adapter = fakeAdapter();
+
+    const result = await runCommand(state, adapter, { type: "restoreNode", nodeId: "window:20" });
+
+    expect(adapter.createWindow).toHaveBeenCalledWith({ url: ["about:blank", "about:blank"] });
+    expect(adapter.createWindow).not.toHaveBeenCalledWith(expect.objectContaining({ url: expect.arrayContaining(["about:newtab"]) }));
+    expect(result.state.nodes["window:20"]?.status).toBe("live");
+    expect(result.state.nodes["tab:5"]?.live).toEqual({ tabId: 200, windowId: 42 });
+    expect(result.state.nodes["tab:6"]?.live).toEqual({ tabId: 201, windowId: 42 });
   });
 
   it("does not fall through to child url restore when a window session reports no tabs yet", async () => {

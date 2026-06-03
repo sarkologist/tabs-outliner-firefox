@@ -206,6 +206,50 @@ describe("outline model", () => {
     expect(state.nodes["tab:4"]).toBeUndefined();
   });
 
+  it("keeps blank opener tabs as window siblings", () => {
+    const state = bootstrapFromWindows([
+      {
+        id: 10,
+        incognito: false,
+        focused: true,
+        tabs: [
+          {
+            id: 1,
+            windowId: 10,
+            index: 0,
+            active: false,
+            url: "https://calendar.example/week",
+            title: "Google Calendar"
+          },
+          {
+            id: 2,
+            windowId: 10,
+            index: 1,
+            active: false,
+            openerTabId: 1,
+            url: "about:newtab",
+            title: "New Tab"
+          },
+          {
+            id: 3,
+            windowId: 10,
+            index: 2,
+            active: true,
+            openerTabId: 2,
+            url: "about:blank",
+            title: "New Tab"
+          }
+        ]
+      }
+    ], { now: 1000 });
+
+    expect(state.nodes["window:10"]?.childIds).toEqual(["tab:1", "tab:2", "tab:3"]);
+    expect(state.nodes["tab:1"]?.childIds).toEqual([]);
+    expect(state.nodes["tab:2"]?.childIds).toEqual([]);
+    expect(state.nodes["tab:2"]?.parentId).toBe("window:10");
+    expect(state.nodes["tab:3"]?.parentId).toBe("window:10");
+  });
+
   it("renames groups with trimmed custom titles", () => {
     const state = bootstrapFromWindows(windows, { now: 1000 });
 
@@ -986,7 +1030,7 @@ describe("outline model", () => {
         nodeId: "tab:1",
         kind: "session",
         sessionId: "session-tab-1",
-        fallbackUrl: "https://example.com/",
+        fallbackTarget: { kind: "url", url: "https://example.com/" },
         windowNodeId: placeholderId
       }
     ]);
@@ -1050,7 +1094,7 @@ describe("outline model", () => {
         nodeId: "tab:1",
         kind: "session",
         sessionId: "session-tab-1",
-        fallbackUrl: "https://example.com/",
+        fallbackTarget: { kind: "url", url: "https://example.com/" },
         windowNodeId: placeholderId
       }
     ]);
@@ -1146,12 +1190,6 @@ describe("outline model", () => {
         kind: "session",
         sessionId: "session-window-20",
         windowNodeId: placeholderId
-      },
-      {
-        nodeId: "tab:5",
-        kind: "url",
-        url: "about:debugging#/runtime/this-firefox",
-        windowNodeId: placeholderId
       }
     ]);
   });
@@ -1167,13 +1205,13 @@ describe("outline model", () => {
         nodeId: "tab:2",
         kind: "session",
         sessionId: "session-tab-2",
-        fallbackUrl: "https://example.com/child",
+        fallbackTarget: { kind: "url", url: "https://example.com/child" },
         windowNodeId: "window:10"
       }
     ]);
   });
 
-  it("keeps the closed window destination when planning url restores", () => {
+  it("keeps the closed window destination when planning create restores", () => {
     const state = closeWindow(bootstrapFromWindows(windows, { now: 1000 }), 10, {
       now: 2000,
       sessionId: "session-window-10"
@@ -1182,11 +1220,60 @@ describe("outline model", () => {
     expect(planRestore(state, "tab:2")).toEqual([
       {
         nodeId: "tab:2",
-        kind: "url",
-        url: "https://example.com/child",
+        kind: "create",
+        target: { kind: "url", url: "https://example.com/child" },
         windowNodeId: "window:10"
       }
     ]);
+  });
+
+  it("plans blank create targets for closed about blank and newtab nodes", () => {
+    const state = closeWindow(bootstrapFromWindows([
+      {
+        id: 10,
+        focused: true,
+        incognito: false,
+        tabs: [
+          {
+            id: 1,
+            windowId: 10,
+            index: 0,
+            active: true,
+            url: "about:newtab",
+            title: "New Tab"
+          },
+          {
+            id: 2,
+            windowId: 10,
+            index: 1,
+            active: false,
+            url: "about:blank",
+            title: "New Tab"
+          }
+        ]
+      }
+    ], { now: 1000 }), 10, { now: 2000 });
+
+    expect(planRestore(state, "window:10")).toEqual([
+      {
+        nodeId: "tab:1",
+        kind: "create",
+        target: { kind: "blank" },
+        windowNodeId: "window:10"
+      },
+      {
+        nodeId: "tab:2",
+        kind: "create",
+        target: { kind: "blank" },
+        windowNodeId: "window:10"
+      }
+    ]);
+    expect(analyzeRestoreScope(state, "window:10")).toMatchObject({
+      nodeIds: ["tab:1", "tab:2"],
+      totalCount: 2,
+      tabCount: 2,
+      windowCount: 0
+    });
   });
 
   it("counts unique restorable closed nodes in a restore subtree", () => {

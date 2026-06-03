@@ -20010,6 +20010,9 @@ function availableGeneratedOperations(context: GeneratedTraceContext): Generated
   if (context.runtime.windows.length > 1) {
     operations.push({ name: "outliner-close-window", run: outlinerCloseGeneratedWindow });
   }
+  if (context.expectedClosedNodeIds.size > 0) {
+    operations.push({ name: "outliner-restore-closed-node", run: outlinerRestoreGeneratedClosedNode });
+  }
   if (context.runtime.windows.length > 1) {
     operations.push(
       { name: "outliner-restore-delete-window-delayed-event", run: outlinerRestoreDeleteGeneratedWindowWithDelayedEvent },
@@ -20018,6 +20021,9 @@ function availableGeneratedOperations(context: GeneratedTraceContext): Generated
   }
   if (multiTabWindows.length > 0) {
     operations.push({ name: "native-close-window", run: nativeCloseGeneratedWindow });
+  }
+  if (closeableOutlinerTabs.length > 0) {
+    operations.push({ name: "native-move-tab-new-window", run: nativeMoveGeneratedTabToNewWindow });
   }
   if (multiTabWindows.length > 0) {
     operations.push(
@@ -20063,13 +20069,14 @@ async function openGeneratedTab(context: GeneratedTraceContext): Promise<void> {
     ? pickOne(context.rng, existingTabs)
     : undefined;
   const tabId = nextGeneratedTabId(context);
+  const blankTab = context.rng() < 0.25;
   const tab: RuntimeTab = {
     id: tabId,
     windowId: windowInfo.id,
     index: Math.floor(context.rng() * (existingTabs.length + 1)),
     active: true,
-    url: `https://generated.example/${tabId}`,
-    title: `Generated ${tabId}`
+    url: blankTab ? "about:newtab" : `https://generated.example/${tabId}`,
+    title: blankTab ? "New Tab" : `Generated ${tabId}`
   };
   if (openerTab) {
     tab.openerTabId = openerTab.id;
@@ -20212,6 +20219,66 @@ async function nativeCloseGeneratedWindow(context: GeneratedTraceContext): Promi
   context.history.push(`native close multi-tab window ${windowInfo.id}`);
   await closeRuntimeWindow(context.runtime, windowInfo.id, { awaitListeners: true });
   await pruneMissingExpectedClosedNodes(context, protectedExpectedNodeIds);
+}
+
+async function nativeMoveGeneratedTabToNewWindow(context: GeneratedTraceContext): Promise<void> {
+  const candidates = context.runtime.tabs.filter((tab) =>
+    tabsInRuntimeWindow(context.runtime, tab.windowId).length > 1
+  );
+  const tab = pickOne(context.rng, candidates);
+  const windowId = nextRuntimeWindowId(context.runtime);
+  const focused = context.rng() < 0.75;
+  context.runtime.windows = context.runtime.windows
+    .map((windowInfo) => ({ ...windowInfo, ...(focused ? { focused: false } : {}) }))
+    .concat({ id: windowId, focused, incognito: false });
+  context.browserCreatedWindowIds.add(windowId);
+  context.history.push(`native move tab ${tab.id} to new window ${windowId}`);
+  await runNativeMoveTab(context, tab, {
+    targetWindowId: windowId,
+    index: 0,
+    active: focused
+  });
+}
+
+async function outlinerRestoreGeneratedClosedNode(context: GeneratedTraceContext): Promise<void> {
+  const state = (await context.controller.handleMessage({ type: "getState" })) as OutlineState;
+  const candidates = [...context.expectedClosedNodeIds].filter((nodeId) =>
+    state.nodes[nodeId]?.status === "closed" &&
+    !hasExpectedClosedAncestor(state, nodeId, context.expectedClosedNodeIds)
+  );
+  if (candidates.length === 0) {
+    return;
+  }
+
+  const nodeId = pickOne(context.rng, candidates);
+  context.history.push(`outliner restore closed node ${nodeId}`);
+  await context.controller.handleMessage({
+    type: "restoreNode",
+    nodeId,
+    confirmedLargeRestore: true
+  });
+  await flushGeneratedRuntimeEventRefreshes(context);
+  reserveGeneratedRuntimeTabIds(context, context.runtime.tabs);
+
+  const restoredState = (await context.controller.handleMessage({ type: "getState" })) as OutlineState;
+  for (const expectedNodeId of context.expectedClosedNodeIds) {
+    if (restoredState.nodes[expectedNodeId]?.status !== "closed") {
+      context.expectedClosedNodeIds.delete(expectedNodeId);
+    }
+  }
+}
+
+function hasExpectedClosedAncestor(state: OutlineState, nodeId: string, expectedClosedNodeIds: Set<string>): boolean {
+  const seen = new Set<string>();
+  let current = state.nodes[nodeId];
+  while (current?.parentId && !seen.has(current.id)) {
+    seen.add(current.id);
+    if (expectedClosedNodeIds.has(current.parentId) && state.nodes[current.parentId]?.status === "closed") {
+      return true;
+    }
+    current = state.nodes[current.parentId];
+  }
+  return false;
 }
 
 async function outlinerRestoreDeleteGeneratedWindowWithDelayedEvent(context: GeneratedTraceContext): Promise<void> {
@@ -20729,6 +20796,7 @@ async function runDomainTrace(trace: RuntimeDomainTrace): Promise<void> {
       await runDomainAction(context, action);
       await assertGeneratedInvariants(context);
       await assertDomainTraceAssertions(trace, context);
+      assertNoAboutNewtabCreateSideEffects(context.history, runtimeSideEffectsSince(context.runtime, sideEffectSnapshot));
       assertDomainTraceSideEffectAssertions(trace, context, action, sideEffectSnapshot);
     } catch (error) {
       throw new Error(`${domainTraceErrorText(trace, index, action, error, context.history)}\n${runtimeTraceDebugText(context, runtimeSideEffectsSince(context.runtime, sideEffectSnapshot))}`);
@@ -22633,6 +22701,7 @@ async function assertRuntimeTraceOracles(
   assertClosedSubtreeInvariants(state, context.history);
   assertRuntimeTruthCaches(context, truth);
   if (options.generatedOperation && options.sideEffects) {
+    assertNoAboutNewtabCreateSideEffects(context.history, options.sideEffects);
     assertGeneratedOperationSideEffectsAssertion(context, options.generatedOperation, options.sideEffects);
   }
 }
@@ -22894,6 +22963,44 @@ function assertGeneratedOperationSideEffectsAssertion(
   );
 }
 
+function assertNoAboutNewtabCreateSideEffects(history: string[], sideEffects: RuntimeSideEffect[]): void {
+  const invalidCreateEffect = sideEffects.find((effect) =>
+    (effect.kind === "tabs.create" || effect.kind === "windows.create") &&
+    effect.args.some(createUrlPayloadContainsAboutNewtab)
+  );
+  invariant(
+    !invalidCreateEffect,
+    `browser create used about:newtab: ${invalidCreateEffect ? formatRuntimeSideEffect(invalidCreateEffect) : ""}`,
+    history
+  );
+}
+
+function createUrlPayloadContainsAboutNewtab(value: unknown): boolean {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  if (Array.isArray(value)) {
+    return value.some(createUrlPayloadContainsAboutNewtab);
+  }
+
+  if ("url" in value) {
+    return urlValueContainsAboutNewtab((value as { url?: unknown }).url);
+  }
+
+  return false;
+}
+
+function urlValueContainsAboutNewtab(value: unknown): boolean {
+  if (typeof value === "string") {
+    return value.toLocaleLowerCase() === "about:newtab";
+  }
+  if (Array.isArray(value)) {
+    return value.some(urlValueContainsAboutNewtab);
+  }
+  return false;
+}
+
 const MUTATING_BROWSER_SIDE_EFFECT_KINDS = new Set<RuntimeSideEffectKind>([
   "tabs.create",
   "tabs.move",
@@ -22912,6 +23019,7 @@ function allowedGeneratedOperationMutatingBrowserSideEffects(name: string): Set<
     name === "activate-tab-with-stale-query" ||
     name === "native-close-tab" ||
     name === "native-close-window" ||
+    name === "native-move-tab-new-window" ||
     name === "stale-activation-snapshot" ||
     name === "stale-tab-created-event" ||
     name === "stale-tab-updated-event" ||
@@ -25525,8 +25633,8 @@ describe("background controller lifecycle", () => {
         index: 3,
         active: true,
         openerTabId: 1,
-        url: "about:newtab",
-        title: "New Tab"
+        url: "https://opened.example/",
+        title: "Opened"
       });
     });
     const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
@@ -30514,6 +30622,126 @@ describe("background controller lifecycle", () => {
     expect(state.nodes["window:10"]?.childIds).toEqual(["tab:2", "tab:3"]);
   });
 
+  it("reattaches restored external-window tabs when the restored session URL has changed", async () => {
+    const loginUrl = "https://vle.example/webapps/login/?action=login&new_loc=/course";
+    const finalUrl = "https://vle.example/course";
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: finalUrl,
+          title: "Content / MSc in Mathematical Sciences"
+        }
+      ]
+    );
+    vi.mocked(runtime.api.sessions.getRecentlyClosed).mockResolvedValue([
+      { window: { sessionId: "session-external-window" } } as never
+    ]);
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+
+    const externalWindow = createWindowFromBrowser(runtime, { focused: true });
+    const externalWindowId = externalWindow.id;
+    await createTabFromBrowser(runtime, {
+      id: 2,
+      windowId: externalWindowId,
+      index: 0,
+      active: true,
+      openerTabId: 1,
+      url: loginUrl,
+      title: loginUrl
+    });
+    await createTabFromBrowser(runtime, {
+      id: 3,
+      windowId: externalWindowId,
+      index: 1,
+      active: false,
+      url: "about:newtab",
+      title: "New Tab"
+    });
+
+    await closeRuntimeWindow(runtime, externalWindowId, { awaitListeners: true }, "windowRemovedOnly");
+    let state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(state.nodes[`window:${externalWindowId}`]?.status).toBe("closed");
+    expect(state.nodes["tab:2"]?.status).toBe("closed");
+
+    let restoredWindowId: number | undefined;
+    let restoredLinkTab: RuntimeTab | undefined;
+    vi.mocked(runtime.api.sessions.restore).mockImplementation(async (sessionId: string) => {
+      if (sessionId !== "session-external-window") {
+        return {};
+      }
+      restoredWindowId = nextRuntimeWindowId(runtime);
+      runtime.windows = runtime.windows
+        .map((windowInfo) => ({ ...windowInfo, focused: false }))
+        .concat({ id: restoredWindowId, focused: true, incognito: false });
+      restoredLinkTab = {
+        id: 20,
+        windowId: restoredWindowId,
+        index: 0,
+        active: true,
+        openerTabId: 1,
+        url: finalUrl,
+        title: "Content / MSc in Mathematical Sciences"
+      };
+      createTabFromBrowser(runtime, restoredLinkTab, { awaitListeners: false });
+      createTabFromBrowser(runtime, {
+        id: 21,
+        windowId: restoredWindowId,
+        index: 1,
+        active: false,
+        url: "about:newtab",
+        title: "New Tab"
+      }, { awaitListeners: false });
+      return {
+        window: {
+          id: restoredWindowId,
+          focused: true,
+          incognito: false,
+          tabs: []
+        }
+      } as never;
+    });
+
+    expectCommandAck(await controller.handleMessage({ type: "restoreNode", nodeId: `window:${externalWindowId}` }), true);
+    await runtime.events.tabCreated.flush();
+    state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+
+    expect(restoredWindowId).toBeTypeOf("number");
+    expect(restoredLinkTab).toBeDefined();
+    expect(state.nodes[`window:${externalWindowId}`]).toMatchObject({
+      status: "live",
+      live: { windowId: restoredWindowId }
+    });
+    expect(state.nodes["tab:2"]).toMatchObject({
+      status: "live",
+      live: { tabId: restoredLinkTab!.id, windowId: restoredWindowId }
+    });
+    expect(state.nodes["tab:2"]?.url).toBe(finalUrl);
+    expect(state.nodes["tab:2"]?.title).toBe("Content / MSc in Mathematical Sciences");
+    expect(state.nodes[`tab:${restoredLinkTab!.id}`]).toBeUndefined();
+    expect(runtime.api.tabs.create).not.toHaveBeenCalledWith(
+      expect.objectContaining({ url: loginUrl })
+    );
+
+    const outlineNodesForOpenedLink = Object.values(state.nodes).filter((node) =>
+      node.kind === "tab" &&
+      (node.url === loginUrl || node.restore?.url === loginUrl || node.url === finalUrl || node.restore?.url === finalUrl) &&
+      node.parentId !== "window:10"
+    );
+    expect(outlineNodesForOpenedLink.map((node) => [node.id, node.status])).toEqual([["tab:2", "live"]]);
+  });
+
   it("reattaches delayed tabs after restoring a closed single-tab window node", async () => {
     const url = "about:debugging#/runtime/this-firefox";
     const runtime = fakeRuntime(
@@ -32579,10 +32807,10 @@ describe("background controller lifecycle", () => {
     const detachedWindow = state.nodes[`window:${detachedWindowId}`];
 
     expect(state.nodes["window:10"]?.childIds).toEqual(["tab:1"]);
-    expect(detachedWindow?.childIds).toEqual(["tab:2"]);
+    expect(detachedWindow?.childIds).toEqual(["tab:2", "tab:3"]);
     expect(state.nodes["tab:2"]).toMatchObject({ live: { windowId: detachedWindowId } });
     expect(state.nodes["tab:3"]).toMatchObject({
-      parentId: "tab:2",
+      parentId: `window:${detachedWindowId}`,
       active: true,
       live: { tabId: 3, windowId: detachedWindowId }
     });
@@ -32592,6 +32820,249 @@ describe("background controller lifecycle", () => {
       expect.arrayContaining([1]),
       expect.objectContaining({ windowId: detachedWindowId })
     );
+  });
+
+  it("keeps blank new tabs flat when they are created in a browser-detached window", async () => {
+    const runtime = fakeRuntime(
+      [
+        { id: 10, focused: true, incognito: false }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://calendar.example/week",
+          title: "Google Calendar - Week of Jun 1, 2026"
+        },
+        { id: 2, windowId: 10, index: 1, active: false, url: "https://two.example/", title: "Two" }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+
+    const detachedWindowId = nextRuntimeWindowId(runtime);
+    runtime.windows = runtime.windows
+      .map((windowInfo) => ({ ...windowInfo, focused: false }))
+      .concat({ id: detachedWindowId, focused: true, incognito: false });
+    const moved = moveTabsFromBrowser(runtime, [1], { windowId: detachedWindowId, index: 0 })[0];
+    if (!moved) {
+      throw new Error("Failed to move test tab");
+    }
+    applyNativeMoveActiveState(runtime, moved.id, 10, detachedWindowId, true);
+
+    runtime.events.tabDetached.dispatch(1, { oldWindowId: 10, oldPosition: 0 });
+    runtime.events.tabActivated.dispatch({ tabId: 2, windowId: 10, previousTabId: 1 });
+    runtime.events.tabAttached.dispatch(1, { newWindowId: detachedWindowId, newPosition: 0 });
+    runtime.events.windowFocusChanged.dispatch(detachedWindowId);
+    runtime.events.tabActivated.dispatch({ tabId: 1, windowId: detachedWindowId, previousTabId: 2 });
+    await runtime.events.tabDetached.flush();
+    await runtime.events.tabAttached.flush();
+    await runtime.events.tabActivated.flush();
+    await runtime.events.windowFocusChanged.flush();
+
+    createTabFromBrowser(runtime, {
+      id: 3,
+      windowId: detachedWindowId,
+      index: 0,
+      active: true,
+      openerTabId: 1,
+      url: "about:newtab",
+      title: "New Tab"
+    }, { awaitListeners: false });
+    createTabFromBrowser(runtime, {
+      id: 4,
+      windowId: detachedWindowId,
+      index: 1,
+      active: true,
+      openerTabId: 3,
+      url: "about:newtab",
+      title: "New Tab"
+    }, { awaitListeners: false });
+    createTabFromBrowser(runtime, {
+      id: 5,
+      windowId: detachedWindowId,
+      index: 3,
+      active: true,
+      openerTabId: 4,
+      url: "about:newtab",
+      title: "New Tab"
+    }, { awaitListeners: false });
+    runtime.events.tabActivated.dispatch({
+      tabId: 5,
+      windowId: detachedWindowId,
+      previousTabId: 1
+    });
+    await runtime.events.tabCreated.flush();
+    await runtime.events.tabActivated.flush();
+
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    const detachedWindow = state.nodes[`window:${detachedWindowId}`];
+
+    expect(state.nodes["window:10"]?.childIds).toEqual(["tab:2"]);
+    expect(detachedWindow?.childIds).toEqual(["tab:3", "tab:4", "tab:1", "tab:5"]);
+    for (const tabId of [1, 3, 4, 5]) {
+      expect(state.nodes[`tab:${tabId}`]?.parentId).toBe(`window:${detachedWindowId}`);
+      expect(state.nodes[`tab:${tabId}`]?.childIds).toEqual([]);
+      expect(state.nodes[`tab:${tabId}`]).toMatchObject({
+        live: { tabId, windowId: detachedWindowId }
+      });
+    }
+    expect(Object.values(state.nodes).filter((node) =>
+      node.kind === "window" &&
+      node.parentId === `window:${detachedWindowId}`
+    )).toHaveLength(0);
+    expect(runtime.tabs.filter((tab) => tab.windowId === detachedWindowId).map((tab) => tab.id)).toEqual([3, 4, 1, 5]);
+  });
+
+  it("claims restored blank tabs after a browser-detached window is closed and restored", async () => {
+    const runtime = fakeRuntime(
+      [
+        { id: 10, focused: true, incognito: false }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://calendar.example/week",
+          title: "University of York - Calendar - Week of 1 June 2026"
+        },
+        { id: 2, windowId: 10, index: 1, active: false, url: "https://two.example/", title: "Two" }
+      ]
+    );
+    vi.mocked(runtime.api.sessions.getRecentlyClosed).mockResolvedValue([
+      { window: { sessionId: "session-detached-window" } } as never
+    ]);
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+
+    const detachedWindowId = nextRuntimeWindowId(runtime);
+    runtime.windows = runtime.windows
+      .map((windowInfo) => ({ ...windowInfo, focused: false }))
+      .concat({ id: detachedWindowId, focused: true, incognito: false });
+    const moved = moveTabsFromBrowser(runtime, [1], { windowId: detachedWindowId, index: 0 })[0];
+    if (!moved) {
+      throw new Error("Failed to move test tab");
+    }
+    applyNativeMoveActiveState(runtime, moved.id, 10, detachedWindowId, true);
+
+    runtime.events.tabDetached.dispatch(1, { oldWindowId: 10, oldPosition: 0 });
+    runtime.events.tabActivated.dispatch({ tabId: 2, windowId: 10, previousTabId: 1 });
+    runtime.events.tabAttached.dispatch(1, { newWindowId: detachedWindowId, newPosition: 0 });
+    runtime.events.windowFocusChanged.dispatch(detachedWindowId);
+    runtime.events.tabActivated.dispatch({ tabId: 1, windowId: detachedWindowId, previousTabId: 2 });
+    await runtime.events.tabDetached.flush();
+    await runtime.events.tabAttached.flush();
+    await runtime.events.tabActivated.flush();
+    await runtime.events.windowFocusChanged.flush();
+
+    createTabFromBrowser(runtime, {
+      id: 3,
+      windowId: detachedWindowId,
+      index: 0,
+      active: true,
+      openerTabId: 1,
+      url: "about:newtab",
+      title: "New Tab"
+    }, { awaitListeners: false });
+    createTabFromBrowser(runtime, {
+      id: 4,
+      windowId: detachedWindowId,
+      index: 1,
+      active: true,
+      openerTabId: 3,
+      url: "about:newtab",
+      title: "New Tab"
+    }, { awaitListeners: false });
+    createTabFromBrowser(runtime, {
+      id: 5,
+      windowId: detachedWindowId,
+      index: 3,
+      active: true,
+      openerTabId: 4,
+      url: "about:newtab",
+      title: "New Tab"
+    }, { awaitListeners: false });
+    await runtime.events.tabCreated.flush();
+
+    await closeRuntimeWindow(runtime, detachedWindowId, { awaitListeners: true }, "windowRemovedOnly");
+    let state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(state.nodes[`window:${detachedWindowId}`]?.status).toBe("closed");
+    expect(state.nodes[`window:${detachedWindowId}`]?.childIds).toEqual(["tab:3", "tab:4", "tab:1", "tab:5"]);
+    for (const nodeId of ["tab:3", "tab:4", "tab:1", "tab:5"]) {
+      expect(state.nodes[nodeId]?.status).toBe("closed");
+    }
+
+    let restoredWindowId: number | undefined;
+    const restoredRuntimeTabs: RuntimeTab[] = [];
+    vi.mocked(runtime.api.sessions.restore).mockImplementation(async (sessionId: string) => {
+      if (sessionId !== "session-detached-window") {
+        return {};
+      }
+      restoredWindowId = nextRuntimeWindowId(runtime);
+      runtime.windows = runtime.windows
+        .map((windowInfo) => ({ ...windowInfo, focused: false }))
+        .concat({ id: restoredWindowId, focused: true, incognito: false });
+      const specs = [
+        { id: 30, index: 0, url: "about:newtab", title: "New Tab" },
+        { id: 31, index: 1, url: "about:newtab", title: "New Tab" },
+        {
+          id: 32,
+          index: 2,
+          url: "https://calendar.example/week",
+          title: "University of York - Calendar - Week of 1 June 2026"
+        },
+        { id: 33, index: 3, url: "about:newtab", title: "New Tab" }
+      ];
+      for (const spec of specs) {
+        const tab = {
+          ...spec,
+          windowId: restoredWindowId,
+          active: spec.id === 33
+        };
+        restoredRuntimeTabs.push(tab);
+        createTabFromBrowser(runtime, tab, { awaitListeners: false });
+      }
+      return {
+        window: {
+          id: restoredWindowId,
+          focused: true,
+          incognito: false,
+          tabs: []
+        }
+      } as never;
+    });
+
+    expectCommandAck(await controller.handleMessage({ type: "restoreNode", nodeId: `window:${detachedWindowId}` }), true);
+    await runtime.events.tabCreated.flush();
+    state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+
+    expect(restoredWindowId).toBeTypeOf("number");
+    expect(state.nodes[`window:${detachedWindowId}`]).toMatchObject({
+      status: "live",
+      live: { windowId: restoredWindowId }
+    });
+    expect(state.nodes[`window:${detachedWindowId}`]?.childIds).toEqual(["tab:3", "tab:4", "tab:1", "tab:5"]);
+    expect(state.nodes["tab:3"]?.live).toEqual({ tabId: 30, windowId: restoredWindowId });
+    expect(state.nodes["tab:4"]?.live).toEqual({ tabId: 31, windowId: restoredWindowId });
+    expect(state.nodes["tab:1"]?.live).toEqual({ tabId: 32, windowId: restoredWindowId });
+    expect(state.nodes["tab:5"]?.live).toEqual({ tabId: 33, windowId: restoredWindowId });
+    for (const runtimeTab of restoredRuntimeTabs) {
+      expect(state.nodes[`tab:${runtimeTab.id}`]).toBeUndefined();
+    }
+    expect(state.nodes["window:10"]?.childIds).toEqual(["tab:2"]);
+    expect(Object.values(state.nodes).filter((node) =>
+      node.kind === "tab" &&
+      node.status === "closed" &&
+      (node.restore?.url === "about:newtab" || node.url === "about:newtab") &&
+      node.parentId === `window:${detachedWindowId}`
+    )).toEqual([]);
+    expect(runtime.api.tabs.create).not.toHaveBeenCalledWith(expect.objectContaining({ url: "about:newtab" }));
+    expect(runtime.api.windows.create).not.toHaveBeenCalledWith(expect.objectContaining({ url: "about:newtab" }));
+    expect(runtime.api.windows.create).not.toHaveBeenCalledWith(expect.objectContaining({ url: expect.arrayContaining(["about:newtab"]) }));
   });
 
   it("does not merge windows when the first browser tab is detached and then opens a new tab", async () => {
@@ -32651,11 +33122,11 @@ describe("background controller lifecycle", () => {
     const detachedWindow = state.nodes[`window:${detachedWindowId}`];
 
     expect(state.nodes["window:10"]?.childIds).toEqual(["tab:2"]);
-    expect(detachedWindow?.childIds).toEqual(["tab:1"]);
+    expect(detachedWindow?.childIds).toEqual(["tab:1", "tab:3"]);
     expect(state.nodes["tab:1"]).toMatchObject({ live: { tabId: 1, windowId: detachedWindowId } });
     expect(state.nodes["tab:2"]).toMatchObject({ live: { tabId: 2, windowId: 10 } });
     expect(state.nodes["tab:3"]).toMatchObject({
-      parentId: "tab:1",
+      parentId: `window:${detachedWindowId}`,
       active: true,
       live: { tabId: 3, windowId: detachedWindowId }
     });

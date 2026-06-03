@@ -15,7 +15,7 @@ export function normalizeRestorableBrowserCreateUrl(url: string | undefined): st
 
   const lowerUrl = trimmed.toLocaleLowerCase();
   if (lowerUrl === ABOUT_BLANK_URL || lowerUrl === ABOUT_NEWTAB_URL) {
-    return lowerUrl;
+    return ABOUT_BLANK_URL;
   }
 
   try {

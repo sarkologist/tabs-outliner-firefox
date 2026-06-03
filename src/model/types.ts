@@ -93,18 +93,27 @@ export type LiveTabProjection = {
   windowId: number;
 };
 
+export type RestoreCreateTarget =
+  | {
+      kind: "url";
+      url: string;
+    }
+  | {
+      kind: "blank";
+    };
+
 export type RestorePlan =
   | {
       kind: "session";
       nodeId: NodeId;
       sessionId: string;
-      fallbackUrl?: string;
+      fallbackTarget?: RestoreCreateTarget;
       windowNodeId?: NodeId;
     }
   | {
-      kind: "url";
+      kind: "create";
       nodeId: NodeId;
-      url: string;
+      target: RestoreCreateTarget;
       windowNodeId?: NodeId;
     };
 
