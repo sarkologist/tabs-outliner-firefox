@@ -4609,7 +4609,7 @@ test.describe("sidebar projection hunt", () => {
     expect(result.requests.every((request) => request.query === "Tab 90")).toBe(true);
     expect(result.stateRequestCount).toBe(0);
     expect(result.searchValue).toBe("Tab 90");
-    expect(result.countText).toBe("10 matches / 1001 items");
+    expect(result.countText).toBe("10 matches / 1000 items");
     expect(result.visibleRows).toContain(1);
     expect(result.hasDeletedMatch).toBe(false);
     expect(result.hasRemainingMatch).toBe(true);
@@ -7042,6 +7042,167 @@ test.describe("sidebar projection hunt", () => {
     expect(result.countText).toBe("4 items / 4 saved");
     await expect(nodeRow(page, "window:30").getByRole("button", { name: "Restore Closed Window", exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "Undo", exact: true })).toBeEnabled();
+    expect(issues).toEqual([]);
+  });
+
+  test("psh-closed-search-clear-stale-query-keeps-restore-actions", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadClosedRestoreSidebar(page, { fullStatePending: true });
+
+    await page.locator("#search").fill("Closed tab 31");
+    await page.evaluate(async () => {
+      await projectionHuntApi().waitForProjectionRequest("Closed tab 31");
+    });
+    await page.locator("#clear-search").click();
+
+    const result = await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      await api.waitForProjectionRequest("");
+      api.resolveSliceForQuery("Closed tab 31");
+      await api.waitForIdleFrames(2);
+      api.resolveSliceForQuery("");
+      await api.waitForIdleFrames(4);
+      return {
+        commands: api.sentCommands(),
+        requests: api.projectionRequests(),
+        stateRequests: api.stateRequestCount(),
+        searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
+        visibleRows: api.visibleRows(),
+        closedWindowExists: Boolean(document.querySelector("[data-node-id='window:30']")),
+        closedTab30Exists: Boolean(document.querySelector("[data-node-id='tab:30']")),
+        staleClosedTabExists: Boolean(document.querySelector("[data-node-id='tab:31']")),
+        countText: document.querySelector("#state-count")?.textContent ?? ""
+      };
+    });
+
+    expect(result.commands).toEqual([]);
+    expect(result.requests[0]).toMatchObject({ query: "Closed tab 31", targetNodeId: undefined });
+    expect(result.requests.slice(1).every((request) => request.query === "" && request.targetNodeId === undefined))
+      .toBe(true);
+    expect(result.stateRequests).toBe(0);
+    expect(result.searchValue).toBe("");
+    expect(result.visibleRows).toContain(0);
+    expect(result.closedWindowExists).toBe(true);
+    expect(result.closedTab30Exists).toBe(true);
+    expect(result.staleClosedTabExists).toBe(false);
+    expect(result.countText).toBe("4 items / 4 saved");
+    await expect(nodeRow(page, "window:30").getByRole("button", { name: "Restore Closed Window", exact: true })).toBeVisible();
+    expect(issues).toEqual([]);
+  });
+
+  test("psh-closed-tab-query-replacement-last-restore-target-wins", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadClosedRestoreSidebar(page, { fullStatePending: true });
+
+    await page.locator("#search").fill("Closed tab 30");
+    await page.evaluate(async () => {
+      await projectionHuntApi().waitForProjectionRequest("Closed tab 30");
+    });
+    await page.locator("#search").fill("Closed tab 31");
+    await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      await api.waitForProjectionRequest("Closed tab 31");
+      api.resolveSliceForQuery("Closed tab 30");
+      await api.waitForIdleFrames(2);
+      api.resolveSliceForQuery("Closed tab 31");
+      await api.waitForVisibleRow(1);
+      await api.waitForIdleFrames(4);
+    });
+
+    await expect(page.locator(nodeSelector("tab:30"))).toHaveCount(0);
+    await expect(nodeRow(page, "tab:31")).toBeVisible();
+    await nodeRow(page, "tab:31").getByRole("button", { name: /Restore Closed tab 31/ }).click();
+
+    const result = await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      await api.waitForIdleFrames(2);
+      return {
+        commands: api.sentCommands(),
+        requests: api.projectionRequests(),
+        stateRequests: api.stateRequestCount(),
+        searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
+        visibleRows: api.visibleRows(),
+        hasLatestTarget: Boolean(document.querySelector("[data-node-id='tab:31']")),
+        hasStaleTarget: Boolean(document.querySelector("[data-node-id='tab:30']"))
+      };
+    });
+
+    expect(result.commands).toEqual([{ type: "restoreNode", nodeId: "tab:31" }]);
+    expect(result.requests[0]).toMatchObject({ query: "Closed tab 30", targetNodeId: undefined });
+    expect(result.requests[1]).toMatchObject({ query: "Closed tab 31", targetNodeId: undefined });
+    expect(result.stateRequests).toBe(0);
+    expect(result.searchValue).toBe("Closed tab 31");
+    expect(result.visibleRows).toContain(1);
+    expect(result.hasLatestTarget).toBe(true);
+    expect(result.hasStaleTarget).toBe(false);
+    expect(issues).toEqual([]);
+  });
+
+  test("psh-closed-child-restore-keeps-parent-preflight", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    const dialogMessages: string[] = [];
+    page.on("dialog", async (dialog) => {
+      dialogMessages.push(dialog.message());
+      await dialog.dismiss();
+    });
+    await loadClosedRestoreSidebar(page, { fullStatePending: true, delayRestoreScope: true });
+
+    await nodeRow(page, "window:30").getByRole("button", { name: "Restore Closed Window", exact: true }).click();
+    await page.waitForFunction(() => projectionHuntApi().sentCommands().length === 1);
+    await page.locator("#search").fill("Closed tab 31");
+    await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      await api.waitForProjectionRequest("Closed tab 31");
+      api.resolveSliceForQuery("Closed tab 31");
+      await api.waitForVisibleRow(1);
+    });
+    await nodeRow(page, "tab:31").getByRole("button", { name: /Restore Closed tab 31/ }).click();
+    await page.waitForFunction(() => projectionHuntApi().sentCommands().length === 2);
+
+    await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      api.emitHistoryStatus({ canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "restore closed child" });
+      api.emitDeletePatch(["tab:31"]);
+      api.resolveRestoreScope();
+      await api.waitForIdleFrames(8);
+    });
+    await page.locator("#clear-search").click();
+
+    const result = await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      await api.waitForProjectionRequest("");
+      api.resolveSliceForQuery("");
+      await api.waitForIdleFrames(4);
+      return {
+        commands: api.sentCommands(),
+        requests: api.projectionRequests(),
+        stateRequests: api.stateRequestCount(),
+        searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
+        visibleRows: api.visibleRows(),
+        closedWindowExists: Boolean(document.querySelector("[data-node-id='window:30']")),
+        closedTab30Exists: Boolean(document.querySelector("[data-node-id='tab:30']")),
+        restoredChildExists: Boolean(document.querySelector("[data-node-id='tab:31']")),
+        undoEnabled: !document.querySelector<HTMLButtonElement>("#undo")?.disabled
+      };
+    });
+
+    expect(result.commands).toEqual([
+      { type: "analyzeRestoreScope", nodeId: "window:30" },
+      { type: "restoreNode", nodeId: "tab:31" }
+    ]);
+    expect(result.requests.slice(0, -1).every((request) => (
+      request.query === "Closed tab 31" && request.targetNodeId === undefined
+    ))).toBe(true);
+    expect(result.requests.at(-1)).toMatchObject({ query: "", targetNodeId: undefined });
+    expect(result.stateRequests).toBe(0);
+    expect(result.searchValue).toBe("");
+    expect(result.visibleRows).toContain(0);
+    expect(result.closedWindowExists).toBe(true);
+    expect(result.closedTab30Exists).toBe(true);
+    expect(result.restoredChildExists).toBe(false);
+    expect(result.undoEnabled).toBe(true);
+    expect(dialogMessages).toEqual([]);
+    await expect(nodeRow(page, "window:30").getByRole("button", { name: "Restore Closed Window", exact: true })).toBeVisible();
     expect(issues).toEqual([]);
   });
 

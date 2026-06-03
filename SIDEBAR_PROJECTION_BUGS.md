@@ -18,13 +18,13 @@ pnpm perf:sidebar-projection-guard
 
 ## Last Projection Run
 
-- Started: 2026-05-27
-- Strategy: collapsed-boundary hunt after the PT-035 fix, focused on drag/drop and local action coverage across collapsed ancestors, hidden children, and non-visible sibling order without automatic full hydration.
-- Last completed run scenario ids: 184 `psh-*` Playwright discovery/regression scenarios before this hunt; this discovery checkpoint adds 21 more `psh-*` scenarios for 205 total.
-- Distinct findings recorded: 36
-- Status: `PT-001` through `PT-031` and `PT-033` through `PT-037` are fixed. The sparse action follow-up hunt suspected `PT-032` around rename/search replacement, but the follow-up fix pass retracted it as a harness-ordering false positive and kept the corrected scenarios as required-passing coverage.
-- Clean blocks after latest finding: 3 after `PT-037`; the collapsed-boundary discovery stop condition was reached before the fix pass.
-- Verification: preflight `pnpm run build`, the 184-scenario projection corpus, and `pnpm perf:sidebar-projection-guard -- --smoke` passed before this hunt. Block 0 added collapsed-parent inside-drop coverage; `psh-collapsed-parent-inside-drop-covered-child-order-sends-command` passed, while `psh-collapsed-parent-inside-drop-missing-child-order-refills` exposed `PT-036`. Block 1 added search-visible hidden-child drag/drop and multi-sidebar coverage; covered cases passed and the missing-coverage case duplicated `PT-036`. Block 2 added collapsed-boundary expand/collapse patch coverage; collapse of already loaded children passed, while expansion exposed `PT-037`. Clean block 1 after `PT-037` added hidden-child show-in-tree, stale clear-search, hidden-child title/delete, and hover cleanup variants with no new distinct finding. Clean block 2 added parent-delete, clear-search action cleanup, mid-drag collapse cleanup, and two-sidebar collapse/search independence with no new distinct finding. Clean block 3 added expanded-child delete, search/target full-broadcast preservation, and hidden-child move-before-target-response coverage with no new distinct finding. After freezing the findings, proposal scouts were closed/removed, `pnpm run build`, the full 205-scenario projection corpus, and `pnpm perf:sidebar-projection-guard -- --smoke` passed. The follow-up fix pass converted the `PT-036` and `PT-037` repros to required-passing tests; targeted collapsed coverage, the full 205-scenario projection corpus, sparse scroll, first-paint, build, and `pnpm perf:sidebar-projection-guard` passed.
+- Started: 2026-06-03
+- Strategy: data-loss complement after the runtime `dl-*` hunt, focused on sparse closed/restorable rows, stale query replacement, and delayed closed-window restore scopes while closed children are restored.
+- Last completed run scenario ids: 207 `psh-*` scenarios before this checkpoint; this discovery checkpoint adds 3 more `psh-*` scenarios for 210 total.
+- Distinct findings recorded: 37
+- Status: `PT-001` through `PT-031` and `PT-033` through `PT-037` are fixed. The sparse action follow-up hunt suspected `PT-032` around rename/search replacement, but the follow-up fix pass retracted it as a harness-ordering false positive and kept the corrected scenarios as required-passing coverage. `PT-038` is open.
+- Clean blocks after latest finding: 0 after `PT-038`.
+- Verification: targeted replay of `psh-closed-search-clear-stale-query-keeps-restore-actions`, `psh-closed-tab-query-replacement-last-restore-target-wins`, and `psh-closed-child-restore-keeps-parent-preflight` passed the first two scenarios and exposed `PT-038` in the third. The full 210-scenario projection corpus then passed 209 scenarios and failed only the frozen open `PT-038` repro after correcting an unrelated stale count oracle for a visible search-delete test.
 
 ## Fix Analysis
 
@@ -49,7 +49,7 @@ pnpm perf:sidebar-projection-guard
 ## Finding Index
 
 - Fixed projection findings: `PT-001`, `PT-002`, `PT-003`, `PT-004`, `PT-005`, `PT-006`, `PT-007`, `PT-008`, `PT-009`, `PT-010`, `PT-011`, `PT-012`, `PT-013`, `PT-014`, `PT-015`, `PT-016`, `PT-017`, `PT-018`, `PT-019`, `PT-020`, `PT-021`, `PT-022`, `PT-023`, `PT-024`, `PT-025`, `PT-026`, `PT-027`, `PT-028`, `PT-029`, `PT-030`, `PT-031`, `PT-033`, `PT-034`, `PT-035`, `PT-036`, `PT-037`
-- Open projection findings: none
+- Open projection findings: `PT-038`
 - Retracted projection suspicions: `PT-032`
 
 ### PT-001 rejected sparse slice leaves viewport blank/no retry
@@ -588,3 +588,17 @@ pnpm exec playwright test tests/playwright/sidebar-projection-hunt.spec.ts --gre
 - Actual before fix: the `toggleCollapsed` command is sent and the collapsed patch is applied locally, but no `getTreeProjectionSlice` request is made. The parent can become expanded while the hidden child rows remain absent.
 - Evidence: the frozen scenario loads `window:1 -> tab:10, group:collapsed, tab:90` with `tab:50` and `tab:51` present only in the background fixture. It clicks `Expand`, emits a `nodeStateUpdated` patch setting `group:collapsed.collapsed = false`, then times out waiting for any sparse projection request. The paired `psh-collapsed-parent-collapse-patch-hides-loaded-children` scenario starts with those children loaded and verifies collapse hides them locally without full hydration.
 - Fix: collapsed-state node patches may explicitly request a current-owner sparse slice even when the visible projection rows equal the visible total. Tree-structure patch fallbacks stay strict, so covered collapsed move/delete patches still update locally without replacing hidden-child visibility with a broader remote refill.
+
+### PT-038 delayed closed-window restore preflight can prompt after child restore
+
+- Status: open
+- Found by: `psh-closed-child-restore-keeps-parent-preflight`
+- Repro:
+
+```sh
+pnpm exec playwright test tests/playwright/sidebar-projection-hunt.spec.ts --grep "psh-closed-child-restore-keeps-parent-preflight" --reporter=list --workers=1
+```
+
+- Expected: if a closed child in a delayed closed-window restore scope is directly restored and then removed by a compact delete patch, the old parent restore-scope response should not prompt for the original subtree or send a parent restore command. The remaining closed parent and sibling should still be visible after clearing search.
+- Actual: resolving the old parent `analyzeRestoreScope` response opens the stale large-restore confirmation prompt for the original four-node closed window after `tab:31` has already been restored and removed.
+- Evidence: the frozen scenario delays `analyzeRestoreScope` for `window:30`, searches for sparse child `Closed tab 31`, sends `restoreNode` for `tab:31`, emits history status plus a `treeStructureUpdated` delete patch for `tab:31`, then resolves the old parent scope. Playwright observes the stale confirmation dialog while `window:30` and `tab:30` remain visible after clear-search, no full `getState` occurs, and the command stream is only `analyzeRestoreScope(window:30)` followed by `restoreNode(tab:31)`.

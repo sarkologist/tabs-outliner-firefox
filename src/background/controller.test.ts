@@ -19108,6 +19108,244 @@ const RUNTIME_DOMAIN_DISCOVERY_TRACES: RuntimeDomainTrace[] = [
       { type: "outlinerRedo" },
       { type: "outlinerCloseWindow", window: { capture: "so-b3-close-window" } }
     ]
+  },
+  {
+    id: "dl-b1-closed-window-passive-external-drift",
+    title: "data loss block1 closed window passive external drift",
+    notes: "Data-loss block 1: a TO-closed saved window is a passive persistence victim while unrelated browser-created scopes move, close, restart, and emit stale evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["data-loss", "closed-subtree", "persistence", "outliner-close", "browserCreated", "native-move", "native-close", "restart", "stale-event", "side-effects"],
+    assertions: ["runtimeSideEffects", "closedSubtreePersistence"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "DL B1 drift A owner" }, { title: "DL B1 drift A mover", active: true }], captureWindow: "dl-b1-drift-a-window", captureTabs: "dl-b1-drift-a-tabs" },
+      { type: "nativeOpenWindow", focused: true, tabs: [{ title: "DL B1 drift B target", active: true }], captureWindow: "dl-b1-drift-b-window", captureTabs: "dl-b1-drift-b-tabs" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "dl-b1-drift-a-tabs", index: 1 }, window: { capture: "dl-b1-drift-b-window" }, index: 0, active: true, captureStaleTabs: "dl-b1-drift-a-old" },
+      { type: "nativeCloseWindow", window: { capture: "dl-b1-drift-a-window" }, order: "windowRemovedOnly" },
+      { type: "restartBackground" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "dl-b1-drift-a-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "dl-b1-closed-tab-sibling-roundtrip",
+    title: "data loss block1 closed tab sibling roundtrip",
+    notes: "Data-loss block 1: a TO-closed leaf must persist while live siblings detach, return, update metadata, and receive reordered browser evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["data-loss", "closed-subtree", "persistence", "outliner-close", "saved", "native-move", "metadata", "stale-query", "runtime-scope-order", "side-effects"],
+    assertions: ["runtimeSideEffects", "runtimeScopeOrder", "runtimeMetadata", "closedSubtreePersistence"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, title: "DL B1 closed leaf", url: "https://dl.example/b1-closed-leaf", captureTab: "dl-b1-closed-leaf" },
+      { type: "outlinerCloseTab", tab: { capture: "dl-b1-closed-leaf" } },
+      { type: "nativeMoveTabToNewWindow", tab: { tabId: 2 }, active: true, captureWindow: "dl-b1-roundtrip-window", captureStaleTabs: "dl-b1-roundtrip-source-old" },
+      { type: "nativeMoveTabToWindow", tab: { role: "lastMovedTab" }, window: { windowId: 10 }, index: 0, active: true, captureStaleTabs: "dl-b1-roundtrip-detached-old" },
+      { type: "updateTab", tab: { role: "lastMovedTab" }, title: "DL B1 roundtrip current", url: "https://dl.example/b1-roundtrip-current" },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 10 }, order: "rotateLeft" },
+      { type: "restartBackground" }
+    ]
+  },
+  {
+    id: "dl-b1-restored-session-close-focus-drift",
+    title: "data loss block1 restored session close focus drift",
+    notes: "Data-loss block 1: a restored saved window closes via session-only last-tab evidence, then unrelated focus/open drift must not erase the closed restored subtree.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["data-loss", "closed-subtree", "persistence", "restored", "native-close", "session", "focus", "browserCreated", "window-state", "metadata", "side-effects"],
+    assertions: ["runtimeSideEffects", "runtimeMetadata", "closedSubtreePersistence"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "dl-b1-session-restored-tabs", captureRestoredWindows: "dl-b1-session-restored-window" },
+      { type: "nativeSetWindowState", window: { capture: "dl-b1-session-restored-window" }, state: "fullscreen" },
+      { type: "updateTab", tab: { capture: "dl-b1-session-restored-tabs" }, title: "DL B1 restored current", url: "https://dl.example/b1-restored-current" },
+      { type: "nativeCloseTab", tab: { capture: "dl-b1-session-restored-tabs" }, order: "sessionChangedOnly" },
+      { type: "nativeOpenWindow", focused: true, tabs: [{ title: "DL B1 focus drift", active: true }], captureWindow: "dl-b1-focus-window", captureTabs: "dl-b1-focus-tabs" },
+      { type: "focusWindow", window: { capture: "dl-b1-focus-window" } },
+      { type: "manualRefreshWithMissingWindowQuery", window: { windowId: 10 } },
+      { type: "restartBackground" }
+    ]
+  },
+  {
+    id: "dl-b2-history-replay-closed-window-persist",
+    title: "data loss block2 history replay closed window persist",
+    notes: "Data-loss block 2: history replay after a TO close crosses abrupt restart and stale query evidence without intentionally undoing the closed subtree.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["data-loss", "closed-subtree", "persistence", "history", "outliner-close", "restart", "stale-query", "stale-event", "side-effects"],
+    assertions: ["runtimeSideEffects", "closedSubtreePersistence"],
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "dl-b2-history-group-old" },
+      { type: "outlinerUndo" },
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRedoThenAbruptRestart" },
+      { type: "manualRefreshWithStaleQuery", staleTab: { capture: "dl-b2-history-group-old" } },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "dl-b2-history-group-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "dl-b2-restore-reject-reclose-persist",
+    title: "data loss block2 restore reject reclose persist",
+    notes: "Data-loss block 2: a restored side effect from a rejecting restore command is reclosed across abrupt restart and must persist as the original closed subtree.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["data-loss", "closed-subtree", "persistence", "restore", "command-rejection", "outliner-close", "journal", "restart", "session", "stale-event", "side-effects"],
+    assertions: ["runtimeSideEffects", "closedSubtreePersistence"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeRejectingCreate", node: { nodeId: "window:20" }, captureRestoredTabs: "dl-b2-reject-restored-tabs", captureRestoredWindows: "dl-b2-reject-restored-window" },
+      { type: "outlinerCloseNodeThenAbruptRestart", node: { window: { capture: "dl-b2-reject-restored-window" } }, captureStaleTabs: "dl-b2-reject-reclose-old" },
+      { type: "sessionChanged" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "dl-b2-reject-reclose-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "dl-b3-restored-owner-close-foreign-survivor",
+    title: "data loss block3 restored owner close foreign survivor",
+    notes: "Data-loss block 3: a restored owner closes after absorbing a browser-created foreign tab; the owner must persist closed while the foreign survivor remains live.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["data-loss", "closed-subtree", "persistence", "restored", "browserCreated", "native-move", "outliner-close", "restart", "stale-event", "runtime-scope-order", "metadata", "side-effects"],
+    assertions: ["runtimeSideEffects", "runtimeScopeOrder", "runtimeMetadata", "closedSubtreePersistence"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "dl-b3-owner-restored-tabs", captureRestoredWindows: "dl-b3-owner-restored-window" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "DL B3 foreign guest" }, { title: "DL B3 foreign survivor", active: true }], captureWindow: "dl-b3-foreign-window", captureTabs: "dl-b3-foreign-tabs" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "dl-b3-foreign-tabs" }, window: { capture: "dl-b3-owner-restored-window" }, index: 0, active: false, captureStaleTabs: "dl-b3-foreign-old" },
+      { type: "outlinerCloseNodeThenAbruptRestart", node: { tab: { capture: "dl-b3-owner-restored-tabs" } }, captureStaleTabs: "dl-b3-owner-reclose-old" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "dl-b3-foreign-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "dl-b3-native-close-stale-created-after-abrupt",
+    title: "data loss block3 native close stale created after abrupt",
+    notes: "Data-loss block 3: a TO-known browser-created window closes before abrupt restart, then stale created/query evidence must not resurrect it or drop the closed record.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["data-loss", "closed-subtree", "persistence", "browserCreated", "native-open", "native-close", "restart", "stale-event", "stale-query", "side-effects"],
+    assertions: ["runtimeSideEffects", "closedSubtreePersistence"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "DL B3 external opener", active: true }, { title: "DL B3 external child" }], captureWindow: "dl-b3-native-close-window", captureTabs: "dl-b3-native-close-tabs" },
+      { type: "nativeCloseWindow", window: { capture: "dl-b3-native-close-window" }, order: "windowRemovedThenTabsRemoved" },
+      { type: "restartBackgroundAbrupt" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "dl-b3-native-close-tabs" }, withStaleQuery: true },
+      { type: "manualRefreshWithStaleQuery", staleTab: { capture: "dl-b3-native-close-tabs", index: 1 } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "dl-b4-unconfirmed-journal-passive-closed-victim",
+    title: "data loss block4 unconfirmed journal passive closed victim",
+    notes: "Data-loss block 4: a passive TO-closed window survives an unrelated unconfirmed close journal, abrupt restarts, history replay, and stale query evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["data-loss", "closed-subtree", "persistence", "journal", "history", "restart", "stale-query", "outliner-close", "side-effects"],
+    assertions: ["runtimeSideEffects", "closedSubtreePersistence"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "dl-b4-unconfirmed-group-old" },
+      { type: "injectCloseJournalThenAbruptRestart", node: { tab: { tabId: 2 } } },
+      { type: "outlinerUndoThenAbruptRestart" },
+      { type: "manualRefreshWithStaleQuery", staleTab: { capture: "dl-b4-unconfirmed-group-old" } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "dl-b4-relocation-close-journal-stack",
+    title: "data loss block4 relocation close journal stack",
+    notes: "Data-loss block 4: a recovered command-created destination is later TO-closed across another abrupt restart while stale source and destination echoes compete.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["data-loss", "closed-subtree", "persistence", "relocation", "commandCreated", "outliner-close", "journal", "restart", "stale-event", "stale-query", "side-effects"],
+    assertions: ["runtimeSideEffects", "closedSubtreePersistence"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindowThenAbruptRestart", tab: { tabId: 2 }, captureStaleTabs: "dl-b4-relocation-source-old" },
+      { type: "openTab", window: { role: "lastOpenedWindow" }, active: false, title: "DL B4 relocation sibling", url: "https://dl.example/b4-relocation-sibling", captureTab: "dl-b4-relocation-sibling" },
+      { type: "outlinerCloseNodeThenAbruptRestart", node: { window: { role: "lastOpenedWindow" } }, captureStaleTabs: "dl-b4-relocation-close-old" },
+      { type: "manualRefreshWithStaleQuery", staleTab: { capture: "dl-b4-relocation-source-old" } },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "dl-b4-relocation-close-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "dl-b4-closed-window-command-cohabitation-redo",
+    title: "data loss block4 closed window command cohabitation redo",
+    notes: "Data-loss block 4: a TO-closed saved window persists while command-created and browser-created tabs cohabit through undo/redo crash replay and partial source evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["data-loss", "closed-subtree", "persistence", "commandCreated", "browserCreated", "native-move", "history", "restart", "partial-snapshot", "runtime-scope-order", "metadata", "side-effects"],
+    assertions: ["runtimeSideEffects", "runtimeScopeOrder", "runtimeMetadata", "closedSubtreePersistence"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "DL B4 cohabit guest" }, { title: "DL B4 cohabit survivor", active: true }], captureWindow: "dl-b4-cohabit-source", captureTabs: "dl-b4-cohabit-tabs" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "dl-b4-cohabit-command-old" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "dl-b4-cohabit-tabs" }, window: { role: "lastOpenedWindow" }, index: 0, active: true, captureStaleTabs: "dl-b4-cohabit-foreign-old" },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedoThenAbruptRestart" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { capture: "dl-b4-cohabit-source" } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "dl-b4-closed-window-fullscreen-focus-reject",
+    title: "data loss block4 closed window fullscreen focus reject",
+    notes: "Data-loss block 4: a TO-closed saved window persists while browser-created fullscreen, metadata, focus rejection, and partial snapshot evidence churn elsewhere.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["data-loss", "closed-subtree", "persistence", "browserCreated", "window-state", "metadata", "focus", "command-rejection", "partial-snapshot", "restart", "side-effects"],
+    assertions: ["runtimeSideEffects", "runtimeMetadata", "closedSubtreePersistence"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "nativeOpenWindow", focused: true, tabs: [{ title: "DL B4 focus external", active: true }], captureWindow: "dl-b4-focus-reject-window", captureTabs: "dl-b4-focus-reject-tabs" },
+      { type: "nativeSetWindowState", window: { capture: "dl-b4-focus-reject-window" }, state: "fullscreen" },
+      { type: "updateTab", tab: { capture: "dl-b4-focus-reject-tabs" }, title: "DL B4 focus current", url: "https://dl.example/b4-focus-current" },
+      { type: "outlinerFocusTabRejectingUpdate", tab: { capture: "dl-b4-focus-reject-tabs" } },
+      { type: "manualRefreshWithMissingWindowQuery", window: { capture: "dl-b4-focus-reject-window" } },
+      { type: "restartBackground" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "dl-b5-same-url-tab-bucket-roundtrip",
+    title: "data loss block5 same url tab bucket roundtrip",
+    notes: "Data-loss block 5: two same-URL closed tab records survive restoring and reclosing one of them across abrupt restart boundaries.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["data-loss", "closed-subtree", "persistence", "same-url", "restore", "outliner-close", "restart", "metadata", "side-effects"],
+    assertions: ["runtimeSideEffects", "runtimeMetadata", "closedSubtreePersistence"],
+    actions: [
+      { type: "updateTab", tab: { tabId: 2 }, title: "DL B5 same URL original", url: "https://dl.example/b5-same-url" },
+      { type: "openTab", window: { windowId: 10 }, active: false, title: "DL B5 same URL duplicate", url: "https://dl.example/b5-same-url", captureTab: "dl-b5-same-url-duplicate" },
+      { type: "outlinerCloseTab", tab: { tabId: 2 } },
+      { type: "outlinerCloseTab", tab: { capture: "dl-b5-same-url-duplicate" } },
+      { type: "restartBackground" },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "tab:2" }, captureRestoredTabs: "dl-b5-same-url-restored-tabs", captureRestoredWindows: "dl-b5-same-url-restored-window" },
+      { type: "outlinerCloseNodeThenAbruptRestart", node: { tab: { capture: "dl-b5-same-url-restored-tabs" } }, captureStaleTabs: "dl-b5-same-url-reclose-old" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "dl-b5-same-url-reclose-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "dl-b5-closed-child-restored-parent-reclose",
+    title: "data loss block5 closed child restored parent reclose",
+    notes: "Data-loss block 5: a restored multi-tab parent has one child TO-closed, gains a new child, and is then reclosed across abrupt restart without losing earlier closed children.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["data-loss", "closed-subtree", "persistence", "restored", "multi-tab", "outliner-close", "restart", "stale-event", "side-effects"],
+    assertions: ["runtimeSideEffects", "closedSubtreePersistence"],
+    actions: [
+      { type: "openTab", window: { windowId: 20 }, active: false, title: "DL B5 restored extra", url: "https://dl.example/b5-restored-extra", captureTab: "dl-b5-restored-extra" },
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "dl-b5-restored-parent-tabs", captureRestoredWindows: "dl-b5-restored-parent-window" },
+      { type: "outlinerCloseTab", tab: { capture: "dl-b5-restored-parent-tabs" } },
+      { type: "openTab", window: { capture: "dl-b5-restored-parent-window" }, active: false, title: "DL B5 restored late child", url: "https://dl.example/b5-restored-late-child", captureTab: "dl-b5-restored-late-child" },
+      { type: "outlinerCloseNodeThenAbruptRestart", node: { window: { capture: "dl-b5-restored-parent-window" } }, captureStaleTabs: "dl-b5-restored-parent-reclose-old" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "dl-b5-restored-parent-reclose-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
   }
 ];
 
