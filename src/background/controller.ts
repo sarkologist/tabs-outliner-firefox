@@ -161,6 +161,9 @@ type RuntimeLifecycleJournalEntryRecovery = {
   completedDeleteClosePlan?: RuntimeClosePlan;
 };
 
+type NativeTabCloseJournalEntry = Extract<RuntimeLifecycleJournalEntry, { kind: "nativeTabClose" }>;
+type NativeWindowCloseJournalEntry = Extract<RuntimeLifecycleJournalEntry, { kind: "nativeWindowClose" }>;
+
 type MutationPriority = "high" | "low";
 
 type ScheduledMutation<T = unknown> = {
@@ -581,8 +584,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
           ? runtimeLifecycleJournalEntryForNativeTabClose(current, tabId, removeInfo.windowId)
           : undefined;
         if (runtimeLifecycleJournalEntry) {
-          await ensureDurableRuntimeLifecycleBase();
-          await appendRuntimeLifecycleJournalEntry(api, runtimeLifecycleJournalEntry);
+          await appendObservedNativeTabCloseJournalEntry(runtimeLifecycleJournalEntry);
         }
         const runtimeWindowsAfterRemoval = removal === "delete-tab"
           ? await getNormalWindows(api).catch(() => undefined)
@@ -1182,7 +1184,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     windowId: number,
     liveTabIds: readonly number[],
     sessionId?: string
-  ): RuntimeLifecycleJournalEntry | undefined {
+  ): NativeWindowCloseJournalEntry | undefined {
     if (!liveWindowNodeByRuntimeId(current, windowId)) {
       return undefined;
     }
@@ -1202,7 +1204,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     current: OutlineState,
     tabId: number,
     windowId?: number
-  ): RuntimeLifecycleJournalEntry | undefined {
+  ): NativeTabCloseJournalEntry | undefined {
     const liveTab = Object.values(current.nodes).find(
       (node) => isLiveTabNode(node) && node.live.tabId === tabId
     );
@@ -1272,6 +1274,15 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       return;
     }
     await flushPendingSaves();
+  }
+
+  async function appendObservedNativeTabCloseJournalEntry(entry: NativeTabCloseJournalEntry): Promise<void> {
+    // Native tab-close side effects already happened; replay by runtime id is enough to recover against the
+    // last persisted state when that tab is already live there, so avoid flushing unrelated pending saves.
+    if (!lastPersistedState || !liveTabNodeByRuntimeId(lastPersistedState, entry.tabId)) {
+      await ensureDurableRuntimeLifecycleBase();
+    }
+    await appendRuntimeLifecycleJournalEntry(api, entry);
   }
 
   function markRuntimeLifecycleJournalEntryForClearAfterSave(entry: RuntimeLifecycleJournalEntry | undefined): void {
@@ -4965,8 +4976,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         for (const tabId of liveTabIds) {
           const runtimeLifecycleJournalEntry = runtimeLifecycleJournalEntryForNativeTabClose(next, tabId, windowId);
           if (runtimeLifecycleJournalEntry) {
-            await ensureDurableRuntimeLifecycleBase();
-            await appendRuntimeLifecycleJournalEntry(api, runtimeLifecycleJournalEntry);
+            await appendObservedNativeTabCloseJournalEntry(runtimeLifecycleJournalEntry);
             runtimeLifecycleJournalEntries.push(runtimeLifecycleJournalEntry);
           }
         }
@@ -5015,8 +5025,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
           liveTabNodeByRuntimeId(next, tabId)?.live.windowId
         );
         if (runtimeLifecycleJournalEntry) {
-          await ensureDurableRuntimeLifecycleBase();
-          await appendRuntimeLifecycleJournalEntry(api, runtimeLifecycleJournalEntry);
+          await appendObservedNativeTabCloseJournalEntry(runtimeLifecycleJournalEntry);
           runtimeLifecycleJournalEntries.push(runtimeLifecycleJournalEntry);
         }
         next = deleteLiveTabNodeByTabId(next, tabId);

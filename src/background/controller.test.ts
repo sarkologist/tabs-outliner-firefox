@@ -27419,6 +27419,92 @@ describe("background controller lifecycle", () => {
     expect(runtime.api.sessions.getRecentlyClosed).not.toHaveBeenCalled();
   });
 
+  it("broadcasts native tab removals before flushing unrelated pending runtime saves", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        },
+        {
+          id: 2,
+          windowId: 10,
+          index: 1,
+          active: false,
+          url: "https://two.example/",
+          title: "Two"
+        },
+        {
+          id: 3,
+          windowId: 10,
+          index: 2,
+          active: false,
+          url: "https://three.example/",
+          title: "Three"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    await controller.flushPendingSaves();
+    vi.mocked(runtime.api.storage.local.set).mockClear();
+
+    await updateTabFromBrowser(runtime, 3, { title: "Three updated" });
+    expect(((await controller.handleMessage({ type: "getState" })) as OutlineState).nodes["tab:3"]?.title).toBe(
+      "Three updated"
+    );
+    runtime.broadcasts.length = 0;
+
+    const releaseStateSave = deferred();
+    let stateSaveStarted = false;
+    const originalSet = vi.mocked(runtime.api.storage.local.set).getMockImplementation();
+    if (!originalSet) {
+      throw new Error("Expected fake storage set implementation");
+    }
+    vi.mocked(runtime.api.storage.local.set).mockImplementation(async (items) => {
+      if (items && typeof items === "object" && !Array.isArray(items) && STATE_V3_MANIFEST_KEY in items) {
+        stateSaveStarted = true;
+        await releaseStateSave.promise;
+      }
+      return originalSet(items);
+    });
+
+    const deletionPatchReceived = (): boolean =>
+      stateBroadcasts(runtime.broadcasts).some((message) =>
+        (message as { type?: string; deletedNodeIds?: string[] }).type === "treeStructureUpdated" &&
+        (message as { deletedNodeIds?: string[] }).deletedNodeIds?.includes("tab:2")
+      );
+
+    try {
+      await closeRuntimeTab(runtime, 2, "tabRemovedOnly", { awaitListeners: false });
+      for (let attempt = 0; attempt < 10 && !deletionPatchReceived(); attempt += 1) {
+        await waitForMacrotask();
+      }
+
+      expect(stateSaveStarted).toBe(false);
+      expect(deletionPatchReceived()).toBe(true);
+    } finally {
+      releaseStateSave.resolve();
+      vi.mocked(runtime.api.storage.local.set).mockImplementation(originalSet);
+    }
+
+    await runtime.events.tabRemoved.flush();
+    await controller.flushPendingSaves();
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(state.nodes["tab:2"]).toBeUndefined();
+  });
+
   it("deletes restored tabs when they are closed through browser chrome", async () => {
     const runtime = fakeRuntime(
       [
