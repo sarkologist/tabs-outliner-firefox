@@ -16,7 +16,8 @@ import {
   outlineStateV2Items,
   outlineStateV3Changes,
   saveState,
-  saveStateAndHistory
+  saveStateAndHistory,
+  type StateSavePhase
 } from "./storage.js";
 import { reconcileWithWindows } from "../model/outline.js";
 import type { OutlineNode, OutlineState } from "../model/types.js";
@@ -493,6 +494,43 @@ describe("outline state v2 storage", () => {
     expect(saved?.[STATE_V3_MANIFEST_KEY]).toBeDefined();
     expect(saved?.[HISTORY_KEY]).toEqual({ version: 1, undoStack: [], redoStack: [] });
     await expect(loadStateV3(api)).resolves.toEqual(state);
+  });
+
+  it("reports v3 save phases with key counts", async () => {
+    const previous = makeLargeState(1100);
+    const next = removeLastOrderPage(previous);
+    const api = fakeApi();
+    const phases: StateSavePhase[] = [];
+    await saveState(previous, api);
+
+    await saveStateAndHistory(next, undefined, api, {
+      previousState: previous,
+      onPhase: (phase) => {
+        phases.push(phase);
+      }
+    });
+
+    expect(phases.map((phase) => phase.name)).toEqual([
+      "v3.changeBuild",
+      "storage.set",
+      "storage.remove"
+    ]);
+    expect(phases.every((phase) => phase.durationMs >= 0)).toBe(true);
+    expect(phases.find((phase) => phase.name === "v3.changeBuild")?.detail).toMatchObject({
+      fullSave: false,
+      setKeys: expect.any(Number),
+      removeKeys: expect.any(Number),
+      nodeShardSetKeys: expect.any(Number),
+      orderPageSetKeys: expect.any(Number),
+      orderPageRemoveKeys: expect.any(Number)
+    });
+    expect(phases.find((phase) => phase.name === "storage.set")?.detail).toMatchObject({
+      keys: expect.any(Number),
+      hasManifest: true
+    });
+    expect(phases.find((phase) => phase.name === "storage.remove")?.detail).toMatchObject({
+      keys: expect.any(Number)
+    });
   });
 });
 

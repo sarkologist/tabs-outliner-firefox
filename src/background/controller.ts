@@ -43,7 +43,7 @@ import {
   loadStateWithMetadata,
   saveStateAndHistory
 } from "./storage.js";
-import type { InitialTreeSnapshot, LoadStateOptions, StateLoadPhase } from "./storage.js";
+import type { InitialTreeSnapshot, LoadStateOptions, SaveStateOptions, StateLoadPhase, StateSavePhase } from "./storage.js";
 import {
   applyOutlineDelta,
   cloneOutlineNode,
@@ -2308,6 +2308,24 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   function stateLoadTraceDetail(phase: StateLoadPhase): TraceDetail {
     return {
       durationMs: phase.durationMs,
+      ...(phase.detail ?? {})
+    };
+  }
+
+  function stateSaveTraceOptions(): Pick<SaveStateOptions, "onPhase"> | undefined {
+    if (!perfTrace.isEnabled()) {
+      return undefined;
+    }
+
+    return {
+      onPhase: (phase) => {
+        perfTrace.record(`background.state.save.${phase.name}`, phase.durationMs, stateSaveTraceDetail(phase));
+      }
+    };
+  }
+
+  function stateSaveTraceDetail(phase: StateSavePhase): TraceDetail {
+    return {
       ...(phase.detail ?? {})
     };
   }
@@ -4706,7 +4724,8 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     await perfTrace.measureAsync("background.state.save", () =>
       saveStateAndHistory(nextState, nextHistory, api, {
         ...(nextState && lastPersistedState ? { previousState: lastPersistedState } : {}),
-        ...(nextState && candidateNodeIds ? { candidateNodeIds } : {})
+        ...(nextState && candidateNodeIds ? { candidateNodeIds } : {}),
+        ...(stateSaveTraceOptions() ?? {})
       })
     );
     if (nextState) {
@@ -4722,7 +4741,9 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       return;
     }
     const entryIds = [...runtimeLifecycleJournalEntryIdsToClearAfterSave];
-    await clearRuntimeLifecycleJournalEntries(api, entryIds);
+    await perfTrace.measureAsync("background.state.save.runtimeLifecycleJournal.clear", { entries: entryIds.length }, () =>
+      clearRuntimeLifecycleJournalEntries(api, entryIds)
+    );
     for (const entryId of entryIds) {
       runtimeLifecycleJournalEntryIdsToClearAfterSave.delete(entryId);
     }

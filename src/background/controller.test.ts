@@ -23857,6 +23857,8 @@ describe("background controller lifecycle", () => {
     });
     expect(traceEntryNames(snapshot)).toContain("background.runtime.message");
     expect(traceEntryNames(snapshot)).toContain("background.state.save");
+    expect(traceEntryNames(snapshot)).toContain("background.state.save.v3.changeBuild");
+    expect(traceEntryNames(snapshot)).toContain("background.state.save.storage.set");
 
     await controller.handleMessage({ type: "clearPerformanceTrace" });
     expect(await controller.handleMessage({ type: "getPerformanceTrace" })).toMatchObject({

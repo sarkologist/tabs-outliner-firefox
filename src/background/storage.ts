@@ -167,6 +167,18 @@ export type LoadStateOptions = {
   onPhase?: (phase: StateLoadPhase) => void;
 };
 
+export type StateSavePhase = {
+  name: string;
+  durationMs: number;
+  detail?: Record<string, string | number | boolean>;
+};
+
+export type SaveStateOptions = {
+  previousState?: OutlineState;
+  candidateNodeIds?: readonly NodeId[];
+  onPhase?: (phase: StateSavePhase) => void;
+};
+
 export type OutlineStateV3Changes = {
   setItems: Record<string, unknown>;
   removeKeys: string[];
@@ -188,6 +200,37 @@ async function measureLoadPhase<T>(
       ...(Object.keys(detail).length > 0 ? { detail } : {})
     });
   }
+}
+
+async function measureSavePhase<T>(
+  options: SaveStateOptions,
+  name: string,
+  detail: StateSavePhase["detail"],
+  fn: () => T | Promise<T>
+): Promise<T> {
+  const startMs = currentMs();
+  try {
+    return await fn();
+  } finally {
+    options.onPhase?.({
+      name,
+      durationMs: currentMs() - startMs,
+      ...(detail && Object.keys(detail).length > 0 ? { detail } : {})
+    });
+  }
+}
+
+function recordSavePhase(
+  options: SaveStateOptions,
+  name: string,
+  startMs: number,
+  detail: StateSavePhase["detail"]
+): void {
+  options.onPhase?.({
+    name,
+    durationMs: currentMs() - startMs,
+    ...(detail && Object.keys(detail).length > 0 ? { detail } : {})
+  });
 }
 
 function currentMs(): number {
@@ -244,15 +287,17 @@ export async function saveStateAndHistory(
   state: OutlineState | undefined,
   history: HistoryState | undefined,
   api: WebExtensionBrowser = browser,
-  options: { previousState?: OutlineState; candidateNodeIds?: readonly NodeId[] } = {}
+  options: SaveStateOptions = {}
 ): Promise<void> {
   const setItems: Record<string, unknown> = {};
   const removeKeys: string[] = [];
   if (state) {
+    const changeBuildStartedAt = currentMs();
     const changes = outlineStateV3Changes(state, {
       ...(options.previousState ? { previousState: options.previousState } : {}),
       ...(options.candidateNodeIds ? { candidateNodeIds: options.candidateNodeIds } : {})
     });
+    recordSavePhase(options, "v3.changeBuild", changeBuildStartedAt, stateV3ChangeTraceDetail(changes, options));
     Object.assign(setItems, changes.setItems);
     removeKeys.push(...changes.removeKeys);
   }
@@ -260,11 +305,56 @@ export async function saveStateAndHistory(
     setItems[HISTORY_KEY] = history;
   }
   if (Object.keys(setItems).length > 0) {
-    await api.storage.local.set(setItems);
+    await measureSavePhase(options, "storage.set", storageSetTraceDetail(setItems), () =>
+      api.storage.local.set(setItems)
+    );
   }
   if (removeKeys.length > 0) {
-    await api.storage.local.remove(removeKeys);
+    await measureSavePhase(options, "storage.remove", storageRemoveTraceDetail(removeKeys), () =>
+      api.storage.local.remove(removeKeys)
+    );
   }
+}
+
+function stateV3ChangeTraceDetail(changes: OutlineStateV3Changes, options: SaveStateOptions): Record<string, number | boolean> {
+  const setKeys = Object.keys(changes.setItems);
+  return {
+    fullSave: !options.previousState,
+    candidateNodeCount: options.candidateNodeIds?.length ?? 0,
+    setKeys: setKeys.length,
+    removeKeys: changes.removeKeys.length,
+    nodeShardSetKeys: countKeysWithPrefix(setKeys, STATE_V3_NODE_SHARD_PREFIX),
+    orderPageSetKeys: countKeysWithPrefix(setKeys, STATE_V3_ORDER_PAGE_PREFIX),
+    nodeShardRemoveKeys: countKeysWithPrefix(changes.removeKeys, STATE_V3_NODE_SHARD_PREFIX),
+    orderPageRemoveKeys: countKeysWithPrefix(changes.removeKeys, STATE_V3_ORDER_PAGE_PREFIX)
+  };
+}
+
+function storageSetTraceDetail(setItems: Record<string, unknown>): Record<string, number | boolean> {
+  const keys = Object.keys(setItems);
+  return {
+    keys: keys.length,
+    hasManifest: hasOwn(setItems, STATE_V3_MANIFEST_KEY),
+    hasHistory: hasOwn(setItems, HISTORY_KEY),
+    nodeShardKeys: countKeysWithPrefix(keys, STATE_V3_NODE_SHARD_PREFIX),
+    orderPageKeys: countKeysWithPrefix(keys, STATE_V3_ORDER_PAGE_PREFIX)
+  };
+}
+
+function storageRemoveTraceDetail(removeKeys: readonly string[]): Record<string, number> {
+  return {
+    keys: removeKeys.length,
+    nodeShardKeys: countKeysWithPrefix(removeKeys, STATE_V3_NODE_SHARD_PREFIX),
+    orderPageKeys: countKeysWithPrefix(removeKeys, STATE_V3_ORDER_PAGE_PREFIX)
+  };
+}
+
+function countKeysWithPrefix(keys: readonly string[], prefix: string): number {
+  return keys.filter((key) => key.startsWith(prefix)).length;
+}
+
+function hasOwn(record: Record<string, unknown>, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(record, key);
 }
 
 export function outlineStateV2Items(
