@@ -290,7 +290,9 @@ const REGRESSION_TRACE_IDS = [
   "oh-external-closed-restore-reject-restart-stale",
   "sb-restored-fullscreen-external-delete-history",
   "sk-b3-undo-abrupt-restored-browser-swap",
-  "mh-opener-chain-native-reorder"
+  "mh-opener-chain-native-reorder",
+  "qh-escape-command-created-double-reorder-complete",
+  "yh-runbook-r1-created-race-command-cohabit"
 ];
 const DISCOVERY_TRACE_IDS = [
   "dh-restore-delayed-focus-refresh",
@@ -962,7 +964,6 @@ const DISCOVERY_TRACE_IDS = [
   "qh-rung2-restored-delete-reject-stale-reordered",
   "qh-escape-window-state-native-move-partial",
   "qh-escape-restored-opener-history-restart-query",
-  "qh-escape-command-created-double-reorder-complete",
   "qh-escape-browser-created-close-reopen-stale-query",
   "qh-escape-session-only-multitab-missing-complete",
   "qh-escape-native-detach-history-redo-partial",
@@ -1075,7 +1076,6 @@ const DISCOVERY_TRACE_IDS = [
   "yh-rung2-focus-other-window-mixed-close",
   "yh-rung2-two-mixed-windows-close-one-partial",
   "yh-runbook-r0-command-owner-session-foreign-survivor",
-  "yh-runbook-r1-created-race-command-cohabit",
   "yh-runbook-r2-race-close-reject-session-query",
   "yh-proper-b1-command-foreign-leaves-owner-remains",
   "yh-proper-b1-restored-owner-leaves-foreign-remains",

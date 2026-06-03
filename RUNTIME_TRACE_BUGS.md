@@ -24,18 +24,19 @@ Default hunt bounds:
 
 ## Last Domain Run
 
-- Completed: 2026-05-31T16:10:49Z
-- Strategy: RT-246 runtime order fix pass, targeting no-event manual refreshes whose first `tabs.query` result is stale/reordered while live shape is unchanged.
-- Trace ids: RT-246 promoted from discovery to regression in `scripts/hunt-runtime-traces.mjs`.
-- Corpus size after latest corpus edit: 847 discovery traces, 276 regression traces
-- Distinct findings recorded: no new findings in targeted RT-246 replay, RT-243 through RT-245 replay, full adversarial domain trace replay, 276-trace regression replay, or 847-trace discovery smoke.
-- Stop condition: targeted replays and regression/discovery safety passed; no RT-247 finding was frozen.
-- Regression preflight replay before the hunt: 251 regression traces, 0 failures, 0 new findings at 2026-05-31T11:53:42Z.
-- Status: RT-243 through RT-246 fixed and promoted.
+- Completed: 2026-06-03T08:38:35Z
+- Strategy: RT-247/RT-248 runtime order fix pass, targeting fast-path browser-created tab insertion after command relocation or command-created cohabitation.
+- Trace ids: RT-247 and RT-248 promoted from discovery to regression in `scripts/hunt-runtime-traces.mjs`.
+- Corpus size after latest corpus edit: 876 discovery traces, 278 regression traces
+- Distinct findings recorded: no new findings in targeted RT-247/RT-248 replay; 278-trace regression replay completed with 1 duplicate known failure and 0 new findings after promotion.
+- Stop condition: targeted replay, regression safety, and data-loss discovery smoke passed without new distinct findings.
+- Regression preflight replay before the hunt: 276 regression traces, 1 duplicate known failure, 0 new findings at 2026-06-03T07:31:04Z.
+- Status: RT-243 through RT-248 fixed and promoted.
 
 ## Finding Index
 
 - Open post-cleanup discovery findings: none
+- Fixed data-loss runtime order findings: RT-247 through RT-248
 - Fixed runtime truth cleanup findings: RT-222 through RT-246
 - Fixed subagent-orchestrated sweep finding: RT-219; duplicate evidence RT-220 and RT-221 cover the same root fix
 - Fixed cross-axis findings: RT-217 through RT-218
@@ -66,6 +67,8 @@ Default hunt bounds:
 - Promotion evidence for RT-222 through RT-242: `pnpm exec vitest run src/background/runtime-reconciler.test.ts --reporter=dot`, explicit RT-222 through RT-242 replay, `pnpm test`, `pnpm build`, `node --check scripts/hunt-runtime-traces.mjs`, and 272-trace regression replay passed on 2026-05-31. The follow-up RT-243 through RT-245 pass added restore-provenance and order-cache unit coverage, replayed the three frozen traces cleanly, passed `pnpm test`, `pnpm build`, `node --check scripts/hunt-runtime-traces.mjs`, and a 275-trace regression replay, then promoted them to regression.
 - RT-246 was fixed by adding no-event order corroboration before material-match/reconcile decisions. When a full refresh has no event tabs, live windows/tabs match current state, and snapshot order differs from the accepted ledger scope order, the controller fetches one second complete `getNormalWindows(api)` snapshot; matching snapshots accept a real browser reorder, while differing snapshots replace the stale first query before scope/install-state rebuild. Repro now passes: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=mh-opener-chain-native-reorder pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`.
 - Promotion evidence for RT-246: focused controller coverage for stale-first/truthful-second query order and corroborated real browser reorder, targeted RT-246 replay, targeted RT-243 through RT-245 replay, full adversarial domain trace replay, `pnpm test`, `pnpm build`, `node --check scripts/hunt-runtime-traces.mjs`, 276-trace regression replay, and 847-trace discovery smoke passed on 2026-05-31.
+- RT-247 and RT-248 were fixed by making the runtime-event fast path insert new same-window tabs according to the planned runtime window order rather than stale outline child order or per-tab index facts left behind by command relocation. The insertion plan now derives a window tab order from the current ledger scope or accepted window-shape fact, filters it through the planned outline subtree, appends outline-only live tabs, and updates the planned order before mutating `childIds`.
+- Promotion evidence for RT-247 and RT-248: focused replay of `qh-escape-command-created-double-reorder-complete` and `yh-runbook-r1-created-race-command-cohabit` passed, `node --check scripts/hunt-runtime-traces.mjs`, `pnpm test`, `pnpm build`, and 278-trace regression replay passed with only 1 duplicate known failure and 0 new findings. Selected runtime order perf sentinel `command-group-live-leaf` passed on rerun; full `pnpm perf:runtime-guard` still has an unrelated `restore-last-transient-echo` timing miss (`firstBroadcastMs=30 > 23`), so no budget movement is accepted here.
 - Additional project perf gate note: `pnpm perf:runtime-guard` was attempted on 2026-05-31 after the RT-246 fix and failed timing budgets across 8 synthetic guard scenarios; correctness/query-count gates above passed, and the timing-budget issue remains separate by scope.
 - Mixed-provenance window cohabitation sweep: added 39 neutral `yh-*` discovery traces covering saved/restored/browser-created/command-created tabs sharing, leaving, closing, and outliving the same runtime windows. Rung 1 shifted into command/restored scope handoff, close/delete journal recovery, window-state transfer, and no-journal restart freshness. Rung 2 combined cohabitation with history replay, partial snapshots, focus in another window, fullscreen/window state, and two mixed-window close/skew cases. Three full corpus runs found no new distinct signatures.
 - RT-219 shows a history/journal boundary after two browser-authored drifts: a Tabs Outliner group command is undone, browser-created/native-moved tabs have already changed the runtime shape, then `outlinerRedoThenAbruptRestart` loses live tab `2` from the outline while the browser still has it. The bug is not a stale-metadata/order issue; it is a live-resource preservation failure across history replay plus abrupt restart recovery after browser-authored movement.
@@ -7084,7 +7087,9 @@ action: {"type":"openTab","window":{"windowId":10},"active":false,"title":"QH es
 - First seen: 2026-06-03T07:06:21.054Z
 - Trace id: `qh-escape-command-created-double-reorder-complete`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=qh-escape-command-created-double-reorder-complete pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed and promoted to regression coverage.
+- Fix: runtime-event fast-path insertion now uses the planned same-window runtime tab order, updated with the incoming tab, before placing the outline child.
+- Verification: focused RT-247/RT-248 replay passed, and the promoted 278-trace regression replay completed with 1 duplicate known failure and 0 new findings.
 
 ```text
 domain trace qh-escape-command-created-double-reorder-complete: escape command created double reorder complete
@@ -7111,7 +7116,9 @@ action: {"type":"raceWithOutlinerGroup","event":{"type":"openTab","window":{"win
 - First seen: 2026-06-03T07:06:48.893Z
 - Trace id: `yh-runbook-r1-created-race-command-cohabit`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=yh-runbook-r1-created-race-command-cohabit pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed and promoted to regression coverage.
+- Fix: command-created cohabitation races now order browser-created siblings by the current planned runtime scope rather than stale command-relocated shape facts.
+- Verification: focused RT-247/RT-248 replay passed, and the promoted 278-trace regression replay completed with 1 duplicate known failure and 0 new findings.
 
 ```text
 domain trace yh-runbook-r1-created-race-command-cohabit: runbook created race command cohabit
@@ -7139,3 +7146,5 @@ Recent side effects: [{"kind":"windows.create","args":[{"tabId":1}]},{"kind":"st
 <!-- hunt-corpus-run: {"at":"2026-06-03T07:17:54.103Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","browserCreated","bug-rich","calibration","closed-subtree","command-rejection","commandCreated","complete-refresh","created-event","cross-axis","data-loss","delayed-event","delete","delete-rejection","event-order","focus","fresh-event","fullscreen","group","history","history-boundary","history-strict-shape","journal","manual-refresh","metadata","mixed-provenance","multi-tab","multi-window","native-close","native-move","native-open","nested","nested-window","opener","oracle-hunt","outliner-close","paired-echo","partial-close","partial-snapshot","persistence","post-recovery","race","real-user","reconciliation","redo","relocation","reparenting","restart","restore","restored","restored-scope","runtime-order","runtime-scope-order","runtimeMetadata","same-url","saved","scope-order-hunt","scope-routing","scope-shape","session","shape-fact","side-effects","snapshot-confidence","soak-complement","stale-event","stale-query","startup-adjacent","subagent","tombstone","transaction-boundary","undo-redo","updated-event","window-scope","window-state"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"dl-b5-closed-child-restored-parent-reclose","runs":878,"processRuns":84,"batchSize":20,"batchFailures":2,"completedCorpus":true,"failures":2,"duplicateFailures":2,"newFindings":0} -->
 
 <!-- hunt-corpus-run: {"at":"2026-06-03T07:31:04.964Z","mode":"agent-corpus-run","profile":"regression","coverageTags":["activation","breadth","browser-authored","browserCreated","command-rejection","commandCreated","complete-refresh","created-event","cross-axis","delayed-event","delete","delete-rejection","event-order","focus","fresh-event","fullscreen","history","history-boundary","journal","known-finding","manual-refresh","metadata","mixed-provenance","multi-tab","multi-window","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","real-user","reconciliation","redo","relocation","reparenting","restart","restore","restored","restored-scope","runtime-order","saved","scope-routing","session","snapshot-confidence","soak-complement","stale-event","stale-query","subagent","tombstone","transaction-boundary","undo-redo","updated-event","window-scope","window-state"],"firstTraceId":"rt-active-race","lastTraceId":"mh-opener-chain-native-reorder","runs":276,"processRuns":32,"batchSize":50,"batchFailures":1,"completedCorpus":true,"failures":1,"duplicateFailures":1,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-06-03T08:38:35.918Z","mode":"agent-corpus-run","profile":"regression","coverageTags":["activation","breadth","browser-authored","browserCreated","command-rejection","commandCreated","complete-refresh","created-event","cross-axis","delayed-event","delete","delete-rejection","event-order","focus","fresh-event","fullscreen","history","history-boundary","journal","known-finding","manual-refresh","metadata","mixed-provenance","multi-tab","multi-window","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","real-user","reconciliation","redo","relocation","reparenting","restart","restore","restored","restored-scope","runtime-order","saved","scope-routing","session","snapshot-confidence","soak-complement","stale-event","stale-query","subagent","tombstone","transaction-boundary","undo-redo","updated-event","window-scope","window-state"],"firstTraceId":"rt-active-race","lastTraceId":"yh-runbook-r1-created-race-command-cohabit","runs":278,"processRuns":34,"batchSize":50,"batchFailures":1,"completedCorpus":true,"failures":1,"duplicateFailures":1,"newFindings":0} -->

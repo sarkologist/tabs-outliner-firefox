@@ -22,9 +22,9 @@ pnpm perf:sidebar-projection-guard
 - Strategy: data-loss complement after the runtime `dl-*` hunt, focused on sparse closed/restorable rows, stale query replacement, and delayed closed-window restore scopes while closed children are restored.
 - Last completed run scenario ids: 207 `psh-*` scenarios before this checkpoint; this discovery checkpoint adds 3 more `psh-*` scenarios for 210 total.
 - Distinct findings recorded: 37
-- Status: `PT-001` through `PT-031` and `PT-033` through `PT-037` are fixed. The sparse action follow-up hunt suspected `PT-032` around rename/search replacement, but the follow-up fix pass retracted it as a harness-ordering false positive and kept the corrected scenarios as required-passing coverage. `PT-038` is open.
-- Clean blocks after latest finding: 0 after `PT-038`.
-- Verification: targeted replay of `psh-closed-search-clear-stale-query-keeps-restore-actions`, `psh-closed-tab-query-replacement-last-restore-target-wins`, and `psh-closed-child-restore-keeps-parent-preflight` passed the first two scenarios and exposed `PT-038` in the third. The full 210-scenario projection corpus then passed 209 scenarios and failed only the frozen open `PT-038` repro after correcting an unrelated stale count oracle for a visible search-delete test.
+- Status: `PT-001` through `PT-031` and `PT-033` through `PT-038` are fixed. The sparse action follow-up hunt suspected `PT-032` around rename/search replacement, but the follow-up fix pass retracted it as a harness-ordering false positive and kept the corrected scenarios as required-passing coverage. No open projection findings remain.
+- Clean blocks after latest finding: targeted `PT-038` replay, neighboring delayed-restore scenarios, and the full 210-scenario projection corpus passed after the fix.
+- Verification: targeted replay of `psh-closed-child-restore-keeps-parent-preflight` passed; neighboring delayed restore-scope scenarios `psh-restore-scope-response-after-delete-does-not-prompt-stale-restore`, `psh-delayed-restore-scope-child-delete-invalidates-prompt`, and `psh-closed-child-restore-keeps-parent-preflight` passed together; the full projection corpus passed 210/210. `pnpm perf:sidebar-projection-guard -- --smoke` passed outside the sandbox after a sandbox-only web-server bind failure.
 
 ## Fix Analysis
 
@@ -44,12 +44,13 @@ pnpm perf:sidebar-projection-guard
 - `PT-033`: delayed closed-restore scope responses lacked a post-await validity check against current sidebar state. The fix admits a restore scope only while the target still exists, is still closed, and any known scoped rows are still closed; the same check runs again after the confirmation prompt before sending the restore command.
 - `PT-034`: state-change refresh after a history/title patch could demote a pending show-in-tree owner into a generic outline sparse refill before the target response arrived. The fix treats a pending show-in-tree request as the current projection owner during state-change refresh, so unrelated patches do not steal visible ownership before the target slice settles.
 - `PT-035`: the `PT-033` restore-scope guard still treated all missing scoped nodes as merely unknown sparse data. The fix snapshots the node ids known to the sidebar before the async restore-scope request starts; if a node that was locally known at request time is missing or no longer closed when the delayed scope resolves, the scope is stale and no confirmation prompt or restore command is allowed.
+- `PT-038`: the `PT-035` restore-scope guard still missed nodes that were not locally known before the async request, then were learned and deleted while the request was in flight. The fix records deleted node IDs by sidebar mutation revision across compact tree patches and authoritative full-state replacements, then rejects delayed restore-scope responses if any scoped node was deleted after the request began, both before and after the confirmation prompt.
 - `PT-036` and `PT-037`: collapsed-boundary refills assumed a visible projection with `rows.length === totalRowCount` was complete, even while the sidebar state was still sparse and hidden child rows or child-order coverage were missing. The fix allows forced current-owner sparse slice requests for hydrating partial projections when coverage is missing or a collapsed-state expansion exposes absent children, while keeping tree-structure patches on the local render path so covered moves still hide collapsed descendants without a remote refill.
 
 ## Finding Index
 
-- Fixed projection findings: `PT-001`, `PT-002`, `PT-003`, `PT-004`, `PT-005`, `PT-006`, `PT-007`, `PT-008`, `PT-009`, `PT-010`, `PT-011`, `PT-012`, `PT-013`, `PT-014`, `PT-015`, `PT-016`, `PT-017`, `PT-018`, `PT-019`, `PT-020`, `PT-021`, `PT-022`, `PT-023`, `PT-024`, `PT-025`, `PT-026`, `PT-027`, `PT-028`, `PT-029`, `PT-030`, `PT-031`, `PT-033`, `PT-034`, `PT-035`, `PT-036`, `PT-037`
-- Open projection findings: `PT-038`
+- Fixed projection findings: `PT-001`, `PT-002`, `PT-003`, `PT-004`, `PT-005`, `PT-006`, `PT-007`, `PT-008`, `PT-009`, `PT-010`, `PT-011`, `PT-012`, `PT-013`, `PT-014`, `PT-015`, `PT-016`, `PT-017`, `PT-018`, `PT-019`, `PT-020`, `PT-021`, `PT-022`, `PT-023`, `PT-024`, `PT-025`, `PT-026`, `PT-027`, `PT-028`, `PT-029`, `PT-030`, `PT-031`, `PT-033`, `PT-034`, `PT-035`, `PT-036`, `PT-037`, `PT-038`
+- Open projection findings: none
 - Retracted projection suspicions: `PT-032`
 
 ### PT-001 rejected sparse slice leaves viewport blank/no retry
@@ -591,7 +592,7 @@ pnpm exec playwright test tests/playwright/sidebar-projection-hunt.spec.ts --gre
 
 ### PT-038 delayed closed-window restore preflight can prompt after child restore
 
-- Status: open
+- Status: fixed
 - Found by: `psh-closed-child-restore-keeps-parent-preflight`
 - Repro:
 
@@ -602,3 +603,5 @@ pnpm exec playwright test tests/playwright/sidebar-projection-hunt.spec.ts --gre
 - Expected: if a closed child in a delayed closed-window restore scope is directly restored and then removed by a compact delete patch, the old parent restore-scope response should not prompt for the original subtree or send a parent restore command. The remaining closed parent and sibling should still be visible after clearing search.
 - Actual: resolving the old parent `analyzeRestoreScope` response opens the stale large-restore confirmation prompt for the original four-node closed window after `tab:31` has already been restored and removed.
 - Evidence: the frozen scenario delays `analyzeRestoreScope` for `window:30`, searches for sparse child `Closed tab 31`, sends `restoreNode` for `tab:31`, emits history status plus a `treeStructureUpdated` delete patch for `tab:31`, then resolves the old parent scope. Playwright observes the stale confirmation dialog while `window:30` and `tab:30` remain visible after clear-search, no full `getState` occurs, and the command stream is only `analyzeRestoreScope(window:30)` followed by `restoreNode(tab:31)`.
+- Fix: sidebar-local deletion revisions now remember nodes removed by compact patches and authoritative state replacements; delayed restore scopes are rejected if they include any node deleted after the restore request began.
+- Verification: focused `PT-038` replay passed, delayed restore-scope neighbor replay passed 3/3, and the full projection hunt corpus passed 210/210.

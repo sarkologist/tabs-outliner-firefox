@@ -3667,10 +3667,11 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       }
     };
 
-    const firstRuntimeIndexInPlannedSubtree = (nodeId: NodeId, runtimeWindowId: number): number | undefined => {
+    const plannedRuntimeOrderByWindowId = new Map<number, number[]>();
+    const runtimeTabIdsInPlannedSubtree = (nodeId: NodeId, runtimeWindowId: number): number[] => {
       const visited = new Set<NodeId>();
       const stack = [nodeId];
-      let firstIndex: number | undefined;
+      const tabIds: number[] = [];
       while (stack.length > 0) {
         const currentNodeId = stack.pop()!;
         if (visited.has(currentNodeId)) {
@@ -3685,21 +3686,73 @@ export function createBackgroundController(options: BackgroundControllerOptions)
           continue;
         }
         if (isLiveTabNode(node) && node.live.windowId === runtimeWindowId) {
-          const factIndex = runtimeFacts.acceptedTabShapeFact(node.live.tabId)?.index;
-          const candidateIndex = factIndex ?? Number.MAX_SAFE_INTEGER;
-          firstIndex = firstIndex === undefined ? candidateIndex : Math.min(firstIndex, candidateIndex);
+          tabIds.push(node.live.tabId);
         }
         for (let index = node.childIds.length - 1; index >= 0; index -= 1) {
           stack.push(node.childIds[index]!);
         }
       }
-      return firstIndex;
+      return tabIds;
+    };
+
+    const outlineRuntimeTabOrderForPlan = (runtimeWindowId: number): number[] => {
+      const windowNodeId = plannedLiveWindowNodeId(runtimeWindowId);
+      return windowNodeId ? runtimeTabIdsInPlannedSubtree(windowNodeId, runtimeWindowId) : [];
+    };
+
+    const plannedRuntimeOrderForWindow = (runtimeWindowId: number): number[] => {
+      const cached = plannedRuntimeOrderByWindowId.get(runtimeWindowId);
+      if (cached) {
+        return cached;
+      }
+
+      const outlineOrder = outlineRuntimeTabOrderForPlan(runtimeWindowId);
+      const outlineTabIds = new Set(outlineOrder);
+      const factOrder = runtimeFacts.windowScope(runtimeWindowId)?.tabOrder ??
+        runtimeFacts.acceptedWindowShapeFact(runtimeWindowId)?.tabOrder ??
+        [];
+      const orderedKnownTabs = factOrder.filter((tabId) => outlineTabIds.has(tabId));
+      const orderedKnownTabIds = new Set(orderedKnownTabs);
+      const order = [
+        ...orderedKnownTabs,
+        ...outlineOrder.filter((tabId) => !orderedKnownTabIds.has(tabId))
+      ];
+      plannedRuntimeOrderByWindowId.set(runtimeWindowId, order);
+      return order;
+    };
+
+    const plannedRuntimeOrderWithTabAtIndex = (
+      tabOrder: readonly number[],
+      tabId: number,
+      index: number | undefined
+    ): number[] => {
+      const withoutTab = tabOrder.filter((candidate) => candidate !== tabId);
+      if (typeof index !== "number") {
+        return [...withoutTab, tabId];
+      }
+      const insertionIndex = Math.max(0, Math.min(index, withoutTab.length));
+      return [
+        ...withoutTab.slice(0, insertionIndex),
+        tabId,
+        ...withoutTab.slice(insertionIndex)
+      ];
     };
 
     const insertRuntimeTabChildForFastPath = (parentNode: OutlineNode, tabNodeId: NodeId, tab: RuntimeTab): void => {
+      const runtimeOrder = plannedRuntimeOrderWithTabAtIndex(
+        plannedRuntimeOrderForWindow(tab.windowId),
+        tab.id,
+        tab.index
+      );
+      plannedRuntimeOrderByWindowId.set(tab.windowId, runtimeOrder);
+      const runtimeOrderIndexByTabId = new Map(runtimeOrder.map((tabId, index) => [tabId, index]));
+      const tabOrderIndex = runtimeOrderIndexByTabId.get(tab.id) ?? runtimeOrder.length;
       const insertAt = parentNode.childIds.findIndex((childId) => {
-        const childIndex = firstRuntimeIndexInPlannedSubtree(childId, tab.windowId);
-        return childIndex !== undefined && childIndex >= tab.index;
+        const childIndex = runtimeTabIdsInPlannedSubtree(childId, tab.windowId)
+          .map((childTabId) => runtimeOrderIndexByTabId.get(childTabId))
+          .filter((index): index is number => typeof index === "number")
+          .sort((left, right) => left - right)[0];
+        return childIndex !== undefined && childIndex >= tabOrderIndex;
       });
       if (insertAt >= 0) {
         parentNode.childIds.splice(insertAt, 0, tabNodeId);

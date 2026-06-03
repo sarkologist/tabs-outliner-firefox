@@ -107,6 +107,8 @@ let currentStateFullyLoaded = false;
 let hydratingFullState = false;
 let fullStateHydrationInFlight = false;
 let pendingFullHydrationTimer: number | undefined;
+let sidebarMutationRevision = 0;
+const deletedNodeRevisionById = new Map<NodeId, number>();
 let draggedNodeId: NodeId | undefined;
 let activeDropPlacement: DropPlacement | undefined;
 let currentZoom = DEFAULT_ZOOM;
@@ -207,6 +209,40 @@ const SIDEBAR_PORT_NAME = "tabs-outliner-sidebar";
 const sidebarProfileInstanceId = createSidebarProfileInstanceId();
 
 type ProfileSnapshot = SidebarProfileSnapshot;
+
+function setCurrentState(nextState: OutlineState): void {
+  recordDeletedNodesFromStateReplacement(currentState, nextState);
+  currentState = nextState;
+}
+
+function recordDeletedNodesFromStateReplacement(
+  previous: OutlineState | undefined,
+  next: OutlineState
+): void {
+  if (!previous) {
+    return;
+  }
+  recordDeletedNodeIds(Object.keys(previous.nodes).filter((nodeId) => !next.nodes[nodeId]));
+}
+
+function recordDeletedNodeIds(nodeIds: Iterable<NodeId>): void {
+  const deletedNodeIds = [...new Set(nodeIds)];
+  if (deletedNodeIds.length === 0) {
+    return;
+  }
+
+  sidebarMutationRevision += 1;
+  for (const nodeId of deletedNodeIds) {
+    deletedNodeRevisionById.set(nodeId, sidebarMutationRevision);
+  }
+}
+
+function restoreScopeContainsNodeDeletedAfter(
+  scope: RestoreScope,
+  revision: number
+): boolean {
+  return scope.nodeIds.some((nodeId) => (deletedNodeRevisionById.get(nodeId) ?? 0) > revision);
+}
 
 type SidebarProfileConsole = {
   enable(): Promise<ProfileSnapshot>;
@@ -464,7 +500,7 @@ function handleBackgroundMessage(message: unknown): unknown {
       const preserveSparseViewport = shouldPreserveSparseViewportScrollIntent();
       preserveRenderedRowWindowOnce = preserveSparseViewport && currentSparseProjectionIntersectsViewport();
       suppressActiveScrollOnce = preserveSparseViewport;
-      currentState = message.state;
+      setCurrentState(message.state);
       currentStateFullyLoaded = true;
       currentProjectionCoverage = undefined;
       invalidateSidebarWindowActiveTabTargets();
@@ -551,7 +587,7 @@ async function hydrateFullState(): Promise<void> {
       const wasSparseProjection = Boolean(currentProjection && isSparseInitialProjection(currentProjection));
       const sparseProjectionIntersectedViewport = currentSparseProjectionIntersectsViewport();
       const preserveSparseViewport = shouldPreserveSparseViewportScrollIntent();
-      currentState = nextState;
+      setCurrentState(nextState);
       currentStateFullyLoaded = true;
       currentProjectionCoverage = undefined;
       preserveRenderedRowWindowOnce = wasSparseProjection && preserveSparseViewport && sparseProjectionIntersectedViewport;
@@ -621,7 +657,7 @@ async function waitForHydrationRenderIdle(): Promise<number> {
 
 function applyInitialTreeSnapshot(snapshot: InitialTreeSnapshot): void {
   setCurrentProjectionOwner(remoteSearchRequestIntent(currentSearchQuery));
-  currentState = snapshot.state;
+  setCurrentState(snapshot.state);
   currentStateFullyLoaded = initialTreeSnapshotHasFullState(snapshot);
   invalidateSidebarWindowActiveTabTargets();
   hydratingFullState = initialTreeSnapshotNeedsFullHydration(snapshot);
@@ -2638,6 +2674,7 @@ function applyTreeStructureUpdate(update: TreeStructureUpdate): void {
       isSparseInitialProjection(currentProjection)
     );
     const deletedNodeIds = new Set(update.deletedNodeIds);
+    recordDeletedNodeIds(deletedNodeIds);
     for (const nodeId of deletedNodeIds) {
       delete state.nodes[nodeId];
     }
@@ -4912,6 +4949,7 @@ async function restoreNodeWithConfirmation(nodeId: NodeId): Promise<void> {
     return;
   }
   const locallyKnownNodeIdsAtRequest = new Set<NodeId>(Object.keys(state.nodes));
+  const restoreScopeRequestRevision = sidebarMutationRevision;
 
   let scope: RestoreScope;
   try {
@@ -4925,10 +4963,16 @@ async function restoreNodeWithConfirmation(nodeId: NodeId): Promise<void> {
   );
   locallyKnownScopeNodeIds.add(nodeId);
 
+  if (restoreScopeContainsNodeDeletedAfter(scope, restoreScopeRequestRevision)) {
+    return;
+  }
   if (!restoreScopeStillApplies(nodeId, scope, locallyKnownScopeNodeIds)) {
     return;
   }
   if (scope.requiresConfirmation && !window.confirm(largeRestoreConfirmationPrompt(scope))) {
+    return;
+  }
+  if (restoreScopeContainsNodeDeletedAfter(scope, restoreScopeRequestRevision)) {
     return;
   }
   if (!restoreScopeStillApplies(nodeId, scope, locallyKnownScopeNodeIds)) {
@@ -5081,7 +5125,7 @@ async function runAndRender(command: BackgroundCommand): Promise<boolean> {
       return true;
     }
     if (isOutlineState(response)) {
-      currentState = response;
+      setCurrentState(response);
       currentStateFullyLoaded = true;
       currentProjectionCoverage = undefined;
       invalidateSidebarWindowActiveTabTargets();
