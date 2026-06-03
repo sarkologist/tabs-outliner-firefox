@@ -104,6 +104,21 @@ function reachableNodeIds(state: OutlineState): string[] {
   return ids.sort();
 }
 
+function expectPreviouslyClosedNodesPreserved(previous: OutlineState, next: OutlineState): void {
+  const reachable = new Set(reachableNodeIds(next));
+  for (const [nodeId, previousNode] of Object.entries(previous.nodes)) {
+    if (previousNode.status !== "closed") {
+      continue;
+    }
+    const nextNode = next.nodes[nodeId];
+    expect(nextNode, `previously closed node ${nodeId} must still exist`).toBeDefined();
+    expect(
+      nextNode?.status === "live" || reachable.has(nodeId),
+      `previously closed node ${nodeId} must be live or reachable`
+    ).toBe(true);
+  }
+}
+
 function largeFlatLiveState(tabCount: number): OutlineState {
   const windowNode = {
     id: "window:10",
@@ -2122,6 +2137,49 @@ describe("outline model", () => {
     expect(reconciled.nodes["tab:1"]?.title).toBe("Example updated");
     expect(reconciled.nodes["tab:1"]?.childIds).toEqual(["tab:2", "tab:5"]);
     expect(reconciled.nodes["tab:5"]?.parentId).toBe("tab:1");
+    expectPreviouslyClosedNodesPreserved(stored, reconciled);
+  });
+
+  it("does not delete empty closed containers during runtime reconciliation", () => {
+    const stored = bootstrapFromWindows(windows, { now: 1000 });
+    stored.nodes["window:closed-empty"] = {
+      id: "window:closed-empty",
+      kind: "window",
+      status: "closed",
+      childIds: [],
+      title: "Saved Empty",
+      collapsed: false,
+      createdAt: 1000,
+      updatedAt: 2000,
+      closedAt: 2000
+    };
+    stored.rootIds.push("window:closed-empty");
+
+    const reconciled = reconcileWithWindows(stored, [
+      {
+        id: 10,
+        incognito: false,
+        focused: true,
+        tabs: [
+          {
+            id: 1,
+            windowId: 10,
+            index: 0,
+            active: true,
+            url: "https://example.com/",
+            title: "Example"
+          }
+        ]
+      }
+    ], { now: 4000 });
+
+    expect(reconciled.nodes["window:closed-empty"]).toMatchObject({
+      kind: "window",
+      status: "closed",
+      childIds: []
+    });
+    expect(reconciled.rootIds).toContain("window:closed-empty");
+    expectPreviouslyClosedNodesPreserved(stored, reconciled);
   });
 
   it("preserves custom group titles during reconciliation", () => {

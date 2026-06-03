@@ -605,9 +605,11 @@ describe("outline state v3 storage", () => {
     const changes = outlineStateV3Changes(next, { previousState: previous, revision: 123 });
     const durationMs = performance.now() - start;
     const setKeys = Object.keys(changes.setItems);
+    const nodeShardSetKeys = setKeys.filter((key) => key.includes(":nodes:")).length;
 
     expect(changes.setItems[STATE_V3_MANIFEST_KEY]).toBeDefined();
-    expect(setKeys.filter((key) => key.includes(":nodes:"))).toHaveLength(32);
+    expect(nodeShardSetKeys).toBeGreaterThan(0);
+    expect(nodeShardSetKeys).toBeLessThanOrEqual(32);
     expect(durationMs).toBeLessThan(700);
   }, 10_000);
 

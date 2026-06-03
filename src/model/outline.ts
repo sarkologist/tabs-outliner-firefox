@@ -351,7 +351,61 @@ export function reconcileWithWindows(
     }
   }
 
-  return repairState(next);
+  return finishRuntimeReconciliation(next);
+}
+
+function finishRuntimeReconciliation(state: OutlineState): OutlineState {
+  reattachLiveTabsToOwningWindows(state);
+  normalizeReachableRoots(state);
+  removeEmptyLiveContainers(state);
+  normalizeReachableRoots(state);
+  return state;
+}
+
+function normalizeReachableRoots(state: OutlineState): void {
+  const rootIds = uniqueIds(state.rootIds)
+    .filter((nodeId) => Boolean(state.nodes[nodeId]) && !state.nodes[nodeId]?.parentId);
+  const rootIdSet = new Set(rootIds);
+  for (const [nodeId, node] of Object.entries(state.nodes)) {
+    if (node.parentId || rootIdSet.has(nodeId)) {
+      continue;
+    }
+    rootIdSet.add(nodeId);
+    rootIds.push(nodeId);
+  }
+  state.rootIds = rootIds;
+}
+
+function removeEmptyLiveContainers(state: OutlineState): void {
+  const queue = Object.values(state.nodes)
+    .filter((node) => isContainerNode(node) && node.status === "live" && node.childIds.length === 0)
+    .map((node) => node.id);
+  const queued = new Set(queue);
+
+  while (queue.length > 0) {
+    const nodeId = queue.pop()!;
+    const node = state.nodes[nodeId];
+    if (!node || !isContainerNode(node) || node.status !== "live" || node.childIds.length > 0) {
+      continue;
+    }
+
+    const parentId = node.parentId;
+    delete state.nodes[nodeId];
+
+    if (parentId) {
+      const parent = state.nodes[parentId];
+      if (!parent) {
+        continue;
+      }
+      removeId(parent.childIds, nodeId);
+      if (isContainerNode(parent) && parent.status === "live" && parent.childIds.length === 0 && !queued.has(parentId)) {
+        queued.add(parentId);
+        queue.push(parentId);
+      }
+    } else {
+      removeId(state.rootIds, nodeId);
+    }
+  }
 }
 
 export function repairState(state: OutlineState): OutlineState {
