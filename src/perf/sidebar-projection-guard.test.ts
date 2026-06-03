@@ -36,7 +36,7 @@ describe("sidebar projection perf guard", () => {
     const passing = evaluateProjectionScenario(scenario, {
       guardFailures: [],
       summary: {
-        status: "keep",
+        status: "candidate-keep",
         firstPaintMaxMs: 6,
         sparseHoverActionButtonsMin: 5
       }

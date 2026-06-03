@@ -16,6 +16,8 @@ autoresearch/sidebar-drag-drop/results.tsv
 autoresearch/sidebar-drag-drop/*.log
 autoresearch/background-reconciliation/results.tsv
 autoresearch/background-reconciliation/*.log
+autoresearch/acceptance/results.tsv
+autoresearch/acceptance/*.log
 autoresearch/sidebar-startup-storage-fanout/*.tsv
 autoresearch/sidebar-startup-storage-fanout/*.log
 .DS_Store

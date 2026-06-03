@@ -77,7 +77,7 @@ describe("drag/drop autoresearch profile", () => {
       dragoverP95MaxMs: 4.2,
       hoverGuideMaxMs: 2.4,
       hoverScrollVirtualRowsMaxMs: 8.1,
-      status: "keep",
+      status: "candidate-keep",
       guardFailures: []
     });
   });
@@ -92,7 +92,7 @@ describe("drag/drop autoresearch profile", () => {
       { run: 2, profiles: goodProfiles }
     ], { baselineMs: 56 });
 
-    expect(candidate.status).toBe("keep");
+    expect(candidate.status).toBe("candidate-keep");
     expect(flat.status).toBe("discard");
     expect(flat.guardFailures).toContain("drop median must improve by at least 5ms from baseline");
   });
@@ -168,6 +168,6 @@ describe("drag/drop autoresearch profile", () => {
 
     expect(DRAG_DROP_RESULTS_TSV_HEADER).toContain("drop_median_ms");
     expect(row).toContain("20260601-drag-drop");
-    expect(row).toContain("\t60\t52.5\t52.5\t3.1\t10.2\t0\t4.2\t2.4\t8.1\tkeep\tfixture");
+    expect(row).toContain("\t60\t52.5\t52.5\t3.1\t10.2\t0\t4.2\t2.4\t8.1\tcandidate-keep\tfixture");
   });
 });

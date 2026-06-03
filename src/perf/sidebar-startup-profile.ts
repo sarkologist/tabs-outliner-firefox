@@ -113,7 +113,7 @@ export type SidebarStartupSummary = {
   improvementMs?: number;
   guardFailures: string[];
   guardWarnings: string[];
-  status: "keep" | "discard";
+  status: "candidate-keep" | "discard";
 };
 
 export type SidebarStartupSummaryOptions = {
@@ -169,7 +169,7 @@ export function summarizeSidebarStartupProfile(
   });
   const guardWarnings = startupGuardWarnings({ shape, saves });
   const improvement = improvementDetails(options.baselinePrimaryMedianMs, primaryMedianMs);
-  const status = guardFailures.length === 0 && improvement.keep ? "keep" : "discard";
+  const status = guardFailures.length === 0 && improvement.keep ? "candidate-keep" : "discard";
   const totalNodeValues = numberValues(results, "totalNodes");
 
   return {

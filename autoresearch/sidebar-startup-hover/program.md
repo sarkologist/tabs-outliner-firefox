@@ -90,8 +90,10 @@ Repeat one hypothesis at a time:
    `pnpm profile:startup-hover`
    `pnpm profile:startup-hover-loop -- --runs 5 --tag <tag> --description "<short idea>" --append-results`
    `pnpm exec playwright test tests/playwright/sidebar-first-paint.spec.ts --grep "paints an active-centered sparse snapshot"`
-5. Keep the experiment only if `clearMissingRowCount` reaches 0, hover feedback appears for the visible sparse row, the repeated loop status is `keep`, and guards do not regress.
-6. If the result is worse or ambiguous, revert only the experiment changes and try the next hypothesis.
+5. If the repeated loop reports `candidate-keep`, run the correctness wrapper before accepting it:
+   `pnpm autoresearch:accept -- --lanes projection --tag <tag> --description "<short idea>" --append-results -- pnpm profile:startup-hover-loop -- --runs 5 --tag <tag> --description "<short idea>"`
+6. Keep the experiment only if `clearMissingRowCount` reaches 0, hover feedback appears for the visible sparse row, the repeated loop reports `candidate-keep`, and the wrapper reports final `keep`.
+7. If the result is worse or ambiguous, revert only the experiment changes and try the next hypothesis.
 
 ## Safety
 

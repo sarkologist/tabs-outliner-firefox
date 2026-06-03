@@ -216,7 +216,7 @@ export function summarizeDragDropRuns(results, options = {}) {
     inputDelayProfiles,
     playwrightFailureCount
   });
-  summary.status = summary.guardFailures.length === 0 ? "keep" : "discard";
+  summary.status = summary.guardFailures.length === 0 ? "candidate-keep" : "discard";
   return summary;
 }
 

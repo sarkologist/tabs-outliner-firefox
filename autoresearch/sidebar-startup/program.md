@@ -36,7 +36,11 @@ Use [../CORRECTNESS_GUARDS.md](../CORRECTNESS_GUARDS.md) before accepting any ex
 
 Correctness-hardening note: sparse first paint, hover, and scroll-away targets are still bounded by the 256-row snapshot/window contract. Full-tree feature readiness is a different target now: default startup should remain sparse/background-backed, and any feature that still needs whole-tree state must either request an explicit fallback or move to a bounded background-backed command.
 
-Keep an experiment only when the primary median improves by at least 10% or by at least 50ms, whichever is smaller, and no guard regresses.
+The profiler reports `candidate-keep` when the primary median improves by at least 10% or by at least 50ms, whichever is smaller, and no local guard regresses. Promote a candidate only through `pnpm autoresearch:accept`, selecting `projection`, `storage`, or both depending on the touched path:
+
+```sh
+pnpm autoresearch:accept -- --lanes projection,storage --tag <tag> --description "<short idea>" --append-results -- pnpm profile:sidebar-startup -- --shape closed-heavy --tabs 50000 --live-tabs 50 --runs 3 --tag <tag> --baseline-ms <baseline-primary-median> --description "<short idea>"
+```
 
 ## Experiment Loop
 
@@ -50,7 +54,7 @@ Repeat one hypothesis at a time:
    `pnpm run build`
    `pnpm profile:sidebar-startup -- --shape closed-heavy --tabs 50000 --live-tabs 50 --runs 3 --tag <tag> --baseline-ms <baseline-primary-median> --description "<short idea>" --append-results`
    `pnpm exec playwright test tests/playwright/sidebar-first-paint.spec.ts --reporter=list`
-5. If the result is `keep`, commit the code change with the metric summary in the commit message.
+5. If the result is `candidate-keep`, run `pnpm autoresearch:accept` with the relevant lanes and commit only after final `keep`.
 6. If the result is `discard`, reset only your experiment changes, leave the TSV row, and try the next hypothesis.
 
 ## Safety

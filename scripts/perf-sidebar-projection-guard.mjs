@@ -148,7 +148,7 @@ export function evaluateProjectionScenario(scenario, profile) {
   const guardFailures = Array.isArray(profile.guardFailures) ? profile.guardFailures : [];
   const status = profile.summary?.status;
   const failures = [...guardFailures];
-  if (status && status !== "keep" && failures.length === 0) {
+  if (status && status !== "keep" && status !== "candidate-keep" && failures.length === 0) {
     failures.push(`profile status is ${status}`);
   }
 

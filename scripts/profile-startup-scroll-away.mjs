@@ -155,7 +155,7 @@ export function summarize(results) {
   };
 
   summary.guardFailures = startupScrollAwayGuardFailures(summary, profiles);
-  summary.status = summary.guardFailures.length === 0 ? "keep" : "discard";
+  summary.status = summary.guardFailures.length === 0 ? "candidate-keep" : "discard";
   return summary;
 }
 

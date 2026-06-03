@@ -170,7 +170,7 @@ export function summarize(results) {
     sparseIdleProfiles,
     remoteIdleProfiles
   });
-  summary.status = summary.guardFailures.length === 0 ? "keep" : "discard";
+  summary.status = summary.guardFailures.length === 0 ? "candidate-keep" : "discard";
   return summary;
 }
 

@@ -12,11 +12,26 @@ Pick every lane touched by the experiment:
 
 If a change crosses lanes, run all relevant lane guards. Do not mark an experiment `keep` while an open finding in the touched lane is still reproducible unless the experiment explicitly fixes that finding.
 
+## Acceptance Wrapper
+
+Profiler loops report `candidate-keep` when their perf budgets pass. A candidate becomes a final `keep` only after `pnpm autoresearch:accept` runs the selected correctness lanes.
+
+Run the profiler through the wrapper, selecting every touched lane:
+
+```sh
+pnpm autoresearch:accept -- --lanes runtime --tag <tag> --description "<idea>" --append-results -- pnpm profile:background-reconciliation -- --runs 5 --tag <tag> --description "<idea>" --baseline-ms <ms>
+pnpm autoresearch:accept -- --lanes projection --tag <tag> --description "<idea>" --append-results -- pnpm profile:drag-drop -- --runs 5 --tag <tag> --description "<idea>" --baseline-ms <ms>
+pnpm autoresearch:accept -- --lanes projection,storage --tag <tag> --description "<idea>" --append-results -- pnpm profile:sidebar-startup -- --shape closed-heavy --tabs 50000 --live-tabs 50 --runs 3 --tag <tag> --baseline-ms <ms> --description "<idea>"
+```
+
+The wrapper writes the final acceptance decision to `autoresearch/acceptance/results.tsv` when `--append-results` is present. Existing profiler TSV rows are perf evidence; the acceptance TSV owns final `keep` versus `discard-correctness`.
+
 ## Runtime/Background Lane
 
 Required before keeping a runtime/background experiment:
 
 ```sh
+pnpm run oracle:build
 pnpm test
 pnpm run build
 RUNTIME_TRACE_HUNT_PROFILE=regression RUNTIME_TRACE_HUNT_BATCH_SIZE=50 pnpm trace-hunt:runtime

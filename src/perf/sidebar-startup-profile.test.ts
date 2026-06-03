@@ -40,7 +40,7 @@ describe("sidebar startup profile helpers", () => {
     expect(summary.parentsWithChildren).toBe(1);
     expect(summary.requiredImprovementMs).toBe(50);
     expect(summary.improvementMs).toBe(50);
-    expect(summary.status).toBe("keep");
+    expect(summary.status).toBe("candidate-keep");
     expect(summary.guardFailures).toEqual([]);
     expect(summary.guardWarnings).toEqual([]);
     expect(summary.snapshotRows).toBe(256);
@@ -100,7 +100,7 @@ describe("sidebar startup profile helpers", () => {
     expect(summary.guardWarnings).toEqual([
       "startup real-browser fanout saved during diagnostic measurement"
     ]);
-    expect(summary.status).toBe("keep");
+    expect(summary.status).toBe("candidate-keep");
   });
 
   it("formats a stable TSV row", () => {
@@ -119,7 +119,7 @@ describe("sidebar startup profile helpers", () => {
       commit: "abcdef1",
       description: "baseline\twith newline\ntrimmed"
     })).toBe(
-      "2026-05-22T13:00:00.000Z\tmay22\tabcdef1\tclosed-heavy\tstartup-initial-snapshot\t50000\t50\t50001\t1\t1\t600\t0\t610\t38\t\t\t\t\t\t\t\t\t\t256\t256\t0\t0\t0\tkeep\t\t{\"v3.nodeMaterialize\":70,\"v3.nodeShardRead\":20,\"v3.orderPageRead\":40}\tbaseline with newline trimmed"
+      "2026-05-22T13:00:00.000Z\tmay22\tabcdef1\tclosed-heavy\tstartup-initial-snapshot\t50000\t50\t50001\t1\t1\t600\t0\t610\t38\t\t\t\t\t\t\t\t\t\t256\t256\t0\t0\t0\tcandidate-keep\t\t{\"v3.nodeMaterialize\":70,\"v3.nodeShardRead\":20,\"v3.orderPageRead\":40}\tbaseline with newline trimmed"
     );
   });
 });

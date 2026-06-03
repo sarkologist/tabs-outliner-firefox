@@ -34,7 +34,13 @@ Target budgets:
 
 Use [../CORRECTNESS_GUARDS.md](../CORRECTNESS_GUARDS.md) before accepting any experiment. Sidebar-only drag/drop rendering changes normally use the sparse projection lane. Experiments that touch background `moveNode`, `moveNodeToNewWindow`, command-created windows, browser tab movement, or runtime echo absorption must also use the runtime/background lane.
 
-Keep an experiment only when all guards pass and the median drop latency improves by at least 10% or 5ms from the supplied baseline, whichever is smaller. Baseline runs without `--baseline-ms` are kept if the guards pass.
+The profiler reports `candidate-keep` when local perf guards pass and the median drop latency improves by at least 10% or 5ms from the supplied baseline, whichever is smaller. Promote a candidate only through `pnpm autoresearch:accept` with `projection` plus `runtime` when the experiment touches background move/runtime ownership paths:
+
+```sh
+pnpm autoresearch:accept -- --lanes projection --tag <tag> --description "<short idea>" --append-results -- pnpm profile:drag-drop -- --runs 5 --tag <tag> --baseline-ms <baseline-drop-median-ms> --description "<short idea>"
+```
+
+Baseline runs without `--baseline-ms` are candidates if local guards pass.
 
 ## Stop Rule
 
@@ -42,7 +48,7 @@ Do not stop the autoresearch loop after a single experiment, a single discard, o
 
 The whole-loop stop condition is **3 consecutive discarded experiments after the latest kept baseline or kept experiment**.
 
-- A `keep` resets the discard streak to 0 and becomes the new baseline for subsequent experiments.
+- A final `keep` from `pnpm autoresearch:accept` resets the discard streak to 0 and becomes the new baseline for subsequent experiments.
 - A `discard` increments the discard streak by 1 after its experiment changes are reverted.
 - Stop only when the discard streak reaches 3, or when the user explicitly asks to stop or pause.
 - If a request says to run or implement the next autoresearch plan, treat that as continuing this loop, not as permission to stop after one bounded run.
@@ -58,7 +64,7 @@ Repeat one hypothesis at a time:
    `pnpm test -- src/perf/drag-drop-profile.test.ts`
    `pnpm run build`
    `pnpm profile:drag-drop -- --runs 5 --tag <tag> --baseline-ms <baseline-drop-median-ms> --description "<short idea>" --append-results`
-5. If the result is `keep`, commit the code change with the metric summary, reset the discard streak, update the baseline median, and continue with the next hypothesis.
+5. If the result is `candidate-keep`, run `pnpm autoresearch:accept` with the relevant lanes; commit only after final `keep`, then reset the discard streak, update the baseline median, and continue with the next hypothesis.
 6. If the result is `discard`, revert only the experiment changes, leave the TSV row, increment the discard streak, and try the next hypothesis unless the streak has reached 3.
 
 First experiment order:

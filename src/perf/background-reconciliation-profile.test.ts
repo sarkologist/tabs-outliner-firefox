@@ -45,7 +45,7 @@ describe("background reconciliation autoresearch profile", () => {
       eventEchoMaxMs: 10,
       runtimeGetWindowsCountMax: 1,
       runtimeGetWindowsMaxMs: 12,
-      status: "keep",
+      status: "candidate-keep",
       guardFailures: []
     });
   });
@@ -62,7 +62,7 @@ describe("background reconciliation autoresearch profile", () => {
       baselineMs: 550
     });
 
-    expect(keep.status).toBe("keep");
+    expect(keep.status).toBe("candidate-keep");
     expect(keep.requiredImprovementMs).toBe(50);
     expect(discard.status).toBe("discard");
     expect(discard.guardFailures).toContain("primary median must improve by at least 50ms from baseline");
@@ -140,7 +140,7 @@ describe("background reconciliation autoresearch profile", () => {
 
     expect(BACKGROUND_RECONCILIATION_RESULTS_TSV_HEADER).toContain("primary_median_ms");
     expect(row).toContain("20260602-background-reconcile");
-    expect(row).toContain("\t570\t50\t520\tmove-top-level-live-leaf\t510\t520\t210\t310\t510\t80\t10\t1\t12\tkeep\tfixture");
+    expect(row).toContain("\t570\t50\t520\tmove-top-level-live-leaf\t510\t520\t210\t310\t510\t80\t10\t1\t12\tcandidate-keep\tfixture");
   });
 
   it("summarizes exported tabsOutlinerProfile background bottlenecks", () => {

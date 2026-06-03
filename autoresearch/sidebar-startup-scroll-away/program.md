@@ -41,10 +41,12 @@ Repeat one hypothesis at a time:
    `pnpm run build`
    `pnpm profile:startup-scroll-away -- --runs 5 --tag <tag> --description "<short idea>" --append-results`
    `pnpm profile:startup-hover-loop -- --runs 5 --tag <tag>-hover-guard --description "<short idea> hover guard"`
-5. Treat `keep` as "candidate is viable", not as a terminal stop. Keep iterating while there are plausible hypotheses with a meaningful chance of improving perceived latency or reducing risk.
-6. Keep the experiment only if scroll-away status is `keep` and the existing startup-hover loop stays `keep`.
-7. If the result is worse or ambiguous, revert only the experiment changes and try the next hypothesis.
-8. Stop when the best kept candidate has comfortable margin and further plausible hypotheses either produce diminishing returns or a short discard streak. Record why the loop stopped.
+5. Treat `candidate-keep` as "candidate is viable", not as a terminal stop. Keep iterating while there are plausible hypotheses with a meaningful chance of improving perceived latency or reducing risk.
+6. If scroll-away and the existing startup-hover loop both report `candidate-keep`, run:
+   `pnpm autoresearch:accept -- --lanes projection --tag <tag> --description "<short idea>" --append-results -- pnpm profile:startup-scroll-away -- --runs 5 --tag <tag> --description "<short idea>"`
+7. Keep the experiment only if the wrapper reports final `keep`.
+8. If the result is worse or ambiguous, revert only the experiment changes and try the next hypothesis.
+9. Stop when the best kept candidate has comfortable margin and further plausible hypotheses either produce diminishing returns or a short discard streak. Record why the loop stopped.
 
 ## Likely Implementation Direction
 

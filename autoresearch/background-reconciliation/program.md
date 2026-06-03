@@ -28,7 +28,13 @@ pnpm run build
 pnpm profile:background-reconciliation -- --runs 5 --tag 20260602-background-reconcile --description "<idea>" --baseline-ms <primary_median_ms> --baseline-summary <baseline_summary.json> --append-results
 ```
 
-Keep an experiment only when the primary median improves by at least `min(10%, 50ms)` and all guards pass.
+The profiler reports `candidate-keep` when the primary median improves by at least `min(10%, 50ms)` and its local guards pass. Promote that candidate only through the correctness wrapper:
+
+```sh
+pnpm autoresearch:accept -- --lanes runtime --tag 20260602-background-reconcile --description "<idea>" --append-results -- pnpm profile:background-reconciliation -- --runs 5 --tag 20260602-background-reconcile --description "<idea>" --baseline-ms <primary_median_ms> --baseline-summary <baseline_summary.json>
+```
+
+Keep an experiment only when the wrapper reports final `keep`.
 
 Do not stop the overall autoresearch loop after one discard. Continue to the next experiment until there have been 3 consecutive discarded experiments after the latest keep.
 

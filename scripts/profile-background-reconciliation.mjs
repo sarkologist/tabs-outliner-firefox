@@ -255,7 +255,7 @@ export function summarizeBackgroundReconciliationRuns(results, options = {}) {
     scenarios,
     baselineSummary: options.baselineSummary
   });
-  summary.status = summary.guardFailures.length === 0 ? "keep" : "discard";
+  summary.status = summary.guardFailures.length === 0 ? "candidate-keep" : "discard";
   return summary;
 }
 
