@@ -1170,7 +1170,28 @@ const DISCOVERY_TRACE_IDS = [
   "dl-b4-closed-window-command-cohabitation-redo",
   "dl-b4-closed-window-fullscreen-focus-reject",
   "dl-b5-same-url-tab-bucket-roundtrip",
-  "dl-b5-closed-child-restored-parent-reclose"
+  "dl-b5-closed-child-restored-parent-reclose",
+  "cl-b1-passive-closed-window-many-native-drifts",
+  "cl-b1-closed-tab-survives-owner-reorder-and-session",
+  "cl-b1-browser-closed-known-window-no-window-event",
+  "cl-b2-restored-window-child-closed-parent-reclosed",
+  "cl-b2-close-restore-reject-reclose-multitab",
+  "cl-b2-closed-subtree-history-redo-skew",
+  "cl-b3-two-closed-same-url-tabs-restore-one",
+  "cl-b3-nested-closed-owner-foreign-live-survivor",
+  "cl-b3-unconfirmed-close-journal-passive-victim",
+  "cl-b4-closed-window-partial-snapshot-missing-live-window",
+  "cl-b4-restored-fullscreen-session-close-closed-sibling",
+  "cl-b4-opener-linked-closed-child-stale-parent",
+  "cl-b5-reject-child-reclose-keeps-closed-sibling",
+  "cl-b5-restored-windowfirst-stale-created-abrupt",
+  "cl-b5-same-title-foreign-survivor",
+  "cl-b5-unconfirmed-journal-mixed-live-passive-closed",
+  "cl-b5-passive-victim-windowonly-query-split",
+  "cl-b6-closed-leaf-stale-created-query-split",
+  "cl-b6-opener-grandchild-closed-stale-parent",
+  "cl-b6-restored-runtime-id-second-generation",
+  "cl-b6-command-window-same-url-foreign-guest"
 ];
 const ALL_TRACE_IDS = [...REGRESSION_TRACE_IDS, ...DISCOVERY_TRACE_IDS];
 const TRACE_TAGS = new Map([

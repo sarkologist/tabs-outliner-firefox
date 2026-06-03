@@ -19346,6 +19346,400 @@ const RUNTIME_DOMAIN_DISCOVERY_TRACES: RuntimeDomainTrace[] = [
       { type: "staleLiveUpdatedEvent", staleTab: { capture: "dl-b5-restored-parent-reclose-old" }, withStaleQuery: true },
       { type: "manualRefresh" }
     ]
+  },
+  {
+    id: "cl-b1-passive-closed-window-many-native-drifts",
+    title: "closed loss block1 passive closed window many native drifts",
+    notes: "Closed-loss block 1: a passive TO-closed saved window survives unrelated browser-created windows moving, closing with mixed orders, restarting, and emitting stale evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["closed-loss-hunt", "closed-subtree", "persistence", "outliner-close", "browserCreated", "native-move", "native-close", "restart", "stale-event", "stale-query", "side-effects"],
+    assertions: ["runtimeSideEffects", "closedSubtreePersistence"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "CL B1 drift source" }, { title: "CL B1 drift mover", active: true }], captureWindow: "cl-b1-drift-source", captureTabs: "cl-b1-drift-source-tabs" },
+      { type: "nativeOpenWindow", focused: true, tabs: [{ title: "CL B1 drift target", active: true }], captureWindow: "cl-b1-drift-target", captureTabs: "cl-b1-drift-target-tabs" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "cl-b1-drift-source-tabs", index: 1 }, window: { capture: "cl-b1-drift-target" }, index: 0, active: true, captureStaleTabs: "cl-b1-drift-source-old" },
+      { type: "nativeCloseWindow", window: { capture: "cl-b1-drift-source" }, order: "windowRemovedOnly" },
+      { type: "restartBackground" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "cl-b1-drift-source-old" }, withStaleQuery: true },
+      { type: "manualRefreshWithStaleQuery", staleTab: { capture: "cl-b1-drift-source-old" } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "cl-b1-closed-tab-survives-owner-reorder-and-session",
+    title: "closed loss block1 closed tab survives owner reorder and session",
+    notes: "Closed-loss block 1: a TO-closed saved leaf survives owner-window sibling reorder, session-only deletion of another sibling, stale evidence, and restart.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["closed-loss-hunt", "closed-subtree", "persistence", "outliner-close", "saved", "native-move", "session", "stale-event", "stale-query", "runtime-scope-order", "side-effects"],
+    assertions: ["runtimeSideEffects", "runtimeScopeOrder", "closedSubtreePersistence"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, title: "CL B1 closed saved leaf", url: "https://cl.example/b1-closed-leaf", captureTab: "cl-b1-closed-leaf" },
+      { type: "outlinerCloseTab", tab: { capture: "cl-b1-closed-leaf" } },
+      { type: "nativeMoveTabToNewWindow", tab: { tabId: 2 }, active: true, captureWindow: "cl-b1-roundtrip-window", captureStaleTabs: "cl-b1-roundtrip-source-old" },
+      { type: "nativeMoveTabToWindow", tab: { role: "lastMovedTab" }, window: { windowId: 10 }, index: 0, active: true, captureStaleTabs: "cl-b1-roundtrip-detached-old" },
+      { type: "nativeCloseTab", tab: { tabId: 1 }, order: "sessionChangedOnly" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "cl-b1-roundtrip-source-old" }, withStaleQuery: true },
+      { type: "manualRefreshWithReorderedQuery", window: { windowId: 10 }, order: "rotateRight" },
+      { type: "restartBackground" }
+    ]
+  },
+  {
+    id: "cl-b1-browser-closed-known-window-no-window-event",
+    title: "closed loss block1 browser closed known window no window event",
+    notes: "Closed-loss block 1: a TO-known browser-created single-tab window closes through session-only tab evidence without windowRemoved, then unrelated stale evidence must not drop the closed record.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["closed-loss-hunt", "closed-subtree", "persistence", "browserCreated", "native-open", "native-close", "session", "stale-query", "side-effects"],
+    assertions: ["runtimeSideEffects", "closedSubtreePersistence"],
+    actions: [
+      { type: "nativeOpenWindow", focused: true, tabs: [{ title: "CL B1 no-window-event", active: true }], captureWindow: "cl-b1-no-window-event-window", captureTabs: "cl-b1-no-window-event-tabs" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "CL B1 stale sideband", active: true }, { title: "CL B1 stale mover" }], captureWindow: "cl-b1-sideband-window", captureTabs: "cl-b1-sideband-tabs" },
+      { type: "nativeMoveTabToNewWindow", tab: { capture: "cl-b1-sideband-tabs", index: 1 }, active: false, captureWindow: "cl-b1-sideband-moved-window", captureStaleTabs: "cl-b1-sideband-old" },
+      { type: "nativeCloseTab", tab: { capture: "cl-b1-no-window-event-tabs" }, order: "sessionChangedOnly" },
+      { type: "restartBackgroundAbrupt" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "cl-b1-sideband-old" }, withStaleQuery: true },
+      { type: "manualRefreshWithStaleQuery", staleTab: { capture: "cl-b1-sideband-old" } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "cl-b2-restored-window-child-closed-parent-reclosed",
+    title: "closed loss block2 restored window child closed parent reclosed",
+    notes: "Closed-loss block 2: a restored multi-tab window has a restored child TO-closed, gains a late child, and is reclosed across abrupt restart without losing closed records.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["closed-loss-hunt", "closed-subtree", "persistence", "restored", "multi-tab", "outliner-close", "restart", "stale-event", "side-effects"],
+    assertions: ["runtimeSideEffects", "closedSubtreePersistence"],
+    actions: [
+      { type: "openTab", window: { windowId: 20 }, active: false, title: "CL B2 restored extra", url: "https://cl.example/b2-restored-extra", captureTab: "cl-b2-restored-extra" },
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "cl-b2-restored-tabs", captureRestoredWindows: "cl-b2-restored-window" },
+      { type: "outlinerCloseTab", tab: { capture: "cl-b2-restored-tabs" } },
+      { type: "openTab", window: { capture: "cl-b2-restored-window" }, active: false, title: "CL B2 restored late child", url: "https://cl.example/b2-late-child", captureTab: "cl-b2-late-child" },
+      { type: "outlinerCloseNodeThenAbruptRestart", node: { window: { capture: "cl-b2-restored-window" } }, captureStaleTabs: "cl-b2-restored-reclose-old" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "cl-b2-restored-reclose-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "cl-b2-close-restore-reject-reclose-multitab",
+    title: "closed loss block2 close restore reject reclose multitab",
+    notes: "Closed-loss block 2: a multi-tab window restore recovers from create rejection, then reorders/updates restored tabs before reclose across abrupt restart.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["closed-loss-hunt", "closed-subtree", "persistence", "restore", "command-rejection", "multi-tab", "outliner-close", "metadata", "runtime-scope-order", "restart", "side-effects"],
+    assertions: ["runtimeSideEffects", "runtimeScopeOrder", "runtimeMetadata", "closedSubtreePersistence"],
+    actions: [
+      { type: "openTab", window: { windowId: 20 }, active: false, title: "CL B2 reject extra", url: "https://cl.example/b2-reject-extra", captureTab: "cl-b2-reject-extra" },
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeRejectingCreate", node: { nodeId: "window:20" }, captureRestoredTabs: "cl-b2-reject-restored-tabs", captureRestoredWindows: "cl-b2-reject-restored-window" },
+      { type: "updateTab", tab: { capture: "cl-b2-reject-restored-tabs" }, title: "CL B2 reject restored current", url: "https://cl.example/b2-reject-current" },
+      { type: "manualRefreshWithReorderedQuery", window: { capture: "cl-b2-reject-restored-window" }, order: "reverse" },
+      { type: "outlinerCloseNodeThenAbruptRestart", node: { window: { capture: "cl-b2-reject-restored-window" } }, captureStaleTabs: "cl-b2-reject-reclose-old" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "cl-b2-reject-reclose-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "cl-b2-closed-subtree-history-redo-skew",
+    title: "closed loss block2 closed subtree history redo skew",
+    notes: "Closed-loss block 2: an unrelated group undo/redo and abrupt restart with stale evidence must not remove or rematerialize a previously TO-closed window.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["closed-loss-hunt", "closed-subtree", "persistence", "history", "outliner-close", "restart", "stale-event", "stale-query", "side-effects"],
+    assertions: ["runtimeSideEffects", "closedSubtreePersistence"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "cl-b2-history-group-old" },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedoThenAbruptRestart" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "cl-b2-history-group-old" }, withStaleQuery: true },
+      { type: "manualRefreshWithStaleQuery", staleTab: { capture: "cl-b2-history-group-old" } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "cl-b3-two-closed-same-url-tabs-restore-one",
+    title: "closed loss block3 two closed same url tabs restore one",
+    notes: "Closed-loss block 3: two same-URL closed tab records remain distinct while one is restored, reclosed, and followed by stale restored-runtime evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["closed-loss-hunt", "closed-subtree", "persistence", "same-url", "same-title", "restore", "outliner-close", "restart", "metadata", "side-effects"],
+    assertions: ["runtimeSideEffects", "runtimeMetadata", "closedSubtreePersistence"],
+    actions: [
+      { type: "updateTab", tab: { tabId: 2 }, title: "CL B3 same bucket", url: "https://cl.example/b3-same-url" },
+      { type: "openTab", window: { windowId: 10 }, active: false, title: "CL B3 same bucket", url: "https://cl.example/b3-same-url", captureTab: "cl-b3-same-url-duplicate" },
+      { type: "outlinerCloseTab", tab: { tabId: 2 } },
+      { type: "outlinerCloseTab", tab: { capture: "cl-b3-same-url-duplicate" } },
+      { type: "restartBackground" },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "tab:2" }, captureRestoredTabs: "cl-b3-same-url-restored-tabs", captureRestoredWindows: "cl-b3-same-url-restored-window" },
+      { type: "outlinerCloseNodeThenAbruptRestart", node: { tab: { capture: "cl-b3-same-url-restored-tabs" } }, captureStaleTabs: "cl-b3-same-url-reclose-old" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "cl-b3-same-url-reclose-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "cl-b3-nested-closed-owner-foreign-live-survivor",
+    title: "closed loss block3 nested closed owner foreign live survivor",
+    notes: "Closed-loss block 3: a command-created owner absorbs a foreign browser-created tab, then closing the owner preserves the closed owner subtree while live foreign evidence remains separate.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["closed-loss-hunt", "closed-subtree", "persistence", "commandCreated", "browserCreated", "native-move", "outliner-close", "restart", "foreign-live-survivor", "runtime-scope-order", "side-effects"],
+    assertions: ["runtimeSideEffects", "runtimeScopeOrder", "closedSubtreePersistence"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 2 }, captureStaleTabs: "cl-b3-command-source-old" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "CL B3 foreign guest", active: true }, { title: "CL B3 foreign sibling" }], captureWindow: "cl-b3-foreign-window", captureTabs: "cl-b3-foreign-tabs" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "cl-b3-foreign-tabs" }, window: { role: "lastOpenedWindow" }, index: 0, active: false, captureStaleTabs: "cl-b3-foreign-old" },
+      { type: "outlinerCloseNodeThenAbruptRestart", node: { tab: { tabId: 2 } }, captureStaleTabs: "cl-b3-owner-close-old" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "cl-b3-foreign-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "cl-b3-unconfirmed-close-journal-passive-victim",
+    title: "closed loss block3 unconfirmed close journal passive victim",
+    notes: "Closed-loss block 3: a passive TO-closed window survives an unrelated injected close journal, abrupt restart, history replay, and stale query evidence.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["closed-loss-hunt", "closed-subtree", "persistence", "journal", "history", "outliner-close", "restart", "stale-query", "side-effects"],
+    assertions: ["runtimeSideEffects", "closedSubtreePersistence"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "cl-b3-unconfirmed-group-old" },
+      { type: "injectCloseJournalThenAbruptRestart", node: { tab: { tabId: 2 } } },
+      { type: "outlinerUndoThenAbruptRestart" },
+      { type: "manualRefreshWithStaleQuery", staleTab: { capture: "cl-b3-unconfirmed-group-old" } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "cl-b4-closed-window-partial-snapshot-missing-live-window",
+    title: "closed loss block4 closed window partial snapshot missing live window",
+    notes: "Closed-loss block 4: a TO-closed saved window survives partial/missing-window evidence for unrelated live browser-created windows before and after restart.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["closed-loss-hunt", "closed-subtree", "persistence", "browserCreated", "partial-snapshot", "missing-window", "restart", "side-effects"],
+    assertions: ["runtimeSideEffects", "closedSubtreePersistence"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "CL B4 partial source", active: true }, { title: "CL B4 partial second" }], captureWindow: "cl-b4-partial-window", captureTabs: "cl-b4-partial-tabs" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { capture: "cl-b4-partial-window" } },
+      { type: "restartBackground" },
+      { type: "manualRefreshWithMissingTabQuery", tab: { capture: "cl-b4-partial-tabs" } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "cl-b4-restored-fullscreen-session-close-closed-sibling",
+    title: "closed loss block4 restored fullscreen session close closed sibling",
+    notes: "Closed-loss block 4: two closed windows persist while one is restored, fullscreened, session-closed, and surrounded by focus/open drift.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["closed-loss-hunt", "closed-subtree", "persistence", "restored", "window-state", "session", "focus", "browserCreated", "metadata", "side-effects"],
+    assertions: ["runtimeSideEffects", "runtimeMetadata", "closedSubtreePersistence"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerCloseWindow", window: { windowId: 10 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "cl-b4-fullscreen-restored-tabs", captureRestoredWindows: "cl-b4-fullscreen-restored-window" },
+      { type: "nativeSetWindowState", window: { capture: "cl-b4-fullscreen-restored-window" }, state: "fullscreen" },
+      { type: "updateTab", tab: { capture: "cl-b4-fullscreen-restored-tabs" }, title: "CL B4 fullscreen current", url: "https://cl.example/b4-fullscreen-current" },
+      { type: "nativeCloseTab", tab: { capture: "cl-b4-fullscreen-restored-tabs" }, order: "sessionChangedOnly" },
+      { type: "nativeOpenWindow", focused: true, tabs: [{ title: "CL B4 focus drift", active: true }], captureWindow: "cl-b4-focus-drift-window", captureTabs: "cl-b4-focus-drift-tabs" },
+      { type: "focusWindow", window: { capture: "cl-b4-focus-drift-window" } },
+      { type: "restartBackground" }
+    ]
+  },
+  {
+    id: "cl-b4-opener-linked-closed-child-stale-parent",
+    title: "closed loss block4 opener linked closed child stale parent",
+    notes: "Closed-loss block 4: an opener-linked TO-closed child survives parent sibling movement, source stale evidence, and restart.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["closed-loss-hunt", "closed-subtree", "persistence", "opener", "outliner-close", "native-move", "stale-event", "stale-query", "restart", "runtime-scope-order", "side-effects"],
+    assertions: ["runtimeSideEffects", "runtimeScopeOrder", "closedSubtreePersistence"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, openerTab: { tabId: 1 }, title: "CL B4 opener child", url: "https://cl.example/b4-opener-child", captureTab: "cl-b4-opener-child" },
+      { type: "openTab", window: { windowId: 10 }, active: false, openerTab: { capture: "cl-b4-opener-child" }, title: "CL B4 opener sibling", url: "https://cl.example/b4-opener-sibling", captureTab: "cl-b4-opener-sibling" },
+      { type: "outlinerCloseTab", tab: { capture: "cl-b4-opener-child" } },
+      { type: "nativeMoveTabToNewWindow", tab: { capture: "cl-b4-opener-sibling" }, active: true, captureWindow: "cl-b4-opener-sibling-window", captureStaleTabs: "cl-b4-opener-source-old" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "cl-b4-opener-source-old" }, withStaleQuery: true },
+      { type: "restartBackground" },
+      { type: "manualRefreshWithStaleQuery", staleTab: { capture: "cl-b4-opener-source-old" } }
+    ]
+  },
+  {
+    id: "cl-b5-reject-child-reclose-keeps-closed-sibling",
+    title: "closed loss block5 reject child reclose keeps closed sibling",
+    notes: "Closed-loss block 5: a rejected restore of one child is reclosed while sibling records from the original closed window remain protected.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["closed-loss-hunt", "closed-subtree", "persistence", "restore", "command-rejection", "outliner-close", "multi-tab", "restart", "stale-event", "side-effects"],
+    assertions: ["runtimeSideEffects", "closedSubtreePersistence"],
+    actions: [
+      { type: "openTab", window: { windowId: 20 }, active: false, title: "CL B5 reject child sibling", url: "https://cl.example/b5-reject-child-sibling", captureTab: "cl-b5-reject-child-sibling" },
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeRejectingCreate", node: { nodeId: "tab:3" }, captureRestoredTabs: "cl-b5-reject-child-restored-tabs", captureRestoredWindows: "cl-b5-reject-child-restored-window" },
+      { type: "outlinerCloseNodeThenAbruptRestart", node: { tab: { capture: "cl-b5-reject-child-restored-tabs" } }, captureStaleTabs: "cl-b5-reject-child-reclose-old" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "cl-b5-reject-child-reclose-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "cl-b5-restored-windowfirst-stale-created-abrupt",
+    title: "closed loss block5 restored window first stale created abrupt",
+    notes: "Closed-loss block 5: a restored window closes through windowRemoved-first native evidence, then abrupt restart and stale created/query evidence must not lose the closed subtree.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["closed-loss-hunt", "closed-subtree", "persistence", "restored", "native-close", "restart", "stale-event", "stale-query", "metadata", "side-effects"],
+    assertions: ["runtimeSideEffects", "runtimeMetadata", "closedSubtreePersistence"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "cl-b5-windowfirst-restored-tabs", captureRestoredWindows: "cl-b5-windowfirst-restored-window" },
+      { type: "updateTab", tab: { capture: "cl-b5-windowfirst-restored-tabs" }, title: "CL B5 window first current", url: "https://cl.example/b5-window-first-current" },
+      { type: "nativeCloseWindow", window: { capture: "cl-b5-windowfirst-restored-window" }, order: "windowRemovedThenTabsRemoved" },
+      { type: "restartBackgroundAbrupt" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "cl-b5-windowfirst-restored-tabs" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "cl-b5-same-title-foreign-survivor",
+    title: "closed loss block5 same title foreign survivor",
+    notes: "Closed-loss block 5: a same-title/same-URL closed saved tab remains distinct from a foreign live survivor moved through another window.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["closed-loss-hunt", "closed-subtree", "persistence", "same-url", "same-title", "foreign-live-survivor", "native-move", "restart", "stale-query", "runtime-scope-order", "metadata", "side-effects"],
+    assertions: ["runtimeSideEffects", "runtimeScopeOrder", "runtimeMetadata", "closedSubtreePersistence"],
+    actions: [
+      { type: "updateTab", tab: { tabId: 2 }, title: "CL B5 shared identity", url: "https://cl.example/b5-shared" },
+      { type: "openTab", window: { windowId: 10 }, active: false, title: "CL B5 shared identity", url: "https://cl.example/b5-shared", captureTab: "cl-b5-shared-duplicate" },
+      { type: "outlinerCloseTab", tab: { tabId: 2 } },
+      { type: "nativeMoveTabToNewWindow", tab: { capture: "cl-b5-shared-duplicate" }, active: true, captureWindow: "cl-b5-shared-foreign-window", captureStaleTabs: "cl-b5-shared-source-old" },
+      { type: "restartBackground" },
+      { type: "manualRefreshWithStaleQuery", staleTab: { capture: "cl-b5-shared-source-old" } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "cl-b5-unconfirmed-journal-mixed-live-passive-closed",
+    title: "closed loss block5 unconfirmed journal mixed live passive closed",
+    notes: "Closed-loss block 5: an incomplete close journal for a mixed command/browser-created window must not consume a passive TO-closed window.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["closed-loss-hunt", "closed-subtree", "persistence", "journal", "commandCreated", "browserCreated", "native-move", "history", "restart", "stale-query", "runtime-scope-order", "side-effects"],
+    assertions: ["runtimeSideEffects", "runtimeScopeOrder", "closedSubtreePersistence"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "cl-b5-mixed-command-old" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "CL B5 mixed foreign", active: true }], captureWindow: "cl-b5-mixed-foreign-window", captureTabs: "cl-b5-mixed-foreign-tabs" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "cl-b5-mixed-foreign-tabs" }, window: { role: "lastOpenedWindow" }, index: 0, active: false, captureStaleTabs: "cl-b5-mixed-foreign-old" },
+      { type: "injectCloseJournalThenAbruptRestart", node: { window: { role: "lastOpenedWindow" } } },
+      { type: "outlinerUndoThenAbruptRestart" },
+      { type: "manualRefreshWithStaleQuery", staleTab: { capture: "cl-b5-mixed-command-old" } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "cl-b5-passive-victim-windowonly-query-split",
+    title: "closed loss block5 passive victim window only query split",
+    notes: "Closed-loss block 5: a passive TO-closed window survives unrelated browser-created tab movement, windowRemoved-only close, stale query, missing-window query, and restart.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["closed-loss-hunt", "closed-subtree", "persistence", "browserCreated", "native-move", "native-close", "stale-query", "partial-snapshot", "restart", "side-effects"],
+    assertions: ["runtimeSideEffects", "closedSubtreePersistence"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "CL B5 window-only source", active: true }, { title: "CL B5 window-only mover" }], captureWindow: "cl-b5-window-only-source", captureTabs: "cl-b5-window-only-tabs" },
+      { type: "nativeMoveTabToNewWindow", tab: { capture: "cl-b5-window-only-tabs", index: 1 }, active: true, captureWindow: "cl-b5-window-only-destination", captureStaleTabs: "cl-b5-window-only-old" },
+      { type: "nativeCloseWindow", window: { capture: "cl-b5-window-only-destination" }, order: "windowRemovedOnly" },
+      { type: "manualRefreshWithStaleQuery", staleTab: { capture: "cl-b5-window-only-old" } },
+      { type: "manualRefreshWithMissingWindowQuery", window: { capture: "cl-b5-window-only-source" } },
+      { type: "restartBackground" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "cl-b6-closed-leaf-stale-created-query-split",
+    title: "closed loss block6 closed leaf stale created query split",
+    notes: "Closed-loss block 6: a TO-closed saved leaf survives stale updated/created echoes, session drift, a partial live-tab snapshot, and restart.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["closed-loss-hunt", "closed-subtree", "persistence", "outliner-close", "saved", "stale-event", "stale-query", "session", "partial-snapshot", "restart", "runtime-scope-order", "side-effects"],
+    assertions: ["runtimeSideEffects", "runtimeScopeOrder", "closedSubtreePersistence"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, title: "CL B6 closed leaf", url: "https://cl.example/b6-closed-leaf", captureTab: "cl-b6-closed-leaf" },
+      { type: "outlinerCloseNodeThenAbruptRestart", node: { tab: { capture: "cl-b6-closed-leaf" } }, captureStaleTabs: "cl-b6-closed-leaf-old" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "cl-b6-closed-leaf-old" }, withStaleQuery: true },
+      { type: "sessionChanged" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "cl-b6-closed-leaf-old" }, withStaleQuery: true },
+      { type: "manualRefreshWithMissingTabQuery", tab: { tabId: 1 } },
+      { type: "restartBackground" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "cl-b6-opener-grandchild-closed-stale-parent",
+    title: "closed loss block6 opener grandchild closed stale parent",
+    notes: "Closed-loss block 6: a closed opener-linked grandchild survives parent movement, stale source evidence, restart, and stale-query replay.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["closed-loss-hunt", "closed-subtree", "persistence", "opener", "nested", "outliner-close", "native-move", "stale-event", "stale-query", "restart", "runtime-scope-order", "side-effects"],
+    assertions: ["runtimeSideEffects", "runtimeScopeOrder", "closedSubtreePersistence"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, openerTab: { tabId: 1 }, title: "CL B6 opener child", url: "https://cl.example/b6-opener-child", captureTab: "cl-b6-opener-child" },
+      { type: "openTab", window: { windowId: 10 }, active: false, openerTab: { capture: "cl-b6-opener-child" }, title: "CL B6 opener grandchild", url: "https://cl.example/b6-opener-grandchild", captureTab: "cl-b6-opener-grandchild" },
+      { type: "outlinerCloseTab", tab: { capture: "cl-b6-opener-grandchild" } },
+      { type: "nativeMoveTabToNewWindow", tab: { capture: "cl-b6-opener-child" }, active: true, captureWindow: "cl-b6-opener-parent-window", captureStaleTabs: "cl-b6-opener-parent-old" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "cl-b6-opener-parent-old" }, withStaleQuery: true },
+      { type: "restartBackground" },
+      { type: "manualRefreshWithStaleQuery", staleTab: { capture: "cl-b6-opener-parent-old" } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "cl-b6-restored-runtime-id-second-generation",
+    title: "closed loss block6 restored runtime id second generation",
+    notes: "Closed-loss block 6: a closed window restored, reclosed, restored again, and reclosed again keeps its closed subtree across stale evidence from both runtime generations.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["closed-loss-hunt", "closed-subtree", "persistence", "restore", "outliner-close", "restart", "stale-event", "stale-query", "metadata", "side-effects"],
+    assertions: ["runtimeSideEffects", "runtimeMetadata", "closedSubtreePersistence"],
+    actions: [
+      { type: "openTab", window: { windowId: 20 }, active: false, title: "CL B6 second generation extra", url: "https://cl.example/b6-second-generation-extra", captureTab: "cl-b6-second-generation-extra" },
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "cl-b6-first-generation-tabs", captureRestoredWindows: "cl-b6-first-generation-window" },
+      { type: "updateTab", tab: { capture: "cl-b6-first-generation-tabs" }, title: "CL B6 first generation current", url: "https://cl.example/b6-first-generation-current" },
+      { type: "outlinerCloseNodeThenAbruptRestart", node: { window: { capture: "cl-b6-first-generation-window" } }, captureStaleTabs: "cl-b6-first-generation-old" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "cl-b6-first-generation-old" }, withStaleQuery: true },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "cl-b6-second-generation-tabs", captureRestoredWindows: "cl-b6-second-generation-window" },
+      { type: "updateTab", tab: { capture: "cl-b6-second-generation-tabs" }, title: "CL B6 second generation current", url: "https://cl.example/b6-second-generation-current" },
+      { type: "outlinerCloseNodeThenAbruptRestart", node: { window: { capture: "cl-b6-second-generation-window" } }, captureStaleTabs: "cl-b6-second-generation-old" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "cl-b6-first-generation-old" }, withStaleQuery: true },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "cl-b6-second-generation-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "cl-b6-command-window-same-url-foreign-guest",
+    title: "closed loss block6 command window same url foreign guest",
+    notes: "Closed-loss block 6: a same-title command-owned tab is TO-closed while a same-URL browser-created guest remains live in the command window.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["closed-loss-hunt", "closed-subtree", "persistence", "same-url", "same-title", "commandCreated", "browserCreated", "native-move", "outliner-close", "restart", "stale-event", "runtime-scope-order", "metadata", "side-effects"],
+    assertions: ["runtimeSideEffects", "runtimeScopeOrder", "runtimeMetadata", "closedSubtreePersistence"],
+    actions: [
+      { type: "updateTab", tab: { tabId: 2 }, title: "CL B6 shared command owner", url: "https://cl.example/b6-shared-command" },
+      { type: "openTab", window: { windowId: 10 }, active: false, title: "CL B6 shared command owner", url: "https://cl.example/b6-shared-command", captureTab: "cl-b6-shared-guest" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 2 }, captureStaleTabs: "cl-b6-command-owner-source-old" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "cl-b6-shared-guest" }, window: { role: "lastOpenedWindow" }, index: 0, active: false, captureStaleTabs: "cl-b6-shared-guest-old" },
+      { type: "outlinerCloseNodeThenAbruptRestart", node: { tab: { tabId: 2 } }, captureStaleTabs: "cl-b6-command-owner-close-old" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "cl-b6-shared-guest-old" }, withStaleQuery: true },
+      { type: "restartBackground" },
+      { type: "manualRefresh" }
+    ]
   }
 ];
 
