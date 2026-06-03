@@ -8,6 +8,7 @@
     "test": "vitest run",
     "test:playwright": "playwright test",
     "test:playwright:ci": "playwright test -c playwright.ci.config.ts",
+    "oracle:build": "XDG_CACHE_HOME=$PWD/.cache/spago sh -c 'cd oracle/purescript && spago build'",
     "trace-hunt:runtime": "node scripts/hunt-runtime-traces.mjs",
     "perf:runtime-guard": "pnpm build && node scripts/perf-runtime-guard.mjs",
     "test:soak": "node scripts/run-generated-soak.mjs",

@@ -3,6 +3,9 @@ dist/
 web-ext-artifacts/
 coverage/
 test-results/
+.cache/
+oracle/purescript/.spago/
+oracle/purescript/output/
 autoresearch/sidebar-startup/*.tsv
 autoresearch/sidebar-startup/*.log
 autoresearch/sidebar-startup-hover/results.tsv
