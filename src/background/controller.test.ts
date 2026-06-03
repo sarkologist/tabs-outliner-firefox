@@ -1628,6 +1628,10 @@ type DomainAction =
       node: DomainNodeSelector;
     }
   | {
+      type: "outlinerDeleteNode";
+      node: DomainNodeSelector;
+    }
+  | {
       type: "outlinerDeleteNodeThenAbruptRestart";
       node: DomainNodeSelector;
       captureStaleTabs?: string;
@@ -1726,6 +1730,134 @@ const RUNTIME_DOMAIN_TRACE_DEFINITIONS: RuntimeDomainTraceDefinition[] = [
     tags: ["purescript-oracle"],
     assertions: ["purescriptOracle"],
     actions: []
+  },
+  {
+    id: "po-runtime-events",
+    title: "PureScript oracle mirrors basic runtime tab and window events",
+    notes: "Covers open, update, activate, focus, and window-state facts in the v1 oracle slice.",
+    tags: ["purescript-oracle", "runtime-events"],
+    assertions: ["purescriptOracle"],
+    actions: [
+      {
+        type: "openTab",
+        window: { windowId: 10 },
+        active: true,
+        title: "Oracle opened",
+        url: "https://oracle.example/opened",
+        captureTab: "po-opened"
+      },
+      {
+        type: "updateTab",
+        tab: { capture: "po-opened" },
+        title: "Oracle updated",
+        url: "https://oracle.example/updated",
+        favIconUrl: "https://oracle.example/favicon.ico"
+      },
+      { type: "activateTab", tab: { tabId: 2 } },
+      { type: "focusWindow", window: { windowId: 20 } },
+      { type: "nativeSetWindowState", window: { windowId: 20 }, state: "fullscreen" }
+    ]
+  },
+  {
+    id: "po-native-moves",
+    title: "PureScript oracle mirrors browser-created windows and native moves",
+    notes: "Covers native window creation, native same-window ownership moves, and native detach to a new window.",
+    tags: ["purescript-oracle", "browser-authored"],
+    assertions: ["purescriptOracle"],
+    actions: [
+      {
+        type: "nativeOpenWindow",
+        focused: false,
+        tabs: [
+          {
+            title: "Native oracle A",
+            url: "https://oracle.example/native-a"
+          },
+          {
+            title: "Native oracle B",
+            url: "https://oracle.example/native-b",
+            active: true
+          }
+        ],
+        captureWindow: "po-native-window",
+        captureTabs: "po-native-tabs"
+      },
+      {
+        type: "nativeMoveTabToWindow",
+        tab: { capture: "po-native-tabs" },
+        window: { windowId: 10 },
+        index: 1,
+        active: false
+      },
+      {
+        type: "nativeMoveTabToNewWindow",
+        tab: { tabId: 2 },
+        active: true,
+        captureWindow: "po-detached-window"
+      }
+    ]
+  },
+  {
+    id: "po-outliner-relocation",
+    title: "PureScript oracle mirrors outliner grouping and move-to-new-window commands",
+    notes: "Covers command-authored relocation without stale echoes or crash recovery.",
+    tags: ["purescript-oracle", "commands", "relocation"],
+    assertions: ["purescriptOracle"],
+    actions: [
+      {
+        type: "openTab",
+        window: { windowId: 10 },
+        active: true,
+        title: "Oracle group me",
+        url: "https://oracle.example/group-me",
+        captureTab: "po-group-me"
+      },
+      { type: "outlinerGroupTab", tab: { capture: "po-group-me" } },
+      {
+        type: "openTab",
+        window: { windowId: 10 },
+        active: true,
+        title: "Oracle move me",
+        url: "https://oracle.example/move-me",
+        captureTab: "po-move-me"
+      },
+      { type: "outlinerMoveTabToNewWindow", tab: { capture: "po-move-me" } }
+    ]
+  },
+  {
+    id: "po-close-delete",
+    title: "PureScript oracle mirrors outliner close and delete commands",
+    notes: "Covers close tab, delete live leaf, and close live window in the v1 oracle slice.",
+    tags: ["purescript-oracle", "commands", "close", "delete"],
+    assertions: ["purescriptOracle"],
+    actions: [
+      {
+        type: "openTab",
+        window: { windowId: 10 },
+        active: false,
+        title: "Oracle close tab",
+        url: "https://oracle.example/close-tab",
+        captureTab: "po-close-tab"
+      },
+      { type: "outlinerCloseTab", tab: { capture: "po-close-tab" } },
+      {
+        type: "openTab",
+        window: { windowId: 10 },
+        active: false,
+        title: "Oracle delete tab",
+        url: "https://oracle.example/delete-tab",
+        captureTab: "po-delete-tab"
+      },
+      { type: "outlinerDeleteNode", node: { tab: { capture: "po-delete-tab" } } },
+      {
+        type: "openTab",
+        window: { windowId: 20 },
+        active: true,
+        title: "Oracle close window extra",
+        url: "https://oracle.example/close-window-extra"
+      },
+      { type: "outlinerCloseWindow", window: { windowId: 20 } }
+    ]
   },
   {
     id: "rt-active-race",
@@ -21033,8 +21165,25 @@ function assertPureScriptOracleSnapshots(
   try {
     expect(actualSnapshots).toEqual(result.snapshots);
   } catch (error) {
-    throw new Error(`${generatedErrorText(error)}\nPureScript oracle mismatch for ${trace.id}\nTrace:\n${history.join("\n")}`);
+    throw new Error(
+      `${generatedErrorText(error)}\nPureScript oracle mismatch for ${trace.id}\n${firstPureScriptOracleMismatch(actualSnapshots, result.snapshots)}\nTrace:\n${history.join("\n")}`
+    );
   }
+}
+
+function firstPureScriptOracleMismatch(
+  actualSnapshots: PureScriptOracleSnapshot[],
+  expectedSnapshots: PureScriptOracleSnapshot[]
+): string {
+  const length = Math.max(actualSnapshots.length, expectedSnapshots.length);
+  for (let index = 0; index < length; index += 1) {
+    const actual = actualSnapshots[index];
+    const expected = expectedSnapshots[index];
+    if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+      return `Snapshot ${index} actual:\n${JSON.stringify(actual, null, 2)}\nSnapshot ${index} oracle:\n${JSON.stringify(expected, null, 2)}`;
+    }
+  }
+  return "No JSON-level mismatch found.";
 }
 
 function evaluatePureScriptOracle(input: PureScriptOracleInput): PureScriptOracleResult {
@@ -21238,6 +21387,11 @@ async function runDomainAction(context: GeneratedTraceContext, action: DomainAct
 
   if (action.type === "outlinerDeleteNodeRejectingClose") {
     await runDomainOutlinerDeleteNodeRejectingClose(context, action.node);
+    return;
+  }
+
+  if (action.type === "outlinerDeleteNode") {
+    await runDomainOutlinerDeleteNode(context, action.node);
     return;
   }
 
@@ -22199,6 +22353,20 @@ async function runDomainOutlinerDeleteNodeRejectingClose(
 
   const result = await context.controller.handleMessage({ type: "deleteNode", nodeId });
   expect((result as CommandAck).type).toBe("commandAck");
+  markCommandDeletedNodes(context, deletedNodeIds);
+  await flushGeneratedCloseEvents(context);
+  await pruneMissingExpectedClosedNodes(context, []);
+}
+
+async function runDomainOutlinerDeleteNode(
+  context: GeneratedTraceContext,
+  selector: DomainNodeSelector
+): Promise<void> {
+  const state = (await context.controller.handleMessage({ type: "getState" })) as OutlineState;
+  const nodeId = resolveDomainNodeId(context, state, selector);
+  const deletedNodeIds = generatedSubtreeNodeIds(state, nodeId);
+  const result = await context.controller.handleMessage({ type: "deleteNode", nodeId });
+  expectCommandAck(result, true);
   markCommandDeletedNodes(context, deletedNodeIds);
   await flushGeneratedCloseEvents(context);
   await pruneMissingExpectedClosedNodes(context, []);
