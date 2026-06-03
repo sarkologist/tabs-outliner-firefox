@@ -1083,6 +1083,22 @@ function traceEntryNames(snapshot: unknown): string[] {
     : [];
 }
 
+function traceEntriesNamed(snapshot: unknown, name: string): Array<{ detail?: Record<string, unknown> }> {
+  if (!Array.isArray((snapshot as { entries?: unknown }).entries)) {
+    return [];
+  }
+  return (snapshot as { entries: Array<{ name?: unknown; detail?: unknown }> }).entries.flatMap((entry) => {
+    if (entry.name !== name) {
+      return [];
+    }
+    return [
+      entry.detail && typeof entry.detail === "object" && !Array.isArray(entry.detail)
+        ? { detail: entry.detail as Record<string, unknown> }
+        : {}
+    ];
+  });
+}
+
 async function countNodeTableObjectValues<T>(
   callback: () => Promise<T>,
   countedNodeTable?: OutlineState["nodes"]
@@ -25709,6 +25725,92 @@ describe("background controller lifecycle", () => {
     expect(state.nodes["window:42"]?.active).toBe(true);
     expect(state.nodes["window:42"]?.childIds).toEqual(["tab:2"]);
     expect(state.nodes["tab:2"]?.active).toBe(true);
+  });
+
+  it("bounds full runtime refresh saves to patch candidates", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        },
+        {
+          id: 2,
+          windowId: 10,
+          index: 1,
+          active: false,
+          url: "https://two.example/",
+          title: "Two"
+        },
+        {
+          id: 3,
+          windowId: 10,
+          index: 2,
+          active: false,
+          url: "https://three.example/",
+          title: "Three"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    await controller.flushPendingSaves();
+    expect(await controller.handleMessage({ type: "setPerformanceTraceEnabled", enabled: true })).toEqual({ ok: true });
+    await controller.handleMessage({ type: "clearPerformanceTrace" });
+    runtime.broadcasts.length = 0;
+    vi.mocked(runtime.api.windows.getAll).mockClear();
+    vi.mocked(runtime.api.storage.local.set).mockClear();
+
+    runtime.tabs = runtime.tabs.map((tab) => tab.windowId === 10
+      ? { ...tab, active: tab.id === 2 }
+      : copyTab(tab));
+    await runtime.events.tabUpdated.emit(2, { active: true }, {
+      id: 2,
+      windowId: 10,
+      index: 99,
+      active: true,
+      url: "https://two.example/",
+      title: "Two"
+    });
+
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    const patch = stateBroadcasts(runtime.broadcasts).at(-1) as
+      | { type?: string; updatedNodes?: Array<{ id: string }> }
+      | undefined;
+
+    expect(vi.mocked(runtime.api.windows.getAll).mock.calls.length).toBeGreaterThanOrEqual(1);
+    expect(patch?.type).toBe("nodeStateUpdated");
+    expect(patch?.updatedNodes?.map((node) => node.id)).toEqual(["tab:1", "tab:2"]);
+    expect(state.nodes["tab:1"]?.active).toBe(false);
+    expect(state.nodes["tab:2"]?.active).toBe(true);
+    expect(state.nodes["tab:3"]?.active).toBe(false);
+    expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(0);
+
+    await controller.flushPendingSaves();
+    const trace = await controller.handleMessage({ type: "getPerformanceTrace" });
+    const saveBuilds = traceEntriesNamed(trace, "background.state.save.v3.changeBuild");
+    const saveDetail = saveBuilds.at(-1)?.detail;
+
+    expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(1);
+    expect(saveBuilds).toHaveLength(1);
+    expect(saveDetail).toMatchObject({
+      fullSave: false,
+      candidateNodeCount: expect.any(Number),
+      nodeShardSetKeys: expect.any(Number)
+    });
+    expect(saveDetail?.candidateNodeCount).toBeGreaterThan(0);
+    expect(saveDetail?.nodeShardSetKeys).toBeLessThan(32);
   });
 
   it("preserves externally created single-tab windows when browser close only reports through sessions", async () => {
