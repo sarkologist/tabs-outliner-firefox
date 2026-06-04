@@ -1484,6 +1484,7 @@ type DomainRuntimeEventAction =
       type: "openTab";
       window: DomainWindowSelector;
       active?: boolean;
+      index?: number;
       title?: string;
       url?: string;
       openerTab?: DomainTabSelector;
@@ -1937,6 +1938,69 @@ const RUNTIME_DOMAIN_TRACE_DEFINITIONS: RuntimeDomainTraceDefinition[] = [
         staleQueryFromCapture: "po-window-with-blank-stale"
       },
       { type: "restartBackground" }
+    ]
+  },
+  {
+    id: "po-created-tab-group-race-restored-window-order",
+    title: "PureScript oracle preserves order when created tab races grouping in restored window",
+    notes: "Covers the 910000046 class where a created-tab event index is corrected against stale command-relocation source-index evidence.",
+    tags: ["purescript-oracle", "runtime-order", "concurrency", "restore", "created-tab"],
+    assertions: ["purescriptOracle", "runtimeOrder", "runtimeScopeOrder", "runtimeMetadata"],
+    actions: [
+      {
+        type: "nativeOpenWindow",
+        focused: true,
+        tabs: [
+          {
+            title: "Oracle race target",
+            url: "https://oracle.example/race-target",
+            active: true
+          }
+        ],
+        captureWindow: "po-race-source-window"
+      },
+      {
+        type: "outlinerCloseWindow",
+        window: { capture: "po-race-source-window" },
+        captureStaleTabs: "po-race-source-stale"
+      },
+      {
+        type: "outlinerRestoreNodeThenAbruptRestart",
+        node: { nodeId: "window:21" },
+        captureRestoredTabs: "po-race-group-target",
+        captureRestoredWindows: "po-race-restored-window"
+      },
+      {
+        type: "openTab",
+        window: { capture: "po-race-restored-window" },
+        index: 0,
+        active: false,
+        title: "Oracle race left",
+        url: "https://oracle.example/race-left",
+        captureTab: "po-race-left"
+      },
+      {
+        type: "openTab",
+        window: { capture: "po-race-restored-window" },
+        active: true,
+        title: "Oracle race right",
+        url: "https://oracle.example/race-right",
+        captureTab: "po-race-right"
+      },
+      {
+        type: "raceWithOutlinerGroup",
+        event: {
+          type: "openTab",
+          window: { capture: "po-race-restored-window" },
+          index: 1,
+          active: false,
+          title: "Oracle race middle",
+          url: "https://oracle.example/race-middle",
+          captureTab: "po-race-middle"
+        },
+        groupTab: { capture: "po-race-group-target" },
+        captureStaleTabs: "po-race-before-group"
+      }
     ]
   },
   {
@@ -21610,6 +21674,18 @@ async function runDomainAction(context: GeneratedTraceContext, action: DomainAct
     await runGeneratedGroupCommand(context, candidate);
     captureMovedTab(context, groupTab.id);
     await flushGeneratedRuntimeEventRefreshes(context);
+    if (action.event.type === "openTab") {
+      const createdTab = action.event.captureTab
+        ? resolveDomainTab(context, { capture: action.event.captureTab })
+        : runtimeTabById(context, context.lastOpenedTabId ?? -1);
+      const moved = runtimeTabById(context, groupTab.id);
+      recordPureScriptOracleAction(context, {
+        type: "concurrentCreatedTabThenGroup",
+        createdTab: copyTab(createdTab),
+        groupTab: action.groupTab,
+        windowId: moved.windowId
+      });
+    }
     return;
   }
 
@@ -21891,7 +21967,7 @@ async function runDomainRuntimeEventAction(
     const tab: RuntimeTab = {
       id: tabId,
       windowId: windowInfo.id,
-      index: existingTabs.length,
+      index: action.index ?? existingTabs.length,
       active: action.active ?? true,
       url: action.url ?? `https://domain.example/${tabId}`,
       title: action.title ?? `Domain ${tabId}`,
@@ -27346,6 +27422,13 @@ describe("background controller lifecycle", () => {
 
   it("preserves runtime order when a created-tab event races grouping out-of-order child tabs", async () => {
     await runGeneratedTrace(1546021748, 4, {
+      adversarialRuntimeQueries: true,
+      adversarialConcurrency: true
+    });
+  });
+
+  it("preserves runtime order when a created-tab event races grouping in a restored window", async () => {
+    await runGeneratedTrace(910000046, 10, {
       adversarialRuntimeQueries: true,
       adversarialConcurrency: true
     });
