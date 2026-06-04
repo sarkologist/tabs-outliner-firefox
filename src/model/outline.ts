@@ -1248,7 +1248,88 @@ export function restoreNodes(state: OutlineState, restoredNodes: RestoredNode[])
     }
   }
 
+  promoteRestoredLiveNodesOutOfClosedAncestors(next, state, restoredNodes.map((restored) => restored.nodeId));
   return next;
+}
+
+function promoteRestoredLiveNodesOutOfClosedAncestors(
+  state: OutlineState,
+  original: OutlineState,
+  restoredNodeIds: readonly NodeId[]
+): void {
+  const promotedNodeIds = new Set<NodeId>();
+  for (const nodeId of restoredNodeIds) {
+    const liveRootId = liveRootUnderClosedAncestor(state, nodeId);
+    if (!liveRootId || promotedNodeIds.has(liveRootId)) {
+      continue;
+    }
+    promoteLiveNodeOutOfClosedAncestors(state, original, liveRootId);
+    promotedNodeIds.add(liveRootId);
+  }
+}
+
+function liveRootUnderClosedAncestor(state: OutlineState, nodeId: NodeId): NodeId | undefined {
+  let current = state.nodes[nodeId];
+  let candidateId: NodeId | undefined;
+  const visited = new Set<NodeId>();
+
+  while (current && !visited.has(current.id)) {
+    visited.add(current.id);
+    const parent = current.parentId ? state.nodes[current.parentId] : undefined;
+    if (current.status === "live" && parent?.status === "closed") {
+      candidateId = current.id;
+    }
+    current = parent;
+  }
+
+  return candidateId;
+}
+
+function promoteLiveNodeOutOfClosedAncestors(
+  state: OutlineState,
+  original: OutlineState,
+  nodeId: NodeId
+): void {
+  const node = state.nodes[nodeId];
+  const closedParent = node?.parentId ? state.nodes[node.parentId] : undefined;
+  if (!node || closedParent?.status !== "closed") {
+    return;
+  }
+
+  let topClosedAncestor = closedParent;
+  const visited = new Set<NodeId>([node.id]);
+  while (topClosedAncestor.parentId && !visited.has(topClosedAncestor.id)) {
+    visited.add(topClosedAncestor.id);
+    const parent = state.nodes[topClosedAncestor.parentId];
+    if (parent?.status !== "closed") {
+      break;
+    }
+    topClosedAncestor = parent;
+  }
+
+  const targetParentId = topClosedAncestor.parentId &&
+    state.nodes[topClosedAncestor.parentId]?.status !== "closed"
+    ? topClosedAncestor.parentId
+    : undefined;
+  const oldSiblings = node.parentId
+    ? cloneNodeForMutation(state, node.parentId).childIds
+    : mutableRootIds(state, original);
+  removeId(oldSiblings, node.id);
+
+  const promotedNode = cloneNodeForMutation(state, node.id);
+  const targetSiblings = targetParentId
+    ? cloneNodeForMutation(state, targetParentId).childIds
+    : mutableRootIds(state, original);
+  removeId(targetSiblings, node.id);
+  const anchorIndex = targetSiblings.indexOf(topClosedAncestor.id);
+  const insertionIndex = anchorIndex >= 0 ? anchorIndex + 1 : targetSiblings.length;
+
+  if (targetParentId) {
+    promotedNode.parentId = targetParentId;
+  } else {
+    delete promotedNode.parentId;
+  }
+  targetSiblings.splice(insertionIndex, 0, promotedNode.id);
 }
 
 function clearOtherActiveLiveWindows(state: OutlineState, activeWindowNodeId: NodeId): void {

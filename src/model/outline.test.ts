@@ -1530,6 +1530,81 @@ describe("outline model", () => {
     expect(restored.nodes["tab:1"]?.restoredFromClosed).toBe(true);
   });
 
+  it("promotes a restored closed window out of closed ancestors", () => {
+    let state = bootstrapFromWindows([
+      {
+        id: 10,
+        incognito: false,
+        focused: true,
+        tabs: [
+          {
+            id: 1,
+            windowId: 10,
+            index: 0,
+            active: true,
+            url: "https://parent.example/",
+            title: "Parent"
+          }
+        ]
+      },
+      {
+        id: 20,
+        incognito: false,
+        focused: false,
+        tabs: [
+          {
+            id: 2,
+            windowId: 20,
+            index: 0,
+            active: true,
+            url: "https://child.example/",
+            title: "Child"
+          }
+        ]
+      }
+    ], { now: 1000 });
+    state = closeWindow(state, 20, { now: 2000, sessionId: "session-window-20" });
+    state = closeWindow(state, 10, { now: 3000, sessionId: "session-window-10" });
+    state = {
+      ...state,
+      rootIds: ["window:10"],
+      nodes: {
+        ...state.nodes,
+        "window:10": {
+          ...state.nodes["window:10"]!,
+          childIds: [...state.nodes["window:10"]!.childIds, "window:20"]
+        },
+        "window:20": {
+          ...state.nodes["window:20"]!,
+          parentId: "window:10"
+        }
+      }
+    };
+
+    const restored = restoreNodes(state, [
+      {
+        nodeId: "window:20",
+        windowId: 30,
+        active: true
+      },
+      {
+        nodeId: "tab:2",
+        tabId: 22,
+        windowId: 30,
+        active: true,
+        url: "https://child.example/",
+        title: "Child"
+      }
+    ]);
+
+    expect(restored.rootIds).toEqual(["window:10", "window:20"]);
+    expect(restored.nodes["window:10"]?.status).toBe("closed");
+    expect(restored.nodes["window:10"]?.childIds).not.toContain("window:20");
+    expect(restored.nodes["window:20"]?.status).toBe("live");
+    expect(restored.nodes["window:20"]?.parentId).toBeUndefined();
+    expect(restored.nodes["tab:2"]?.parentId).toBe("window:20");
+  });
+
   it("updates stale browser-created provenance when a closed window is restored live", () => {
     const browserCreated = bootstrapFromWindows([
       {
