@@ -756,6 +756,26 @@ describe("runtime reconciliation ledger", () => {
       source: "installedState"
     });
   });
+
+  it("records command relocation source indexes from pre-command outline order", () => {
+    const state = bootstrapFromWindows([windowInfo(10, [tabOne, tabTwo])], { now: 1000 });
+    const ledger = new RuntimeFactLedger();
+    ledger.reconstructFromState(state, [windowInfo(10, [tabOne, tabTwo])]);
+
+    const reordered = moveNode(state, "tab:2", { parentId: "window:10", index: 0, now: 2000 });
+    const moved = moveTabToNewLiveWindow(
+      reordered,
+      "tab:1",
+      windowInfo(20, [{ ...tabOne, windowId: 20, index: 0 }]),
+      { now: 3000 }
+    );
+
+    expect(ledger.acceptedTabShapeFact(1)?.index).toBe(0);
+
+    ledger.recordCommandRelocatedTabs(reordered, moved, ["tab:1"]);
+
+    expect(ledger.commandRelocatedTabEcho(1)?.sourceIndex).toBe(1);
+  });
 });
 
 describe("runtime window scope index", () => {

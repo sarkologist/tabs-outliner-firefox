@@ -3761,6 +3761,46 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       return tabIds;
     };
 
+    const commandRelocationAnchorIndexesInPlannedSubtree = (
+      nodeId: NodeId,
+      sourceWindowId: number,
+      eventSequence: number
+    ): number[] => {
+      if (eventSequence <= 0 || runtimeFacts.commandRelocatedTabEchoCount() === 0) {
+        return [];
+      }
+      const visited = new Set<NodeId>();
+      const stack = [nodeId];
+      const indexes: number[] = [];
+      while (stack.length > 0) {
+        const currentNodeId = stack.pop()!;
+        if (visited.has(currentNodeId)) {
+          continue;
+        }
+        visited.add(currentNodeId);
+        const node = nodeForPlan(currentNodeId);
+        if (!node) {
+          continue;
+        }
+        if (isLiveTabNode(node)) {
+          const echo = runtimeFacts.commandRelocatedTabEcho(node.live.tabId);
+          if (
+            echo &&
+            echo.sourceWindowId === sourceWindowId &&
+            echo.toWindowId === node.live.windowId &&
+            eventSequence < echo.sequence &&
+            typeof echo.sourceIndex === "number"
+          ) {
+            indexes.push(echo.sourceIndex);
+          }
+        }
+        for (let index = node.childIds.length - 1; index >= 0; index -= 1) {
+          stack.push(node.childIds[index]!);
+        }
+      }
+      return indexes;
+    };
+
     const outlineRuntimeTabOrderForPlan = (runtimeWindowId: number): number[] => {
       const windowNodeId = plannedLiveWindowNodeId(runtimeWindowId);
       return windowNodeId ? runtimeTabIdsInPlannedSubtree(windowNodeId, runtimeWindowId) : [];
@@ -3804,7 +3844,12 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       ];
     };
 
-    const insertRuntimeTabChildForFastPath = (parentNode: OutlineNode, tabNodeId: NodeId, tab: RuntimeTab): void => {
+    const insertRuntimeTabChildForFastPath = (
+      parentNode: OutlineNode,
+      tabNodeId: NodeId,
+      tab: RuntimeTab,
+      eventSequence: number
+    ): void => {
       const runtimeOrder = plannedRuntimeOrderWithTabAtIndex(
         plannedRuntimeOrderForWindow(tab.windowId),
         tab.id,
@@ -3814,9 +3859,12 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       const runtimeOrderIndexByTabId = new Map(runtimeOrder.map((tabId, index) => [tabId, index]));
       const tabOrderIndex = runtimeOrderIndexByTabId.get(tab.id) ?? runtimeOrder.length;
       const insertAt = parentNode.childIds.findIndex((childId) => {
-        const childIndex = runtimeTabIdsInPlannedSubtree(childId, tab.windowId)
-          .map((childTabId) => runtimeOrderIndexByTabId.get(childTabId))
-          .filter((index): index is number => typeof index === "number")
+        const childIndex = [
+          ...runtimeTabIdsInPlannedSubtree(childId, tab.windowId)
+            .map((childTabId) => runtimeOrderIndexByTabId.get(childTabId))
+            .filter((index): index is number => typeof index === "number"),
+          ...commandRelocationAnchorIndexesInPlannedSubtree(childId, tab.windowId, eventSequence)
+        ]
           .sort((left, right) => left - right)[0];
         return childIndex !== undefined && childIndex >= tabOrderIndex;
       });
@@ -3942,7 +3990,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       }
       const scopeTab = tabWithCommandRelocationAdjustedIndex(tab, evidence.sequence);
       plannedNodes.set(tabNodeId, runtimeTabNodeForFastPath(tab, tabNodeId, parentId, now()));
-      insertRuntimeTabChildForFastPath(parentNode, tabNodeId, scopeTab);
+      insertRuntimeTabChildForFastPath(parentNode, tabNodeId, scopeTab, evidence.sequence);
       changedNodeIds.add(tabNodeId);
       structuralChanged = true;
       liveTabNodeIdAdditions.set(tab.id, tabNodeId);
