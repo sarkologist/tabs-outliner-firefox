@@ -547,17 +547,17 @@ decodeCommandTabAction json =
 
 isGeneratedNoopAction :: String -> Boolean
 isGeneratedNoopAction actionType =
-  orBoolean
-    (eqString actionType "staleActivationSnapshot")
-    (orBoolean
-      (eqString actionType "staleTabCreatedEvent")
-      (orBoolean
-        (eqString actionType "staleTabUpdatedEvent")
-        (orBoolean
-          (eqString actionType "staleLiveTabUpdatedEvent")
-          (orBoolean
-            (eqString actionType "staleLiveTabUpdatedEventWithStaleQuery")
-            (eqString actionType "staleLiveTabCreatedEventWithStaleQuery")))))
+  anyArray
+    (\candidate -> eqString actionType candidate)
+    [ "staleActivationSnapshot"
+    , "staleTabCreatedEvent"
+    , "staleTabUpdatedEvent"
+    , "staleLiveTabUpdatedEvent"
+    , "staleLiveTabUpdatedEventWithStaleQuery"
+    , "staleLiveTabCreatedEventWithStaleQuery"
+    , "staleLiveUpdatedEvent"
+    , "staleLiveCreatedEvent"
+    ]
 
 decodeRestoreNodeAction :: Json -> Result RestoreNodeAction
 decodeRestoreNodeAction json =
@@ -1195,7 +1195,11 @@ applyOutlinerDeleteWindowRejectingClose step selector model =
 
 applyOutlinerRestoreDeleteWindowDelayedEvent :: Int -> WindowSelector -> OracleModel -> Result OracleModel
 applyOutlinerRestoreDeleteWindowDelayedEvent step selector model =
-  applyOutlinerDeleteWindowRejectingClose step selector model
+  bindResult (applyOutlinerDeleteWindowRejectingClose step selector model) (\deleted ->
+    Ok deleted
+      { runtimeWindows = mapArray (\window -> window { focused = false }) deleted.runtimeWindows
+      , outline = clearActiveWindowsInOutline deleted.outline
+      })
 
 applyConcurrentCreatedTabThenGroup :: Int -> ConcurrentCreatedTabThenGroupAction -> OracleModel -> Result OracleModel
 applyConcurrentCreatedTabThenGroup step details model =
@@ -1265,17 +1269,115 @@ restoreClosedWindowSubtree :: NodeId -> RuntimeWindow -> Array RuntimeTab -> Out
 restoreClosedWindowSubtree nodeId window restoredTabs outline =
   let
     closedTabNodeIds = closedTabNodeIdsInSubtree nodeId outline
+    restoredOutline =
+      outline { nodes = mapArray (\node ->
+        if nodeIdEq node.id nodeId then restoreWindowOutlineNode node window
+        else
+          case restoredTabForNode node.id closedTabNodeIds restoredTabs of
+            Nothing -> node
+            Just tab -> restoreTabOutlineNode node tab) outline.nodes }
   in
-    outline { nodes = mapArray (\node ->
-      if nodeIdEq node.id nodeId then restoreWindowOutlineNode node window
-      else
-        case restoredTabForNode node.id closedTabNodeIds restoredTabs of
-          Nothing -> node
-          Just tab -> restoreTabOutlineNode node tab) outline.nodes }
+    promoteRestoredLiveNodesOutOfClosedAncestors [nodeId] restoredOutline
 
 restoreClosedTabNode :: NodeId -> RuntimeTab -> Outline -> Outline
 restoreClosedTabNode nodeId tab outline =
-  replaceNode outline (restoreTabOutlineNode (requireNodeOr nodeId outline (emptyTabNode nodeId)) tab)
+  promoteRestoredLiveNodesOutOfClosedAncestors [nodeId]
+    (replaceNode outline (restoreTabOutlineNode (requireNodeOr nodeId outline (emptyTabNode nodeId)) tab))
+
+promoteRestoredLiveNodesOutOfClosedAncestors :: Array NodeId -> Outline -> Outline
+promoteRestoredLiveNodesOutOfClosedAncestors nodeIds outline =
+  foldlArray
+    (\current nodeId -> promoteLiveNodeOutOfClosedAncestors nodeId current)
+    outline
+    (uniqueRestoredLiveRootsUnderClosedAncestors nodeIds outline)
+
+uniqueRestoredLiveRootsUnderClosedAncestors :: Array NodeId -> Outline -> Array NodeId
+uniqueRestoredLiveRootsUnderClosedAncestors nodeIds outline =
+  foldlArray
+    (\roots nodeId ->
+      case liveRootUnderClosedAncestor nodeId outline of
+        Nothing -> roots
+        Just rootId ->
+          if anyArray (\candidateId -> nodeIdEq candidateId rootId) roots then roots
+          else snocArray roots rootId)
+    []
+    nodeIds
+
+liveRootUnderClosedAncestor :: NodeId -> Outline -> Maybe NodeId
+liveRootUnderClosedAncestor nodeId outline =
+  liveRootUnderClosedAncestorLoop nodeId Nothing [] outline
+
+liveRootUnderClosedAncestorLoop :: NodeId -> Maybe NodeId -> Array NodeId -> Outline -> Maybe NodeId
+liveRootUnderClosedAncestorLoop nodeId candidateId visited outline =
+  if anyArray (\visitedId -> nodeIdEq visitedId nodeId) visited then candidateId
+  else
+    case findNode nodeId outline of
+      Nothing -> candidateId
+      Just node ->
+        let
+          nextCandidateId = case node.parentId of
+            Nothing -> candidateId
+            Just parentId ->
+              case findNode parentId outline of
+                Nothing -> candidateId
+                Just parent ->
+                  if andBoolean (isLiveStatus node.status) (isClosedStatus parent.status) then Just node.id
+                  else candidateId
+        in
+          case node.parentId of
+            Nothing -> nextCandidateId
+            Just parentId -> liveRootUnderClosedAncestorLoop parentId nextCandidateId (snocArray visited node.id) outline
+
+promoteLiveNodeOutOfClosedAncestors :: NodeId -> Outline -> Outline
+promoteLiveNodeOutOfClosedAncestors nodeId outline =
+  case findNode nodeId outline of
+    Nothing -> outline
+    Just node ->
+      case node.parentId of
+        Nothing -> outline
+        Just parentId ->
+          case findNode parentId outline of
+            Nothing -> outline
+            Just parent ->
+              if notBoolean (isClosedStatus parent.status) then outline
+              else
+                let
+                  topClosedAncestor = topClosedAncestorFrom parent [] outline
+                  targetParentId = nonClosedParentId topClosedAncestor outline
+                  insertionIndex = case targetParentId of
+                    Nothing -> addInt (indexOfNodeId topClosedAncestor.id outline.rootIds) 1
+                    Just targetId -> addInt (indexOfNodeId topClosedAncestor.id (requireNodeOr targetId outline (emptyTabNode targetId)).childIds) 1
+                  detached = detachNode nodeId outline
+                  withParent = replaceNode detached ((requireNodeOr nodeId detached (emptyTabNode nodeId)) { parentId = targetParentId })
+                in
+                  case targetParentId of
+                    Nothing -> withParent { rootIds = insertNodeIdAt nodeId insertionIndex withParent.rootIds }
+                    Just targetId ->
+                      replaceNode withParent
+                        ((requireNodeOr targetId withParent (emptyTabNode targetId))
+                          { childIds = insertNodeIdAt nodeId insertionIndex (requireNodeOr targetId withParent (emptyTabNode targetId)).childIds })
+
+topClosedAncestorFrom :: OutlineNode -> Array NodeId -> Outline -> OutlineNode
+topClosedAncestorFrom node visited outline =
+  if anyArray (\visitedId -> nodeIdEq visitedId node.id) visited then node
+  else
+    case node.parentId of
+      Nothing -> node
+      Just parentId ->
+        case findNode parentId outline of
+          Just parent ->
+            if isClosedStatus parent.status then topClosedAncestorFrom parent (snocArray visited node.id) outline
+            else node
+          Nothing -> node
+
+nonClosedParentId :: OutlineNode -> Outline -> Maybe NodeId
+nonClosedParentId node outline =
+  case node.parentId of
+    Nothing -> Nothing
+    Just parentId ->
+      case findNode parentId outline of
+        Just parent -> if isClosedStatus parent.status then Nothing else Just parentId
+        Nothing -> Nothing
 
 restoreWindowOutlineNode :: OutlineNode -> RuntimeWindow -> OutlineNode
 restoreWindowOutlineNode node window =
@@ -1956,6 +2058,10 @@ setActiveWindowInOutline windowId outline =
         Nothing -> node
     else node) outline.nodes }
 
+clearActiveWindowsInOutline :: Outline -> Outline
+clearActiveWindowsInOutline outline =
+  outline { nodes = mapArray (\node -> if isLiveWindowNode node then node { active = Just false } else node) outline.nodes }
+
 setActiveWindowInOutlineIfFocused :: Array RuntimeWindow -> Outline -> Outline
 setActiveWindowInOutlineIfFocused windows outline =
   case findArray (\window -> window.focused) windows of
@@ -2298,6 +2404,20 @@ isBlankRuntimeTabUrl url =
   case url of
     Nothing -> true
     Just value -> orBoolean (eqString value "about:blank") (eqString value "about:newtab")
+
+isLiveStatus :: NodeStatus -> Boolean
+isLiveStatus status =
+  case status of
+    LiveStatus -> true
+    ClosedStatus -> false
+    NeutralStatus -> false
+
+isClosedStatus :: NodeStatus -> Boolean
+isClosedStatus status =
+  case status of
+    ClosedStatus -> true
+    LiveStatus -> false
+    NeutralStatus -> false
 
 isLiveTabNode :: OutlineNode -> Boolean
 isLiveTabNode node =

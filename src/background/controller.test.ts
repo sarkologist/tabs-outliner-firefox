@@ -1940,6 +1940,59 @@ const RUNTIME_DOMAIN_TRACE_DEFINITIONS: RuntimeDomainTraceDefinition[] = [
     ]
   },
   {
+    id: "po-restore-nested-closed-window-promotes-from-closed-parent",
+    title: "PureScript oracle promotes restored nested window from closed parent",
+    notes: "Covers the 900000021 class where a nested closed command window is restored after its outline parent has also closed.",
+    tags: ["purescript-oracle", "restore", "nested-window", "closed-subtree"],
+    assertions: ["purescriptOracle", "closedSubtreePersistence"],
+    actions: [
+      {
+        type: "outlinerGroupTab",
+        tab: { tabId: 1 },
+        captureStaleTabs: "po-nested-window-before-group"
+      },
+      { type: "nativeCloseWindow", window: { role: "lastOpenedWindow" } },
+      { type: "nativeCloseWindow", window: { windowId: 10 } },
+      {
+        type: "outlinerRestoreNodeThenAbruptRestart",
+        node: { nodeId: "window:21" },
+        captureRestoredTabs: "po-nested-restored-tabs",
+        captureRestoredWindows: "po-nested-restored-window"
+      }
+    ]
+  },
+  {
+    id: "po-restore-delete-nested-closed-window-promotes-from-closed-parent",
+    title: "PureScript oracle promotes restored nested window after restore-delete workflow",
+    notes: "Covers the 900000000 class where restore-delete delayed events and stale runtime echoes precede restoring a child window under a closed ancestor.",
+    tags: ["purescript-oracle", "restore-delete", "restore", "nested-window", "stale-event", "closed-subtree"],
+    assertions: ["purescriptOracle", "closedSubtreePersistence"],
+    actions: [
+      { type: "outlinerRestoreDeleteWindowDelayedEvent", window: { windowId: 20 } },
+      {
+        type: "openTab",
+        window: { windowId: 10 },
+        title: "Oracle nested restore-delete child",
+        url: "https://oracle.example/nested-restore-delete",
+        captureTab: "po-restore-delete-nested-tab"
+      },
+      {
+        type: "outlinerGroupTab",
+        tab: { capture: "po-restore-delete-nested-tab" },
+        captureStaleTabs: "po-restore-delete-before-group"
+      },
+      { type: "nativeCloseWindow", window: { role: "lastOpenedWindow" } },
+      { type: "nativeCloseWindow", window: { windowId: 10 } },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "po-restore-delete-before-group" }, withStaleQuery: true },
+      {
+        type: "outlinerRestoreNodeThenAbruptRestart",
+        node: { nodeId: "window:22" },
+        captureRestoredTabs: "po-restore-delete-nested-restored-tabs",
+        captureRestoredWindows: "po-restore-delete-nested-restored-window"
+      }
+    ]
+  },
+  {
     id: "rt-active-race",
     title: "activation event races a live-tab grouping command",
     notes: "Translated from RT-001/SS-001.",
@@ -22165,6 +22218,13 @@ async function runDomainOutlinerGroupTab(
   captureStaleRuntimeTabs(context, captureStaleTabs, candidate.staleTabs);
   await runGeneratedGroupCommand(context, candidate);
   captureMovedTab(context, tab.id);
+  const moved = runtimeTabById(context, tab.id);
+  recordPureScriptOracleAction(context, {
+    type: "outlinerGroupTab",
+    tab: selector,
+    ...(captureStaleTabs ? { captureStaleTabs } : {}),
+    windowId: moved.windowId
+  });
 }
 
 async function runDomainOutlinerGroupTabThenAbruptRestart(
@@ -22182,6 +22242,13 @@ async function runDomainOutlinerGroupTabThenAbruptRestart(
   });
   expectCommandAck(result, true);
   captureMovedTab(context, tab.id);
+  const moved = runtimeTabById(context, tab.id);
+  recordPureScriptOracleAction(context, {
+    type: "outlinerGroupTab",
+    tab: selector,
+    ...(captureStaleTabs ? { captureStaleTabs } : {}),
+    windowId: moved.windowId
+  });
   await runDomainRestartBackgroundAbrupt(context);
 }
 
