@@ -35,14 +35,27 @@ data Action
   | UpdateTab UpdateTabAction
   | FocusWindow WindowSelector
   | NativeSetWindowState WindowSelector RuntimeWindowState
+  | NativeCloseTab NativeCloseTabAction
+  | NativeCloseWindow WindowSelector
   | NativeOpenWindow NativeOpenWindowAction
   | NativeMoveTabToWindow NativeMoveTabAction
   | NativeMoveTabToNewWindow NativeMoveTabToNewWindowAction
-  | OutlinerGroupTab TabSelector
-  | OutlinerMoveTabToNewWindow TabSelector
-  | OutlinerCloseTab TabSelector
-  | OutlinerCloseWindow WindowSelector
+  | OutlinerGroupTab CommandTabAction
+  | OutlinerMoveTabToNewWindow CommandTabAction
+  | OutlinerCloseTab OutlinerCloseTabAction
+  | OutlinerCloseWindow OutlinerCloseWindowAction
+  | OutlinerRestoreNodeRejectingCreate RestoreNodeAction
+  | OutlinerRestoreNodeThenAbruptRestart RestoreNodeAction
+  | OutlinerDeleteWindowRejectingClose WindowSelector
+  | OutlinerRestoreDeleteWindowDelayedEvent WindowSelector
   | OutlinerDeleteNode NodeSelector
+  | ConcurrentCreatedTabThenGroup ConcurrentCreatedTabThenGroupAction
+  | ConcurrentUpdatedTabThenGroup ConcurrentUpdatedTabThenGroupAction
+  | ConcurrentActivatedTabThenGroup ConcurrentActivatedTabThenGroupAction
+  | ConcurrentFocusedWindowThenGroup ConcurrentFocusedWindowThenGroupAction
+  | StaleActivationSnapshot StaleActivationSnapshotAction
+  | RestartBackground
+  | NoopAction String
   | UnsupportedAction String
 
 type OracleError =
@@ -86,6 +99,7 @@ type OutlineNode =
   , restoreUrl :: Maybe String
   , restoreTitle :: Maybe String
   , restoreFavIconUrl :: Maybe String
+  , restoreClosedBy :: Maybe String
   , runtimeProvenance :: Maybe String
   }
 
@@ -102,6 +116,7 @@ type OracleModel =
   , runtimeTabs :: Array RuntimeTab
   , outline :: Outline
   , tabCaptures :: Array (Pair String TabId)
+  , staleTabCaptures :: Array (Pair String (Array RuntimeTab))
   , windowCaptures :: Array (Pair String WindowId)
   , lastOpenedTabId :: Maybe TabId
   , lastMovedTabId :: Maybe TabId
@@ -118,12 +133,15 @@ type OracleInput =
 
 type OpenTabAction =
   { window :: WindowSelector
+  , tabId :: Maybe TabId
+  , index :: Maybe Int
   , active :: Maybe Boolean
   , title :: Maybe String
   , url :: Maybe String
   , favIconUrl :: Maybe String
   , openerTab :: Maybe TabSelector
   , captureTab :: Maybe String
+  , queryLag :: Maybe Boolean
   , staleQueryFromCapture :: Maybe String
   }
 
@@ -159,7 +177,63 @@ type NativeMoveTabAction =
 type NativeMoveTabToNewWindowAction =
   { tab :: TabSelector
   , active :: Maybe Boolean
+  , windowId :: Maybe WindowId
   , captureWindow :: Maybe String
+  }
+
+type NativeCloseTabAction =
+  { tab :: TabSelector
+  }
+
+type CommandTabAction =
+  { tab :: TabSelector
+  , windowId :: Maybe WindowId
+  }
+
+type OutlinerCloseTabAction =
+  { tab :: TabSelector
+  , captureStaleTabs :: Maybe String
+  }
+
+type OutlinerCloseWindowAction =
+  { window :: WindowSelector
+  , captureStaleTabs :: Maybe String
+  }
+
+type RestoreNodeAction =
+  { node :: NodeSelector
+  , restoredTabs :: Array RuntimeTab
+  , restoredWindows :: Array RuntimeWindow
+  , captureRestoredTabs :: Maybe String
+  , captureRestoredWindows :: Maybe String
+  }
+
+type ConcurrentCreatedTabThenGroupAction =
+  { createdTab :: RuntimeTab
+  , groupTab :: TabSelector
+  , windowId :: Maybe WindowId
+  }
+
+type ConcurrentUpdatedTabThenGroupAction =
+  { updatedTab :: RuntimeTab
+  , groupTab :: TabSelector
+  , windowId :: Maybe WindowId
+  }
+
+type ConcurrentActivatedTabThenGroupAction =
+  { activatedTab :: TabSelector
+  , groupTab :: TabSelector
+  , windowId :: Maybe WindowId
+  }
+
+type ConcurrentFocusedWindowThenGroupAction =
+  { focusedWindow :: WindowSelector
+  , groupTab :: TabSelector
+  , windowId :: Maybe WindowId
+  }
+
+type StaleActivationSnapshotAction =
+  { targetTab :: TabSelector
   }
 
 type Snapshot =
@@ -197,6 +271,7 @@ type SnapshotRestoreRef =
   , url :: Maybe String
   , title :: Maybe String
   , favIconUrl :: Maybe String
+  , closedBy :: Maybe String
   }
 
 type SnapshotRuntime =
@@ -240,6 +315,7 @@ foreign import orBoolean :: Boolean -> Boolean -> Boolean
 foreign import addInt :: Int -> Int -> Int
 foreign import subInt :: Int -> Int -> Int
 foreign import maxInt :: Int -> Int -> Int
+foreign import lessThanInt :: Int -> Int -> Boolean
 foreign import intToString :: Int -> String
 foreign import appendString :: String -> String -> String
 foreign import mapArray :: forall a b. (a -> b) -> Array a -> Array b
@@ -334,12 +410,15 @@ decodeAction json =
       bindResult (decodeWindowSelectorField "window" json) (\window ->
         Ok (OpenTab
           { window: window
+          , tabId: mapMaybe (\value -> Just (TabId value)) (fieldInt "tabId" json)
+          , index: fieldInt "index" json
           , active: fieldBoolean "active" json
           , title: fieldString "title" json
           , url: fieldString "url" json
           , favIconUrl: fieldString "favIconUrl" json
           , openerTab: decodeOptionalTabSelectorField "openerTab" json
           , captureTab: fieldString "captureTab" json
+          , queryLag: fieldBoolean "queryLag" json
           , staleQueryFromCapture: fieldString "staleQueryFromCapture" json
           }))
     else if eqString actionType "activateTab" then
@@ -357,6 +436,11 @@ decodeAction json =
     else if eqString actionType "nativeSetWindowState" then
       bindResult (decodeWindowSelectorField "window" json) (\window ->
         bindResult (requireString "state" json) (\state -> Ok (NativeSetWindowState window (parseRuntimeWindowState state))))
+    else if eqString actionType "nativeCloseTab" then
+      bindResult (decodeTabSelectorField "tab" json) (\tab ->
+        Ok (NativeCloseTab { tab: tab }))
+    else if eqString actionType "nativeCloseWindow" then
+      bindResult (decodeWindowSelectorField "window" json) (\window -> Ok (NativeCloseWindow window))
     else if eqString actionType "nativeOpenWindow" then
       bindResult (decodeNativeOpenWindowTabs json) (\tabs ->
         Ok (NativeOpenWindow
@@ -379,19 +463,114 @@ decodeAction json =
         Ok (NativeMoveTabToNewWindow
           { tab: tab
           , active: fieldBoolean "active" json
+          , windowId: mapMaybe (\value -> Just (WindowId value)) (fieldInt "windowId" json)
           , captureWindow: fieldString "captureWindow" json
           }))
     else if eqString actionType "outlinerGroupTab" then
-      bindResult (decodeTabSelectorField "tab" json) (\tab -> Ok (OutlinerGroupTab tab))
+      bindResult (decodeCommandTabAction json) (\details -> Ok (OutlinerGroupTab details))
     else if eqString actionType "outlinerMoveTabToNewWindow" then
-      bindResult (decodeTabSelectorField "tab" json) (\tab -> Ok (OutlinerMoveTabToNewWindow tab))
+      bindResult (decodeCommandTabAction json) (\details -> Ok (OutlinerMoveTabToNewWindow details))
     else if eqString actionType "outlinerCloseTab" then
-      bindResult (decodeTabSelectorField "tab" json) (\tab -> Ok (OutlinerCloseTab tab))
+      bindResult (decodeTabSelectorField "tab" json) (\tab ->
+        Ok (OutlinerCloseTab
+          { tab: tab
+          , captureStaleTabs: fieldString "captureStaleTabs" json
+          }))
     else if eqString actionType "outlinerCloseWindow" then
-      bindResult (decodeWindowSelectorField "window" json) (\window -> Ok (OutlinerCloseWindow window))
+      bindResult (decodeWindowSelectorField "window" json) (\window ->
+        Ok (OutlinerCloseWindow
+          { window: window
+          , captureStaleTabs: fieldString "captureStaleTabs" json
+          }))
+    else if eqString actionType "outlinerRestoreNodeRejectingCreate" then
+      bindResult (decodeRestoreNodeAction json) (\details -> Ok (OutlinerRestoreNodeRejectingCreate details))
+    else if eqString actionType "outlinerRestoreNodeThenAbruptRestart" then
+      bindResult (decodeRestoreNodeAction json) (\details -> Ok (OutlinerRestoreNodeThenAbruptRestart details))
+    else if eqString actionType "outlinerDeleteWindowRejectingClose" then
+      bindResult (decodeWindowSelectorField "window" json) (\window -> Ok (OutlinerDeleteWindowRejectingClose window))
+    else if eqString actionType "outlinerRestoreDeleteWindowDelayedEvent" then
+      bindResult (decodeWindowSelectorField "window" json) (\window -> Ok (OutlinerRestoreDeleteWindowDelayedEvent window))
     else if eqString actionType "outlinerDeleteNode" then
       bindResult (decodeNodeSelectorField "node" json) (\node -> Ok (OutlinerDeleteNode node))
+    else if eqString actionType "concurrentCreatedTabThenGroup" then
+      bindResult (decodeRuntimeTabField "createdTab" json) (\createdTab ->
+        bindResult (decodeTabSelectorField "groupTab" json) (\groupTab ->
+          Ok (ConcurrentCreatedTabThenGroup
+            { createdTab: createdTab
+            , groupTab: groupTab
+            , windowId: mapMaybe (\value -> Just (WindowId value)) (fieldInt "windowId" json)
+            })))
+    else if eqString actionType "concurrentUpdatedTabThenGroup" then
+      bindResult (decodeRuntimeTabField "updatedTab" json) (\updatedTab ->
+        bindResult (decodeTabSelectorField "groupTab" json) (\groupTab ->
+          Ok (ConcurrentUpdatedTabThenGroup
+            { updatedTab: updatedTab
+            , groupTab: groupTab
+            , windowId: mapMaybe (\value -> Just (WindowId value)) (fieldInt "windowId" json)
+            })))
+    else if eqString actionType "concurrentActivatedTabThenGroup" then
+      bindResult (decodeTabSelectorField "activatedTab" json) (\activatedTab ->
+        bindResult (decodeTabSelectorField "groupTab" json) (\groupTab ->
+          Ok (ConcurrentActivatedTabThenGroup
+            { activatedTab: activatedTab
+            , groupTab: groupTab
+            , windowId: mapMaybe (\value -> Just (WindowId value)) (fieldInt "windowId" json)
+            })))
+    else if eqString actionType "concurrentFocusedWindowThenGroup" then
+      bindResult (decodeWindowSelectorField "focusedWindow" json) (\focusedWindow ->
+        bindResult (decodeTabSelectorField "groupTab" json) (\groupTab ->
+          Ok (ConcurrentFocusedWindowThenGroup
+            { focusedWindow: focusedWindow
+            , groupTab: groupTab
+            , windowId: mapMaybe (\value -> Just (WindowId value)) (fieldInt "windowId" json)
+            })))
+    else if eqString actionType "staleActivationSnapshot" then
+      bindResult (decodeTabSelectorField "targetTab" json) (\targetTab ->
+        Ok (StaleActivationSnapshot { targetTab: targetTab }))
+    else if eqString actionType "restartBackground" then
+      Ok RestartBackground
+    else if isGeneratedNoopAction actionType then
+      Ok (NoopAction actionType)
     else Ok (UnsupportedAction actionType))
+
+decodeRuntimeTabField :: String -> Json -> Result RuntimeTab
+decodeRuntimeTabField key json =
+  bindResult (requireObject key json) decodeTab
+
+decodeCommandTabAction :: Json -> Result CommandTabAction
+decodeCommandTabAction json =
+  bindResult (decodeTabSelectorField "tab" json) (\tab ->
+    Ok
+      { tab: tab
+      , windowId: mapMaybe (\value -> Just (WindowId value)) (fieldInt "windowId" json)
+      })
+
+isGeneratedNoopAction :: String -> Boolean
+isGeneratedNoopAction actionType =
+  orBoolean
+    (eqString actionType "staleActivationSnapshot")
+    (orBoolean
+      (eqString actionType "staleTabCreatedEvent")
+      (orBoolean
+        (eqString actionType "staleTabUpdatedEvent")
+        (orBoolean
+          (eqString actionType "staleLiveTabUpdatedEvent")
+          (orBoolean
+            (eqString actionType "staleLiveTabUpdatedEventWithStaleQuery")
+            (eqString actionType "staleLiveTabCreatedEventWithStaleQuery")))))
+
+decodeRestoreNodeAction :: Json -> Result RestoreNodeAction
+decodeRestoreNodeAction json =
+  bindResult (decodeNodeSelectorField "node" json) (\node ->
+    bindResult (decodeOptionalArray decodeTab "restoredTabs" json) (\restoredTabs ->
+      bindResult (decodeOptionalArray decodeWindow "restoredWindows" json) (\restoredWindows ->
+        Ok
+          { node: node
+          , restoredTabs: restoredTabs
+          , restoredWindows: restoredWindows
+          , captureRestoredTabs: fieldString "captureRestoredTabs" json
+          , captureRestoredWindows: fieldString "captureRestoredWindows" json
+          })))
 
 decodeNativeOpenWindowTabs :: Json -> Result (Array NativeOpenWindowTab)
 decodeNativeOpenWindowTabs json =
@@ -489,6 +668,7 @@ initialModel input =
       , runtimeTabs: tabs
       , outline: outline
       , tabCaptures: []
+      , staleTabCaptures: []
       , windowCaptures: []
       , lastOpenedTabId: Nothing
       , lastMovedTabId: Nothing
@@ -512,14 +692,27 @@ applyAction step action model =
     UpdateTab details -> applyUpdateTab step details model
     FocusWindow selector -> applyFocusWindow step selector model
     NativeSetWindowState selector state -> applyNativeSetWindowState step selector state model
+    NativeCloseTab details -> applyNativeCloseTab step details model
+    NativeCloseWindow selector -> applyNativeCloseWindow step selector model
     NativeOpenWindow details -> applyNativeOpenWindow step details model
     NativeMoveTabToWindow details -> applyNativeMoveTabToWindow step details model
     NativeMoveTabToNewWindow details -> applyNativeMoveTabToNewWindow step details model
-    OutlinerGroupTab selector -> applyOutlinerRelocation step selector true model
-    OutlinerMoveTabToNewWindow selector -> applyOutlinerRelocation step selector false model
-    OutlinerCloseTab selector -> applyOutlinerCloseTab step selector model
-    OutlinerCloseWindow selector -> applyOutlinerCloseWindow step selector model
+    OutlinerGroupTab details -> applyOutlinerRelocation step details.tab true details.windowId model
+    OutlinerMoveTabToNewWindow details -> applyOutlinerRelocation step details.tab false details.windowId model
+    OutlinerCloseTab details -> applyOutlinerCloseTab step details model
+    OutlinerCloseWindow details -> applyOutlinerCloseWindow step details model
+    OutlinerRestoreNodeRejectingCreate details -> applyOutlinerRestoreNode step details model
+    OutlinerRestoreNodeThenAbruptRestart details -> applyOutlinerRestoreNode step details model
+    OutlinerDeleteWindowRejectingClose selector -> applyOutlinerDeleteWindowRejectingClose step selector model
+    OutlinerRestoreDeleteWindowDelayedEvent selector -> applyOutlinerRestoreDeleteWindowDelayedEvent step selector model
     OutlinerDeleteNode selector -> applyOutlinerDeleteNode step selector model
+    ConcurrentCreatedTabThenGroup details -> applyConcurrentCreatedTabThenGroup step details model
+    ConcurrentUpdatedTabThenGroup details -> applyConcurrentUpdatedTabThenGroup step details model
+    ConcurrentActivatedTabThenGroup details -> applyConcurrentActivatedTabThenGroup step details model
+    ConcurrentFocusedWindowThenGroup details -> applyConcurrentFocusedWindowThenGroup step details model
+    StaleActivationSnapshot details -> applyActivateTab step details.targetTab model
+    RestartBackground -> Ok model
+    NoopAction _ -> Ok model
     UnsupportedAction actionType -> Err (oracleStepError step "unsupported-action" (appendString "Unsupported action: " actionType))
 
 bootstrapOutline :: Int -> Array RuntimeWindow -> Array RuntimeTab -> Outline
@@ -546,6 +739,7 @@ bootstrapWindow now allTabs outline window =
       , restoreUrl: Nothing
       , restoreTitle: Nothing
       , restoreFavIconUrl: Nothing
+      , restoreClosedBy: Nothing
       , runtimeProvenance: Nothing
       }
     tabs = tabsInWindowFrom allTabs window.id
@@ -592,36 +786,44 @@ tabToNode _now _parentId tab =
   , restoreUrl: Nothing
   , restoreTitle: Nothing
   , restoreFavIconUrl: Nothing
+  , restoreClosedBy: Nothing
   , runtimeProvenance: Nothing
   }
 
 applyOpenTab :: Int -> OpenTabAction -> OracleModel -> Result OracleModel
 applyOpenTab step details model =
   case details.staleQueryFromCapture of
-    Just _ -> Err (oracleStepError step "unsupported-action" "openTab staleQueryFromCapture is outside the v1 oracle slice")
-    Nothing ->
+    Just name ->
+      case findPair name model.staleTabCaptures of
+        Nothing -> Err (oracleStepError step "missing-capture" (appendString "Missing stale tab capture: " name))
+        Just _ -> applyOpenTabCurrentTruth step details model
+    Nothing -> applyOpenTabCurrentTruth step details model
+
+applyOpenTabCurrentTruth :: Int -> OpenTabAction -> OracleModel -> Result OracleModel
+applyOpenTabCurrentTruth step details model =
       bindResult (resolveWindowSelector step details.window model) (\window ->
         bindResult (resolveMaybeTabSelector step details.openerTab model) (\opener ->
           let
-            tabId = TabId model.nextTabId
-            existingTabs = tabsInWindow model window.id
+            tabId = maybe (TabId model.nextTabId) identityTabId details.tabId
+            tabsBeforeCreate = tabsInWindow model window.id
             active = maybe true identityBoolean details.active
             tab =
               { id: tabId
               , windowId: window.id
-              , index: lengthArray existingTabs
+              , index: maybe (lengthArray tabsBeforeCreate) identityInt details.index
               , active: active
               , openerTabId: mapMaybe (\value -> Just value.id) opener
-              , url: maybe (Just (appendString "https://domain.example/" (intToString model.nextTabId))) Just details.url
-              , title: maybe (Just (appendString "Domain " (intToString model.nextTabId))) Just details.title
+              , url: maybe (Just (appendString "https://domain.example/" (intToString (tabIdInt tabId)))) Just details.url
+              , title: maybe (Just (appendString "Domain " (intToString (tabIdInt tabId)))) Just details.title
               , favIconUrl: details.favIconUrl
               , incognito: false
               }
             runtimeTabs = createRuntimeTab model.runtimeTabs tab
-            outline = addLiveTabToOutline model.outline model.now tab
+            existingTabs = filterArray (\candidate -> notBoolean (tabIdEq candidate.id tab.id)) (tabsInWindowFrom runtimeTabs window.id)
+            outline = addLiveTabToOutlineWithExistingTabs model.outline model.now tab existingTabs
             nextModel = setTabCapture details.captureTab tabId
               model
-                { nextTabId = addInt model.nextTabId 1
+                { nextTabId = maxInt model.nextTabId (addInt (tabIdInt tabId) 1)
                 , runtimeTabs = runtimeTabs
                 , outline = if active then setActiveTabInOutlineWindow tab.windowId tab.id outline else outline
                 , lastOpenedTabId = Just tabId
@@ -669,6 +871,56 @@ applyNativeSetWindowState step selector state model =
           (\candidate -> if windowIdEq candidate.id window.id then candidate { state = Just state } else candidate)
           model.runtimeWindows
       })
+
+applyNativeCloseTab :: Int -> NativeCloseTabAction -> OracleModel -> Result OracleModel
+applyNativeCloseTab step details model =
+  bindResult (resolveTabSelector step details.tab model) (\tab ->
+    let
+      windowTabs = tabsInWindow model tab.windowId
+      runtimeTabsWithoutTab = filterArray (\candidate -> notBoolean (tabIdEq candidate.id tab.id)) model.runtimeTabs
+    in
+      if eqInt (lengthArray windowTabs) 1 then
+        let
+          runtimeTabs = reindexAllRuntimeTabs runtimeTabsWithoutTab
+          runtimeWindows = filterArray (\window -> notBoolean (windowIdEq window.id tab.windowId)) model.runtimeWindows
+          closingNodeId = liveWindowNodeIdForRuntimeWindow tab.windowId model.outline
+          outlineWithPromoted = promoteForeignLiveWindowsAfterClosingWindow closingNodeId tab.windowId model.outline
+          outline = markClosedSubtreeById closingNodeId model.now outlineWithPromoted
+        in
+          Ok model
+            { runtimeTabs = runtimeTabs
+            , runtimeWindows = runtimeWindows
+            , outline = setActiveWindowInOutlineIfFocused runtimeWindows outline
+            }
+      else
+        let
+          runtimeTabs = ensureWindowHasActiveTab tab.windowId (reindexAllRuntimeTabs runtimeTabsWithoutTab)
+          activeTab = findArray (\candidate -> andBoolean (windowIdEq candidate.windowId tab.windowId) candidate.active) runtimeTabs
+          outline = deleteLiveTabNodePromotingChildren (liveTabNodeIdForRuntimeTab tab.id model.outline) model.outline
+          activeOutline = case activeTab of
+            Nothing -> outline
+            Just nextActiveTab -> setActiveTabInOutlineWindow nextActiveTab.windowId nextActiveTab.id outline
+        in
+          Ok model
+            { runtimeTabs = runtimeTabs
+            , outline = activeOutline
+            })
+
+applyNativeCloseWindow :: Int -> WindowSelector -> OracleModel -> Result OracleModel
+applyNativeCloseWindow step selector model =
+  bindResult (resolveWindowSelector step selector model) (\window ->
+    let
+      runtimeTabs = filterArray (\tab -> notBoolean (windowIdEq tab.windowId window.id)) model.runtimeTabs
+      runtimeWindows = filterArray (\candidate -> notBoolean (windowIdEq candidate.id window.id)) model.runtimeWindows
+      closingNodeId = liveWindowNodeIdForRuntimeWindow window.id model.outline
+      outlineWithPromoted = promoteForeignLiveWindowsAfterClosingWindow closingNodeId window.id model.outline
+      outline = markClosedSubtreeById closingNodeId model.now outlineWithPromoted
+    in
+      Ok model
+        { runtimeTabs = runtimeTabs
+        , runtimeWindows = runtimeWindows
+        , outline = setActiveWindowInOutlineIfFocused runtimeWindows outline
+        })
 
 applyNativeOpenWindow :: Int -> NativeOpenWindowAction -> OracleModel -> Result OracleModel
 applyNativeOpenWindow step details model =
@@ -755,7 +1007,7 @@ applyNativeMoveTabToNewWindow :: Int -> NativeMoveTabToNewWindowAction -> Oracle
 applyNativeMoveTabToNewWindow step details model =
   bindResult (resolveTabSelector step details.tab model) (\tab ->
     let
-      windowId = WindowId model.nextWindowId
+      windowId = maybe (WindowId model.nextWindowId) identityWindowId details.windowId
       focused = maybe true identityBoolean details.active
       window = { id: windowId, focused: focused, incognito: false, state: Nothing }
       runtimeWindows = snocArray
@@ -764,23 +1016,23 @@ applyNativeMoveTabToNewWindow step details model =
       outline = addLiveWindowToOutline model.outline model.now window (Just "browserCreated")
       withWindow = setWindowCapture details.captureWindow windowId
         model
-          { nextWindowId = addInt model.nextWindowId 1
+          { nextWindowId = maxInt model.nextWindowId (addInt (windowIdInt windowId) 1)
           , runtimeWindows = runtimeWindows
           , outline = if focused then setActiveWindowInOutline windowId outline else outline
           , lastOpenedWindowId = Just windowId
           }
     in moveRuntimeTabAndOutline step tab windowId (Just 0) (Just focused) false Nothing withWindow)
 
-applyOutlinerRelocation :: Int -> TabSelector -> Boolean -> OracleModel -> Result OracleModel
-applyOutlinerRelocation step selector wrap model =
+applyOutlinerRelocation :: Int -> TabSelector -> Boolean -> Maybe WindowId -> OracleModel -> Result OracleModel
+applyOutlinerRelocation step selector wrap maybeWindowId model =
   bindResult (resolveTabSelector step selector model) (\tab ->
     let
-      windowId = WindowId model.nextWindowId
+      windowId = maybe (WindowId model.nextWindowId) identityWindowId maybeWindowId
       window = { id: windowId, focused: true, incognito: false, state: Nothing }
       runtimeWindows = snocArray (mapArray (\candidate -> candidate { focused = false }) model.runtimeWindows) window
       withWindow =
         model
-          { nextWindowId = addInt model.nextWindowId 1
+          { nextWindowId = maxInt model.nextWindowId (addInt (windowIdInt windowId) 1)
           , runtimeWindows = runtimeWindows
           , lastOpenedWindowId = Just windowId
           }
@@ -810,40 +1062,100 @@ moveRuntimeTabAndOutline _step tab targetWindowId index active commandCreated wr
       Nothing -> if commandCreated then addLiveWindowToOutline model.outline model.now (runtimeWindowForId targetWindowId runtimeWindows) (Just "commandCreated") else model.outline
       Just true -> model.outline
       Just false -> model.outline
+    movingNodeId = liveTabNodeIdForRuntimeTab tab.id outlineWithCommandWindow
+    outlineBeforeMove =
+      if commandCreated then outlineWithCommandWindow
+      else promoteSourceWindowLiveChildrenBeforeMove movingNodeId tab.windowId outlineWithCommandWindow
     outline = case wrapMode of
-      Just true -> wrapLiveTabInCommandWindow tab.id targetWindowId model.now outlineWithCommandWindow
-      Just false -> moveLiveTabToNewRootWindow tab.id targetWindowId model.now outlineWithCommandWindow
-      Nothing -> moveLiveTabToWindow tab.id targetWindowId targetIndex model.now outlineWithCommandWindow
+      Just true -> wrapLiveTabInCommandWindow movingNodeId targetWindowId model.now outlineBeforeMove
+      Just false -> moveLiveTabToNewRootWindow movingNodeId targetWindowId model.now outlineBeforeMove
+      Nothing -> moveLiveTabToWindow movingNodeId targetWindowId targetIndex model.now outlineBeforeMove
   in
     let
-      outlineWithRefs = updateLiveTabWindowRefForSubtree tab.id targetWindowId outline
-      outlineWithActiveTab = if activeValue then setActiveTabInOutlineWindow targetWindowId tab.id outlineWithRefs else outlineWithRefs
+      outlineWithRefs =
+        if commandCreated then updateLiveTabWindowRefForSubtree movingNodeId targetWindowId outline
+        else updateLiveTabWindowRefForNode movingNodeId targetWindowId outline
+      outlineWithActiveTabs = setActiveTabsInOutlineFromRuntime runtimeTabs outlineWithRefs
     in
       Ok model
         { runtimeTabs = runtimeTabs
         , runtimeWindows = runtimeWindows
-        , outline = closeOutlineWindowsMissingFromRuntime runtimeWindows (setActiveWindowInOutlineIfFocused runtimeWindows outlineWithActiveTab)
+        , outline = closeOutlineWindowsMissingFromRuntime runtimeWindows (setActiveWindowInOutlineIfFocused runtimeWindows outlineWithActiveTabs)
         , lastMovedTabId = Just tab.id
         , lastOpenedWindowId = Just targetWindowId
         }
 
-applyOutlinerCloseTab :: Int -> TabSelector -> OracleModel -> Result OracleModel
-applyOutlinerCloseTab step selector model =
-  bindResult (resolveTabSelector step selector model) (\tab ->
-    Ok model
+applyOutlinerCloseTab :: Int -> OutlinerCloseTabAction -> OracleModel -> Result OracleModel
+applyOutlinerCloseTab step details model =
+  bindResult (resolveTabSelector step details.tab model) (\tab ->
+    Ok (setStaleTabsCapture details.captureStaleTabs [tab] model)
       { runtimeTabs = reindexAllRuntimeTabs (filterArray (\candidate -> notBoolean (tabIdEq candidate.id tab.id)) model.runtimeTabs)
       , runtimeWindows = removeEmptyRuntimeWindows (filterArray (\candidate -> notBoolean (tabIdEq candidate.id tab.id)) model.runtimeTabs) model.runtimeWindows
-      , outline = markClosedNodeByIdWithSession (tabNodeId tab.id) (Just "recent-session") model.now model.outline
+      , outline = markClosedNodeByIdWithSessionAndClosedBy (liveTabNodeIdForRuntimeTab tab.id model.outline) (Just "recent-session") (Just "outliner") model.now model.outline
       })
 
-applyOutlinerCloseWindow :: Int -> WindowSelector -> OracleModel -> Result OracleModel
-applyOutlinerCloseWindow step selector model =
-  bindResult (resolveWindowSelector step selector model) (\window ->
-    Ok model
+applyOutlinerCloseWindow :: Int -> OutlinerCloseWindowAction -> OracleModel -> Result OracleModel
+applyOutlinerCloseWindow step details model =
+  bindResult (resolveWindowSelector step details.window model) (\window ->
+    Ok (setStaleTabsCapture details.captureStaleTabs (tabsInWindow model window.id) model)
       { runtimeTabs = filterArray (\tab -> notBoolean (windowIdEq tab.windowId window.id)) model.runtimeTabs
       , runtimeWindows = filterArray (\candidate -> notBoolean (windowIdEq candidate.id window.id)) model.runtimeWindows
-      , outline = markClosedSubtreeById (windowNodeId window.id) model.now model.outline
+      , outline =
+          let
+            closingNodeId = liveWindowNodeIdForRuntimeWindow window.id model.outline
+            outlineWithPromoted = promoteForeignLiveWindowsAfterClosingWindow closingNodeId window.id model.outline
+          in
+            markClosedSubtreeByIdWithClosedBy closingNodeId (Just "outliner") model.now outlineWithPromoted
       })
+
+applyOutlinerRestoreNode :: Int -> RestoreNodeAction -> OracleModel -> Result OracleModel
+applyOutlinerRestoreNode step details model =
+  bindResult (resolveNodeSelector step details.node model) (\node ->
+    case node.kind of
+      WindowKind ->
+        case indexArray 0 details.restoredWindows of
+          Nothing -> Err (oracleStepError step "missing-runtime-window" "Restore window action did not provide a restored runtime window")
+          Just window ->
+            let
+              runtimeWindows = appendRestoredRuntimeWindows details.restoredWindows (clearRuntimeWindowFocusIfRestoredFocused details.restoredWindows model.runtimeWindows)
+              runtimeTabs = reindexAllRuntimeTabs (appendRestoredRuntimeTabs details.restoredTabs model.runtimeTabs)
+              outline = restoreClosedWindowSubtree node.id window details.restoredTabs model.outline
+              activeOutline = if window.focused then setActiveWindowInOutline window.id outline else outline
+              focusedOutline = case findArray (\tab -> tab.active) details.restoredTabs of
+                Nothing -> activeOutline
+                Just tab -> setActiveTabInOutlineWindow tab.windowId tab.id activeOutline
+              nextModel = setRestoredCaptures details
+                model
+                  { runtimeWindows = runtimeWindows
+                  , runtimeTabs = runtimeTabs
+                  , outline = focusedOutline
+                  , nextTabId = maxInt model.nextTabId (addInt 1 (maxRuntimeTabId details.restoredTabs))
+                  , nextWindowId = maxInt model.nextWindowId (addInt 1 (maxRuntimeWindowId details.restoredWindows))
+                  , lastOpenedWindowId = Just window.id
+                  , lastOpenedTabId = firstRuntimeTabId details.restoredTabs model.lastOpenedTabId
+                  }
+            in Ok nextModel
+      TabKind ->
+        case indexArray 0 details.restoredTabs of
+          Nothing -> Err (oracleStepError step "missing-runtime-tab" "Restore tab action did not provide a restored runtime tab")
+          Just tab ->
+            let
+              runtimeWindows = appendRestoredRuntimeWindows details.restoredWindows (clearRuntimeWindowFocusIfRestoredFocused details.restoredWindows model.runtimeWindows)
+              runtimeTabs = reindexAllRuntimeTabs (appendRestoredRuntimeTabs details.restoredTabs model.runtimeTabs)
+              outline = restoreClosedTabNode node.id tab model.outline
+              activeOutline = if tab.active then setActiveTabInOutlineWindow tab.windowId tab.id outline else outline
+              nextModel = setRestoredCaptures details
+                model
+                  { runtimeWindows = runtimeWindows
+                  , runtimeTabs = runtimeTabs
+                  , outline = activeOutline
+                  , nextTabId = maxInt model.nextTabId (addInt 1 (maxRuntimeTabId details.restoredTabs))
+                  , nextWindowId = maxInt model.nextWindowId (addInt 1 (maxRuntimeWindowId details.restoredWindows))
+                  , lastOpenedWindowId = firstRuntimeWindowId details.restoredWindows model.lastOpenedWindowId
+                  , lastOpenedTabId = Just tab.id
+                  }
+            in Ok nextModel
+      GroupKind -> Err (oracleStepError step "unsupported-action" "Restore group is outside the current oracle restore slice"))
 
 applyOutlinerDeleteNode :: Int -> NodeSelector -> OracleModel -> Result OracleModel
 applyOutlinerDeleteNode step selector model =
@@ -865,6 +1177,175 @@ applyOutlinerDeleteNode step selector model =
         , runtimeWindows = runtimeWindows
         , outline = outline
         })
+
+applyOutlinerDeleteWindowRejectingClose :: Int -> WindowSelector -> OracleModel -> Result OracleModel
+applyOutlinerDeleteWindowRejectingClose step selector model =
+  bindResult (resolveWindowSelector step selector model) (\window ->
+    let
+      nodeId = liveWindowNodeIdForRuntimeWindow window.id model.outline
+      subtreeIds = subtreeNodeIds nodeId model.outline
+      runtimeTabs = filterArray (\tab -> notBoolean (windowIdEq tab.windowId window.id)) model.runtimeTabs
+      runtimeWindows = filterArray (\candidate -> notBoolean (windowIdEq candidate.id window.id)) model.runtimeWindows
+    in
+      Ok model
+        { runtimeTabs = runtimeTabs
+        , runtimeWindows = runtimeWindows
+        , outline = deleteNodes subtreeIds model.outline
+        })
+
+applyOutlinerRestoreDeleteWindowDelayedEvent :: Int -> WindowSelector -> OracleModel -> Result OracleModel
+applyOutlinerRestoreDeleteWindowDelayedEvent step selector model =
+  applyOutlinerDeleteWindowRejectingClose step selector model
+
+applyConcurrentCreatedTabThenGroup :: Int -> ConcurrentCreatedTabThenGroupAction -> OracleModel -> Result OracleModel
+applyConcurrentCreatedTabThenGroup step details model =
+  let
+    runtimeTabs = createRuntimeTab model.runtimeTabs details.createdTab
+    existingTabs = filterArray (\candidate -> notBoolean (tabIdEq candidate.id details.createdTab.id)) (tabsInWindowFrom runtimeTabs details.createdTab.windowId)
+    outline = addLiveTabToOutlineWithExistingTabs model.outline model.now details.createdTab existingTabs
+    withCreated = model
+      { runtimeTabs = runtimeTabs
+      , outline = if details.createdTab.active then setActiveTabInOutlineWindow details.createdTab.windowId details.createdTab.id outline else outline
+      , nextTabId = maxInt model.nextTabId (addInt (tabIdInt details.createdTab.id) 1)
+      , lastOpenedTabId = Just details.createdTab.id
+      }
+  in
+    applyOutlinerRelocation step details.groupTab true details.windowId withCreated
+
+applyConcurrentUpdatedTabThenGroup :: Int -> ConcurrentUpdatedTabThenGroupAction -> OracleModel -> Result OracleModel
+applyConcurrentUpdatedTabThenGroup step details model =
+  let
+    withUpdated = model
+      { runtimeTabs = replaceRuntimeTab details.updatedTab model.runtimeTabs
+      , outline = updateLiveTabMetadata details.updatedTab model.outline
+      }
+  in
+    applyOutlinerRelocation step details.groupTab true details.windowId withUpdated
+
+applyConcurrentActivatedTabThenGroup :: Int -> ConcurrentActivatedTabThenGroupAction -> OracleModel -> Result OracleModel
+applyConcurrentActivatedTabThenGroup step details model =
+  bindResult (resolveTabSelector step details.activatedTab model) (\tab ->
+    let
+      withActivated = model
+        { runtimeTabs = setRuntimeActiveTab tab.id tab.windowId model.runtimeTabs
+        , outline = setActiveTabInOutlineWindow tab.windowId tab.id model.outline
+        }
+    in
+      applyOutlinerRelocation step details.groupTab true details.windowId withActivated)
+
+applyConcurrentFocusedWindowThenGroup :: Int -> ConcurrentFocusedWindowThenGroupAction -> OracleModel -> Result OracleModel
+applyConcurrentFocusedWindowThenGroup step details model =
+  bindResult (resolveWindowSelector step details.focusedWindow model) (\window ->
+    let
+      withFocused = model
+        { runtimeWindows = mapArray (\candidate -> candidate { focused = windowIdEq candidate.id window.id }) model.runtimeWindows
+        , outline = setActiveWindowInOutline window.id model.outline
+        }
+    in
+      applyOutlinerRelocation step details.groupTab true details.windowId withFocused)
+
+appendRestoredRuntimeWindows :: Array RuntimeWindow -> Array RuntimeWindow -> Array RuntimeWindow
+appendRestoredRuntimeWindows restored existing =
+  appendArray
+    (filterArray (\window -> notBoolean (anyArray (\restoredWindow -> windowIdEq restoredWindow.id window.id) restored)) existing)
+    restored
+
+clearRuntimeWindowFocusIfRestoredFocused :: Array RuntimeWindow -> Array RuntimeWindow -> Array RuntimeWindow
+clearRuntimeWindowFocusIfRestoredFocused restored existing =
+  if anyArray (\window -> window.focused) restored then mapArray (\window -> window { focused = false }) existing
+  else existing
+
+appendRestoredRuntimeTabs :: Array RuntimeTab -> Array RuntimeTab -> Array RuntimeTab
+appendRestoredRuntimeTabs restored existing =
+  appendArray
+    (filterArray (\tab -> notBoolean (anyArray (\restoredTab -> tabIdEq restoredTab.id tab.id) restored)) existing)
+    restored
+
+restoreClosedWindowSubtree :: NodeId -> RuntimeWindow -> Array RuntimeTab -> Outline -> Outline
+restoreClosedWindowSubtree nodeId window restoredTabs outline =
+  let
+    closedTabNodeIds = closedTabNodeIdsInSubtree nodeId outline
+  in
+    outline { nodes = mapArray (\node ->
+      if nodeIdEq node.id nodeId then restoreWindowOutlineNode node window
+      else
+        case restoredTabForNode node.id closedTabNodeIds restoredTabs of
+          Nothing -> node
+          Just tab -> restoreTabOutlineNode node tab) outline.nodes }
+
+restoreClosedTabNode :: NodeId -> RuntimeTab -> Outline -> Outline
+restoreClosedTabNode nodeId tab outline =
+  replaceNode outline (restoreTabOutlineNode (requireNodeOr nodeId outline (emptyTabNode nodeId)) tab)
+
+restoreWindowOutlineNode :: OutlineNode -> RuntimeWindow -> OutlineNode
+restoreWindowOutlineNode node window =
+  node
+    { status = LiveStatus
+    , active = Just window.focused
+    , liveWindowId = Just window.id
+    , liveTabId = Nothing
+    , restoreSessionId = Nothing
+    , restoreUrl = Nothing
+    , restoreTitle = Nothing
+    , restoreFavIconUrl = Nothing
+    , restoreClosedBy = Nothing
+    , runtimeProvenance = Just "commandCreated"
+    }
+
+restoreTabOutlineNode :: OutlineNode -> RuntimeTab -> OutlineNode
+restoreTabOutlineNode node tab =
+  node
+    { status = LiveStatus
+    , active = Just tab.active
+    , liveWindowId = Just tab.windowId
+    , liveTabId = Just tab.id
+    , url = tab.url
+    , title = node.title
+    , favIconUrl = tab.favIconUrl
+    , restoreSessionId = Nothing
+    , restoreUrl = Nothing
+    , restoreTitle = Nothing
+    , restoreFavIconUrl = Nothing
+    , restoreClosedBy = Nothing
+    }
+
+closedTabNodeIdsInSubtree :: NodeId -> Outline -> Array NodeId
+closedTabNodeIdsInSubtree nodeId outline =
+  mapMaybeArray (\candidateId ->
+    case findNode candidateId outline of
+      Just node ->
+        case node.kind of
+          TabKind -> Just candidateId
+          WindowKind -> Nothing
+          GroupKind -> Nothing
+      Nothing -> Nothing) (subtreeNodeIds nodeId outline)
+
+restoredTabForNode :: NodeId -> Array NodeId -> Array RuntimeTab -> Maybe RuntimeTab
+restoredTabForNode nodeId tabNodeIds restoredTabs =
+  case findIndexArray (\candidateId -> nodeIdEq candidateId nodeId) tabNodeIds of
+    Nothing -> Nothing
+    Just index -> indexArray index restoredTabs
+
+setRestoredCaptures :: RestoreNodeAction -> OracleModel -> OracleModel
+setRestoredCaptures details model =
+  let
+    withTabs = setTabsCapture details.captureRestoredTabs details.restoredTabs model
+  in
+    case indexArray 0 details.restoredWindows of
+      Nothing -> withTabs
+      Just window -> setWindowCapture details.captureRestoredWindows window.id withTabs
+
+firstRuntimeTabId :: Array RuntimeTab -> Maybe TabId -> Maybe TabId
+firstRuntimeTabId tabs fallback =
+  case indexArray 0 tabs of
+    Nothing -> fallback
+    Just tab -> Just tab.id
+
+firstRuntimeWindowId :: Array RuntimeWindow -> Maybe WindowId -> Maybe WindowId
+firstRuntimeWindowId windows fallback =
+  case indexArray 0 windows of
+    Nothing -> fallback
+    Just window -> Just window.id
 
 addLiveWindowToOutline :: Outline -> Int -> RuntimeWindow -> Maybe String -> Outline
 addLiveWindowToOutline outline _now window provenance =
@@ -891,37 +1372,79 @@ addLiveWindowToOutline outline _now window provenance =
           , restoreUrl: Nothing
           , restoreTitle: Nothing
           , restoreFavIconUrl: Nothing
+          , restoreClosedBy: Nothing
           , runtimeProvenance: provenance
           }
 
 addLiveTabToOutline :: Outline -> Int -> RuntimeTab -> Outline
 addLiveTabToOutline outline now tab =
+  addLiveTabToOutlineWithExistingTabs outline now tab []
+
+addLiveTabToOutlineWithExistingTabs :: Outline -> Int -> RuntimeTab -> Array RuntimeTab -> Outline
+addLiveTabToOutlineWithExistingTabs outline now tab existingTabs =
   let
     parentId = parentForNewRuntimeTab outline tab
     nodeId = tabNodeId tab.id
     node = (tabToNode now parentId tab) { parentId = Just parentId }
+    withNode = addNode outline node
   in
-    appendChild parentId nodeId (addNode outline node)
+    if andBoolean (isBlankRuntimeTabUrl tab.url) (hasClosedDirectChild parentId withNode) then appendChild parentId nodeId withNode
+    else insertLiveTabChildInRuntimeOrder parentId nodeId tab existingTabs withNode
+
+hasClosedDirectChild :: NodeId -> Outline -> Boolean
+hasClosedDirectChild parentId outline =
+  case findNode parentId outline of
+    Nothing -> false
+    Just parent ->
+      anyArray
+        (\childId -> case findNode childId outline of
+          Just child -> case child.status of
+            ClosedStatus -> true
+            LiveStatus -> false
+            NeutralStatus -> false
+          Nothing -> false)
+        parent.childIds
+
+insertLiveTabChildInRuntimeOrder :: NodeId -> NodeId -> RuntimeTab -> Array RuntimeTab -> Outline -> Outline
+insertLiveTabChildInRuntimeOrder parentId nodeId tab existingTabs outline =
+  case nextRuntimeTabInParent parentId tab existingTabs outline of
+    Just nextTab -> insertChildBefore parentId nodeId (liveTabNodeIdForRuntimeTab nextTab.id outline) outline
+    Nothing -> appendChild parentId nodeId outline
+
+nextRuntimeTabInParent :: NodeId -> RuntimeTab -> Array RuntimeTab -> Outline -> Maybe RuntimeTab
+nextRuntimeTabInParent parentId tab existingTabs outline =
+  case indexArray 0 (filterArray (\candidate -> andBoolean (runtimeTabBelongsToParent parentId candidate outline) (notBoolean (lessThanInt candidate.index tab.index))) existingTabs) of
+    Nothing -> Nothing
+    Just next -> Just next
+
+runtimeTabBelongsToParent :: NodeId -> RuntimeTab -> Outline -> Boolean
+runtimeTabBelongsToParent parentId tab outline =
+  case findNode (liveTabNodeIdForRuntimeTab tab.id outline) outline of
+    Nothing -> false
+    Just node ->
+      case node.parentId of
+        Nothing -> false
+        Just candidateParentId -> nodeIdEq candidateParentId parentId
 
 parentForNewRuntimeTab :: Outline -> RuntimeTab -> NodeId
 parentForNewRuntimeTab outline tab =
+  let fallbackWindowNodeId = liveWindowNodeIdForRuntimeWindow tab.windowId outline in
   case tab.openerTabId of
     Just openerId ->
-      if isBlankRuntimeTabUrl tab.url then windowNodeId tab.windowId
+      if isBlankRuntimeTabUrl tab.url then fallbackWindowNodeId
       else
-        let openerNodeId = tabNodeId openerId in
+        let openerNodeId = liveTabNodeIdForRuntimeTab openerId outline in
           case findNode openerNodeId outline of
             Just openerNode ->
               case openerNode.liveWindowId of
-                Just openerWindowId -> if windowIdEq openerWindowId tab.windowId then openerNodeId else windowNodeId tab.windowId
-                Nothing -> windowNodeId tab.windowId
-            Nothing -> windowNodeId tab.windowId
-    Nothing -> windowNodeId tab.windowId
+                Just openerWindowId -> if windowIdEq openerWindowId tab.windowId then openerNodeId else fallbackWindowNodeId
+                Nothing -> fallbackWindowNodeId
+            Nothing -> fallbackWindowNodeId
+    Nothing -> fallbackWindowNodeId
 
-wrapLiveTabInCommandWindow :: TabId -> WindowId -> Int -> Outline -> Outline
-wrapLiveTabInCommandWindow tabId newWindowId _now outline =
+wrapLiveTabInCommandWindow :: NodeId -> WindowId -> Int -> Outline -> Outline
+wrapLiveTabInCommandWindow tabNode newWindowId _now outline =
   let
-    tabNode = tabNodeId tabId
     wrapperId = windowNodeId newWindowId
   in
     case findNode tabNode outline of
@@ -944,6 +1467,7 @@ wrapLiveTabInCommandWindow tabId newWindowId _now outline =
             , restoreUrl: Nothing
             , restoreTitle: Nothing
             , restoreFavIconUrl: Nothing
+            , restoreClosedBy: Nothing
             , runtimeProvenance: Just "commandCreated"
             }
           insertionIndex = case node.parentId of
@@ -957,10 +1481,9 @@ wrapLiveTabInCommandWindow tabId newWindowId _now outline =
           withTab = replaceNode withWrapper (node { parentId = Just wrapperId })
         in setActiveWindowInOutline newWindowId withTab
 
-moveLiveTabToNewRootWindow :: TabId -> WindowId -> Int -> Outline -> Outline
-moveLiveTabToNewRootWindow tabId newWindowId _now outline =
+moveLiveTabToNewRootWindow :: NodeId -> WindowId -> Int -> Outline -> Outline
+moveLiveTabToNewRootWindow tabNode newWindowId _now outline =
   let
-    tabNode = tabNodeId tabId
     windowNode =
       { id: windowNodeId newWindowId
       , kind: WindowKind
@@ -977,6 +1500,7 @@ moveLiveTabToNewRootWindow tabId newWindowId _now outline =
       , restoreUrl: Nothing
       , restoreTitle: Nothing
       , restoreFavIconUrl: Nothing
+      , restoreClosedBy: Nothing
       , runtimeProvenance: Just "commandCreated"
       }
     detached = detachNode tabNode outline
@@ -985,10 +1509,9 @@ moveLiveTabToNewRootWindow tabId newWindowId _now outline =
   in
     replaceNode withRoots ((requireNodeOr tabNode outline (emptyTabNode tabNode)) { parentId = Just windowNode.id })
 
-moveLiveTabToWindow :: TabId -> WindowId -> Int -> Int -> Outline -> Outline
-moveLiveTabToWindow tabId targetWindowId targetIndex _now outline =
+moveLiveTabToWindow :: NodeId -> WindowId -> Int -> Int -> Outline -> Outline
+moveLiveTabToWindow tabNode targetWindowId targetIndex _now outline =
   let
-    tabNode = tabNodeId tabId
     targetWindowNode = windowNodeId targetWindowId
   in
     case findNode tabNode outline of
@@ -999,21 +1522,89 @@ moveLiveTabToWindow tabId targetWindowId targetIndex _now outline =
           updated = node { parentId = Just targetWindowNode }
         in insertChildAt targetWindowNode tabNode targetIndex (replaceNode detached updated)
 
-updateLiveTabWindowRefForSubtree :: TabId -> WindowId -> Outline -> Outline
-updateLiveTabWindowRefForSubtree tabId windowId outline =
-  let ids = subtreeNodeIds (tabNodeId tabId) outline in
+updateLiveTabWindowRefForSubtree :: NodeId -> WindowId -> Outline -> Outline
+updateLiveTabWindowRefForSubtree nodeId windowId outline =
+  let ids = subtreeNodeIds nodeId outline in
     outline { nodes = mapArray (\node ->
       if andBoolean (anyArray (\id -> nodeIdEq id node.id) ids) (isLiveTabNode node) then node { liveWindowId = Just windowId }
       else node) outline.nodes }
 
-markClosedNodeByIdWithSession :: NodeId -> Maybe String -> Int -> Outline -> Outline
-markClosedNodeByIdWithSession nodeId sessionId _now outline =
-  replaceNode outline ((markClosed (requireNodeOr nodeId outline (emptyTabNode nodeId))) { restoreSessionId = sessionId })
+updateLiveTabWindowRefForNode :: NodeId -> WindowId -> Outline -> Outline
+updateLiveTabWindowRefForNode nodeId windowId outline =
+  case findNode nodeId outline of
+    Just node -> if isLiveTabNode node then replaceNode outline (node { liveWindowId = Just windowId }) else outline
+    Nothing -> outline
+
+setActiveTabsInOutlineFromRuntime :: Array RuntimeTab -> Outline -> Outline
+setActiveTabsInOutlineFromRuntime tabs outline =
+  foldlArray
+    (\current tab -> if tab.active then setActiveTabInOutlineWindow tab.windowId tab.id current else current)
+    outline
+    tabs
+
+promoteSourceWindowLiveChildrenBeforeMove :: NodeId -> WindowId -> Outline -> Outline
+promoteSourceWindowLiveChildrenBeforeMove movingNodeId sourceWindowId outline =
+  case findNode movingNodeId outline of
+    Nothing -> outline
+    Just movingNode ->
+      let
+        promotedChildIds = filterArray (\childId -> isLiveTabChildInWindow childId sourceWindowId outline) movingNode.childIds
+      in
+        if eqInt (lengthArray promotedChildIds) 0 then outline
+        else
+          let
+            remainingChildIds = filterArray (\childId -> notBoolean (anyArray (\promotedId -> nodeIdEq promotedId childId) promotedChildIds)) movingNode.childIds
+            movingIndex = case movingNode.parentId of
+              Nothing -> indexOfNodeId movingNodeId outline.rootIds
+              Just parentId -> indexOfNodeId movingNodeId (requireNodeOr parentId outline (emptyTabNode parentId)).childIds
+            withMoving = replaceNode outline (movingNode { childIds = remainingChildIds })
+            withPromotedParents = withMoving
+              { nodes = mapArray (\node ->
+                  if anyArray (\promotedId -> nodeIdEq promotedId node.id) promotedChildIds then node { parentId = movingNode.parentId }
+                  else node) withMoving.nodes
+              }
+            insertionIndex = addInt movingIndex 1
+          in
+            case movingNode.parentId of
+              Nothing -> withPromotedParents { rootIds = insertNodeIdsAt promotedChildIds insertionIndex withPromotedParents.rootIds }
+              Just parentId ->
+                replaceNode withPromotedParents
+                  ((requireNodeOr parentId withPromotedParents (emptyTabNode parentId))
+                    { childIds = insertNodeIdsAt promotedChildIds insertionIndex (requireNodeOr parentId withPromotedParents (emptyTabNode parentId)).childIds })
+
+isLiveTabChildInWindow :: NodeId -> WindowId -> Outline -> Boolean
+isLiveTabChildInWindow nodeId windowId outline =
+  case findNode nodeId outline of
+    Nothing -> false
+    Just node ->
+      if isLiveTabNode node then
+        case node.liveWindowId of
+          Just liveWindowId -> windowIdEq liveWindowId windowId
+          Nothing -> false
+      else false
+
+markClosedNodeByIdWithSessionAndClosedBy :: NodeId -> Maybe String -> Maybe String -> Int -> Outline -> Outline
+markClosedNodeByIdWithSessionAndClosedBy nodeId sessionId closedBy _now outline =
+  let
+    node = requireNodeOr nodeId outline (emptyTabNode nodeId)
+    nextClosedBy = closeOwnerForNode closedBy node
+  in
+    replaceNode outline ((markClosed node) { restoreSessionId = sessionId, restoreClosedBy = nextClosedBy })
 
 markClosedSubtreeById :: NodeId -> Int -> Outline -> Outline
-markClosedSubtreeById nodeId _now outline =
+markClosedSubtreeById nodeId now outline =
+  markClosedSubtreeByIdWithClosedBy nodeId Nothing now outline
+
+markClosedSubtreeByIdWithClosedBy :: NodeId -> Maybe String -> Int -> Outline -> Outline
+markClosedSubtreeByIdWithClosedBy nodeId closedBy _now outline =
   let ids = subtreeNodeIds nodeId outline in
-    outline { nodes = mapArray (\node -> if anyArray (\id -> nodeIdEq id node.id) ids then markClosed node else node) outline.nodes }
+    outline { nodes = mapArray (\node -> if anyArray (\id -> nodeIdEq id node.id) ids then (markClosed node) { restoreClosedBy = closeOwnerForNode closedBy node } else node) outline.nodes }
+
+closeOwnerForNode :: Maybe String -> OutlineNode -> Maybe String
+closeOwnerForNode closedBy node =
+  case closedBy of
+    Just owner -> Just owner
+    Nothing -> node.restoreClosedBy
 
 markClosed :: OutlineNode -> OutlineNode
 markClosed node =
@@ -1027,6 +1618,39 @@ markClosed node =
     , restoreFavIconUrl = node.favIconUrl
     }
 
+promoteForeignLiveWindowsAfterClosingWindow :: NodeId -> WindowId -> Outline -> Outline
+promoteForeignLiveWindowsAfterClosingWindow closingNodeId closingRuntimeWindowId outline =
+  foldlArray
+    (\current foreignNodeId -> promoteForeignLiveWindowRoot closingNodeId foreignNodeId current)
+    outline
+    (foreignLiveWindowRootsInSubtree closingNodeId closingRuntimeWindowId outline)
+
+foreignLiveWindowRootsInSubtree :: NodeId -> WindowId -> Outline -> Array NodeId
+foreignLiveWindowRootsInSubtree closingNodeId closingRuntimeWindowId outline =
+  filterArray
+    (\nodeId ->
+      case findNode nodeId outline of
+        Nothing -> false
+        Just node ->
+          if nodeIdEq node.id closingNodeId then false
+          else
+            case node.liveWindowId of
+              Nothing -> false
+              Just liveWindowId -> andBoolean (isLiveWindowNode node) (notBoolean (windowIdEq liveWindowId closingRuntimeWindowId)))
+    (subtreeNodeIds closingNodeId outline)
+
+promoteForeignLiveWindowRoot :: NodeId -> NodeId -> Outline -> Outline
+promoteForeignLiveWindowRoot closingNodeId foreignNodeId outline =
+  case findNode foreignNodeId outline of
+    Nothing -> outline
+    Just node ->
+      let
+        detached = detachNode foreignNodeId outline
+        promoted = replaceNode detached (node { parentId = Nothing })
+        insertionIndex = addInt (indexOfNodeId closingNodeId promoted.rootIds) 1
+      in
+        promoted { rootIds = insertNodeIdAt foreignNodeId insertionIndex promoted.rootIds }
+
 deleteNodes :: Array NodeId -> Outline -> Outline
 deleteNodes ids outline =
   let
@@ -1035,6 +1659,44 @@ deleteNodes ids outline =
     cleaned = { rootIds: rootIds, nodes: nodes }
   in
     cleaned { nodes = mapArray (\node -> node { childIds = filterArray (\childId -> notBoolean (anyArray (\id -> nodeIdEq id childId) ids)) node.childIds }) cleaned.nodes }
+
+deleteLiveTabNodePromotingChildren :: NodeId -> Outline -> Outline
+deleteLiveTabNodePromotingChildren nodeId outline =
+  case findNode nodeId outline of
+    Nothing -> outline
+    Just node ->
+      let
+        insertionIndex = case node.parentId of
+          Nothing -> indexOfNodeId node.id outline.rootIds
+          Just parentId -> indexOfNodeId node.id (requireNodeOr parentId outline (emptyTabNode parentId)).childIds
+        withoutNode = removeSingleNode nodeId outline
+        withChildrenParent = withoutNode { nodes = mapArray (\candidate ->
+          if anyArray (\childId -> nodeIdEq childId candidate.id) node.childIds then candidate { parentId = node.parentId }
+          else candidate) withoutNode.nodes }
+      in
+        case node.parentId of
+          Nothing -> withChildrenParent { rootIds = insertNodeIdsAt node.childIds insertionIndex withChildrenParent.rootIds }
+          Just parentId -> replaceNode withChildrenParent
+            ((requireNodeOr parentId withChildrenParent (emptyTabNode parentId))
+              { childIds = insertNodeIdsAt node.childIds insertionIndex (requireNodeOr parentId withChildrenParent (emptyTabNode parentId)).childIds })
+
+removeSingleNode :: NodeId -> Outline -> Outline
+removeSingleNode nodeId outline =
+  { rootIds: removeNodeId nodeId outline.rootIds
+  , nodes: mapArray (\node -> node { childIds = removeNodeId nodeId node.childIds })
+      (filterArray (\node -> notBoolean (nodeIdEq node.id nodeId)) outline.nodes)
+  }
+
+insertNodeIdsAt :: Array NodeId -> Int -> Array NodeId -> Array NodeId
+insertNodeIdsAt nodeIds targetIndex values =
+  let
+    cleaned = foldlArray (\current nodeId -> removeNodeId nodeId current) values nodeIds
+    inserted = foldlWithIndexArray
+      (\index acc item -> if eqInt index targetIndex then appendArray (appendArray acc nodeIds) [item] else snocArray acc item)
+      []
+      cleaned
+  in
+    if eqInt targetIndex (lengthArray cleaned) then appendArray inserted nodeIds else inserted
 
 closeOutlineWindowsMissingFromRuntime :: Array RuntimeWindow -> Outline -> Outline
 closeOutlineWindowsMissingFromRuntime runtimeWindows outline =
@@ -1078,6 +1740,7 @@ snapshotNode node =
       , url: node.restoreUrl
       , title: node.restoreTitle
       , favIconUrl: node.restoreFavIconUrl
+      , closedBy: node.restoreClosedBy
       }
   , runtimeProvenance: node.runtimeProvenance
   }
@@ -1168,9 +1831,9 @@ resolveNodeSelector step selector model =
   case selector of
     NodeById id -> requireOutlineNode step id model.outline
     NodeByTab tabSelector ->
-      bindResult (resolveTabSelector step tabSelector model) (\tab -> requireOutlineNode step (tabNodeId tab.id) model.outline)
+      bindResult (resolveTabSelector step tabSelector model) (\tab -> requireOutlineNode step (liveTabNodeIdForRuntimeTab tab.id model.outline) model.outline)
     NodeByWindow windowSelector ->
-      bindResult (resolveWindowSelector step windowSelector model) (\window -> requireOutlineNode step (windowNodeId window.id) model.outline)
+      bindResult (resolveWindowSelector step windowSelector model) (\window -> requireOutlineNode step (liveWindowNodeIdForRuntimeWindow window.id model.outline) model.outline)
 
 requireRuntimeTab :: Int -> TabId -> OracleModel -> Result RuntimeTab
 requireRuntimeTab step tabId model =
@@ -1192,9 +1855,9 @@ requireOutlineNode step nodeId outline =
 
 createRuntimeTab :: Array RuntimeTab -> RuntimeTab -> Array RuntimeTab
 createRuntimeTab tabs tab =
-  reindexAllRuntimeTabs (snocArray (mapArray (\candidate ->
+  reindexAllRuntimeTabs (insertRuntimeTabAt (mapArray (\candidate ->
     if andBoolean (windowIdEq candidate.windowId tab.windowId) tab.active then candidate { active = false }
-    else candidate) tabs) tab)
+    else candidate) tabs) tab tab.windowId tab.index)
 
 setRuntimeActiveTab :: TabId -> WindowId -> Array RuntimeTab -> Array RuntimeTab
 setRuntimeActiveTab tabId windowId tabs =
@@ -1301,8 +1964,9 @@ setActiveWindowInOutlineIfFocused windows outline =
 
 updateLiveTabMetadata :: RuntimeTab -> Outline -> Outline
 updateLiveTabMetadata tab outline =
+  let nodeId = liveTabNodeIdForRuntimeTab tab.id outline in
   replaceNode outline
-    ((requireNodeOr (tabNodeId tab.id) outline (emptyTabNode (tabNodeId tab.id)))
+    ((requireNodeOr nodeId outline (emptyTabNode nodeId))
       { title = runtimeTabTitle tab
       , url = tab.url
       , favIconUrl = tab.favIconUrl
@@ -1333,6 +1997,10 @@ insertChildAt parentId childId index outline =
   in
     replaceNode outline (parent { childIds = insertNodeIdAt childId index parent.childIds })
 
+insertChildBefore :: NodeId -> NodeId -> NodeId -> Outline -> Outline
+insertChildBefore parentId childId beforeChildId outline =
+  insertChildAt parentId childId (indexOfNodeId beforeChildId (requireNodeOr parentId outline (emptyTabNode parentId)).childIds) outline
+
 insertNodeIdAt :: NodeId -> Int -> Array NodeId -> Array NodeId
 insertNodeIdAt nodeId targetIndex values =
   let
@@ -1354,6 +2022,24 @@ detachNode nodeId outline =
 findNode :: NodeId -> Outline -> Maybe OutlineNode
 findNode nodeId outline =
   findArray (\node -> nodeIdEq node.id nodeId) outline.nodes
+
+liveWindowNodeIdForRuntimeWindow :: WindowId -> Outline -> NodeId
+liveWindowNodeIdForRuntimeWindow windowId outline =
+  case findArray (\node ->
+    case node.liveWindowId of
+      Just liveWindowId -> andBoolean (isLiveWindowNode node) (windowIdEq liveWindowId windowId)
+      Nothing -> false) outline.nodes of
+    Nothing -> windowNodeId windowId
+    Just node -> node.id
+
+liveTabNodeIdForRuntimeTab :: TabId -> Outline -> NodeId
+liveTabNodeIdForRuntimeTab tabId outline =
+  case findArray (\node ->
+    case node.liveTabId of
+      Just liveTabId -> andBoolean (isLiveTabNode node) (tabIdEq liveTabId tabId)
+      Nothing -> false) outline.nodes of
+    Nothing -> tabNodeId tabId
+    Just node -> node.id
 
 requireNodeOr :: NodeId -> Outline -> OutlineNode -> OutlineNode
 requireNodeOr nodeId outline fallback =
@@ -1378,6 +2064,7 @@ emptyTabNode nodeId =
   , restoreUrl: Nothing
   , restoreTitle: Nothing
   , restoreFavIconUrl: Nothing
+  , restoreClosedBy: Nothing
   , runtimeProvenance: Nothing
   }
 
@@ -1442,6 +2129,12 @@ setTabsCapture maybeName tabs model =
         Nothing -> model
         Just tab -> model { tabCaptures = setPair name tab.id model.tabCaptures }
 
+setStaleTabsCapture :: Maybe String -> Array RuntimeTab -> OracleModel -> OracleModel
+setStaleTabsCapture maybeName tabs model =
+  case maybeName of
+    Nothing -> model
+    Just name -> model { staleTabCaptures = setPair name tabs model.staleTabCaptures }
+
 setWindowCapture :: Maybe String -> WindowId -> OracleModel -> OracleModel
 setWindowCapture maybeName windowId model =
   case maybeName of
@@ -1475,6 +2168,14 @@ decodeArray :: forall a. (Json -> Result a) -> String -> Json -> Result (Array a
 decodeArray decoder key json =
   case fieldArray key json of
     Nothing -> Err (oracleError Nothing "invalid-json" (appendString "Missing array field: " key))
+    Just values -> foldlArray (\result value ->
+      bindResult result (\acc ->
+        bindResult (decoder value) (\decoded -> Ok (snocArray acc decoded)))) (Ok []) values
+
+decodeOptionalArray :: forall a. (Json -> Result a) -> String -> Json -> Result (Array a)
+decodeOptionalArray decoder key json =
+  case fieldArray key json of
+    Nothing -> Ok []
     Just values -> foldlArray (\result value ->
       bindResult result (\acc ->
         bindResult (decoder value) (\decoded -> Ok (snocArray acc decoded)))) (Ok []) values
@@ -1681,6 +2382,12 @@ identityInt value = value
 
 identityString :: String -> String
 identityString value = value
+
+identityTabId :: TabId -> TabId
+identityTabId value = value
+
+identityWindowId :: WindowId -> WindowId
+identityWindowId value = value
 
 oracleError :: Maybe Int -> String -> String -> OracleError
 oracleError step code message =

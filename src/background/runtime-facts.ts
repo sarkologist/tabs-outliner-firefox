@@ -157,6 +157,8 @@ export type NativeWindowRemovedDecision = "ignore-duplicate" | "ignore-delete-ow
 export class RuntimeFactLedger {
   private readonly outlinerClosingTabIds = new Set<number>();
   private readonly outlinerClosingWindowIds = new Set<number>();
+  private readonly outlinerClosedTabIds = new Set<number>();
+  private readonly outlinerClosedWindowIds = new Set<number>();
   private readonly deleteOwnedClosingTabIds = new Set<number>();
   private readonly deleteOwnedClosingWindowIds = new Set<number>();
   private readonly removedTabIds = new Set<number>();
@@ -808,6 +810,32 @@ export class RuntimeFactLedger {
     }
   }
 
+  closedRestoreNodeIdsExcludedFromRuntimeAttach(state: OutlineState): Set<NodeId> {
+    const excluded = new Set<NodeId>();
+
+    for (const [tabId, nodeId] of this.windowScopes.removedTabNodeIdEntries()) {
+      const node = state.nodes[nodeId];
+      if (this.outlinerClosedTabIds.has(tabId) && node?.kind === "tab" && node.status === "closed") {
+        excluded.add(nodeId);
+      }
+    }
+
+    for (const node of Object.values(state.nodes)) {
+      if (node.kind !== "tab" || node.status !== "closed") {
+        continue;
+      }
+      if (node.restore?.closedBy === "outliner") {
+        excluded.add(node.id);
+      }
+      const tabId = canonicalRuntimeIdFromNodeId(node.id, "tab");
+      if (tabId !== undefined && this.outlinerClosedTabIds.has(tabId)) {
+        excluded.add(node.id);
+      }
+    }
+
+    return excluded;
+  }
+
   windowScope(windowId: number): RuntimeWindowScope | undefined {
     return this.windowScopes.scopeForWindow(windowId);
   }
@@ -1457,10 +1485,12 @@ export class RuntimeFactLedger {
   recordCompletedOutlinerClosePlan(plan: RuntimeClosePlan): void {
     for (const tabId of plan.tabIds) {
       this.markTabRemoved(tabId);
+      this.outlinerClosedTabIds.add(tabId);
       this.outlinerClosingTabIds.delete(tabId);
     }
     for (const windowId of plan.windowIds) {
       this.markWindowRemoved(windowId);
+      this.outlinerClosedWindowIds.add(windowId);
       this.outlinerClosingWindowIds.delete(windowId);
     }
   }
@@ -1541,6 +1571,7 @@ export class RuntimeFactLedger {
         this.removedWindowIds.delete(node.live.windowId);
         this.deleteOwnedClosingWindowIds.delete(node.live.windowId);
         this.outlinerClosingWindowIds.delete(node.live.windowId);
+        this.outlinerClosedWindowIds.delete(node.live.windowId);
         this.reconstructedLiveWindowIds.add(node.live.windowId);
         this.reconstructedMaxWindowId = Math.max(this.reconstructedMaxWindowId, node.live.windowId);
       }
@@ -1591,6 +1622,14 @@ export class RuntimeFactLedger {
     return this.hasDeleteOwnedClosingWindow(windowId) || this.hasOutlinerClosingWindow(windowId);
   }
 
+  isOutlinerClosingWindow(windowId: number): boolean {
+    return this.hasOutlinerClosingWindow(windowId);
+  }
+
+  isOutlinerClosedWindow(windowId: number): boolean {
+    return this.outlinerClosedWindowIds.has(windowId);
+  }
+
   consumeOutlinerClosingTab(tabId: number): boolean {
     return this.outlinerClosingTabIds.delete(tabId);
   }
@@ -1603,7 +1642,10 @@ export class RuntimeFactLedger {
     return this.outlinerClosingTabIds.size > 0;
   }
 
-  recordOutlinerClosedTabRemovalApplied(): void {
+  recordOutlinerClosedTabRemovalApplied(tabId?: number): void {
+    if (typeof tabId === "number") {
+      this.outlinerClosedTabIds.add(tabId);
+    }
     if (this.commandCloseSessionEchoesSkippedBeforeRemoval > 0) {
       this.commandCloseSessionEchoesSkippedBeforeRemoval -= 1;
       return;
@@ -1658,6 +1700,7 @@ export class RuntimeFactLedger {
   recordCommandRestoredTab(tabId: number): void {
     this.commandRestoredTabIds.add(tabId);
     this.removedTabIds.delete(tabId);
+    this.outlinerClosedTabIds.delete(tabId);
     this.reconstructedLiveTabIds.add(tabId);
     this.reconstructedMaxTabId = Math.max(this.reconstructedMaxTabId, tabId);
   }
