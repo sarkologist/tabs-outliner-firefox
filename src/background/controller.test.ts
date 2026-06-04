@@ -2103,6 +2103,114 @@ const RUNTIME_DOMAIN_TRACE_DEFINITIONS: RuntimeDomainTraceDefinition[] = [
     ]
   },
   {
+    id: "po-stale-live-created-after-nested-command-group",
+    title: "PureScript oracle ignores stale live-created query after nested grouping",
+    notes: "Covers the 1277552077/930000045 placement class where stale old-window evidence follows nested command-created group windows.",
+    tags: ["purescript-oracle", "stale-event", "stale-query", "concurrency", "nested-window"],
+    assertions: ["purescriptOracle", "runtimeScopeOrder", "runtimeMetadata"],
+    actions: [
+      {
+        type: "nativeOpenWindow",
+        focused: true,
+        tabs: [
+          {
+            title: "Oracle stale nested parent",
+            url: "https://oracle.example/stale-nested-parent",
+            active: true
+          }
+        ],
+        captureWindow: "po-stale-nested-source-window",
+        captureTabs: "po-stale-nested-parent"
+      },
+      {
+        type: "openTab",
+        window: { capture: "po-stale-nested-source-window" },
+        active: false,
+        openerTab: { capture: "po-stale-nested-parent" },
+        title: "Oracle stale nested child",
+        url: "https://oracle.example/stale-nested-child",
+        captureTab: "po-stale-nested-child"
+      },
+      {
+        type: "raceWithOutlinerGroup",
+        event: {
+          type: "openTab",
+          window: { capture: "po-stale-nested-source-window" },
+          index: 1,
+          active: true,
+          title: "Oracle stale nested created",
+          url: "https://oracle.example/stale-nested-created",
+          captureTab: "po-stale-nested-created"
+        },
+        groupTab: { capture: "po-stale-nested-child" },
+        captureStaleTabs: "po-stale-nested-before-group"
+      },
+      {
+        type: "raceWithOutlinerGroup",
+        event: {
+          type: "openTab",
+          window: { capture: "po-stale-nested-source-window" },
+          index: 1,
+          active: false,
+          title: "Oracle stale nested second",
+          url: "https://oracle.example/stale-nested-second",
+          captureTab: "po-stale-nested-second"
+        },
+        groupTab: { capture: "po-stale-nested-child" },
+        captureStaleTabs: "po-stale-nested-second-before-group"
+      },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "po-stale-nested-second-before-group" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "po-stale-live-updated-after-restore-delete-group",
+    title: "PureScript oracle ignores stale live-updated query after restore-delete grouping",
+    notes: "Covers restore-delete delayed events followed by command grouping and stale old-window update evidence.",
+    tags: ["purescript-oracle", "restore-delete", "stale-event", "stale-query", "concurrency"],
+    assertions: ["purescriptOracle", "runtimeScopeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "outlinerRestoreDeleteWindowDelayedEvent", window: { windowId: 20 } },
+      {
+        type: "openTab",
+        window: { windowId: 10 },
+        title: "Oracle restore-delete stale target",
+        url: "https://oracle.example/restore-delete-stale-target",
+        captureTab: "po-restore-delete-stale-target"
+      },
+      {
+        type: "outlinerGroupTab",
+        tab: { capture: "po-restore-delete-stale-target" },
+        captureStaleTabs: "po-restore-delete-stale-before-group"
+      },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "po-restore-delete-stale-before-group" }, withStaleQuery: true }
+    ]
+  },
+  {
+    id: "po-stale-live-created-after-grouped-source-close",
+    title: "PureScript oracle ignores stale live-created query after grouped source closes",
+    notes: "Covers stale created evidence after grouped subtree relocation and source-window closure.",
+    tags: ["purescript-oracle", "stale-event", "stale-query", "closed-subtree", "concurrency"],
+    assertions: ["purescriptOracle", "runtimeScopeOrder", "runtimeMetadata"],
+    actions: [
+      {
+        type: "openTab",
+        window: { windowId: 10 },
+        active: true,
+        openerTab: { tabId: 1 },
+        title: "Oracle grouped close child",
+        url: "https://oracle.example/grouped-close-child",
+        captureTab: "po-grouped-close-child"
+      },
+      {
+        type: "outlinerGroupTab",
+        tab: { capture: "po-grouped-close-child" },
+        captureStaleTabs: "po-grouped-close-before-group"
+      },
+      { type: "nativeCloseWindow", window: { windowId: 10 } },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "po-grouped-close-before-group" }, withStaleQuery: true }
+    ]
+  },
+  {
     id: "po-restore-nested-closed-window-promotes-from-closed-parent",
     title: "PureScript oracle promotes restored nested window from closed parent",
     notes: "Covers the 900000021 class where a nested closed command window is restored after its outline parent has also closed.",
@@ -23321,6 +23429,9 @@ async function runDomainStaleLiveUpdatedEvent(
   } finally {
     context.runtime.clearNextTabQueryResult();
   }
+  recordGeneratedNoopOracleAction(context, withStaleQuery ? "staleLiveTabUpdatedEventWithStaleQuery" : "staleLiveTabUpdatedEvent", {
+    staleTab: copyTab(stale)
+  });
 }
 
 async function runDomainStaleLiveCreatedEvent(
@@ -23337,6 +23448,9 @@ async function runDomainStaleLiveCreatedEvent(
   } finally {
     context.runtime.clearNextTabQueryResult();
   }
+  recordGeneratedNoopOracleAction(context, withStaleQuery ? "staleLiveTabCreatedEventWithStaleQuery" : "staleLiveTabCreatedEvent", {
+    staleTab: copyTab(stale)
+  });
 }
 
 function resolveDomainTab(context: GeneratedTraceContext, selector: DomainTabSelector): RuntimeTab {
@@ -23631,6 +23745,9 @@ function shouldRunGeneratedPureScriptOracle(
     (seed === 910720204 && steps === 21 && options.adversarialRuntimeQueries === true && options.adversarialConcurrency === true) ||
     (seed === 1546021748 && steps === 4 && options.adversarialRuntimeQueries === true && options.adversarialConcurrency === true) ||
     (seed === 910000046 && steps === 10 && options.adversarialRuntimeQueries === true && options.adversarialConcurrency === true) ||
+    (seed === 1277552077 && steps === 8 && options.adversarialRuntimeQueries === true && options.adversarialConcurrency === true) ||
+    (seed === 930000045 && steps === 40 && options.adversarialRuntimeQueries === true && options.adversarialConcurrency === true) ||
+    (seed === 940000016 && steps === 48 && options.adversarialRuntimeQueries === true && options.adversarialConcurrency === true) ||
     (seed === 422754531 && steps === 2 && options.adversarialRuntimeQueries === true && options.adversarialConcurrency === true) ||
     (seed === 1338200851 && steps === 8 && options.adversarialRuntimeQueries === true && options.adversarialConcurrency === true) ||
     (seed === 684835488 && steps === 9 && !options.adversarialRuntimeQueries && !options.adversarialConcurrency) ||

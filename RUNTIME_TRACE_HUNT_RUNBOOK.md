@@ -27,6 +27,8 @@ Find new runtime/model reconciliation bugs by adding or mutating explicit domain
 - If a corpus run reveals multiple distinct signatures, record all of them before changing the corpus.
 - If a trace fails because of a harness/precondition issue, fix the trace or harness before counting it as a runtime finding.
 - If a trace fails by runtime invariant, freeze it and let the runner record the finding.
+- When adding PureScript oracle coverage, define the intended invariant before changing oracle semantics. Add focused domain traces first, then enable broad generated replay gates only after every operation in the replay is supported.
+- Treat a PureScript/TS divergence as a triage result, not automatically as an oracle gap. Update the oracle only when TS behavior is independently judged correct; otherwise fix the app and keep the oracle assertion.
 - Do not fix bugs during a hunt. Finding a bug does not end the hunt by itself; freeze and record it, reset the clean-block count, and keep hunting until the normal stop rules say to stop. Fixes happen only after the hunt has stopped.
 - If you used subagent scouts, close/remove those subagent threads when their proposals are collected or when the hunt stops.
 - Perf guard is not part of discovery. It is mandatory for the later fix/promote pass.
@@ -216,6 +218,7 @@ Bug fixing begins only after the hunt has stopped under the normal hunt rules. F
 After the hunt stops, propose principled fixes for any open `RT-*` findings. A finding is not fixed until:
 
 - failing traces are promoted to regression or otherwise covered by focused regression tests;
+- oracle-backed fixes include focused domain traces that state the invariant before any broad generated replay gate is enabled;
 - correctness checks pass;
 - selected perf guard passes for the changed blast radius;
 - `RUNTIME_TRACE_BUGS.md` records the fix analysis and perf result.

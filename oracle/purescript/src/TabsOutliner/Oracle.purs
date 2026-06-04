@@ -1078,7 +1078,10 @@ moveRuntimeTabAndOutline _step tab targetWindowId index active commandCreated wr
       outlineWithRefs =
         if commandCreated then updateLiveTabWindowRefForSubtree movingNodeId targetWindowId outline
         else updateLiveTabWindowRefForNode movingNodeId targetWindowId outline
-      outlineWithActiveTabs = setActiveTabsInOutlineFromRuntime runtimeTabs outlineWithRefs
+      outlineWithOpenedChildWindows =
+        if commandCreated then attachRuntimeOpenerWindowsUnderMovedTab movingNodeId runtimeTabs outlineWithRefs
+        else outlineWithRefs
+      outlineWithActiveTabs = setActiveTabsInOutlineFromRuntime runtimeTabs outlineWithOpenedChildWindows
       finalOutline = closeOutlineWindowsMissingFromRuntime runtimeWindows (setActiveWindowInOutlineIfFocused runtimeWindows outlineWithActiveTabs)
       finalRuntimeTabs = case wrapMode of
         Just false -> syncRuntimeOrderFromOutline finalOutline runtimeTabs
@@ -1147,10 +1150,11 @@ applyOutlinerRestoreNode step details model =
           Nothing -> Err (oracleStepError step "missing-runtime-tab" "Restore tab action did not provide a restored runtime tab")
           Just tab ->
             let
-              runtimeWindows = appendRestoredRuntimeWindows details.restoredWindows (clearRuntimeWindowFocusIfRestoredFocused details.restoredWindows model.runtimeWindows)
+              restoredWindows = restoredWindowsForRestoredTab tab details.restoredWindows
+              runtimeWindows = appendRestoredRuntimeWindows restoredWindows (clearRuntimeWindowFocusIfRestoredFocused restoredWindows model.runtimeWindows)
               runtimeTabs = reindexAllRuntimeTabs (appendRestoredRuntimeTabs details.restoredTabs model.runtimeTabs)
-              outline = restoreClosedTabNode node.id tab model.outline
-              activeOutline = if tab.active then setActiveTabInOutlineWindow tab.windowId tab.id outline else outline
+              outline = restoreClosedTabNode node.id tab restoredWindows model.outline
+              activeOutline = if tab.active then setActiveTabInOutlineWindow tab.windowId tab.id (setActiveWindowInOutline tab.windowId outline) else outline
               nextModel = setRestoredCaptures details
                 model
                   { runtimeWindows = runtimeWindows
@@ -1158,7 +1162,7 @@ applyOutlinerRestoreNode step details model =
                   , outline = activeOutline
                   , nextTabId = maxInt model.nextTabId (addInt 1 (maxRuntimeTabId details.restoredTabs))
                   , nextWindowId = maxInt model.nextWindowId (addInt 1 (maxRuntimeWindowId details.restoredWindows))
-                  , lastOpenedWindowId = firstRuntimeWindowId details.restoredWindows model.lastOpenedWindowId
+                  , lastOpenedWindowId = firstRuntimeWindowId restoredWindows model.lastOpenedWindowId
                   , lastOpenedTabId = Just tab.id
                   }
             in Ok nextModel
@@ -1214,17 +1218,112 @@ applyConcurrentCreatedTabThenGroup step details model =
     let
       groupNodeId = liveTabNodeIdForRuntimeTab groupTab.id model.outline
       createdTab = commandRelocationAdjustedCreatedTab groupNodeId details.createdTab model
-      runtimeTabs = createRuntimeTab model.runtimeTabs createdTab
-      existingTabs = filterArray (\candidate -> notBoolean (tabIdEq candidate.id createdTab.id)) (tabsInWindowFrom runtimeTabs createdTab.windowId)
-      outline = addLiveTabToOutlineWithExistingTabs model.outline model.now createdTab existingTabs
-      withCreated = model
-        { runtimeTabs = runtimeTabs
-        , outline = if createdTab.active then setActiveTabInOutlineWindow createdTab.windowId createdTab.id outline else outline
-        , nextTabId = maxInt model.nextTabId (addInt (tabIdInt createdTab.id) 1)
-        , lastOpenedTabId = Just createdTab.id
-        }
     in
-      applyOutlinerRelocation step details.groupTab true details.windowId withCreated)
+      case nonCanonicalCommandWindowSource groupNodeId createdTab.windowId model.outline of
+        Just source -> applyConcurrentCreatedTabThenGroupFromNonCanonicalSource details groupTab groupNodeId createdTab source model
+        Nothing ->
+          let
+            runtimeTabs = createRuntimeTab model.runtimeTabs createdTab
+            existingTabs = filterArray (\candidate -> notBoolean (tabIdEq candidate.id createdTab.id)) (tabsInWindowFrom runtimeTabs createdTab.windowId)
+            outline = addLiveTabToOutlineWithExistingTabs model.outline model.now createdTab existingTabs
+            withCreated = model
+              { runtimeTabs = runtimeTabs
+              , outline = if createdTab.active then setActiveTabInOutlineWindow createdTab.windowId createdTab.id outline else outline
+              , nextTabId = maxInt model.nextTabId (addInt (tabIdInt createdTab.id) 1)
+              , lastOpenedTabId = Just createdTab.id
+              }
+          in
+            applyOutlinerRelocation step details.groupTab true details.windowId withCreated)
+
+applyConcurrentCreatedTabThenGroupFromNonCanonicalSource ::
+  ConcurrentCreatedTabThenGroupAction ->
+  RuntimeTab ->
+  NodeId ->
+  RuntimeTab ->
+  OutlineNode ->
+  OracleModel ->
+  Result OracleModel
+applyConcurrentCreatedTabThenGroupFromNonCanonicalSource details groupTab groupNodeId createdTab source model =
+  let
+    newWindowId = maybe (WindowId model.nextWindowId) identityWindowId details.windowId
+    newWindow = { id: newWindowId, focused: true, incognito: false, state: Nothing }
+    runtimeWindowsWithNew = snocArray (mapArray (\candidate -> candidate { focused = false }) model.runtimeWindows) newWindow
+    runtimeTabsWithCreated = createRuntimeTab model.runtimeTabs createdTab
+    movedRuntimeTabs = moveRuntimeTabSubtree groupNodeId groupTab.id newWindowId 0 model.outline runtimeTabsWithCreated
+    activeRuntimeTabs = applyCommandMoveActiveState groupTab.id groupTab.active movedRuntimeTabs
+    runtimeTabs = reindexAllRuntimeTabs activeRuntimeTabs
+    runtimeWindows = removeEmptyRuntimeWindows runtimeTabs runtimeWindowsWithNew
+    canonicalWindow = runtimeWindowForId createdTab.windowId runtimeWindows
+    canonicalWindowNodeId = windowNodeId createdTab.windowId
+    withCanonicalWindow = addLiveWindowToOutline model.outline model.now canonicalWindow (Just "commandCreated")
+    existingTabs = filterArray (\candidate -> notBoolean (tabIdEq candidate.id createdTab.id)) (tabsInWindowFrom runtimeTabs createdTab.windowId)
+    withCreated = addLiveTabToOutlineUnderParent withCanonicalWindow model.now canonicalWindowNodeId createdTab existingTabs
+    sourceIndex = indexOfNodeId source.id withCreated.rootIds
+    withoutGroup = detachNode groupNodeId withCreated
+    wrapper =
+      { id: windowNodeId newWindowId
+      , kind: WindowKind
+      , status: LiveStatus
+      , parentId: Nothing
+      , childIds: [groupNodeId]
+      , title: "Group"
+      , url: Nothing
+      , favIconUrl: Nothing
+      , active: Just true
+      , liveWindowId: Just newWindowId
+      , liveTabId: Nothing
+      , restoreSessionId: Nothing
+      , restoreUrl: Nothing
+      , restoreTitle: Nothing
+      , restoreFavIconUrl: Nothing
+      , restoreClosedBy: Nothing
+      , runtimeProvenance: Just "commandCreated"
+      }
+    withWrapperNode = addNode withoutGroup wrapper
+    withWrapper = withWrapperNode { rootIds = insertNodeIdAt wrapper.id (addInt sourceIndex 1) withWrapperNode.rootIds }
+    withGroupParent = replaceNode withWrapper ((requireNodeOr groupNodeId withWrapper (emptyTabNode groupNodeId)) { parentId = Just wrapper.id })
+    withRefs = updateLiveTabWindowRefForSubtree groupNodeId newWindowId withGroupParent
+    withClosedSource = markClosedSubtreeById source.id model.now withRefs
+    outlineWithActiveTabs = syncTabActiveFlagsFromRuntime runtimeTabs withClosedSource
+    finalOutline = closeOutlineWindowsMissingFromRuntime runtimeWindows (setActiveWindowInOutlineIfFocused runtimeWindows outlineWithActiveTabs)
+  in
+    Ok model
+      { runtimeTabs = runtimeTabs
+      , runtimeWindows = runtimeWindows
+      , outline = finalOutline
+      , nextWindowId = maxInt model.nextWindowId (addInt (windowIdInt newWindowId) 1)
+      , nextTabId = maxInt model.nextTabId (addInt (tabIdInt createdTab.id) 1)
+      , lastOpenedTabId = Just createdTab.id
+      , lastMovedTabId = Just groupTab.id
+      , lastOpenedWindowId = Just newWindowId
+      }
+
+nonCanonicalCommandWindowSource :: NodeId -> WindowId -> Outline -> Maybe OutlineNode
+nonCanonicalCommandWindowSource groupNodeId runtimeWindowId outline =
+  case findNode groupNodeId outline of
+    Nothing -> Nothing
+    Just node ->
+      case node.parentId of
+        Nothing -> Nothing
+        Just sourceNodeId ->
+          case findNode sourceNodeId outline of
+            Nothing -> Nothing
+            Just source ->
+              case source.liveWindowId of
+                Nothing -> Nothing
+                Just liveWindowId ->
+                  let
+                    commandCreated = case source.runtimeProvenance of
+                      Just provenance -> eqString provenance "commandCreated"
+                      Nothing -> false
+                  in
+                    if andBoolean
+                      (andBoolean (isLiveWindowNode source) commandCreated)
+                      (andBoolean
+                        (andBoolean (windowIdEq liveWindowId runtimeWindowId) (notBoolean (nodeIdEq source.id (windowNodeId runtimeWindowId))))
+                        (hasClosedDirectChild source.id outline))
+                    then Just source
+                    else Nothing
 
 commandRelocationAdjustedCreatedTab :: NodeId -> RuntimeTab -> OracleModel -> RuntimeTab
 commandRelocationAdjustedCreatedTab groupNodeId createdTab model =
@@ -1291,6 +1390,11 @@ appendRestoredRuntimeTabs restored existing =
     (filterArray (\tab -> notBoolean (anyArray (\restoredTab -> tabIdEq restoredTab.id tab.id) restored)) existing)
     restored
 
+restoredWindowsForRestoredTab :: RuntimeTab -> Array RuntimeWindow -> Array RuntimeWindow
+restoredWindowsForRestoredTab tab restoredWindows =
+  if anyArray (\window -> windowIdEq window.id tab.windowId) restoredWindows then restoredWindows
+  else snocArray restoredWindows { id: tab.windowId, focused: tab.active, incognito: false, state: Nothing }
+
 restoreClosedWindowSubtree :: NodeId -> RuntimeWindow -> Array RuntimeTab -> Outline -> Outline
 restoreClosedWindowSubtree nodeId window restoredTabs outline =
   let
@@ -1305,10 +1409,54 @@ restoreClosedWindowSubtree nodeId window restoredTabs outline =
   in
     promoteRestoredLiveNodesOutOfClosedAncestors [nodeId] restoredOutline
 
-restoreClosedTabNode :: NodeId -> RuntimeTab -> Outline -> Outline
-restoreClosedTabNode nodeId tab outline =
-  promoteRestoredLiveNodesOutOfClosedAncestors [nodeId]
-    (replaceNode outline (restoreTabOutlineNode (requireNodeOr nodeId outline (emptyTabNode nodeId)) tab))
+restoreClosedTabNode :: NodeId -> RuntimeTab -> Array RuntimeWindow -> Outline -> Outline
+restoreClosedTabNode nodeId tab restoredWindows outline =
+  let
+    node = requireNodeOr nodeId outline (emptyTabNode nodeId)
+  in
+    case node.parentId of
+      Just parentId ->
+        case findNode parentId outline of
+          Just parent ->
+            if andBoolean (isClosedCommandCreatedWindowNode parent) (notBoolean (eqInt (lengthArray restoredWindows) 0)) then
+              let
+                window = runtimeWindowForId tab.windowId restoredWindows
+                withParent = replaceNode outline (restoreWindowOutlineNode parent window)
+                withTab = replaceNode withParent (restoreTabOutlineNode node tab)
+              in
+                withTab
+            else promoteRestoredLiveNodesOutOfClosedAncestors [nodeId] (replaceNode outline (restoreTabOutlineNode node tab))
+          Nothing -> promoteRestoredLiveNodesOutOfClosedAncestors [nodeId] (replaceNode outline (restoreTabOutlineNode node tab))
+      Nothing ->
+        case emptyClosedCommandCreatedWindow restoredWindows outline of
+          Just parent ->
+            let
+              window = runtimeWindowForId tab.windowId restoredWindows
+              withParent = replaceNode outline (restoreWindowOutlineNode parent window)
+              withTabRootRemoved = withParent { rootIds = removeNodeId node.id withParent.rootIds }
+              withTab = replaceNode withTabRootRemoved ((restoreTabOutlineNode node tab) { parentId = Just parent.id })
+            in
+              replaceNode withTab ((requireNodeOr parent.id withTab (emptyTabNode parent.id)) { childIds = [node.id] })
+          Nothing -> promoteRestoredLiveNodesOutOfClosedAncestors [nodeId] (replaceNode outline (restoreTabOutlineNode node tab))
+
+isClosedCommandCreatedWindowNode :: OutlineNode -> Boolean
+isClosedCommandCreatedWindowNode node =
+  case node.runtimeProvenance of
+    Just provenance ->
+      case node.kind of
+        WindowKind ->
+          case node.status of
+            ClosedStatus -> eqString provenance "commandCreated"
+            LiveStatus -> false
+            NeutralStatus -> false
+        TabKind -> false
+        GroupKind -> false
+    Nothing -> false
+
+emptyClosedCommandCreatedWindow :: Array RuntimeWindow -> Outline -> Maybe OutlineNode
+emptyClosedCommandCreatedWindow restoredWindows outline =
+  if eqInt (lengthArray restoredWindows) 0 then Nothing
+  else findArray (\node -> andBoolean (isClosedCommandCreatedWindowNode node) (eqInt (lengthArray node.childIds) 0)) outline.nodes
 
 promoteRestoredLiveNodesOutOfClosedAncestors :: Array NodeId -> Outline -> Outline
 promoteRestoredLiveNodesOutOfClosedAncestors nodeIds outline =
@@ -1519,6 +1667,16 @@ addLiveTabToOutlineWithExistingTabs outline now tab existingTabs =
     if andBoolean (isBlankRuntimeTabUrl tab.url) (hasClosedDirectChild parentId withNode) then appendChild parentId nodeId withNode
     else insertLiveTabChildInRuntimeOrder parentId nodeId tab existingTabs withNode
 
+addLiveTabToOutlineUnderParent :: Outline -> Int -> NodeId -> RuntimeTab -> Array RuntimeTab -> Outline
+addLiveTabToOutlineUnderParent outline now parentId tab existingTabs =
+  let
+    nodeId = tabNodeId tab.id
+    node = (tabToNode now parentId tab) { parentId = Just parentId }
+    withNode = addNode outline node
+  in
+    if andBoolean (isBlankRuntimeTabUrl tab.url) (hasClosedDirectChild parentId withNode) then appendChild parentId nodeId withNode
+    else insertLiveTabChildInRuntimeOrder parentId nodeId tab existingTabs withNode
+
 hasClosedDirectChild :: NodeId -> Outline -> Boolean
 hasClosedDirectChild parentId outline =
   case findNode parentId outline of
@@ -1578,36 +1736,137 @@ wrapLiveTabInCommandWindow tabNode newWindowId _now outline =
     case findNode tabNode outline of
       Nothing -> outline
       Just node ->
-        let
-          wrapper =
-            { id: wrapperId
-            , kind: WindowKind
-            , status: LiveStatus
-            , parentId: node.parentId
-            , childIds: [tabNode]
-            , title: "Group"
-            , url: Nothing
-            , favIconUrl: Nothing
-            , active: Just true
-            , liveWindowId: Just newWindowId
-            , liveTabId: Nothing
-            , restoreSessionId: Nothing
-            , restoreUrl: Nothing
-            , restoreTitle: Nothing
-            , restoreFavIconUrl: Nothing
-            , restoreClosedBy: Nothing
-            , runtimeProvenance: Just "commandCreated"
-            }
-          insertionIndex = case node.parentId of
-            Nothing -> indexOfNodeId node.id outline.rootIds
-            Just parentId -> indexOfNodeId node.id (requireNodeOr parentId outline (emptyTabNode parentId)).childIds
-          detached = detachNode tabNode outline
-          withWrapperNode = addNode detached wrapper
-          withWrapper = case node.parentId of
-            Nothing -> withWrapperNode { rootIds = insertNodeIdAt wrapperId insertionIndex withWrapperNode.rootIds }
-            Just parentId -> insertChildAt parentId wrapperId insertionIndex withWrapperNode
-          withTab = replaceNode withWrapper (node { parentId = Just wrapperId })
-        in setActiveWindowInOutline newWindowId withTab
+        case commandWindowSourceForPromotedWrap tabNode newWindowId outline of
+          Just source -> setActiveWindowInOutline newWindowId (wrapLiveTabInCommandWindowPromotingSource tabNode newWindowId source outline)
+          Nothing ->
+            let
+              wrapper =
+                { id: wrapperId
+                , kind: WindowKind
+                , status: LiveStatus
+                , parentId: node.parentId
+                , childIds: [tabNode]
+                , title: "Group"
+                , url: Nothing
+                , favIconUrl: Nothing
+                , active: Just true
+                , liveWindowId: Just newWindowId
+                , liveTabId: Nothing
+                , restoreSessionId: Nothing
+                , restoreUrl: Nothing
+                , restoreTitle: Nothing
+                , restoreFavIconUrl: Nothing
+                , restoreClosedBy: Nothing
+                , runtimeProvenance: Just "commandCreated"
+                }
+              insertionIndex = case node.parentId of
+                Nothing -> indexOfNodeId node.id outline.rootIds
+                Just parentId -> indexOfNodeId node.id (requireNodeOr parentId outline (emptyTabNode parentId)).childIds
+              detached = detachNode tabNode outline
+              withWrapperNode = addNode detached wrapper
+              withWrapper = case node.parentId of
+                Nothing -> withWrapperNode { rootIds = insertNodeIdAt wrapperId insertionIndex withWrapperNode.rootIds }
+                Just parentId -> insertChildAt parentId wrapperId insertionIndex withWrapperNode
+              withTab = replaceNode withWrapper (node { parentId = Just wrapperId })
+            in setActiveWindowInOutline newWindowId withTab
+
+type CommandWindowSource =
+  { sourceNode :: OutlineNode
+  , parentId :: Maybe NodeId
+  , sourceIndex :: Int
+  }
+
+commandWindowSourceForPromotedWrap :: NodeId -> WindowId -> Outline -> Maybe CommandWindowSource
+commandWindowSourceForPromotedWrap tabNode newWindowId outline =
+  case findNode tabNode outline of
+    Nothing -> Nothing
+    Just node ->
+      case node.parentId of
+        Nothing -> Nothing
+        Just sourceNodeId ->
+          case findNode sourceNodeId outline of
+            Nothing -> Nothing
+            Just sourceNode ->
+              case sourceNode.liveWindowId of
+                Nothing -> Nothing
+                Just sourceWindowId ->
+                  let
+                    commandCreated = case sourceNode.runtimeProvenance of
+                      Just provenance -> eqString provenance "commandCreated"
+                      Nothing -> false
+                  in
+                    if andBoolean
+                      (andBoolean (isLiveWindowNode sourceNode) commandCreated)
+                      (andBoolean
+                        (andBoolean (notBoolean (windowIdEq sourceWindowId newWindowId)) (sourceCommandWindowHasParent sourceNode))
+                        (sourceCommandWindowHasOtherOwnedLiveTab sourceNode.id tabNode sourceWindowId outline))
+                    then
+                      let
+                        sourceIndex = case sourceNode.parentId of
+                          Nothing -> indexOfNodeId sourceNode.id outline.rootIds
+                          Just parentId -> indexOfNodeId sourceNode.id (requireNodeOr parentId outline (emptyTabNode parentId)).childIds
+                      in
+                        Just { sourceNode: sourceNode, parentId: sourceNode.parentId, sourceIndex: sourceIndex }
+                    else Nothing
+
+sourceCommandWindowHasParent :: OutlineNode -> Boolean
+sourceCommandWindowHasParent node =
+  case node.parentId of
+    Just _ -> true
+    Nothing -> false
+
+sourceCommandWindowHasOtherOwnedLiveTab :: NodeId -> NodeId -> WindowId -> Outline -> Boolean
+sourceCommandWindowHasOtherOwnedLiveTab sourceNodeId movingNodeId sourceWindowId outline =
+  let movingIds = subtreeNodeIdsExcludingNestedLiveWindows movingNodeId outline in
+    anyArray
+      (\nodeId ->
+        if anyArray (\movingId -> nodeIdEq movingId nodeId) movingIds then false
+        else
+          case findNode nodeId outline of
+            Nothing -> false
+            Just node ->
+              case node.liveWindowId of
+                Just liveWindowId -> andBoolean (isLiveTabNode node) (windowIdEq liveWindowId sourceWindowId)
+                Nothing -> false)
+      (subtreeNodeIdsExcludingNestedLiveWindows sourceNodeId outline)
+
+wrapLiveTabInCommandWindowPromotingSource :: NodeId -> WindowId -> CommandWindowSource -> Outline -> Outline
+wrapLiveTabInCommandWindowPromotingSource tabNode newWindowId source outline =
+  let
+    wrapperId = windowNodeId newWindowId
+    wrapper =
+      { id: wrapperId
+      , kind: WindowKind
+      , status: LiveStatus
+      , parentId: source.parentId
+      , childIds: [tabNode]
+      , title: "Group"
+      , url: Nothing
+      , favIconUrl: Nothing
+      , active: Just true
+      , liveWindowId: Just newWindowId
+      , liveTabId: Nothing
+      , restoreSessionId: Nothing
+      , restoreUrl: Nothing
+      , restoreTitle: Nothing
+      , restoreFavIconUrl: Nothing
+      , restoreClosedBy: Nothing
+      , runtimeProvenance: Just "commandCreated"
+      }
+    withoutTab = detachNode tabNode outline
+    withoutSource = detachNode source.sourceNode.id withoutTab
+    withSourceRoot =
+      if anyArray (\rootId -> nodeIdEq rootId source.sourceNode.id) withoutSource.rootIds then withoutSource
+      else withoutSource { rootIds = snocArray withoutSource.rootIds source.sourceNode.id }
+    withWrapperNode = addNode withSourceRoot wrapper
+    withWrapper = case source.parentId of
+      Nothing -> withWrapperNode { rootIds = insertNodeIdAt wrapperId source.sourceIndex withWrapperNode.rootIds }
+      Just parentId ->
+        replaceNode withWrapperNode
+          ((requireNodeOr parentId withWrapperNode (emptyTabNode parentId))
+            { childIds = insertNodeIdAt wrapperId source.sourceIndex (requireNodeOr parentId withWrapperNode (emptyTabNode parentId)).childIds })
+  in
+    replaceNode withWrapper ((requireNodeOr tabNode withWrapper (emptyTabNode tabNode)) { parentId = Just wrapperId })
 
 moveLiveTabToNewRootWindow :: NodeId -> WindowId -> Int -> Outline -> Outline
 moveLiveTabToNewRootWindow tabNode newWindowId _now outline =
@@ -1669,6 +1928,53 @@ setActiveTabsInOutlineFromRuntime tabs outline =
     (\current tab -> if tab.active then setActiveTabInOutlineWindow tab.windowId tab.id current else current)
     outline
     tabs
+
+syncTabActiveFlagsFromRuntime :: Array RuntimeTab -> Outline -> Outline
+syncTabActiveFlagsFromRuntime tabs outline =
+  outline { nodes = mapArray (\node ->
+    if isLiveTabNode node then
+      case node.liveTabId of
+        Nothing -> node
+        Just liveTabId ->
+          case findArray (\tab -> tabIdEq tab.id liveTabId) tabs of
+            Nothing -> node
+            Just tab -> node { active = Just tab.active }
+    else node) outline.nodes }
+
+attachRuntimeOpenerWindowsUnderMovedTab :: NodeId -> Array RuntimeTab -> Outline -> Outline
+attachRuntimeOpenerWindowsUnderMovedTab movedNodeId tabs outline =
+  case findNode movedNodeId outline of
+    Nothing -> outline
+    Just movedNode ->
+      case movedNode.liveTabId of
+        Nothing -> outline
+        Just movedTabId ->
+          foldlArray
+            (\current tab ->
+              case tab.openerTabId of
+                Just openerTabId ->
+                  if tabIdEq openerTabId movedTabId then attachLiveWindowUnderTab movedNodeId tab.windowId current else current
+                Nothing -> current)
+            outline
+            tabs
+
+attachLiveWindowUnderTab :: NodeId -> WindowId -> Outline -> Outline
+attachLiveWindowUnderTab parentTabNodeId windowId outline =
+  let windowNodeIdValue = liveWindowNodeIdForRuntimeWindow windowId outline in
+    case findNode windowNodeIdValue outline of
+      Nothing -> outline
+      Just windowNode ->
+        if anyArray (\nodeId -> nodeIdEq nodeId parentTabNodeId) (subtreeNodeIds windowNode.id outline) then outline
+        else
+          case windowNode.parentId of
+            Just parentId -> if nodeIdEq parentId parentTabNodeId then outline else outline
+            Nothing ->
+              let
+                withoutWindowRoot = outline { rootIds = removeNodeId windowNode.id outline.rootIds }
+                withWindowParent = replaceNode withoutWindowRoot (windowNode { parentId = Just parentTabNodeId })
+                parent = requireNodeOr parentTabNodeId withWindowParent (emptyTabNode parentTabNodeId)
+              in
+                replaceNode withWindowParent (parent { childIds = snocArray (removeNodeId windowNode.id parent.childIds) windowNode.id })
 
 promoteSourceWindowLiveChildrenBeforeMove :: NodeId -> WindowId -> Outline -> Outline
 promoteSourceWindowLiveChildrenBeforeMove movingNodeId sourceWindowId outline =
@@ -1787,29 +2093,44 @@ promoteForeignLiveWindowsAfterClosingWindow closingNodeId closingRuntimeWindowId
 
 foreignLiveWindowRootsInSubtree :: NodeId -> WindowId -> Outline -> Array NodeId
 foreignLiveWindowRootsInSubtree closingNodeId closingRuntimeWindowId outline =
-  filterArray
-    (\nodeId ->
-      case findNode nodeId outline of
-        Nothing -> false
-        Just node ->
-          if nodeIdEq node.id closingNodeId then false
-          else
-            case node.liveWindowId of
-              Nothing -> false
-              Just liveWindowId -> andBoolean (isLiveWindowNode node) (notBoolean (windowIdEq liveWindowId closingRuntimeWindowId)))
-    (subtreeNodeIds closingNodeId outline)
+  case findNode closingNodeId outline of
+    Nothing -> []
+    Just node -> foldlArray (\ids childId -> appendArray ids (foreignLiveWindowRootsFrom childId closingRuntimeWindowId outline)) [] node.childIds
+
+foreignLiveWindowRootsFrom :: NodeId -> WindowId -> Outline -> Array NodeId
+foreignLiveWindowRootsFrom nodeId closingRuntimeWindowId outline =
+  case findNode nodeId outline of
+    Nothing -> []
+    Just node ->
+      case node.liveWindowId of
+        Just liveWindowId ->
+          if andBoolean (isLiveWindowNode node) (notBoolean (windowIdEq liveWindowId closingRuntimeWindowId)) then [node.id]
+          else foldlArray (\ids childId -> appendArray ids (foreignLiveWindowRootsFrom childId closingRuntimeWindowId outline)) [] node.childIds
+        Nothing -> foldlArray (\ids childId -> appendArray ids (foreignLiveWindowRootsFrom childId closingRuntimeWindowId outline)) [] node.childIds
 
 promoteForeignLiveWindowRoot :: NodeId -> NodeId -> Outline -> Outline
 promoteForeignLiveWindowRoot closingNodeId foreignNodeId outline =
   case findNode foreignNodeId outline of
     Nothing -> outline
     Just node ->
-      let
-        detached = detachNode foreignNodeId outline
-        promoted = replaceNode detached (node { parentId = Nothing })
-        insertionIndex = addInt (indexOfNodeId closingNodeId promoted.rootIds) 1
-      in
-        promoted { rootIds = insertNodeIdAt foreignNodeId insertionIndex promoted.rootIds }
+      case findNode closingNodeId outline of
+        Nothing -> outline
+        Just closingNode ->
+          let
+            detached = detachNode foreignNodeId outline
+            promotedNode = node { parentId = closingNode.parentId }
+            promoted = replaceNode detached promotedNode
+          in
+            case closingNode.parentId of
+              Nothing ->
+                let insertionIndex = addInt (indexOfNodeId closingNodeId promoted.rootIds) 1 in
+                  promoted { rootIds = insertNodeIdAt foreignNodeId insertionIndex promoted.rootIds }
+              Just parentId ->
+                let
+                  parent = requireNodeOr parentId promoted (emptyTabNode parentId)
+                  insertionIndex = addInt (indexOfNodeId closingNodeId parent.childIds) 1
+                in
+                  replaceNode promoted (parent { childIds = insertNodeIdAt foreignNodeId insertionIndex parent.childIds })
 
 deleteNodes :: Array NodeId -> Outline -> Outline
 deleteNodes ids outline =
