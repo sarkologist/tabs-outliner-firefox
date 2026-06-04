@@ -2004,6 +2004,105 @@ const RUNTIME_DOMAIN_TRACE_DEFINITIONS: RuntimeDomainTraceDefinition[] = [
     ]
   },
   {
+    id: "po-created-tab-group-race-nested-child-source-order",
+    title: "PureScript oracle preserves order when created tab races grouping a nested child",
+    notes: "Covers the 930000045 class where runtime order is child-before-parent while outline preorder is parent-before-child.",
+    tags: ["purescript-oracle", "runtime-order", "concurrency", "created-tab", "nested-tab"],
+    assertions: ["purescriptOracle", "runtimeScopeOrder", "runtimeMetadata"],
+    actions: [
+      {
+        type: "nativeOpenWindow",
+        focused: true,
+        tabs: [
+          {
+            title: "Oracle nested parent",
+            url: "https://oracle.example/nested-parent",
+            active: true
+          }
+        ],
+        captureWindow: "po-nested-child-source-window",
+        captureTabs: "po-nested-child-parent"
+      },
+      {
+        type: "openTab",
+        window: { capture: "po-nested-child-source-window" },
+        index: 0,
+        active: true,
+        openerTab: { capture: "po-nested-child-parent" },
+        title: "Oracle nested child",
+        url: "https://oracle.example/nested-child",
+        captureTab: "po-nested-child"
+      },
+      {
+        type: "raceWithOutlinerGroup",
+        event: {
+          type: "openTab",
+          window: { capture: "po-nested-child-source-window" },
+          index: 1,
+          active: false,
+          title: "Oracle nested created",
+          url: "https://oracle.example/nested-created",
+          captureTab: "po-nested-child-created"
+        },
+        groupTab: { capture: "po-nested-child" },
+        captureStaleTabs: "po-nested-child-before-group"
+      }
+    ]
+  },
+  {
+    id: "po-created-tab-group-race-subtree-source-order",
+    title: "PureScript oracle preserves order when created tab races grouping a source subtree",
+    notes: "Covers the 940000016 class where multiple relocated source tabs before the created-tab index must be subtracted from the original browser index.",
+    tags: ["purescript-oracle", "runtime-order", "concurrency", "created-tab", "subtree"],
+    assertions: ["purescriptOracle", "runtimeOrder", "runtimeScopeOrder", "runtimeMetadata"],
+    actions: [
+      {
+        type: "nativeOpenWindow",
+        focused: true,
+        tabs: [
+          {
+            title: "Oracle subtree parent",
+            url: "https://oracle.example/subtree-parent",
+            active: true
+          }
+        ],
+        captureWindow: "po-subtree-source-window",
+        captureTabs: "po-subtree-parent"
+      },
+      {
+        type: "openTab",
+        window: { capture: "po-subtree-source-window" },
+        active: false,
+        openerTab: { capture: "po-subtree-parent" },
+        title: "Oracle subtree child",
+        url: "https://oracle.example/subtree-child",
+        captureTab: "po-subtree-child"
+      },
+      {
+        type: "openTab",
+        window: { capture: "po-subtree-source-window" },
+        active: true,
+        title: "Oracle subtree remaining",
+        url: "https://oracle.example/subtree-remaining",
+        captureTab: "po-subtree-remaining"
+      },
+      {
+        type: "raceWithOutlinerGroup",
+        event: {
+          type: "openTab",
+          window: { capture: "po-subtree-source-window" },
+          index: 2,
+          active: false,
+          title: "Oracle subtree created",
+          url: "https://oracle.example/subtree-created",
+          captureTab: "po-subtree-created"
+        },
+        groupTab: { capture: "po-subtree-parent" },
+        captureStaleTabs: "po-subtree-before-group"
+      }
+    ]
+  },
+  {
     id: "po-restore-nested-closed-window-promotes-from-closed-parent",
     title: "PureScript oracle promotes restored nested window from closed parent",
     notes: "Covers the 900000021 class where a nested closed command window is restored after its outline parent has also closed.",
@@ -27429,6 +27528,20 @@ describe("background controller lifecycle", () => {
 
   it("preserves runtime order when a created-tab event races grouping in a restored window", async () => {
     await runGeneratedTrace(910000046, 10, {
+      adversarialRuntimeQueries: true,
+      adversarialConcurrency: true
+    });
+  });
+
+  it("preserves runtime order when a created-tab event races grouping a nested source tab", async () => {
+    await runGeneratedTrace(930000045, 40, {
+      adversarialRuntimeQueries: true,
+      adversarialConcurrency: true
+    });
+  });
+
+  it("preserves runtime order when a created-tab event races grouping a source subtree", async () => {
+    await runGeneratedTrace(940000016, 48, {
       adversarialRuntimeQueries: true,
       adversarialConcurrency: true
     });

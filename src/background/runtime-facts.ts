@@ -1766,12 +1766,7 @@ export class RuntimeFactLedger {
         this.commandCreatedWindowIds.add(nextNode.live.windowId);
         this.browserCreatedWindowIds.delete(nextNode.live.windowId);
       }
-      const sourceIndex = previousOutlineRuntimeTabIndex(previous, previousNode) ??
-        (
-          this.tabShapeFacts.get(previousNode.live.tabId)?.windowId === previousNode.live.windowId
-            ? this.tabShapeFacts.get(previousNode.live.tabId)?.index
-            : undefined
-        );
+      const sourceIndex = this.commandRelocationSourceIndex(previous, previousNode);
       this.commandRelocatedTabEchoes.set(previousNode.live.tabId, {
         fromWindowIds,
         sequence: this.observationSequence,
@@ -1780,6 +1775,22 @@ export class RuntimeFactLedger {
         toWindowId: nextNode.live.windowId
       });
     }
+  }
+
+  private commandRelocationSourceIndex(previous: OutlineState, previousNode: LiveTabNode): number | undefined {
+    const scopedIndex = this.windowScopes.scopeForWindow(previousNode.live.windowId)?.tabOrder
+      .indexOf(previousNode.live.tabId);
+    if (scopedIndex !== undefined && scopedIndex >= 0) {
+      return scopedIndex;
+    }
+
+    const outlineIndex = previousOutlineRuntimeTabIndex(previous, previousNode);
+    if (outlineIndex !== undefined) {
+      return outlineIndex;
+    }
+
+    const fact = this.tabShapeFacts.get(previousNode.live.tabId);
+    return fact?.windowId === previousNode.live.windowId ? fact.index : undefined;
   }
 
   recordCommandRelocatedTab(tabId: number, fromWindowId: number, toWindowId: number): void {

@@ -3879,17 +3879,18 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       if (eventSequence <= 0) {
         return tab;
       }
-      let adjustedIndex = tab.index;
+      const relocatedSourceIndexes = new Set<number>();
       for (const [, echo] of runtimeFacts.commandRelocatedTabEchoEntries()) {
         if (
           echo.sourceWindowId === tab.windowId &&
           eventSequence < echo.sequence &&
           typeof echo.sourceIndex === "number" &&
-          echo.sourceIndex < adjustedIndex
+          echo.sourceIndex < tab.index
         ) {
-          adjustedIndex -= 1;
+          relocatedSourceIndexes.add(echo.sourceIndex);
         }
       }
+      const adjustedIndex = Math.max(0, tab.index - relocatedSourceIndexes.size);
       return adjustedIndex === tab.index ? tab : { ...tab, index: adjustedIndex };
     };
 

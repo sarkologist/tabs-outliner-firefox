@@ -757,11 +757,33 @@ describe("runtime reconciliation ledger", () => {
     });
   });
 
-  it("records command relocation source indexes from pre-command outline order", () => {
+  it("records command relocation source indexes from pre-command runtime scope order", () => {
     const state = bootstrapFromWindows([windowInfo(10, [tabOne, tabTwo])], { now: 1000 });
     const ledger = new RuntimeFactLedger();
     ledger.reconstructFromState(state, [windowInfo(10, [tabOne, tabTwo])]);
 
+    const nested = moveNode(state, "tab:2", { parentId: "tab:1", index: 0, now: 2000 });
+    ledger.reconstructFromState(nested, [windowInfo(10, [
+      { ...tabTwo, index: 0 },
+      { ...tabOne, index: 1 }
+    ])]);
+
+    const moved = moveTabToNewLiveWindow(
+      nested,
+      "tab:2",
+      windowInfo(20, [{ ...tabTwo, windowId: 20, index: 0 }]),
+      { now: 3000 }
+    );
+
+    expect(ledger.acceptedTabShapeFact(2)?.index).toBe(0);
+
+    ledger.recordCommandRelocatedTabs(nested, moved, ["tab:2"]);
+
+    expect(ledger.commandRelocatedTabEcho(2)?.sourceIndex).toBe(0);
+  });
+
+  it("falls back to pre-command outline order when the runtime scope lacks a relocated tab", () => {
+    const state = bootstrapFromWindows([windowInfo(10, [tabOne, tabTwo])], { now: 1000 });
     const reordered = moveNode(state, "tab:2", { parentId: "window:10", index: 0, now: 2000 });
     const moved = moveTabToNewLiveWindow(
       reordered,
@@ -769,8 +791,7 @@ describe("runtime reconciliation ledger", () => {
       windowInfo(20, [{ ...tabOne, windowId: 20, index: 0 }]),
       { now: 3000 }
     );
-
-    expect(ledger.acceptedTabShapeFact(1)?.index).toBe(0);
+    const ledger = new RuntimeFactLedger();
 
     ledger.recordCommandRelocatedTabs(reordered, moved, ["tab:1"]);
 

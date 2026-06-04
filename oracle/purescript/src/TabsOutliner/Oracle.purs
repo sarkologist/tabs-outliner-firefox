@@ -1054,7 +1054,10 @@ moveRuntimeTabAndOutline _step tab targetWindowId index active commandCreated wr
   let
     targetIndex = maybe (lengthArray (tabsInWindow model targetWindowId)) identityInt index
     activeValue = maybe tab.active identityBoolean active
-    movedRuntimeTabs = moveRuntimeTab tab.id targetWindowId targetIndex model.runtimeTabs
+    movingNodeIdBeforeMove = liveTabNodeIdForRuntimeTab tab.id model.outline
+    movedRuntimeTabs =
+      if commandCreated then moveRuntimeTabSubtree movingNodeIdBeforeMove tab.id targetWindowId targetIndex model.outline model.runtimeTabs
+      else moveRuntimeTab tab.id targetWindowId targetIndex model.runtimeTabs
     activeRuntimeTabs = if commandCreated then applyCommandMoveActiveState tab.id activeValue movedRuntimeTabs else applyNativeMoveActiveState tab.id tab.windowId targetWindowId activeValue movedRuntimeTabs
     runtimeTabs = reindexAllRuntimeTabs activeRuntimeTabs
     runtimeWindows = removeEmptyRuntimeWindows runtimeTabs model.runtimeWindows
@@ -1626,7 +1629,7 @@ moveLiveTabToWindow tabNode targetWindowId targetIndex _now outline =
 
 updateLiveTabWindowRefForSubtree :: NodeId -> WindowId -> Outline -> Outline
 updateLiveTabWindowRefForSubtree nodeId windowId outline =
-  let ids = subtreeNodeIds nodeId outline in
+  let ids = subtreeNodeIdsExcludingNestedLiveWindows nodeId outline in
     outline { nodes = mapArray (\node ->
       if andBoolean (anyArray (\id -> nodeIdEq id node.id) ids) (isLiveTabNode node) then node { liveWindowId = Just windowId }
       else node) outline.nodes }
@@ -1981,6 +1984,18 @@ moveRuntimeTab tabId targetWindowId targetIndex tabs =
         moved = moving { windowId = targetWindowId, index = boundedIndex }
       in insertRuntimeTabAt remaining moved targetWindowId boundedIndex
 
+moveRuntimeTabSubtree :: NodeId -> TabId -> WindowId -> Int -> Outline -> Array RuntimeTab -> Array RuntimeTab
+moveRuntimeTabSubtree nodeId selectedTabId targetWindowId targetIndex outline tabs =
+  let
+    subtreeTabIds = liveTabIdsInSubtreeExcludingNestedLiveWindows nodeId outline
+    remainingTabIds = filterArray (\tabId -> notBoolean (tabIdEq tabId selectedTabId)) subtreeTabIds
+    withSelected = moveRuntimeTab selectedTabId targetWindowId targetIndex tabs
+  in
+    foldlWithIndexArray
+      (\index current tabId -> moveRuntimeTab tabId targetWindowId (addInt targetIndex (addInt index 1)) current)
+      withSelected
+      remainingTabIds
+
 insertRuntimeTabAt :: Array RuntimeTab -> RuntimeTab -> WindowId -> Int -> Array RuntimeTab
 insertRuntimeTabAt tabs moved targetWindowId targetIndex =
   mapWithIndexArray (\_ tab -> tab)
@@ -2186,6 +2201,28 @@ liveTabIdsForNodes nodeIds outline =
     case findNode nodeId outline of
       Just node -> if isLiveTabNode node then node.liveTabId else Nothing
       Nothing -> Nothing) nodeIds
+
+subtreeNodeIdsExcludingNestedLiveWindows :: NodeId -> Outline -> Array NodeId
+subtreeNodeIdsExcludingNestedLiveWindows nodeId outline =
+  subtreeNodeIdsExcludingNestedLiveWindowsFrom nodeId nodeId outline
+
+subtreeNodeIdsExcludingNestedLiveWindowsFrom :: NodeId -> NodeId -> Outline -> Array NodeId
+subtreeNodeIdsExcludingNestedLiveWindowsFrom rootId nodeId outline =
+  case findNode nodeId outline of
+    Nothing -> []
+    Just node ->
+      if andBoolean (notBoolean (nodeIdEq nodeId rootId)) (isLiveWindowNode node) then []
+      else
+        let
+          childNodeIds = foldlArray
+            (\ids childId -> appendArray ids (subtreeNodeIdsExcludingNestedLiveWindowsFrom rootId childId outline))
+            []
+            node.childIds
+        in appendArray [node.id] childNodeIds
+
+liveTabIdsInSubtreeExcludingNestedLiveWindows :: NodeId -> Outline -> Array TabId
+liveTabIdsInSubtreeExcludingNestedLiveWindows nodeId outline =
+  liveTabIdsForNodes (subtreeNodeIdsExcludingNestedLiveWindows nodeId outline) outline
 
 liveWindowIdsForNodes :: Array NodeId -> Outline -> Array WindowId
 liveWindowIdsForNodes nodeIds outline =
