@@ -2732,6 +2732,30 @@ const RUNTIME_DOMAIN_TRACE_DEFINITIONS: RuntimeDomainTraceDefinition[] = [
     ]
   },
   {
+    id: "po-created-race-promotes-existing-command-child-when-source-empties",
+    title: "PureScript oracle promotes existing command children when a raced create was not command-visible",
+    notes: "Class-level concurrency contract: when a grouping command empties its command-visible source, nested live command windows are promoted before a raced browser-created tab refresh repopulates that source window.",
+    tags: ["purescript-oracle", "created-tab", "grouping", "root-order", "concurrency", "commandCreated"],
+    assertions: ["purescriptOracle", "runtimeScopeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 2 }, captureStaleTabs: "po-raced-existing-child-first-source" },
+      {
+        type: "raceWithOutlinerGroup",
+        event: {
+          type: "openTab",
+          window: { windowId: 10 },
+          index: 0,
+          active: true,
+          title: "Oracle raced source replacement",
+          url: "https://oracle.example/raced-source-replacement",
+          captureTab: "po-raced-source-replacement"
+        },
+        groupTab: { tabId: 1 },
+        captureStaleTabs: "po-raced-existing-child-second-source"
+      }
+    ]
+  },
+  {
     id: "po-created-race-keeps-command-window-nested-when-source-had-sibling",
     title: "PureScript oracle keeps command windows nested when the command saw a source sibling",
     notes: "Class-level concurrency contract: a raced browser-created tab does not by itself promote the wrapper when the command-visible source window already had another owned live sibling.",
@@ -25054,6 +25078,10 @@ function shouldRunGeneratedPureScriptOracle(
     (seed === 960000027 && steps === 80 && options.adversarialRuntimeQueries === true && options.adversarialConcurrency === true) ||
     (seed === 960000038 && steps === 80 && options.adversarialRuntimeQueries === true && options.adversarialConcurrency === true) ||
     (seed === 960000039 && steps === 80 && options.adversarialRuntimeQueries === true && options.adversarialConcurrency === true) ||
+    (seed === 950000000 && steps === 80 && options.adversarialRuntimeQueries === true && options.adversarialConcurrency === true) ||
+    (seed === 950000027 && steps === 80 && options.adversarialRuntimeQueries === true && options.adversarialConcurrency === true) ||
+    (seed === 960000003 && steps === 80 && options.adversarialRuntimeQueries === true && options.adversarialConcurrency === true) ||
+    (seed === 960000021 && steps === 80 && options.adversarialRuntimeQueries === true && options.adversarialConcurrency === true) ||
     (seed === 141616461 && steps === 7 && options.adversarialRuntimeQueries === true && options.adversarialConcurrency === true) ||
     (seed === 910720204 && steps === 21 && options.adversarialRuntimeQueries === true && options.adversarialConcurrency === true) ||
     (seed === 1546021748 && steps === 4 && options.adversarialRuntimeQueries === true && options.adversarialConcurrency === true) ||

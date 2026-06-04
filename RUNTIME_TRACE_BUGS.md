@@ -33,6 +33,28 @@ Default hunt bounds:
 - Projection lane: skipped; no apparent closed-row disappearance or wrong closed-row restore/close binding surfaced during the runtime hunt.
 - Status: no closed-subtree loss findings found; RT-243 through RT-248 remain fixed and promoted.
 
+## Pre-Perf Oracle Explore Triage
+
+- Completed so far: 2026-06-04 pre-perf pass over the current `950000000`/`960000000` generated oracle-explore candidates.
+- Confirmed production bugs so far: none. The first root-placement slice was a PureScript oracle timing gap: the browser runtime mutation for a raced created tab is real before the grouping command, but the command-visible outline can still be pre-event, so source-empty cleanup can promote nested command windows before the created-tab refresh repopulates the source.
+- Promoted oracle coverage: `po-created-race-promotes-existing-command-child-when-source-empties`, plus strict generated gates for `950000000`, `950000027`, `960000003`, and `960000021`.
+
+| Candidate | Cluster | Triage status | Current strict result |
+| --- | --- | --- | --- |
+| `950000000` | root placement / command-created source-empty race | oracle gap fixed and gated | pass |
+| `950000027` | root placement / existing nested command child promotion | oracle gap fixed and gated | pass |
+| `960000003` | root order after created/group race | oracle gap fixed and gated | pass |
+| `960000021` | root order after created/group race | oracle gap fixed and gated | pass |
+| `950000005` | stale root shell cleanup | open; no production bug confirmed yet | fails on oracle-only extra `window:10` |
+| `950000007` | stale/remapped root shell cleanup | open; no production bug confirmed yet | fails on oracle-only extra `window:20` |
+| `960000036` | stale command-created shell cleanup | open; no production bug confirmed yet | fails on oracle-only extra `window:30` |
+| `950000009` | runtime order around anchors | open; needs focused invariant before oracle change | fails on `window:24.childIds` |
+| `950000033` | restore-delete plus created/group runtime order | open; needs focused invariant before oracle change | fails on runtime tab order |
+| `950000036` | live-run order around nested window anchor | open; needs focused invariant before oracle change | fails on `window:25.childIds` |
+| `960000017` | direct-child runtime-rank refresh under query/concurrency | open; serial variant is covered, query+concurrency variant is not | fails on `window:20.childIds` |
+| `950000003` | window active metadata | deferred metadata-only candidate | fails on `window:32.active` |
+| `960000026` | `restore.closedBy` metadata | deferred metadata-only candidate | fails on `closedBy` classification |
+
 ## Finding Index
 
 - Closed-subtree loss hunt findings: none

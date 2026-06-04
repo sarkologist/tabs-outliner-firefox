@@ -1801,25 +1801,50 @@ applyConcurrentCreatedTabThenGroup step details model =
         Just source -> applyConcurrentCreatedTabThenGroupFromNonCanonicalSource details groupTab groupNodeId createdTab source model
         Nothing ->
           let
-            runtimeTabs = createRuntimeTab model.runtimeTabs createdTab
-            existingTabs = filterArray (\candidate -> notBoolean (tabIdEq candidate.id createdTab.id)) (tabsInWindowFrom runtimeTabs createdTab.windowId)
-            outline = addLiveTabToOutlineWithExistingTabs model.outline model.now createdTab existingTabs
-            withCreated = model
-              { runtimeTabs = runtimeTabs
-              , outline = if createdTab.active then setActiveTabInOutlineWindow createdTab.windowId createdTab.id outline else outline
-              , nextTabId = maxInt model.nextTabId (addInt (tabIdInt createdTab.id) 1)
-              , lastOpenedTabId = Just createdTab.id
-              }
+            runtimeTabsWithCreated = createRuntimeTab model.runtimeTabs createdTab
+            existingTabsBeforeCommand = filterArray (\candidate -> notBoolean (tabIdEq candidate.id createdTab.id)) (tabsInWindowFrom runtimeTabsWithCreated createdTab.windowId)
+            outlineWithCreatedBeforeCommand = addLiveTabToOutlineWithExistingTabs model.outline model.now createdTab existingTabsBeforeCommand
+            modelWithCreatedBeforeCommand =
+              model
+                { runtimeTabs = runtimeTabsWithCreated
+                , outline = if createdTab.active then setActiveTabInOutlineWindow createdTab.windowId createdTab.id outlineWithCreatedBeforeCommand else outlineWithCreatedBeforeCommand
+                , nextTabId = maxInt model.nextTabId (addInt (tabIdInt createdTab.id) 1)
+                , lastOpenedTabId = Just createdTab.id
+                }
           in
-            bindResult (applyOutlinerRelocation step details.groupTab true details.windowId withCreated) (\moved ->
+            if notBoolean sourceWasCommandVisibleEmpty then
+              bindResult (applyOutlinerRelocation step details.groupTab true details.windowId modelWithCreatedBeforeCommand) (\moved ->
+                Ok moved { outline = refreshOutlineDirectLiveTabOrderFromRuntime moved.runtimeTabs moved.outline })
+            else
               let
-                wrapperId = windowNodeId (maybe (WindowId model.nextWindowId) identityWindowId details.windowId)
-                adjustedOutline =
-                  if sourceWasCommandVisibleEmpty then
-                    promoteCommandCreatedWindowBeforeSource sourceWindowNodeId wrapperId moved.outline
-                  else moved.outline
+                runtimeWindowsWithCreated = removeEmptyRuntimeWindows runtimeTabsWithCreated (ensureRuntimeWindowForTab createdTab model.runtimeWindows)
+                sourceProvenance = currentRuntimeWindowProvenance model.outline createdTab.windowId
+                modelWithCreatedRuntime =
+                  model
+                    { runtimeTabs = runtimeTabsWithCreated
+                    , runtimeWindows = runtimeWindowsWithCreated
+                    , nextTabId = maxInt model.nextTabId (addInt (tabIdInt createdTab.id) 1)
+                    , lastOpenedTabId = Just createdTab.id
+                    }
               in
-                Ok moved { outline = adjustedOutline }))
+                bindResult (applyOutlinerRelocation step details.groupTab true details.windowId modelWithCreatedRuntime) (\moved ->
+                  let
+                    runtimeTabs = moved.runtimeTabs
+                    runtimeWindows = moved.runtimeWindows
+                    createdWindow = runtimeWindowForId createdTab.windowId runtimeWindows
+                    outlineAfterCommand = closeMissingOutlineWindow sourceWindowNodeId createdTab.windowId moved.outline
+                    outlineWithCreatedWindow = addLiveWindowToOutlineIfRuntimeMissing outlineAfterCommand model.now createdWindow sourceProvenance
+                    existingTabs = filterArray (\candidate -> notBoolean (tabIdEq candidate.id createdTab.id)) (tabsInWindowFrom runtimeTabs createdTab.windowId)
+                    outlineWithCreatedTab = addLiveTabToOutlineWithExistingTabs outlineWithCreatedWindow model.now createdTab existingTabs
+                    outlineWithCreatedActive = if createdTab.active then setActiveTabInOutlineWindow createdTab.windowId createdTab.id outlineWithCreatedTab else outlineWithCreatedTab
+                    outline = syncTabActiveFlagsFromRuntime runtimeTabs outlineWithCreatedActive
+                  in
+                    Ok moved
+                      { runtimeTabs = runtimeTabs
+                      , runtimeWindows = runtimeWindows
+                      , outline = outline
+                      , lastOpenedTabId = Just createdTab.id
+                      }))
 
 sourceWindowWouldBeEmptiedByMovingNode :: NodeId -> NodeId -> Outline -> Boolean
 sourceWindowWouldBeEmptiedByMovingNode sourceWindowNodeId movingNodeId outline =
@@ -1840,52 +1865,6 @@ allTabIdsInArray values candidates =
     (\matched value -> andBoolean matched (anyArray (\candidate -> tabIdEq candidate value) candidates))
     true
     values
-
-promoteCommandCreatedWindowBeforeSource :: NodeId -> NodeId -> Outline -> Outline
-promoteCommandCreatedWindowBeforeSource sourceWindowNodeId wrapperNodeId outline =
-  case findNode sourceWindowNodeId outline of
-    Nothing -> outline
-    Just source ->
-      case findNode wrapperNodeId outline of
-        Nothing -> outline
-        Just wrapper ->
-          let
-            sourceWasCommandCreated = isCommandCreatedNode sourceWindowNodeId outline
-            wrapperNestedInSource = maybeNodeIdEq wrapper.parentId (Just sourceWindowNodeId)
-          in
-          if notBoolean (andBoolean (isCommandCreatedNode wrapperNodeId outline) (orBoolean wrapperNestedInSource sourceWasCommandCreated)) then outline
-          else
-            let
-              withParent =
-                if wrapperNestedInSource then
-                  replaceNode (detachNode wrapperNodeId outline) (wrapper { parentId = source.parentId })
-                else outline
-            in
-              case source.parentId of
-                Nothing ->
-                  let
-                    insertionIndex = indexOfNodeId sourceWindowNodeId withParent.rootIds
-                    withWrapper =
-                      if wrapperNestedInSource then
-                        withParent { rootIds = insertNodeIdAt wrapperNodeId insertionIndex withParent.rootIds }
-                      else withParent
-                  in
-                    if sourceWasCommandCreated then
-                      withWrapper { rootIds = snocArray (removeNodeId sourceWindowNodeId withWrapper.rootIds) sourceWindowNodeId }
-                    else withWrapper
-                Just parentId ->
-                  let
-                    parent = requireNodeOr parentId withParent (emptyTabNode parentId)
-                    insertionIndex = indexOfNodeId sourceWindowNodeId parent.childIds
-                    withWrapper =
-                      if wrapperNestedInSource then
-                        replaceNode withParent (parent { childIds = insertNodeIdAt wrapperNodeId insertionIndex parent.childIds })
-                      else withParent
-                  in
-                    if sourceWasCommandCreated then
-                      let updatedParent = requireNodeOr parentId withWrapper (emptyTabNode parentId) in
-                        replaceNode withWrapper (updatedParent { childIds = snocArray (removeNodeId sourceWindowNodeId updatedParent.childIds) sourceWindowNodeId })
-                    else withWrapper
 
 applyConcurrentCreatedTabThenGroupFromNonCanonicalSource ::
   ConcurrentCreatedTabThenGroupAction ->
@@ -2327,6 +2306,12 @@ addLiveWindowToOutline outline _now window provenance =
           , runtimeProvenance: provenance
           , restoredFromClosed: false
           }
+
+addLiveWindowToOutlineIfRuntimeMissing :: Outline -> Int -> RuntimeWindow -> Maybe String -> Outline
+addLiveWindowToOutlineIfRuntimeMissing outline now window provenance =
+  case findNode (liveWindowNodeIdForRuntimeWindow window.id outline) outline of
+    Just _ -> outline
+    Nothing -> addLiveWindowToOutline outline now window provenance
 
 addLiveTabToOutline :: Outline -> Int -> RuntimeTab -> Outline
 addLiveTabToOutline outline now tab =
@@ -3564,6 +3549,13 @@ runtimeWindowForId windowId windows =
   case findArray (\window -> windowIdEq window.id windowId) windows of
     Just window -> window
     Nothing -> { id: windowId, focused: false, incognito: false, state: Nothing }
+
+ensureRuntimeWindowForTab :: RuntimeTab -> Array RuntimeWindow -> Array RuntimeWindow
+ensureRuntimeWindowForTab tab windows =
+  if anyArray (\window -> windowIdEq window.id tab.windowId) windows then
+    windows
+  else
+    snocArray windows { id: tab.windowId, focused: false, incognito: tab.incognito, state: Nothing }
 
 maxRuntimeTabId :: Array RuntimeTab -> Int
 maxRuntimeTabId tabs =
