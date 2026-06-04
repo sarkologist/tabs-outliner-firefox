@@ -128,6 +128,12 @@ exports.maxInt = function (left) {
   };
 };
 
+exports.lessThanInt = function (left) {
+  return function (right) {
+    return left < right;
+  };
+};
+
 exports.minInt = function (left) {
   return function (right) {
     return Math.min(left, right);

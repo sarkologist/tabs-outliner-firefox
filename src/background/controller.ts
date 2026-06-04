@@ -93,7 +93,7 @@ import {
 } from "../model/outline.js";
 import { buildOutlineLookup, type OutlineLookup } from "../model/outline-lookup.js";
 import { exportPortableTree, portableTreeFilename, serializePortableTreeFile } from "../model/portable-tree.js";
-import type { NodeId, OutlineNode, OutlineState, RestoredNode, RuntimeTab, RuntimeWindow } from "../model/types.js";
+import type { NodeId, OutlineNode, OutlineState, ReconcileOptions, RestoredNode, RuntimeTab, RuntimeWindow } from "../model/types.js";
 import { createPerformanceTracer, type TraceDetail, type TraceSnapshot } from "../perf/trace.js";
 import {
   PROFILE_STORAGE_KEY,
@@ -573,10 +573,11 @@ export function createBackgroundController(options: BackgroundControllerOptions)
           const recent = await mostRecentClosedSession();
           next = closeTab(current, tabId, {
             now: now(),
-            ...(recent?.tab?.sessionId ? { sessionId: recent.tab.sessionId } : {})
+            ...(recent?.tab?.sessionId ? { sessionId: recent.tab.sessionId } : {}),
+            closedBy: "outliner"
           });
           if (removal === "close-outliner-tab") {
-            runtimeFacts.recordOutlinerClosedTabRemovalApplied();
+            runtimeFacts.recordOutlinerClosedTabRemovalApplied(tabId);
           }
         } else {
           next = deleteLiveTabNodeByTabId(current, tabId);
@@ -619,11 +620,14 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       await enqueueMutation(async () => {
         const current = await ensureState();
         const liveTabIds = liveTabIdsInWindow(current, windowId);
+        const closedByOutliner = runtimeFacts.isOutlinerClosingWindow(windowId) ||
+          runtimeFacts.isOutlinerClosedWindow(windowId);
         runtimeFacts.recordClosedRuntimeWindow(windowId, liveTabIds);
         const recent = await mostRecentClosedSession();
         const next = closeWindow(current, windowId, {
           now: now(),
-          ...(recent?.window?.sessionId ? { sessionId: recent.window.sessionId } : {})
+          ...(recent?.window?.sessionId ? { sessionId: recent.window.sessionId } : {}),
+          ...(closedByOutliner ? { closedBy: "outliner" } : {})
         });
         if (next === current) {
           return;
@@ -977,6 +981,13 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       const outlineSyncedRuntimeWindowIds = commandRunsFullBrowserOrderSync(message, current)
         ? liveWindowNodes(result.state).map((node) => node.live.windowId)
         : undefined;
+      if (
+        message.type === "closeNode" &&
+        outlinerClosePlan &&
+        await runtimeClosePlanCompleted(outlinerClosePlan)
+      ) {
+        runtimeFacts.recordCompletedOutlinerClosePlan(outlinerClosePlan);
+      }
       runtimeFacts.clearRemovalTombstonesForLiveState(result.state, runtimeIndexCandidateNodeIds);
       if (runtimeCommandRelocatesLiveTabs(message.type)) {
         runtimeFacts.recordCommandRelocatedTabs(current, result.state, runtimeIndexCandidateNodeIds);
@@ -1341,13 +1352,15 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     for (const windowId of plan.windowIds) {
       next = closeWindow(next, windowId, {
         now: now(),
-        ...(recent?.window?.sessionId ? { sessionId: recent.window.sessionId } : {})
+        ...(recent?.window?.sessionId ? { sessionId: recent.window.sessionId } : {}),
+        closedBy: "outliner"
       });
     }
     for (const tabId of plan.tabIds) {
       next = closeTab(next, tabId, {
         now: now(),
-        ...(recent?.tab?.sessionId ? { sessionId: recent.tab.sessionId } : {})
+        ...(recent?.tab?.sessionId ? { sessionId: recent.tab.sessionId } : {}),
+        closedBy: "outliner"
       });
     }
 
@@ -2057,10 +2070,10 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   function applyClosedRuntimeClosePlan(current: OutlineState, plan: RuntimeClosePlan): OutlineState {
     let next = current;
     for (const windowId of plan.windowIds) {
-      next = closeWindow(next, windowId, { now: now() });
+      next = closeWindow(next, windowId, { now: now(), closedBy: "outliner" });
     }
     for (const tabId of plan.tabIds) {
-      next = closeTab(next, tabId, { now: now() });
+      next = closeTab(next, tabId, { now: now(), closedBy: "outliner" });
     }
     return next;
   }
@@ -2545,9 +2558,20 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   function reconcileRuntimeTruth(
     current: OutlineState,
     windows: RuntimeWindow[],
-    options: { closeMissing?: boolean; respectRuntimeTabOrder?: boolean } = {}
+    options: ReconcileOptions = {}
   ): OutlineState {
-    return reconcileWithWindows(current, windows, { now: now() }, options);
+    const excludedClosedRestoreNodeIds = new Set(options.excludedClosedRestoreNodeIds ?? []);
+    for (const nodeId of runtimeFacts.closedRestoreNodeIdsExcludedFromRuntimeAttach(current)) {
+      excludedClosedRestoreNodeIds.add(nodeId);
+    }
+    return reconcileWithWindows(
+      current,
+      windows,
+      { now: now() },
+      excludedClosedRestoreNodeIds.size > 0
+        ? { ...options, excludedClosedRestoreNodeIds }
+        : options
+    );
   }
 
   function alignKnownRuntimeWindowProvenance(next: OutlineState): void {
@@ -5011,6 +5035,8 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         continue;
       }
 
+      const closedByOutliner = runtimeFacts.isOutlinerClosingWindow(windowId) ||
+        runtimeFacts.isOutlinerClosedWindow(windowId);
       const runtimeLifecycleJournalEntry = runtimeLifecycleJournalEntryForNativeWindowClose(
         next,
         windowId,
@@ -5025,7 +5051,8 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       runtimeFacts.recordClosedRuntimeWindow(windowId, liveTabIds);
       next = closeWindow(next, windowId, {
         now: now(),
-        ...(recent?.window?.sessionId ? { sessionId: recent.window.sessionId } : {})
+        ...(recent?.window?.sessionId ? { sessionId: recent.window.sessionId } : {}),
+        ...(closedByOutliner ? { closedBy: "outliner" } : {})
       });
       markCompletedOutlinerCloseJournalEntriesForClearAfterSave({
         tabIds: liveTabIds,
@@ -5040,7 +5067,8 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         const recent = await mostRecentClosedSession();
         next = closeTab(next, tabId, {
           now: now(),
-          ...(recent?.tab?.sessionId ? { sessionId: recent.tab.sessionId } : {})
+          ...(recent?.tab?.sessionId ? { sessionId: recent.tab.sessionId } : {}),
+          closedBy: "outliner"
         });
       } else {
         const runtimeLifecycleJournalEntry = runtimeLifecycleJournalEntryForNativeTabClose(

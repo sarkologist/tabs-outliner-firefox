@@ -2616,6 +2616,62 @@ describe("outline model", () => {
     expect(reconciled.nodes["tab:1"]?.childIds).toEqual(["tab:2"]);
   });
 
+  it("does not reattach excluded closed blank restore candidates", () => {
+    const closed = closeWindow(bootstrapFromWindows(windows, { now: 1000 }), 10, {
+      now: 2000,
+      sessionId: "session-window-10"
+    });
+    const restored = restoreNodes(closed, [
+      {
+        nodeId: "window:10",
+        windowId: 20,
+        active: true
+      },
+      {
+        nodeId: "tab:1",
+        tabId: 11,
+        windowId: 20,
+        active: false,
+        url: "https://example.com/",
+        title: "Example"
+      }
+    ]);
+
+    const reconciled = reconcileWithWindows(restored, [
+      {
+        id: 20,
+        incognito: false,
+        focused: true,
+        tabs: [
+          {
+            id: 11,
+            windowId: 20,
+            index: 0,
+            active: false,
+            url: "https://example.com/",
+            title: "Example"
+          },
+          {
+            id: 22,
+            windowId: 20,
+            index: 1,
+            active: true,
+            url: "about:newtab",
+            title: "New Tab"
+          }
+        ]
+      }
+    ], { now: 5000 }, { excludedClosedRestoreNodeIds: new Set(["tab:3"]) });
+
+    expect(reconciled.nodes["tab:3"]?.status).toBe("closed");
+    expect(reconciled.nodes["tab:22"]).toMatchObject({
+      kind: "tab",
+      status: "live",
+      parentId: "window:10",
+      live: { tabId: 22, windowId: 20 }
+    });
+  });
+
   it("replaces a native restore about:blank placeholder when the real url arrives", () => {
     const stored = closeTab(bootstrapFromWindows(windows, { now: 1000 }), 2, {
       now: 2000,

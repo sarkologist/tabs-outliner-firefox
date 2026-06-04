@@ -2,6 +2,7 @@
 
 import { spawn } from "node:child_process";
 import { randomInt } from "node:crypto";
+import { existsSync } from "node:fs";
 
 const files = [
   "src/background/controller.test.ts",
@@ -37,6 +38,9 @@ const generatedTraceEnv = {
   GENERATED_TRACE_SOAK: "1",
   GENERATED_TRACE_BASE_SEED: String(baseSeed)
 };
+const oracleEntryPoint = new URL("../oracle/purescript/output/TabsOutliner.Oracle/index.js", import.meta.url);
+const pnpmCommand = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
+
 if (seedCount) {
   generatedTraceEnv.GENERATED_TRACE_SEED_COUNT = String(seedCount);
 }
@@ -44,7 +48,15 @@ if (steps) {
   generatedTraceEnv.GENERATED_TRACE_STEPS = String(steps);
 }
 
-const child = spawn(process.platform === "win32" ? "pnpm.cmd" : "pnpm", [
+if (!existsSync(oracleEntryPoint)) {
+  console.log("PureScript oracle output missing; running pnpm run oracle:build");
+  const oracleBuildExitCode = await runPnpm(["run", "oracle:build"], "PureScript oracle build");
+  if (oracleBuildExitCode !== 0) {
+    process.exit(oracleBuildExitCode);
+  }
+}
+
+const vitestExitCode = await runPnpm([
   "exec",
   "vitest",
   "run",
@@ -53,17 +65,10 @@ const child = spawn(process.platform === "win32" ? "pnpm.cmd" : "pnpm", [
   env: {
     ...process.env,
     ...generatedTraceEnv
-  },
-  stdio: "inherit"
+  }
 });
 
-child.on("exit", (code, signal) => {
-  if (signal) {
-    console.error(`Generated trace soak interrupted by ${signal}`);
-    process.exit(1);
-  }
-  process.exit(code ?? 1);
-});
+process.exit(vitestExitCode);
 
 function positiveIntegerEnv(name) {
   const value = process.env[name];
@@ -75,4 +80,29 @@ function positiveIntegerEnv(name) {
     throw new Error(`${name} must be a positive integer, got ${JSON.stringify(value)}`);
   }
   return parsed;
+}
+
+function runPnpm(args, optionsOrLabel = {}) {
+  const options = typeof optionsOrLabel === "string" ? {} : optionsOrLabel;
+  const label = typeof optionsOrLabel === "string" ? optionsOrLabel : "Generated trace soak";
+
+  return new Promise((resolve) => {
+    const child = spawn(pnpmCommand, args, {
+      ...options,
+      stdio: "inherit"
+    });
+
+    child.on("error", (error) => {
+      console.error(`${label} failed to start: ${error.message}`);
+      resolve(1);
+    });
+    child.on("exit", (code, signal) => {
+      if (signal) {
+        console.error(`${label} interrupted by ${signal}`);
+        resolve(1);
+        return;
+      }
+      resolve(code ?? 1);
+    });
+  });
 }

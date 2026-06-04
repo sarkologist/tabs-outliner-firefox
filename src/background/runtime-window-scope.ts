@@ -383,6 +383,10 @@ export class RuntimeWindowScopeIndex {
     return typeof windowId === "number" ? this.scopes.get(windowId) : undefined;
   }
 
+  removedTabNodeIdEntries(): Array<[number, NodeId]> {
+    return [...this.removedTabNodeIdsByRuntimeId.entries()];
+  }
+
   snapshots(): RuntimeWindowScopeSnapshot[] {
     return [...this.scopes.values()].map((scope) => ({
       ...scope,

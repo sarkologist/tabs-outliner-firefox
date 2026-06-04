@@ -208,6 +208,7 @@ export function reconcileWithWindows(
   let next = cloneState(state);
   let lookup = buildOutlineLookup(next);
   const closeMissing = options.closeMissing ?? true;
+  const excludedClosedRestoreNodeIds = options.excludedClosedRestoreNodeIds ?? new Set<NodeId>();
   const openWindowIds = new Set<number>();
   const openTabIds = new Set<number>();
 
@@ -262,7 +263,14 @@ export function reconcileWithWindows(
       const existingTabId = lookup.liveTabNodeIdsByRuntimeId.get(tab.id);
       if (existingTabId) {
         const node = requireNode(next, existingTabId);
-        const reattachedNodeId = findRestorableClosedTabNode(next, lookup, tab, winId, reattachedNodeIds);
+        const reattachedNodeId = findRestorableClosedTabNode(
+          next,
+          lookup,
+          tab,
+          winId,
+          reattachedNodeIds,
+          excludedClosedRestoreNodeIds
+        );
         if (reattachedNodeId && isProvisionalLiveTabNode(node)) {
           replaceProvisionalNode(next, node.id, reattachedNodeId);
           updateLiveTabNode(requireNode(next, reattachedNodeId), tab, clock.now);
@@ -279,7 +287,14 @@ export function reconcileWithWindows(
         continue;
       }
 
-      const reattachedNodeId = findRestorableClosedTabNode(next, lookup, tab, winId, reattachedNodeIds);
+      const reattachedNodeId = findRestorableClosedTabNode(
+        next,
+        lookup,
+        tab,
+        winId,
+        reattachedNodeIds,
+        excludedClosedRestoreNodeIds
+      );
       const nodeId = reattachedNodeId ?? uniqueNodeId(next, tabNodeId(tab.id), clock.now);
       if (reattachedNodeId) {
         updateLiveTabNode(requireNode(next, reattachedNodeId), tab, clock.now);
@@ -542,7 +557,8 @@ export function closeWindow(state: OutlineState, windowId: number, context: Clos
   for (const id of subtreeIds) {
     markClosedNode(next, id, {
       now: context.now,
-      ...(id === nodeId && context.sessionId ? { sessionId: context.sessionId } : {})
+      ...(id === nodeId && context.sessionId ? { sessionId: context.sessionId } : {}),
+      ...(context.closedBy ? { closedBy: context.closedBy } : {})
     });
   }
   return next;
@@ -1439,10 +1455,17 @@ function findRestorableClosedTabNode(
   lookup: OutlineLookup,
   tab: RuntimeTab,
   windowNodeIdForTab: NodeId,
-  alreadyMatched: Set<NodeId>
+  alreadyMatched: Set<NodeId>,
+  excludedClosedRestoreNodeIds: ReadonlySet<NodeId>
 ): NodeId | undefined {
   if (isBlankRuntimeTabUrl(tab.url)) {
-    return findRestorableClosedBlankTabNode(state, lookup, windowNodeIdForTab, alreadyMatched);
+    return findRestorableClosedBlankTabNode(
+      state,
+      lookup,
+      windowNodeIdForTab,
+      alreadyMatched,
+      excludedClosedRestoreNodeIds
+    );
   }
 
   if (!tab.url) {
@@ -1462,6 +1485,7 @@ function findRestorableClosedTabNode(
       node.status === "closed" &&
       node.restore?.url === tab.url &&
       !alreadyMatched.has(node.id) &&
+      !excludedClosedRestoreNodeIds.has(node.id) &&
       isInCompatibleWindow(state, lookup, node, tab.windowId, windowNodeIdForTab)
     ) {
       return node.id;
@@ -1475,7 +1499,8 @@ function findRestorableClosedBlankTabNode(
   state: OutlineState,
   lookup: OutlineLookup,
   windowNodeIdForTab: NodeId,
-  alreadyMatched: Set<NodeId>
+  alreadyMatched: Set<NodeId>,
+  excludedClosedRestoreNodeIds: ReadonlySet<NodeId>
 ): NodeId | undefined {
   const owner = state.nodes[windowNodeIdForTab];
   if (owner?.kind !== "window" || owner.status !== "live" || owner.restoredFromClosed !== true) {
@@ -1489,6 +1514,7 @@ function findRestorableClosedBlankTabNode(
       node.kind === "tab" &&
       node.status === "closed" &&
       !alreadyMatched.has(node.id) &&
+      !excludedClosedRestoreNodeIds.has(node.id) &&
       lookup.ownerWindowNodeIdsByNodeId.get(node.id) === windowNodeIdForTab &&
       isBlankRuntimeTabUrl(node.restore?.url ?? node.url)
     ) {
@@ -1661,7 +1687,8 @@ function markClosedSubtree(state: OutlineState, nodeId: NodeId, context: CloseCo
   for (const id of collectSubtreeIds(state, nodeId)) {
     markClosedNode(state, id, {
       now: context.now,
-      ...(id === nodeId && context.sessionId ? { sessionId: context.sessionId } : {})
+      ...(id === nodeId && context.sessionId ? { sessionId: context.sessionId } : {}),
+      ...(context.closedBy ? { closedBy: context.closedBy } : {})
     });
   }
 }
@@ -1679,7 +1706,8 @@ function markClosedNode(state: OutlineState, nodeId: NodeId, context: CloseConte
     ...(context.sessionId ? { sessionId: context.sessionId } : {}),
     ...(node.url ? { url: node.url } : {}),
     ...(node.title ? { title: node.title } : {}),
-    ...(node.favIconUrl ? { favIconUrl: node.favIconUrl } : {})
+    ...(node.favIconUrl ? { favIconUrl: node.favIconUrl } : {}),
+    ...(context.closedBy ? { closedBy: context.closedBy } : {})
   };
 
   node.status = "closed";

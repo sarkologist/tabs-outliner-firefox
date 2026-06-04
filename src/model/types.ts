@@ -45,6 +45,7 @@ export type RestoreRef = {
   url?: string;
   title?: string;
   favIconUrl?: string;
+  closedBy?: "outliner";
 };
 
 export type OutlineNode = {
@@ -80,6 +81,7 @@ export type Clock = {
 
 export type CloseContext = Clock & {
   sessionId?: string;
+  closedBy?: "outliner";
 };
 
 export type MoveTarget = {
@@ -129,5 +131,6 @@ export type RestoredNode = {
 
 export type ReconcileOptions = {
   closeMissing?: boolean;
+  excludedClosedRestoreNodeIds?: ReadonlySet<NodeId>;
   respectRuntimeTabOrder?: boolean;
 };

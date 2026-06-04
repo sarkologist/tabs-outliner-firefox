@@ -1287,6 +1287,7 @@ type GeneratedTraceContext = {
   staleTabs: RuntimeTab[];
   staleLiveEventTabs: RuntimeTab[];
   domainCaptures: DomainTraceCaptures;
+  oracleActions: PureScriptOracleAction[];
   lastOpenedTabId?: number;
   lastMovedTabId?: number;
   lastOpenedWindowId?: number;
@@ -1601,10 +1602,12 @@ type DomainAction =
   | {
       type: "outlinerCloseTab";
       tab: DomainTabSelector;
+      captureStaleTabs?: string;
     }
   | {
       type: "outlinerCloseWindow";
       window: DomainWindowSelector;
+      captureStaleTabs?: string;
     }
   | {
       type: "outlinerCloseNodeRejectingClose";
@@ -1857,6 +1860,83 @@ const RUNTIME_DOMAIN_TRACE_DEFINITIONS: RuntimeDomainTraceDefinition[] = [
         url: "https://oracle.example/close-window-extra"
       },
       { type: "outlinerCloseWindow", window: { windowId: 20 } }
+    ]
+  },
+  {
+    id: "po-outliner-close-stale-query-tab",
+    title: "PureScript oracle keeps outliner-closed tab closed across stale fresh-tab query",
+    notes: "Covers the generated-soak resurrection class for a command-closed tab followed by a fresh blank tab whose query still reports the closed runtime tab.",
+    tags: ["purescript-oracle", "outliner-close", "stale-query", "closed-subtree"],
+    assertions: ["purescriptOracle", "closedSubtreePersistence"],
+    actions: [
+      {
+        type: "openTab",
+        window: { windowId: 10 },
+        active: false,
+        title: "New Tab",
+        url: "about:newtab",
+        captureTab: "po-closed-blank-tab"
+      },
+      {
+        type: "outlinerCloseTab",
+        tab: { capture: "po-closed-blank-tab" },
+        captureStaleTabs: "po-closed-blank-tab-stale"
+      },
+      {
+        type: "openTab",
+        window: { windowId: 10 },
+        active: true,
+        title: "New Tab",
+        url: "about:newtab",
+        captureTab: "po-fresh-blank-tab",
+        staleQueryFromCapture: "po-closed-blank-tab-stale"
+      },
+      { type: "restartBackground" }
+    ]
+  },
+  {
+    id: "po-outliner-close-stale-query-restored-window-blank",
+    title: "PureScript oracle keeps outliner-closed blank restore candidate closed",
+    notes: "Covers a closed/restored window where a later fresh blank tab arrives with stale query evidence for the closed blank candidate.",
+    tags: ["purescript-oracle", "outliner-close", "stale-query", "closed-subtree", "restore-candidate"],
+    assertions: ["purescriptOracle", "closedSubtreePersistence"],
+    actions: [
+      {
+        type: "nativeOpenWindow",
+        focused: true,
+        tabs: [
+          {
+            title: "Oracle restored base",
+            url: "https://oracle.example/restored-base",
+            active: true
+          },
+          {
+            title: "New Tab",
+            url: "about:newtab"
+          }
+        ],
+        captureWindow: "po-window-with-blank"
+      },
+      {
+        type: "outlinerCloseWindow",
+        window: { capture: "po-window-with-blank" },
+        captureStaleTabs: "po-window-with-blank-stale"
+      },
+      {
+        type: "outlinerRestoreNodeThenAbruptRestart",
+        node: { nodeId: "window:21" },
+        captureRestoredWindows: "po-restored-window-with-blank"
+      },
+      {
+        type: "openTab",
+        window: { capture: "po-restored-window-with-blank" },
+        active: true,
+        title: "New Tab",
+        url: "about:newtab",
+        captureTab: "po-restored-window-fresh-blank",
+        staleQueryFromCapture: "po-window-with-blank-stale"
+      },
+      { type: "restartBackground" }
     ]
   },
   {
@@ -20245,12 +20325,27 @@ async function openGeneratedTab(context: GeneratedTraceContext): Promise<void> {
   const queryLag = context.rng() < 0.25;
   context.history.push(`open tab ${tab.id} in window ${tab.windowId}${queryLag ? " with stale query" : ""}`);
   await createTabFromBrowser(context.runtime, tab, { queryLag });
+  recordPureScriptOracleAction(context, {
+    type: "openTab",
+    window: windowOracleSelector(windowInfo),
+    tabId: tab.id,
+    index: tab.index,
+    active: tab.active,
+    title: tab.title,
+    url: tab.url,
+    ...(openerTab ? { openerTab: tabOracleSelector(openerTab) } : {}),
+    queryLag
+  });
 }
 
 async function activateGeneratedTab(context: GeneratedTraceContext): Promise<void> {
   const tab = pickOne(context.rng, context.runtime.tabs);
   context.history.push(`activate tab ${tab.id}`);
   await activateTabFromBrowser(context.runtime, tab.id);
+  recordPureScriptOracleAction(context, {
+    type: "activateTab",
+    tab: tabOracleSelector(tab)
+  });
 }
 
 async function activateGeneratedTabWithStaleQuery(context: GeneratedTraceContext): Promise<void> {
@@ -20267,6 +20362,11 @@ async function activateGeneratedTabWithStaleQuery(context: GeneratedTraceContext
   ));
   context.history.push(`activate tab ${target.id} with stale query for moved tab ${stale.id}`);
   await activateTabFromBrowser(context.runtime, target.id);
+  recordPureScriptOracleAction(context, {
+    type: "activateTab",
+    tab: tabOracleSelector(target),
+    staleTab: copyTab(stale)
+  });
 }
 
 async function nativeCloseGeneratedTab(context: GeneratedTraceContext): Promise<void> {
@@ -20285,6 +20385,11 @@ async function nativeCloseGeneratedTab(context: GeneratedTraceContext): Promise<
     context.history.push(`native close last tab ${tab.id} in window ${tab.windowId}`);
     await closeRuntimeWindow(context.runtime, tab.windowId, { awaitListeners: true });
     await pruneMissingExpectedClosedNodes(context, protectedExpectedNodeIds);
+    recordPureScriptOracleAction(context, {
+      type: "nativeCloseTab",
+      tab: tabOracleSelector(tab),
+      lastTab: true
+    });
     return;
   }
 
@@ -20299,6 +20404,11 @@ async function nativeCloseGeneratedTab(context: GeneratedTraceContext): Promise<
   context.history.push(`native close tab ${tab.id} with ${order}`);
   await closeTabFromBrowser(context.runtime, tab.id, order);
   await pruneMissingExpectedClosedNodes(context, []);
+  recordPureScriptOracleAction(context, {
+    type: "nativeCloseTab",
+    tab: tabOracleSelector(tab),
+    order
+  });
 }
 
 async function outlinerCloseGeneratedTab(context: GeneratedTraceContext): Promise<void> {
@@ -20312,6 +20422,10 @@ async function outlinerCloseGeneratedTab(context: GeneratedTraceContext): Promis
   context.history.push(`outliner close tab ${tab.id}`);
   await context.controller.handleMessage({ type: "closeNode", nodeId: protectedExpectedNodeIds[0]! });
   await pruneMissingExpectedClosedNodes(context, protectedExpectedNodeIds);
+  recordPureScriptOracleAction(context, {
+    type: "outlinerCloseTab",
+    tab: tabOracleSelector(tab)
+  });
 }
 
 async function outlinerCloseGeneratedWindow(context: GeneratedTraceContext): Promise<void> {
@@ -20329,6 +20443,10 @@ async function outlinerCloseGeneratedWindow(context: GeneratedTraceContext): Pro
   context.history.push(`outliner close window ${windowInfo.id} with ${tabs.length} tabs`);
   await context.controller.handleMessage({ type: "closeNode", nodeId: protectedExpectedNodeIds[0]! });
   await pruneMissingExpectedClosedNodes(context, protectedExpectedNodeIds);
+  recordPureScriptOracleAction(context, {
+    type: "outlinerCloseWindow",
+    window: windowOracleSelector(windowInfo)
+  });
 }
 
 async function outlinerMoveGeneratedTabToNewWindow(context: GeneratedTraceContext): Promise<void> {
@@ -20345,6 +20463,12 @@ async function outlinerMoveGeneratedTabToNewWindow(context: GeneratedTraceContex
     nodeId: candidate.nodeId,
     index: 0
   });
+  const moved = runtimeTabById(context, candidate.runtimeTab.id);
+  recordPureScriptOracleAction(context, {
+    type: "outlinerMoveTabToNewWindow",
+    tab: tabOracleSelector(candidate.runtimeTab),
+    windowId: moved.windowId
+  });
 }
 
 async function outlinerGroupGeneratedTab(context: GeneratedTraceContext): Promise<void> {
@@ -20359,6 +20483,12 @@ async function outlinerGroupGeneratedTab(context: GeneratedTraceContext): Promis
   await context.controller.handleMessage({
     type: "wrapNodeInGroup",
     nodeId: candidate.nodeId
+  });
+  const moved = runtimeTabById(context, candidate.runtimeTab.id);
+  recordPureScriptOracleAction(context, {
+    type: "outlinerGroupTab",
+    tab: tabOracleSelector(candidate.runtimeTab),
+    windowId: moved.windowId
   });
 }
 
@@ -20380,6 +20510,10 @@ async function nativeCloseGeneratedWindow(context: GeneratedTraceContext): Promi
   context.history.push(`native close multi-tab window ${windowInfo.id}`);
   await closeRuntimeWindow(context.runtime, windowInfo.id, { awaitListeners: true });
   await pruneMissingExpectedClosedNodes(context, protectedExpectedNodeIds);
+  recordPureScriptOracleAction(context, {
+    type: "nativeCloseWindow",
+    window: windowOracleSelector(windowInfo)
+  });
 }
 
 async function nativeMoveGeneratedTabToNewWindow(context: GeneratedTraceContext): Promise<void> {
@@ -20398,6 +20532,12 @@ async function nativeMoveGeneratedTabToNewWindow(context: GeneratedTraceContext)
     targetWindowId: windowId,
     index: 0,
     active: focused
+  });
+  recordPureScriptOracleAction(context, {
+    type: "nativeMoveTabToNewWindow",
+    tab: tabOracleSelector(tab),
+    active: focused,
+    windowId
   });
 }
 
@@ -20427,6 +20567,13 @@ async function outlinerRestoreGeneratedClosedNode(context: GeneratedTraceContext
       context.expectedClosedNodeIds.delete(expectedNodeId);
     }
   }
+  const restored = restoredRuntimeResourcesForGeneratedNodes(context, state, restoredState, new Set(generatedSubtreeNodeIds(state, nodeId)));
+  recordPureScriptOracleAction(context, {
+    type: "outlinerRestoreNodeThenAbruptRestart",
+    node: { nodeId },
+    restoredTabs: restored.tabs,
+    restoredWindows: restored.windows
+  });
 }
 
 function hasExpectedClosedAncestor(state: OutlineState, nodeId: string, expectedClosedNodeIds: Set<string>): boolean {
@@ -20484,6 +20631,9 @@ async function outlinerRestoreDeleteGeneratedWindowWithDelayedEvent(context: Gen
   await context.runtime.events.tabUpdated.flush();
   await closeRuntimeWindow(context.runtime, restoredWindowId, { awaitListeners: true });
   await pruneMissingExpectedClosedNodes(context, []);
+  recordGeneratedNoopOracleAction(context, "outlinerRestoreDeleteWindowDelayedEvent", {
+    window: windowOracleSelector(windowInfo)
+  });
 }
 
 async function outlinerDeleteGeneratedWindowWithRejectingClose(context: GeneratedTraceContext): Promise<void> {
@@ -20512,6 +20662,10 @@ async function outlinerDeleteGeneratedWindowWithRejectingClose(context: Generate
   markCommandDeletedNodes(context, deletedNodeIds);
   await flushGeneratedCloseEvents(context);
   await pruneMissingExpectedClosedNodes(context, []);
+  recordPureScriptOracleAction(context, {
+    type: "outlinerDeleteWindowRejectingClose",
+    window: windowOracleSelector(windowInfo)
+  });
 }
 
 async function pruneMissingExpectedClosedNodes(
@@ -20542,12 +20696,19 @@ async function staleActivationSnapshot(context: GeneratedTraceContext): Promise<
   ));
   context.history.push(`activate tab ${target.id} with stale tab ${stale.id} in query result`);
   await activateTabFromBrowser(context.runtime, target.id);
+  recordGeneratedNoopOracleAction(context, "staleActivationSnapshot", {
+    staleTab: copyTab(stale),
+    targetTab: tabOracleSelector(target)
+  });
 }
 
 async function staleCreatedEvent(context: GeneratedTraceContext): Promise<void> {
   const stale = pickOne(context.rng, staleDeletedTabsInOpenWindows(context));
   context.history.push(`dispatch stale created event for tab ${stale.id}`);
   await context.runtime.events.tabCreated.emit(copyTab(stale));
+  recordGeneratedNoopOracleAction(context, "staleTabCreatedEvent", {
+    staleTab: copyTab(stale)
+  });
 }
 
 async function staleUpdatedEvent(context: GeneratedTraceContext): Promise<void> {
@@ -20557,6 +20718,9 @@ async function staleUpdatedEvent(context: GeneratedTraceContext): Promise<void> 
     ...stale,
     title: "Stale"
   });
+  recordGeneratedNoopOracleAction(context, "staleTabUpdatedEvent", {
+    staleTab: copyTab(stale)
+  });
 }
 
 async function staleLiveUpdatedEvent(context: GeneratedTraceContext): Promise<void> {
@@ -20565,6 +20729,9 @@ async function staleLiveUpdatedEvent(context: GeneratedTraceContext): Promise<vo
   await context.runtime.events.tabUpdated.emit(stale.id, { title: "Stale live" }, {
     ...stale,
     title: "Stale live"
+  });
+  recordGeneratedNoopOracleAction(context, "staleLiveTabUpdatedEvent", {
+    staleTab: copyTab(stale)
   });
 }
 
@@ -20580,6 +20747,9 @@ async function staleLiveUpdatedEventWithStaleQuery(context: GeneratedTraceContex
   } finally {
     context.runtime.clearNextTabQueryResult();
   }
+  recordGeneratedNoopOracleAction(context, "staleLiveTabUpdatedEventWithStaleQuery", {
+    staleTab: copyTab(stale)
+  });
 }
 
 async function staleLiveCreatedEventWithStaleQuery(context: GeneratedTraceContext): Promise<void> {
@@ -20591,6 +20761,9 @@ async function staleLiveCreatedEventWithStaleQuery(context: GeneratedTraceContex
   } finally {
     context.runtime.clearNextTabQueryResult();
   }
+  recordGeneratedNoopOracleAction(context, "staleLiveTabCreatedEventWithStaleQuery", {
+    staleTab: copyTab(stale)
+  });
 }
 
 async function concurrentCreatedTabThenGroup(context: GeneratedTraceContext): Promise<void> {
@@ -20614,6 +20787,13 @@ async function concurrentCreatedTabThenGroup(context: GeneratedTraceContext): Pr
   createTabFromBrowser(context.runtime, tab, { awaitListeners: false });
   await runGeneratedGroupCommand(context, candidate);
   await flushGeneratedRuntimeEventRefreshes(context);
+  const moved = runtimeTabById(context, candidate.runtimeTab.id);
+  recordPureScriptOracleAction(context, {
+    type: "concurrentCreatedTabThenGroup",
+    createdTab: copyTab(tab),
+    groupTab: tabOracleSelector(candidate.runtimeTab),
+    windowId: moved.windowId
+  });
 }
 
 async function concurrentUpdatedTabThenGroup(context: GeneratedTraceContext): Promise<void> {
@@ -20629,6 +20809,13 @@ async function concurrentUpdatedTabThenGroup(context: GeneratedTraceContext): Pr
   }, { awaitListeners: false });
   await runGeneratedGroupCommand(context, candidate);
   await flushGeneratedRuntimeEventRefreshes(context);
+  const moved = runtimeTabById(context, candidate.runtimeTab.id);
+  recordPureScriptOracleAction(context, {
+    type: "concurrentUpdatedTabThenGroup",
+    updatedTab: copyTab(runtimeTabById(context, tab.id)),
+    groupTab: tabOracleSelector(candidate.runtimeTab),
+    windowId: moved.windowId
+  });
 }
 
 async function concurrentActivatedTabThenGroup(context: GeneratedTraceContext): Promise<void> {
@@ -20642,6 +20829,13 @@ async function concurrentActivatedTabThenGroup(context: GeneratedTraceContext): 
   dispatchTabActivatedFromBrowser(context.runtime, tab.id);
   await runGeneratedGroupCommand(context, candidate);
   await flushGeneratedRuntimeEventRefreshes(context);
+  const moved = runtimeTabById(context, candidate.runtimeTab.id);
+  recordPureScriptOracleAction(context, {
+    type: "concurrentActivatedTabThenGroup",
+    activatedTab: tabOracleSelector(tab),
+    groupTab: tabOracleSelector(candidate.runtimeTab),
+    windowId: moved.windowId
+  });
 }
 
 async function concurrentFocusedWindowThenGroup(context: GeneratedTraceContext): Promise<void> {
@@ -20655,6 +20849,13 @@ async function concurrentFocusedWindowThenGroup(context: GeneratedTraceContext):
   dispatchWindowFocusedFromBrowser(context.runtime, windowInfo.id);
   await runGeneratedGroupCommand(context, candidate);
   await flushGeneratedRuntimeEventRefreshes(context);
+  const moved = runtimeTabById(context, candidate.runtimeTab.id);
+  recordPureScriptOracleAction(context, {
+    type: "concurrentFocusedWindowThenGroup",
+    focusedWindow: windowOracleSelector(windowInfo),
+    groupTab: tabOracleSelector(candidate.runtimeTab),
+    windowId: moved.windowId
+  });
 }
 
 async function generatedGroupCommandCandidate(
@@ -20944,7 +21145,7 @@ async function runDomainTrace(trace: RuntimeDomainTrace): Promise<void> {
     now: 10_000,
     history: [`domain trace ${trace.id}: ${trace.title}`]
   });
-  const oracleInput = trace.assertions?.includes("purescriptOracle")
+  const oracleInputBase = trace.assertions?.includes("purescriptOracle")
     ? pureScriptOracleInput(trace, context)
     : undefined;
   const oracleSnapshots: PureScriptOracleSnapshot[] = [];
@@ -20952,7 +21153,7 @@ async function runDomainTrace(trace: RuntimeDomainTrace): Promise<void> {
   await context.controller.ensureState();
   await assertGeneratedInvariants(context);
   await assertDomainTraceAssertions(trace, context);
-  if (oracleInput) {
+  if (oracleInputBase) {
     oracleSnapshots.push(await pureScriptOracleSnapshot(context));
   }
 
@@ -20961,10 +21162,17 @@ async function runDomainTrace(trace: RuntimeDomainTrace): Promise<void> {
     context.history.push(`action ${index + 1}: ${domainActionSummary(action)}`);
     const sideEffectSnapshot = runtimeSideEffectSnapshot(context.runtime);
     try {
+      const oracleActionCount = context.oracleActions.length;
       await runDomainAction(context, action);
+      if (oracleInputBase && context.oracleActions.length === oracleActionCount) {
+        recordPureScriptOracleAction(context, action);
+      }
+      if (oracleInputBase && context.oracleActions.length !== oracleActionCount + 1) {
+        throw new Error(`Domain action recorded ${context.oracleActions.length - oracleActionCount} PureScript oracle actions`);
+      }
       await assertGeneratedInvariants(context);
       await assertDomainTraceAssertions(trace, context);
-      if (oracleInput) {
+      if (oracleInputBase) {
         oracleSnapshots.push(await pureScriptOracleSnapshot(context));
       }
       assertNoAboutNewtabCreateSideEffects(context.history, runtimeSideEffectsSince(context.runtime, sideEffectSnapshot));
@@ -20974,7 +21182,14 @@ async function runDomainTrace(trace: RuntimeDomainTrace): Promise<void> {
     }
   }
 
-  if (oracleInput) {
+  if (oracleInputBase) {
+    const oracleInput: PureScriptOracleInput = {
+      ...oracleInputBase,
+      trace: {
+        ...oracleInputBase.trace,
+        actions: context.oracleActions
+      }
+    };
     assertPureScriptOracleSnapshots(trace, oracleInput, oracleSnapshots, context.history);
   }
 }
@@ -20992,9 +21207,33 @@ type PureScriptOracleInput = {
   };
   trace: {
     id: string;
-    actions: DomainAction[];
+    actions: PureScriptOracleAction[];
   };
 };
+
+type PureScriptOracleAction = {
+  type: string;
+  [key: string]: unknown;
+  restoredTabs?: RuntimeTab[];
+  restoredWindows?: RuntimeWindow[];
+};
+
+function recordPureScriptOracleAction(context: GeneratedTraceContext, action: PureScriptOracleAction): void {
+  context.oracleActions ??= [];
+  context.oracleActions.push(JSON.parse(JSON.stringify(action)) as PureScriptOracleAction);
+}
+
+function tabOracleSelector(tab: Pick<RuntimeTab, "id">): { tabId: number } {
+  return { tabId: tab.id };
+}
+
+function windowOracleSelector(windowInfo: Pick<RuntimeWindow, "id"> | Pick<FakeRuntimeWindow, "id">): { windowId: number } {
+  return { windowId: windowInfo.id };
+}
+
+function recordGeneratedNoopOracleAction(context: GeneratedTraceContext, type: string, details: Record<string, unknown> = {}): void {
+  recordPureScriptOracleAction(context, { type, ...details });
+}
 
 type PureScriptOracleResult =
   | {
@@ -21042,6 +21281,7 @@ type PureScriptOracleNode = {
     url: string | null;
     title: string | null;
     favIconUrl: string | null;
+    closedBy: string | null;
   };
   runtimeProvenance: string | null;
 };
@@ -21066,7 +21306,11 @@ type PureScriptOracleRuntimeTab = {
   incognito: boolean;
 };
 
-function pureScriptOracleInput(trace: RuntimeDomainTrace, context: GeneratedTraceContext): PureScriptOracleInput {
+function pureScriptOracleInput(
+  trace: RuntimeDomainTrace,
+  context: GeneratedTraceContext,
+  actions: PureScriptOracleAction[] = JSON.parse(JSON.stringify(trace.actions)) as PureScriptOracleAction[]
+): PureScriptOracleInput {
   return {
     version: 1,
     initial: {
@@ -21076,7 +21320,7 @@ function pureScriptOracleInput(trace: RuntimeDomainTrace, context: GeneratedTrac
     },
     trace: {
       id: trace.id,
-      actions: JSON.parse(JSON.stringify(trace.actions)) as DomainAction[]
+      actions
     }
   };
 }
@@ -21142,7 +21386,8 @@ function pureScriptOracleNode(node: OutlineState["nodes"][string]): PureScriptOr
       sessionId: restore?.sessionId ?? null,
       url: restore?.url ?? null,
       title: restore?.title ?? null,
-      favIconUrl: restore?.favIconUrl ?? null
+      favIconUrl: restore?.favIconUrl ?? null,
+      closedBy: restore?.closedBy ?? null
     },
     runtimeProvenance: node.runtimeProvenance ?? null
   };
@@ -21154,10 +21399,19 @@ function assertPureScriptOracleSnapshots(
   actualSnapshots: PureScriptOracleSnapshot[],
   history: string[]
 ): void {
+  assertPureScriptOracleSnapshotsForId(trace.id, input, actualSnapshots, history);
+}
+
+function assertPureScriptOracleSnapshotsForId(
+  traceId: string,
+  input: PureScriptOracleInput,
+  actualSnapshots: PureScriptOracleSnapshot[],
+  history: string[]
+): void {
   const result = evaluatePureScriptOracle(input);
   if (!result.ok) {
     throw new Error(
-      `PureScript oracle rejected trace ${trace.id}: ${result.error.code}: ${result.error.message}` +
+      `PureScript oracle rejected trace ${traceId}: ${result.error.code}: ${result.error.message}` +
         `${typeof result.error.step === "number" ? ` at step ${result.error.step}` : ""}\nTrace:\n${history.join("\n")}`
     );
   }
@@ -21166,7 +21420,7 @@ function assertPureScriptOracleSnapshots(
     expect(actualSnapshots).toEqual(result.snapshots);
   } catch (error) {
     throw new Error(
-      `${generatedErrorText(error)}\nPureScript oracle mismatch for ${trace.id}\n${firstPureScriptOracleMismatch(actualSnapshots, result.snapshots)}\nTrace:\n${history.join("\n")}`
+      `${generatedErrorText(error)}\nPureScript oracle mismatch for ${traceId}\n${firstPureScriptOracleMismatch(actualSnapshots, result.snapshots)}\nTrace:\n${history.join("\n")}`
     );
   }
 }
@@ -21259,6 +21513,7 @@ function createGeneratedTraceContext(options: { now: number; history: string[] }
     staleTabs: [],
     staleLiveEventTabs: [],
     domainCaptures: emptyDomainTraceCaptures(),
+    oracleActions: [],
     adversarialRuntimeQueries: false,
     adversarialConcurrency: false,
     rng: seededRandom(options.now)
@@ -21356,12 +21611,12 @@ async function runDomainAction(context: GeneratedTraceContext, action: DomainAct
   }
 
   if (action.type === "outlinerCloseTab") {
-    await runDomainOutlinerCloseTab(context, action.tab);
+    await runDomainOutlinerCloseTab(context, action.tab, action.captureStaleTabs);
     return;
   }
 
   if (action.type === "outlinerCloseWindow") {
-    await runDomainOutlinerCloseWindow(context, action.window);
+    await runDomainOutlinerCloseWindow(context, action.window, action.captureStaleTabs);
     return;
   }
 
@@ -22113,10 +22368,12 @@ async function runDomainOutlinerFocusTabRejectingUpdate(
 
 async function runDomainOutlinerCloseWindow(
   context: GeneratedTraceContext,
-  selector: DomainWindowSelector
+  selector: DomainWindowSelector,
+  captureStaleTabs?: string
 ): Promise<void> {
   const windowInfo = resolveDomainWindow(context, selector);
   const tabs = tabsInRuntimeWindow(context.runtime, windowInfo.id);
+  captureStaleRuntimeTabs(context, captureStaleTabs, tabs);
   const state = (await context.controller.handleMessage({ type: "getState" })) as OutlineState;
   const protectedExpectedNodeIds = [
     liveWindowNodeIdForRuntimeWindow(state, windowInfo.id),
@@ -22133,9 +22390,11 @@ async function runDomainOutlinerCloseWindow(
 
 async function runDomainOutlinerCloseTab(
   context: GeneratedTraceContext,
-  selector: DomainTabSelector
+  selector: DomainTabSelector,
+  captureStaleTabs?: string
 ): Promise<void> {
   const tab = resolveDomainTab(context, selector);
+  captureStaleRuntimeTabs(context, captureStaleTabs, [tab]);
   const state = (await context.controller.handleMessage({ type: "getState" })) as OutlineState;
   const nodeId = liveTabNodeIdForRuntimeTab(state, tab.id);
   context.expectedClosedNodeIds.add(nodeId);
@@ -22483,9 +22742,17 @@ async function runDomainOutlinerRestoreNodeRejectingCreate(
     // The breadth action models a browser create/restore side effect that completes before the command rejects.
   }
   const after = (await context.controller.handleMessage({ type: "getState" })) as OutlineState;
-  captureRestoredRuntimeResources(context, before, after, candidateNodeIds, {
+  const restored = captureRestoredRuntimeResources(context, before, after, candidateNodeIds, {
     tabs: captureRestoredTabs,
     windows: captureRestoredWindows
+  });
+  recordPureScriptOracleAction(context, {
+    type: "outlinerRestoreNodeRejectingCreate",
+    node: selector,
+    ...(captureRestoredTabs ? { captureRestoredTabs } : {}),
+    ...(captureRestoredWindows ? { captureRestoredWindows } : {}),
+    restoredTabs: restored.tabs,
+    restoredWindows: restored.windows
   });
   trackRestoreCommandLifecycleExpectations(context, before, after);
   await flushGeneratedRuntimeEventRefreshes(context);
@@ -22504,9 +22771,17 @@ async function runDomainOutlinerRestoreNodeThenAbruptRestart(
   const result = await context.controller.handleMessage({ type: "restoreNode", nodeId });
   expect((result as CommandAck).type).toBe("commandAck");
   const after = (await context.controller.handleMessage({ type: "getState" })) as OutlineState;
-  captureRestoredRuntimeResources(context, before, after, candidateNodeIds, {
+  const restored = captureRestoredRuntimeResources(context, before, after, candidateNodeIds, {
     tabs: captureRestoredTabs,
     windows: captureRestoredWindows
+  });
+  recordPureScriptOracleAction(context, {
+    type: "outlinerRestoreNodeThenAbruptRestart",
+    node: selector,
+    ...(captureRestoredTabs ? { captureRestoredTabs } : {}),
+    ...(captureRestoredWindows ? { captureRestoredWindows } : {}),
+    restoredTabs: restored.tabs,
+    restoredWindows: restored.windows
   });
   trackRestoreCommandLifecycleExpectations(context, before, after);
   await runDomainRestartBackgroundAbrupt(context);
@@ -22543,9 +22818,9 @@ function captureRestoredRuntimeResources(
   after: OutlineState,
   candidateNodeIds: ReadonlySet<NodeId>,
   captures: { tabs?: string; windows?: string }
-): void {
+): { tabs: RuntimeTab[]; windows: RuntimeWindow[] } {
   const restoredTabs: RuntimeTab[] = [];
-  const restoredWindows: FakeRuntimeWindow[] = [];
+  const restoredWindows: RuntimeWindow[] = [];
   for (const nodeId of candidateNodeIds) {
     const beforeNode = before.nodes[nodeId];
     const afterNode = after.nodes[nodeId];
@@ -22575,6 +22850,40 @@ function captureRestoredRuntimeResources(
     context.domainCaptures.windows.set(captures.windows, { ...restoredWindows[0]! });
     context.lastOpenedWindowId = restoredWindows[0]!.id;
   }
+  return {
+    tabs: restoredTabs.map(copyTab),
+    windows: restoredWindows.map(copyWindowWithoutTabs)
+  };
+}
+
+function restoredRuntimeResourcesForGeneratedNodes(
+  context: GeneratedTraceContext,
+  before: OutlineState,
+  after: OutlineState,
+  candidateNodeIds: ReadonlySet<NodeId>
+): { tabs: RuntimeTab[]; windows: RuntimeWindow[] } {
+  const restoredTabs: RuntimeTab[] = [];
+  const restoredWindows: RuntimeWindow[] = [];
+  for (const nodeId of candidateNodeIds) {
+    const beforeNode = before.nodes[nodeId];
+    const afterNode = after.nodes[nodeId];
+    if (beforeNode?.status !== "closed" || afterNode?.status !== "live") {
+      continue;
+    }
+    if (afterNode.kind === "tab" && afterNode.live && "tabId" in afterNode.live) {
+      const tab = context.runtime.tabs.find((candidate) => candidate.id === afterNode.live.tabId);
+      if (tab) {
+        restoredTabs.push(copyTab(tab));
+      }
+    }
+    if (afterNode.kind === "window" && afterNode.live && "windowId" in afterNode.live) {
+      const windowInfo = context.runtime.windows.find((candidate) => candidate.id === afterNode.live.windowId);
+      if (windowInfo) {
+        restoredWindows.push(copyWindowWithoutTabs(windowInfo));
+      }
+    }
+  }
+  return { tabs: restoredTabs, windows: restoredWindows };
 }
 
 function trackRestoreCommandLifecycleExpectations(
@@ -22986,9 +23295,17 @@ async function runGeneratedTrace(seed: number, steps: number, options: Generated
   context.adversarialRuntimeQueries = options.adversarialRuntimeQueries ?? false;
   context.adversarialConcurrency = options.adversarialConcurrency ?? false;
   context.rng = seededRandom(seed);
+  const oracleTraceId = `generated:${seed}:${steps}:${context.adversarialRuntimeQueries ? "query-skew" : "normal"}:${context.adversarialConcurrency ? "concurrency" : "serial"}`;
+  const oracleInputBase = shouldRunGeneratedPureScriptOracle(seed, steps, options)
+    ? pureScriptOracleInputForGeneratedTrace(oracleTraceId, context)
+    : undefined;
+  const oracleSnapshots: PureScriptOracleSnapshot[] = [];
 
   await context.controller.ensureState();
   await assertGeneratedInvariants(context);
+  if (oracleInputBase) {
+    oracleSnapshots.push(await pureScriptOracleSnapshot(context));
+  }
 
   for (let step = 0; step < steps; step += 1) {
     const operations = availableGeneratedOperations(context);
@@ -22999,12 +23316,19 @@ async function runGeneratedTrace(seed: number, steps: number, options: Generated
     const operation = pickOne(context.rng, operations);
     context.history.push(`step ${step + 1}: ${operation.name}`);
     const sideEffectSnapshot = runtimeSideEffectSnapshot(context.runtime);
+    const oracleActionCount = context.oracleActions.length;
     try {
       await operation.run(context);
+      if (oracleInputBase && context.oracleActions.length !== oracleActionCount + 1) {
+        throw new Error(`Generated operation ${operation.name} recorded ${context.oracleActions.length - oracleActionCount} PureScript oracle actions`);
+      }
       await assertRuntimeTraceOracles(context, {
         generatedOperation: operation,
         sideEffects: runtimeSideEffectsSince(context.runtime, sideEffectSnapshot)
       });
+      if (oracleInputBase) {
+        oracleSnapshots.push(await pureScriptOracleSnapshot(context));
+      }
     } catch (error) {
       throw new Error(`${generatedErrorText(error)}\n${runtimeTraceDebugText(context, runtimeSideEffectsSince(context.runtime, sideEffectSnapshot))}\nTrace:\n${context.history.join("\n")}`);
     }
@@ -23021,6 +23345,44 @@ async function runGeneratedTrace(seed: number, steps: number, options: Generated
       throw new Error(`${generatedErrorText(error)}\n${runtimeTraceDebugText(context)}\nTrace:\n${context.history.join("\n")}`);
     }
   }
+  if (oracleInputBase) {
+    assertPureScriptOracleSnapshotsForId(
+      oracleTraceId,
+      {
+        ...oracleInputBase,
+        trace: {
+          ...oracleInputBase.trace,
+          actions: context.oracleActions
+        }
+      },
+      oracleSnapshots,
+      context.history
+    );
+  }
+}
+
+function pureScriptOracleInputForGeneratedTrace(traceId: string, context: GeneratedTraceContext): PureScriptOracleInput {
+  return {
+    version: 1,
+    initial: {
+      now: context.now,
+      windows: context.runtime.windows.map(copyWindowWithoutTabs),
+      tabs: context.runtime.tabs.map(copyTab)
+    },
+    trace: {
+      id: traceId,
+      actions: []
+    }
+  };
+}
+
+function shouldRunGeneratedPureScriptOracle(
+  seed: number,
+  steps: number,
+  options: GeneratedTraceOptions
+): boolean {
+  return (seed === 684835488 && steps === 9 && !options.adversarialRuntimeQueries && !options.adversarialConcurrency) ||
+    (seed === 684835609 && steps === 31 && options.adversarialRuntimeQueries === true && !options.adversarialConcurrency);
 }
 
 async function runGeneratedGroupingTrace(): Promise<void> {
@@ -26936,6 +27298,16 @@ describe("background controller lifecycle", () => {
     });
   });
 
+  it("keeps an outliner-closed tab closed when a later fresh tab has a stale query", async () => {
+    await runGeneratedTrace(684835488, 9);
+  });
+
+  it("keeps an adversarial outliner-closed tab closed across stale live events", async () => {
+    await runGeneratedTrace(684835609, 31, {
+      adversarialRuntimeQueries: true
+    });
+  });
+
   const domainTraceIt = process.env.RUNTIME_DOMAIN_TRACE_HUNT === "1" || process.env.RUNTIME_TRACE_HUNT_TRACE_IDS
     ? it
     : it.skip;
@@ -29540,7 +29912,8 @@ describe("background controller lifecycle", () => {
     expect(state.nodes["tab:2"]?.restore).toEqual({
       sessionId: "recent-session",
       url: "https://two.example/",
-      title: "Two"
+      title: "Two",
+      closedBy: "outliner"
     });
     expect(state.nodes["window:10"]?.childIds).toEqual(["tab:1", "tab:2"]);
   });

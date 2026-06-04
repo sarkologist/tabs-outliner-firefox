@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "tsc -p tsconfig.json && node scripts/copy-static.mjs",
+    "pretest": "pnpm run oracle:build",
     "test": "vitest run",
     "test:playwright": "playwright test",
     "test:playwright:ci": "playwright test -c playwright.ci.config.ts",
