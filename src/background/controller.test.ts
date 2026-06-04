@@ -19675,6 +19675,157 @@ const RUNTIME_DOMAIN_DISCOVERY_TRACES: RuntimeDomainTrace[] = [
     ]
   },
   {
+    id: "bdh-b1-native-move-before-undo-partial-query",
+    title: "browser drift history block1 native move before undo partial query",
+    notes: "Browser-drift/history block 1: a saved tab is browser-moved and updated before TO undo replays older structure, then partial and stale old-window evidence try to overwrite current scope truth.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["browser-drift-history", "saved", "history", "native-move", "partial-snapshot", "stale-event", "stale-query", "runtime-scope-order", "metadata", "side-effects"],
+    assertions: ["runtimeSideEffects", "runtimeScopeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "bdh-b1-move-group-old" },
+      { type: "nativeMoveTabToWindow", tab: { tabId: 2 }, window: { windowId: 20 }, index: 1, active: true, captureStaleTabs: "bdh-b1-move-source-old" },
+      { type: "updateTab", tab: { tabId: 2 }, title: "BDH B1 moved current", url: "https://bdh.example/b1-moved-current" },
+      { type: "outlinerUndo" },
+      { type: "manualRefreshWithMissingTabQuery", tab: { tabId: 2 } },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "bdh-b1-move-source-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "bdh-b1-native-open-before-redo-stale-created",
+    title: "browser drift history block1 native open before redo stale created",
+    notes: "Browser-drift/history block 1: a browser-created window appears and updates while command history is undone, then redo crash replay and stale command-created evidence must not erase browser-authored provenance or metadata.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["browser-drift-history", "browserCreated", "native-open", "history", "restart", "partial-snapshot", "stale-event", "stale-query", "metadata", "side-effects"],
+    assertions: ["runtimeSideEffects", "runtimeMetadata"],
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "bdh-b1-open-group-old" },
+      { type: "outlinerUndo" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "BDH B1 browser owner" }, { title: "BDH B1 browser current", active: true }], captureWindow: "bdh-b1-open-window", captureTabs: "bdh-b1-open-tabs" },
+      { type: "updateTab", tab: { capture: "bdh-b1-open-tabs", index: 1 }, title: "BDH B1 browser updated", url: "https://bdh.example/b1-browser-updated" },
+      { type: "outlinerRedoThenAbruptRestart" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { capture: "bdh-b1-open-window" } },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "bdh-b1-open-group-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "bdh-b1-native-close-before-history-stale-query",
+    title: "browser drift history block1 native close before history stale query",
+    notes: "Browser-drift/history block 1: a browser-created window closes before TO redo crash replay, then stale command/query evidence must not resurrect the closed browser-created subtree.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["browser-drift-history", "browserCreated", "native-open", "native-close", "history", "restart", "stale-event", "stale-query", "closed-subtree", "side-effects"],
+    assertions: ["runtimeSideEffects", "closedSubtreePersistence"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "BDH B1 close owner" }, { title: "BDH B1 close victim", active: true }], captureWindow: "bdh-b1-close-window", captureTabs: "bdh-b1-close-tabs" },
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "bdh-b1-close-group-old" },
+      { type: "outlinerUndo" },
+      { type: "nativeCloseWindow", window: { capture: "bdh-b1-close-window" }, order: "tabsRemovedThenWindowRemoved" },
+      { type: "outlinerRedoThenAbruptRestart" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "bdh-b1-close-group-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "bdh-b2-restored-browser-drift-history-restart",
+    title: "browser drift history block2 restored browser drift history restart",
+    notes: "Browser-drift/history block 2: a restored window absorbs a browser-created tab, current metadata changes, history undo replays older structure, and restart plus reordered/stale evidence must preserve browser truth.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["browser-drift-history", "restored", "browserCreated", "native-move", "history", "restart", "stale-event", "stale-query", "runtime-scope-order", "metadata", "side-effects"],
+    assertions: ["runtimeSideEffects", "runtimeScopeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "bdh-b2-restored-tabs", captureRestoredWindows: "bdh-b2-restored-window" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "BDH B2 external owner" }, { title: "BDH B2 external guest", active: true }], captureWindow: "bdh-b2-external-window", captureTabs: "bdh-b2-external-tabs" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "bdh-b2-external-tabs", index: 1 }, window: { capture: "bdh-b2-restored-window" }, index: 0, active: true, captureStaleTabs: "bdh-b2-external-old" },
+      { type: "updateTab", tab: { capture: "bdh-b2-external-tabs", index: 1 }, title: "BDH B2 external current", url: "https://bdh.example/b2-external-current" },
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "bdh-b2-restored-group-old" },
+      { type: "outlinerUndo" },
+      { type: "restartBackground" },
+      { type: "manualRefreshWithReorderedQuery", window: { capture: "bdh-b2-restored-window" }, order: "rotateLeft" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "bdh-b2-external-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "bdh-b2-command-destination-browser-sibling-history",
+    title: "browser drift history block2 command destination browser sibling history",
+    notes: "Browser-drift/history block 2: a command-created destination absorbs browser-created siblings before undo/redo crash replay, partial source evidence, reordered destination evidence, and stale command echoes.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["browser-drift-history", "commandCreated", "browserCreated", "native-move", "history", "restart", "partial-snapshot", "stale-event", "runtime-scope-order", "metadata", "side-effects"],
+    assertions: ["runtimeSideEffects", "runtimeScopeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "BDH B2 command guest" }, { title: "BDH B2 command survivor", active: true }], captureWindow: "bdh-b2-command-source", captureTabs: "bdh-b2-command-tabs" },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "bdh-b2-command-owner-old" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "bdh-b2-command-tabs" }, window: { role: "lastOpenedWindow" }, index: 0, active: true, captureStaleTabs: "bdh-b2-command-guest-old" },
+      { type: "openTab", window: { role: "lastOpenedWindow" }, index: 1, active: false, title: "BDH B2 command late sibling", url: "https://bdh.example/b2-command-late-sibling", captureTab: "bdh-b2-command-late-sibling" },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedoThenAbruptRestart" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { capture: "bdh-b2-command-source" } },
+      { type: "manualRefreshWithReorderedQuery", window: { role: "lastOpenedWindow" }, order: "reverse" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "bdh-b2-command-owner-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "bdh-b3-reject-history-browser-drift-temporal",
+    title: "browser drift history block3 reject history browser drift temporal",
+    notes: "Browser-drift/history block 3: pre-command metadata, relocation-create rejection, browser-created cohabitation, undo/redo crash replay, partial evidence, and stale echoes all compete for current shape authority.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["browser-drift-history", "race", "command-rejection", "browserCreated", "native-move", "history", "restart", "partial-snapshot", "stale-event", "runtime-scope-order", "metadata", "side-effects"],
+    assertions: ["runtimeSideEffects", "runtimeScopeOrder", "runtimeMetadata"],
+    actions: [
+      {
+        type: "raceWithOutlinerGroup",
+        event: {
+          type: "updateTab",
+          tab: { tabId: 2 },
+          title: "BDH B3 raced current",
+          url: "https://bdh.example/b3-raced-current"
+        },
+        groupTab: { tabId: 1 },
+        captureStaleTabs: "bdh-b3-race-group-old"
+      },
+      { type: "outlinerMoveTabCommandToNewWindowRejectingCreate", tab: { tabId: 2 }, captureStaleTabs: "bdh-b3-reject-old" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "BDH B3 reject guest" }, { title: "BDH B3 reject survivor", active: true }], captureWindow: "bdh-b3-reject-browser-window", captureTabs: "bdh-b3-reject-browser-tabs" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "bdh-b3-reject-browser-tabs" }, window: { role: "lastOpenedWindow" }, index: 0, active: false, captureStaleTabs: "bdh-b3-reject-browser-old" },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedoThenAbruptRestart" },
+      { type: "manualRefreshWithMissingWindowQuery", window: { capture: "bdh-b3-reject-browser-window" } },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "bdh-b3-race-group-old" }, withStaleQuery: true },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "bdh-b3-reject-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "bdh-b3-restore-reject-browser-drift-partial-redo",
+    title: "browser drift history block3 restore reject browser drift partial redo",
+    notes: "Browser-drift/history block 3: restore-create rejection materializes a restored window, browser-created drift joins it, and command history redo plus partial/stale evidence must keep restored/browser truth current.",
+    purpose: "discovery",
+    origin: "agent-generated",
+    tags: ["browser-drift-history", "restore", "command-rejection", "restored", "browserCreated", "native-move", "history", "partial-snapshot", "stale-event", "runtime-scope-order", "metadata", "side-effects"],
+    assertions: ["runtimeSideEffects", "runtimeScopeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeRejectingCreate", node: { nodeId: "window:20" }, captureRestoredTabs: "bdh-b3-restore-tabs", captureRestoredWindows: "bdh-b3-restore-window" },
+      { type: "updateTab", tab: { capture: "bdh-b3-restore-tabs" }, title: "BDH B3 restored current", url: "https://bdh.example/b3-restored-current" },
+      { type: "nativeOpenWindow", focused: false, tabs: [{ title: "BDH B3 restore external" }, { title: "BDH B3 restore guest", active: true }], captureWindow: "bdh-b3-restore-browser-window", captureTabs: "bdh-b3-restore-browser-tabs" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "bdh-b3-restore-browser-tabs" }, window: { capture: "bdh-b3-restore-window" }, index: 0, active: true, captureStaleTabs: "bdh-b3-restore-browser-old" },
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "bdh-b3-restore-group-old" },
+      { type: "outlinerUndo" },
+      { type: "manualRefreshWithMissingTabQuery", tab: { capture: "bdh-b3-restore-tabs" } },
+      { type: "outlinerRedo" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "bdh-b3-restore-browser-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
     id: "dl-b1-closed-window-passive-external-drift",
     title: "data loss block1 closed window passive external drift",
     notes: "Data-loss block 1: a TO-closed saved window is a passive persistence victim while unrelated browser-created scopes move, close, restart, and emit stale evidence.",

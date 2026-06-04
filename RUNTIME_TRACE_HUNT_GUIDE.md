@@ -486,6 +486,44 @@ This hunt started from the `276` regression / `856` discovery baseline after the
 - Coverage movement: sampled-clean movement for Rung 2 temporal heat across restore/delete/history/restart and mixed provenance, plus one short closed-subtree persistence check. The scope-order authority cell is stronger but still not treated as complete coverage.
 - Dedupe/result: third clean active block; bug yield none; runtime scope-order hunt stop condition reached.
 
+## Browser-Drift History Hunt 2026-06-04
+
+This hunt started from the `278` regression / `897` discovery baseline after generated soak found no new failures. It targeted browser-authored drift crossing Tabs Outliner history replay, with stale/partial query confidence as the freshness axis. The hunt found three new open signatures; do not treat this target as sampled clean until the fix/oracle pass promotes the findings and reruns the corpus.
+
+- Block: 1
+- Active effort: about five minutes of target selection, DSL review, trace edits, explicit replay, and selected-runner evidence recording; corpus wait time excluded.
+- Rung: 0
+- Axes changed: saved/browser-created windows, native move/open/close, undo/redo crash replay, partial/stale query evidence, `runtimeScopeOrder`, metadata, and closed-subtree assertions.
+- Temporal boundaries crossed: browser move/update before TO undo; browser-created window before redo crash replay; browser-created close before redo crash replay and stale command evidence.
+- New/changed trace ids: `bdh-b1-native-move-before-undo-partial-query`, `bdh-b1-native-open-before-redo-stale-created`, `bdh-b1-native-close-before-history-stale-query`
+- Explicit replay result: three-trace replay found `bdh-b1-native-move-before-undo-partial-query` failing at `outlinerUndo`.
+- Discovery runner result: selected three-trace runner recorded `RT-249`; the other two block traces were clean.
+- New signatures: `RT-249`, where history undo leaves a moved live tab listed under its old closed source window while the tab parent points at the current runtime window.
+- Coverage movement: bug-yield movement for saved-window browser drift before history replay; clean sampled coverage for browser-created open/close variants around redo crash replay.
+- Dedupe/result: clean-block count reset to 0; continue without fixing behavior.
+- Block: 2
+- Active effort: about five minutes of Rung 1 trace design, explicit replay, selected-runner accounting, and result review.
+- Rung: 1
+- Axes changed: restored/browser-created cohabitation, command-created destination cohabitation, native move, restart, undo/redo crash replay, partial/reordered evidence.
+- Temporal boundaries crossed: restored materialization before browser-created tab move and history undo; command-created destination absorbs browser siblings before redo crash replay and stale command echo.
+- New/changed trace ids: `bdh-b2-restored-browser-drift-history-restart`, `bdh-b2-command-destination-browser-sibling-history`
+- Explicit replay result: two-trace replay passed.
+- Discovery runner result: selected two-trace runner completed clean.
+- New signatures: none in the new traces.
+- Coverage movement: sampled-clean movement for restored/browser-created and command-created/browser-created history replay cohabitation.
+- Dedupe/result: first clean active block after `RT-249`.
+- Block: 3
+- Active effort: about five minutes of Rung 2 temporal-heat trace design, explicit replay, selected/full corpus review, and runner manifest correction.
+- Rung: 2
+- Axes changed: pre-command race evidence, relocation-create rejection, restore-create rejection, browser-created cohabitation, undo/redo crash replay, partial/stale evidence.
+- Temporal boundaries crossed: raced metadata before grouping and relocation rejection; restore rejection materialization before browser-created drift and history redo; stale echoes after current scope shape changed.
+- New/changed trace ids: `bdh-b3-reject-history-browser-drift-temporal`, `bdh-b3-restore-reject-browser-drift-partial-redo`; runner manifest updated for all `bdh-*` traces.
+- Explicit replay result: two-trace replay passed.
+- Discovery runner result: selected seven-trace runner reported `RT-249` as duplicate; full discovery first ran `897` traces before manifest update and found `RT-250`/`RT-251`; after manifest update it ran `904` traces with three duplicate failures and no further new findings.
+- New signatures: `RT-250`, where history undo leaves a moved live command window listed under an old closed source window while the window parent points elsewhere; `RT-251`, where an injected close journal after history/browser drift resurrects a command-deleted window.
+- Coverage movement: bug-yield movement for history replay merge integrity and journal recovery after browser-authored drift. The next oracle-back target should cover history replay plus browser drift/journal ownership before broad generated replay gates.
+- Dedupe/result: hunt paused with open `RT-249` through `RT-251`; fix/oracle pass should come next rather than adding more random soak.
+
 ## Runtime Shape Integrity Sweep
 
 Runtime-shape discovery started from 209 regression traces and 403 discovery traces after the browser-authored drift fix and expanded to 461 discovery traces. It recorded RT-171 through RT-186 and stopped after three complete active mutation blocks found no new distinct signatures. After the shape fix and the later UR-001 external browser-created close regression promotion, coverage is 226 regression traces and 445 discovery traces. Add future shape probes as fresh neutral IDs and avoid mutating fixed `rt-*`, `bh-*`, `ph-*`, `lh-*`, fixed `hh-*`, fixed `jh-*`, fixed `nh-*`, fixed `mh-*`, or `ur-*` repros. This sweep adds opt-in trace assertions for order and metadata so failures are about browser shape, not only live ID convergence.
