@@ -894,7 +894,7 @@ applyNativeCloseTab step details model =
             }
       else
         let
-          runtimeTabs = ensureWindowHasActiveTab tab.windowId (reindexAllRuntimeTabs runtimeTabsWithoutTab)
+          runtimeTabs = reindexAllRuntimeTabs runtimeTabsWithoutTab
           activeTab = findArray (\candidate -> andBoolean (windowIdEq candidate.windowId tab.windowId) candidate.active) runtimeTabs
           outline = deleteLiveTabNodePromotingChildren (liveTabNodeIdForRuntimeTab tab.id model.outline) model.outline
           activeOutline = case activeTab of
@@ -1079,11 +1079,15 @@ moveRuntimeTabAndOutline _step tab targetWindowId index active commandCreated wr
         if commandCreated then updateLiveTabWindowRefForSubtree movingNodeId targetWindowId outline
         else updateLiveTabWindowRefForNode movingNodeId targetWindowId outline
       outlineWithActiveTabs = setActiveTabsInOutlineFromRuntime runtimeTabs outlineWithRefs
+      finalOutline = closeOutlineWindowsMissingFromRuntime runtimeWindows (setActiveWindowInOutlineIfFocused runtimeWindows outlineWithActiveTabs)
+      finalRuntimeTabs = case wrapMode of
+        Just false -> syncRuntimeOrderFromOutline finalOutline runtimeTabs
+        _ -> runtimeTabs
     in
       Ok model
-        { runtimeTabs = runtimeTabs
+        { runtimeTabs = finalRuntimeTabs
         , runtimeWindows = runtimeWindows
-        , outline = closeOutlineWindowsMissingFromRuntime runtimeWindows (setActiveWindowInOutlineIfFocused runtimeWindows outlineWithActiveTabs)
+        , outline = finalOutline
         , lastMovedTabId = Just tab.id
         , lastOpenedWindowId = Just targetWindowId
         }
@@ -1094,7 +1098,7 @@ applyOutlinerCloseTab step details model =
     Ok (setStaleTabsCapture details.captureStaleTabs [tab] model)
       { runtimeTabs = reindexAllRuntimeTabs (filterArray (\candidate -> notBoolean (tabIdEq candidate.id tab.id)) model.runtimeTabs)
       , runtimeWindows = removeEmptyRuntimeWindows (filterArray (\candidate -> notBoolean (tabIdEq candidate.id tab.id)) model.runtimeTabs) model.runtimeWindows
-      , outline = markClosedNodeByIdWithSessionAndClosedBy (liveTabNodeIdForRuntimeTab tab.id model.outline) (Just "recent-session") (Just "outliner") model.now model.outline
+      , outline = closeTabNodeByIdWithSessionAndClosedBy (liveTabNodeIdForRuntimeTab tab.id model.outline) (Just "recent-session") (Just "outliner") model.now model.outline
       })
 
 applyOutlinerCloseWindow :: Int -> OutlinerCloseWindowAction -> OracleModel -> Result OracleModel
@@ -1206,18 +1210,37 @@ applyOutlinerRestoreDeleteWindowDelayedEvent step selector model =
 
 applyConcurrentCreatedTabThenGroup :: Int -> ConcurrentCreatedTabThenGroupAction -> OracleModel -> Result OracleModel
 applyConcurrentCreatedTabThenGroup step details model =
+  bindResult (resolveTabSelector step details.groupTab model) (\groupTab ->
+    let
+      groupNodeId = liveTabNodeIdForRuntimeTab groupTab.id model.outline
+      createdTab = commandRelocationAdjustedCreatedTab groupNodeId details.createdTab model
+      runtimeTabs = createRuntimeTab model.runtimeTabs createdTab
+      existingTabs = filterArray (\candidate -> notBoolean (tabIdEq candidate.id createdTab.id)) (tabsInWindowFrom runtimeTabs createdTab.windowId)
+      outline = addLiveTabToOutlineWithExistingTabs model.outline model.now createdTab existingTabs
+      withCreated = model
+        { runtimeTabs = runtimeTabs
+        , outline = if createdTab.active then setActiveTabInOutlineWindow createdTab.windowId createdTab.id outline else outline
+        , nextTabId = maxInt model.nextTabId (addInt (tabIdInt createdTab.id) 1)
+        , lastOpenedTabId = Just createdTab.id
+        }
+    in
+      applyOutlinerRelocation step details.groupTab true details.windowId withCreated)
+
+commandRelocationAdjustedCreatedTab :: NodeId -> RuntimeTab -> OracleModel -> RuntimeTab
+commandRelocationAdjustedCreatedTab groupNodeId createdTab model =
   let
-    runtimeTabs = createRuntimeTab model.runtimeTabs details.createdTab
-    existingTabs = filterArray (\candidate -> notBoolean (tabIdEq candidate.id details.createdTab.id)) (tabsInWindowFrom runtimeTabs details.createdTab.windowId)
-    outline = addLiveTabToOutlineWithExistingTabs model.outline model.now details.createdTab existingTabs
-    withCreated = model
-      { runtimeTabs = runtimeTabs
-      , outline = if details.createdTab.active then setActiveTabInOutlineWindow details.createdTab.windowId details.createdTab.id outline else outline
-      , nextTabId = maxInt model.nextTabId (addInt (tabIdInt details.createdTab.id) 1)
-      , lastOpenedTabId = Just details.createdTab.id
-      }
+    movedSourceCount = lengthArray
+      (filterArray
+        (\tabId ->
+          case findArray (\tab -> tabIdEq tab.id tabId) model.runtimeTabs of
+            Nothing -> false
+            Just tab -> andBoolean
+              (windowIdEq tab.windowId createdTab.windowId)
+              (lessThanInt tab.index createdTab.index))
+        (liveTabIdsInSubtreeExcludingNestedLiveWindows groupNodeId model.outline))
+    adjustedIndex = maxInt 0 (subInt createdTab.index movedSourceCount)
   in
-    applyOutlinerRelocation step details.groupTab true details.windowId withCreated
+    if eqInt adjustedIndex createdTab.index then createdTab else createdTab { index = adjustedIndex }
 
 applyConcurrentUpdatedTabThenGroup :: Int -> ConcurrentUpdatedTabThenGroupAction -> OracleModel -> Result OracleModel
 applyConcurrentUpdatedTabThenGroup step details model =
@@ -1696,6 +1719,38 @@ markClosedNodeByIdWithSessionAndClosedBy nodeId sessionId closedBy _now outline 
   in
     replaceNode outline ((markClosed node) { restoreSessionId = sessionId, restoreClosedBy = nextClosedBy })
 
+closeTabNodeByIdWithSessionAndClosedBy :: NodeId -> Maybe String -> Maybe String -> Int -> Outline -> Outline
+closeTabNodeByIdWithSessionAndClosedBy nodeId sessionId closedBy now outline =
+  promoteChildrenAfterNodeId nodeId (markClosedNodeByIdWithSessionAndClosedBy nodeId sessionId closedBy now outline)
+
+promoteChildrenAfterNodeId :: NodeId -> Outline -> Outline
+promoteChildrenAfterNodeId nodeId outline =
+  case findNode nodeId outline of
+    Nothing -> outline
+    Just node ->
+      let
+        promotedChildIds = node.childIds
+      in
+        if eqInt (lengthArray promotedChildIds) 0 then outline
+        else
+          let
+            insertionIndex = case node.parentId of
+              Nothing -> addInt (indexOfNodeId node.id outline.rootIds) 1
+              Just parentId -> addInt (indexOfNodeId node.id (requireNodeOr parentId outline (emptyTabNode parentId)).childIds) 1
+            withNode = replaceNode outline (node { childIds = [] })
+            withParents = withNode
+              { nodes = mapArray (\candidate ->
+                  if anyArray (\childId -> nodeIdEq childId candidate.id) promotedChildIds then candidate { parentId = node.parentId }
+                  else candidate) withNode.nodes
+              }
+          in
+            case node.parentId of
+              Nothing -> withParents { rootIds = insertNodeIdsAt promotedChildIds insertionIndex withParents.rootIds }
+              Just parentId ->
+                replaceNode withParents
+                  ((requireNodeOr parentId withParents (emptyTabNode parentId))
+                    { childIds = insertNodeIdsAt promotedChildIds insertionIndex (requireNodeOr parentId withParents (emptyTabNode parentId)).childIds })
+
 markClosedSubtreeById :: NodeId -> Int -> Outline -> Outline
 markClosedSubtreeById nodeId now outline =
   markClosedSubtreeByIdWithClosedBy nodeId Nothing now outline
@@ -1809,9 +1864,20 @@ closeOutlineWindowsMissingFromRuntime runtimeWindows outline =
     case node.liveWindowId of
       Just windowId ->
         if andBoolean (isLiveWindowNode node) (notBoolean (anyArray (\window -> windowIdEq window.id windowId) runtimeWindows)) then
-          markClosedSubtreeById node.id 0 current
+          closeMissingOutlineWindow node.id windowId current
         else current
       Nothing -> current) outline outline.nodes
+
+closeMissingOutlineWindow :: NodeId -> WindowId -> Outline -> Outline
+closeMissingOutlineWindow nodeId windowId outline =
+  let
+    promoted = promoteForeignLiveWindowsAfterClosingWindow nodeId windowId outline
+  in
+    case findNode nodeId promoted of
+      Nothing -> promoted
+      Just node ->
+        if eqInt (lengthArray node.childIds) 0 then removeSingleNode nodeId promoted
+        else markClosedSubtreeById nodeId 0 promoted
 
 snapshot :: OracleModel -> Snapshot
 snapshot model =
@@ -1961,7 +2027,11 @@ requireOutlineNode step nodeId outline =
 createRuntimeTab :: Array RuntimeTab -> RuntimeTab -> Array RuntimeTab
 createRuntimeTab tabs tab =
   reindexAllRuntimeTabs (insertRuntimeTabAt (mapArray (\candidate ->
-    if andBoolean (windowIdEq candidate.windowId tab.windowId) tab.active then candidate { active = false }
+    if windowIdEq candidate.windowId tab.windowId then
+      let
+        bumped = if notBoolean (lessThanInt candidate.index tab.index) then candidate { index = addInt candidate.index 1 } else candidate
+      in
+        if tab.active then bumped { active = false } else bumped
     else candidate) tabs) tab tab.windowId tab.index)
 
 setRuntimeActiveTab :: TabId -> WindowId -> Array RuntimeTab -> Array RuntimeTab
@@ -1996,12 +2066,34 @@ moveRuntimeTabSubtree nodeId selectedTabId targetWindowId targetIndex outline ta
       withSelected
       remainingTabIds
 
+syncRuntimeOrderFromOutline :: Outline -> Array RuntimeTab -> Array RuntimeTab
+syncRuntimeOrderFromOutline outline tabs =
+  foldlArray (\current windowNode ->
+    case windowNode.liveWindowId of
+      Nothing -> current
+      Just windowId ->
+        let tabIds = liveTabIdsAlreadyInRuntimeWindow windowNode.id windowId outline in
+          if eqInt (lengthArray tabIds) 0 then current
+          else reindexAllRuntimeTabs (moveRuntimeTabsToWindowInOrder tabIds windowId 0 current))
+    tabs
+    (liveWindowNodesInVisibleOrder outline)
+
+moveRuntimeTabsToWindowInOrder :: Array TabId -> WindowId -> Int -> Array RuntimeTab -> Array RuntimeTab
+moveRuntimeTabsToWindowInOrder tabIds windowId startIndex tabs =
+  foldlWithIndexArray
+    (\index current tabId -> moveRuntimeTab tabId windowId (addInt startIndex index) current)
+    tabs
+    tabIds
+
 insertRuntimeTabAt :: Array RuntimeTab -> RuntimeTab -> WindowId -> Int -> Array RuntimeTab
 insertRuntimeTabAt tabs moved targetWindowId targetIndex =
-  mapWithIndexArray (\_ tab -> tab)
-    (appendArray
+  let
+    targetTabs = insertAtIndex moved targetIndex (tabsInWindowFrom tabs targetWindowId)
+    reindexedTargetTabs = mapWithIndexArray (\index tab -> tab { index = index }) targetTabs
+  in
+    appendArray
       (filterArray (\tab -> notBoolean (windowIdEq tab.windowId targetWindowId)) tabs)
-      (insertAtIndex moved targetIndex (tabsInWindowFrom tabs targetWindowId)))
+      reindexedTargetTabs
 
 insertAtIndex :: RuntimeTab -> Int -> Array RuntimeTab -> Array RuntimeTab
 insertAtIndex value targetIndex values =
@@ -2044,7 +2136,7 @@ reindexAllRuntimeTabs tabs =
 reindexWindowTabs :: WindowId -> Array RuntimeTab -> Array RuntimeTab
 reindexWindowTabs windowId tabs =
   let
-    windowTabs = filterArray (\tab -> windowIdEq tab.windowId windowId) tabs
+    windowTabs = tabsInWindowFrom tabs windowId
     reindexed = mapWithIndexArray (\index tab -> tab { index = index }) windowTabs
   in
     appendArray
@@ -2224,12 +2316,36 @@ liveTabIdsInSubtreeExcludingNestedLiveWindows :: NodeId -> Outline -> Array TabI
 liveTabIdsInSubtreeExcludingNestedLiveWindows nodeId outline =
   liveTabIdsForNodes (subtreeNodeIdsExcludingNestedLiveWindows nodeId outline) outline
 
+liveTabIdsAlreadyInRuntimeWindow :: NodeId -> WindowId -> Outline -> Array TabId
+liveTabIdsAlreadyInRuntimeWindow rootWindowNodeId runtimeWindowId outline =
+  mapMaybeArray
+    (\nodeId ->
+      case findNode nodeId outline of
+        Just node ->
+          case node.liveTabId of
+            Just tabId ->
+              case node.liveWindowId of
+                Just tabWindowId -> if andBoolean (isLiveTabNode node) (windowIdEq tabWindowId runtimeWindowId) then Just tabId else Nothing
+                Nothing -> Nothing
+            Nothing -> Nothing
+        Nothing -> Nothing)
+    (subtreeNodeIdsExcludingNestedLiveWindows rootWindowNodeId outline)
+
 liveWindowIdsForNodes :: Array NodeId -> Outline -> Array WindowId
 liveWindowIdsForNodes nodeIds outline =
   mapMaybeArray (\nodeId ->
     case findNode nodeId outline of
       Just node -> if isLiveWindowNode node then node.liveWindowId else Nothing
       Nothing -> Nothing) nodeIds
+
+liveWindowNodesInVisibleOrder :: Outline -> Array OutlineNode
+liveWindowNodesInVisibleOrder outline =
+  mapMaybeArray
+    (\nodeId ->
+      case findNode nodeId outline of
+        Just node -> if isLiveWindowNode node then Just node else Nothing
+        Nothing -> Nothing)
+    (foldlArray (\ids rootId -> appendArray ids (subtreeNodeIds rootId outline)) [] outline.rootIds)
 
 tabsInWindow :: OracleModel -> WindowId -> Array RuntimeTab
 tabsInWindow model windowId =

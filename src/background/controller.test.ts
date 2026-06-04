@@ -20541,14 +20541,15 @@ async function openGeneratedTab(context: GeneratedTraceContext): Promise<void> {
   const queryLag = context.rng() < 0.25;
   context.history.push(`open tab ${tab.id} in window ${tab.windowId}${queryLag ? " with stale query" : ""}`);
   await createTabFromBrowser(context.runtime, tab, { queryLag });
+  const created = runtimeTabById(context, tab.id);
   recordPureScriptOracleAction(context, {
     type: "openTab",
     window: windowOracleSelector(windowInfo),
-    tabId: tab.id,
-    index: tab.index,
-    active: tab.active,
-    title: tab.title,
-    url: tab.url,
+    tabId: created.id,
+    index: created.index,
+    active: created.active,
+    title: created.title,
+    url: created.url,
     ...(openerTab ? { openerTab: tabOracleSelector(openerTab) } : {}),
     queryLag
   });
@@ -23623,7 +23624,16 @@ function shouldRunGeneratedPureScriptOracle(
   steps: number,
   options: GeneratedTraceOptions
 ): boolean {
-  return (seed === 684835488 && steps === 9 && !options.adversarialRuntimeQueries && !options.adversarialConcurrency) ||
+  // Full generated replay sequences only join this gate once every recorded
+  // action in the replay matches the oracle semantics.
+  return (seed === 1277552076 && steps === 11 && !options.adversarialRuntimeQueries && !options.adversarialConcurrency) ||
+    (seed === 141616461 && steps === 7 && options.adversarialRuntimeQueries === true && options.adversarialConcurrency === true) ||
+    (seed === 910720204 && steps === 21 && options.adversarialRuntimeQueries === true && options.adversarialConcurrency === true) ||
+    (seed === 1546021748 && steps === 4 && options.adversarialRuntimeQueries === true && options.adversarialConcurrency === true) ||
+    (seed === 910000046 && steps === 10 && options.adversarialRuntimeQueries === true && options.adversarialConcurrency === true) ||
+    (seed === 422754531 && steps === 2 && options.adversarialRuntimeQueries === true && options.adversarialConcurrency === true) ||
+    (seed === 1338200851 && steps === 8 && options.adversarialRuntimeQueries === true && options.adversarialConcurrency === true) ||
+    (seed === 684835488 && steps === 9 && !options.adversarialRuntimeQueries && !options.adversarialConcurrency) ||
     (seed === 684835609 && steps === 31 && options.adversarialRuntimeQueries === true && !options.adversarialConcurrency);
 }
 
