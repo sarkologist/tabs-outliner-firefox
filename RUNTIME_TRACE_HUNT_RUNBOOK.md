@@ -58,6 +58,19 @@ RUNTIME_TRACE_BUGS_FILE=/private/tmp/runtime-smoke.md RUNTIME_TRACE_HUNT_PROFILE
 
 If the runner does not complete the selected corpus, the run is not clean. Increase `RUNTIME_TRACE_HUNT_CORPUS_RUN_MS`, reduce explicit trace selection, or fix the runner/harness issue before counting the block.
 
+## Generated Oracle Exploration
+
+Use generated trace oracle exploration as a shakeout lane, not as the normal CI gate. The default generated trace mode is still `gated`: only frozen generated replays intentionally listed in `shouldRunGeneratedPureScriptOracle()` compare against the PureScript oracle.
+
+Useful commands:
+
+```sh
+GENERATED_TRACE_ORACLE_MODE=explore GENERATED_TRACE_ORACLE_REPORT=/tmp/oracle-hunt.jsonl SOAK_SEED=<seed> SOAK_SEED_COUNT=<count> pnpm test:soak
+GENERATED_TRACE_ORACLE_MODE=strict GENERATED_TRACE_REPLAY_SEED=<seed> GENERATED_TRACE_REPLAY_STEPS=<steps> GENERATED_TRACE_REPLAY_RUNTIME_QUERIES=1 GENERATED_TRACE_REPLAY_CONCURRENCY=1 pnpm exec vitest run src/background/controller.test.ts --testNamePattern "replays a selected generated trace"
+```
+
+Explore mode keeps runtime invariants authoritative and writes JSONL records for `matched`, `unsupported`, `rejected`, and `mismatch` oracle outcomes. Treat these records as triage input: reduce mismatches to a general domain trace, decide app bug vs oracle gap from browser truth and established invariants, then add or adjust broad oracle semantics. Only add a full generated replay to `shouldRunGeneratedPureScriptOracle()` after every operation in that replay is supported and the intended semantics are clear.
+
 ## Five-Minute Active Mutation Block
 
 A block is a timed period of active adversarial mutation effort. It is not an add/replay/corpus-review cycle.

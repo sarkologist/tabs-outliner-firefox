@@ -1,4 +1,7 @@
 import { createRequire } from "node:module";
+import { appendFileSync, mkdirSync, mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
@@ -1646,6 +1649,12 @@ type DomainAction =
       captureStaleTabs?: string;
     }
   | {
+      type: "outlinerRestoreNode";
+      node: DomainNodeSelector;
+      captureRestoredTabs?: string;
+      captureRestoredWindows?: string;
+    }
+  | {
       type: "outlinerRestoreNodeRejectingCreate";
       node: DomainNodeSelector;
       captureRestoredTabs?: string;
@@ -2103,6 +2112,164 @@ const RUNTIME_DOMAIN_TRACE_DEFINITIONS: RuntimeDomainTraceDefinition[] = [
     ]
   },
   {
+    id: "po-updated-tab-group-race-preserves-moved-tab-metadata",
+    title: "PureScript oracle preserves raced update metadata on the grouped tab",
+    notes: "Class-level concurrency contract: when a browser tab update races an outliner grouping command, the browser-authored metadata remains current after the command moves that same tab.",
+    tags: ["purescript-oracle", "metadata", "concurrency", "grouping"],
+    assertions: ["purescriptOracle", "runtimeScopeOrder", "runtimeMetadata"],
+    actions: [
+      {
+        type: "raceWithOutlinerGroup",
+        event: {
+          type: "updateTab",
+          tab: { tabId: 1 },
+          title: "Oracle raced grouped update",
+          url: "https://oracle.example/raced-grouped-update"
+        },
+        groupTab: { tabId: 1 },
+        captureStaleTabs: "po-updated-grouped-before-group"
+      }
+    ]
+  },
+  {
+    id: "po-updated-tab-group-race-preserves-source-sibling-metadata",
+    title: "PureScript oracle preserves raced update metadata on a source sibling",
+    notes: "Class-level concurrency contract: a browser-authored update to a same-window sibling is not overwritten by a concurrent grouping command that moves another tab out of that window.",
+    tags: ["purescript-oracle", "metadata", "concurrency", "grouping"],
+    assertions: ["purescriptOracle", "runtimeScopeOrder", "runtimeMetadata"],
+    actions: [
+      {
+        type: "raceWithOutlinerGroup",
+        event: {
+          type: "updateTab",
+          tab: { tabId: 2 },
+          title: "Oracle raced sibling update",
+          url: "https://oracle.example/raced-sibling-update"
+        },
+        groupTab: { tabId: 1 },
+        captureStaleTabs: "po-updated-sibling-before-group"
+      }
+    ]
+  },
+  {
+    id: "po-updated-restored-tab-group-race-preserves-metadata",
+    title: "PureScript oracle preserves raced update metadata on a restored grouped tab",
+    notes: "Class-level concurrency contract: restored tabs keep browser-authored metadata updates across a concurrent grouping command, even when the restore rekeys the runtime tab id.",
+    tags: ["purescript-oracle", "metadata", "concurrency", "grouping", "restore"],
+    assertions: ["purescriptOracle", "runtimeScopeOrder", "runtimeMetadata"],
+    actions: [
+      {
+        type: "nativeMoveTabToNewWindow",
+        tab: { tabId: 2 },
+        active: true,
+        captureWindow: "po-updated-restored-source-window",
+        captureStaleTabs: "po-updated-restored-old-source"
+      },
+      { type: "nativeCloseTab", tab: { tabId: 2 } },
+      {
+        type: "outlinerRestoreNode",
+        node: { nodeId: "window:21" },
+        captureRestoredTabs: "po-updated-restored-tabs",
+        captureRestoredWindows: "po-updated-restored-window"
+      },
+      {
+        type: "raceWithOutlinerGroup",
+        event: {
+          type: "updateTab",
+          tab: { capture: "po-updated-restored-tabs" },
+          title: "Oracle raced restored update",
+          url: "https://oracle.example/raced-restored-update"
+        },
+        groupTab: { capture: "po-updated-restored-tabs" },
+        captureStaleTabs: "po-updated-restored-before-group"
+      }
+    ]
+  },
+  {
+    id: "po-updated-restored-tab-group-race-keeps-saved-title-for-transient-url",
+    title: "PureScript oracle keeps saved restored title for raced transient URL title",
+    notes: "Class-level restored-title contract: URL-like browser titles are transient restore evidence, so the outline keeps its saved title even when that update races a grouping command.",
+    tags: ["purescript-oracle", "metadata", "concurrency", "grouping", "restore", "transient-title"],
+    assertions: ["purescriptOracle", "runtimeScopeOrder", "runtimeMetadata"],
+    actions: [
+      {
+        type: "nativeMoveTabToNewWindow",
+        tab: { tabId: 2 },
+        active: true,
+        captureWindow: "po-updated-restored-url-title-source-window",
+        captureStaleTabs: "po-updated-restored-url-title-old-source"
+      },
+      { type: "nativeCloseTab", tab: { tabId: 2 } },
+      {
+        type: "outlinerRestoreNode",
+        node: { nodeId: "window:21" },
+        captureRestoredTabs: "po-updated-restored-url-title-tabs",
+        captureRestoredWindows: "po-updated-restored-url-title-window"
+      },
+      {
+        type: "raceWithOutlinerGroup",
+        event: {
+          type: "updateTab",
+          tab: { capture: "po-updated-restored-url-title-tabs" },
+          title: "https://two.example/ concurrent title",
+          url: "https://two.example/"
+        },
+        groupTab: { capture: "po-updated-restored-url-title-tabs" },
+        captureStaleTabs: "po-updated-restored-url-title-before-group"
+      }
+    ]
+  },
+  {
+    id: "po-updated-restored-tab-after-browser-drift-preserves-metadata",
+    title: "PureScript oracle preserves restored-tab update metadata after browser drift",
+    notes: "Class-level concurrency contract: a restored tab still accepts browser-authored metadata when unrelated browser-created or browser-moved windows have changed runtime scope shape before grouping.",
+    tags: ["purescript-oracle", "metadata", "concurrency", "grouping", "restore", "browser-authored"],
+    assertions: ["purescriptOracle", "runtimeScopeOrder", "runtimeMetadata"],
+    actions: [
+      {
+        type: "nativeMoveTabToNewWindow",
+        tab: { tabId: 2 },
+        active: true,
+        captureWindow: "po-updated-restored-drift-source-window",
+        captureStaleTabs: "po-updated-restored-drift-old-source"
+      },
+      { type: "nativeCloseTab", tab: { tabId: 2 } },
+      {
+        type: "openTab",
+        window: { windowId: 10 },
+        active: true,
+        openerTab: { tabId: 1 },
+        title: "Oracle unrelated drift tab",
+        url: "https://oracle.example/unrelated-drift-tab",
+        captureTab: "po-updated-restored-drift-unrelated-tab"
+      },
+      {
+        type: "outlinerRestoreNode",
+        node: { nodeId: "window:21" },
+        captureRestoredTabs: "po-updated-restored-drift-tabs",
+        captureRestoredWindows: "po-updated-restored-drift-window"
+      },
+      {
+        type: "nativeMoveTabToNewWindow",
+        tab: { capture: "po-updated-restored-drift-unrelated-tab" },
+        active: true,
+        captureWindow: "po-updated-restored-drift-unrelated-window",
+        captureStaleTabs: "po-updated-restored-drift-unrelated-old-source"
+      },
+      {
+        type: "raceWithOutlinerGroup",
+        event: {
+          type: "updateTab",
+          tab: { capture: "po-updated-restored-drift-tabs" },
+          title: "Oracle raced restored drift update",
+          url: "https://oracle.example/raced-restored-drift-update"
+        },
+        groupTab: { capture: "po-updated-restored-drift-tabs" },
+        captureStaleTabs: "po-updated-restored-drift-before-group"
+      }
+    ]
+  },
+  {
     id: "po-stale-live-created-after-nested-command-group",
     title: "PureScript oracle ignores stale live-created query after nested grouping",
     notes: "Covers the 1277552077/930000045 placement class where stale old-window evidence follows nested command-created group windows.",
@@ -2260,6 +2427,538 @@ const RUNTIME_DOMAIN_TRACE_DEFINITIONS: RuntimeDomainTraceDefinition[] = [
         node: { nodeId: "window:22" },
         captureRestoredTabs: "po-restore-delete-nested-restored-tabs",
         captureRestoredWindows: "po-restore-delete-nested-restored-window"
+      }
+    ]
+  },
+  {
+    id: "po-delete-window-subtree-removes-nested-command-window",
+    title: "PureScript oracle removes nested runtime resources when deleting a window subtree",
+    notes: "Class-level delete contract: deleting a live window outline subtree removes every live runtime window and tab contained in that subtree, not only the selected window's own runtime ID.",
+    tags: ["purescript-oracle", "delete", "nested-window", "commandCreated", "runtime-order"],
+    assertions: ["purescriptOracle", "runtimeOrder", "runtimeMetadata"],
+    actions: [
+      {
+        type: "outlinerGroupTab",
+        tab: { tabId: 1 },
+        captureStaleTabs: "po-delete-subtree-before-group"
+      },
+      { type: "outlinerDeleteWindowRejectingClose", window: { windowId: 10 } }
+    ]
+  },
+  {
+    id: "po-restore-delete-window-subtree-removes-nested-command-window",
+    title: "PureScript oracle removes nested runtime resources after restore-delete subtree cleanup",
+    notes: "Class-level restore-delete contract: the delayed restored-tab workflow deletes every live runtime resource in the selected restored subtree before stale delayed events are observed.",
+    tags: ["purescript-oracle", "restore-delete", "delete", "nested-window", "commandCreated", "delayed-event"],
+    assertions: ["purescriptOracle", "runtimeOrder", "runtimeMetadata"],
+    actions: [
+      {
+        type: "outlinerGroupTab",
+        tab: { tabId: 1 },
+        captureStaleTabs: "po-restore-delete-subtree-before-group"
+      },
+      { type: "outlinerRestoreDeleteWindowDelayedEvent", window: { windowId: 10 } }
+    ]
+  },
+  {
+    id: "po-restore-tab-preserves-existing-window-focus",
+    title: "PureScript oracle preserves focus when restoring an inactive tab into its existing window",
+    notes: "Class-level restore contract: restoring a closed tab into an already-open focused runtime window must preserve the window metadata instead of deriving focus from the restored tab active flag.",
+    tags: ["purescript-oracle", "restore", "focus", "runtime-metadata"],
+    assertions: ["purescriptOracle", "runtimeMetadata"],
+    actions: [
+      { type: "activateTab", tab: { tabId: 2 } },
+      { type: "outlinerCloseTab", tab: { tabId: 2 }, captureStaleTabs: "po-restore-focus-closed-source" },
+      {
+        type: "outlinerRestoreNodeThenAbruptRestart",
+        node: { nodeId: "tab:2" },
+        captureRestoredTabs: "po-restore-focus-restored-tab"
+      }
+    ]
+  },
+  {
+    id: "po-restore-tab-preserves-focused-native-destination",
+    title: "PureScript oracle preserves focus in a browser-created destination window",
+    notes: "Class-level restore contract: restoring an inactive tab into an existing focused native destination window must not replace that window's browser-authored metadata.",
+    tags: ["purescript-oracle", "restore", "focus", "native-window", "runtime-metadata"],
+    assertions: ["purescriptOracle", "runtimeMetadata"],
+    actions: [
+      { type: "nativeMoveTabToNewWindow", tab: { tabId: 1 }, active: true, captureWindow: "po-restore-focus-native-window" },
+      { type: "openTab", window: { role: "lastOpenedWindow" }, active: false, captureTab: "po-restore-focus-native-tab" },
+      { type: "outlinerCloseTab", tab: { capture: "po-restore-focus-native-tab" }, captureStaleTabs: "po-restore-focus-native-closed-source" },
+      {
+        type: "outlinerRestoreNodeThenAbruptRestart",
+        node: { nodeId: "tab:100" },
+        captureRestoredTabs: "po-restore-focus-native-restored-tab"
+      }
+    ]
+  },
+  {
+    id: "po-post-restore-activation-refresh-reorders-live-tabs",
+    title: "PureScript oracle reorders live direct children after post-restore activation refresh",
+    notes: "Class-level restore contract: restoring a closed tab preserves outline placement at the restore boundary, but later current runtime truth can reorder direct live tab children to match browser order.",
+    tags: ["purescript-oracle", "restore", "runtime-order", "activation-refresh"],
+    assertions: ["purescriptOracle", "runtimeScopeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseTab", tab: { tabId: 1 }, captureStaleTabs: "po-post-restore-order-closed-source" },
+      {
+        type: "outlinerRestoreNode",
+        node: { nodeId: "tab:1" },
+        captureRestoredTabs: "po-post-restore-order-restored-tab"
+      },
+      { type: "activateTab", tab: { tabId: 3 } }
+    ]
+  },
+  {
+    id: "po-post-restore-stale-query-then-activation-refresh-reorders-live-tabs",
+    title: "PureScript oracle ignores stale restore evidence before post-restore order refresh",
+    notes: "Class-level restore contract: stale live event/query evidence after restore is observational, while a later current activation refresh can reorder live direct tab children to browser order.",
+    tags: ["purescript-oracle", "restore", "runtime-order", "stale-query", "activation-refresh"],
+    assertions: ["purescriptOracle", "runtimeScopeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseTab", tab: { tabId: 1 }, captureStaleTabs: "po-post-restore-stale-order-closed-source" },
+      {
+        type: "outlinerRestoreNode",
+        node: { nodeId: "tab:1" },
+        captureRestoredTabs: "po-post-restore-stale-order-restored-tab"
+      },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "po-post-restore-stale-order-restored-tab" }, withStaleQuery: true },
+      { type: "activateTab", tab: { tabId: 3 } }
+    ]
+  },
+  {
+    id: "po-opener-subtree-refresh-orders-direct-child-by-min-runtime-rank",
+    title: "PureScript oracle orders opener subtrees by their minimum runtime rank on refresh",
+    notes: "Class-level runtime refresh contract: a same-window opener subtree remains nested, but the direct child subtree participates in parent window ordering by the minimum runtime rank inside that subtree.",
+    tags: ["purescript-oracle", "opener", "runtime-order", "activation-refresh"],
+    assertions: ["purescriptOracle", "runtimeScopeOrder", "runtimeMetadata"],
+    actions: [
+      {
+        type: "openTab",
+        window: { windowId: 10 },
+        index: 2,
+        active: false,
+        title: "Oracle opener parent",
+        url: "https://oracle.example/opener-parent",
+        captureTab: "po-opener-rank-parent"
+      },
+      {
+        type: "openTab",
+        window: { windowId: 10 },
+        openerTab: { capture: "po-opener-rank-parent" },
+        index: 0,
+        active: false,
+        title: "Oracle opener child",
+        url: "https://oracle.example/opener-child",
+        captureTab: "po-opener-rank-child"
+      },
+      { type: "activateTab", tab: { capture: "po-opener-rank-child" } }
+    ]
+  },
+  {
+    id: "po-runtime-refresh-sorts-live-run-after-closed-anchor",
+    title: "PureScript oracle sorts contiguous live tab runs without moving closed anchors",
+    notes: "Class-level runtime refresh contract: closed direct children remain anchors while the adjacent rank-bearing live run is sorted by current runtime order.",
+    tags: ["purescript-oracle", "runtime-order", "closed-anchor", "activation-refresh"],
+    assertions: ["purescriptOracle", "runtimeScopeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseTab", tab: { tabId: 1 }, captureStaleTabs: "po-rank-run-closed-anchor" },
+      {
+        type: "openTab",
+        window: { windowId: 10 },
+        index: 1,
+        active: false,
+        title: "Oracle rank late",
+        url: "https://oracle.example/rank-late",
+        captureTab: "po-rank-run-late"
+      },
+      {
+        type: "openTab",
+        window: { windowId: 10 },
+        index: 1,
+        active: true,
+        title: "Oracle rank early",
+        url: "https://oracle.example/rank-early",
+        captureTab: "po-rank-run-early"
+      },
+      { type: "activateTab", tab: { tabId: 2 } }
+    ]
+  },
+  {
+    id: "po-created-blank-tab-inserts-within-live-run-after-closed-anchor",
+    title: "PureScript oracle inserts created blank tabs by runtime rank after closed anchors",
+    notes: "Class-level created-tab placement contract: closed direct children remain anchors, but a browser-created blank tab still joins the adjacent live sibling run according to browser runtime index.",
+    tags: ["purescript-oracle", "created-tab", "runtime-order", "closed-anchor"],
+    assertions: ["purescriptOracle", "runtimeScopeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "outlinerCloseTab", tab: { tabId: 1 }, captureStaleTabs: "po-created-blank-closed-anchor" },
+      {
+        type: "openTab",
+        window: { windowId: 10 },
+        index: 0,
+        active: true,
+        title: "New Tab",
+        url: "about:newtab",
+        captureTab: "po-created-blank-before-live"
+      }
+    ]
+  },
+  {
+    id: "po-created-blank-tab-stays-after-nested-live-window-anchor",
+    title: "PureScript oracle keeps nested live windows as created-tab insertion anchors",
+    notes: "Class-level created-tab placement contract: browser-created blank tabs are placed by runtime rank within a direct live run, but a nested live window remains an outline boundary during create insertion.",
+    tags: ["purescript-oracle", "created-tab", "runtime-order", "nested-window"],
+    assertions: ["purescriptOracle", "runtimeScopeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 2 }, captureStaleTabs: "po-created-blank-nested-anchor-source" },
+      {
+        type: "openTab",
+        window: { windowId: 10 },
+        index: 0,
+        active: true,
+        openerTab: { tabId: 1 },
+        title: "New Tab",
+        url: "about:newtab",
+        captureTab: "po-created-blank-before-nested-anchor"
+      }
+    ]
+  },
+  {
+    id: "po-created-blank-tab-stays-after-nested-live-window-and-closed-opener-anchor",
+    title: "PureScript oracle keeps nested live-window boundaries near closed opener subtrees",
+    notes: "Class-level created-tab placement contract: a closed child under an opener subtree and an adjacent nested live window split the direct-child insertion boundary for later browser-created blank tabs.",
+    tags: ["purescript-oracle", "created-tab", "runtime-order", "nested-window", "closed-anchor"],
+    assertions: ["purescriptOracle", "runtimeScopeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 2 }, captureStaleTabs: "po-created-blank-nested-closed-source" },
+      {
+        type: "openTab",
+        window: { windowId: 10 },
+        index: 1,
+        active: false,
+        openerTab: { tabId: 1 },
+        title: "Oracle nested closed child",
+        url: "https://oracle.example/nested-closed-child",
+        captureTab: "po-created-blank-nested-closed-child"
+      },
+      { type: "outlinerCloseTab", tab: { capture: "po-created-blank-nested-closed-child" } },
+      {
+        type: "openTab",
+        window: { windowId: 10 },
+        index: 0,
+        active: true,
+        openerTab: { tabId: 1 },
+        title: "New Tab",
+        url: "about:newtab",
+        captureTab: "po-created-blank-before-nested-closed-anchor"
+      }
+    ]
+  },
+  {
+    id: "po-tab-removed-only-prunes-empty-command-window-shell",
+    title: "PureScript oracle prunes an empty command window after tab-only last-tab disappearance",
+    notes: "Class-level close contract: when a command-created runtime window loses its last tab without window-close evidence, the tab is natively deleted and the empty command shell is pruned rather than persisted as a restorable closed window.",
+    tags: ["purescript-oracle", "native-close", "commandCreated", "empty-window", "runtime-truth"],
+    assertions: ["purescriptOracle", "runtimeScopeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "po-tab-only-command-source" },
+      { type: "nativeCloseTab", tab: { role: "lastMovedTab" }, order: "tabRemovedOnly" },
+      { type: "restartBackground" }
+    ]
+  },
+  {
+    id: "po-session-only-prunes-empty-command-window-shell",
+    title: "PureScript oracle prunes an empty command window after session-only last-tab disappearance",
+    notes: "Class-level close contract: session-only disappearance of the last tab in a command-created window is not whole-window close ownership, so current truth removes the live tab and drops the empty command-created shell.",
+    tags: ["purescript-oracle", "native-close", "session", "commandCreated", "empty-window", "runtime-truth"],
+    assertions: ["purescriptOracle", "runtimeScopeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "po-session-only-command-source" },
+      { type: "nativeCloseTab", tab: { role: "lastMovedTab" }, order: "sessionChangedOnly" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "po-regroup-tab-stays-inside-command-window-with-live-sibling",
+    title: "PureScript oracle nests regrouped tabs inside their command-created source window",
+    notes: "Class-level grouping contract: grouping a tab that already lives inside a command-created window with live siblings creates a nested command window in that source wrapper, instead of promoting either wrapper to root.",
+    tags: ["purescript-oracle", "grouping", "nested-window", "commandCreated"],
+    assertions: ["purescriptOracle", "runtimeScopeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "po-regroup-command-source-before" },
+      {
+        type: "openTab",
+        window: { role: "lastOpenedWindow" },
+        active: true,
+        title: "Oracle command sibling",
+        url: "https://oracle.example/command-sibling",
+        captureTab: "po-regroup-command-sibling"
+      },
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "po-regroup-command-source-second" }
+    ]
+  },
+  {
+    id: "po-successive-root-grouping-preserves-command-window-order",
+    title: "PureScript oracle preserves root order for successive command-created groups",
+    notes: "Class-level grouping contract: grouping multiple tabs out of the same source root window keeps command-created root windows in command order instead of prepending each new wrapper.",
+    tags: ["purescript-oracle", "grouping", "root-order", "commandCreated"],
+    assertions: ["purescriptOracle", "runtimeScopeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "po-successive-root-group-first" },
+      { type: "outlinerGroupTab", tab: { tabId: 2 }, captureStaleTabs: "po-successive-root-group-second" }
+    ]
+  },
+  {
+    id: "po-created-race-promotes-command-window-when-command-source-was-empty",
+    title: "PureScript oracle promotes command windows when a raced create was not command-visible",
+    notes: "Class-level concurrency contract: a browser-created tab is runtime truth before grouping, but the grouping command may still see a single-tab source outline; the command-created window is promoted out before the created tab refresh repopulates the source window.",
+    tags: ["purescript-oracle", "created-tab", "grouping", "root-order", "concurrency"],
+    assertions: ["purescriptOracle", "runtimeScopeOrder", "runtimeMetadata"],
+    actions: [
+      {
+        type: "raceWithOutlinerGroup",
+        event: {
+          type: "openTab",
+          window: { windowId: 20 },
+          index: 0,
+          active: false,
+          title: "Oracle raced source create",
+          url: "https://oracle.example/raced-source-create",
+          captureTab: "po-raced-source-create"
+        },
+        groupTab: { tabId: 3 },
+        captureStaleTabs: "po-raced-source-create-command-source"
+      }
+    ]
+  },
+  {
+    id: "po-created-race-keeps-command-window-nested-when-source-had-sibling",
+    title: "PureScript oracle keeps command windows nested when the command saw a source sibling",
+    notes: "Class-level concurrency contract: a raced browser-created tab does not by itself promote the wrapper when the command-visible source window already had another owned live sibling.",
+    tags: ["purescript-oracle", "created-tab", "grouping", "nested-window", "concurrency"],
+    assertions: ["purescriptOracle", "runtimeScopeOrder", "runtimeMetadata"],
+    actions: [
+      {
+        type: "raceWithOutlinerGroup",
+        event: {
+          type: "openTab",
+          window: { windowId: 10 },
+          index: 1,
+          active: false,
+          title: "Oracle raced sibling create",
+          url: "https://oracle.example/raced-sibling-create",
+          captureTab: "po-raced-sibling-create"
+        },
+        groupTab: { tabId: 1 },
+        captureStaleTabs: "po-raced-sibling-create-command-source"
+      }
+    ]
+  },
+  {
+    id: "po-repeated-created-race-preserves-promoted-root-order",
+    title: "PureScript oracle preserves promoted root order across repeated created/group races",
+    notes: "Class-level concurrency contract: repeated source-empty created/group races promote each command-created wrapper while preserving the older promoted wrapper before the refreshed source window.",
+    tags: ["purescript-oracle", "created-tab", "grouping", "root-order", "concurrency"],
+    assertions: ["purescriptOracle", "runtimeScopeOrder", "runtimeMetadata"],
+    actions: [
+      {
+        type: "raceWithOutlinerGroup",
+        event: {
+          type: "openTab",
+          window: { windowId: 20 },
+          index: 0,
+          active: true,
+          title: "Oracle first raced source create",
+          url: "https://oracle.example/raced-source-create-1",
+          captureTab: "po-raced-source-create-1"
+        },
+        groupTab: { tabId: 3 },
+        captureStaleTabs: "po-raced-source-create-first-source"
+      },
+      {
+        type: "raceWithOutlinerGroup",
+        event: {
+          type: "openTab",
+          window: { role: "lastOpenedWindow" },
+          index: 0,
+          active: true,
+          title: "Oracle second raced source create",
+          url: "https://oracle.example/raced-source-create-2",
+          captureTab: "po-raced-source-create-2"
+        },
+        groupTab: { role: "lastMovedTab" },
+        captureStaleTabs: "po-raced-source-create-second-source"
+      }
+    ]
+  },
+  {
+    id: "po-restore-window-subtree-revives-nested-command-window",
+    title: "PureScript oracle restores nested closed command windows with their parent subtree",
+    notes: "Class-level restore contract: restoring a closed window subtree materializes closed descendant command windows when the browser restore produces runtime windows for those descendants.",
+    tags: ["purescript-oracle", "restore", "nested-window", "commandCreated"],
+    assertions: ["purescriptOracle", "runtimeScopeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 2 }, captureStaleTabs: "po-restore-nested-window-source" },
+      {
+        type: "openTab",
+        window: { role: "lastOpenedWindow" },
+        active: true,
+        title: "Oracle restore sibling",
+        url: "https://oracle.example/restore-sibling",
+        captureTab: "po-restore-nested-window-sibling"
+      },
+      { type: "outlinerGroupTab", tab: { tabId: 2 }, captureStaleTabs: "po-restore-nested-window-before-nested-close" },
+      { type: "nativeCloseTab", tab: { tabId: 2 } },
+      { type: "nativeCloseWindow", window: { windowId: 21 } },
+      {
+        type: "outlinerRestoreNode",
+        node: { nodeId: "window:21" },
+        captureRestoredTabs: "po-restore-nested-window-restored-tabs",
+        captureRestoredWindows: "po-restore-nested-window-restored-windows"
+      }
+    ]
+  },
+  {
+    id: "po-history-browser-move-before-undo",
+    title: "PureScript oracle preserves browser move placement across undo",
+    notes: "Class-level history replay contract: undoing an older grouping command must not reattach a browser-moved live tab to the stale source window child list.",
+    tags: ["purescript-oracle", "history", "browser-authored", "native-move", "runtime-scope-order"],
+    assertions: ["purescriptOracle", "runtimeScopeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "po-history-move-before-group" },
+      {
+        type: "nativeMoveTabToWindow",
+        tab: { tabId: 2 },
+        window: { windowId: 20 },
+        index: 1,
+        active: true,
+        captureStaleTabs: "po-history-move-old-source"
+      },
+      {
+        type: "updateTab",
+        tab: { tabId: 2 },
+        title: "Oracle history moved current",
+        url: "https://oracle.example/history-moved-current"
+      },
+      { type: "outlinerUndo" }
+    ]
+  },
+  {
+    id: "po-history-mixed-scope-browser-drift-before-undo",
+    title: "PureScript oracle preserves mixed runtime scope across undo",
+    notes: "Class-level history replay contract: restored, command-created, and browser-created tabs cohabiting one runtime scope remain structurally consistent after undo.",
+    tags: ["purescript-oracle", "history", "mixed-provenance", "restored", "commandCreated", "browserCreated"],
+    assertions: ["purescriptOracle", "runtimeOrder", "runtimeScopeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 2 }, captureStaleTabs: "po-history-mixed-first-group" },
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      {
+        type: "outlinerRestoreNodeThenAbruptRestart",
+        node: { nodeId: "window:20" },
+        captureRestoredTabs: "po-history-mixed-restored-tabs",
+        captureRestoredWindows: "po-history-mixed-restored-window"
+      },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "po-history-mixed-command-move" },
+      {
+        type: "nativeOpenWindow",
+        focused: false,
+        tabs: [{ title: "Oracle history external", active: true }],
+        captureWindow: "po-history-mixed-external-window",
+        captureTabs: "po-history-mixed-external-tabs"
+      },
+      {
+        type: "nativeMoveTabToWindow",
+        tab: { tabId: 1 },
+        window: { capture: "po-history-mixed-restored-window" },
+        index: 0,
+        active: true,
+        captureStaleTabs: "po-history-mixed-command-old"
+      },
+      {
+        type: "nativeMoveTabToWindow",
+        tab: { capture: "po-history-mixed-external-tabs" },
+        window: { capture: "po-history-mixed-restored-window" },
+        index: 1,
+        active: true,
+        captureStaleTabs: "po-history-mixed-external-old"
+      },
+      { type: "outlinerUndo" }
+    ]
+  },
+  {
+    id: "po-history-journal-browser-drift-tombstone",
+    title: "PureScript oracle keeps journal tombstones dominant after history drift",
+    notes: "Class-level lifecycle contract: an injected close journal after history replay and browser-authored drift must not resurrect command-deleted outline nodes.",
+    tags: ["purescript-oracle", "history", "journal", "browserCreated", "native-move", "tombstone"],
+    assertions: ["purescriptOracle", "runtimeOrder", "runtimeMetadata"],
+    actions: [
+      {
+        type: "nativeOpenWindow",
+        focused: false,
+        tabs: [
+          { title: "Oracle journal browser A" },
+          { title: "Oracle journal browser B", active: true }
+        ],
+        captureWindow: "po-history-journal-browser-window",
+        captureTabs: "po-history-journal-browser-tabs"
+      },
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "po-history-journal-group-old" },
+      { type: "outlinerUndo" },
+      {
+        type: "nativeMoveTabToWindow",
+        tab: { capture: "po-history-journal-browser-tabs" },
+        window: { windowId: 10 },
+        index: 1,
+        active: true,
+        captureStaleTabs: "po-history-journal-browser-old"
+      },
+      { type: "injectCloseJournalThenAbruptRestart", node: { tab: { capture: "po-history-journal-browser-tabs" } } },
+      { type: "outlinerRedo" }
+    ]
+  },
+  {
+    id: "po-cross-window-opener-popup-stays-root-after-command-move",
+    title: "PureScript oracle keeps cross-window opener popups rooted after command move",
+    notes: "Class-level opener contract: opener metadata may nest tabs only inside the same runtime window; a browser-created popup window whose opener tab is command-moved remains its own live root.",
+    tags: ["purescript-oracle", "opener", "browserCreated", "commandCreated", "relocation", "runtime-scope-order"],
+    assertions: ["purescriptOracle", "runtimeScopeOrder", "runtimeMetadata"],
+    actions: [
+      {
+        type: "nativeOpenWindow",
+        focused: false,
+        tabs: [{ title: "Oracle opener popup", openerTab: { tabId: 1 }, active: true }],
+        captureWindow: "po-opener-popup-window",
+        captureTabs: "po-opener-popup-tab"
+      },
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "po-opener-command-old" }
+    ]
+  },
+  {
+    id: "po-same-window-opener-child-preserves-direct-sibling-order",
+    title: "PureScript oracle preserves direct sibling order around same-window opener children",
+    notes: "Class-level opener contract: runtime order may place an opener child before its opener, but direct outline child ordering is based on each direct child's subtree minimum rank rather than a flattened tab order.",
+    tags: ["purescript-oracle", "opener", "browserCreated", "commandCreated", "runtime-scope-order"],
+    assertions: ["purescriptOracle", "runtimeScopeOrder", "runtimeMetadata"],
+    actions: [
+      { type: "outlinerMoveTabCommandToNewWindow", tab: { tabId: 1 }, captureStaleTabs: "po-opener-sibling-command-old" },
+      {
+        type: "openTab",
+        window: { role: "lastOpenedWindow" },
+        openerTab: { tabId: 1 },
+        index: 0,
+        active: false,
+        title: "Oracle opener child",
+        url: "https://oracle.example/opener-child",
+        captureTab: "po-opener-sibling-child"
+      },
+      {
+        type: "openTab",
+        window: { role: "lastOpenedWindow" },
+        index: 1,
+        active: true,
+        title: "Oracle opener sibling",
+        url: "https://oracle.example/opener-sibling",
+        captureTab: "po-opener-sibling-direct"
       }
     ]
   },
@@ -21727,6 +22426,77 @@ type PureScriptOracleResult =
       };
     };
 
+type GeneratedOracleMode = "gated" | "explore" | "strict";
+
+type GeneratedOracleResultKind = "matched" | "unsupported" | "rejected" | "mismatch";
+
+type GeneratedOracleClassification = "matched" | "unsupported" | "oracle-gap" | "candidate-app-bug";
+
+type PureScriptOracleComparison =
+  | {
+      kind: "matched";
+      traceId: string;
+      snapshotCount: number;
+    }
+  | {
+      kind: "unsupported";
+      traceId: string;
+      reason: string;
+      step?: number;
+      operation?: string;
+      actionDelta?: number;
+      code?: string;
+      message?: string;
+    }
+  | {
+      kind: "rejected";
+      traceId: string;
+      step?: number;
+      code: string;
+      message: string;
+    }
+  | {
+      kind: "mismatch";
+      traceId: string;
+      actualSnapshotCount: number;
+      oracleSnapshotCount: number;
+      firstMismatch: string;
+    };
+
+type GeneratedOracleReportRecord = {
+  version: 1;
+  at: string;
+  mode: GeneratedOracleMode;
+  traceId: string;
+  seed: number;
+  steps: number;
+  options: Required<GeneratedTraceOptions>;
+  result: GeneratedOracleResultKind;
+  classification: GeneratedOracleClassification;
+  actionCount: number;
+  snapshotCount: number;
+  replayCommand: string;
+  history: string[];
+  unsupported?: {
+    reason: string;
+    step?: number;
+    operation?: string;
+    actionDelta?: number;
+    code?: string;
+    message?: string;
+  };
+  rejection?: {
+    step?: number;
+    code: string;
+    message: string;
+  };
+  mismatch?: {
+    firstMismatch: string;
+    actualSnapshotCount: number;
+    oracleSnapshotCount: number;
+  };
+};
+
 type PureScriptOracleSnapshot = {
   outline: {
     rootIds: string[];
@@ -21884,21 +22654,69 @@ function assertPureScriptOracleSnapshotsForId(
   actualSnapshots: PureScriptOracleSnapshot[],
   history: string[]
 ): void {
+  const comparison = comparePureScriptOracleSnapshotsForId(traceId, input, actualSnapshots);
+  if (comparison.kind !== "matched") {
+    throw new Error(pureScriptOracleFailureText(comparison, history));
+  }
+}
+
+function comparePureScriptOracleSnapshotsForId(
+  traceId: string,
+  input: PureScriptOracleInput,
+  actualSnapshots: PureScriptOracleSnapshot[]
+): PureScriptOracleComparison {
   const result = evaluatePureScriptOracle(input);
   if (!result.ok) {
-    throw new Error(
-      `PureScript oracle rejected trace ${traceId}: ${result.error.code}: ${result.error.message}` +
-        `${typeof result.error.step === "number" ? ` at step ${result.error.step}` : ""}\nTrace:\n${history.join("\n")}`
-    );
+    const rejected = {
+      traceId,
+      step: result.error.step,
+      code: result.error.code,
+      message: result.error.message
+    };
+    return result.error.code === "unsupported-action"
+      ? {
+          kind: "unsupported",
+          reason: "oracle-rejected-unsupported-action",
+          ...rejected
+        }
+      : {
+          kind: "rejected",
+          ...rejected
+        };
   }
 
-  try {
-    expect(actualSnapshots).toEqual(result.snapshots);
-  } catch (error) {
-    throw new Error(
-      `${generatedErrorText(error)}\nPureScript oracle mismatch for ${traceId}\n${firstPureScriptOracleMismatch(actualSnapshots, result.snapshots)}\nTrace:\n${history.join("\n")}`
-    );
+  if (JSON.stringify(actualSnapshots) === JSON.stringify(result.snapshots)) {
+    return {
+      kind: "matched",
+      traceId,
+      snapshotCount: actualSnapshots.length
+    };
   }
+
+  return {
+    kind: "mismatch",
+    traceId,
+    actualSnapshotCount: actualSnapshots.length,
+    oracleSnapshotCount: result.snapshots.length,
+    firstMismatch: firstPureScriptOracleMismatch(actualSnapshots, result.snapshots)
+  };
+}
+
+function pureScriptOracleFailureText(comparison: PureScriptOracleComparison, history: string[]): string {
+  const traceText = `Trace:\n${history.join("\n")}`;
+  if (comparison.kind === "unsupported") {
+    return `PureScript oracle unsupported trace ${comparison.traceId}: ${comparison.reason}` +
+      `${typeof comparison.code === "string" ? ` (${comparison.code}: ${comparison.message ?? ""})` : ""}` +
+      `${typeof comparison.step === "number" ? ` at step ${comparison.step}` : ""}\n${traceText}`;
+  }
+  if (comparison.kind === "rejected") {
+    return `PureScript oracle rejected trace ${comparison.traceId}: ${comparison.code}: ${comparison.message}` +
+      `${typeof comparison.step === "number" ? ` at step ${comparison.step}` : ""}\n${traceText}`;
+  }
+  if (comparison.kind === "mismatch") {
+    return `PureScript oracle mismatch for ${comparison.traceId}\n${comparison.firstMismatch}\n${traceText}`;
+  }
+  return `PureScript oracle matched ${comparison.traceId}`;
 }
 
 function firstPureScriptOracleMismatch(
@@ -21929,6 +22747,215 @@ function loadPureScriptOracleModule(): PureScriptOracleModule {
     throw new Error(
       `PureScript oracle output is missing. Run pnpm run oracle:build before purescriptOracle traces.\n${generatedErrorText(error)}`
     );
+  }
+}
+
+function generatedTraceOracleMode(): GeneratedOracleMode {
+  const mode = process.env.GENERATED_TRACE_ORACLE_MODE ?? "gated";
+  if (mode === "gated" || mode === "explore" || mode === "strict") {
+    return mode;
+  }
+  throw new Error(`Unknown GENERATED_TRACE_ORACLE_MODE ${JSON.stringify(mode)}`);
+}
+
+function shouldAttemptGeneratedPureScriptOracle(
+  seed: number,
+  steps: number,
+  options: GeneratedTraceOptions,
+  mode: GeneratedOracleMode
+): boolean {
+  return mode === "explore" ||
+    mode === "strict" ||
+    shouldRunGeneratedPureScriptOracle(seed, steps, options);
+}
+
+function generatedTraceOracleFailOnMismatch(): boolean {
+  return process.env.GENERATED_TRACE_ORACLE_FAIL_ON_MISMATCH === "1";
+}
+
+function generatedOracleComparisonShouldFail(
+  comparison: PureScriptOracleComparison,
+  mode: GeneratedOracleMode
+): boolean {
+  if (comparison.kind === "matched") {
+    return false;
+  }
+  if (mode === "strict" || mode === "gated") {
+    return true;
+  }
+  return comparison.kind === "mismatch" && generatedTraceOracleFailOnMismatch();
+}
+
+function classifyGeneratedOracleComparison(
+  comparison: PureScriptOracleComparison
+): GeneratedOracleClassification {
+  if (comparison.kind === "matched") {
+    return "matched";
+  }
+  if (comparison.kind === "unsupported") {
+    return "unsupported";
+  }
+  if (comparison.kind === "rejected") {
+    return "oracle-gap";
+  }
+  return "candidate-app-bug";
+}
+
+function unsupportedGeneratedOracleComparison(details: {
+  traceId: string;
+  reason: string;
+  step?: number;
+  operation?: string;
+  actionDelta?: number;
+}): PureScriptOracleComparison {
+  return {
+    kind: "unsupported",
+    traceId: details.traceId,
+    reason: details.reason,
+    step: details.step,
+    operation: details.operation,
+    actionDelta: details.actionDelta
+  };
+}
+
+function appendGeneratedOracleReport(record: GeneratedOracleReportRecord): void {
+  const reportPath = process.env.GENERATED_TRACE_ORACLE_REPORT;
+  if (!reportPath) {
+    return;
+  }
+  mkdirSync(dirname(reportPath), { recursive: true });
+  appendFileSync(reportPath, `${JSON.stringify(record)}\n`, "utf8");
+}
+
+function generatedOracleReportRecord(details: {
+  mode: GeneratedOracleMode;
+  traceId: string;
+  seed: number;
+  steps: number;
+  options: Required<GeneratedTraceOptions>;
+  comparison: PureScriptOracleComparison;
+  actionCount: number;
+  snapshotCount: number;
+  history: string[];
+}): GeneratedOracleReportRecord {
+  const base = {
+    version: 1 as const,
+    at: new Date().toISOString(),
+    mode: details.mode,
+    traceId: details.traceId,
+    seed: details.seed,
+    steps: details.steps,
+    options: details.options,
+    result: details.comparison.kind,
+    classification: classifyGeneratedOracleComparison(details.comparison),
+    actionCount: details.actionCount,
+    snapshotCount: details.snapshotCount,
+    replayCommand: generatedTraceReplayCommand(details.seed, details.steps, details.options),
+    history: [...details.history]
+  };
+  if (details.comparison.kind === "unsupported") {
+    return {
+      ...base,
+      unsupported: {
+        reason: details.comparison.reason,
+        step: details.comparison.step,
+        operation: details.comparison.operation,
+        actionDelta: details.comparison.actionDelta,
+        code: details.comparison.code,
+        message: details.comparison.message
+      }
+    };
+  }
+  if (details.comparison.kind === "rejected") {
+    return {
+      ...base,
+      rejection: {
+        step: details.comparison.step,
+        code: details.comparison.code,
+        message: details.comparison.message
+      }
+    };
+  }
+  if (details.comparison.kind === "mismatch") {
+    return {
+      ...base,
+      mismatch: {
+        firstMismatch: details.comparison.firstMismatch,
+        actualSnapshotCount: details.comparison.actualSnapshotCount,
+        oracleSnapshotCount: details.comparison.oracleSnapshotCount
+      }
+    };
+  }
+  return base;
+}
+
+function generatedTraceReplayCommand(
+  seed: number,
+  steps: number,
+  options: Required<GeneratedTraceOptions>
+): string {
+  const parts = [
+    "GENERATED_TRACE_ORACLE_MODE=strict",
+    `GENERATED_TRACE_REPLAY_SEED=${seed}`,
+    `GENERATED_TRACE_REPLAY_STEPS=${steps}`
+  ];
+  if (options.adversarialRuntimeQueries) {
+    parts.push("GENERATED_TRACE_REPLAY_RUNTIME_QUERIES=1");
+  }
+  if (options.adversarialConcurrency) {
+    parts.push("GENERATED_TRACE_REPLAY_CONCURRENCY=1");
+  }
+  parts.push(
+    "pnpm exec vitest run src/background/controller.test.ts --testNamePattern \"replays a selected generated trace\""
+  );
+  return parts.join(" ");
+}
+
+function optionalPositiveIntegerEnv(name: string): number | undefined {
+  const value = process.env[name];
+  if (value === undefined || value === "") {
+    return undefined;
+  }
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 1) {
+    throw new Error(`${name} must be a positive integer, got ${JSON.stringify(value)}`);
+  }
+  return parsed;
+}
+
+function requiredPositiveIntegerEnv(name: string): number {
+  const parsed = optionalPositiveIntegerEnv(name);
+  if (typeof parsed !== "number") {
+    throw new Error(`${name} must be set`);
+  }
+  return parsed;
+}
+
+function booleanFlagEnv(name: string): boolean {
+  const value = process.env[name];
+  return value === "1" || value === "true";
+}
+
+async function withEnv<T>(updates: Record<string, string | undefined>, run: () => Promise<T> | T): Promise<T> {
+  const previous = new Map<string, string | undefined>();
+  for (const [key, value] of Object.entries(updates)) {
+    previous.set(key, process.env[key]);
+    if (typeof value === "undefined") {
+      delete process.env[key];
+    } else {
+      process.env[key] = value;
+    }
+  }
+  try {
+    return await run();
+  } finally {
+    for (const [key, value] of previous) {
+      if (typeof value === "undefined") {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
   }
 }
 
@@ -22045,6 +23072,36 @@ async function runDomainAction(context: GeneratedTraceContext, action: DomainAct
         windowId: moved.windowId
       });
     }
+    if (action.event.type === "updateTab") {
+      const updatedTab = resolveDomainTab(context, action.event.tab);
+      const moved = runtimeTabById(context, groupTab.id);
+      recordPureScriptOracleAction(context, {
+        type: "concurrentUpdatedTabThenGroup",
+        updatedTab: copyTab(updatedTab),
+        groupTab: action.groupTab,
+        windowId: moved.windowId
+      });
+    }
+    if (action.event.type === "activateTab") {
+      const activatedTab = resolveDomainTab(context, action.event.tab);
+      const moved = runtimeTabById(context, groupTab.id);
+      recordPureScriptOracleAction(context, {
+        type: "concurrentActivatedTabThenGroup",
+        activatedTab: tabOracleSelector(activatedTab),
+        groupTab: action.groupTab,
+        windowId: moved.windowId
+      });
+    }
+    if (action.event.type === "focusWindow") {
+      const focusedWindow = resolveDomainWindow(context, action.event.window);
+      const moved = runtimeTabById(context, groupTab.id);
+      recordPureScriptOracleAction(context, {
+        type: "concurrentFocusedWindowThenGroup",
+        focusedWindow: windowOracleSelector(focusedWindow),
+        groupTab: action.groupTab,
+        windowId: moved.windowId
+      });
+    }
     return;
   }
 
@@ -22145,6 +23202,16 @@ async function runDomainAction(context: GeneratedTraceContext, action: DomainAct
 
   if (action.type === "outlinerRestoreDeleteWindowDelayedEvent") {
     await runDomainOutlinerRestoreDeleteWindowDelayedEvent(context, action.window, action.captureStaleTabs);
+    return;
+  }
+
+  if (action.type === "outlinerRestoreNode") {
+    await runDomainOutlinerRestoreNode(
+      context,
+      action.node,
+      action.captureRestoredTabs,
+      action.captureRestoredWindows
+    );
     return;
   }
 
@@ -23198,6 +24265,36 @@ async function runDomainOutlinerRestoreDeleteWindowDelayedEvent(
   await pruneMissingExpectedClosedNodes(context, []);
 }
 
+async function runDomainOutlinerRestoreNode(
+  context: GeneratedTraceContext,
+  selector: DomainNodeSelector,
+  captureRestoredTabs?: string,
+  captureRestoredWindows?: string
+): Promise<void> {
+  const before = (await context.controller.handleMessage({ type: "getState" })) as OutlineState;
+  const nodeId = resolveDomainNodeId(context, before, selector);
+  const candidateNodeIds = new Set(generatedSubtreeNodeIds(before, nodeId));
+
+  const result = await context.controller.handleMessage({ type: "restoreNode", nodeId });
+  expect((result as CommandAck).type).toBe("commandAck");
+  await flushGeneratedRuntimeEventRefreshes(context);
+
+  const after = (await context.controller.handleMessage({ type: "getState" })) as OutlineState;
+  const restored = captureRestoredRuntimeResources(context, before, after, candidateNodeIds, {
+    tabs: captureRestoredTabs,
+    windows: captureRestoredWindows
+  });
+  recordPureScriptOracleAction(context, {
+    type: "outlinerRestoreNode",
+    node: selector,
+    ...(captureRestoredTabs ? { captureRestoredTabs } : {}),
+    ...(captureRestoredWindows ? { captureRestoredWindows } : {}),
+    restoredTabs: restored.tabs,
+    restoredWindows: restored.windows
+  });
+  trackRestoreCommandLifecycleExpectations(context, before, after);
+}
+
 async function runDomainOutlinerRestoreNodeRejectingCreate(
   context: GeneratedTraceContext,
   selector: DomainNodeSelector,
@@ -23800,14 +24897,21 @@ function domainTraceErrorText(
 
 async function runGeneratedTrace(seed: number, steps: number, options: GeneratedTraceOptions = {}): Promise<void> {
   const context = createGeneratedTraceContext({ now: seed * 1000, history: [`seed ${seed}`] });
-  context.adversarialRuntimeQueries = options.adversarialRuntimeQueries ?? false;
-  context.adversarialConcurrency = options.adversarialConcurrency ?? false;
+  const normalizedOptions: Required<GeneratedTraceOptions> = {
+    adversarialRuntimeQueries: options.adversarialRuntimeQueries ?? false,
+    adversarialConcurrency: options.adversarialConcurrency ?? false
+  };
+  context.adversarialRuntimeQueries = normalizedOptions.adversarialRuntimeQueries;
+  context.adversarialConcurrency = normalizedOptions.adversarialConcurrency;
   context.rng = seededRandom(seed);
   const oracleTraceId = `generated:${seed}:${steps}:${context.adversarialRuntimeQueries ? "query-skew" : "normal"}:${context.adversarialConcurrency ? "concurrency" : "serial"}`;
-  const oracleInputBase = shouldRunGeneratedPureScriptOracle(seed, steps, options)
+  const oracleMode = generatedTraceOracleMode();
+  const oracleInputBase = shouldAttemptGeneratedPureScriptOracle(seed, steps, normalizedOptions, oracleMode)
     ? pureScriptOracleInputForGeneratedTrace(oracleTraceId, context)
     : undefined;
   const oracleSnapshots: PureScriptOracleSnapshot[] = [];
+  let oracleComparison: PureScriptOracleComparison | undefined;
+  let oracleStillSupported = Boolean(oracleInputBase);
 
   await context.controller.ensureState();
   await assertGeneratedInvariants(context);
@@ -23827,14 +24931,24 @@ async function runGeneratedTrace(seed: number, steps: number, options: Generated
     const oracleActionCount = context.oracleActions.length;
     try {
       await operation.run(context);
-      if (oracleInputBase && context.oracleActions.length !== oracleActionCount + 1) {
-        throw new Error(`Generated operation ${operation.name} recorded ${context.oracleActions.length - oracleActionCount} PureScript oracle actions`);
+      if (oracleInputBase && oracleStillSupported && context.oracleActions.length !== oracleActionCount + 1) {
+        oracleComparison = unsupportedGeneratedOracleComparison({
+          traceId: oracleTraceId,
+          reason: "generated-operation-oracle-action-count",
+          step: step + 1,
+          operation: operation.name,
+          actionDelta: context.oracleActions.length - oracleActionCount
+        });
+        oracleStillSupported = false;
+        if (generatedOracleComparisonShouldFail(oracleComparison, oracleMode)) {
+          throw new Error(pureScriptOracleFailureText(oracleComparison, context.history));
+        }
       }
       await assertRuntimeTraceOracles(context, {
         generatedOperation: operation,
         sideEffects: runtimeSideEffectsSince(context.runtime, sideEffectSnapshot)
       });
-      if (oracleInputBase) {
+      if (oracleInputBase && oracleStillSupported) {
         oracleSnapshots.push(await pureScriptOracleSnapshot(context));
       }
     } catch (error) {
@@ -23854,18 +24968,35 @@ async function runGeneratedTrace(seed: number, steps: number, options: Generated
     }
   }
   if (oracleInputBase) {
-    assertPureScriptOracleSnapshotsForId(
-      oracleTraceId,
-      {
-        ...oracleInputBase,
-        trace: {
-          ...oracleInputBase.trace,
-          actions: context.oracleActions
-        }
-      },
-      oracleSnapshots,
-      context.history
-    );
+    if (oracleStillSupported) {
+      oracleComparison = comparePureScriptOracleSnapshotsForId(
+        oracleTraceId,
+        {
+          ...oracleInputBase,
+          trace: {
+            ...oracleInputBase.trace,
+            actions: context.oracleActions
+          }
+        },
+        oracleSnapshots
+      );
+    }
+    if (oracleComparison) {
+      appendGeneratedOracleReport(generatedOracleReportRecord({
+        mode: oracleMode,
+        traceId: oracleTraceId,
+        seed,
+        steps,
+        options: normalizedOptions,
+        comparison: oracleComparison,
+        actionCount: context.oracleActions.length,
+        snapshotCount: oracleSnapshots.length,
+        history: context.history
+      }));
+      if (generatedOracleComparisonShouldFail(oracleComparison, oracleMode)) {
+        throw new Error(pureScriptOracleFailureText(oracleComparison, context.history));
+      }
+    }
   }
 }
 
@@ -23892,6 +25023,37 @@ function shouldRunGeneratedPureScriptOracle(
   // Full generated replay sequences only join this gate once every recorded
   // action in the replay matches the oracle semantics.
   return (seed === 1277552076 && steps === 11 && !options.adversarialRuntimeQueries && !options.adversarialConcurrency) ||
+    (seed === 950000016 && steps === 80 && !options.adversarialRuntimeQueries && !options.adversarialConcurrency) ||
+    (seed === 950000033 && steps === 80 && !options.adversarialRuntimeQueries && !options.adversarialConcurrency) ||
+    (seed === 950000017 && steps === 80 && !options.adversarialRuntimeQueries && !options.adversarialConcurrency) ||
+    (seed === 950000107 && steps === 80 && options.adversarialRuntimeQueries === true && !options.adversarialConcurrency) ||
+    (seed === 950000115 && steps === 80 && options.adversarialRuntimeQueries === true && !options.adversarialConcurrency) ||
+    (seed === 950000125 && steps === 80 && options.adversarialRuntimeQueries === true && !options.adversarialConcurrency) ||
+    (seed === 950000130 && steps === 80 && options.adversarialRuntimeQueries === true && !options.adversarialConcurrency) ||
+    (seed === 950000134 && steps === 80 && options.adversarialRuntimeQueries === true && !options.adversarialConcurrency) ||
+    (seed === 960000001 && steps === 80 && !options.adversarialRuntimeQueries && !options.adversarialConcurrency) ||
+    (seed === 960000006 && steps === 80 && !options.adversarialRuntimeQueries && !options.adversarialConcurrency) ||
+    (seed === 960000017 && steps === 80 && !options.adversarialRuntimeQueries && !options.adversarialConcurrency) ||
+    (seed === 960000032 && steps === 80 && !options.adversarialRuntimeQueries && !options.adversarialConcurrency) ||
+    (seed === 960000039 && steps === 80 && !options.adversarialRuntimeQueries && !options.adversarialConcurrency) ||
+    (seed === 960000102 && steps === 80 && options.adversarialRuntimeQueries === true && !options.adversarialConcurrency) ||
+    (seed === 960000105 && steps === 80 && options.adversarialRuntimeQueries === true && !options.adversarialConcurrency) ||
+    (seed === 950000001 && steps === 80 && options.adversarialRuntimeQueries === true && options.adversarialConcurrency === true) ||
+    (seed === 950000014 && steps === 80 && options.adversarialRuntimeQueries === true && options.adversarialConcurrency === true) ||
+    (seed === 950000032 && steps === 80 && options.adversarialRuntimeQueries === true && options.adversarialConcurrency === true) ||
+    (seed === 950000034 && steps === 80 && options.adversarialRuntimeQueries === true && options.adversarialConcurrency === true) ||
+    (seed === 950000038 && steps === 80 && options.adversarialRuntimeQueries === true && options.adversarialConcurrency === true) ||
+    (seed === 950000012 && steps === 80 && options.adversarialRuntimeQueries === true && options.adversarialConcurrency === true) ||
+    (seed === 950000025 && steps === 80 && options.adversarialRuntimeQueries === true && options.adversarialConcurrency === true) ||
+    (seed === 960000001 && steps === 80 && options.adversarialRuntimeQueries === true && options.adversarialConcurrency === true) ||
+    (seed === 960000008 && steps === 80 && options.adversarialRuntimeQueries === true && options.adversarialConcurrency === true) ||
+    (seed === 960000015 && steps === 80 && options.adversarialRuntimeQueries === true && options.adversarialConcurrency === true) ||
+    (seed === 960000024 && steps === 80 && options.adversarialRuntimeQueries === true && options.adversarialConcurrency === true) ||
+    (seed === 960000034 && steps === 80 && options.adversarialRuntimeQueries === true && options.adversarialConcurrency === true) ||
+    (seed === 960000012 && steps === 80 && options.adversarialRuntimeQueries === true && options.adversarialConcurrency === true) ||
+    (seed === 960000027 && steps === 80 && options.adversarialRuntimeQueries === true && options.adversarialConcurrency === true) ||
+    (seed === 960000038 && steps === 80 && options.adversarialRuntimeQueries === true && options.adversarialConcurrency === true) ||
+    (seed === 960000039 && steps === 80 && options.adversarialRuntimeQueries === true && options.adversarialConcurrency === true) ||
     (seed === 141616461 && steps === 7 && options.adversarialRuntimeQueries === true && options.adversarialConcurrency === true) ||
     (seed === 910720204 && steps === 21 && options.adversarialRuntimeQueries === true && options.adversarialConcurrency === true) ||
     (seed === 1546021748 && steps === 4 && options.adversarialRuntimeQueries === true && options.adversarialConcurrency === true) ||
@@ -24390,6 +25552,7 @@ function allowedMutatingBrowserSideEffects(action: DomainAction): Set<RuntimeSid
   }
 
   if (
+    action.type === "outlinerRestoreNode" ||
     action.type === "outlinerRestoreNodeRejectingCreate" ||
     action.type === "outlinerRestoreNodeThenAbruptRestart"
   ) {
@@ -25414,6 +26577,81 @@ describe("background controller lifecycle", () => {
     expect(state.nodes["tab:300"]?.title).toBe("Saved 300");
     expect(calls).toBeLessThanOrEqual(1);
     expect(controller.__debugRuntimeIndexStatus()).toEqual({ warm: true, matchesState: true, reason: "" });
+  });
+
+  it("keeps generated oracle exploration opt-in outside the frozen gate", async () => {
+    const mismatch: PureScriptOracleComparison = {
+      kind: "mismatch",
+      traceId: "generated:1:1:normal:serial",
+      actualSnapshotCount: 0,
+      oracleSnapshotCount: 1,
+      firstMismatch: "Snapshot 0 differs"
+    };
+
+    await withEnv({ GENERATED_TRACE_ORACLE_MODE: undefined, GENERATED_TRACE_ORACLE_FAIL_ON_MISMATCH: undefined }, () => {
+      expect(generatedTraceOracleMode()).toBe("gated");
+      expect(shouldAttemptGeneratedPureScriptOracle(1, 1, {}, generatedTraceOracleMode())).toBe(false);
+      expect(generatedOracleComparisonShouldFail(mismatch, "explore")).toBe(false);
+    });
+    await withEnv({ GENERATED_TRACE_ORACLE_MODE: "explore" }, () => {
+      expect(generatedTraceOracleMode()).toBe("explore");
+      expect(shouldAttemptGeneratedPureScriptOracle(1, 1, {}, generatedTraceOracleMode())).toBe(true);
+    });
+    await withEnv({ GENERATED_TRACE_ORACLE_MODE: "strict" }, () => {
+      expect(generatedTraceOracleMode()).toBe("strict");
+      expect(generatedOracleComparisonShouldFail(mismatch, generatedTraceOracleMode())).toBe(true);
+    });
+    await withEnv({ GENERATED_TRACE_ORACLE_MODE: "explore", GENERATED_TRACE_ORACLE_FAIL_ON_MISMATCH: "1" }, () => {
+      expect(generatedOracleComparisonShouldFail(mismatch, generatedTraceOracleMode())).toBe(true);
+    });
+  });
+
+  it("records structured generated oracle comparison reports", async () => {
+    const context = createGeneratedTraceContext({
+      now: 1000,
+      history: ["structured oracle comparison"]
+    });
+    await context.controller.ensureState();
+    const input = pureScriptOracleInputForGeneratedTrace("generated:1:1:normal:serial", context);
+    const snapshot = await pureScriptOracleSnapshot(context);
+    const matched = comparePureScriptOracleSnapshotsForId(input.trace.id, input, [snapshot]);
+    const mismatch = comparePureScriptOracleSnapshotsForId(input.trace.id, input, []);
+    const reportPath = join(mkdtempSync(join(tmpdir(), "tabs-outliner-oracle-")), "oracle.jsonl");
+
+    expect(matched.kind).toBe("matched");
+    expect(mismatch.kind).toBe("mismatch");
+    expect(classifyGeneratedOracleComparison(mismatch)).toBe("candidate-app-bug");
+
+    await withEnv({ GENERATED_TRACE_ORACLE_REPORT: reportPath }, () => {
+      appendGeneratedOracleReport(generatedOracleReportRecord({
+        mode: "explore",
+        traceId: input.trace.id,
+        seed: 1,
+        steps: 1,
+        options: {
+          adversarialRuntimeQueries: false,
+          adversarialConcurrency: false
+        },
+        comparison: mismatch,
+        actionCount: 0,
+        snapshotCount: 0,
+        history: ["seed 1"]
+      }));
+    });
+
+    const [record] = readFileSync(reportPath, "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as GeneratedOracleReportRecord);
+    expect(record).toMatchObject({
+      version: 1,
+      mode: "explore",
+      traceId: input.trace.id,
+      result: "mismatch",
+      classification: "candidate-app-bug",
+      replayCommand: expect.stringContaining("GENERATED_TRACE_REPLAY_SEED=1")
+    });
+    expect(record?.mismatch?.firstMismatch).toContain("Snapshot 0");
   });
 
   it("exposes runtime cache truth after browser-authored and command-authored scope changes", async () => {
@@ -27783,6 +29021,29 @@ describe("background controller lifecycle", () => {
     });
   });
 
+  it("preserves root order across successive grouping concurrency", async () => {
+    await runGeneratedTrace(950000001, 80, {
+      adversarialRuntimeQueries: true,
+      adversarialConcurrency: true
+    });
+  });
+
+  it("promotes command windows when raced creates were not command-visible", async () => {
+    await runGeneratedTrace(950000014, 80, {
+      adversarialRuntimeQueries: true,
+      adversarialConcurrency: true
+    });
+  });
+
+  it("promotes command windows across source-empty created/group variants", async () => {
+    for (const seed of [950000032, 950000034, 950000038, 960000012, 960000027, 960000038, 960000039]) {
+      await runGeneratedTrace(seed, 80, {
+        adversarialRuntimeQueries: true,
+        adversarialConcurrency: true
+      });
+    }
+  });
+
   it("preserves active tab state across stale relocation concurrency", async () => {
     await runGeneratedTrace(141616461, 7, {
       adversarialRuntimeQueries: true,
@@ -27832,6 +29093,15 @@ describe("background controller lifecycle", () => {
     });
   });
 
+  it("keeps restored saved titles for transient URL-like update races", async () => {
+    for (const seed of [950000012, 950000025, 960000001, 960000008, 960000015, 960000024, 960000034]) {
+      await runGeneratedTrace(seed, 80, {
+        adversarialRuntimeQueries: true,
+        adversarialConcurrency: true
+      });
+    }
+  });
+
   it("preserves active tab state when activation races grouping after source-window churn", async () => {
     await runGeneratedTrace(1338200851, 8, {
       adversarialRuntimeQueries: true,
@@ -27843,11 +29113,99 @@ describe("background controller lifecycle", () => {
     await runGeneratedTrace(684835488, 9);
   });
 
+  it("removes nested runtime resources during restore-delete subtree cleanup", async () => {
+    await runGeneratedTrace(950000016, 80);
+  });
+
+  it("removes restored nested runtime resources during repeated restore-delete cleanup", async () => {
+    await runGeneratedTrace(950000033, 80);
+  });
+
+  it("preserves runtime window focus when restoring a closed tab", async () => {
+    await runGeneratedTrace(950000017, 80);
+  });
+
+  it("preserves post-restore runtime order after current runtime refresh", async () => {
+    await runGeneratedTrace(950000107, 80, {
+      adversarialRuntimeQueries: true
+    });
+  });
+
+  it("preserves created-tab placement across stale query grouping churn", async () => {
+    await runGeneratedTrace(950000115, 80, {
+      adversarialRuntimeQueries: true
+    });
+  });
+
+  it("preserves post-restore runtime order through stale-query churn", async () => {
+    await runGeneratedTrace(950000130, 80, {
+      adversarialRuntimeQueries: true
+    });
+  });
+
+  it("preserves runtime window focus when restore precedes restore-delete cleanup", async () => {
+    await runGeneratedTrace(950000134, 80, {
+      adversarialRuntimeQueries: true
+    });
+  });
+
+  it("preserves runtime window focus across stale-query restore churn", async () => {
+    await runGeneratedTrace(950000125, 80, {
+      adversarialRuntimeQueries: true
+    });
+  });
+
+  it("preserves runtime window focus across restore-delete cleanup", async () => {
+    await runGeneratedTrace(960000006, 80);
+  });
+
+  it("places created blank tabs by runtime order after closed anchors", async () => {
+    await runGeneratedTrace(960000001, 80);
+  });
+
+  it("preserves direct-child runtime-rank order across opener refresh", async () => {
+    await runGeneratedTrace(960000017, 80);
+  });
+
+  it("preserves created-tab placement after nested live-window anchors", async () => {
+    await runGeneratedTrace(960000032, 80);
+  });
+
+  it("restores nested command windows with their parent subtree", async () => {
+    await runGeneratedTrace(960000039, 80);
+  });
+
+  it("preserves runtime window focus across stale-query restore cleanup", async () => {
+    await runGeneratedTrace(960000102, 80, {
+      adversarialRuntimeQueries: true
+    });
+  });
+
+  it("preserves runtime window focus after grouped restore cleanup", async () => {
+    await runGeneratedTrace(960000105, 80, {
+      adversarialRuntimeQueries: true
+    });
+  });
+
   it("keeps an adversarial outliner-closed tab closed across stale live events", async () => {
     await runGeneratedTrace(684835609, 31, {
       adversarialRuntimeQueries: true
     });
   });
+
+  const generatedTraceReplayIt = process.env.GENERATED_TRACE_REPLAY_SEED
+    ? it
+    : it.skip;
+  generatedTraceReplayIt("replays a selected generated trace", async () => {
+    await runGeneratedTrace(
+      requiredPositiveIntegerEnv("GENERATED_TRACE_REPLAY_SEED"),
+      requiredPositiveIntegerEnv("GENERATED_TRACE_REPLAY_STEPS"),
+      {
+        adversarialRuntimeQueries: booleanFlagEnv("GENERATED_TRACE_REPLAY_RUNTIME_QUERIES"),
+        adversarialConcurrency: booleanFlagEnv("GENERATED_TRACE_REPLAY_CONCURRENCY")
+      }
+    );
+  }, generatedTraceTimeoutMs(10_000, 120_000));
 
   const domainTraceIt = process.env.RUNTIME_DOMAIN_TRACE_HUNT === "1" || process.env.RUNTIME_TRACE_HUNT_TRACE_IDS
     ? it

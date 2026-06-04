@@ -20,6 +20,8 @@ const seedCount = positiveIntegerEnv("SOAK_SEED_COUNT")
   ?? positiveIntegerEnv("GENERATED_TRACE_SEED_COUNT");
 const steps = positiveIntegerEnv("SOAK_STEPS")
   ?? positiveIntegerEnv("GENERATED_TRACE_STEPS");
+const oracleMode = process.env.GENERATED_TRACE_ORACLE_MODE ?? "gated";
+const oracleReport = process.env.GENERATED_TRACE_ORACLE_REPORT;
 
 const replayParts = [`SOAK_SEED=${baseSeed}`];
 if (seedCount) {
@@ -28,10 +30,18 @@ if (seedCount) {
 if (steps) {
   replayParts.push(`SOAK_STEPS=${steps}`);
 }
+if (oracleMode !== "gated") {
+  replayParts.push(`GENERATED_TRACE_ORACLE_MODE=${oracleMode}`);
+}
+if (oracleReport) {
+  replayParts.push(`GENERATED_TRACE_ORACLE_REPORT=${oracleReport}`);
+}
 replayParts.push("pnpm test:soak");
 console.log(`Generated trace soak seed: ${baseSeed}`);
 console.log(`Generated trace soak seed count: ${seedCount ?? "per-test defaults"}`);
 console.log(`Generated trace soak steps/cycles: ${steps ?? "per-test defaults"}`);
+console.log(`Generated trace oracle mode: ${oracleMode}`);
+console.log(`Generated trace oracle report: ${oracleReport ?? "disabled"}`);
 console.log(`Replay with: ${replayParts.join(" ")}`);
 
 const generatedTraceEnv = {

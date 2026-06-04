@@ -150,6 +150,68 @@ exports.appendString = function (left) {
   };
 };
 
+function isDisplayUrlProtocol(protocol) {
+  return protocol === "http:" ||
+    protocol === "https:" ||
+    protocol === "file:" ||
+    protocol === "about:" ||
+    protocol === "moz-extension:" ||
+    protocol === "chrome-extension:";
+}
+
+function normalizedUrlString(value) {
+  try {
+    const parsed = new URL(value);
+    return isDisplayUrlProtocol(parsed.protocol) ? parsed.href : undefined;
+  } catch (error) {
+    return undefined;
+  }
+}
+
+function isSchemelessUrlTitle(title) {
+  if (/\s/.test(title)) {
+    return false;
+  }
+
+  const withoutTrailingPath = title.split(/[/?#]/, 1)[0] || "";
+  const credentialParts = withoutTrailingPath.split("@");
+  const withoutCredentials = credentialParts[credentialParts.length - 1] || "";
+  const host = withoutCredentials.replace(/:\d+$/, "");
+  if (!host) {
+    return false;
+  }
+
+  return host === "localhost" ||
+    /^\d{1,3}(?:\.\d{1,3}){3}$/.test(host) ||
+    host.includes(".");
+}
+
+function urlsMatch(left, right) {
+  if (left === right) {
+    return true;
+  }
+
+  const normalizedLeft = normalizedUrlString(left);
+  const normalizedRight = normalizedUrlString(right);
+  return Boolean(normalizedLeft && normalizedRight && normalizedLeft === normalizedRight);
+}
+
+exports.isTransientRestoredRuntimeTitleImpl = function (title) {
+  return function (url) {
+    const trimmedTitle = title.trim();
+    if (trimmedTitle.toLocaleLowerCase() === "new tab") {
+      return true;
+    }
+    if (normalizedUrlString(trimmedTitle)) {
+      return true;
+    }
+    if (isSchemelessUrlTitle(trimmedTitle)) {
+      return true;
+    }
+    return Boolean(url && urlsMatch(trimmedTitle, url.trim()));
+  };
+};
+
 exports.mapArray = function (f) {
   return function (values) {
     return values.map(f);

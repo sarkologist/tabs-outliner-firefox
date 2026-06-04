@@ -1891,6 +1891,13 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       state = bootstrapFromWindows(windows, { now: now() });
       scheduleStateSave(state);
     }
+    const prunedStartupState = pruneMissingEmptyCommandRuntimeWindows(state, windows);
+    if (prunedStartupState !== state) {
+      state = prunedStartupState;
+      runtimeLifecycleJournalChangedState = true;
+      lastPersistedState = undefined;
+      scheduleStateSave(state);
+    }
     if (consumedRuntimeLifecycleJournalEntryIds.length > 0) {
       if (
         runtimeLifecycleJournalChangedState ||
@@ -2117,7 +2124,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     if (!history || !historyTopMatchesJournalEntry(history, entry)) {
       return { state: current };
     }
-    let replayed = preserveClosedNodesDuringHistoryReplay(current, applyOutlineDelta(current, entry.delta));
+    let replayed = repairState(preserveClosedNodesDuringHistoryReplay(current, applyOutlineDelta(current, entry.delta)));
     replayed = remapHistoryReplayMaterializedWindowsFromSnapshot(replayed, windows);
     replayed = collapseSupersededHistoryReplayWindows(replayed, entry.delta, windows);
     if (historyReplayMayDropCurrentLiveRuntimeResources(current, replayed, entry.delta)) {
@@ -2327,6 +2334,41 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     };
   }
 
+  function pruneMissingEmptyCommandRuntimeWindows(
+    current: OutlineState,
+    windows: RuntimeWindow[]
+  ): OutlineState {
+    const runtimeWindowIds = new Set(windows.map((windowInfo) => windowInfo.id));
+    let pruned: OutlineState | undefined;
+    const mutable = (): OutlineState => {
+      pruned ??= cloneOutlineState(current);
+      return pruned;
+    };
+
+    for (const nodeId in current.nodes) {
+      const node = current.nodes[nodeId as NodeId];
+      if (!node) {
+        continue;
+      }
+      if (
+        node.kind !== "window" ||
+        node.childIds.length > 0 ||
+        node.runtimeProvenance !== "commandCreated"
+      ) {
+        continue;
+      }
+      const runtimeWindowId = isLiveWindowNode(node)
+        ? node.live.windowId
+        : canonicalWindowIdFromNodeId(node.id);
+      if (typeof runtimeWindowId !== "number" || runtimeWindowIds.has(runtimeWindowId)) {
+        continue;
+      }
+      deleteHistoryReplayContainerNode(mutable(), node.id);
+    }
+
+    return pruned ? repairState(pruned) : current;
+  }
+
   function stateLoadTraceOptions(): LoadStateOptions | undefined {
     if (!perfTrace.isEnabled()) {
       return undefined;
@@ -2487,7 +2529,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     commandType: TrackableHistoryCommandType
   ): Promise<HistoryRuntimeApplication> {
     const windowsBeforeReplay = await getNormalWindows(api);
-    let next = preserveClosedNodesDuringHistoryReplay(current, applyOutlineDelta(current, delta));
+    let next = repairState(preserveClosedNodesDuringHistoryReplay(current, applyOutlineDelta(current, delta)));
     if (historyReplayMayDropCurrentLiveRuntimeResources(current, next, delta)) {
       next = preserveCurrentLiveRuntimeResourcesDuringHistoryReplay(current, next, delta, windowsBeforeReplay);
     }
@@ -5753,6 +5795,11 @@ function tabNodeIdForRuntime(tabId: number): NodeId {
 
 function windowNodeIdForRuntime(windowId: number): NodeId {
   return `window:${windowId}`;
+}
+
+function canonicalWindowIdFromNodeId(nodeId: NodeId): number | undefined {
+  const match = /^window:(\d+)$/.exec(nodeId);
+  return match ? Number(match[1]) : undefined;
 }
 
 function isTrackableHistoryCommandType(value: string): value is TrackableHistoryCommandType {

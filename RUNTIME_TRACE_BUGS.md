@@ -7176,7 +7176,9 @@ action: {"type":"outlinerUndo"} -->
 - First seen: 2026-06-04T14:27:26.252Z
 - Trace id: `bdh-b1-native-move-before-undo-partial-query`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=bdh-b1-native-move-before-undo-partial-query pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed; promoted to oracle-backed domain trace `po-history-browser-move-before-undo`.
+- Resolution: history replay now repairs the replayed outline immediately after applying the undo delta, so browser-moved live tabs cannot remain in stale source-window child lists with mismatched parents.
+- Verification: `RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=bdh-b1-native-move-before-undo-partial-query pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
 
 ```text
 domain trace bdh-b1-native-move-before-undo-partial-query: browser drift history block1 native move before undo partial query
@@ -7211,7 +7213,9 @@ action: {"type":"outlinerUndo"} -->
 - First seen: 2026-06-04T14:31:24.094Z
 - Trace id: `yh-rung2-history-after-three-scope-cohabit`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=yh-rung2-history-after-three-scope-cohabit pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed; promoted to oracle-backed domain trace `po-history-mixed-scope-browser-drift-before-undo`.
+- Resolution: history replay repair plus oracle-backed cohabiting-scope semantics preserve restored, command-created, and browser-created live tabs under the browser's current runtime scope order when undo crosses browser-authored drift.
+- Verification: `RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=yh-rung2-history-after-three-scope-cohabit pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
 
 ```text
 domain trace yh-rung2-history-after-three-scope-cohabit: mixed provenance history after three scope cohabit
@@ -7248,7 +7252,9 @@ action: {"type":"injectCloseJournalThenAbruptRestart","node":{"tab":{"capture":"
 - First seen: 2026-06-04T14:31:51.511Z
 - Trace id: `sk-b3-injected-journal-history-browser-drift`
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=sk-b3-injected-journal-history-browser-drift pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
-- Status: documented, not fixed.
+- Status: fixed; promoted to oracle-backed domain trace `po-history-journal-browser-drift-tombstone`.
+- Resolution: startup/lifecycle recovery now prunes missing empty command-created runtime windows, and history replay repair keeps close-journal tombstones dominant after browser-authored drift.
+- Verification: `RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=sk-b3-injected-journal-history-browser-drift pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
 
 ```text
 domain trace sk-b3-injected-journal-history-browser-drift: soak complement block3 injected journal history browser drift
