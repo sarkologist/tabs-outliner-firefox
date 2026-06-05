@@ -14,7 +14,8 @@ export const BACKGROUND_RECONCILIATION_SCENARIOS = [
   "move-leaf",
   "group-live-leaf",
   "move-top-level-live-leaf",
-  "command-relocation-echo"
+  "command-relocation-echo",
+  "structural-save-pressure"
 ];
 
 export const BACKGROUND_RECONCILIATION_RESULTS_TSV_HEADER = [
@@ -282,6 +283,10 @@ function summarizeScenario(results, options = {}) {
     totalWithSaveFlushMaxMs: max(profiles.map((profile) => profile.totalWithSaveFlushMs).filter(isFiniteNumber)),
     commandMedianMs: median(profiles.map((profile) => profile.commandMs).filter(isFiniteNumber)),
     commandMaxMs: max(profiles.map((profile) => profile.commandMs).filter(isFiniteNumber)),
+    followUpCommandMedianMs: median(profiles.map((profile) => profile.followUpCommandMs).filter(isFiniteNumber)),
+    followUpCommandMaxMs: max(profiles.map((profile) => profile.followUpCommandMs).filter(isFiniteNumber)),
+    stateSaveStartedBeforeAckCount: profiles.filter((profile) => profile.stateSaveStartedBeforeAck === true).length,
+    delayedStateSaveCountMax: max(profiles.map((profile) => profile.delayedStateSaveCount).filter(isFiniteNumber)),
     eventEchoMedianMs: median(profiles.map((profile) => profile.eventEchoMs).filter(isFiniteNumber)),
     eventEchoMaxMs: max(profiles.map((profile) => profile.eventEchoMs).filter(isFiniteNumber)),
     saveFlushMedianMs: median(profiles.map((profile) => profile.saveFlushMs).filter(isFiniteNumber)),
@@ -348,6 +353,21 @@ export function backgroundReconciliationGuardFailures(summary, context = {}) {
     }
     if (scenario === "command-relocation-echo" && scenarioSummary.eventEchoMaxMs > 25) {
       failures.push("command-relocation-echo native echo flush must stay below 25ms");
+    }
+    if (scenario === "structural-save-pressure" && scenarioSummary.stateSaveStartedBeforeAckCount > 0) {
+      failures.push("structural-save-pressure must not start V3 state saves before command ack");
+    }
+    if (scenario === "structural-save-pressure" && scenarioSummary.followUpCommandMaxMs > 25) {
+      failures.push("structural-save-pressure follow-up command must not wait for deferred state save");
+    }
+    if (scenario === "structural-save-pressure" && scenarioSummary.runtimeGetWindowsCountMax > 0) {
+      failures.push("structural-save-pressure must not add runtime.getWindows");
+    }
+    if (scenario === "structural-save-pressure" && scenarioSummary.stateSavesMax > 1) {
+      failures.push("structural-save-pressure must coalesce to one eventual state save");
+    }
+    if (scenario === "structural-save-pressure" && scenarioSummary.fullStateBroadcastsMax > 0) {
+      failures.push("structural-save-pressure must not broadcast full stateUpdated messages");
     }
   }
   if (
@@ -516,7 +536,12 @@ function expectedNodeCount(scenario, tabs) {
   if (scenario === "move-leaf") {
     return tabs + 1;
   }
-  if (scenario === "group-live-leaf" || scenario === "move-top-level-live-leaf" || scenario === "command-relocation-echo") {
+  if (
+    scenario === "group-live-leaf" ||
+    scenario === "move-top-level-live-leaf" ||
+    scenario === "command-relocation-echo" ||
+    scenario === "structural-save-pressure"
+  ) {
     return tabs + 2;
   }
   return undefined;
@@ -538,7 +563,11 @@ function expectedRootShape(scenario) {
   if (scenario === "move-leaf" || scenario === "group-live-leaf") {
     return { rootCount: 1, liveWindowRootCount: 1 };
   }
-  if (scenario === "move-top-level-live-leaf" || scenario === "command-relocation-echo") {
+  if (
+    scenario === "move-top-level-live-leaf" ||
+    scenario === "command-relocation-echo" ||
+    scenario === "structural-save-pressure"
+  ) {
     return { rootCount: 2, liveWindowRootCount: 2 };
   }
   return undefined;

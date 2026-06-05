@@ -56,13 +56,14 @@ function parseArgs(argv) {
     "group-live-leaf",
     "move-top-level-live-leaf",
     "command-relocation-echo",
+    "structural-save-pressure",
     "flatten-window",
     "import-small",
     "import-large",
     "refresh-noop"
   ].includes(options.scenario)) {
     throw new Error(
-      "--scenario must be rename-window, toggle-window, move-leaf, group-live-leaf, move-top-level-live-leaf, command-relocation-echo, flatten-window, import-small, import-large, or refresh-noop"
+      "--scenario must be rename-window, toggle-window, move-leaf, group-live-leaf, move-top-level-live-leaf, command-relocation-echo, structural-save-pressure, flatten-window, import-small, import-large, or refresh-noop"
     );
   }
 
@@ -100,6 +101,11 @@ function makeRuntime(tabCount, scenario) {
     sidebarProjection: undefined,
     eventCounts,
     events,
+    primaryCommandAcked: false,
+    stateSaveDelayMs: 0,
+    stateSaveStartedBeforeAck: false,
+    delayedStateSaveStartedAt: undefined,
+    delayedStateSaveCount: 0,
     api: undefined
   };
 
@@ -144,6 +150,12 @@ function makeRuntime(tabCount, scenario) {
       local: {
         get: async (key) => typeof key === "string" ? { [key]: undefined } : {},
         set: async (items) => {
+          if (runtime.stateSaveDelayMs > 0 && isV3StateSave(items)) {
+            runtime.delayedStateSaveCount += 1;
+            runtime.stateSaveStartedBeforeAck ||= !runtime.primaryCommandAcked;
+            runtime.delayedStateSaveStartedAt ??= performance.now();
+            await sleep(runtime.stateSaveDelayMs);
+          }
           recordProfileStorageSet(runtime, items, measure);
         },
         remove: async () => undefined,
@@ -339,6 +351,9 @@ function commandForScenario(scenario, tabCount) {
   if (scenario === "command-relocation-echo") {
     return { type: "moveSubtreeToTopLevel", nodeId: `tab:${tabCount}` };
   }
+  if (scenario === "structural-save-pressure") {
+    return { type: "moveSubtreeToTopLevel", nodeId: `tab:${tabCount}` };
+  }
   if (scenario === "flatten-window") {
     return { type: "flattenSubtree", nodeId: "window:10" };
   }
@@ -482,12 +497,21 @@ async function profile(options) {
   runtime.treePatchMs = 0;
   runtime.operationStart = performance.now();
   runtime.firstBroadcastMs = undefined;
+  runtime.primaryCommandAcked = false;
+  runtime.stateSaveStartedBeforeAck = false;
+  runtime.delayedStateSaveStartedAt = undefined;
+  runtime.delayedStateSaveCount = 0;
+  runtime.stateSaveDelayMs = options.scenario === "structural-save-pressure" ? 250 : 0;
 
   const command = await measureAsync(() => controller.handleMessage(commandForScenario(options.scenario, options.tabs)));
+  runtime.primaryCommandAcked = true;
   dispatchScenarioNativeEchoes(runtime, options.scenario, options.tabs);
   const eventEcho = await measureAsync(() => flushProfileEvents(runtime.events));
+  const followUp = options.scenario === "structural-save-pressure"
+    ? await measureFollowUpDuringDeferredSave(controller, runtime)
+    : undefined;
   const current = await controller.handleMessage({ type: "getState" });
-  const saveFlush = await measureAsync(() => controller.flushPendingSaves());
+  const saveFlush = followUp?.saveFlush ?? await measureAsync(() => controller.flushPendingSaves());
   const trace = traceBackground
     ? await controller.handleMessage({ type: "getPerformanceTrace" })
     : undefined;
@@ -501,6 +525,11 @@ async function profile(options) {
     totalMeasuredMs: Math.round(command.ms + eventEcho.ms),
     saveFlushMs: Math.round(saveFlush.ms),
     totalWithSaveFlushMs: Math.round(command.ms + eventEcho.ms + saveFlush.ms),
+    ...(followUp ? {
+      followUpCommandMs: Math.round(followUp.command.ms),
+      stateSaveStartedBeforeAck: runtime.stateSaveStartedBeforeAck,
+      delayedStateSaveCount: runtime.delayedStateSaveCount
+    } : {}),
     firstBroadcastMs: Math.round(runtime.firstBroadcastMs ?? 0),
     ...storageMetricsResult(runtime),
     broadcastStringifyMs: Math.round(runtime.broadcastStringifyMs),
@@ -521,6 +550,29 @@ async function profile(options) {
     nodes: Object.keys(current.nodes).length,
     rootShape: summarizeRootShape(current)
   };
+}
+
+async function measureFollowUpDuringDeferredSave(controller, runtime) {
+  const saveFlushPromise = measureAsync(() => controller.flushPendingSaves());
+  await waitForDelayedStateSaveStart(runtime);
+  const command = await measureAsync(() => controller.handleMessage({ type: "focusNode", nodeId: "tab:1" }));
+  const saveFlush = await saveFlushPromise;
+  return { command, saveFlush };
+}
+
+async function waitForDelayedStateSaveStart(runtime) {
+  const deadline = performance.now() + 1000;
+  while (runtime.delayedStateSaveStartedAt === undefined && performance.now() < deadline) {
+    await sleep(0);
+  }
+}
+
+function isV3StateSave(items) {
+  return Boolean(items && typeof items === "object" && !Array.isArray(items) && "outlineState:v3:manifest" in items);
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 const result = await profile(parseArgs(process.argv.slice(2)));

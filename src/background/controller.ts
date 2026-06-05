@@ -845,7 +845,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
           restoreCreateRecovery
         }
       );
-      if (runtimeLifecycleJournalEntry) {
+      if (runtimeLifecycleJournalEntry && runtimeLifecycleJournalEntryNeedsDurableBase(runtimeLifecycleJournalEntry)) {
         await ensureDurableRuntimeLifecycleBase();
       }
       if (runtimeLifecycleJournalEntry && runtimeLifecycleJournalEntry.kind !== "restoreNode") {
@@ -1061,7 +1061,10 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         );
         await broadcastTreeStructureUpdate(update);
         scheduleStateSave(result.state, saveSchedule, runtimeIndexCandidateNodeIds);
-        await flushRuntimeProvenanceSaveIfChanged(current, result.state);
+        await flushRuntimeProvenanceSaveIfChanged(current, result.state, runtimeIndexCandidateNodeIds, {
+          allowDeferredPlacementCheckpoint: true,
+          reason: message.type
+        });
         if (commandTransaction) {
           runtimeFacts.commitCommand(commandTransaction.id);
         }
@@ -1094,7 +1097,10 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         if (sameParentReorder) {
           await broadcastSameParentReorderUpdate(sameParentReorder);
           scheduleStateSave(result.state, saveSchedule, [sameParentReorder.parentId, sameParentReorder.movedNodeId]);
-          await flushRuntimeProvenanceSaveIfChanged(current, result.state);
+          await flushRuntimeProvenanceSaveIfChanged(current, result.state, [sameParentReorder.parentId, sameParentReorder.movedNodeId], {
+            allowDeferredPlacementCheckpoint: true,
+            reason: message.type
+          });
           if (commandTransaction) {
             runtimeFacts.commitCommand(commandTransaction.id);
           }
@@ -1103,7 +1109,10 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         }
       }
       await persistWithBestEffortPatch(current, result.state, { saveSchedule });
-      await flushRuntimeProvenanceSaveIfChanged(current, result.state);
+      await flushRuntimeProvenanceSaveIfChanged(current, result.state, runtimeIndexCandidateNodeIds, {
+        allowDeferredPlacementCheckpoint: isStructuralCommand(message.type),
+        reason: message.type
+      });
       if (commandTransaction) {
         runtimeFacts.commitCommand(commandTransaction.id);
       }
@@ -1298,6 +1307,10 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       return;
     }
     await flushPendingSaves();
+  }
+
+  function runtimeLifecycleJournalEntryNeedsDurableBase(entry: RuntimeLifecycleJournalEntry): boolean {
+    return entry.kind !== "relocation";
   }
 
   async function appendObservedNativeTabCloseJournalEntry(entry: NativeTabCloseJournalEntry): Promise<void> {
@@ -4244,9 +4257,23 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   async function flushRuntimeProvenanceSaveIfChanged(
     previous: OutlineState,
     next: OutlineState,
-    candidateNodeIds?: readonly NodeId[]
+    candidateNodeIds?: readonly NodeId[],
+    options: {
+      allowDeferredPlacementCheckpoint?: boolean;
+      reason?: string;
+    } = {}
   ): Promise<void> {
     if (!runtimeProvenanceChanged(previous, next, candidateNodeIds)) {
+      return;
+    }
+    if (
+      options.allowDeferredPlacementCheckpoint === true &&
+      runtimeTruthCheckpointCanBeDeferred(previous, next, candidateNodeIds)
+    ) {
+      perfTrace.mark("background.state.save.runtimeTruthCheckpoint.deferred", {
+        ...(options.reason ? { reason: options.reason } : {}),
+        candidateNodeCount: candidateNodeIds?.length ?? 0
+      });
       return;
     }
     await flushPendingSaves();
@@ -4379,6 +4406,30 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
   function runtimeTruthWindowNeedsCheckpoint(node: OutlineNode | undefined): boolean {
     return isLiveWindowNode(node) && (node.runtimeProvenance !== undefined || node.restoredFromClosed === true);
+  }
+
+  function runtimeTruthCheckpointCanBeDeferred(
+    previous: OutlineState,
+    next: OutlineState,
+    candidateNodeIds?: readonly NodeId[]
+  ): boolean {
+    if (liveRuntimeRemovalTouchedRuntimeTruth(previous, next, candidateNodeIds)) {
+      return false;
+    }
+
+    const nodeIds = candidateNodeIds ?? Object.keys(previous.nodes);
+    return nodeIds.every((nodeId) => {
+      const previousNode = previous.nodes[nodeId];
+      if (isLiveWindowNode(previousNode)) {
+        const nextNode = next.nodes[nodeId];
+        return isLiveWindowNode(nextNode) && nextNode.live.windowId === previousNode.live.windowId;
+      }
+      if (isLiveTabNode(previousNode)) {
+        const nextNode = next.nodes[nodeId];
+        return isLiveTabNode(nextNode) && nextNode.live.tabId === previousNode.live.tabId;
+      }
+      return true;
+    });
   }
 
   function replaceCachedState(next: OutlineState): void {

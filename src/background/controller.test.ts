@@ -27411,6 +27411,219 @@ describe("background controller lifecycle", () => {
     }
   });
 
+  it("defers command-window structural move persistence until an explicit save flush", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        },
+        {
+          id: 2,
+          windowId: 10,
+          index: 1,
+          active: false,
+          url: "https://two.example/",
+          title: "Two"
+        }
+      ]
+    );
+    let controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    await controller.flushPendingSaves();
+    vi.mocked(runtime.api.storage.local.set).mockClear();
+    runtime.broadcasts.length = 0;
+    await controller.handleMessage({ type: "setPerformanceTraceEnabled", enabled: true });
+    await controller.handleMessage({ type: "clearPerformanceTrace" });
+    vi.mocked(runtime.api.storage.local.set).mockClear();
+
+    const blockedSave = deferred<void>();
+    const saveImplementation = vi.mocked(runtime.api.storage.local.set).getMockImplementation();
+    vi.mocked(runtime.api.storage.local.set).mockImplementation(async (items: Record<string, unknown>) => {
+      if (STATE_V3_MANIFEST_KEY in items) {
+        await blockedSave.promise;
+      }
+      await saveImplementation?.(items);
+    });
+
+    const response = await Promise.race([
+      controller.handleMessage({ type: "moveSubtreeToTopLevel", nodeId: "tab:2" }),
+      waitForMacrotask().then(() => "blocked")
+    ]);
+
+    expectCommandAck(response, true);
+    expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(0);
+    expect(stateBroadcasts(runtime.broadcasts).map((message) => (message as { type?: unknown }).type))
+      .toContain("treeStructureUpdated");
+    expect(traceEntryNames(await controller.handleMessage({ type: "getPerformanceTrace" }))).toContain(
+      "background.state.save.runtimeTruthCheckpoint.deferred"
+    );
+
+    try {
+      const flush = controller.flushPendingSaves();
+      await waitForMacrotask();
+      expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(1);
+      blockedSave.resolve();
+      await flush;
+    } finally {
+      vi.mocked(runtime.api.storage.local.set).mockImplementation(saveImplementation);
+    }
+
+    controller = restartControllerAbrupt(runtime);
+    const reloaded = await controller.ensureState();
+    const moved = reloaded.nodes["tab:2"];
+    expect(moved?.parentId).toBeDefined();
+    expect(reloaded.rootIds).toContain(moved?.parentId);
+    expect(reloaded.nodes[moved!.parentId!]).toMatchObject({
+      kind: "window",
+      status: "live",
+      runtimeProvenance: "commandCreated"
+    });
+  });
+
+  it("does not block follow-up focus commands behind an in-flight deferred structural save", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        },
+        {
+          id: 2,
+          windowId: 10,
+          index: 1,
+          active: false,
+          url: "https://two.example/",
+          title: "Two"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    await controller.flushPendingSaves();
+    vi.mocked(runtime.api.storage.local.set).mockClear();
+
+    expectCommandAck(await controller.handleMessage({ type: "moveSubtreeToTopLevel", nodeId: "tab:2" }), true);
+
+    const blockedSave = deferred<void>();
+    const saveImplementation = vi.mocked(runtime.api.storage.local.set).getMockImplementation();
+    vi.mocked(runtime.api.storage.local.set).mockImplementation(async (items: Record<string, unknown>) => {
+      if (STATE_V3_MANIFEST_KEY in items) {
+        await blockedSave.promise;
+      }
+      await saveImplementation?.(items);
+    });
+    const flush = controller.flushPendingSaves();
+    await waitForMacrotask();
+    expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(1);
+
+    const focusResponse = await Promise.race([
+      controller.handleMessage({ type: "focusNode", nodeId: "tab:1" }),
+      waitForMacrotask().then(() => "blocked")
+    ]);
+
+    expectCommandAck(focusResponse, false);
+    blockedSave.resolve();
+    await flush;
+    vi.mocked(runtime.api.storage.local.set).mockImplementation(saveImplementation);
+  });
+
+  it("coalesces command-window structural move bursts into one eventual state save", async () => {
+    vi.useFakeTimers();
+    try {
+      const runtime = fakeRuntime(
+        [
+          {
+            id: 10,
+            focused: true,
+            incognito: false
+          }
+        ],
+        [
+          {
+            id: 1,
+            windowId: 10,
+            index: 0,
+            active: true,
+            url: "https://one.example/",
+            title: "One"
+          },
+          {
+            id: 2,
+            windowId: 10,
+            index: 1,
+            active: false,
+            url: "https://two.example/",
+            title: "Two"
+          },
+          {
+            id: 3,
+            windowId: 10,
+            index: 2,
+            active: false,
+            url: "https://three.example/",
+            title: "Three"
+          },
+          {
+            id: 4,
+            windowId: 10,
+            index: 3,
+            active: false,
+            url: "https://four.example/",
+            title: "Four"
+          }
+        ]
+      );
+      const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+      await controller.ensureState();
+      await controller.flushPendingSaves();
+      vi.mocked(runtime.api.storage.local.set).mockClear();
+
+      expectCommandAck(await controller.handleMessage({ type: "moveSubtreeToTopLevel", nodeId: "tab:4" }), true);
+      expectCommandAck(await controller.handleMessage({ type: "moveSubtreeToTopLevel", nodeId: "tab:3" }), true);
+      expectCommandAck(await controller.handleMessage({ type: "moveSubtreeToTopLevel", nodeId: "tab:2" }), true);
+
+      await vi.advanceTimersByTimeAsync(4999);
+      expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(0);
+
+      await vi.advanceTimersByTimeAsync(1);
+      expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(1);
+
+      const reloaded = await restartControllerAbrupt(runtime).ensureState();
+      const movedRootTitles = reloaded.rootIds
+        .map((nodeId) => reloaded.nodes[nodeId])
+        .filter((node) => node?.kind === "window" && node.status === "live")
+        .map((node) => node.childIds.map((childId) => reloaded.nodes[childId]?.title).join(","));
+      expect(movedRootTitles).toContain("Two");
+      expect(movedRootTitles).toContain("Three");
+      expect(movedRootTitles).toContain("Four");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("keeps a structural save batch deferred after a later ordinary command", async () => {
     vi.useFakeTimers();
     try {

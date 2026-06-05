@@ -140,6 +140,24 @@ describe("background reconciliation autoresearch profile", () => {
     expect(summary.guardFailures).toContain("command-relocation-echo native echo flush must stay below 25ms");
   });
 
+  it("guards structural save pressure latency metrics", () => {
+    const summary = summarizeBackgroundReconciliationRuns([
+      result(1, "structural-save-pressure", {
+        followUpCommandMs: 26,
+        stateSaveStartedBeforeAck: true,
+        stateSaves: 2,
+        fullStateBroadcasts: 1,
+        traceSummary: traceSummary({ runtimeGetWindowsCount: 1, runtimeGetWindowsMaxMs: 12 })
+      })
+    ], { runs: 1, tabs, scenarios: ["structural-save-pressure"] });
+
+    expect(summary.guardFailures).toContain("structural-save-pressure must not start V3 state saves before command ack");
+    expect(summary.guardFailures).toContain("structural-save-pressure follow-up command must not wait for deferred state save");
+    expect(summary.guardFailures).toContain("structural-save-pressure must not add runtime.getWindows");
+    expect(summary.guardFailures).toContain("structural-save-pressure must coalesce to one eventual state save");
+    expect(summary.guardFailures).toContain("structural-save-pressure must not broadcast full stateUpdated messages");
+  });
+
   it("formats TSV rows for ignored autoresearch results", () => {
     const summary = summarizeBackgroundReconciliationRuns(candidateResults(), {
       runs: 2,
