@@ -55,13 +55,14 @@ function parseArgs(argv) {
     "move-leaf",
     "group-live-leaf",
     "move-top-level-live-leaf",
+    "command-relocation-echo",
     "flatten-window",
     "import-small",
     "import-large",
     "refresh-noop"
   ].includes(options.scenario)) {
     throw new Error(
-      "--scenario must be rename-window, toggle-window, move-leaf, group-live-leaf, move-top-level-live-leaf, flatten-window, import-small, import-large, or refresh-noop"
+      "--scenario must be rename-window, toggle-window, move-leaf, group-live-leaf, move-top-level-live-leaf, command-relocation-echo, flatten-window, import-small, import-large, or refresh-noop"
     );
   }
 
@@ -170,6 +171,9 @@ function makeRuntime(tabCount, scenario) {
       onCreated: events.tabCreated,
       onUpdated: events.tabUpdated,
       onActivated: events.tabActivated,
+      onDetached: events.tabDetached,
+      onAttached: events.tabAttached,
+      onMoved: events.tabMoved,
       onRemoved: events.tabRemoved
     },
     sessions: {
@@ -332,6 +336,9 @@ function commandForScenario(scenario, tabCount) {
   if (scenario === "move-top-level-live-leaf") {
     return { type: "moveSubtreeToTopLevel", nodeId: `tab:${tabCount}` };
   }
+  if (scenario === "command-relocation-echo") {
+    return { type: "moveSubtreeToTopLevel", nodeId: `tab:${tabCount}` };
+  }
   if (scenario === "flatten-window") {
     return { type: "flattenSubtree", nodeId: "window:10" };
   }
@@ -477,6 +484,7 @@ async function profile(options) {
   runtime.firstBroadcastMs = undefined;
 
   const command = await measureAsync(() => controller.handleMessage(commandForScenario(options.scenario, options.tabs)));
+  dispatchScenarioNativeEchoes(runtime, options.scenario, options.tabs);
   const eventEcho = await measureAsync(() => flushProfileEvents(runtime.events));
   const current = await controller.handleMessage({ type: "getState" });
   const saveFlush = await measureAsync(() => controller.flushPendingSaves());
@@ -517,6 +525,31 @@ async function profile(options) {
 
 const result = await profile(parseArgs(process.argv.slice(2)));
 console.log(JSON.stringify(result, null, 2));
+
+function dispatchScenarioNativeEchoes(runtime, scenario, tabCount) {
+  if (scenario !== "command-relocation-echo") {
+    return;
+  }
+
+  const moved = runtime.tabs.find((tab) => tab.id === tabCount);
+  if (!moved || moved.windowId === 10) {
+    return;
+  }
+
+  runtime.events.tabDetached.dispatch(moved.id, {
+    oldWindowId: 10,
+    oldPosition: tabCount - 1
+  });
+  runtime.events.tabAttached.dispatch(moved.id, {
+    newWindowId: moved.windowId,
+    newPosition: moved.index
+  });
+  runtime.events.tabMoved.dispatch(moved.id, {
+    windowId: moved.windowId,
+    fromIndex: moved.index,
+    toIndex: moved.index
+  });
+}
 
 function summarizeTrace(trace) {
   const entries = Array.isArray(trace?.entries) ? trace.entries : [];

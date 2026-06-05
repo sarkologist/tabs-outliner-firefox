@@ -13,7 +13,8 @@ const defaultExportProfilePath = join(rootDir, "dist/tabs-outliner-profile-2026-
 export const BACKGROUND_RECONCILIATION_SCENARIOS = [
   "move-leaf",
   "group-live-leaf",
-  "move-top-level-live-leaf"
+  "move-top-level-live-leaf",
+  "command-relocation-echo"
 ];
 
 export const BACKGROUND_RECONCILIATION_RESULTS_TSV_HEADER = [
@@ -216,7 +217,7 @@ export function parseCommandProfileJson(output) {
 }
 
 export function summarizeBackgroundReconciliationRuns(results, options = {}) {
-  const scenarios = options.scenarios ?? BACKGROUND_RECONCILIATION_SCENARIOS;
+  const scenarios = options.scenarios ?? inferredScenarios(results);
   const scenarioSummaries = Object.fromEntries(scenarios.map((scenario) => [
     scenario,
     summarizeScenario(results.filter((result) => result.scenario === scenario), {
@@ -257,6 +258,16 @@ export function summarizeBackgroundReconciliationRuns(results, options = {}) {
   });
   summary.status = summary.guardFailures.length === 0 ? "candidate-keep" : "discard";
   return summary;
+}
+
+function inferredScenarios(results) {
+  const names = [];
+  for (const result of results) {
+    if (typeof result.scenario === "string" && !names.includes(result.scenario)) {
+      names.push(result.scenario);
+    }
+  }
+  return names.length > 0 ? names : BACKGROUND_RECONCILIATION_SCENARIOS;
 }
 
 function summarizeScenario(results, options = {}) {
@@ -325,6 +336,18 @@ export function backgroundReconciliationGuardFailures(summary, context = {}) {
     }
     if (scenario === "move-leaf" && scenarioSummary.treePatchMaxMs !== 0) {
       failures.push("move-leaf must not spend synthetic tree patch time");
+    }
+    if (scenario === "command-relocation-echo" && scenarioSummary.runtimeGetWindowsCountMax > 0) {
+      failures.push("command-relocation-echo must absorb native echoes without runtime.getWindows");
+    }
+    if (scenario === "command-relocation-echo" && scenarioSummary.stateSavesMax > 1) {
+      failures.push("command-relocation-echo must not add a second state save for native echoes");
+    }
+    if (scenario === "command-relocation-echo" && scenarioSummary.storageSetCallsMax > 2) {
+      failures.push("command-relocation-echo must not add storage writes for native echoes");
+    }
+    if (scenario === "command-relocation-echo" && scenarioSummary.eventEchoMaxMs > 25) {
+      failures.push("command-relocation-echo native echo flush must stay below 25ms");
     }
   }
   if (
@@ -493,7 +516,7 @@ function expectedNodeCount(scenario, tabs) {
   if (scenario === "move-leaf") {
     return tabs + 1;
   }
-  if (scenario === "group-live-leaf" || scenario === "move-top-level-live-leaf") {
+  if (scenario === "group-live-leaf" || scenario === "move-top-level-live-leaf" || scenario === "command-relocation-echo") {
     return tabs + 2;
   }
   return undefined;
@@ -515,7 +538,7 @@ function expectedRootShape(scenario) {
   if (scenario === "move-leaf" || scenario === "group-live-leaf") {
     return { rootCount: 1, liveWindowRootCount: 1 };
   }
-  if (scenario === "move-top-level-live-leaf") {
+  if (scenario === "move-top-level-live-leaf" || scenario === "command-relocation-echo") {
     return { rootCount: 2, liveWindowRootCount: 2 };
   }
   return undefined;

@@ -29636,6 +29636,227 @@ describe("background controller lifecycle", () => {
     expect(state.nodes["tab:2"]?.live).toEqual({ tabId: 2, windowId: destinationRuntimeWindowId });
   });
 
+  it("absorbs command-owned native relocation echoes without refreshing or saving", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        },
+        {
+          id: 2,
+          windowId: 10,
+          index: 1,
+          active: false,
+          url: "https://two.example/",
+          title: "Two"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    await controller.flushPendingSaves();
+
+    expectCommandAck(await controller.handleMessage({
+      type: "moveNode",
+      nodeId: "tab:2",
+      index: 0
+    }), true);
+    await controller.flushPendingSaves();
+    const moved = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    const destinationWindowId = moved.nodes["tab:2"]?.parentId;
+    if (!destinationWindowId) {
+      throw new Error("Expected tab:2 to be moved into a live window");
+    }
+    const destinationRuntimeWindowId = moved.nodes[destinationWindowId]?.live?.windowId;
+    if (typeof destinationRuntimeWindowId !== "number") {
+      throw new Error("Expected command destination window to be live");
+    }
+
+    await controller.handleMessage({ type: "setPerformanceTraceEnabled", enabled: true });
+    await controller.handleMessage({ type: "clearPerformanceTrace" });
+    runtime.broadcasts.length = 0;
+    vi.mocked(runtime.api.windows.getAll).mockClear();
+    vi.mocked(runtime.api.storage.local.set).mockClear();
+
+    await runtime.events.tabDetached.emit(2, { oldWindowId: 10, oldPosition: 1 });
+    await runtime.events.tabAttached.emit(2, { newWindowId: destinationRuntimeWindowId, newPosition: 0 });
+    await runtime.events.tabMoved.emit(2, { windowId: destinationRuntimeWindowId, fromIndex: 0, toIndex: 0 });
+
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    const trace = await controller.handleMessage({ type: "getPerformanceTrace" });
+    const absorbed = traceEntriesNamed(trace, "background.runtime.commandRelocationEcho.absorbed")
+      .map((entry) => entry.detail);
+
+    expect(state).toEqual(moved);
+    expect(vi.mocked(runtime.api.windows.getAll)).not.toHaveBeenCalled();
+    expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(0);
+    expect(stateBroadcasts(runtime.broadcasts)).toHaveLength(0);
+    expect(absorbed).toEqual([
+      { event: "detached", tabId: 2, windowId: 10 },
+      { event: "attached", tabId: 2, windowId: destinationRuntimeWindowId },
+      { event: "moved", tabId: 2, windowId: destinationRuntimeWindowId }
+    ]);
+  });
+
+  it("keeps stale relocation updates ignored after absorbing native echoes", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        },
+        {
+          id: 2,
+          windowId: 10,
+          index: 1,
+          active: false,
+          openerTabId: 1,
+          url: "https://two.example/",
+          title: "Two"
+        },
+        {
+          id: 3,
+          windowId: 10,
+          index: 2,
+          active: false,
+          url: "https://three.example/",
+          title: "Three"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    const staleChild = copyTab(runtime.tabs.find((tab) => tab.id === 2)!);
+
+    expectCommandAck(await controller.handleMessage({
+      type: "moveNode",
+      nodeId: "tab:1",
+      index: 0
+    }), true);
+    const moved = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    const destinationWindowId = moved.nodes["tab:1"]?.parentId;
+    if (!destinationWindowId) {
+      throw new Error("Expected tab:1 to be moved into a live window");
+    }
+    const destinationRuntimeWindowId = moved.nodes[destinationWindowId]?.live?.windowId;
+    if (typeof destinationRuntimeWindowId !== "number") {
+      throw new Error("Expected command destination window to be live");
+    }
+
+    await runtime.events.tabDetached.emit(2, { oldWindowId: 10, oldPosition: 1 });
+    await runtime.events.tabAttached.emit(2, { newWindowId: destinationRuntimeWindowId, newPosition: 1 });
+
+    runtime.queueTabQueryResult(snapshotReplacingTab(runtime.tabs, staleChild));
+    try {
+      await runtime.events.tabUpdated.emit(2, { title: "Stale child update" }, {
+        ...staleChild,
+        title: "Stale child update"
+      });
+    } finally {
+      runtime.clearNextTabQueryResult();
+    }
+
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(state.nodes[destinationWindowId]?.childIds).toEqual(["tab:1"]);
+    expect(state.nodes["window:10"]?.childIds).toEqual(["tab:3"]);
+    expect(state.nodes["tab:1"]?.childIds).toEqual(["tab:2"]);
+    expect(state.nodes["tab:2"]?.parentId).toBe("tab:1");
+    expect(state.nodes["tab:2"]?.title).toBe("Two");
+    expect(state.nodes["tab:2"]?.live).toEqual({ tabId: 2, windowId: destinationRuntimeWindowId });
+  });
+
+  it("keeps browser-authored relocation echoes on the refresh path", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        },
+        {
+          id: 2,
+          windowId: 10,
+          index: 1,
+          active: false,
+          url: "https://two.example/",
+          title: "Two"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+
+    expectCommandAck(await controller.handleMessage({
+      type: "moveNode",
+      nodeId: "tab:2",
+      index: 0
+    }), true);
+    const commandMoved = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    const commandWindowId = commandMoved.nodes["tab:2"]?.parentId;
+    if (!commandWindowId) {
+      throw new Error("Expected tab:2 to be moved into a live window");
+    }
+    const commandRuntimeWindowId = commandMoved.nodes[commandWindowId]?.live?.windowId;
+    if (typeof commandRuntimeWindowId !== "number") {
+      throw new Error("Expected command destination window to be live");
+    }
+
+    const browserWindowId = nextRuntimeWindowId(runtime);
+    runtime.windows = runtime.windows
+      .map((windowInfo) => ({ ...windowInfo, focused: false }))
+      .concat({ id: browserWindowId, focused: true, incognito: false });
+    const browserMoved = moveTabsFromBrowser(runtime, [2], { windowId: browserWindowId, index: 0 })[0];
+    if (!browserMoved) {
+      throw new Error("Failed to browser-move tab:2");
+    }
+
+    await controller.flushPendingSaves();
+    runtime.broadcasts.length = 0;
+    vi.mocked(runtime.api.windows.getAll).mockClear();
+    vi.mocked(runtime.api.storage.local.set).mockClear();
+
+    await runtime.events.tabAttached.emit(2, { newWindowId: browserWindowId, newPosition: 0 });
+
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(vi.mocked(runtime.api.windows.getAll)).toHaveBeenCalled();
+    expect(nearestWindowNode(state, "tab:2")?.live).toEqual({ windowId: browserWindowId });
+    expect(state.nodes["tab:2"]?.live).toEqual({ tabId: 2, windowId: browserWindowId });
+    expect(state.nodes[commandWindowId]?.childIds ?? []).toEqual([]);
+  });
+
   it("ignores older command-relocated stale created events after a second command move", async () => {
     const runtime = fakeRuntime(
       [

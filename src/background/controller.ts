@@ -461,23 +461,32 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   });
 
   api.tabs.onDetached?.addListener(async (tabId, detachInfo) => {
-    await perfTrace.measureAsync("background.event.tabs.onDetached", { tabId, windowId: detachInfo.oldWindowId }, () => {
+    await perfTrace.measureAsync("background.event.tabs.onDetached", { tabId, windowId: detachInfo.oldWindowId }, async () => {
       runtimeFacts.recordNativeTabDetached(tabId, detachInfo.oldWindowId);
+      if (await absorbCommandRelocationNativeEcho("detached", tabId, detachInfo.oldWindowId)) {
+        return;
+      }
       return queueRuntimeRefresh([], { closeMissing: false, forceSnapshot: true });
     });
   });
 
   api.tabs.onAttached?.addListener(async (tabId, attachInfo) => {
-    await perfTrace.measureAsync("background.event.tabs.onAttached", { tabId, windowId: attachInfo.newWindowId }, () => {
+    await perfTrace.measureAsync("background.event.tabs.onAttached", { tabId, windowId: attachInfo.newWindowId }, async () => {
       seedRuntimeWindowProvenanceFromCurrentState(attachInfo.newWindowId);
       runtimeFacts.recordNativeTabAttached(tabId, attachInfo.newWindowId);
+      if (await absorbCommandRelocationNativeEcho("attached", tabId, attachInfo.newWindowId)) {
+        return;
+      }
       return queueRuntimeRefresh([], { closeMissing: false, forceSnapshot: true });
     });
   });
 
   api.tabs.onMoved?.addListener(async (tabId, moveInfo) => {
-    await perfTrace.measureAsync("background.event.tabs.onMoved", { tabId, windowId: moveInfo.windowId }, () => {
+    await perfTrace.measureAsync("background.event.tabs.onMoved", { tabId, windowId: moveInfo.windowId }, async () => {
       runtimeFacts.recordNativeTabMoved(tabId, moveInfo.windowId);
+      if (await absorbCommandRelocationNativeEcho("moved", tabId, moveInfo.windowId)) {
+        return;
+      }
       return queueRuntimeRefresh([], { closeMissing: false, forceSnapshot: true });
     });
   });
@@ -2993,6 +3002,40 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   async function refreshFromRuntime(eventTabs: RuntimeTab[] = [], options: RefreshOptions = {}): Promise<boolean> {
     return enqueueMutation(async () =>
       refreshFromRuntimeNow(eventTabs.map(runtimeTabEvidenceForExternalRefresh), options), { reason: "refreshFromRuntime" });
+  }
+
+  async function absorbCommandRelocationNativeEcho(
+    event: "attached" | "detached" | "moved",
+    tabId: number,
+    windowId: number | undefined
+  ): Promise<boolean> {
+    if (typeof windowId !== "number") {
+      return false;
+    }
+    const echo = runtimeFacts.commandRelocatedTabEcho(tabId);
+    if (!echo) {
+      return false;
+    }
+
+    const current = await ensureState();
+    const node = indexedLiveTabNodeByRuntimeId(current, runtimeIndexForState(current), tabId);
+    if (!node || node.live.windowId !== echo.toWindowId) {
+      return false;
+    }
+
+    const absorbed = event === "detached"
+      ? echo.fromWindowIds.has(windowId)
+      : windowId === echo.toWindowId;
+    if (!absorbed) {
+      return false;
+    }
+
+    perfTrace.mark("background.runtime.commandRelocationEcho.absorbed", {
+      event,
+      tabId,
+      windowId
+    });
+    return true;
   }
 
   function queueRuntimeRefresh(eventTabs: RuntimeTabEvidence[] = [], options: RefreshOptions = {}): Promise<boolean> {

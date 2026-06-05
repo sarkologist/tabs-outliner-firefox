@@ -124,6 +124,22 @@ describe("background reconciliation autoresearch profile", () => {
     ]);
   });
 
+  it("guards command relocation echo absorption metrics", () => {
+    const summary = summarizeBackgroundReconciliationRuns([
+      result(1, "command-relocation-echo", {
+        eventEchoMs: 26,
+        storageSetCalls: 3,
+        stateSaves: 2,
+        traceSummary: traceSummary({ runtimeGetWindowsCount: 1, runtimeGetWindowsMaxMs: 12 })
+      })
+    ], { runs: 1, tabs, scenarios: ["command-relocation-echo"] });
+
+    expect(summary.guardFailures).toContain("command-relocation-echo must absorb native echoes without runtime.getWindows");
+    expect(summary.guardFailures).toContain("command-relocation-echo must not add a second state save for native echoes");
+    expect(summary.guardFailures).toContain("command-relocation-echo must not add storage writes for native echoes");
+    expect(summary.guardFailures).toContain("command-relocation-echo native echo flush must stay below 25ms");
+  });
+
   it("formats TSV rows for ignored autoresearch results", () => {
     const summary = summarizeBackgroundReconciliationRuns(candidateResults(), {
       runs: 2,
