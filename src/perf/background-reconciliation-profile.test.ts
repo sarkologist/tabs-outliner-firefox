@@ -140,6 +140,22 @@ describe("background reconciliation autoresearch profile", () => {
     expect(summary.guardFailures).toContain("command-relocation-echo native echo flush must stay below 25ms");
   });
 
+  it("guards existing command-window relocation echo absorption metrics", () => {
+    const summary = summarizeBackgroundReconciliationRuns([
+      result(1, "command-existing-window-relocation-echo", {
+        eventEchoMs: 26,
+        storageSetCalls: 3,
+        stateSaves: 2,
+        traceSummary: traceSummary({ runtimeGetWindowsCount: 1, runtimeGetWindowsMaxMs: 12 })
+      })
+    ], { runs: 1, tabs, scenarios: ["command-existing-window-relocation-echo"] });
+
+    expect(summary.guardFailures).toContain("command-existing-window-relocation-echo must absorb native echoes without runtime.getWindows");
+    expect(summary.guardFailures).toContain("command-existing-window-relocation-echo must not add a second state save for native echoes");
+    expect(summary.guardFailures).toContain("command-existing-window-relocation-echo must not add storage writes for native echoes");
+    expect(summary.guardFailures).toContain("command-existing-window-relocation-echo native echo flush must stay below 25ms");
+  });
+
   it("guards structural save pressure latency metrics", () => {
     const summary = summarizeBackgroundReconciliationRuns([
       result(1, "structural-save-pressure", {

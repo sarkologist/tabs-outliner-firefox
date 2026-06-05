@@ -15,6 +15,7 @@ export const BACKGROUND_RECONCILIATION_SCENARIOS = [
   "group-live-leaf",
   "move-top-level-live-leaf",
   "command-relocation-echo",
+  "command-existing-window-relocation-echo",
   "structural-save-pressure"
 ];
 
@@ -342,17 +343,17 @@ export function backgroundReconciliationGuardFailures(summary, context = {}) {
     if (scenario === "move-leaf" && scenarioSummary.treePatchMaxMs !== 0) {
       failures.push("move-leaf must not spend synthetic tree patch time");
     }
-    if (scenario === "command-relocation-echo" && scenarioSummary.runtimeGetWindowsCountMax > 0) {
-      failures.push("command-relocation-echo must absorb native echoes without runtime.getWindows");
+    if (isCommandRelocationEchoScenario(scenario) && scenarioSummary.runtimeGetWindowsCountMax > 0) {
+      failures.push(`${scenario} must absorb native echoes without runtime.getWindows`);
     }
-    if (scenario === "command-relocation-echo" && scenarioSummary.stateSavesMax > 1) {
-      failures.push("command-relocation-echo must not add a second state save for native echoes");
+    if (isCommandRelocationEchoScenario(scenario) && scenarioSummary.stateSavesMax > 1) {
+      failures.push(`${scenario} must not add a second state save for native echoes`);
     }
-    if (scenario === "command-relocation-echo" && scenarioSummary.storageSetCallsMax > 2) {
-      failures.push("command-relocation-echo must not add storage writes for native echoes");
+    if (isCommandRelocationEchoScenario(scenario) && scenarioSummary.storageSetCallsMax > 2) {
+      failures.push(`${scenario} must not add storage writes for native echoes`);
     }
-    if (scenario === "command-relocation-echo" && scenarioSummary.eventEchoMaxMs > 25) {
-      failures.push("command-relocation-echo native echo flush must stay below 25ms");
+    if (isCommandRelocationEchoScenario(scenario) && scenarioSummary.eventEchoMaxMs > 25) {
+      failures.push(`${scenario} native echo flush must stay below 25ms`);
     }
     if (scenario === "structural-save-pressure" && scenarioSummary.stateSaveStartedBeforeAckCount > 0) {
       failures.push("structural-save-pressure must not start V3 state saves before command ack");
@@ -529,6 +530,11 @@ function runtimeEventMaxMs(profile) {
   return max(rows.map((row) => row.maxMs).filter(isFiniteNumber));
 }
 
+function isCommandRelocationEchoScenario(scenario) {
+  return scenario === "command-relocation-echo" ||
+    scenario === "command-existing-window-relocation-echo";
+}
+
 function expectedNodeCount(scenario, tabs) {
   if (!Number.isFinite(tabs)) {
     return undefined;
@@ -540,6 +546,7 @@ function expectedNodeCount(scenario, tabs) {
     scenario === "group-live-leaf" ||
     scenario === "move-top-level-live-leaf" ||
     scenario === "command-relocation-echo" ||
+    scenario === "command-existing-window-relocation-echo" ||
     scenario === "structural-save-pressure"
   ) {
     return tabs + 2;
@@ -566,6 +573,7 @@ function expectedRootShape(scenario) {
   if (
     scenario === "move-top-level-live-leaf" ||
     scenario === "command-relocation-echo" ||
+    scenario === "command-existing-window-relocation-echo" ||
     scenario === "structural-save-pressure"
   ) {
     return { rootCount: 2, liveWindowRootCount: 2 };

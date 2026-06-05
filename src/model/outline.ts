@@ -723,6 +723,38 @@ export function moveNode(state: OutlineState, nodeId: NodeId, target: MoveTarget
   return removeEmptyWindowNodesFrom(next, oldParentId);
 }
 
+export function updateMovedLiveSubtreeRuntimeWindow(
+  state: OutlineState,
+  original: OutlineState,
+  nodeId: NodeId,
+  windowId: number,
+  now: number
+): OutlineState {
+  const liveTabIds = collectSubtreeIdsExcludingNestedLiveWindows(original, nodeId)
+    .filter((id) => {
+      const node = state.nodes[id];
+      return Boolean(node && isNodeLiveTab(node) && node.live.windowId !== windowId);
+    });
+  if (liveTabIds.length === 0) {
+    return state;
+  }
+
+  const next = copyStateForNodeTableMutation(state);
+  for (const id of liveTabIds) {
+    const candidate = next.nodes[id];
+    if (!candidate || !isNodeLiveTab(candidate)) {
+      continue;
+    }
+    const liveTab = cloneNodeForMutation(next, id);
+    liveTab.live = {
+      tabId: candidate.live.tabId,
+      windowId
+    };
+    liveTab.updatedAt = now;
+  }
+  return next;
+}
+
 function inheritSingleTabWindowRestoreSession(
   node: OutlineNode,
   sourceWindow: OutlineNode | undefined

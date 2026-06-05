@@ -56,6 +56,7 @@ function parseArgs(argv) {
     "group-live-leaf",
     "move-top-level-live-leaf",
     "command-relocation-echo",
+    "command-existing-window-relocation-echo",
     "structural-save-pressure",
     "flatten-window",
     "import-small",
@@ -63,7 +64,7 @@ function parseArgs(argv) {
     "refresh-noop"
   ].includes(options.scenario)) {
     throw new Error(
-      "--scenario must be rename-window, toggle-window, move-leaf, group-live-leaf, move-top-level-live-leaf, command-relocation-echo, structural-save-pressure, flatten-window, import-small, import-large, or refresh-noop"
+      "--scenario must be rename-window, toggle-window, move-leaf, group-live-leaf, move-top-level-live-leaf, command-relocation-echo, command-existing-window-relocation-echo, structural-save-pressure, flatten-window, import-small, import-large, or refresh-noop"
     );
   }
 
@@ -106,6 +107,7 @@ function makeRuntime(tabCount, scenario) {
     stateSaveStartedBeforeAck: false,
     delayedStateSaveStartedAt: undefined,
     delayedStateSaveCount: 0,
+    existingCommandWindowNodeId: undefined,
     api: undefined
   };
 
@@ -332,7 +334,25 @@ function moveTabs(runtime, tabIds, moveProperties, options = {}) {
   }
 }
 
-function commandForScenario(scenario, tabCount) {
+async function prepareScenario(controller, runtime, scenario) {
+  if (scenario !== "command-existing-window-relocation-echo") {
+    return;
+  }
+
+  await controller.handleMessage({
+    type: "moveNode",
+    nodeId: "tab:1",
+    index: 0
+  });
+  const state = await controller.handleMessage({ type: "getState" });
+  const destinationWindowNodeId = state.nodes["tab:1"]?.parentId;
+  if (!destinationWindowNodeId) {
+    throw new Error("Failed to prepare existing command relocation destination");
+  }
+  runtime.existingCommandWindowNodeId = destinationWindowNodeId;
+}
+
+function commandForScenario(scenario, tabCount, runtime) {
   if (scenario === "rename-window") {
     return { type: "renameGroup", nodeId: "window:10", title: "Profiled Group" };
   }
@@ -350,6 +370,12 @@ function commandForScenario(scenario, tabCount) {
   }
   if (scenario === "command-relocation-echo") {
     return { type: "moveSubtreeToTopLevel", nodeId: `tab:${tabCount}` };
+  }
+  if (scenario === "command-existing-window-relocation-echo") {
+    if (!runtime.existingCommandWindowNodeId) {
+      throw new Error("command-existing-window-relocation-echo requires a prepared destination window");
+    }
+    return { type: "moveNode", nodeId: `tab:${tabCount}`, parentId: runtime.existingCommandWindowNodeId, index: 1 };
   }
   if (scenario === "structural-save-pressure") {
     return { type: "moveSubtreeToTopLevel", nodeId: `tab:${tabCount}` };
@@ -472,6 +498,7 @@ async function profile(options) {
   const runtime = makeRuntime(options.tabs, options.scenario);
   const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
   const init = await measureAsync(() => controller.ensureState());
+  await prepareScenario(controller, runtime, options.scenario);
   await controller.flushPendingSaves();
   runtime.sidebarState = await controller.handleMessage({ type: "getState" });
   runtime.sidebarProjection = buildVisibleTreeProjection(runtime.sidebarState, "");
@@ -503,7 +530,7 @@ async function profile(options) {
   runtime.delayedStateSaveCount = 0;
   runtime.stateSaveDelayMs = options.scenario === "structural-save-pressure" ? 250 : 0;
 
-  const command = await measureAsync(() => controller.handleMessage(commandForScenario(options.scenario, options.tabs)));
+  const command = await measureAsync(() => controller.handleMessage(commandForScenario(options.scenario, options.tabs, runtime)));
   runtime.primaryCommandAcked = true;
   dispatchScenarioNativeEchoes(runtime, options.scenario, options.tabs);
   const eventEcho = await measureAsync(() => flushProfileEvents(runtime.events));
@@ -579,7 +606,7 @@ const result = await profile(parseArgs(process.argv.slice(2)));
 console.log(JSON.stringify(result, null, 2));
 
 function dispatchScenarioNativeEchoes(runtime, scenario, tabCount) {
-  if (scenario !== "command-relocation-echo") {
+  if (scenario !== "command-relocation-echo" && scenario !== "command-existing-window-relocation-echo") {
     return;
   }
 
@@ -601,6 +628,9 @@ function dispatchScenarioNativeEchoes(runtime, scenario, tabCount) {
     fromIndex: moved.index,
     toIndex: moved.index
   });
+  if (scenario === "command-existing-window-relocation-echo") {
+    runtime.events.tabUpdated.dispatch(moved.id, { title: moved.title }, { ...moved });
+  }
 }
 
 function summarizeTrace(trace) {

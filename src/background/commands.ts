@@ -12,6 +12,7 @@ import {
   projectLiveTabs,
   renameGroup,
   restoreNodes,
+  updateMovedLiveSubtreeRuntimeWindow,
   wrapNodeInGroup
 } from "../model/outline.js";
 import { appendPortableTree } from "../model/portable-tree.js";
@@ -245,12 +246,25 @@ export async function runCommand(
         return commandResultFromNextState(state, await moveNodeToNewWindow(state, adapter, command.nodeId, command.index));
       }
 
-      const next = moveNode(state, command.nodeId, {
+      let next = moveNode(state, command.nodeId, {
         ...(command.parentId ? { parentId: command.parentId } : {}),
         index: command.index
       });
-      if (next !== state && !(await syncMovedSubtreeBrowserOrder(next, command.nodeId, adapter))) {
-        await syncBrowserOrder(next, adapter);
+      if (next !== state) {
+        if (await syncMovedSubtreeBrowserOrder(next, command.nodeId, adapter)) {
+          const targetWindow = nearestLiveWindow(next, command.nodeId);
+          if (targetWindow) {
+            next = updateMovedLiveSubtreeRuntimeWindow(
+              next,
+              state,
+              command.nodeId,
+              targetWindow.live.windowId,
+              Date.now()
+            );
+          }
+        } else {
+          await syncBrowserOrder(next, adapter);
+        }
       }
       return commandResultFromNextState(state, next);
     }
