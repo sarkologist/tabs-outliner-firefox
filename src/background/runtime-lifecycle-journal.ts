@@ -41,7 +41,12 @@ export type RuntimeLifecycleJournalEntry =
       id: string;
       createdAt: number;
       kind: "relocation";
-      commandType: "moveNode" | "moveNodeToNewWindow" | "wrapNodeInGroup" | "moveSubtreeToTopLevel";
+      commandType:
+        | "moveNode"
+        | "moveNodeToNewWindow"
+        | "wrapNodeInGroup"
+        | "moveSubtreeToTopLevel"
+        | "moveSubtreeToBottomTopLevel";
       nodeId: NodeId;
       tabId: number;
       sourceWindowId: number;

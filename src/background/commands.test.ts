@@ -122,6 +122,7 @@ describe("background commands", () => {
       { type: "moveNodeToNewWindow", nodeId: "tab:1", index: 0 },
       { type: "wrapNodeInGroup", nodeId: "tab:1" },
       { type: "moveSubtreeToTopLevel", nodeId: "tab:1" },
+      { type: "moveSubtreeToBottomTopLevel", nodeId: "tab:1" },
       { type: "flattenSubtree", nodeId: "window:10" },
       { type: "promoteChildren", nodeId: "tab:1" },
       { type: "toggleCollapsed", nodeId: "tab:1" },
@@ -1562,6 +1563,77 @@ describe("background commands", () => {
     expect(result.state.nodes["window:10"]?.childIds).toEqual(["tab:3"]);
     expect(result.state.nodes["window:42"]?.childIds).toEqual(["tab:1"]);
     expect(result.state.nodes["tab:2"]?.live).toEqual({ tabId: 2, windowId: 42 });
+  });
+
+  it("wraps live tabs before moving them to the bottom top level", async () => {
+    const state: OutlineState = bootstrapFromWindows([
+      ...runtimeWindows,
+      {
+        id: 20,
+        focused: false,
+        incognito: false,
+        tabs: [
+          {
+            id: 20,
+            windowId: 20,
+            index: 0,
+            active: true,
+            url: "https://last.example/",
+            title: "Last"
+          }
+        ]
+      }
+    ], { now: 1000 });
+    const adapter = fakeAdapter();
+
+    const result = await runCommand(state, adapter, {
+      type: "moveSubtreeToBottomTopLevel",
+      nodeId: "tab:1"
+    });
+
+    expect(adapter.createWindow).toHaveBeenCalledWith({ tabId: 1 });
+    expect(adapter.moveTabs).toHaveBeenCalledWith([2], { windowId: 42, index: 1 });
+    expect(result.state.rootIds).toEqual(["window:10", "window:20", "window:42"]);
+    expect(result.state.nodes["window:10"]?.childIds).toEqual(["tab:3"]);
+    expect(result.state.nodes["window:42"]?.childIds).toEqual(["tab:1"]);
+    expect(result.state.nodes["tab:2"]?.live).toEqual({ tabId: 2, windowId: 42 });
+  });
+
+  it("moves root group-like rows to the bottom top level without touching Firefox", async () => {
+    const state: OutlineState = bootstrapFromWindows([
+      ...runtimeWindows,
+      {
+        id: 20,
+        focused: false,
+        incognito: false,
+        tabs: [
+          {
+            id: 20,
+            windowId: 20,
+            index: 0,
+            active: true,
+            url: "https://last.example/",
+            title: "Last"
+          }
+        ]
+      }
+    ], { now: 1000 });
+    const adapter = fakeAdapter();
+
+    const result = await runCommand(state, adapter, {
+      type: "moveSubtreeToBottomTopLevel",
+      nodeId: "window:10"
+    });
+
+    expect(result.state.rootIds).toEqual(["window:20", "window:10"]);
+    expect(result.state.nodes["window:10"]?.parentId).toBeUndefined();
+    expect(adapter.focusTab).not.toHaveBeenCalled();
+    expect(adapter.closeTab).not.toHaveBeenCalled();
+    expect(adapter.closeWindow).not.toHaveBeenCalled();
+    expect(adapter.restoreSession).not.toHaveBeenCalled();
+    expect(adapter.createTab).not.toHaveBeenCalled();
+    expect(adapter.createWindow).not.toHaveBeenCalled();
+    expect(adapter.moveTabs).not.toHaveBeenCalled();
   });
 
   it("wraps closed tabs before moving them to top level without touching Firefox", async () => {

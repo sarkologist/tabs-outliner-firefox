@@ -54,7 +54,9 @@ test.describe("sidebar promote children and icons", () => {
       "tab:b",
       "tab:b1",
       "tab:b1i",
-      "tab:c"
+      "tab:c",
+      "window:2",
+      "tab:z"
     ]);
 
     expect(issues).toEqual([]);
@@ -71,7 +73,7 @@ test.describe("sidebar promote children and icons", () => {
 
     await moveToTop.click();
 
-    await expect(outlineRootIds(page)).resolves.toEqual(["window:1", "window:top:tab:a"]);
+    await expect(outlineRootIds(page)).resolves.toEqual(["window:1", "window:top:tab:a", "window:2"]);
     await expect(outlineChildIds(page, "window:1")).resolves.toEqual(["tab:b", "tab:c"]);
     await expect(outlineChildIds(page, "window:top:tab:a")).resolves.toEqual(["tab:a"]);
     await expect(outlineParentId(page, "tab:a")).resolves.toBe("window:top:tab:a");
@@ -85,7 +87,72 @@ test.describe("sidebar promote children and icons", () => {
       "window:top:tab:a",
       "tab:a",
       "tab:a1",
+      "tab:a1i",
+      "window:2",
+      "tab:z"
+    ]);
+
+    expect(issues).toEqual([]);
+  });
+
+  test("moves a subtree to the bottom top level through an icon action", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadSidebar(page);
+
+    await nodeRow(page, "tab:a").hover();
+    const moveToBottom = nodeRow(page, "tab:a").getByRole("button", { name: "Move to bottom", exact: true });
+    await expect(moveToBottom).toHaveAttribute("title", "Move to bottom");
+    await expect(moveToBottom.locator("svg")).toHaveCount(1);
+
+    await moveToBottom.click();
+
+    await expect(outlineRootIds(page)).resolves.toEqual(["window:1", "window:2", "window:bottom:tab:a"]);
+    await expect(outlineChildIds(page, "window:1")).resolves.toEqual(["tab:b", "tab:c"]);
+    await expect(outlineChildIds(page, "window:bottom:tab:a")).resolves.toEqual(["tab:a"]);
+    await expect(outlineParentId(page, "tab:a")).resolves.toBe("window:bottom:tab:a");
+    await expect(page.locator(".node[data-node-id='window:bottom:tab:a']")).toHaveAttribute("aria-level", "1");
+    await expect(visibleNodeOrder(page)).resolves.toEqual([
+      "window:1",
+      "tab:b",
+      "tab:b1",
+      "tab:b1i",
+      "tab:c",
+      "window:2",
+      "tab:z",
+      "window:bottom:tab:a",
+      "tab:a",
+      "tab:a1",
       "tab:a1i"
+    ]);
+
+    expect(issues).toEqual([]);
+  });
+
+  test("moves a top-level group to the bottom through an icon action", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadSidebar(page);
+
+    await nodeRow(page, "window:1").hover();
+    const moveToBottom = nodeRow(page, "window:1").getByRole("button", { name: "Move to bottom", exact: true });
+    await expect(moveToBottom).toHaveAttribute("title", "Move to bottom");
+    await expect(moveToBottom.locator("svg")).toHaveCount(1);
+
+    await moveToBottom.click();
+
+    await expect(outlineRootIds(page)).resolves.toEqual(["window:2", "window:1"]);
+    await expect(outlineChildIds(page, "window:1")).resolves.toEqual(["tab:a", "tab:b", "tab:c"]);
+    await expect(outlineParentId(page, "window:1")).resolves.toBeUndefined();
+    await expect(visibleNodeOrder(page)).resolves.toEqual([
+      "window:2",
+      "tab:z",
+      "window:1",
+      "tab:a",
+      "tab:a1",
+      "tab:a1i",
+      "tab:b",
+      "tab:b1",
+      "tab:b1i",
+      "tab:c"
     ]);
 
     expect(issues).toEqual([]);
@@ -216,6 +283,65 @@ async function loadSidebar(page: Page): Promise<void> {
       return next;
     }
 
+    function moveSubtreeToBottomTopLevel(nodeId: string): State {
+      const node = state.nodes[nodeId];
+      if (!node) {
+        return state;
+      }
+
+      const next = structuredClone(state) as State;
+      let movingId = nodeId;
+      const nextNode = next.nodes[nodeId]!;
+
+      if (!node.parentId) {
+        if (!isGroupLike(node)) {
+          return state;
+        }
+        const rootIndex = next.rootIds.indexOf(nodeId);
+        if (rootIndex < 0 || rootIndex === next.rootIds.length - 1) {
+          return state;
+        }
+        next.rootIds.splice(rootIndex, 1);
+        next.rootIds.push(nodeId);
+        return next;
+      }
+
+      if (!isGroupLike(node)) {
+        const wrapperId = `window:bottom:${nodeId}`;
+        const oldSiblings = nextNode.parentId ? next.nodes[nextNode.parentId]?.childIds : next.rootIds;
+        if (!oldSiblings) {
+          return state;
+        }
+        const oldIndex = oldSiblings.indexOf(nodeId);
+        if (oldIndex < 0) {
+          return state;
+        }
+        next.nodes[wrapperId] = {
+          id: wrapperId,
+          kind: "window",
+          status: "live",
+          parentId: nextNode.parentId,
+          title: "Group",
+          childIds: [nodeId],
+          collapsed: false,
+          createdAt: Date.now(),
+          updatedAt: Date.now()
+        } as Node;
+        oldSiblings.splice(oldIndex, 1, wrapperId);
+        nextNode.parentId = wrapperId;
+        movingId = wrapperId;
+      }
+
+      const moving = next.nodes[movingId];
+      if (!moving?.parentId) {
+        return next;
+      }
+      removeId(next.nodes[moving.parentId]?.childIds, movingId);
+      next.rootIds.push(movingId);
+      delete moving.parentId;
+      return next;
+    }
+
     function rootAncestorIdFor(nodeId: string): string | undefined {
       let current = state.nodes[nodeId];
       const visited = new Set<string>();
@@ -283,6 +409,10 @@ async function loadSidebar(page: Page): Promise<void> {
             replaceState(moveSubtreeToTopLevel((message as { nodeId: string }).nodeId));
             return { type: "commandAck", stateChanged: true };
           }
+          if (type === "moveSubtreeToBottomTopLevel") {
+            replaceState(moveSubtreeToBottomTopLevel((message as { nodeId: string }).nodeId));
+            return { type: "commandAck", stateChanged: true };
+          }
           return { type: "commandAck", stateChanged: false };
         },
         onMessage: {
@@ -305,7 +435,7 @@ async function loadSidebar(page: Page): Promise<void> {
   }, fixtureState());
 
   await page.goto("/sidebar/sidebar.html");
-  await expect(page.getByRole("treeitem")).toHaveCount(8);
+  await expect(page.getByRole("treeitem")).toHaveCount(10);
 }
 
 function nodeRow(page: Page, nodeId: string) {
@@ -360,7 +490,7 @@ function fixtureState() {
   const now = 1_700_000_000_000;
   return {
     version: 1,
-    rootIds: ["window:1"],
+    rootIds: ["window:1", "window:2"],
     nodes: {
       "window:1": {
         id: "window:1",
@@ -471,6 +601,32 @@ function fixtureState() {
         createdAt: now,
         updatedAt: now,
         live: { tabId: 7, windowId: 1 }
+      },
+      "window:2": {
+        id: "window:2",
+        kind: "window",
+        status: "live",
+        title: "Window",
+        childIds: ["tab:z"],
+        active: false,
+        collapsed: false,
+        createdAt: now,
+        updatedAt: now,
+        live: { windowId: 2 }
+      },
+      "tab:z": {
+        id: "tab:z",
+        kind: "tab",
+        status: "live",
+        parentId: "window:2",
+        title: "Zeta",
+        url: "https://z.example/",
+        childIds: [],
+        active: false,
+        collapsed: false,
+        createdAt: now,
+        updatedAt: now,
+        live: { tabId: 8, windowId: 2 }
       }
     }
   };

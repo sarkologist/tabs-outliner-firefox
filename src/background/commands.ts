@@ -4,6 +4,7 @@ import {
   deleteNode,
   flattenSubtreeOneLevel,
   moveNode,
+  moveSubtreeToBottomTopLevel,
   moveSubtreeToTopLevel,
   moveTabToNewClosedWindow,
   moveTabToNewLiveWindow,
@@ -64,6 +65,10 @@ export type BackgroundCommand =
       nodeId: NodeId;
     }
   | {
+      type: "moveSubtreeToBottomTopLevel";
+      nodeId: NodeId;
+    }
+  | {
       type: "flattenSubtree";
       nodeId: NodeId;
     }
@@ -112,6 +117,7 @@ export const BACKGROUND_COMMAND_TYPES = [
   "moveNodeToNewWindow",
   "wrapNodeInGroup",
   "moveSubtreeToTopLevel",
+  "moveSubtreeToBottomTopLevel",
   "flattenSubtree",
   "promoteChildren",
   "toggleCollapsed",
@@ -277,6 +283,9 @@ export async function runCommand(
 
     case "moveSubtreeToTopLevel":
       return commandResultFromNextState(state, await moveSubtreeToTopLevelCommand(state, adapter, command.nodeId));
+
+    case "moveSubtreeToBottomTopLevel":
+      return commandResultFromNextState(state, await moveSubtreeToBottomTopLevelCommand(state, adapter, command.nodeId));
 
     case "flattenSubtree":
       return commandResultFromNextState(state, flattenSubtreeOneLevel(state, command.nodeId));
@@ -1038,11 +1047,11 @@ async function moveSubtreeToTopLevelCommand(
   nodeId: NodeId
 ): Promise<OutlineState> {
   const node = state.nodes[nodeId];
-  if (!node?.parentId) {
+  if (!node) {
     return state;
   }
 
-  if (isLiveTab(node)) {
+  if (isLiveTab(node) && node.parentId) {
     const createdWindow = await adapter.createWindow({ tabId: node.live.tabId });
     await moveRemainingLiveSubtreeTabsIntoCreatedWindow(
       state,
@@ -1058,6 +1067,34 @@ async function moveSubtreeToTopLevelCommand(
   }
 
   return moveSubtreeToTopLevel(state, nodeId, { now: Date.now() });
+}
+
+async function moveSubtreeToBottomTopLevelCommand(
+  state: OutlineState,
+  adapter: BrowserAdapter,
+  nodeId: NodeId
+): Promise<OutlineState> {
+  const node = state.nodes[nodeId];
+  if (!node) {
+    return state;
+  }
+
+  if (isLiveTab(node) && node.parentId) {
+    const createdWindow = await adapter.createWindow({ tabId: node.live.tabId });
+    await moveRemainingLiveSubtreeTabsIntoCreatedWindow(
+      state,
+      adapter,
+      nodeId,
+      node.live.tabId,
+      createdWindow.id
+    );
+    return moveSubtreeToBottomTopLevel(state, nodeId, {
+      now: Date.now(),
+      liveWindow: createdWindow
+    });
+  }
+
+  return moveSubtreeToBottomTopLevel(state, nodeId, { now: Date.now() });
 }
 
 async function moveRemainingLiveSubtreeTabsIntoCreatedWindow(

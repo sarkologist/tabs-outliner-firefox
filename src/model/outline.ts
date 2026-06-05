@@ -1059,6 +1059,56 @@ export function moveSubtreeToTopLevel(
   });
 }
 
+export function moveSubtreeToBottomTopLevel(
+  state: OutlineState,
+  nodeId: NodeId,
+  context: MoveSubtreeToTopLevelContext
+): OutlineState {
+  const node = state.nodes[nodeId];
+  if (!node) {
+    return state;
+  }
+
+  if (!node.parentId) {
+    if (!isGroupLikeNode(node)) {
+      return state;
+    }
+    const rootIndex = state.rootIds.indexOf(nodeId);
+    if (rootIndex < 0 || rootIndex === state.rootIds.length - 1) {
+      return state;
+    }
+    return moveNode(state, nodeId, {
+      index: state.rootIds.length,
+      now: context.now
+    });
+  }
+
+  let next = state;
+  let movingNodeId = nodeId;
+
+  if (!isGroupLikeNode(node)) {
+    next = wrapNodeInGroup(state, nodeId, context);
+    if (next === state) {
+      return state;
+    }
+    const wrapperId = next.nodes[nodeId]?.parentId;
+    if (!wrapperId) {
+      return state;
+    }
+    movingNodeId = wrapperId;
+  }
+
+  const moving = next.nodes[movingNodeId];
+  if (!moving?.parentId) {
+    return next;
+  }
+
+  return moveNode(next, movingNodeId, {
+    index: next.rootIds.length,
+    now: context.now
+  });
+}
+
 export function projectLiveTabs(
   state: OutlineState,
   windowIdOrNodeId: number | NodeId,
