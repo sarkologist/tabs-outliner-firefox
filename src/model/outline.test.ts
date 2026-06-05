@@ -10,6 +10,7 @@ import {
   deleteNode,
   flattenSubtreeOneLevel,
   moveNode,
+  moveSubtreeToBottomTopLevel,
   moveSubtreeToTopLevel,
   moveTabToNewClosedWindow,
   moveTabToNewLiveWindow,
@@ -2065,6 +2066,136 @@ describe("outline model", () => {
     expect(moved.rootIds).toEqual(["window:42"]);
     expect(moved.nodes["window:42"]?.childIds).toEqual(["tab:1"]);
     expect(moved.nodes["tab:1"]?.parentId).toBe("window:42");
+  });
+
+  it("wraps live tabs before moving them to the bottom top level", () => {
+    const state = bootstrapFromWindows([
+      ...windows,
+      {
+        id: 20,
+        incognito: false,
+        focused: false,
+        tabs: [
+          {
+            id: 20,
+            windowId: 20,
+            index: 0,
+            active: true,
+            url: "https://last.example/",
+            title: "Last"
+          }
+        ]
+      }
+    ], { now: 1000 });
+
+    const moved = moveSubtreeToBottomTopLevel(state, "tab:1", {
+      now: 3000,
+      liveWindow: {
+        id: 42,
+        focused: true,
+        incognito: false
+      }
+    });
+
+    expect(moved.rootIds).toEqual(["window:10", "window:20", "window:42"]);
+    expect(moved.nodes["window:10"]?.childIds).toEqual(["tab:3"]);
+    expect(moved.nodes["window:42"]?.childIds).toEqual(["tab:1"]);
+    expect(moved.nodes["tab:1"]?.childIds).toEqual(["tab:2"]);
+    expect(moved.nodes["tab:1"]?.parentId).toBe("window:42");
+    expect(moved.nodes["tab:2"]?.live).toEqual({ tabId: 2, windowId: 42 });
+  });
+
+  it("moves nested group-like subtrees to the bottom top level", () => {
+    const wrapped = wrapNodeInGroup(bootstrapFromWindows([
+      {
+        id: 10,
+        incognito: false,
+        focused: true,
+        tabs: [
+          {
+            id: 1,
+            windowId: 10,
+            index: 0,
+            active: true,
+            url: "https://one.example/",
+            title: "One"
+          }
+        ]
+      },
+      {
+        id: 20,
+        incognito: false,
+        focused: false,
+        tabs: [
+          {
+            id: 2,
+            windowId: 20,
+            index: 0,
+            active: true,
+            url: "https://two.example/",
+            title: "Two"
+          }
+        ]
+      },
+      {
+        id: 30,
+        incognito: false,
+        focused: false,
+        tabs: [
+          {
+            id: 3,
+            windowId: 30,
+            index: 0,
+            active: true,
+            url: "https://three.example/",
+            title: "Three"
+          }
+        ]
+      }
+    ], { now: 1000 }), "window:10", { now: 3000 });
+    const wrapperId = wrapped.nodes["window:10"]?.parentId;
+    const nested = moveNode(wrapped, "window:20", { parentId: wrapperId, index: 1 });
+
+    const moved = moveSubtreeToBottomTopLevel(nested, "window:10", { now: 4000 });
+
+    expect(moved.rootIds).toEqual([wrapperId, "window:30", "window:10"]);
+    expect(moved.nodes[wrapperId!]?.childIds).toEqual(["window:20"]);
+    expect(moved.nodes["window:10"]?.parentId).toBeUndefined();
+    expect(moved.nodes["tab:1"]?.parentId).toBe("window:10");
+  });
+
+  it("moves root group-like rows to the bottom top level", () => {
+    const state = bootstrapFromWindows([
+      ...windows,
+      {
+        id: 20,
+        incognito: false,
+        focused: false,
+        tabs: [
+          {
+            id: 20,
+            windowId: 20,
+            index: 0,
+            active: true,
+            url: "https://last.example/",
+            title: "Last"
+          }
+        ]
+      }
+    ], { now: 1000 });
+
+    const moved = moveSubtreeToBottomTopLevel(state, "window:10", { now: 3000 });
+
+    expect(moved.rootIds).toEqual(["window:20", "window:10"]);
+    expect(moved.nodes["window:10"]?.parentId).toBeUndefined();
+    expect(moved.nodes["window:10"]?.childIds).toEqual(["tab:1", "tab:3"]);
+  });
+
+  it("does not move missing or already-bottom root rows to bottom top level", () => {
+    const state = bootstrapFromWindows(windows, { now: 1000 });
+
+    expect(moveSubtreeToBottomTopLevel(state, "window:10", { now: 3000 })).toBe(state);
+    expect(moveSubtreeToBottomTopLevel(state, "missing", { now: 3000 })).toBe(state);
   });
 
   it("repairs cyclic and duplicate child links in stored state", () => {

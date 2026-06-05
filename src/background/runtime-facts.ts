@@ -2017,7 +2017,8 @@ export function runtimeCommandRelocatesLiveTabs(type: BackgroundCommand["type"])
   return type === "moveNode" ||
     type === "moveNodeToNewWindow" ||
     type === "wrapNodeInGroup" ||
-    type === "moveSubtreeToTopLevel";
+    type === "moveSubtreeToTopLevel" ||
+    type === "moveSubtreeToBottomTopLevel";
 }
 
 function commandOwnershipForType(type: BackgroundCommand["type"]): CommandOwnership | undefined {

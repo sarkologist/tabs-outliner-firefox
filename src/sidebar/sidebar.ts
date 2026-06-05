@@ -354,6 +354,7 @@ type IconName =
   | "flatten"
   | "outdent"
   | "root-outdent"
+  | "root-down"
   | "pencil"
   | "trash"
   | "locate"
@@ -3065,6 +3066,17 @@ function canMoveSubtreeToTopLevel(node: OutlineNode): boolean {
   return Boolean(node.parentId);
 }
 
+function canMoveSubtreeToBottomTopLevel(state: OutlineState, node: OutlineNode): boolean {
+  if (node.parentId) {
+    return true;
+  }
+  if (!isRenamableGroup(node)) {
+    return false;
+  }
+  const rootIndex = state.rootIds.indexOf(node.id);
+  return rootIndex >= 0 && rootIndex < state.rootIds.length - 1;
+}
+
 function isRenamableGroup(node: OutlineNode): boolean {
   return node.kind === "window" || node.kind === "group";
 }
@@ -3489,6 +3501,9 @@ function renderNodeActions(
   }
   if (canMoveSubtreeToTopLevel(node) && canRenderHydratingNodeAction("move-subtree-to-top-level", node)) {
     actions.append(actionButton("Move to top level", "move-subtree-to-top-level", "root-outdent"));
+  }
+  if (canMoveSubtreeToBottomTopLevel(state, node) && canRenderHydratingNodeAction("move-subtree-to-bottom-top-level", node)) {
+    actions.append(actionButton("Move to bottom", "move-subtree-to-bottom-top-level", "root-down"));
   }
   if ((node.status === "live" || hasLiveDescendant(node.id)) && canRenderHydratingNodeAction("close-node", node)) {
     actions.append(actionButton("Close", "close-node", "close-circle"));
@@ -4190,6 +4205,11 @@ function handleTreeClick(event: MouseEvent): void {
 
   if (action === "move-subtree-to-top-level") {
     void runAndRender({ type: "moveSubtreeToTopLevel", nodeId: node.id });
+    return;
+  }
+
+  if (action === "move-subtree-to-bottom-top-level") {
+    void runAndRender({ type: "moveSubtreeToBottomTopLevel", nodeId: node.id });
     return;
   }
 

@@ -80,6 +80,7 @@ import {
   closeWindow,
   deleteNode as deleteOutlineNode,
   deleteLiveTabNodeByTabId,
+  moveSubtreeToBottomTopLevel,
   moveSubtreeToTopLevel,
   moveTabToNewLiveWindow,
   planRestore,
@@ -1052,6 +1053,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       if (
         message.type === "wrapNodeInGroup" ||
         message.type === "moveSubtreeToTopLevel" ||
+        message.type === "moveSubtreeToBottomTopLevel" ||
         message.type === "promoteChildren"
       ) {
         const update = perfTrace.measure("background.patch.build.treeStructure", { command: message.type }, () =>
@@ -1596,6 +1598,8 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       ? wrapNodeInGroup(current, details.nodeId, { now: nowValue, liveWindow: createdWindow })
       : details.kind === "topLevel"
         ? moveSubtreeToTopLevel(current, details.nodeId, { now: nowValue, liveWindow: createdWindow })
+        : details.kind === "bottomTopLevel"
+          ? moveSubtreeToBottomTopLevel(current, details.nodeId, { now: nowValue, liveWindow: createdWindow })
         : moveTabToNewLiveWindow(current, details.nodeId, createdWindow, {
             now: nowValue,
             ...(typeof details.rootIndex === "number" ? { rootIndex: details.rootIndex } : {})
@@ -1609,7 +1613,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   function relocationCreateRecoveryDetails(
     current: OutlineState,
     command: BackgroundCommand
-  ): { kind: "newWindow" | "wrap" | "topLevel"; nodeId: NodeId; tabId: number; sourceWindowId: number; rootIndex?: number } | undefined {
+  ): { kind: "newWindow" | "wrap" | "topLevel" | "bottomTopLevel"; nodeId: NodeId; tabId: number; sourceWindowId: number; rootIndex?: number } | undefined {
     if (command.type === "moveNode" && command.parentId) {
       return undefined;
     }
@@ -1617,7 +1621,8 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       command.type !== "moveNode" &&
       command.type !== "moveNodeToNewWindow" &&
       command.type !== "wrapNodeInGroup" &&
-      command.type !== "moveSubtreeToTopLevel"
+      command.type !== "moveSubtreeToTopLevel" &&
+      command.type !== "moveSubtreeToBottomTopLevel"
     ) {
       return undefined;
     }
@@ -1632,6 +1637,8 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         ? "wrap"
         : command.type === "moveSubtreeToTopLevel"
           ? "topLevel"
+          : command.type === "moveSubtreeToBottomTopLevel"
+            ? "bottomTopLevel"
           : "newWindow",
       nodeId: command.nodeId,
       tabId: node.live.tabId,
@@ -2130,6 +2137,9 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     }
     if (entry.commandType === "moveSubtreeToTopLevel") {
       return moveSubtreeToTopLevel(current, entry.nodeId, { now: now(), liveWindow: runtimeWindow });
+    }
+    if (entry.commandType === "moveSubtreeToBottomTopLevel") {
+      return moveSubtreeToBottomTopLevel(current, entry.nodeId, { now: now(), liveWindow: runtimeWindow });
     }
     return moveTabToNewLiveWindow(current, entry.nodeId, runtimeWindow, {
       now: now(),
@@ -5713,6 +5723,7 @@ function runtimeIndexCandidateNodeIdsForCommand(
     case "moveNodeToNewWindow":
     case "wrapNodeInGroup":
     case "moveSubtreeToTopLevel":
+    case "moveSubtreeToBottomTopLevel":
     case "flattenSubtree":
     case "promoteChildren":
     case "closeNode":
@@ -5901,6 +5912,7 @@ function isTrackableHistoryCommandType(value: string): value is TrackableHistory
     value === "moveNodeToNewWindow" ||
     value === "wrapNodeInGroup" ||
     value === "moveSubtreeToTopLevel" ||
+    value === "moveSubtreeToBottomTopLevel" ||
     value === "flattenSubtree" ||
     value === "promoteChildren" ||
     value === "toggleCollapsed" ||
@@ -6431,6 +6443,7 @@ function isStructuralCommand(type: BackgroundCommand["type"]): boolean {
     type === "restoreNode" ||
     type === "wrapNodeInGroup" ||
     type === "moveSubtreeToTopLevel" ||
+    type === "moveSubtreeToBottomTopLevel" ||
     type === "flattenSubtree" ||
     type === "promoteChildren" ||
     type === "deleteNode" ||

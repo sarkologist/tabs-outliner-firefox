@@ -9,6 +9,7 @@ export type TrackableHistoryCommandType =
   | "moveNodeToNewWindow"
   | "wrapNodeInGroup"
   | "moveSubtreeToTopLevel"
+  | "moveSubtreeToBottomTopLevel"
   | "flattenSubtree"
   | "promoteChildren"
   | "toggleCollapsed"
@@ -252,6 +253,8 @@ function historyLabel(commandType: TrackableHistoryCommandType): string {
       return "Group";
     case "moveSubtreeToTopLevel":
       return "Move to top level";
+    case "moveSubtreeToBottomTopLevel":
+      return "Move to bottom";
     case "flattenSubtree":
       return "Flatten";
     case "promoteChildren":
@@ -298,6 +301,7 @@ function isTrackableHistoryCommandType(value: unknown): value is TrackableHistor
     value === "moveNodeToNewWindow" ||
     value === "wrapNodeInGroup" ||
     value === "moveSubtreeToTopLevel" ||
+    value === "moveSubtreeToBottomTopLevel" ||
     value === "flattenSubtree" ||
     value === "promoteChildren" ||
     value === "toggleCollapsed" ||
