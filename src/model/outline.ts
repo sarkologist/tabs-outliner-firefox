@@ -540,7 +540,7 @@ export function closeTab(state: OutlineState, tabId: number, context: CloseConte
 }
 
 export function closeWindow(state: OutlineState, windowId: number, context: CloseContext): OutlineState {
-  const nodeId = findLiveWindowNode(state, windowId);
+  const nodeId = findLiveWindowNode(state, windowId) ?? findRestoredTabSubgroupRuntimeOwnerNode(state, windowId);
   if (!nodeId) {
     return state;
   }
@@ -2678,6 +2678,14 @@ function findLiveTabNode(state: OutlineState, tabId: number): NodeId | undefined
 function findLiveWindowNode(state: OutlineState, windowId: number): NodeId | undefined {
   return Object.values(state.nodes).find((node) => {
     return node.kind === "window" && node.live && "windowId" in node.live && node.live.windowId === windowId;
+  })?.id;
+}
+
+function findRestoredTabSubgroupRuntimeOwnerNode(state: OutlineState, windowId: number): NodeId | undefined {
+  return Object.values(state.nodes).find((node) => {
+    return isRestoredTabSubgroupRuntimeOwner(node) &&
+      node.live.windowId === windowId &&
+      hasClosedAncestor(state, node.id);
   })?.id;
 }
 

@@ -1482,6 +1482,85 @@ describe("outline model", () => {
     expect(Object.keys(restored.nodes).filter((id) => id === "tab:2")).toHaveLength(1);
   });
 
+  it("closes restored tab subgroup runtime owners as closed subtrees", () => {
+    const state: OutlineState = {
+      version: 1,
+      rootIds: ["window:parent"],
+      nodes: {
+        "window:parent": {
+          id: "window:parent",
+          kind: "window",
+          status: "closed",
+          childIds: ["tab:root"],
+          title: "Imported parent",
+          collapsed: false,
+          createdAt: 1000,
+          updatedAt: 1000,
+          closedAt: 1000
+        },
+        "tab:root": {
+          id: "tab:root",
+          kind: "tab",
+          status: "live",
+          parentId: "window:parent",
+          childIds: ["tab:child"],
+          title: "Restored root",
+          url: "https://restore.example/root",
+          collapsed: false,
+          createdAt: 1000,
+          updatedAt: 2000,
+          restoredFromClosed: true,
+          live: { tabId: 41, windowId: 42 }
+        },
+        "tab:child": {
+          id: "tab:child",
+          kind: "tab",
+          status: "live",
+          parentId: "tab:root",
+          childIds: [],
+          title: "Restored child",
+          url: "https://restore.example/child",
+          collapsed: false,
+          createdAt: 1000,
+          updatedAt: 2000,
+          restoredFromClosed: true,
+          live: { tabId: 43, windowId: 42 }
+        }
+      }
+    };
+
+    const closed = closeWindow(state, 42, {
+      now: 3000,
+      sessionId: "session-restored-owner",
+      closedBy: "outliner"
+    });
+
+    expect(closed.nodes["window:parent"]).toMatchObject({
+      status: "closed",
+      childIds: ["tab:root"]
+    });
+    expect(closed.nodes["tab:root"]).toMatchObject({
+      status: "closed",
+      childIds: ["tab:child"],
+      restore: expect.objectContaining({
+        sessionId: "session-restored-owner",
+        url: "https://restore.example/root",
+        title: "Restored root",
+        closedBy: "outliner"
+      })
+    });
+    expect(closed.nodes["tab:child"]).toMatchObject({
+      status: "closed",
+      restore: expect.objectContaining({
+        url: "https://restore.example/child",
+        title: "Restored child",
+        closedBy: "outliner"
+      })
+    });
+    expect(closed.nodes["tab:root"]?.live).toBeUndefined();
+    expect(closed.nodes["tab:child"]?.live).toBeUndefined();
+  });
+
   it("keeps a restored tab's saved title while runtime reports transient titles", () => {
     const state = closeTab(bootstrapFromWindows(windows, { now: 1000 }), 2, {
       now: 2000,

@@ -224,14 +224,7 @@ export async function runCommand(
     }
 
     case "closeNode": {
-      const node = state.nodes[command.nodeId];
-      if (isLiveTab(node)) {
-        await adapter.closeTabs([node.live.tabId]);
-      } else if (isLiveWindow(node)) {
-        await adapter.closeWindow(node.live.windowId);
-      } else {
-        await closeRuntimePlan(adapter, planLiveSubtreeClose(state, command.nodeId));
-      }
+      await closeRuntimePlan(adapter, planCloseNodeRuntimeClose(state, command.nodeId));
       return unchangedCommandResult(state);
     }
 
@@ -423,6 +416,54 @@ export function planLiveSubtreeClose(state: OutlineState, nodeId: NodeId): Runti
     windowIds,
     tabIds: tabEntries.map((entry) => entry.tabId)
   };
+}
+
+export function planCloseNodeRuntimeClose(state: OutlineState, nodeId: NodeId): RuntimeClosePlan {
+  const restoredOwnerWindowId = restoredTabSubgroupRuntimeWindowIdForCloseNode(state, nodeId);
+  if (typeof restoredOwnerWindowId === "number") {
+    return { windowIds: [restoredOwnerWindowId], tabIds: [] };
+  }
+
+  const node = state.nodes[nodeId];
+  if (isLiveTab(node)) {
+    return { windowIds: [], tabIds: [node.live.tabId] };
+  }
+  if (isLiveWindow(node)) {
+    return { windowIds: [node.live.windowId], tabIds: [] };
+  }
+
+  return planLiveSubtreeClose(state, nodeId);
+}
+
+function restoredTabSubgroupRuntimeWindowIdForCloseNode(state: OutlineState, nodeId: NodeId): number | undefined {
+  const node = state.nodes[nodeId];
+  if (
+    !isLiveTab(node) ||
+    node.restoredFromClosed !== true ||
+    node.childIds.length === 0 ||
+    !hasClosedAncestor(state, node.id)
+  ) {
+    return undefined;
+  }
+
+  return node.live.windowId;
+}
+
+function hasClosedAncestor(state: OutlineState, nodeId: NodeId): boolean {
+  let currentId = state.nodes[nodeId]?.parentId;
+  const visited = new Set<NodeId>([nodeId]);
+  while (currentId && !visited.has(currentId)) {
+    visited.add(currentId);
+    const current = state.nodes[currentId];
+    if (!current) {
+      return false;
+    }
+    if (current.status === "closed") {
+      return true;
+    }
+    currentId = current.parentId;
+  }
+  return false;
 }
 
 type SubtreeEntry = {

@@ -17,7 +17,7 @@ import {
   type ClosedSubtreeGuardResult
 } from "./closed-subtree-guard.js";
 import { computeDiagnostics, type OutlineDiagnostics } from "./diagnostics.js";
-import { isBackgroundCommand, planLiveSubtreeClose, runCommand, syncBrowserOrder } from "./commands.js";
+import { isBackgroundCommand, planCloseNodeRuntimeClose, planLiveSubtreeClose, runCommand, syncBrowserOrder } from "./commands.js";
 import type { BackgroundCommand, CommandAck, RestoreCreateAttempt, RuntimeClosePlan } from "./commands.js";
 import {
   RuntimeFactLedger,
@@ -819,7 +819,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
           : current
         : undefined;
       const outlinerClosePlan = message.type === "closeNode"
-        ? closePlanForCloseNodeCommand(current, message.nodeId)
+        ? planCloseNodeRuntimeClose(current, message.nodeId)
         : undefined;
       const focusTarget = message.type === "focusNode"
         ? focusTargetForNode(current, message.nodeId)
@@ -6658,34 +6658,6 @@ function focusRuntimeWindowInPlace(
   index.activeWindowNodeId = targetNodeId;
 
   return { found: true, changed, updates };
-}
-
-function closePlanForCloseNodeCommand(state: OutlineState, nodeId: NodeId): RuntimeClosePlan {
-  const tabId = liveTabIdForNode(state, nodeId);
-  if (typeof tabId === "number") {
-    return { windowIds: [], tabIds: [tabId] };
-  }
-
-  const windowId = liveWindowIdForNode(state, nodeId);
-  if (typeof windowId === "number") {
-    return { windowIds: [windowId], tabIds: [] };
-  }
-
-  return planLiveSubtreeClose(state, nodeId);
-}
-
-function liveTabIdForNode(state: OutlineState, nodeId: NodeId): number | undefined {
-  const node = state.nodes[nodeId];
-  return node?.kind === "tab" && node.status === "live" && node.live && "tabId" in node.live
-    ? node.live.tabId
-    : undefined;
-}
-
-function liveWindowIdForNode(state: OutlineState, nodeId: NodeId): number | undefined {
-  const node = state.nodes[nodeId];
-  return node?.kind === "window" && node.status === "live" && node.live && "windowId" in node.live
-    ? node.live.windowId
-    : undefined;
 }
 
 function liveWindowNodeByRuntimeId(

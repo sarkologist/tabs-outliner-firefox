@@ -21,15 +21,22 @@ try {
   const expectedLabels = result.expected.map((tab) => tab.label);
   const immediateLabels = result.immediate.map((tab) => tab.label);
   const settledLabels = result.settled.map((tab) => tab.label);
+  const closeOk = !options.verifyClose || result.close?.ok === true;
 
-  if (!result.immediateOk || !result.settledOk) {
-    console.error("Firefox restore order mismatch");
+  if (!result.immediateOk || !result.settledOk || !closeOk) {
+    console.error("Firefox restore verification failed");
     console.error(`expected:  ${expectedLabels.join(" > ")}`);
     console.error(`immediate: ${immediateLabels.join(" > ")}`);
     console.error(`settled:   ${settledLabels.join(" > ")}`);
+    if (options.verifyClose && result.close) {
+      console.error(`close:     ${JSON.stringify(result.close)}`);
+    }
     process.exitCode = 1;
   } else {
     console.log(`Firefox restore order verified: ${settledLabels.join(" > ")}`);
+    if (options.verifyClose) {
+      console.log(`Firefox TO-close verified: ${result.close.closedNodeIds.join(" > ")}`);
+    }
   }
 } finally {
   await rm(extensionDir, { recursive: true, force: true });
@@ -141,11 +148,14 @@ function parseArgs(args) {
     restoreTitle: "Imported subgroup",
     restoreOccurrence: 1,
     settleMs: 750,
+    verifyClose: false,
     headed: false
   };
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
-    if (arg === "--tree") {
+    if (arg === "--") {
+      continue;
+    } else if (arg === "--tree") {
       const value = args[++index];
       if (!value) {
         throw new Error("--tree requires a path");
@@ -169,6 +179,8 @@ function parseArgs(args) {
         throw new Error("--settle-ms requires a non-negative number");
       }
       parsed.settleMs = value;
+    } else if (arg === "--verify-close") {
+      parsed.verifyClose = true;
     } else if (arg === "--headed") {
       parsed.headed = true;
     } else {
@@ -185,6 +197,7 @@ const errorPrefix = ${JSON.stringify(errorPrefix)};
 const restoreTitle = ${JSON.stringify(options.restoreTitle)};
 const restoreOccurrence = ${JSON.stringify(options.restoreOccurrence)};
 const settleMs = ${JSON.stringify(options.settleMs)};
+const verifyClose = ${JSON.stringify(options.verifyClose)};
 
 main().catch((error) => {
   emit(errorPrefix, {
@@ -231,14 +244,82 @@ async function main() {
   const immediate = await runtimeTabs(windowId, expectedLabelsByTabId);
   await delay(settleMs);
   const settled = await runtimeTabs(windowId, expectedLabelsByTabId);
+  const close = verifyClose
+    ? await verifyToClose(controller, restored, subgroup.id, windowId, settleMs)
+    : undefined;
 
   emit(resultPrefix, {
     expected,
     immediate,
     settled,
     immediateOk: sameOrder(expected, immediate),
-    settledOk: sameOrder(expected, settled)
+    settledOk: sameOrder(expected, settled),
+    ...(close ? { close } : {})
   });
+}
+
+async function verifyToClose(controller, restored, rootId, windowId, settleMs) {
+  const closeNodeIds = outlineLiveRuntimeNodeIds(restored, rootId, windowId);
+  const rootBeforeClose = restored.nodes[rootId];
+  const parentId = rootBeforeClose && rootBeforeClose.parentId;
+
+  await controller.handleMessage({ type: "closeNode", nodeId: rootId });
+  await delay(settleMs);
+
+  const closed = await controller.handleMessage({ type: "getState" });
+  const runtimeWindowOpen = await browser.windows.get(windowId)
+    .then(() => true)
+    .catch(() => false);
+  const missingNodeIds = closeNodeIds.filter((nodeId) => !closed.nodes[nodeId]);
+  const staleLiveNodeIds = closeNodeIds.filter((nodeId) => {
+    const node = closed.nodes[nodeId];
+    return node && (node.status !== "closed" || node.live);
+  });
+  const parentStillContains = parentId
+    ? closed.nodes[parentId]?.childIds?.includes(rootId) === true
+    : closed.rootIds.includes(rootId);
+
+  return {
+    ok: missingNodeIds.length === 0 &&
+      staleLiveNodeIds.length === 0 &&
+      !runtimeWindowOpen &&
+      parentStillContains,
+    closedNodeIds: closeNodeIds,
+    missingNodeIds,
+    staleLiveNodeIds,
+    runtimeWindowOpen,
+    parentStillContains
+  };
+}
+
+function outlineLiveRuntimeNodeIds(state, rootId, windowId) {
+  const ids = [];
+  const visited = new Set();
+  const visit = (nodeId) => {
+    if (visited.has(nodeId)) {
+      return;
+    }
+    visited.add(nodeId);
+    const node = state.nodes[nodeId];
+    if (!node) {
+      return;
+    }
+    if (
+      node.status === "live" &&
+      node.live &&
+      (
+        (node.kind === "window" && node.live.windowId === windowId) ||
+        (node.kind === "tab" && node.live.windowId === windowId)
+      )
+    ) {
+      ids.push(node.id);
+    }
+    for (const childId of node.childIds ?? []) {
+      visit(childId);
+    }
+  };
+  visit(rootId);
+  return ids;
 }
 
 function outlineTabs(state, rootId, windowId) {
