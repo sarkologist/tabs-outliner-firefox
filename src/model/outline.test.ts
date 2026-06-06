@@ -1482,6 +1482,114 @@ describe("outline model", () => {
     expect(Object.keys(restored.nodes).filter((id) => id === "tab:2")).toHaveLength(1);
   });
 
+  it("keeps a single restored tab inside a restored closed parent window with closed siblings", () => {
+    const state: OutlineState = {
+      version: 1,
+      rootIds: ["window:outer"],
+      nodes: {
+        "window:outer": {
+          id: "window:outer",
+          kind: "window",
+          status: "closed",
+          childIds: ["window:inner"],
+          title: "Outer group",
+          collapsed: false,
+          createdAt: 1000,
+          updatedAt: 1000,
+          closedAt: 1000
+        },
+        "window:inner": {
+          id: "window:inner",
+          kind: "window",
+          status: "closed",
+          parentId: "window:outer",
+          childIds: ["tab:first", "tab:second"],
+          title: "Inner group",
+          collapsed: false,
+          createdAt: 1000,
+          updatedAt: 1000,
+          closedAt: 1000
+        },
+        "tab:first": {
+          id: "tab:first",
+          kind: "tab",
+          status: "closed",
+          parentId: "window:inner",
+          childIds: [],
+          title: "First",
+          url: "https://restore.example/first",
+          collapsed: false,
+          createdAt: 1000,
+          updatedAt: 1000,
+          closedAt: 1000,
+          restore: {
+            url: "https://restore.example/first",
+            title: "First"
+          }
+        },
+        "tab:second": {
+          id: "tab:second",
+          kind: "tab",
+          status: "closed",
+          parentId: "window:inner",
+          childIds: [],
+          title: "Second",
+          url: "https://restore.example/second",
+          collapsed: false,
+          createdAt: 1000,
+          updatedAt: 1000,
+          closedAt: 1000,
+          restore: {
+            url: "https://restore.example/second",
+            title: "Second"
+          }
+        }
+      }
+    };
+
+    const restored = restoreNodes(state, [
+      {
+        nodeId: "window:inner",
+        windowId: 42,
+        active: true
+      },
+      {
+        nodeId: "tab:first",
+        tabId: 21,
+        windowId: 42,
+        active: true,
+        url: "https://restore.example/first",
+        title: "First"
+      }
+    ]);
+
+    expect(restored.rootIds).toEqual(["window:outer"]);
+    expect(restored.nodes["window:outer"]).toMatchObject({
+      status: "closed",
+      childIds: ["window:inner"]
+    });
+    expect(restored.nodes["window:inner"]).toMatchObject({
+      status: "live",
+      parentId: "window:outer",
+      childIds: ["tab:first", "tab:second"],
+      live: { windowId: 42 }
+    });
+    expect(restored.nodes["tab:first"]).toMatchObject({
+      status: "live",
+      parentId: "window:inner",
+      live: { tabId: 21, windowId: 42 }
+    });
+    expect(restored.nodes["tab:second"]).toMatchObject({
+      status: "closed",
+      parentId: "window:inner",
+      restore: {
+        url: "https://restore.example/second",
+        title: "Second"
+      }
+    });
+    expect(restored.nodes["tab:second"]?.live).toBeUndefined();
+  });
+
   it("closes restored tab subgroup runtime owners as closed subtrees", () => {
     const state: OutlineState = {
       version: 1,

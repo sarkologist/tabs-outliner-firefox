@@ -110,6 +110,52 @@ function windowWithTabs(windowId: number, tabCount: number): RuntimeWindow {
   };
 }
 
+async function importNestedSiblingGroup() {
+  const imported = await runCommand(bootstrapFromWindows(runtimeWindows, { now: 1000 }), fakeAdapter(), {
+    type: "importTree",
+    tree: {
+      schema: PORTABLE_TREE_SCHEMA,
+      version: 1,
+      exportedAt: "2026-05-16T12:00:00.000Z",
+      roots: [
+        {
+          kind: "window",
+          title: "Imported outer group",
+          children: [
+            {
+              kind: "window",
+              title: "Imported inner group",
+              children: [
+                {
+                  kind: "tab",
+                  title: "Imported first tab",
+                  url: "https://imported.example/first",
+                  children: []
+                },
+                {
+                  kind: "tab",
+                  title: "Imported second tab",
+                  url: "https://imported.example/second",
+                  children: []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  });
+  const nodeByTitle = (title: string) =>
+    Object.values(imported.state.nodes).find((node) => node.title === title)!;
+  return {
+    state: imported.state,
+    outer: nodeByTitle("Imported outer group"),
+    inner: nodeByTitle("Imported inner group"),
+    first: nodeByTitle("Imported first tab"),
+    second: nodeByTitle("Imported second tab")
+  };
+}
+
 describe("background commands", () => {
   it("recognizes every supported background command variant", () => {
     const supportedCommands = [
@@ -1790,6 +1836,131 @@ describe("background commands", () => {
         live: { windowId: 42 }
       });
     }
+  });
+
+  it("restores one imported tab by materializing its direct parent window group", async () => {
+    const imported = await importNestedSiblingGroup();
+    const adapter = fakeAdapter();
+
+    const restored = await runCommand(imported.state, adapter, {
+      type: "restoreNode",
+      nodeId: imported.first.id
+    });
+
+    expect(adapter.createWindow).toHaveBeenCalledWith({ url: "https://imported.example/first" });
+    expect(adapter.createTab).not.toHaveBeenCalled();
+    expect(restored.state.rootIds).toEqual(imported.state.rootIds);
+    expect(restored.state.rootIds).not.toContain(imported.first.id);
+    expect(restored.state.nodes[imported.outer.id]).toMatchObject({
+      status: "closed",
+      childIds: [imported.inner.id]
+    });
+    expect(restored.state.nodes[imported.inner.id]).toMatchObject({
+      status: "live",
+      parentId: imported.outer.id,
+      childIds: [imported.first.id, imported.second.id],
+      live: { windowId: 42 }
+    });
+    expect(restored.state.nodes[imported.first.id]).toMatchObject({
+      status: "live",
+      parentId: imported.inner.id,
+      live: { tabId: 200, windowId: 42 }
+    });
+    expect(restored.state.nodes[imported.second.id]).toMatchObject({
+      status: "closed",
+      parentId: imported.inner.id,
+      restore: {
+        url: "https://imported.example/second",
+        title: "Imported second tab"
+      }
+    });
+    expect(restored.state.nodes[imported.second.id]?.live).toBeUndefined();
+  });
+
+  it("restores one imported tab session by materializing its direct parent window group", async () => {
+    const imported = await importNestedSiblingGroup();
+    const state: OutlineState = {
+      ...imported.state,
+      nodes: {
+        ...imported.state.nodes,
+        [imported.first.id]: {
+          ...imported.first,
+          restore: {
+            ...(imported.first.restore ?? {}),
+            sessionId: "session-imported-first"
+          }
+        }
+      }
+    };
+    const adapter = fakeAdapter({
+      restoreSession: vi.fn(async () => ({
+        tab: {
+          id: 21,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://imported.example/first",
+          title: "Imported first tab"
+        }
+      })),
+      createWindow: vi.fn(async ({ tabId, url }) => {
+        if (url) {
+          throw new Error(`Unexpected URL window create: ${url}`);
+        }
+        return {
+          id: 42,
+          focused: true,
+          incognito: false,
+          tabs: typeof tabId === "number"
+            ? [
+                {
+                  id: tabId,
+                  windowId: 42,
+                  index: 0,
+                  active: true,
+                  url: "https://imported.example/first",
+                  title: "Imported first tab"
+                }
+              ]
+            : []
+        };
+      })
+    });
+
+    const restored = await runCommand(state, adapter, {
+      type: "restoreNode",
+      nodeId: imported.first.id
+    });
+
+    expect(adapter.restoreSession).toHaveBeenCalledWith("session-imported-first");
+    expect(adapter.createWindow).toHaveBeenCalledWith({ tabId: 21 });
+    expect(adapter.createTab).not.toHaveBeenCalled();
+    expect(restored.state.rootIds).toEqual(imported.state.rootIds);
+    expect(restored.state.rootIds).not.toContain(imported.first.id);
+    expect(restored.state.nodes[imported.outer.id]).toMatchObject({
+      status: "closed",
+      childIds: [imported.inner.id]
+    });
+    expect(restored.state.nodes[imported.inner.id]).toMatchObject({
+      status: "live",
+      parentId: imported.outer.id,
+      childIds: [imported.first.id, imported.second.id],
+      live: { windowId: 42 }
+    });
+    expect(restored.state.nodes[imported.first.id]).toMatchObject({
+      status: "live",
+      parentId: imported.inner.id,
+      live: { tabId: 21, windowId: 42 }
+    });
+    expect(restored.state.nodes[imported.second.id]).toMatchObject({
+      status: "closed",
+      parentId: imported.inner.id,
+      restore: {
+        url: "https://imported.example/second",
+        title: "Imported second tab"
+      }
+    });
+    expect(restored.state.nodes[imported.second.id]?.live).toBeUndefined();
   });
 
   it("restores nested parent tabs inside an imported subgroup window", async () => {

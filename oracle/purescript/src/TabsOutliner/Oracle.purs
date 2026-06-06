@@ -2055,7 +2055,7 @@ restoreClosedTabNode nodeId tab restoredWindows outline =
       Just parentId ->
         case findNode parentId outline of
           Just parent ->
-            if andBoolean (isClosedCommandCreatedWindowNode parent) (notBoolean (eqInt (lengthArray restoredWindows) 0)) then
+            if andBoolean (isClosedWindowNode parent) (notBoolean (eqInt (lengthArray restoredWindows) 0)) then
               let
                 window = runtimeWindowForId tab.windowId restoredWindows
                 withParent = replaceNode outline (restoreWindowOutlineNode parent window)
@@ -2075,6 +2075,13 @@ restoreClosedTabNode nodeId tab restoredWindows outline =
             in
               replaceNode withTab ((requireNodeOr parent.id withTab (emptyTabNode parent.id)) { childIds = [node.id] })
           Nothing -> promoteRestoredLiveNodesOutOfClosedAncestors [nodeId] (replaceNode outline (restoreTabOutlineNode node tab))
+
+isClosedWindowNode :: OutlineNode -> Boolean
+isClosedWindowNode node =
+  case node.kind of
+    WindowKind -> isClosedStatus node.status
+    TabKind -> false
+    GroupKind -> false
 
 isClosedCommandCreatedWindowNode :: OutlineNode -> Boolean
 isClosedCommandCreatedWindowNode node =

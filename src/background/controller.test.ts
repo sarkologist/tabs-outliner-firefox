@@ -37142,7 +37142,7 @@ describe("background controller lifecycle", () => {
     ])).toEqual(new Set([state.nodes["window:10"]?.live?.windowId]));
   });
 
-  it("restores remaining imported group tabs after one promoted child is browser-closed", async () => {
+  it("restores an imported group after one materialized child window is browser-closed", async () => {
     const importedUrl = "https://calendar.example/week";
     const runtime = fakeRuntime(
       [
@@ -37199,14 +37199,21 @@ describe("background controller lifecycle", () => {
 
     expectCommandAck(await controller.handleMessage({ type: "restoreNode", nodeId: firstTabId! }), true);
     state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
-    const firstRestoredWindowId = state.nodes[firstTabId!]?.live?.windowId;
+    const firstRestoredWindowId = state.nodes[importedGroupId!]?.live?.windowId;
     expect(typeof firstRestoredWindowId).toBe("number");
-    expect(state.nodes[importedGroupId!]?.status).toBe("closed");
+    expect(state.nodes[importedGroupId!]).toMatchObject({
+      status: "live",
+      childIds: [firstTabId, secondTabId],
+      live: { windowId: firstRestoredWindowId }
+    });
     expect(state.nodes[firstTabId!]).toMatchObject({
       status: "live",
       live: { windowId: firstRestoredWindowId }
     });
-    expect(state.nodes[secondTabId!]?.status).toBe("closed");
+    expect(state.nodes[secondTabId!]).toMatchObject({
+      status: "closed",
+      parentId: importedGroupId
+    });
 
     recentClosedSession = { tab: { sessionId: "session-imported-first" } };
     const firstRestoredTabId = state.nodes[firstTabId!]?.live?.tabId;
@@ -37237,8 +37244,11 @@ describe("background controller lifecycle", () => {
     state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
     const restoredGroupWindowId = state.nodes[importedGroupId!]?.live?.windowId;
     expect(typeof restoredGroupWindowId).toBe("number");
-    expect(state.nodes[importedGroupId!]?.childIds).not.toContain(firstTabId);
-    expect(state.nodes[firstTabId!]?.status).toBe("closed");
+    expect(state.nodes[importedGroupId!]?.childIds).toEqual([firstTabId, secondTabId]);
+    expect(state.nodes[firstTabId!]).toMatchObject({
+      status: "live",
+      live: { windowId: restoredGroupWindowId }
+    });
     expect(state.nodes[secondTabId!]).toMatchObject({
       status: "live",
       live: { windowId: restoredGroupWindowId }
@@ -37246,7 +37256,7 @@ describe("background controller lifecycle", () => {
     expect(runtime.tabs
       .filter((tab) => tab.windowId === restoredGroupWindowId)
       .sort((left, right) => left.index - right.index)
-      .map((tab) => tab.url)).toEqual([importedUrl]);
+      .map((tab) => tab.url)).toEqual([importedUrl, importedUrl]);
   });
 
   it("keeps a restored imported subgroup attached after runtime refresh and restart", async () => {
@@ -38008,7 +38018,7 @@ describe("background controller lifecycle", () => {
       .map((tab) => tab.windowId)).toEqual([restoredSubgroupWindowId, restoredSubgroupWindowId]);
   });
 
-  it("keeps a promoted restored imported child separate from later parent restore", async () => {
+  it("keeps a materialized restored imported child inside its parent group session", async () => {
     let currentTime = 1000;
     const importedUrls = [
       "https://images.example/first.jpg",
@@ -38062,9 +38072,13 @@ describe("background controller lifecycle", () => {
 
     expectCommandAck(await controller.handleMessage({ type: "restoreNode", nodeId: laterTabId }), true);
     state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
-    const firstRestoredWindowId = state.nodes[laterTabId]?.live?.windowId;
+    const firstRestoredWindowId = state.nodes[importedGroupId!]?.live?.windowId;
     expect(typeof firstRestoredWindowId).toBe("number");
-    expect(state.nodes[importedGroupId!]?.status).toBe("closed");
+    expect(state.nodes[importedGroupId!]).toMatchObject({
+      status: "live",
+      childIds: importedTabIds,
+      live: { windowId: firstRestoredWindowId }
+    });
     expect(state.nodes[laterTabId]).toMatchObject({
       status: "live",
       live: { windowId: firstRestoredWindowId }
@@ -38077,13 +38091,41 @@ describe("background controller lifecycle", () => {
     await closeRuntimeTab(runtime, laterRuntimeTabId!, "tabRemovedThenSessionChanged", { awaitListeners: true });
     state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
     expect(state.nodes[importedGroupId!]?.status).toBe("closed");
-    expect(state.nodes[importedGroupId!]?.restore?.sessionId).toBeUndefined();
-    expect(state.nodes[laterTabId]?.restore?.sessionId).toBe("session-imported-window");
+    expect(state.nodes[importedGroupId!]?.restore?.sessionId).toBe("session-imported-window");
+    expect(state.nodes[laterTabId]?.restore?.sessionId).toBeUndefined();
     expect(state.nodes[importedTabIds[0]!]?.closedAt).toBe(firstImportedClosedAt);
     expect(state.nodes[laterTabId]?.closedAt).toBe(2000);
     for (const tabId of importedTabIds) {
       expect(state.nodes[tabId!]?.active).toBeUndefined();
     }
+
+    vi.mocked(runtime.api.sessions.restore).mockImplementation(async (sessionId: string) => {
+      if (sessionId !== "session-imported-window") {
+        return {};
+      }
+      const restoredRuntimeWindowId = nextRuntimeWindowId(runtime);
+      runtime.windows = runtime.windows
+        .map((windowInfo) => ({ ...windowInfo, focused: false }))
+        .concat({ id: restoredRuntimeWindowId, focused: true, incognito: false });
+      const firstRestoredTabId = nextRuntimeTabId(runtime);
+      const restoredTabs = importedUrls.map((url, index) => ({
+        id: firstRestoredTabId + index,
+        windowId: restoredRuntimeWindowId,
+        index,
+        active: index === 1,
+        url,
+        title: `Imported ${index + 1}`
+      }));
+      runtime.tabs = [...runtime.tabs, ...restoredTabs.map(copyTab)];
+      return {
+        window: {
+          id: restoredRuntimeWindowId,
+          focused: true,
+          incognito: false,
+          tabs: restoredTabs.map(copyTab)
+        }
+      } as never;
+    });
 
     expectCommandAck(await controller.handleMessage({ type: "restoreNode", nodeId: importedGroupId! }), true);
     state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
@@ -38093,21 +38135,17 @@ describe("background controller lifecycle", () => {
       status: "live",
       live: { windowId: restoredRuntimeWindowId }
     });
-    expect(state.nodes[importedGroupId!]?.childIds).not.toContain(laterTabId);
-    for (const tabId of [importedTabIds[0]!, importedTabIds[2]!]) {
+    expect(state.nodes[importedGroupId!]?.childIds).toEqual(importedTabIds);
+    for (const tabId of importedTabIds) {
       expect(state.nodes[tabId!]).toMatchObject({
         status: "live",
         live: { windowId: restoredRuntimeWindowId }
       });
     }
-    expect(state.nodes[laterTabId]).toMatchObject({
-      status: "closed",
-      restore: { sessionId: "session-imported-window" }
-    });
     expect(runtime.tabs
       .filter((tab) => tab.windowId === restoredRuntimeWindowId)
       .sort((left, right) => left.index - right.index)
-      .map((tab) => tab.url)).toEqual([importedUrls[0], importedUrls[2]]);
+      .map((tab) => tab.url)).toEqual(importedUrls);
   });
 
   it("restores an earlier closed dragged-in tab when the restored window session has no tab list", async () => {
