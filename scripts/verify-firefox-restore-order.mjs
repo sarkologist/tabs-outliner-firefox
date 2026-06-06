@@ -17,7 +17,7 @@ const extensionDir = await mkdtemp(path.join(tmpdir(), "tabs-outliner-firefox-re
 try {
   await cp(distDir, extensionDir, { recursive: true });
   await installProbe(extensionDir, options);
-  const result = await runProbe(extensionDir);
+  const result = await runProbe(extensionDir, options);
   const expectedLabels = result.expected.map((tab) => tab.label);
   const immediateLabels = result.immediate.map((tab) => tab.label);
   const settledLabels = result.settled.map((tab) => tab.label);
@@ -47,8 +47,8 @@ async function installProbe(sourceDir, options) {
   await writeFile(path.join(sourceDir, "probe-index.js"), probeSource(options));
 }
 
-async function runProbe(sourceDir) {
-  const child = spawn("pnpm", [
+async function runProbe(sourceDir, options) {
+  const webExtArgs = [
     "exec",
     "web-ext",
     "run",
@@ -59,10 +59,14 @@ async function runProbe(sourceDir) {
     "--no-config-discovery",
     "--no-reload",
     "--no-input",
-    "--arg=-headless",
     "--pref=devtools.console.stdout.content=true",
     "--verbose"
-  ], {
+  ];
+  if (!options.headed) {
+    webExtArgs.splice(webExtArgs.length - 2, 0, "--arg=-headless");
+  }
+
+  const child = spawn("pnpm", webExtArgs, {
     cwd: repoRoot,
     stdio: ["ignore", "pipe", "pipe"]
   });
@@ -134,7 +138,10 @@ async function probeTree(options) {
 
 function parseArgs(args) {
   const parsed = {
-    restoreTitle: "Imported subgroup"
+    restoreTitle: "Imported subgroup",
+    restoreOccurrence: 1,
+    settleMs: 750,
+    headed: false
   };
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
@@ -150,6 +157,20 @@ function parseArgs(args) {
         throw new Error("--restore-title requires a title");
       }
       parsed.restoreTitle = value;
+    } else if (arg === "--restore-occurrence") {
+      const value = Number(args[++index]);
+      if (!Number.isInteger(value) || value < 1) {
+        throw new Error("--restore-occurrence requires a positive integer");
+      }
+      parsed.restoreOccurrence = value;
+    } else if (arg === "--settle-ms") {
+      const value = Number(args[++index]);
+      if (!Number.isFinite(value) || value < 0) {
+        throw new Error("--settle-ms requires a non-negative number");
+      }
+      parsed.settleMs = value;
+    } else if (arg === "--headed") {
+      parsed.headed = true;
     } else {
       throw new Error(`Unknown argument: ${arg}`);
     }
@@ -162,6 +183,8 @@ function probeSource(options) {
 const resultPrefix = ${JSON.stringify(resultPrefix)};
 const errorPrefix = ${JSON.stringify(errorPrefix)};
 const restoreTitle = ${JSON.stringify(options.restoreTitle)};
+const restoreOccurrence = ${JSON.stringify(options.restoreOccurrence)};
+const settleMs = ${JSON.stringify(options.settleMs)};
 
 main().catch((error) => {
   emit(errorPrefix, {
@@ -183,11 +206,16 @@ async function main() {
 
   await controller.handleMessage({ type: "importTree", tree });
   const imported = await controller.handleMessage({ type: "getState" });
-  const subgroup = Object.values(imported.nodes).find((node) =>
+  const matchingTargets = Object.values(imported.nodes).filter((node) =>
     (node.kind === "window" || node.kind === "tab") && node.title === restoreTitle
   );
+  const subgroup = matchingTargets[restoreOccurrence - 1];
   if (!subgroup) {
-    throw new Error("Restore target was not created: " + restoreTitle);
+    throw new Error(
+      "Restore target was not created: " + restoreTitle +
+      " occurrence " + restoreOccurrence +
+      " of " + matchingTargets.length
+    );
   }
 
   await controller.handleMessage({ type: "restoreNode", nodeId: subgroup.id });
@@ -201,7 +229,7 @@ async function main() {
   const expected = outlineTabs(restored, subgroup.id, windowId);
   const expectedLabelsByTabId = new Map(expected.map((tab) => [tab.tabId, tab.label]));
   const immediate = await runtimeTabs(windowId, expectedLabelsByTabId);
-  await delay(750);
+  await delay(settleMs);
   const settled = await runtimeTabs(windowId, expectedLabelsByTabId);
 
   emit(resultPrefix, {

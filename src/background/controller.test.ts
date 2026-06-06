@@ -37464,9 +37464,7 @@ describe("background controller lifecycle", () => {
       .filter((tab) => tab.windowId === subgroupRuntimeWindowId)
       .sort((left, right) => left.index - right.index);
     expect(runtimeTabs.map((tab) => tab.url)).toEqual(urls);
-    expect(vi.mocked(runtime.api.tabs.move).mock.calls).toEqual(
-      runtimeTabs.map((tab) => [[tab.id], { windowId: subgroupRuntimeWindowId, index: -1 }])
-    );
+    expect(runtime.api.tabs.move).not.toHaveBeenCalled();
   });
 
   it("keeps a restored Chrome-imported tab subgroup attached after runtime refresh", async () => {

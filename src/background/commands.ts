@@ -813,15 +813,13 @@ async function restoreClosedWindowCreateBatchWithIndividualTabs(
     }
   }
 
-  await moveRestoredTabsIntoOutlineOrder(adapter, createdWindow.id, restored, "single");
   return restored;
 }
 
 async function moveRestoredTabsIntoOutlineOrder(
   adapter: BrowserAdapter,
   windowId: number,
-  restoredNodes: readonly RestoredNode[],
-  mode: "batch" | "single" = "batch"
+  restoredNodes: readonly RestoredNode[]
 ): Promise<void> {
   const restoredTabIds = restoredNodes.flatMap((restoredNode) =>
     typeof restoredNode.tabId === "number" ? [restoredNode.tabId] : []
@@ -831,13 +829,6 @@ async function moveRestoredTabsIntoOutlineOrder(
   }
 
   try {
-    if (mode === "single") {
-      for (const tabId of restoredTabIds) {
-        await adapter.moveTabs([tabId], { windowId, index: -1 });
-      }
-      return;
-    }
-
     await adapter.moveTabs(restoredTabIds, { windowId, index: 0 });
   } catch {
     // Keep the restored nodes; a failed order correction should not duplicate the already-created window.
