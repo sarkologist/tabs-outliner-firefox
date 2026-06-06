@@ -1659,7 +1659,7 @@ function externallyOwnedLiveTabIdsInDeletedSubtree(
     for (let index = node.childIds.length - 1; index >= 0; index -= 1) {
       stack.push({
         nodeId: node.childIds[index]!,
-        coveredRuntimeWindowId: childCoveredRuntimeWindowId
+        ...(typeof childCoveredRuntimeWindowId === "number" ? { coveredRuntimeWindowId: childCoveredRuntimeWindowId } : {})
       });
     }
   }
@@ -2746,12 +2746,12 @@ function isContainerNode(node: OutlineNode): boolean {
   return node.kind === "window" || node.kind === "group";
 }
 
-function isNodeLiveTab(node: OutlineNode): node is OutlineNode & { live: { tabId: number; windowId: number } } {
-  return Boolean(node.kind === "tab" && node.status === "live" && node.live && "tabId" in node.live);
+function isNodeLiveTab(node: OutlineNode | undefined): node is OutlineNode & { live: { tabId: number; windowId: number } } {
+  return Boolean(node?.kind === "tab" && node.status === "live" && node.live && "tabId" in node.live);
 }
 
-function isNodeLiveWindow(node: OutlineNode): node is OutlineNode & { live: { windowId: number } } {
-  return Boolean(node.kind === "window" && node.status === "live" && node.live && "windowId" in node.live);
+function isNodeLiveWindow(node: OutlineNode | undefined): node is OutlineNode & { live: { windowId: number } } {
+  return Boolean(node?.kind === "window" && node.status === "live" && node.live && "windowId" in node.live);
 }
 
 function requireNode(state: OutlineState, nodeId: NodeId): OutlineNode {

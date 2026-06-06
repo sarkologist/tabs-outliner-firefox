@@ -6490,7 +6490,7 @@ function restoreTreeStructureCandidateNodeIdsForClosedParentSubgroupRestore(
   return [...candidateNodeIds];
 }
 
-function isRestoredSubgroupRootForClosedParentPatch(node: OutlineNode | undefined): boolean {
+function isRestoredSubgroupRootForClosedParentPatch(node: OutlineNode | undefined): node is OutlineNode {
   return Boolean(
     node?.kind === "window" ||
       (node?.kind === "tab" && node.childIds.length > 0)
