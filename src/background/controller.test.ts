@@ -37365,7 +37365,7 @@ describe("background controller lifecycle", () => {
       .map((tab) => tab.windowId)).toEqual([subgroupRuntimeWindowId, subgroupRuntimeWindowId]);
   });
 
-  it("orders batch-created restored imported tabs before sampling runtime windows", async () => {
+  it("orders individually created restored imported tabs before sampling runtime windows", async () => {
     const urls = [
       "https://subgroup.example/root",
       "https://subgroup.example/branch-a",
@@ -37452,23 +37452,6 @@ describe("background controller lifecycle", () => {
     const importedSubgroupId = Object.values(state.nodes)
       .find((node) => node.kind === "window" && node.title === "Imported subgroup")?.id;
     expect(importedSubgroupId).toBeDefined();
-
-    vi.mocked(runtime.api.windows.create).mockImplementationOnce(async (createData: FakeWindowCreateData = {}) => {
-      const createdWindow = createWindowFromBrowser(runtime, createData);
-      const reportedOrder = [urls[0], urls[2], urls[3], urls[1], urls[5], urls[4]];
-      const rankByUrl = new Map(reportedOrder.map((url, index) => [url, index]));
-      const createdTabs = [...(createdWindow.tabs ?? [])]
-        .sort((left, right) => (rankByUrl.get(left.url ?? "") ?? 0) - (rankByUrl.get(right.url ?? "") ?? 0))
-        .map((tab, index) => ({ ...tab, index }));
-      const createdTabIds = new Set(createdTabs.map((tab) => tab.id));
-      runtime.tabs = runtime.tabs.map((tab) => createdTabIds.has(tab.id)
-        ? copyTab(createdTabs.find((createdTab) => createdTab.id === tab.id)!)
-        : copyTab(tab));
-      return {
-        ...createdWindow,
-        tabs: createdTabs.map(copyTab)
-      };
-    });
 
     expectCommandAck(await controller.handleMessage({ type: "restoreNode", nodeId: importedSubgroupId! }), true);
 

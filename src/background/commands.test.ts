@@ -1856,9 +1856,15 @@ describe("background commands", () => {
     });
 
     expect(adapter.createWindow).toHaveBeenCalledWith({
-      url: ["https://imported.example/parent", "https://imported.example/child"]
+      url: "https://imported.example/parent"
     });
-    expect(adapter.createTab).not.toHaveBeenCalled();
+    expect(adapter.createTab).toHaveBeenCalledWith({
+      url: "https://imported.example/child",
+      windowId: 42,
+      active: false,
+      index: 1
+    });
+    expect(adapter.moveTabs).toHaveBeenCalledWith([200, 300], { windowId: 42, index: 0 });
     expect(restored.state.nodes[importedParent!.id]?.status).toBe("closed");
     expect(restored.state.nodes[importedParent!.id]?.childIds).toContain(importedSubgroup!.id);
     expect(restored.state.nodes[importedSubgroup!.id]).toMatchObject({
@@ -1944,14 +1950,28 @@ describe("background commands", () => {
     });
 
     expect(adapter.createWindow).toHaveBeenCalledWith({
-      url: [
-        "https://imported.example/1",
-        "https://imported.example/2",
-        "https://imported.example/3",
-        "https://imported.example/4"
-      ]
+      url: "https://imported.example/1"
     });
-    expect(adapter.createTab).not.toHaveBeenCalled();
+    expect(vi.mocked(adapter.createTab).mock.calls.map(([createProperties]) => createProperties)).toEqual([
+      {
+        url: "https://imported.example/2",
+        windowId: 42,
+        active: false,
+        index: 1
+      },
+      {
+        url: "https://imported.example/3",
+        windowId: 42,
+        active: false,
+        index: 2
+      },
+      {
+        url: "https://imported.example/4",
+        windowId: 42,
+        active: false,
+        index: 3
+      }
+    ]);
     for (const [index, importedTab] of importedTabs.entries()) {
       expect(restored.state.nodes[importedTab!.id]).toMatchObject({
         status: "live",
@@ -2037,16 +2057,40 @@ describe("background commands", () => {
     });
 
     expect(adapter.createWindow).toHaveBeenCalledWith({
-      url: [
-        "https://imported.example/1",
-        "https://imported.example/2",
-        "https://imported.example/3",
-        "https://imported.example/4",
-        "https://imported.example/5",
-        "https://imported.example/6"
-      ]
+      url: "https://imported.example/1"
     });
-    expect(adapter.createTab).not.toHaveBeenCalled();
+    expect(vi.mocked(adapter.createTab).mock.calls.map(([createProperties]) => createProperties)).toEqual([
+      {
+        url: "https://imported.example/2",
+        windowId: 42,
+        active: false,
+        index: 1
+      },
+      {
+        url: "https://imported.example/3",
+        windowId: 42,
+        active: false,
+        index: 2
+      },
+      {
+        url: "https://imported.example/4",
+        windowId: 42,
+        active: false,
+        index: 3
+      },
+      {
+        url: "https://imported.example/5",
+        windowId: 42,
+        active: false,
+        index: 4
+      },
+      {
+        url: "https://imported.example/6",
+        windowId: 42,
+        active: false,
+        index: 5
+      }
+    ]);
     for (const url of [
       "https://imported.example/1",
       "https://imported.example/2",
@@ -2063,38 +2107,44 @@ describe("background commands", () => {
     }
   });
 
-  it("moves batch-created imported tabs back into outline order when Firefox reports children before parents", async () => {
+  it("creates nested imported tabs individually before moving them into outline order", async () => {
     const state: OutlineState = bootstrapFromWindows(runtimeWindows, { now: 1000 });
     const tabIdByUrl = new Map<string, number>();
+    let nextTabId = 300;
     const adapter = fakeAdapter({
       createWindow: vi.fn(async ({ url }) => {
-        const urls = Array.isArray(url) ? url : url ? [url] : [];
-        const reportedUrls = [
-          "https://imported.example/1",
-          "https://imported.example/3",
-          "https://imported.example/4",
-          "https://imported.example/2",
-          "https://imported.example/6",
-          "https://imported.example/5"
-        ].filter((reportedUrl) => urls.includes(reportedUrl));
-        const tabs = reportedUrls.map((tabUrl, index) => {
-          const tabId = 300 + index;
-          tabIdByUrl.set(tabUrl, tabId);
-          return {
-            id: tabId,
+        const tabUrl = Array.isArray(url) ? url[0] : url;
+        const tab = tabUrl
+          ? {
+            id: nextTabId++,
             windowId: 42,
-            index,
-            active: index === 0,
+            index: 0,
+            active: true,
             url: tabUrl,
             title: tabUrl
-          };
-        });
+          }
+          : undefined;
+        if (tab) {
+          tabIdByUrl.set(tab.url, tab.id);
+        }
         return {
           id: 42,
           focused: true,
           incognito: false,
-          tabs
+          tabs: tab ? [tab] : []
         };
+      }),
+      createTab: vi.fn(async ({ url, windowId = 42, active = false, index = 0 }) => {
+        const tab = {
+          id: nextTabId++,
+          windowId,
+          index,
+          active,
+          url,
+          title: url
+        };
+        tabIdByUrl.set(url, tab.id);
+        return tab;
       })
     });
     const imported = await runCommand(state, adapter, {
@@ -2169,15 +2219,40 @@ describe("background commands", () => {
     });
 
     expect(adapter.createWindow).toHaveBeenCalledWith({
-      url: [
-        "https://imported.example/1",
-        "https://imported.example/2",
-        "https://imported.example/3",
-        "https://imported.example/4",
-        "https://imported.example/5",
-        "https://imported.example/6"
-      ]
+      url: "https://imported.example/1"
     });
+    expect(vi.mocked(adapter.createTab).mock.calls.map(([createProperties]) => createProperties)).toEqual([
+      {
+        url: "https://imported.example/2",
+        windowId: 42,
+        active: false,
+        index: 1
+      },
+      {
+        url: "https://imported.example/3",
+        windowId: 42,
+        active: false,
+        index: 2
+      },
+      {
+        url: "https://imported.example/4",
+        windowId: 42,
+        active: false,
+        index: 3
+      },
+      {
+        url: "https://imported.example/5",
+        windowId: 42,
+        active: false,
+        index: 4
+      },
+      {
+        url: "https://imported.example/6",
+        windowId: 42,
+        active: false,
+        index: 5
+      }
+    ]);
     expect(adapter.moveTabs).toHaveBeenCalledWith(
       [
         tabIdByUrl.get("https://imported.example/1"),
@@ -2262,9 +2337,15 @@ describe("background commands", () => {
     });
 
     expect(adapter.createWindow).toHaveBeenCalledWith({
-      url: ["https://imported.example/subgroup", "https://imported.example/child"]
+      url: "https://imported.example/subgroup"
     });
-    expect(adapter.createTab).not.toHaveBeenCalled();
+    expect(adapter.createTab).toHaveBeenCalledWith({
+      url: "https://imported.example/child",
+      windowId: 42,
+      active: false,
+      index: 1
+    });
+    expect(adapter.moveTabs).toHaveBeenCalledWith([200, 99], { windowId: 42, index: 0 });
 
     const restoredImportGroup = restored.state.nodes[importGroup!.id];
     const restoredParent = restored.state.nodes[importedParent!.id];

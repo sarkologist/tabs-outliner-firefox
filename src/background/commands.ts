@@ -507,6 +507,7 @@ async function restoreNode(
     const createBatch = closedWindowCreateBatchPlans(next, plans, index, pendingNodeIds, coveredNodeIds, restoredWindowNodeIds);
     if (createBatch.length > 1 && plan.windowNodeId) {
       const restoredNodes = await restoreClosedWindowCreateBatch(
+        next,
         adapter,
         plan.windowNodeId,
         createBatch,
@@ -694,6 +695,7 @@ function tabCreateBatchPlanFromRestorePlan(
 }
 
 async function restoreClosedWindowCreateBatch(
+  state: OutlineState,
   adapter: BrowserAdapter,
   windowNodeId: NodeId,
   plans: WindowCreateBatchPlan[],
@@ -701,6 +703,16 @@ async function restoreClosedWindowCreateBatch(
   restoreObserver?: RestoreObserver
 ): Promise<RestoredNode[]> {
   try {
+    if (windowCreateBatchHasNestedTabs(state, plans)) {
+      return await restoreClosedWindowCreateBatchWithIndividualTabs(
+        adapter,
+        windowNodeId,
+        plans,
+        restoreWindowNode,
+        restoreObserver
+      );
+    }
+
     const urls = plans.map((plan) => plan.url);
     const createData = { url: urls };
     await restoreObserver?.recordCreateAttempt({
@@ -732,16 +744,7 @@ async function restoreClosedWindowCreateBatch(
       }
     }
 
-    const restoredTabIds = restored.flatMap((restoredNode) =>
-      typeof restoredNode.tabId === "number" ? [restoredNode.tabId] : []
-    );
-    if (restoredTabIds.length > 1) {
-      try {
-        await adapter.moveTabs(restoredTabIds, { windowId: createdWindow.id, index: 0 });
-      } catch {
-        // Keep the restored nodes; a failed order correction should not duplicate the already-created window.
-      }
-    }
+    await moveRestoredTabsIntoOutlineOrder(adapter, createdWindow.id, restored);
 
     return restored;
   } catch (error) {
@@ -750,6 +753,106 @@ async function restoreClosedWindowCreateBatch(
     }
     return [];
   }
+}
+
+async function restoreClosedWindowCreateBatchWithIndividualTabs(
+  adapter: BrowserAdapter,
+  windowNodeId: NodeId,
+  plans: WindowCreateBatchPlan[],
+  restoreWindowNode: boolean,
+  restoreObserver?: RestoreObserver
+): Promise<RestoredNode[]> {
+  const firstPlan = plans[0];
+  if (!firstPlan) {
+    return [];
+  }
+
+  const createData = { url: firstPlan.url };
+  await restoreObserver?.recordCreateAttempt({
+    kind: "window",
+    windowNodeId,
+    tabNodeIds: [firstPlan.nodeId],
+    urls: [firstPlan.url],
+    createData
+  });
+  const createdWindow = await adapter.createWindow(createData);
+  const restored: RestoredNode[] = restoreWindowNode
+    ? [
+        {
+          nodeId: windowNodeId,
+          windowId: createdWindow.id,
+          active: createdWindow.focused
+        }
+      ]
+    : [];
+  const firstTab = createdWindow.tabs?.[0];
+  if (firstTab) {
+    restored.push(restoredTabFromRuntime(firstPlan.nodeId, firstTab));
+  }
+
+  for (const [index, plan] of plans.slice(1).entries()) {
+    const createProperties = {
+      url: plan.url,
+      windowId: createdWindow.id,
+      active: false,
+      index: index + 1
+    };
+    await restoreObserver?.recordCreateAttempt({
+      kind: "tab",
+      nodeId: plan.nodeId,
+      windowNodeId,
+      createProperties
+    });
+    try {
+      const created = await adapter.createTab(createProperties);
+      restored.push(restoredTabFromRuntime(plan.nodeId, created));
+    } catch (error) {
+      if (restoreObserver) {
+        throw error;
+      }
+    }
+  }
+
+  await moveRestoredTabsIntoOutlineOrder(adapter, createdWindow.id, restored);
+  return restored;
+}
+
+async function moveRestoredTabsIntoOutlineOrder(
+  adapter: BrowserAdapter,
+  windowId: number,
+  restoredNodes: readonly RestoredNode[]
+): Promise<void> {
+  const restoredTabIds = restoredNodes.flatMap((restoredNode) =>
+    typeof restoredNode.tabId === "number" ? [restoredNode.tabId] : []
+  );
+  if (restoredTabIds.length <= 1) {
+    return;
+  }
+
+  try {
+    await adapter.moveTabs(restoredTabIds, { windowId, index: 0 });
+  } catch {
+    // Keep the restored nodes; a failed order correction should not duplicate the already-created window.
+  }
+}
+
+function windowCreateBatchHasNestedTabs(
+  state: OutlineState,
+  plans: readonly WindowCreateBatchPlan[]
+): boolean {
+  const plannedNodeIds = new Set(plans.map((plan) => plan.nodeId));
+  for (const plan of plans) {
+    let currentId = state.nodes[plan.nodeId]?.parentId;
+    const visited = new Set<NodeId>();
+    while (currentId && !visited.has(currentId)) {
+      if (plannedNodeIds.has(currentId)) {
+        return true;
+      }
+      visited.add(currentId);
+      currentId = state.nodes[currentId]?.parentId;
+    }
+  }
+  return false;
 }
 
 async function runRestorePlan(
