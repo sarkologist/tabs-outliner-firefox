@@ -37462,9 +37462,10 @@ describe("background controller lifecycle", () => {
       .filter((tab) => tab.windowId === subgroupRuntimeWindowId)
       .sort((left, right) => left.index - right.index);
     expect(runtimeTabs.map((tab) => tab.url)).toEqual(urls);
-    expect(runtime.api.tabs.move).toHaveBeenCalledWith(
-      runtimeTabs.map((tab) => tab.id),
-      { windowId: subgroupRuntimeWindowId, index: 0 }
+    expect(vi.mocked(runtime.api.tabs.move).mock.calls).toEqual(
+      [...runtimeTabs]
+        .reverse()
+        .map((tab) => [[tab.id], { windowId: subgroupRuntimeWindowId, index: 0 }])
     );
   });
 

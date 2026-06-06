@@ -1864,7 +1864,10 @@ describe("background commands", () => {
       active: false,
       index: 1
     });
-    expect(adapter.moveTabs).toHaveBeenCalledWith([200, 300], { windowId: 42, index: 0 });
+    expect(vi.mocked(adapter.moveTabs).mock.calls).toEqual([
+      [[300], { windowId: 42, index: 0 }],
+      [[200], { windowId: 42, index: 0 }]
+    ]);
     expect(restored.state.nodes[importedParent!.id]?.status).toBe("closed");
     expect(restored.state.nodes[importedParent!.id]?.childIds).toContain(importedSubgroup!.id);
     expect(restored.state.nodes[importedSubgroup!.id]).toMatchObject({
@@ -2253,16 +2256,15 @@ describe("background commands", () => {
         index: 5
       }
     ]);
-    expect(adapter.moveTabs).toHaveBeenCalledWith(
+    expect(vi.mocked(adapter.moveTabs).mock.calls).toEqual(
       [
-        tabIdByUrl.get("https://imported.example/1"),
-        tabIdByUrl.get("https://imported.example/2"),
-        tabIdByUrl.get("https://imported.example/3"),
-        tabIdByUrl.get("https://imported.example/4"),
-        tabIdByUrl.get("https://imported.example/5"),
-        tabIdByUrl.get("https://imported.example/6")
-      ],
-      { windowId: 42, index: 0 }
+        "https://imported.example/6",
+        "https://imported.example/5",
+        "https://imported.example/4",
+        "https://imported.example/3",
+        "https://imported.example/2",
+        "https://imported.example/1"
+      ].map((url) => [[tabIdByUrl.get(url)], { windowId: 42, index: 0 }])
     );
   });
 
@@ -2345,7 +2347,10 @@ describe("background commands", () => {
       active: false,
       index: 1
     });
-    expect(adapter.moveTabs).toHaveBeenCalledWith([200, 99], { windowId: 42, index: 0 });
+    expect(vi.mocked(adapter.moveTabs).mock.calls).toEqual([
+      [[99], { windowId: 42, index: 0 }],
+      [[200], { windowId: 42, index: 0 }]
+    ]);
 
     const restoredImportGroup = restored.state.nodes[importGroup!.id];
     const restoredParent = restored.state.nodes[importedParent!.id];
