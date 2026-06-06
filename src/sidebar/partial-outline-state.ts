@@ -18,7 +18,7 @@ export function mergePartialOutlineState(
 
   return {
     version: current.version,
-    rootIds: mergeKnownNodeIds(current.rootIds, incoming.rootIds),
+    rootIds: mergeKnownRootIds(current.rootIds, incoming.rootIds, nodes),
     nodes
   };
 }
@@ -61,4 +61,13 @@ function mergeKnownNodeIds(current: readonly NodeId[], incoming: readonly NodeId
   }
 
   return merged;
+}
+
+function mergeKnownRootIds(
+  current: readonly NodeId[],
+  incoming: readonly NodeId[],
+  nodes: OutlineState["nodes"]
+): NodeId[] {
+  return mergeKnownNodeIds(current, incoming)
+    .filter((nodeId) => !nodes[nodeId]?.parentId);
 }

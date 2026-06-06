@@ -59,6 +59,27 @@ describe("partial outline state merge", () => {
 
     expect(merged.nodes["window:1"]?.childIds).toEqual(["group:hidden"]);
   });
+
+  it("removes a known node from roots when an incoming partial node has a parent", () => {
+    const current = fixtureState();
+    const merged = mergePartialOutlineState(current, {
+      version: 1,
+      rootIds: ["window:1"],
+      nodes: {
+        "window:2": {
+          ...current.nodes["window:2"]!,
+          parentId: "window:1"
+        },
+        "window:1": {
+          ...current.nodes["window:1"]!,
+          childIds: ["tab:visible", "group:hidden", "window:2"]
+        }
+      }
+    });
+
+    expect(merged.nodes["window:2"]?.parentId).toBe("window:1");
+    expect(merged.rootIds).toEqual(["window:1"]);
+  });
 });
 
 function fixtureState(): OutlineState {
