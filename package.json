@@ -30,7 +30,8 @@
     "profile:startup-hover": "playwright test tests/playwright/sidebar-startup-interaction-profile.spec.ts --reporter=list",
     "profile:startup-hover-loop": "node scripts/profile-startup-hover.mjs",
     "profile:startup-scroll-away": "node scripts/profile-startup-scroll-away.mjs",
-    "autoresearch:accept": "node scripts/autoresearch-accept.mjs"
+    "autoresearch:accept": "node scripts/autoresearch-accept.mjs",
+    "verify:firefox-restore-order": "pnpm run build && node scripts/verify-firefox-restore-order.mjs"
   },
   "devDependencies": {
     "@playwright/test": "^1.60.0",
