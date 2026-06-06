@@ -522,7 +522,7 @@ async function restoreNode(
       }
     }
 
-    const restoredNodes = await runRestorePlan(next, adapter, plan, restoreObserver);
+    const restoredNodes = await runRestorePlan(next, adapter, plan, nodeId, restoreObserver);
     if (restoredNodes.length > 0) {
       appendRestoredNodes(restoredNodes);
       const restoredWindowNodeId = restoredNodes.find((restored) => next.nodes[restored.nodeId]?.kind === "window")?.nodeId;
@@ -736,6 +736,7 @@ async function runRestorePlan(
   state: OutlineState,
   adapter: BrowserAdapter,
   plan: RestorePlan,
+  restoreRootNodeId: NodeId,
   restoreObserver?: RestoreObserver
 ): Promise<RestoredNode[]> {
   if (plan.kind === "session") {
@@ -757,12 +758,12 @@ async function runRestorePlan(
     }
 
     if (plan.fallbackTarget) {
-      return tryCreateFallbackTab(state, adapter, plan.nodeId, plan.fallbackTarget, plan.windowNodeId, restoreObserver);
+      return tryCreateFallbackTab(state, adapter, plan.nodeId, plan.fallbackTarget, plan.windowNodeId, restoreRootNodeId, restoreObserver);
     }
     return [];
   }
 
-  return tryCreateFallbackTab(state, adapter, plan.nodeId, plan.target, plan.windowNodeId, restoreObserver);
+  return tryCreateFallbackTab(state, adapter, plan.nodeId, plan.target, plan.windowNodeId, restoreRootNodeId, restoreObserver);
 }
 
 async function moveRestoredTabsIntoPlannedLiveWindow(
@@ -864,7 +865,7 @@ async function restoreSessionIntoClosedWindowDestination(
   }
 
   return plan.fallbackTarget
-    ? tryCreateFallbackTab(state, adapter, plan.nodeId, plan.fallbackTarget, plan.windowNodeId, restoreObserver)
+    ? tryCreateFallbackTab(state, adapter, plan.nodeId, plan.fallbackTarget, plan.windowNodeId, plan.windowNodeId, restoreObserver)
     : [];
 }
 
@@ -890,6 +891,7 @@ async function createFallbackTab(
   nodeId: NodeId,
   target: RestoreCreateTarget,
   windowNodeId?: NodeId,
+  restoreRootNodeId?: NodeId,
   restoreObserver?: RestoreObserver
 ): Promise<RestoredNode[]> {
   const plannedWindow = windowNodeId ? state.nodes[windowNodeId] : undefined;
@@ -932,10 +934,12 @@ async function createFallbackTab(
     plannedWindow?.kind === "window" &&
     plannedWindow.status === "closed" &&
     windowNodeId &&
-    plannedNode?.kind === "tab" &&
-    plannedNode.childIds.length === 0
+    plannedNode?.kind === "tab"
   ) {
-    const sessionRestored = closedWindowHasOnlyTab(state, windowNodeId, nodeId)
+    const onlyClosedTabInWindow = closedWindowHasOnlyTab(state, windowNodeId, nodeId);
+    const restoreWindowNode = onlyClosedTabInWindow ||
+      shouldRestoreClosedWindowDestinationForScope(state, windowNodeId, restoreRootNodeId);
+    const sessionRestored = restoreWindowNode && onlyClosedTabInWindow
       ? await restoreClosedWindowSessionForTab(state, adapter, nodeId, plannedWindow)
       : [];
     if (sessionRestored.length > 0) {
@@ -954,23 +958,28 @@ async function createFallbackTab(
     const createdWindow = await adapter.createWindow(createData);
     const createdTab = createdWindow.tabs?.[0];
     if (!createdTab) {
-      return [
-        {
-          nodeId: windowNodeId,
-          windowId: createdWindow.id,
-          active: createdWindow.focused
-        }
-      ];
+      return restoreWindowNode
+        ? [
+            {
+              nodeId: windowNodeId,
+              windowId: createdWindow.id,
+              active: createdWindow.focused
+            }
+          ]
+        : [];
     }
 
-    return [
-      {
-        nodeId: windowNodeId,
-        windowId: createdWindow.id,
-        active: createdWindow.focused
-      },
-      restoredTabFromRuntime(nodeId, createdTab)
-    ];
+    const restoredTab = restoredTabFromRuntime(nodeId, createdTab);
+    return restoreWindowNode
+      ? [
+          {
+            nodeId: windowNodeId,
+            windowId: createdWindow.id,
+            active: createdWindow.focused
+          },
+          restoredTab
+        ]
+      : [restoredTab];
   }
 
   const parentWindow = nearestLiveWindow(state, nodeId);
@@ -1014,9 +1023,21 @@ async function tryCreateFallbackTab(
   nodeId: NodeId,
   target: RestoreCreateTarget,
   windowNodeId?: NodeId,
+  restoreRootNodeId?: NodeId,
   restoreObserver?: RestoreObserver
 ): Promise<RestoredNode[]> {
-  return createFallbackTab(state, adapter, nodeId, target, windowNodeId, restoreObserver);
+  return createFallbackTab(state, adapter, nodeId, target, windowNodeId, restoreRootNodeId, restoreObserver);
+}
+
+function shouldRestoreClosedWindowDestinationForScope(
+  state: OutlineState,
+  windowNodeId: NodeId,
+  restoreRootNodeId: NodeId | undefined
+): boolean {
+  return Boolean(
+    restoreRootNodeId &&
+      (windowNodeId === restoreRootNodeId || isDescendantOfNode(state, windowNodeId, restoreRootNodeId))
+  );
 }
 
 function createUrlForRestoreTarget(target: RestoreCreateTarget): string {

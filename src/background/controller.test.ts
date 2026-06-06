@@ -37254,6 +37254,117 @@ describe("background controller lifecycle", () => {
     expect(state.rootIds).not.toContain(importedSubgroupId);
   });
 
+  it("keeps nested restored imported tabs in the subgroup runtime window", async () => {
+    const parentUrl = "https://subgroup.example/parent";
+    const childUrl = "https://subgroup.example/child";
+    const runtime = fakeRuntime(
+      [
+        { id: 10, focused: true, incognito: false }
+      ],
+      [
+        { id: 1, windowId: 10, index: 0, active: true, url: "https://one.example/", title: "One" }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+
+    expectCommandAck(await controller.handleMessage({
+      type: "importTree",
+      tree: {
+        schema: PORTABLE_TREE_SCHEMA,
+        version: 1,
+        exportedAt: "2026-05-18T12:00:00.000Z",
+        roots: [
+          {
+            kind: "window",
+            title: "Imported parent",
+            children: [
+              {
+                kind: "window",
+                title: "Imported subgroup",
+                children: [
+                  {
+                    kind: "tab",
+                    title: "Imported parent tab",
+                    url: parentUrl,
+                    children: [
+                      {
+                        kind: "tab",
+                        title: "Imported nested child",
+                        url: childUrl,
+                        children: []
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    }), true);
+
+    let state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    const importedParentId = Object.values(state.nodes)
+      .find((node) => node.kind === "window" && node.title === "Imported parent")?.id;
+    const importedSubgroupId = Object.values(state.nodes)
+      .find((node) => node.kind === "window" && node.title === "Imported subgroup")?.id;
+    const importedParentTabId = Object.values(state.nodes)
+      .find((node) => node.kind === "tab" && node.title === "Imported parent tab")?.id;
+    const importedChildId = Object.values(state.nodes)
+      .find((node) => node.kind === "tab" && node.title === "Imported nested child")?.id;
+    expect(importedParentId).toBeDefined();
+    expect(importedSubgroupId).toBeDefined();
+    expect(importedParentTabId).toBeDefined();
+    expect(importedChildId).toBeDefined();
+
+    expectCommandAck(await controller.handleMessage({ type: "restoreNode", nodeId: importedSubgroupId! }), true);
+    await runtime.events.tabCreated.flush();
+    state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    const subgroupRuntimeWindowId = state.nodes[importedSubgroupId!]?.live?.windowId;
+    expect(typeof subgroupRuntimeWindowId).toBe("number");
+    const restoredRuntimeTabs = runtime.tabs
+      .filter((tab) => tab.windowId === subgroupRuntimeWindowId)
+      .sort((left, right) => left.index - right.index)
+      .map(copyTab);
+    expect(restoredRuntimeTabs.map((tab) => tab.url)).toEqual([parentUrl, childUrl]);
+
+    for (const tab of restoredRuntimeTabs) {
+      runtime.events.tabUpdated.dispatch(tab.id, { title: `${tab.title} loaded` }, {
+        ...tab,
+        title: `${tab.title} loaded`
+      });
+      runtime.events.tabMoved.dispatch(tab.id, {
+        windowId: tab.windowId,
+        fromIndex: tab.index,
+        toIndex: tab.index
+      });
+    }
+    await runtime.events.tabUpdated.flush();
+    await runtime.events.tabMoved.flush();
+
+    state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(state.nodes[importedParentId!]?.status).toBe("closed");
+    expect(state.nodes[importedParentId!]?.childIds).toContain(importedSubgroupId);
+    expect(state.nodes[importedSubgroupId!]).toMatchObject({
+      status: "live",
+      parentId: importedParentId,
+      live: { windowId: subgroupRuntimeWindowId }
+    });
+    expect(state.nodes[importedParentTabId!]).toMatchObject({
+      status: "live",
+      parentId: importedSubgroupId,
+      live: { windowId: subgroupRuntimeWindowId }
+    });
+    expect(state.nodes[importedChildId!]).toMatchObject({
+      status: "live",
+      parentId: importedParentTabId,
+      live: { windowId: subgroupRuntimeWindowId }
+    });
+    expect(runtime.tabs.filter((tab) => tab.url === parentUrl || tab.url === childUrl)
+      .map((tab) => tab.windowId)).toEqual([subgroupRuntimeWindowId, subgroupRuntimeWindowId]);
+  });
+
   it("keeps a restored Chrome-imported tab subgroup attached after runtime refresh", async () => {
     const runtime = fakeRuntime(
       [
@@ -37342,10 +37453,19 @@ describe("background controller lifecycle", () => {
     expect(restoredPatchNodeIds).toContain(importedParentId);
     expect(restoredPatchNodeIds).toContain(importedSubgroupId);
 
-    expectCommandAck(await controller.handleMessage({ type: "refresh" }), false);
+    expectCommandAck(await controller.handleMessage({ type: "refresh" }), true);
     state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
     const restoredSubgroupWindowId = state.nodes[importedSubgroupId!]?.live?.windowId;
     expect(typeof restoredSubgroupWindowId).toBe("number");
+    const leakedRuntimeWindowShellIds = Object.values(state.nodes).flatMap((node) =>
+      node.kind === "window" &&
+        node.status === "live" &&
+        node.live &&
+        "windowId" in node.live &&
+        node.live.windowId === restoredSubgroupWindowId
+        ? [node.id]
+        : []
+    );
 
     expect(state.nodes[importedParentId!]?.status).toBe("closed");
     expect(state.nodes[importedParentId!]?.childIds).toContain(importedSubgroupId);
@@ -37361,6 +37481,13 @@ describe("background controller lifecycle", () => {
       live: { windowId: restoredSubgroupWindowId }
     });
     expect(state.rootIds).not.toContain(importedSubgroupId);
+    expect(leakedRuntimeWindowShellIds).toEqual([]);
+    expect(runtime.tabs
+      .filter((tab) =>
+        tab.url === "https://imported.example/subgroup" ||
+        tab.url === "https://imported.example/child"
+      )
+      .map((tab) => tab.windowId)).toEqual([restoredSubgroupWindowId, restoredSubgroupWindowId]);
   });
 
   it("restores a whole imported group after a later restored child closes as a window session", async () => {

@@ -1787,6 +1787,97 @@ describe("background commands", () => {
     }
   });
 
+  it("restores nested parent tabs inside an imported subgroup window", async () => {
+    const state: OutlineState = bootstrapFromWindows(runtimeWindows, { now: 1000 });
+    let nextCreatedTabId = 300;
+    const adapter = fakeAdapter({
+      createTab: vi.fn(async ({ url, windowId = 10, active = false }) => ({
+        id: nextCreatedTabId++,
+        windowId,
+        index: nextCreatedTabId - 301,
+        active,
+        url,
+        title: url
+      }))
+    });
+    const imported = await runCommand(state, adapter, {
+      type: "importTree",
+      tree: {
+        schema: PORTABLE_TREE_SCHEMA,
+        version: 1,
+        exportedAt: "2026-05-16T12:00:00.000Z",
+        roots: [
+          {
+            kind: "window",
+            title: "Imported parent group",
+            children: [
+              {
+                kind: "window",
+                title: "Imported subgroup",
+                children: [
+                  {
+                    kind: "tab",
+                    title: "Imported parent tab",
+                    url: "https://imported.example/parent",
+                    children: [
+                      {
+                        kind: "tab",
+                        title: "Imported nested child",
+                        url: "https://imported.example/child",
+                        children: []
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    });
+    const importedParent = Object.values(imported.state.nodes).find((node) => node.title === "Imported parent group");
+    const importedSubgroup = Object.values(imported.state.nodes).find((node) => node.title === "Imported subgroup");
+    const importedParentTab = Object.values(imported.state.nodes).find((node) => node.title === "Imported parent tab");
+    const importedChild = Object.values(imported.state.nodes).find((node) => node.title === "Imported nested child");
+
+    expect(importedParent).toBeDefined();
+    expect(importedSubgroup).toBeDefined();
+    expect(importedParentTab).toBeDefined();
+    expect(importedChild).toBeDefined();
+
+    const restored = await runCommand(imported.state, adapter, {
+      type: "restoreNode",
+      nodeId: importedSubgroup!.id
+    });
+
+    expect(adapter.createWindow).toHaveBeenCalledWith({
+      url: "https://imported.example/parent"
+    });
+    expect(adapter.createTab).toHaveBeenCalledWith({
+      url: "https://imported.example/child",
+      windowId: 42,
+      active: false
+    });
+    expect(restored.state.nodes[importedParent!.id]?.status).toBe("closed");
+    expect(restored.state.nodes[importedParent!.id]?.childIds).toContain(importedSubgroup!.id);
+    expect(restored.state.nodes[importedSubgroup!.id]).toMatchObject({
+      status: "live",
+      parentId: importedParent!.id,
+      live: { windowId: 42 }
+    });
+    expect(restored.state.nodes[importedParentTab!.id]).toMatchObject({
+      status: "live",
+      parentId: importedSubgroup!.id,
+      live: { windowId: 42 }
+    });
+    expect(restored.state.nodes[importedChild!.id]).toMatchObject({
+      status: "live",
+      parentId: importedParentTab!.id,
+      live: { windowId: 42 }
+    });
+    expect(restored.state.rootIds).not.toContain(importedSubgroup!.id);
+  });
+
   it("keeps a restored Chrome-imported tab subgroup attached to its parent group", async () => {
     const state: OutlineState = bootstrapFromWindows(runtimeWindows, { now: 1000 });
     let nextCreatedTabId = 200;
@@ -1879,12 +1970,12 @@ describe("background commands", () => {
       status: "live",
       parentId: importedParent!.id,
       childIds: [importedChild!.id],
-      live: { windowId: 10 }
+      live: { windowId: 42 }
     });
     expect(restoredChild).toMatchObject({
       status: "live",
       parentId: importedSubgroup!.id,
-      live: { windowId: 10 }
+      live: { windowId: 42 }
     });
   });
 
