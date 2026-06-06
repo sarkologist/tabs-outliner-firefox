@@ -1716,6 +1716,77 @@ describe("background commands", () => {
     });
   });
 
+  it("keeps a restored imported subgroup attached to its parent group", async () => {
+    const state: OutlineState = bootstrapFromWindows(runtimeWindows, { now: 1000 });
+    const adapter = fakeAdapter();
+    const imported = await runCommand(state, adapter, {
+      type: "importTree",
+      tree: {
+        schema: PORTABLE_TREE_SCHEMA,
+        version: 1,
+        exportedAt: "2026-05-16T12:00:00.000Z",
+        roots: [
+          {
+            kind: "window",
+            title: "Imported parent group",
+            children: [
+              {
+                kind: "window",
+                title: "Imported subgroup",
+                children: [
+                  {
+                    kind: "tab",
+                    title: "Imported subgroup first",
+                    url: "https://imported.example/first",
+                    children: []
+                  },
+                  {
+                    kind: "tab",
+                    title: "Imported subgroup second",
+                    url: "https://imported.example/second",
+                    children: []
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    });
+    const importedParent = Object.values(imported.state.nodes).find((node) => node.title === "Imported parent group");
+    const importedSubgroup = Object.values(imported.state.nodes).find((node) => node.title === "Imported subgroup");
+    const importedTabs = ["Imported subgroup first", "Imported subgroup second"].map((title) =>
+      Object.values(imported.state.nodes).find((node) => node.title === title)
+    );
+
+    expect(importedParent).toBeDefined();
+    expect(importedSubgroup).toBeDefined();
+    expect(importedSubgroup?.parentId).toBe(importedParent?.id);
+    expect(importedTabs.every(Boolean)).toBe(true);
+
+    const restored = await runCommand(imported.state, adapter, {
+      type: "restoreNode",
+      nodeId: importedSubgroup!.id
+    });
+
+    const restoredParent = restored.state.nodes[importedParent!.id];
+    const restoredSubgroup = restored.state.nodes[importedSubgroup!.id];
+    expect(restoredParent?.status).toBe("closed");
+    expect(restoredParent?.childIds).toContain(importedSubgroup!.id);
+    expect(restoredSubgroup).toMatchObject({
+      status: "live",
+      parentId: importedParent!.id,
+      live: { windowId: 42 }
+    });
+    for (const importedTab of importedTabs) {
+      expect(restored.state.nodes[importedTab!.id]).toMatchObject({
+        status: "live",
+        parentId: importedSubgroup!.id,
+        live: { windowId: 42 }
+      });
+    }
+  });
+
   it("renames groups locally without touching browser tabs or windows", async () => {
     const state: OutlineState = bootstrapFromWindows(runtimeWindows, { now: 1000 });
     const adapter = fakeAdapter();

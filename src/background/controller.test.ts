@@ -2378,8 +2378,8 @@ const RUNTIME_DOMAIN_TRACE_DEFINITIONS: RuntimeDomainTraceDefinition[] = [
     ]
   },
   {
-    id: "po-restore-nested-closed-window-promotes-from-closed-parent",
-    title: "PureScript oracle promotes restored nested window from closed parent",
+    id: "po-restore-nested-closed-window-preserves-closed-parent",
+    title: "PureScript oracle preserves restored nested window under closed parent",
     notes: "Covers the 900000021 class where a nested closed command window is restored after its outline parent has also closed.",
     tags: ["purescript-oracle", "restore", "nested-window", "closed-subtree"],
     assertions: ["purescriptOracle", "closedSubtreePersistence"],
@@ -2400,8 +2400,8 @@ const RUNTIME_DOMAIN_TRACE_DEFINITIONS: RuntimeDomainTraceDefinition[] = [
     ]
   },
   {
-    id: "po-restore-delete-nested-closed-window-promotes-from-closed-parent",
-    title: "PureScript oracle promotes restored nested window after restore-delete workflow",
+    id: "po-restore-delete-nested-closed-window-preserves-closed-parent",
+    title: "PureScript oracle preserves restored nested window after restore-delete workflow",
     notes: "Covers the 900000000 class where restore-delete delayed events and stale runtime echoes precede restoring a child window under a closed ancestor.",
     tags: ["purescript-oracle", "restore-delete", "restore", "nested-window", "stale-event", "closed-subtree"],
     assertions: ["purescriptOracle", "closedSubtreePersistence"],
@@ -25873,7 +25873,11 @@ function assertClosedSubtreeInvariants(state: OutlineState, history: string[]): 
   for (const node of Object.values(state.nodes)) {
     if (node.status === "live") {
       const closedAncestor = nearestAncestor(state, node.id, (candidate) => candidate.status === "closed");
-      invariant(!closedAncestor, `live node ${node.id} is under closed node ${closedAncestor?.id}`, history);
+      invariant(
+        !closedAncestor || liveNodeCanRemainUnderClosedAncestor(state, node),
+        `live node ${node.id} is under closed node ${closedAncestor?.id}`,
+        history
+      );
     }
 
     if (node.kind === "tab" && node.status === "closed" && node.childIds.length > 0) {
@@ -25885,6 +25889,25 @@ function assertClosedSubtreeInvariants(state: OutlineState, history: string[]): 
       );
     }
   }
+}
+
+function liveNodeCanRemainUnderClosedAncestor(state: OutlineState, node: OutlineState["nodes"][string]): boolean {
+  if (node.kind === "window") {
+    return node.restoredFromClosed === true;
+  }
+
+  if (node.kind !== "tab") {
+    return false;
+  }
+
+  const owningWindow = nearestWindowNode(state, node.id);
+  return Boolean(
+    owningWindow &&
+      owningWindow.id !== node.id &&
+      owningWindow.kind === "window" &&
+      owningWindow.status === "live" &&
+      owningWindow.restoredFromClosed === true
+  );
 }
 
 function liveTabNodeForRuntimeTab(state: OutlineState, tabId: number) {

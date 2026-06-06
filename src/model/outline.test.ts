@@ -1531,7 +1531,7 @@ describe("outline model", () => {
     expect(restored.nodes["tab:1"]?.restoredFromClosed).toBe(true);
   });
 
-  it("promotes a restored closed window out of closed ancestors", () => {
+  it("preserves a restored closed window under closed ancestors", () => {
     let state = bootstrapFromWindows([
       {
         id: 10,
@@ -1598,11 +1598,11 @@ describe("outline model", () => {
       }
     ]);
 
-    expect(restored.rootIds).toEqual(["window:10", "window:20"]);
+    expect(restored.rootIds).toEqual(["window:10"]);
     expect(restored.nodes["window:10"]?.status).toBe("closed");
-    expect(restored.nodes["window:10"]?.childIds).not.toContain("window:20");
+    expect(restored.nodes["window:10"]?.childIds).toEqual(["tab:1", "window:20"]);
     expect(restored.nodes["window:20"]?.status).toBe("live");
-    expect(restored.nodes["window:20"]?.parentId).toBeUndefined();
+    expect(restored.nodes["window:20"]?.parentId).toBe("window:10");
     expect(restored.nodes["tab:2"]?.parentId).toBe("window:20");
   });
 

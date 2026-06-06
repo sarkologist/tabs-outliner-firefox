@@ -1345,6 +1345,9 @@ function promoteRestoredLiveNodesOutOfClosedAncestors(
     if (!liveRootId || promotedNodeIds.has(liveRootId)) {
       continue;
     }
+    if (state.nodes[liveRootId]?.kind !== "tab") {
+      continue;
+    }
     promoteLiveNodeOutOfClosedAncestors(state, original, liveRootId);
     promotedNodeIds.add(liveRootId);
   }

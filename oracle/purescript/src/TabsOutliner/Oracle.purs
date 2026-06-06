@@ -2107,8 +2107,15 @@ uniqueRestoredLiveRootsUnderClosedAncestors nodeIds outline =
       case liveRootUnderClosedAncestor nodeId outline of
         Nothing -> roots
         Just rootId ->
-          if anyArray (\candidateId -> nodeIdEq candidateId rootId) roots then roots
-          else snocArray roots rootId)
+          case findNode rootId outline of
+            Just root ->
+              case root.kind of
+                TabKind ->
+                  if anyArray (\candidateId -> nodeIdEq candidateId rootId) roots then roots
+                  else snocArray roots rootId
+                WindowKind -> roots
+                GroupKind -> roots
+            Nothing -> roots)
     []
     nodeIds
 
