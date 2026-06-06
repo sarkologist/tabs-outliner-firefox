@@ -526,6 +526,10 @@ async function restoreNode(
     if (restoredNodes.length > 0) {
       appendRestoredNodes(restoredNodes);
       const restoredWindowNodeId = restoredNodes.find((restored) => next.nodes[restored.nodeId]?.kind === "window")?.nodeId;
+      const restoredTabSubgroupNodeId = restoredNodes.find((restored) => {
+        const restoredNode = next.nodes[restored.nodeId];
+        return restoredNode?.kind === "tab" && restoredNode.childIds.length > 0;
+      })?.nodeId;
       if (restoredWindowNodeId) {
         const coverage = restoredWindowDescendantCoverage(next, restoredWindowNodeId, plans, restoredNodes);
         if (coverage.coveredWindowDescendants) {
@@ -536,6 +540,8 @@ async function restoreNode(
           }
           flushRestoredNodes();
         }
+      } else if (restoredTabSubgroupNodeId) {
+        flushRestoredNodes();
       }
     }
   }
@@ -670,7 +676,8 @@ function tabCreateBatchPlanFromRestorePlan(
   state: OutlineState,
   plan: RestorePlan | undefined
 ): WindowCreateBatchPlan | undefined {
-  if (!plan?.windowNodeId || state.nodes[plan.nodeId]?.kind !== "tab") {
+  const node = plan ? state.nodes[plan.nodeId] : undefined;
+  if (!plan?.windowNodeId || node?.kind !== "tab" || node.childIds.length > 0) {
     return undefined;
   }
 
@@ -870,6 +877,7 @@ function shouldCreateClosedWindowDestination(state: OutlineState, plan: RestoreP
   const plannedNode = state.nodes[plan.nodeId];
   return Boolean(
     plannedNode?.kind === "tab" &&
+      plannedNode.childIds.length === 0 &&
       plannedWindow?.kind === "window" &&
       plannedWindow.status === "closed" &&
       !plannedWindow.restore?.sessionId
@@ -885,6 +893,7 @@ async function createFallbackTab(
   restoreObserver?: RestoreObserver
 ): Promise<RestoredNode[]> {
   const plannedWindow = windowNodeId ? state.nodes[windowNodeId] : undefined;
+  const liveTabAncestor = nearestLiveTabAncestor(state, nodeId);
   if (isLiveWindow(plannedWindow)) {
     const createUrl = createUrlForRestoreTarget(target);
     const createProperties = {
@@ -902,7 +911,30 @@ async function createFallbackTab(
     return [restoredTabFromRuntime(nodeId, created)];
   }
 
-  if (plannedWindow?.kind === "window" && plannedWindow.status === "closed" && windowNodeId) {
+  if (liveTabAncestor?.live && "tabId" in liveTabAncestor.live) {
+    const createUrl = createUrlForRestoreTarget(target);
+    const createProperties = {
+      url: createUrl,
+      windowId: liveTabAncestor.live.windowId,
+      active: false
+    };
+    await restoreObserver?.recordCreateAttempt({
+      kind: "tab",
+      nodeId,
+      createProperties
+    });
+    const created = await adapter.createTab(createProperties);
+    return [restoredTabFromRuntime(nodeId, created)];
+  }
+
+  const plannedNode = state.nodes[nodeId];
+  if (
+    plannedWindow?.kind === "window" &&
+    plannedWindow.status === "closed" &&
+    windowNodeId &&
+    plannedNode?.kind === "tab" &&
+    plannedNode.childIds.length === 0
+  ) {
     const sessionRestored = closedWindowHasOnlyTab(state, windowNodeId, nodeId)
       ? await restoreClosedWindowSessionForTab(state, adapter, nodeId, plannedWindow)
       : [];
@@ -957,6 +989,23 @@ async function createFallbackTab(
   const created = await adapter.createTab(createProperties);
 
   return [restoredTabFromRuntime(nodeId, created)];
+}
+
+function nearestLiveTabAncestor(state: OutlineState, nodeId: NodeId): OutlineState["nodes"][string] | undefined {
+  const visited = new Set<NodeId>([nodeId]);
+  let currentId = state.nodes[nodeId]?.parentId;
+  while (currentId && !visited.has(currentId)) {
+    visited.add(currentId);
+    const current = state.nodes[currentId];
+    if (!current) {
+      return undefined;
+    }
+    if (current.kind === "tab" && current.status === "live" && current.live && "tabId" in current.live) {
+      return current;
+    }
+    currentId = current.parentId;
+  }
+  return undefined;
 }
 
 async function tryCreateFallbackTab(

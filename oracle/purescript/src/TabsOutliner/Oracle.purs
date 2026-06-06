@@ -2111,7 +2111,8 @@ uniqueRestoredLiveRootsUnderClosedAncestors nodeIds outline =
             Just root ->
               case root.kind of
                 TabKind ->
-                  if anyArray (\candidateId -> nodeIdEq candidateId rootId) roots then roots
+                  if notBoolean (eqInt (lengthArray root.childIds) 0) then roots
+                  else if anyArray (\candidateId -> nodeIdEq candidateId rootId) roots then roots
                   else snocArray roots rootId
                 WindowKind -> roots
                 GroupKind -> roots

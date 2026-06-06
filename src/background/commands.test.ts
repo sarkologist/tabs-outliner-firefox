@@ -1787,6 +1787,107 @@ describe("background commands", () => {
     }
   });
 
+  it("keeps a restored Chrome-imported tab subgroup attached to its parent group", async () => {
+    const state: OutlineState = bootstrapFromWindows(runtimeWindows, { now: 1000 });
+    let nextCreatedTabId = 200;
+    const adapter = fakeAdapter({
+      createTab: vi.fn(async ({ url, windowId = 10, active = false }) => ({
+        id: nextCreatedTabId++,
+        windowId,
+        index: nextCreatedTabId - 201,
+        active,
+        url,
+        title: url
+      }))
+    });
+    const imported = await runCommand(state, adapter, {
+      type: "importTree",
+      tree: [
+        {
+          type: 2000,
+          node: {
+            type: "session",
+            data: {
+              treeId: "1483340179831.8303"
+            }
+          }
+        },
+        [
+          2001,
+          {
+            type: "savedwin",
+            marks: {
+              customTitle: "Research"
+            },
+            data: {
+              type: "normal"
+            }
+          },
+          [0]
+        ],
+        [
+          2001,
+          {
+            data: {
+              title: "Imported subgroup",
+              url: "https://imported.example/subgroup"
+            }
+          },
+          [0, 0]
+        ],
+        [
+          2001,
+          {
+            type: "tab",
+            data: {
+              title: "Imported subgroup child",
+              url: "https://imported.example/child"
+            }
+          },
+          [0, 0, 0]
+        ]
+      ]
+    });
+    const importGroup = Object.values(imported.state.nodes).find((node) => node.title === "Chrome Tab Outliner import");
+    const importedParent = Object.values(imported.state.nodes).find((node) => node.title === "Research");
+    const importedSubgroup = Object.values(imported.state.nodes).find((node) => node.title === "Imported subgroup");
+    const importedChild = Object.values(imported.state.nodes).find((node) => node.title === "Imported subgroup child");
+
+    expect(importGroup).toBeDefined();
+    expect(importedParent).toBeDefined();
+    expect(importedSubgroup).toBeDefined();
+    expect(importedChild).toBeDefined();
+    expect(importedParent?.parentId).toBe(importGroup?.id);
+    expect(importedSubgroup?.kind).toBe("tab");
+    expect(importedSubgroup?.parentId).toBe(importedParent?.id);
+    expect(importedChild?.parentId).toBe(importedSubgroup?.id);
+
+    const restored = await runCommand(imported.state, adapter, {
+      type: "restoreNode",
+      nodeId: importedSubgroup!.id
+    });
+
+    const restoredImportGroup = restored.state.nodes[importGroup!.id];
+    const restoredParent = restored.state.nodes[importedParent!.id];
+    const restoredSubgroup = restored.state.nodes[importedSubgroup!.id];
+    const restoredChild = restored.state.nodes[importedChild!.id];
+    expect(restored.state.rootIds).not.toContain(importedSubgroup!.id);
+    expect(restoredImportGroup?.childIds).toContain(importedParent!.id);
+    expect(restoredParent?.status).toBe("closed");
+    expect(restoredParent?.childIds).toContain(importedSubgroup!.id);
+    expect(restoredSubgroup).toMatchObject({
+      status: "live",
+      parentId: importedParent!.id,
+      childIds: [importedChild!.id],
+      live: { windowId: 10 }
+    });
+    expect(restoredChild).toMatchObject({
+      status: "live",
+      parentId: importedSubgroup!.id,
+      live: { windowId: 10 }
+    });
+  });
+
   it("renames groups locally without touching browser tabs or windows", async () => {
     const state: OutlineState = bootstrapFromWindows(runtimeWindows, { now: 1000 });
     const adapter = fakeAdapter();

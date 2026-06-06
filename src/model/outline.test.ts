@@ -515,6 +515,104 @@ describe("outline model", () => {
     expect(next.nodes["tab:2"]?.parentId).toBe("tab:1");
   });
 
+  it("promotes foreign live tabs when their outline parent window closes", () => {
+    const state: OutlineState = {
+      version: 1,
+      rootIds: ["window:10", "window:20"],
+      nodes: {
+        "window:10": {
+          id: "window:10",
+          kind: "window",
+          status: "live",
+          childIds: ["tab:1"],
+          title: "Window 10",
+          collapsed: false,
+          createdAt: 1000,
+          updatedAt: 1000,
+          live: { windowId: 10 }
+        },
+        "tab:1": {
+          id: "tab:1",
+          kind: "tab",
+          status: "live",
+          parentId: "window:10",
+          childIds: [],
+          title: "Owner tab",
+          url: "https://owner.example/",
+          collapsed: false,
+          createdAt: 1000,
+          updatedAt: 1000,
+          live: { tabId: 1, windowId: 10 }
+        },
+        "window:20": {
+          id: "window:20",
+          kind: "window",
+          status: "live",
+          childIds: ["tab:2", "tab:3"],
+          title: "Window 20",
+          collapsed: false,
+          createdAt: 1000,
+          updatedAt: 1000,
+          live: { windowId: 20 }
+        },
+        "tab:2": {
+          id: "tab:2",
+          kind: "tab",
+          status: "live",
+          parentId: "window:20",
+          childIds: ["tab:4"],
+          title: "Foreign tab",
+          url: "https://foreign.example/",
+          collapsed: false,
+          createdAt: 1000,
+          updatedAt: 1000,
+          live: { tabId: 2, windowId: 10 }
+        },
+        "tab:3": {
+          id: "tab:3",
+          kind: "tab",
+          status: "live",
+          parentId: "window:20",
+          childIds: [],
+          title: "Closed tab",
+          url: "https://closed.example/",
+          collapsed: false,
+          createdAt: 1000,
+          updatedAt: 1000,
+          live: { tabId: 3, windowId: 20 }
+        },
+        "tab:4": {
+          id: "tab:4",
+          kind: "tab",
+          status: "live",
+          parentId: "tab:2",
+          childIds: [],
+          title: "Closed child",
+          url: "https://closed-child.example/",
+          collapsed: false,
+          createdAt: 1000,
+          updatedAt: 1000,
+          live: { tabId: 4, windowId: 20 }
+        }
+      }
+    };
+
+    const next = closeWindow(state, 20, {
+      now: 2000,
+      sessionId: "session-window-20"
+    });
+
+    expect(next.nodes["window:20"]?.status).toBe("closed");
+    expect(next.nodes["window:20"]?.childIds).toEqual(["tab:4", "tab:3"]);
+    expect(next.nodes["tab:3"]?.status).toBe("closed");
+    expect(next.nodes["tab:4"]?.status).toBe("closed");
+    expect(next.nodes["tab:4"]?.parentId).toBe("window:20");
+    expect(next.nodes["tab:2"]?.status).toBe("live");
+    expect(next.nodes["tab:2"]?.parentId).toBe("window:10");
+    expect(next.nodes["tab:2"]?.childIds).toEqual([]);
+    expect(next.nodes["window:10"]?.childIds).toEqual(["tab:1", "tab:2"]);
+  });
+
   it("deletes a live tab node by runtime id and promotes its live children", () => {
     const state = bootstrapFromWindows(windows, { now: 1000 });
 
@@ -1606,6 +1704,279 @@ describe("outline model", () => {
     expect(restored.nodes["tab:2"]?.parentId).toBe("window:20");
   });
 
+  it("preserves a restored child-bearing tab subgroup under closed ancestors", () => {
+    const state: OutlineState = {
+      version: 1,
+      rootIds: ["window:parent"],
+      nodes: {
+        "window:parent": {
+          id: "window:parent",
+          kind: "window",
+          status: "closed",
+          childIds: ["tab:subgroup"],
+          title: "Imported parent",
+          collapsed: false,
+          createdAt: 1000,
+          updatedAt: 1000,
+          closedAt: 1000
+        },
+        "tab:subgroup": {
+          id: "tab:subgroup",
+          kind: "tab",
+          status: "closed",
+          parentId: "window:parent",
+          childIds: ["tab:child"],
+          title: "Imported subgroup",
+          url: "https://subgroup.example/",
+          collapsed: false,
+          createdAt: 1000,
+          updatedAt: 1000,
+          closedAt: 1000,
+          restore: {
+            url: "https://subgroup.example/",
+            title: "Imported subgroup"
+          }
+        },
+        "tab:child": {
+          id: "tab:child",
+          kind: "tab",
+          status: "closed",
+          parentId: "tab:subgroup",
+          childIds: [],
+          title: "Imported child",
+          url: "https://subgroup.example/child",
+          collapsed: false,
+          createdAt: 1000,
+          updatedAt: 1000,
+          closedAt: 1000,
+          restore: {
+            url: "https://subgroup.example/child",
+            title: "Imported child"
+          }
+        }
+      }
+    };
+
+    const restored = restoreNodes(state, [
+      {
+        nodeId: "tab:subgroup",
+        tabId: 10,
+        windowId: 50,
+        url: "https://subgroup.example/",
+        title: "Imported subgroup"
+      },
+      {
+        nodeId: "tab:child",
+        tabId: 11,
+        windowId: 50,
+        url: "https://subgroup.example/child",
+        title: "Imported child"
+      }
+    ]);
+
+    expect(restored.rootIds).toEqual(["window:parent"]);
+    expect(restored.nodes["window:parent"]?.status).toBe("closed");
+    expect(restored.nodes["window:parent"]?.childIds).toEqual(["tab:subgroup"]);
+    expect(restored.nodes["tab:subgroup"]).toMatchObject({
+      status: "live",
+      parentId: "window:parent",
+      childIds: ["tab:child"]
+    });
+    expect(restored.nodes["tab:child"]).toMatchObject({
+      status: "live",
+      parentId: "tab:subgroup"
+    });
+  });
+
+  it("preserves a restored child-bearing tab subgroup through runtime reconciliation", () => {
+    const state: OutlineState = {
+      version: 1,
+      rootIds: ["window:parent"],
+      nodes: {
+        "window:parent": {
+          id: "window:parent",
+          kind: "window",
+          status: "closed",
+          childIds: ["tab:subgroup"],
+          title: "Imported parent",
+          collapsed: false,
+          createdAt: 1000,
+          updatedAt: 1000,
+          closedAt: 1000
+        },
+        "tab:subgroup": {
+          id: "tab:subgroup",
+          kind: "tab",
+          status: "closed",
+          parentId: "window:parent",
+          childIds: ["tab:child"],
+          title: "Imported subgroup",
+          url: "https://subgroup.example/",
+          collapsed: false,
+          createdAt: 1000,
+          updatedAt: 1000,
+          closedAt: 1000,
+          restore: {
+            url: "https://subgroup.example/",
+            title: "Imported subgroup"
+          }
+        },
+        "tab:child": {
+          id: "tab:child",
+          kind: "tab",
+          status: "closed",
+          parentId: "tab:subgroup",
+          childIds: [],
+          title: "Imported child",
+          url: "https://subgroup.example/child",
+          collapsed: false,
+          createdAt: 1000,
+          updatedAt: 1000,
+          closedAt: 1000,
+          restore: {
+            url: "https://subgroup.example/child",
+            title: "Imported child"
+          }
+        }
+      }
+    };
+    const restored = restoreNodes(state, [
+      {
+        nodeId: "tab:subgroup",
+        tabId: 10,
+        windowId: 50,
+        url: "https://subgroup.example/",
+        title: "Imported subgroup"
+      },
+      {
+        nodeId: "tab:child",
+        tabId: 11,
+        windowId: 50,
+        url: "https://subgroup.example/child",
+        title: "Imported child"
+      }
+    ]);
+
+    const reconciled = reconcileWithWindows(restored, [
+      {
+        id: 50,
+        incognito: false,
+        focused: true,
+        tabs: [
+          {
+            id: 10,
+            windowId: 50,
+            index: 0,
+            active: true,
+            url: "https://subgroup.example/",
+            title: "Imported subgroup"
+          },
+          {
+            id: 11,
+            windowId: 50,
+            index: 1,
+            active: false,
+            url: "https://subgroup.example/child",
+            title: "Imported child"
+          }
+        ]
+      }
+    ], { now: 2000 });
+
+    expect(reconciled.rootIds).toEqual(["window:parent"]);
+    expect(reconciled.nodes["window:parent"]?.status).toBe("closed");
+    expect(reconciled.nodes["window:parent"]?.childIds).toEqual(["tab:subgroup"]);
+    expect(reconciled.nodes["tab:subgroup"]).toMatchObject({
+      status: "live",
+      parentId: "window:parent",
+      childIds: ["tab:child"],
+      live: { tabId: 10, windowId: 50 }
+    });
+    expect(reconciled.nodes["tab:child"]).toMatchObject({
+      status: "live",
+      parentId: "tab:subgroup",
+      live: { tabId: 11, windowId: 50 }
+    });
+  });
+
+  it("reattaches restored tab subgroup children when the subgroup tab closes", () => {
+    const state: OutlineState = {
+      version: 1,
+      rootIds: ["window:10", "window:parent"],
+      nodes: {
+        "window:10": {
+          id: "window:10",
+          kind: "window",
+          status: "live",
+          childIds: [],
+          title: "Group",
+          collapsed: false,
+          createdAt: 1000,
+          updatedAt: 1000,
+          live: { windowId: 10 }
+        },
+        "window:parent": {
+          id: "window:parent",
+          kind: "window",
+          status: "closed",
+          childIds: ["tab:subgroup"],
+          title: "Imported parent",
+          collapsed: false,
+          createdAt: 1000,
+          updatedAt: 1000,
+          closedAt: 1000
+        },
+        "tab:subgroup": {
+          id: "tab:subgroup",
+          kind: "tab",
+          status: "live",
+          parentId: "window:parent",
+          childIds: ["tab:child"],
+          title: "Imported subgroup",
+          url: "https://subgroup.example/",
+          collapsed: false,
+          createdAt: 1000,
+          updatedAt: 1000,
+          restoredFromClosed: true,
+          live: { tabId: 10, windowId: 10 }
+        },
+        "tab:child": {
+          id: "tab:child",
+          kind: "tab",
+          status: "live",
+          parentId: "tab:subgroup",
+          childIds: [],
+          title: "Imported child",
+          url: "https://subgroup.example/child",
+          collapsed: false,
+          createdAt: 1000,
+          updatedAt: 1000,
+          restoredFromClosed: true,
+          live: { tabId: 11, windowId: 10 }
+        }
+      }
+    };
+
+    const closed = closeTab(state, 10, {
+      now: 2000,
+      sessionId: "session-subgroup"
+    });
+
+    expect(closed.nodes["window:parent"]?.status).toBe("closed");
+    expect(closed.nodes["window:parent"]?.childIds).toEqual(["tab:subgroup"]);
+    expect(closed.nodes["tab:subgroup"]).toMatchObject({
+      status: "closed",
+      parentId: "window:parent",
+      childIds: []
+    });
+    expect(closed.nodes["window:10"]?.childIds).toEqual(["tab:child"]);
+    expect(closed.nodes["tab:child"]).toMatchObject({
+      status: "live",
+      parentId: "window:10",
+      live: { tabId: 11, windowId: 10 }
+    });
+  });
+
   it("updates stale browser-created provenance when a closed window is restored live", () => {
     const browserCreated = bootstrapFromWindows([
       {
@@ -1810,6 +2181,112 @@ describe("outline model", () => {
     expect(deleted.nodes["tab:1"]).toBeUndefined();
     expect(deleted.nodes["tab:2"]).toBeUndefined();
     expect(deleted.nodes["window:10"]?.childIds).toEqual(["tab:3"]);
+  });
+
+  it("preserves externally owned live tabs when deleting a live subtree", () => {
+    const state: OutlineState = {
+      version: 1,
+      rootIds: ["window:10", "group:1"],
+      nodes: {
+        "window:10": {
+          id: "window:10",
+          kind: "window",
+          status: "live",
+          childIds: ["tab:1"],
+          title: "Window 10",
+          collapsed: false,
+          createdAt: 1000,
+          updatedAt: 1000,
+          live: { windowId: 10 }
+        },
+        "tab:1": {
+          id: "tab:1",
+          kind: "tab",
+          status: "live",
+          parentId: "window:10",
+          childIds: [],
+          title: "Owner tab",
+          url: "https://owner.example/",
+          collapsed: false,
+          createdAt: 1000,
+          updatedAt: 1000,
+          live: { tabId: 1, windowId: 10 }
+        },
+        "group:1": {
+          id: "group:1",
+          kind: "group",
+          status: "neutral",
+          childIds: ["window:20"],
+          title: "Group",
+          collapsed: false,
+          createdAt: 1000,
+          updatedAt: 1000
+        },
+        "window:20": {
+          id: "window:20",
+          kind: "window",
+          status: "live",
+          parentId: "group:1",
+          childIds: ["tab:2", "tab:3"],
+          title: "Window 20",
+          collapsed: false,
+          createdAt: 1000,
+          updatedAt: 1000,
+          live: { windowId: 20 }
+        },
+        "tab:2": {
+          id: "tab:2",
+          kind: "tab",
+          status: "live",
+          parentId: "window:20",
+          childIds: ["tab:4"],
+          title: "Foreign tab",
+          url: "https://foreign.example/",
+          collapsed: false,
+          createdAt: 1000,
+          updatedAt: 1000,
+          live: { tabId: 2, windowId: 10 }
+        },
+        "tab:3": {
+          id: "tab:3",
+          kind: "tab",
+          status: "live",
+          parentId: "window:20",
+          childIds: [],
+          title: "Deleted tab",
+          url: "https://deleted.example/",
+          collapsed: false,
+          createdAt: 1000,
+          updatedAt: 1000,
+          live: { tabId: 3, windowId: 20 }
+        },
+        "tab:4": {
+          id: "tab:4",
+          kind: "tab",
+          status: "live",
+          parentId: "tab:2",
+          childIds: [],
+          title: "Nested deleted tab",
+          url: "https://nested-deleted.example/",
+          collapsed: false,
+          createdAt: 1000,
+          updatedAt: 1000,
+          live: { tabId: 4, windowId: 20 }
+        }
+      }
+    };
+
+    const deleted = deleteNode(state, "group:1", { allowLive: true });
+
+    expect(deleted.rootIds).toEqual(["window:10"]);
+    expect(deleted.nodes["group:1"]).toBeUndefined();
+    expect(deleted.nodes["window:20"]).toBeUndefined();
+    expect(deleted.nodes["tab:3"]).toBeUndefined();
+    expect(deleted.nodes["tab:4"]).toBeUndefined();
+    expect(deleted.nodes["tab:2"]?.status).toBe("live");
+    expect(deleted.nodes["tab:2"]?.parentId).toBe("window:10");
+    expect(deleted.nodes["tab:2"]?.childIds).toEqual([]);
+    expect(deleted.nodes["window:10"]?.childIds).toEqual(["tab:1", "tab:2"]);
   });
 
   it("preserves unchanged node identities when deleting a single live leaf", () => {

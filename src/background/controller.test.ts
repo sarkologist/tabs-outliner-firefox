@@ -25188,7 +25188,7 @@ async function assertRuntimeTraceOracles(
   assertRuntimeTruthOutline(state, truth, context);
   assertLifecycleExpectationInvariants(state, context);
   assertClosedSubtreeInvariants(state, context.history);
-  assertRuntimeTruthCaches(context, truth);
+  assertRuntimeTruthCaches(state, context, truth);
   if (options.generatedOperation && options.sideEffects) {
     assertNoAboutNewtabCreateSideEffects(context.history, options.sideEffects);
     assertGeneratedOperationSideEffectsAssertion(context, options.generatedOperation, options.sideEffects);
@@ -25216,9 +25216,9 @@ function assertRuntimeTruthOutline(
       context.history
     );
     invariantEqual(
-      [...liveRuntimeTabIdsInOutlineWindowPreorder(state, windowNode.id)].sort((left, right) => left - right),
+      liveRuntimeTabIdsForRuntimeWindow(state, truthWindow.windowId).sort((left, right) => left - right),
       [...truthWindow.tabIds].sort((left, right) => left - right),
-      `truth tab membership for window ${truthWindow.windowId} matches outline subtree`,
+      `truth tab membership for window ${truthWindow.windowId} matches outline live window ids`,
       context.history
     );
     assertTruthWindowProvenance(windowNode, truthWindow, context.history);
@@ -25298,7 +25298,11 @@ function assertTruthWindowProvenance(
   );
 }
 
-function assertRuntimeTruthCaches(context: GeneratedTraceContext, truth: RuntimeTruthSnapshot): void {
+function assertRuntimeTruthCaches(
+  state: OutlineState,
+  context: GeneratedTraceContext,
+  truth: RuntimeTruthSnapshot
+): void {
   const cache = context.controller.__debugRuntimeCacheSnapshot();
   invariant(cache.runtimeIndex.warm, "runtime index was cold after generated operation", context.history);
   invariant(
@@ -25321,8 +25325,15 @@ function assertRuntimeTruthCaches(context: GeneratedTraceContext, truth: Runtime
     if (!scope) {
       continue;
     }
+    const preservedClosedSubtreeTabIds = preservedClosedSubtreeRuntimeTabIds(state, truthWindow.windowId);
+    const requiredScopedTruthTabIds = truthWindow.tabIds.filter((tabId) => !preservedClosedSubtreeTabIds.includes(tabId));
     if (runtimeTruthWindowHasUnambiguousOrder(truthWindow)) {
-      invariantEqual(scope.tabOrder, truthWindow.tabIds, `runtime fact tab order matches truth window ${truthWindow.windowId}`, context.history);
+      invariantEqual(
+        scope.tabOrder,
+        truthWindow.tabIds.filter((tabId) => scope.tabOrder.includes(tabId)),
+        `runtime fact tab order matches truth window ${truthWindow.windowId}`,
+        context.history
+      );
     }
     if (runtimeTruthWindowHasUnambiguousActiveTab(truthWindow)) {
       invariant(
@@ -25336,10 +25347,15 @@ function assertRuntimeTruthCaches(context: GeneratedTraceContext, truth: Runtime
     }
     assertRuntimeScopeProvenance(scope.provenance, truthWindow, context.history);
     const scopedTabIds = scope.tabNodeIdsByRuntimeId.map(([tabId]) => tabId).sort((left, right) => left - right);
-    invariantEqual(
-      scopedTabIds,
-      [...truthWindow.tabIds].sort((left, right) => left - right),
-      `runtime fact tab membership matches truth window ${truthWindow.windowId}`,
+    const sortedTruthTabIds = [...truthWindow.tabIds].sort((left, right) => left - right);
+    invariant(
+      scopedTabIds.every((tabId) => sortedTruthTabIds.includes(tabId)),
+      `runtime fact tab membership has foreign tab for truth window ${truthWindow.windowId}`,
+      context.history
+    );
+    invariant(
+      requiredScopedTruthTabIds.every((tabId) => scopedTabIds.includes(tabId)),
+      `runtime fact tab membership is missing required tab for truth window ${truthWindow.windowId}`,
       context.history
     );
   }
@@ -25360,6 +25376,37 @@ function assertRuntimeTruthCaches(context: GeneratedTraceContext, truth: Runtime
       context.history
     );
   }
+}
+
+function preservedClosedSubtreeRuntimeTabIds(state: OutlineState, runtimeWindowId: number): number[] {
+  return Object.values(state.nodes).flatMap((node) => {
+    if (
+      node.kind !== "tab" ||
+      node.status !== "live" ||
+      !node.live ||
+      !("tabId" in node.live) ||
+      node.live.windowId !== runtimeWindowId ||
+      !isLiveTabInPreservedClosedSubtreeOutsideLiveRuntimeWindow(state, node)
+    ) {
+      return [];
+    }
+    return [node.live.tabId];
+  });
+}
+
+function isLiveTabInPreservedClosedSubtreeOutsideLiveRuntimeWindow(
+  state: OutlineState,
+  node: OutlineState["nodes"][string]
+): boolean {
+  if (node.kind !== "tab" || node.status !== "live" || !node.live || !("tabId" in node.live)) {
+    return false;
+  }
+  const owningWindow = nearestWindowNode(state, node.id);
+  if (owningWindow?.live && "windowId" in owningWindow.live && owningWindow.live.windowId === node.live.windowId) {
+    return false;
+  }
+  const closedAncestor = nearestAncestor(state, node.id, (candidate) => candidate.status === "closed");
+  return Boolean(closedAncestor && liveNodeCanRemainUnderClosedAncestor(state, node));
 }
 
 function runtimeTruthWindowHasUnambiguousOrder(truthWindow: RuntimeTruthWindow): boolean {
@@ -25752,6 +25799,21 @@ function liveRuntimeTabIdsInOutlineWindowPreorder(state: OutlineState, windowNod
   });
 }
 
+function liveRuntimeTabIdsForRuntimeWindow(state: OutlineState, runtimeWindowId: number): number[] {
+  return Object.values(state.nodes).flatMap((node) => {
+    if (
+      node.kind !== "tab" ||
+      node.status !== "live" ||
+      !node.live ||
+      !("tabId" in node.live) ||
+      node.live.windowId !== runtimeWindowId
+    ) {
+      return [];
+    }
+    return [node.live.tabId];
+  });
+}
+
 function assertRuntimeMetadataAssertion(state: OutlineState, context: GeneratedTraceContext): void {
   for (const runtimeTab of context.runtime.tabs) {
     const node = liveTabNodeForRuntimeTab(state, runtimeTab.id);
@@ -25901,12 +25963,34 @@ function liveNodeCanRemainUnderClosedAncestor(state: OutlineState, node: Outline
   }
 
   const owningWindow = nearestWindowNode(state, node.id);
-  return Boolean(
+  if (
     owningWindow &&
       owningWindow.id !== node.id &&
       owningWindow.kind === "window" &&
       owningWindow.status === "live" &&
       owningWindow.restoredFromClosed === true
+  ) {
+    return true;
+  }
+
+  const restoredTabSubgroupOwner = nearestAncestor(state, node.id, isRestoredLiveTabSubgroupRuntimeOwner);
+  return Boolean(
+    restoredTabSubgroupOwner?.live &&
+      "tabId" in restoredTabSubgroupOwner.live &&
+      node.live &&
+      "tabId" in node.live &&
+      restoredTabSubgroupOwner.live.windowId === node.live.windowId
+  );
+}
+
+function isRestoredLiveTabSubgroupRuntimeOwner(node: OutlineState["nodes"][string]): boolean {
+  return Boolean(
+    node.kind === "tab" &&
+      node.status === "live" &&
+      node.restoredFromClosed === true &&
+      node.childIds.length > 0 &&
+      node.live &&
+      "tabId" in node.live
   );
 }
 
@@ -37073,6 +37157,115 @@ describe("background controller lifecycle", () => {
     expect(state.nodes[importedSubgroupId!]).toMatchObject({
       status: "live",
       parentId: importedParentId,
+      live: { windowId: restoredSubgroupWindowId }
+    });
+    expect(state.rootIds).not.toContain(importedSubgroupId);
+  });
+
+  it("keeps a restored Chrome-imported tab subgroup attached after runtime refresh", async () => {
+    const runtime = fakeRuntime(
+      [
+        { id: 10, focused: true, incognito: false }
+      ],
+      [
+        { id: 1, windowId: 10, index: 0, active: true, url: "https://one.example/", title: "One" }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+
+    expectCommandAck(await controller.handleMessage({
+      type: "importTree",
+      tree: [
+        {
+          type: 2000,
+          node: {
+            type: "session",
+            data: {
+              treeId: "1483340179831.8303"
+            }
+          }
+        },
+        [
+          2001,
+          {
+            type: "savedwin",
+            marks: {
+              customTitle: "Research"
+            },
+            data: {
+              type: "normal"
+            }
+          },
+          [0]
+        ],
+        [
+          2001,
+          {
+            data: {
+              title: "Imported subgroup",
+              url: "https://imported.example/subgroup"
+            }
+          },
+          [0, 0]
+        ],
+        [
+          2001,
+          {
+            type: "tab",
+            data: {
+              title: "Imported subgroup child",
+              url: "https://imported.example/child"
+            }
+          },
+          [0, 0, 0]
+        ]
+      ]
+    }), true);
+
+    let state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    const importedParentId = Object.values(state.nodes)
+      .find((node) => node.kind === "window" && node.title === "Research")?.id;
+    const importedSubgroupId = Object.values(state.nodes)
+      .find((node) => node.kind === "tab" && node.title === "Imported subgroup")?.id;
+    const importedChildId = Object.values(state.nodes)
+      .find((node) => node.kind === "tab" && node.title === "Imported subgroup child")?.id;
+    expect(importedParentId).toBeDefined();
+    expect(importedSubgroupId).toBeDefined();
+    expect(importedChildId).toBeDefined();
+
+    runtime.broadcasts.length = 0;
+    expectCommandAck(await controller.handleMessage({ type: "restoreNode", nodeId: importedSubgroupId! }), true);
+    await runtime.events.tabCreated.flush();
+    const restoreBroadcast = stateBroadcasts(runtime.broadcasts).at(0) as
+      | {
+          type?: string;
+          rootIds?: NodeId[];
+          updatedNodes?: OutlineState["nodes"][string][];
+        }
+      | undefined;
+    const restoredPatchNodeIds = restoreBroadcast?.updatedNodes?.map((node) => node.id) ?? [];
+    expect(restoreBroadcast?.type).toBe("treeStructureUpdated");
+    expect(restoreBroadcast?.rootIds).not.toContain(importedSubgroupId);
+    expect(restoredPatchNodeIds).toContain(importedParentId);
+    expect(restoredPatchNodeIds).toContain(importedSubgroupId);
+
+    expectCommandAck(await controller.handleMessage({ type: "refresh" }), false);
+    state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    const restoredSubgroupWindowId = state.nodes[importedSubgroupId!]?.live?.windowId;
+    expect(typeof restoredSubgroupWindowId).toBe("number");
+
+    expect(state.nodes[importedParentId!]?.status).toBe("closed");
+    expect(state.nodes[importedParentId!]?.childIds).toContain(importedSubgroupId);
+    expect(state.nodes[importedSubgroupId!]).toMatchObject({
+      status: "live",
+      parentId: importedParentId,
+      childIds: [importedChildId],
+      live: { windowId: restoredSubgroupWindowId }
+    });
+    expect(state.nodes[importedChildId!]).toMatchObject({
+      status: "live",
+      parentId: importedSubgroupId,
       live: { windowId: restoredSubgroupWindowId }
     });
     expect(state.rootIds).not.toContain(importedSubgroupId);

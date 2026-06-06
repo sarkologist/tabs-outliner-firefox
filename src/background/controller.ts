@@ -1029,7 +1029,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         });
       }
       if (message.type === "restoreNode") {
-        const restoreTreePatchNodeIds = restoreTreeStructureCandidateNodeIdsForClosedParentWindowRestore(
+        const restoreTreePatchNodeIds = restoreTreeStructureCandidateNodeIdsForClosedParentSubgroupRestore(
           current,
           result.state,
           restorePatchNodeIds ?? [message.nodeId]
@@ -6449,7 +6449,7 @@ function restorePatchCandidateNodeIds(
   return [...nodeIds];
 }
 
-function restoreTreeStructureCandidateNodeIdsForClosedParentWindowRestore(
+function restoreTreeStructureCandidateNodeIdsForClosedParentSubgroupRestore(
   previous: OutlineState,
   next: OutlineState,
   restorePatchNodeIds: readonly NodeId[]
@@ -6462,7 +6462,7 @@ function restoreTreeStructureCandidateNodeIdsForClosedParentWindowRestore(
     const node = next.nodes[nodeId];
     if (
       previousNode?.status !== "closed" ||
-      node?.kind !== "window" ||
+      !isRestoredSubgroupRootForClosedParentPatch(node) ||
       node.status !== "live"
     ) {
       continue;
@@ -6488,6 +6488,13 @@ function restoreTreeStructureCandidateNodeIdsForClosedParentWindowRestore(
   }
 
   return [...candidateNodeIds];
+}
+
+function isRestoredSubgroupRootForClosedParentPatch(node: OutlineNode | undefined): boolean {
+  return Boolean(
+    node?.kind === "window" ||
+      (node?.kind === "tab" && node.childIds.length > 0)
+  );
 }
 
 function addAncestorNodeIds(
