@@ -1856,14 +1856,9 @@ describe("background commands", () => {
     });
 
     expect(adapter.createWindow).toHaveBeenCalledWith({
-      url: "https://imported.example/parent"
+      url: ["https://imported.example/parent", "https://imported.example/child"]
     });
-    expect(adapter.createTab).toHaveBeenCalledWith({
-      url: "https://imported.example/child",
-      windowId: 42,
-      active: false,
-      index: 1
-    });
+    expect(adapter.createTab).not.toHaveBeenCalled();
     expect(restored.state.nodes[importedParent!.id]?.status).toBe("closed");
     expect(restored.state.nodes[importedParent!.id]?.childIds).toContain(importedSubgroup!.id);
     expect(restored.state.nodes[importedSubgroup!.id]).toMatchObject({
@@ -1886,17 +1881,7 @@ describe("background commands", () => {
 
   it("restores a nested imported tab chain in outline order", async () => {
     const state: OutlineState = bootstrapFromWindows(runtimeWindows, { now: 1000 });
-    let nextCreatedTabId = 300;
-    const adapter = fakeAdapter({
-      createTab: vi.fn(async ({ url, windowId = 10, active = false, index = 1 }) => ({
-        id: nextCreatedTabId++,
-        windowId,
-        index,
-        active,
-        url,
-        title: url
-      }))
-    });
+    const adapter = fakeAdapter();
     const imported = await runCommand(state, adapter, {
       type: "importTree",
       tree: {
@@ -1959,28 +1944,14 @@ describe("background commands", () => {
     });
 
     expect(adapter.createWindow).toHaveBeenCalledWith({
-      url: "https://imported.example/1"
+      url: [
+        "https://imported.example/1",
+        "https://imported.example/2",
+        "https://imported.example/3",
+        "https://imported.example/4"
+      ]
     });
-    expect(vi.mocked(adapter.createTab).mock.calls.map(([createProperties]) => createProperties)).toEqual([
-      {
-        url: "https://imported.example/2",
-        windowId: 42,
-        active: false,
-        index: 1
-      },
-      {
-        url: "https://imported.example/3",
-        windowId: 42,
-        active: false,
-        index: 2
-      },
-      {
-        url: "https://imported.example/4",
-        windowId: 42,
-        active: false,
-        index: 3
-      }
-    ]);
+    expect(adapter.createTab).not.toHaveBeenCalled();
     for (const [index, importedTab] of importedTabs.entries()) {
       expect(restored.state.nodes[importedTab!.id]).toMatchObject({
         status: "live",
@@ -1992,19 +1963,109 @@ describe("background commands", () => {
     }
   });
 
+  it("restores a branching imported tab tree in outline order", async () => {
+    const state: OutlineState = bootstrapFromWindows(runtimeWindows, { now: 1000 });
+    const adapter = fakeAdapter();
+    const imported = await runCommand(state, adapter, {
+      type: "importTree",
+      tree: {
+        schema: PORTABLE_TREE_SCHEMA,
+        version: 1,
+        exportedAt: "2026-05-16T12:00:00.000Z",
+        roots: [
+          {
+            kind: "window",
+            title: "Imported parent group",
+            children: [
+              {
+                kind: "window",
+                title: "Imported subgroup",
+                children: [
+                  {
+                    kind: "tab",
+                    title: "Imported first",
+                    url: "https://imported.example/1",
+                    children: [
+                      {
+                        kind: "tab",
+                        title: "Imported second",
+                        url: "https://imported.example/2",
+                        children: [
+                          {
+                            kind: "tab",
+                            title: "Imported third",
+                            url: "https://imported.example/3",
+                            children: [
+                              {
+                                kind: "tab",
+                                title: "Imported fourth",
+                                url: "https://imported.example/4",
+                                children: []
+                              },
+                              {
+                                kind: "tab",
+                                title: "Imported fifth",
+                                url: "https://imported.example/5",
+                                children: []
+                              }
+                            ]
+                          }
+                        ]
+                      },
+                      {
+                        kind: "tab",
+                        title: "Imported sixth",
+                        url: "https://imported.example/6",
+                        children: []
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    });
+    const importedSubgroup = Object.values(imported.state.nodes).find((node) => node.title === "Imported subgroup");
+
+    expect(importedSubgroup).toBeDefined();
+
+    const restored = await runCommand(imported.state, adapter, {
+      type: "restoreNode",
+      nodeId: importedSubgroup!.id
+    });
+
+    expect(adapter.createWindow).toHaveBeenCalledWith({
+      url: [
+        "https://imported.example/1",
+        "https://imported.example/2",
+        "https://imported.example/3",
+        "https://imported.example/4",
+        "https://imported.example/5",
+        "https://imported.example/6"
+      ]
+    });
+    expect(adapter.createTab).not.toHaveBeenCalled();
+    for (const url of [
+      "https://imported.example/1",
+      "https://imported.example/2",
+      "https://imported.example/3",
+      "https://imported.example/4",
+      "https://imported.example/5",
+      "https://imported.example/6"
+    ]) {
+      const node = Object.values(restored.state.nodes).find((candidate) => candidate.kind === "tab" && candidate.url === url);
+      expect(node).toMatchObject({
+        status: "live",
+        live: { windowId: 42 }
+      });
+    }
+  });
+
   it("keeps a restored Chrome-imported tab subgroup attached to its parent group", async () => {
     const state: OutlineState = bootstrapFromWindows(runtimeWindows, { now: 1000 });
-    let nextCreatedTabId = 200;
-    const adapter = fakeAdapter({
-      createTab: vi.fn(async ({ url, windowId = 10, active = false }) => ({
-        id: nextCreatedTabId++,
-        windowId,
-        index: nextCreatedTabId - 201,
-        active,
-        url,
-        title: url
-      }))
-    });
+    const adapter = fakeAdapter();
     const imported = await runCommand(state, adapter, {
       type: "importTree",
       tree: [
@@ -2071,6 +2132,11 @@ describe("background commands", () => {
       type: "restoreNode",
       nodeId: importedSubgroup!.id
     });
+
+    expect(adapter.createWindow).toHaveBeenCalledWith({
+      url: ["https://imported.example/subgroup", "https://imported.example/child"]
+    });
+    expect(adapter.createTab).not.toHaveBeenCalled();
 
     const restoredImportGroup = restored.state.nodes[importGroup!.id];
     const restoredParent = restored.state.nodes[importedParent!.id];

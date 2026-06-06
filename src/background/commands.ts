@@ -506,7 +506,13 @@ async function restoreNode(
 
     const createBatch = closedWindowCreateBatchPlans(next, plans, index, pendingNodeIds, coveredNodeIds, restoredWindowNodeIds);
     if (createBatch.length > 1 && plan.windowNodeId) {
-      const restoredNodes = await restoreClosedWindowCreateBatch(adapter, plan.windowNodeId, createBatch, restoreObserver);
+      const restoredNodes = await restoreClosedWindowCreateBatch(
+        adapter,
+        plan.windowNodeId,
+        createBatch,
+        shouldRestoreClosedWindowDestinationForScope(next, plan.windowNodeId, nodeId),
+        restoreObserver
+      );
       if (restoredNodes.length > 0) {
         appendRestoredNodes(restoredNodes);
         const coverage = restoredWindowDescendantCoverage(next, plan.windowNodeId, plans, restoredNodes);
@@ -677,7 +683,7 @@ function tabCreateBatchPlanFromRestorePlan(
   plan: RestorePlan | undefined
 ): WindowCreateBatchPlan | undefined {
   const node = plan ? state.nodes[plan.nodeId] : undefined;
-  if (!plan?.windowNodeId || node?.kind !== "tab" || node.childIds.length > 0) {
+  if (!plan?.windowNodeId || node?.kind !== "tab") {
     return undefined;
   }
 
@@ -691,6 +697,7 @@ async function restoreClosedWindowCreateBatch(
   adapter: BrowserAdapter,
   windowNodeId: NodeId,
   plans: WindowCreateBatchPlan[],
+  restoreWindowNode: boolean,
   restoreObserver?: RestoreObserver
 ): Promise<RestoredNode[]> {
   try {
@@ -705,13 +712,15 @@ async function restoreClosedWindowCreateBatch(
     });
     const createdWindow = await adapter.createWindow(createData);
     const availableTabs = [...(createdWindow.tabs ?? [])];
-    const restored: RestoredNode[] = [
-      {
-        nodeId: windowNodeId,
-        windowId: createdWindow.id,
-        active: createdWindow.focused
-      }
-    ];
+    const restored: RestoredNode[] = restoreWindowNode
+      ? [
+          {
+            nodeId: windowNodeId,
+            windowId: createdWindow.id,
+            active: createdWindow.focused
+          }
+        ]
+      : [];
 
     for (const plan of plans) {
       const matchingIndex = availableTabs.findIndex((tab) => tab.url === plan.url);
