@@ -10,12 +10,13 @@ const distDir = path.join(repoRoot, "dist");
 const firefoxBinary = process.env.FIREFOX_BINARY ?? "/Applications/Firefox.app/Contents/MacOS/firefox";
 const resultPrefix = "TABS_OUTLINER_RESTORE_ORDER_RESULT_BASE64";
 const errorPrefix = "TABS_OUTLINER_RESTORE_ORDER_ERROR_BASE64";
+const options = parseArgs(process.argv.slice(2));
 
 const extensionDir = await mkdtemp(path.join(tmpdir(), "tabs-outliner-firefox-restore-order-"));
 
 try {
   await cp(distDir, extensionDir, { recursive: true });
-  await installProbe(extensionDir);
+  await installProbe(extensionDir, options);
   const result = await runProbe(extensionDir);
   const expectedLabels = result.expected.map((tab) => tab.label);
   const immediateLabels = result.immediate.map((tab) => tab.label);
@@ -34,7 +35,7 @@ try {
   await rm(extensionDir, { recursive: true, force: true });
 }
 
-async function installProbe(sourceDir) {
+async function installProbe(sourceDir, options) {
   const manifestPath = path.join(sourceDir, "manifest.json");
   const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
   manifest.background = {
@@ -42,7 +43,8 @@ async function installProbe(sourceDir) {
     type: "module"
   };
   await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
-  await writeFile(path.join(sourceDir, "probe-index.js"), probeSource());
+  await writeFile(path.join(sourceDir, "probe-tree.json"), JSON.stringify(await probeTree(options)));
+  await writeFile(path.join(sourceDir, "probe-index.js"), probeSource(options));
 }
 
 async function runProbe(sourceDir) {
@@ -123,70 +125,43 @@ function extractPayload(output, prefix) {
   return JSON.parse(Buffer.from(match[1], "base64").toString("utf8"));
 }
 
-function probeSource() {
+async function probeTree(options) {
+  if (!options.treePath) {
+    return defaultTree();
+  }
+  return JSON.parse(await readFile(options.treePath, "utf8"));
+}
+
+function parseArgs(args) {
+  const parsed = {
+    restoreTitle: "Imported subgroup"
+  };
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === "--tree") {
+      const value = args[++index];
+      if (!value) {
+        throw new Error("--tree requires a path");
+      }
+      parsed.treePath = path.resolve(value);
+    } else if (arg === "--restore-title") {
+      const value = args[++index];
+      if (!value) {
+        throw new Error("--restore-title requires a title");
+      }
+      parsed.restoreTitle = value;
+    } else {
+      throw new Error(`Unknown argument: ${arg}`);
+    }
+  }
+  return parsed;
+}
+
+function probeSource(options) {
   return `
 const resultPrefix = ${JSON.stringify(resultPrefix)};
 const errorPrefix = ${JSON.stringify(errorPrefix)};
-
-const tree = {
-  schema: "tabs-outliner-tree",
-  version: 1,
-  exportedAt: "2026-06-06T00:00:00.000Z",
-  roots: [
-    {
-      kind: "window",
-      title: "Imported parent",
-      children: [
-        {
-          kind: "window",
-          title: "Imported subgroup",
-          children: [
-            {
-              kind: "tab",
-              title: "Root",
-              url: "https://example.invalid/tabs-outliner/restore-order/root",
-              children: [
-                {
-                  kind: "tab",
-                  title: "Branch A",
-                  url: "https://example.invalid/tabs-outliner/restore-order/branch-a",
-                  children: [
-                    {
-                      kind: "tab",
-                      title: "Branch A child",
-                      url: "https://example.invalid/tabs-outliner/restore-order/branch-a-child",
-                      children: [
-                        {
-                          kind: "tab",
-                          title: "Branch A grandchild",
-                          url: "https://example.invalid/tabs-outliner/restore-order/branch-a-grandchild",
-                          children: []
-                        }
-                      ]
-                    }
-                  ]
-                },
-                {
-                  kind: "tab",
-                  title: "Branch B",
-                  url: "https://example.invalid/tabs-outliner/restore-order/branch-b",
-                  children: [
-                    {
-                      kind: "tab",
-                      title: "Branch B child",
-                      url: "https://example.invalid/tabs-outliner/restore-order/branch-b-child",
-                      children: []
-                    }
-                  ]
-                }
-              ]
-            }
-          ]
-        }
-      ]
-    }
-  ]
-};
+const restoreTitle = ${JSON.stringify(options.restoreTitle)};
 
 main().catch((error) => {
   emit(errorPrefix, {
@@ -195,6 +170,7 @@ main().catch((error) => {
 });
 
 async function main() {
+  const tree = await fetch(browser.runtime.getURL("probe-tree.json")).then((response) => response.json());
   await browser.storage.local.clear();
   const [{ createBrowserAdapter }, { createBackgroundController }] = await Promise.all([
     import("./background/browser-adapter.js"),
@@ -208,10 +184,10 @@ async function main() {
   await controller.handleMessage({ type: "importTree", tree });
   const imported = await controller.handleMessage({ type: "getState" });
   const subgroup = Object.values(imported.nodes).find((node) =>
-    node.kind === "window" && node.title === "Imported subgroup"
+    (node.kind === "window" || node.kind === "tab") && node.title === restoreTitle
   );
   if (!subgroup) {
-    throw new Error("Imported subgroup was not created");
+    throw new Error("Restore target was not created: " + restoreTitle);
   }
 
   await controller.handleMessage({ type: "restoreNode", nodeId: subgroup.id });
@@ -219,13 +195,14 @@ async function main() {
   const restoredSubgroup = restored.nodes[subgroup.id];
   const windowId = restoredSubgroup && restoredSubgroup.live && restoredSubgroup.live.windowId;
   if (typeof windowId !== "number") {
-    throw new Error("Imported subgroup was not restored to a runtime window");
+    throw new Error("Restore target was not restored to a runtime window: " + restoreTitle);
   }
 
   const expected = outlineTabs(restored, subgroup.id, windowId);
-  const immediate = await runtimeTabs(windowId);
+  const expectedLabelsByTabId = new Map(expected.map((tab) => [tab.tabId, tab.label]));
+  const immediate = await runtimeTabs(windowId, expectedLabelsByTabId);
   await delay(750);
-  const settled = await runtimeTabs(windowId);
+  const settled = await runtimeTabs(windowId, expectedLabelsByTabId);
 
   emit(resultPrefix, {
     expected,
@@ -269,14 +246,14 @@ function outlineTabs(state, rootId, windowId) {
   return tabs;
 }
 
-async function runtimeTabs(windowId) {
+async function runtimeTabs(windowId, expectedLabelsByTabId) {
   const tabs = await browser.tabs.query({ windowId });
   return tabs
     .sort((left, right) => left.index - right.index)
     .map((tab) => ({
       tabId: tab.id,
       index: tab.index,
-      label: labelForUrl(tab.url)
+      label: expectedLabelsByTabId.get(tab.id) ?? labelForUrl(tab.url)
     }));
 }
 
@@ -291,11 +268,78 @@ function sameOrder(expected, actual) {
 }
 
 function emit(prefix, value) {
-  console.log(prefix + " " + btoa(JSON.stringify(value)));
+  const bytes = new TextEncoder().encode(JSON.stringify(value));
+  let binary = "";
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
+  }
+  console.log(prefix + " " + btoa(binary));
 }
 
 async function delay(ms) {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 `;
+}
+
+function defaultTree() {
+  return {
+    schema: "tabs-outliner-tree",
+    version: 1,
+    exportedAt: "2026-06-06T00:00:00.000Z",
+    roots: [
+      {
+        kind: "window",
+        title: "Imported parent",
+        children: [
+          {
+            kind: "window",
+            title: "Imported subgroup",
+            children: [
+              {
+                kind: "tab",
+                title: "Root",
+                url: "https://example.invalid/tabs-outliner/restore-order/root",
+                children: [
+                  {
+                    kind: "tab",
+                    title: "Branch A",
+                    url: "https://example.invalid/tabs-outliner/restore-order/branch-a",
+                    children: [
+                      {
+                        kind: "tab",
+                        title: "Branch A child",
+                        url: "https://example.invalid/tabs-outliner/restore-order/branch-a-child",
+                        children: [
+                          {
+                            kind: "tab",
+                            title: "Branch A grandchild",
+                            url: "https://example.invalid/tabs-outliner/restore-order/branch-a-grandchild",
+                            children: []
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    kind: "tab",
+                    title: "Branch B",
+                    url: "https://example.invalid/tabs-outliner/restore-order/branch-b",
+                    children: [
+                      {
+                        kind: "tab",
+                        title: "Branch B child",
+                        url: "https://example.invalid/tabs-outliner/restore-order/branch-b-child",
+                        children: []
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  };
 }
