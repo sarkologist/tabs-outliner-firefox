@@ -2063,6 +2063,134 @@ describe("background commands", () => {
     }
   });
 
+  it("moves batch-created imported tabs back into outline order when Firefox reports children before parents", async () => {
+    const state: OutlineState = bootstrapFromWindows(runtimeWindows, { now: 1000 });
+    const tabIdByUrl = new Map<string, number>();
+    const adapter = fakeAdapter({
+      createWindow: vi.fn(async ({ url }) => {
+        const urls = Array.isArray(url) ? url : url ? [url] : [];
+        const reportedUrls = [
+          "https://imported.example/1",
+          "https://imported.example/3",
+          "https://imported.example/4",
+          "https://imported.example/2",
+          "https://imported.example/6",
+          "https://imported.example/5"
+        ].filter((reportedUrl) => urls.includes(reportedUrl));
+        const tabs = reportedUrls.map((tabUrl, index) => {
+          const tabId = 300 + index;
+          tabIdByUrl.set(tabUrl, tabId);
+          return {
+            id: tabId,
+            windowId: 42,
+            index,
+            active: index === 0,
+            url: tabUrl,
+            title: tabUrl
+          };
+        });
+        return {
+          id: 42,
+          focused: true,
+          incognito: false,
+          tabs
+        };
+      })
+    });
+    const imported = await runCommand(state, adapter, {
+      type: "importTree",
+      tree: {
+        schema: PORTABLE_TREE_SCHEMA,
+        version: 1,
+        exportedAt: "2026-05-16T12:00:00.000Z",
+        roots: [
+          {
+            kind: "window",
+            title: "Imported parent group",
+            children: [
+              {
+                kind: "window",
+                title: "Imported subgroup",
+                children: [
+                  {
+                    kind: "tab",
+                    title: "Imported first",
+                    url: "https://imported.example/1",
+                    children: [
+                      {
+                        kind: "tab",
+                        title: "Imported second",
+                        url: "https://imported.example/2",
+                        children: [
+                          {
+                            kind: "tab",
+                            title: "Imported third",
+                            url: "https://imported.example/3",
+                            children: [
+                              {
+                                kind: "tab",
+                                title: "Imported fourth",
+                                url: "https://imported.example/4",
+                                children: []
+                              }
+                            ]
+                          }
+                        ]
+                      },
+                      {
+                        kind: "tab",
+                        title: "Imported fifth",
+                        url: "https://imported.example/5",
+                        children: [
+                          {
+                            kind: "tab",
+                            title: "Imported sixth",
+                            url: "https://imported.example/6",
+                            children: []
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    });
+    const importedSubgroup = Object.values(imported.state.nodes).find((node) => node.title === "Imported subgroup");
+
+    expect(importedSubgroup).toBeDefined();
+
+    await runCommand(imported.state, adapter, {
+      type: "restoreNode",
+      nodeId: importedSubgroup!.id
+    });
+
+    expect(adapter.createWindow).toHaveBeenCalledWith({
+      url: [
+        "https://imported.example/1",
+        "https://imported.example/2",
+        "https://imported.example/3",
+        "https://imported.example/4",
+        "https://imported.example/5",
+        "https://imported.example/6"
+      ]
+    });
+    expect(adapter.moveTabs).toHaveBeenCalledWith(
+      [
+        tabIdByUrl.get("https://imported.example/1"),
+        tabIdByUrl.get("https://imported.example/2"),
+        tabIdByUrl.get("https://imported.example/3"),
+        tabIdByUrl.get("https://imported.example/4"),
+        tabIdByUrl.get("https://imported.example/5"),
+        tabIdByUrl.get("https://imported.example/6")
+      ],
+      { windowId: 42, index: 0 }
+    );
+  });
+
   it("keeps a restored Chrome-imported tab subgroup attached to its parent group", async () => {
     const state: OutlineState = bootstrapFromWindows(runtimeWindows, { now: 1000 });
     const adapter = fakeAdapter();

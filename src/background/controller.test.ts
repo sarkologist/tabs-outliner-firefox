@@ -37365,6 +37365,126 @@ describe("background controller lifecycle", () => {
       .map((tab) => tab.windowId)).toEqual([subgroupRuntimeWindowId, subgroupRuntimeWindowId]);
   });
 
+  it("orders batch-created restored imported tabs before sampling runtime windows", async () => {
+    const urls = [
+      "https://subgroup.example/root",
+      "https://subgroup.example/branch-a",
+      "https://subgroup.example/branch-a-child",
+      "https://subgroup.example/branch-a-grandchild",
+      "https://subgroup.example/branch-b",
+      "https://subgroup.example/branch-b-child"
+    ];
+    const runtime = fakeRuntime(
+      [
+        { id: 10, focused: true, incognito: false }
+      ],
+      [
+        { id: 1, windowId: 10, index: 0, active: true, url: "https://one.example/", title: "One" }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+
+    expectCommandAck(await controller.handleMessage({
+      type: "importTree",
+      tree: {
+        schema: PORTABLE_TREE_SCHEMA,
+        version: 1,
+        exportedAt: "2026-05-18T12:00:00.000Z",
+        roots: [
+          {
+            kind: "window",
+            title: "Imported parent",
+            children: [
+              {
+                kind: "window",
+                title: "Imported subgroup",
+                children: [
+                  {
+                    kind: "tab",
+                    title: "Imported root",
+                    url: urls[0],
+                    children: [
+                      {
+                        kind: "tab",
+                        title: "Imported branch A",
+                        url: urls[1],
+                        children: [
+                          {
+                            kind: "tab",
+                            title: "Imported branch A child",
+                            url: urls[2],
+                            children: [
+                              {
+                                kind: "tab",
+                                title: "Imported branch A grandchild",
+                                url: urls[3],
+                                children: []
+                              }
+                            ]
+                          }
+                        ]
+                      },
+                      {
+                        kind: "tab",
+                        title: "Imported branch B",
+                        url: urls[4],
+                        children: [
+                          {
+                            kind: "tab",
+                            title: "Imported branch B child",
+                            url: urls[5],
+                            children: []
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    }), true);
+
+    let state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    const importedSubgroupId = Object.values(state.nodes)
+      .find((node) => node.kind === "window" && node.title === "Imported subgroup")?.id;
+    expect(importedSubgroupId).toBeDefined();
+
+    vi.mocked(runtime.api.windows.create).mockImplementationOnce(async (createData: FakeWindowCreateData = {}) => {
+      const createdWindow = createWindowFromBrowser(runtime, createData);
+      const reportedOrder = [urls[0], urls[2], urls[3], urls[1], urls[5], urls[4]];
+      const rankByUrl = new Map(reportedOrder.map((url, index) => [url, index]));
+      const createdTabs = [...(createdWindow.tabs ?? [])]
+        .sort((left, right) => (rankByUrl.get(left.url ?? "") ?? 0) - (rankByUrl.get(right.url ?? "") ?? 0))
+        .map((tab, index) => ({ ...tab, index }));
+      const createdTabIds = new Set(createdTabs.map((tab) => tab.id));
+      runtime.tabs = runtime.tabs.map((tab) => createdTabIds.has(tab.id)
+        ? copyTab(createdTabs.find((createdTab) => createdTab.id === tab.id)!)
+        : copyTab(tab));
+      return {
+        ...createdWindow,
+        tabs: createdTabs.map(copyTab)
+      };
+    });
+
+    expectCommandAck(await controller.handleMessage({ type: "restoreNode", nodeId: importedSubgroupId! }), true);
+
+    state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    const subgroupRuntimeWindowId = state.nodes[importedSubgroupId!]?.live?.windowId;
+    expect(typeof subgroupRuntimeWindowId).toBe("number");
+    const runtimeTabs = runtime.tabs
+      .filter((tab) => tab.windowId === subgroupRuntimeWindowId)
+      .sort((left, right) => left.index - right.index);
+    expect(runtimeTabs.map((tab) => tab.url)).toEqual(urls);
+    expect(runtime.api.tabs.move).toHaveBeenCalledWith(
+      runtimeTabs.map((tab) => tab.id),
+      { windowId: subgroupRuntimeWindowId, index: 0 }
+    );
+  });
+
   it("keeps a restored Chrome-imported tab subgroup attached after runtime refresh", async () => {
     const runtime = fakeRuntime(
       [

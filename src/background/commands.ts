@@ -732,6 +732,17 @@ async function restoreClosedWindowCreateBatch(
       }
     }
 
+    const restoredTabIds = restored.flatMap((restoredNode) =>
+      typeof restoredNode.tabId === "number" ? [restoredNode.tabId] : []
+    );
+    if (restoredTabIds.length > 1) {
+      try {
+        await adapter.moveTabs(restoredTabIds, { windowId: createdWindow.id, index: 0 });
+      } catch {
+        // Keep the restored nodes; a failed order correction should not duplicate the already-created window.
+      }
+    }
+
     return restored;
   } catch (error) {
     if (restoreObserver) {
