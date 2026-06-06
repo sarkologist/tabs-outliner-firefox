@@ -99,6 +99,157 @@ describe("runtime reconciliation ledger", () => {
     ]);
   });
 
+  it("records typed expected effects for command-owned runtime echoes", () => {
+    const base = bootstrapFromWindows([windowInfo(10, [tabOne, tabTwo])], { now: 1000 });
+    const movedTab = { ...tabOne, windowId: 20, index: 0, active: true };
+    const moved = moveTabToNewLiveWindow(
+      base,
+      "tab:1",
+      windowInfo(20, [movedTab]),
+      { now: 2000 }
+    );
+    const ledger = new RuntimeFactLedger();
+
+    const focusTransaction = ledger.beginCommandTransactionForCommand("focusNode", {
+      focusTarget: { tabId: 2, windowId: 10, tabActive: false, windowActive: true }
+    });
+    const closeTransaction = ledger.beginCommandTransactionForCommand("closeNode", {
+      outlinerClosePlan: { tabIds: [2], windowIds: [] }
+    });
+    ledger.markCommandFocusTarget(2, 10, false);
+    ledger.markOutlinerClosePlan({ tabIds: [2], windowIds: [] });
+    ledger.recordCommandRelocatedTabs(base, moved, ["tab:1"]);
+    ledger.recordCommandRestoredTab(3, 20);
+
+    expect(focusTransaction?.expectedEffects).toEqual([
+      {
+        kind: "focus",
+        tabId: 2,
+        windowId: 10,
+        tabActivationExpected: true,
+        windowFocusExpected: false
+      }
+    ]);
+    expect(closeTransaction?.expectedEffects).toEqual([
+      {
+        kind: "closeSession",
+        pendingTabRemovals: 1,
+        echoesToSkip: 0,
+        skippedBeforeRemoval: 0
+      }
+    ]);
+    expect(ledger.debugSnapshot().expectedEffects).toEqual(expect.arrayContaining([
+      {
+        kind: "focus",
+        tabId: 2,
+        windowId: 10,
+        tabActivationExpected: true,
+        windowFocusExpected: true
+      },
+      {
+        kind: "closeSession",
+        pendingTabRemovals: 1,
+        echoesToSkip: 0,
+        skippedBeforeRemoval: 0
+      },
+      {
+        kind: "tabRelocation",
+        tabId: 1,
+        fromWindowIds: [10],
+        sequence: expect.any(Number),
+        sourceIndex: 0,
+        sourceWindowId: 10,
+        toWindowId: 20
+      },
+      {
+        kind: "tabRestore",
+        tabId: 3,
+        windowId: 20
+      }
+    ]));
+  });
+
+  it("classifies command-owned relocated tab echoes through a uniform decision API", () => {
+    const base = bootstrapFromWindows([windowInfo(10, [tabOne, tabTwo])], { now: 1000 });
+    const movedTab = { ...tabOne, windowId: 20, index: 0, active: true };
+    const moved = moveTabToNewLiveWindow(
+      base,
+      "tab:1",
+      windowInfo(20, [movedTab]),
+      { now: 2000 }
+    );
+    const ledger = new RuntimeFactLedger();
+    const reconciler = new RuntimeReconciler();
+    const index = buildRuntimeStateIndexForReconciliation(moved);
+    const preCommandMetadata = ledger.recordNativeTabUpdated(
+      { ...tabOne, active: false, title: "Metadata from old scope" },
+      { title: "Metadata from old scope" }
+    );
+    const transaction = ledger.beginCommandTransactionForCommand("moveNodeToNewWindow");
+    if (!transaction) {
+      throw new Error("Expected relocation transaction");
+    }
+    ledger.recordCommandObserved(transaction.id);
+    ledger.recordCommandRelocatedTabs(base, moved, ["tab:1"]);
+
+    expect(reconciler.decideRuntimeTabEcho({
+      state: moved,
+      index,
+      ledger,
+      evidence: updatedEvidence({ ...tabOne, active: false }, ["windowId"])
+    })).toEqual({ action: "absorb", effect: "tabRelocation" });
+
+    expect(reconciler.decideRuntimeTabEcho({
+      state: moved,
+      index,
+      ledger,
+      evidence: preCommandMetadata.evidence
+    })).toMatchObject({
+      action: "remapToCurrentScope",
+      effect: "tabRelocation",
+      evidence: {
+        tab: {
+          id: 1,
+          windowId: 20,
+          title: "Metadata from old scope"
+        }
+      }
+    });
+
+    expect(reconciler.decideRuntimeTabEcho({
+      state: moved,
+      index,
+      ledger: new RuntimeFactLedger(),
+      evidence: updatedEvidence({ ...tabOne, active: false }, ["windowId"])
+    })).toEqual({ action: "accept" });
+  });
+
+  it("retires relocation effects when current state no longer matches the command destination", () => {
+    const state = bootstrapFromWindows([windowInfo(10, [tabOne, tabTwo])], { now: 1000 });
+    const ledger = new RuntimeFactLedger();
+    const reconciler = new RuntimeReconciler();
+    ledger.recordCommandRelocatedTab(1, 10, 20);
+
+    expect(reconciler.decideRuntimeTabEcho({
+      state,
+      index: buildRuntimeStateIndexForReconciliation(state),
+      ledger,
+      evidence: updatedEvidence({ ...tabOne, active: false }, ["windowId"])
+    })).toEqual({ action: "accept" });
+    expect(ledger.debugSnapshot().expectedEffects.filter((effect) => effect.kind === "tabRelocation")).toEqual([]);
+  });
+
+  it("classifies focus command echoes as fast-path effects", () => {
+    const ledger = new RuntimeFactLedger();
+
+    expect(ledger.recordNativeTabActivated(1, 10)).toEqual({ action: "accept" });
+
+    ledger.markCommandFocusTarget(1, 10, false);
+
+    expect(ledger.recordNativeTabActivated(1, 10)).toEqual({ action: "applyFastPath", effect: "focus" });
+    expect(ledger.recordNativeWindowFocused(10)).toEqual({ action: "applyFastPath", effect: "focus" });
+  });
+
   it("treats an empty still-open window snapshot as partial evidence", () => {
     const state = bootstrapFromWindows([windowInfo(10, [tabOne, tabTwo])], { now: 1000 });
     const normalized = new RuntimeReconciler().normalizeSnapshot({
