@@ -56,6 +56,7 @@ import {
 import { mergePartialOutlineState } from "./partial-outline-state.js";
 import { normalizeSearchQuery, segmentSearchText } from "./search.js";
 import {
+  applyCrossParentLeafMoveTreeStructurePatchToProjection,
   applyInsertTreeStructurePatchToProjection,
   applyDeleteTreeStructurePatchToProjection,
   applySameParentReorderTreeStructurePatchToProjection,
@@ -2739,6 +2740,19 @@ function applyTreeStructureUpdate(update: TreeStructureUpdate): void {
         return;
       }
 
+      if (applyCrossParentLeafMoveTreeStructurePatchToProjection(state, currentProjection, update)) {
+        currentCutRowRange = cutSubtreeRowRange(currentProjection.rows, pendingCutNodeId);
+        updateProjectionChrome(currentProjection);
+        rememberAcceptedRenderedProjection(currentProjection, { forceOutline: true });
+        scrollToObservedActiveTab(currentProjection, {
+          ignoreSparseViewportIntent: Boolean(activeRevealNodeId)
+        });
+        clearHoverLineScope();
+        scheduleCurrentRowsRender();
+        refreshSparseProjectionAfterLocalTreePatch();
+        return;
+      }
+
       if (applyInsertTreeStructurePatchToProjection(state, currentProjection, update)) {
         currentCutRowRange = cutSubtreeRowRange(currentProjection.rows, pendingCutNodeId);
         updateProjectionChrome(currentProjection);
@@ -2918,6 +2932,7 @@ function refreshLastOutlineProjectionAfterTreeStructureUpdate(
   let applied = false;
   if (update.deletedNodeIds.length === 0) {
     applied = applySameParentReorderTreeStructurePatchToProjection(state, projection, update) ||
+      applyCrossParentLeafMoveTreeStructurePatchToProjection(state, projection, update) ||
       applyInsertTreeStructurePatchToProjection(state, projection, update);
   } else {
     applied = applyDeleteTreeStructurePatchToProjection(state, projection, update);

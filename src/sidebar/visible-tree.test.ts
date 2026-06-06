@@ -4,6 +4,7 @@ import type { NodeId, OutlineNode, OutlineState } from "../model/types.js";
 import { generatedTraceConfig, generatedTraceTimeoutMs } from "../test/generated-traces.test-support.js";
 import {
   applyDeleteTreeStructurePatchToProjection,
+  applyCrossParentLeafMoveTreeStructurePatchToProjection,
   applyInsertTreeStructurePatchToProjection,
   applySameParentReorderTreeStructurePatchToProjection,
   buildVisibleTreeProjection,
@@ -312,6 +313,75 @@ describe("visible tree projection", () => {
       movedSize: 1,
       insertionIndex: 1
     });
+  });
+
+  it("applies cross-parent visible leaf move patches in place", () => {
+    const state = outlineState([
+      windowNode("window:1", ["tab:a", "tab:b"]),
+      tabNode("tab:a", "window:1", "A"),
+      tabNode("tab:b", "window:1", "B"),
+      windowNode("window:2", ["tab:c"], { active: true }),
+      tabNode("tab:c", "window:2", "C", [], { active: true })
+    ]);
+    const projection = buildVisibleTreeProjection(state, "");
+    const rows = projection.rows;
+    const visibleNodeIds = projection.visibleNodeIds;
+    const visibleNodeIdSet = projection.visibleNodeIdSet;
+    const next = outlineState([
+      windowNode("window:1", ["tab:a"]),
+      tabNode("tab:a", "window:1", "A"),
+      windowNode("window:2", ["tab:c", "tab:b"], { active: true }),
+      tabNode("tab:c", "window:2", "C", [], { active: true }),
+      tabNode("tab:b", "window:2", "B")
+    ]);
+
+    const applied = applyCrossParentLeafMoveTreeStructurePatchToProjection(next, projection, {
+      deletedNodeIds: [],
+      updatedNodes: [next.nodes["window:1"]!, next.nodes["window:2"]!, next.nodes["tab:b"]!],
+      rootIds: ["window:1", "window:2"],
+      deletedClosedCount: 0
+    });
+
+    expect(applied).toBe(true);
+    expect(projection.rows).toBe(rows);
+    expect(projection.visibleNodeIds).toBe(visibleNodeIds);
+    expect(projection.visibleNodeIdSet).toBe(visibleNodeIdSet);
+    expect(projection.rows.map((row) => row.nodeId)).toEqual([
+      "window:1",
+      "tab:a",
+      "window:2",
+      "tab:c",
+      "tab:b"
+    ]);
+    expect(projection.visibleNodeIds).toEqual([
+      "window:1",
+      "tab:a",
+      "window:2",
+      "tab:c",
+      "tab:b"
+    ]);
+    expect(projection.rows[0]).toMatchObject({
+      nodeId: "window:1",
+      index: 0,
+      subtreeEndIndex: 2,
+      childCount: 1,
+      visibleChildCount: 1
+    });
+    expect(projection.rows[2]).toMatchObject({
+      nodeId: "window:2",
+      index: 2,
+      subtreeEndIndex: 5,
+      childCount: 2,
+      visibleChildCount: 2
+    });
+    expect(projection.rows[4]).toMatchObject({
+      nodeId: "tab:b",
+      index: 4,
+      parentRowIndex: 2,
+      subtreeEndIndex: 5
+    });
+    expect(projection.activeTabNodeId).toBe("tab:c");
+    expect(projection.activeTabRowIndex).toBe(3);
   });
 
   it("rejects same-parent reorder ranges when full projection child metadata is stale", () => {

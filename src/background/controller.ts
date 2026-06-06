@@ -1129,6 +1129,22 @@ export function createBackgroundController(options: BackgroundControllerOptions)
           markRuntimeLifecycleJournalEntryForClearAfterSave(runtimeLifecycleJournalEntry);
           return commandAck(true);
         }
+        if (runtimeIndexCandidateNodeIds) {
+          const update = perfTrace.measure("background.patch.build.treeStructure", { command: message.type }, () =>
+            treeStructureUpdateFromCandidateNodeIds(current, result.state, runtimeIndexCandidateNodeIds)
+          );
+          await broadcastTreeStructureUpdate(update);
+          scheduleStateSave(result.state, saveSchedule, runtimeIndexCandidateNodeIds);
+          await flushRuntimeProvenanceSaveIfChanged(current, result.state, runtimeIndexCandidateNodeIds, {
+            allowDeferredPlacementCheckpoint: true,
+            reason: message.type
+          });
+          if (commandTransaction) {
+            runtimeFacts.commitCommand(commandTransaction.id);
+          }
+          markRuntimeLifecycleJournalEntryForClearAfterSave(runtimeLifecycleJournalEntry);
+          return commandAck(true);
+        }
       }
       await persistWithBestEffortPatch(current, result.state, { saveSchedule });
       await flushRuntimeProvenanceSaveIfChanged(current, result.state, runtimeIndexCandidateNodeIds, {

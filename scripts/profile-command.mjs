@@ -2,6 +2,7 @@ import { performance } from "node:perf_hooks";
 
 import { createBackgroundController } from "../dist/background/controller.js";
 import {
+  applyCrossParentLeafMoveTreeStructurePatchToProjection,
   applyDeleteTreeStructurePatchToProjection,
   applyInsertTreeStructurePatchToProjection,
   applySameParentReorderTreeStructurePatchToProjection,
@@ -488,6 +489,7 @@ function applyTreeStructureUpdate(runtime, update) {
 function applyProjectionTreeStructureUpdate(runtime, update) {
   if (update.deletedNodeIds.length === 0) {
     return applySameParentReorderTreeStructurePatchToProjection(runtime.sidebarState, runtime.sidebarProjection, update) ||
+      applyCrossParentLeafMoveTreeStructurePatchToProjection(runtime.sidebarState, runtime.sidebarProjection, update) ||
       applyInsertTreeStructurePatchToProjection(runtime.sidebarState, runtime.sidebarProjection, update);
   }
 

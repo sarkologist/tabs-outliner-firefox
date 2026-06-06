@@ -303,6 +303,190 @@ export function applySameParentReorderTreeStructurePatchToProjection(
   return true;
 }
 
+export function applyCrossParentLeafMoveTreeStructurePatchToProjection(
+  state: OutlineState,
+  projection: VisibleTreeProjection,
+  patch: InsertTreeStructurePatch
+): boolean {
+  if (
+    projection.isSearchActive ||
+    patch.deletedNodeIds.length > 0 ||
+    patch.deletedClosedCount !== 0 ||
+    projection.rows.length === 0 ||
+    projection.visibleNodeIds.length !== projection.rows.length ||
+    !sameNodeIdList(patch.rootIds, state.rootIds) ||
+    (typeof projection.totalRowCount === "number" && projection.totalRowCount !== projection.rows.length) ||
+    !projection.rows.every((row, index) => row.index === index && projection.visibleNodeIds[index] === row.nodeId)
+  ) {
+    return false;
+  }
+
+  const updatedNodeIds = new Set(patch.updatedNodes.map((node) => node.id));
+  const movedEntries = patch.updatedNodes
+    .map((node) => {
+      const row = projection.rows.find((candidate) => candidate.nodeId === node.id);
+      const previousParentId = row && typeof row.parentRowIndex === "number"
+        ? projection.rows[row.parentRowIndex]?.nodeId
+        : undefined;
+      return row && previousParentId && node.parentId && previousParentId !== node.parentId
+        ? { node, row, previousParentId }
+        : undefined;
+    })
+    .filter((entry): entry is { node: OutlineNode; row: VisibleTreeRow; previousParentId: NodeId } => Boolean(entry));
+  if (movedEntries.length !== 1) {
+    return false;
+  }
+
+  const { node: movedNode, row: movedRow, previousParentId } = movedEntries[0]!;
+  if (projection.activeTabNodeId === movedNode.id || !updatedNodeIds.has(movedNode.id)) {
+    return false;
+  }
+
+  const nextMovedNode = state.nodes[movedNode.id];
+  const sourceParent = state.nodes[previousParentId];
+  const destinationParentId = movedNode.parentId;
+  const destinationParent = destinationParentId ? state.nodes[destinationParentId] : undefined;
+  if (
+    !nextMovedNode ||
+    !sourceParent ||
+    !destinationParent ||
+    !destinationParentId ||
+    !updatedNodeIds.has(previousParentId) ||
+    !updatedNodeIds.has(destinationParentId) ||
+    nextMovedNode.childIds.length !== 0 ||
+    movedRow.childCount !== 0 ||
+    movedRow.subtreeEndIndex !== movedRow.index + 1
+  ) {
+    return false;
+  }
+
+  const sourceParentRow = projection.rows[movedRow.parentRowIndex ?? -1];
+  const destinationParentRow = projection.rows.find((row) => row.nodeId === destinationParentId);
+  if (
+    !sourceParentRow ||
+    !destinationParentRow ||
+    sourceParentRow.nodeId !== previousParentId ||
+    sourceParentRow === destinationParentRow ||
+    sourceParentRow.depth !== 0 ||
+    destinationParentRow.depth !== 0 ||
+    !sourceParentRow.expanded ||
+    !destinationParentRow.expanded ||
+    sourceParent.childIds.length !== sourceParentRow.childCount - 1 ||
+    destinationParent.childIds.length !== destinationParentRow.childCount + 1 ||
+    !projectionHasAllDirectChildren(projection, sourceParentRow, sourceParentRow.childCount) ||
+    !projectionHasAllDirectChildren(projection, destinationParentRow, destinationParentRow.childCount)
+  ) {
+    return false;
+  }
+
+  const destinationChildOffset = destinationParent.childIds.indexOf(movedNode.id);
+  if (destinationChildOffset < 0) {
+    return false;
+  }
+
+  let insertionIndexBeforeRemoval = destinationParentRow.index + 1;
+  if (destinationChildOffset > 0) {
+    const previousSiblingId = destinationParent.childIds[destinationChildOffset - 1];
+    const previousSiblingRow = previousSiblingId
+      ? projection.rows.find((row) => row.nodeId === previousSiblingId)
+      : undefined;
+    if (!previousSiblingRow || previousSiblingRow.parentRowIndex !== destinationParentRow.index) {
+      return false;
+    }
+    insertionIndexBeforeRemoval = previousSiblingRow.subtreeEndIndex;
+  }
+
+  const movedIndex = movedRow.index;
+  if (
+    insertionIndexBeforeRemoval < 0 ||
+    insertionIndexBeforeRemoval > projection.rows.length ||
+    projection.visibleNodeIds[movedIndex] !== movedNode.id ||
+    insertionIndexBeforeRemoval === movedIndex ||
+    insertionIndexBeforeRemoval === movedIndex + 1
+  ) {
+    return false;
+  }
+
+  const insertionIndex = insertionIndexBeforeRemoval > movedIndex
+    ? insertionIndexBeforeRemoval - 1
+    : insertionIndexBeforeRemoval;
+  if (insertionIndex < 0 || insertionIndex > projection.rows.length - 1) {
+    return false;
+  }
+
+  const sourceParentIndex = sourceParentRow.index;
+  const sourceParentEnd = sourceParentRow.subtreeEndIndex;
+  const destinationParentIndex = destinationParentRow.index;
+  const destinationParentEnd = destinationParentRow.subtreeEndIndex;
+
+  const finalIndexForOldIndex = (oldIndex: number): number => {
+    if (oldIndex === movedIndex) {
+      return insertionIndex;
+    }
+    const afterRemoval = oldIndex > movedIndex ? oldIndex - 1 : oldIndex;
+    return afterRemoval >= insertionIndex ? afterRemoval + 1 : afterRemoval;
+  };
+  const finalEndForOldEnd = (oldEnd: number, includeInsertionBoundary = false): number => {
+    const afterRemoval = oldEnd > movedIndex ? oldEnd - 1 : oldEnd;
+    return afterRemoval > insertionIndex || (includeInsertionBoundary && afterRemoval === insertionIndex)
+      ? afterRemoval + 1
+      : afterRemoval;
+  };
+
+  const movedRows = projection.rows.splice(movedIndex, 1);
+  const [movedRowAfterRemoval] = movedRows;
+  if (!movedRowAfterRemoval) {
+    return false;
+  }
+  projection.rows.splice(insertionIndex, 0, movedRowAfterRemoval);
+
+  projection.visibleNodeIds.splice(movedIndex, 1);
+  projection.visibleNodeIds.splice(insertionIndex, 0, movedNode.id);
+
+  const changedStart = Math.min(movedIndex, insertionIndex);
+  const changedEnd = Math.max(movedIndex, insertionIndex) + 1;
+  for (let index = changedStart; index < changedEnd; index += 1) {
+    const row = projection.rows[index];
+    if (!row) {
+      return false;
+    }
+    const previousParentRowIndex = row.parentRowIndex;
+    row.index = index;
+    if (row === movedRowAfterRemoval) {
+      row.depth = destinationParentRow.depth + 1;
+      row.parentRowIndex = finalIndexForOldIndex(destinationParentIndex);
+      row.subtreeEndIndex = index + 1;
+      continue;
+    }
+    row.subtreeEndIndex = finalEndForOldEnd(row.subtreeEndIndex);
+    if (typeof previousParentRowIndex === "number") {
+      row.parentRowIndex = finalIndexForOldIndex(previousParentRowIndex);
+    }
+  }
+
+  sourceParentRow.index = finalIndexForOldIndex(sourceParentIndex);
+  sourceParentRow.subtreeEndIndex = finalEndForOldEnd(sourceParentEnd);
+  destinationParentRow.index = finalIndexForOldIndex(destinationParentIndex);
+  destinationParentRow.subtreeEndIndex = finalEndForOldEnd(destinationParentEnd, true);
+  delete sourceParentRow.parentRowIndex;
+  delete destinationParentRow.parentRowIndex;
+  movedRowAfterRemoval.parentRowIndex = destinationParentRow.index;
+
+  refreshRowFromState(state, projection, sourceParentRow);
+  refreshRowFromState(state, projection, destinationParentRow);
+  refreshRowFromState(state, projection, movedRowAfterRemoval);
+  sourceParentRow.insideActiveWindow = false;
+  destinationParentRow.insideActiveWindow = false;
+  movedRowAfterRemoval.insideActiveWindow = Boolean(
+    destinationParent.kind === "window" && destinationParent.active
+  );
+
+  if (typeof projection.activeTabRowIndex === "number") {
+    projection.activeTabRowIndex = finalIndexForOldIndex(projection.activeTabRowIndex);
+  }
+  return true;
+}
+
 export function sameParentReorderTreeStructurePatchInfo(
   state: OutlineState,
   projection: VisibleTreeProjection,

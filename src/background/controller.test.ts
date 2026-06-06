@@ -35123,6 +35123,81 @@ describe("background controller lifecycle", () => {
     expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(1);
   });
 
+  it("moves one live leaf across parents without full node-table diff scans", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        },
+        {
+          id: 20,
+          focused: false,
+          incognito: false
+        }
+      ],
+      [
+        ...Array.from({ length: 100 }, (_value, index) => ({
+          id: index + 1,
+          windowId: 10,
+          index,
+          active: index === 0,
+          url: `https://source.example/${index + 1}`,
+          title: `Source ${index + 1}`
+        })),
+        {
+          id: 201,
+          windowId: 20,
+          index: 0,
+          active: true,
+          url: "https://destination.example/",
+          title: "Destination"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    runtime.broadcasts.length = 0;
+    vi.mocked(runtime.api.storage.local.set).mockClear();
+
+    const { calls, value } = await countNodeTableObjectKeys(() =>
+      controller.handleMessage({
+        type: "moveNode",
+        nodeId: "tab:100",
+        parentId: "window:20",
+        index: 1
+      })
+    );
+    const moved = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    const lastBroadcast = stateBroadcasts(runtime.broadcasts).at(-1) as
+      | {
+          type?: string;
+          deletedNodeIds?: string[];
+          updatedNodes?: OutlineState["nodes"][string][];
+          rootIds?: string[];
+          state?: OutlineState;
+        }
+      | undefined;
+
+    expectCommandAck(value, true);
+    expect(calls).toBe(0);
+    expect(moved.nodes["window:10"]?.childIds).not.toContain("tab:100");
+    expect(moved.nodes["window:20"]?.childIds).toEqual(["tab:201", "tab:100"]);
+    expect(moved.nodes["tab:100"]?.parentId).toBe("window:20");
+    expect(lastBroadcast?.type).toBe("treeStructureUpdated");
+    expect(lastBroadcast?.deletedNodeIds).toEqual([]);
+    expect(lastBroadcast?.updatedNodes?.map((node) => node.id).sort()).toEqual([
+      "tab:100",
+      "window:10",
+      "window:20"
+    ]);
+    expect(lastBroadcast?.rootIds).toEqual(["window:10", "window:20"]);
+    expect(lastBroadcast?.state).toBeUndefined();
+    await controller.flushPendingSaves();
+    expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(1);
+  });
+
   it("broadcasts wrap-in-group commands as tree structure patches", async () => {
     const runtime = fakeRuntime(
       [

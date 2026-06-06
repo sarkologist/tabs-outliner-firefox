@@ -42,6 +42,22 @@ Known follow-up, intentionally not tackled before longer naturalistic QA:
 
 - Fresh trace `dist/snapshot3.log` showed no full `stateUpdated` broadcasts and no sidebar hotspot, but it did show long trains of queued `tabs.onUpdated` runtime refreshes. If usability still feels sluggish, the next likely target is in-flight runtime-refresh coalescing and/or command priority so stale refresh work cannot sit in front of focus/close/restore commands.
 
+## Current Asymptotics Audit
+
+This is the maintained asymptotics table. Dated tables in the `Progress Log` are historical snapshots. Let `n` be outline nodes, `u` be unique runtime events in one coalesced batch, `k` be changed or transported nodes, `c` be runtime-index candidate nodes for a narrow state transition, `d` be opener ancestor depth, `w` be browser windows/tabs returned by a runtime snapshot, `v` be visible sidebar rows, and `r` be search result rows.
+
+| Path | Current Asymptotic | Theoretical Optimum | Gap / Next Work |
+| --- | --- | --- | --- |
+| Pure drops: irrelevant `tabs.onUpdated`, command focus active-update echoes, delete/close-owned echoes, sidebar focus noise, absorbed native relocation attach/detach/move echoes | `O(1)` | `O(1)` | At optimum; keep these paths out of saves, broadcasts, diagnostics, projection rebuilds, and runtime snapshots. |
+| Command-owned restore and relocation echoes | steady-state `O(u)` with a warm runtime index | `O(u)` | At optimum for command-created restore and relocation echoes. June relocation work keeps existing-window drag/drop echoes off full reconciliation. |
+| Small runtime update/create fast path | `O(u + k)` normally; `O(u * d + k)` for opener placement; `O(k)` transport | `O(u + k)` CPU, `O(k)` transport | Remaining gap is opener ancestor validation; maintain owner-window or nearest-window data before trying to remove the `d` factor. |
+| Runtime-index maintenance for narrow transitions | `O(c)` | `O(c)` | At optimum for candidate-backed command/native transitions. Broad import and full reconciliation intentionally rebuild in `O(n)`. |
+| Structural command patch construction and transport | `O(k)` when candidate ids exist, including non-same-parent `moveNode`; generic fallback `O(n)` | `O(k)` for narrow commands, `O(n)` for broad commands | Keep threading candidate ids through new narrow commands. Reserve generic whole-state diffing for genuinely broad changes. |
+| Sidebar patch handling | same-parent reorder, simple insert, trailing leaf delete, and guarded top-level cross-parent visible leaf move avoid full projection rebuilds; current row discovery can still cost `O(v)` before bounded splice/metadata work; ambiguous/search-active paths can reach `O(v)` or `O(n)` | `O(visible-delta + k)` for non-search patches; `O(k + r-delta)` for search patches | Maintain stronger projection indexes before claiming the cross-parent leaf path is fully at the lower bound. Search-active patching still favors correctness. |
+| Sparse startup and scroll-away | normal first paint/window fetch is `O(window rows)` and avoids full hydration; fallback/full operations are `O(n)` | `O(window rows)` for sparse interactions, `O(n)` when full tree ownership is required | At the sparse lower bound. Keep export/search/import/restore preflight background-backed so startup does not auto-hydrate. |
+| Persistence | interaction path is deferred/coalesced; eventual v3 saves are `O(changed shards/pages)` for narrow changes and `O(n)` for full replacement, migration, or broad edits | Same lower bound unless storage layout changes | Keep perceived latency separate from durability. Do not force-drain unrelated broad saves on narrow interaction paths. |
+| Full runtime reconciliation fallback | `O(w log w + n)` plus browser snapshot cost, then `O(n)` diff or full-state fallback | `O(w + n)` if full validation is required; effectively `O(0)` when avoided | This is the correctness fallback. Main win is preventing narrow events from entering it; secondary win is trimming avoidable sort/diff work inside it. |
+
 ## General Lessons
 
 - Profile before accepting performance changes. Record the scenario, tree size, command/tool, before/after numbers, and whether the measurement is synthetic or in-browser.
@@ -60,6 +76,8 @@ Update this file as you investigate and implement performance improvements.
 
 - Keep the `Progress Log` section current. Add a new dated entry for each meaningful experiment, design decision, implementation step, or surprising finding.
 - Record commands, benchmark shapes, tree sizes, and before/after numbers when available.
+- Keep the `Current Asymptotics Audit` table current when performance work changes algorithmic shape, transport shape, save timing, or runtime/sidebar patch behavior. If a performance fix does not change the table, say so in the progress-log entry.
+- Treat dated asymptotics tables in the `Progress Log` as historical snapshots; the top-level `Current Asymptotics Audit` section is the maintained source of truth.
 - For correctness hunt fix passes, record the Perf Blast Radius tags, selected `perf:runtime-guard` scenarios, and whether any budget moved. Include profile-export notes only when the export was captured from the current build as part of the investigation.
 - For sidebar projection/hydration fix passes, run `pnpm perf:sidebar-projection-guard`. It wraps the startup hover and sparse scroll-away profile loops as a hard gate, so `guardFailures` or `status: discard` fail the command instead of relying on manual JSON review.
 - Preserve prior findings unless they are clearly wrong; if correcting one, add a note explaining why.
@@ -101,6 +119,21 @@ Use these as starting targets, not hard promises:
 - Existing lifecycle behavior must remain intact for browser-native close, outliner close, delete-owned removals, restore, and stale events.
 
 ## Progress Log
+
+### 2026-06-06: Promoted Current Asymptotics Audit
+
+- Promoted the event-echo and remaining-target asymptotics tables out of the dated May 21 progress entries into a stable `Current Asymptotics Audit` section near the top of this file.
+- Updated repo and performance-note agent instructions so future performance work must update that table when algorithmic shape, transport shape, save timing, or runtime/sidebar patch behavior changes, or explicitly note that it is unchanged.
+- No code behavior changed; no performance profiles were rerun. Verification: `git diff --check` passed.
+
+### 2026-06-06: Cross-Parent Move Structural Patch Fast Path
+
+- Change: non-same-parent `moveNode` now builds `treeStructureUpdated` from `runtimeIndexCandidateNodeIds` instead of falling through to `persistWithBestEffortPatch()` and whole-node-table diff scans. The same-parent reorder path remains on `sameParentReorderUpdated`.
+- Change: sidebar projection handling now has a guarded non-search fast path for a single visible leaf moving between two visible expanded top-level parents. It splices existing row/id arrays in place, refreshes the moved row and affected parent metadata, and falls back for search-active, sparse, collapsed/hidden, subtree, deleted-row, multi-move, or active-moved cases. The synthetic command profiler was wired to the same helper.
+- Baseline reference from current samples before this pass: `command-existing-window-relocation-echo --tabs 50000` had `projectionMs=108`, `treePatchMs=115`, `firstBroadcastMs=148`, no full-state broadcast, one state save, and five native echo events.
+- Final acceptance: `pnpm build` passed. Three final-dist runs of `node scripts/profile-command.mjs --scenario command-existing-window-relocation-echo --tabs 50000` reported `projectionMs=0` each time, `treePatchMs=5,5,5`, `firstBroadcastMs=123,123,122`, no full-state broadcasts, one state save, one storage set, and the same five native echo events.
+- Regression profiles on final dist: `move-leaf --tabs 50000` kept `sameParentReorderBroadcasts=1`, `treeStructureBroadcasts=0`, `projectionMs=0`, `treePatchMs=0`; `move-top-level-live-leaf --tabs 50000` reported `projectionMs=0`, `treePatchMs=32`, `firstBroadcastMs=152`; `group-live-leaf --tabs 50000` reported `projectionMs=0`, `treePatchMs=26`, `firstBroadcastMs=149`.
+- `Current Asymptotics Audit` updated: structural command patching now explicitly includes candidate-backed non-same-parent `moveNode`; sidebar patch handling now documents the cross-parent leaf fast path and the remaining `O(v)` row-discovery gap before it can honestly be called `O(visible-delta + k)`.
 
 ### 2026-06-05: Drag/Drop Command Relocation Echo Absorption
 
