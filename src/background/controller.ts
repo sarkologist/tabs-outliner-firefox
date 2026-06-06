@@ -499,7 +499,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       }
       seedRuntimeWindowProvenanceFromCurrentState(tab.windowId);
       const record = runtimeFacts.recordNativeTabUpdated(tab, changeInfo);
-      if (record.decision === "command-focus-active") {
+      if (record.echoDecision.action === "applyFastPath") {
         await handleCommandTabActivated({ tabId: tab.id, windowId: tab.windowId }, { consumeTabEcho: false });
         return;
       }
@@ -509,7 +509,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
   api.tabs.onActivated.addListener(async (activeInfo) => {
     await perfTrace.measureAsync("background.event.tabs.onActivated", { tabId: activeInfo.tabId }, async () => {
-      if (runtimeFacts.recordNativeTabActivated(activeInfo.tabId, activeInfo.windowId) === "command-focus") {
+      if (runtimeFacts.recordNativeTabActivated(activeInfo.tabId, activeInfo.windowId).action === "applyFastPath") {
         await handleCommandTabActivated(activeInfo);
         return;
       }
@@ -670,7 +670,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       if (await shouldIgnoreSidebarWindowFocus(windowId)) {
         return;
       }
-      if (runtimeFacts.recordNativeWindowFocused(windowId) === "command-focus") {
+      if (runtimeFacts.recordNativeWindowFocused(windowId).action === "applyFastPath") {
         await handleCommandWindowFocusChanged(windowId);
         return;
       }
@@ -702,7 +702,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
           while (pendingSessionChangedCount > 0) {
             const observedSessionChangedCount = pendingSessionChangedCount;
             pendingSessionChangedCount = 0;
-            if (runtimeFacts.consumeOutlinerCloseSessionEcho()) {
+            if (runtimeFacts.consumeOutlinerCloseSessionEcho().action === "applyFastPath") {
               pendingSessionChangedCount += Math.max(0, observedSessionChangedCount - 1);
               continue;
             }
@@ -868,7 +868,12 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         runtimeFacts.markOutlinerClosePlan(outlinerClosePlan);
       }
       if (focusTarget) {
-        runtimeFacts.markCommandFocusTarget(focusTarget.tabId, focusTarget.windowId, focusTarget.tabActive);
+        runtimeFacts.markCommandFocusTarget(
+          focusTarget.tabId,
+          focusTarget.windowId,
+          focusTarget.tabActive,
+          focusTarget.windowActive
+        );
       }
       if (deleteClosePlan) {
         runtimeFacts.markDeleteClosePlan(deleteClosePlan);
@@ -2999,7 +3004,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         if (restoredNode) {
           restoredNode.restoredFromClosed = true;
         }
-        runtimeFacts.recordCommandRestoredTab(createdTab.id);
+        runtimeFacts.recordCommandRestoredTab(createdTab.id, createdWindow.id);
         tabNodesCreatedWithWindow.add(firstMissingTab.id);
       }
       changed = true;
@@ -3030,7 +3035,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       if (restoredNode) {
         restoredNode.restoredFromClosed = true;
       }
-      runtimeFacts.recordCommandRestoredTab(created.id);
+      runtimeFacts.recordCommandRestoredTab(created.id, created.windowId);
       changed = true;
     }
 
@@ -3047,24 +3052,15 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     tabId: number,
     windowId: number | undefined
   ): Promise<boolean> {
-    if (typeof windowId !== "number") {
-      return false;
-    }
-    const echo = runtimeFacts.commandRelocatedTabEcho(tabId);
-    if (!echo) {
-      return false;
-    }
-
     const current = await ensureState();
     const node = indexedLiveTabNodeByRuntimeId(current, runtimeIndexForState(current), tabId);
-    if (!node || node.live.windowId !== echo.toWindowId) {
-      return false;
-    }
-
-    const absorbed = event === "detached"
-      ? echo.fromWindowIds.has(windowId)
-      : windowId === echo.toWindowId;
-    if (!absorbed) {
+    const decision = runtimeFacts.decideCommandRelocationNativeEcho({
+      event,
+      tabId,
+      windowId,
+      currentWindowId: node?.live.windowId
+    });
+    if (decision.action !== "absorb") {
       return false;
     }
 

@@ -1,5 +1,6 @@
 import type {
   RuntimeFactLedger,
+  RuntimeEchoDecision,
   RuntimeSnapshotConfidence,
   RuntimeTabEvidence,
   RuntimeTabEvidenceField,
@@ -46,6 +47,13 @@ export type SnapshotSuspicionInput = {
 
 export type RuntimeEventTabFilterInput = {
   eventTabs: Array<RuntimeTabEvidence | RuntimeTab>;
+  state: OutlineState;
+  index: RuntimeStateIndexForReconciliation;
+  ledger: RuntimeFactLedger;
+};
+
+export type RuntimeTabEchoDecisionInput = {
+  evidence: RuntimeTabEvidence;
   state: OutlineState;
   index: RuntimeStateIndexForReconciliation;
   ledger: RuntimeFactLedger;
@@ -111,19 +119,12 @@ export class RuntimeReconciler {
     ledger: RuntimeFactLedger,
     tab: RuntimeTab
   ): boolean {
-    if (!ledger.hasCommandRestoredTab(tab.id)) {
-      return false;
-    }
-
-    if (!this.isCommandRestoredAbsorbableTabEvent(state, index, ledger, tab)) {
-      const node = indexedLiveTabNodeByRuntimeId(state, index, tab.id);
-      if (!node || node.live.windowId !== tab.windowId) {
-        ledger.deleteCommandRestoredTab(tab.id);
-      }
-      return false;
-    }
-
-    return true;
+    return this.decideCommandRestoredTabEcho({
+      evidence: runtimeTabEvidenceFromInput(tab, ledger),
+      state,
+      index,
+      ledger
+    }).action === "absorb";
   }
 
   isCommandRestoredAbsorbableTabEvent(
@@ -150,23 +151,12 @@ export class RuntimeReconciler {
     ledger: RuntimeFactLedger,
     tab: RuntimeTab
   ): boolean {
-    const echo = ledger.commandRelocatedTabEcho(tab.id);
-    if (!echo) {
-      return false;
-    }
-
-    const node = indexedLiveTabNodeByRuntimeId(state, index, tab.id);
-    if (!node) {
-      ledger.deleteCommandRelocatedTabEcho(tab.id);
-      return false;
-    }
-
-    if (node.live.windowId !== echo.toWindowId) {
-      ledger.deleteCommandRelocatedTabEcho(tab.id);
-      return false;
-    }
-
-    return echo.fromWindowIds.has(tab.windowId);
+    return this.decideCommandRelocatedTabEcho({
+      evidence: runtimeTabEvidenceFromInput(tab, ledger),
+      state,
+      index,
+      ledger
+    }).action === "absorb";
   }
 
   isCommandRelocatedStaleTabEvent(
@@ -182,6 +172,74 @@ export class RuntimeReconciler {
 
     const node = indexedLiveTabNodeByRuntimeId(state, index, tab.id);
     return Boolean(node && node.live.windowId === echo.toWindowId && echo.fromWindowIds.has(tab.windowId));
+  }
+
+  decideRuntimeTabEcho(input: RuntimeTabEchoDecisionInput): RuntimeEchoDecision {
+    const restoredDecision = this.decideCommandRestoredTabEcho(input);
+    if (restoredDecision.action !== "accept") {
+      return restoredDecision;
+    }
+
+    const relocatedDecision = this.decideCommandRelocatedTabEcho(input);
+    if (relocatedDecision.action !== "accept") {
+      return relocatedDecision;
+    }
+
+    return { action: "accept" };
+  }
+
+  private decideCommandRestoredTabEcho(input: RuntimeTabEchoDecisionInput): RuntimeEchoDecision {
+    const tab = input.evidence.tab;
+    if (!input.ledger.hasCommandRestoredTab(tab.id)) {
+      return { action: "accept" };
+    }
+
+    if (!this.isCommandRestoredAbsorbableTabEvent(input.state, input.index, input.ledger, tab)) {
+      const node = indexedLiveTabNodeByRuntimeId(input.state, input.index, tab.id);
+      if (!node || node.live.windowId !== tab.windowId) {
+        input.ledger.deleteCommandRestoredTab(tab.id);
+      }
+      return { action: "accept" };
+    }
+
+    return { action: "absorb", effect: "tabRestore" };
+  }
+
+  private decideCommandRelocatedTabEcho(input: RuntimeTabEchoDecisionInput): RuntimeEchoDecision {
+    const remappedEvidence = commandRelocatedMetadataEvidenceForCurrentScope(
+      input.state,
+      input.index,
+      input.ledger,
+      input.evidence
+    );
+    if (remappedEvidence) {
+      return {
+        action: "remapToCurrentScope",
+        effect: "tabRelocation",
+        evidence: remappedEvidence
+      };
+    }
+
+    const tab = input.evidence.tab;
+    const echo = input.ledger.commandRelocatedTabEcho(tab.id);
+    if (!echo) {
+      return { action: "accept" };
+    }
+
+    const node = indexedLiveTabNodeByRuntimeId(input.state, input.index, tab.id);
+    if (!node) {
+      input.ledger.deleteCommandRelocatedTabEcho(tab.id);
+      return { action: "accept" };
+    }
+
+    if (node.live.windowId !== echo.toWindowId) {
+      input.ledger.deleteCommandRelocatedTabEcho(tab.id);
+      return { action: "accept" };
+    }
+
+    return echo.fromWindowIds.has(tab.windowId)
+      ? { action: "absorb", effect: "tabRelocation" }
+      : { action: "accept" };
   }
 
   tabEventMayChangeState(
@@ -205,11 +263,18 @@ export class RuntimeReconciler {
       .map((eventTab) => runtimeTabEvidenceFromInput(eventTab, input.ledger))
       .filter((evidence) => !input.ledger.isTabIgnoredForRefresh(evidence.tab.id))
       .filter((evidence) => !input.ledger.isWindowIgnoredForRefresh(evidence.tab.windowId))
-      .filter((evidence) => !this.consumeCommandRestoredTabEvent(input.state, input.index, input.ledger, evidence.tab))
-      .map((evidence) => commandRelocatedMetadataEvidenceForCurrentScope(input.state, input.index, input.ledger, evidence) ?? evidence)
-      .filter((evidence) =>
-        !this.consumeCommandRelocatedStaleTabEvent(input.state, input.index, input.ledger, evidence.tab)
-      )
+      .flatMap((evidence) => {
+        const decision = this.decideRuntimeTabEcho({
+          evidence,
+          state: input.state,
+          index: input.index,
+          ledger: input.ledger
+        });
+        if (decision.action === "absorb") {
+          return [];
+        }
+        return [decision.action === "remapToCurrentScope" ? decision.evidence : evidence];
+      })
       .filter((evidence) => this.tabEventMayChangeState(input.state, input.index, evidence.tab));
   }
 

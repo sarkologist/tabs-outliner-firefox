@@ -94,12 +94,47 @@ export type RuntimeObservation =
 
 export type CommandOwnership = "outliner-close" | "delete" | "relocation" | "restore" | "focus";
 
+export type ExpectedRuntimeEffect =
+  | {
+      kind: "tabRelocation";
+      tabId: number;
+      fromWindowIds: number[];
+      sequence: number;
+      sourceIndex?: number | undefined;
+      sourceWindowId: number;
+      toWindowId: number;
+    }
+  | {
+      kind: "tabRestore";
+      tabId: number;
+      windowId: number;
+    }
+  | {
+      kind: "focus";
+      tabId: number;
+      windowId: number;
+      tabActivationExpected: boolean;
+      windowFocusExpected: boolean;
+    }
+  | {
+      kind: "closeSession";
+      pendingTabRemovals: number;
+      echoesToSkip: number;
+      skippedBeforeRemoval: number;
+    };
+
+export type RuntimeEchoDecision =
+  | { action: "accept" }
+  | { action: "absorb"; effect: ExpectedRuntimeEffect["kind"] }
+  | { action: "remapToCurrentScope"; effect: "tabRelocation"; evidence: RuntimeTabEvidence }
+  | { action: "applyFastPath"; effect: "focus" | "closeSession" };
+
 export type CommandTransaction = {
   id: string;
   commandType: BackgroundCommand["type"];
   plannedTabs: number[];
   plannedWindows: number[];
-  expectedEchoes: RuntimeObservation[];
+  expectedEffects: ExpectedRuntimeEffect[];
   ownership: CommandOwnership;
 };
 
@@ -127,6 +162,7 @@ export type RuntimeFactLedgerDebugSnapshot = {
     sourceWindowId: number;
     toWindowId: number;
   }>;
+  expectedEffects: ExpectedRuntimeEffect[];
   acceptedTabShapeFacts: RuntimeTabShapeFact[];
   acceptedWindowShapeFacts: RuntimeWindowShapeFact[];
 };
@@ -134,7 +170,7 @@ export type RuntimeFactLedgerDebugSnapshot = {
 export type CommandTransactionFacts = {
   outlinerClosePlan?: RuntimeClosePlan | undefined;
   deleteClosePlan?: RuntimeClosePlan | undefined;
-  focusTarget?: { tabId: number; windowId: number } | undefined;
+  focusTarget?: { tabId: number; windowId: number; tabActive?: boolean; windowActive?: boolean } | undefined;
 };
 
 type LiveTabNode = OutlineNode & { live: { tabId: number; windowId: number } };
@@ -149,9 +185,10 @@ export type NativeTabRemovedDecision = "ignore-delete-owned" | "continue";
 export type NativeTabUpdatedDecision = "command-focus-active" | "refresh";
 export type NativeTabUpdatedRecord = {
   decision: NativeTabUpdatedDecision;
+  echoDecision: RuntimeEchoDecision;
   evidence: RuntimeTabEvidence;
 };
-export type NativeFocusEventDecision = "command-focus" | "runtime-refresh";
+export type NativeFocusEventDecision = RuntimeEchoDecision;
 export type NativeWindowRemovedDecision = "ignore-duplicate" | "ignore-delete-owned" | "close-window";
 
 export class RuntimeFactLedger {
@@ -166,10 +203,12 @@ export class RuntimeFactLedger {
   private readonly browserCreatedWindowIds = new Set<number>();
   private readonly commandCreatedWindowIds = new Set<number>();
   private readonly commandRestoredTabIds = new Set<number>();
+  private readonly commandRestoredTabWindowIds = new Map<number, number>();
   private readonly commandRelocatedTabEchoes = new Map<number, CommandRelocatedTabEcho>();
   private readonly commandFocusedTabIds = new Set<number>();
   private readonly commandFocusedActivationWindowIds = new Set<number>();
   private readonly commandFocusedWindowIds = new Set<number>();
+  private readonly commandFocusTargets = new Map<string, Extract<ExpectedRuntimeEffect, { kind: "focus" }>>();
   private readonly windowScopes = new RuntimeWindowScopeIndex();
   private readonly tabShapeFacts = new Map<number, RuntimeTabShapeFact>();
   private readonly windowShapeFacts = new Map<number, RuntimeWindowShapeFact>();
@@ -913,7 +952,7 @@ export class RuntimeFactLedger {
     commandType: BackgroundCommand["type"];
     plannedTabs?: readonly number[];
     plannedWindows?: readonly number[];
-    expectedEchoes?: readonly RuntimeObservation[];
+    expectedEffects?: readonly ExpectedRuntimeEffect[];
     ownership: CommandOwnership;
   }): CommandTransaction {
     const transaction: CommandTransaction = {
@@ -921,7 +960,7 @@ export class RuntimeFactLedger {
       commandType: input.commandType,
       plannedTabs: [...(input.plannedTabs ?? [])],
       plannedWindows: [...(input.plannedWindows ?? [])],
-      expectedEchoes: [...(input.expectedEchoes ?? [])],
+      expectedEffects: [...(input.expectedEffects ?? [])],
       ownership: input.ownership
     };
     this.transactions.set(transaction.id, transaction);
@@ -944,6 +983,7 @@ export class RuntimeFactLedger {
 
     const plannedTabs = new Set<number>();
     const plannedWindows = new Set<number>();
+    const expectedEffects: ExpectedRuntimeEffect[] = [];
     for (const tabId of facts.outlinerClosePlan?.tabIds ?? []) {
       plannedTabs.add(tabId);
     }
@@ -959,12 +999,27 @@ export class RuntimeFactLedger {
     if (facts.focusTarget) {
       plannedTabs.add(facts.focusTarget.tabId);
       plannedWindows.add(facts.focusTarget.windowId);
+      expectedEffects.push(focusExpectedEffect(
+        facts.focusTarget.tabId,
+        facts.focusTarget.windowId,
+        facts.focusTarget.tabActive === true,
+        facts.focusTarget.windowActive === true
+      ));
+    }
+    if (facts.outlinerClosePlan && facts.outlinerClosePlan.tabIds.length > 0) {
+      expectedEffects.push({
+        kind: "closeSession",
+        pendingTabRemovals: facts.outlinerClosePlan.tabIds.length,
+        echoesToSkip: 0,
+        skippedBeforeRemoval: 0
+      });
     }
 
     return this.beginCommandTransaction({
       commandType,
       plannedTabs: [...plannedTabs],
       plannedWindows: [...plannedWindows],
+      expectedEffects,
       ownership
     });
   }
@@ -1061,8 +1116,12 @@ export class RuntimeFactLedger {
     this.observeLiveTabIfAccepted(tab);
     this.markStructurallyFreshIfShapeChanged(tab);
     const sequence = this.recordObservation({ source: "tabEvent", kind: "updated", tabId: tab.id, windowId: tab.windowId, tab });
+    const echoDecision: RuntimeEchoDecision = this.isCommandFocusActiveUpdateEcho(changeInfo, tab)
+      ? { action: "applyFastPath", effect: "focus" }
+      : { action: "accept" };
     return {
-      decision: this.isCommandFocusActiveUpdateEcho(changeInfo, tab) ? "command-focus-active" : "refresh",
+      decision: echoDecision.action === "applyFastPath" ? "command-focus-active" : "refresh",
+      echoDecision,
       evidence: this.runtimeTabEvidence("updated", tab, runtimeTabEvidenceFieldsFromUpdate(changeInfo), sequence)
     };
   }
@@ -1260,10 +1319,12 @@ export class RuntimeFactLedger {
           tabId,
           fromWindowIds: [...echo.fromWindowIds].sort((left, right) => left - right),
           sequence: echo.sequence,
+          sourceIndex: echo.sourceIndex,
           sourceWindowId: echo.sourceWindowId,
           toWindowId: echo.toWindowId
         }))
         .sort((left, right) => left.tabId - right.tabId),
+      expectedEffects: this.expectedEffectsSnapshot(),
       acceptedTabShapeFacts: [...this.tabShapeFacts.values()]
         .map((fact) => ({ ...fact }))
         .sort((left, right) => left.tabId - right.tabId),
@@ -1274,6 +1335,51 @@ export class RuntimeFactLedger {
         }))
         .sort((left, right) => left.windowId - right.windowId)
     };
+  }
+
+  expectedEffectsSnapshot(): ExpectedRuntimeEffect[] {
+    const effects: ExpectedRuntimeEffect[] = [
+      ...[...this.commandRelocatedTabEchoes.entries()]
+        .map(([tabId, echo]) => commandRelocationExpectedEffect(tabId, echo))
+        .sort((left, right) => left.tabId - right.tabId),
+      ...[...this.commandRestoredTabWindowIds.entries()]
+        .map(([tabId, windowId]) => ({
+          kind: "tabRestore" as const,
+          tabId,
+          windowId
+        }))
+        .sort((left, right) => left.tabId - right.tabId)
+    ];
+
+    for (const target of [...this.commandFocusTargets.values()]
+      .sort((left, right) => left.windowId - right.windowId || left.tabId - right.tabId)) {
+      const tabActivationExpected = this.commandFocusedTabIds.has(target.tabId) ||
+        this.commandFocusedActivationWindowIds.has(target.windowId);
+      const windowFocusExpected = this.commandFocusedWindowIds.has(target.windowId);
+      if (tabActivationExpected || windowFocusExpected) {
+        effects.push({
+          ...target,
+          tabActivationExpected,
+          windowFocusExpected
+        });
+      }
+    }
+
+    const pendingTabRemovals = this.outlinerClosingTabIds.size;
+    if (
+      pendingTabRemovals > 0 ||
+      this.commandCloseSessionEchoesToSkip > 0 ||
+      this.commandCloseSessionEchoesSkippedBeforeRemoval > 0
+    ) {
+      effects.push({
+        kind: "closeSession",
+        pendingTabRemovals,
+        echoesToSkip: this.commandCloseSessionEchoesToSkip,
+        skippedBeforeRemoval: this.commandCloseSessionEchoesSkippedBeforeRemoval
+      });
+    }
+
+    return effects;
   }
 
   tabNeedsShapeCorroboration(tabId: number): boolean {
@@ -1289,7 +1395,9 @@ export class RuntimeFactLedger {
       tabId,
       ...(typeof windowId === "number" ? { windowId } : {})
     });
-    return this.hasCommandFocusedTab(tabId) ? "command-focus" : "runtime-refresh";
+    return this.hasCommandFocusedTab(tabId)
+      ? { action: "applyFastPath", effect: "focus" }
+      : { action: "accept" };
   }
 
   recordNativeTabDetached(tabId: number, oldWindowId: number | undefined): void {
@@ -1366,7 +1474,9 @@ export class RuntimeFactLedger {
   recordNativeWindowFocused(windowId: number): NativeFocusEventDecision {
     this.observeLiveWindowIfAccepted(windowId);
     this.recordObservation({ source: "windowEvent", kind: "focused", windowId });
-    return this.hasCommandFocusedWindow(windowId) ? "command-focus" : "runtime-refresh";
+    return this.hasCommandFocusedWindow(windowId)
+      ? { action: "applyFastPath", effect: "focus" }
+      : { action: "accept" };
   }
 
   recordNativeWindowBoundsChanged(windowInfo: RuntimeWindow): void {
@@ -1498,6 +1608,7 @@ export class RuntimeFactLedger {
   private markTabRemoved(tabId: number): void {
     this.removedTabIds.add(tabId);
     this.commandRestoredTabIds.delete(tabId);
+    this.commandRestoredTabWindowIds.delete(tabId);
     this.commandRelocatedTabEchoes.delete(tabId);
     this.structurallyFreshTabIds.delete(tabId);
     this.tabShapeFacts.delete(tabId);
@@ -1654,18 +1765,18 @@ export class RuntimeFactLedger {
     this.commandCloseSessionEchoesToSkip += 1;
   }
 
-  consumeOutlinerCloseSessionEcho(): boolean {
+  consumeOutlinerCloseSessionEcho(): RuntimeEchoDecision {
     if (this.commandCloseSessionEchoesToSkip > 0) {
       this.commandCloseSessionEchoesToSkip -= 1;
-      return true;
+      return { action: "applyFastPath", effect: "closeSession" };
     }
 
     if (this.hasOutlinerClosingTabs()) {
       this.commandCloseSessionEchoesSkippedBeforeRemoval += 1;
-      return true;
+      return { action: "applyFastPath", effect: "closeSession" };
     }
 
-    return false;
+    return { action: "accept" };
   }
 
   private clearWindowCloseTracking(windowId: number): void {
@@ -1697,8 +1808,11 @@ export class RuntimeFactLedger {
     return "close-window";
   }
 
-  recordCommandRestoredTab(tabId: number): void {
+  recordCommandRestoredTab(tabId: number, windowId?: number): void {
     this.commandRestoredTabIds.add(tabId);
+    if (typeof windowId === "number") {
+      this.commandRestoredTabWindowIds.set(tabId, windowId);
+    }
     this.removedTabIds.delete(tabId);
     this.outlinerClosedTabIds.delete(tabId);
     this.reconstructedLiveTabIds.add(tabId);
@@ -1721,7 +1835,7 @@ export class RuntimeFactLedger {
       if (!isLiveTabNode(node) || !node.restoredFromClosed || previous.nodes[node.id]?.status !== "closed") {
         continue;
       }
-      this.recordCommandRestoredTab(node.live.tabId);
+      this.recordCommandRestoredTab(node.live.tabId, node.live.windowId);
     }
   }
 
@@ -1731,6 +1845,7 @@ export class RuntimeFactLedger {
 
   deleteCommandRestoredTab(tabId: number): void {
     this.commandRestoredTabIds.delete(tabId);
+    this.commandRestoredTabWindowIds.delete(tabId);
   }
 
   recordCommandRelocatedTabs(
@@ -1826,6 +1941,28 @@ export class RuntimeFactLedger {
     this.commandRelocatedTabEchoes.delete(tabId);
   }
 
+  decideCommandRelocationNativeEcho(input: {
+    event: "attached" | "detached" | "moved";
+    tabId: number;
+    windowId: number | undefined;
+    currentWindowId: number | undefined;
+  }): RuntimeEchoDecision {
+    if (typeof input.windowId !== "number" || typeof input.currentWindowId !== "number") {
+      return { action: "accept" };
+    }
+    const echo = this.commandRelocatedTabEchoes.get(input.tabId);
+    if (!echo || input.currentWindowId !== echo.toWindowId) {
+      return { action: "accept" };
+    }
+
+    const absorbed = input.event === "detached"
+      ? echo.fromWindowIds.has(input.windowId)
+      : input.windowId === echo.toWindowId;
+    return absorbed
+      ? { action: "absorb", effect: "tabRelocation" }
+      : { action: "accept" };
+  }
+
   private clearCommandRelocationEchoIfBrowserMoved(tabId: number, windowId: number | undefined): void {
     if (typeof windowId !== "number") {
       return;
@@ -1836,7 +1973,8 @@ export class RuntimeFactLedger {
     }
   }
 
-  markCommandFocusTarget(tabId: number, windowId: number, tabActive: boolean): void {
+  markCommandFocusTarget(tabId: number, windowId: number, tabActive: boolean, windowActive = false): void {
+    this.commandFocusTargets.set(commandFocusTargetKey(tabId, windowId), focusExpectedEffect(tabId, windowId, tabActive, windowActive));
     if (!tabActive) {
       this.commandFocusedTabIds.add(tabId);
       this.commandFocusedActivationWindowIds.add(windowId);
@@ -1845,6 +1983,7 @@ export class RuntimeFactLedger {
   }
 
   clearCommandFocusTarget(tabId: number, windowId: number): void {
+    this.commandFocusTargets.delete(commandFocusTargetKey(tabId, windowId));
     this.commandFocusedTabIds.delete(tabId);
     this.commandFocusedActivationWindowIds.delete(windowId);
     this.commandFocusedWindowIds.delete(windowId);
@@ -1875,6 +2014,40 @@ export class RuntimeFactLedger {
       this.commandFocusedActivationWindowIds.has(tab.windowId) &&
       Object.keys(changeInfo).every((key) => key === "active");
   }
+}
+
+function commandRelocationExpectedEffect(
+  tabId: number,
+  echo: CommandRelocatedTabEcho
+): Extract<ExpectedRuntimeEffect, { kind: "tabRelocation" }> {
+  return {
+    kind: "tabRelocation",
+    tabId,
+    fromWindowIds: [...echo.fromWindowIds].sort((left, right) => left - right),
+    sequence: echo.sequence,
+    sourceIndex: echo.sourceIndex,
+    sourceWindowId: echo.sourceWindowId,
+    toWindowId: echo.toWindowId
+  };
+}
+
+function focusExpectedEffect(
+  tabId: number,
+  windowId: number,
+  tabActive: boolean,
+  windowActive: boolean
+): Extract<ExpectedRuntimeEffect, { kind: "focus" }> {
+  return {
+    kind: "focus",
+    tabId,
+    windowId,
+    tabActivationExpected: !tabActive,
+    windowFocusExpected: !windowActive
+  };
+}
+
+function commandFocusTargetKey(tabId: number, windowId: number): string {
+  return `${tabId}:${windowId}`;
 }
 
 function isLiveTabNode(node: OutlineNode | undefined): node is LiveTabNode {
