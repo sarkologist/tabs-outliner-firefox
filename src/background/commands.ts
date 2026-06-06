@@ -419,7 +419,7 @@ export function planLiveSubtreeClose(state: OutlineState, nodeId: NodeId): Runti
 }
 
 export function planCloseNodeRuntimeClose(state: OutlineState, nodeId: NodeId): RuntimeClosePlan {
-  const restoredOwnerWindowId = restoredTabSubgroupRuntimeWindowIdForCloseNode(state, nodeId);
+  const restoredOwnerWindowId = restoredTabRuntimeOwnerWindowIdForCloseNode(state, nodeId);
   if (typeof restoredOwnerWindowId === "number") {
     return { windowIds: [restoredOwnerWindowId], tabIds: [] };
   }
@@ -435,13 +435,13 @@ export function planCloseNodeRuntimeClose(state: OutlineState, nodeId: NodeId): 
   return planLiveSubtreeClose(state, nodeId);
 }
 
-function restoredTabSubgroupRuntimeWindowIdForCloseNode(state: OutlineState, nodeId: NodeId): number | undefined {
+function restoredTabRuntimeOwnerWindowIdForCloseNode(state: OutlineState, nodeId: NodeId): number | undefined {
   const node = state.nodes[nodeId];
   if (
     !isLiveTab(node) ||
     node.restoredFromClosed !== true ||
-    node.childIds.length === 0 ||
-    !hasClosedAncestor(state, node.id)
+    hasLiveWindowAncestor(state, node.id) ||
+    hasLiveTabAncestorInRuntimeWindow(state, node.id, node.live.windowId)
   ) {
     return undefined;
   }
@@ -449,7 +449,7 @@ function restoredTabSubgroupRuntimeWindowIdForCloseNode(state: OutlineState, nod
   return node.live.windowId;
 }
 
-function hasClosedAncestor(state: OutlineState, nodeId: NodeId): boolean {
+function hasLiveWindowAncestor(state: OutlineState, nodeId: NodeId): boolean {
   let currentId = state.nodes[nodeId]?.parentId;
   const visited = new Set<NodeId>([nodeId]);
   while (currentId && !visited.has(currentId)) {
@@ -458,7 +458,24 @@ function hasClosedAncestor(state: OutlineState, nodeId: NodeId): boolean {
     if (!current) {
       return false;
     }
-    if (current.status === "closed") {
+    if (isLiveWindow(current)) {
+      return true;
+    }
+    currentId = current.parentId;
+  }
+  return false;
+}
+
+function hasLiveTabAncestorInRuntimeWindow(state: OutlineState, nodeId: NodeId, windowId: number): boolean {
+  let currentId = state.nodes[nodeId]?.parentId;
+  const visited = new Set<NodeId>([nodeId]);
+  while (currentId && !visited.has(currentId)) {
+    visited.add(currentId);
+    const current = state.nodes[currentId];
+    if (!current) {
+      return false;
+    }
+    if (isLiveTab(current) && current.live.windowId === windowId) {
       return true;
     }
     currentId = current.parentId;

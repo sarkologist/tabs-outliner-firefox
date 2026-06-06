@@ -540,7 +540,7 @@ export function closeTab(state: OutlineState, tabId: number, context: CloseConte
 }
 
 export function closeWindow(state: OutlineState, windowId: number, context: CloseContext): OutlineState {
-  const nodeId = findLiveWindowNode(state, windowId) ?? findRestoredTabSubgroupRuntimeOwnerNode(state, windowId);
+  const nodeId = findLiveWindowNode(state, windowId) ?? findRestoredTabRuntimeOwnerNode(state, windowId);
   if (!nodeId) {
     return state;
   }
@@ -2681,12 +2681,48 @@ function findLiveWindowNode(state: OutlineState, windowId: number): NodeId | und
   })?.id;
 }
 
-function findRestoredTabSubgroupRuntimeOwnerNode(state: OutlineState, windowId: number): NodeId | undefined {
+function findRestoredTabRuntimeOwnerNode(state: OutlineState, windowId: number): NodeId | undefined {
   return Object.values(state.nodes).find((node) => {
-    return isRestoredTabSubgroupRuntimeOwner(node) &&
+    return isNodeLiveTab(node) &&
+      node.restoredFromClosed === true &&
       node.live.windowId === windowId &&
-      hasClosedAncestor(state, node.id);
+      !hasLiveWindowAncestor(state, node.id) &&
+      !hasLiveTabAncestorInRuntimeWindow(state, node.id, windowId);
   })?.id;
+}
+
+function hasLiveWindowAncestor(state: OutlineState, nodeId: NodeId): boolean {
+  let currentId = state.nodes[nodeId]?.parentId;
+  const visited = new Set<NodeId>([nodeId]);
+  while (currentId && !visited.has(currentId)) {
+    visited.add(currentId);
+    const current = state.nodes[currentId];
+    if (!current) {
+      return false;
+    }
+    if (isNodeLiveWindow(current)) {
+      return true;
+    }
+    currentId = current.parentId;
+  }
+  return false;
+}
+
+function hasLiveTabAncestorInRuntimeWindow(state: OutlineState, nodeId: NodeId, windowId: number): boolean {
+  let currentId = state.nodes[nodeId]?.parentId;
+  const visited = new Set<NodeId>([nodeId]);
+  while (currentId && !visited.has(currentId)) {
+    visited.add(currentId);
+    const current = state.nodes[currentId];
+    if (!current) {
+      return false;
+    }
+    if (isNodeLiveTab(current) && current.live.windowId === windowId) {
+      return true;
+    }
+    currentId = current.parentId;
+  }
+  return false;
 }
 
 function cloneState(state: OutlineState): OutlineState {

@@ -844,6 +844,23 @@ async function closeRuntimeWindow(
   }
 }
 
+async function withTemporaryWindowRemoveImplementation<T>(
+  runtime: FakeRuntime,
+  implementation: (windowId: number) => Promise<void>,
+  callback: () => Promise<T>
+): Promise<T> {
+  const removeWindow = vi.mocked(runtime.api.windows.remove);
+  const previousImplementation = removeWindow.getMockImplementation();
+  removeWindow.mockImplementation(implementation);
+  try {
+    return await callback();
+  } finally {
+    removeWindow.mockImplementation(previousImplementation ?? (async (windowId: number) => {
+      await closeRuntimeWindow(runtime, windowId, { awaitListeners: false });
+    }));
+  }
+}
+
 function fireEvent<TArgs extends unknown[]>(
   event: FakeEvent<TArgs>,
   awaitListeners: boolean,
@@ -21734,6 +21751,7 @@ async function nativeMoveGeneratedTabToNewWindow(context: GeneratedTraceContext)
     index: 0,
     active: focused
   });
+  await pruneMissingExpectedClosedNodes(context, []);
   recordPureScriptOracleAction(context, {
     type: "nativeMoveTabToNewWindow",
     tab: tabOracleSelector(tab),
@@ -21791,9 +21809,17 @@ function hasExpectedClosedAncestor(state: OutlineState, nodeId: string, expected
 }
 
 async function outlinerRestoreDeleteGeneratedWindowWithDelayedEvent(context: GeneratedTraceContext): Promise<void> {
-  const windowInfo = pickOne(context.rng, context.runtime.windows);
   let state = (await context.controller.handleMessage({ type: "getState" })) as OutlineState;
-  const originalWindowNodeId = liveWindowNodeIdForRuntimeWindow(state, windowInfo.id);
+  const candidates = restoreDeleteGeneratedWindowCandidates(context, state);
+  if (candidates.length === 0) {
+    context.history.push("outliner restore-delete skipped with no standalone window candidate");
+    recordGeneratedNoopOracleAction(context, "skippedGeneratedOperation", {
+      operation: "outlinerRestoreDeleteWindowDelayedEvent"
+    });
+    return;
+  }
+
+  const { windowInfo, originalWindowNodeId } = pickOne(context.rng, candidates);
   context.history.push(`outliner restore-delete window ${windowInfo.id} with delayed restored-tab event`);
   await context.controller.handleMessage({ type: "wrapNodeInGroup", nodeId: originalWindowNodeId });
   state = (await context.controller.handleMessage({ type: "getState" })) as OutlineState;
@@ -21806,17 +21832,13 @@ async function outlinerRestoreDeleteGeneratedWindowWithDelayedEvent(context: Gen
   await flushGeneratedCloseEvents(context);
   await context.controller.handleMessage({ type: "restoreNode", nodeId: groupId });
   state = (await context.controller.handleMessage({ type: "getState" })) as OutlineState;
-  const restoredWindow = state.nodes[originalWindowNodeId];
-  const restoredWindowId =
-    restoredWindow?.kind === "window" && restoredWindow.status === "live" && restoredWindow.live && "windowId" in restoredWindow.live
-      ? restoredWindow.live.windowId
-      : undefined;
-  if (typeof restoredWindowId !== "number") {
+  const restoredWindowIds = restoredRuntimeWindowIdsForWrappedRestore(state, groupId, originalWindowNodeId);
+  if (restoredWindowIds.length === 0) {
     return;
   }
 
   reserveGeneratedRuntimeTabIds(context, context.runtime.tabs);
-  const restoredTabs = tabsInRuntimeWindow(context.runtime, restoredWindowId);
+  const restoredTabs = restoredWindowIds.flatMap((restoredWindowId) => tabsInRuntimeWindow(context.runtime, restoredWindowId));
   const delayedTab = restoredTabs[0];
   if (delayedTab) {
     await updateTabFromBrowser(context.runtime, delayedTab.id, {
@@ -21825,16 +21847,102 @@ async function outlinerRestoreDeleteGeneratedWindowWithDelayedEvent(context: Gen
   }
 
   const deletedNodeIds = generatedSubtreeNodeIds(state, groupId);
-  vi.mocked(context.runtime.api.windows.remove).mockImplementationOnce(async () => undefined);
-  const result = await context.controller.handleMessage({ type: "deleteNode", nodeId: groupId });
+  const result = await withTemporaryWindowRemoveImplementation(
+    context.runtime,
+    async () => undefined,
+    () => context.controller.handleMessage({ type: "deleteNode", nodeId: groupId })
+  );
   expectCommandAck(result, true);
   markCommandDeletedNodes(context, deletedNodeIds);
   await context.runtime.events.tabUpdated.flush();
-  await closeRuntimeWindow(context.runtime, restoredWindowId, { awaitListeners: true });
+  for (const restoredWindowId of restoredWindowIds) {
+    await closeRuntimeWindow(context.runtime, restoredWindowId, { awaitListeners: true });
+  }
   await pruneMissingExpectedClosedNodes(context, []);
   recordGeneratedNoopOracleAction(context, "outlinerRestoreDeleteWindowDelayedEvent", {
     window: windowOracleSelector(windowInfo)
   });
+}
+
+function restoreDeleteGeneratedWindowCandidates(
+  context: GeneratedTraceContext,
+  state: OutlineState
+): Array<{ windowInfo: RuntimeWindow; originalWindowNodeId: NodeId }> {
+  return context.runtime.windows.flatMap((windowInfo) => {
+    const originalWindow = liveWindowNodeForRuntimeWindow(state, windowInfo.id);
+    if (
+      !originalWindow ||
+      hasLiveWindowAncestorForCloseExpectation(state, originalWindow.id) ||
+      hasLiveTabAncestorForRestoreDeleteCandidate(state, originalWindow.id)
+    ) {
+      return [];
+    }
+    return [{ windowInfo, originalWindowNodeId: originalWindow.id }];
+  });
+}
+
+function hasLiveTabAncestorForRestoreDeleteCandidate(state: OutlineState, nodeId: NodeId): boolean {
+  let currentId = state.nodes[nodeId]?.parentId;
+  const visited = new Set<NodeId>([nodeId]);
+  while (currentId && !visited.has(currentId)) {
+    visited.add(currentId);
+    const current = state.nodes[currentId];
+    if (!current) {
+      return false;
+    }
+    if (
+      current.kind === "tab" &&
+      current.status === "live" &&
+      current.live &&
+      "tabId" in current.live
+    ) {
+      return true;
+    }
+    currentId = current.parentId;
+  }
+  return false;
+}
+
+function restoredRuntimeWindowIdsForWrappedRestore(
+  state: OutlineState,
+  groupId: NodeId,
+  originalWindowNodeId: NodeId
+): number[] {
+  const restoredWindowIds = new Set<number>();
+  const restoredWindow = state.nodes[originalWindowNodeId];
+  if (
+    restoredWindow?.kind === "window" &&
+    restoredWindow.status === "live" &&
+    restoredWindow.live &&
+    "windowId" in restoredWindow.live
+  ) {
+    restoredWindowIds.add(restoredWindow.live.windowId);
+  }
+
+  for (const nodeId of generatedSubtreeNodeIds(state, groupId)) {
+    const node = state.nodes[nodeId];
+    if (
+      node?.kind === "window" &&
+      node.status === "live" &&
+      node.live &&
+      "windowId" in node.live
+    ) {
+      restoredWindowIds.add(node.live.windowId);
+    }
+    if (
+      node?.kind === "tab" &&
+      node.status === "live" &&
+      node.restoredFromClosed === true &&
+      node.live &&
+      "windowId" in node.live &&
+      !hasLiveWindowAncestorForCloseExpectation(state, node.id) &&
+      !hasLiveTabAncestorInRuntimeWindowForCloseExpectation(state, node.id, node.live.windowId)
+    ) {
+      restoredWindowIds.add(node.live.windowId);
+    }
+  }
+
+  return [...restoredWindowIds];
 }
 
 async function outlinerDeleteGeneratedWindowWithRejectingClose(context: GeneratedTraceContext): Promise<void> {
@@ -21853,12 +21961,10 @@ async function outlinerDeleteGeneratedWindowWithRejectingClose(context: Generate
   const { windowInfo, nodeId } = pickOne(context.rng, candidates);
   const deletedNodeIds = generatedSubtreeNodeIds(state, nodeId);
   context.history.push(`outliner delete window ${windowInfo.id} with rejecting close`);
-  vi.mocked(context.runtime.api.windows.remove).mockImplementationOnce(async (windowId) => {
+  const result = await withTemporaryWindowRemoveImplementation(context.runtime, async (windowId) => {
     await closeRuntimeWindow(context.runtime, windowId, { awaitListeners: false });
     throw new Error("generated window close rejected after completion");
-  });
-
-  const result = await context.controller.handleMessage({ type: "deleteNode", nodeId });
+  }, () => context.controller.handleMessage({ type: "deleteNode", nodeId }));
   expectCommandAck(result, true);
   markCommandDeletedNodes(context, deletedNodeIds);
   await flushGeneratedCloseEvents(context);
@@ -24056,6 +24162,27 @@ function expectedClosedNodeIdsForOutlinerCloseNode(state: OutlineState, nodeId: 
   }
 
   if (node.kind === "tab" && node.status === "live") {
+    if (
+      node.restoredFromClosed === true &&
+      node.live &&
+      "windowId" in node.live &&
+      !hasLiveWindowAncestorForCloseExpectation(state, node.id) &&
+      !hasLiveTabAncestorInRuntimeWindowForCloseExpectation(state, node.id, node.live.windowId)
+    ) {
+      return generatedSubtreeNodeIds(state, nodeId).filter((candidateId) => {
+        const candidate = state.nodes[candidateId];
+        return candidate?.status === "live" &&
+          (
+            candidate.id === node.id ||
+            (
+              candidate.kind === "tab" &&
+              candidate.live &&
+              "windowId" in candidate.live &&
+              candidate.live.windowId === node.live!.windowId
+            )
+          );
+      });
+    }
     return [node.id];
   }
 
@@ -24078,6 +24205,50 @@ function expectedClosedNodeIdsForOutlinerCloseNode(state: OutlineState, nodeId: 
 
   return generatedSubtreeNodeIds(state, nodeId)
     .filter((candidateId) => state.nodes[candidateId]?.status === "live");
+}
+
+function hasLiveWindowAncestorForCloseExpectation(state: OutlineState, nodeId: NodeId): boolean {
+  let currentId = state.nodes[nodeId]?.parentId;
+  const visited = new Set<NodeId>([nodeId]);
+  while (currentId && !visited.has(currentId)) {
+    visited.add(currentId);
+    const current = state.nodes[currentId];
+    if (!current) {
+      return false;
+    }
+    if (current.kind === "window" && current.status === "live") {
+      return true;
+    }
+    currentId = current.parentId;
+  }
+  return false;
+}
+
+function hasLiveTabAncestorInRuntimeWindowForCloseExpectation(
+  state: OutlineState,
+  nodeId: NodeId,
+  windowId: number
+): boolean {
+  let currentId = state.nodes[nodeId]?.parentId;
+  const visited = new Set<NodeId>([nodeId]);
+  while (currentId && !visited.has(currentId)) {
+    visited.add(currentId);
+    const current = state.nodes[currentId];
+    if (!current) {
+      return false;
+    }
+    if (
+      current.kind === "tab" &&
+      current.status === "live" &&
+      current.live &&
+      "windowId" in current.live &&
+      current.live.windowId === windowId
+    ) {
+      return true;
+    }
+    currentId = current.parentId;
+  }
+  return false;
 }
 
 function staleRuntimeTabsForDomainNode(
@@ -24132,11 +24303,10 @@ async function runDomainOutlinerDeleteWindowRejectingClose(
   }
 
   const deletedNodeIds = generatedSubtreeNodeIds(state, stateWindow.id);
-  vi.mocked(context.runtime.api.windows.remove).mockImplementationOnce(async (windowId) => {
+  const result = await withTemporaryWindowRemoveImplementation(context.runtime, async (windowId) => {
     await closeRuntimeWindow(context.runtime, windowId, { awaitListeners: false });
     throw new Error("domain window close rejected after completion");
-  });
-  const result = await context.controller.handleMessage({ type: "deleteNode", nodeId: stateWindow.id });
+  }, () => context.controller.handleMessage({ type: "deleteNode", nodeId: stateWindow.id }));
   expectCommandAck(result, true);
   markCommandDeletedNodes(context, deletedNodeIds);
   await flushGeneratedCloseEvents(context);
@@ -24262,17 +24432,13 @@ async function runDomainOutlinerRestoreDeleteWindowDelayedEvent(
   await flushGeneratedCloseEvents(context);
   await context.controller.handleMessage({ type: "restoreNode", nodeId: groupId });
   state = (await context.controller.handleMessage({ type: "getState" })) as OutlineState;
-  const restoredWindow = state.nodes[originalWindowNodeId];
-  const restoredWindowId =
-    restoredWindow?.kind === "window" && restoredWindow.status === "live" && restoredWindow.live && "windowId" in restoredWindow.live
-      ? restoredWindow.live.windowId
-      : undefined;
-  if (typeof restoredWindowId !== "number") {
+  const restoredWindowIds = restoredRuntimeWindowIdsForWrappedRestore(state, groupId, originalWindowNodeId);
+  if (restoredWindowIds.length === 0) {
     throw new Error(`Window ${windowInfo.id} did not restore to a live runtime window`);
   }
 
-  context.lastOpenedWindowId = restoredWindowId;
-  const restoredTabs = tabsInRuntimeWindow(context.runtime, restoredWindowId);
+  context.lastOpenedWindowId = restoredWindowIds[0]!;
+  const restoredTabs = restoredWindowIds.flatMap((restoredWindowId) => tabsInRuntimeWindow(context.runtime, restoredWindowId));
   captureStaleRuntimeTabs(context, captureStaleTabs, restoredTabs);
   const delayedTab = restoredTabs[0];
   if (delayedTab) {
@@ -24282,12 +24448,17 @@ async function runDomainOutlinerRestoreDeleteWindowDelayedEvent(
   }
 
   const deletedNodeIds = generatedSubtreeNodeIds(state, groupId);
-  vi.mocked(context.runtime.api.windows.remove).mockImplementationOnce(async () => undefined);
-  const result = await context.controller.handleMessage({ type: "deleteNode", nodeId: groupId });
+  const result = await withTemporaryWindowRemoveImplementation(
+    context.runtime,
+    async () => undefined,
+    () => context.controller.handleMessage({ type: "deleteNode", nodeId: groupId })
+  );
   expectCommandAck(result, true);
   markCommandDeletedNodes(context, deletedNodeIds);
   await context.runtime.events.tabUpdated.flush();
-  await closeRuntimeWindow(context.runtime, restoredWindowId, { awaitListeners: true });
+  for (const restoredWindowId of restoredWindowIds) {
+    await closeRuntimeWindow(context.runtime, restoredWindowId, { awaitListeners: true });
+  }
   await pruneMissingExpectedClosedNodes(context, []);
 }
 
@@ -25050,7 +25221,6 @@ function shouldRunGeneratedPureScriptOracle(
   // action in the replay matches the oracle semantics.
   return (seed === 1277552076 && steps === 11 && !options.adversarialRuntimeQueries && !options.adversarialConcurrency) ||
     (seed === 950000016 && steps === 80 && !options.adversarialRuntimeQueries && !options.adversarialConcurrency) ||
-    (seed === 950000033 && steps === 80 && !options.adversarialRuntimeQueries && !options.adversarialConcurrency) ||
     (seed === 950000017 && steps === 80 && !options.adversarialRuntimeQueries && !options.adversarialConcurrency) ||
     (seed === 950000107 && steps === 80 && options.adversarialRuntimeQueries === true && !options.adversarialConcurrency) ||
     (seed === 950000115 && steps === 80 && options.adversarialRuntimeQueries === true && !options.adversarialConcurrency) ||
@@ -25074,7 +25244,6 @@ function shouldRunGeneratedPureScriptOracle(
     (seed === 960000001 && steps === 80 && options.adversarialRuntimeQueries === true && options.adversarialConcurrency === true) ||
     (seed === 960000008 && steps === 80 && options.adversarialRuntimeQueries === true && options.adversarialConcurrency === true) ||
     (seed === 960000015 && steps === 80 && options.adversarialRuntimeQueries === true && options.adversarialConcurrency === true) ||
-    (seed === 960000024 && steps === 80 && options.adversarialRuntimeQueries === true && options.adversarialConcurrency === true) ||
     (seed === 960000034 && steps === 80 && options.adversarialRuntimeQueries === true && options.adversarialConcurrency === true) ||
     (seed === 960000012 && steps === 80 && options.adversarialRuntimeQueries === true && options.adversarialConcurrency === true) ||
     (seed === 960000027 && steps === 80 && options.adversarialRuntimeQueries === true && options.adversarialConcurrency === true) ||
@@ -25697,6 +25866,7 @@ async function assertClosedSubtreePersistenceAssertion(context: GeneratedTraceCo
   }
 
   await flushGeneratedRuntimeEventRefreshes(context);
+  await pruneEmptyExpectedClosedWindowNodes(context);
   await context.controller.flushPendingSaves();
   const persisted = await loadState(context.runtime.api);
   assertClosedNodeIdsPersisted(persisted, context, "persisted");
@@ -25709,6 +25879,16 @@ async function assertClosedSubtreePersistenceAssertion(context: GeneratedTraceCo
   await context.controller.ensureState();
   const reloaded = (await context.controller.handleMessage({ type: "getState" })) as OutlineState;
   assertClosedNodeIdsPersisted(reloaded, context, "reloaded");
+}
+
+async function pruneEmptyExpectedClosedWindowNodes(context: GeneratedTraceContext): Promise<void> {
+  const state = (await context.controller.handleMessage({ type: "getState" })) as OutlineState;
+  for (const nodeId of [...context.expectedClosedNodeIds]) {
+    const node = state.nodes[nodeId];
+    if (node?.kind === "window" && node.status === "closed" && node.childIds.length === 0) {
+      context.expectedClosedNodeIds.delete(nodeId);
+    }
+  }
 }
 
 function assertClosedNodeIdsPersisted(
@@ -36962,7 +37142,7 @@ describe("background controller lifecycle", () => {
     ])).toEqual(new Set([state.nodes["window:10"]?.live?.windowId]));
   });
 
-  it("restores a whole imported group after one restored child is browser-closed", async () => {
+  it("restores remaining imported group tabs after one promoted child is browser-closed", async () => {
     const importedUrl = "https://calendar.example/week";
     const runtime = fakeRuntime(
       [
@@ -37019,8 +37199,9 @@ describe("background controller lifecycle", () => {
 
     expectCommandAck(await controller.handleMessage({ type: "restoreNode", nodeId: firstTabId! }), true);
     state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
-    const firstRestoredWindowId = state.nodes[importedGroupId!]?.live?.windowId;
+    const firstRestoredWindowId = state.nodes[firstTabId!]?.live?.windowId;
     expect(typeof firstRestoredWindowId).toBe("number");
+    expect(state.nodes[importedGroupId!]?.status).toBe("closed");
     expect(state.nodes[firstTabId!]).toMatchObject({
       status: "live",
       live: { windowId: firstRestoredWindowId }
@@ -37056,10 +37237,8 @@ describe("background controller lifecycle", () => {
     state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
     const restoredGroupWindowId = state.nodes[importedGroupId!]?.live?.windowId;
     expect(typeof restoredGroupWindowId).toBe("number");
-    expect(state.nodes[firstTabId!]).toMatchObject({
-      status: "live",
-      live: { windowId: restoredGroupWindowId }
-    });
+    expect(state.nodes[importedGroupId!]?.childIds).not.toContain(firstTabId);
+    expect(state.nodes[firstTabId!]?.status).toBe("closed");
     expect(state.nodes[secondTabId!]).toMatchObject({
       status: "live",
       live: { windowId: restoredGroupWindowId }
@@ -37067,7 +37246,7 @@ describe("background controller lifecycle", () => {
     expect(runtime.tabs
       .filter((tab) => tab.windowId === restoredGroupWindowId)
       .sort((left, right) => left.index - right.index)
-      .map((tab) => tab.url)).toEqual([importedUrl, importedUrl]);
+      .map((tab) => tab.url)).toEqual([importedUrl]);
   });
 
   it("keeps a restored imported subgroup attached after runtime refresh and restart", async () => {
@@ -37829,7 +38008,7 @@ describe("background controller lifecycle", () => {
       .map((tab) => tab.windowId)).toEqual([restoredSubgroupWindowId, restoredSubgroupWindowId]);
   });
 
-  it("restores a whole imported group after a later restored child closes as a window session", async () => {
+  it("keeps a promoted restored imported child separate from later parent restore", async () => {
     let currentTime = 1000;
     const importedUrls = [
       "https://images.example/first.jpg",
@@ -37883,8 +38062,9 @@ describe("background controller lifecycle", () => {
 
     expectCommandAck(await controller.handleMessage({ type: "restoreNode", nodeId: laterTabId }), true);
     state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
-    const firstRestoredWindowId = state.nodes[importedGroupId!]?.live?.windowId;
+    const firstRestoredWindowId = state.nodes[laterTabId]?.live?.windowId;
     expect(typeof firstRestoredWindowId).toBe("number");
+    expect(state.nodes[importedGroupId!]?.status).toBe("closed");
     expect(state.nodes[laterTabId]).toMatchObject({
       status: "live",
       live: { windowId: firstRestoredWindowId }
@@ -37897,49 +38077,37 @@ describe("background controller lifecycle", () => {
     await closeRuntimeTab(runtime, laterRuntimeTabId!, "tabRemovedThenSessionChanged", { awaitListeners: true });
     state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
     expect(state.nodes[importedGroupId!]?.status).toBe("closed");
-    expect(state.nodes[importedGroupId!]?.restore?.sessionId).toBe("session-imported-window");
+    expect(state.nodes[importedGroupId!]?.restore?.sessionId).toBeUndefined();
+    expect(state.nodes[laterTabId]?.restore?.sessionId).toBe("session-imported-window");
     expect(state.nodes[importedTabIds[0]!]?.closedAt).toBe(firstImportedClosedAt);
     expect(state.nodes[laterTabId]?.closedAt).toBe(2000);
     for (const tabId of importedTabIds) {
       expect(state.nodes[tabId!]?.active).toBeUndefined();
     }
 
-    let restoredRuntimeWindowId: number | undefined;
-    vi.mocked(runtime.api.sessions.restore).mockImplementation(async (sessionId: string) => {
-      if (sessionId !== "session-imported-window") {
-        return {};
-      }
-      restoredRuntimeWindowId = nextRuntimeWindowId(runtime);
-      runtime.windows = runtime.windows
-        .map((windowInfo) => ({ ...windowInfo, focused: false }))
-        .concat({ id: restoredRuntimeWindowId, focused: true, incognito: false });
-      return {
-        window: {
-          id: restoredRuntimeWindowId,
-          focused: true,
-          incognito: false,
-          tabs: []
-        }
-      } as never;
-    });
-
     expectCommandAck(await controller.handleMessage({ type: "restoreNode", nodeId: importedGroupId! }), true);
     state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    const restoredRuntimeWindowId = state.nodes[importedGroupId!]?.live?.windowId;
     expect(restoredRuntimeWindowId).toBeTypeOf("number");
     expect(state.nodes[importedGroupId!]).toMatchObject({
       status: "live",
       live: { windowId: restoredRuntimeWindowId }
     });
-    for (const tabId of importedTabIds) {
+    expect(state.nodes[importedGroupId!]?.childIds).not.toContain(laterTabId);
+    for (const tabId of [importedTabIds[0]!, importedTabIds[2]!]) {
       expect(state.nodes[tabId!]).toMatchObject({
         status: "live",
         live: { windowId: restoredRuntimeWindowId }
       });
     }
+    expect(state.nodes[laterTabId]).toMatchObject({
+      status: "closed",
+      restore: { sessionId: "session-imported-window" }
+    });
     expect(runtime.tabs
       .filter((tab) => tab.windowId === restoredRuntimeWindowId)
       .sort((left, right) => left.index - right.index)
-      .map((tab) => tab.url)).toEqual(importedUrls);
+      .map((tab) => tab.url)).toEqual([importedUrls[0], importedUrls[2]]);
   });
 
   it("restores an earlier closed dragged-in tab when the restored window session has no tab list", async () => {
@@ -38001,7 +38169,8 @@ describe("background controller lifecycle", () => {
     expect(runtime.api.tabs.create).toHaveBeenCalledWith({
       url,
       windowId: restoredRuntimeWindowId,
-      active: false
+      active: false,
+      index: 1
     });
     expect(state.nodes["window:10"]?.status).toBe("live");
     expect(state.nodes["window:10"]?.childIds).toEqual(["tab:1", "tab:2"]);

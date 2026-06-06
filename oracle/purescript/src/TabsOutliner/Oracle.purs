@@ -595,6 +595,7 @@ isGeneratedNoopAction actionType =
     , "staleLiveTabCreatedEventWithStaleQuery"
     , "staleLiveUpdatedEvent"
     , "staleLiveCreatedEvent"
+    , "skippedGeneratedOperation"
     ]
 
 decodeRestoreNodeAction :: Json -> Result RestoreNodeAction
@@ -2018,7 +2019,8 @@ clearRuntimeWindowFocusIfRestoredFocused restored existing =
 
 appendRestoredRuntimeTabs :: Array RuntimeTab -> Array RuntimeTab -> Array RuntimeTab
 appendRestoredRuntimeTabs restored existing =
-  appendArray
+  foldlArray
+    (\current tab -> createRuntimeTab current tab)
     (filterArray (\tab -> notBoolean (anyArray (\restoredTab -> tabIdEq restoredTab.id tab.id) restored)) existing)
     restored
 
