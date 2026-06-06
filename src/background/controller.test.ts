@@ -36984,6 +36984,100 @@ describe("background controller lifecycle", () => {
       .map((tab) => tab.url)).toEqual([importedUrl, importedUrl]);
   });
 
+  it("keeps a restored imported subgroup attached after runtime refresh and restart", async () => {
+    const importedUrls = [
+      "https://subgroup.example/first",
+      "https://subgroup.example/second"
+    ];
+    const runtime = fakeRuntime(
+      [
+        { id: 10, focused: true, incognito: false }
+      ],
+      [
+        { id: 1, windowId: 10, index: 0, active: true, url: "https://one.example/", title: "One" }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+
+    expectCommandAck(await controller.handleMessage({
+      type: "importTree",
+      tree: {
+        schema: PORTABLE_TREE_SCHEMA,
+        version: 1,
+        exportedAt: "2026-05-18T12:00:00.000Z",
+        roots: [
+          {
+            kind: "window",
+            title: "Imported parent",
+            children: [
+              {
+                kind: "window",
+                title: "Imported subgroup",
+                children: importedUrls.map((url, index) => ({
+                  kind: "tab" as const,
+                  title: `Imported subgroup ${index + 1}`,
+                  url,
+                  children: []
+                }))
+              }
+            ]
+          }
+        ]
+      }
+    }), true);
+
+    let state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    const importedParentId = Object.values(state.nodes)
+      .find((node) => node.kind === "window" && node.title === "Imported parent")?.id;
+    const importedSubgroupId = Object.values(state.nodes)
+      .find((node) => node.kind === "window" && node.title === "Imported subgroup")?.id;
+    expect(importedParentId).toBeDefined();
+    expect(importedSubgroupId).toBeDefined();
+
+    runtime.broadcasts.length = 0;
+    expectCommandAck(await controller.handleMessage({ type: "restoreNode", nodeId: importedSubgroupId! }), true);
+    const restoreBroadcast = stateBroadcasts(runtime.broadcasts).at(-1) as
+      | {
+          type?: string;
+          rootIds?: NodeId[];
+          updatedNodes?: OutlineState["nodes"][string][];
+        }
+      | undefined;
+    const restoredPatchNodeIds = restoreBroadcast?.updatedNodes?.map((node) => node.id) ?? [];
+    expect(restoreBroadcast?.type).toBe("treeStructureUpdated");
+    expect(restoreBroadcast?.rootIds).not.toContain(importedSubgroupId);
+    expect(restoredPatchNodeIds).toContain(importedParentId);
+    expect(restoredPatchNodeIds).toContain(importedSubgroupId);
+
+    expectCommandAck(await controller.handleMessage({ type: "refresh" }), false);
+    state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    const restoredSubgroupWindowId = state.nodes[importedSubgroupId!]?.live?.windowId;
+    expect(typeof restoredSubgroupWindowId).toBe("number");
+
+    expect(state.nodes[importedParentId!]?.status).toBe("closed");
+    expect(state.nodes[importedParentId!]?.childIds).toContain(importedSubgroupId);
+    expect(state.nodes[importedSubgroupId!]).toMatchObject({
+      status: "live",
+      parentId: importedParentId,
+      live: { windowId: restoredSubgroupWindowId }
+    });
+    expect(state.rootIds).not.toContain(importedSubgroupId);
+
+    await controller.flushPendingSaves();
+    const restarted = restartControllerAbrupt(runtime, () => 2000);
+    state = await restarted.ensureState();
+
+    expect(state.nodes[importedParentId!]?.status).toBe("closed");
+    expect(state.nodes[importedParentId!]?.childIds).toContain(importedSubgroupId);
+    expect(state.nodes[importedSubgroupId!]).toMatchObject({
+      status: "live",
+      parentId: importedParentId,
+      live: { windowId: restoredSubgroupWindowId }
+    });
+    expect(state.rootIds).not.toContain(importedSubgroupId);
+  });
+
   it("restores a whole imported group after a later restored child closes as a window session", async () => {
     let currentTime = 1000;
     const importedUrls = [

@@ -1029,8 +1029,23 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         });
       }
       if (message.type === "restoreNode") {
-        await persistWithNodeStateUpdate(current, result.state, restorePatchNodeIds, { saveSchedule });
-        await flushRuntimeProvenanceSaveIfChanged(current, result.state);
+        const restoreTreePatchNodeIds = restoreTreeStructureCandidateNodeIdsForClosedParentWindowRestore(
+          current,
+          result.state,
+          restorePatchNodeIds ?? [message.nodeId]
+        );
+        if (restoreTreePatchNodeIds) {
+          const update = perfTrace.measure("background.patch.build.treeStructure", { command: message.type }, () =>
+            treeStructureUpdateFromCandidateNodeIds(current, result.state, restoreTreePatchNodeIds, {
+              includeUnchanged: true
+            })
+          );
+          await broadcastTreeStructureUpdate(update);
+          scheduleStateSave(result.state, saveSchedule, candidateNodeIdsForPatch(update));
+        } else {
+          await persistWithNodeStateUpdate(current, result.state, restorePatchNodeIds, { saveSchedule });
+        }
+        await flushRuntimeProvenanceSaveIfChanged(current, result.state, restoreTreePatchNodeIds);
         if (commandTransaction) {
           runtimeFacts.commitCommand(commandTransaction.id);
         }
@@ -6100,9 +6115,10 @@ function treeStructureUpdateFromCandidateNodeIds(
   previous: OutlineState,
   next: OutlineState,
   candidateNodeIds: readonly NodeId[],
-  options: { diffMode?: StateDiffMode } = {}
+  options: { diffMode?: StateDiffMode; includeUnchanged?: boolean } = {}
 ): TreeStructureUpdate {
   const diffMode = options.diffMode ?? "identity";
+  const includeUnchanged = options.includeUnchanged ?? false;
   const uniqueCandidateNodeIds = uniqueDefinedNodeIds([...candidateNodeIds]);
   const deletedNodeIds = uniqueCandidateNodeIds.filter((nodeId) => previous.nodes[nodeId] && !next.nodes[nodeId]);
   const updatedNodes: OutlineNode[] = [];
@@ -6112,7 +6128,7 @@ function treeStructureUpdateFromCandidateNodeIds(
       continue;
     }
     const previousNode = previous.nodes[nodeId];
-    if (!previousNode || nodeChangedForPatch(previousNode, node, diffMode)) {
+    if (includeUnchanged || !previousNode || nodeChangedForPatch(previousNode, node, diffMode)) {
       updatedNodes.push(node);
     }
   }
@@ -6431,6 +6447,62 @@ function restorePatchCandidateNodeIds(
     nodeIds.add(index.activeWindowNodeId);
   }
   return [...nodeIds];
+}
+
+function restoreTreeStructureCandidateNodeIdsForClosedParentWindowRestore(
+  previous: OutlineState,
+  next: OutlineState,
+  restorePatchNodeIds: readonly NodeId[]
+): NodeId[] | undefined {
+  const candidateNodeIds = new Set<NodeId>();
+  let needsTreeStructurePatch = false;
+
+  for (const nodeId of restorePatchNodeIds) {
+    const previousNode = previous.nodes[nodeId];
+    const node = next.nodes[nodeId];
+    if (
+      previousNode?.status !== "closed" ||
+      node?.kind !== "window" ||
+      node.status !== "live"
+    ) {
+      continue;
+    }
+
+    const parent = node.parentId ? next.nodes[node.parentId] : undefined;
+    if (parent?.status !== "closed") {
+      continue;
+    }
+
+    needsTreeStructurePatch = true;
+    addSubtreeNodeIds(next, node.id, candidateNodeIds);
+    addAncestorNodeIds(previous, next, node.id, candidateNodeIds);
+  }
+
+  if (!needsTreeStructurePatch) {
+    return undefined;
+  }
+
+  for (const nodeId of restorePatchNodeIds) {
+    candidateNodeIds.add(nodeId);
+    addAncestorNodeIds(previous, next, nodeId, candidateNodeIds);
+  }
+
+  return [...candidateNodeIds];
+}
+
+function addAncestorNodeIds(
+  previous: OutlineState,
+  next: OutlineState,
+  nodeId: NodeId,
+  result: Set<NodeId>
+): void {
+  const visited = new Set<NodeId>([nodeId]);
+  let parentId = next.nodes[nodeId]?.parentId ?? previous.nodes[nodeId]?.parentId;
+  while (parentId && !visited.has(parentId)) {
+    visited.add(parentId);
+    result.add(parentId);
+    parentId = next.nodes[parentId]?.parentId ?? previous.nodes[parentId]?.parentId;
+  }
 }
 
 function saveScheduleForCommand(type: BackgroundCommand["type"]): SaveSchedule {
