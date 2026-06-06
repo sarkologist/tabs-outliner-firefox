@@ -1963,6 +1963,99 @@ describe("background commands", () => {
     expect(restored.state.nodes[imported.second.id]?.live).toBeUndefined();
   });
 
+  it("restores one tab session in a parent group that also has restore metadata", async () => {
+    const imported = await importNestedSiblingGroup();
+    const state: OutlineState = {
+      ...imported.state,
+      nodes: {
+        ...imported.state.nodes,
+        [imported.inner.id]: {
+          ...imported.inner,
+          restore: {
+            sessionId: "session-imported-inner"
+          }
+        },
+        [imported.first.id]: {
+          ...imported.first,
+          restore: {
+            ...(imported.first.restore ?? {}),
+            sessionId: "session-imported-first"
+          }
+        }
+      }
+    };
+    const adapter = fakeAdapter({
+      restoreSession: vi.fn(async () => ({
+        tab: {
+          id: 21,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://imported.example/first",
+          title: "Imported first tab"
+        }
+      })),
+      createWindow: vi.fn(async ({ tabId, url }) => {
+        if (url) {
+          throw new Error(`Unexpected URL window create: ${url}`);
+        }
+        return {
+          id: 42,
+          focused: true,
+          incognito: false,
+          tabs: typeof tabId === "number"
+            ? [
+                {
+                  id: tabId,
+                  windowId: 42,
+                  index: 0,
+                  active: true,
+                  url: "https://imported.example/first",
+                  title: "Imported first tab"
+                }
+              ]
+            : []
+        };
+      })
+    });
+
+    const restored = await runCommand(state, adapter, {
+      type: "restoreNode",
+      nodeId: imported.first.id
+    });
+
+    expect(adapter.restoreSession).toHaveBeenCalledWith("session-imported-first");
+    expect(adapter.createWindow).toHaveBeenCalledWith({ tabId: 21 });
+    expect(adapter.createTab).not.toHaveBeenCalled();
+    expect(restored.state.rootIds).toEqual(imported.state.rootIds);
+    expect(restored.state.rootIds).not.toContain(imported.first.id);
+    expect(restored.state.nodes[imported.outer.id]).toMatchObject({
+      status: "closed",
+      childIds: [imported.inner.id]
+    });
+    expect(restored.state.nodes[imported.inner.id]).toMatchObject({
+      status: "live",
+      parentId: imported.outer.id,
+      childIds: [imported.first.id, imported.second.id],
+      live: { windowId: 42 }
+    });
+    expect(restored.state.nodes[imported.inner.id]?.restore).toBeUndefined();
+    expect(restored.state.nodes[imported.first.id]).toMatchObject({
+      status: "live",
+      parentId: imported.inner.id,
+      live: { tabId: 21, windowId: 42 }
+    });
+    expect(restored.state.nodes[imported.second.id]).toMatchObject({
+      status: "closed",
+      parentId: imported.inner.id,
+      restore: {
+        url: "https://imported.example/second",
+        title: "Imported second tab"
+      }
+    });
+    expect(restored.state.nodes[imported.second.id]?.live).toBeUndefined();
+  });
+
   it("restores nested parent tabs inside an imported subgroup window", async () => {
     const state: OutlineState = bootstrapFromWindows(runtimeWindows, { now: 1000 });
     let nextCreatedTabId = 300;

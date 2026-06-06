@@ -37445,6 +37445,142 @@ describe("background controller lifecycle", () => {
     expect(state.rootIds).not.toContain(importedSubgroupId);
   });
 
+  it("keeps a single restored child tab attached after browser tab events when its parent has restore metadata", async () => {
+    const storedState: OutlineState = {
+      version: 1,
+      rootIds: ["window:outer"],
+      nodes: {
+        "window:outer": {
+          id: "window:outer",
+          kind: "window",
+          status: "closed",
+          childIds: ["window:inner"],
+          title: "Imported parent",
+          collapsed: false,
+          createdAt: 1000,
+          updatedAt: 1000,
+          closedAt: 1000
+        },
+        "window:inner": {
+          id: "window:inner",
+          kind: "window",
+          status: "closed",
+          parentId: "window:outer",
+          childIds: ["tab:first", "tab:second"],
+          title: "Imported subgroup",
+          collapsed: false,
+          createdAt: 1000,
+          updatedAt: 1000,
+          closedAt: 1000,
+          restore: {
+            sessionId: "session-imported-inner"
+          }
+        },
+        "tab:first": {
+          id: "tab:first",
+          kind: "tab",
+          status: "closed",
+          parentId: "window:inner",
+          childIds: [],
+          title: "Imported first tab",
+          url: "https://imported.example/first",
+          collapsed: false,
+          createdAt: 1000,
+          updatedAt: 1000,
+          closedAt: 1000,
+          restore: {
+            sessionId: "session-imported-first",
+            url: "https://imported.example/first",
+            title: "Imported first tab"
+          }
+        },
+        "tab:second": {
+          id: "tab:second",
+          kind: "tab",
+          status: "closed",
+          parentId: "window:inner",
+          childIds: [],
+          title: "Imported second tab",
+          url: "https://imported.example/second",
+          collapsed: false,
+          createdAt: 1000,
+          updatedAt: 1000,
+          closedAt: 1000,
+          restore: {
+            url: "https://imported.example/second",
+            title: "Imported second tab"
+          }
+        }
+      }
+    };
+    const runtime = fakeRuntime(
+      [
+        { id: 10, focused: true, incognito: false }
+      ],
+      [
+        { id: 1, windowId: 10, index: 0, active: true, url: "https://one.example/", title: "One" }
+      ],
+      { initialStorage: outlineStateV3Changes(storedState).setItems }
+    );
+    const restoredTab: RuntimeTab = {
+      id: 21,
+      windowId: 10,
+      index: 1,
+      active: true,
+      url: "https://imported.example/first",
+      title: "Imported first tab"
+    };
+    vi.mocked(runtime.api.sessions.restore).mockImplementation(async () => {
+      runtime.tabs = [
+        ...runtime.tabs.filter((tab) => tab.id !== restoredTab.id),
+        copyTab(restoredTab)
+      ];
+      reindexWindowTabs(runtime, restoredTab.windowId);
+      return { tab: copyTab(restoredTab) } as never;
+    });
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+
+    expectCommandAck(await controller.handleMessage({ type: "restoreNode", nodeId: "tab:first" }), true);
+    let state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    const restoredWindowId = state.nodes["window:inner"]?.live?.windowId;
+    expect(typeof restoredWindowId).toBe("number");
+    const runtimeRestoredTab = runtime.tabs.find((tab) => tab.id === 21);
+    expect(runtimeRestoredTab?.windowId).toBe(restoredWindowId);
+
+    await runtime.events.tabUpdated.emit(21, { title: "Imported first tab loaded" }, {
+      ...copyTab(runtimeRestoredTab!),
+      title: "Imported first tab loaded"
+    });
+
+    state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(state.nodes["window:outer"]).toMatchObject({
+      status: "closed",
+      childIds: ["window:inner"]
+    });
+    expect(state.nodes["window:inner"]).toMatchObject({
+      status: "live",
+      parentId: "window:outer",
+      childIds: ["tab:first", "tab:second"],
+      live: { windowId: restoredWindowId }
+    });
+    expect(state.rootIds).not.toContain("window:inner");
+    expect(state.rootIds).not.toContain("tab:first");
+    expect(state.nodes["tab:first"]).toMatchObject({
+      status: "live",
+      parentId: "window:inner",
+      live: { tabId: 21, windowId: restoredWindowId }
+    });
+    expect(state.nodes["tab:second"]).toMatchObject({
+      status: "closed",
+      parentId: "window:inner",
+      restore: {
+        url: "https://imported.example/second",
+        title: "Imported second tab"
+      }
+    });
+  });
+
   it("keeps nested restored imported tabs in the subgroup runtime window", async () => {
     const parentUrl = "https://subgroup.example/parent";
     const childUrl = "https://subgroup.example/child";

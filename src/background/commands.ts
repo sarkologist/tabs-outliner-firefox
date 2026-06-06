@@ -1071,8 +1071,7 @@ function shouldCreateClosedWindowDestination(state: OutlineState, plan: RestoreP
   return Boolean(
     plannedNode?.kind === "tab" &&
       plannedNode.childIds.length === 0 &&
-      isDirectClosedWindowParentForTabRestore(state, plan.windowNodeId, plan.nodeId) &&
-      !state.nodes[plan.windowNodeId]?.restore?.sessionId
+      isDirectClosedWindowParentForTabRestore(state, plan.windowNodeId, plan.nodeId)
   );
 }
 
