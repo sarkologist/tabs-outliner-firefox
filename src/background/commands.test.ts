@@ -1865,8 +1865,8 @@ describe("background commands", () => {
       index: 1
     });
     expect(vi.mocked(adapter.moveTabs).mock.calls).toEqual([
-      [[300], { windowId: 42, index: 0 }],
-      [[200], { windowId: 42, index: 0 }]
+      [[200], { windowId: 42, index: -1 }],
+      [[300], { windowId: 42, index: -1 }]
     ]);
     expect(restored.state.nodes[importedParent!.id]?.status).toBe("closed");
     expect(restored.state.nodes[importedParent!.id]?.childIds).toContain(importedSubgroup!.id);
@@ -2258,13 +2258,13 @@ describe("background commands", () => {
     ]);
     expect(vi.mocked(adapter.moveTabs).mock.calls).toEqual(
       [
-        "https://imported.example/6",
-        "https://imported.example/5",
-        "https://imported.example/4",
-        "https://imported.example/3",
+        "https://imported.example/1",
         "https://imported.example/2",
-        "https://imported.example/1"
-      ].map((url) => [[tabIdByUrl.get(url)], { windowId: 42, index: 0 }])
+        "https://imported.example/3",
+        "https://imported.example/4",
+        "https://imported.example/5",
+        "https://imported.example/6"
+      ].map((url) => [[tabIdByUrl.get(url)], { windowId: 42, index: -1 }])
     );
   });
 
@@ -2348,8 +2348,8 @@ describe("background commands", () => {
       index: 1
     });
     expect(vi.mocked(adapter.moveTabs).mock.calls).toEqual([
-      [[99], { windowId: 42, index: 0 }],
-      [[200], { windowId: 42, index: 0 }]
+      [[200], { windowId: 42, index: -1 }],
+      [[99], { windowId: 42, index: -1 }]
     ]);
 
     const restoredImportGroup = restored.state.nodes[importGroup!.id];

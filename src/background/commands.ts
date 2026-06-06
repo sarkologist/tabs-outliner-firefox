@@ -832,8 +832,8 @@ async function moveRestoredTabsIntoOutlineOrder(
 
   try {
     if (mode === "single") {
-      for (let index = restoredTabIds.length - 1; index >= 0; index -= 1) {
-        await adapter.moveTabs([restoredTabIds[index]!], { windowId, index: 0 });
+      for (const tabId of restoredTabIds) {
+        await adapter.moveTabs([tabId], { windowId, index: -1 });
       }
       return;
     }

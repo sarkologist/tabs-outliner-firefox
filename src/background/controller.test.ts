@@ -611,7 +611,9 @@ function moveTabsFromBrowser(
     .filter((tab) => tab.windowId === targetWindowId)
     .sort((left, right) => left.index - right.index)
     .map(copyTab);
-  const boundedIndex = Math.max(0, Math.min(moveProperties.index, targetTabs.length));
+  const boundedIndex = moveProperties.index === -1
+    ? targetTabs.length
+    : Math.max(0, Math.min(moveProperties.index, targetTabs.length));
   const movedTabs = moving.map((tab) => ({
     ...tab,
     windowId: targetWindowId
@@ -37463,9 +37465,7 @@ describe("background controller lifecycle", () => {
       .sort((left, right) => left.index - right.index);
     expect(runtimeTabs.map((tab) => tab.url)).toEqual(urls);
     expect(vi.mocked(runtime.api.tabs.move).mock.calls).toEqual(
-      [...runtimeTabs]
-        .reverse()
-        .map((tab) => [[tab.id], { windowId: subgroupRuntimeWindowId, index: 0 }])
+      runtimeTabs.map((tab) => [[tab.id], { windowId: subgroupRuntimeWindowId, index: -1 }])
     );
   });
 
