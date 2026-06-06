@@ -354,7 +354,8 @@ describe("background commands", () => {
     expect(adapter.createTab).toHaveBeenCalledWith({
       url: "https://example.com/child",
       windowId: 10,
-      active: false
+      active: false,
+      index: 1
     });
     expect(result.state.nodes["tab:2"]?.live).toEqual({ tabId: 23, windowId: 10 });
   });
@@ -385,7 +386,8 @@ describe("background commands", () => {
         createProperties: {
           url: "https://example.com/child",
           windowId: 10,
-          active: false
+          active: false,
+          index: 1
         }
       }
     ]);
@@ -852,7 +854,8 @@ describe("background commands", () => {
     expect(adapter.createTab).toHaveBeenCalledWith({
       url: "https://detached.example/",
       windowId: 42,
-      active: false
+      active: false,
+      index: 1
     });
     expect(result.state.nodes["window:10"]?.live).toEqual({ windowId: 42 });
     expect(result.state.nodes["tab:1"]?.live).toEqual({ tabId: 200, windowId: 42 });
@@ -925,7 +928,8 @@ describe("background commands", () => {
     expect(adapter.createTab).toHaveBeenCalledWith({
       url: "https://calendar.example/week",
       windowId: 42,
-      active: false
+      active: false,
+      index: 1
     });
     expect(result.state.nodes["window:10"]?.live).toEqual({ windowId: 42 });
     expect(result.state.nodes["tab:2"]?.live).toEqual({ tabId: 201, windowId: 42 });
@@ -1223,7 +1227,8 @@ describe("background commands", () => {
     expect(adapter.createTab).toHaveBeenCalledWith({
       url: "about:blank",
       windowId: 10,
-      active: false
+      active: false,
+      index: 1
     });
     expect(adapter.createTab).not.toHaveBeenCalledWith(expect.objectContaining({ url: "about:newtab" }));
     expect(result.state.nodes["tab:2"]?.status).toBe("live");
@@ -1856,7 +1861,8 @@ describe("background commands", () => {
     expect(adapter.createTab).toHaveBeenCalledWith({
       url: "https://imported.example/child",
       windowId: 42,
-      active: false
+      active: false,
+      index: 1
     });
     expect(restored.state.nodes[importedParent!.id]?.status).toBe("closed");
     expect(restored.state.nodes[importedParent!.id]?.childIds).toContain(importedSubgroup!.id);
@@ -1876,6 +1882,114 @@ describe("background commands", () => {
       live: { windowId: 42 }
     });
     expect(restored.state.rootIds).not.toContain(importedSubgroup!.id);
+  });
+
+  it("restores a nested imported tab chain in outline order", async () => {
+    const state: OutlineState = bootstrapFromWindows(runtimeWindows, { now: 1000 });
+    let nextCreatedTabId = 300;
+    const adapter = fakeAdapter({
+      createTab: vi.fn(async ({ url, windowId = 10, active = false, index = 1 }) => ({
+        id: nextCreatedTabId++,
+        windowId,
+        index,
+        active,
+        url,
+        title: url
+      }))
+    });
+    const imported = await runCommand(state, adapter, {
+      type: "importTree",
+      tree: {
+        schema: PORTABLE_TREE_SCHEMA,
+        version: 1,
+        exportedAt: "2026-05-16T12:00:00.000Z",
+        roots: [
+          {
+            kind: "window",
+            title: "Imported parent group",
+            children: [
+              {
+                kind: "window",
+                title: "Imported subgroup",
+                children: [
+                  {
+                    kind: "tab",
+                    title: "Imported first",
+                    url: "https://imported.example/1",
+                    children: [
+                      {
+                        kind: "tab",
+                        title: "Imported second",
+                        url: "https://imported.example/2",
+                        children: [
+                          {
+                            kind: "tab",
+                            title: "Imported third",
+                            url: "https://imported.example/3",
+                            children: [
+                              {
+                                kind: "tab",
+                                title: "Imported fourth",
+                                url: "https://imported.example/4",
+                                children: []
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    });
+    const importedSubgroup = Object.values(imported.state.nodes).find((node) => node.title === "Imported subgroup");
+    const importedTabs = ["Imported first", "Imported second", "Imported third", "Imported fourth"].map((title) =>
+      Object.values(imported.state.nodes).find((node) => node.title === title)
+    );
+    expect(importedSubgroup).toBeDefined();
+    expect(importedTabs.every(Boolean)).toBe(true);
+
+    const restored = await runCommand(imported.state, adapter, {
+      type: "restoreNode",
+      nodeId: importedSubgroup!.id
+    });
+
+    expect(adapter.createWindow).toHaveBeenCalledWith({
+      url: "https://imported.example/1"
+    });
+    expect(vi.mocked(adapter.createTab).mock.calls.map(([createProperties]) => createProperties)).toEqual([
+      {
+        url: "https://imported.example/2",
+        windowId: 42,
+        active: false,
+        index: 1
+      },
+      {
+        url: "https://imported.example/3",
+        windowId: 42,
+        active: false,
+        index: 2
+      },
+      {
+        url: "https://imported.example/4",
+        windowId: 42,
+        active: false,
+        index: 3
+      }
+    ]);
+    for (const [index, importedTab] of importedTabs.entries()) {
+      expect(restored.state.nodes[importedTab!.id]).toMatchObject({
+        status: "live",
+        live: { windowId: 42 }
+      });
+      if (index > 0) {
+        expect(restored.state.nodes[importedTab!.id]?.parentId).toBe(importedTabs[index - 1]!.id);
+      }
+    }
   });
 
   it("keeps a restored Chrome-imported tab subgroup attached to its parent group", async () => {
@@ -2529,7 +2643,8 @@ describe("background commands", () => {
     expect(adapter.createTab).toHaveBeenCalledWith({
       url: siblingUrl,
       windowId: 42,
-      active: false
+      active: false,
+      index: 1
     });
     expect(restored.state.nodes[importedGroup.id]?.live).toEqual({ windowId: 42 });
     expect(restored.state.nodes[firstTab.id]?.live).toEqual({ tabId: 21, windowId: 42 });
@@ -2626,11 +2741,12 @@ describe("background commands", () => {
     expect(adapter.restoreSession).toHaveBeenCalledWith("session-imported-window");
     expect(adapter.createWindow).not.toHaveBeenCalled();
     expect(adapter.createTab).toHaveBeenCalledTimes(3);
-    for (const tab of importedTabs) {
+    for (const [index, tab] of importedTabs.entries()) {
       expect(adapter.createTab).toHaveBeenCalledWith({
         url: tab.url,
         windowId: 42,
-        active: false
+        active: false,
+        index
       });
       expect(restored.state.nodes[tab.id]).toMatchObject({
         status: "live",

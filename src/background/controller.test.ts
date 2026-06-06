@@ -451,7 +451,7 @@ function fakeRuntime(windows: RuntimeWindow[], tabs: RuntimeTab[], options: Fake
             });
           }
         }),
-        create: vi.fn(async (createProperties: { url: string; windowId?: number; active?: boolean }) => {
+        create: vi.fn(async (createProperties: { url: string; windowId?: number; active?: boolean; index?: number }) => {
           const windowId =
             createProperties.windowId ??
             runtime.windows.find((windowInfo) => windowInfo.focused)?.id ??
@@ -463,7 +463,7 @@ function fakeRuntime(windows: RuntimeWindow[], tabs: RuntimeTab[], options: Fake
           const tab: RuntimeTab = {
             id: nextRuntimeTabId(runtime),
             windowId,
-            index: runtime.tabs.filter((candidate) => candidate.windowId === windowId).length,
+            index: createProperties.index ?? runtime.tabs.filter((candidate) => candidate.windowId === windowId).length,
             active: createProperties.active ?? true,
             url: createProperties.url,
             title: createProperties.url
@@ -37801,7 +37801,7 @@ describe("background controller lifecycle", () => {
       ],
       { browserLikeTabRemove: "tabRemovedOnly" }
     );
-    vi.mocked(runtime.api.tabs.create).mockImplementation(async (createProperties: { url: string; windowId?: number; active?: boolean }) => {
+    vi.mocked(runtime.api.tabs.create).mockImplementation(async (createProperties: { url: string; windowId?: number; active?: boolean; index?: number }) => {
       if (createProperties.url === "about home") {
         throw new Error("illegal url: about home");
       }
@@ -37809,7 +37809,7 @@ describe("background controller lifecycle", () => {
       const tab: RuntimeTab = {
         id: nextRuntimeTabId(runtime),
         windowId,
-        index: runtime.tabs.filter((candidate) => candidate.windowId === windowId).length,
+        index: createProperties.index ?? runtime.tabs.filter((candidate) => candidate.windowId === windowId).length,
         active: createProperties.active ?? true,
         url: createProperties.url,
         title: createProperties.url

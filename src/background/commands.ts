@@ -164,7 +164,7 @@ export type RestoreCreateAttempt =
       kind: "tab";
       nodeId: NodeId;
       windowNodeId?: NodeId;
-      createProperties: { url: string; windowId?: number; active?: boolean };
+      createProperties: { url: string; windowId?: number; active?: boolean; index?: number };
     }
   | {
       kind: "window";
@@ -809,6 +809,19 @@ async function moveRestoredTabsIntoPlannedLiveWindow(
 }
 
 function restoredTabTargetIndex(state: OutlineState, windowNodeId: NodeId, nodeId: NodeId): number {
+  const owner = state.nodes[windowNodeId];
+  const node = state.nodes[nodeId];
+  if (
+    owner &&
+    node?.parentId === windowNodeId &&
+    owner.childIds.every((childId) => childId.startsWith("tab:"))
+  ) {
+    const directIndex = owner.childIds.indexOf(nodeId);
+    if (directIndex >= 0) {
+      return directIndex;
+    }
+  }
+
   const tabNodeIds = collectSubtreeEntries(state, windowNodeId)
     .map((entry) => entry.node)
     .filter((node) => node.kind === "tab")
@@ -901,7 +914,8 @@ async function createFallbackTab(
     const createProperties = {
       url: createUrl,
       windowId: plannedWindow.live.windowId,
-      active: false
+      active: false,
+      index: restoredTabTargetIndex(state, plannedWindow.id, nodeId)
     };
     await restoreObserver?.recordCreateAttempt({
       kind: "tab",
@@ -918,7 +932,12 @@ async function createFallbackTab(
     const createProperties = {
       url: createUrl,
       windowId: liveTabAncestor.live.windowId,
-      active: false
+      active: false,
+      index: restoredTabTargetIndex(
+        state,
+        topmostLiveTabAncestorInRuntimeWindow(state, liveTabAncestor.id, liveTabAncestor.live.windowId).id,
+        nodeId
+      )
     };
     await restoreObserver?.recordCreateAttempt({
       kind: "tab",
@@ -987,6 +1006,7 @@ async function createFallbackTab(
   const createProperties = {
     url: createUrl,
     ...(parentWindow ? { windowId: parentWindow.live.windowId } : {}),
+    ...(parentWindow ? { index: restoredTabTargetIndex(state, parentWindow.id, nodeId) } : {}),
     active: false
   };
   await restoreObserver?.recordCreateAttempt({
@@ -1015,6 +1035,37 @@ function nearestLiveTabAncestor(state: OutlineState, nodeId: NodeId): OutlineSta
     currentId = current.parentId;
   }
   return undefined;
+}
+
+function topmostLiveTabAncestorInRuntimeWindow(
+  state: OutlineState,
+  nodeId: NodeId,
+  runtimeWindowId: number
+): OutlineNode & { live: { tabId: number; windowId: number } } {
+  let topmost = requireLiveTab(state, nodeId);
+  const visited = new Set<NodeId>([nodeId]);
+  let currentId = topmost.parentId;
+  while (currentId && !visited.has(currentId)) {
+    visited.add(currentId);
+    const current = state.nodes[currentId];
+    if (!isLiveTab(current) || current.live.windowId !== runtimeWindowId) {
+      break;
+    }
+    topmost = current;
+    currentId = current.parentId;
+  }
+  return topmost;
+}
+
+function requireLiveTab(
+  state: OutlineState,
+  nodeId: NodeId
+): OutlineNode & { live: { tabId: number; windowId: number } } {
+  const node = state.nodes[nodeId];
+  if (!isLiveTab(node)) {
+    throw new Error(`Expected live tab node: ${nodeId}`);
+  }
+  return node;
 }
 
 async function tryCreateFallbackTab(
