@@ -2051,30 +2051,33 @@ restoreClosedTabNode nodeId tab restoredWindows outline =
   let
     node = requireNodeOr nodeId outline (emptyTabNode nodeId)
   in
-    case node.parentId of
-      Just parentId ->
-        case findNode parentId outline of
-          Just parent ->
-            if andBoolean (isClosedWindowNode parent) (notBoolean (eqInt (lengthArray restoredWindows) 0)) then
-              let
-                window = runtimeWindowForId tab.windowId restoredWindows
-                withParent = replaceNode outline (restoreWindowOutlineNode parent window)
-                withTab = replaceNode withParent (restoreTabOutlineNode node tab)
-              in
-                withTab
-            else promoteRestoredLiveNodesOutOfClosedAncestors [nodeId] (replaceNode outline (restoreTabOutlineNode node tab))
-          Nothing -> promoteRestoredLiveNodesOutOfClosedAncestors [nodeId] (replaceNode outline (restoreTabOutlineNode node tab))
+    case closedWindowAncestorForTabRestore nodeId outline of
+      Just parent ->
+        if notBoolean (eqInt (lengthArray restoredWindows) 0) then
+          let
+            window = runtimeWindowForId tab.windowId restoredWindows
+            withParent = replaceNode outline (restoreWindowOutlineNode parent window)
+            withTab = replaceNode withParent (restoreTabOutlineNode node tab)
+          in
+            withTab
+        else promoteRestoredLiveNodesOutOfClosedAncestors [nodeId] (replaceNode outline (restoreTabOutlineNode node tab))
       Nothing ->
-        case emptyClosedCommandCreatedWindow restoredWindows outline of
-          Just parent ->
-            let
-              window = runtimeWindowForId tab.windowId restoredWindows
-              withParent = replaceNode outline (restoreWindowOutlineNode parent window)
-              withTabRootRemoved = withParent { rootIds = removeNodeId node.id withParent.rootIds }
-              withTab = replaceNode withTabRootRemoved ((restoreTabOutlineNode node tab) { parentId = Just parent.id })
-            in
-              replaceNode withTab ((requireNodeOr parent.id withTab (emptyTabNode parent.id)) { childIds = [node.id] })
-          Nothing -> promoteRestoredLiveNodesOutOfClosedAncestors [nodeId] (replaceNode outline (restoreTabOutlineNode node tab))
+        case node.parentId of
+          Just parentId ->
+            case findNode parentId outline of
+              Just _ -> promoteRestoredLiveNodesOutOfClosedAncestors [nodeId] (replaceNode outline (restoreTabOutlineNode node tab))
+              Nothing -> promoteRestoredLiveNodesOutOfClosedAncestors [nodeId] (replaceNode outline (restoreTabOutlineNode node tab))
+          Nothing ->
+            case emptyClosedCommandCreatedWindow restoredWindows outline of
+              Just parent ->
+                let
+                  window = runtimeWindowForId tab.windowId restoredWindows
+                  withParent = replaceNode outline (restoreWindowOutlineNode parent window)
+                  withTabRootRemoved = withParent { rootIds = removeNodeId node.id withParent.rootIds }
+                  withTab = replaceNode withTabRootRemoved ((restoreTabOutlineNode node tab) { parentId = Just parent.id })
+                in
+                  replaceNode withTab ((requireNodeOr parent.id withTab (emptyTabNode parent.id)) { childIds = [node.id] })
+              Nothing -> promoteRestoredLiveNodesOutOfClosedAncestors [nodeId] (replaceNode outline (restoreTabOutlineNode node tab))
 
 isClosedWindowNode :: OutlineNode -> Boolean
 isClosedWindowNode node =
@@ -2082,6 +2085,25 @@ isClosedWindowNode node =
     WindowKind -> isClosedStatus node.status
     TabKind -> false
     GroupKind -> false
+
+closedWindowAncestorForTabRestore :: NodeId -> Outline -> Maybe OutlineNode
+closedWindowAncestorForTabRestore nodeId outline =
+  case findNode nodeId outline of
+    Nothing -> Nothing
+    Just node -> closedWindowAncestorFromParent node.parentId [] outline
+
+closedWindowAncestorFromParent :: Maybe NodeId -> Array NodeId -> Outline -> Maybe OutlineNode
+closedWindowAncestorFromParent parentId visited outline =
+  case parentId of
+    Nothing -> Nothing
+    Just currentId ->
+      if anyArray (\visitedId -> nodeIdEq visitedId currentId) visited then Nothing
+      else
+        case findNode currentId outline of
+          Nothing -> Nothing
+          Just current ->
+            if isClosedWindowNode current then Just current
+            else closedWindowAncestorFromParent current.parentId (snocArray visited currentId) outline
 
 isClosedCommandCreatedWindowNode :: OutlineNode -> Boolean
 isClosedCommandCreatedWindowNode node =
@@ -2121,6 +2143,7 @@ uniqueRestoredLiveRootsUnderClosedAncestors nodeIds outline =
               case root.kind of
                 TabKind ->
                   if notBoolean (eqInt (lengthArray root.childIds) 0) then roots
+                  else if restoredLiveTabHasMatchingLiveWindowAncestor root outline then roots
                   else if anyArray (\candidateId -> nodeIdEq candidateId rootId) roots then roots
                   else snocArray roots rootId
                 WindowKind -> roots
@@ -2128,6 +2151,28 @@ uniqueRestoredLiveRootsUnderClosedAncestors nodeIds outline =
             Nothing -> roots)
     []
     nodeIds
+
+restoredLiveTabHasMatchingLiveWindowAncestor :: OutlineNode -> Outline -> Boolean
+restoredLiveTabHasMatchingLiveWindowAncestor node outline =
+  case node.liveWindowId of
+    Nothing -> false
+    Just windowId -> liveWindowAncestorOwnsWindowId node.parentId windowId [] outline
+
+liveWindowAncestorOwnsWindowId :: Maybe NodeId -> WindowId -> Array NodeId -> Outline -> Boolean
+liveWindowAncestorOwnsWindowId parentId windowId visited outline =
+  case parentId of
+    Nothing -> false
+    Just currentId ->
+      if anyArray (\visitedId -> nodeIdEq visitedId currentId) visited then false
+      else
+        case findNode currentId outline of
+          Nothing -> false
+          Just current ->
+            if isLiveWindowNode current then
+              case current.liveWindowId of
+                Just liveWindowId -> windowIdEq liveWindowId windowId
+                Nothing -> false
+            else liveWindowAncestorOwnsWindowId current.parentId windowId (snocArray visited currentId) outline
 
 liveRootUnderClosedAncestor :: NodeId -> Outline -> Maybe NodeId
 liveRootUnderClosedAncestor nodeId outline =

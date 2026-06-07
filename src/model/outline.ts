@@ -1481,7 +1481,7 @@ function promoteRestoredLiveNodesOutOfClosedAncestors(
     if (!liveRootId || promotedNodeIds.has(liveRootId)) {
       continue;
     }
-    if (!isBareLiveTabRootForClosedAncestorPromotion(state.nodes[liveRootId])) {
+    if (!isBareLiveTabRootForClosedAncestorPromotion(state, state.nodes[liveRootId])) {
       continue;
     }
     promoteLiveNodeOutOfClosedAncestors(state, original, liveRootId);
@@ -1489,8 +1489,20 @@ function promoteRestoredLiveNodesOutOfClosedAncestors(
   }
 }
 
-function isBareLiveTabRootForClosedAncestorPromotion(node: OutlineNode | undefined): boolean {
-  return Boolean(node && node.kind === "tab" && node.childIds.length === 0);
+function isBareLiveTabRootForClosedAncestorPromotion(state: OutlineState, node: OutlineNode | undefined): boolean {
+  return Boolean(
+    isNodeLiveTab(node) &&
+      node.childIds.length === 0 &&
+      !hasMatchingLiveWindowAncestor(state, node)
+  );
+}
+
+function hasMatchingLiveWindowAncestor(
+  state: OutlineState,
+  node: OutlineNode & { live: { tabId: number; windowId: number } }
+): boolean {
+  const owner = nearestWindow(state, node.id);
+  return Boolean(owner && isNodeLiveWindow(owner) && owner.live.windowId === node.live.windowId);
 }
 
 function liveRootUnderClosedAncestor(state: OutlineState, nodeId: NodeId): NodeId | undefined {
@@ -2198,11 +2210,32 @@ function promoteClosedTabChildrenInLiveWindows(state: OutlineState): void {
       if (!owner || !isNodeLiveWindow(owner)) {
         continue;
       }
+      if (closedTabCanRemainUnderLiveWindow(state, node, owner)) {
+        continue;
+      }
 
       promoteChildrenAfterNode(state, node.id);
       promoted = true;
     }
   }
+}
+
+function closedTabCanRemainUnderLiveWindow(
+  state: OutlineState,
+  node: OutlineNode,
+  owner: OutlineNode & { live: { windowId: number } }
+): boolean {
+  if (owner.restoredFromClosed !== true) {
+    return false;
+  }
+
+  return collectSubtreeIds(state, node.id).some((descendantId) => {
+    if (descendantId === node.id) {
+      return false;
+    }
+    const descendant = state.nodes[descendantId];
+    return isNodeLiveTab(descendant) && descendant.live.windowId === owner.live.windowId;
+  });
 }
 
 function markClosedSubtree(state: OutlineState, nodeId: NodeId, context: CloseContext): void {

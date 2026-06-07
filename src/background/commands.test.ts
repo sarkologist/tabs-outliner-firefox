@@ -2056,6 +2056,230 @@ describe("background commands", () => {
     expect(restored.state.nodes[imported.second.id]?.live).toBeUndefined();
   });
 
+  it("restores one imported leaf tab by materializing its nearest ancestor window group", async () => {
+    const imported = await runCommand(bootstrapFromWindows(runtimeWindows, { now: 1000 }), fakeAdapter(), {
+      type: "importTree",
+      tree: {
+        schema: PORTABLE_TREE_SCHEMA,
+        version: 1,
+        exportedAt: "2026-05-16T12:00:00.000Z",
+        roots: [
+          {
+            kind: "window",
+            title: "Imported outer group",
+            children: [
+              {
+                kind: "window",
+                title: "Imported inner group",
+                children: [
+                  {
+                    kind: "tab",
+                    title: "Imported parent tab",
+                    url: "https://imported.example/parent",
+                    children: [
+                      {
+                        kind: "tab",
+                        title: "Imported child tab",
+                        url: "https://imported.example/child",
+                        children: []
+                      },
+                      {
+                        kind: "tab",
+                        title: "Imported sibling tab",
+                        url: "https://imported.example/sibling",
+                        children: []
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    });
+    const nodeByTitle = (title: string) =>
+      Object.values(imported.state.nodes).find((node) => node.title === title)!;
+    const outer = nodeByTitle("Imported outer group");
+    const inner = nodeByTitle("Imported inner group");
+    const parent = nodeByTitle("Imported parent tab");
+    const child = nodeByTitle("Imported child tab");
+    const sibling = nodeByTitle("Imported sibling tab");
+    const adapter = fakeAdapter();
+
+    const restored = await runCommand(imported.state, adapter, {
+      type: "restoreNode",
+      nodeId: child.id
+    });
+
+    expect(adapter.createWindow).toHaveBeenCalledWith({ url: "https://imported.example/child" });
+    expect(adapter.createTab).not.toHaveBeenCalled();
+    expect(restored.state.rootIds).toEqual(imported.state.rootIds);
+    expect(restored.state.rootIds).not.toContain(child.id);
+    expect(restored.state.nodes[outer.id]).toMatchObject({
+      status: "closed",
+      childIds: [inner.id]
+    });
+    expect(restored.state.nodes[inner.id]).toMatchObject({
+      status: "live",
+      parentId: outer.id,
+      childIds: [parent.id],
+      live: { windowId: 42 }
+    });
+    expect(restored.state.nodes[parent.id]).toMatchObject({
+      status: "closed",
+      parentId: inner.id,
+      childIds: [child.id, sibling.id],
+      restore: {
+        url: "https://imported.example/parent",
+        title: "Imported parent tab"
+      }
+    });
+    expect(restored.state.nodes[child.id]).toMatchObject({
+      status: "live",
+      parentId: parent.id,
+      live: { tabId: 200, windowId: 42 }
+    });
+    expect(restored.state.nodes[sibling.id]).toMatchObject({
+      status: "closed",
+      parentId: parent.id,
+      restore: {
+        url: "https://imported.example/sibling",
+        title: "Imported sibling tab"
+      }
+    });
+  });
+
+  it("restores one imported leaf tab session by materializing its nearest ancestor window group", async () => {
+    const imported = await runCommand(bootstrapFromWindows(runtimeWindows, { now: 1000 }), fakeAdapter(), {
+      type: "importTree",
+      tree: {
+        schema: PORTABLE_TREE_SCHEMA,
+        version: 1,
+        exportedAt: "2026-05-16T12:00:00.000Z",
+        roots: [
+          {
+            kind: "window",
+            title: "Imported outer group",
+            children: [
+              {
+                kind: "window",
+                title: "Imported inner group",
+                children: [
+                  {
+                    kind: "tab",
+                    title: "Imported parent tab",
+                    url: "https://imported.example/parent",
+                    children: [
+                      {
+                        kind: "tab",
+                        title: "Imported child tab",
+                        url: "https://imported.example/child",
+                        children: []
+                      },
+                      {
+                        kind: "tab",
+                        title: "Imported sibling tab",
+                        url: "https://imported.example/sibling",
+                        children: []
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    });
+    const nodeByTitle = (title: string) =>
+      Object.values(imported.state.nodes).find((node) => node.title === title)!;
+    const outer = nodeByTitle("Imported outer group");
+    const inner = nodeByTitle("Imported inner group");
+    const parent = nodeByTitle("Imported parent tab");
+    const child = nodeByTitle("Imported child tab");
+    const sibling = nodeByTitle("Imported sibling tab");
+    const state: OutlineState = {
+      ...imported.state,
+      nodes: {
+        ...imported.state.nodes,
+        [child.id]: {
+          ...child,
+          restore: {
+            ...(child.restore ?? {}),
+            sessionId: "session-imported-child"
+          }
+        }
+      }
+    };
+    const adapter = fakeAdapter({
+      restoreSession: vi.fn(async () => ({
+        tab: {
+          id: 21,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://imported.example/child",
+          title: "Imported child tab"
+        }
+      })),
+      createWindow: vi.fn(async ({ tabId, url }) => {
+        if (url) {
+          throw new Error(`Unexpected URL window create: ${url}`);
+        }
+        return {
+          id: 42,
+          focused: true,
+          incognito: false,
+          tabs: typeof tabId === "number"
+            ? [
+                {
+                  id: tabId,
+                  windowId: 42,
+                  index: 0,
+                  active: true,
+                  url: "https://imported.example/child",
+                  title: "Imported child tab"
+                }
+              ]
+            : []
+        };
+      })
+    });
+
+    const restored = await runCommand(state, adapter, {
+      type: "restoreNode",
+      nodeId: child.id
+    });
+
+    expect(adapter.restoreSession).toHaveBeenCalledWith("session-imported-child");
+    expect(adapter.createWindow).toHaveBeenCalledWith({ tabId: 21 });
+    expect(adapter.createTab).not.toHaveBeenCalled();
+    expect(restored.state.rootIds).toEqual(imported.state.rootIds);
+    expect(restored.state.rootIds).not.toContain(child.id);
+    expect(restored.state.nodes[outer.id]?.status).toBe("closed");
+    expect(restored.state.nodes[inner.id]).toMatchObject({
+      status: "live",
+      parentId: outer.id,
+      childIds: [parent.id],
+      live: { windowId: 42 }
+    });
+    expect(restored.state.nodes[parent.id]).toMatchObject({
+      status: "closed",
+      parentId: inner.id,
+      childIds: [child.id, sibling.id]
+    });
+    expect(restored.state.nodes[child.id]).toMatchObject({
+      status: "live",
+      parentId: parent.id,
+      live: { tabId: 21, windowId: 42 }
+    });
+    expect(restored.state.nodes[sibling.id]).toMatchObject({
+      status: "closed",
+      parentId: parent.id
+    });
+  });
+
   it("restores nested parent tabs inside an imported subgroup window", async () => {
     const state: OutlineState = bootstrapFromWindows(runtimeWindows, { now: 1000 });
     let nextCreatedTabId = 300;

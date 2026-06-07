@@ -26127,7 +26127,7 @@ function assertClosedSubtreeInvariants(state: OutlineState, history: string[]): 
     if (node.kind === "tab" && node.status === "closed" && node.childIds.length > 0) {
       const owningWindow = nearestWindowNode(state, node.id);
       invariant(
-        owningWindow?.status !== "live",
+        owningWindow?.status !== "live" || closedTabCanRemainUnderLiveWindow(state, node, owningWindow),
         `closed tab ${node.id} has children while under live window ${owningWindow?.id}`,
         history
       );
@@ -26150,7 +26150,10 @@ function liveNodeCanRemainUnderClosedAncestor(state: OutlineState, node: Outline
       owningWindow.id !== node.id &&
       owningWindow.kind === "window" &&
       owningWindow.status === "live" &&
-      owningWindow.restoredFromClosed === true
+      owningWindow.restoredFromClosed === true &&
+      node.live &&
+      "tabId" in node.live &&
+      owningWindow.live?.windowId === node.live.windowId
   ) {
     return true;
   }
@@ -26163,6 +26166,46 @@ function liveNodeCanRemainUnderClosedAncestor(state: OutlineState, node: Outline
       "tabId" in node.live &&
       restoredTabSubgroupOwner.live.windowId === node.live.windowId
   );
+}
+
+function closedTabCanRemainUnderLiveWindow(
+  state: OutlineState,
+  node: OutlineState["nodes"][string],
+  owningWindow: OutlineState["nodes"][string]
+): boolean {
+  if (
+    owningWindow.kind !== "window" ||
+    owningWindow.status !== "live" ||
+    owningWindow.restoredFromClosed !== true ||
+    !owningWindow.live ||
+    !("windowId" in owningWindow.live)
+  ) {
+    return false;
+  }
+  const visited = new Set<string>();
+  const stack = [...node.childIds];
+  while (stack.length > 0) {
+    const currentId = stack.pop()!;
+    if (visited.has(currentId)) {
+      continue;
+    }
+    visited.add(currentId);
+    const current = state.nodes[currentId];
+    if (!current) {
+      continue;
+    }
+    if (
+      current.kind === "tab" &&
+      current.status === "live" &&
+      current.live &&
+      "tabId" in current.live &&
+      current.live.windowId === owningWindow.live.windowId
+    ) {
+      return true;
+    }
+    stack.push(...current.childIds);
+  }
+  return false;
 }
 
 function isRestoredLiveTabSubgroupRuntimeOwner(node: OutlineState["nodes"][string]): boolean {
@@ -37652,6 +37695,151 @@ describe("background controller lifecycle", () => {
       restore: {
         url: "https://imported.example/second",
         title: "Imported second tab"
+      }
+    });
+  });
+
+  it("keeps a single restored leaf tab under closed tab ancestors after browser tab events", async () => {
+    const storedState: OutlineState = {
+      version: 1,
+      rootIds: ["window:outer"],
+      nodes: {
+        "window:outer": {
+          id: "window:outer",
+          kind: "window",
+          status: "closed",
+          childIds: ["window:inner"],
+          title: "Imported parent",
+          collapsed: false,
+          createdAt: 1000,
+          updatedAt: 1000,
+          closedAt: 1000
+        },
+        "window:inner": {
+          id: "window:inner",
+          kind: "window",
+          status: "closed",
+          parentId: "window:outer",
+          childIds: ["tab:parent"],
+          title: "Imported subgroup",
+          collapsed: false,
+          createdAt: 1000,
+          updatedAt: 1000,
+          closedAt: 1000
+        },
+        "tab:parent": {
+          id: "tab:parent",
+          kind: "tab",
+          status: "closed",
+          parentId: "window:inner",
+          childIds: ["tab:child", "tab:sibling"],
+          title: "Imported parent tab",
+          url: "https://imported.example/parent",
+          collapsed: false,
+          createdAt: 1000,
+          updatedAt: 1000,
+          closedAt: 1000,
+          restore: {
+            url: "https://imported.example/parent",
+            title: "Imported parent tab"
+          }
+        },
+        "tab:child": {
+          id: "tab:child",
+          kind: "tab",
+          status: "closed",
+          parentId: "tab:parent",
+          childIds: [],
+          title: "Imported child tab",
+          url: "https://imported.example/child",
+          collapsed: false,
+          createdAt: 1000,
+          updatedAt: 1000,
+          closedAt: 1000,
+          restore: {
+            url: "https://imported.example/child",
+            title: "Imported child tab"
+          }
+        },
+        "tab:sibling": {
+          id: "tab:sibling",
+          kind: "tab",
+          status: "closed",
+          parentId: "tab:parent",
+          childIds: [],
+          title: "Imported sibling tab",
+          url: "https://imported.example/sibling",
+          collapsed: false,
+          createdAt: 1000,
+          updatedAt: 1000,
+          closedAt: 1000,
+          restore: {
+            url: "https://imported.example/sibling",
+            title: "Imported sibling tab"
+          }
+        }
+      }
+    };
+    const runtime = fakeRuntime(
+      [
+        { id: 10, focused: true, incognito: false }
+      ],
+      [
+        { id: 1, windowId: 10, index: 0, active: true, url: "https://one.example/", title: "One" }
+      ],
+      { initialStorage: outlineStateV3Changes(storedState).setItems }
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+
+    expectCommandAck(await controller.handleMessage({ type: "restoreNode", nodeId: "tab:child" }), true);
+    let state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    const restoredWindowId = state.nodes["window:inner"]?.live?.windowId;
+    expect(typeof restoredWindowId).toBe("number");
+    const runtimeRestoredTab = runtime.tabs.find((tab) =>
+      tab.windowId === restoredWindowId &&
+      tab.url === "https://imported.example/child"
+    );
+    expect(runtimeRestoredTab).toBeDefined();
+
+    await runtime.events.tabUpdated.emit(runtimeRestoredTab!.id, { title: "Imported child tab loaded" }, {
+      ...copyTab(runtimeRestoredTab!),
+      title: "Imported child tab loaded"
+    });
+
+    state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(state.nodes["window:outer"]).toMatchObject({
+      status: "closed",
+      childIds: ["window:inner"]
+    });
+    expect(state.nodes["window:inner"]).toMatchObject({
+      status: "live",
+      parentId: "window:outer",
+      childIds: ["tab:parent"],
+      live: { windowId: restoredWindowId }
+    });
+    expect(state.rootIds).not.toContain("window:inner");
+    expect(state.rootIds).not.toContain("tab:child");
+    expect(state.nodes["tab:parent"]).toMatchObject({
+      status: "closed",
+      parentId: "window:inner",
+      childIds: ["tab:child", "tab:sibling"],
+      restore: {
+        url: "https://imported.example/parent",
+        title: "Imported parent tab"
+      }
+    });
+    expect(state.nodes["tab:child"]).toMatchObject({
+      status: "live",
+      parentId: "tab:parent",
+      live: { tabId: runtimeRestoredTab!.id, windowId: restoredWindowId }
+    });
+    expect(state.nodes["tab:sibling"]).toMatchObject({
+      status: "closed",
+      parentId: "tab:parent",
+      restore: {
+        url: "https://imported.example/sibling",
+        title: "Imported sibling tab"
       }
     });
   });

@@ -1071,11 +1071,11 @@ function shouldCreateClosedWindowDestination(state: OutlineState, plan: RestoreP
   return Boolean(
     plannedNode?.kind === "tab" &&
       plannedNode.childIds.length === 0 &&
-      isDirectClosedWindowParentForTabRestore(state, plan.windowNodeId, plan.nodeId)
+      isClosedWindowAncestorForLeafTabRestore(state, plan.windowNodeId, plan.nodeId)
   );
 }
 
-function isDirectClosedWindowParentForTabRestore(
+function isClosedWindowAncestorForLeafTabRestore(
   state: OutlineState,
   windowNodeId: NodeId,
   tabNodeId: NodeId
@@ -1084,9 +1084,10 @@ function isDirectClosedWindowParentForTabRestore(
   const plannedNode = state.nodes[tabNodeId];
   return Boolean(
     plannedNode?.kind === "tab" &&
-      plannedNode.parentId === windowNodeId &&
+      plannedNode.childIds.length === 0 &&
       plannedWindow?.kind === "window" &&
-      plannedWindow.status === "closed"
+      plannedWindow.status === "closed" &&
+      isDescendantOfNode(state, tabNodeId, windowNodeId)
   );
 }
 
@@ -1148,7 +1149,7 @@ async function createFallbackTab(
     plannedNode?.kind === "tab"
   ) {
     const onlyClosedTabInWindow = closedWindowHasOnlyTab(state, windowNodeId, nodeId);
-    const restoreWindowNode = isDirectClosedWindowParentForTabRestore(state, windowNodeId, nodeId) ||
+    const restoreWindowNode = isClosedWindowAncestorForLeafTabRestore(state, windowNodeId, nodeId) ||
       onlyClosedTabInWindow ||
       shouldRestoreClosedWindowDestinationForScope(state, windowNodeId, restoreRootNodeId);
     const sessionRestored = restoreWindowNode && onlyClosedTabInWindow
