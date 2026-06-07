@@ -99,6 +99,25 @@ test.describe("extension options page", () => {
           event: "startupStateLoaded"
         }
       ],
+      portableTree: {
+        schema: "tabs-outliner-tree",
+        version: 1,
+        exportedAt: "2026-06-07T12:00:00.000Z",
+        roots: [
+          {
+            kind: "window",
+            title: "Group",
+            children: [
+              {
+                kind: "tab",
+                title: "One",
+                url: "https://one.example/",
+                children: []
+              }
+            ]
+          }
+        ]
+      },
       sidebars: [
         {
           id: "sidebar-window-10",
@@ -136,6 +155,25 @@ test.describe("extension options page", () => {
           event: "startupStateLoaded"
         }
       ],
+      portableTree: {
+        schema: "tabs-outliner-tree",
+        version: 1,
+        exportedAt: "2026-06-07T12:00:00.000Z",
+        roots: [
+          {
+            kind: "window",
+            title: "Group",
+            children: [
+              {
+                kind: "tab",
+                title: "One",
+                url: "https://one.example/",
+                children: []
+              }
+            ]
+          }
+        ]
+      },
       sidebars: [
         {
           id: "sidebar-window-10",
@@ -175,6 +213,7 @@ test.describe("extension options page", () => {
       snapshot?: {
         background?: { entries?: unknown[] };
         incidentLog?: Array<{ event?: string }>;
+        portableTree?: { schema?: string; roots?: unknown[] };
         sidebars?: Array<{
           id?: string;
           label?: string;
@@ -190,6 +229,10 @@ test.describe("extension options page", () => {
     expect(payload.snapshot?.incidentLog).toEqual([
       expect.objectContaining({ event: "startupStateLoaded" })
     ]);
+    expect(payload.snapshot?.portableTree).toEqual(expect.objectContaining({
+      schema: "tabs-outliner-tree",
+      roots: expect.any(Array)
+    }));
     expect(payload.snapshot?.sidebars).toEqual([
       expect.objectContaining({
         id: "sidebar-window-10",

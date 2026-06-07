@@ -48,7 +48,14 @@ import {
   loadStateWithMetadata,
   saveStateAndHistory
 } from "./storage.js";
-import type { InitialTreeSnapshot, LoadStateOptions, SaveStateOptions, StateLoadPhase, StateSavePhase } from "./storage.js";
+import type {
+  InitialTreeSnapshot,
+  LoadStateOptions,
+  SaveStateOptions,
+  StateLoadPhase,
+  StateSavePhase,
+  StateStructureRepair
+} from "./storage.js";
 import {
   applyOutlineDelta,
   cloneOutlineNode,
@@ -2465,16 +2472,22 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     return pruned ? repairState(pruned) : current;
   }
 
-  function stateLoadTraceOptions(): LoadStateOptions | undefined {
-    if (!perfTrace.isEnabled()) {
-      return undefined;
-    }
-
-    return {
-      onPhase: (phase) => {
-        perfTrace.mark(`background.state.load.${phase.name}`, stateLoadTraceDetail(phase));
+  function stateLoadTraceOptions(): LoadStateOptions {
+    const options: LoadStateOptions = {
+      onStructureRepair: (repair) => {
+        recordStorageLoadStructureRepair(repair);
       }
     };
+    if (perfTrace.isEnabled()) {
+      options.onPhase = (phase) => {
+        perfTrace.mark(`background.state.load.${phase.name}`, stateLoadTraceDetail(phase));
+      };
+    }
+    return options;
+  }
+
+  function recordStorageLoadStructureRepair(repair: StateStructureRepair): Promise<void> {
+    return recordIncidentLog("storageLoadStructureRepair", { ...repair });
   }
 
   function stateLoadTraceDetail(phase: StateLoadPhase): TraceDetail {
@@ -4882,7 +4895,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     candidateNodeIds?: readonly NodeId[]
   ): void {
     pendingSaveState = next;
-    if (candidateNodeIds && candidateNodeIds.some((nodeId) => !next.nodes[nodeId])) {
+    if (candidateNodeIds && candidateSaveRequiresFullDiff(next, candidateNodeIds)) {
       pendingSaveCandidateNodeIds = undefined;
       pendingSaveRequiresFullDiff = true;
     } else if (candidateNodeIds) {
@@ -4897,6 +4910,19 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       pendingSaveRequiresFullDiff = true;
     }
     schedulePendingSave(schedule);
+  }
+
+  function candidateSaveRequiresFullDiff(next: OutlineState, candidateNodeIds: readonly NodeId[]): boolean {
+    if (candidateNodeIds.some((nodeId) => !next.nodes[nodeId])) {
+      return true;
+    }
+    if (!lastPersistedState) {
+      return false;
+    }
+    if (!sameNodeIdList(lastPersistedState.rootIds, next.rootIds)) {
+      return true;
+    }
+    return Object.keys(next.nodes).length < Object.keys(lastPersistedState.nodes).length;
   }
 
   function scheduleHistorySave(next: HistoryState, schedule: SaveSchedule = "normal"): void {
@@ -5047,13 +5073,18 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     nextHistory: HistoryState | undefined,
     candidateNodeIds?: readonly NodeId[]
   ): Promise<void> {
+    const nextCountDetail = nextState ? outlineStateCountDetail(nextState) : undefined;
+    const previousCountDetail = lastPersistedState
+      ? outlineStateCountDetail(lastPersistedState)
+      : emptyOutlineStateCountDetail();
     const saveIncidentDetail = nextState
       ? {
           candidateNodeCount: candidateNodeIds?.length ?? 0,
           fullDiff: !candidateNodeIds,
           fullSave: !lastPersistedState,
           hasHistory: Boolean(nextHistory),
-          ...outlineStateCountDetail(nextState)
+          ...nextCountDetail,
+          ...outlineStateCountDeltaDetail(previousCountDetail, nextCountDetail!)
         }
       : undefined;
     await perfTrace.measureAsync("background.state.save", () =>
@@ -5162,22 +5193,68 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     }
   }
 
-  function outlineStateCountDetail(source: OutlineState): IncidentLogDetail {
+  type OutlineStateCountDetail = {
+    nodeCount: number;
+    closedCount: number;
+    rootCount: number;
+    windowCount: number;
+    tabCount: number;
+  };
+
+  function outlineStateCountDetail(source: OutlineState): OutlineStateCountDetail {
     let nodeCount = 0;
     let closedCount = 0;
+    let windowCount = 0;
+    let tabCount = 0;
     for (const nodeId in source.nodes) {
       const node = source.nodes[nodeId];
       if (!node) {
         continue;
       }
       nodeCount += 1;
+      if (node.kind === "window") {
+        windowCount += 1;
+      } else if (node.kind === "tab") {
+        tabCount += 1;
+      }
       if (node.status === "closed") {
         closedCount += 1;
       }
     }
     return {
       nodeCount,
-      closedCount
+      closedCount,
+      rootCount: source.rootIds.length,
+      windowCount,
+      tabCount
+    };
+  }
+
+  function emptyOutlineStateCountDetail(): OutlineStateCountDetail {
+    return {
+      nodeCount: 0,
+      closedCount: 0,
+      rootCount: 0,
+      windowCount: 0,
+      tabCount: 0
+    };
+  }
+
+  function outlineStateCountDeltaDetail(
+    previous: OutlineStateCountDetail,
+    next: OutlineStateCountDetail
+  ): IncidentLogDetail {
+    return {
+      previousNodeCount: previous.nodeCount,
+      nodeCountDelta: next.nodeCount - previous.nodeCount,
+      previousClosedCount: previous.closedCount,
+      closedCountDelta: next.closedCount - previous.closedCount,
+      previousRootCount: previous.rootCount,
+      rootCountDelta: next.rootCount - previous.rootCount,
+      previousWindowCount: previous.windowCount,
+      windowCountDelta: next.windowCount - previous.windowCount,
+      previousTabCount: previous.tabCount,
+      tabCountDelta: next.tabCount - previous.tabCount
     };
   }
 
@@ -5244,13 +5321,15 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
   async function performanceProfileSnapshot(): Promise<PerformanceProfileSnapshot> {
     const background = perfTrace.snapshot();
-    const [incidentLog, sidebars] = await Promise.all([
+    const [currentState, incidentLog, sidebars] = await Promise.all([
+      ensureState(),
       loadIncidentLog(api),
       collectSidebarPerformanceTraces()
     ]);
     return {
       background,
       incidentLog,
+      portableTree: exportPortableTree(currentState, { now: now() }),
       sidebars
     };
   }

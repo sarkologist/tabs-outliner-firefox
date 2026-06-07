@@ -17,6 +17,7 @@ import {
   outlineStateV3Changes,
   saveState,
   saveStateAndHistory,
+  type StateStructureRepair,
   type StateSavePhase
 } from "./storage.js";
 import { reconcileWithWindows } from "../model/outline.js";
@@ -129,6 +130,25 @@ function removeLastOrderPage(state: OutlineState): OutlineState {
       }
     }
   };
+}
+
+function mutateStoredV3Node(
+  items: Record<string, unknown>,
+  nodeId: string,
+  mutate: (node: Record<string, unknown>) => void
+): void {
+  for (const value of Object.values(items)) {
+    if (!value || typeof value !== "object" || !Array.isArray((value as { nodes?: unknown }).nodes)) {
+      continue;
+    }
+    for (const node of (value as { nodes: unknown[] }).nodes) {
+      if (node && typeof node === "object" && (node as { id?: unknown }).id === nodeId) {
+        mutate(node as Record<string, unknown>);
+        return;
+      }
+    }
+  }
+  throw new Error(`missing stored v3 node ${nodeId}`);
 }
 
 describe("outline state v2 storage", () => {
@@ -549,6 +569,119 @@ describe("outline state v3 storage", () => {
     await expect(loadState(api)).resolves.toEqual(state);
   });
 
+  it("loads v3 structure from manifest roots and order pages over stale parent ids", async () => {
+    const state: OutlineState = {
+      version: 1,
+      rootIds: ["window:10", "window:20", "window:30"],
+      nodes: {
+        "window:10": {
+          id: "window:10",
+          kind: "window",
+          status: "closed",
+          childIds: [],
+          title: "First root",
+          active: false,
+          collapsed: false,
+          createdAt: 1000,
+          updatedAt: 1000,
+          closedAt: 1100
+        },
+        "window:20": {
+          id: "window:20",
+          kind: "window",
+          status: "closed",
+          childIds: ["tab:20"],
+          title: "Second root",
+          active: false,
+          collapsed: false,
+          createdAt: 1000,
+          updatedAt: 1000,
+          closedAt: 1100
+        },
+        "tab:20": {
+          id: "tab:20",
+          kind: "tab",
+          status: "closed",
+          parentId: "window:20",
+          childIds: [],
+          title: "Second tab",
+          url: "https://two.example/",
+          active: false,
+          collapsed: false,
+          createdAt: 1000,
+          updatedAt: 1000,
+          closedAt: 1100
+        },
+        "window:30": {
+          id: "window:30",
+          kind: "window",
+          status: "closed",
+          childIds: ["tab:30"],
+          title: "Unreferenced root",
+          active: false,
+          collapsed: false,
+          createdAt: 1000,
+          updatedAt: 1000,
+          closedAt: 1100
+        },
+        "tab:30": {
+          id: "tab:30",
+          kind: "tab",
+          status: "closed",
+          parentId: "window:30",
+          childIds: [],
+          title: "Unreferenced tab",
+          url: "https://three.example/",
+          active: false,
+          collapsed: false,
+          createdAt: 1000,
+          updatedAt: 1000,
+          closedAt: 1100
+        }
+      }
+    };
+    const items = outlineStateV3Changes(state, { revision: 321 }).setItems;
+    mutateStoredV3Node(items, "window:20", (node) => {
+      node.parentId = "window:10";
+    });
+    mutateStoredV3Node(items, "tab:20", (node) => {
+      node.parentId = "window:10";
+    });
+    mutateStoredV3Node(items, "window:30", (node) => {
+      node.parentId = "window:10";
+    });
+    items[STATE_V3_MANIFEST_KEY] = {
+      ...(items[STATE_V3_MANIFEST_KEY] as Record<string, unknown>),
+      rootIds: ["window:10", "window:20"]
+    };
+    const repairs: StateStructureRepair[] = [];
+
+    const loaded = await loadStateWithMetadata(fakeApi(items), {
+      onStructureRepair: (repair) => {
+        repairs.push(repair);
+      }
+    });
+
+    expect(loaded?.state.rootIds).toEqual(["window:10", "window:20", "window:30"]);
+    expect(loaded?.state.nodes["window:10"]?.childIds).toEqual([]);
+    expect(loaded?.state.nodes["window:20"]?.parentId).toBeUndefined();
+    expect(loaded?.state.nodes["window:20"]?.childIds).toEqual(["tab:20"]);
+    expect(loaded?.state.nodes["tab:20"]?.parentId).toBe("window:20");
+    expect(loaded?.state.nodes["window:30"]?.parentId).toBeUndefined();
+    expect(loaded?.state.nodes["tab:30"]?.parentId).toBe("window:30");
+    expect(repairs).toEqual([
+      expect.objectContaining({
+        source: "v3",
+        rootCountBefore: 2,
+        rootCountAfter: 3,
+        parentMismatchCount: 3,
+        staleRootParentCount: 2,
+        extraRootCount: 1,
+        unreachableNodeCount: 2
+      })
+    ]);
+  });
+
   it("loads v3 before falling back to v2", async () => {
     const v2State = makeLargeState(5);
     const v3State = makeLargeState(7, { activeTabIndex: 6 });
@@ -643,6 +776,32 @@ describe("outline state v3 storage", () => {
     await saveStateAndHistory(next, undefined, api, { previousState: previous });
 
     expect(vi.mocked(api.storage.local.remove)).toHaveBeenCalled();
+    await expect(loadStateV3(api)).resolves.toEqual(next);
+  });
+
+  it("promotes candidate v3 saves when node count decreases and candidates omit the deleted id", async () => {
+    const previous = makeLargeState(40);
+    const previousRoot = previous.nodes["window:10"]!;
+    const nodes = { ...previous.nodes };
+    delete nodes["tab:40"];
+    const next: OutlineState = {
+      ...previous,
+      nodes: {
+        ...nodes,
+        "window:10": {
+          ...previousRoot,
+          childIds: previousRoot.childIds.filter((nodeId) => nodeId !== "tab:40")
+        }
+      }
+    };
+    const api = fakeApi();
+    await saveState(previous, api);
+
+    await saveStateAndHistory(next, undefined, api, {
+      previousState: previous,
+      candidateNodeIds: ["window:10"]
+    });
+
     await expect(loadStateV3(api)).resolves.toEqual(next);
   });
 

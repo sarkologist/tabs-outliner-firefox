@@ -200,6 +200,25 @@ function isLifecycleJournalOnlyStorageSet(items: unknown): boolean {
   return keys.length === 1 && (keys[0] === RUNTIME_LIFECYCLE_JOURNAL_KEY || keys[0] === INCIDENT_LOG_STORAGE_KEY);
 }
 
+function mutateStoredV3Node(
+  items: Record<string, unknown>,
+  nodeId: string,
+  mutate: (node: Record<string, unknown>) => void
+): void {
+  for (const value of Object.values(items)) {
+    if (!value || typeof value !== "object" || !Array.isArray((value as { nodes?: unknown }).nodes)) {
+      continue;
+    }
+    for (const node of (value as { nodes: unknown[] }).nodes) {
+      if (node && typeof node === "object" && (node as { id?: unknown }).id === nodeId) {
+        mutate(node as Record<string, unknown>);
+        return;
+      }
+    }
+  }
+  throw new Error(`missing stored v3 node ${nodeId}`);
+}
+
 function runtimeSideEffectSnapshot(runtime: FakeRuntime): RuntimeSideEffectSnapshot {
   return new Map(runtimeSideEffectCallLists(runtime).map(({ kind, calls }) => [kind, calls.length]));
 }
@@ -26837,6 +26856,10 @@ describe("background controller lifecycle", () => {
             event: "saveFlush"
           })
         ]),
+        portableTree: expect.objectContaining({
+          schema: "tabs-outliner-tree",
+          roots: expect.any(Array)
+        }),
         sidebars: [
           firstSidebar,
           secondSidebar
@@ -26880,14 +26903,100 @@ describe("background controller lifecycle", () => {
         event: "startupStateLoaded",
         detail: expect.objectContaining({
           nodeCount: 2,
-          closedCount: 0
+          closedCount: 0,
+          rootCount: 1,
+          windowCount: 1,
+          tabCount: 1
         })
       }),
       expect.objectContaining({
         event: "saveFlush",
         detail: expect.objectContaining({
           nodeCount: 2,
-          closedCount: 0
+          closedCount: 0,
+          rootCount: 1,
+          windowCount: 1,
+          tabCount: 1,
+          previousNodeCount: 0,
+          nodeCountDelta: 2,
+          previousRootCount: 0,
+          rootCountDelta: 1
+        })
+      })
+    ]));
+  });
+
+  it("records v3 load structure repairs in the durable incident log", async () => {
+    const storedState: OutlineState = {
+      version: 1,
+      rootIds: ["window:10", "window:20"],
+      nodes: {
+        "window:10": {
+          id: "window:10",
+          kind: "window",
+          status: "closed",
+          childIds: [],
+          title: "First root",
+          active: false,
+          collapsed: false,
+          createdAt: 1000,
+          updatedAt: 1000,
+          closedAt: 1100
+        },
+        "window:20": {
+          id: "window:20",
+          kind: "window",
+          status: "closed",
+          childIds: ["tab:20"],
+          title: "Second root",
+          active: false,
+          collapsed: false,
+          createdAt: 1000,
+          updatedAt: 1000,
+          closedAt: 1100
+        },
+        "tab:20": {
+          id: "tab:20",
+          kind: "tab",
+          status: "closed",
+          parentId: "window:20",
+          childIds: [],
+          title: "Second tab",
+          url: "https://two.example/",
+          active: false,
+          collapsed: false,
+          createdAt: 1000,
+          updatedAt: 1000,
+          closedAt: 1100
+        }
+      }
+    };
+    const initialStorage = outlineStateV3Changes(storedState).setItems;
+    mutateStoredV3Node(initialStorage, "window:20", (node) => {
+      node.parentId = "window:10";
+    });
+    mutateStoredV3Node(initialStorage, "tab:20", (node) => {
+      node.parentId = "window:10";
+    });
+    const runtime = fakeRuntime([], [], { initialStorage });
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+
+    const state = await controller.ensureState();
+    const incidentLog = await loadIncidentLog(runtime.api);
+
+    expect(state.rootIds).toEqual(["window:10", "window:20"]);
+    expect(state.nodes["window:20"]?.parentId).toBeUndefined();
+    expect(state.nodes["tab:20"]?.parentId).toBe("window:20");
+    expect(incidentLog).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        event: "storageLoadStructureRepair",
+        detail: expect.objectContaining({
+          source: "v3",
+          parentMismatchCount: 2,
+          staleRootParentCount: 1,
+          unreachableNodeCount: 0,
+          rootCountBefore: 2,
+          rootCountAfter: 2
         })
       })
     ]));
@@ -35576,7 +35685,13 @@ describe("background controller lifecycle", () => {
       canUndo: true,
       undoLabel: "Move to top level"
     });
-    await controller.flushPendingSaves();
+    const { calls } = await countNodeTableObjectKeys(() => controller.flushPendingSaves());
+    const persisted = await loadStateV3(runtime.api);
+
+    expect(calls).toBeGreaterThan(0);
+    expect(persisted?.rootIds).toEqual(["window:10", "window:42"]);
+    expect(persisted?.nodes["window:42"]?.parentId).toBeUndefined();
+    expect(persisted?.nodes["tab:1"]?.parentId).toBe("window:42");
     expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(1);
   });
 
