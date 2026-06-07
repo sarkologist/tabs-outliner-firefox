@@ -18,6 +18,7 @@
       <symbol id="icon-refresh" viewBox="0 0 24 24"><path d="M20 6v5h-5" /><path d="M4 18v-5h5" /><path d="M18.5 9A7 7 0 0 0 6.3 6.8L4 9" /><path d="M5.5 15a7 7 0 0 0 12.2 2.2L20 15" /></symbol>
       <symbol id="icon-expand" viewBox="0 0 24 24"><path d="M8 3H3v5" /><path d="M3 3l7 7" /><path d="M16 21h5v-5" /><path d="m14 14 7 7" /></symbol>
       <symbol id="icon-gear" viewBox="0 0 24 24"><path d="M12 8.5a3.5 3.5 0 1 1 0 7a3.5 3.5 0 0 1 0-7Z" /><path d="m19 13.5 1.5 1-2 3.5-1.8-.8a7.3 7.3 0 0 1-1.5.9L15 20h-6l-.2-1.9a7.3 7.3 0 0 1-1.5-.9l-1.8.8-2-3.5 1.5-1a7.8 7.8 0 0 1 0-3l-1.5-1 2-3.5 1.8.8a7.3 7.3 0 0 1 1.5-.9L9 4h6l.2 1.9a7.3 7.3 0 0 1 1.5.9l1.8-.8 2 3.5-1.5 1a7.8 7.8 0 0 1 0 3Z" /></symbol>
+      <symbol id="icon-more-horizontal" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.5" /><circle cx="12" cy="12" r="1.5" /><circle cx="19" cy="12" r="1.5" /></symbol>
       <symbol id="icon-scissors" viewBox="0 0 24 24"><circle cx="3.65" cy="7.93" r="2.45" /><circle cx="3.65" cy="16.07" r="2.45" /><path d="M5.86 9 12 12 19.82 15.81" /><path d="M5.86 15 12 12 19.82 8.19" /><circle cx="12" cy="12" r="0.85" fill="currentColor" stroke="none" /></symbol>
       <symbol id="icon-clipboard" viewBox="0 0 24 24"><path d="M9 4h6l1 2h3v15H5V6h3l1-2Z" /><path d="M9 4v4h6V4" /></symbol>
       <symbol id="icon-group" viewBox="0 0 24 24"><path d="M8.5 5c-1.8 0-1.8 1.6-1.8 2.8V10c0 .9-.8 1.8-1.7 1.8.9 0 1.7.9 1.7 1.8v2.2c0 1.2 0 2.8 1.8 2.8" /><path d="M11 8h7" /><path d="M11 12h7" /><path d="M11 16h7" /></symbol>
@@ -58,9 +59,34 @@
       </div>
       <button id="undo-history" class="toolbar-button" type="button" title="Undo" aria-label="Undo" disabled><svg class="toolbar-icon button-icon" aria-hidden="true"><use href="#icon-undo"></use></svg></button>
       <button id="redo-history" class="toolbar-button" type="button" title="Redo" aria-label="Redo" disabled><svg class="toolbar-icon button-icon" aria-hidden="true"><use href="#icon-redo"></use></svg></button>
-      <button id="export-tree" class="toolbar-button" type="button" title="Export tree" aria-label="Export tree"><svg class="toolbar-icon button-icon" aria-hidden="true"><use href="#icon-export"></use></svg></button>
-      <button id="import-tree" class="toolbar-button" type="button" title="Import tree" aria-label="Import tree"><svg class="toolbar-icon button-icon" aria-hidden="true"><use href="#icon-import"></use></svg></button>
-      <button id="refresh" class="toolbar-button" type="button" title="Refresh outline" aria-label="Refresh outline"><svg class="toolbar-icon button-icon" aria-hidden="true"><use href="#icon-refresh"></use></svg></button>
+      <div class="toolbar-overflow">
+        <button
+          id="toolbar-overflow"
+          class="toolbar-button"
+          type="button"
+          title="More actions"
+          aria-label="More actions"
+          aria-haspopup="menu"
+          aria-expanded="false"
+          aria-controls="toolbar-overflow-menu"
+        >
+          <svg class="toolbar-icon button-icon" aria-hidden="true"><use href="#icon-more-horizontal"></use></svg>
+        </button>
+        <div id="toolbar-overflow-menu" class="overflow-menu" role="menu" hidden>
+          <button id="export-tree" class="overflow-menu-item" type="button" role="menuitem" title="Export tree" aria-label="Export tree">
+            <svg class="button-icon" aria-hidden="true"><use href="#icon-export"></use></svg>
+            <span>Export tree</span>
+          </button>
+          <button id="import-tree" class="overflow-menu-item" type="button" role="menuitem" title="Import tree" aria-label="Import tree">
+            <svg class="button-icon" aria-hidden="true"><use href="#icon-import"></use></svg>
+            <span>Import tree</span>
+          </button>
+          <button id="refresh" class="overflow-menu-item" type="button" role="menuitem" title="Repair outline" aria-label="Repair outline">
+            <svg class="button-icon" aria-hidden="true"><use href="#icon-refresh"></use></svg>
+            <span>Repair outline</span>
+          </button>
+        </div>
+      </div>
       <button
         id="open-sidebar-window"
         class="toolbar-button"

@@ -66,7 +66,7 @@ body[data-sidebar-booting] {
   top: 0;
   z-index: 1;
   display: grid;
-  grid-template-columns: auto minmax(52px, 1fr) minmax(0, auto) repeat(7, auto);
+  grid-template-columns: auto minmax(52px, 1fr) minmax(0, auto) repeat(5, auto);
   align-items: center;
   gap: 6px;
   padding: 8px 10px;
@@ -138,6 +138,56 @@ h1 {
 }
 
 .toolbar-button:disabled:hover {
+  background: transparent;
+}
+
+.toolbar-overflow {
+  position: relative;
+  display: inline-flex;
+}
+
+.overflow-menu {
+  position: absolute;
+  top: calc(100% + 5px);
+  right: 0;
+  z-index: 3;
+  display: grid;
+  min-width: 152px;
+  padding: 4px;
+  border: 1px solid color-mix(in srgb, CanvasText 18%, transparent);
+  border-radius: 6px;
+  background: Canvas;
+  box-shadow: 0 8px 22px color-mix(in srgb, CanvasText 18%, transparent);
+}
+
+.overflow-menu-item {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 4px;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  line-height: 1.2;
+  text-align: left;
+}
+
+.overflow-menu-item:hover,
+.overflow-menu-item:focus {
+  background: color-mix(in srgb, CanvasText 12%, transparent);
+  outline: none;
+}
+
+.overflow-menu-item:disabled {
+  opacity: 0.42;
+}
+
+.overflow-menu-item:disabled:hover,
+.overflow-menu-item:disabled:focus {
   background: transparent;
 }
 

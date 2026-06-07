@@ -92,6 +92,8 @@ const diagnostics = document.querySelector<HTMLSpanElement>("#diagnostics");
 const undoHistory = document.querySelector<HTMLButtonElement>("#undo-history");
 const redoHistory = document.querySelector<HTMLButtonElement>("#redo-history");
 const refresh = document.querySelector<HTMLButtonElement>("#refresh");
+const toolbarOverflow = document.querySelector<HTMLButtonElement>("#toolbar-overflow");
+const toolbarOverflowMenu = document.querySelector<HTMLElement>("#toolbar-overflow-menu");
 const openOptions = document.querySelector<HTMLButtonElement>("#open-options");
 const exportTree = document.querySelector<HTMLButtonElement>("#export-tree");
 const importTree = document.querySelector<HTMLButtonElement>("#import-tree");
@@ -388,6 +390,7 @@ applyZoom(currentZoom);
 registerPreferenceListener();
 registerZoomShortcuts();
 registerSearchControls();
+registerToolbarOverflowControls();
 registerPortableTreeControls();
 registerHistoryControls();
 registerTreeControls();
@@ -1481,6 +1484,74 @@ function registerPortableTreeControls(): void {
   importTreeFile?.addEventListener("change", () => {
     void importSelectedTreeFile();
   });
+}
+
+function registerToolbarOverflowControls(): void {
+  toolbarOverflow?.addEventListener("click", (event) => {
+    event.stopPropagation();
+    toggleToolbarOverflowMenu();
+  });
+
+  toolbarOverflowMenu?.addEventListener("click", (event) => {
+    const item = event.target instanceof Element
+      ? event.target.closest<HTMLButtonElement>(".overflow-menu-item")
+      : null;
+    if (item) {
+      closeToolbarOverflowMenu();
+    }
+  });
+
+  document.addEventListener("click", (event) => {
+    if (!toolbarOverflowMenu || toolbarOverflowMenu.hidden) {
+      return;
+    }
+    const target = event.target;
+    if (!(target instanceof Node)) {
+      closeToolbarOverflowMenu();
+      return;
+    }
+    if (toolbarOverflow?.contains(target) || toolbarOverflowMenu.contains(target)) {
+      return;
+    }
+    closeToolbarOverflowMenu();
+  });
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape" || !toolbarOverflowMenu || toolbarOverflowMenu.hidden) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    closeToolbarOverflowMenu();
+    toolbarOverflow?.focus();
+  });
+}
+
+function toggleToolbarOverflowMenu(): void {
+  if (!toolbarOverflowMenu || !toolbarOverflow) {
+    return;
+  }
+  if (toolbarOverflowMenu.hidden) {
+    openToolbarOverflowMenu();
+    return;
+  }
+  closeToolbarOverflowMenu();
+}
+
+function openToolbarOverflowMenu(): void {
+  if (!toolbarOverflowMenu || !toolbarOverflow) {
+    return;
+  }
+  toolbarOverflowMenu.hidden = false;
+  toolbarOverflow.setAttribute("aria-expanded", "true");
+}
+
+function closeToolbarOverflowMenu(): void {
+  if (!toolbarOverflowMenu || !toolbarOverflow) {
+    return;
+  }
+  toolbarOverflowMenu.hidden = true;
+  toolbarOverflow.setAttribute("aria-expanded", "false");
 }
 
 function registerHistoryControls(): void {
@@ -3667,6 +3738,9 @@ function appendTitleText(element: HTMLElement, titleText: string, searchQuery: s
 }
 
 function handleTreePointerOver(event: PointerEvent): void {
+  if (event.relatedTarget instanceof Node && toolbarOverflowMenu?.contains(event.relatedTarget)) {
+    return;
+  }
   noteNonEditInteraction();
   if (draggedNodeId) {
     const detail = pointerInputDetail(event, "clear-dragging");

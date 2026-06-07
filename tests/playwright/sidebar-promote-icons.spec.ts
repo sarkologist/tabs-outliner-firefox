@@ -13,14 +13,24 @@ test.describe("sidebar promote children and icons", () => {
     for (const buttonId of [
       "undo-history",
       "redo-history",
-      "export-tree",
-      "import-tree",
-      "refresh",
+      "toolbar-overflow",
       "open-sidebar-window",
       "open-options"
     ]) {
       await expect(page.locator(`#${buttonId} svg`), `${buttonId} uses an SVG icon`).toHaveCount(1);
     }
+    await expect(page.locator("#export-tree")).toBeHidden();
+    await expect(page.locator("#import-tree")).toBeHidden();
+    await expect(page.locator("#refresh")).toBeHidden();
+
+    await page.getByRole("button", { name: "More actions" }).click();
+    await expect(page.locator("#toolbar-overflow-menu")).toBeVisible();
+    for (const buttonId of ["export-tree", "import-tree", "refresh"]) {
+      await expect(page.locator(`#${buttonId}`), `${buttonId} is in overflow`).toBeVisible();
+      await expect(page.locator(`#${buttonId} svg`), `${buttonId} uses an SVG icon`).toHaveCount(1);
+    }
+    await page.keyboard.press("Escape");
+    await expect(page.locator("#toolbar-overflow-menu")).toBeHidden();
 
     await page.getByRole("searchbox", { name: "Search tabs" }).fill("Alpha");
     await expect(page.locator("#clear-search svg")).toHaveCount(1);

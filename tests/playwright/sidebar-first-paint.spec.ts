@@ -291,6 +291,9 @@ test.describe("sidebar first paint", () => {
     await page.goto("/sidebar/sidebar.html");
     await expect(page.locator(".node[data-node-id='group:hidden']")).toBeVisible();
     await expect(page.locator("#state-count")).toHaveText("103 items / 101 saved");
+    await expect(page.locator("#export-tree")).toBeHidden();
+    await expect(page.locator("#import-tree")).toBeHidden();
+    await openToolbarOverflow(page);
     await expect(page.locator("#export-tree")).toBeEnabled();
     await expect(page.locator("#import-tree")).toBeEnabled();
     await page.locator("#export-tree").click();
@@ -432,6 +435,7 @@ test.describe("sidebar first paint", () => {
       };
     });
     expect(beforeHydration.hydrationRequests).toBe(0);
+    await openToolbarOverflow(page);
     await expect(page.locator("#export-tree")).toBeEnabled();
     await expect(page.locator("#import-tree")).toBeEnabled();
     expect(issues).toEqual([]);
@@ -1623,4 +1627,9 @@ async function sparseSearchRequestCount(page: Page, query: string): Promise<numb
       message.type === "getTreeProjectionSlice" && message.query === expectedQuery
     ).length;
   }, query);
+}
+
+async function openToolbarOverflow(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "More actions" }).click();
+  await expect(page.locator("#toolbar-overflow-menu")).toBeVisible();
 }
