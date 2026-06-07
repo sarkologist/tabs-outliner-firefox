@@ -3210,7 +3210,7 @@ function canMoveSubtreeToTopLevel(node: OutlineNode): boolean {
   return Boolean(node.parentId);
 }
 
-function canMoveSubtreeToBottomTopLevel(state: OutlineState, node: OutlineNode): boolean {
+function canMoveSubtreeToBottomTopLevel(state: OutlineState, node: OutlineNode, rowInfo: VisibleTreeRow): boolean {
   if (node.parentId) {
     return true;
   }
@@ -3218,7 +3218,22 @@ function canMoveSubtreeToBottomTopLevel(state: OutlineState, node: OutlineNode):
     return false;
   }
   const rootIndex = state.rootIds.indexOf(node.id);
-  return rootIndex >= 0 && rootIndex < state.rootIds.length - 1;
+  if (rootIndex >= 0 && rootIndex < state.rootIds.length - 1) {
+    return true;
+  }
+  return canMoveSparseHydratingRootSubtreeToBottom(rowInfo);
+}
+
+function canMoveSparseHydratingRootSubtreeToBottom(rowInfo: VisibleTreeRow): boolean {
+  const projection = currentProjection;
+  return Boolean(
+    rowInfo.depth === 0 &&
+      projection &&
+      !projection.isSearchActive &&
+      projectionRequiresHydrationCoverage(projection) &&
+      typeof projection.totalRowCount === "number" &&
+      rowInfo.subtreeEndIndex < projection.totalRowCount
+  );
 }
 
 function isRenamableGroup(node: OutlineNode): boolean {
@@ -3646,7 +3661,10 @@ function renderNodeActions(
   if (canMoveSubtreeToTopLevel(node) && canRenderHydratingNodeAction("move-subtree-to-top-level", node)) {
     actions.append(actionButton("Move to top level", "move-subtree-to-top-level", "root-outdent"));
   }
-  if (canMoveSubtreeToBottomTopLevel(state, node) && canRenderHydratingNodeAction("move-subtree-to-bottom-top-level", node)) {
+  if (
+    canMoveSubtreeToBottomTopLevel(state, node, rowInfo) &&
+    canRenderHydratingNodeAction("move-subtree-to-bottom-top-level", node)
+  ) {
     actions.append(actionButton("Move to bottom", "move-subtree-to-bottom-top-level", "root-down"));
   }
   if ((node.status === "live" || hasLiveDescendant(node.id)) && canRenderHydratingNodeAction("close-node", node)) {

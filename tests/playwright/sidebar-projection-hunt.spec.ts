@@ -933,6 +933,27 @@ test.describe("sidebar projection hunt", () => {
     expect(issues).toEqual([]);
   });
 
+  test("psh move to bottom visible for sparse root named group with unloaded tail", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadSparseNamedGroupSidebar(page, { fullStatePending: true });
+
+    const row = nodeRow(page, "window:named-group");
+    await row.hover();
+    const moveToBottom = row.getByRole("button", { name: "Move to bottom", exact: true });
+    await expect(moveToBottom).toBeVisible();
+
+    await moveToBottom.click();
+
+    const result = await page.evaluate(() => ({
+      commands: projectionHuntApi().sentCommands()
+    }));
+    expect(result.commands).toContainEqual({
+      type: "moveSubtreeToBottomTopLevel",
+      nodeId: "window:named-group"
+    });
+    expect(issues).toEqual([]);
+  });
+
   test("psh-rename-input-undo-shortcut-stays-local-during-hydration", async ({ page }) => {
     const issues = collectPageIssues(page);
     await loadLargeSparseSidebar(page, {
@@ -10546,6 +10567,33 @@ async function loadRestoredSubgroupSidebar(
   await expect(page.locator(nodeSelector("tab:s3"))).toBeVisible();
 }
 
+async function loadSparseNamedGroupSidebar(
+  page: Page,
+  options: { fullStatePending?: boolean } = {}
+): Promise<void> {
+  await page.addInitScript(({ installerSource, harnessOptions }) => {
+    const install = (0, eval)(`(${installerSource})`) as typeof installProjectionHuntHarness;
+    install(harnessOptions);
+  }, {
+    installerSource: installProjectionHuntHarness.toString(),
+    harnessOptions: {
+      totalRows: 6,
+      initialStart: 0,
+      initialEnd: 4,
+      activeTabId: 0,
+      fullStatePending: Boolean(options.fullStatePending),
+      includeCoverage: true,
+      restoredFixture: false,
+      namedGroupRootsFixture: true
+    }
+  });
+
+  await page.goto("/sidebar/sidebar.html");
+  await waitForSidebarAppReady(page);
+  await expect(page.locator(nodeSelector("window:named-group"))).toBeVisible();
+  await expect(page.locator(nodeSelector("window:tail"))).toHaveCount(0);
+}
+
 async function loadClosedRestoreSidebar(
   page: Page,
   options: { fullStatePending?: boolean; invalidRestoreScope?: boolean; delayRestoreScope?: boolean } = {}
@@ -10828,6 +10876,7 @@ function installProjectionHuntHarness(options: {
   fullStatePending: boolean;
   includeCoverage: boolean;
   restoredFixture: boolean;
+  namedGroupRootsFixture?: boolean;
   restoredSubgroupFixture?: boolean;
   closedRestoreFixture?: boolean;
   collapsedBoundaryFixture?: boolean;
@@ -10954,6 +11003,7 @@ function installProjectionHuntHarness(options: {
           type === "moveNodeToNewWindow" ||
           type === "wrapNodeInGroup" ||
           type === "moveSubtreeToTopLevel" ||
+          type === "moveSubtreeToBottomTopLevel" ||
           type === "renameGroup" ||
           type === "focusNode" ||
           type === "expandAncestors" ||
@@ -11180,9 +11230,15 @@ function installProjectionHuntHarness(options: {
         .filter(Boolean)
         .map((node) => [node.id, structuredClone(node)])
     );
-    if (!options.restoredFixture && !options.closedRestoreFixture && !options.restoredSubgroupFixture) {
+    if (
+      !options.restoredFixture &&
+      !options.closedRestoreFixture &&
+      !options.restoredSubgroupFixture &&
+      !options.namedGroupRootsFixture
+    ) {
       nodes["window:1"] = structuredClone(sourceState.nodes["window:1"]);
     }
+    const loadedRootIds = new Set(rows.filter((row) => row.depth === 0).map((row) => row.nodeId));
     const indexes = rows.map((row) => row.index);
     return {
       type: "initialTreeSnapshot",
@@ -11191,7 +11247,9 @@ function installProjectionHuntHarness(options: {
       hydrating: settings.hydrating,
       state: {
         version: 1,
-        rootIds: [...sourceState.rootIds],
+        rootIds: options.namedGroupRootsFixture
+          ? sourceState.rootIds.filter((nodeId) => loadedRootIds.has(nodeId))
+          : [...sourceState.rootIds],
         nodes
       },
       projection: {
@@ -11244,6 +11302,13 @@ function installProjectionHuntHarness(options: {
       const start = override.start ?? Math.max(0, Math.floor(centerRowIndex - request.rowLimit / 2));
       const end = override.end ?? Math.min(currentTotalRows(sourceState), Math.floor(centerRowIndex + request.rowLimit / 2));
       const rows = restoredSubgroupRows(sourceState).filter((row) => row.index >= start && row.index < end);
+      return { rows, matchingNodeIds: [], totalRowCount: currentTotalRows(sourceState) };
+    }
+    if (options.namedGroupRootsFixture) {
+      const centerRowIndex = request.targetNodeId ? rowIndexForNodeId(request.targetNodeId, sourceState) : request.centerRowIndex;
+      const start = override.start ?? Math.max(0, Math.floor(centerRowIndex - request.rowLimit / 2));
+      const end = override.end ?? Math.min(currentTotalRows(sourceState), Math.floor(centerRowIndex + request.rowLimit / 2));
+      const rows = namedGroupRootRows(sourceState).filter((row) => row.index >= start && row.index < end);
       return { rows, matchingNodeIds: [], totalRowCount: currentTotalRows(sourceState) };
     }
     if (options.collapsedBoundaryFixture) {
@@ -11403,6 +11468,12 @@ function installProjectionHuntHarness(options: {
         return row.index;
       }
     }
+    if (options.namedGroupRootsFixture) {
+      const row = namedGroupRootRows(sourceState).find((candidate) => candidate.nodeId === nodeId);
+      if (row) {
+        return row.index;
+      }
+    }
     if (options.collapsedBoundaryFixture) {
       const row = collapsedBoundaryRows().find((candidate) => candidate.nodeId === nodeId);
       if (row) {
@@ -11436,6 +11507,9 @@ function installProjectionHuntHarness(options: {
     if (options.restoredSubgroupFixture) {
       return restoredSubgroupState();
     }
+    if (options.namedGroupRootsFixture) {
+      return namedGroupRootState();
+    }
     return options.restoredFixture ? restoredState() : largeState();
   }
 
@@ -11448,6 +11522,9 @@ function installProjectionHuntHarness(options: {
     }
     if (options.restoredSubgroupFixture) {
       return restoredSubgroupRows().filter((row) => row.index >= options.initialStart && row.index < options.initialEnd);
+    }
+    if (options.namedGroupRootsFixture) {
+      return namedGroupRootRows().filter((row) => row.index >= options.initialStart && row.index < options.initialEnd);
     }
     return options.restoredFixture
       ? restoredRows()
@@ -11465,6 +11542,14 @@ function installProjectionHuntHarness(options: {
       return sourceState.nodes["tab:performance"]
         ? {
             activeTabNodeId: "tab:performance",
+            activeTabRowIndex: 1
+          }
+        : {};
+    }
+    if (options.namedGroupRootsFixture) {
+      return sourceState.nodes["tab:rare-earth"]
+        ? {
+            activeTabNodeId: "tab:rare-earth",
             activeTabRowIndex: 1
           }
         : {};
@@ -11494,6 +11579,9 @@ function installProjectionHuntHarness(options: {
     }
     if (options.restoredSubgroupFixture) {
       return ["window:restored-subgroup"];
+    }
+    if (options.namedGroupRootsFixture) {
+      return ["window:named-group", "window:earth"];
     }
     return ["window:1"];
   }
@@ -11639,6 +11727,84 @@ function installProjectionHuntHarness(options: {
     };
   }
 
+  function namedGroupRootState() {
+    return {
+      version: 1,
+      rootIds: ["window:named-group", "window:tail"],
+      nodes: {
+        "window:named-group": {
+          id: "window:named-group",
+          kind: "window",
+          status: "live",
+          title: "maps / earth / world",
+          customTitle: "maps / earth / world",
+          active: true,
+          collapsed: false,
+          childIds: ["tab:rare-earth", "window:earth"],
+          createdAt: now,
+          updatedAt: now,
+          restoredFromClosed: true,
+          live: { windowId: 40 }
+        },
+        "tab:rare-earth": namedGroupTabNode("tab:rare-earth", 401, "window:named-group", "Rare Earth - YouTube", true, 40),
+        "window:earth": {
+          id: "window:earth",
+          kind: "window",
+          status: "live",
+          parentId: "window:named-group",
+          title: "Google Earth",
+          customTitle: "Google Earth",
+          active: false,
+          collapsed: false,
+          childIds: ["tab:google-maps"],
+          createdAt: now,
+          updatedAt: now,
+          restoredFromClosed: true,
+          live: { windowId: 41 }
+        },
+        "tab:google-maps": namedGroupTabNode("tab:google-maps", 402, "window:earth", "Google Maps", false, 41),
+        "window:tail": {
+          id: "window:tail",
+          kind: "window",
+          status: "live",
+          title: "Later root",
+          active: false,
+          collapsed: false,
+          childIds: ["tab:tail"],
+          createdAt: now,
+          updatedAt: now,
+          live: { windowId: 42 }
+        },
+        "tab:tail": namedGroupTabNode("tab:tail", 403, "window:tail", "Tail tab", false, 42)
+      }
+    };
+  }
+
+  function namedGroupTabNode(
+    id: string,
+    tabId: number,
+    parentId: string,
+    title: string,
+    active: boolean,
+    windowId: number
+  ) {
+    return {
+      id,
+      kind: "tab",
+      status: "live",
+      parentId,
+      title,
+      url: `https://named-group.example/${tabId}`,
+      active,
+      collapsed: false,
+      childIds: [],
+      createdAt: now,
+      updatedAt: now,
+      restoredFromClosed: true,
+      live: { tabId, windowId }
+    };
+  }
+
   function collapsedBoundaryState() {
     return {
       version: 1,
@@ -11727,6 +11893,9 @@ function installProjectionHuntHarness(options: {
     }
     if (options.restoredSubgroupFixture) {
       return restoredSubgroupRows(sourceState).length;
+    }
+    if (options.namedGroupRootsFixture) {
+      return namedGroupRootRows(sourceState).length;
     }
     const window = sourceState.nodes["window:1"] as { childIds?: string[] } | undefined;
     return 1 + (Array.isArray(window?.childIds) ? window.childIds.length : 0);
@@ -11867,6 +12036,107 @@ function installProjectionHuntHarness(options: {
         insideActiveWindow: nodeId === "tab:performance"
       }))
     ];
+  }
+
+  function namedGroupRootRows(sourceState = fullState) {
+    const namedGroup = sourceState.nodes["window:named-group"] as { childIds?: string[] } | undefined;
+    const earthGroup = sourceState.nodes["window:earth"] as { childIds?: string[] } | undefined;
+    const tailGroup = sourceState.nodes["window:tail"] as { childIds?: string[] } | undefined;
+    const rows: Array<Record<string, unknown> & { nodeId: string; index: number }> = [];
+
+    if (namedGroup) {
+      const namedChildren = Array.isArray(namedGroup.childIds) ? namedGroup.childIds : [];
+      rows.push({
+        nodeId: "window:named-group",
+        depth: 0,
+        index: 0,
+        subtreeEndIndex: 4,
+        childCount: namedChildren.length,
+        visibleChildCount: namedChildren.length,
+        expanded: true,
+        searchRevealsCollapsedChildren: false,
+        isSearchMatch: false,
+        isSearchPath: false,
+        insideActiveWindow: false
+      });
+      rows.push({
+        nodeId: "tab:rare-earth",
+        depth: 1,
+        index: 1,
+        parentRowIndex: 0,
+        subtreeEndIndex: 2,
+        childCount: 0,
+        visibleChildCount: 0,
+        expanded: true,
+        searchRevealsCollapsedChildren: false,
+        isSearchMatch: false,
+        isSearchPath: false,
+        insideActiveWindow: false
+      });
+    }
+    if (earthGroup) {
+      const earthChildren = Array.isArray(earthGroup.childIds) ? earthGroup.childIds : [];
+      rows.push({
+        nodeId: "window:earth",
+        depth: 1,
+        index: 2,
+        parentRowIndex: 0,
+        subtreeEndIndex: 4,
+        childCount: earthChildren.length,
+        visibleChildCount: earthChildren.length,
+        expanded: true,
+        searchRevealsCollapsedChildren: false,
+        isSearchMatch: false,
+        isSearchPath: false,
+        insideActiveWindow: false
+      });
+      rows.push({
+        nodeId: "tab:google-maps",
+        depth: 2,
+        index: 3,
+        parentRowIndex: 2,
+        subtreeEndIndex: 4,
+        childCount: 0,
+        visibleChildCount: 0,
+        expanded: true,
+        searchRevealsCollapsedChildren: false,
+        isSearchMatch: false,
+        isSearchPath: false,
+        insideActiveWindow: false
+      });
+    }
+    if (tailGroup) {
+      const tailChildren = Array.isArray(tailGroup.childIds) ? tailGroup.childIds : [];
+      rows.push({
+        nodeId: "window:tail",
+        depth: 0,
+        index: 4,
+        subtreeEndIndex: 6,
+        childCount: tailChildren.length,
+        visibleChildCount: tailChildren.length,
+        expanded: true,
+        searchRevealsCollapsedChildren: false,
+        isSearchMatch: false,
+        isSearchPath: false,
+        insideActiveWindow: false
+      });
+      rows.push({
+        nodeId: "tab:tail",
+        depth: 1,
+        index: 5,
+        parentRowIndex: 4,
+        subtreeEndIndex: 6,
+        childCount: 0,
+        visibleChildCount: 0,
+        expanded: true,
+        searchRevealsCollapsedChildren: false,
+        isSearchMatch: false,
+        isSearchPath: false,
+        insideActiveWindow: false
+      });
+    }
+
+    return rows;
   }
 
   function collapsedBoundaryRows() {
