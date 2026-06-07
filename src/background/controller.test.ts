@@ -37656,6 +37656,123 @@ describe("background controller lifecycle", () => {
     });
   });
 
+  it("ignores transient restored-window placeholders until they report a restorable URL", async () => {
+    const storedState: OutlineState = {
+      version: 1,
+      rootIds: ["window:saved"],
+      nodes: {
+        "window:saved": {
+          id: "window:saved",
+          kind: "window",
+          status: "closed",
+          childIds: ["tab:saved"],
+          title: "Saved group",
+          collapsed: false,
+          createdAt: 1000,
+          updatedAt: 1000,
+          closedAt: 1000,
+          restore: {
+            sessionId: "session-saved-window"
+          }
+        },
+        "tab:saved": {
+          id: "tab:saved",
+          kind: "tab",
+          status: "closed",
+          parentId: "window:saved",
+          childIds: [],
+          title: "Saved target",
+          url: "https://restore.example/final",
+          collapsed: false,
+          createdAt: 1000,
+          updatedAt: 1000,
+          closedAt: 1000,
+          restore: {
+            url: "https://restore.example/final",
+            title: "Saved target"
+          }
+        }
+      }
+    };
+    const runtime = fakeRuntime(
+      [
+        { id: 10, focused: true, incognito: false }
+      ],
+      [
+        { id: 1, windowId: 10, index: 0, active: true, url: "https://one.example/", title: "One" }
+      ],
+      { initialStorage: outlineStateV3Changes(storedState).setItems }
+    );
+    let restoredWindowId: number | undefined;
+    vi.mocked(runtime.api.sessions.restore).mockImplementation(async (sessionId: string) => {
+      if (sessionId !== "session-saved-window") {
+        return {};
+      }
+      restoredWindowId = nextRuntimeWindowId(runtime);
+      runtime.windows = runtime.windows
+        .map((windowInfo) => ({ ...windowInfo, focused: false }))
+        .concat({ id: restoredWindowId, focused: true, incognito: false });
+      return {
+        window: {
+          id: restoredWindowId,
+          focused: true,
+          incognito: false,
+          tabs: []
+        }
+      } as never;
+    });
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+
+    expectCommandAck(await controller.handleMessage({ type: "restoreNode", nodeId: "window:saved" }), true);
+    const placeholderTab: RuntimeTab = {
+      id: nextRuntimeTabId(runtime),
+      windowId: restoredWindowId!,
+      index: 0,
+      active: true,
+      url: "about:blank",
+      title: "New Tab"
+    };
+    runtime.tabs = [...runtime.tabs, copyTab(placeholderTab)];
+    runtime.events.tabCreated.dispatch(copyTab(placeholderTab));
+    await runtime.events.tabCreated.flush();
+    let state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+
+    expect(restoredWindowId).toBeTypeOf("number");
+    expect(state.nodes["window:saved"]).toMatchObject({
+      status: "live",
+      childIds: ["tab:saved"],
+      live: { windowId: restoredWindowId }
+    });
+    expect(state.nodes["tab:saved"]).toMatchObject({
+      status: "closed",
+      parentId: "window:saved"
+    });
+    expect(state.nodes[`tab:${placeholderTab.id}`]).toBeUndefined();
+
+    const loadedTab = {
+      ...placeholderTab,
+      url: "https://restore.example/final",
+      title: "Saved target"
+    };
+    runtime.tabs = runtime.tabs.map((tab) => tab.id === loadedTab.id ? copyTab(loadedTab) : tab);
+    await runtime.events.tabUpdated.emit(loadedTab.id, {
+      url: loadedTab.url,
+      title: loadedTab.title
+    }, copyTab(loadedTab));
+
+    state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(state.nodes["window:saved"]?.childIds).toEqual(["tab:saved"]);
+    expect(state.nodes["tab:saved"]).toMatchObject({
+      status: "live",
+      title: "Saved target",
+      url: "https://restore.example/final",
+      parentId: "window:saved",
+      live: { tabId: loadedTab.id, windowId: restoredWindowId }
+    });
+    expect(state.nodes[`tab:${loadedTab.id}`]).toBeUndefined();
+  });
+
   it("keeps nested restored imported tabs in the subgroup runtime window", async () => {
     const parentUrl = "https://subgroup.example/parent";
     const childUrl = "https://subgroup.example/child";

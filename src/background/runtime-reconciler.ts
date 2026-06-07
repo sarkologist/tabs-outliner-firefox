@@ -85,15 +85,22 @@ export class RuntimeReconciler {
     const ignoredWindowIds = input.ledger.ignoredWindowIdsForRefresh();
 
     return applyActivationOverridesToWindows(
-      addMissingCommandRelocatedTabsFromCurrentState(
-        filterCommandRelocatedStaleTabsFromWindows(
-          addMissingTabsForEmptyOpenWindowSnapshots(
-            filterIgnoredWindowsFromWindows(
-              filterIgnoredTabsFromWindows(input.windows, input.ledger),
-              input.ledger
+      filterTransientRestoredWindowPlaceholdersFromWindows(
+        addMissingCommandRelocatedTabsFromCurrentState(
+          filterCommandRelocatedStaleTabsFromWindows(
+            addMissingTabsForEmptyOpenWindowSnapshots(
+              filterIgnoredWindowsFromWindows(
+                filterIgnoredTabsFromWindows(input.windows, input.ledger),
+                input.ledger
+              ),
+              input.state,
+              input.index,
+              ignoredTabIds,
+              ignoredWindowIds
             ),
             input.state,
             input.index,
+            input.ledger,
             ignoredTabIds,
             ignoredWindowIds
           ),
@@ -105,9 +112,7 @@ export class RuntimeReconciler {
         ),
         input.state,
         input.index,
-        input.ledger,
-        ignoredTabIds,
-        ignoredWindowIds
+        input.ledger
       ),
       input.activationByWindowId
     );
@@ -537,7 +542,43 @@ export function buildRuntimeStateIndexForReconciliation(state: OutlineState): Ru
     }
   }
 
+  populateClosedRestoreCandidateCounts(state, index);
   return index;
+}
+
+function populateClosedRestoreCandidateCounts(
+  state: OutlineState,
+  index: RuntimeStateIndexForReconciliation
+): void {
+  const visited = new Set<NodeId>();
+  const stack: Array<{ nodeId: NodeId; ownerWindowNodeId?: NodeId }> = state.rootIds.map((nodeId) => ({ nodeId }));
+
+  while (stack.length > 0) {
+    const entry = stack.pop()!;
+    if (visited.has(entry.nodeId)) {
+      continue;
+    }
+    visited.add(entry.nodeId);
+
+    const node = state.nodes[entry.nodeId];
+    if (!node) {
+      continue;
+    }
+
+    const ownerWindowNodeId = node.kind === "window" ? node.id : entry.ownerWindowNodeId;
+    if (ownerWindowNodeId && node.id !== ownerWindowNodeId && node.kind === "tab" && node.status === "closed") {
+      const count = index.closedRestoreCandidateCountsByWindowNodeId.get(ownerWindowNodeId) ?? 0;
+      index.closedRestoreCandidateCountsByWindowNodeId.set(ownerWindowNodeId, count + 1);
+      index.windowNodeIdsWithClosedRestoreCandidates.add(ownerWindowNodeId);
+    }
+
+    for (const childId of node.childIds) {
+      stack.push({
+        nodeId: childId,
+        ...(ownerWindowNodeId ? { ownerWindowNodeId } : {})
+      });
+    }
+  }
 }
 
 function filterIgnoredTabsFromWindows(windows: RuntimeWindow[], ledger: RuntimeFactLedger): RuntimeWindow[] {
@@ -764,6 +805,122 @@ function addMissingCommandRelocatedTabsFromCurrentState(
       tabs: [...(windowInfo.tabs ?? []), ...additions].sort((left, right) => left.index - right.index)
     };
   });
+}
+
+function filterTransientRestoredWindowPlaceholdersFromWindows(
+  windows: RuntimeWindow[],
+  state: OutlineState,
+  index: RuntimeStateIndexForReconciliation,
+  ledger: RuntimeFactLedger
+): RuntimeWindow[] {
+  let changed = false;
+  const next = windows.map((windowInfo) => {
+    const tabs = windowInfo.tabs ?? [];
+    if (tabs.length === 0) {
+      return windowInfo;
+    }
+
+    const windowNodeId = index.liveWindowNodeIdsByRuntimeId.get(windowInfo.id);
+    if (!windowNodeId || !index.windowNodeIdsWithClosedRestoreCandidates.has(windowNodeId)) {
+      return windowInfo;
+    }
+
+    const windowNode = state.nodes[windowNodeId];
+    if (!isRestoredOrCommandCreatedWindowScope(windowNode, windowInfo.id, ledger)) {
+      return windowInfo;
+    }
+    if ((index.liveTabNodeIdsByWindowId.get(windowInfo.id)?.size ?? 0) > 0) {
+      return windowInfo;
+    }
+
+    let blankRestoreCandidateCount = closedBlankRestoreCandidateCount(state, windowNodeId);
+    const filteredTabs = tabs.filter((tab) => {
+      if (index.liveTabNodeIdsByRuntimeId.has(tab.id)) {
+        return true;
+      }
+      if (!isBlankTransientRuntimePlaceholder(tab)) {
+        return true;
+      }
+      if (blankRestoreCandidateCount > 0) {
+        blankRestoreCandidateCount -= 1;
+        return true;
+      }
+      changed = true;
+      return false;
+    });
+
+    return filteredTabs.length === tabs.length
+      ? windowInfo
+      : {
+          ...windowInfo,
+          tabs: filteredTabs
+        };
+  });
+
+  return changed ? next : windows;
+}
+
+function isRestoredOrCommandCreatedWindowScope(
+  node: OutlineNode | undefined,
+  runtimeWindowId: number,
+  ledger: RuntimeFactLedger
+): boolean {
+  const scope = ledger.windowScope(runtimeWindowId);
+  return Boolean(
+    isLiveWindowNode(node) &&
+      (
+        node.restoredFromClosed === true ||
+        node.runtimeProvenance === "commandCreated" ||
+        scope?.provenance === "restored" ||
+        scope?.provenance === "commandCreated"
+      )
+  );
+}
+
+function closedBlankRestoreCandidateCount(state: OutlineState, windowNodeId: NodeId): number {
+  let count = 0;
+  const visited = new Set<NodeId>();
+  const stack: Array<{ nodeId: NodeId; ownerWindowNodeId: NodeId }> =
+    (state.nodes[windowNodeId]?.childIds ?? []).map((nodeId) => ({ nodeId, ownerWindowNodeId: windowNodeId }));
+
+  while (stack.length > 0) {
+    const entry = stack.pop()!;
+    if (visited.has(entry.nodeId)) {
+      continue;
+    }
+    visited.add(entry.nodeId);
+
+    const node = state.nodes[entry.nodeId];
+    if (!node) {
+      continue;
+    }
+
+    if (
+      entry.ownerWindowNodeId === windowNodeId &&
+      node.kind === "tab" &&
+      node.status === "closed" &&
+      isBlankRestoreCandidateUrl(node.restore?.url ?? node.url)
+    ) {
+      count += 1;
+    }
+
+    const ownerWindowNodeId = node.kind === "window" ? node.id : entry.ownerWindowNodeId;
+    for (const childId of node.childIds) {
+      stack.push({ nodeId: childId, ownerWindowNodeId });
+    }
+  }
+
+  return count;
+}
+
+function isBlankRestoreCandidateUrl(url: string | undefined): boolean {
+  const normalized = url?.trim().toLocaleLowerCase();
+  return normalized === "about:blank" || normalized === "about:newtab";
+}
+
+function isBlankTransientRuntimePlaceholder(tab: RuntimeTab): boolean {
+  const normalizedUrl = tab.url?.trim().toLocaleLowerCase();
+  return !normalizedUrl || normalizedUrl === "about:blank" || normalizedUrl === "about:newtab";
 }
 
 function applyActivationOverridesToWindows(
