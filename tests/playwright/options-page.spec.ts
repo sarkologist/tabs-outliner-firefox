@@ -92,6 +92,13 @@ test.describe("extension options page", () => {
           { source: "background", name: "background.save", atMs: 1, durationMs: 12 }
         ]
       },
+      incidentLog: [
+        {
+          version: 1,
+          at: "2026-06-07T12:00:00.000Z",
+          event: "startupStateLoaded"
+        }
+      ],
       sidebars: [
         {
           id: "sidebar-window-10",
@@ -122,6 +129,13 @@ test.describe("extension options page", () => {
           { source: "background", name: "background.save", atMs: 3, durationMs: 8 }
         ]
       },
+      incidentLog: [
+        {
+          version: 1,
+          at: "2026-06-07T12:00:00.000Z",
+          event: "startupStateLoaded"
+        }
+      ],
       sidebars: [
         {
           id: "sidebar-window-10",
@@ -160,6 +174,7 @@ test.describe("extension options page", () => {
       exportedAt?: string;
       snapshot?: {
         background?: { entries?: unknown[] };
+        incidentLog?: Array<{ event?: string }>;
         sidebars?: Array<{
           id?: string;
           label?: string;
@@ -172,6 +187,9 @@ test.describe("extension options page", () => {
     expect(payload.schema).toBe("tabs-outliner-profile");
     expect(payload.exportedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     expect(payload.snapshot?.background?.entries).toHaveLength(1);
+    expect(payload.snapshot?.incidentLog).toEqual([
+      expect.objectContaining({ event: "startupStateLoaded" })
+    ]);
     expect(payload.snapshot?.sidebars).toEqual([
       expect.objectContaining({
         id: "sidebar-window-10",
@@ -217,6 +235,13 @@ async function loadOptions(page: Page): Promise<void> {
         maxEntries: 500,
         entries: [] as unknown[]
       },
+      incidentLog: [
+        {
+          version: 1,
+          at: "2026-06-07T12:00:00.000Z",
+          event: "startupStateLoaded"
+        }
+      ],
       sidebars: [] as unknown[]
     };
     const runtimeMessages: unknown[] = [];

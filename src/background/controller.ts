@@ -17,6 +17,7 @@ import {
   type ClosedSubtreeGuardResult
 } from "./closed-subtree-guard.js";
 import { computeDiagnostics, type OutlineDiagnostics } from "./diagnostics.js";
+import { appendIncidentLogEntry, loadIncidentLog, type IncidentLogDetail } from "./incident-log.js";
 import { isBackgroundCommand, planCloseNodeRuntimeClose, planLiveSubtreeClose, runCommand, syncBrowserOrder } from "./commands.js";
 import type { BackgroundCommand, CommandAck, RestoreCreateAttempt, RuntimeClosePlan } from "./commands.js";
 import {
@@ -759,6 +760,10 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
     if (isDiagnosticsRequest(message)) {
       return getDiagnosticsCoalesced();
+    }
+
+    if (isIncidentLogRequest(message)) {
+      return loadIncidentLog(api);
     }
 
     if (isInitialTreeSnapshotMessage(message)) {
@@ -1732,6 +1737,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       const attemptedAtMs = now();
       const attemptedAt = new Date(attemptedAtMs).toISOString();
       const previousStatus = await loadAutomaticBackupStatus(api).catch(() => ({}));
+      await recordIncidentLog("automaticBackupStart", { attemptedAt });
       try {
         await waitForSchedulerIdle();
         await downloadAutomaticBackup(await ensureState(), api, attemptedAtMs);
@@ -1742,6 +1748,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         };
         delete nextStatus.lastError;
         await saveAutomaticBackupStatus(nextStatus, api);
+        await recordIncidentLog("automaticBackupSuccess", { attemptedAt });
         return nextStatus;
       } catch (error) {
         const nextStatus: AutomaticBackupStatus = {
@@ -1750,6 +1757,10 @@ export function createBackgroundController(options: BackgroundControllerOptions)
           lastError: backupErrorText(error)
         };
         await saveAutomaticBackupStatus(nextStatus, api);
+        await recordIncidentLog("automaticBackupFailure", {
+          attemptedAt,
+          error: backupErrorText(error)
+        });
         return nextStatus;
       }
     }).finally(() => {
@@ -1922,6 +1933,15 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       runtimeLifecycleJournalChangedHistory = lifecycleRecovery.changedHistory;
       completedOutlinerClosePlans = lifecycleRecovery.completedOutlinerClosePlans;
       completedDeleteClosePlans = lifecycleRecovery.completedDeleteClosePlans;
+      if (lifecycleJournal.entries.length > 0) {
+        await recordIncidentLog("lifecycleJournalRecovery", {
+          entryCount: lifecycleJournal.entries.length,
+          entryKinds: lifecycleJournal.entries.map((entry) => entry.kind).join(","),
+          consumedCount: lifecycleRecovery.consumedEntryIds.length,
+          changedState: lifecycleRecovery.changed,
+          changedHistory: lifecycleRecovery.changedHistory
+        });
+      }
       if (lifecycleRecovery.history) {
         historyState = lifecycleRecovery.history;
       }
@@ -1981,6 +2001,14 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     if (runtimeLifecycleJournalChangedHistory && historyState) {
       scheduleHistorySave(historyState);
     }
+    await recordIncidentLog("startupStateLoaded", {
+      stored: Boolean(stored),
+      format: loaded?.format ?? "none",
+      requiresFullSave: loaded?.requiresFullSave === true,
+      runtimeWindowCount: windows.length,
+      journalEntryCount: lifecycleJournal.entries.length,
+      ...outlineStateCountDetail(state)
+    });
     runtimeIndex = storedRuntimeMatch?.matches && state === stored
       ? buildRuntimeStateIndexFromLookup(state, storedRuntimeMatch.lookup)
       : buildRuntimeStateIndex(state);
@@ -4254,6 +4282,10 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         ...detail,
         restoredNodeCount: guarded.restoredNodeIds.length
       });
+      void recordIncidentLog("closedSubtreeGuardRestore", {
+        source: typeof detail.source === "string" ? detail.source : "unknown",
+        restoredNodeCount: guarded.restoredNodeIds.length
+      });
     }
     return guarded;
   }
@@ -4850,7 +4882,10 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     candidateNodeIds?: readonly NodeId[]
   ): void {
     pendingSaveState = next;
-    if (candidateNodeIds) {
+    if (candidateNodeIds && candidateNodeIds.some((nodeId) => !next.nodes[nodeId])) {
+      pendingSaveCandidateNodeIds = undefined;
+      pendingSaveRequiresFullDiff = true;
+    } else if (candidateNodeIds) {
       if (!pendingSaveRequiresFullDiff) {
         pendingSaveCandidateNodeIds ??= new Set<NodeId>();
         for (const nodeId of candidateNodeIds) {
@@ -5012,6 +5047,15 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     nextHistory: HistoryState | undefined,
     candidateNodeIds?: readonly NodeId[]
   ): Promise<void> {
+    const saveIncidentDetail = nextState
+      ? {
+          candidateNodeCount: candidateNodeIds?.length ?? 0,
+          fullDiff: !candidateNodeIds,
+          fullSave: !lastPersistedState,
+          hasHistory: Boolean(nextHistory),
+          ...outlineStateCountDetail(nextState)
+        }
+      : undefined;
     await perfTrace.measureAsync("background.state.save", () =>
       saveStateAndHistory(nextState, nextHistory, api, {
         ...(nextState && lastPersistedState ? { previousState: lastPersistedState } : {}),
@@ -5019,6 +5063,9 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         ...(stateSaveTraceOptions() ?? {})
       })
     );
+    if (saveIncidentDetail) {
+      await recordIncidentLog("saveFlush", saveIncidentDetail);
+    }
     if (nextState) {
       deferPersistedStateBaselineClone(nextState);
     }
@@ -5104,6 +5151,36 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     }
   }
 
+  async function recordIncidentLog(event: string, detail: IncidentLogDetail = {}): Promise<void> {
+    try {
+      await appendIncidentLogEntry(api, event, detail, { now });
+    } catch (error) {
+      perfTrace.mark("background.incidentLog.error", {
+        event,
+        message: errorText(error)
+      });
+    }
+  }
+
+  function outlineStateCountDetail(source: OutlineState): IncidentLogDetail {
+    let nodeCount = 0;
+    let closedCount = 0;
+    for (const nodeId in source.nodes) {
+      const node = source.nodes[nodeId];
+      if (!node) {
+        continue;
+      }
+      nodeCount += 1;
+      if (node.status === "closed") {
+        closedCount += 1;
+      }
+    }
+    return {
+      nodeCount,
+      closedCount
+    };
+  }
+
   function getDiagnosticsCoalesced(): Promise<OutlineDiagnostics> {
     diagnosticsInFlight ??= perfTrace.measureAsync("background.diagnostics", async () => {
       await waitForSchedulerIdle();
@@ -5167,9 +5244,14 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
   async function performanceProfileSnapshot(): Promise<PerformanceProfileSnapshot> {
     const background = perfTrace.snapshot();
+    const [incidentLog, sidebars] = await Promise.all([
+      loadIncidentLog(api),
+      collectSidebarPerformanceTraces()
+    ]);
     return {
       background,
-      sidebars: await collectSidebarPerformanceTraces()
+      incidentLog,
+      sidebars
     };
   }
 
@@ -6971,6 +7053,14 @@ function isDiagnosticsRequest(message: unknown): message is { type: "getDiagnost
     message &&
       typeof message === "object" &&
       (message as { type?: unknown }).type === "getDiagnostics"
+  );
+}
+
+function isIncidentLogRequest(message: unknown): message is { type: "getIncidentLog" } {
+  return Boolean(
+    message &&
+      typeof message === "object" &&
+      (message as { type?: unknown }).type === "getIncidentLog"
   );
 }
 

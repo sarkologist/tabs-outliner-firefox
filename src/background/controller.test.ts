@@ -12,6 +12,7 @@ import {
 } from "./backups.js";
 import { createBackgroundController, type BackgroundController } from "./controller.js";
 import type { CommandAck } from "./commands.js";
+import { INCIDENT_LOG_STORAGE_KEY, loadIncidentLog } from "./incident-log.js";
 import { RUNTIME_LIFECYCLE_JOURNAL_KEY } from "./runtime-lifecycle-journal.js";
 import {
   HISTORY_KEY,
@@ -19,6 +20,7 @@ import {
   STATE_V3_MANIFEST_KEY,
   loadState,
   loadStateV2,
+  loadStateV3,
   outlineStateV2Items,
   outlineStateV3Changes
 } from "./storage.js";
@@ -195,7 +197,7 @@ function isLifecycleJournalOnlyStorageSet(items: unknown): boolean {
     return false;
   }
   const keys = Object.keys(items);
-  return keys.length === 1 && keys[0] === RUNTIME_LIFECYCLE_JOURNAL_KEY;
+  return keys.length === 1 && (keys[0] === RUNTIME_LIFECYCLE_JOURNAL_KEY || keys[0] === INCIDENT_LOG_STORAGE_KEY);
 }
 
 function runtimeSideEffectSnapshot(runtime: FakeRuntime): RuntimeSideEffectSnapshot {
@@ -26606,7 +26608,7 @@ describe("background controller lifecycle", () => {
       focused: true
     });
     expect(stateBroadcasts(runtime.broadcasts)).toHaveLength(0);
-    expect(vi.mocked(runtime.api.storage.local.set)).not.toHaveBeenCalled();
+    expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(0);
   });
 
   it("ignores focus changes from the tracked full-size sidebar popup", async () => {
@@ -26644,7 +26646,7 @@ describe("background controller lifecycle", () => {
 
     expect(state.nodes["window:10"]?.active).toBe(true);
     expect(stateBroadcasts(runtime.broadcasts)).toHaveLength(0);
-    expect(vi.mocked(runtime.api.storage.local.set)).not.toHaveBeenCalled();
+    expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(0);
   });
 
   it("records opt-in performance trace entries", async () => {
@@ -26827,6 +26829,14 @@ describe("background controller lifecycle", () => {
         background: {
           enabled: true
         },
+        incidentLog: expect.arrayContaining([
+          expect.objectContaining({
+            event: "startupStateLoaded"
+          }),
+          expect.objectContaining({
+            event: "saveFlush"
+          })
+        ]),
         sidebars: [
           firstSidebar,
           secondSidebar
@@ -26835,6 +26845,52 @@ describe("background controller lifecycle", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("returns the durable incident log through the extension message path", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    await controller.flushPendingSaves();
+
+    const fromMessage = await controller.handleMessage({ type: "getIncidentLog" });
+    const fromStorage = await loadIncidentLog(runtime.api);
+
+    expect(fromMessage).toEqual(fromStorage);
+    expect(fromStorage).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        event: "startupStateLoaded",
+        detail: expect.objectContaining({
+          nodeCount: 2,
+          closedCount: 0
+        })
+      }),
+      expect.objectContaining({
+        event: "saveFlush",
+        detail: expect.objectContaining({
+          nodeCount: 2,
+          closedCount: 0
+        })
+      })
+    ]));
   });
 
   it("does not save during startup when stored state already matches runtime", async () => {
@@ -26865,7 +26921,7 @@ describe("background controller lifecycle", () => {
     const secondController = createBackgroundController({ api: runtime.api, now: () => 2000 });
     await secondController.ensureState();
 
-    expect(vi.mocked(runtime.api.storage.local.set)).not.toHaveBeenCalled();
+    expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(0);
   });
 
   it("fully rewrites matching startup state when the v3 shard format changed", async () => {
@@ -26891,7 +26947,7 @@ describe("background controller lifecycle", () => {
     await controller.ensureState();
     await controller.flushPendingSaves();
 
-    const saved = vi.mocked(runtime.api.storage.local.set).mock.calls.at(-1)?.[0] as
+    const saved = storageSetCallsExcludingLifecycleJournal(runtime).at(-1)?.[0] as
       | Record<string, unknown>
       | undefined;
     expect((saved?.[STATE_V3_MANIFEST_KEY] as { nodeShardCount?: number }).nodeShardCount).toBe(32);
@@ -27204,11 +27260,11 @@ describe("background controller lifecycle", () => {
     const state = await controller.ensureState();
 
     expect(state.nodes["tab:1"]?.title).toBe("One");
-    expect(vi.mocked(runtime.api.storage.local.set)).not.toHaveBeenCalled();
+    expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(0);
 
     await controller.flushPendingSaves();
 
-    expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
+    expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(1);
   });
 
   it("eventually persists repaired startup state without blocking initialization", async () => {
@@ -27249,11 +27305,11 @@ describe("background controller lifecycle", () => {
     const state = await secondController.ensureState();
 
     expect(state.nodes["tab:2"]?.title).toBe("Two");
-    expect(vi.mocked(runtime.api.storage.local.set)).not.toHaveBeenCalled();
+    expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(0);
 
     await secondController.flushPendingSaves();
 
-    expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
+    expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(1);
   });
 
   it("serves an initial tree snapshot from v2 storage without full runtime startup", async () => {
@@ -27545,10 +27601,10 @@ describe("background controller lifecycle", () => {
     expect(runtime.broadcasts.at(-1)).toMatchObject({
       type: "nodeStateUpdated"
     });
-    expect(vi.mocked(runtime.api.storage.local.set)).not.toHaveBeenCalled();
+    expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(0);
 
     const flush = controller.flushPendingSaves();
-    expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
+    expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(1);
     finishSave();
     await flush;
   });
@@ -27635,7 +27691,7 @@ describe("background controller lifecycle", () => {
     });
     await controller.flushPendingSaves();
 
-    const saved = vi.mocked(runtime.api.storage.local.set).mock.calls.at(-1)?.[0] as
+    const saved = storageSetCallsExcludingLifecycleJournal(runtime).at(-1)?.[0] as
       | Record<string, unknown>
       | undefined;
     const savedKeys = Object.keys(saved ?? {});
@@ -27674,16 +27730,16 @@ describe("background controller lifecycle", () => {
       await controller.handleMessage({ type: "toggleCollapsed", nodeId: "window:10" });
       await vi.advanceTimersByTimeAsync(999);
 
-      expect(vi.mocked(runtime.api.storage.local.set)).not.toHaveBeenCalled();
+      expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(0);
 
       await controller.handleMessage({ type: "toggleCollapsed", nodeId: "window:10" });
       await vi.advanceTimersByTimeAsync(999);
 
-      expect(vi.mocked(runtime.api.storage.local.set)).not.toHaveBeenCalled();
+      expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(0);
 
       await vi.advanceTimersByTimeAsync(1);
 
-      expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
+      expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(1);
     } finally {
       vi.useRealTimers();
     }
@@ -27733,11 +27789,11 @@ describe("background controller lifecycle", () => {
       }), true);
       await vi.advanceTimersByTimeAsync(1000);
 
-      expect(vi.mocked(runtime.api.storage.local.set)).not.toHaveBeenCalled();
+      expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(0);
 
       await vi.advanceTimersByTimeAsync(4000);
 
-      expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
+      expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(1);
     } finally {
       vi.useRealTimers();
     }
@@ -28002,11 +28058,11 @@ describe("background controller lifecycle", () => {
       expectCommandAck(await controller.handleMessage({ type: "toggleCollapsed", nodeId: "window:10" }), true);
       await vi.advanceTimersByTimeAsync(1000);
 
-      expect(vi.mocked(runtime.api.storage.local.set)).not.toHaveBeenCalled();
+      expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(0);
 
       await vi.advanceTimersByTimeAsync(4000);
 
-      expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
+      expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(1);
     } finally {
       vi.useRealTimers();
     }
@@ -28065,11 +28121,11 @@ describe("background controller lifecycle", () => {
       expectCommandAck(await controller.handleMessage({ type: "restoreNode", nodeId: "tab:2" }), true);
       await vi.advanceTimersByTimeAsync(1000);
 
-      expect(vi.mocked(runtime.api.storage.local.set)).not.toHaveBeenCalled();
+      expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(0);
 
       await vi.advanceTimersByTimeAsync(4000);
 
-      expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
+      expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(1);
     } finally {
       vi.useRealTimers();
     }
@@ -28123,22 +28179,22 @@ describe("background controller lifecycle", () => {
       expectCommandAck(await controller.handleMessage({ type: "undo" }), true);
       await vi.advanceTimersByTimeAsync(1000);
 
-      expect(vi.mocked(runtime.api.storage.local.set)).not.toHaveBeenCalled();
+      expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(0);
 
       await vi.advanceTimersByTimeAsync(4000);
 
-      expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
+      expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(1);
 
       vi.mocked(runtime.api.storage.local.set).mockClear();
 
       expectCommandAck(await controller.handleMessage({ type: "redo" }), true);
       await vi.advanceTimersByTimeAsync(1000);
 
-      expect(vi.mocked(runtime.api.storage.local.set)).not.toHaveBeenCalled();
+      expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(0);
 
       await vi.advanceTimersByTimeAsync(4000);
 
-      expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
+      expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(1);
     } finally {
       vi.useRealTimers();
     }
@@ -28181,19 +28237,19 @@ describe("background controller lifecycle", () => {
       await controller.handleMessage({ type: "toggleCollapsed", nodeId: "window:10" });
       await vi.advanceTimersByTimeAsync(1000);
 
-      expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
+      expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(1);
 
       await controller.handleMessage({ type: "toggleCollapsed", nodeId: "window:10" });
       firstSave.resolve();
       await vi.advanceTimersByTimeAsync(0);
 
-      expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
+      expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(1);
 
       await vi.advanceTimersByTimeAsync(999);
-      expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
+      expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(1);
 
       await vi.advanceTimersByTimeAsync(1);
-      expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(2);
+      expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(2);
     } finally {
       vi.useRealTimers();
     }
@@ -28350,7 +28406,7 @@ describe("background controller lifecycle", () => {
       type: "treeStructureUpdated"
     });
     await controller.flushPendingSaves();
-    expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
+    expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(1);
     expect(state.nodes["tab:4"]?.title).toBe("Opened");
     expect(state.nodes["tab:4"]?.url).toBe("https://opened.example/");
     expect(state.nodes["tab:4"]?.active).toBe(true);
@@ -29085,7 +29141,7 @@ describe("background controller lifecycle", () => {
     });
     expect(lastBroadcast?.state).toBeUndefined();
     await controller.flushPendingSaves();
-    expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
+    expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(1);
   });
 
   it("ignores tab update events without outline-relevant changes", async () => {
@@ -29133,7 +29189,7 @@ describe("background controller lifecycle", () => {
     const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
 
     expect(runtime.broadcasts).toHaveLength(0);
-    expect(vi.mocked(runtime.api.storage.local.set)).not.toHaveBeenCalled();
+    expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(0);
     expect(state.nodes["tab:1"]?.title).toBe("One");
   });
 
@@ -29180,7 +29236,7 @@ describe("background controller lifecycle", () => {
     const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
 
     expect(runtime.broadcasts).toHaveLength(0);
-    expect(vi.mocked(runtime.api.storage.local.set)).not.toHaveBeenCalled();
+    expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(0);
     expect(state.nodes["tab:1"]?.title).toBe("One");
   });
 
@@ -29328,7 +29384,7 @@ describe("background controller lifecycle", () => {
         { nodeId: "tab:2", active: true }
       ]
     });
-    expect(vi.mocked(runtime.api.storage.local.set)).not.toHaveBeenCalled();
+    expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(0);
   });
 
   it("absorbs cross-window focus command echoes without node table scans", async () => {
@@ -29389,7 +29445,7 @@ describe("background controller lifecycle", () => {
     expect(runtime.api.windows.getAll).not.toHaveBeenCalled();
     expect(calls).toBe(0);
     expect(stateBroadcasts(runtime.broadcasts)).toHaveLength(2);
-    expect(vi.mocked(runtime.api.storage.local.set)).not.toHaveBeenCalled();
+    expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(0);
   });
 
   it("uses activation snapshots to remove tabs Firefox no longer reports", async () => {
@@ -30926,7 +30982,7 @@ describe("background controller lifecycle", () => {
     expect(state.nodes["tab:1"]?.status).toBe("live");
     expect(state.nodes["tab:2"]?.status).toBe("live");
     expect(runtime.broadcasts).toHaveLength(0);
-    expect(vi.mocked(runtime.api.storage.local.set)).not.toHaveBeenCalled();
+    expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(0);
     expect(vi.mocked(runtime.api.tabs.query)).not.toHaveBeenCalled();
     expect(vi.mocked(runtime.api.windows.getAll)).not.toHaveBeenCalled();
     expect(vi.mocked(runtime.api.sessions.getRecentlyClosed)).not.toHaveBeenCalled();
@@ -30971,7 +31027,7 @@ describe("background controller lifecycle", () => {
     expect(state.nodes["window:10"]?.childIds).toEqual(["tab:1"]);
 
     await controller.flushPendingSaves();
-    const lastSave = vi.mocked(runtime.api.storage.local.set).mock.calls.at(-1)?.[0] as
+    const lastSave = storageSetCallsExcludingLifecycleJournal(runtime).at(-1)?.[0] as
       | Record<string, unknown>
       | undefined;
     expect(lastSave?.[STATE_KEY]).toBeUndefined();
@@ -32006,9 +32062,21 @@ describe("background controller lifecycle", () => {
 
     controller = restartControllerAbrupt(runtime);
     const state = await controller.ensureState();
+    const incidentLog = await loadIncidentLog(runtime.api);
 
     expect(state.nodes["tab:2"]).toBeUndefined();
     expect(state.nodes["window:10"]?.childIds).toEqual(["tab:1"]);
+    expect(incidentLog).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        event: "lifecycleJournalRecovery",
+        detail: expect.objectContaining({
+          entryCount: 1,
+          entryKinds: "deleteNode",
+          consumedCount: 1,
+          changedState: true
+        })
+      })
+    ]));
   });
 
   it("recovers a restore create side effect across abrupt restart before state save", async () => {
@@ -32544,7 +32612,7 @@ describe("background controller lifecycle", () => {
     expect(restoreBroadcast?.type).toBe("nodeStateUpdated");
     expect(restoreBroadcast?.state).toBeUndefined();
     await controller.flushPendingSaves();
-    expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
+    expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(1);
   });
 
   it("keeps a command-restored tab's saved title until runtime reports the final page title", async () => {
@@ -34307,7 +34375,7 @@ describe("background controller lifecycle", () => {
 
     expectCommandAck(result, false);
     expect(runtime.broadcasts).toHaveLength(0);
-    expect(vi.mocked(runtime.api.storage.local.set)).not.toHaveBeenCalled();
+    expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(0);
   });
 
   it("manual refresh deletes stale parent tab nodes without closing their children", async () => {
@@ -34819,7 +34887,7 @@ describe("background controller lifecycle", () => {
     expect(deleted.nodes["window:10"]?.childIds).toEqual(["tab:1"]);
 
     await controller.flushPendingSaves();
-    const lastSave = vi.mocked(runtime.api.storage.local.set).mock.calls.at(-1)?.[0] as
+    const lastSave = storageSetCallsExcludingLifecycleJournal(runtime).at(-1)?.[0] as
       | Record<string, unknown>
       | undefined;
     expect(lastSave?.[STATE_KEY]).toBeUndefined();
@@ -34847,7 +34915,7 @@ describe("background controller lifecycle", () => {
     expect(afterRemoveEvent.nodes["window:10"]?.childIds).toEqual(["tab:1"]);
   });
 
-  it("deletes one live leaf without full node-table diff scans", async () => {
+  it("deletes one live leaf with a compact sidebar patch", async () => {
     const runtime = fakeRuntime(
       [
         {
@@ -34870,9 +34938,7 @@ describe("background controller lifecycle", () => {
     runtime.broadcasts.length = 0;
     vi.mocked(runtime.api.storage.local.set).mockClear();
 
-    const { calls, value } = await countNodeTableObjectKeys(() =>
-      controller.handleMessage({ type: "deleteNode", nodeId: "tab:100" })
-    );
+    const value = await controller.handleMessage({ type: "deleteNode", nodeId: "tab:100" });
     const deleted = (await controller.handleMessage({ type: "getState" })) as OutlineState;
     const lastBroadcast = runtime.broadcasts.at(-1) as
       | {
@@ -34884,13 +34950,97 @@ describe("background controller lifecycle", () => {
       | undefined;
 
     expectCommandAck(value, true);
-    expect(calls).toBe(0);
     expect(deleted.nodes["tab:100"]).toBeUndefined();
     expect(deleted.nodes["window:10"]?.childIds.at(-1)).toBe("tab:99");
     expect(lastBroadcast?.type).toBe("treeStructureUpdated");
     expect(lastBroadcast?.deletedNodeIds).toEqual(["tab:100"]);
     expect(lastBroadcast?.updatedNodes?.map((node) => node.id)).toEqual(["window:10"]);
     expect(lastBroadcast?.state).toBeUndefined();
+  });
+
+  it("persists delete patches with a full diff so stale v3 shards cannot resurrect nodes", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      Array.from({ length: 40 }, (_value, index) => ({
+        id: index + 1,
+        windowId: 10,
+        index,
+        active: index === 0,
+        url: `https://delete.example/${index + 1}`,
+        title: `Tab ${index + 1}`
+      }))
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    await controller.flushPendingSaves();
+    vi.mocked(runtime.api.storage.local.set).mockClear();
+
+    expectCommandAck(await controller.handleMessage({ type: "deleteNode", nodeId: "tab:40" }), true);
+    const { calls } = await countNodeTableObjectKeys(() => controller.flushPendingSaves());
+    const persisted = await loadStateV3(runtime.api);
+
+    expect(calls).toBeGreaterThan(0);
+    expect(persisted?.nodes["tab:40"]).toBeUndefined();
+    expect(persisted?.nodes["window:10"]?.childIds).not.toContain("tab:40");
+    expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(1);
+  });
+
+  it("does not resurrect a deleted live subtree from persisted v3 storage after restart", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        },
+        {
+          id: 2,
+          windowId: 10,
+          index: 1,
+          active: false,
+          openerTabId: 1,
+          url: "https://two.example/",
+          title: "Two"
+        },
+        {
+          id: 3,
+          windowId: 10,
+          index: 2,
+          active: false,
+          url: "https://three.example/",
+          title: "Three"
+        }
+      ]
+    );
+    let controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    await controller.flushPendingSaves();
+
+    expectCommandAck(await controller.handleMessage({ type: "deleteNode", nodeId: "tab:1" }), true);
+    await controller.flushPendingSaves();
+    controller = restartControllerAbrupt(runtime, () => 2000);
+    const reloaded = await controller.ensureState();
+
+    expect(reloaded.nodes["tab:1"]).toBeUndefined();
+    expect(reloaded.nodes["tab:2"]).toBeUndefined();
+    expect(reloaded.nodes["tab:3"]?.status).toBe("live");
+    expect(reloaded.nodes["window:10"]?.childIds).toEqual(["tab:3"]);
   });
 
   it("batches delete-owned live subtree removals without redundant event persistence", async () => {
@@ -35749,7 +35899,7 @@ describe("background controller lifecycle", () => {
     expect(adapter.focusTab).toHaveBeenCalledWith(1, 10);
     expectCommandAck(result, false);
     expect(runtime.broadcasts).toHaveLength(0);
-    expect(vi.mocked(runtime.api.storage.local.set)).not.toHaveBeenCalled();
+    expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(0);
   });
 
   it("broadcasts command mutations even when the state object is reused", async () => {
@@ -35790,7 +35940,7 @@ describe("background controller lifecycle", () => {
     expect(lastBroadcast?.updatedNodes?.[0]).toMatchObject({ id: "tab:1", collapsed: true });
     expect(lastBroadcast?.state).toBeUndefined();
     await controller.flushPendingSaves();
-    expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
+    expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(1);
   });
 
   it("broadcasts ancestor expansion as one node state patch and one undoable command", async () => {
@@ -35868,7 +36018,7 @@ describe("background controller lifecycle", () => {
     });
 
     await controller.flushPendingSaves();
-    expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
+    expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(1);
   });
 
   it("broadcasts group renames as node state patches", async () => {
@@ -35917,7 +36067,7 @@ describe("background controller lifecycle", () => {
     });
     expect(lastBroadcast?.state).toBeUndefined();
     await controller.flushPendingSaves();
-    expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
+    expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(1);
   });
 
   it("deletes the window node when its only live tab is deleted by command", async () => {
@@ -35953,7 +36103,7 @@ describe("background controller lifecycle", () => {
     expect(deleted.rootIds).toEqual([]);
 
     await controller.flushPendingSaves();
-    const lastSave = vi.mocked(runtime.api.storage.local.set).mock.calls.at(-1)?.[0] as
+    const lastSave = storageSetCallsExcludingLifecycleJournal(runtime).at(-1)?.[0] as
       | Record<string, unknown>
       | undefined;
     expect(lastSave?.[STATE_KEY]).toBeUndefined();
@@ -36127,13 +36277,13 @@ describe("background controller lifecycle", () => {
     ]);
 
     expectCommandAck(response, true);
-    expect(vi.mocked(runtime.api.storage.local.set)).not.toHaveBeenCalled();
+    expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(0);
     const broadcasts = stateBroadcasts(runtime.broadcasts);
     expect(broadcasts.map((message) => (message as { type?: unknown }).type)).toContain("treeStructureUpdated");
     expect(broadcasts.map((message) => (message as { type?: unknown }).type)).not.toContain("stateUpdated");
 
     const flush = controller.flushPendingSaves();
-    expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
+    expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(1);
     blockedSave.resolve();
     await flush;
   });
@@ -36198,7 +36348,7 @@ describe("background controller lifecycle", () => {
 
     const flush = controller.flushPendingSaves();
     await waitForMacrotask();
-    expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
+    expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(1);
 
     const deletePromise = controller.handleMessage({ type: "deleteNode", nodeId: importedNodeId! });
     let response: unknown;
@@ -36258,10 +36408,10 @@ describe("background controller lifecycle", () => {
         ]
       }
     }), true);
-    expect(vi.mocked(runtime.api.storage.local.set)).not.toHaveBeenCalled();
+    expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(0);
 
     await controller.flushPendingSaves();
-    expect(vi.mocked(runtime.api.storage.local.set)).toHaveBeenCalledTimes(1);
+    expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(1);
 
     controller = restartControllerAbrupt(runtime);
     const reloaded = await controller.ensureState();
@@ -36319,7 +36469,7 @@ describe("background controller lifecycle", () => {
     });
 
     await controller.flushPendingSaves();
-    const lastSave = vi.mocked(runtime.api.storage.local.set).mock.calls.at(-1)?.[0] as Record<string, unknown>;
+    const lastSave = storageSetCallsExcludingLifecycleJournal(runtime).at(-1)?.[0] as Record<string, unknown>;
     expect((lastSave[HISTORY_KEY] as { undoStack?: unknown[] }).undoStack).toHaveLength(2);
   });
 
