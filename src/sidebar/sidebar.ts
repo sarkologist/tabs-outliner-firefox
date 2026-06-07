@@ -245,6 +245,28 @@ function restoreScopeContainsNodeDeletedAfter(
   return scope.nodeIds.some((nodeId) => (deletedNodeRevisionById.get(nodeId) ?? 0) > revision);
 }
 
+function snapshotContainsNodeDeletedAfter(
+  snapshot: InitialTreeSnapshot,
+  revision: number
+): boolean {
+  for (const nodeId of nodeIdsInProjectionSnapshot(snapshot)) {
+    if ((deletedNodeRevisionById.get(nodeId) ?? 0) > revision) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function nodeIdsInProjectionSnapshot(snapshot: InitialTreeSnapshot): Set<NodeId> {
+  return new Set<NodeId>([
+    ...snapshot.state.rootIds,
+    ...Object.keys(snapshot.state.nodes),
+    ...snapshot.projection.rows.map((row) => row.nodeId),
+    ...snapshot.projection.visibleNodeIds,
+    ...snapshot.projection.matchingNodeIds
+  ]);
+}
+
 type SidebarProfileConsole = {
   enable(): Promise<ProfileSnapshot>;
   disable(): Promise<ProfileSnapshot>;
@@ -818,6 +840,7 @@ function startSparseScrollWindowRequest(
   const requestId = ++sparseWindowRequestSequence;
   const rowHeight = currentRowHeight();
   const viewportRange = currentViewportRowRange(rowHeight);
+  const requestMutationRevision = sidebarMutationRevision;
   perfTrace.mark("sidebar.sparseScrollWindow.request", {
     centerRowIndex,
     rowLimit,
@@ -826,7 +849,16 @@ function startSparseScrollWindowRequest(
     viewportStartRow: viewportRange.start,
     viewportEndRow: viewportRange.end
   });
-  void loadSparseScrollWindow(centerRowIndex, rowLimit, query, requestId, retryAttempt, intent, countMode);
+  void loadSparseScrollWindow(
+    centerRowIndex,
+    rowLimit,
+    query,
+    requestId,
+    retryAttempt,
+    intent,
+    countMode,
+    requestMutationRevision
+  );
 }
 
 async function loadSparseScrollWindow(
@@ -836,13 +868,22 @@ async function loadSparseScrollWindow(
   requestId: number,
   retryAttempt: number,
   intent: ProjectionRequestIntent,
-  countMode: SparseProjectionCountMode
+  countMode: SparseProjectionCountMode,
+  requestMutationRevision: number
 ): Promise<void> {
   try {
     const response = await requestProjectionSlice(centerRowIndex, rowLimit, query);
     await nextAnimationFrame();
+    const responseContainsStaleDeletedNode =
+      isInitialTreeSnapshot(response) &&
+      snapshotContainsNodeDeletedAfter(response, requestMutationRevision);
     if (requestId <= sparseWindowStateChangeCutoff) {
-      if (isInitialTreeSnapshot(response) && response.hydrating && snapshotProjectionMatchesRequestIntent(response, intent)) {
+      if (
+        isInitialTreeSnapshot(response) &&
+        !responseContainsStaleDeletedNode &&
+        response.hydrating &&
+        snapshotProjectionMatchesRequestIntent(response, intent)
+      ) {
         mergeProjectionSliceSnapshot(response, { coverageMode: "none" });
       }
       requestSparseScrollWindowIfNeeded();
@@ -851,6 +892,7 @@ async function loadSparseScrollWindow(
     if (requestId !== sparseWindowRequestSequence) {
       if (
         isInitialTreeSnapshot(response) &&
+        !responseContainsStaleDeletedNode &&
         canUseHydratingProjectionSlice(currentProjection) &&
         projectionRequestIntentMatchesCurrent(intent) &&
         snapshotProjectionMatchesRequestIntent(response, intent) &&
@@ -860,6 +902,7 @@ async function loadSparseScrollWindow(
         applySparseScrollWindowSnapshot(response, { countMode });
       } else if (
         isInitialTreeSnapshot(response) &&
+        !responseContainsStaleDeletedNode &&
         response.hydrating &&
         snapshotProjectionMatchesRequestIntent(response, intent)
       ) {
@@ -871,6 +914,7 @@ async function loadSparseScrollWindow(
 
     if (
       !isInitialTreeSnapshot(response) ||
+      responseContainsStaleDeletedNode ||
       !currentProjection ||
       !canUseHydratingProjectionSlice(currentProjection) ||
       !projectionRequestIntentMatchesCurrent(intent) ||
@@ -1861,6 +1905,7 @@ async function loadRemoteSearchProjection(
   const trimmedQuery = query.trim();
   const intent = remoteSearchRequestIntent(query);
   const requestWindow = remoteSearchProjectionRequestWindow(trimmedQuery);
+  const requestMutationRevision = sidebarMutationRevision;
 
   try {
     const response = await requestProjectionSlice(requestWindow.centerRowIndex, requestWindow.rowLimit, trimmedQuery);
@@ -1871,6 +1916,7 @@ async function loadRemoteSearchProjection(
       !projectionRequestIntentMatchesCurrent(intent) ||
       currentStateFullyLoaded ||
       !isInitialTreeSnapshot(response) ||
+      snapshotContainsNodeDeletedAfter(response, requestMutationRevision) ||
       !snapshotProjectionMatchesRequestIntent(response, intent)
     ) {
       return;
@@ -1899,6 +1945,7 @@ async function loadRemoteShowInTreeProjection(nodeId: NodeId): Promise<void> {
   pendingShowInTreeNodeId = nodeId;
   const requestId = beginRemoteSearchProjectionRequest();
   const intent = remoteShowInTreeRequestIntent(nodeId);
+  const requestMutationRevision = sidebarMutationRevision;
 
   try {
     const response = await requestProjectionSlice(0, INITIAL_TREE_SNAPSHOT_ROW_LIMIT, "", { targetNodeId: nodeId });
@@ -1911,6 +1958,17 @@ async function loadRemoteShowInTreeProjection(nodeId: NodeId): Promise<void> {
       !isInitialTreeSnapshot(response) ||
       !snapshotProjectionMatchesRequestIntent(response, intent)
     ) {
+      return;
+    }
+
+    if (snapshotContainsNodeDeletedAfter(response, requestMutationRevision)) {
+      if (pendingShowInTreeNodeId === nodeId) {
+        pendingShowInTreeNodeId = undefined;
+      }
+      if (projectionRequestIntentMatchesCurrent(intent)) {
+        setCurrentProjectionOwner(remoteSearchRequestIntent(""));
+      }
+      restoreLastOutlineProjectionAfterRemoteFailure();
       return;
     }
 
