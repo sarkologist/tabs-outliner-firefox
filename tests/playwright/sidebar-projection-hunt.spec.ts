@@ -15,6 +15,65 @@ type HarnessHistoryStatus = {
 };
 
 test.describe("sidebar projection hunt", () => {
+  test("psh stale restored subgroup slice after external delete does not repaint", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadRestoredSubgroupSidebar(page, { fullStatePending: true });
+    await page.locator("#search").fill("restored-subgroup.example");
+
+    const result = await page.evaluate(async () => {
+      const staleQuery = "restored-subgroup.example";
+      const deletedNodeIds = ["window:restored-subgroup", "tab:performance", "tab:annotate", "tab:s3", "tab:offscreen"];
+      const api = projectionHuntApi();
+      await api.waitForProjectionRequest(staleQuery);
+      api.emitDeletePatch(deletedNodeIds);
+      await api.waitForIdleFrames(4);
+      const afterDelete = {
+        visibleRows: api.visibleRows(),
+        hasGroup: Boolean(document.querySelector("[data-node-id='window:restored-subgroup']")),
+        hasPerformance: Boolean(document.querySelector("[data-node-id='tab:performance']")),
+        hasAnnotate: Boolean(document.querySelector("[data-node-id='tab:annotate']")),
+        hasS3: Boolean(document.querySelector("[data-node-id='tab:s3']"))
+      };
+
+      api.resolveSliceForQuery(staleQuery, { staleAtRequest: true });
+      await api.waitForIdleFrames(6);
+      return {
+        commands: api.sentCommands(),
+        requests: api.projectionRequests(),
+        stateRequests: api.stateRequestCount(),
+        afterDelete,
+        afterStale: {
+          visibleRows: api.visibleRows(),
+          hasGroup: Boolean(document.querySelector("[data-node-id='window:restored-subgroup']")),
+          hasPerformance: Boolean(document.querySelector("[data-node-id='tab:performance']")),
+          hasAnnotate: Boolean(document.querySelector("[data-node-id='tab:annotate']")),
+          hasS3: Boolean(document.querySelector("[data-node-id='tab:s3']")),
+          hasStaleActionButton: Boolean(document.querySelector("[data-node-id='window:restored-subgroup'] button"))
+        }
+      };
+    });
+
+    expect(result.commands).toEqual([]);
+    expect(result.requests.length).toBeGreaterThanOrEqual(1);
+    expect(result.requests[0]).toEqual(expect.objectContaining({
+      query: "restored-subgroup.example",
+      targetNodeId: undefined
+    }));
+    expect(result.stateRequests).toBe(0);
+    expect(result.afterDelete.visibleRows).not.toContain(0);
+    expect(result.afterDelete.hasGroup).toBe(false);
+    expect(result.afterDelete.hasPerformance).toBe(false);
+    expect(result.afterDelete.hasAnnotate).toBe(false);
+    expect(result.afterDelete.hasS3).toBe(false);
+    expect(result.afterStale.visibleRows).not.toContain(0);
+    expect(result.afterStale.hasGroup).toBe(false);
+    expect(result.afterStale.hasPerformance).toBe(false);
+    expect(result.afterStale.hasAnnotate).toBe(false);
+    expect(result.afterStale.hasS3).toBe(false);
+    expect(result.afterStale.hasStaleActionButton).toBe(false);
+    expect(issues).toEqual([]);
+  });
+
   test("psh-scroll-rejected-slice-recovers-without-second-user-scroll", async ({ page }) => {
     const issues = collectPageIssues(page);
     await loadLargeSparseSidebar(page, { fullStatePending: true });
@@ -10458,6 +10517,35 @@ async function loadRestoredWindowSidebar(
   await expect(page.locator(nodeSelector("tab:2"))).toBeVisible();
 }
 
+async function loadRestoredSubgroupSidebar(
+  page: Page,
+  options: { fullStatePending?: boolean } = {}
+): Promise<void> {
+  await page.addInitScript(({ installerSource, harnessOptions }) => {
+    const install = (0, eval)(`(${installerSource})`) as typeof installProjectionHuntHarness;
+    install(harnessOptions);
+  }, {
+    installerSource: installProjectionHuntHarness.toString(),
+    harnessOptions: {
+      totalRows: 5,
+      initialStart: 0,
+      initialEnd: 4,
+      activeTabId: 0,
+      fullStatePending: Boolean(options.fullStatePending),
+      includeCoverage: true,
+      restoredFixture: false,
+      restoredSubgroupFixture: true
+    }
+  });
+
+  await page.goto("/sidebar/sidebar.html");
+  await waitForSidebarAppReady(page);
+  await expect(page.locator(nodeSelector("window:restored-subgroup"))).toBeVisible();
+  await expect(page.locator(nodeSelector("tab:performance"))).toBeVisible();
+  await expect(page.locator(nodeSelector("tab:annotate"))).toBeVisible();
+  await expect(page.locator(nodeSelector("tab:s3"))).toBeVisible();
+}
+
 async function loadClosedRestoreSidebar(
   page: Page,
   options: { fullStatePending?: boolean; invalidRestoreScope?: boolean; delayRestoreScope?: boolean } = {}
@@ -10688,9 +10776,9 @@ type ProjectionHuntApi = {
   scrollTop(): number;
   scrollTopHistory(): number[];
   sparseRequestCount(): number;
-  resolveSliceAt(index: number, override?: { start?: number; end?: number; includeCoverage?: boolean }): void;
-  resolveSliceForQuery(query: string, override?: { start?: number; end?: number; includeCoverage?: boolean }): void;
-  resolveSliceForTarget(targetNodeId: string, override?: { start?: number; end?: number; includeCoverage?: boolean }): void;
+  resolveSliceAt(index: number, override?: ProjectionSliceOverride): void;
+  resolveSliceForQuery(query: string, override?: ProjectionSliceOverride): void;
+  resolveSliceForTarget(targetNodeId: string, override?: ProjectionSliceOverride): void;
   resolveRestoreScope(): void;
   rejectSliceAt(index: number): void;
   visibleRows(): number[];
@@ -10717,6 +10805,13 @@ type ProjectionSliceRequest = {
   targetNodeId?: string;
 };
 
+type ProjectionSliceOverride = {
+  start?: number;
+  end?: number;
+  includeCoverage?: boolean;
+  staleAtRequest?: boolean;
+};
+
 function projectionHuntApi(): ProjectionHuntApi {
   const api = window.projectionHuntApi?.();
   if (!api) {
@@ -10733,6 +10828,7 @@ function installProjectionHuntHarness(options: {
   fullStatePending: boolean;
   includeCoverage: boolean;
   restoredFixture: boolean;
+  restoredSubgroupFixture?: boolean;
   closedRestoreFixture?: boolean;
   collapsedBoundaryFixture?: boolean;
   collapsedBoundaryInitiallyExpanded?: boolean;
@@ -10750,6 +10846,7 @@ function installProjectionHuntHarness(options: {
   const scrollTopSamples: number[] = [];
   const pendingSlices: Array<{
     request: ProjectionSliceRequest;
+    stateAtRequest: ReturnType<typeof initialFullState>;
     resolve: (value: unknown) => void;
     reject: (error: Error) => void;
   }> = [];
@@ -10808,9 +10905,10 @@ function installProjectionHuntHarness(options: {
             ? (message as { targetNodeId: string }).targetNodeId
             : undefined;
           const request: ProjectionSliceRequest = { centerRowIndex, rowLimit, query, targetNodeId };
+          const stateAtRequest = structuredClone(fullState) as ReturnType<typeof initialFullState>;
           sliceRequests.push(request);
           return new Promise((resolve, reject) => {
-            pendingSlices.push({ request, resolve, reject });
+            pendingSlices.push({ request, stateAtRequest, resolve, reject });
           });
         }
         if (type === "getState") {
@@ -10885,25 +10983,26 @@ function installProjectionHuntHarness(options: {
     }
   };
 
-  function resolveSliceAt(index: number, override: { start?: number; end?: number; includeCoverage?: boolean } = {}) {
+  function resolveSliceAt(index: number, override: ProjectionSliceOverride = {}) {
     const pending = pendingSlices[index];
     if (!pending) {
       throw new Error(`No sparse slice request at index ${index}`);
     }
     pendingSlices.splice(index, 1);
-    const projection = rowsForProjectionRequest(pending.request, override);
+    const sourceState = override.staleAtRequest ? pending.stateAtRequest : fullState;
+    const projection = rowsForProjectionRequest(pending.request, override, sourceState);
     pending.resolve(snapshotFromRows(projection.rows, {
       hydrating: true,
       query: pending.request.query,
       totalRowCount: projection.totalRowCount,
       matchingNodeIds: projection.matchingNodeIds,
       ...(typeof override.includeCoverage === "boolean" ? { includeCoverage: override.includeCoverage } : {})
-    }));
+    }, sourceState));
   }
 
   function resolveSliceForQuery(
     query: string,
-    override: { start?: number; end?: number; includeCoverage?: boolean } = {}
+    override: ProjectionSliceOverride = {}
   ) {
     const index = pendingSlices.findIndex((pending) => pending.request.query === query);
     if (index < 0) {
@@ -10914,7 +11013,7 @@ function installProjectionHuntHarness(options: {
 
   function resolveSliceForTarget(
     targetNodeId: string,
-    override: { start?: number; end?: number; includeCoverage?: boolean } = {}
+    override: ProjectionSliceOverride = {}
   ) {
     const index = pendingSlices.findIndex((pending) => pending.request.targetNodeId === targetNodeId);
     if (index < 0) {
@@ -11069,19 +11168,20 @@ function installProjectionHuntHarness(options: {
       totalRowCount?: number;
       matchingNodeIds?: string[];
       includeCoverage?: boolean;
-    }
+    },
+    sourceState = fullState
   ) {
     const query = settings.query ?? "";
     const totalRowCount = settings.totalRowCount ?? options.totalRows;
     const matchingNodeIds = settings.matchingNodeIds ?? [];
     const nodes = Object.fromEntries(
       rows
-        .map((row) => fullState.nodes[row.nodeId])
+        .map((row) => sourceState.nodes[row.nodeId])
         .filter(Boolean)
         .map((node) => [node.id, structuredClone(node)])
     );
-    if (!options.restoredFixture && !options.closedRestoreFixture) {
-      nodes["window:1"] = structuredClone(fullState.nodes["window:1"]);
+    if (!options.restoredFixture && !options.closedRestoreFixture && !options.restoredSubgroupFixture) {
+      nodes["window:1"] = structuredClone(sourceState.nodes["window:1"]);
     }
     const indexes = rows.map((row) => row.index);
     return {
@@ -11091,7 +11191,7 @@ function installProjectionHuntHarness(options: {
       hydrating: settings.hydrating,
       state: {
         version: 1,
-        rootIds: [...fullState.rootIds],
+        rootIds: [...sourceState.rootIds],
         nodes
       },
       projection: {
@@ -11100,9 +11200,9 @@ function installProjectionHuntHarness(options: {
         rows,
         matchingNodeIds,
         visibleNodeIds: rows.map((row) => row.nodeId),
-        ...activeProjectionTarget(),
+        ...activeProjectionTarget(sourceState),
         totalRowCount,
-        nodeCount: currentNodeCount(),
+        nodeCount: currentNodeCount(sourceState),
         closedCount: options.closedRestoreFixture ? 4 : 0,
         matchCount: matchingNodeIds.length
       },
@@ -11120,9 +11220,13 @@ function installProjectionHuntHarness(options: {
     };
   }
 
-  function rowsForProjectionRequest(request: ProjectionSliceRequest, override: { start?: number; end?: number }) {
+  function rowsForProjectionRequest(
+    request: ProjectionSliceRequest,
+    override: { start?: number; end?: number },
+    sourceState = fullState
+  ) {
     if (request.query) {
-      const rows = searchRowsForQuery(request.query);
+      const rows = searchRowsForQuery(request.query, sourceState);
       return {
         rows,
         matchingNodeIds: rows.filter((row) => row.isSearchMatch).map((row) => row.nodeId),
@@ -11135,28 +11239,38 @@ function installProjectionHuntHarness(options: {
     if (options.restoredFixture) {
       return { rows: restoredRows(), matchingNodeIds: [], totalRowCount: restoredRows().length };
     }
+    if (options.restoredSubgroupFixture) {
+      const centerRowIndex = request.targetNodeId ? rowIndexForNodeId(request.targetNodeId, sourceState) : request.centerRowIndex;
+      const start = override.start ?? Math.max(0, Math.floor(centerRowIndex - request.rowLimit / 2));
+      const end = override.end ?? Math.min(currentTotalRows(sourceState), Math.floor(centerRowIndex + request.rowLimit / 2));
+      const rows = restoredSubgroupRows(sourceState).filter((row) => row.index >= start && row.index < end);
+      return { rows, matchingNodeIds: [], totalRowCount: currentTotalRows(sourceState) };
+    }
     if (options.collapsedBoundaryFixture) {
-      const centerRowIndex = request.targetNodeId ? rowIndexForNodeId(request.targetNodeId) : request.centerRowIndex;
+      const centerRowIndex = request.targetNodeId ? rowIndexForNodeId(request.targetNodeId, sourceState) : request.centerRowIndex;
       const start = override.start ?? Math.max(0, Math.floor(centerRowIndex - request.rowLimit / 2));
       const end = override.end ?? Math.min(currentTotalRows(), Math.floor(centerRowIndex + request.rowLimit / 2));
       const rows = collapsedBoundaryRows().filter((row) => row.index >= start && row.index < end);
       return { rows, matchingNodeIds: [], totalRowCount: currentTotalRows() };
     }
-    const centerRowIndex = request.targetNodeId ? rowIndexForNodeId(request.targetNodeId) : request.centerRowIndex;
+    const centerRowIndex = request.targetNodeId ? rowIndexForNodeId(request.targetNodeId, sourceState) : request.centerRowIndex;
     const start = override.start ?? Math.max(1, Math.floor(centerRowIndex - request.rowLimit / 2));
     const end = override.end ?? Math.min(currentTotalRows(), Math.floor(centerRowIndex + request.rowLimit / 2));
     return { rows: tabRows(start, end), matchingNodeIds: [], totalRowCount: currentTotalRows() };
   }
 
-  function searchRowsForQuery(query: string) {
+  function searchRowsForQuery(query: string, sourceState = fullState) {
     const normalizedQuery = query.trim().toLocaleLowerCase();
     if (!normalizedQuery) {
       return [];
     }
+    if (options.restoredSubgroupFixture) {
+      return restoredSubgroupSearchRowsForQuery(normalizedQuery, sourceState);
+    }
     if (options.collapsedBoundaryFixture) {
       return collapsedBoundarySearchRowsForQuery(normalizedQuery);
     }
-    const matches = Object.values(fullState.nodes)
+    const matches = Object.values(sourceState.nodes)
       .filter((node): node is ReturnType<typeof tabNode> => (
         node.kind === "tab" &&
         (
@@ -11179,6 +11293,54 @@ function installProjectionHuntHarness(options: {
         subtreeEndIndex: index + 2,
         isSearchMatch: true,
         isSearchPath: false
+      }))
+    ];
+  }
+
+  function restoredSubgroupSearchRowsForQuery(normalizedQuery: string, sourceState = fullState) {
+    const window = sourceState.nodes["window:restored-subgroup"] as { childIds?: string[] } | undefined;
+    const childIds = Array.isArray(window?.childIds) ? window.childIds : [];
+    const matchingChildIds = childIds.filter((nodeId) => {
+      const node = sourceState.nodes[nodeId] as { title?: string; url?: string } | undefined;
+      return Boolean(
+        node &&
+        (
+          String(node.title ?? "").toLocaleLowerCase().includes(normalizedQuery) ||
+          String(node.url ?? "").toLocaleLowerCase().includes(normalizedQuery)
+        )
+      );
+    });
+    if (!window || matchingChildIds.length === 0) {
+      return [];
+    }
+    const subtreeEndIndex = matchingChildIds.length + 1;
+    return [
+      {
+        nodeId: "window:restored-subgroup",
+        depth: 0,
+        index: 0,
+        subtreeEndIndex,
+        childCount: childIds.length,
+        visibleChildCount: matchingChildIds.length,
+        expanded: true,
+        searchRevealsCollapsedChildren: false,
+        isSearchMatch: false,
+        isSearchPath: true,
+        insideActiveWindow: false
+      },
+      ...matchingChildIds.map((nodeId, index) => ({
+        nodeId,
+        depth: 1,
+        index: index + 1,
+        parentRowIndex: 0,
+        subtreeEndIndex: index + 2,
+        childCount: 0,
+        visibleChildCount: 0,
+        expanded: true,
+        searchRevealsCollapsedChildren: false,
+        isSearchMatch: true,
+        isSearchPath: false,
+        insideActiveWindow: nodeId === "tab:performance"
       }))
     ];
   }
@@ -11234,7 +11396,13 @@ function installProjectionHuntHarness(options: {
     ];
   }
 
-  function rowIndexForNodeId(nodeId: string) {
+  function rowIndexForNodeId(nodeId: string, sourceState = fullState) {
+    if (options.restoredSubgroupFixture) {
+      const row = restoredSubgroupRows(sourceState).find((candidate) => candidate.nodeId === nodeId);
+      if (row) {
+        return row.index;
+      }
+    }
     if (options.collapsedBoundaryFixture) {
       const row = collapsedBoundaryRows().find((candidate) => candidate.nodeId === nodeId);
       if (row) {
@@ -11265,6 +11433,9 @@ function installProjectionHuntHarness(options: {
     if (options.collapsedBoundaryFixture) {
       return collapsedBoundaryState();
     }
+    if (options.restoredSubgroupFixture) {
+      return restoredSubgroupState();
+    }
     return options.restoredFixture ? restoredState() : largeState();
   }
 
@@ -11275,17 +11446,28 @@ function installProjectionHuntHarness(options: {
     if (options.collapsedBoundaryFixture) {
       return collapsedBoundaryRows();
     }
+    if (options.restoredSubgroupFixture) {
+      return restoredSubgroupRows().filter((row) => row.index >= options.initialStart && row.index < options.initialEnd);
+    }
     return options.restoredFixture
       ? restoredRows()
       : [windowRow(), ...tabRows(options.initialStart, options.initialEnd)];
   }
 
-  function activeProjectionTarget() {
+  function activeProjectionTarget(sourceState = fullState) {
     if (options.closedRestoreFixture) {
       return {
         activeTabNodeId: "window:30",
         activeTabRowIndex: 0
       };
+    }
+    if (options.restoredSubgroupFixture) {
+      return sourceState.nodes["tab:performance"]
+        ? {
+            activeTabNodeId: "tab:performance",
+            activeTabRowIndex: 1
+          }
+        : {};
     }
     return options.activeTabId > 0
       ? {
@@ -11307,7 +11489,13 @@ function installProjectionHuntHarness(options: {
     if (options.coveredSiblingParentIds) {
       return options.coveredSiblingParentIds;
     }
-    return options.restoredFixture ? ["window:10", "window:20"] : ["window:1"];
+    if (options.restoredFixture) {
+      return ["window:10", "window:20"];
+    }
+    if (options.restoredSubgroupFixture) {
+      return ["window:restored-subgroup"];
+    }
+    return ["window:1"];
   }
 
   function largeState() {
@@ -11402,6 +11590,55 @@ function installProjectionHuntHarness(options: {
     };
   }
 
+  function restoredSubgroupState() {
+    return {
+      version: 1,
+      rootIds: ["window:restored-subgroup"],
+      nodes: {
+        "window:restored-subgroup": {
+          id: "window:restored-subgroup",
+          kind: "window",
+          status: "live",
+          title: "Group",
+          active: true,
+          collapsed: false,
+          childIds: ["tab:performance", "tab:annotate", "tab:s3", "tab:offscreen"],
+          createdAt: now,
+          updatedAt: now,
+          restoredFromClosed: true,
+          live: { windowId: 40 }
+        },
+        "tab:performance": restoredSubgroupTabNode("tab:performance", 300, "Performance", true),
+        "tab:annotate": restoredSubgroupTabNode(
+          "tab:annotate",
+          301,
+          "Annotate DjVu | Search, Highlight, and Markup by converting DjVu to PDF",
+          false
+        ),
+        "tab:s3": restoredSubgroupTabNode("tab:s3", 302, "djvu2pdf - S3 bucket", false),
+        "tab:offscreen": restoredSubgroupTabNode("tab:offscreen", 303, "Offscreen restored child", false)
+      }
+    };
+  }
+
+  function restoredSubgroupTabNode(id: string, tabId: number, title: string, active: boolean) {
+    return {
+      id,
+      kind: "tab",
+      status: "live",
+      parentId: "window:restored-subgroup",
+      title,
+      url: `https://restored-subgroup.example/${tabId}`,
+      active,
+      collapsed: false,
+      childIds: [],
+      createdAt: now,
+      updatedAt: now,
+      restoredFromClosed: true,
+      live: { tabId, windowId: 40 }
+    };
+  }
+
   function collapsedBoundaryState() {
     return {
       version: 1,
@@ -11478,7 +11715,7 @@ function installProjectionHuntHarness(options: {
     };
   }
 
-  function currentTotalRows() {
+  function currentTotalRows(sourceState = fullState) {
     if (options.closedRestoreFixture) {
       return closedRestoreRows().length;
     }
@@ -11488,12 +11725,15 @@ function installProjectionHuntHarness(options: {
     if (options.restoredFixture) {
       return restoredRows().length;
     }
-    const window = fullState.nodes["window:1"] as { childIds?: string[] } | undefined;
+    if (options.restoredSubgroupFixture) {
+      return restoredSubgroupRows(sourceState).length;
+    }
+    const window = sourceState.nodes["window:1"] as { childIds?: string[] } | undefined;
     return 1 + (Array.isArray(window?.childIds) ? window.childIds.length : 0);
   }
 
-  function currentNodeCount() {
-    return Object.keys(fullState.nodes).length;
+  function currentNodeCount(sourceState = fullState) {
+    return Object.keys(sourceState.nodes).length;
   }
 
   function searchWindowRow(subtreeEndIndex: number) {
@@ -11588,6 +11828,44 @@ function installProjectionHuntHarness(options: {
         insideActiveWindow: false
       },
       { ...tabRow(30), index: 1, parentRowIndex: 0, subtreeEndIndex: 2, insideActiveWindow: false }
+    ];
+  }
+
+  function restoredSubgroupRows(sourceState = fullState) {
+    const window = sourceState.nodes["window:restored-subgroup"] as { childIds?: string[] } | undefined;
+    if (!window) {
+      return [];
+    }
+    const childIds = Array.isArray(window.childIds) ? window.childIds : [];
+    const visibleChildIds = childIds.filter((nodeId) => Boolean(sourceState.nodes[nodeId]));
+    return [
+      {
+        nodeId: "window:restored-subgroup",
+        depth: 0,
+        index: 0,
+        subtreeEndIndex: 1 + visibleChildIds.length,
+        childCount: childIds.length,
+        visibleChildCount: visibleChildIds.length,
+        expanded: true,
+        searchRevealsCollapsedChildren: false,
+        isSearchMatch: false,
+        isSearchPath: false,
+        insideActiveWindow: false
+      },
+      ...visibleChildIds.map((nodeId, index) => ({
+        nodeId,
+        depth: 1,
+        index: index + 1,
+        parentRowIndex: 0,
+        subtreeEndIndex: index + 2,
+        childCount: 0,
+        visibleChildCount: 0,
+        expanded: true,
+        searchRevealsCollapsedChildren: false,
+        isSearchMatch: false,
+        isSearchPath: false,
+        insideActiveWindow: nodeId === "tab:performance"
+      }))
     ];
   }
 
