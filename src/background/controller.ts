@@ -2761,6 +2761,10 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   }
 
   function alignKnownRuntimeWindowProvenance(next: OutlineState): void {
+    // This mutates node.runtimeProvenance in place. If the persisted-state baseline still
+    // aliases the live state (the 0ms clone has not run yet), detach it first so the change
+    // is visible to the next save diff (V5 / RC-8).
+    detachPersistedStateBaselineForMutation();
     for (const node of liveWindowNodes(next)) {
       const provenance = runtimeFacts.runtimeWindowProvenanceMarker(node.live.windowId) ??
         (node.runtimeProvenance ? undefined : runtimeFacts.runtimeProvenanceForRecoveredWindow(node.live.windowId));
