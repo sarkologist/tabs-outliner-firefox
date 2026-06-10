@@ -20,9 +20,25 @@ type StoredIncidentLog = {
 
 let appendQueue = Promise.resolve();
 
+// One in-memory copy of the log per writer context (keyed by the storage api so
+// tests stay isolated). The background page is the only writer, so the cache stays
+// authoritative and lets appends do a single `set` with no per-append `get`.
+const cachedEntriesByApi = new WeakMap<WebExtensionBrowser, IncidentLogEntry[]>();
+
 export async function loadIncidentLog(api: WebExtensionBrowser = browser): Promise<IncidentLogEntry[]> {
   const stored = await api.storage.local.get(INCIDENT_LOG_STORAGE_KEY);
   return normalizeIncidentLog(stored[INCIDENT_LOG_STORAGE_KEY]).entries;
+}
+
+async function ensureCachedEntries(api: WebExtensionBrowser): Promise<IncidentLogEntry[]> {
+  const existing = cachedEntriesByApi.get(api);
+  if (existing) {
+    return existing;
+  }
+  const stored = await api.storage.local.get(INCIDENT_LOG_STORAGE_KEY);
+  const entries = normalizeIncidentLog(stored[INCIDENT_LOG_STORAGE_KEY]).entries;
+  cachedEntriesByApi.set(api, entries);
+  return entries;
 }
 
 export async function appendIncidentLogEntry(
@@ -45,8 +61,7 @@ async function appendIncidentLogEntryNow(
   options: { now?: () => number; limit?: number }
 ): Promise<void> {
   const limit = options.limit ?? INCIDENT_LOG_LIMIT;
-  const stored = await api.storage.local.get(INCIDENT_LOG_STORAGE_KEY);
-  const log = normalizeIncidentLog(stored[INCIDENT_LOG_STORAGE_KEY]);
+  const cached = await ensureCachedEntries(api);
   const normalized = normalizedDetail(detail);
   const entry: IncidentLogEntry = {
     version: INCIDENT_LOG_VERSION,
@@ -56,10 +71,12 @@ async function appendIncidentLogEntryNow(
   if (normalized) {
     entry.detail = normalized;
   }
+  const nextEntries = [...cached, entry].slice(-limit);
+  cachedEntriesByApi.set(api, nextEntries);
   await api.storage.local.set({
     [INCIDENT_LOG_STORAGE_KEY]: {
       version: INCIDENT_LOG_VERSION,
-      entries: [...log.entries, entry].slice(-limit)
+      entries: nextEntries
     }
   });
 }

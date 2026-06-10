@@ -120,6 +120,20 @@ Use these as starting targets, not hard promises:
 
 ## Progress Log
 
+### 2026-06-10: Storage Rearchitecture Phase 0 (docs/storage-rearchitecture)
+
+This and the following dated entries implement Phase 0 of `docs/storage-rearchitecture/02-IMPLEMENTATION-PLAN.md` — contained fixes that re-green the hard counters and close loss vectors without the v4 architecture change.
+
+#### P0.1: Incident log is anomalies-only + in-memory cache
+
+- Root cause of the `saves: 2 > 1` guard regression (introduced by `72bc680`/`369c317`): `saveStateAndHistoryNowWithTrace` recorded a `saveFlush` incident on *every* flush, and `scripts/profile-storage-metrics.mjs` counts any non-lifecycle-journal `set` as a `save`. The incident-log `set` was the second save.
+- Change: the save flush now records an incident (`saveFlushAnomaly`) only when the flush sharply reduces node counts — `closedCountDelta <= SAVE_FLUSH_ANOMALY_CLOSED_DELTA (-25)` or `nodeCountDelta <= SAVE_FLUSH_ANOMALY_NODE_DELTA (-50)` — the signature of the data-loss family. Routine flushes are silent.
+- Change: `incident-log.ts` keeps one in-memory copy of the log per writer context (a `WeakMap` keyed by the storage api) and appends with a single `set` and no per-append `get`. The background page is the only writer, so the cache stays authoritative.
+- Tests (red first): `incident-log.test.ts` "appends without re-reading storage after the first append"; `controller.test.ts` "does not write an incident log entry for a routine save flush" and "writes a saveFlushAnomaly incident when a flush sharply reduces the closed node count". Updated two existing controller tests and the profile test that asserted a routine `saveFlush` entry.
+- Guard before (this machine, after `pnpm build`): all six mutating scenarios `saves=2` (FAIL hard-max). Guard after: every mutating scenario `saves=1`; **all `saves` hard-counter failures gone**. `journalWrites`/`storageSetCalls` unchanged except dropping the incident-log `set`.
+- Residual guard misses after P0.1 are timing-only and pre-existing on this machine, documented as never-moved budgets: `restore-last-transient-echo firstBroadcastMs` 36–45 vs budget 20 (see 2026-06-03 entry — over the 23 limit since before the data-loss fix), `command-group-live-leaf firstBroadcastMs` 152–160 vs budget 120 (see 2026-06-05 entries, repeatedly 154–178), and `command-refresh-noop totalMeasuredMs` 141–157 vs budget 123 (a no-op scenario with zero saves/journal — pure CPU variance). None is in the save path; none is touched by P0.1. No runtime perf budget moved.
+- `Current Asymptotics Audit`: unchanged (incident logging is diagnostic Class C, off the durable-state asymptotics).
+
 ### 2026-06-06: Promoted Current Asymptotics Audit
 
 - Promoted the event-echo and remaining-target asymptotics tables out of the dated May 21 progress entries into a stable `Current Asymptotics Audit` section near the top of this file.

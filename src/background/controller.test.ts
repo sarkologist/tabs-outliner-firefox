@@ -26851,9 +26851,6 @@ describe("background controller lifecycle", () => {
         incidentLog: expect.arrayContaining([
           expect.objectContaining({
             event: "startupStateLoaded"
-          }),
-          expect.objectContaining({
-            event: "saveFlush"
           })
         ]),
         portableTree: expect.objectContaining({
@@ -26908,19 +26905,93 @@ describe("background controller lifecycle", () => {
           windowCount: 1,
           tabCount: 1
         })
-      }),
+      })
+    ]));
+  });
+
+  it("does not write an incident log entry for a routine save flush", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    await controller.flushPendingSaves();
+
+    // A routine rename is a small, non-destructive change; it must not log an incident.
+    expectCommandAck(await controller.handleMessage({ type: "renameGroup", nodeId: "window:10", title: "Renamed" }), true);
+    await controller.flushPendingSaves();
+
+    const incidentLog = await loadIncidentLog(runtime.api);
+    expect(incidentLog.some((entry) => entry.event === "saveFlush" || entry.event === "saveFlushAnomaly")).toBe(false);
+  });
+
+  it("writes a saveFlushAnomaly incident when a flush sharply reduces the closed node count", async () => {
+    const closedChildIds = Array.from({ length: 60 }, (_value, index) => `tab:${index + 100}`);
+    const storedState: OutlineState = {
+      version: 1,
+      rootIds: ["window:10"],
+      nodes: {
+        "window:10": {
+          id: "window:10",
+          kind: "window",
+          status: "closed",
+          childIds: closedChildIds,
+          title: "Closed window",
+          active: false,
+          collapsed: false,
+          createdAt: 1000,
+          updatedAt: 1000,
+          closedAt: 1100
+        },
+        ...Object.fromEntries(closedChildIds.map((childId, index) => [childId, {
+          id: childId,
+          kind: "tab",
+          status: "closed",
+          parentId: "window:10",
+          childIds: [],
+          title: `Closed tab ${index}`,
+          url: `https://closed.example/${index}`,
+          active: false,
+          collapsed: false,
+          createdAt: 1000,
+          updatedAt: 1000,
+          closedAt: 1100
+        }]))
+      }
+    };
+    const initialStorage = outlineStateV3Changes(storedState).setItems;
+    const runtime = fakeRuntime([], [], { initialStorage });
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+
+    await controller.ensureState();
+    await controller.flushPendingSaves();
+
+    expectCommandAck(await controller.handleMessage({ type: "deleteNode", nodeId: "window:10" }), true);
+    await controller.flushPendingSaves();
+
+    const incidentLog = await loadIncidentLog(runtime.api);
+    expect(incidentLog).toEqual(expect.arrayContaining([
       expect.objectContaining({
-        event: "saveFlush",
+        event: "saveFlushAnomaly",
         detail: expect.objectContaining({
-          nodeCount: 2,
-          closedCount: 0,
-          rootCount: 1,
-          windowCount: 1,
-          tabCount: 1,
-          previousNodeCount: 0,
-          nodeCountDelta: 2,
-          previousRootCount: 0,
-          rootCountDelta: 1
+          closedCountDelta: -61,
+          nodeCountDelta: -61
         })
       })
     ]));

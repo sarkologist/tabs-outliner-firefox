@@ -43,6 +43,27 @@ describe("incident log", () => {
     );
   });
 
+  it("appends without re-reading storage after the first append", async () => {
+    const api = fakeApi();
+    const getMock = vi.mocked(api.storage.local.get);
+
+    for (let index = 0; index < 3; index += 1) {
+      await appendIncidentLogEntry(api, `event-${index}`, { index }, {
+        now: () => Date.parse("2026-06-07T12:00:00.000Z") + index
+      });
+    }
+
+    expect(getMock).toHaveBeenCalledTimes(1);
+
+    const entries = await loadIncidentLog(api);
+    expect(entries).toEqual(
+      Array.from({ length: 3 }, (_value, index) => expect.objectContaining({
+        event: `event-${index}`,
+        detail: { index }
+      }))
+    );
+  });
+
   it("normalizes malformed stored logs", async () => {
     const api = fakeApi({
       [INCIDENT_LOG_STORAGE_KEY]: {

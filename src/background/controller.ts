@@ -340,6 +340,11 @@ const STATE_SAVE_QUIET_DELAY_MS = 1000;
 const STATE_SAVE_MAX_DELAY_MS = 5000;
 const INTERACTION_STATE_SAVE_QUIET_DELAY_MS = 5000;
 const INTERACTION_STATE_SAVE_MAX_DELAY_MS = 30000;
+// A save flush only records an incident when it is anomalous: a sharp drop in closed
+// or total node count is the signature of the data-loss family. Routine flushes are
+// silent so the bounded incident log stays a signal rather than a per-save diary.
+const SAVE_FLUSH_ANOMALY_CLOSED_DELTA = -25;
+const SAVE_FLUSH_ANOMALY_NODE_DELTA = -50;
 const SIDEBAR_PROFILE_COLLECTION_DELAY_MS = 50;
 const TOGGLE_SIDEBAR_COMMAND = "toggle-sidebar";
 const SIDEBAR_WINDOW_PATH = "sidebar/sidebar.html";
@@ -5094,8 +5099,15 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         ...(stateSaveTraceOptions() ?? {})
       })
     );
-    if (saveIncidentDetail) {
-      await recordIncidentLog("saveFlush", saveIncidentDetail);
+    if (saveIncidentDetail && nextCountDetail) {
+      const closedCountDelta = nextCountDetail.closedCount - previousCountDetail.closedCount;
+      const nodeCountDelta = nextCountDetail.nodeCount - previousCountDetail.nodeCount;
+      if (
+        closedCountDelta <= SAVE_FLUSH_ANOMALY_CLOSED_DELTA ||
+        nodeCountDelta <= SAVE_FLUSH_ANOMALY_NODE_DELTA
+      ) {
+        await recordIncidentLog("saveFlushAnomaly", saveIncidentDetail);
+      }
     }
     if (nextState) {
       deferPersistedStateBaselineClone(nextState);
