@@ -2035,6 +2035,16 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         throughSeq: journalInit.headSeq,
         ...(journalInit.truncatedAtSeq !== undefined ? { truncatedAtSeq: journalInit.truncatedAtSeq } : {})
       });
+      // A spill marker past the snapshot's journalSeqIncluded means a broad change was too
+      // heavy to journal and its compaction never landed: the loaded state may be missing
+      // it (bounded by the tightened post-spill save schedule). Surface that honestly.
+      const spillGaps = journalReplayEntries.filter((entry) => entry.spill);
+      if (spillGaps.length > 0) {
+        await recordIncidentLog("journalSpillGap", {
+          markerCount: spillGaps.length,
+          labels: spillGaps.map((entry) => entry.label ?? "unknown").join(",")
+        });
+      }
     }
     if (loaded?.salvaged) {
       await recordIncidentLog("v3LoadSalvaged", { ...(loaded.repair ?? {}) });
@@ -5421,17 +5431,31 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     }
     // A delta too heavy to journal cheaply -- a huge subtree delete, or any change to a
     // parent with a large childIds array (e.g. a reorder in a 50k-tab window) -- stays on
-    // the deferred snapshot save path. Estimated without serializing: node count plus total
-    // childIds across updated nodes.
+    // the deferred snapshot save path. A spill marker records the gap durably (a loader
+    // replaying past an unfolded marker knows the snapshot may miss a broad change), and
+    // the pending save drops to the faster normal schedule so the loss window is bounded
+    // by seconds rather than the 30s interaction deferral. Weight is estimated without
+    // serializing: node count plus total childIds across updated nodes.
     const updatedNodes = item.delta?.updatedNodes ?? [];
     const weight = updatedNodes.length + (item.delta?.deletedNodeIds?.length ?? 0) +
       updatedNodes.reduce((sum, node) => sum + node.childIds.length, 0);
     if (weight > JOURNAL_SPILL_NODE_LIMIT) {
-      await appendOutlineJournalItems(queuedEventItems);
+      await appendOutlineJournalItems([...queuedEventItems, { kind: "command", label, spill: true }]);
+      tightenPendingSaveScheduleAfterSpill();
       return false;
     }
     await appendOutlineJournalItems([...queuedEventItems, item]);
     return true;
+  }
+
+  // A spill means the journal does NOT carry the change, so the snapshot save must land
+  // soon. schedulePendingSave alone would keep the more-deferred interaction schedule
+  // (moreDeferredSaveSchedule escalates, never tightens), so reset the schedule first.
+  function tightenPendingSaveScheduleAfterSpill(): void {
+    pendingSaveSchedule = "normal";
+    pendingSaveBatchStartedAt = undefined;
+    pendingSaveMaxDelayMs = undefined;
+    schedulePendingSave("normal");
   }
 
   // Journal a command whose model op mutates the live state in place (toggleCollapsed,
@@ -5456,7 +5480,8 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     }
     const weight = updatedNodes.length + updatedNodes.reduce((sum, node) => sum + node.childIds.length, 0);
     if (weight > JOURNAL_SPILL_NODE_LIMIT) {
-      await appendOutlineJournalItems(queuedEventItems);
+      await appendOutlineJournalItems([...queuedEventItems, { kind: "command", label, spill: true }]);
+      tightenPendingSaveScheduleAfterSpill();
       return false;
     }
     await appendOutlineJournalItems([...queuedEventItems, { kind: "command", label, delta: { updatedNodes } }]);

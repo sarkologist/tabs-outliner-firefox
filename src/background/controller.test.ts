@@ -32590,6 +32590,53 @@ describe("background controller lifecycle", () => {
     ]));
   });
 
+  it("appends a spill marker for a too-heavy command delta and tightens the save schedule", async () => {
+    vi.useFakeTimers();
+    try {
+      const tabCount = 2500;
+      const runtime = fakeRuntime(
+        [{ id: 10, focused: true, incognito: false }],
+        Array.from({ length: tabCount }, (_value, index) => ({
+          id: index + 1,
+          windowId: 10,
+          index,
+          active: index === 0,
+          url: `https://heavy.example/${index + 1}`,
+          title: `Tab ${index + 1}`
+        }))
+      );
+      const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+      await controller.ensureState();
+      await controller.flushPendingSaves();
+      vi.mocked(runtime.api.storage.local.set).mockClear();
+      vi.mocked(runtime.api.tabs.remove).mockImplementationOnce(async (tabIds) => {
+        for (const tabId of Array.isArray(tabIds) ? tabIds : [tabIds]) {
+          removeRuntimeTabWithoutEvents(runtime, tabId);
+        }
+      });
+
+      // The delete's delta includes the 2500-child window node, exceeding the journal
+      // weight cap: a spill marker is appended instead of the delta.
+      expectCommandAck(await controller.handleMessage({ type: "deleteNode", nodeId: `tab:${tabCount}` }), true);
+      const journalSlotWrites = vi.mocked(runtime.api.storage.local.set).mock.calls
+        .map(([items]) => items as Record<string, unknown>)
+        .filter((items) => Object.keys(items).some((key) => key.startsWith("outline:v4:journal:slot:")));
+      expect(journalSlotWrites).toHaveLength(1);
+      const slotKey = Object.keys(journalSlotWrites[0]!).find((key) => key.startsWith("outline:v4:journal:slot:"))!;
+      const slot = journalSlotWrites[0]![slotKey] as { entries: Array<{ kind?: string; spill?: boolean; delta?: unknown }> };
+      expect(slot.entries.at(-1)).toMatchObject({ spill: true });
+      expect(slot.entries.at(-1)?.delta).toBeUndefined();
+
+      // Delete is interaction-scheduled (5s quiet), but the spill tightens it to the
+      // normal 1s quiet so the un-journaled change reaches the snapshot quickly.
+      expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(0);
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("journals browser-created window provenance within 250ms and survives an abrupt restart before any save", async () => {
     vi.useFakeTimers();
     try {

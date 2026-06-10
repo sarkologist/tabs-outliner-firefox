@@ -168,6 +168,15 @@ This and the following dated entries implement Phase 0 of `docs/storage-rearchit
 - Test status (honest): a deterministic red-first regression test for this race is impractical with the current harness — fake timers hang the runtime-refresh flow (it awaits event processing that needs timer advancement), and real timers let the 0ms baseline clone fire before the race can trigger. The race needs torn-timing control, which is exactly what the Phase 1 fault-injection lane (03-WORKFLOW-FIXES W-4) is for; the deterministic test is deferred there. The fix mirrors the four existing tested detach call sites and is validated by the full suite (677 passing) and a green-hard-counter guard with no close-scenario (refresh→align) regression.
 - Guard: unchanged — only the chronic `restore-last-transient-echo firstBroadcastMs` timing item fails. No budget moved.
 
+### 2026-06-10: Spill markers for heavy deltas (Phase 4 prerequisite)
+
+Heavy command deltas (weight over `JOURNAL_SPILL_NODE_LIMIT` 2,000 — any edit touching a huge-childIds parent) previously skipped the journal **silently**: the deferred snapshot was their only durability, the loader had no way to know a broad change was un-journaled, and Phase 4 cannot delete candidate threading while the journal is blind to heavy edits.
+
+- Change: the heavy branch of `appendCommandJournal`/`appendCommandJournalForKnownNodeIds` now appends a delta-less `{spill: true}` marker entry (the journal module also accepts explicit spill items) and **tightens the pending save to the normal schedule** via `tightenPendingSaveScheduleAfterSpill` — `schedulePendingSave` alone is an escalator (`moreDeferredSaveSchedule` never tightens), so the schedule is reset first. A heavy structural edit's loss window drops from the 5/30 s interaction deferral to the 1/5 s normal one. Startup replay that crosses an unfolded marker records a `journalSpillGap` incident (the snapshot may miss that change; bounded by the tightened schedule).
+- Tests: journal module explicit-spill round-trip; controller "appends a spill marker for a too-heavy command delta and tightens the save schedule" (2,500-tab delete: marker entry without delta in the slot write, snapshot save fires at 1 s instead of 5 s).
+- Guard impact: `command-move-leaf` (same-parent reorder in the 50k window) now performs 2 journal-class writes (spill marker + journal-meta prune after the flush), exceeding its `journalWrites: 0` budget — raised in the accompanying `budget:` commit per the W-2 contract. All other scenarios absorbed the marker within existing budgets (delete/close/restore/group observed `journalWrites=1`, burst 20). 708 tests passing.
+- Event paths intentionally do not write markers (their heavy deltas keep the checkpoint flush, which is itself the immediate durability).
+
 ### 2026-06-10: Workflow fixes W-1/W-2/W-4/W-5/W-8 (symmetric gates, fault lane, CI hard counters)
 
 Implements the process half of the rearchitecture pack (docs/storage-rearchitecture/03-WORKFLOW-FIXES.md; status note added there). No behavior changes to product code.

@@ -34,6 +34,10 @@ export type OutlineJournalAppendItem = {
   kind: OutlineJournalEntryKind;
   label?: string;
   delta?: OutlineJournalDelta;
+  // Explicit spill marker: the caller had a delta too heavy to journal and is recording
+  // that fact (the snapshot save, not the journal, carries the change). Replay skips it;
+  // a loader that replays past an unfolded marker knows the snapshot may miss a broad change.
+  spill?: true;
 };
 
 export type OutlineJournalAppendResult = {
@@ -178,7 +182,7 @@ export function createOutlineJournal(
       if (item.label !== undefined) {
         entry.label = item.label;
       }
-      if (item.delta && deltaExceedsSpillLimit(item.delta)) {
+      if (item.spill || (item.delta && deltaExceedsSpillLimit(item.delta))) {
         entry.spill = true;
         spilled = true;
       } else if (item.delta) {

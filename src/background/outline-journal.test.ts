@@ -58,6 +58,21 @@ describe("outline journal", () => {
     expect(result.entries[1]?.delta?.deletedNodeIds).toEqual(["tab:2"]);
   });
 
+  it("writes an explicit spill marker item as a delta-less spill entry", async () => {
+    const faulty = createFaultyStorage();
+    const journal = createOutlineJournal(faulty.api, { epoch: 1, now: () => 1000 });
+    await journal.init();
+
+    const result = await journal.append([{ kind: "command", label: "deleteNode", spill: true }]);
+
+    expect(result.spilled).toBe(true);
+    const reopened = createOutlineJournal(faulty.api, { epoch: 2 });
+    const reloaded = await reopened.init();
+    expect(reloaded.entries).toHaveLength(1);
+    expect(reloaded.entries[0]).toMatchObject({ kind: "command", label: "deleteNode", spill: true });
+    expect(reloaded.entries[0]?.delta).toBeUndefined();
+  });
+
   it("writes a spill marker without the delta when a delta exceeds the spill limits", async () => {
     const faulty = createFaultyStorage();
     const journal = createOutlineJournal(faulty.api, { epoch: 1, now: () => 1000 });
