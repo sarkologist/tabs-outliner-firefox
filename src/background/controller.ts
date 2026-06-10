@@ -46,6 +46,7 @@ import {
   loadHistory,
   loadInitialTreeSnapshot,
   loadStateWithMetadata,
+  outlineStateV3BootSnapshotItem,
   saveStateAndHistory,
   STATE_KEY,
   STATE_V2_MANIFEST_KEY,
@@ -351,6 +352,10 @@ const SAVE_FLUSH_ANOMALY_NODE_DELTA = -50;
 // After a failed state save the next attempt is retried with growing backoff so a
 // transient storage error does not silently drop the pending change.
 const SAVE_FAILURE_BACKOFF_MS = [1000, 4000, 16000] as const;
+// The boot snapshot is a cold-start-only first-paint cache, written on its own debounce
+// rather than embedded in every save's manifest. Staleness up to this window is harmless:
+// it is superseded by full hydration immediately after first paint.
+const BOOT_SNAPSHOT_WRITE_DELAY_MS = 10000;
 const SIDEBAR_PROFILE_COLLECTION_DELAY_MS = 50;
 const TOGGLE_SIDEBAR_COMMAND = "toggle-sidebar";
 const SIDEBAR_WINDOW_PATH = "sidebar/sidebar.html";
@@ -409,6 +414,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   let pendingSaveBatchStartedAt: number | undefined;
   let pendingSaveMaxDelayMs: number | undefined;
   let saveFailureBackoffIndex = 0;
+  let bootSnapshotTimer: number | undefined;
   let pendingSaveSchedule: SaveSchedule | undefined;
   let nextRuntimeLifecycleJournalSequence = 1;
   const runtimeLifecycleJournalEntryIdsToClearAfterSave = new Set<string>();
@@ -4939,6 +4945,33 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       pendingSaveRequiresFullDiff = true;
     }
     schedulePendingSave(schedule);
+    scheduleBootSnapshotWrite();
+  }
+
+  // Refresh the cold-start boot snapshot off the interaction path. Debounced and never part
+  // of a save flush, so a one-node change no longer reserializes the 256-row snapshot.
+  function scheduleBootSnapshotWrite(): void {
+    if (bootSnapshotTimer !== undefined) {
+      return;
+    }
+    bootSnapshotTimer = globalThis.setTimeout(() => {
+      bootSnapshotTimer = undefined;
+      void writeBootSnapshot();
+    }, BOOT_SNAPSHOT_WRITE_DELAY_MS);
+  }
+
+  async function writeBootSnapshot(): Promise<void> {
+    const current = state;
+    if (!current) {
+      return;
+    }
+    try {
+      await perfTrace.measureAsync("background.state.bootSnapshot.write", () =>
+        api.storage.local.set(outlineStateV3BootSnapshotItem(current, now()))
+      );
+    } catch (error) {
+      perfTrace.mark("background.state.bootSnapshot.error", { message: errorText(error) });
+    }
   }
 
   function candidateSaveRequiresFullDiff(next: OutlineState, candidateNodeIds: readonly NodeId[]): boolean {

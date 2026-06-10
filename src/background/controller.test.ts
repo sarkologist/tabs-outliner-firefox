@@ -197,7 +197,11 @@ function isLifecycleJournalOnlyStorageSet(items: unknown): boolean {
     return false;
   }
   const keys = Object.keys(items);
-  return keys.length === 1 && (keys[0] === RUNTIME_LIFECYCLE_JOURNAL_KEY || keys[0] === INCIDENT_LOG_STORAGE_KEY);
+  return keys.length === 1 && (
+    keys[0] === RUNTIME_LIFECYCLE_JOURNAL_KEY ||
+    keys[0] === INCIDENT_LOG_STORAGE_KEY ||
+    keys[0] === "outlineState:v3:bootSnapshot"
+  );
 }
 
 function mutateStoredV3Node(
@@ -27589,7 +27593,11 @@ describe("background controller lifecycle", () => {
     expect(snapshot?.projection?.rows).toHaveLength(256);
     expect(snapshot?.projection?.nodeCount).toBe(301);
     expect(Object.keys(snapshot?.state?.nodes ?? {})).toHaveLength(256);
-    expect(runtime.api.storage.local.get).toHaveBeenCalledWith(["outlineState:v3:manifest", "outlineState:v2:manifest"]);
+    expect(runtime.api.storage.local.get).toHaveBeenCalledWith([
+      "outlineState:v3:bootSnapshot",
+      "outlineState:v3:manifest",
+      "outlineState:v2:manifest"
+    ]);
     expect(runtime.api.windows.getAll).not.toHaveBeenCalled();
     expect(runtime.api.tabs.query).not.toHaveBeenCalled();
     await waitForMacrotask();

@@ -1,4 +1,6 @@
 export const RUNTIME_LIFECYCLE_JOURNAL_KEY = "runtimeLifecycleJournal:v1";
+// Cold-start first-paint cache (Class C), written on its own debounce -- not a state save.
+const STATE_V3_BOOT_SNAPSHOT_KEY = "outlineState:v3:bootSnapshot";
 
 export function createStorageMetrics() {
   return {
@@ -109,5 +111,5 @@ function isJournalOnlySet(items) {
     return false;
   }
   const keys = Object.keys(items);
-  return keys.length === 1 && keys[0] === RUNTIME_LIFECYCLE_JOURNAL_KEY;
+  return keys.length === 1 && (keys[0] === RUNTIME_LIFECYCLE_JOURNAL_KEY || keys[0] === STATE_V3_BOOT_SNAPSHOT_KEY);
 }

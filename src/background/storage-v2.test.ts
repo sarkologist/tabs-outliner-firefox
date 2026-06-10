@@ -5,6 +5,7 @@ import {
   HISTORY_KEY,
   STATE_KEY,
   STATE_V2_MANIFEST_KEY,
+  STATE_V3_BOOT_SNAPSHOT_KEY,
   STATE_V3_MANIFEST_KEY,
   loadInitialTreeSnapshot,
   loadState,
@@ -14,6 +15,7 @@ import {
   createInitialTreeSnapshotProjector,
   initialTreeSnapshotForState,
   outlineStateV2Items,
+  outlineStateV3BootSnapshotItem,
   outlineStateV3Changes,
   saveState,
   saveStateAndHistory,
@@ -410,7 +412,11 @@ describe("outline state v2 storage", () => {
     expect(snapshot?.projection.nodeCount).toBe(801);
     expect(Object.keys(snapshot?.state.nodes ?? {})).toHaveLength(INITIAL_TREE_SNAPSHOT_ROW_LIMIT);
     expect(api.storage.local.get).toHaveBeenCalledTimes(1);
-    expect(api.storage.local.get).toHaveBeenCalledWith([STATE_V3_MANIFEST_KEY, STATE_V2_MANIFEST_KEY]);
+    expect(api.storage.local.get).toHaveBeenCalledWith([
+      STATE_V3_BOOT_SNAPSHOT_KEY,
+      STATE_V3_MANIFEST_KEY,
+      STATE_V2_MANIFEST_KEY
+    ]);
   });
 
   it("round-trips generated nested states through v2 chunks and order pages", async () => {
@@ -858,11 +864,12 @@ describe("outline state v3 storage", () => {
     await expect(loadStateV3(api)).resolves.toEqual(next);
   });
 
-  it("loads initial snapshots from the v3 manifest before v2", async () => {
+  it("loads the boot snapshot from its own key before v2", async () => {
     const v2State = makeLargeState(20);
     const v3State = makeLargeState(800, { activeTabIndex: 799 });
     const api = fakeApi(outlineStateV2Items(v2State, { revision: 111 }));
     await saveState(v3State, api);
+    await api.storage.local.set(outlineStateV3BootSnapshotItem(v3State, 222));
     vi.mocked(api.storage.local.get).mockClear();
 
     const snapshot = await loadInitialTreeSnapshot(api);
@@ -871,6 +878,37 @@ describe("outline state v3 storage", () => {
     expect(snapshot?.projection.nodeCount).toBe(801);
     expect(snapshot?.projection.activeTabNodeId).toBe("tab:800");
     expect(api.storage.local.get).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not embed the initial snapshot in v3 save manifests", async () => {
+    const state = makeLargeState(50);
+    const incremental = outlineStateV3Changes(moveLastTabToFront(state), {
+      previousState: state,
+      revision: 2
+    });
+    const fullManifest = outlineStateV3Changes(state, { revision: 1 }).setItems[STATE_V3_MANIFEST_KEY] as Record<string, unknown>;
+    const incrementalManifest = incremental.setItems[STATE_V3_MANIFEST_KEY] as Record<string, unknown>;
+
+    expect(fullManifest.initialSnapshot).toBeUndefined();
+    expect(incrementalManifest.initialSnapshot).toBeUndefined();
+    expect(fullManifest.bootSnapshotRevision).toBe(1);
+    // A small same-parent move must not carry the 256-row snapshot in its manifest.
+    expect(JSON.stringify(incrementalManifest).length).toBeLessThan(2000);
+  });
+
+  it("loads the embedded snapshot from older v3 manifests for back-compat", async () => {
+    const state = makeLargeState(40, { activeTabIndex: 5 });
+    const items = outlineStateV3Changes(state).setItems;
+    // Simulate an older manifest that still embeds the snapshot and has no boot snapshot key.
+    items[STATE_V3_MANIFEST_KEY] = {
+      ...(items[STATE_V3_MANIFEST_KEY] as Record<string, unknown>),
+      initialSnapshot: initialTreeSnapshotForState(state, { revision: 9, hydrating: true })
+    };
+
+    const snapshot = await loadInitialTreeSnapshot(fakeApi(items));
+
+    expect(snapshot?.projection.nodeCount).toBe(41);
+    expect(snapshot?.projection.activeTabNodeId).toBe("tab:6");
   });
 });
 

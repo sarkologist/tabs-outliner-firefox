@@ -13,6 +13,7 @@ const STATE_V2_NODE_CHUNK_SIZE = 512;
 const STATE_V2_ORDER_PAGE_SIZE = 1024;
 const STATE_V3_NODE_SHARD_PREFIX = "outlineState:v3:nodes:";
 const STATE_V3_ORDER_PAGE_PREFIX = "outlineState:v3:order:";
+export const STATE_V3_BOOT_SNAPSHOT_KEY = "outlineState:v3:bootSnapshot";
 const STATE_V3_NODE_SHARD_COUNT = 32;
 const STATE_V3_ORDER_PAGE_SIZE = 1024;
 export const INITIAL_TREE_SNAPSHOT_ROW_LIMIT = 256;
@@ -148,7 +149,17 @@ type StateV3Manifest = {
   nodeShardCount: number;
   nodeShardKeys: string[];
   orderPageSize: number;
-  initialSnapshot: InitialTreeSnapshot;
+  // Revision of the separately-stored boot snapshot (STATE_V3_BOOT_SNAPSHOT_KEY).
+  bootSnapshotRevision?: number;
+  // Only older manifests embed the snapshot inline; new saves write it to its own key so
+  // a one-node change no longer reserializes the whole 256-row snapshot per flush.
+  initialSnapshot?: InitialTreeSnapshot;
+};
+
+type StateV3BootSnapshot = {
+  version: 3;
+  revision: number;
+  snapshot: InitialTreeSnapshot;
 };
 
 export type LoadedOutlineState = {
@@ -469,9 +480,19 @@ export function outlineStateV2Items(
 export async function loadInitialTreeSnapshot(
   api: WebExtensionBrowser = browser
 ): Promise<InitialTreeSnapshot | undefined> {
-  const stored = await api.storage.local.get([STATE_V3_MANIFEST_KEY, STATE_V2_MANIFEST_KEY]);
+  const stored = await api.storage.local.get([
+    STATE_V3_BOOT_SNAPSHOT_KEY,
+    STATE_V3_MANIFEST_KEY,
+    STATE_V2_MANIFEST_KEY
+  ]);
+  const bootSnapshot = stored[STATE_V3_BOOT_SNAPSHOT_KEY];
+  if (isStateV3BootSnapshot(bootSnapshot)) {
+    return cloneInitialTreeSnapshot(bootSnapshot.snapshot, true);
+  }
+
+  // Back-compat: older manifests embed the snapshot inline.
   const v3Manifest = stored[STATE_V3_MANIFEST_KEY];
-  if (isStateV3Manifest(v3Manifest)) {
+  if (isStateV3Manifest(v3Manifest) && v3Manifest.initialSnapshot) {
     return cloneInitialTreeSnapshot(v3Manifest.initialSnapshot, true);
   }
 
@@ -1274,7 +1295,22 @@ function stateV3ManifestForState(state: OutlineState, revision: number): StateV3
     nodeShardCount: STATE_V3_NODE_SHARD_COUNT,
     nodeShardKeys: stateV3NodeShardKeys(state),
     orderPageSize: STATE_V3_ORDER_PAGE_SIZE,
-    initialSnapshot: initialTreeSnapshotForState(state, { revision, hydrating: true })
+    bootSnapshotRevision: revision
+  };
+}
+
+// The boot snapshot is a cold-start-only sparse first-paint cache (Class C). It is written
+// to its own key on a debounce rather than embedded in every save's manifest.
+export function outlineStateV3BootSnapshotItem(
+  state: OutlineState,
+  revision: number = Date.now()
+): Record<string, StateV3BootSnapshot> {
+  return {
+    [STATE_V3_BOOT_SNAPSHOT_KEY]: {
+      version: 3,
+      revision,
+      snapshot: initialTreeSnapshotForState(state, { revision, hydrating: true })
+    }
   };
 }
 
@@ -1558,7 +1594,20 @@ function isStateV3Manifest(value: unknown): value is StateV3Manifest {
       typeof (value as StateV3Manifest).nodeShardCount === "number" &&
       Array.isArray((value as StateV3Manifest).nodeShardKeys) &&
       typeof (value as StateV3Manifest).orderPageSize === "number" &&
-      isInitialTreeSnapshot((value as StateV3Manifest).initialSnapshot)
+      // New manifests store the snapshot in its own key; older ones embed it inline. Accept
+      // either, but if an inline snapshot is present it must be well-formed.
+      ((value as StateV3Manifest).initialSnapshot === undefined ||
+        isInitialTreeSnapshot((value as StateV3Manifest).initialSnapshot))
+  );
+}
+
+function isStateV3BootSnapshot(value: unknown): value is StateV3BootSnapshot {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      (value as StateV3BootSnapshot).version === 3 &&
+      typeof (value as StateV3BootSnapshot).revision === "number" &&
+      isInitialTreeSnapshot((value as StateV3BootSnapshot).snapshot)
   );
 }
 
