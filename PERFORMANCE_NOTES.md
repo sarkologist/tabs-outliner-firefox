@@ -168,6 +168,14 @@ This and the following dated entries implement Phase 0 of `docs/storage-rearchit
 - Test status (honest): a deterministic red-first regression test for this race is impractical with the current harness — fake timers hang the runtime-refresh flow (it awaits event processing that needs timer advancement), and real timers let the 0ms baseline clone fire before the race can trigger. The race needs torn-timing control, which is exactly what the Phase 1 fault-injection lane (03-WORKFLOW-FIXES W-4) is for; the deterministic test is deferred there. The fix mirrors the four existing tested detach call sites and is validated by the full suite (677 passing) and a green-hard-counter guard with no close-scenario (refresh→align) regression.
 - Guard: unchanged — only the chronic `restore-last-transient-echo firstBroadcastMs` timing item fails. No budget moved.
 
+### 2026-06-10: Storage Rearchitecture Phase 1 (journal module, unwired)
+
+Phase 1 of `docs/storage-rearchitecture/02-IMPLEMENTATION-PLAN.md`: the pure v4 mutation-journal module and the fault-injection storage harness. **No controller or save/load wiring** — this is groundwork for Phase 2/3, so the runtime guard and asymptotics audit are unchanged.
+
+- New `src/background/outline-journal.ts`: `createOutlineJournal(api, {epoch, now})` with `init`/`append`/`prune`/`pendingEntryCount`/`pendingBytes`, plus pure `journalTouchedNodeIds` and `replayJournal`, and a typed `JournalFullError`. Entries carry `{seq, epoch, at, kind, label?, delta?, spill?}`; deltas over `JOURNAL_SPILL_NODE_LIMIT` (2000 nodes) or `JOURNAL_SPILL_BYTE_LIMIT` (512 KB) are recorded as `spill: true` markers without the delta. Storage layout: a 64-slot ring (`outline:v4:journal:slot:<i>`) plus `outline:v4:journal:meta`; one `set` per append writes a single slot and advances meta together; a full ring throws `JournalFullError` so the controller compacts; `init` truncates at the last good seq on a corrupt slot and reports `truncatedAtSeq`.
+- New `src/test/faulty-storage.test-support.ts`: an in-memory `storage.local` with `failNextSet()`, `tearNextSet(keepKeys)` (crash-consistent partial multi-key write), and `setLatencyMs()` — the harness that makes torn-write/failed-set/restart scenarios testable for Phases 2-3 and the storage-fault lane (03-WORKFLOW-FIXES W-4).
+- Tests: `outline-journal.test.ts` (8 — round-trip, spill marker, ring-full, prune, replay, corrupt-slot truncation, touched-id union, failed-append-leaves-state-unchanged) and `faulty-storage.test.ts` (6). Full suite 691 passing; tsc clean; runtime guard unchanged (hard counters green).
+
 ### 2026-06-06: Promoted Current Asymptotics Audit
 
 - Promoted the event-echo and remaining-target asymptotics tables out of the dated May 21 progress entries into a stable `Current Asymptotics Audit` section near the top of this file.
