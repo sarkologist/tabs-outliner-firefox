@@ -155,6 +155,18 @@ export type LoadedOutlineState = {
   state: OutlineState;
   format: "v2" | "v3";
   requiresFullSave?: boolean;
+  // True when the v3 load skipped unparseable shards or accepted partial order pages.
+  salvaged?: boolean;
+  repair?: StateStructureRepair;
+  // True when a present-but-unloadable v3 manifest forced a fall back to the frozen v2
+  // snapshot. The caller must surface this — it is a silent-time-travel risk.
+  staleV2Fallback?: boolean;
+};
+
+type StateV3LoadOutcome = {
+  state: OutlineState;
+  salvaged: boolean;
+  repair?: StateStructureRepair;
 };
 
 export type StateLoadPhase = {
@@ -264,13 +276,16 @@ export async function loadStateWithMetadata(
     api.storage.local.get([STATE_V3_MANIFEST_KEY, STATE_V2_MANIFEST_KEY])
   );
   const v3Manifest = stored[STATE_V3_MANIFEST_KEY];
-  if (isStateV3Manifest(v3Manifest)) {
-    const state = await loadStateV3FromManifest(v3Manifest, api, options);
-    if (state) {
+  const v3ManifestPresent = isStateV3Manifest(v3Manifest);
+  if (v3ManifestPresent) {
+    const outcome = await loadStateV3FromManifest(v3Manifest, api, options);
+    if (outcome) {
       return {
-        state,
+        state: outcome.state,
         format: "v3",
-        ...(stateV3ManifestRequiresFullSave(v3Manifest) ? { requiresFullSave: true } : {})
+        ...(stateV3ManifestRequiresFullSave(v3Manifest) || outcome.salvaged ? { requiresFullSave: true } : {}),
+        ...(outcome.salvaged ? { salvaged: true } : {}),
+        ...(outcome.repair ? { repair: outcome.repair } : {})
       };
     }
   }
@@ -279,8 +294,26 @@ export async function loadStateWithMetadata(
   if (isStateV2Manifest(v2Manifest)) {
     const state = await loadStateV2FromManifest(v2Manifest, api);
     if (state) {
-      return { state, format: "v2" };
+      // Falling back to the frozen v2 snapshot is only legitimate before migration. If a
+      // v3 manifest exists, this is a silent rollback the caller must be told about.
+      return {
+        state,
+        format: "v2",
+        ...(v3ManifestPresent ? { staleV2Fallback: true, requiresFullSave: true } : {})
+      };
     }
+  }
+
+  // A v3 manifest exists but neither its shards nor a usable v2 snapshot loaded. Return an
+  // empty salvaged v3 state so the caller reconciles from runtime rather than silently
+  // bootstrapping a fresh tree on top of (now unreadable) stored data.
+  if (v3ManifestPresent) {
+    return {
+      state: { version: 1, rootIds: [], nodes: {} },
+      format: "v3",
+      requiresFullSave: true,
+      salvaged: true
+    };
   }
 
   return undefined;
@@ -509,14 +542,14 @@ export async function loadStateV3(api: WebExtensionBrowser = browser): Promise<O
     return undefined;
   }
 
-  return loadStateV3FromManifest(manifest, api);
+  return (await loadStateV3FromManifest(manifest, api))?.state;
 }
 
 async function loadStateV3FromManifest(
   manifest: StateV3Manifest,
   api: WebExtensionBrowser,
   options: LoadStateOptions = {}
-): Promise<OutlineState | undefined> {
+): Promise<StateV3LoadOutcome | undefined> {
   const shardItems: Record<string, unknown> = await measureLoadPhase(
     options,
     "v3.nodeShardRead",
@@ -526,30 +559,33 @@ async function loadStateV3FromManifest(
     { keys: manifest.nodeShardKeys.length }
   );
   const nodes: OutlineState["nodes"] = {};
-  const storedNodes: StoredOutlineNode[] = [];
   const storedNodesWithChildren: StoredOutlineNode[] = [];
-  const materialized = await measureLoadPhase(
+  let parsedShardCount = 0;
+  let shardParseFailureCount = 0;
+  await measureLoadPhase(
     options,
     "v3.nodeMaterialize",
     () => {
       for (const key of manifest.nodeShardKeys) {
         const shard = shardItems[key];
         if (!isStateV3NodeShard(shard)) {
-          return false;
+          // Salvage: skip an unparseable shard rather than failing the whole load.
+          shardParseFailureCount += 1;
+          continue;
         }
+        parsedShardCount += 1;
         for (const storedNode of shard.nodes) {
-          storedNodes.push(storedNode);
           if (storedNode.childCount > 0) {
             storedNodesWithChildren.push(storedNode);
           }
           nodes[storedNode.id] = storedNodeToNode(storedNode);
         }
       }
-      return true;
     },
     { shards: manifest.nodeShardKeys.length }
   );
-  if (!materialized) {
+  // If shards were expected but none parsed, the node table is unrecoverable from v3.
+  if (manifest.nodeShardKeys.length > 0 && parsedShardCount === 0) {
     return undefined;
   }
 
@@ -565,49 +601,55 @@ async function loadStateV3FromManifest(
     () => orderPageKeys.length > 0 ? api.storage.local.get(orderPageKeys) : Promise.resolve({}),
     { keys: orderPageKeys.length }
   );
-  const attached = await measureLoadPhase(
+  let orderSalvageCount = 0;
+  await measureLoadPhase(
     options,
     "v3.orderAttach",
     () => {
       for (const storedNode of storedNodesWithChildren) {
         const node = nodes[storedNode.id];
         if (!node) {
-          return false;
+          continue;
         }
         const childIds: NodeId[] = [];
         const pageCount = Math.ceil(storedNode.childCount / manifest.orderPageSize);
+        let truncated = false;
         for (let pageIndex = 0; pageIndex < pageCount; pageIndex += 1) {
           const page = orderPageItems[stateV3OrderPageKey(storedNode.id, pageIndex)];
           if (!isStateV3OrderPage(page) || page.parentId !== storedNode.id || page.pageIndex !== pageIndex) {
-            return false;
+            // Salvage: keep the valid prefix of the child order; structure repair re-roots
+            // the children we could not place.
+            truncated = true;
+            break;
           }
           childIds.push(...page.childIds);
         }
-        if (childIds.length !== storedNode.childCount) {
-          return false;
+        if (truncated || childIds.length !== storedNode.childCount) {
+          orderSalvageCount += 1;
         }
         node.childIds = childIds;
       }
-      return true;
     },
     { pages: orderPageKeys.length }
   );
-  if (!attached) {
-    return undefined;
-  }
 
   const state: OutlineState = {
     version: 1,
     rootIds: [...manifest.rootIds],
     nodes
   };
-  const structureRepair = normalizeLoadedV3Structure(state);
-  if (structureRepair) {
-    await options.onStructureRepair?.(structureRepair);
+  const repair = normalizeLoadedV3Structure(state);
+  if (repair) {
+    await options.onStructureRepair?.(repair);
   }
-  return await measureLoadPhase(options, "v3.validation", () => isOutlineState(state))
-    ? state
-    : undefined;
+  if (!(await measureLoadPhase(options, "v3.validation", () => isOutlineState(state)))) {
+    return undefined;
+  }
+  return {
+    state,
+    salvaged: shardParseFailureCount > 0 || orderSalvageCount > 0,
+    ...(repair ? { repair } : {})
+  };
 }
 
 export function outlineStateV3Changes(

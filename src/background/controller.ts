@@ -46,7 +46,10 @@ import {
   loadHistory,
   loadInitialTreeSnapshot,
   loadStateWithMetadata,
-  saveStateAndHistory
+  saveStateAndHistory,
+  STATE_KEY,
+  STATE_V2_MANIFEST_KEY,
+  STATE_V3_MANIFEST_KEY
 } from "./storage.js";
 import type {
   InitialTreeSnapshot,
@@ -1924,6 +1927,12 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       loadRuntimeLifecycleJournal(api)
     ]);
     const stored = loaded?.state;
+    if (loaded?.salvaged) {
+      await recordIncidentLog("v3LoadSalvaged", { ...(loaded.repair ?? {}) });
+    }
+    if (loaded?.staleV2Fallback) {
+      await recordIncidentLog("staleV2FallbackUsed", { ...outlineStateCountDetail(loaded.state) });
+    }
     let storedRuntimeMatch: RuntimeSnapshotMatch | undefined;
     let consumedRuntimeLifecycleJournalEntryIds: string[] = [];
     let runtimeLifecycleJournalChangedState = false;
@@ -1989,6 +1998,17 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         }
       }
     } else {
+      // Nothing loadable. Bootstrapping from windows is only safe on a genuinely fresh
+      // profile; if any stored outline keys exist, the bootstrap would overwrite them, so
+      // record an incident rather than letting that happen silently.
+      const storedKeys = await api.storage.local.get([STATE_V3_MANIFEST_KEY, STATE_V2_MANIFEST_KEY, STATE_KEY]);
+      if (storedKeys[STATE_V3_MANIFEST_KEY] || storedKeys[STATE_V2_MANIFEST_KEY] || storedKeys[STATE_KEY]) {
+        await recordIncidentLog("bootstrapSkippedStoredDataPresent", {
+          hasV3Manifest: Boolean(storedKeys[STATE_V3_MANIFEST_KEY]),
+          hasV2Manifest: Boolean(storedKeys[STATE_V2_MANIFEST_KEY]),
+          hasV1State: Boolean(storedKeys[STATE_KEY])
+        });
+      }
       state = bootstrapFromWindows(windows, { now: now() });
       scheduleStateSave(state);
     }

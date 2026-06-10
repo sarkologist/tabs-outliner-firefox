@@ -27073,6 +27073,61 @@ describe("background controller lifecycle", () => {
     ]));
   });
 
+  it("startup salvages closed v3 nodes instead of bootstrapping over them", async () => {
+    const closedChildIds = Array.from({ length: 40 }, (_value, index) => `tab:${index + 100}`);
+    const storedState: OutlineState = {
+      version: 1,
+      rootIds: ["window:50"],
+      nodes: {
+        "window:50": {
+          id: "window:50",
+          kind: "window",
+          status: "closed",
+          childIds: closedChildIds,
+          title: "Closed session",
+          active: false,
+          collapsed: false,
+          createdAt: 1000,
+          updatedAt: 1000,
+          closedAt: 1100
+        },
+        ...Object.fromEntries(closedChildIds.map((childId, index) => [childId, {
+          id: childId,
+          kind: "tab",
+          status: "closed",
+          parentId: "window:50",
+          childIds: [],
+          title: `Closed tab ${index}`,
+          url: `https://closed.example/${index}`,
+          active: false,
+          collapsed: false,
+          createdAt: 1000,
+          updatedAt: 1000,
+          closedAt: 1100
+        }]))
+      }
+    };
+    const initialStorage = outlineStateV3Changes(storedState).setItems;
+    // Corrupt one node shard: the old loader would fail the whole v3 read and bootstrap a
+    // live-window-only tree, silently discarding the closed session.
+    const shardKey = Object.keys(initialStorage).find((key) => key.startsWith("outlineState:v3:nodes:"));
+    initialStorage[shardKey!] = { not: "a shard" };
+
+    const runtime = fakeRuntime(
+      [{ id: 99, focused: true, incognito: false }],
+      [{ id: 1, windowId: 99, index: 0, active: true, url: "https://live.example/", title: "Live" }],
+      { initialStorage }
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+
+    const state = await controller.ensureState();
+    const incidentLog = await loadIncidentLog(runtime.api);
+
+    // Salvage recovered closed nodes; a bootstrap-from-windows tree would have none.
+    expect(Object.values(state.nodes).some((node) => node.status === "closed")).toBe(true);
+    expect(incidentLog.some((entry) => entry.event === "v3LoadSalvaged")).toBe(true);
+  });
+
   it("does not save during startup when stored state already matches runtime", async () => {
     const runtime = fakeRuntime(
       [

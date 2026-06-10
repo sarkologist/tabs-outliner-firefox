@@ -142,6 +142,15 @@ This and the following dated entries implement Phase 0 of `docs/storage-rearchit
 - Guard: unchanged from P0.1 — all hard counters green; only the chronic `restore-last-transient-echo firstBroadcastMs` timing miss remains (pre-existing; see 2026-06-03). No budget moved.
 - `Current Asymptotics Audit`: unchanged (retry/backoff is on the failure path; steady-state save shape is unchanged).
 
+#### P0.4: Salvage v3 loads instead of silently falling back to stale v2 (V1)
+
+- Root cause (loss vector V1 / RC-3, highest severity): any v3 consistency failure at load — an unparseable shard, a missing/mismatched order page, a `childIds.length !== childCount` — made `loadStateV3FromManifest` return `undefined`, which silently fell back to the frozen v2 manifest (never updated since migration) or, failing that, to `bootstrapFromWindows`. The next save then overwrote good v3 keys with the rolled-back/empty tree. This is the most probable mechanism behind "my outline lost weeks of data".
+- Change (`storage.ts`): the v3 loader now salvages. It skips unparseable shards (keeping every shard that parses), keeps the valid prefix of each parent's child order when a page is missing, then runs the existing `normalizeLoadedV3Structure` (which re-roots the children it could not place). It returns `undefined` only when shards were expected and *none* parsed. `loadStateWithMetadata` now distinguishes "v3 manifest absent" (legitimate pre-migration → v2) from "v3 manifest present but unloadable", flags salvaged loads (`salvaged`, `repair`, `requiresFullSave`), marks a v2 result used under a present v3 manifest as `staleV2Fallback`, and returns an empty salvaged v3 state rather than letting the caller bootstrap when a v3 manifest exists but nothing loaded.
+- Change (`controller.ts` startup): records `v3LoadSalvaged` (with repair counts) when a salvage occurred, `staleV2FallbackUsed` when a present v3 manifest forced a v2 rollback, and `bootstrapSkippedStoredDataPresent` when it is about to bootstrap while stored outline keys exist. `requiresFullSave` from salvage already forces a full rewrite to the current physical layout.
+- Tests (red first): `storage-v2.test.ts` — "salvages v3 when an order page is missing", "salvages v3 when a shard is corrupt", "does not fall back to v2 when a v3 manifest exists"; `controller.test.ts` — "startup salvages closed v3 nodes instead of bootstrapping over them".
+- Guard: unchanged — all hard counters green; only the chronic `firstBroadcastMs` timing items remain. No budget moved. Full suite: 675 passed.
+- `Current Asymptotics Audit`: Persistence/load lower bound unchanged — salvage reads the same shard + order-page keys; it changes the *failure* response (recover + flag, not silent fallback), not the steady-state load shape.
+
 ### 2026-06-06: Promoted Current Asymptotics Audit
 
 - Promoted the event-echo and remaining-target asymptotics tables out of the dated May 21 progress entries into a stable `Current Asymptotics Audit` section near the top of this file.

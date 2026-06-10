@@ -691,6 +691,59 @@ describe("outline state v3 storage", () => {
     await expect(loadState(api)).resolves.toEqual(v3State);
   });
 
+  it("salvages v3 when an order page is missing instead of failing the load", async () => {
+    const state = makeLargeState(1500, { activeTabIndex: 0 });
+    const items = outlineStateV3Changes(state).setItems;
+    const secondPageKey = Object.keys(items).find(
+      (key) => key.startsWith("outlineState:v3:order:") && key.endsWith(":1")
+    );
+    expect(secondPageKey).toBeDefined();
+    delete items[secondPageKey!];
+    const repairs: StateStructureRepair[] = [];
+
+    const loaded = await loadStateWithMetadata(fakeApi(items), {
+      onStructureRepair: (repair) => repairs.push(repair)
+    });
+
+    expect(loaded?.format).toBe("v3");
+    expect(loaded?.salvaged).toBe(true);
+    expect(loaded?.requiresFullSave).toBe(true);
+    // Page 0 (1024 children) survives; the rest are re-rooted by structure repair.
+    expect(loaded?.state.nodes["window:10"]?.childIds).toHaveLength(1024);
+    expect(repairs.length).toBeGreaterThan(0);
+  });
+
+  it("salvages v3 when a shard is corrupt", async () => {
+    const state = makeLargeState(400);
+    const items = outlineStateV3Changes(state).setItems;
+    const shardKey = Object.keys(items).find((key) => key.startsWith("outlineState:v3:nodes:"));
+    expect(shardKey).toBeDefined();
+    items[shardKey!] = { not: "a shard" };
+
+    const loaded = await loadStateWithMetadata(fakeApi(items));
+
+    expect(loaded?.format).toBe("v3");
+    expect(loaded?.salvaged).toBe(true);
+    expect(loaded?.requiresFullSave).toBe(true);
+    const survivingNodeCount = Object.keys(loaded!.state.nodes).length;
+    expect(survivingNodeCount).toBeGreaterThan(0);
+    expect(survivingNodeCount).toBeLessThan(401);
+  });
+
+  it("does not fall back to v2 when a v3 manifest exists", async () => {
+    const v3State = makeLargeState(300);
+    const items = outlineStateV3Changes(v3State).setItems;
+    const shardKey = Object.keys(items).find((key) => key.startsWith("outlineState:v3:nodes:"));
+    items[shardKey!] = { not: "a shard" };
+    // A stale but structurally valid v2 manifest must NOT win over salvageable v3.
+    Object.assign(items, outlineStateV2Items(makeLargeState(5), { revision: 10 }));
+
+    const loaded = await loadStateWithMetadata(fakeApi(items));
+
+    expect(loaded?.format).toBe("v3");
+    expect(loaded?.salvaged).toBe(true);
+  });
+
   it("writes bounded incremental v3 shards and order pages for a large same-parent move", () => {
     const previous = makeLargeState(50_000);
     const next = moveLastTabToFront(previous);
