@@ -197,10 +197,11 @@ function isLifecycleJournalOnlyStorageSet(items: unknown): boolean {
     return false;
   }
   const keys = Object.keys(items);
-  return keys.length === 1 && (
-    keys[0] === RUNTIME_LIFECYCLE_JOURNAL_KEY ||
-    keys[0] === INCIDENT_LOG_STORAGE_KEY ||
-    keys[0] === "outlineState:v3:bootSnapshot"
+  return keys.length > 0 && keys.every((key) =>
+    key === RUNTIME_LIFECYCLE_JOURNAL_KEY ||
+    key === INCIDENT_LOG_STORAGE_KEY ||
+    key === "outlineState:v3:bootSnapshot" ||
+    key.startsWith("outline:v4:journal:")
   );
 }
 
@@ -32411,6 +32412,9 @@ describe("background controller lifecycle", () => {
 
     expect(state.nodes["tab:2"]).toBeUndefined();
     expect(state.nodes["window:10"]?.childIds).toEqual(["tab:1"]);
+    // The v4 outline journal now replays the delete's outline delta before lifecycle
+    // recovery runs, so the lifecycle entry is still consumed (and re-runs browser side
+    // effects) but finds the outline state already recovered (changedState: false).
     expect(incidentLog).toEqual(expect.arrayContaining([
       expect.objectContaining({
         event: "lifecycleJournalRecovery",
@@ -32418,9 +32422,65 @@ describe("background controller lifecycle", () => {
           entryCount: 1,
           entryKinds: "deleteNode",
           consumedCount: 1,
-          changedState: true
+          changedState: false
         })
       })
+    ]));
+    expect(incidentLog).toEqual(expect.arrayContaining([
+      expect.objectContaining({ event: "journalReplay" })
+    ]));
+  });
+
+  it("I-1: an acked rename survives an abrupt restart before any state save", async () => {
+    const runtime = fakeRuntime(
+      [{ id: 10, focused: true, incognito: false }],
+      [{ id: 1, windowId: 10, index: 0, active: true, url: "https://one.example/", title: "One" }]
+    );
+    let controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    await controller.flushPendingSaves();
+    vi.mocked(runtime.api.storage.local.set).mockClear();
+
+    expectCommandAck(await controller.handleMessage({ type: "renameGroup", nodeId: "window:10", title: "Renamed" }), true);
+    // The deferred v3 save has NOT run -- only the journal append persisted the change.
+    expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(0);
+
+    controller = restartControllerAbrupt(runtime);
+    const state = await controller.ensureState();
+
+    expect(state.nodes["window:10"]?.title).toBe("Renamed");
+  });
+
+  it("I-1: an acked rename survives a torn v3 save across restart via journal replay", async () => {
+    const runtime = fakeRuntime(
+      [{ id: 10, focused: true, incognito: false }],
+      [{ id: 1, windowId: 10, index: 0, active: true, url: "https://one.example/", title: "One" }]
+    );
+    let controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    await controller.flushPendingSaves();
+
+    // Tear every v3 outline write: the manifest/shard set is dropped (crash mid-write),
+    // while the journal append (no manifest key) still lands before the ack.
+    const baseSet = vi.mocked(runtime.api.storage.local.set).getMockImplementation();
+    vi.mocked(runtime.api.storage.local.set).mockImplementation(async (items: Record<string, unknown>) => {
+      if (STATE_V3_MANIFEST_KEY in items) {
+        return;
+      }
+      await baseSet?.(items);
+    });
+
+    expectCommandAck(await controller.handleMessage({ type: "renameGroup", nodeId: "window:10", title: "Renamed" }), true);
+    await controller.flushPendingSaves();
+    vi.mocked(runtime.api.storage.local.set).mockImplementation(baseSet!);
+
+    controller = restartControllerAbrupt(runtime);
+    const state = await controller.ensureState();
+    const incidentLog = await loadIncidentLog(runtime.api);
+
+    expect(state.nodes["window:10"]?.title).toBe("Renamed");
+    expect(incidentLog).toEqual(expect.arrayContaining([
+      expect.objectContaining({ event: "journalReplay" })
     ]));
   });
 

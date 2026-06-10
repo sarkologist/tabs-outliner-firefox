@@ -201,6 +201,16 @@ export function cloneOutlineNode(node: OutlineNode): OutlineNode {
   };
 }
 
+// Material diff for callers outside history (e.g. the v4 journal). Narrowed to
+// candidateNodeIds when provided (O(candidates)); a full O(n) diff otherwise.
+export function outlineMaterialDelta(
+  previous: OutlineState,
+  next: OutlineState,
+  candidateNodeIds?: readonly NodeId[]
+): OutlineDelta {
+  return deltaBetween(previous, next, "material", candidateNodeIds);
+}
+
 function deltaBetween(
   previous: OutlineState,
   next: OutlineState,

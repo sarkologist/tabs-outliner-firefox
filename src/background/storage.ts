@@ -149,6 +149,9 @@ type StateV3Manifest = {
   nodeShardCount: number;
   nodeShardKeys: string[];
   orderPageSize: number;
+  // Highest v4 journal seq reflected in this snapshot. The loader replays journal entries
+  // with seq > this value on top of the loaded state (Phase 2 double-write durability).
+  journalSeqIncluded?: number;
   // Revision of the separately-stored boot snapshot (STATE_V3_BOOT_SNAPSHOT_KEY).
   bootSnapshotRevision?: number;
   // Only older manifests embed the snapshot inline; new saves write it to its own key so
@@ -166,6 +169,9 @@ export type LoadedOutlineState = {
   state: OutlineState;
   format: "v2" | "v3";
   requiresFullSave?: boolean;
+  // Highest journal seq already reflected in the loaded snapshot; the controller replays
+  // journal entries with seq greater than this on top of `state`.
+  journalSeqIncluded?: number;
   // True when the v3 load skipped unparseable shards or accepted partial order pages.
   salvaged?: boolean;
   repair?: StateStructureRepair;
@@ -212,6 +218,7 @@ export type StateSavePhase = {
 export type SaveStateOptions = {
   previousState?: OutlineState;
   candidateNodeIds?: readonly NodeId[];
+  journalSeqIncluded?: number;
   onPhase?: (phase: StateSavePhase) => void;
 };
 
@@ -296,7 +303,8 @@ export async function loadStateWithMetadata(
         format: "v3",
         ...(stateV3ManifestRequiresFullSave(v3Manifest) || outcome.salvaged ? { requiresFullSave: true } : {}),
         ...(outcome.salvaged ? { salvaged: true } : {}),
-        ...(outcome.repair ? { repair: outcome.repair } : {})
+        ...(outcome.repair ? { repair: outcome.repair } : {}),
+        ...(typeof v3Manifest.journalSeqIncluded === "number" ? { journalSeqIncluded: v3Manifest.journalSeqIncluded } : {})
       };
     }
   }
@@ -354,7 +362,8 @@ export async function saveStateAndHistory(
     const changeBuildStartedAt = currentMs();
     const changes = outlineStateV3Changes(state, {
       ...(options.previousState ? { previousState: options.previousState } : {}),
-      ...(options.candidateNodeIds ? { candidateNodeIds: options.candidateNodeIds } : {})
+      ...(options.candidateNodeIds ? { candidateNodeIds: options.candidateNodeIds } : {}),
+      ...(options.journalSeqIncluded !== undefined ? { journalSeqIncluded: options.journalSeqIncluded } : {})
     });
     recordSavePhase(options, "v3.changeBuild", changeBuildStartedAt, stateV3ChangeTraceDetail(changes, options));
     Object.assign(setItems, changes.setItems);
@@ -675,10 +684,15 @@ async function loadStateV3FromManifest(
 
 export function outlineStateV3Changes(
   state: OutlineState,
-  options: { previousState?: OutlineState; candidateNodeIds?: readonly NodeId[]; revision?: number } = {}
+  options: {
+    previousState?: OutlineState;
+    candidateNodeIds?: readonly NodeId[];
+    revision?: number;
+    journalSeqIncluded?: number;
+  } = {}
 ): OutlineStateV3Changes {
   const revision = options.revision ?? Date.now();
-  const manifest = stateV3ManifestForState(state, revision);
+  const manifest = stateV3ManifestForState(state, revision, options.journalSeqIncluded);
   const setItems: Record<string, unknown> = {
     [STATE_V3_MANIFEST_KEY]: manifest
   };
@@ -1284,7 +1298,11 @@ function storedNodeToNode(node: StoredOutlineNode): OutlineNode {
   return outlineNode;
 }
 
-function stateV3ManifestForState(state: OutlineState, revision: number): StateV3Manifest {
+function stateV3ManifestForState(
+  state: OutlineState,
+  revision: number,
+  journalSeqIncluded?: number
+): StateV3Manifest {
   const nodes = Object.values(state.nodes);
   return {
     version: 3,
@@ -1295,6 +1313,7 @@ function stateV3ManifestForState(state: OutlineState, revision: number): StateV3
     nodeShardCount: STATE_V3_NODE_SHARD_COUNT,
     nodeShardKeys: stateV3NodeShardKeys(state),
     orderPageSize: STATE_V3_ORDER_PAGE_SIZE,
+    ...(journalSeqIncluded !== undefined ? { journalSeqIncluded } : {}),
     bootSnapshotRevision: revision
   };
 }

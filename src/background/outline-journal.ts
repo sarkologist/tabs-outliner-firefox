@@ -55,6 +55,8 @@ export type OutlineJournal = {
   prune(throughSeq: number): Promise<void>;
   pendingEntryCount(): number;
   pendingBytes(): number;
+  headSeq(): number;
+  epoch(): number;
 };
 
 export class JournalFullError extends Error {
@@ -254,7 +256,15 @@ export function createOutlineJournal(
     return liveBatches.reduce((total, liveBatch) => total + JSON.stringify(liveBatch.entries).length, 0);
   }
 
-  return { init, append, prune, pendingEntryCount, pendingBytes };
+  return {
+    init,
+    append,
+    prune,
+    pendingEntryCount,
+    pendingBytes,
+    headSeq: () => headSeq,
+    epoch: () => epoch
+  };
 }
 
 export function journalTouchedNodeIds(entries: readonly OutlineJournalEntry[]): Set<NodeId> {
