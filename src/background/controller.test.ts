@@ -28200,8 +28200,10 @@ describe("background controller lifecycle", () => {
     expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(0);
     expect(stateBroadcasts(runtime.broadcasts).map((message) => (message as { type?: unknown }).type))
       .toContain("treeStructureUpdated");
+    // The small structural move's delta is journaled before ack (durability) instead of
+    // forcing a runtime-truth checkpoint flush, so the v3 save stays deferred.
     expect(traceEntryNames(await controller.handleMessage({ type: "getPerformanceTrace" }))).toContain(
-      "background.state.save.runtimeTruthCheckpoint.deferred"
+      "background.journal.append"
     );
 
     try {

@@ -1095,8 +1095,9 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         } else {
           await persistWithNodeStateUpdate(current, result.state, restorePatchNodeIds, { saveSchedule });
         }
-        await flushRuntimeProvenanceSaveIfChanged(current, result.state, restoreTreePatchNodeIds);
-        await appendCommandJournal(current, result.state, restoreTreePatchNodeIds ?? restorePatchNodeIds, message.type);
+        if (!(await appendCommandJournal(current, result.state, restoreTreePatchNodeIds ?? restorePatchNodeIds, message.type))) {
+          await flushRuntimeProvenanceSaveIfChanged(current, result.state, restoreTreePatchNodeIds);
+        }
         if (commandTransaction) {
           runtimeFacts.commitCommand(commandTransaction.id);
         }
@@ -1109,8 +1110,9 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         );
         await broadcastTreeStructureUpdate(update);
         scheduleStateSave(result.state, saveSchedule, deletePatchNodeIds ?? [message.nodeId]);
-        await flushRuntimeTruthSaveIfNeeded(current, result.state, deletePatchNodeIds ?? [message.nodeId]);
-        await appendCommandJournal(current, result.state, deletePatchNodeIds ?? [message.nodeId], message.type);
+        if (!(await appendCommandJournal(current, result.state, deletePatchNodeIds ?? [message.nodeId], message.type))) {
+          await flushRuntimeTruthSaveIfNeeded(current, result.state, deletePatchNodeIds ?? [message.nodeId]);
+        }
         if (commandTransaction) {
           runtimeFacts.commitCommand(commandTransaction.id);
         }
@@ -1130,11 +1132,12 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         );
         await broadcastTreeStructureUpdate(update);
         scheduleStateSave(result.state, saveSchedule, runtimeIndexCandidateNodeIds);
-        await flushRuntimeProvenanceSaveIfChanged(current, result.state, runtimeIndexCandidateNodeIds, {
-          allowDeferredPlacementCheckpoint: true,
-          reason: message.type
-        });
-        await appendCommandJournal(current, result.state, runtimeIndexCandidateNodeIds, message.type);
+        if (!(await appendCommandJournal(current, result.state, runtimeIndexCandidateNodeIds, message.type))) {
+          await flushRuntimeProvenanceSaveIfChanged(current, result.state, runtimeIndexCandidateNodeIds, {
+            allowDeferredPlacementCheckpoint: true,
+            reason: message.type
+          });
+        }
         if (commandTransaction) {
           runtimeFacts.commitCommand(commandTransaction.id);
         }
@@ -1170,11 +1173,12 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         if (sameParentReorder) {
           await broadcastSameParentReorderUpdate(sameParentReorder);
           scheduleStateSave(result.state, saveSchedule, [sameParentReorder.parentId, sameParentReorder.movedNodeId]);
-          await flushRuntimeProvenanceSaveIfChanged(current, result.state, [sameParentReorder.parentId, sameParentReorder.movedNodeId], {
-            allowDeferredPlacementCheckpoint: true,
-            reason: message.type
-          });
-          await appendCommandJournal(current, result.state, [sameParentReorder.parentId, sameParentReorder.movedNodeId], message.type);
+          if (!(await appendCommandJournal(current, result.state, [sameParentReorder.parentId, sameParentReorder.movedNodeId], message.type))) {
+            await flushRuntimeProvenanceSaveIfChanged(current, result.state, [sameParentReorder.parentId, sameParentReorder.movedNodeId], {
+              allowDeferredPlacementCheckpoint: true,
+              reason: message.type
+            });
+          }
           if (commandTransaction) {
             runtimeFacts.commitCommand(commandTransaction.id);
           }
@@ -1187,11 +1191,12 @@ export function createBackgroundController(options: BackgroundControllerOptions)
           );
           await broadcastTreeStructureUpdate(update);
           scheduleStateSave(result.state, saveSchedule, runtimeIndexCandidateNodeIds);
-          await flushRuntimeProvenanceSaveIfChanged(current, result.state, runtimeIndexCandidateNodeIds, {
-            allowDeferredPlacementCheckpoint: true,
-            reason: message.type
-          });
-          await appendCommandJournal(current, result.state, runtimeIndexCandidateNodeIds, message.type);
+          if (!(await appendCommandJournal(current, result.state, runtimeIndexCandidateNodeIds, message.type))) {
+            await flushRuntimeProvenanceSaveIfChanged(current, result.state, runtimeIndexCandidateNodeIds, {
+              allowDeferredPlacementCheckpoint: true,
+              reason: message.type
+            });
+          }
           if (commandTransaction) {
             runtimeFacts.commitCommand(commandTransaction.id);
           }
@@ -5301,19 +5306,23 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   }
 
   // Append a command's delta to the journal before its ack so the change survives a restart
-  // before the deferred v3 save lands (invariant I-1). The v3 save remains the snapshot.
+  // before the deferred v3 save lands (invariant I-1). Returns true when the delta (including
+  // any runtime-provenance change) was durably journaled, letting the caller skip the
+  // runtime-truth checkpoint flush. Returns false when the delta is empty or too heavy to
+  // journal cheaply, in which case the caller keeps the checkpoint flush for durability.
   async function appendCommandJournal(
     previous: OutlineState,
     next: OutlineState,
     candidateNodeIds: readonly NodeId[] | undefined,
     label: string
-  ): Promise<void> {
+  ): Promise<boolean> {
     if (!outlineJournal) {
-      return;
+      return false;
     }
     const item = journalDeltaItem(previous, next, candidateNodeIds, "command", label);
     if (!item) {
-      return;
+      // No durable change to record (e.g. a no-op move); nothing for the checkpoint to flush.
+      return true;
     }
     // A delta too heavy to journal cheaply -- a huge subtree delete, or any change to a
     // parent with a large childIds array (e.g. a reorder in a 50k-tab window) -- stays on
@@ -5323,9 +5332,10 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     const weight = updatedNodes.length + (item.delta?.deletedNodeIds?.length ?? 0) +
       updatedNodes.reduce((sum, node) => sum + node.childIds.length, 0);
     if (weight > JOURNAL_SPILL_NODE_LIMIT) {
-      return;
+      return false;
     }
     await appendOutlineJournalItems([item]);
+    return true;
   }
 
   async function appendOutlineJournalItems(items: OutlineJournalAppendItem[]): Promise<void> {
