@@ -338,6 +338,31 @@
       }
     },
     {
+      "id": "compaction-after-burst",
+      "pnpmScript": "profile:command",
+      "args": [
+        "--tabs",
+        "1000",
+        "--scenario",
+        "compaction-after-burst"
+      ],
+      "tags": [
+        "journal",
+        "compaction"
+      ],
+      "budget": {
+        "firstBroadcastMs": 20,
+        "totalMeasuredMs": 60,
+        "totalWithSaveFlushMs": 75,
+        "saves": 1,
+        "journalWrites": 21,
+        "projectionMs": 0,
+        "mbStringified": 1,
+        "stateBroadcasts": 20,
+        "statusBroadcasts": 20
+      }
+    },
+    {
       "id": "command-refresh-noop",
       "pnpmScript": "profile:command",
       "args": [

@@ -371,6 +371,11 @@ const SAVE_FLUSH_ANOMALY_NODE_DELTA = -50;
 // After a failed state save the next attempt is retried with growing backoff so a
 // transient storage error does not silently drop the pending change.
 const SAVE_FAILURE_BACKOFF_MS = [1000, 4000, 16000] as const;
+// Runtime-event deltas (Class B: native closes, creates, moves, metadata) are journaled on
+// a short coalescer instead of per event: bursts become one slot write, and the accepted
+// loss window on process death is the max delay below (vs 1-30s of deferred-save loss).
+const EVENT_JOURNAL_QUIET_DELAY_MS = 50;
+const EVENT_JOURNAL_MAX_DELAY_MS = 250;
 // The boot snapshot is a cold-start-only first-paint cache, written on its own debounce
 // rather than embedded in every save's manifest. Staleness up to this window is harmless:
 // it is superseded by full hydration immediately after first paint.
@@ -441,6 +446,10 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   // Shard indexes touched by journal appends since the last compaction that folded them in.
   // Unioned with the pending save's candidate shards to compute a compaction's dirty set.
   let journalTouchedSinceCompaction = new Set<number>();
+  let pendingEventJournalItems: OutlineJournalAppendItem[] = [];
+  let eventJournalQuietTimer: number | undefined;
+  let eventJournalMaxTimer: number | undefined;
+  let eventJournalBatchStartedAt: number | undefined;
   let pendingSaveSchedule: SaveSchedule | undefined;
   let nextRuntimeLifecycleJournalSequence = 1;
   const runtimeLifecycleJournalEntryIdsToClearAfterSave = new Set<string>();
@@ -622,7 +631,8 @@ export function createBackgroundController(options: BackgroundControllerOptions)
             windowIds: [removeInfo.windowId]
           });
           markRuntimeLifecycleJournalEntryForClearAfterSave(runtimeLifecycleJournalEntry);
-          await persistWithNodeStateUpdate(current, next);
+          const persistedCandidates = await persistWithNodeStateUpdate(current, next);
+          queueRuntimeEventJournal(current, next, persistedCandidates, "tabs.onRemoved.windowClosing");
         }, { reason: "tabs.onRemoved.windowClosing" });
         return;
       }
@@ -665,7 +675,8 @@ export function createBackgroundController(options: BackgroundControllerOptions)
           windowIds: []
         });
         markRuntimeLifecycleJournalEntryForClearAfterSave(runtimeLifecycleJournalEntry);
-        await persistWithNodeStateUpdate(current, next);
+        const persistedCandidates = await persistWithNodeStateUpdate(current, next);
+        queueRuntimeEventJournal(current, next, persistedCandidates, "tabs.onRemoved");
       }, { reason: "tabs.onRemoved" });
     });
   });
@@ -712,7 +723,8 @@ export function createBackgroundController(options: BackgroundControllerOptions)
           windowIds: [windowId]
         });
         markRuntimeLifecycleJournalEntryForClearAfterSave(runtimeLifecycleJournalEntry);
-        await persistWithNodeStateUpdate(current, next);
+        const persistedCandidates = await persistWithNodeStateUpdate(current, next);
+        queueRuntimeEventJournal(current, next, persistedCandidates, "windows.onRemoved");
       }, { reason: "windows.onRemoved" });
     });
   });
@@ -763,7 +775,8 @@ export function createBackgroundController(options: BackgroundControllerOptions)
               for (const entry of reconciled.runtimeLifecycleJournalEntries ?? []) {
                 markRuntimeLifecycleJournalEntryForClearAfterSave(entry);
               }
-              await persistWithNodeStateUpdate(reconciled.previous, reconciled.next);
+              const persistedCandidates = await persistWithNodeStateUpdate(reconciled.previous, reconciled.next);
+              queueRuntimeEventJournal(reconciled.previous, reconciled.next, persistedCandidates, "sessions.onChanged");
             }
           }
         } finally {
@@ -1165,7 +1178,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       }
       if (message.type === "toggleCollapsed") {
         await persistKnownNodeStateUpdate(current, result.state, message.nodeId);
-        await appendCommandJournal(current, result.state, [message.nodeId], message.type);
+        await appendCommandJournalForKnownNodeIds(result.state, [message.nodeId], message.type);
         if (commandTransaction) {
           runtimeFacts.commitCommand(commandTransaction.id);
         }
@@ -1173,7 +1186,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       }
       if (message.type === "expandAncestors") {
         await persistKnownNodeStateUpdates(current, result.state, expandAncestorNodeIds ?? []);
-        await appendCommandJournal(current, result.state, expandAncestorNodeIds ?? [], message.type);
+        await appendCommandJournalForKnownNodeIds(result.state, expandAncestorNodeIds ?? [], message.type);
         if (commandTransaction) {
           runtimeFacts.commitCommand(commandTransaction.id);
         }
@@ -3541,7 +3554,11 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         runtimeIndex = fastPath.index;
         runtimeFacts.recordAcceptedRuntimeTabScopeUpdates(fastPath.runtimeScopeUpdates);
         await persistKnownRuntimeFastPathUpdate(fastPath.update, state);
-        await flushRuntimeTruthFastPathSaveIfNeeded(state, fastPath.update, fastPathCandidateNodeIds);
+        // The fast path mutates state in place, so the journal delta comes from the update
+        // payload; when queued, the coalesced append replaces the checkpoint flush.
+        if (!queueRuntimeEventJournalFromUpdate(fastPath.update, "runtimeFastPath")) {
+          await flushRuntimeTruthFastPathSaveIfNeeded(state, fastPath.update, fastPathCandidateNodeIds);
+        }
         return true;
       }
     }
@@ -3613,7 +3630,9 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       runtimeWindows: acceptedRuntimeWindowsForRefresh ?? windows
     });
     const persistResult = await persistWithBestEffortPatch(current, next, { diffMode: "material" });
-    await flushRuntimeTruthSaveIfNeeded(current, next, persistResult.candidateNodeIds);
+    if (!queueRuntimeEventJournal(current, next, persistResult.candidateNodeIds, "refreshSnapshot")) {
+      await flushRuntimeTruthSaveIfNeeded(current, next, persistResult.candidateNodeIds);
+    }
     return state !== current;
   }
 
@@ -4841,7 +4860,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     next: OutlineState,
     candidateNodeIds?: readonly NodeId[],
     options: { saveSchedule?: SaveSchedule } = {}
-  ): Promise<void> {
+  ): Promise<readonly NodeId[] | undefined> {
     const update = perfTrace.measure("background.patch.build.nodeState", {
       candidateNodeCount: candidateNodeIds?.length ?? 0
     }, () => candidateNodeIds
@@ -4851,15 +4870,17 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       await broadcastNodeStateUpdate(update);
       // The patch enumerates exactly the changed nodes, so it is a complete candidate set
       // for the compactor's dirty shards even when the caller had none to thread.
-      scheduleStateSave(next, options.saveSchedule, candidateNodeIds ?? candidateNodeIdsForPatch(update));
-      return;
+      const persistedCandidateNodeIds = candidateNodeIds ?? candidateNodeIdsForPatch(update);
+      scheduleStateSave(next, options.saveSchedule, persistedCandidateNodeIds);
+      return persistedCandidateNodeIds;
     }
 
-    await persistWithBestEffortPatch(previous, next, {
+    const fallback = await persistWithBestEffortPatch(previous, next, {
       diffMode: "material",
       skipNodeState: true,
       ...(options.saveSchedule ? { saveSchedule: options.saveSchedule } : {})
     });
+    return fallback.candidateNodeIds;
   }
 
   async function persistKnownNodeStateUpdate(previous: OutlineState, next: OutlineState, nodeId: NodeId): Promise<void> {
@@ -5227,6 +5248,10 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     // can be pruned. For an older queued snapshot, leave it unstamped (loader replays all,
     // idempotently). Captured synchronously so it pairs with nextState atomically.
     const journalSeqIncluded = nextState && nextState === state ? outlineJournal?.headSeq() : undefined;
+    // A compaction of the current state subsumes every queued (not yet appended) event
+    // delta: their content is in the snapshot, so they are dropped on success and restored
+    // on failure. Items queued during the write stay queued (they may postdate nextState).
+    const subsumedEventItems = journalSeqIncluded !== undefined ? drainPendingEventJournalItems() : [];
     try {
       await perfTrace.measureAsync("background.state.save", async () => {
         const setItems: Record<string, unknown> = {};
@@ -5281,6 +5306,10 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         }
       });
     } catch (error) {
+      if (subsumedEventItems.length > 0) {
+        pendingEventJournalItems = [...subsumedEventItems, ...pendingEventJournalItems];
+        armEventJournalTimers();
+      }
       handleStateSaveFailure(nextState, nextHistory, error);
       throw error;
     }
@@ -5381,23 +5410,157 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     if (!outlineJournal) {
       return false;
     }
+    // Any coalesced event deltas captured before this command must land first so journal
+    // seq order stays chronological (replay applies absolute node records in seq order).
+    const queuedEventItems = drainPendingEventJournalItems();
     const item = journalDeltaItem(previous, next, candidateNodeIds, "command", label);
     if (!item) {
       // No durable change to record (e.g. a no-op move); nothing for the checkpoint to flush.
+      await appendOutlineJournalItems(queuedEventItems);
       return true;
     }
     // A delta too heavy to journal cheaply -- a huge subtree delete, or any change to a
     // parent with a large childIds array (e.g. a reorder in a 50k-tab window) -- stays on
-    // the deferred v3 save path, whose order pages persist it cheaply. Estimated without
-    // serializing: node count plus total childIds across updated nodes.
+    // the deferred snapshot save path. Estimated without serializing: node count plus total
+    // childIds across updated nodes.
+    const updatedNodes = item.delta?.updatedNodes ?? [];
+    const weight = updatedNodes.length + (item.delta?.deletedNodeIds?.length ?? 0) +
+      updatedNodes.reduce((sum, node) => sum + node.childIds.length, 0);
+    if (weight > JOURNAL_SPILL_NODE_LIMIT) {
+      await appendOutlineJournalItems(queuedEventItems);
+      return false;
+    }
+    await appendOutlineJournalItems([...queuedEventItems, item]);
+    return true;
+  }
+
+  // Journal a command whose model op mutates the live state in place (toggleCollapsed,
+  // expandAncestors): previous === next there, so a diff sees nothing -- the delta is built
+  // directly from the known changed node ids instead.
+  async function appendCommandJournalForKnownNodeIds(
+    next: OutlineState,
+    nodeIds: readonly NodeId[],
+    label: string
+  ): Promise<boolean> {
+    if (!outlineJournal) {
+      return false;
+    }
+    const queuedEventItems = drainPendingEventJournalItems();
+    const updatedNodes = uniqueDefinedNodeIds([...nodeIds]).flatMap((nodeId) => {
+      const node = next.nodes[nodeId];
+      return node ? [cloneOutlineNode(node)] : [];
+    });
+    if (updatedNodes.length === 0) {
+      await appendOutlineJournalItems(queuedEventItems);
+      return true;
+    }
+    const weight = updatedNodes.length + updatedNodes.reduce((sum, node) => sum + node.childIds.length, 0);
+    if (weight > JOURNAL_SPILL_NODE_LIMIT) {
+      await appendOutlineJournalItems(queuedEventItems);
+      return false;
+    }
+    await appendOutlineJournalItems([...queuedEventItems, { kind: "command", label, delta: { updatedNodes } }]);
+    return true;
+  }
+
+  // Queue a runtime-event delta for coalesced journaling. Returns true when the transition
+  // is durably covered (queued, or nothing material changed), false when the caller must
+  // keep its checkpoint flush (no journal, no candidates, or a too-heavy delta).
+  function queueRuntimeEventJournal(
+    previous: OutlineState,
+    next: OutlineState,
+    candidateNodeIds: readonly NodeId[] | undefined,
+    label: string
+  ): boolean {
+    if (!outlineJournal || !candidateNodeIds) {
+      return false;
+    }
+    const item = journalDeltaItem(previous, next, candidateNodeIds, "runtimeEvent", label);
+    if (!item) {
+      return true;
+    }
+    return queueEventJournalItem(item);
+  }
+
+  // The runtime fast path mutates the live state in place, so its delta cannot be diffed
+  // from previous/next -- the broadcast update payload already enumerates the changed nodes.
+  function queueRuntimeEventJournalFromUpdate(
+    update: TreeStructureUpdate | NodeStateUpdate,
+    label: string
+  ): boolean {
+    if (!outlineJournal) {
+      return false;
+    }
+    const updatedNodes = update.updatedNodes.map(cloneOutlineNode);
+    const deletedNodeIds = update.type === "treeStructureUpdated" ? [...update.deletedNodeIds] : [];
+    if (updatedNodes.length === 0 && deletedNodeIds.length === 0) {
+      return true;
+    }
+    return queueEventJournalItem({
+      kind: "runtimeEvent",
+      label,
+      delta: {
+        ...(updatedNodes.length > 0 ? { updatedNodes } : {}),
+        ...(deletedNodeIds.length > 0 ? { deletedNodeIds } : {}),
+        ...(update.type === "treeStructureUpdated" ? { rootIds: [...update.rootIds] } : {})
+      }
+    });
+  }
+
+  function queueEventJournalItem(item: OutlineJournalAppendItem): boolean {
     const updatedNodes = item.delta?.updatedNodes ?? [];
     const weight = updatedNodes.length + (item.delta?.deletedNodeIds?.length ?? 0) +
       updatedNodes.reduce((sum, node) => sum + node.childIds.length, 0);
     if (weight > JOURNAL_SPILL_NODE_LIMIT) {
       return false;
     }
-    await appendOutlineJournalItems([item]);
+    pendingEventJournalItems.push(item);
+    armEventJournalTimers();
     return true;
+  }
+
+  function armEventJournalTimers(): void {
+    const scheduledAt = performance.now();
+    eventJournalBatchStartedAt ??= scheduledAt;
+    if (eventJournalQuietTimer !== undefined) {
+      globalThis.clearTimeout(eventJournalQuietTimer);
+    }
+    eventJournalQuietTimer = globalThis.setTimeout(() => {
+      void flushEventJournalQueue();
+    }, EVENT_JOURNAL_QUIET_DELAY_MS);
+    if (eventJournalMaxTimer === undefined) {
+      eventJournalMaxTimer = globalThis.setTimeout(() => {
+        void flushEventJournalQueue();
+      }, Math.max(0, eventJournalBatchStartedAt + EVENT_JOURNAL_MAX_DELAY_MS - scheduledAt));
+    }
+  }
+
+  function drainPendingEventJournalItems(): OutlineJournalAppendItem[] {
+    if (eventJournalQuietTimer !== undefined) {
+      globalThis.clearTimeout(eventJournalQuietTimer);
+      eventJournalQuietTimer = undefined;
+    }
+    if (eventJournalMaxTimer !== undefined) {
+      globalThis.clearTimeout(eventJournalMaxTimer);
+      eventJournalMaxTimer = undefined;
+    }
+    eventJournalBatchStartedAt = undefined;
+    const items = pendingEventJournalItems;
+    pendingEventJournalItems = [];
+    return items;
+  }
+
+  async function flushEventJournalQueue(): Promise<void> {
+    const items = drainPendingEventJournalItems();
+    if (items.length === 0) {
+      return;
+    }
+    try {
+      await appendOutlineJournalItems(items);
+    } catch (error) {
+      // Class B: a failed coalesced append falls back to the deferred snapshot save.
+      perfTrace.mark("background.journal.event.error", { message: errorText(error) });
+    }
   }
 
   async function appendOutlineJournalItems(items: OutlineJournalAppendItem[]): Promise<void> {

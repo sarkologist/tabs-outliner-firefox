@@ -27920,12 +27920,20 @@ describe("background controller lifecycle", () => {
     vi.mocked(runtime.api.storage.local.set).mockClear();
     runtime.broadcasts.length = 0;
 
+    // Hang only the snapshot compaction: the ack contract allows the small journal append,
+    // not state persistence.
     let finishSave: () => void = () => undefined;
-    vi.mocked(runtime.api.storage.local.set).mockImplementationOnce(
-      () => new Promise<void>((resolve) => {
-        finishSave = resolve;
-      })
-    );
+    let hangNextSnapshotSave = true;
+    const baseSet = vi.mocked(runtime.api.storage.local.set).getMockImplementation();
+    vi.mocked(runtime.api.storage.local.set).mockImplementation(async (items: Record<string, unknown>) => {
+      if (hangNextSnapshotSave && isV4ManifestWrite(items)) {
+        hangNextSnapshotSave = false;
+        await new Promise<void>((resolve) => {
+          finishSave = resolve;
+        });
+      }
+      await baseSet?.(items);
+    });
 
     const response = await controller.handleMessage({ type: "toggleCollapsed", nodeId: "window:10" });
 
@@ -28668,8 +28676,12 @@ describe("background controller lifecycle", () => {
 
       const firstSave = deferred<void>();
       const saveImplementation = vi.mocked(runtime.api.storage.local.set).getMockImplementation();
-      vi.mocked(runtime.api.storage.local.set).mockImplementationOnce(async (items: Record<string, unknown>) => {
-        await firstSave.promise;
+      let hangNextSnapshotSave = true;
+      vi.mocked(runtime.api.storage.local.set).mockImplementation(async (items: Record<string, unknown>) => {
+        if (hangNextSnapshotSave && isV4ManifestWrite(items)) {
+          hangNextSnapshotSave = false;
+          await firstSave.promise;
+        }
         await saveImplementation?.(items);
       });
 
@@ -32576,6 +32588,111 @@ describe("background controller lifecycle", () => {
     expect(incidentLog).toEqual(expect.arrayContaining([
       expect.objectContaining({ event: "journalReplay" })
     ]));
+  });
+
+  it("journals browser-created window provenance within 250ms and survives an abrupt restart before any save", async () => {
+    vi.useFakeTimers();
+    try {
+      const runtime = fakeRuntime(
+        [{ id: 10, focused: true, incognito: false }],
+        [{ id: 1, windowId: 10, index: 0, active: true, url: "https://one.example/", title: "One" }]
+      );
+      let controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+      await controller.ensureState();
+      await controller.flushPendingSaves();
+      vi.mocked(runtime.api.storage.local.set).mockClear();
+
+      // Dispatch (not emit): under fake timers, awaiting listeners deadlocks on the
+      // refresh batch timer; advancing interleaves listeners, batches, and the coalescer.
+      const windowInfo = createWindowFromBrowser(runtime, {
+        focused: true,
+        url: "https://external.example/"
+      });
+      for (const tab of windowInfo.tabs ?? []) {
+        runtime.events.tabCreated.dispatch(copyTab(tab));
+      }
+      // Let the refresh batch run and the event-journal coalescer drain (max 250ms), but
+      // never flush the deferred snapshot save.
+      await vi.advanceTimersByTimeAsync(300);
+      await runtime.events.tabCreated.flush();
+      expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(0);
+
+      controller = restartControllerAbrupt(runtime);
+      const reconstructed = await controller.ensureState();
+      const incidentLog = await loadIncidentLog(runtime.api);
+
+      expect(reconstructed.nodes[`window:${windowInfo.id}`]?.runtimeProvenance).toBe("browserCreated");
+      expect(incidentLog).toEqual(expect.arrayContaining([
+        expect.objectContaining({ event: "journalReplay" })
+      ]));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("coalesces a burst of runtime tab updates into one journal slot write", async () => {
+    vi.useFakeTimers();
+    try {
+      const runtime = fakeRuntime(
+        [{ id: 10, focused: true, incognito: false }],
+        [
+          { id: 1, windowId: 10, index: 0, active: true, url: "https://one.example/", title: "One" },
+          { id: 2, windowId: 10, index: 1, active: false, url: "https://two.example/", title: "Two" },
+          { id: 3, windowId: 10, index: 2, active: false, url: "https://three.example/", title: "Three" }
+        ]
+      );
+      const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+      await controller.ensureState();
+      await controller.flushPendingSaves();
+      vi.mocked(runtime.api.storage.local.set).mockClear();
+
+      for (const tabId of [1, 2, 3]) {
+        const tab = runtime.tabs.find((candidate) => candidate.id === tabId)!;
+        tab.title = `Retitled ${tabId}`;
+        runtime.events.tabUpdated.dispatch(tabId, { title: tab.title }, { ...tab });
+        await vi.advanceTimersByTimeAsync(10);
+      }
+      await vi.advanceTimersByTimeAsync(300);
+      await runtime.events.tabUpdated.flush();
+
+      const journalSlotWrites = vi.mocked(runtime.api.storage.local.set).mock.calls
+        .filter(([items]) => Object.keys(items as Record<string, unknown>)
+          .some((key) => key.startsWith("outline:v4:journal:slot:")));
+      expect(journalSlotWrites).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("drops queued event journal deltas once a flush has snapshotted them", async () => {
+    vi.useFakeTimers();
+    try {
+      const runtime = fakeRuntime(
+        [{ id: 10, focused: true, incognito: false }],
+        [{ id: 1, windowId: 10, index: 0, active: true, url: "https://one.example/", title: "One" }]
+      );
+      const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+      await controller.ensureState();
+      await controller.flushPendingSaves();
+
+      const tab = runtime.tabs.find((candidate) => candidate.id === 1)!;
+      tab.title = "Retitled";
+      runtime.events.tabUpdated.dispatch(1, { title: tab.title }, { ...tab });
+      await vi.advanceTimersByTimeAsync(10);
+      await runtime.events.tabUpdated.flush();
+      vi.mocked(runtime.api.storage.local.set).mockClear();
+      // Flush before the 50/250ms coalescer fires: the compaction includes the change, so
+      // the queued delta must be discarded rather than appended afterwards.
+      await controller.flushPendingSaves();
+      await vi.advanceTimersByTimeAsync(400);
+
+      const journalSlotWrites = vi.mocked(runtime.api.storage.local.set).mock.calls
+        .filter(([items]) => Object.keys(items as Record<string, unknown>)
+          .some((key) => key.startsWith("outline:v4:journal:slot:")));
+      expect(journalSlotWrites).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("recovers a restore create side effect across abrupt restart before state save", async () => {

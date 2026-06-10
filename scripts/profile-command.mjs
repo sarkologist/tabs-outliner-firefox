@@ -62,10 +62,11 @@ function parseArgs(argv) {
     "flatten-window",
     "import-small",
     "import-large",
+    "compaction-after-burst",
     "refresh-noop"
   ].includes(options.scenario)) {
     throw new Error(
-      "--scenario must be rename-window, toggle-window, move-leaf, group-live-leaf, move-top-level-live-leaf, command-relocation-echo, command-existing-window-relocation-echo, structural-save-pressure, flatten-window, import-small, import-large, or refresh-noop"
+      "--scenario must be rename-window, toggle-window, move-leaf, group-live-leaf, move-top-level-live-leaf, command-relocation-echo, command-existing-window-relocation-echo, structural-save-pressure, flatten-window, import-small, import-large, compaction-after-burst, or refresh-noop"
     );
   }
 
@@ -153,7 +154,7 @@ function makeRuntime(tabCount, scenario) {
       local: {
         get: async (key) => typeof key === "string" ? { [key]: undefined } : {},
         set: async (items) => {
-          if (runtime.stateSaveDelayMs > 0 && isV3StateSave(items)) {
+          if (runtime.stateSaveDelayMs > 0 && isStateSnapshotSave(items)) {
             runtime.delayedStateSaveCount += 1;
             runtime.stateSaveStartedBeforeAck ||= !runtime.primaryCommandAcked;
             runtime.delayedStateSaveStartedAt ??= performance.now();
@@ -532,7 +533,9 @@ async function profile(options) {
   runtime.delayedStateSaveCount = 0;
   runtime.stateSaveDelayMs = options.scenario === "structural-save-pressure" ? 250 : 0;
 
-  const command = await measureAsync(() => controller.handleMessage(commandForScenario(options.scenario, options.tabs, runtime)));
+  const command = await measureAsync(() => options.scenario === "compaction-after-burst"
+    ? runCompactionBurst(controller, options.tabs)
+    : controller.handleMessage(commandForScenario(options.scenario, options.tabs, runtime)));
   runtime.primaryCommandAcked = true;
   dispatchScenarioNativeEchoes(runtime, options.scenario, options.tabs);
   const eventEcho = await measureAsync(() => flushProfileEvents(runtime.events));
@@ -581,6 +584,22 @@ async function profile(options) {
   };
 }
 
+// 20 mixed small mutations, each journaled before its ack, followed by one explicit flush:
+// the burst must coalesce into ONE compaction (saves=1) with bounded journal writes.
+async function runCompactionBurst(controller, tabCount) {
+  let lastAck;
+  for (let index = 0; index < 20; index += 1) {
+    const kind = index % 3;
+    const message = kind === 0
+      ? { type: "renameGroup", nodeId: "window:10", title: `Burst ${index}` }
+      : kind === 1
+        ? { type: "toggleCollapsed", nodeId: "window:10" }
+        : { type: "moveNode", nodeId: `tab:${(index % tabCount) + 1}`, parentId: "window:10", index: 0 };
+    lastAck = await controller.handleMessage(message);
+  }
+  return lastAck;
+}
+
 async function measureFollowUpDuringDeferredSave(controller, runtime) {
   const saveFlushPromise = measureAsync(() => controller.flushPendingSaves());
   await waitForDelayedStateSaveStart(runtime);
@@ -596,8 +615,13 @@ async function waitForDelayedStateSaveStart(runtime) {
   }
 }
 
-function isV3StateSave(items) {
-  return Boolean(items && typeof items === "object" && !Array.isArray(items) && "outlineState:v3:manifest" in items);
+function isStateSnapshotSave(items) {
+  if (!items || typeof items !== "object" || Array.isArray(items)) {
+    return false;
+  }
+  return Object.keys(items).some((key) =>
+    key === "outlineState:v3:manifest" || key.startsWith("outline:v4:manifest:")
+  );
 }
 
 function sleep(ms) {

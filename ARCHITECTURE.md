@@ -235,24 +235,58 @@ The full-state broadcast remains an intentional fallback. Compact patches are pr
 
 ## Persistence
 
-Persistence lives in [storage.ts](./src/background/storage.ts). Current saves use the v3 layout:
+Persistence is split into two durable artifacts (the v4 design, 2026-06; see
+`docs/storage-rearchitecture/` for the full rationale):
 
-- A v3 manifest records revision, roots, counts, shard settings, and the bounded initial snapshot.
-- Nodes are stored in 32 stable hash shards.
-- Child order is stored in stable parent/page keys.
-- The initial sidebar snapshot is capped at 256 visible rows and may be centered on the active tab.
+- **Mutation journal** ([outline-journal.ts](./src/background/outline-journal.ts)): an
+  append-only ring of 64 slots (`outline:v4:journal:slot:<i>` plus `outline:v4:journal:meta`)
+  holding `{seq, epoch, kind, delta}` entries whose deltas are absolute
+  `{rootIds?, updatedNodes, deletedNodeIds}` records. Replay is a pure overwrite in seq
+  order. Small command deltas are appended **before the command ack** (invariant I-1: an
+  acked mutation survives a background restart); runtime-event deltas are coalesced on a
+  50 ms quiet / 250 ms max timer (Class B: at most 250 ms of event bookkeeping is lost on
+  process death). Deltas too heavy to journal cheaply (node count plus total `childIds`
+  over 2,000 — e.g. any edit touching a 50k-child window) skip the journal and rely on the
+  deferred snapshot save, which is the same loss window the pre-journal design accepted.
+- **Snapshot store** ([storage-v4.ts](./src/background/storage-v4.ts)): 32 hash shards of
+  full node records with `childIds` inline (`outline:v4:nodes:<idx>:<generation>`) plus
+  double-buffered manifests (`outline:v4:manifest:a|b`). Shard keys are copy-on-write: a
+  compaction writes dirty shards at `generation + 1` and the inactive manifest slot in one
+  `storage.local.set`, then garbage-collects superseded keys. A shard is only trusted when
+  its embedded generation matches the manifest's `shardGenerations` entry, so consistency
+  is verifiable from storage alone and a torn write can never be half-trusted.
 
-`loadStateWithMetadata` prefers v3 and falls back to v2. The older v1 monolithic `outlineState` key is no longer written by default.
-Older v3 manifests with a different physical layout still load, but the controller schedules a full rewrite to the current shard/page layout after startup.
+The save scheduler is unchanged in shape (deferred quiet/max delays, interaction commands
+use the longer schedule, one in-flight flush at a time), but a flush is now a **compaction**:
+dirty shards = the pending save's candidate shards ∪ shards touched by journal appends since
+the last stamped compaction; a save without candidates (broad edits, startup rewrites,
+failure retries) rewrites all 32. The manifest records `journalSeqIncluded`; entries at or
+below it are pruned after the flush, and queued-but-unappended event deltas subsumed by the
+snapshot are dropped.
 
-Saves are deferred and coalesced:
+Loading ([controller startup](./src/background/controller.ts) + `loadStateV4`) follows an
+explicit recovery ladder — no fallback is silent:
 
-- Normal saves use a short quiet delay and max delay.
-- Structural interaction saves use a longer quiet delay and max delay so repeated grouping, flattening, restore, and structural undo/redo stay responsive.
-- Once there is a persisted v3 baseline, flushes write only changed node shards, changed/removed order pages, manifest, and history.
-- Scheduled saves flush one pending state/history snapshot at a time. If another save is queued while storage is in flight, the controller re-arms the quiet timer afterward instead of immediately draining the next save. Explicit `flushPendingSaves()` still drains fully for tests and shutdown-style callers.
+- R0: the highest-generation valid manifest with every shard generation verified.
+- R1: that snapshot is torn → the other manifest slot (its keys are untouched by
+  construction); its older `journalSeqIncluded` makes replay cover the entries the torn
+  compaction failed to fold in.
+- R2: both manifests unusable → salvage every readable shard at its highest readable
+  generation, run structural repair, replay the whole journal.
+- R3: no v4 keys → one-time migration from the legacy v3/v2 store (including the v3
+  salvage ladder), with read-back verification, a portable-tree backup under
+  `outline:v4:migrationBackup`, and legacy-key deletion only after the migrated store
+  verifies; failures keep legacy keys authoritative and retry next startup.
+- R4: nothing stored at all → bootstrap from the open windows (genuinely first run).
 
-This is a deliberate perceived-latency tradeoff: sidebar-visible broadcasts should not wait for a full outline `storage.local.set`. If the extension crashes between a broadcast and the delayed save, the latest outline-only edits may be lost. Runtime lifecycle commands are stricter: the controller persists a small recovery journal before touching browser tabs/windows, so startup can repair confirmed side effects before normal reconciliation.
+Every non-R0 outcome records an incident (`v4LoadRecovery`, `v3LoadSalvaged`,
+`staleV2FallbackUsed`, `v4MigrationFailed`, `journalReplay`) visible on the options page.
+
+The boot snapshot (256-row sparse first paint) lives at `outline:v4:bootSnapshot`, written
+on a 10 s debounce off the interaction path — never inside a save flush. Runtime lifecycle
+commands additionally persist a small intent journal (`runtimeLifecycleJournal:v1`) before
+touching browser tabs/windows, so startup can repair confirmed side effects before normal
+reconciliation; it predates and currently complements the outline journal.
 
 ## Sidebar Rendering
 
@@ -384,6 +418,9 @@ Fast paths are guarded. If a patch would be ambiguous, whole-tree sized, search-
 
 ## Important Invariants
 
+The numbered registry with owner mechanisms and enforcing tests lives in
+[INVARIANTS.md](./INVARIANTS.md); cite `I-n` ids from hunts, guards, and fix entries.
+
 - Every reachable child id should exist in `state.nodes`.
 - Parent and child links should agree for normal tree operations.
 - `rootIds` order and each `childIds` order define visible outline order.
@@ -410,7 +447,7 @@ Most behavior changes should move through these layers:
 
 ## Current Tradeoffs And Follow-Ups
 
-- v3 incremental saves greatly reduce repeated save cost, but full v3 hydration is still heavier than the old monolithic read. Full hydration reads all node shards and all required parent order pages; real Firefox `storage.local` fanout can dominate even when the synthetic Node profile is fast. The initial snapshot hides most of that from first paint, but not from full-tree feature unlock.
+- v4 loads are 2 storage round trips (manifests + meta, then 32 shards + journal slots), eliminating the v3 order-page fanout that dominated real-Firefox hydration. Remaining storage gaps: heavy deltas (over the journal weight cap) keep the deferred-save loss window until spill markers land, runtime-event journaling accepts a ≤250 ms window by design, and a single 50k-child window concentrates ~1 MB of `childIds` in one shard per touch. The v3 incremental writer and the `lastPersistedState` baseline machinery still exist pending the post-soak deletion phase (`docs/storage-rearchitecture/02-IMPLEMENTATION-PLAN.md` Phase 4).
 - Large structural operations such as flattening a huge window can still produce large history and structure deltas.
 - Runtime fast paths cover common tab/window create/update flows, but full reconciliation remains necessary for ambiguous or restore-candidate cases.
 - The runtime fact ledger/reconciler/scope path has absorbed command ownership, native event classification, stale-evidence filtering, missing-live-tab detection, scope provenance, and shape freshness. The controller still intentionally owns orchestration-specific branches for adapter calls, history, patching, persistence, and broadcasts.
