@@ -11,16 +11,18 @@ import {
   AUTOMATIC_BACKUP_STATUS_STORAGE_KEY
 } from "./backups.js";
 import { createBackgroundController, type BackgroundController } from "./controller.js";
+import { createOutlineJournal, replayJournal } from "./outline-journal.js";
+import { loadStateV4, outlineStateV4Snapshot } from "./storage-v4.js";
 import type { CommandAck } from "./commands.js";
 import { INCIDENT_LOG_STORAGE_KEY, loadIncidentLog } from "./incident-log.js";
 import { RUNTIME_LIFECYCLE_JOURNAL_KEY } from "./runtime-lifecycle-journal.js";
 import {
   HISTORY_KEY,
   STATE_KEY,
+  STATE_V2_MANIFEST_KEY,
   STATE_V3_MANIFEST_KEY,
   loadState,
   loadStateV2,
-  loadStateV3,
   outlineStateV2Items,
   outlineStateV3Changes
 } from "./storage.js";
@@ -201,6 +203,7 @@ function isLifecycleJournalOnlyStorageSet(items: unknown): boolean {
     key === RUNTIME_LIFECYCLE_JOURNAL_KEY ||
     key === INCIDENT_LOG_STORAGE_KEY ||
     key === "outlineState:v3:bootSnapshot" ||
+    key === "outline:v4:bootSnapshot" ||
     key.startsWith("outline:v4:journal:")
   );
 }
@@ -25886,6 +25889,22 @@ function formatRuntimeSideEffect(effect: RuntimeSideEffect): string {
   return `${effect.kind}(${effect.args.map((arg) => JSON.stringify(arg)).join(", ")})`;
 }
 
+function isV4ManifestWrite(items: Record<string, unknown>): boolean {
+  return Object.keys(items).some((key) => key.startsWith("outline:v4:manifest:"));
+}
+
+// What a restart would durably reproduce: the v4 snapshot plus the journal entries it does
+// not yet include, falling back to the legacy v3/v2 store for pre-migration fixtures.
+async function loadPersistedOutlineState(api: WebExtensionBrowser): Promise<OutlineState | undefined> {
+  const v4 = await loadStateV4(api);
+  if (!v4) {
+    return loadState(api);
+  }
+  const journal = createOutlineJournal(api, { epoch: 0 });
+  const init = await journal.init();
+  return replayJournal(v4.state, init.entries.filter((entry) => entry.seq > v4.journalSeqIncluded));
+}
+
 async function assertClosedSubtreePersistenceAssertion(context: GeneratedTraceContext): Promise<void> {
   if (context.expectedClosedNodeIds.size === 0) {
     return;
@@ -25894,7 +25913,7 @@ async function assertClosedSubtreePersistenceAssertion(context: GeneratedTraceCo
   await flushGeneratedRuntimeEventRefreshes(context);
   await pruneEmptyExpectedClosedWindowNodes(context);
   await context.controller.flushPendingSaves();
-  const persisted = await loadState(context.runtime.api);
+  const persisted = await loadPersistedOutlineState(context.runtime.api);
   assertClosedNodeIdsPersisted(persisted, context, "persisted");
 
   clearFakeRuntimeListeners(context.runtime);
@@ -26705,8 +26724,7 @@ describe("background controller lifecycle", () => {
     });
     expect(traceEntryNames(snapshot)).toContain("background.runtime.message");
     expect(traceEntryNames(snapshot)).toContain("background.state.save");
-    expect(traceEntryNames(snapshot)).toContain("background.state.save.v3.changeBuild");
-    expect(traceEntryNames(snapshot)).toContain("background.state.save.storage.set");
+    expect(traceEntryNames(snapshot)).toContain("background.state.save.v4.compact");
 
     await controller.handleMessage({ type: "clearPerformanceTrace" });
     expect(await controller.handleMessage({ type: "getPerformanceTrace" })).toMatchObject({
@@ -27187,11 +27205,80 @@ describe("background controller lifecycle", () => {
     await controller.ensureState();
     await controller.flushPendingSaves();
 
+    // A legacy v3 store (any shard format) is migrated to a complete v4 snapshot at startup.
     const saved = storageSetCallsExcludingLifecycleJournal(runtime).at(-1)?.[0] as
       | Record<string, unknown>
       | undefined;
-    expect((saved?.[STATE_V3_MANIFEST_KEY] as { nodeShardCount?: number }).nodeShardCount).toBe(32);
-    expect(Object.keys(saved ?? {}).filter((key) => key.includes(":nodes:"))).toHaveLength(32);
+    const savedKeys = Object.keys(saved ?? {});
+    expect(savedKeys.some((key) => key.startsWith("outline:v4:manifest:"))).toBe(true);
+    expect(savedKeys.filter((key) => key.startsWith("outline:v4:nodes:"))).toHaveLength(32);
+    const persisted = await loadPersistedOutlineState(runtime.api);
+    expect(persisted?.nodes["tab:300"]?.title).toBe("Saved 300");
+    // The legacy keys are deleted once the migrated store verifies, and a portable-tree
+    // backup is kept under the migration backup key.
+    const stored = await runtime.api.storage.local.get([STATE_V3_MANIFEST_KEY, "outline:v4:migrationBackup"]);
+    expect(stored[STATE_V3_MANIFEST_KEY]).toBeUndefined();
+    expect(stored["outline:v4:migrationBackup"]).toMatchObject({
+      version: 1,
+      tree: expect.objectContaining({ schema: PORTABLE_TREE_SCHEMA })
+    });
+    const incidentLog = await loadIncidentLog(runtime.api);
+    expect(incidentLog.some((entry) => entry.event === "v4MigrationComplete")).toBe(true);
+  });
+
+  it("keeps legacy keys authoritative and retries when the v4 migration write fails", async () => {
+    const storedState = wideClosedTabState(50);
+    const initialStorage = outlineStateV3Changes(storedState).setItems;
+    const runtime = fakeRuntime(
+      [{ id: 10, focused: true, incognito: false }],
+      [],
+      { initialStorage }
+    );
+    const baseSet = vi.mocked(runtime.api.storage.local.set).getMockImplementation();
+    vi.mocked(runtime.api.storage.local.set).mockImplementation(async (items: Record<string, unknown>) => {
+      if (isV4ManifestWrite(items)) {
+        throw new Error("simulated quota failure");
+      }
+      await baseSet?.(items);
+    });
+
+    let controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    const state = await controller.ensureState();
+
+    expect(state.nodes["tab:50"]?.title).toBe("Saved 50");
+    const afterFailure = await runtime.api.storage.local.get(STATE_V3_MANIFEST_KEY);
+    expect(afterFailure[STATE_V3_MANIFEST_KEY]).toBeDefined();
+    const incidentLog = await loadIncidentLog(runtime.api);
+    expect(incidentLog.some((entry) => entry.event === "v4MigrationFailed")).toBe(true);
+
+    // Next startup retries the migration and succeeds once storage recovers.
+    vi.mocked(runtime.api.storage.local.set).mockImplementation(baseSet!);
+    controller = restartControllerAbrupt(runtime);
+    const reloaded = await controller.ensureState();
+
+    expect(reloaded.nodes["tab:50"]?.title).toBe("Saved 50");
+    const afterRetry = await runtime.api.storage.local.get(STATE_V3_MANIFEST_KEY);
+    expect(afterRetry[STATE_V3_MANIFEST_KEY]).toBeUndefined();
+    const persisted = await loadStateV4(runtime.api);
+    expect(persisted?.state.nodes["tab:50"]?.title).toBe("Saved 50");
+  });
+
+  it("migrates a v2-only store to v4 at startup", async () => {
+    const storedState = wideClosedTabState(40);
+    const runtime = fakeRuntime(
+      [{ id: 10, focused: true, incognito: false }],
+      [],
+      { initialStorage: outlineStateV2Items(storedState, { revision: 7 }) }
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+
+    const state = await controller.ensureState();
+
+    expect(state.nodes["tab:40"]?.title).toBe("Saved 40");
+    const persisted = await loadStateV4(runtime.api);
+    expect(persisted?.state.nodes["tab:40"]?.title).toBe("Saved 40");
+    const legacy = await runtime.api.storage.local.get(STATE_V2_MANIFEST_KEY);
+    expect(legacy[STATE_V2_MANIFEST_KEY]).toBeUndefined();
   });
 
   it("does not clone the persisted v3 node table before returning a matching closed-heavy startup state", async () => {
@@ -27225,7 +27312,7 @@ describe("background controller lifecycle", () => {
         }
       ],
       [],
-      { initialStorage: outlineStateV3Changes(storedState).setItems }
+      { initialStorage: outlineStateV4Snapshot(storedState, { epoch: 0, journalSeqIncluded: 0, savedAt: 1 }).setItems }
     );
     const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
     const { calls, value: state } = await countNodeTableObjectValues(() => controller.ensureState());
@@ -27595,6 +27682,7 @@ describe("background controller lifecycle", () => {
     expect(snapshot?.projection?.nodeCount).toBe(301);
     expect(Object.keys(snapshot?.state?.nodes ?? {})).toHaveLength(256);
     expect(runtime.api.storage.local.get).toHaveBeenCalledWith([
+      "outline:v4:bootSnapshot",
       "outlineState:v3:bootSnapshot",
       "outlineState:v3:manifest",
       "outlineState:v2:manifest"
@@ -27939,9 +28027,12 @@ describe("background controller lifecycle", () => {
       | Record<string, unknown>
       | undefined;
     const savedKeys = Object.keys(saved ?? {});
-    expect(savedKeys).toContain("outlineState:v3:manifest");
-    expect(savedKeys.filter((key) => key.includes(":nodes:"))).toHaveLength(0);
-    expect(savedKeys.filter((key) => key.includes(":order:")).length).toBeGreaterThan(0);
+    // A same-parent reorder compacts only the touched shards (window + moved tab) plus the
+    // inactive v4 manifest slot -- never a full 32-shard rewrite.
+    expect(savedKeys.some((key) => key.startsWith("outline:v4:manifest:"))).toBe(true);
+    const shardKeys = savedKeys.filter((key) => key.includes(":nodes:"));
+    expect(shardKeys.length).toBeGreaterThan(0);
+    expect(shardKeys.length).toBeLessThanOrEqual(2);
     expect(savedKeys.length).toBeLessThan(10);
   });
 
@@ -28072,7 +28163,7 @@ describe("background controller lifecycle", () => {
       const baseSet = vi.mocked(runtime.api.storage.local.set).getMockImplementation();
       let failNextStateSave = true;
       vi.mocked(runtime.api.storage.local.set).mockImplementation(async (items: Record<string, unknown>) => {
-        if (failNextStateSave && STATE_V3_MANIFEST_KEY in items) {
+        if (failNextStateSave && isV4ManifestWrite(items)) {
           failNextStateSave = false;
           throw new Error("simulated disk failure");
         }
@@ -28088,8 +28179,8 @@ describe("background controller lifecycle", () => {
 
       // The backoff timer retries and succeeds.
       await vi.advanceTimersByTimeAsync(1000);
-      const reloaded = await loadStateV3(runtime.api);
-      expect(reloaded?.nodes["window:10"]?.title).toBe("Renamed");
+      const reloaded = await loadStateV4(runtime.api);
+      expect(reloaded?.state.nodes["window:10"]?.title).toBe("Renamed");
     } finally {
       vi.useRealTimers();
     }
@@ -28126,7 +28217,7 @@ describe("background controller lifecycle", () => {
       const baseSet = vi.mocked(runtime.api.storage.local.set).getMockImplementation();
       let failNextStateSave = true;
       vi.mocked(runtime.api.storage.local.set).mockImplementation(async (items: Record<string, unknown>) => {
-        if (failNextStateSave && STATE_V3_MANIFEST_KEY in items) {
+        if (failNextStateSave && isV4ManifestWrite(items)) {
           failNextStateSave = false;
           throw new Error("simulated disk failure");
         }
@@ -28138,8 +28229,8 @@ describe("background controller lifecycle", () => {
       await vi.advanceTimersByTimeAsync(1000);
 
       const trace = await controller.handleMessage({ type: "getPerformanceTrace" });
-      const saveBuilds = traceEntriesNamed(trace, "background.state.save.v3.changeBuild");
-      expect(saveBuilds.at(-1)?.detail).toMatchObject({ fullSave: true });
+      const saveBuilds = traceEntriesNamed(trace, "background.state.save.v4.compact");
+      expect(saveBuilds.at(-1)?.detail).toMatchObject({ fullCompaction: true });
     } finally {
       vi.useRealTimers();
     }
@@ -29297,18 +29388,17 @@ describe("background controller lifecycle", () => {
 
     await controller.flushPendingSaves();
     const trace = await controller.handleMessage({ type: "getPerformanceTrace" });
-    const saveBuilds = traceEntriesNamed(trace, "background.state.save.v3.changeBuild");
+    const saveBuilds = traceEntriesNamed(trace, "background.state.save.v4.compact");
     const saveDetail = saveBuilds.at(-1)?.detail;
 
     expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(1);
     expect(saveBuilds).toHaveLength(1);
     expect(saveDetail).toMatchObject({
-      fullSave: false,
-      candidateNodeCount: expect.any(Number),
-      nodeShardSetKeys: expect.any(Number)
+      fullCompaction: false,
+      dirtyShardCount: expect.any(Number)
     });
-    expect(saveDetail?.candidateNodeCount).toBeGreaterThan(0);
-    expect(saveDetail?.nodeShardSetKeys).toBeLessThan(32);
+    expect(saveDetail?.dirtyShardCount).toBeGreaterThan(0);
+    expect(saveDetail?.dirtyShardCount).toBeLessThan(32);
   });
 
   it("preserves externally created single-tab windows when browser close only reports through sessions", async () => {
@@ -32453,7 +32543,7 @@ describe("background controller lifecycle", () => {
     expect(state.nodes["window:10"]?.title).toBe("Renamed");
   });
 
-  it("I-1: an acked rename survives a torn v3 save across restart via journal replay", async () => {
+  it("I-1: an acked rename survives a torn snapshot save across restart via journal replay", async () => {
     const runtime = fakeRuntime(
       [{ id: 10, focused: true, incognito: false }],
       [{ id: 1, windowId: 10, index: 0, active: true, url: "https://one.example/", title: "One" }]
@@ -32462,18 +32552,20 @@ describe("background controller lifecycle", () => {
     await controller.ensureState();
     await controller.flushPendingSaves();
 
-    // Tear every v3 outline write: the manifest/shard set is dropped (crash mid-write),
-    // while the journal append (no manifest key) still lands before the ack.
+    // Crash mid-compaction: the manifest/shard set never resolves (process death), so
+    // nothing after it -- including the journal prune -- runs. The journal append (no
+    // manifest key) already landed before the ack.
     const baseSet = vi.mocked(runtime.api.storage.local.set).getMockImplementation();
-    vi.mocked(runtime.api.storage.local.set).mockImplementation(async (items: Record<string, unknown>) => {
-      if (STATE_V3_MANIFEST_KEY in items) {
-        return;
+    vi.mocked(runtime.api.storage.local.set).mockImplementation((items: Record<string, unknown>) => {
+      if (isV4ManifestWrite(items)) {
+        return new Promise<void>(() => {});
       }
-      await baseSet?.(items);
+      return Promise.resolve(baseSet?.(items));
     });
 
     expectCommandAck(await controller.handleMessage({ type: "renameGroup", nodeId: "window:10", title: "Renamed" }), true);
-    await controller.flushPendingSaves();
+    void controller.flushPendingSaves().catch(() => undefined);
+    await waitForMacrotask();
     vi.mocked(runtime.api.storage.local.set).mockImplementation(baseSet!);
 
     controller = restartControllerAbrupt(runtime);
@@ -35389,10 +35481,11 @@ describe("background controller lifecycle", () => {
     vi.mocked(runtime.api.storage.local.set).mockClear();
 
     expectCommandAck(await controller.handleMessage({ type: "deleteNode", nodeId: "tab:40" }), true);
-    const { calls } = await countNodeTableObjectKeys(() => controller.flushPendingSaves());
-    const persisted = await loadStateV3(runtime.api);
+    await controller.flushPendingSaves();
+    const persisted = await loadPersistedOutlineState(runtime.api);
 
-    expect(calls).toBeGreaterThan(0);
+    // v4 compaction rewrites the deleted node's shard wholesale from current state, so a
+    // stale record cannot survive the flush (no diff trust involved).
     expect(persisted?.nodes["tab:40"]).toBeUndefined();
     expect(persisted?.nodes["window:10"]?.childIds).not.toContain("tab:40");
     expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(1);
@@ -35983,10 +36076,9 @@ describe("background controller lifecycle", () => {
       canUndo: true,
       undoLabel: "Move to top level"
     });
-    const { calls } = await countNodeTableObjectKeys(() => controller.flushPendingSaves());
-    const persisted = await loadStateV3(runtime.api);
+    await controller.flushPendingSaves();
+    const persisted = await loadPersistedOutlineState(runtime.api);
 
-    expect(calls).toBeGreaterThan(0);
     expect(persisted?.rootIds).toEqual(["window:10", "window:42"]);
     expect(persisted?.nodes["window:42"]?.parentId).toBeUndefined();
     expect(persisted?.nodes["tab:1"]?.parentId).toBe("window:42");

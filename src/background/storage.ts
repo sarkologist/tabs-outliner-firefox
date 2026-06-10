@@ -14,6 +14,7 @@ const STATE_V2_ORDER_PAGE_SIZE = 1024;
 const STATE_V3_NODE_SHARD_PREFIX = "outlineState:v3:nodes:";
 const STATE_V3_ORDER_PAGE_PREFIX = "outlineState:v3:order:";
 export const STATE_V3_BOOT_SNAPSHOT_KEY = "outlineState:v3:bootSnapshot";
+export const STATE_V4_BOOT_SNAPSHOT_KEY = "outline:v4:bootSnapshot";
 const STATE_V3_NODE_SHARD_COUNT = 32;
 const STATE_V3_ORDER_PAGE_SIZE = 1024;
 export const INITIAL_TREE_SNAPSHOT_ROW_LIMIT = 256;
@@ -167,7 +168,7 @@ type StateV3BootSnapshot = {
 
 export type LoadedOutlineState = {
   state: OutlineState;
-  format: "v2" | "v3";
+  format: "v2" | "v3" | "v4";
   requiresFullSave?: boolean;
   // Highest journal seq already reflected in the loaded snapshot; the controller replays
   // journal entries with seq greater than this on top of `state`.
@@ -490,11 +491,12 @@ export async function loadInitialTreeSnapshot(
   api: WebExtensionBrowser = browser
 ): Promise<InitialTreeSnapshot | undefined> {
   const stored = await api.storage.local.get([
+    STATE_V4_BOOT_SNAPSHOT_KEY,
     STATE_V3_BOOT_SNAPSHOT_KEY,
     STATE_V3_MANIFEST_KEY,
     STATE_V2_MANIFEST_KEY
   ]);
-  const bootSnapshot = stored[STATE_V3_BOOT_SNAPSHOT_KEY];
+  const bootSnapshot = stored[STATE_V4_BOOT_SNAPSHOT_KEY] ?? stored[STATE_V3_BOOT_SNAPSHOT_KEY];
   if (isStateV3BootSnapshot(bootSnapshot)) {
     return cloneInitialTreeSnapshot(bootSnapshot.snapshot, true);
   }
@@ -1326,12 +1328,12 @@ function stateV3ManifestForState(
 
 // The boot snapshot is a cold-start-only sparse first-paint cache (Class C). It is written
 // to its own key on a debounce rather than embedded in every save's manifest.
-export function outlineStateV3BootSnapshotItem(
+export function outlineBootSnapshotItem(
   state: OutlineState,
   revision: number = Date.now()
 ): Record<string, StateV3BootSnapshot> {
   return {
-    [STATE_V3_BOOT_SNAPSHOT_KEY]: {
+    [STATE_V4_BOOT_SNAPSHOT_KEY]: {
       version: 3,
       revision,
       snapshot: initialTreeSnapshotForState(state, { revision, hydrating: true })

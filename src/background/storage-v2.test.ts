@@ -15,7 +15,7 @@ import {
   createInitialTreeSnapshotProjector,
   initialTreeSnapshotForState,
   outlineStateV2Items,
-  outlineStateV3BootSnapshotItem,
+  outlineBootSnapshotItem,
   outlineStateV3Changes,
   saveState,
   saveStateAndHistory,
@@ -413,6 +413,7 @@ describe("outline state v2 storage", () => {
     expect(Object.keys(snapshot?.state.nodes ?? {})).toHaveLength(INITIAL_TREE_SNAPSHOT_ROW_LIMIT);
     expect(api.storage.local.get).toHaveBeenCalledTimes(1);
     expect(api.storage.local.get).toHaveBeenCalledWith([
+      "outline:v4:bootSnapshot",
       STATE_V3_BOOT_SNAPSHOT_KEY,
       STATE_V3_MANIFEST_KEY,
       STATE_V2_MANIFEST_KEY
@@ -869,7 +870,7 @@ describe("outline state v3 storage", () => {
     const v3State = makeLargeState(800, { activeTabIndex: 799 });
     const api = fakeApi(outlineStateV2Items(v2State, { revision: 111 }));
     await saveState(v3State, api);
-    await api.storage.local.set(outlineStateV3BootSnapshotItem(v3State, 222));
+    await api.storage.local.set(outlineBootSnapshotItem(v3State, 222));
     vi.mocked(api.storage.local.get).mockClear();
 
     const snapshot = await loadInitialTreeSnapshot(api);

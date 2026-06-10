@@ -45,13 +45,22 @@ import {
   initialTreeSnapshotForState,
   loadHistory,
   loadInitialTreeSnapshot,
+  HISTORY_KEY,
   loadStateWithMetadata,
-  outlineStateV3BootSnapshotItem,
-  saveStateAndHistory,
+  outlineBootSnapshotItem,
   STATE_KEY,
   STATE_V2_MANIFEST_KEY,
-  STATE_V3_MANIFEST_KEY
+  STATE_V3_MANIFEST_KEY,
+  type LoadedOutlineState
 } from "./storage.js";
+import {
+  STATE_V4_MIGRATION_BACKUP_KEY,
+  loadStateV4,
+  outlineStateV4Snapshot,
+  stateV4ShardIndexForNodeId,
+  type StateV4Manifest,
+  type StateV4ManifestSlot
+} from "./storage-v4.js";
 import {
   JOURNAL_META_KEY,
   JOURNAL_SPILL_NODE_LIMIT,
@@ -362,10 +371,6 @@ const SAVE_FLUSH_ANOMALY_NODE_DELTA = -50;
 // After a failed state save the next attempt is retried with growing backoff so a
 // transient storage error does not silently drop the pending change.
 const SAVE_FAILURE_BACKOFF_MS = [1000, 4000, 16000] as const;
-// Prune the journal once it has accumulated this many live entries and a save has folded
-// them into the v3 snapshot. Kept below the 64-slot ring so appends never block on a full
-// ring under normal use; a burst that outruns saves still triggers compaction on JournalFullError.
-const JOURNAL_PRUNE_THRESHOLD = 32;
 // The boot snapshot is a cold-start-only first-paint cache, written on its own debounce
 // rather than embedded in every save's manifest. Staleness up to this window is harmless:
 // it is superseded by full hydration immediately after first paint.
@@ -430,6 +435,12 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   let saveFailureBackoffIndex = 0;
   let bootSnapshotTimer: number | undefined;
   let outlineJournal: OutlineJournal | undefined;
+  // The active v4 snapshot (manifest + the slot it occupies). Undefined until the first v4
+  // load, migration, or full compaction of this session.
+  let currentV4Snapshot: { manifest: StateV4Manifest; slot: StateV4ManifestSlot } | undefined;
+  // Shard indexes touched by journal appends since the last compaction that folded them in.
+  // Unioned with the pending save's candidate shards to compute a compaction's dirty set.
+  let journalTouchedSinceCompaction = new Set<number>();
   let pendingSaveSchedule: SaveSchedule | undefined;
   let nextRuntimeLifecycleJournalSequence = 1;
   const runtimeLifecycleJournalEntryIdsToClearAfterSave = new Set<string>();
@@ -1958,15 +1969,45 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   }
 
   async function initializeState(): Promise<OutlineState> {
-    const [windows, loaded, lifecycleJournal, priorJournalMeta] = await Promise.all([
+    const [windows, v4Loaded, lifecycleJournal, startupKeys] = await Promise.all([
       perfTrace.measureAsync("background.runtime.getWindows", () => getNormalWindows(api)),
-      perfTrace.measureAsync("background.state.load", () => loadStateWithMetadata(api, stateLoadTraceOptions())),
+      perfTrace.measureAsync("background.state.load", () => loadStateV4(api)),
       loadRuntimeLifecycleJournal(api),
-      api.storage.local.get(JOURNAL_META_KEY)
+      api.storage.local.get([JOURNAL_META_KEY, STATE_V3_MANIFEST_KEY, STATE_V2_MANIFEST_KEY, STATE_KEY])
     ]);
+    const legacyKeysPresent = Boolean(
+      startupKeys[STATE_V3_MANIFEST_KEY] || startupKeys[STATE_V2_MANIFEST_KEY] || startupKeys[STATE_KEY]
+    );
+    let loaded: LoadedOutlineState | undefined;
+    if (v4Loaded) {
+      currentV4Snapshot = { manifest: v4Loaded.manifest, slot: v4Loaded.slot };
+      loaded = {
+        state: v4Loaded.state,
+        format: "v4",
+        journalSeqIncluded: v4Loaded.journalSeqIncluded,
+        // Anything below a clean R0 load must be folded into a fresh snapshot generation.
+        ...(v4Loaded.recovery !== "r0" || v4Loaded.repair ? { requiresFullSave: true } : {})
+      };
+      if (v4Loaded.recovery !== "r0" || v4Loaded.repair) {
+        await recordIncidentLog("v4LoadRecovery", {
+          recovery: v4Loaded.recovery,
+          ...(v4Loaded.repair ?? {})
+        });
+      }
+      if (legacyKeysPresent) {
+        // A previous migration wrote the v4 store but died before deleting the legacy keys.
+        void deleteLegacyStateKeys().catch((error) => {
+          perfTrace.mark("background.state.migration.cleanup.error", { message: errorText(error) });
+        });
+      }
+    } else {
+      loaded = await perfTrace.measureAsync("background.state.load.legacy", () =>
+        loadStateWithMetadata(api, stateLoadTraceOptions())
+      );
+    }
     // Construct the journal with a fresh epoch (prior + 1) and replay any acked deltas that
-    // the loaded v3 snapshot does not yet reflect (crash between journal append and v3 save).
-    const priorEpoch = readJournalEpoch(priorJournalMeta[JOURNAL_META_KEY]);
+    // the loaded snapshot does not yet reflect (crash between journal append and compaction).
+    const priorEpoch = readJournalEpoch(startupKeys[JOURNAL_META_KEY]);
     outlineJournal = createOutlineJournal(api, { epoch: priorEpoch + 1, now });
     const journalInit = await perfTrace.measureAsync("background.journal.init", () => outlineJournal!.init());
     const loadedState = loaded?.state;
@@ -1987,6 +2028,11 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     }
     if (loaded?.staleV2Fallback) {
       await recordIncidentLog("staleV2FallbackUsed", { ...outlineStateCountDetail(loaded.state) });
+    }
+    if (!v4Loaded && stored) {
+      // First startup on the v4 store: migrate the legacy (journal-replayed) state. Failure
+      // keeps the legacy keys authoritative and retries next startup.
+      await migrateLegacyStateToV4(stored);
     }
     let storedRuntimeMatch: RuntimeSnapshotMatch | undefined;
     let consumedRuntimeLifecycleJournalEntryIds: string[] = [];
@@ -2031,7 +2077,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       const loadedRequiresFullSave = loaded?.requiresFullSave === true || journalReplayed;
       storedRuntimeMatch = runtimeSnapshotMateriallyMatchesState(startupBase, windows);
       if (storedRuntimeMatch.matches) {
-        if (loaded?.format === "v3" && !runtimeLifecycleJournalChangedState && !loadedRequiresFullSave) {
+        if (loaded?.format !== "v2" && !runtimeLifecycleJournalChangedState && !loadedRequiresFullSave) {
           deferPersistedStateBaselineClone(startupBase);
         } else {
           lastPersistedState = undefined;
@@ -2041,7 +2087,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
           scheduleStateSave(state);
         }
       } else {
-        lastPersistedState = loaded?.format === "v3" && !loadedRequiresFullSave
+        lastPersistedState = loaded?.format !== "v2" && !loadedRequiresFullSave
           ? cloneOutlineState(stored)
           : undefined;
         runtimeFacts.reconstructFromState(startupBase, windows);
@@ -2579,24 +2625,6 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   function stateLoadTraceDetail(phase: StateLoadPhase): TraceDetail {
     return {
       durationMs: phase.durationMs,
-      ...(phase.detail ?? {})
-    };
-  }
-
-  function stateSaveTraceOptions(): Pick<SaveStateOptions, "onPhase"> | undefined {
-    if (!perfTrace.isEnabled()) {
-      return undefined;
-    }
-
-    return {
-      onPhase: (phase) => {
-        perfTrace.record(`background.state.save.${phase.name}`, phase.durationMs, stateSaveTraceDetail(phase));
-      }
-    };
-  }
-
-  function stateSaveTraceDetail(phase: StateSavePhase): TraceDetail {
-    return {
       ...(phase.detail ?? {})
     };
   }
@@ -4821,7 +4849,9 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       : nodeStateUpdateFromStateChange(previous, next));
     if (isUsefulNodeStateUpdate(update, next)) {
       await broadcastNodeStateUpdate(update);
-      scheduleStateSave(next, options.saveSchedule, candidateNodeIds);
+      // The patch enumerates exactly the changed nodes, so it is a complete candidate set
+      // for the compactor's dirty shards even when the caller had none to thread.
+      scheduleStateSave(next, options.saveSchedule, candidateNodeIds ?? candidateNodeIdsForPatch(update));
       return;
     }
 
@@ -4985,10 +5015,11 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     candidateNodeIds?: readonly NodeId[]
   ): void {
     pendingSaveState = next;
-    if (candidateNodeIds && candidateSaveRequiresFullDiff(next, candidateNodeIds)) {
-      pendingSaveCandidateNodeIds = undefined;
-      pendingSaveRequiresFullDiff = true;
-    } else if (candidateNodeIds) {
+    // Candidates only widen the compaction's dirty-shard set; deletions need no full-save
+    // promotion because a dirty shard is rebuilt wholesale from current state (a deleted
+    // node is simply absent from the rebuilt shard). No candidates means a broad change:
+    // every shard is dirty.
+    if (candidateNodeIds) {
       if (!pendingSaveRequiresFullDiff) {
         pendingSaveCandidateNodeIds ??= new Set<NodeId>();
         for (const nodeId of candidateNodeIds) {
@@ -5022,24 +5053,11 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     }
     try {
       await perfTrace.measureAsync("background.state.bootSnapshot.write", () =>
-        api.storage.local.set(outlineStateV3BootSnapshotItem(current, now()))
+        api.storage.local.set(outlineBootSnapshotItem(current, now()))
       );
     } catch (error) {
       perfTrace.mark("background.state.bootSnapshot.error", { message: errorText(error) });
     }
-  }
-
-  function candidateSaveRequiresFullDiff(next: OutlineState, candidateNodeIds: readonly NodeId[]): boolean {
-    if (candidateNodeIds.some((nodeId) => !next.nodes[nodeId])) {
-      return true;
-    }
-    if (!lastPersistedState) {
-      return false;
-    }
-    if (!sameNodeIdList(lastPersistedState.rootIds, next.rootIds)) {
-      return true;
-    }
-    return Object.keys(next.nodes).length < Object.keys(lastPersistedState.nodes).length;
   }
 
   function scheduleHistorySave(next: HistoryState, schedule: SaveSchedule = "normal"): void {
@@ -5210,20 +5228,64 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     // idempotently). Captured synchronously so it pairs with nextState atomically.
     const journalSeqIncluded = nextState && nextState === state ? outlineJournal?.headSeq() : undefined;
     try {
-      await perfTrace.measureAsync("background.state.save", () =>
-        saveStateAndHistory(nextState, nextHistory, api, {
-          ...(nextState && lastPersistedState ? { previousState: lastPersistedState } : {}),
-          ...(nextState && candidateNodeIds ? { candidateNodeIds } : {}),
-          ...(journalSeqIncluded !== undefined ? { journalSeqIncluded } : {}),
-          ...(stateSaveTraceOptions() ?? {})
-        })
-      );
+      await perfTrace.measureAsync("background.state.save", async () => {
+        const setItems: Record<string, unknown> = {};
+        let v4Snapshot: ReturnType<typeof outlineStateV4Snapshot> | undefined;
+        if (nextState) {
+          // Dirty set: shards of the flush's candidates plus shards touched by journal
+          // appends since the last fully-stamped compaction. No candidates (full-diff
+          // promotion, startup rewrites, failure retries) means every shard is dirty.
+          // Swap the journal-touched set out before the await so appends that land during
+          // the write re-arm cleanly for the next compaction.
+          const journalTouched = journalTouchedSinceCompaction;
+          if (journalSeqIncluded !== undefined) {
+            journalTouchedSinceCompaction = new Set();
+          }
+          const fullCompaction = !candidateNodeIds || !currentV4Snapshot;
+          const dirtyShardIndexes = fullCompaction
+            ? undefined
+            : new Set([
+                ...[...candidateNodeIds!].map(stateV4ShardIndexForNodeId),
+                ...journalTouched
+              ]);
+          v4Snapshot = outlineStateV4Snapshot(nextState, {
+            epoch: outlineJournal?.epoch() ?? 0,
+            journalSeqIncluded: journalSeqIncluded ?? currentV4Snapshot?.manifest.journalSeqIncluded ?? 0,
+            savedAt: now(),
+            ...(currentV4Snapshot ? { previous: currentV4Snapshot } : {}),
+            ...(dirtyShardIndexes ? { dirtyShardIndexes } : {})
+          });
+          Object.assign(setItems, v4Snapshot.setItems);
+          perfTrace.mark("background.state.save.v4.compact", {
+            fullCompaction,
+            dirtyShardCount: dirtyShardIndexes ? dirtyShardIndexes.size : v4Snapshot.manifest.shardGenerations.length,
+            setKeys: Object.keys(v4Snapshot.setItems).length,
+            removeKeys: v4Snapshot.removeKeysAfterCommit.length,
+            generation: v4Snapshot.manifest.generation
+          });
+        }
+        if (nextHistory) {
+          setItems[HISTORY_KEY] = nextHistory;
+        }
+        if (Object.keys(setItems).length > 0) {
+          await api.storage.local.set(setItems);
+        }
+        if (v4Snapshot) {
+          currentV4Snapshot = { manifest: v4Snapshot.manifest, slot: v4Snapshot.slot };
+          if (v4Snapshot.removeKeysAfterCommit.length > 0) {
+            // Superseded old-generation shard keys; a failed remove is harmless garbage.
+            void api.storage.local.remove(v4Snapshot.removeKeysAfterCommit).catch((error) => {
+              perfTrace.mark("background.state.save.v4.gc.error", { message: errorText(error) });
+            });
+          }
+        }
+      });
     } catch (error) {
       handleStateSaveFailure(nextState, nextHistory, error);
       throw error;
     }
     saveFailureBackoffIndex = 0;
-    if (journalSeqIncluded !== undefined && outlineJournal && outlineJournal.pendingEntryCount() >= JOURNAL_PRUNE_THRESHOLD) {
+    if (journalSeqIncluded !== undefined && outlineJournal && outlineJournal.pendingEntryCount() > 0) {
       await outlineJournal.prune(journalSeqIncluded);
     }
     if (saveIncidentDetail && nextCountDetail) {
@@ -5346,6 +5408,14 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       const result = await perfTrace.measureAsync("background.journal.append", { entries: items.length }, () =>
         outlineJournal!.append(items)
       );
+      for (const item of items) {
+        for (const node of item.delta?.updatedNodes ?? []) {
+          journalTouchedSinceCompaction.add(stateV4ShardIndexForNodeId(node.id));
+        }
+        for (const nodeId of item.delta?.deletedNodeIds ?? []) {
+          journalTouchedSinceCompaction.add(stateV4ShardIndexForNodeId(nodeId));
+        }
+      }
       if (result.spilled) {
         // Heavy deltas are filtered out before we reach here; a residual byte-spill is left
         // to the deferred v3 save (silently, so routine large-tree edits do not log or
@@ -5379,6 +5449,56 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       return (value as { epoch: number }).epoch;
     }
     return 0;
+  }
+
+  // One-time v3/v2 -> v4 migration: write a complete v4 store from the loaded legacy state,
+  // read it back and verify it reproduces that state exactly, write a portable-tree backup,
+  // and only then delete the legacy keys. Any failure removes the just-written v4 keys so
+  // the next startup retries with the legacy keys still authoritative.
+  async function migrateLegacyStateToV4(stored: OutlineState): Promise<void> {
+    const snapshot = outlineStateV4Snapshot(stored, {
+      epoch: outlineJournal?.epoch() ?? 0,
+      journalSeqIncluded: outlineJournal?.headSeq() ?? 0,
+      savedAt: now()
+    });
+    try {
+      await perfTrace.measureAsync("background.state.migration.write", () =>
+        api.storage.local.set({
+          ...snapshot.setItems,
+          ...outlineBootSnapshotItem(stored, now())
+        })
+      );
+      const verify = await loadStateV4(api);
+      if (!verify || verify.recovery !== "r0" || !statesMateriallyEqual(verify.state, stored)) {
+        throw new Error(verify ? `verification mismatch (${verify.recovery})` : "verification load failed");
+      }
+      currentV4Snapshot = { manifest: snapshot.manifest, slot: snapshot.slot };
+      await api.storage.local.set({
+        [STATE_V4_MIGRATION_BACKUP_KEY]: {
+          version: 1,
+          exportedAt: now(),
+          tree: exportPortableTree(stored, { now: now() })
+        }
+      });
+      await deleteLegacyStateKeys();
+      await recordIncidentLog("v4MigrationComplete", { ...outlineStateCountDetail(stored) });
+    } catch (error) {
+      currentV4Snapshot = undefined;
+      await api.storage.local.remove(Object.keys(snapshot.setItems)).catch(() => undefined);
+      await recordIncidentLog("v4MigrationFailed", { message: errorText(error) });
+    }
+  }
+
+  async function deleteLegacyStateKeys(): Promise<void> {
+    const everything = await api.storage.local.get(null);
+    const legacyKeys = Object.keys(everything).filter((key) =>
+      key === STATE_KEY ||
+      key.startsWith("outlineState:v2:") ||
+      key.startsWith("outlineState:v3:")
+    );
+    if (legacyKeys.length > 0) {
+      await api.storage.local.remove(legacyKeys);
+    }
   }
 
   async function clearCompletedRuntimeLifecycleJournalEntriesAfterSave(): Promise<void> {
