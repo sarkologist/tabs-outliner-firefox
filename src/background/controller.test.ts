@@ -27979,6 +27979,108 @@ describe("background controller lifecycle", () => {
     }
   });
 
+  it("re-schedules and retries after a failed state save", async () => {
+    vi.useFakeTimers();
+    try {
+      const runtime = fakeRuntime(
+        [
+          {
+            id: 10,
+            focused: true,
+            incognito: false
+          }
+        ],
+        [
+          {
+            id: 1,
+            windowId: 10,
+            index: 0,
+            active: true,
+            url: "https://one.example/",
+            title: "One"
+          }
+        ]
+      );
+      const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+      await controller.ensureState();
+      await controller.flushPendingSaves();
+
+      const baseSet = vi.mocked(runtime.api.storage.local.set).getMockImplementation();
+      let failNextStateSave = true;
+      vi.mocked(runtime.api.storage.local.set).mockImplementation(async (items: Record<string, unknown>) => {
+        if (failNextStateSave && STATE_V3_MANIFEST_KEY in items) {
+          failNextStateSave = false;
+          throw new Error("simulated disk failure");
+        }
+        await baseSet?.(items);
+      });
+
+      expectCommandAck(await controller.handleMessage({ type: "renameGroup", nodeId: "window:10", title: "Renamed" }), true);
+
+      // First scheduled flush fires and fails; the change must not be dropped.
+      await vi.advanceTimersByTimeAsync(1000);
+      const afterFailure = await loadIncidentLog(runtime.api);
+      expect(afterFailure.some((entry) => entry.event === "stateSaveFailed")).toBe(true);
+
+      // The backoff timer retries and succeeds.
+      await vi.advanceTimersByTimeAsync(1000);
+      const reloaded = await loadStateV3(runtime.api);
+      expect(reloaded?.nodes["window:10"]?.title).toBe("Renamed");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("forces a full-diff save after a save failure", async () => {
+    vi.useFakeTimers();
+    try {
+      const runtime = fakeRuntime(
+        [
+          {
+            id: 10,
+            focused: true,
+            incognito: false
+          }
+        ],
+        [
+          {
+            id: 1,
+            windowId: 10,
+            index: 0,
+            active: true,
+            url: "https://one.example/",
+            title: "One"
+          }
+        ]
+      );
+      const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+      await controller.ensureState();
+      await controller.flushPendingSaves();
+      expect(await controller.handleMessage({ type: "setPerformanceTraceEnabled", enabled: true })).toEqual({ ok: true });
+      await controller.handleMessage({ type: "clearPerformanceTrace" });
+
+      const baseSet = vi.mocked(runtime.api.storage.local.set).getMockImplementation();
+      let failNextStateSave = true;
+      vi.mocked(runtime.api.storage.local.set).mockImplementation(async (items: Record<string, unknown>) => {
+        if (failNextStateSave && STATE_V3_MANIFEST_KEY in items) {
+          failNextStateSave = false;
+          throw new Error("simulated disk failure");
+        }
+        await baseSet?.(items);
+      });
+
+      expectCommandAck(await controller.handleMessage({ type: "renameGroup", nodeId: "window:10", title: "Renamed" }), true);
+      await vi.advanceTimersByTimeAsync(1000);
+      await vi.advanceTimersByTimeAsync(1000);
+
+      const trace = await controller.handleMessage({ type: "getPerformanceTrace" });
+      const saveBuilds = traceEntriesNamed(trace, "background.state.save.v3.changeBuild");
+      expect(saveBuilds.at(-1)?.detail).toMatchObject({ fullSave: true });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("defers command-window structural move persistence until an explicit save flush", async () => {
     const runtime = fakeRuntime(
       [

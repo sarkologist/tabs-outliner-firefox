@@ -134,6 +134,14 @@ This and the following dated entries implement Phase 0 of `docs/storage-rearchit
 - Residual guard misses after P0.1 are timing-only and pre-existing on this machine, documented as never-moved budgets: `restore-last-transient-echo firstBroadcastMs` 36–45 vs budget 20 (see 2026-06-03 entry — over the 23 limit since before the data-loss fix), `command-group-live-leaf firstBroadcastMs` 152–160 vs budget 120 (see 2026-06-05 entries, repeatedly 154–178), and `command-refresh-noop totalMeasuredMs` 141–157 vs budget 123 (a no-op scenario with zero saves/journal — pure CPU variance). None is in the save path; none is touched by P0.1. No runtime perf budget moved.
 - `Current Asymptotics Audit`: unchanged (incident logging is diagnostic Class C, off the durable-state asymptotics).
 
+#### P0.3: Save failures retry with backoff and force a full save
+
+- Root cause (loss vector V2 / RC-4): a failed `flushScheduledSave` caught the error, only wrote a trace mark, and had already dequeued `pendingSaveState` — so the change was silently dropped with no retry, and if the failed `set` partially applied, the next incremental save diffed against a now-wrong `lastPersistedState`.
+- Change: on a state-save rejection the controller now sets `lastPersistedState = undefined` (so the retry rewrites the full state rather than trusting an incremental baseline against an unknown partial write), re-queues the failed snapshot unless a newer mutation superseded it, sets `pendingSaveRequiresFullDiff = true`, records a `stateSaveFailed` incident, and re-arms the save timer with `SAVE_FAILURE_BACKOFF_MS = [1000, 4000, 16000]` (reset to index 0 on the next success). The error is re-thrown so the timer path still swallows it and explicit `flushPendingSaves()` keeps its existing throw contract; the re-throw also makes `flushPendingSaves()` do exactly one attempt then defer to the backoff timer, so it cannot spin.
+- Tests (red first): `controller.test.ts` "re-schedules and retries after a failed state save" (fail one `storage.local.set` on the v3 manifest, advance fake timers, assert a `stateSaveFailed` incident then the backoff retry persists the change) and "forces a full-diff save after a save failure" (assert the retry's `background.state.save.v3.changeBuild` detail is `fullSave: true`).
+- Guard: unchanged from P0.1 — all hard counters green; only the chronic `restore-last-transient-echo firstBroadcastMs` timing miss remains (pre-existing; see 2026-06-03). No budget moved.
+- `Current Asymptotics Audit`: unchanged (retry/backoff is on the failure path; steady-state save shape is unchanged).
+
 ### 2026-06-06: Promoted Current Asymptotics Audit
 
 - Promoted the event-echo and remaining-target asymptotics tables out of the dated May 21 progress entries into a stable `Current Asymptotics Audit` section near the top of this file.

@@ -345,6 +345,9 @@ const INTERACTION_STATE_SAVE_MAX_DELAY_MS = 30000;
 // silent so the bounded incident log stays a signal rather than a per-save diary.
 const SAVE_FLUSH_ANOMALY_CLOSED_DELTA = -25;
 const SAVE_FLUSH_ANOMALY_NODE_DELTA = -50;
+// After a failed state save the next attempt is retried with growing backoff so a
+// transient storage error does not silently drop the pending change.
+const SAVE_FAILURE_BACKOFF_MS = [1000, 4000, 16000] as const;
 const SIDEBAR_PROFILE_COLLECTION_DELAY_MS = 50;
 const TOGGLE_SIDEBAR_COMMAND = "toggle-sidebar";
 const SIDEBAR_WINDOW_PATH = "sidebar/sidebar.html";
@@ -402,6 +405,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   let explicitSaveFlushInProgress = false;
   let pendingSaveBatchStartedAt: number | undefined;
   let pendingSaveMaxDelayMs: number | undefined;
+  let saveFailureBackoffIndex = 0;
   let pendingSaveSchedule: SaveSchedule | undefined;
   let nextRuntimeLifecycleJournalSequence = 1;
   const runtimeLifecycleJournalEntryIdsToClearAfterSave = new Set<string>();
@@ -5092,13 +5096,19 @@ export function createBackgroundController(options: BackgroundControllerOptions)
           ...outlineStateCountDeltaDetail(previousCountDetail, nextCountDetail!)
         }
       : undefined;
-    await perfTrace.measureAsync("background.state.save", () =>
-      saveStateAndHistory(nextState, nextHistory, api, {
-        ...(nextState && lastPersistedState ? { previousState: lastPersistedState } : {}),
-        ...(nextState && candidateNodeIds ? { candidateNodeIds } : {}),
-        ...(stateSaveTraceOptions() ?? {})
-      })
-    );
+    try {
+      await perfTrace.measureAsync("background.state.save", () =>
+        saveStateAndHistory(nextState, nextHistory, api, {
+          ...(nextState && lastPersistedState ? { previousState: lastPersistedState } : {}),
+          ...(nextState && candidateNodeIds ? { candidateNodeIds } : {}),
+          ...(stateSaveTraceOptions() ?? {})
+        })
+      );
+    } catch (error) {
+      handleStateSaveFailure(nextState, nextHistory, error);
+      throw error;
+    }
+    saveFailureBackoffIndex = 0;
     if (saveIncidentDetail && nextCountDetail) {
       const closedCountDelta = nextCountDetail.closedCount - previousCountDetail.closedCount;
       const nodeCountDelta = nextCountDetail.nodeCount - previousCountDetail.nodeCount;
@@ -5115,6 +5125,42 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     if (nextState || nextHistory) {
       await clearCompletedRuntimeLifecycleJournalEntriesAfterSave();
     }
+  }
+
+  function handleStateSaveFailure(
+    nextState: OutlineState | undefined,
+    nextHistory: HistoryState | undefined,
+    error: unknown
+  ): void {
+    // A partial write may have landed, so the in-memory baseline can no longer be
+    // trusted; force the retry to rewrite the full state rather than an incremental diff.
+    lastPersistedState = undefined;
+    pendingSaveRequiresFullDiff = true;
+    pendingSaveCandidateNodeIds = undefined;
+    // Re-queue the snapshot we just failed to persist, unless a newer mutation already
+    // superseded it.
+    if (nextState && !pendingSaveState) {
+      pendingSaveState = nextState;
+    }
+    if (nextHistory && !pendingSaveHistory) {
+      pendingSaveHistory = nextHistory;
+    }
+    void recordIncidentLog("stateSaveFailed", {
+      message: errorText(error),
+      backoffIndex: saveFailureBackoffIndex
+    });
+    armSaveFailureRetryTimer();
+  }
+
+  function armSaveFailureRetryTimer(): void {
+    const delayMs = SAVE_FAILURE_BACKOFF_MS[Math.min(saveFailureBackoffIndex, SAVE_FAILURE_BACKOFF_MS.length - 1)];
+    saveFailureBackoffIndex += 1;
+    if (saveTimer !== undefined) {
+      globalThis.clearTimeout(saveTimer);
+    }
+    saveTimer = globalThis.setTimeout(() => {
+      void flushScheduledSave();
+    }, delayMs);
   }
 
   async function clearCompletedRuntimeLifecycleJournalEntriesAfterSave(): Promise<void> {
