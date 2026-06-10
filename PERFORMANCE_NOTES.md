@@ -168,6 +168,17 @@ This and the following dated entries implement Phase 0 of `docs/storage-rearchit
 - Test status (honest): a deterministic red-first regression test for this race is impractical with the current harness — fake timers hang the runtime-refresh flow (it awaits event processing that needs timer advancement), and real timers let the 0ms baseline clone fire before the race can trigger. The race needs torn-timing control, which is exactly what the Phase 1 fault-injection lane (03-WORKFLOW-FIXES W-4) is for; the deterministic test is deferred there. The fix mirrors the four existing tested detach call sites and is validated by the full suite (677 passing) and a green-hard-counter guard with no close-scenario (refresh→align) regression.
 - Guard: unchanged — only the chronic `restore-last-transient-echo firstBroadcastMs` timing item fails. No budget moved.
 
+### 2026-06-10: Workflow fixes W-1/W-2/W-4/W-5/W-8 (symmetric gates, fault lane, CI hard counters)
+
+Implements the process half of the rearchitecture pack (docs/storage-rearchitecture/03-WORKFLOW-FIXES.md; status note added there). No behavior changes to product code.
+
+- **W-1**: AGENTS.md now states that any change touching save/load/compaction, journaling, broadcast, reconciliation, projection, or patch paths is perf-relevant regardless of motive, with a red guard blocking the commit. The projection hunt's Fix Gate cross-references the runtime guard for background-touching fixes. `scripts/perf-runtime-guard.mjs` gained `--hard-only` / `RUNTIME_PERF_GUARD_HARD_ONLY=1` (timing failures report-only, hard counters still fail — verified PASS on this machine where the two chronic timing budgets miss), and CI gained a `runtime-perf-hard-counters` job running it on every PR. Timing remains a blocking local gate.
+- **W-2**: budget changes to `scripts/runtime-perf-budgets.json` are reviewed contract changes (commit prefixed `budget:` + a notes entry with scenario, old/new, measured cause, and why fundamental); loosening without that is disallowed.
+- **W-4**: new `storage-faults` autoresearch lane (CORRECTNESS_GUARDS.md + `autoresearch-accept.mjs` LANE_COMMANDS): the deterministic torn/failed/corrupt/recovery tests plus the storage-v4 generated crash/restart property test at soak scale. That property test is now soak-scalable (`generatedTraceConfig`, 16 seeds × 400 steps under `GENERATED_TRACE_SOAK=1`, ~0.4 s) and included in `pnpm test:soak`, so the nightly soak fault-injects with fresh seeds. The runtime hunt coverage matrix gained a "Process death / storage fault" axis. The storage lane's vitest corpus now includes `storage-v4.test.ts` and `outline-journal.test.ts`.
+- **W-5**: RUNTIME_TRACE_HUNT_GUIDE.md gained an "Incident Log Triage" section — non-routine incidents during dogfooding are treated like failing hunt traces (freeze, reduce, file).
+- **W-8**: save-timing/save-shape changes must run the storage-fault lane before acceptance (AGENTS.md bullet + the hunt guide's fix-pass gate).
+- Not done: W-7 (evidence-log archival). W-6's calendar conditions (3 consecutive ≥10k-op fault soaks, 14 clean dogfood days, zero closed-subtree-guard fires) start counting now.
+
 ### 2026-06-10: Storage Rearchitecture Phase 3 follow-up (event journaling, in-place command gap, burst guard scenario)
 
 Completes the Phase 3 durability story for runtime events and closes a command-path journal gap the new guard scenario exposed.

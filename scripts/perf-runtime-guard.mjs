@@ -131,6 +131,10 @@ export function metricLimit(metric, expected, tolerance = DEFAULT_TOLERANCE) {
 export async function runRuntimePerfGuard(options = {}) {
   const config = loadBudgetConfig(options.budgetFile);
   const smoke = Boolean(options.smoke);
+  // Hard-only mode (CI): hard counters (saves, journalWrites, byte/broadcast/query counts)
+  // still fail the run, but machine-variance-sensitive timing budgets are report-only.
+  // Timing stays a blocking local pre-commit gate (AGENTS.md).
+  const hardOnly = Boolean(options.hardOnly);
   const scenarios = selectScenarios(config, options);
   if (scenarios.length === 0) {
     throw new Error("No runtime perf guard scenarios selected");
@@ -145,6 +149,9 @@ export async function runRuntimePerfGuard(options = {}) {
     });
     results.push({
       ...evaluation,
+      ...(hardOnly
+        ? { passed: evaluation.failures.every((failure) => failure.reason === "timing") }
+        : {}),
       command: profile.command,
       stdout: profile.stdout,
       stderr: profile.stderr
@@ -152,6 +159,7 @@ export async function runRuntimePerfGuard(options = {}) {
   }
   return {
     smoke,
+    hardOnly,
     scenarioCount: scenarios.length,
     results,
     passed: results.every((result) => result.passed)
@@ -195,7 +203,7 @@ export function runProfileScenario(scenario, options = {}) {
 
 export function formatGuardSummary(summary) {
   const lines = [
-    `Runtime perf guard: ${summary.passed ? "PASS" : "FAIL"} (${summary.scenarioCount} scenario${summary.scenarioCount === 1 ? "" : "s"}${summary.smoke ? ", smoke" : ""})`
+    `Runtime perf guard: ${summary.passed ? "PASS" : "FAIL"} (${summary.scenarioCount} scenario${summary.scenarioCount === 1 ? "" : "s"}${summary.smoke ? ", smoke" : ""}${summary.hardOnly ? ", hard counters only" : ""})`
   ];
   for (const result of summary.results) {
     const status = result.passed ? "PASS" : "FAIL";
@@ -205,7 +213,8 @@ export function formatGuardSummary(summary) {
       .join(" ");
     lines.push(`${status} ${result.id}${metrics ? ` ${metrics}` : ""}`);
     for (const failure of result.failures) {
-      lines.push(`  ${failure.metric}: ${failure.actual ?? "missing"} > ${failure.limit} (${failure.reason}, budget ${failure.expected})`);
+      const reportOnly = summary.hardOnly && failure.reason === "timing" ? ", report-only" : "";
+      lines.push(`  ${failure.metric}: ${failure.actual ?? "missing"} > ${failure.limit} (${failure.reason}, budget ${failure.expected}${reportOnly})`);
     }
   }
   return `${lines.join("\n")}\n`;
@@ -225,6 +234,7 @@ function parseCli(argv) {
     scenarios: process.env.RUNTIME_PERF_GUARD_SCENARIOS,
     tags: process.env.RUNTIME_PERF_GUARD_TAGS,
     smoke: process.env.RUNTIME_PERF_GUARD_SMOKE === "1",
+    hardOnly: process.env.RUNTIME_PERF_GUARD_HARD_ONLY === "1",
     json: false,
     list: false
   };
@@ -242,6 +252,8 @@ function parseCli(argv) {
       index += 1;
     } else if (arg === "--smoke") {
       options.smoke = true;
+    } else if (arg === "--hard-only") {
+      options.hardOnly = true;
     } else if (arg === "--json") {
       options.json = true;
     } else if (arg === "--list") {

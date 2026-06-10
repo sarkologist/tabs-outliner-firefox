@@ -10,7 +10,10 @@ const files = [
   "src/sidebar/visible-tree.test.ts",
   "src/background/history.test.ts",
   "src/model/outline.test.ts",
-  "src/background/storage-v2.test.ts"
+  "src/background/storage-v2.test.ts",
+  // Storage-fault lane (W-4.2): generated mutate/journal/compact/fail/crash/restart runs
+  // against the fault-injecting storage mock; every restart must reproduce the model.
+  "src/background/storage-v4.test.ts"
 ];
 
 const baseSeed = positiveIntegerEnv("SOAK_SEED")

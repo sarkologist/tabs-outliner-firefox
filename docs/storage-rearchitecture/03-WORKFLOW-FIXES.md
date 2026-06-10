@@ -1,5 +1,19 @@
 # Workflow Fixes: Ending the Correctness/Performance Pendulum
 
+> **Status (2026-06-10):** W-1 implemented (AGENTS.md scope rule; projection fix-gate
+> cross-reference; CI `runtime-perf-hard-counters` job via the guard's `--hard-only`
+> mode). W-2 implemented (budget-change contract in AGENTS.md). W-3 implemented
+> (`INVARIANTS.md`). W-4 implemented (`storage-faults` lane in
+> autoresearch/CORRECTNESS_GUARDS.md + `scripts/autoresearch-accept.mjs`; the
+> storage-v4 crash/restart property test is soak-scaled and included in
+> `pnpm test:soak`; fault axis added to the runtime hunt coverage matrix). W-5
+> implemented (anomalies-only policy landed in P0.1; triage loop documented in
+> RUNTIME_TRACE_HUNT_GUIDE.md "Incident Log Triage"). W-6 is the standing definition
+> of fixed — its calendar conditions (fault-soak runs, 14 clean dogfood days, zero
+> guard fires) start now. W-7 (evidence-log archival) not yet done. W-8 implemented
+> (save-timing experiments must run the storage-fault lane; in AGENTS.md and the
+> hunt guide's fix-pass gate).
+
 The repo's documented workflow (AGENTS.md, the hunt guides/runbooks,
 autoresearch/CORRECTNESS_GUARDS.md) is unusually strong, but it has structural
 asymmetries that produced the current situation: a correctness branch sitting at HEAD

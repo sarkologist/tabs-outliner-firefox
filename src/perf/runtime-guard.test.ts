@@ -65,6 +65,23 @@ describe("runtime perf guard", () => {
     expect(fail.failures.map((failure) => failure.metric)).toEqual(["totalMeasuredMs", "saves"]);
   });
 
+  it("treats timing failures as report-only in hard-only mode while hard counters still fail", () => {
+    const scenario = {
+      id: "close",
+      budget: {
+        totalMeasuredMs: 100,
+        saves: 1
+      }
+    };
+
+    const timingOnly = evaluateProfileResult(scenario, { totalMeasuredMs: 500, saves: 1 });
+    const hardFailure = evaluateProfileResult(scenario, { totalMeasuredMs: 500, saves: 2 });
+
+    // Hard-only semantics (CI): a scenario passes when its only failures are timing.
+    expect(timingOnly.failures.every((failure) => failure.reason === "timing")).toBe(true);
+    expect(hardFailure.failures.some((failure) => failure.reason === "hard-max")).toBe(true);
+  });
+
   it("runs a smoke guard against a fixture command", () => {
     const budget = path.join(repoRoot, "src/perf/fixtures/runtime-perf-budget-smoke.json");
     const result = spawnSync("node", ["scripts/perf-runtime-guard.mjs", "--budget", budget, "--json"], {

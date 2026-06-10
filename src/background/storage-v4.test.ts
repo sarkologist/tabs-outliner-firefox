@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { NodeId, OutlineNode, OutlineState } from "../model/types.js";
 import { createFaultyStorage } from "../test/faulty-storage.test-support.js";
+import { generatedTraceConfig, generatedTraceTimeoutMs } from "../test/generated-traces.test-support.js";
 import { createOutlineJournal, replayJournal, type OutlineJournalEntry } from "./outline-journal.js";
 import {
   STATE_V4_MANIFEST_A_KEY,
@@ -202,7 +203,15 @@ describe("outline state v4 storage", () => {
   });
 
   it("keeps generated compactions, journal replays, crashes, and restarts loadable as the exact model state", async () => {
-    for (let seed = 1; seed <= 4; seed += 1) {
+    // The storage-fault soak lane (docs/storage-rearchitecture 03-WORKFLOW-FIXES W-4.2):
+    // pnpm test:soak scales this to more seeds and longer runs via GENERATED_TRACE_* env.
+    const config = generatedTraceConfig({
+      defaultSeedCount: 4,
+      defaultSteps: 60,
+      soakSeedCount: 16,
+      soakSteps: 400
+    });
+    for (const seed of config.seeds) {
       const random = seededRandom(seed);
       const faulty = createFaultyStorage();
       const journal = createOutlineJournal(faulty.api, { epoch: 1, now: () => 1000 });
@@ -283,8 +292,7 @@ describe("outline state v4 storage", () => {
 
       await compact("ok");
 
-      const steps = 60;
-      for (let step = 0; step < steps; step += 1) {
+      for (let step = 0; step < config.steps; step += 1) {
         const roll = random();
         if (roll < 0.45) {
           // Mutate: add, rename, or delete a node, journaling the delta.
@@ -332,7 +340,7 @@ describe("outline state v4 storage", () => {
 
       await restart();
     }
-  }, 30000);
+  }, generatedTraceTimeoutMs(30000, 300000));
 });
 
 function seededRandom(seed: number): () => number {
