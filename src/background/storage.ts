@@ -193,7 +193,7 @@ export type StateLoadPhase = {
 };
 
 export type StateStructureRepair = {
-  source: "v3";
+  source: "v3" | "v4";
   rootCountBefore: number;
   rootCountAfter: number;
   parentMismatchCount: number;
@@ -668,7 +668,7 @@ async function loadStateV3FromManifest(
     rootIds: [...manifest.rootIds],
     nodes
   };
-  const repair = normalizeLoadedV3Structure(state);
+  const repair = normalizeLoadedOutlineStructure(state, "v3");
   if (repair) {
     await options.onStructureRepair?.(repair);
   }
@@ -738,7 +738,13 @@ export function outlineStateV3Changes(
   };
 }
 
-function normalizeLoadedV3Structure(state: OutlineState): StateStructureRepair | undefined {
+// Load-time structural repair: re-roots unreachable nodes, drops dangling child refs, and
+// reconciles parent pointers against the reachable tree. Generic over the storage format
+// that produced the state (v3 load and v4 R2 salvage both use it).
+export function normalizeLoadedOutlineStructure(
+  state: OutlineState,
+  source: StateStructureRepair["source"]
+): StateStructureRepair | undefined {
   const originalRootIds = [...state.rootIds];
   const originalParentIds = new Map<NodeId, NodeId | undefined>();
   const referencedChildIds = new Set<NodeId>();
@@ -867,7 +873,7 @@ function normalizeLoadedV3Structure(state: OutlineState): StateStructureRepair |
   }
 
   return {
-    source: "v3",
+    source,
     rootCountBefore,
     rootCountAfter,
     parentMismatchCount,
