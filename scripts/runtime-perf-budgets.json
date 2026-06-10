@@ -330,7 +330,7 @@
         "totalMeasuredMs": 221,
         "totalWithSaveFlushMs": 330,
         "saves": 1,
-        "journalWrites": 0,
+        "journalWrites": 2,
         "projectionMs": 0,
         "mbStringified": 13,
         "stateBroadcasts": 1,

@@ -168,6 +168,13 @@ This and the following dated entries implement Phase 0 of `docs/storage-rearchit
 - Test status (honest): a deterministic red-first regression test for this race is impractical with the current harness — fake timers hang the runtime-refresh flow (it awaits event processing that needs timer advancement), and real timers let the 0ms baseline clone fire before the race can trigger. The race needs torn-timing control, which is exactly what the Phase 1 fault-injection lane (03-WORKFLOW-FIXES W-4) is for; the deterministic test is deferred there. The fix mirrors the four existing tested detach call sites and is validated by the full suite (677 passing) and a green-hard-counter guard with no close-scenario (refresh→align) regression.
 - Guard: unchanged — only the chronic `restore-last-transient-echo firstBroadcastMs` timing item fails. No budget moved.
 
+### 2026-06-10: budget: command-move-leaf journalWrites 0 -> 2
+
+- Scenario: `command-move-leaf` (same-parent reorder of the last tab in a 50,000-tab window).
+- Old/new: `journalWrites` 0 → 2. All other budget values unchanged.
+- Measured cause: the reorder's delta includes the 50k-childIds window node, which exceeds the journal weight cap, so the command now durably records a `{spill: true}` marker (write 1) per the spill rule, and the post-flush journal prune advances `outline:v4:journal:meta` (write 2). Both are journal-class small-byte writes (`journalKbStringified` ≈ 1), not state saves; `saves` stays 1.
+- Why fundamental rather than incidental: the marker is the architecture's designed record that a change bypassed the journal — it is what lets the loader detect an un-folded broad change (`journalSpillGap`) and what Phase 4 needs before candidate threading can be deleted (the journal becomes the compactor's only dirty-source, with markers forcing full compactions). Suppressing the write would re-create the silent heavy-delta gap.
+
 ### 2026-06-10: Spill markers for heavy deltas (Phase 4 prerequisite)
 
 Heavy command deltas (weight over `JOURNAL_SPILL_NODE_LIMIT` 2,000 — any edit touching a huge-childIds parent) previously skipped the journal **silently**: the deferred snapshot was their only durability, the loader had no way to know a broad change was un-journaled, and Phase 4 cannot delete candidate threading while the journal is blind to heavy edits.
