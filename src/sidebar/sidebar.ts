@@ -6,7 +6,7 @@ import {
   INITIAL_TREE_SNAPSHOT_ROW_LIMIT,
   type InitialTreeSnapshot,
   type ProjectionSliceCoverage
-} from "../background/storage.js";
+} from "../background/initial-tree-snapshot.js";
 import { analyzeRestoreScope, runtimeTitleForOutlineTab, type RestoreScope } from "../model/outline.js";
 import { isOutlinerSidebarNode } from "../model/outliner-page.js";
 import type { NodeId, OutlineNode, OutlineState } from "../model/types.js";

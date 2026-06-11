@@ -42,7 +42,9 @@ import { createStateCache } from "./state-cache.js";
 import {
   INITIAL_TREE_SNAPSHOT_ROW_LIMIT,
   createInitialTreeSnapshotProjector,
-  initialTreeSnapshotForState,
+  initialTreeSnapshotForState
+} from "./initial-tree-snapshot.js";
+import {
   loadHistory,
   loadInitialTreeSnapshot,
   HISTORY_KEY,
@@ -75,8 +77,8 @@ import {
   type OutlineJournalAppendItem,
   type OutlineJournalEntry
 } from "./outline-journal.js";
+import type { InitialTreeSnapshot } from "./initial-tree-snapshot.js";
 import type {
-  InitialTreeSnapshot,
   LoadStateOptions,
   StateLoadPhase,
   StateStructureRepair

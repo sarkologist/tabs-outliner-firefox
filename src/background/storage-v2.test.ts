@@ -2,16 +2,17 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   INITIAL_TREE_SNAPSHOT_ROW_LIMIT,
+  createInitialTreeSnapshotProjector,
+  initialTreeSnapshotForState
+} from "./initial-tree-snapshot.js";
+import {
   STATE_KEY,
   STATE_V2_MANIFEST_KEY,
   STATE_V3_BOOT_SNAPSHOT_KEY,
   STATE_V3_MANIFEST_KEY,
   loadInitialTreeSnapshot,
-  loadState,
   loadStateWithMetadata,
   loadStateV3,
-  createInitialTreeSnapshotProjector,
-  initialTreeSnapshotForState,
   outlineBootSnapshotItem,
   type StateStructureRepair
 } from "./storage.js";
@@ -394,7 +395,7 @@ describe("outline state v3 storage", () => {
     expect(saved?.[STATE_V2_MANIFEST_KEY]).toBeUndefined();
     expect(saved?.[STATE_V3_MANIFEST_KEY]).toBeDefined();
     await expect(loadStateV3(api)).resolves.toEqual(state);
-    await expect(loadState(api)).resolves.toEqual(state);
+    await expect(loadStateWithMetadata(api).then((loaded) => loaded?.state)).resolves.toEqual(state);
   });
 
   it("loads v3 structure from manifest roots and order pages over stale parent ids", async () => {
@@ -516,7 +517,7 @@ describe("outline state v3 storage", () => {
     const api = fakeApi(outlineStateV2Items(v2State, { revision: 10 }));
     await api.storage.local.set(outlineStateV3Items(v3State));
 
-    await expect(loadState(api)).resolves.toEqual(v3State);
+    await expect(loadStateWithMetadata(api).then((loaded) => loaded?.state)).resolves.toEqual(v3State);
   });
 
   it("salvages v3 when an order page is missing instead of failing the load", async () => {

@@ -4,15 +4,14 @@ import {
   STATE_V3_MANIFEST_KEY,
   STATE_V3_NODE_SHARD_COUNT,
   STATE_V3_ORDER_PAGE_SIZE,
-  initialTreeSnapshotForState,
   outlineNodeShardIndex,
   stateV3OrderPageKey,
-  type InitialTreeSnapshot,
   type StateV3Manifest,
   type StateV3NodeShard,
   type StateV3OrderPage,
   type StoredOutlineNode
 } from "./storage.js";
+import { initialTreeSnapshotForState, type InitialTreeSnapshot } from "./initial-tree-snapshot.js";
 
 // The v2 record shapes live only here now: production neither reads nor writes
 // v2, and these fixtures exist to seed tests that prove leftover v2 keys are

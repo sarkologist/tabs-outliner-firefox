@@ -1,4 +1,4 @@
-import type { InitialTreeSnapshot } from "../background/storage.js";
+import type { InitialTreeSnapshot } from "../background/initial-tree-snapshot.js";
 
 declare global {
   interface Window {

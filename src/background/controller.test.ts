@@ -21,7 +21,7 @@ import {
   STATE_KEY,
   STATE_V2_MANIFEST_KEY,
   STATE_V3_MANIFEST_KEY,
-  loadState,
+  loadStateWithMetadata,
   outlineBootSnapshotItem
 } from "./storage.js";
 import { outlineStateV2Items, outlineStateV3Items } from "./storage-legacy-write.test-support.js";
@@ -25935,7 +25935,7 @@ function isV4ManifestWrite(items: Record<string, unknown>): boolean {
 async function loadPersistedOutlineState(api: WebExtensionBrowser): Promise<OutlineState | undefined> {
   const v4 = await loadStateV4(api);
   if (!v4) {
-    return loadState(api);
+    return loadStateWithMetadata(api).then((loaded) => loaded?.state);
   }
   const journal = createOutlineJournal(api, { epoch: 0 });
   const init = await journal.init();
