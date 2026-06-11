@@ -55,6 +55,7 @@ import {
 } from "./storage.js";
 import {
   STATE_V4_MIGRATION_BACKUP_KEY,
+  STATE_V4_MIGRATION_BACKUP_META_KEY,
   loadStateV4,
   outlineStateV4Snapshot,
   stateV4ShardIndexForNodeId,
@@ -66,6 +67,7 @@ import {
   JOURNAL_SPILL_NODE_LIMIT,
   JournalFullError,
   createOutlineJournal,
+  outlineJournalDeltaWeight,
   replayJournal,
   type OutlineJournal,
   type OutlineJournalAppendItem
@@ -376,6 +378,9 @@ const SAVE_FAILURE_BACKOFF_MS = [1000, 4000, 16000] as const;
 // loss window on process death is the max delay below (vs 1-30s of deferred-save loss).
 const EVENT_JOURNAL_QUIET_DELAY_MS = 50;
 const EVENT_JOURNAL_MAX_DELAY_MS = 250;
+// The migration's portable-tree backup is a one-time safety copy; reclaim its quota after
+// the soak window (01-TARGET-ARCHITECTURE.md section 6).
+const MIGRATION_BACKUP_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 // The boot snapshot is a cold-start-only first-paint cache, written on its own debounce
 // rather than embedded in every save's manifest. Staleness up to this window is harmless:
 // it is superseded by full hydration immediately after first paint.
@@ -443,6 +448,10 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   // The active v4 snapshot (manifest + the slot it occupies). Undefined until the first v4
   // load, migration, or full compaction of this session.
   let currentV4Snapshot: { manifest: StateV4Manifest; slot: StateV4ManifestSlot } | undefined;
+  // The snapshot currentV4Snapshot superseded (still stored in the other manifest slot, the
+  // R1 fallback). The next compaction overwrites its slot, at which point the shard keys
+  // only it referenced become collectable -- never earlier (I-5).
+  let previousV4Snapshot: { manifest: StateV4Manifest; slot: StateV4ManifestSlot } | undefined;
   // Shard indexes touched by journal appends since the last compaction that folded them in.
   // Unioned with the pending save's candidate shards to compute a compaction's dirty set.
   let journalTouchedSinceCompaction = new Set<number>();
@@ -1986,14 +1995,22 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       perfTrace.measureAsync("background.runtime.getWindows", () => getNormalWindows(api)),
       perfTrace.measureAsync("background.state.load", () => loadStateV4(api)),
       loadRuntimeLifecycleJournal(api),
-      api.storage.local.get([JOURNAL_META_KEY, STATE_V3_MANIFEST_KEY, STATE_V2_MANIFEST_KEY, STATE_KEY])
+      api.storage.local.get([
+        JOURNAL_META_KEY,
+        STATE_V3_MANIFEST_KEY,
+        STATE_V2_MANIFEST_KEY,
+        STATE_KEY,
+        STATE_V4_MIGRATION_BACKUP_META_KEY
+      ])
     ]);
     const legacyKeysPresent = Boolean(
       startupKeys[STATE_V3_MANIFEST_KEY] || startupKeys[STATE_V2_MANIFEST_KEY] || startupKeys[STATE_KEY]
     );
+    const migrationBackupExportedAt = readMigrationBackupExportedAt(startupKeys[STATE_V4_MIGRATION_BACKUP_META_KEY]);
     let loaded: LoadedOutlineState | undefined;
     if (v4Loaded) {
       currentV4Snapshot = { manifest: v4Loaded.manifest, slot: v4Loaded.slot };
+      previousV4Snapshot = undefined;
       loaded = {
         state: v4Loaded.state,
         format: "v4",
@@ -2008,10 +2025,31 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         });
       }
       if (legacyKeysPresent) {
-        // A previous migration wrote the v4 store but died before deleting the legacy keys.
-        void deleteLegacyStateKeys().catch((error) => {
-          perfTrace.mark("background.state.migration.cleanup.error", { message: errorText(error) });
-        });
+        if (migrationBackupExportedAt !== undefined) {
+          // A completed migration (evidenced by the backup meta) died before deleting the
+          // legacy keys; finish the cleanup off-path.
+          void deleteLegacyStateKeys().catch((error) => {
+            perfTrace.mark("background.state.migration.cleanup.error", { message: errorText(error) });
+          });
+        } else {
+          // A v4 store exists without migration evidence: it was written by saves during a
+          // degraded-load session whose migration was deferred. Keep the legacy keys as the
+          // recovery resource they are and surface the stuck state.
+          await recordIncidentLog("legacyKeysRetainedWithoutMigrationEvidence", {
+            ...outlineStateCountDetail(v4Loaded.state)
+          });
+        }
+      }
+      if (
+        migrationBackupExportedAt !== undefined &&
+        now() - migrationBackupExportedAt > MIGRATION_BACKUP_TTL_MS &&
+        !legacyKeysPresent
+      ) {
+        // The post-migration safety copy has served its soak window; reclaim the quota.
+        void api.storage.local.remove([STATE_V4_MIGRATION_BACKUP_KEY, STATE_V4_MIGRATION_BACKUP_META_KEY])
+          .catch((error) => {
+            perfTrace.mark("background.state.migration.backup.expire.error", { message: errorText(error) });
+          });
       }
     } else {
       loaded = await perfTrace.measureAsync("background.state.load.legacy", () =>
@@ -2053,9 +2091,21 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       await recordIncidentLog("staleV2FallbackUsed", { ...outlineStateCountDetail(loaded.state) });
     }
     if (!v4Loaded && stored) {
-      // First startup on the v4 store: migrate the legacy (journal-replayed) state. Failure
-      // keeps the legacy keys authoritative and retries next startup.
-      await migrateLegacyStateToV4(stored);
+      if (loaded?.salvaged || loaded?.staleV2Fallback) {
+        // Never migrate (and never delete legacy keys) off a degraded read: a transient
+        // storage fault that produced an empty or partial salvage must stay recoverable on
+        // a later startup with the legacy store intact. The session runs on the salvaged
+        // state; migration retries on the next clean load.
+        await recordIncidentLog("v4MigrationDeferredDegradedLoad", {
+          salvaged: loaded.salvaged === true,
+          staleV2Fallback: loaded.staleV2Fallback === true,
+          ...outlineStateCountDetail(stored)
+        });
+      } else {
+        // First startup on the v4 store: migrate the legacy (journal-replayed) state.
+        // Failure keeps the legacy keys authoritative and retries next startup.
+        await migrateLegacyStateToV4(stored);
+      }
     }
     let storedRuntimeMatch: RuntimeSnapshotMatch | undefined;
     let consumedRuntimeLifecycleJournalEntryIds: string[] = [];
@@ -2727,7 +2777,17 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     historyState = direction === "undo"
       ? pushRedoEntry(popped.history, popped.entry, activePreferences.undoHistoryLimit)
       : pushUndoEntryPreservingRedo(popped.history, popped.entry, activePreferences.undoHistoryLimit);
-    await persistWithBestEffortPatch(current, next, { diffMode: "material", saveSchedule });
+    const persistResult = await persistWithBestEffortPatch(current, next, { diffMode: "material", saveSchedule });
+    // History replay must be durable before its ack like any other mutating command: the
+    // command it reverts is already in the outline journal, and a restart that replays that
+    // entry with no counter-entry would resurrect the change the user saw undone. Undos that
+    // touch live runtime state already wrote a lifecycle "history" intent above, and startup
+    // recovery replays that with runtime reconciliation -- journaling those too would apply
+    // the delta twice with conflicting merge semantics. Only the closed-only undos (no
+    // lifecycle entry, the previously uncovered case) go through the outline journal.
+    if (!runtimeLifecycleJournalEntry) {
+      await appendCommandJournal(current, next, persistResult.candidateNodeIds, direction, "historyReplay");
+    }
     scheduleHistorySave(historyState, saveSchedule);
     broadcastHistoryStatusSoon(historyState);
     runtimeFacts.commitCommand(transaction.id);
@@ -5288,6 +5348,9 @@ export function createBackgroundController(options: BackgroundControllerOptions)
             journalSeqIncluded: journalSeqIncluded ?? currentV4Snapshot?.manifest.journalSeqIncluded ?? 0,
             savedAt: now(),
             ...(currentV4Snapshot ? { previous: currentV4Snapshot } : {}),
+            // This write evicts the manifest two compactions back from its slot; only the
+            // keys solely referenced by that manifest are collectable (keeps R1 loadable).
+            ...(previousV4Snapshot ? { collect: previousV4Snapshot.manifest } : {}),
             ...(dirtyShardIndexes ? { dirtyShardIndexes } : {})
           });
           Object.assign(setItems, v4Snapshot.setItems);
@@ -5306,9 +5369,10 @@ export function createBackgroundController(options: BackgroundControllerOptions)
           await api.storage.local.set(setItems);
         }
         if (v4Snapshot) {
+          previousV4Snapshot = currentV4Snapshot;
           currentV4Snapshot = { manifest: v4Snapshot.manifest, slot: v4Snapshot.slot };
           if (v4Snapshot.removeKeysAfterCommit.length > 0) {
-            // Superseded old-generation shard keys; a failed remove is harmless garbage.
+            // Keys no stored manifest references anymore; a failed remove is harmless garbage.
             void api.storage.local.remove(v4Snapshot.removeKeysAfterCommit).catch((error) => {
               perfTrace.mark("background.state.save.v4.gc.error", { message: errorText(error) });
             });
@@ -5415,7 +5479,8 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     previous: OutlineState,
     next: OutlineState,
     candidateNodeIds: readonly NodeId[] | undefined,
-    label: string
+    label: string,
+    kind: "command" | "historyReplay" = "command"
   ): Promise<boolean> {
     if (!outlineJournal) {
       return false;
@@ -5423,29 +5488,18 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     // Any coalesced event deltas captured before this command must land first so journal
     // seq order stays chronological (replay applies absolute node records in seq order).
     const queuedEventItems = drainPendingEventJournalItems();
-    const item = journalDeltaItem(previous, next, candidateNodeIds, "command", label);
+    const item = journalDeltaItem(previous, next, candidateNodeIds, kind, label);
     if (!item) {
       // No durable change to record (e.g. a no-op move); nothing for the checkpoint to flush.
       await appendOutlineJournalItems(queuedEventItems);
       return true;
     }
-    // A delta too heavy to journal cheaply -- a huge subtree delete, or any change to a
-    // parent with a large childIds array (e.g. a reorder in a 50k-tab window) -- stays on
-    // the deferred snapshot save path. A spill marker records the gap durably (a loader
-    // replaying past an unfolded marker knows the snapshot may miss a broad change), and
-    // the pending save drops to the faster normal schedule so the loss window is bounded
-    // by seconds rather than the 30s interaction deferral. Weight is estimated without
-    // serializing: node count plus total childIds across updated nodes.
-    const updatedNodes = item.delta?.updatedNodes ?? [];
-    const weight = updatedNodes.length + (item.delta?.deletedNodeIds?.length ?? 0) +
-      updatedNodes.reduce((sum, node) => sum + node.childIds.length, 0);
-    if (weight > JOURNAL_SPILL_NODE_LIMIT) {
-      await appendOutlineJournalItems([...queuedEventItems, { kind: "command", label, spill: true }]);
-      tightenPendingSaveScheduleAfterSpill();
-      return false;
-    }
-    await appendOutlineJournalItems([...queuedEventItems, item]);
-    return true;
+    // The journal module is the single spill authority (node/childIds weight plus a byte
+    // cap): a too-heavy delta is durably recorded as a delta-less spill marker instead.
+    // When that happens the change itself is NOT in the journal, so report false -- the
+    // caller keeps its checkpoint flush, and the spill already tightened the save schedule.
+    const spilled = await appendOutlineJournalItems([...queuedEventItems, item]);
+    return !spilled;
   }
 
   // A spill means the journal does NOT carry the change, so the snapshot save must land
@@ -5478,14 +5532,8 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       await appendOutlineJournalItems(queuedEventItems);
       return true;
     }
-    const weight = updatedNodes.length + updatedNodes.reduce((sum, node) => sum + node.childIds.length, 0);
-    if (weight > JOURNAL_SPILL_NODE_LIMIT) {
-      await appendOutlineJournalItems([...queuedEventItems, { kind: "command", label, spill: true }]);
-      tightenPendingSaveScheduleAfterSpill();
-      return false;
-    }
-    await appendOutlineJournalItems([...queuedEventItems, { kind: "command", label, delta: { updatedNodes } }]);
-    return true;
+    const spilled = await appendOutlineJournalItems([...queuedEventItems, { kind: "command", label, delta: { updatedNodes } }]);
+    return !spilled;
   }
 
   // Queue a runtime-event delta for coalesced journaling. Returns true when the transition
@@ -5533,10 +5581,14 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   }
 
   function queueEventJournalItem(item: OutlineJournalAppendItem): boolean {
-    const updatedNodes = item.delta?.updatedNodes ?? [];
-    const weight = updatedNodes.length + (item.delta?.deletedNodeIds?.length ?? 0) +
-      updatedNodes.reduce((sum, node) => sum + node.childIds.length, 0);
-    if (weight > JOURNAL_SPILL_NODE_LIMIT) {
+    // Events have no ack to anchor a synchronous spill response, so a weight-heavy delta is
+    // declined here (the caller keeps its checkpoint flush where wired) and the pending
+    // save is tightened so the un-journaled change reaches the snapshot within seconds even
+    // at call sites that do not check the return value. Byte-heavy deltas that pass this
+    // cheap pre-check are caught at flush time by the journal's spill authority, which also
+    // tightens the schedule.
+    if (item.delta && outlineJournalDeltaWeight(item.delta) > JOURNAL_SPILL_NODE_LIMIT) {
+      tightenPendingSaveScheduleAfterSpill();
       return false;
     }
     pendingEventJournalItems.push(item);
@@ -5588,9 +5640,12 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     }
   }
 
-  async function appendOutlineJournalItems(items: OutlineJournalAppendItem[]): Promise<void> {
+  // Appends items and returns whether the journal spilled any of them (recorded a delta-less
+  // marker instead of the delta). A spill means the change is NOT recoverable from the
+  // journal, so the pending save schedule is tightened here for every caller.
+  async function appendOutlineJournalItems(items: OutlineJournalAppendItem[]): Promise<boolean> {
     if (!outlineJournal || items.length === 0) {
-      return;
+      return false;
     }
     try {
       const result = await perfTrace.measureAsync("background.journal.append", { entries: items.length }, () =>
@@ -5605,16 +5660,14 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         }
       }
       if (result.spilled) {
-        // Heavy deltas are filtered out before we reach here; a residual byte-spill is left
-        // to the deferred v3 save (silently, so routine large-tree edits do not log or
-        // count as a save flush).
         perfTrace.mark("background.journal.spill", { entries: items.length });
+        tightenPendingSaveScheduleAfterSpill();
       }
+      return result.spilled;
     } catch (error) {
       if (error instanceof JournalFullError) {
         await compactOutlineJournal();
-        await outlineJournal.append(items);
-        return;
+        return appendOutlineJournalItems(items);
       }
       throw error;
     }
@@ -5639,6 +5692,13 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     return 0;
   }
 
+  function readMigrationBackupExportedAt(value: unknown): number | undefined {
+    if (value && typeof value === "object" && typeof (value as { exportedAt?: unknown }).exportedAt === "number") {
+      return (value as { exportedAt: number }).exportedAt;
+    }
+    return undefined;
+  }
+
   // One-time v3/v2 -> v4 migration: write a complete v4 store from the loaded legacy state,
   // read it back and verify it reproduces that state exactly, write a portable-tree backup,
   // and only then delete the legacy keys. Any failure removes the just-written v4 keys so
@@ -5649,30 +5709,39 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       journalSeqIncluded: outlineJournal?.headSeq() ?? 0,
       savedAt: now()
     });
+    // One written-key set drives both the write and the failure rollback so they cannot
+    // diverge (the boot snapshot key must roll back too).
+    const writtenItems: Record<string, unknown> = {
+      ...snapshot.setItems,
+      ...outlineBootSnapshotItem(stored, now())
+    };
     try {
       await perfTrace.measureAsync("background.state.migration.write", () =>
-        api.storage.local.set({
-          ...snapshot.setItems,
-          ...outlineBootSnapshotItem(stored, now())
-        })
+        api.storage.local.set(writtenItems)
       );
       const verify = await loadStateV4(api);
       if (!verify || verify.recovery !== "r0" || !statesMateriallyEqual(verify.state, stored)) {
         throw new Error(verify ? `verification mismatch (${verify.recovery})` : "verification load failed");
       }
       currentV4Snapshot = { manifest: snapshot.manifest, slot: snapshot.slot };
+      previousV4Snapshot = undefined;
       await api.storage.local.set({
         [STATE_V4_MIGRATION_BACKUP_KEY]: {
           version: 1,
           exportedAt: now(),
           tree: exportPortableTree(stored, { now: now() })
-        }
+        },
+        // The tiny meta record is the durable "migration completed" evidence: startup gates
+        // legacy-key cleanup on it and expires the backup through it without ever
+        // deserializing the multi-MB backup value.
+        [STATE_V4_MIGRATION_BACKUP_META_KEY]: { version: 1, exportedAt: now() }
       });
       await deleteLegacyStateKeys();
       await recordIncidentLog("v4MigrationComplete", { ...outlineStateCountDetail(stored) });
     } catch (error) {
       currentV4Snapshot = undefined;
-      await api.storage.local.remove(Object.keys(snapshot.setItems)).catch(() => undefined);
+      previousV4Snapshot = undefined;
+      await api.storage.local.remove(Object.keys(writtenItems)).catch(() => undefined);
       await recordIncidentLog("v4MigrationFailed", { message: errorText(error) });
     }
   }

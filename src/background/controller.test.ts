@@ -32555,6 +32555,53 @@ describe("background controller lifecycle", () => {
     expect(state.nodes["window:10"]?.title).toBe("Renamed");
   });
 
+  it("I-1: an acked undo survives a restart before any save instead of resurrecting the undone change", async () => {
+    const runtime = fakeRuntime(
+      [{ id: 10, focused: true, incognito: false }],
+      [{ id: 1, windowId: 10, index: 0, active: true, url: "https://one.example/", title: "One" }]
+    );
+    let controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    await controller.flushPendingSaves();
+
+    // The rename is journaled before its ack; the undo must be too, or a restart replays
+    // the rename's entry over the pre-rename snapshot and resurrects the undone change.
+    expectCommandAck(await controller.handleMessage({ type: "renameGroup", nodeId: "window:10", title: "Renamed" }), true);
+    expectCommandAck(await controller.handleMessage({ type: "undo" }), true);
+
+    controller = restartControllerAbrupt(runtime);
+    const state = await controller.ensureState();
+
+    expect(state.nodes["window:10"]?.customTitle).toBeUndefined();
+    expect(state.nodes["window:10"]?.title).not.toBe("Renamed");
+  });
+
+  it("defers migration and keeps legacy keys when the legacy load was salvaged", async () => {
+    const storedState = wideClosedTabState(50);
+    const initialStorage = outlineStateV3Changes(storedState).setItems;
+    // Corrupt one v3 shard: the load salvages (partial tree) -- a possibly-transient fault
+    // that must never become a permanent migration.
+    const shardKey = Object.keys(initialStorage).find((key) => key.startsWith("outlineState:v3:nodes:"));
+    initialStorage[shardKey!] = { not: "a shard" };
+    const runtime = fakeRuntime(
+      [{ id: 10, focused: true, incognito: false }],
+      [],
+      { initialStorage }
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+
+    await controller.ensureState();
+
+    const incidentLog = await loadIncidentLog(runtime.api);
+    expect(incidentLog.some((entry) => entry.event === "v4MigrationDeferredDegradedLoad")).toBe(true);
+    expect(incidentLog.some((entry) => entry.event === "v4MigrationComplete")).toBe(false);
+    // The legacy store stays authoritative for the next (hopefully clean) startup.
+    const legacy = await runtime.api.storage.local.get(STATE_V3_MANIFEST_KEY);
+    expect(legacy[STATE_V3_MANIFEST_KEY]).toBeDefined();
+    const backup = await runtime.api.storage.local.get("outline:v4:migrationBackup");
+    expect(backup["outline:v4:migrationBackup"]).toBeUndefined();
+  });
+
   it("I-1: an acked rename survives a torn snapshot save across restart via journal replay", async () => {
     const runtime = fakeRuntime(
       [{ id: 10, focused: true, incognito: false }],

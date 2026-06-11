@@ -1506,13 +1506,20 @@ function orderPageKeysForStoredNode(node: StoredOutlineNode, orderPageSize: numb
   return keys;
 }
 
-function stateV3NodeShardIndex(nodeId: NodeId): number {
+// One FNV-1a shard hash shared by the v3 and v4 stores: node-to-shard assignment must stay
+// byte-identical across formats (migration re-shards by id; a silent divergence would make
+// dirty-shard compaction write the wrong shard).
+export function outlineNodeShardIndex(nodeId: NodeId, shardCount: number): number {
   let hash = 0x811c9dc5;
   for (let index = 0; index < nodeId.length; index += 1) {
     hash ^= nodeId.charCodeAt(index);
     hash = Math.imul(hash, 0x01000193);
   }
-  return (hash >>> 0) % STATE_V3_NODE_SHARD_COUNT;
+  return (hash >>> 0) % shardCount;
+}
+
+function stateV3NodeShardIndex(nodeId: NodeId): number {
+  return outlineNodeShardIndex(nodeId, STATE_V3_NODE_SHARD_COUNT);
 }
 
 function stateV3NodeShardKey(shardIndex: number): string {

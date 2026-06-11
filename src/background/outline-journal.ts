@@ -104,6 +104,18 @@ export function createOutlineJournal(
   let tailSeq = 0;
   let nextBatch = 0;
   let liveBatches: LiveBatch[] = [];
+  // All storage-touching operations are serialized through one chain: append() and prune()
+  // each read seq/batch bookkeeping, await a storage write, then commit it back. Two such
+  // operations overlapping across the await would compute the same seq/slot key (an event
+  // coalescer flush runs on plain timers, outside any caller-side queue) and overwrite each
+  // other, or prune slots a concurrent append's meta still references.
+  let opQueue: Promise<unknown> = Promise.resolve();
+
+  function serialize<T>(operation: () => Promise<T>): Promise<T> {
+    const run = opQueue.then(operation, operation);
+    opQueue = run.catch(() => undefined);
+    return run;
+  }
 
   function firstBatch(): number {
     return liveBatches.length > 0 ? liveBatches[0]!.batch : nextBatch;
@@ -160,7 +172,7 @@ export function createOutlineJournal(
     };
   }
 
-  async function append(batch: OutlineJournalAppendItem[]): Promise<OutlineJournalAppendResult> {
+  async function appendNow(batch: OutlineJournalAppendItem[]): Promise<OutlineJournalAppendResult> {
     if (batch.length === 0) {
       return { seq: headSeq, spilled: false };
     }
@@ -210,7 +222,7 @@ export function createOutlineJournal(
     return { seq: headSeq, spilled };
   }
 
-  async function prune(throughSeq: number): Promise<void> {
+  async function pruneNow(throughSeq: number): Promise<void> {
     let removed = 0;
     const removeKeys: string[] = [];
     for (const liveBatch of liveBatches) {
@@ -261,9 +273,9 @@ export function createOutlineJournal(
   }
 
   return {
-    init,
-    append,
-    prune,
+    init: () => serialize(init),
+    append: (batch) => serialize(() => appendNow(batch)),
+    prune: (throughSeq) => serialize(() => pruneNow(throughSeq)),
     pendingEntryCount,
     pendingBytes,
     headSeq: () => headSeq,
@@ -320,9 +332,18 @@ export function replayJournal(state: OutlineState, entries: readonly OutlineJour
   };
 }
 
+// The single authority for "too heavy to journal". Weight counts nodes plus their inline
+// childIds (a cheap serialization proxy that catches huge-childIds parents without
+// stringifying); the byte check catches node-light but byte-heavy deltas (long URLs,
+// data-URI favicons) and only runs when the weight check passed.
+export function outlineJournalDeltaWeight(delta: OutlineJournalDelta): number {
+  const updatedNodes = delta.updatedNodes ?? [];
+  return updatedNodes.length + (delta.deletedNodeIds?.length ?? 0) +
+    updatedNodes.reduce((sum, node) => sum + node.childIds.length, 0);
+}
+
 function deltaExceedsSpillLimit(delta: OutlineJournalDelta): boolean {
-  const touchedCount = (delta.updatedNodes?.length ?? 0) + (delta.deletedNodeIds?.length ?? 0);
-  if (touchedCount > JOURNAL_SPILL_NODE_LIMIT) {
+  if (outlineJournalDeltaWeight(delta) > JOURNAL_SPILL_NODE_LIMIT) {
     return true;
   }
   return JSON.stringify(delta).length > JOURNAL_SPILL_BYTE_LIMIT;

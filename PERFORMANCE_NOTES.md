@@ -168,6 +168,18 @@ This and the following dated entries implement Phase 0 of `docs/storage-rearchit
 - Test status (honest): a deterministic red-first regression test for this race is impractical with the current harness — fake timers hang the runtime-refresh flow (it awaits event processing that needs timer advancement), and real timers let the 0ms baseline clone fire before the race can trigger. The race needs torn-timing control, which is exactly what the Phase 1 fault-injection lane (03-WORKFLOW-FIXES W-4) is for; the deterministic test is deferred there. The fix mirrors the four existing tested detach call sites and is validated by the full suite (677 passing) and a green-hard-counter guard with no close-scenario (refresh→align) regression.
 - Guard: unchanged — only the chronic `restore-last-transient-echo firstBroadcastMs` timing item fails. No budget moved.
 
+### 2026-06-10: Code-review fixes (6 confirmed durability bugs)
+
+A max-effort multi-agent review of the branch confirmed six bugs, all storage-fault/concurrency interleavings. Fixes:
+
+- **Migration on degraded loads**: salvaged/staleV2Fallback legacy loads no longer migrate (incident `v4MigrationDeferredDegradedLoad`; legacy keys stay authoritative for the next clean startup). Legacy-key cleanup after a v4 load now requires migration evidence (`outline:v4:migrationBackupMeta`), so a degraded session's v4 saves can never trigger legacy deletion (`legacyKeysRetainedWithoutMigrationEvidence` surfaces the stuck state). The backup now expires after 7 days via the tiny meta key; the failure rollback covers every written key incl. the boot snapshot.
+- **Shadow-paging GC (I-5)**: `removeKeysAfterCommit` now lists only keys NEITHER stored manifest references — the writer takes `collect` (the manifest evicted from the target slot, two compactions back) and the controller tracks `previousV4Snapshot`. A torn-but-resolved compaction can no longer delete the R1 fallback slot's shards; the property test's crash mode now also runs the post-commit GC.
+- **Journal serialization**: `append`/`prune`/`init` run through an internal single-flight op queue, eliminating the same-seq/same-slot overwrite between overlapping event-flush/command appends and the prune-vs-append meta corruption. New concurrency tests.
+- **Spill authority unified**: the journal module is the single spill judge (node+childIds weight, then a byte cap); the controller's three duplicated weight pre-checks are deleted; `appendOutlineJournalItems` returns `spilled` and tightens the save schedule itself, and command appenders return false on spill so the checkpoint flush runs — closing the byte-heavy/node-light loss window. The JournalFullError retry now re-enters the tracked path.
+- **Undo/redo journaled (I-1)**: closed-only history replays (no lifecycle intent) append a `historyReplay` entry before ack, so a restart can no longer resurrect an undone change by replaying only the original command's entry. Runtime-touching undos keep lifecycle-journal recovery exclusively (journaling both double-applied the delta — caught by the regression trace corpus).
+- Incident-log cache updates after the write lands; the FNV-1a shard hash is now one shared `outlineNodeShardIndex`.
+- Validation: 713 tests (4 new), hard-only guard PASS, no budget moved.
+
 ### 2026-06-10: budget: command-move-leaf journalWrites 0 -> 2
 
 - Scenario: `command-move-leaf` (same-parent reorder of the last tab in a 50,000-tab window).

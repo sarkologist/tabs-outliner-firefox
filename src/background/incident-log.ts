@@ -72,13 +72,15 @@ async function appendIncidentLogEntryNow(
     entry.detail = normalized;
   }
   const nextEntries = [...cached, entry].slice(-limit);
-  cachedEntriesByApi.set(api, nextEntries);
   await api.storage.local.set({
     [INCIDENT_LOG_STORAGE_KEY]: {
       version: INCIDENT_LOG_VERSION,
       entries: nextEntries
     }
   });
+  // Update the cache only after the write lands: a rejected set must not leave a phantom
+  // entry in memory that the next successful append would then persist.
+  cachedEntriesByApi.set(api, nextEntries);
 }
 
 function normalizeIncidentLog(value: unknown): StoredIncidentLog {

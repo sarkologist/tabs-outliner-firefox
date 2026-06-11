@@ -1,6 +1,6 @@
 import type { NodeId, OutlineNode, OutlineState } from "../model/types.js";
 import { cloneOutlineNode } from "./history.js";
-import { normalizeLoadedOutlineStructure, type StateStructureRepair } from "./storage.js";
+import { normalizeLoadedOutlineStructure, outlineNodeShardIndex, type StateStructureRepair } from "./storage.js";
 
 // v4 snapshot store: 32 generation-stamped node shards (childIds inline -- no order pages)
 // plus double-buffered manifests. Consistency is verifiable from storage alone: a shard is
@@ -13,6 +13,9 @@ export const STATE_V4_MANIFEST_B_KEY = "outline:v4:manifest:b";
 export const STATE_V4_NODE_SHARD_PREFIX = "outline:v4:nodes:";
 export const STATE_V4_NODE_SHARD_COUNT = 32;
 export const STATE_V4_MIGRATION_BACKUP_KEY = "outline:v4:migrationBackup";
+// Tiny side record for the multi-MB backup key: lets startup check migration evidence and
+// the backup's age without deserializing the backup itself.
+export const STATE_V4_MIGRATION_BACKUP_META_KEY = "outline:v4:migrationBackupMeta";
 
 export type StateV4ManifestSlot = "a" | "b";
 
@@ -39,8 +42,12 @@ type StateV4NodeShard = {
 
 export type OutlineStateV4Snapshot = {
   setItems: Record<string, unknown>;
-  // Old-generation shard keys superseded by this write; remove only after the set commits.
-  // A failed remove leaves harmless unreferenced garbage.
+  // Shard keys that NEITHER stored manifest references once this write commits: keys owned
+  // solely by the manifest this write evicts from its slot (options.collect). Keys the
+  // still-stored other-slot manifest references are never listed, so the R1 fallback slot
+  // stays loadable even if this write turns out to be torn (I-5: an old generation remains
+  // loadable until the manifest that supersedes it is durably referenced). A failed remove
+  // leaves harmless unreferenced garbage.
   removeKeysAfterCommit: string[];
   manifest: StateV4Manifest;
   manifestKey: string;
@@ -60,12 +67,7 @@ export type LoadStateV4Result = {
 };
 
 export function stateV4ShardIndexForNodeId(nodeId: NodeId): number {
-  let hash = 0x811c9dc5;
-  for (let index = 0; index < nodeId.length; index += 1) {
-    hash ^= nodeId.charCodeAt(index);
-    hash = Math.imul(hash, 0x01000193);
-  }
-  return (hash >>> 0) % STATE_V4_NODE_SHARD_COUNT;
+  return outlineNodeShardIndex(nodeId, STATE_V4_NODE_SHARD_COUNT);
 }
 
 export function stateV4NodeShardKey(shardIndex: number, generation: number): string {
@@ -85,6 +87,10 @@ export function outlineStateV4Snapshot(
     // The currently-active manifest and the slot it occupies. Absent -> first full write at
     // generation 1 into slot "a".
     previous?: { manifest: StateV4Manifest; slot: StateV4ManifestSlot };
+    // The manifest currently stored in the slot this write targets (the one written two
+    // compactions ago). Once this write commits, that manifest is gone, so the shard keys
+    // only it referenced become collectable. Absent -> nothing is collected this round.
+    collect?: StateV4Manifest;
     // Shards to rewrite at the new generation. Absent -> all shards (full compaction).
     dirtyShardIndexes?: ReadonlySet<number>;
   }
@@ -134,9 +140,23 @@ export function outlineStateV4Snapshot(
       .map(cloneOutlineNode);
     const shard: StateV4NodeShard = { version: 4, shardIndex, generation, nodes };
     setItems[stateV4NodeShardKey(shardIndex, generation)] = shard;
-    const previousGeneration = previous?.manifest.shardGenerations[shardIndex];
-    if (previousGeneration !== undefined && previousGeneration !== generation) {
-      removeKeysAfterCommit.push(stateV4NodeShardKey(shardIndex, previousGeneration));
+  }
+
+  // Collect only keys that no stored manifest will reference after this commit: a key from
+  // the evicted manifest (options.collect) is removable iff the surviving other-slot
+  // manifest (options.previous) and this new manifest both moved that shard to a different
+  // generation. Removing the previous manifest's own keys here would destroy the R1
+  // fallback the moment a torn write resolves.
+  if (options.collect && previous) {
+    for (let shardIndex = 0; shardIndex < STATE_V4_NODE_SHARD_COUNT; shardIndex += 1) {
+      const evictedGeneration = options.collect.shardGenerations[shardIndex];
+      if (
+        evictedGeneration !== undefined &&
+        evictedGeneration !== previous.manifest.shardGenerations[shardIndex] &&
+        evictedGeneration !== shardGenerations[shardIndex]
+      ) {
+        removeKeysAfterCommit.push(stateV4NodeShardKey(shardIndex, evictedGeneration));
+      }
     }
   }
 

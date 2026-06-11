@@ -174,6 +174,47 @@ describe("outline journal", () => {
     expect([...journalTouchedNodeIds(entries)].sort()).toEqual(["tab:1", "tab:2", "tab:3"]);
   });
 
+  it("serializes overlapping appends so they never share a seq or slot", async () => {
+    const faulty = createFaultyStorage();
+    faulty.setLatencyMs(15);
+    const journal = createOutlineJournal(faulty.api, { epoch: 1, now: () => 1000 });
+    await journal.init();
+
+    // Fire two appends without awaiting the first (models an event-coalescer timer flush
+    // overlapping a command append across the storage await).
+    const [first, second] = await Promise.all([
+      journal.append([{ kind: "runtimeEvent", label: "a", delta: { updatedNodes: [makeNode("tab:1")] } }]),
+      journal.append([{ kind: "command", label: "b", delta: { updatedNodes: [makeNode("tab:2")] } }])
+    ]);
+
+    expect(first.seq).not.toBe(second.seq);
+    const reopened = createOutlineJournal(faulty.api, { epoch: 2 });
+    const result = await reopened.init();
+    expect(result.entries.map((entry) => entry.label)).toEqual(["a", "b"]);
+    expect(result.entries.map((entry) => entry.seq)).toEqual([1, 2]);
+  });
+
+  it("serializes prune against a concurrent append so meta never references removed slots", async () => {
+    const faulty = createFaultyStorage();
+    const journal = createOutlineJournal(faulty.api, { epoch: 1, now: () => 1000 });
+    await journal.init();
+    await journal.append([{ kind: "command", delta: { updatedNodes: [makeNode("tab:1")] } }]);
+    await journal.append([{ kind: "command", delta: { updatedNodes: [makeNode("tab:2")] } }]);
+
+    faulty.setLatencyMs(15);
+    const [, appended] = await Promise.all([
+      journal.prune(2),
+      journal.append([{ kind: "command", label: "later", delta: { updatedNodes: [makeNode("tab:3")] } }])
+    ]);
+
+    expect(appended.seq).toBe(3);
+    const reopened = createOutlineJournal(faulty.api, { epoch: 2 });
+    const result = await reopened.init();
+    expect(result.truncatedAtSeq).toBeUndefined();
+    expect(result.entries.map((entry) => entry.seq)).toEqual([3]);
+    expect(result.tailSeq).toBe(2);
+  });
+
   it("leaves pending state unchanged and rethrows when an append set rejects", async () => {
     const faulty = createFaultyStorage();
     const journal = createOutlineJournal(faulty.api, { epoch: 1, now: () => 1000 });

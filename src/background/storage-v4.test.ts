@@ -105,7 +105,9 @@ describe("outline state v4 storage", () => {
     expect(incremental.manifest.shardGenerations[dirtyShard]).toBe(2);
     expect(incremental.manifest.shardGenerations.filter((generation) => generation === 1))
       .toHaveLength(STATE_V4_NODE_SHARD_COUNT - 1);
-    expect(incremental.removeKeysAfterCommit).toEqual([stateV4NodeShardKey(dirtyShard, 1)]);
+    // The gen-1 shard is still referenced by the manifest left in slot a (the R1 fallback),
+    // so nothing is collectable yet.
+    expect(incremental.removeKeysAfterCommit).toEqual([]);
 
     await applySnapshot(faulty, incremental);
     const loaded = await loadStateV4(faulty.api);
@@ -114,6 +116,61 @@ describe("outline state v4 storage", () => {
     expect(loaded?.slot).toBe("b");
     expect(loaded?.journalSeqIncluded).toBe(9);
     expect(loaded?.state).toEqual(next);
+  });
+
+  it("keeps the fallback slot loadable across a torn compaction and collects a generation only once unreferenced", async () => {
+    const state = makeTree(60);
+    const faulty = createFaultyStorage();
+    const full = outlineStateV4Snapshot(state, { epoch: 1, journalSeqIncluded: 0, savedAt: 1 });
+    await applySnapshot(faulty, full);
+
+    const second: OutlineState = {
+      ...state,
+      nodes: { ...state.nodes, "tab:5": { ...state.nodes["tab:5"]!, title: "Second" } }
+    };
+    const dirtyShard = stateV4ShardIndexForNodeId("tab:5");
+    const incremental = outlineStateV4Snapshot(second, {
+      epoch: 1,
+      journalSeqIncluded: 4,
+      savedAt: 2,
+      previous: { manifest: full.manifest, slot: full.slot },
+      dirtyShardIndexes: new Set([dirtyShard])
+    });
+    await applySnapshot(faulty, incremental);
+
+    const third: OutlineState = {
+      ...second,
+      nodes: { ...second.nodes, "tab:5": { ...second.nodes["tab:5"]!, title: "Third" } }
+    };
+    const thirdSnapshot = outlineStateV4Snapshot(third, {
+      epoch: 1,
+      journalSeqIncluded: 8,
+      savedAt: 3,
+      previous: { manifest: incremental.manifest, slot: incremental.slot },
+      // This write evicts the gen-1 manifest from slot a, so gen-1's superseded shard
+      // becomes collectable exactly now.
+      collect: full.manifest,
+      dirtyShardIndexes: new Set([dirtyShard])
+    });
+    expect(thirdSnapshot.slot).toBe("a");
+    expect(thirdSnapshot.removeKeysAfterCommit).toEqual([stateV4NodeShardKey(dirtyShard, 1)]);
+
+    // Crash mid-write of the third compaction: the manifest lands, its shard does not, and
+    // the GC (modeling the post-resolve remove) still runs. The fallback slot b (gen 2)
+    // must stay fully loadable -- the collected key belonged only to the evicted gen 1.
+    const tornItems: Record<string, unknown> = {
+      [thirdSnapshot.manifestKey]: thirdSnapshot.setItems[thirdSnapshot.manifestKey]
+    };
+    faulty.tearNextSet(1);
+    await faulty.api.storage.local.set({ ...tornItems, ...thirdSnapshot.setItems });
+    await faulty.api.storage.local.remove(thirdSnapshot.removeKeysAfterCommit);
+
+    const loaded = await loadStateV4(faulty.api);
+
+    expect(loaded?.recovery).toBe("r1");
+    expect(loaded?.slot).toBe("b");
+    expect(loaded?.journalSeqIncluded).toBe(4);
+    expect(loaded?.state).toEqual(second);
   });
 
   it("falls back to the other manifest slot when the newest snapshot is torn (R1)", async () => {
@@ -223,6 +280,7 @@ describe("outline state v4 storage", () => {
       let nextNodeNumber = 1000;
       let seq = 0;
       let active: { manifest: StateV4Manifest; slot: StateV4ManifestSlot } | undefined;
+      let evictable: StateV4Manifest | undefined;
       let includedSeq = 0;
       let dirty = new Set<number>();
       let fullCompactionNeeded = true;
@@ -249,7 +307,8 @@ describe("outline state v4 storage", () => {
           epoch: 1,
           journalSeqIncluded: seq,
           savedAt: seq,
-          ...(active && !fullCompactionNeeded ? { previous: active, dirtyShardIndexes: dirty } : (active ? { previous: active } : {}))
+          ...(active && !fullCompactionNeeded ? { previous: active, dirtyShardIndexes: dirty } : (active ? { previous: active } : {})),
+          ...(active && evictable ? { collect: evictable } : {})
         });
         if (mode === "fail") {
           faulty.failNextSet();
@@ -259,14 +318,20 @@ describe("outline state v4 storage", () => {
           return "survived";
         }
         if (mode === "crash") {
-          // Torn write then process death: keep keys are arbitrary prefix of the set.
+          // Torn-but-resolved write, then the post-commit GC runs (as production does on any
+          // resolved set), then process death. The GC must never delete keys the surviving
+          // fallback manifest still references.
           faulty.tearNextSet(1 + Math.floor(random() * Object.keys(snapshot.setItems).length));
           await faulty.api.storage.local.set(snapshot.setItems);
+          if (snapshot.removeKeysAfterCommit.length > 0) {
+            await faulty.api.storage.local.remove(snapshot.removeKeysAfterCommit);
+          }
           return "crashed";
         }
         await applySnapshot(faulty, snapshot);
         await journal.prune(seq);
         entries = entries.filter((entry) => entry.seq > seq);
+        evictable = active?.manifest;
         active = { manifest: snapshot.manifest, slot: snapshot.slot };
         includedSeq = seq;
         dirty = new Set();
@@ -284,6 +349,7 @@ describe("outline state v4 storage", () => {
         expect(recovered, `seed ${seed}: restart must reproduce the model`).toEqual(model);
         // Continue the run from the recovered position.
         active = { manifest: loaded!.manifest, slot: loaded!.slot };
+        evictable = undefined;
         includedSeq = loaded!.journalSeqIncluded;
         seq = Math.max(seq, init.headSeq);
         fullCompactionNeeded = true;
