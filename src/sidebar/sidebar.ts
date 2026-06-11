@@ -4038,11 +4038,15 @@ function clearHoverLineScope(
 }
 
 function resetHoverLineScope(): void {
+  clearPendingHoverGuide();
+  hoverLineScope = undefined;
+}
+
+function clearPendingHoverGuide(): void {
   if (scheduledHoverGuideFrame !== undefined) {
     window.cancelAnimationFrame(scheduledHoverGuideFrame);
     scheduledHoverGuideFrame = undefined;
   }
-  hoverLineScope = undefined;
   pendingHoverLineScope = undefined;
   pendingHoverGuideReason = "pointer";
   pendingHoverFeedbackTrace = undefined;
@@ -4094,14 +4098,7 @@ function applyHoverLineScopeNow(
   reason: HoverGuideApplyReason,
   feedbackTrace?: HoverFeedbackTrace
 ): void {
-  if (scheduledHoverGuideFrame !== undefined) {
-    window.cancelAnimationFrame(scheduledHoverGuideFrame);
-    scheduledHoverGuideFrame = undefined;
-  }
-  pendingHoverLineScope = undefined;
-  pendingHoverGuideReason = "pointer";
-  pendingHoverFeedbackTrace = undefined;
-  pendingHoverGuideApply = false;
+  clearPendingHoverGuide();
 
   if (scope ? sameHoverLineScope(hoverLineScope, scope) : !hoverLineScope) {
     return;
