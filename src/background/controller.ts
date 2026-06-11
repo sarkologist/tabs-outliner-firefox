@@ -83,8 +83,6 @@ import type {
 } from "./storage.js";
 import {
   applyOutlineDelta,
-  cloneOutlineNode,
-  cloneOutlineState,
   createHistoryEntry,
   historyStatus,
   normalizeHistoryState,
@@ -110,6 +108,8 @@ import {
 import {
   bootstrapFromWindows,
   analyzeRestoreScope,
+  cloneOutlineNode,
+  cloneOutlineState,
   closeTab,
   closeWindow,
   deleteNode as deleteOutlineNode,
@@ -127,6 +127,7 @@ import {
   wrapNodeInGroup
 } from "../model/outline.js";
 import { buildOutlineLookup, type OutlineLookup } from "../model/outline-lookup.js";
+import { isLiveTabNode, isLiveWindowNode, liveTabNodes, liveWindowNodes } from "../model/live-nodes.js";
 import { exportPortableTree, portableTreeFilename, serializePortableTreeFile } from "../model/portable-tree.js";
 import type { NodeId, OutlineNode, OutlineState, ReconcileOptions, RestoredNode, RuntimeTab, RuntimeWindow, RuntimeWindowProvenance } from "../model/types.js";
 import { createPerformanceTracer, type TraceDetail, type TraceSnapshot } from "../perf/trace.js";
@@ -7630,14 +7631,6 @@ function liveStructureSignature(state: OutlineState): string {
   ].sort().join("|");
 }
 
-function liveWindowNodes(state: OutlineState): Array<OutlineNode & { live: { windowId: number } }> {
-  return Object.values(state.nodes).filter(isLiveWindowNode);
-}
-
-function liveTabNodes(state: OutlineState): Array<OutlineNode & { live: { tabId: number; windowId: number } }> {
-  return Object.values(state.nodes).filter(isLiveTabNode);
-}
-
 function liveTabNodesInSubtree(
   state: OutlineState,
   nodeId: NodeId
@@ -7862,14 +7855,6 @@ function nearestLiveWindowId(state: OutlineState, nodeId: NodeId): number | unde
 
 function historyNodeUrl(node: OutlineNode): string {
   return normalizeBrowserCreateUrl(node.url ?? node.restore?.url);
-}
-
-function isLiveWindowNode(node: OutlineNode | undefined): node is OutlineNode & { live: { windowId: number } } {
-  return Boolean(node?.kind === "window" && node.status === "live" && node.live && "windowId" in node.live);
-}
-
-function isLiveTabNode(node: OutlineNode | undefined): node is OutlineNode & { live: { tabId: number; windowId: number } } {
-  return Boolean(node?.kind === "tab" && node.status === "live" && node.live && "tabId" in node.live);
 }
 
 function isLiveRuntimeNode(node: OutlineNode | undefined): boolean {

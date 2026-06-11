@@ -7,6 +7,14 @@ import type {
   WindowClosingTabRemovalDecision
 } from "./runtime-facts.js";
 import { projectLiveTabs, runtimeTitleForOutlineTab } from "../model/outline.js";
+import {
+  isLiveTabNode,
+  isLiveWindowNode,
+  liveTabNodes,
+  liveWindowNodes,
+  type LiveTabNode,
+  type LiveWindowNode
+} from "../model/live-nodes.js";
 import type { NodeId, OutlineNode, OutlineState, RuntimeTab, RuntimeWindow } from "../model/types.js";
 
 export type RuntimeStateIndexForReconciliation = {
@@ -19,9 +27,6 @@ export type RuntimeStateIndexForReconciliation = {
   windowNodeIdsWithClosedRestoreCandidates: Set<NodeId>;
   activeWindowNodeId?: NodeId;
 };
-
-type LiveTabNode = OutlineNode & { live: { tabId: number; windowId: number } };
-type LiveWindowNode = OutlineNode & { live: { windowId: number } };
 
 export type RuntimeSnapshotNormalizationInput = {
   windows: RuntimeWindow[];
@@ -1195,18 +1200,3 @@ function isTransientRestoredTabEcho(tab: RuntimeTab): boolean {
     tab.title === "New Tab";
 }
 
-function isLiveTabNode(node: OutlineNode | undefined): node is LiveTabNode {
-  return Boolean(node?.kind === "tab" && node.status === "live" && node.live && "tabId" in node.live);
-}
-
-function isLiveWindowNode(node: OutlineNode | undefined): node is LiveWindowNode {
-  return Boolean(node?.kind === "window" && node.status === "live" && node.live && "windowId" in node.live);
-}
-
-function liveTabNodes(state: OutlineState): LiveTabNode[] {
-  return Object.values(state.nodes).filter(isLiveTabNode);
-}
-
-function liveWindowNodes(state: OutlineState): LiveWindowNode[] {
-  return Object.values(state.nodes).filter(isLiveWindowNode);
-}

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { preserveClosedSubtreesAcrossNonDestructiveTransition } from "./closed-subtree-guard.js";
-import { cloneOutlineNode } from "./history.js";
+import { cloneOutlineNode } from "../model/outline.js";
 import { bootstrapFromWindows, closeWindow } from "../model/outline.js";
 import type { OutlineState, RuntimeWindow } from "../model/types.js";
 

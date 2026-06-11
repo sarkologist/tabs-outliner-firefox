@@ -1,3 +1,9 @@
+import {
+  isLiveTabNode,
+  isLiveWindowNode,
+  type LiveTabNode,
+  type LiveWindowNode
+} from "../model/live-nodes.js";
 import type { NodeId, OutlineNode, OutlineState, RuntimeWindow } from "../model/types.js";
 
 export type RuntimeWindowScopeProvenance = "saved" | "restored" | "browserCreated" | "commandCreated";
@@ -435,9 +441,6 @@ export class RuntimeWindowScopeIndex {
   }
 }
 
-type LiveTabNode = OutlineNode & { live: { tabId: number; windowId: number } };
-type LiveWindowNode = OutlineNode & { live: { windowId: number } };
-
 function scopeProvenance(
   input: RuntimeWindowScopeProvenanceResolverInput,
   browserCreatedWindowIds: ReadonlySet<number> | undefined,
@@ -527,14 +530,6 @@ function windowNodes(nodes: readonly OutlineNode[]): OutlineNode[] {
 
 function liveWindowNodes(nodes: readonly OutlineNode[]): LiveWindowNode[] {
   return nodes.filter(isLiveWindowNode);
-}
-
-function isLiveTabNode(node: OutlineNode | undefined): node is LiveTabNode {
-  return Boolean(node?.kind === "tab" && node.status === "live" && node.live && "tabId" in node.live);
-}
-
-function isLiveWindowNode(node: OutlineNode | undefined): node is LiveWindowNode {
-  return Boolean(node?.kind === "window" && node.status === "live" && node.live && "windowId" in node.live);
 }
 
 function canonicalRuntimeIdFromNodeId(nodeId: NodeId, kind: "tab" | "window"): number | undefined {

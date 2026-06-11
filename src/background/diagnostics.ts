@@ -1,4 +1,5 @@
-import type { NodeId, OutlineNode, OutlineState, RuntimeWindow } from "../model/types.js";
+import { isLiveTabNode } from "../model/live-nodes.js";
+import type { NodeId, OutlineState, RuntimeWindow } from "../model/types.js";
 
 export type OutlineDiagnostics = {
   runtimeTabCount: number;
@@ -22,7 +23,7 @@ export function computeDiagnostics(state: OutlineState, runtimeWindows: RuntimeW
       continue;
     }
 
-    if (isLiveTab(node)) {
+    if (isLiveTabNode(node)) {
       liveTabNodeCount += 1;
       liveTabIds.add(node.live.tabId);
     } else if (node.status === "closed") {
@@ -62,7 +63,7 @@ function countVisibleLiveTabs(state: OutlineState): number {
       continue;
     }
 
-    if (isLiveTab(node)) {
+    if (isLiveTabNode(node)) {
       count += 1;
     }
     if (node.collapsed) {
@@ -77,6 +78,3 @@ function countVisibleLiveTabs(state: OutlineState): number {
   return count;
 }
 
-function isLiveTab(node: OutlineNode): node is OutlineNode & { live: { tabId: number; windowId: number } } {
-  return Boolean(node.kind === "tab" && node.status === "live" && node.live && "tabId" in node.live);
-}

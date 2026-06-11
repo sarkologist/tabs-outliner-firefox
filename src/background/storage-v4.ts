@@ -1,5 +1,5 @@
 import type { NodeId, OutlineNode, OutlineState } from "../model/types.js";
-import { cloneOutlineNode } from "./history.js";
+import { cloneOutlineNode } from "../model/outline.js";
 import { normalizeLoadedOutlineStructure, outlineNodeShardIndex, type StateStructureRepair } from "./storage.js";
 
 // v4 snapshot store: 32 generation-stamped node shards (childIds inline -- no order pages)

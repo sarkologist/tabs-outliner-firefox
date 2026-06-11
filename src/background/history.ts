@@ -1,3 +1,4 @@
+import { cloneOutlineNode } from "../model/outline.js";
 import type { NodeId, OutlineNode, OutlineState } from "../model/types.js";
 import { DEFAULT_UNDO_HISTORY_LIMIT, normalizeUndoHistoryLimit } from "../preferences.js";
 
@@ -196,23 +197,6 @@ export function applyOutlineDelta(state: OutlineState, delta: OutlineDelta): Out
   }
 
   return next;
-}
-
-export function cloneOutlineState(state: OutlineState): OutlineState {
-  return {
-    version: state.version,
-    rootIds: [...state.rootIds],
-    nodes: Object.fromEntries(Object.entries(state.nodes).map(([nodeId, node]) => [nodeId, cloneOutlineNode(node)]))
-  };
-}
-
-export function cloneOutlineNode(node: OutlineNode): OutlineNode {
-  return {
-    ...node,
-    childIds: [...node.childIds],
-    ...(node.live ? { live: { ...node.live } } : {}),
-    ...(node.restore ? { restore: { ...node.restore } } : {})
-  };
 }
 
 // Material diff for callers outside history (e.g. the v4 journal). Narrowed to

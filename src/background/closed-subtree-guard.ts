@@ -1,4 +1,4 @@
-import { cloneOutlineNode } from "./history.js";
+import { cloneOutlineNode } from "../model/outline.js";
 import type { NodeId, OutlineState } from "../model/types.js";
 
 export type ClosedSubtreeGuardResult = {

@@ -5,6 +5,13 @@ import {
   type RuntimeWindowScopeProvenanceResolverInput,
   type RuntimeWindowScopeSnapshot
 } from "./runtime-window-scope.js";
+import {
+  isLiveTabNode,
+  isLiveWindowNode,
+  liveTabNodes,
+  liveWindowNodes,
+  type LiveTabNode
+} from "../model/live-nodes.js";
 import type { NodeId, OutlineNode, OutlineState, RuntimeTab, RuntimeWindow, RuntimeWindowProvenance } from "../model/types.js";
 
 export type RuntimeSnapshotConfidence = "complete" | "partial" | "eventLocal" | "staleSuspect";
@@ -172,8 +179,6 @@ export type CommandTransactionFacts = {
   deleteClosePlan?: RuntimeClosePlan | undefined;
   focusTarget?: { tabId: number; windowId: number; tabActive?: boolean; windowActive?: boolean } | undefined;
 };
-
-type LiveTabNode = OutlineNode & { live: { tabId: number; windowId: number } };
 
 export type WindowClosingTabRemovalDecision =
   | "ignore-command-owned"
@@ -2050,22 +2055,6 @@ function focusExpectedEffect(
 
 function commandFocusTargetKey(tabId: number, windowId: number): string {
   return `${tabId}:${windowId}`;
-}
-
-function isLiveTabNode(node: OutlineNode | undefined): node is LiveTabNode {
-  return Boolean(node?.kind === "tab" && node.status === "live" && node.live && "tabId" in node.live);
-}
-
-function isLiveWindowNode(node: OutlineNode | undefined): node is OutlineNode & { live: { windowId: number } } {
-  return Boolean(node?.kind === "window" && node.status === "live" && node.live && "windowId" in node.live);
-}
-
-function liveTabNodes(state: OutlineState): LiveTabNode[] {
-  return Object.values(state.nodes).filter(isLiveTabNode);
-}
-
-function liveWindowNodes(state: OutlineState): Array<OutlineNode & { live: { windowId: number } }> {
-  return Object.values(state.nodes).filter(isLiveWindowNode);
 }
 
 function currentOrOutlineOrderedLiveTabsForRuntimeWindow(
