@@ -7320,3 +7320,25 @@ Recent side effects: []
 <!-- hunt-corpus-run: {"at":"2026-06-05T09:04:39.470Z","mode":"agent-corpus-run","profile":"regression","coverageTags":["activation","breadth","browser-authored","browserCreated","command-rejection","commandCreated","complete-refresh","created-event","cross-axis","delayed-event","delete","delete-rejection","event-order","focus","fresh-event","fullscreen","history","history-boundary","journal","known-finding","manual-refresh","metadata","mixed-provenance","multi-tab","multi-window","native-close","native-move","native-open","nested","nested-window","opener","outliner-close","paired-echo","partial-close","partial-snapshot","post-recovery","race","real-user","reconciliation","redo","relocation","reparenting","restart","restore","restored","restored-scope","runtime-order","saved","scope-routing","session","snapshot-confidence","soak-complement","stale-event","stale-query","subagent","tombstone","transaction-boundary","undo-redo","updated-event","window-scope","window-state"],"firstTraceId":"rt-active-race","lastTraceId":"yh-runbook-r1-created-race-command-cohabit","runs":278,"processRuns":34,"batchSize":50,"batchFailures":1,"completedCorpus":true,"failures":1,"duplicateFailures":1,"newFindings":0} -->
 
 <!-- hunt-corpus-run: {"at":"2026-06-05T09:07:43.632Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["known-finding","unknown"],"firstTraceId":"po-outliner-relocation","lastTraceId":"po-history-mixed-scope-browser-drift-before-undo","runs":6,"processRuns":1,"batchSize":20,"batchFailures":0,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
+
+### RT-252 truth command/restored window has provenance undefined after abrupt restart
+<!-- signature: truth command/restored window <id> has provenance undefined
+domain trace: jh-relocate-direct-abrupt-old-updated
+action: {"type":"restartBackgroundAbrupt"} -->
+
+- First seen: 2026-06-10 (domain-trace hunt run during storage Phase 3 validation).
+- Trace id: `jh-relocate-direct-abrupt-old-updated` (same signature on sibling `jh-relocate-direct-abrupt-*` variants).
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=jh-relocate-direct-abrupt-old-updated pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Pre-existing: reproduced byte-identically at `369c317` (before the v4 journal/snapshot work and before the Phase 2 checkpoint changes), at the Phase 2 HEAD, and on the Phase 3 tree. Not a storage-rearchitecture regression.
+- Shape: a relocation command creates a command window; the background restarts abruptly before the deferred save (and, at `369c317`, before the checkpoint flush) persists the window's `runtimeProvenance`; after recovery the truth model expects `commandOrRestored` provenance but the node carries none.
+- Status: documented, not fixed.
+
+### RT-253 live tab left under closed window in adversarial concurrency soak
+<!-- signature: live node <tab> is under closed node <window>
+generated trace: adversarial runtime concurrency, soak seed 116881488 -->
+
+- First seen: 2026-06-10 (`pnpm test:soak`, time-based seed).
+- Repro: `GENERATED_TRACE_SOAK=1 GENERATED_TRACE_BASE_SEED=116881477 pnpm exec vitest run src/background/controller.test.ts -t "preserves invariants across adversarial runtime concurrency traces"` (failing seed 116881488; error `live node tab:3 is under closed node window:20`).
+- Pre-existing: reproduced byte-identically at `369c317` — a fresh random seed discovered it, not the storage-rearchitecture changes.
+- Shape: after a generated concurrency sequence (outliner deletes racing native closes and relocations), a live tab node remains parented under a window node that reconciliation marked closed.
+- Status: documented, not fixed.

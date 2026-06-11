@@ -1,4 +1,6 @@
 import { summarizeTraceEvents, type TraceSnapshot, type TraceSummaryRow } from "./trace.js";
+import type { IncidentLogEntry } from "../background/incident-log.js";
+import type { PortableTreeFile } from "../model/portable-tree.js";
 
 export const PROFILE_STORAGE_KEY = "tabsOutlinerProfileEnabled";
 export const PERFORMANCE_PROFILE_SCHEMA = "tabs-outliner-profile";
@@ -13,6 +15,8 @@ export type LabeledTraceSnapshot = {
 
 export type PerformanceProfileSources = {
   background?: TraceSnapshot;
+  incidentLog?: IncidentLogEntry[];
+  portableTree?: PortableTreeFile;
   sidebar?: TraceSnapshot;
   sidebars?: LabeledTraceSnapshot[];
 };
@@ -114,11 +118,44 @@ export function isPerformanceProfileSnapshot(value: unknown): value is Performan
   if (!value || typeof value !== "object") {
     return false;
   }
-  const snapshot = value as { background?: unknown; sidebar?: unknown; sidebars?: unknown };
+  const snapshot = value as {
+    background?: unknown;
+    incidentLog?: unknown;
+    portableTree?: unknown;
+    sidebar?: unknown;
+    sidebars?: unknown;
+  };
   return isTraceSnapshot(snapshot.background) &&
+    (snapshot.incidentLog === undefined || isIncidentLog(snapshot.incidentLog)) &&
+    (snapshot.portableTree === undefined || isPortableTreeFile(snapshot.portableTree)) &&
     (snapshot.sidebar === undefined || isTraceSnapshot(snapshot.sidebar)) &&
     (snapshot.sidebars === undefined ||
       (Array.isArray(snapshot.sidebars) && snapshot.sidebars.every(isLabeledTraceSnapshot)));
+}
+
+function isPortableTreeFile(value: unknown): value is PortableTreeFile {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const tree = value as { schema?: unknown; version?: unknown; exportedAt?: unknown; roots?: unknown };
+  return tree.schema === "tabs-outliner-tree" &&
+    tree.version === 1 &&
+    typeof tree.exportedAt === "string" &&
+    Array.isArray(tree.roots);
+}
+
+function isIncidentLog(value: unknown): value is IncidentLogEntry[] {
+  return Array.isArray(value) && value.every((entry) => {
+    if (!entry || typeof entry !== "object") {
+      return false;
+    }
+    const candidate = entry as { version?: unknown; at?: unknown; event?: unknown; detail?: unknown };
+    return candidate.version === 1 &&
+      typeof candidate.at === "string" &&
+      typeof candidate.event === "string" &&
+      (candidate.detail === undefined ||
+        (typeof candidate.detail === "object" && candidate.detail !== null && !Array.isArray(candidate.detail)));
+  });
 }
 
 function sidebarTraceSnapshots(snapshot: PerformanceProfileSources): TraceSnapshot[] {

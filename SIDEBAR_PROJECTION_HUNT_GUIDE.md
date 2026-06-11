@@ -72,4 +72,7 @@ A `PT-*` finding is not fixed until:
 - its Playwright repro passes;
 - related projection/hydration tests pass;
 - `pnpm perf:sidebar-projection-guard` passes;
+- `pnpm perf:runtime-guard` also passes when the fix touched background save/load/journal,
+  broadcast, or reconciliation paths (per AGENTS.md, perf-relevant regardless of why the
+  change was made);
 - any accepted budget movement is recorded in `PERFORMANCE_NOTES.md`.

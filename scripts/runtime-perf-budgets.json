@@ -330,11 +330,36 @@
         "totalMeasuredMs": 221,
         "totalWithSaveFlushMs": 330,
         "saves": 1,
-        "journalWrites": 0,
+        "journalWrites": 2,
         "projectionMs": 0,
         "mbStringified": 13,
         "stateBroadcasts": 1,
         "statusBroadcasts": 1
+      }
+    },
+    {
+      "id": "compaction-after-burst",
+      "pnpmScript": "profile:command",
+      "args": [
+        "--tabs",
+        "1000",
+        "--scenario",
+        "compaction-after-burst"
+      ],
+      "tags": [
+        "journal",
+        "compaction"
+      ],
+      "budget": {
+        "firstBroadcastMs": 20,
+        "totalMeasuredMs": 60,
+        "totalWithSaveFlushMs": 75,
+        "saves": 1,
+        "journalWrites": 21,
+        "projectionMs": 0,
+        "mbStringified": 1,
+        "stateBroadcasts": 20,
+        "statusBroadcasts": 20
       }
     },
     {

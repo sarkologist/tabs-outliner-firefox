@@ -64,7 +64,7 @@ const LANE_COMMANDS = {
     {
       label: "storage vitest corpus",
       command: "pnpm",
-      args: ["test", "--", "src/background/storage-v2.test.ts"]
+      args: ["test", "--", "src/background/storage-v2.test.ts", "src/background/storage-v4.test.ts", "src/background/outline-journal.test.ts"]
     },
     {
       label: "storage build",
@@ -81,6 +81,33 @@ const LANE_COMMANDS = {
         "tests/playwright/sidebar-first-paint.spec.ts",
         "--reporter=list"
       ]
+    }
+  ],
+  // Storage fault lane (docs/storage-rearchitecture 03-WORKFLOW-FIXES W-4): torn writes,
+  // failed sets, and crash/restart sequences against the fault-injecting storage mock.
+  // Required for any experiment that changes save timing or save shape (W-8).
+  "storage-faults": [
+    {
+      label: "storage fault corpus",
+      command: "pnpm",
+      args: [
+        "exec",
+        "vitest",
+        "run",
+        "src/background/storage-v4.test.ts",
+        "src/background/outline-journal.test.ts",
+        "src/test/faulty-storage.test.ts",
+        "-t",
+        "fault|torn|corrupt|crash|restart|fail|reject"
+      ]
+    },
+    {
+      label: "storage fault soak",
+      command: "pnpm",
+      args: ["exec", "vitest", "run", "src/background/storage-v4.test.ts", "-t", "crashes"],
+      env: {
+        GENERATED_TRACE_SOAK: "1"
+      }
     }
   ]
 };

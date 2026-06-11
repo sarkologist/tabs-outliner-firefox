@@ -17,6 +17,7 @@ import {
   type ClosedSubtreeGuardResult
 } from "./closed-subtree-guard.js";
 import { computeDiagnostics, type OutlineDiagnostics } from "./diagnostics.js";
+import { appendIncidentLogEntry, loadIncidentLog, type IncidentLogDetail } from "./incident-log.js";
 import { isBackgroundCommand, planCloseNodeRuntimeClose, planLiveSubtreeClose, runCommand, syncBrowserOrder } from "./commands.js";
 import type { BackgroundCommand, CommandAck, RestoreCreateAttempt, RuntimeClosePlan } from "./commands.js";
 import {
@@ -44,10 +45,41 @@ import {
   initialTreeSnapshotForState,
   loadHistory,
   loadInitialTreeSnapshot,
+  HISTORY_KEY,
   loadStateWithMetadata,
-  saveStateAndHistory
+  outlineBootSnapshotItem,
+  STATE_KEY,
+  STATE_V2_MANIFEST_KEY,
+  STATE_V3_MANIFEST_KEY,
+  type LoadedOutlineState
 } from "./storage.js";
-import type { InitialTreeSnapshot, LoadStateOptions, SaveStateOptions, StateLoadPhase, StateSavePhase } from "./storage.js";
+import {
+  STATE_V4_MIGRATION_BACKUP_KEY,
+  STATE_V4_MIGRATION_BACKUP_META_KEY,
+  loadStateV4,
+  outlineStateV4Snapshot,
+  stateV4ShardIndexForNodeId,
+  type StateV4Manifest,
+  type StateV4ManifestSlot
+} from "./storage-v4.js";
+import {
+  JOURNAL_META_KEY,
+  JOURNAL_SPILL_NODE_LIMIT,
+  JournalFullError,
+  createOutlineJournal,
+  outlineJournalDeltaWeight,
+  replayJournal,
+  type OutlineJournal,
+  type OutlineJournalAppendItem
+} from "./outline-journal.js";
+import type {
+  InitialTreeSnapshot,
+  LoadStateOptions,
+  SaveStateOptions,
+  StateLoadPhase,
+  StateSavePhase,
+  StateStructureRepair
+} from "./storage.js";
 import {
   applyOutlineDelta,
   cloneOutlineNode,
@@ -55,6 +87,7 @@ import {
   createHistoryEntry,
   historyStatus,
   normalizeHistoryState,
+  outlineMaterialDelta,
   popRedoEntry,
   popUndoEntry,
   pushRedoEntry,
@@ -332,6 +365,26 @@ const STATE_SAVE_QUIET_DELAY_MS = 1000;
 const STATE_SAVE_MAX_DELAY_MS = 5000;
 const INTERACTION_STATE_SAVE_QUIET_DELAY_MS = 5000;
 const INTERACTION_STATE_SAVE_MAX_DELAY_MS = 30000;
+// A save flush only records an incident when it is anomalous: a sharp drop in closed
+// or total node count is the signature of the data-loss family. Routine flushes are
+// silent so the bounded incident log stays a signal rather than a per-save diary.
+const SAVE_FLUSH_ANOMALY_CLOSED_DELTA = -25;
+const SAVE_FLUSH_ANOMALY_NODE_DELTA = -50;
+// After a failed state save the next attempt is retried with growing backoff so a
+// transient storage error does not silently drop the pending change.
+const SAVE_FAILURE_BACKOFF_MS = [1000, 4000, 16000] as const;
+// Runtime-event deltas (Class B: native closes, creates, moves, metadata) are journaled on
+// a short coalescer instead of per event: bursts become one slot write, and the accepted
+// loss window on process death is the max delay below (vs 1-30s of deferred-save loss).
+const EVENT_JOURNAL_QUIET_DELAY_MS = 50;
+const EVENT_JOURNAL_MAX_DELAY_MS = 250;
+// The migration's portable-tree backup is a one-time safety copy; reclaim its quota after
+// the soak window (01-TARGET-ARCHITECTURE.md section 6).
+const MIGRATION_BACKUP_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+// The boot snapshot is a cold-start-only first-paint cache, written on its own debounce
+// rather than embedded in every save's manifest. Staleness up to this window is harmless:
+// it is superseded by full hydration immediately after first paint.
+const BOOT_SNAPSHOT_WRITE_DELAY_MS = 10000;
 const SIDEBAR_PROFILE_COLLECTION_DELAY_MS = 50;
 const TOGGLE_SIDEBAR_COMMAND = "toggle-sidebar";
 const SIDEBAR_WINDOW_PATH = "sidebar/sidebar.html";
@@ -389,6 +442,23 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   let explicitSaveFlushInProgress = false;
   let pendingSaveBatchStartedAt: number | undefined;
   let pendingSaveMaxDelayMs: number | undefined;
+  let saveFailureBackoffIndex = 0;
+  let bootSnapshotTimer: number | undefined;
+  let outlineJournal: OutlineJournal | undefined;
+  // The active v4 snapshot (manifest + the slot it occupies). Undefined until the first v4
+  // load, migration, or full compaction of this session.
+  let currentV4Snapshot: { manifest: StateV4Manifest; slot: StateV4ManifestSlot } | undefined;
+  // The snapshot currentV4Snapshot superseded (still stored in the other manifest slot, the
+  // R1 fallback). The next compaction overwrites its slot, at which point the shard keys
+  // only it referenced become collectable -- never earlier (I-5).
+  let previousV4Snapshot: { manifest: StateV4Manifest; slot: StateV4ManifestSlot } | undefined;
+  // Shard indexes touched by journal appends since the last compaction that folded them in.
+  // Unioned with the pending save's candidate shards to compute a compaction's dirty set.
+  let journalTouchedSinceCompaction = new Set<number>();
+  let pendingEventJournalItems: OutlineJournalAppendItem[] = [];
+  let eventJournalQuietTimer: number | undefined;
+  let eventJournalMaxTimer: number | undefined;
+  let eventJournalBatchStartedAt: number | undefined;
   let pendingSaveSchedule: SaveSchedule | undefined;
   let nextRuntimeLifecycleJournalSequence = 1;
   const runtimeLifecycleJournalEntryIdsToClearAfterSave = new Set<string>();
@@ -570,7 +640,8 @@ export function createBackgroundController(options: BackgroundControllerOptions)
             windowIds: [removeInfo.windowId]
           });
           markRuntimeLifecycleJournalEntryForClearAfterSave(runtimeLifecycleJournalEntry);
-          await persistWithNodeStateUpdate(current, next);
+          const persistedCandidates = await persistWithNodeStateUpdate(current, next);
+          queueRuntimeEventJournal(current, next, persistedCandidates, "tabs.onRemoved.windowClosing");
         }, { reason: "tabs.onRemoved.windowClosing" });
         return;
       }
@@ -613,7 +684,8 @@ export function createBackgroundController(options: BackgroundControllerOptions)
           windowIds: []
         });
         markRuntimeLifecycleJournalEntryForClearAfterSave(runtimeLifecycleJournalEntry);
-        await persistWithNodeStateUpdate(current, next);
+        const persistedCandidates = await persistWithNodeStateUpdate(current, next);
+        queueRuntimeEventJournal(current, next, persistedCandidates, "tabs.onRemoved");
       }, { reason: "tabs.onRemoved" });
     });
   });
@@ -660,7 +732,8 @@ export function createBackgroundController(options: BackgroundControllerOptions)
           windowIds: [windowId]
         });
         markRuntimeLifecycleJournalEntryForClearAfterSave(runtimeLifecycleJournalEntry);
-        await persistWithNodeStateUpdate(current, next);
+        const persistedCandidates = await persistWithNodeStateUpdate(current, next);
+        queueRuntimeEventJournal(current, next, persistedCandidates, "windows.onRemoved");
       }, { reason: "windows.onRemoved" });
     });
   });
@@ -711,7 +784,8 @@ export function createBackgroundController(options: BackgroundControllerOptions)
               for (const entry of reconciled.runtimeLifecycleJournalEntries ?? []) {
                 markRuntimeLifecycleJournalEntryForClearAfterSave(entry);
               }
-              await persistWithNodeStateUpdate(reconciled.previous, reconciled.next);
+              const persistedCandidates = await persistWithNodeStateUpdate(reconciled.previous, reconciled.next);
+              queueRuntimeEventJournal(reconciled.previous, reconciled.next, persistedCandidates, "sessions.onChanged");
             }
           }
         } finally {
@@ -759,6 +833,10 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
     if (isDiagnosticsRequest(message)) {
       return getDiagnosticsCoalesced();
+    }
+
+    if (isIncidentLogRequest(message)) {
+      return loadIncidentLog(api);
     }
 
     if (isInitialTreeSnapshotMessage(message)) {
@@ -1050,7 +1128,9 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         } else {
           await persistWithNodeStateUpdate(current, result.state, restorePatchNodeIds, { saveSchedule });
         }
-        await flushRuntimeProvenanceSaveIfChanged(current, result.state, restoreTreePatchNodeIds);
+        if (!(await appendCommandJournal(current, result.state, restoreTreePatchNodeIds ?? restorePatchNodeIds, message.type))) {
+          await flushRuntimeProvenanceSaveIfChanged(current, result.state, restoreTreePatchNodeIds);
+        }
         if (commandTransaction) {
           runtimeFacts.commitCommand(commandTransaction.id);
         }
@@ -1063,7 +1143,9 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         );
         await broadcastTreeStructureUpdate(update);
         scheduleStateSave(result.state, saveSchedule, deletePatchNodeIds ?? [message.nodeId]);
-        await flushRuntimeTruthSaveIfNeeded(current, result.state, deletePatchNodeIds ?? [message.nodeId]);
+        if (!(await appendCommandJournal(current, result.state, deletePatchNodeIds ?? [message.nodeId], message.type))) {
+          await flushRuntimeTruthSaveIfNeeded(current, result.state, deletePatchNodeIds ?? [message.nodeId]);
+        }
         if (commandTransaction) {
           runtimeFacts.commitCommand(commandTransaction.id);
         }
@@ -1083,10 +1165,12 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         );
         await broadcastTreeStructureUpdate(update);
         scheduleStateSave(result.state, saveSchedule, runtimeIndexCandidateNodeIds);
-        await flushRuntimeProvenanceSaveIfChanged(current, result.state, runtimeIndexCandidateNodeIds, {
-          allowDeferredPlacementCheckpoint: true,
-          reason: message.type
-        });
+        if (!(await appendCommandJournal(current, result.state, runtimeIndexCandidateNodeIds, message.type))) {
+          await flushRuntimeProvenanceSaveIfChanged(current, result.state, runtimeIndexCandidateNodeIds, {
+            allowDeferredPlacementCheckpoint: true,
+            reason: message.type
+          });
+        }
         if (commandTransaction) {
           runtimeFacts.commitCommand(commandTransaction.id);
         }
@@ -1095,6 +1179,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       }
       if (message.type === "renameGroup") {
         await persistKnownNodeStateUpdate(current, result.state, message.nodeId);
+        await appendCommandJournal(current, result.state, [message.nodeId], message.type);
         if (commandTransaction) {
           runtimeFacts.commitCommand(commandTransaction.id);
         }
@@ -1102,6 +1187,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       }
       if (message.type === "toggleCollapsed") {
         await persistKnownNodeStateUpdate(current, result.state, message.nodeId);
+        await appendCommandJournalForKnownNodeIds(result.state, [message.nodeId], message.type);
         if (commandTransaction) {
           runtimeFacts.commitCommand(commandTransaction.id);
         }
@@ -1109,6 +1195,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       }
       if (message.type === "expandAncestors") {
         await persistKnownNodeStateUpdates(current, result.state, expandAncestorNodeIds ?? []);
+        await appendCommandJournalForKnownNodeIds(result.state, expandAncestorNodeIds ?? [], message.type);
         if (commandTransaction) {
           runtimeFacts.commitCommand(commandTransaction.id);
         }
@@ -1119,10 +1206,12 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         if (sameParentReorder) {
           await broadcastSameParentReorderUpdate(sameParentReorder);
           scheduleStateSave(result.state, saveSchedule, [sameParentReorder.parentId, sameParentReorder.movedNodeId]);
-          await flushRuntimeProvenanceSaveIfChanged(current, result.state, [sameParentReorder.parentId, sameParentReorder.movedNodeId], {
-            allowDeferredPlacementCheckpoint: true,
-            reason: message.type
-          });
+          if (!(await appendCommandJournal(current, result.state, [sameParentReorder.parentId, sameParentReorder.movedNodeId], message.type))) {
+            await flushRuntimeProvenanceSaveIfChanged(current, result.state, [sameParentReorder.parentId, sameParentReorder.movedNodeId], {
+              allowDeferredPlacementCheckpoint: true,
+              reason: message.type
+            });
+          }
           if (commandTransaction) {
             runtimeFacts.commitCommand(commandTransaction.id);
           }
@@ -1135,10 +1224,12 @@ export function createBackgroundController(options: BackgroundControllerOptions)
           );
           await broadcastTreeStructureUpdate(update);
           scheduleStateSave(result.state, saveSchedule, runtimeIndexCandidateNodeIds);
-          await flushRuntimeProvenanceSaveIfChanged(current, result.state, runtimeIndexCandidateNodeIds, {
-            allowDeferredPlacementCheckpoint: true,
-            reason: message.type
-          });
+          if (!(await appendCommandJournal(current, result.state, runtimeIndexCandidateNodeIds, message.type))) {
+            await flushRuntimeProvenanceSaveIfChanged(current, result.state, runtimeIndexCandidateNodeIds, {
+              allowDeferredPlacementCheckpoint: true,
+              reason: message.type
+            });
+          }
           if (commandTransaction) {
             runtimeFacts.commitCommand(commandTransaction.id);
           }
@@ -1151,6 +1242,9 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         allowDeferredPlacementCheckpoint: isStructuralCommand(message.type),
         reason: message.type
       });
+      // The generic fallback handles broad, visible-first commands (e.g. importTree) whose
+      // durability stays deferred by design; journaling them is deferred to slice 2's
+      // coalescer so the ack never waits on a large journal write.
       if (commandTransaction) {
         runtimeFacts.commitCommand(commandTransaction.id);
       }
@@ -1732,6 +1826,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       const attemptedAtMs = now();
       const attemptedAt = new Date(attemptedAtMs).toISOString();
       const previousStatus = await loadAutomaticBackupStatus(api).catch(() => ({}));
+      await recordIncidentLog("automaticBackupStart", { attemptedAt });
       try {
         await waitForSchedulerIdle();
         await downloadAutomaticBackup(await ensureState(), api, attemptedAtMs);
@@ -1742,6 +1837,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         };
         delete nextStatus.lastError;
         await saveAutomaticBackupStatus(nextStatus, api);
+        await recordIncidentLog("automaticBackupSuccess", { attemptedAt });
         return nextStatus;
       } catch (error) {
         const nextStatus: AutomaticBackupStatus = {
@@ -1750,6 +1846,10 @@ export function createBackgroundController(options: BackgroundControllerOptions)
           lastError: backupErrorText(error)
         };
         await saveAutomaticBackupStatus(nextStatus, api);
+        await recordIncidentLog("automaticBackupFailure", {
+          attemptedAt,
+          error: backupErrorText(error)
+        });
         return nextStatus;
       }
     }).finally(() => {
@@ -1891,12 +1991,122 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   }
 
   async function initializeState(): Promise<OutlineState> {
-    const [windows, loaded, lifecycleJournal] = await Promise.all([
+    const [windows, v4Loaded, lifecycleJournal, startupKeys] = await Promise.all([
       perfTrace.measureAsync("background.runtime.getWindows", () => getNormalWindows(api)),
-      perfTrace.measureAsync("background.state.load", () => loadStateWithMetadata(api, stateLoadTraceOptions())),
-      loadRuntimeLifecycleJournal(api)
+      perfTrace.measureAsync("background.state.load", () => loadStateV4(api)),
+      loadRuntimeLifecycleJournal(api),
+      api.storage.local.get([
+        JOURNAL_META_KEY,
+        STATE_V3_MANIFEST_KEY,
+        STATE_V2_MANIFEST_KEY,
+        STATE_KEY,
+        STATE_V4_MIGRATION_BACKUP_META_KEY
+      ])
     ]);
-    const stored = loaded?.state;
+    const legacyKeysPresent = Boolean(
+      startupKeys[STATE_V3_MANIFEST_KEY] || startupKeys[STATE_V2_MANIFEST_KEY] || startupKeys[STATE_KEY]
+    );
+    const migrationBackupExportedAt = readMigrationBackupExportedAt(startupKeys[STATE_V4_MIGRATION_BACKUP_META_KEY]);
+    let loaded: LoadedOutlineState | undefined;
+    if (v4Loaded) {
+      currentV4Snapshot = { manifest: v4Loaded.manifest, slot: v4Loaded.slot };
+      previousV4Snapshot = undefined;
+      loaded = {
+        state: v4Loaded.state,
+        format: "v4",
+        journalSeqIncluded: v4Loaded.journalSeqIncluded,
+        // Anything below a clean R0 load must be folded into a fresh snapshot generation.
+        ...(v4Loaded.recovery !== "r0" || v4Loaded.repair ? { requiresFullSave: true } : {})
+      };
+      if (v4Loaded.recovery !== "r0" || v4Loaded.repair) {
+        await recordIncidentLog("v4LoadRecovery", {
+          recovery: v4Loaded.recovery,
+          ...(v4Loaded.repair ?? {})
+        });
+      }
+      if (legacyKeysPresent) {
+        if (migrationBackupExportedAt !== undefined) {
+          // A completed migration (evidenced by the backup meta) died before deleting the
+          // legacy keys; finish the cleanup off-path.
+          void deleteLegacyStateKeys().catch((error) => {
+            perfTrace.mark("background.state.migration.cleanup.error", { message: errorText(error) });
+          });
+        } else {
+          // A v4 store exists without migration evidence: it was written by saves during a
+          // degraded-load session whose migration was deferred. Keep the legacy keys as the
+          // recovery resource they are and surface the stuck state.
+          await recordIncidentLog("legacyKeysRetainedWithoutMigrationEvidence", {
+            ...outlineStateCountDetail(v4Loaded.state)
+          });
+        }
+      }
+      if (
+        migrationBackupExportedAt !== undefined &&
+        now() - migrationBackupExportedAt > MIGRATION_BACKUP_TTL_MS &&
+        !legacyKeysPresent
+      ) {
+        // The post-migration safety copy has served its soak window; reclaim the quota.
+        void api.storage.local.remove([STATE_V4_MIGRATION_BACKUP_KEY, STATE_V4_MIGRATION_BACKUP_META_KEY])
+          .catch((error) => {
+            perfTrace.mark("background.state.migration.backup.expire.error", { message: errorText(error) });
+          });
+      }
+    } else {
+      loaded = await perfTrace.measureAsync("background.state.load.legacy", () =>
+        loadStateWithMetadata(api, stateLoadTraceOptions())
+      );
+    }
+    // Construct the journal with a fresh epoch (prior + 1) and replay any acked deltas that
+    // the loaded snapshot does not yet reflect (crash between journal append and compaction).
+    const priorEpoch = readJournalEpoch(startupKeys[JOURNAL_META_KEY]);
+    outlineJournal = createOutlineJournal(api, { epoch: priorEpoch + 1, now });
+    const journalInit = await perfTrace.measureAsync("background.journal.init", () => outlineJournal!.init());
+    const loadedState = loaded?.state;
+    const journalReplayEntries = loadedState
+      ? journalInit.entries.filter((entry) => entry.seq > (loaded?.journalSeqIncluded ?? 0))
+      : [];
+    const journalReplayed = journalReplayEntries.length > 0;
+    const stored = journalReplayed ? replayJournal(loadedState!, journalReplayEntries) : loadedState;
+    if (journalReplayed) {
+      await recordIncidentLog("journalReplay", {
+        entryCount: journalReplayEntries.length,
+        throughSeq: journalInit.headSeq,
+        ...(journalInit.truncatedAtSeq !== undefined ? { truncatedAtSeq: journalInit.truncatedAtSeq } : {})
+      });
+      // A spill marker past the snapshot's journalSeqIncluded means a broad change was too
+      // heavy to journal and its compaction never landed: the loaded state may be missing
+      // it (bounded by the tightened post-spill save schedule). Surface that honestly.
+      const spillGaps = journalReplayEntries.filter((entry) => entry.spill);
+      if (spillGaps.length > 0) {
+        await recordIncidentLog("journalSpillGap", {
+          markerCount: spillGaps.length,
+          labels: spillGaps.map((entry) => entry.label ?? "unknown").join(",")
+        });
+      }
+    }
+    if (loaded?.salvaged) {
+      await recordIncidentLog("v3LoadSalvaged", { ...(loaded.repair ?? {}) });
+    }
+    if (loaded?.staleV2Fallback) {
+      await recordIncidentLog("staleV2FallbackUsed", { ...outlineStateCountDetail(loaded.state) });
+    }
+    if (!v4Loaded && stored) {
+      if (loaded?.salvaged || loaded?.staleV2Fallback) {
+        // Never migrate (and never delete legacy keys) off a degraded read: a transient
+        // storage fault that produced an empty or partial salvage must stay recoverable on
+        // a later startup with the legacy store intact. The session runs on the salvaged
+        // state; migration retries on the next clean load.
+        await recordIncidentLog("v4MigrationDeferredDegradedLoad", {
+          salvaged: loaded.salvaged === true,
+          staleV2Fallback: loaded.staleV2Fallback === true,
+          ...outlineStateCountDetail(stored)
+        });
+      } else {
+        // First startup on the v4 store: migrate the legacy (journal-replayed) state.
+        // Failure keeps the legacy keys authoritative and retries next startup.
+        await migrateLegacyStateToV4(stored);
+      }
+    }
     let storedRuntimeMatch: RuntimeSnapshotMatch | undefined;
     let consumedRuntimeLifecycleJournalEntryIds: string[] = [];
     let runtimeLifecycleJournalChangedState = false;
@@ -1922,14 +2132,25 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       runtimeLifecycleJournalChangedHistory = lifecycleRecovery.changedHistory;
       completedOutlinerClosePlans = lifecycleRecovery.completedOutlinerClosePlans;
       completedDeleteClosePlans = lifecycleRecovery.completedDeleteClosePlans;
+      if (lifecycleJournal.entries.length > 0) {
+        await recordIncidentLog("lifecycleJournalRecovery", {
+          entryCount: lifecycleJournal.entries.length,
+          entryKinds: lifecycleJournal.entries.map((entry) => entry.kind).join(","),
+          consumedCount: lifecycleRecovery.consumedEntryIds.length,
+          changedState: lifecycleRecovery.changed,
+          changedHistory: lifecycleRecovery.changedHistory
+        });
+      }
       if (lifecycleRecovery.history) {
         historyState = lifecycleRecovery.history;
       }
       const startupBase = lifecycleRecovery.state;
-      const loadedRequiresFullSave = loaded.requiresFullSave === true;
+      // A journal replay must be folded into a fresh full v3 snapshot so the next startup
+      // does not re-replay (and so journalSeqIncluded advances past the replayed entries).
+      const loadedRequiresFullSave = loaded?.requiresFullSave === true || journalReplayed;
       storedRuntimeMatch = runtimeSnapshotMateriallyMatchesState(startupBase, windows);
       if (storedRuntimeMatch.matches) {
-        if (loaded.format === "v3" && !runtimeLifecycleJournalChangedState && !loadedRequiresFullSave) {
+        if (loaded?.format !== "v2" && !runtimeLifecycleJournalChangedState && !loadedRequiresFullSave) {
           deferPersistedStateBaselineClone(startupBase);
         } else {
           lastPersistedState = undefined;
@@ -1939,7 +2160,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
           scheduleStateSave(state);
         }
       } else {
-        lastPersistedState = loaded.format === "v3" && !loadedRequiresFullSave
+        lastPersistedState = loaded?.format !== "v2" && !loadedRequiresFullSave
           ? cloneOutlineState(stored)
           : undefined;
         runtimeFacts.reconstructFromState(startupBase, windows);
@@ -1953,6 +2174,17 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         }
       }
     } else {
+      // Nothing loadable. Bootstrapping from windows is only safe on a genuinely fresh
+      // profile; if any stored outline keys exist, the bootstrap would overwrite them, so
+      // record an incident rather than letting that happen silently.
+      const storedKeys = await api.storage.local.get([STATE_V3_MANIFEST_KEY, STATE_V2_MANIFEST_KEY, STATE_KEY]);
+      if (storedKeys[STATE_V3_MANIFEST_KEY] || storedKeys[STATE_V2_MANIFEST_KEY] || storedKeys[STATE_KEY]) {
+        await recordIncidentLog("bootstrapSkippedStoredDataPresent", {
+          hasV3Manifest: Boolean(storedKeys[STATE_V3_MANIFEST_KEY]),
+          hasV2Manifest: Boolean(storedKeys[STATE_V2_MANIFEST_KEY]),
+          hasV1State: Boolean(storedKeys[STATE_KEY])
+        });
+      }
       state = bootstrapFromWindows(windows, { now: now() });
       scheduleStateSave(state);
     }
@@ -1981,6 +2213,14 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     if (runtimeLifecycleJournalChangedHistory && historyState) {
       scheduleHistorySave(historyState);
     }
+    await recordIncidentLog("startupStateLoaded", {
+      stored: Boolean(stored),
+      format: loaded?.format ?? "none",
+      requiresFullSave: loaded?.requiresFullSave === true,
+      runtimeWindowCount: windows.length,
+      journalEntryCount: lifecycleJournal.entries.length,
+      ...outlineStateCountDetail(state)
+    });
     runtimeIndex = storedRuntimeMatch?.matches && state === stored
       ? buildRuntimeStateIndexFromLookup(state, storedRuntimeMatch.lookup)
       : buildRuntimeStateIndex(state);
@@ -2437,39 +2677,27 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     return pruned ? repairState(pruned) : current;
   }
 
-  function stateLoadTraceOptions(): LoadStateOptions | undefined {
-    if (!perfTrace.isEnabled()) {
-      return undefined;
-    }
-
-    return {
-      onPhase: (phase) => {
-        perfTrace.mark(`background.state.load.${phase.name}`, stateLoadTraceDetail(phase));
+  function stateLoadTraceOptions(): LoadStateOptions {
+    const options: LoadStateOptions = {
+      onStructureRepair: (repair) => {
+        recordStorageLoadStructureRepair(repair);
       }
     };
+    if (perfTrace.isEnabled()) {
+      options.onPhase = (phase) => {
+        perfTrace.mark(`background.state.load.${phase.name}`, stateLoadTraceDetail(phase));
+      };
+    }
+    return options;
+  }
+
+  function recordStorageLoadStructureRepair(repair: StateStructureRepair): Promise<void> {
+    return recordIncidentLog("storageLoadStructureRepair", { ...repair });
   }
 
   function stateLoadTraceDetail(phase: StateLoadPhase): TraceDetail {
     return {
       durationMs: phase.durationMs,
-      ...(phase.detail ?? {})
-    };
-  }
-
-  function stateSaveTraceOptions(): Pick<SaveStateOptions, "onPhase"> | undefined {
-    if (!perfTrace.isEnabled()) {
-      return undefined;
-    }
-
-    return {
-      onPhase: (phase) => {
-        perfTrace.record(`background.state.save.${phase.name}`, phase.durationMs, stateSaveTraceDetail(phase));
-      }
-    };
-  }
-
-  function stateSaveTraceDetail(phase: StateSavePhase): TraceDetail {
-    return {
       ...(phase.detail ?? {})
     };
   }
@@ -2549,7 +2777,17 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     historyState = direction === "undo"
       ? pushRedoEntry(popped.history, popped.entry, activePreferences.undoHistoryLimit)
       : pushUndoEntryPreservingRedo(popped.history, popped.entry, activePreferences.undoHistoryLimit);
-    await persistWithBestEffortPatch(current, next, { diffMode: "material", saveSchedule });
+    const persistResult = await persistWithBestEffortPatch(current, next, { diffMode: "material", saveSchedule });
+    // History replay must be durable before its ack like any other mutating command: the
+    // command it reverts is already in the outline journal, and a restart that replays that
+    // entry with no counter-entry would resurrect the change the user saw undone. Undos that
+    // touch live runtime state already wrote a lifecycle "history" intent above, and startup
+    // recovery replays that with runtime reconciliation -- journaling those too would apply
+    // the delta twice with conflicting merge semantics. Only the closed-only undos (no
+    // lifecycle entry, the previously uncovered case) go through the outline journal.
+    if (!runtimeLifecycleJournalEntry) {
+      await appendCommandJournal(current, next, persistResult.candidateNodeIds, direction, "historyReplay");
+    }
     scheduleHistorySave(historyState, saveSchedule);
     broadcastHistoryStatusSoon(historyState);
     runtimeFacts.commitCommand(transaction.id);
@@ -2685,6 +2923,10 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   }
 
   function alignKnownRuntimeWindowProvenance(next: OutlineState): void {
+    // This mutates node.runtimeProvenance in place. If the persisted-state baseline still
+    // aliases the live state (the 0ms clone has not run yet), detach it first so the change
+    // is visible to the next save diff (V5 / RC-8).
+    detachPersistedStateBaselineForMutation();
     for (const node of liveWindowNodes(next)) {
       const provenance = runtimeFacts.runtimeWindowProvenanceMarker(node.live.windowId) ??
         (node.runtimeProvenance ? undefined : runtimeFacts.runtimeProvenanceForRecoveredWindow(node.live.windowId));
@@ -3382,7 +3624,11 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         runtimeIndex = fastPath.index;
         runtimeFacts.recordAcceptedRuntimeTabScopeUpdates(fastPath.runtimeScopeUpdates);
         await persistKnownRuntimeFastPathUpdate(fastPath.update, state);
-        await flushRuntimeTruthFastPathSaveIfNeeded(state, fastPath.update, fastPathCandidateNodeIds);
+        // The fast path mutates state in place, so the journal delta comes from the update
+        // payload; when queued, the coalesced append replaces the checkpoint flush.
+        if (!queueRuntimeEventJournalFromUpdate(fastPath.update, "runtimeFastPath")) {
+          await flushRuntimeTruthFastPathSaveIfNeeded(state, fastPath.update, fastPathCandidateNodeIds);
+        }
         return true;
       }
     }
@@ -3454,7 +3700,9 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       runtimeWindows: acceptedRuntimeWindowsForRefresh ?? windows
     });
     const persistResult = await persistWithBestEffortPatch(current, next, { diffMode: "material" });
-    await flushRuntimeTruthSaveIfNeeded(current, next, persistResult.candidateNodeIds);
+    if (!queueRuntimeEventJournal(current, next, persistResult.candidateNodeIds, "refreshSnapshot")) {
+      await flushRuntimeTruthSaveIfNeeded(current, next, persistResult.candidateNodeIds);
+    }
     return state !== current;
   }
 
@@ -4254,6 +4502,10 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         ...detail,
         restoredNodeCount: guarded.restoredNodeIds.length
       });
+      void recordIncidentLog("closedSubtreeGuardRestore", {
+        source: typeof detail.source === "string" ? detail.source : "unknown",
+        restoredNodeCount: guarded.restoredNodeIds.length
+      });
     }
     return guarded;
   }
@@ -4678,7 +4930,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     next: OutlineState,
     candidateNodeIds?: readonly NodeId[],
     options: { saveSchedule?: SaveSchedule } = {}
-  ): Promise<void> {
+  ): Promise<readonly NodeId[] | undefined> {
     const update = perfTrace.measure("background.patch.build.nodeState", {
       candidateNodeCount: candidateNodeIds?.length ?? 0
     }, () => candidateNodeIds
@@ -4686,15 +4938,19 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       : nodeStateUpdateFromStateChange(previous, next));
     if (isUsefulNodeStateUpdate(update, next)) {
       await broadcastNodeStateUpdate(update);
-      scheduleStateSave(next, options.saveSchedule, candidateNodeIds);
-      return;
+      // The patch enumerates exactly the changed nodes, so it is a complete candidate set
+      // for the compactor's dirty shards even when the caller had none to thread.
+      const persistedCandidateNodeIds = candidateNodeIds ?? candidateNodeIdsForPatch(update);
+      scheduleStateSave(next, options.saveSchedule, persistedCandidateNodeIds);
+      return persistedCandidateNodeIds;
     }
 
-    await persistWithBestEffortPatch(previous, next, {
+    const fallback = await persistWithBestEffortPatch(previous, next, {
       diffMode: "material",
       skipNodeState: true,
       ...(options.saveSchedule ? { saveSchedule: options.saveSchedule } : {})
     });
+    return fallback.candidateNodeIds;
   }
 
   async function persistKnownNodeStateUpdate(previous: OutlineState, next: OutlineState, nodeId: NodeId): Promise<void> {
@@ -4850,6 +5106,10 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     candidateNodeIds?: readonly NodeId[]
   ): void {
     pendingSaveState = next;
+    // Candidates only widen the compaction's dirty-shard set; deletions need no full-save
+    // promotion because a dirty shard is rebuilt wholesale from current state (a deleted
+    // node is simply absent from the rebuilt shard). No candidates means a broad change:
+    // every shard is dirty.
     if (candidateNodeIds) {
       if (!pendingSaveRequiresFullDiff) {
         pendingSaveCandidateNodeIds ??= new Set<NodeId>();
@@ -4862,6 +5122,33 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       pendingSaveRequiresFullDiff = true;
     }
     schedulePendingSave(schedule);
+    scheduleBootSnapshotWrite();
+  }
+
+  // Refresh the cold-start boot snapshot off the interaction path. Debounced and never part
+  // of a save flush, so a one-node change no longer reserializes the 256-row snapshot.
+  function scheduleBootSnapshotWrite(): void {
+    if (bootSnapshotTimer !== undefined) {
+      return;
+    }
+    bootSnapshotTimer = globalThis.setTimeout(() => {
+      bootSnapshotTimer = undefined;
+      void writeBootSnapshot();
+    }, BOOT_SNAPSHOT_WRITE_DELAY_MS);
+  }
+
+  async function writeBootSnapshot(): Promise<void> {
+    const current = state;
+    if (!current) {
+      return;
+    }
+    try {
+      await perfTrace.measureAsync("background.state.bootSnapshot.write", () =>
+        api.storage.local.set(outlineBootSnapshotItem(current, now()))
+      );
+    } catch (error) {
+      perfTrace.mark("background.state.bootSnapshot.error", { message: errorText(error) });
+    }
   }
 
   function scheduleHistorySave(next: HistoryState, schedule: SaveSchedule = "normal"): void {
@@ -5012,18 +5299,462 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     nextHistory: HistoryState | undefined,
     candidateNodeIds?: readonly NodeId[]
   ): Promise<void> {
-    await perfTrace.measureAsync("background.state.save", () =>
-      saveStateAndHistory(nextState, nextHistory, api, {
-        ...(nextState && lastPersistedState ? { previousState: lastPersistedState } : {}),
-        ...(nextState && candidateNodeIds ? { candidateNodeIds } : {}),
-        ...(stateSaveTraceOptions() ?? {})
-      })
-    );
+    const nextCountDetail = nextState ? outlineStateCountDetail(nextState) : undefined;
+    const previousCountDetail = lastPersistedState
+      ? outlineStateCountDetail(lastPersistedState)
+      : emptyOutlineStateCountDetail();
+    const saveIncidentDetail = nextState
+      ? {
+          candidateNodeCount: candidateNodeIds?.length ?? 0,
+          fullDiff: !candidateNodeIds,
+          fullSave: !lastPersistedState,
+          hasHistory: Boolean(nextHistory),
+          ...nextCountDetail,
+          ...outlineStateCountDeltaDetail(previousCountDetail, nextCountDetail!)
+        }
+      : undefined;
+    // Only stamp journalSeqIncluded when this save serializes the current state: then the
+    // snapshot reflects every journaled delta up to the current headSeq and those entries
+    // can be pruned. For an older queued snapshot, leave it unstamped (loader replays all,
+    // idempotently). Captured synchronously so it pairs with nextState atomically.
+    const journalSeqIncluded = nextState && nextState === state ? outlineJournal?.headSeq() : undefined;
+    // A compaction of the current state subsumes every queued (not yet appended) event
+    // delta: their content is in the snapshot, so they are dropped on success and restored
+    // on failure. Items queued during the write stay queued (they may postdate nextState).
+    const subsumedEventItems = journalSeqIncluded !== undefined ? drainPendingEventJournalItems() : [];
+    try {
+      await perfTrace.measureAsync("background.state.save", async () => {
+        const setItems: Record<string, unknown> = {};
+        let v4Snapshot: ReturnType<typeof outlineStateV4Snapshot> | undefined;
+        if (nextState) {
+          // Dirty set: shards of the flush's candidates plus shards touched by journal
+          // appends since the last fully-stamped compaction. No candidates (full-diff
+          // promotion, startup rewrites, failure retries) means every shard is dirty.
+          // Swap the journal-touched set out before the await so appends that land during
+          // the write re-arm cleanly for the next compaction.
+          const journalTouched = journalTouchedSinceCompaction;
+          if (journalSeqIncluded !== undefined) {
+            journalTouchedSinceCompaction = new Set();
+          }
+          const fullCompaction = !candidateNodeIds || !currentV4Snapshot;
+          const dirtyShardIndexes = fullCompaction
+            ? undefined
+            : new Set([
+                ...[...candidateNodeIds!].map(stateV4ShardIndexForNodeId),
+                ...journalTouched
+              ]);
+          v4Snapshot = outlineStateV4Snapshot(nextState, {
+            epoch: outlineJournal?.epoch() ?? 0,
+            journalSeqIncluded: journalSeqIncluded ?? currentV4Snapshot?.manifest.journalSeqIncluded ?? 0,
+            savedAt: now(),
+            ...(currentV4Snapshot ? { previous: currentV4Snapshot } : {}),
+            // This write evicts the manifest two compactions back from its slot; only the
+            // keys solely referenced by that manifest are collectable (keeps R1 loadable).
+            ...(previousV4Snapshot ? { collect: previousV4Snapshot.manifest } : {}),
+            ...(dirtyShardIndexes ? { dirtyShardIndexes } : {})
+          });
+          Object.assign(setItems, v4Snapshot.setItems);
+          perfTrace.mark("background.state.save.v4.compact", {
+            fullCompaction,
+            dirtyShardCount: dirtyShardIndexes ? dirtyShardIndexes.size : v4Snapshot.manifest.shardGenerations.length,
+            setKeys: Object.keys(v4Snapshot.setItems).length,
+            removeKeys: v4Snapshot.removeKeysAfterCommit.length,
+            generation: v4Snapshot.manifest.generation
+          });
+        }
+        if (nextHistory) {
+          setItems[HISTORY_KEY] = nextHistory;
+        }
+        if (Object.keys(setItems).length > 0) {
+          await api.storage.local.set(setItems);
+        }
+        if (v4Snapshot) {
+          previousV4Snapshot = currentV4Snapshot;
+          currentV4Snapshot = { manifest: v4Snapshot.manifest, slot: v4Snapshot.slot };
+          if (v4Snapshot.removeKeysAfterCommit.length > 0) {
+            // Keys no stored manifest references anymore; a failed remove is harmless garbage.
+            void api.storage.local.remove(v4Snapshot.removeKeysAfterCommit).catch((error) => {
+              perfTrace.mark("background.state.save.v4.gc.error", { message: errorText(error) });
+            });
+          }
+        }
+      });
+    } catch (error) {
+      if (subsumedEventItems.length > 0) {
+        pendingEventJournalItems = [...subsumedEventItems, ...pendingEventJournalItems];
+        armEventJournalTimers();
+      }
+      handleStateSaveFailure(nextState, nextHistory, error);
+      throw error;
+    }
+    saveFailureBackoffIndex = 0;
+    if (journalSeqIncluded !== undefined && outlineJournal && outlineJournal.pendingEntryCount() > 0) {
+      await outlineJournal.prune(journalSeqIncluded);
+    }
+    if (saveIncidentDetail && nextCountDetail) {
+      const closedCountDelta = nextCountDetail.closedCount - previousCountDetail.closedCount;
+      const nodeCountDelta = nextCountDetail.nodeCount - previousCountDetail.nodeCount;
+      if (
+        closedCountDelta <= SAVE_FLUSH_ANOMALY_CLOSED_DELTA ||
+        nodeCountDelta <= SAVE_FLUSH_ANOMALY_NODE_DELTA
+      ) {
+        await recordIncidentLog("saveFlushAnomaly", saveIncidentDetail);
+      }
+    }
     if (nextState) {
       deferPersistedStateBaselineClone(nextState);
     }
     if (nextState || nextHistory) {
       await clearCompletedRuntimeLifecycleJournalEntriesAfterSave();
+    }
+  }
+
+  function handleStateSaveFailure(
+    nextState: OutlineState | undefined,
+    nextHistory: HistoryState | undefined,
+    error: unknown
+  ): void {
+    // A partial write may have landed, so the in-memory baseline can no longer be
+    // trusted; force the retry to rewrite the full state rather than an incremental diff.
+    lastPersistedState = undefined;
+    pendingSaveRequiresFullDiff = true;
+    pendingSaveCandidateNodeIds = undefined;
+    // Re-queue the snapshot we just failed to persist, unless a newer mutation already
+    // superseded it.
+    if (nextState && !pendingSaveState) {
+      pendingSaveState = nextState;
+    }
+    if (nextHistory && !pendingSaveHistory) {
+      pendingSaveHistory = nextHistory;
+    }
+    void recordIncidentLog("stateSaveFailed", {
+      message: errorText(error),
+      backoffIndex: saveFailureBackoffIndex
+    });
+    armSaveFailureRetryTimer();
+  }
+
+  function armSaveFailureRetryTimer(): void {
+    const delayMs = SAVE_FAILURE_BACKOFF_MS[Math.min(saveFailureBackoffIndex, SAVE_FAILURE_BACKOFF_MS.length - 1)];
+    saveFailureBackoffIndex += 1;
+    if (saveTimer !== undefined) {
+      globalThis.clearTimeout(saveTimer);
+    }
+    saveTimer = globalThis.setTimeout(() => {
+      void flushScheduledSave();
+    }, delayMs);
+  }
+
+  // Build a journal delta item from a state transition, or undefined when nothing changed.
+  // candidateNodeIds narrows the diff to O(candidates); root changes are detected separately.
+  function journalDeltaItem(
+    previous: OutlineState,
+    next: OutlineState,
+    candidateNodeIds: readonly NodeId[] | undefined,
+    kind: OutlineJournalAppendItem["kind"],
+    label: string
+  ): OutlineJournalAppendItem | undefined {
+    const delta = outlineMaterialDelta(previous, next, candidateNodeIds);
+    const rootsChanged = !sameNodeIdList(previous.rootIds, next.rootIds);
+    if (delta.updatedNodes.length === 0 && delta.deletedNodeIds.length === 0 && !rootsChanged) {
+      return undefined;
+    }
+    return {
+      kind,
+      label,
+      delta: {
+        ...(delta.updatedNodes.length > 0 ? { updatedNodes: delta.updatedNodes } : {}),
+        ...(delta.deletedNodeIds.length > 0 ? { deletedNodeIds: delta.deletedNodeIds } : {}),
+        ...(rootsChanged ? { rootIds: [...next.rootIds] } : {})
+      }
+    };
+  }
+
+  // Append a command's delta to the journal before its ack so the change survives a restart
+  // before the deferred v3 save lands (invariant I-1). Returns true when the delta (including
+  // any runtime-provenance change) was durably journaled, letting the caller skip the
+  // runtime-truth checkpoint flush. Returns false when the delta is empty or too heavy to
+  // journal cheaply, in which case the caller keeps the checkpoint flush for durability.
+  async function appendCommandJournal(
+    previous: OutlineState,
+    next: OutlineState,
+    candidateNodeIds: readonly NodeId[] | undefined,
+    label: string,
+    kind: "command" | "historyReplay" = "command"
+  ): Promise<boolean> {
+    if (!outlineJournal) {
+      return false;
+    }
+    // Any coalesced event deltas captured before this command must land first so journal
+    // seq order stays chronological (replay applies absolute node records in seq order).
+    const queuedEventItems = drainPendingEventJournalItems();
+    const item = journalDeltaItem(previous, next, candidateNodeIds, kind, label);
+    if (!item) {
+      // No durable change to record (e.g. a no-op move); nothing for the checkpoint to flush.
+      await appendOutlineJournalItems(queuedEventItems);
+      return true;
+    }
+    // The journal module is the single spill authority (node/childIds weight plus a byte
+    // cap): a too-heavy delta is durably recorded as a delta-less spill marker instead.
+    // When that happens the change itself is NOT in the journal, so report false -- the
+    // caller keeps its checkpoint flush, and the spill already tightened the save schedule.
+    const spilled = await appendOutlineJournalItems([...queuedEventItems, item]);
+    return !spilled;
+  }
+
+  // A spill means the journal does NOT carry the change, so the snapshot save must land
+  // soon. schedulePendingSave alone would keep the more-deferred interaction schedule
+  // (moreDeferredSaveSchedule escalates, never tightens), so reset the schedule first.
+  function tightenPendingSaveScheduleAfterSpill(): void {
+    pendingSaveSchedule = "normal";
+    pendingSaveBatchStartedAt = undefined;
+    pendingSaveMaxDelayMs = undefined;
+    schedulePendingSave("normal");
+  }
+
+  // Journal a command whose model op mutates the live state in place (toggleCollapsed,
+  // expandAncestors): previous === next there, so a diff sees nothing -- the delta is built
+  // directly from the known changed node ids instead.
+  async function appendCommandJournalForKnownNodeIds(
+    next: OutlineState,
+    nodeIds: readonly NodeId[],
+    label: string
+  ): Promise<boolean> {
+    if (!outlineJournal) {
+      return false;
+    }
+    const queuedEventItems = drainPendingEventJournalItems();
+    const updatedNodes = uniqueDefinedNodeIds([...nodeIds]).flatMap((nodeId) => {
+      const node = next.nodes[nodeId];
+      return node ? [cloneOutlineNode(node)] : [];
+    });
+    if (updatedNodes.length === 0) {
+      await appendOutlineJournalItems(queuedEventItems);
+      return true;
+    }
+    const spilled = await appendOutlineJournalItems([...queuedEventItems, { kind: "command", label, delta: { updatedNodes } }]);
+    return !spilled;
+  }
+
+  // Queue a runtime-event delta for coalesced journaling. Returns true when the transition
+  // is durably covered (queued, or nothing material changed), false when the caller must
+  // keep its checkpoint flush (no journal, no candidates, or a too-heavy delta).
+  function queueRuntimeEventJournal(
+    previous: OutlineState,
+    next: OutlineState,
+    candidateNodeIds: readonly NodeId[] | undefined,
+    label: string
+  ): boolean {
+    if (!outlineJournal || !candidateNodeIds) {
+      return false;
+    }
+    const item = journalDeltaItem(previous, next, candidateNodeIds, "runtimeEvent", label);
+    if (!item) {
+      return true;
+    }
+    return queueEventJournalItem(item);
+  }
+
+  // The runtime fast path mutates the live state in place, so its delta cannot be diffed
+  // from previous/next -- the broadcast update payload already enumerates the changed nodes.
+  function queueRuntimeEventJournalFromUpdate(
+    update: TreeStructureUpdate | NodeStateUpdate,
+    label: string
+  ): boolean {
+    if (!outlineJournal) {
+      return false;
+    }
+    const updatedNodes = update.updatedNodes.map(cloneOutlineNode);
+    const deletedNodeIds = update.type === "treeStructureUpdated" ? [...update.deletedNodeIds] : [];
+    if (updatedNodes.length === 0 && deletedNodeIds.length === 0) {
+      return true;
+    }
+    return queueEventJournalItem({
+      kind: "runtimeEvent",
+      label,
+      delta: {
+        ...(updatedNodes.length > 0 ? { updatedNodes } : {}),
+        ...(deletedNodeIds.length > 0 ? { deletedNodeIds } : {}),
+        ...(update.type === "treeStructureUpdated" ? { rootIds: [...update.rootIds] } : {})
+      }
+    });
+  }
+
+  function queueEventJournalItem(item: OutlineJournalAppendItem): boolean {
+    // Events have no ack to anchor a synchronous spill response, so a weight-heavy delta is
+    // declined here (the caller keeps its checkpoint flush where wired) and the pending
+    // save is tightened so the un-journaled change reaches the snapshot within seconds even
+    // at call sites that do not check the return value. Byte-heavy deltas that pass this
+    // cheap pre-check are caught at flush time by the journal's spill authority, which also
+    // tightens the schedule.
+    if (item.delta && outlineJournalDeltaWeight(item.delta) > JOURNAL_SPILL_NODE_LIMIT) {
+      tightenPendingSaveScheduleAfterSpill();
+      return false;
+    }
+    pendingEventJournalItems.push(item);
+    armEventJournalTimers();
+    return true;
+  }
+
+  function armEventJournalTimers(): void {
+    const scheduledAt = performance.now();
+    eventJournalBatchStartedAt ??= scheduledAt;
+    if (eventJournalQuietTimer !== undefined) {
+      globalThis.clearTimeout(eventJournalQuietTimer);
+    }
+    eventJournalQuietTimer = globalThis.setTimeout(() => {
+      void flushEventJournalQueue();
+    }, EVENT_JOURNAL_QUIET_DELAY_MS);
+    if (eventJournalMaxTimer === undefined) {
+      eventJournalMaxTimer = globalThis.setTimeout(() => {
+        void flushEventJournalQueue();
+      }, Math.max(0, eventJournalBatchStartedAt + EVENT_JOURNAL_MAX_DELAY_MS - scheduledAt));
+    }
+  }
+
+  function drainPendingEventJournalItems(): OutlineJournalAppendItem[] {
+    if (eventJournalQuietTimer !== undefined) {
+      globalThis.clearTimeout(eventJournalQuietTimer);
+      eventJournalQuietTimer = undefined;
+    }
+    if (eventJournalMaxTimer !== undefined) {
+      globalThis.clearTimeout(eventJournalMaxTimer);
+      eventJournalMaxTimer = undefined;
+    }
+    eventJournalBatchStartedAt = undefined;
+    const items = pendingEventJournalItems;
+    pendingEventJournalItems = [];
+    return items;
+  }
+
+  async function flushEventJournalQueue(): Promise<void> {
+    const items = drainPendingEventJournalItems();
+    if (items.length === 0) {
+      return;
+    }
+    try {
+      await appendOutlineJournalItems(items);
+    } catch (error) {
+      // Class B: a failed coalesced append falls back to the deferred snapshot save.
+      perfTrace.mark("background.journal.event.error", { message: errorText(error) });
+    }
+  }
+
+  // Appends items and returns whether the journal spilled any of them (recorded a delta-less
+  // marker instead of the delta). A spill means the change is NOT recoverable from the
+  // journal, so the pending save schedule is tightened here for every caller.
+  async function appendOutlineJournalItems(items: OutlineJournalAppendItem[]): Promise<boolean> {
+    if (!outlineJournal || items.length === 0) {
+      return false;
+    }
+    try {
+      const result = await perfTrace.measureAsync("background.journal.append", { entries: items.length }, () =>
+        outlineJournal!.append(items)
+      );
+      for (const item of items) {
+        for (const node of item.delta?.updatedNodes ?? []) {
+          journalTouchedSinceCompaction.add(stateV4ShardIndexForNodeId(node.id));
+        }
+        for (const nodeId of item.delta?.deletedNodeIds ?? []) {
+          journalTouchedSinceCompaction.add(stateV4ShardIndexForNodeId(nodeId));
+        }
+      }
+      if (result.spilled) {
+        perfTrace.mark("background.journal.spill", { entries: items.length });
+        tightenPendingSaveScheduleAfterSpill();
+      }
+      return result.spilled;
+    } catch (error) {
+      if (error instanceof JournalFullError) {
+        await compactOutlineJournal();
+        return appendOutlineJournalItems(items);
+      }
+      throw error;
+    }
+  }
+
+  // Interim compaction: fold the current state into a v3 snapshot (stamping journalSeqIncluded)
+  // and prune the journal. Phase 3 replaces this with the v4 shadow-paged compactor.
+  async function compactOutlineJournal(): Promise<void> {
+    if (!outlineJournal || !state) {
+      return;
+    }
+    const throughSeq = outlineJournal.headSeq();
+    scheduleStateSave(state);
+    await flushPendingSaves();
+    await outlineJournal.prune(throughSeq);
+  }
+
+  function readJournalEpoch(value: unknown): number {
+    if (value && typeof value === "object" && typeof (value as { epoch?: unknown }).epoch === "number") {
+      return (value as { epoch: number }).epoch;
+    }
+    return 0;
+  }
+
+  function readMigrationBackupExportedAt(value: unknown): number | undefined {
+    if (value && typeof value === "object" && typeof (value as { exportedAt?: unknown }).exportedAt === "number") {
+      return (value as { exportedAt: number }).exportedAt;
+    }
+    return undefined;
+  }
+
+  // One-time v3/v2 -> v4 migration: write a complete v4 store from the loaded legacy state,
+  // read it back and verify it reproduces that state exactly, write a portable-tree backup,
+  // and only then delete the legacy keys. Any failure removes the just-written v4 keys so
+  // the next startup retries with the legacy keys still authoritative.
+  async function migrateLegacyStateToV4(stored: OutlineState): Promise<void> {
+    const snapshot = outlineStateV4Snapshot(stored, {
+      epoch: outlineJournal?.epoch() ?? 0,
+      journalSeqIncluded: outlineJournal?.headSeq() ?? 0,
+      savedAt: now()
+    });
+    // One written-key set drives both the write and the failure rollback so they cannot
+    // diverge (the boot snapshot key must roll back too).
+    const writtenItems: Record<string, unknown> = {
+      ...snapshot.setItems,
+      ...outlineBootSnapshotItem(stored, now())
+    };
+    try {
+      await perfTrace.measureAsync("background.state.migration.write", () =>
+        api.storage.local.set(writtenItems)
+      );
+      const verify = await loadStateV4(api);
+      if (!verify || verify.recovery !== "r0" || !statesMateriallyEqual(verify.state, stored)) {
+        throw new Error(verify ? `verification mismatch (${verify.recovery})` : "verification load failed");
+      }
+      currentV4Snapshot = { manifest: snapshot.manifest, slot: snapshot.slot };
+      previousV4Snapshot = undefined;
+      await api.storage.local.set({
+        [STATE_V4_MIGRATION_BACKUP_KEY]: {
+          version: 1,
+          exportedAt: now(),
+          tree: exportPortableTree(stored, { now: now() })
+        },
+        // The tiny meta record is the durable "migration completed" evidence: startup gates
+        // legacy-key cleanup on it and expires the backup through it without ever
+        // deserializing the multi-MB backup value.
+        [STATE_V4_MIGRATION_BACKUP_META_KEY]: { version: 1, exportedAt: now() }
+      });
+      await deleteLegacyStateKeys();
+      await recordIncidentLog("v4MigrationComplete", { ...outlineStateCountDetail(stored) });
+    } catch (error) {
+      currentV4Snapshot = undefined;
+      previousV4Snapshot = undefined;
+      await api.storage.local.remove(Object.keys(writtenItems)).catch(() => undefined);
+      await recordIncidentLog("v4MigrationFailed", { message: errorText(error) });
+    }
+  }
+
+  async function deleteLegacyStateKeys(): Promise<void> {
+    const everything = await api.storage.local.get(null);
+    const legacyKeys = Object.keys(everything).filter((key) =>
+      key === STATE_KEY ||
+      key.startsWith("outlineState:v2:") ||
+      key.startsWith("outlineState:v3:")
+    );
+    if (legacyKeys.length > 0) {
+      await api.storage.local.remove(legacyKeys);
     }
   }
 
@@ -5104,6 +5835,82 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     }
   }
 
+  async function recordIncidentLog(event: string, detail: IncidentLogDetail = {}): Promise<void> {
+    try {
+      await appendIncidentLogEntry(api, event, detail, { now });
+    } catch (error) {
+      perfTrace.mark("background.incidentLog.error", {
+        event,
+        message: errorText(error)
+      });
+    }
+  }
+
+  type OutlineStateCountDetail = {
+    nodeCount: number;
+    closedCount: number;
+    rootCount: number;
+    windowCount: number;
+    tabCount: number;
+  };
+
+  function outlineStateCountDetail(source: OutlineState): OutlineStateCountDetail {
+    let nodeCount = 0;
+    let closedCount = 0;
+    let windowCount = 0;
+    let tabCount = 0;
+    for (const nodeId in source.nodes) {
+      const node = source.nodes[nodeId];
+      if (!node) {
+        continue;
+      }
+      nodeCount += 1;
+      if (node.kind === "window") {
+        windowCount += 1;
+      } else if (node.kind === "tab") {
+        tabCount += 1;
+      }
+      if (node.status === "closed") {
+        closedCount += 1;
+      }
+    }
+    return {
+      nodeCount,
+      closedCount,
+      rootCount: source.rootIds.length,
+      windowCount,
+      tabCount
+    };
+  }
+
+  function emptyOutlineStateCountDetail(): OutlineStateCountDetail {
+    return {
+      nodeCount: 0,
+      closedCount: 0,
+      rootCount: 0,
+      windowCount: 0,
+      tabCount: 0
+    };
+  }
+
+  function outlineStateCountDeltaDetail(
+    previous: OutlineStateCountDetail,
+    next: OutlineStateCountDetail
+  ): IncidentLogDetail {
+    return {
+      previousNodeCount: previous.nodeCount,
+      nodeCountDelta: next.nodeCount - previous.nodeCount,
+      previousClosedCount: previous.closedCount,
+      closedCountDelta: next.closedCount - previous.closedCount,
+      previousRootCount: previous.rootCount,
+      rootCountDelta: next.rootCount - previous.rootCount,
+      previousWindowCount: previous.windowCount,
+      windowCountDelta: next.windowCount - previous.windowCount,
+      previousTabCount: previous.tabCount,
+      tabCountDelta: next.tabCount - previous.tabCount
+    };
+  }
+
   function getDiagnosticsCoalesced(): Promise<OutlineDiagnostics> {
     diagnosticsInFlight ??= perfTrace.measureAsync("background.diagnostics", async () => {
       await waitForSchedulerIdle();
@@ -5167,9 +5974,16 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
   async function performanceProfileSnapshot(): Promise<PerformanceProfileSnapshot> {
     const background = perfTrace.snapshot();
+    const [currentState, incidentLog, sidebars] = await Promise.all([
+      ensureState(),
+      loadIncidentLog(api),
+      collectSidebarPerformanceTraces()
+    ]);
     return {
       background,
-      sidebars: await collectSidebarPerformanceTraces()
+      incidentLog,
+      portableTree: exportPortableTree(currentState, { now: now() }),
+      sidebars
     };
   }
 
@@ -6971,6 +7785,14 @@ function isDiagnosticsRequest(message: unknown): message is { type: "getDiagnost
     message &&
       typeof message === "object" &&
       (message as { type?: unknown }).type === "getDiagnostics"
+  );
+}
+
+function isIncidentLogRequest(message: unknown): message is { type: "getIncidentLog" } {
+  return Boolean(
+    message &&
+      typeof message === "object" &&
+      (message as { type?: unknown }).type === "getIncidentLog"
   );
 }
 

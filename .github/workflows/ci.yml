@@ -49,3 +49,37 @@ jobs:
             test-results/playwright
             playwright-report
           if-no-files-found: ignore
+
+  runtime-perf-hard-counters:
+    # Enforces the runtime perf guard's hard counters (saves, journalWrites,
+    # storageSetCalls, byte and broadcast counts) on every PR. Timing budgets are
+    # machine-variance-sensitive on shared runners, so they are report-only here and
+    # remain a blocking local pre-commit gate (AGENTS.md; docs/storage-rearchitecture
+    # 03-WORKFLOW-FIXES W-1).
+    name: Runtime perf guard (hard counters)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm run build
+
+      - name: Run runtime perf guard (hard counters only)
+        run: node scripts/perf-runtime-guard.mjs --hard-only

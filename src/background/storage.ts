@@ -13,6 +13,8 @@ const STATE_V2_NODE_CHUNK_SIZE = 512;
 const STATE_V2_ORDER_PAGE_SIZE = 1024;
 const STATE_V3_NODE_SHARD_PREFIX = "outlineState:v3:nodes:";
 const STATE_V3_ORDER_PAGE_PREFIX = "outlineState:v3:order:";
+export const STATE_V3_BOOT_SNAPSHOT_KEY = "outlineState:v3:bootSnapshot";
+export const STATE_V4_BOOT_SNAPSHOT_KEY = "outline:v4:bootSnapshot";
 const STATE_V3_NODE_SHARD_COUNT = 32;
 const STATE_V3_ORDER_PAGE_SIZE = 1024;
 export const INITIAL_TREE_SNAPSHOT_ROW_LIMIT = 256;
@@ -148,13 +150,41 @@ type StateV3Manifest = {
   nodeShardCount: number;
   nodeShardKeys: string[];
   orderPageSize: number;
-  initialSnapshot: InitialTreeSnapshot;
+  // Highest v4 journal seq reflected in this snapshot. The loader replays journal entries
+  // with seq > this value on top of the loaded state (Phase 2 double-write durability).
+  journalSeqIncluded?: number;
+  // Revision of the separately-stored boot snapshot (STATE_V3_BOOT_SNAPSHOT_KEY).
+  bootSnapshotRevision?: number;
+  // Only older manifests embed the snapshot inline; new saves write it to its own key so
+  // a one-node change no longer reserializes the whole 256-row snapshot per flush.
+  initialSnapshot?: InitialTreeSnapshot;
+};
+
+type StateV3BootSnapshot = {
+  version: 3;
+  revision: number;
+  snapshot: InitialTreeSnapshot;
 };
 
 export type LoadedOutlineState = {
   state: OutlineState;
-  format: "v2" | "v3";
+  format: "v2" | "v3" | "v4";
   requiresFullSave?: boolean;
+  // Highest journal seq already reflected in the loaded snapshot; the controller replays
+  // journal entries with seq greater than this on top of `state`.
+  journalSeqIncluded?: number;
+  // True when the v3 load skipped unparseable shards or accepted partial order pages.
+  salvaged?: boolean;
+  repair?: StateStructureRepair;
+  // True when a present-but-unloadable v3 manifest forced a fall back to the frozen v2
+  // snapshot. The caller must surface this — it is a silent-time-travel risk.
+  staleV2Fallback?: boolean;
+};
+
+type StateV3LoadOutcome = {
+  state: OutlineState;
+  salvaged: boolean;
+  repair?: StateStructureRepair;
 };
 
 export type StateLoadPhase = {
@@ -163,8 +193,21 @@ export type StateLoadPhase = {
   detail?: Record<string, string | number | boolean>;
 };
 
+export type StateStructureRepair = {
+  source: "v3" | "v4";
+  rootCountBefore: number;
+  rootCountAfter: number;
+  parentMismatchCount: number;
+  staleRootParentCount: number;
+  missingChildCount: number;
+  duplicateChildCount: number;
+  extraRootCount: number;
+  unreachableNodeCount: number;
+};
+
 export type LoadStateOptions = {
   onPhase?: (phase: StateLoadPhase) => void;
+  onStructureRepair?: (repair: StateStructureRepair) => void | Promise<void>;
 };
 
 export type StateSavePhase = {
@@ -176,12 +219,15 @@ export type StateSavePhase = {
 export type SaveStateOptions = {
   previousState?: OutlineState;
   candidateNodeIds?: readonly NodeId[];
+  journalSeqIncluded?: number;
   onPhase?: (phase: StateSavePhase) => void;
 };
 
 export type OutlineStateV3Changes = {
   setItems: Record<string, unknown>;
   removeKeys: string[];
+  effectiveCandidateNodeIds?: readonly NodeId[];
+  candidatePromotionReason?: "nodeCountDecreased" | "rootIdsChanged";
 };
 
 async function measureLoadPhase<T>(
@@ -249,13 +295,17 @@ export async function loadStateWithMetadata(
     api.storage.local.get([STATE_V3_MANIFEST_KEY, STATE_V2_MANIFEST_KEY])
   );
   const v3Manifest = stored[STATE_V3_MANIFEST_KEY];
-  if (isStateV3Manifest(v3Manifest)) {
-    const state = await loadStateV3FromManifest(v3Manifest, api, options);
-    if (state) {
+  const v3ManifestPresent = isStateV3Manifest(v3Manifest);
+  if (v3ManifestPresent) {
+    const outcome = await loadStateV3FromManifest(v3Manifest, api, options);
+    if (outcome) {
       return {
-        state,
+        state: outcome.state,
         format: "v3",
-        ...(stateV3ManifestRequiresFullSave(v3Manifest) ? { requiresFullSave: true } : {})
+        ...(stateV3ManifestRequiresFullSave(v3Manifest) || outcome.salvaged ? { requiresFullSave: true } : {}),
+        ...(outcome.salvaged ? { salvaged: true } : {}),
+        ...(outcome.repair ? { repair: outcome.repair } : {}),
+        ...(typeof v3Manifest.journalSeqIncluded === "number" ? { journalSeqIncluded: v3Manifest.journalSeqIncluded } : {})
       };
     }
   }
@@ -264,8 +314,26 @@ export async function loadStateWithMetadata(
   if (isStateV2Manifest(v2Manifest)) {
     const state = await loadStateV2FromManifest(v2Manifest, api);
     if (state) {
-      return { state, format: "v2" };
+      // Falling back to the frozen v2 snapshot is only legitimate before migration. If a
+      // v3 manifest exists, this is a silent rollback the caller must be told about.
+      return {
+        state,
+        format: "v2",
+        ...(v3ManifestPresent ? { staleV2Fallback: true, requiresFullSave: true } : {})
+      };
     }
+  }
+
+  // A v3 manifest exists but neither its shards nor a usable v2 snapshot loaded. Return an
+  // empty salvaged v3 state so the caller reconciles from runtime rather than silently
+  // bootstrapping a fresh tree on top of (now unreadable) stored data.
+  if (v3ManifestPresent) {
+    return {
+      state: { version: 1, rootIds: [], nodes: {} },
+      format: "v3",
+      requiresFullSave: true,
+      salvaged: true
+    };
   }
 
   return undefined;
@@ -295,7 +363,8 @@ export async function saveStateAndHistory(
     const changeBuildStartedAt = currentMs();
     const changes = outlineStateV3Changes(state, {
       ...(options.previousState ? { previousState: options.previousState } : {}),
-      ...(options.candidateNodeIds ? { candidateNodeIds: options.candidateNodeIds } : {})
+      ...(options.candidateNodeIds ? { candidateNodeIds: options.candidateNodeIds } : {}),
+      ...(options.journalSeqIncluded !== undefined ? { journalSeqIncluded: options.journalSeqIncluded } : {})
     });
     recordSavePhase(options, "v3.changeBuild", changeBuildStartedAt, stateV3ChangeTraceDetail(changes, options));
     Object.assign(setItems, changes.setItems);
@@ -316,11 +385,16 @@ export async function saveStateAndHistory(
   }
 }
 
-function stateV3ChangeTraceDetail(changes: OutlineStateV3Changes, options: SaveStateOptions): Record<string, number | boolean> {
+function stateV3ChangeTraceDetail(
+  changes: OutlineStateV3Changes,
+  options: SaveStateOptions
+): Record<string, string | number | boolean> {
   const setKeys = Object.keys(changes.setItems);
   return {
     fullSave: !options.previousState,
-    candidateNodeCount: options.candidateNodeIds?.length ?? 0,
+    candidateNodeCount: changes.effectiveCandidateNodeIds?.length ?? 0,
+    candidatePromoted: Boolean(changes.candidatePromotionReason),
+    ...(changes.candidatePromotionReason ? { candidatePromotionReason: changes.candidatePromotionReason } : {}),
     setKeys: setKeys.length,
     removeKeys: changes.removeKeys.length,
     nodeShardSetKeys: countKeysWithPrefix(setKeys, STATE_V3_NODE_SHARD_PREFIX),
@@ -416,9 +490,20 @@ export function outlineStateV2Items(
 export async function loadInitialTreeSnapshot(
   api: WebExtensionBrowser = browser
 ): Promise<InitialTreeSnapshot | undefined> {
-  const stored = await api.storage.local.get([STATE_V3_MANIFEST_KEY, STATE_V2_MANIFEST_KEY]);
+  const stored = await api.storage.local.get([
+    STATE_V4_BOOT_SNAPSHOT_KEY,
+    STATE_V3_BOOT_SNAPSHOT_KEY,
+    STATE_V3_MANIFEST_KEY,
+    STATE_V2_MANIFEST_KEY
+  ]);
+  const bootSnapshot = stored[STATE_V4_BOOT_SNAPSHOT_KEY] ?? stored[STATE_V3_BOOT_SNAPSHOT_KEY];
+  if (isStateV3BootSnapshot(bootSnapshot)) {
+    return cloneInitialTreeSnapshot(bootSnapshot.snapshot, true);
+  }
+
+  // Back-compat: older manifests embed the snapshot inline.
   const v3Manifest = stored[STATE_V3_MANIFEST_KEY];
-  if (isStateV3Manifest(v3Manifest)) {
+  if (isStateV3Manifest(v3Manifest) && v3Manifest.initialSnapshot) {
     return cloneInitialTreeSnapshot(v3Manifest.initialSnapshot, true);
   }
 
@@ -489,14 +574,14 @@ export async function loadStateV3(api: WebExtensionBrowser = browser): Promise<O
     return undefined;
   }
 
-  return loadStateV3FromManifest(manifest, api);
+  return (await loadStateV3FromManifest(manifest, api))?.state;
 }
 
 async function loadStateV3FromManifest(
   manifest: StateV3Manifest,
   api: WebExtensionBrowser,
   options: LoadStateOptions = {}
-): Promise<OutlineState | undefined> {
+): Promise<StateV3LoadOutcome | undefined> {
   const shardItems: Record<string, unknown> = await measureLoadPhase(
     options,
     "v3.nodeShardRead",
@@ -506,30 +591,33 @@ async function loadStateV3FromManifest(
     { keys: manifest.nodeShardKeys.length }
   );
   const nodes: OutlineState["nodes"] = {};
-  const storedNodes: StoredOutlineNode[] = [];
   const storedNodesWithChildren: StoredOutlineNode[] = [];
-  const materialized = await measureLoadPhase(
+  let parsedShardCount = 0;
+  let shardParseFailureCount = 0;
+  await measureLoadPhase(
     options,
     "v3.nodeMaterialize",
     () => {
       for (const key of manifest.nodeShardKeys) {
         const shard = shardItems[key];
         if (!isStateV3NodeShard(shard)) {
-          return false;
+          // Salvage: skip an unparseable shard rather than failing the whole load.
+          shardParseFailureCount += 1;
+          continue;
         }
+        parsedShardCount += 1;
         for (const storedNode of shard.nodes) {
-          storedNodes.push(storedNode);
           if (storedNode.childCount > 0) {
             storedNodesWithChildren.push(storedNode);
           }
           nodes[storedNode.id] = storedNodeToNode(storedNode);
         }
       }
-      return true;
     },
     { shards: manifest.nodeShardKeys.length }
   );
-  if (!materialized) {
+  // If shards were expected but none parsed, the node table is unrecoverable from v3.
+  if (manifest.nodeShardKeys.length > 0 && parsedShardCount === 0) {
     return undefined;
   }
 
@@ -545,53 +633,68 @@ async function loadStateV3FromManifest(
     () => orderPageKeys.length > 0 ? api.storage.local.get(orderPageKeys) : Promise.resolve({}),
     { keys: orderPageKeys.length }
   );
-  const attached = await measureLoadPhase(
+  let orderSalvageCount = 0;
+  await measureLoadPhase(
     options,
     "v3.orderAttach",
     () => {
       for (const storedNode of storedNodesWithChildren) {
         const node = nodes[storedNode.id];
         if (!node) {
-          return false;
+          continue;
         }
         const childIds: NodeId[] = [];
         const pageCount = Math.ceil(storedNode.childCount / manifest.orderPageSize);
+        let truncated = false;
         for (let pageIndex = 0; pageIndex < pageCount; pageIndex += 1) {
           const page = orderPageItems[stateV3OrderPageKey(storedNode.id, pageIndex)];
           if (!isStateV3OrderPage(page) || page.parentId !== storedNode.id || page.pageIndex !== pageIndex) {
-            return false;
+            // Salvage: keep the valid prefix of the child order; structure repair re-roots
+            // the children we could not place.
+            truncated = true;
+            break;
           }
           childIds.push(...page.childIds);
         }
-        if (childIds.length !== storedNode.childCount) {
-          return false;
+        if (truncated || childIds.length !== storedNode.childCount) {
+          orderSalvageCount += 1;
         }
         node.childIds = childIds;
       }
-      return true;
     },
     { pages: orderPageKeys.length }
   );
-  if (!attached) {
-    return undefined;
-  }
 
   const state: OutlineState = {
     version: 1,
     rootIds: [...manifest.rootIds],
     nodes
   };
-  return await measureLoadPhase(options, "v3.validation", () => isOutlineState(state))
-    ? state
-    : undefined;
+  const repair = normalizeLoadedOutlineStructure(state, "v3");
+  if (repair) {
+    await options.onStructureRepair?.(repair);
+  }
+  if (!(await measureLoadPhase(options, "v3.validation", () => isOutlineState(state)))) {
+    return undefined;
+  }
+  return {
+    state,
+    salvaged: shardParseFailureCount > 0 || orderSalvageCount > 0,
+    ...(repair ? { repair } : {})
+  };
 }
 
 export function outlineStateV3Changes(
   state: OutlineState,
-  options: { previousState?: OutlineState; candidateNodeIds?: readonly NodeId[]; revision?: number } = {}
+  options: {
+    previousState?: OutlineState;
+    candidateNodeIds?: readonly NodeId[];
+    revision?: number;
+    journalSeqIncluded?: number;
+  } = {}
 ): OutlineStateV3Changes {
   const revision = options.revision ?? Date.now();
-  const manifest = stateV3ManifestForState(state, revision);
+  const manifest = stateV3ManifestForState(state, revision, options.journalSeqIncluded);
   const setItems: Record<string, unknown> = {
     [STATE_V3_MANIFEST_KEY]: manifest
   };
@@ -607,7 +710,12 @@ export function outlineStateV3Changes(
     return { setItems, removeKeys };
   }
 
-  for (const [shardIndex, shard] of changedNodeShardItems(options.previousState, state, options.candidateNodeIds)) {
+  const candidatePromotionReason = options.candidateNodeIds
+    ? v3CandidatePromotionReason(options.previousState, state)
+    : undefined;
+  const effectiveCandidateNodeIds = candidatePromotionReason ? undefined : options.candidateNodeIds;
+
+  for (const [shardIndex, shard] of changedNodeShardItems(options.previousState, state, effectiveCandidateNodeIds)) {
     const key = stateV3NodeShardKey(shardIndex);
     if (shard.nodes.length === 0) {
       removeKeys.push(key);
@@ -616,7 +724,7 @@ export function outlineStateV3Changes(
     }
   }
 
-  for (const change of changedOrderPages(options.previousState, state, options.candidateNodeIds)) {
+  for (const change of changedOrderPages(options.previousState, state, effectiveCandidateNodeIds)) {
     if (change.page) {
       setItems[change.key] = change.page;
     } else {
@@ -624,7 +732,172 @@ export function outlineStateV3Changes(
     }
   }
 
-  return { setItems, removeKeys };
+  return {
+    setItems,
+    removeKeys,
+    ...(effectiveCandidateNodeIds ? { effectiveCandidateNodeIds } : {}),
+    ...(candidatePromotionReason ? { candidatePromotionReason } : {})
+  };
+}
+
+// Load-time structural repair: re-roots unreachable nodes, drops dangling child refs, and
+// reconciles parent pointers against the reachable tree. Generic over the storage format
+// that produced the state (v3 load and v4 R2 salvage both use it).
+export function normalizeLoadedOutlineStructure(
+  state: OutlineState,
+  source: StateStructureRepair["source"]
+): StateStructureRepair | undefined {
+  const originalRootIds = [...state.rootIds];
+  const originalParentIds = new Map<NodeId, NodeId | undefined>();
+  const referencedChildIds = new Set<NodeId>();
+  for (const nodeId in state.nodes) {
+    const node = state.nodes[nodeId];
+    if (!node) {
+      continue;
+    }
+    originalParentIds.set(nodeId, node.parentId);
+    for (const childId of node.childIds) {
+      if (state.nodes[childId]) {
+        referencedChildIds.add(childId);
+      }
+    }
+  }
+  const rootIds: NodeId[] = [];
+  const rootIdSet = new Set<NodeId>();
+  const manifestRootIds = uniqueNodeIds(originalRootIds);
+  const manifestRootIdSet = new Set<NodeId>(manifestRootIds.filter((nodeId) => Boolean(state.nodes[nodeId])));
+  const reached = new Set<NodeId>();
+  let parentMismatchCount = 0;
+  let staleRootParentCount = 0;
+  let missingChildCount = 0;
+  let duplicateChildCount = 0;
+  let extraRootCount = 0;
+  let unreachableNodeCount = 0;
+
+  const assignParent = (node: OutlineNode, parentId: NodeId | undefined): void => {
+    const previousParentId = originalParentIds.get(node.id);
+    if (previousParentId !== parentId) {
+      parentMismatchCount += 1;
+    }
+    if (parentId === undefined) {
+      if (previousParentId !== undefined) {
+        staleRootParentCount += 1;
+      }
+      delete node.parentId;
+    } else {
+      node.parentId = parentId;
+    }
+  };
+
+  const visit = (nodeId: NodeId, parentId: NodeId | undefined): boolean => {
+    const node = state.nodes[nodeId];
+    if (!node || reached.has(nodeId)) {
+      duplicateChildCount += reached.has(nodeId) ? 1 : 0;
+      missingChildCount += !node ? 1 : 0;
+      return false;
+    }
+
+    reached.add(nodeId);
+    assignParent(node, parentId);
+
+    const childIds: NodeId[] = [];
+    for (const childId of node.childIds) {
+      if (!state.nodes[childId]) {
+        missingChildCount += 1;
+        continue;
+      }
+      if (manifestRootIdSet.has(childId) || reached.has(childId)) {
+        duplicateChildCount += 1;
+        continue;
+      }
+      if (visit(childId, nodeId)) {
+        childIds.push(childId);
+      }
+    }
+    node.childIds = childIds;
+    return true;
+  };
+
+  for (const rootId of manifestRootIds) {
+    if (!state.nodes[rootId]) {
+      missingChildCount += 1;
+      continue;
+    }
+    if (rootIdSet.has(rootId)) {
+      duplicateChildCount += 1;
+      continue;
+    }
+    if (visit(rootId, undefined)) {
+      rootIds.push(rootId);
+      rootIdSet.add(rootId);
+    }
+  }
+
+  for (const nodeId in state.nodes) {
+    if (reached.has(nodeId) || referencedChildIds.has(nodeId)) {
+      continue;
+    }
+    const reachedBefore = reached.size;
+    if (visit(nodeId, undefined)) {
+      rootIds.push(nodeId);
+      rootIdSet.add(nodeId);
+      extraRootCount += 1;
+      unreachableNodeCount += reached.size - reachedBefore;
+    }
+  }
+
+  for (const nodeId in state.nodes) {
+    if (reached.has(nodeId)) {
+      continue;
+    }
+    const reachedBefore = reached.size;
+    if (visit(nodeId, undefined)) {
+      rootIds.push(nodeId);
+      rootIdSet.add(nodeId);
+      extraRootCount += 1;
+      unreachableNodeCount += reached.size - reachedBefore;
+    }
+  }
+
+  state.rootIds = rootIds;
+  const rootCountBefore = originalRootIds.length;
+  const rootCountAfter = rootIds.length;
+  const rootIdsChanged = !sameNodeIdList(originalRootIds, rootIds);
+  if (
+    parentMismatchCount === 0 &&
+    missingChildCount === 0 &&
+    duplicateChildCount === 0 &&
+    extraRootCount === 0 &&
+    unreachableNodeCount === 0 &&
+    !rootIdsChanged
+  ) {
+    return undefined;
+  }
+
+  return {
+    source,
+    rootCountBefore,
+    rootCountAfter,
+    parentMismatchCount,
+    staleRootParentCount,
+    missingChildCount,
+    duplicateChildCount,
+    extraRootCount,
+    unreachableNodeCount
+  };
+}
+
+function v3CandidatePromotionReason(
+  previous: OutlineState,
+  next: OutlineState
+): OutlineStateV3Changes["candidatePromotionReason"] | undefined {
+  if (!sameNodeIdList(previous.rootIds, next.rootIds)) {
+    return "rootIdsChanged";
+  }
+  if (Object.keys(next.nodes).length < Object.keys(previous.nodes).length) {
+    return "nodeCountDecreased";
+  }
+  return undefined;
 }
 
 export function initialTreeSnapshotForState(
@@ -1033,7 +1306,11 @@ function storedNodeToNode(node: StoredOutlineNode): OutlineNode {
   return outlineNode;
 }
 
-function stateV3ManifestForState(state: OutlineState, revision: number): StateV3Manifest {
+function stateV3ManifestForState(
+  state: OutlineState,
+  revision: number,
+  journalSeqIncluded?: number
+): StateV3Manifest {
   const nodes = Object.values(state.nodes);
   return {
     version: 3,
@@ -1044,7 +1321,23 @@ function stateV3ManifestForState(state: OutlineState, revision: number): StateV3
     nodeShardCount: STATE_V3_NODE_SHARD_COUNT,
     nodeShardKeys: stateV3NodeShardKeys(state),
     orderPageSize: STATE_V3_ORDER_PAGE_SIZE,
-    initialSnapshot: initialTreeSnapshotForState(state, { revision, hydrating: true })
+    ...(journalSeqIncluded !== undefined ? { journalSeqIncluded } : {}),
+    bootSnapshotRevision: revision
+  };
+}
+
+// The boot snapshot is a cold-start-only sparse first-paint cache (Class C). It is written
+// to its own key on a debounce rather than embedded in every save's manifest.
+export function outlineBootSnapshotItem(
+  state: OutlineState,
+  revision: number = Date.now()
+): Record<string, StateV3BootSnapshot> {
+  return {
+    [STATE_V4_BOOT_SNAPSHOT_KEY]: {
+      version: 3,
+      revision,
+      snapshot: initialTreeSnapshotForState(state, { revision, hydrating: true })
+    }
   };
 }
 
@@ -1213,13 +1506,20 @@ function orderPageKeysForStoredNode(node: StoredOutlineNode, orderPageSize: numb
   return keys;
 }
 
-function stateV3NodeShardIndex(nodeId: NodeId): number {
+// One FNV-1a shard hash shared by the v3 and v4 stores: node-to-shard assignment must stay
+// byte-identical across formats (migration re-shards by id; a silent divergence would make
+// dirty-shard compaction write the wrong shard).
+export function outlineNodeShardIndex(nodeId: NodeId, shardCount: number): number {
   let hash = 0x811c9dc5;
   for (let index = 0; index < nodeId.length; index += 1) {
     hash ^= nodeId.charCodeAt(index);
     hash = Math.imul(hash, 0x01000193);
   }
-  return (hash >>> 0) % STATE_V3_NODE_SHARD_COUNT;
+  return (hash >>> 0) % shardCount;
+}
+
+function stateV3NodeShardIndex(nodeId: NodeId): number {
+  return outlineNodeShardIndex(nodeId, STATE_V3_NODE_SHARD_COUNT);
 }
 
 function stateV3NodeShardKey(shardIndex: number): string {
@@ -1328,7 +1628,20 @@ function isStateV3Manifest(value: unknown): value is StateV3Manifest {
       typeof (value as StateV3Manifest).nodeShardCount === "number" &&
       Array.isArray((value as StateV3Manifest).nodeShardKeys) &&
       typeof (value as StateV3Manifest).orderPageSize === "number" &&
-      isInitialTreeSnapshot((value as StateV3Manifest).initialSnapshot)
+      // New manifests store the snapshot in its own key; older ones embed it inline. Accept
+      // either, but if an inline snapshot is present it must be well-formed.
+      ((value as StateV3Manifest).initialSnapshot === undefined ||
+        isInitialTreeSnapshot((value as StateV3Manifest).initialSnapshot))
+  );
+}
+
+function isStateV3BootSnapshot(value: unknown): value is StateV3BootSnapshot {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      (value as StateV3BootSnapshot).version === 3 &&
+      typeof (value as StateV3BootSnapshot).revision === "number" &&
+      isInitialTreeSnapshot((value as StateV3BootSnapshot).snapshot)
   );
 }
 
