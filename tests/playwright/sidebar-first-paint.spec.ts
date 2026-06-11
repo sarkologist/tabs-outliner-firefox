@@ -199,6 +199,66 @@ test.describe("sidebar first paint", () => {
     expect(issues).toEqual([]);
   });
 
+  test("replaces a stale boot snapshot with background truth without user interaction", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await page.addInitScript(({ snapshot, fullState }) => {
+      const messages: Array<{ type: string; at: number }> = [];
+      (window as typeof window & { __sidebarBootMessages?: typeof messages }).__sidebarBootMessages = messages;
+      window.browser = {
+        runtime: {
+          sendMessage: async (message: unknown) => {
+            const type = typeof message === "object" && message ? String((message as { type?: unknown }).type) : "";
+            messages.push({ type, at: performance.now() });
+            if (type === "getInitialTreeSnapshot") {
+              return structuredClone(snapshot);
+            }
+            if (type === "getState") {
+              return structuredClone(fullState);
+            }
+            if (
+              type === "getDiagnostics" ||
+              type === "getPerformanceTrace" ||
+              type === "setPerformanceTraceEnabled" ||
+              type === "clearPerformanceTrace"
+            ) {
+              return undefined;
+            }
+            return { ok: true };
+          },
+          onMessage: {
+            addListener: () => undefined
+          }
+        },
+        storage: {
+          local: {
+            get: async () => ({}),
+            set: async () => undefined
+          }
+        }
+      };
+    }, {
+      // The boot snapshot still contains tab:99, whose journaled delete the stored
+      // snapshot missed (the background serves it while its own startup load runs).
+      snapshot: fixtureStaleBootSnapshot(),
+      fullState: fixtureFullState(3, 1)
+    });
+
+    await page.goto("/sidebar/sidebar.html");
+    // Stale paint first: the phantom node is visible without any interaction...
+    await expect(page.locator(".node[data-node-id='tab:99']")).toBeVisible();
+    // ...and the scheduled hydration replaces it with background truth, still without
+    // any interaction (no hover, click, or broadcast).
+    await expect(page.locator(".node[data-node-id='tab:99']")).toHaveCount(0, { timeout: 5000 });
+    await expect(page.locator(".node[data-node-id='tab:3']")).toBeVisible();
+
+    const hydrationRequests = await page.evaluate(() =>
+      ((window as typeof window & { __sidebarBootMessages?: Array<{ type: string }> }).__sidebarBootMessages ?? [])
+        .filter((message) => message.type === "getState").length
+    );
+    expect(hydrationRequests).toBeGreaterThanOrEqual(1);
+    expect(issues).toEqual([]);
+  });
+
   test("exports and imports through the background when a sparse snapshot omits collapsed descendants", async ({ page }) => {
     const issues = collectPageIssues(page);
     await page.addInitScript(({ snapshot, fullState, searchSnapshot }) => {
@@ -1078,6 +1138,100 @@ function fixtureInitialSnapshot(tabCount: number, options: { activeTabInSnapshot
       ...(activeTabInSnapshot ? { activeTabNodeId: "tab:1", activeTabRowIndex: 1 } : {}),
       totalRowCount: tabCount + 1,
       nodeCount: tabCount + 1,
+      closedCount: 0,
+      matchCount: 0
+    }
+  };
+}
+
+// A storage-served boot snapshot (hydrating: true) whose tree predates a journaled delete:
+// it still contains tab:99 alongside tabs 1-3. The matching background truth is
+// fixtureFullState(3, 1), which lacks tab:99.
+function fixtureStaleBootSnapshot() {
+  const now = 1_700_000_000_000;
+  const tabIds = ["tab:1", "tab:2", "tab:3", "tab:99"];
+  const rows = [
+    {
+      nodeId: "window:1",
+      depth: 0,
+      index: 0,
+      subtreeEndIndex: tabIds.length + 1,
+      childCount: tabIds.length,
+      visibleChildCount: tabIds.length,
+      expanded: true,
+      searchRevealsCollapsedChildren: false,
+      isSearchMatch: false,
+      isSearchPath: false,
+      insideActiveWindow: true
+    },
+    ...tabIds.map((nodeId, index) => ({
+      nodeId,
+      depth: 1,
+      index: index + 1,
+      parentRowIndex: 0,
+      subtreeEndIndex: index + 2,
+      childCount: 0,
+      visibleChildCount: 0,
+      expanded: true,
+      searchRevealsCollapsedChildren: false,
+      isSearchMatch: false,
+      isSearchPath: false,
+      insideActiveWindow: true
+    }))
+  ];
+  return {
+    type: "initialTreeSnapshot",
+    version: 1,
+    revision: 7,
+    hydrating: true,
+    fromStorage: true,
+    state: {
+      version: 1,
+      rootIds: ["window:1"],
+      nodes: {
+        "window:1": {
+          id: "window:1",
+          kind: "window",
+          status: "live",
+          childIds: tabIds,
+          title: "Window",
+          active: true,
+          collapsed: false,
+          createdAt: now,
+          updatedAt: now,
+          live: { windowId: 1 }
+        },
+        ...Object.fromEntries(
+          tabIds.map((id, index) => [
+            id,
+            {
+              id,
+              kind: "tab",
+              status: "live",
+              parentId: "window:1",
+              childIds: [],
+              title: id === "tab:99" ? "Stale" : `Tab ${index + 1}`,
+              url: `https://paint.example/${id}`,
+              active: index === 0,
+              collapsed: false,
+              createdAt: now,
+              updatedAt: now,
+              live: { tabId: index + 1, windowId: 1 }
+            }
+          ])
+        )
+      }
+    },
+    projection: {
+      query: "",
+      isSearchActive: false,
+      rows,
+      matchingNodeIds: [],
+      visibleNodeIds: rows.map((row) => row.nodeId),
+      activeTabNodeId: "tab:1",
+      activeTabRowIndex: 1,
+      totalRowCount: tabIds.length + 1,
+      nodeCount: tabIds.length + 1,
       closedCount: 0,
       matchCount: 0
     }

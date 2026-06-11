@@ -98,6 +98,10 @@ export type InitialTreeSnapshot = {
   };
   coverage?: ProjectionSliceCoverage;
   hydrating: boolean;
+  // Set when the snapshot was served from the persisted boot-snapshot key because the
+  // background's own state load had not finished: it can predate journal-replayed changes,
+  // so the sidebar must converge on background truth without waiting for interaction.
+  fromStorage?: true;
 };
 
 export type InitialTreeSnapshotOptions = {
@@ -498,17 +502,19 @@ export async function loadInitialTreeSnapshot(
   ]);
   const bootSnapshot = stored[STATE_V4_BOOT_SNAPSHOT_KEY] ?? stored[STATE_V3_BOOT_SNAPSHOT_KEY];
   if (isStateV3BootSnapshot(bootSnapshot)) {
-    return cloneInitialTreeSnapshot(bootSnapshot.snapshot, true);
+    return { ...cloneInitialTreeSnapshot(bootSnapshot.snapshot, true), fromStorage: true };
   }
 
   // Back-compat: older manifests embed the snapshot inline.
   const v3Manifest = stored[STATE_V3_MANIFEST_KEY];
   if (isStateV3Manifest(v3Manifest) && v3Manifest.initialSnapshot) {
-    return cloneInitialTreeSnapshot(v3Manifest.initialSnapshot, true);
+    return { ...cloneInitialTreeSnapshot(v3Manifest.initialSnapshot, true), fromStorage: true };
   }
 
   const v2Manifest = stored[STATE_V2_MANIFEST_KEY];
-  return isStateV2Manifest(v2Manifest) ? cloneInitialTreeSnapshot(v2Manifest.initialSnapshot, true) : undefined;
+  return isStateV2Manifest(v2Manifest)
+    ? { ...cloneInitialTreeSnapshot(v2Manifest.initialSnapshot, true), fromStorage: true }
+    : undefined;
 }
 
 export async function loadStateV2(api: WebExtensionBrowser = browser): Promise<OutlineState | undefined> {

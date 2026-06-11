@@ -696,6 +696,14 @@ function applyInitialTreeSnapshot(snapshot: InitialTreeSnapshot): void {
   resetHoverLineScope();
   updateHydrationControls();
   renderInitialTreeSnapshot();
+  // A storage-served snapshot can predate journal-replayed changes (the background serves
+  // the persisted boot snapshot while its own startup load is still running), so converge
+  // on background truth without waiting -- interaction or a divergent patch may never come,
+  // leaving a stale paint (e.g. a deleted node) up indefinitely. Live-served sparse
+  // snapshots are fresh and keep hydrating on demand.
+  if (snapshot.fromStorage) {
+    scheduleFullStateHydration();
+  }
   applyPendingSearchQueryAfterStateReady();
 }
 
