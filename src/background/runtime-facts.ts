@@ -594,7 +594,13 @@ export class RuntimeFactLedger {
       }
 
       const runtimeWindow = runtimeWindowsById.get(windowId);
-      const orderCandidateTabNodes = candidateLiveTabNodesAffectingRuntimeOrder(previous, next, windowNode, candidateNodeIds);
+      // Ordering the affected candidates walks the whole window subtree in outline order, so
+      // compute it lazily: the runtime-window / outline-synced / closed-candidate branches
+      // never read it, and on a 50k-child window the unused walk is a measurable chunk of a
+      // command ack (the restore-last firstBroadcast perf-guard regression).
+      let orderCandidateTabNodesCache: LiveTabNode[] | undefined;
+      const orderCandidateTabNodes = (): LiveTabNode[] =>
+        (orderCandidateTabNodesCache ??= candidateLiveTabNodesAffectingRuntimeOrder(previous, next, windowNode, candidateNodeIds));
       let tabNodes: LiveTabNode[];
       if (runtimeWindow) {
         tabNodes = liveTabNodesFromRuntimeWindowOrder(next, runtimeWindow, candidateNodeIds, previousScope);
@@ -602,9 +608,9 @@ export class RuntimeFactLedger {
         tabNodes = outlineOrderedLiveTabNodesForRuntimeWindow(next, windowNode);
       } else if (previousScope && closedRuntimeTabIds.size > 0) {
         tabNodes = liveTabNodesFromExistingScopeOrder(next, windowId, previousScope);
-      } else if ((previousScope?.tabOrder.length ?? 0) === 0 && orderCandidateTabNodes.length > 0) {
-        tabNodes = orderCandidateTabNodes;
-      } else if (previousScope && orderCandidateTabNodes.length === 0) {
+      } else if ((previousScope?.tabOrder.length ?? 0) === 0 && orderCandidateTabNodes().length > 0) {
+        tabNodes = orderCandidateTabNodes();
+      } else if (previousScope && orderCandidateTabNodes().length === 0) {
         tabNodes = liveTabNodesFromExistingScopeOrder(next, windowId, previousScope);
       } else {
         tabNodes = outlineOrderedLiveTabNodesForRuntimeWindow(next, windowNode);
@@ -2348,6 +2354,11 @@ function candidateLiveTabNodesAffectingRuntimeOrder(
     ) {
       affectedNodeIds.add(nextNode.id);
     }
+  }
+  if (affectedNodeIds.size === 0) {
+    // Filtering by an empty set is always []; skip the whole-window outline-order walk that
+    // the filter would otherwise pay (a 50k-child window makes it a measurable ack cost).
+    return [];
   }
   return outlineOrderedLiveTabNodesForRuntimeWindow(next, windowNode).filter((tabNode) =>
     affectedNodeIds.has(tabNode.id)

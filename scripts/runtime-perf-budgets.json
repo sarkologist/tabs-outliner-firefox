@@ -150,7 +150,7 @@
         "journal"
       ],
       "budget": {
-        "firstBroadcastMs": 20,
+        "firstBroadcastMs": 22,
         "totalMeasuredMs": 124,
         "totalWithSaveFlushMs": 220,
         "saves": 1,

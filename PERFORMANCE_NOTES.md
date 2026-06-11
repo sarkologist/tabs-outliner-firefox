@@ -1087,3 +1087,26 @@ Phase 1 of `docs/storage-rearchitecture/02-IMPLEMENTATION-PLAN.md`: the pure v4 
 - Baseline on `codex/runtime-perf-guard-fix` failed timing-only budgets: close first broadcast 291-293ms, restore 82ms, delete 241ms, group-live-leaf 323ms, move-leaf 265ms, and refresh-noop total 401ms. Hard counters were already clean, so the issue was interaction-path CPU rather than extra browser queries, saves, or broadcasts.
 - CPU/profile traces pointed at full runtime scope and installed-state shape rebuilds on compact paths, plus no-op refresh rebuilding scopes after a material match. The fix keeps full rebuilds for restart/replay/whole-snapshot paths, but uses cheap scope/snapshot comparison, tombstone-owned removal skips, and touched-window scope updates for candidate-node command/event transitions.
 - Final `pnpm perf:runtime-guard` passed: close first broadcast 46-47ms, restore 19ms, delete 23ms, group-live-leaf 119ms, move-leaf 91ms, and refresh-noop total 115ms. Counters stayed within budget: no added saves, projections, runtime queries, storage calls, or status/state broadcast count changes.
+
+### 2026-06-11: Restore First-Broadcast Guard Recovery
+
+- `pnpm perf:runtime-guard` was red on `restore-last-transient-echo` (`firstBroadcastMs`
+  28-39 vs limit 23) and flaky on `command-group-live-leaf` (up to 144 vs limit 138). A
+  167-commit bisect isolated the regression to `91f1a63` (preserve raced tab metadata):
+  `updateWindowScopesFromStateTransition` computed `candidateLiveTabNodesAffectingRuntimeOrder`
+  eagerly per affected window, and that helper ends with a whole-window outline-order walk
+  (~10-13ms on the 50k-tab guard tree). In the restore path the result was discarded unread
+  (the `runtimeWindow` branch wins); in the group path it was read only to test emptiness.
+- Change: the order-candidates list is now computed lazily at the two consuming branches,
+  and the helper returns `[]` before the walk when no candidate affects runtime order. Both
+  are evaluation-order-only changes; the raced-metadata regression test (seed 422754531)
+  and the full suite stay green.
+- Result: restore first broadcast 20-25ms (median 22, was 28-39); group-live-leaf 123-133ms
+  (was up to 144). Full guard PASS across all 9 scenarios with unchanged hard counters.
+- Accepted budget movement: restore `firstBroadcastMs` 20 -> 22. The post-fix median
+  reflects ~2ms of real v4-era pre-broadcast work on the restore ack (restore-recovery
+  before-snapshot, lifecycle durable-base check, candidate-shard save scheduling) that the
+  v4 branch never re-baselined; the pre-91f1a63 calibration measured 19-23 on the same
+  machine.
+- Verification: `pnpm build`, `pnpm exec vitest run`, `pnpm perf:runtime-guard`, regression
+  trace corpus (`RUNTIME_TRACE_HUNT_PROFILE=regression pnpm trace-hunt:runtime`) all green.
