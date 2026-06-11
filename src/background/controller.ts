@@ -589,6 +589,47 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     });
   });
 
+  // Shared mutation tail for both native window-close signals: a windows.onRemoved
+  // event and a tabs.onRemoved with isWindowClosing that the reconciler classified
+  // as a whole-window close.
+  async function applyNativeWindowClose(
+    current: OutlineState,
+    windowId: number,
+    liveTabIds: number[],
+    options: { closedByOutliner: boolean; eventName: string }
+  ): Promise<void> {
+    runtimeFacts.recordClosedRuntimeWindow(windowId, liveTabIds);
+    const recent = await mostRecentClosedSession();
+    const next = closeWindow(current, windowId, {
+      now: now(),
+      ...(recent?.window?.sessionId ? { sessionId: recent.window.sessionId } : {}),
+      ...(options.closedByOutliner ? { closedBy: "outliner" as const } : {})
+    });
+    if (next === current) {
+      return;
+    }
+    const runtimeLifecycleJournalEntry = runtimeLifecycleJournalEntryForNativeWindowClose(
+      current,
+      windowId,
+      liveTabIds,
+      recent?.window?.sessionId
+    );
+    if (runtimeLifecycleJournalEntry) {
+      await ensureDurableRuntimeLifecycleBase();
+      await appendRuntimeLifecycleJournalEntry(api, runtimeLifecycleJournalEntry);
+    }
+    installStateTransition(current, next, {
+      candidateNodeIds: runtimeIndexCandidateNodeIdsForWindowRemoval(current, next, runtimeIndexForState(current), windowId)
+    });
+    markCompletedOutlinerCloseJournalEntriesForClearAfterSave({
+      tabIds: liveTabIds,
+      windowIds: [windowId]
+    });
+    markRuntimeLifecycleJournalEntryForClearAfterSave(runtimeLifecycleJournalEntry);
+    const persistedCandidates = await persistWithNodeStateUpdate(current, next);
+    queueRuntimeEventJournal(current, next, persistedCandidates, options.eventName);
+  }
+
   api.tabs.onRemoved.addListener(async (tabId, removeInfo) => {
     await perfTrace.measureAsync("background.event.tabs.onRemoved", { tabId }, async () => {
       if (runtimeFacts.recordNativeTabRemoved(tabId, removeInfo.windowId) === "ignore-delete-owned") {
@@ -615,35 +656,10 @@ export function createBackgroundController(options: BackgroundControllerOptions)
             return;
           }
 
-          runtimeFacts.recordClosedRuntimeWindow(removeInfo.windowId, liveTabIds);
-          const recent = await mostRecentClosedSession();
-          const next = closeWindow(current, removeInfo.windowId, {
-            now: now(),
-            ...(recent?.window?.sessionId ? { sessionId: recent.window.sessionId } : {})
+          await applyNativeWindowClose(current, removeInfo.windowId, liveTabIds, {
+            closedByOutliner: false,
+            eventName: "tabs.onRemoved.windowClosing"
           });
-          if (next === current) {
-            return;
-          }
-          const runtimeLifecycleJournalEntry = runtimeLifecycleJournalEntryForNativeWindowClose(
-            current,
-            removeInfo.windowId,
-            liveTabIds,
-            recent?.window?.sessionId
-          );
-          if (runtimeLifecycleJournalEntry) {
-            await ensureDurableRuntimeLifecycleBase();
-            await appendRuntimeLifecycleJournalEntry(api, runtimeLifecycleJournalEntry);
-          }
-          installStateTransition(current, next, {
-            candidateNodeIds: runtimeIndexCandidateNodeIdsForWindowRemoval(current, next, runtimeIndexForState(current), removeInfo.windowId)
-          });
-          markCompletedOutlinerCloseJournalEntriesForClearAfterSave({
-            tabIds: liveTabIds,
-            windowIds: [removeInfo.windowId]
-          });
-          markRuntimeLifecycleJournalEntryForClearAfterSave(runtimeLifecycleJournalEntry);
-          const persistedCandidates = await persistWithNodeStateUpdate(current, next);
-          queueRuntimeEventJournal(current, next, persistedCandidates, "tabs.onRemoved.windowClosing");
         }, { reason: "tabs.onRemoved.windowClosing" });
         return;
       }
@@ -659,9 +675,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
             ...(recent?.tab?.sessionId ? { sessionId: recent.tab.sessionId } : {}),
             closedBy: "outliner"
           });
-          if (removal === "close-outliner-tab") {
-            runtimeFacts.recordOutlinerClosedTabRemovalApplied(tabId);
-          }
+          runtimeFacts.recordOutlinerClosedTabRemovalApplied(tabId);
         } else {
           next = deleteLiveTabNodeByTabId(current, tabId);
         }
@@ -706,36 +720,10 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         const liveTabIds = liveTabIdsInWindow(current, windowId);
         const closedByOutliner = runtimeFacts.isOutlinerClosingWindow(windowId) ||
           runtimeFacts.isOutlinerClosedWindow(windowId);
-        runtimeFacts.recordClosedRuntimeWindow(windowId, liveTabIds);
-        const recent = await mostRecentClosedSession();
-        const next = closeWindow(current, windowId, {
-          now: now(),
-          ...(recent?.window?.sessionId ? { sessionId: recent.window.sessionId } : {}),
-          ...(closedByOutliner ? { closedBy: "outliner" } : {})
+        await applyNativeWindowClose(current, windowId, liveTabIds, {
+          closedByOutliner,
+          eventName: "windows.onRemoved"
         });
-        if (next === current) {
-          return;
-        }
-        const runtimeLifecycleJournalEntry = runtimeLifecycleJournalEntryForNativeWindowClose(
-          current,
-          windowId,
-          liveTabIds,
-          recent?.window?.sessionId
-        );
-        if (runtimeLifecycleJournalEntry) {
-          await ensureDurableRuntimeLifecycleBase();
-          await appendRuntimeLifecycleJournalEntry(api, runtimeLifecycleJournalEntry);
-        }
-        installStateTransition(current, next, {
-          candidateNodeIds: runtimeIndexCandidateNodeIdsForWindowRemoval(current, next, runtimeIndexForState(current), windowId)
-        });
-        markCompletedOutlinerCloseJournalEntriesForClearAfterSave({
-          tabIds: liveTabIds,
-          windowIds: [windowId]
-        });
-        markRuntimeLifecycleJournalEntryForClearAfterSave(runtimeLifecycleJournalEntry);
-        const persistedCandidates = await persistWithNodeStateUpdate(current, next);
-        queueRuntimeEventJournal(current, next, persistedCandidates, "windows.onRemoved");
       }, { reason: "windows.onRemoved" });
     });
   });
@@ -944,6 +932,17 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         deleteClosePlan,
         focusTarget
       });
+      // Shared success tail for every mutating-command branch: commit the ledger
+      // transaction, mark the lifecycle journal entry (no-op when undefined) for
+      // clearing after the next save, and ack. Reads runtimeLifecycleJournalEntry
+      // at call time because the restore observer can replace it mid-command.
+      const commitCommandAck = (): ReturnType<typeof commandAck> => {
+        if (commandTransaction) {
+          runtimeFacts.commitCommand(commandTransaction.id);
+        }
+        markRuntimeLifecycleJournalEntryForClearAfterSave(runtimeLifecycleJournalEntry);
+        return commandAck(true);
+      };
       if (outlinerClosePlan) {
         runtimeFacts.markOutlinerClosePlan(outlinerClosePlan);
       }
@@ -1036,11 +1035,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
               // the history entry above is only durable via the journal record (I-1 parity
               // with the non-recovered delete path).
               await appendCommandJournal(current, recovered, deletePatchNodeIds, message.type, "command", recoveredDeleteHistoryEntryId);
-              if (commandTransaction) {
-                runtimeFacts.commitCommand(commandTransaction.id);
-              }
-              markRuntimeLifecycleJournalEntryForClearAfterSave(runtimeLifecycleJournalEntry);
-              return commandAck(true);
+              return commitCommandAck();
             }
           }
           if (outlinerClosePlan) {
@@ -1139,11 +1134,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         if (!(await appendCommandJournal(current, result.state, restoreTreePatchNodeIds ?? restorePatchNodeIds, message.type))) {
           await flushRuntimeProvenanceSaveIfChanged(current, result.state, restoreTreePatchNodeIds);
         }
-        if (commandTransaction) {
-          runtimeFacts.commitCommand(commandTransaction.id);
-        }
-        markRuntimeLifecycleJournalEntryForClearAfterSave(runtimeLifecycleJournalEntry);
-        return commandAck(true);
+        return commitCommandAck();
       }
       if (message.type === "deleteNode") {
         const update = perfTrace.measure("background.patch.build.treeStructure", { command: message.type }, () =>
@@ -1154,11 +1145,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         if (!(await appendCommandJournal(current, result.state, deletePatchNodeIds ?? [message.nodeId], message.type, "command", recordedHistoryEntryId))) {
           await flushRuntimeTruthSaveIfNeeded(current, result.state, deletePatchNodeIds ?? [message.nodeId]);
         }
-        if (commandTransaction) {
-          runtimeFacts.commitCommand(commandTransaction.id);
-        }
-        markRuntimeLifecycleJournalEntryForClearAfterSave(runtimeLifecycleJournalEntry);
-        return commandAck(true);
+        return commitCommandAck();
       }
       if (
         message.type === "wrapNodeInGroup" ||
@@ -1179,35 +1166,22 @@ export function createBackgroundController(options: BackgroundControllerOptions)
             reason: message.type
           });
         }
-        if (commandTransaction) {
-          runtimeFacts.commitCommand(commandTransaction.id);
-        }
-        markRuntimeLifecycleJournalEntryForClearAfterSave(runtimeLifecycleJournalEntry);
-        return commandAck(true);
+        return commitCommandAck();
       }
       if (message.type === "renameGroup") {
         await persistKnownNodeStateUpdate(current, result.state, message.nodeId);
         await appendCommandJournal(current, result.state, [message.nodeId], message.type, "command", recordedHistoryEntryId);
-        if (commandTransaction) {
-          runtimeFacts.commitCommand(commandTransaction.id);
-        }
-        return commandAck(true);
+        return commitCommandAck();
       }
       if (message.type === "toggleCollapsed") {
         await persistKnownNodeStateUpdate(current, result.state, message.nodeId);
         await appendCommandJournalForKnownNodeIds(result.state, [message.nodeId], message.type, recordedHistoryEntryId);
-        if (commandTransaction) {
-          runtimeFacts.commitCommand(commandTransaction.id);
-        }
-        return commandAck(true);
+        return commitCommandAck();
       }
       if (message.type === "expandAncestors") {
         await persistKnownNodeStateUpdates(current, result.state, expandAncestorNodeIds ?? []);
         await appendCommandJournalForKnownNodeIds(result.state, expandAncestorNodeIds ?? [], message.type, recordedHistoryEntryId);
-        if (commandTransaction) {
-          runtimeFacts.commitCommand(commandTransaction.id);
-        }
-        return commandAck(true);
+        return commitCommandAck();
       }
       if (message.type === "moveNode") {
         const sameParentReorder = sameParentReorderUpdateForMoveCommand(current, result.state, message);
@@ -1220,11 +1194,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
               reason: message.type
             });
           }
-          if (commandTransaction) {
-            runtimeFacts.commitCommand(commandTransaction.id);
-          }
-          markRuntimeLifecycleJournalEntryForClearAfterSave(runtimeLifecycleJournalEntry);
-          return commandAck(true);
+          return commitCommandAck();
         }
         if (runtimeIndexCandidateNodeIds) {
           const update = perfTrace.measure("background.patch.build.treeStructure", { command: message.type }, () =>
@@ -1238,11 +1208,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
               reason: message.type
             });
           }
-          if (commandTransaction) {
-            runtimeFacts.commitCommand(commandTransaction.id);
-          }
-          markRuntimeLifecycleJournalEntryForClearAfterSave(runtimeLifecycleJournalEntry);
-          return commandAck(true);
+          return commitCommandAck();
         }
       }
       await persistWithBestEffortPatch(current, result.state, { saveSchedule });
@@ -1257,11 +1223,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
           reason: message.type
         });
       }
-      if (commandTransaction) {
-        runtimeFacts.commitCommand(commandTransaction.id);
-      }
-      markRuntimeLifecycleJournalEntryForClearAfterSave(runtimeLifecycleJournalEntry);
-      return commandAck(true);
+      return commitCommandAck();
     }, { reason: "command", command: message.type });
   }
 
@@ -1271,17 +1233,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     }
 
     const windows = await getNormalWindows(api).catch(() => undefined);
-    if (!windows) {
-      return false;
-    }
-
-    const openWindowIds = new Set(windows.map((windowInfo) => windowInfo.id));
-    if (plan.windowIds.some((windowId) => openWindowIds.has(windowId))) {
-      return false;
-    }
-
-    const openTabIds = new Set(windows.flatMap((windowInfo) => windowInfo.tabs ?? []).map((tab) => tab.id));
-    return plan.tabIds.every((tabId) => !openTabIds.has(tabId));
+    return windows ? runtimeClosePlanCompletedInWindows(plan, windows) : false;
   }
 
   function runtimeLifecycleJournalEntryForCommand(
