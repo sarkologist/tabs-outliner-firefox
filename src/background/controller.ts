@@ -2068,18 +2068,14 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     if (loaded?.salvaged) {
       await recordIncidentLog("v3LoadSalvaged", { ...(loaded.repair ?? {}) });
     }
-    if (loaded?.staleV2Fallback) {
-      await recordIncidentLog("staleV2FallbackUsed", { ...outlineStateCountDetail(loaded.state) });
-    }
     if (!v4Loaded && stored) {
-      if (loaded?.salvaged || loaded?.staleV2Fallback) {
+      if (loaded?.salvaged) {
         // Never migrate (and never delete legacy keys) off a degraded read: a transient
         // storage fault that produced an empty or partial salvage must stay recoverable on
         // a later startup with the legacy store intact. The session runs on the salvaged
         // state; migration retries on the next clean load.
         await recordIncidentLog("v4MigrationDeferredDegradedLoad", {
-          salvaged: loaded.salvaged === true,
-          staleV2Fallback: loaded.staleV2Fallback === true,
+          salvaged: true,
           ...outlineStateCountDetail(stored)
         });
       } else {
@@ -2131,7 +2127,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       const loadedRequiresFullSave = loaded?.requiresFullSave === true || journalReplayed;
       storedRuntimeMatch = runtimeSnapshotMateriallyMatchesState(startupBase, windows);
       if (storedRuntimeMatch.matches) {
-        if (loaded?.format !== "v2" && !runtimeLifecycleJournalChangedState && !loadedRequiresFullSave) {
+        if (!runtimeLifecycleJournalChangedState && !loadedRequiresFullSave) {
           deferPersistedStateBaselineClone(startupBase);
         } else {
           lastPersistedState = undefined;
@@ -2141,7 +2137,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
           scheduleStateSave(state);
         }
       } else {
-        lastPersistedState = loaded?.format !== "v2" && !loadedRequiresFullSave
+        lastPersistedState = !loadedRequiresFullSave
           ? cloneOutlineState(stored)
           : undefined;
         runtimeFacts.reconstructFromState(startupBase, windows);

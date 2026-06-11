@@ -22,7 +22,7 @@ import {
   STATE_V2_MANIFEST_KEY,
   STATE_V3_MANIFEST_KEY,
   loadState,
-  loadStateV2
+  outlineBootSnapshotItem
 } from "./storage.js";
 import { outlineStateV2Items, outlineStateV3Items } from "./storage-legacy-write.test-support.js";
 import { PORTABLE_TREE_SCHEMA } from "../model/portable-tree.js";
@@ -27272,22 +27272,25 @@ describe("background controller lifecycle", () => {
     expect(persisted?.state.nodes["tab:50"]?.title).toBe("Saved 50");
   });
 
-  it("migrates a v2-only store to v4 at startup", async () => {
+  it("bootstraps and retains an unreadable v2-only store at startup", async () => {
     const storedState = wideClosedTabState(40);
     const runtime = fakeRuntime(
       [{ id: 10, focused: true, incognito: false }],
-      [],
+      [{ id: 1, windowId: 10, index: 0, active: true, url: "https://one.example/", title: "One" }],
       { initialStorage: outlineStateV2Items(storedState, { revision: 7 }) }
     );
     const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
 
     const state = await controller.ensureState();
 
-    expect(state.nodes["tab:40"]?.title).toBe("Saved 40");
-    const persisted = await loadStateV4(runtime.api);
-    expect(persisted?.state.nodes["tab:40"]?.title).toBe("Saved 40");
+    // v2 is no longer readable: startup bootstraps from the open windows instead of
+    // migrating, keeps the legacy keys as a recovery resource, and records the incident.
+    expect(state.nodes["tab:40"]).toBeUndefined();
+    expect(state.rootIds).toEqual(["window:10"]);
     const legacy = await runtime.api.storage.local.get(STATE_V2_MANIFEST_KEY);
-    expect(legacy[STATE_V2_MANIFEST_KEY]).toBeUndefined();
+    expect(legacy[STATE_V2_MANIFEST_KEY]).toBeDefined();
+    const incidents = await loadIncidentLog(runtime.api);
+    expect(incidents.map((entry) => entry.event)).toContain("bootstrapSkippedStoredDataPresent");
   });
 
   it("does not clone the persisted v3 node table before returning a matching closed-heavy startup state", async () => {
@@ -27648,7 +27651,7 @@ describe("background controller lifecycle", () => {
     expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(1);
   });
 
-  it("serves an initial tree snapshot from v2 storage without full runtime startup", async () => {
+  it("serves an initial tree snapshot from the stored boot snapshot without full runtime startup", async () => {
     const runtime = fakeRuntime(
       [
         {
@@ -27668,7 +27671,10 @@ describe("background controller lifecycle", () => {
     );
     const seeded = createBackgroundController({ api: runtime.api, now: () => 1000 });
     const fullState = await seeded.ensureState();
-    await runtime.api.storage.local.set(outlineStateV2Items(fullState, { revision: 321 }));
+    await runtime.api.storage.local.set({
+      ...outlineStateV4Snapshot(fullState, { epoch: 1, journalSeqIncluded: 0 }).setItems,
+      ...outlineBootSnapshotItem(fullState, 321)
+    });
     vi.mocked(runtime.api.storage.local.get).mockClear();
     vi.mocked(runtime.api.windows.getAll).mockClear();
     vi.mocked(runtime.api.tabs.query).mockClear();
@@ -27693,8 +27699,7 @@ describe("background controller lifecycle", () => {
     expect(runtime.api.storage.local.get).toHaveBeenCalledWith([
       "outline:v4:bootSnapshot",
       "outlineState:v3:bootSnapshot",
-      "outlineState:v3:manifest",
-      "outlineState:v2:manifest"
+      "outlineState:v3:manifest"
     ]);
     expect(runtime.api.windows.getAll).not.toHaveBeenCalled();
     expect(runtime.api.tabs.query).not.toHaveBeenCalled();
@@ -31500,7 +31505,8 @@ describe("background controller lifecycle", () => {
       | Record<string, unknown>
       | undefined;
     expect(lastSave?.[STATE_KEY]).toBeUndefined();
-    const persisted = await loadStateV2(runtime.api);
+    const persisted = (await loadStateV4(runtime.api))?.state;
+    expect(persisted).toBeDefined();
     expect(persisted?.nodes["tab:2"]).toBeUndefined();
 
     const lastBroadcast = runtime.broadcasts.at(-1) as { type?: string; state?: OutlineState } | undefined;
@@ -35684,7 +35690,8 @@ describe("background controller lifecycle", () => {
       | Record<string, unknown>
       | undefined;
     expect(lastSave?.[STATE_KEY]).toBeUndefined();
-    const persisted = await loadStateV2(runtime.api);
+    const persisted = (await loadStateV4(runtime.api))?.state;
+    expect(persisted).toBeDefined();
     expect(persisted?.nodes["tab:2"]).toBeUndefined();
 
     const lastBroadcast = runtime.broadcasts.at(-1) as
@@ -36906,7 +36913,8 @@ describe("background controller lifecycle", () => {
       | Record<string, unknown>
       | undefined;
     expect(lastSave?.[STATE_KEY]).toBeUndefined();
-    const persisted = await loadStateV2(runtime.api);
+    const persisted = (await loadStateV4(runtime.api))?.state;
+    expect(persisted).toBeDefined();
     expect(persisted?.nodes["window:10"]).toBeUndefined();
 
     const lastBroadcast = runtime.broadcasts.at(-1) as

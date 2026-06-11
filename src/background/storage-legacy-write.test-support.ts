@@ -7,14 +7,40 @@ import {
   initialTreeSnapshotForState,
   outlineNodeShardIndex,
   stateV3OrderPageKey,
-  type StateV2Manifest,
-  type StateV2NodeChunk,
-  type StateV2OrderPage,
+  type InitialTreeSnapshot,
   type StateV3Manifest,
   type StateV3NodeShard,
   type StateV3OrderPage,
   type StoredOutlineNode
 } from "./storage.js";
+
+// The v2 record shapes live only here now: production neither reads nor writes
+// v2, and these fixtures exist to seed tests that prove leftover v2 keys are
+// detected, retained, and cleaned up without being interpreted.
+type StateV2NodeChunk = {
+  version: 2;
+  nodes: StoredOutlineNode[];
+};
+
+type StateV2OrderPage = {
+  version: 2;
+  parentId: string;
+  pageIndex: number;
+  childIds: string[];
+};
+
+type StateV2Manifest = {
+  version: 2;
+  revision: number;
+  rootIds: string[];
+  nodeCount: number;
+  closedCount: number;
+  nodeChunkSize: number;
+  orderPageSize: number;
+  nodeChunkKeys: string[];
+  orderPageKeys: string[];
+  initialSnapshot: InitialTreeSnapshot;
+};
 
 // Test-only writers for the legacy v2/v3 storage formats. Production stopped
 // writing these formats when the v4 journal+snapshot store became the live

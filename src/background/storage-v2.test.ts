@@ -9,7 +9,6 @@ import {
   loadInitialTreeSnapshot,
   loadState,
   loadStateWithMetadata,
-  loadStateV2,
   loadStateV3,
   createInitialTreeSnapshotProjector,
   initialTreeSnapshotForState,
@@ -244,54 +243,27 @@ describe("outline state v2 storage", () => {
     ]);
   });
 
-  it("writes a small manifest snapshot plus chunked node and order pages", () => {
+  it("bounds the initial tree snapshot to the row limit", () => {
     const state = makeLargeState(INITIAL_TREE_SNAPSHOT_ROW_LIMIT + 20);
-    const items = outlineStateV2Items(state, { revision: 123 });
-    const manifest = items[STATE_V2_MANIFEST_KEY] as
-      | {
-          revision?: number;
-          nodeCount?: number;
-          initialSnapshot?: { state?: OutlineState; projection?: { rows?: unknown[]; nodeCount?: number } };
-          nodeChunkKeys?: string[];
-          orderPageKeys?: string[];
-        }
-      | undefined;
 
-    expect(manifest?.revision).toBe(123);
-    expect(manifest?.nodeCount).toBe(INITIAL_TREE_SNAPSHOT_ROW_LIMIT + 21);
-    expect(manifest?.initialSnapshot?.projection?.rows).toHaveLength(INITIAL_TREE_SNAPSHOT_ROW_LIMIT);
-    expect(Object.keys(manifest?.initialSnapshot?.state?.nodes ?? {})).toHaveLength(INITIAL_TREE_SNAPSHOT_ROW_LIMIT);
-    expect(manifest?.initialSnapshot?.projection?.nodeCount).toBe(INITIAL_TREE_SNAPSHOT_ROW_LIMIT + 21);
-    expect(manifest?.initialSnapshot?.projection?.totalRowCount).toBe(INITIAL_TREE_SNAPSHOT_ROW_LIMIT + 21);
-    expect(manifest?.nodeChunkKeys?.length).toBeGreaterThan(0);
-    expect(manifest?.orderPageKeys?.length).toBeGreaterThan(0);
-    expect(JSON.stringify(manifest?.initialSnapshot)).not.toContain("tab:260");
+    const snapshot = initialTreeSnapshotForState(state, { revision: 123, hydrating: true });
+
+    expect(snapshot.revision).toBe(123);
+    expect(snapshot.projection.rows).toHaveLength(INITIAL_TREE_SNAPSHOT_ROW_LIMIT);
+    expect(snapshot.projection.nodeCount).toBe(INITIAL_TREE_SNAPSHOT_ROW_LIMIT + 21);
+    expect(Object.keys(snapshot.state.nodes)).toHaveLength(INITIAL_TREE_SNAPSHOT_ROW_LIMIT);
+    expect(JSON.stringify(snapshot)).not.toContain("tab:260");
   });
 
   it("centers the initial tree snapshot on the active tab when it is outside the first page", () => {
     const state = makeLargeState(800, { activeTabIndex: 799 });
-    const items = outlineStateV2Items(state, { revision: 654 });
-    const manifest = items[STATE_V2_MANIFEST_KEY] as
-      | {
-          initialSnapshot?: {
-            state?: OutlineState;
-            projection?: {
-              rows?: Array<{ nodeId?: string; index?: number }>;
-              activeTabNodeId?: string;
-              activeTabRowIndex?: number;
-              totalRowCount?: number;
-            };
-          };
-        }
-      | undefined;
 
-    expect(manifest?.initialSnapshot?.projection?.activeTabNodeId).toBe("tab:800");
-    expect(manifest?.initialSnapshot?.projection?.activeTabRowIndex).toBe(800);
-    expect(manifest?.initialSnapshot?.projection?.rows).toHaveLength(INITIAL_TREE_SNAPSHOT_ROW_LIMIT);
-    expect(manifest?.initialSnapshot?.projection?.rows?.some((row) => row.nodeId === "tab:800")).toBe(true);
-    expect(manifest?.initialSnapshot?.projection?.rows?.[0]?.index).toBeGreaterThan(0);
-    expect(manifest?.initialSnapshot?.projection?.totalRowCount).toBe(801);
-    expect(manifest?.initialSnapshot?.state?.nodes["tab:800"]).toBeDefined();
+    const snapshot = initialTreeSnapshotForState(state, { revision: 654, hydrating: true });
+
+    expect(snapshot.projection.activeTabNodeId).toBe("tab:800");
+    expect(snapshot.projection.activeTabRowIndex).toBe(800);
+    expect(snapshot.projection.rows).toHaveLength(INITIAL_TREE_SNAPSHOT_ROW_LIMIT);
+    expect(snapshot.projection.rows.some((row) => row.nodeId === "tab:800")).toBe(true);
   });
 
   it("can build an initial tree snapshot centered on an arbitrary visible row", () => {
@@ -341,28 +313,17 @@ describe("outline state v2 storage", () => {
       ...state.nodes["tab:2"]!,
       active: true
     };
-    const items = outlineStateV2Items(state, { revision: 654 });
-    const manifest = items[STATE_V2_MANIFEST_KEY] as
-      | {
-          initialSnapshot?: {
-            projection?: {
-              rows?: Array<{ nodeId?: string; index?: number }>;
-              activeTabNodeId?: string;
-              activeTabRowIndex?: number;
-            };
-          };
-        }
-      | undefined;
 
-    expect(manifest?.initialSnapshot?.projection?.rows?.some((row) => row.nodeId === "tab:1")).toBe(true);
-    expect(manifest?.initialSnapshot?.projection?.activeTabNodeId).toBe("tab:2");
-    expect(manifest?.initialSnapshot?.projection?.activeTabRowIndex).toBe(2);
+    const snapshot = initialTreeSnapshotForState(state, { revision: 654, hydrating: true });
+
+    expect(snapshot.projection.rows.some((row) => row.nodeId === "tab:1")).toBe(true);
+    expect(snapshot.projection.activeTabNodeId).toBe("tab:2");
+    expect(snapshot.projection.activeTabRowIndex).toBe(2);
   });
 
-  it("loads the initial tree snapshot by reading only manifest keys", async () => {
+  it("loads the initial tree snapshot by reading only boot keys", async () => {
     const state = makeLargeState(800);
-    const items = outlineStateV2Items(state, { revision: 456 });
-    const api = fakeApi(items);
+    const api = fakeApi(outlineBootSnapshotItem(state, 456));
 
     const snapshot = await loadInitialTreeSnapshot(api);
 
@@ -374,35 +335,8 @@ describe("outline state v2 storage", () => {
     expect(api.storage.local.get).toHaveBeenCalledWith([
       "outline:v4:bootSnapshot",
       STATE_V3_BOOT_SNAPSHOT_KEY,
-      STATE_V3_MANIFEST_KEY,
-      STATE_V2_MANIFEST_KEY
+      STATE_V3_MANIFEST_KEY
     ]);
-  });
-
-  it("round-trips generated nested states through v2 chunks and order pages", async () => {
-    const config = generatedTraceConfig({
-      defaultSeedCount: 8,
-      defaultSteps: 1,
-      soakSeedCount: 48,
-      soakSteps: 1
-    });
-    for (const seed of config.seeds) {
-      const state = generatedStorageState(seed);
-      const api = fakeApi(outlineStateV2Items(state, { revision: seed }));
-
-      await expect(loadStateV2(api), `seed ${seed}`).resolves.toEqual(state);
-    }
-  }, generatedTraceTimeoutMs(5_000, 60_000));
-
-  it("hydrates the full state from v2 chunks and order pages", async () => {
-    const state = makeLargeState(1200);
-    const api = fakeApi(outlineStateV2Items(state, { revision: 789 }));
-
-    const loaded = await loadStateV2(api);
-
-    expect(loaded).toEqual(state);
-    expect(api.storage.local.get).toHaveBeenCalledWith(STATE_V2_MANIFEST_KEY);
-    expect(vi.mocked(api.storage.local.get).mock.calls.some((call) => Array.isArray(call[0]))).toBe(true);
   });
 
   it("reports v3 hydration phases while loading metadata", async () => {
@@ -576,7 +510,7 @@ describe("outline state v3 storage", () => {
     ]);
   });
 
-  it("loads v3 before falling back to v2", async () => {
+  it("loads v3 when leftover v2 keys are present", async () => {
     const v2State = makeLargeState(5);
     const v3State = makeLargeState(7, { activeTabIndex: 6 });
     const api = fakeApi(outlineStateV2Items(v2State, { revision: 10 }));
@@ -624,7 +558,7 @@ describe("outline state v3 storage", () => {
     expect(survivingNodeCount).toBeLessThan(401);
   });
 
-  it("does not fall back to v2 when a v3 manifest exists", async () => {
+  it("salvages v3 rather than consulting leftover v2 keys", async () => {
     const v3State = makeLargeState(300);
     const items = outlineStateV3Items(v3State);
     const shardKey = Object.keys(items).find((key) => key.startsWith("outlineState:v3:nodes:"));
@@ -638,7 +572,7 @@ describe("outline state v3 storage", () => {
     expect(loaded?.salvaged).toBe(true);
   });
 
-  it("loads the boot snapshot from its own key before v2", async () => {
+  it("loads the boot snapshot from its own key when legacy keys are present", async () => {
     const v2State = makeLargeState(20);
     const v3State = makeLargeState(800, { activeTabIndex: 799 });
     const api = fakeApi(outlineStateV2Items(v2State, { revision: 111 }));

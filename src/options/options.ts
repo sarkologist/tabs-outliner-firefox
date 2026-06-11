@@ -61,6 +61,8 @@ const INCIDENT_SEVERITY_BY_EVENT: Record<string, IncidentSeverity> = {
   automaticBackupFailure: "error",
   v4LoadRecovery: "warning",
   v3LoadSalvaged: "warning",
+  // No longer produced (v2 reads were removed); kept so entries persisted by
+  // older versions still render with the right severity.
   staleV2FallbackUsed: "warning",
   bootstrapSkippedStoredDataPresent: "warning",
   bootstrapProvenanceRecovered: "warning",

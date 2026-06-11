@@ -273,14 +273,17 @@ explicit recovery ladder — no fallback is silent:
   compaction failed to fold in.
 - R2: both manifests unusable → salvage every readable shard at its highest readable
   generation, run structural repair, replay the whole journal.
-- R3: no v4 keys → one-time migration from the legacy v3/v2 store (including the v3
-  salvage ladder), with read-back verification, a portable-tree backup under
+- R3: no v4 keys → one-time migration from the legacy v3 store (including the v3 salvage
+  ladder), with read-back verification, a portable-tree backup under
   `outline:v4:migrationBackup`, and legacy-key deletion only after the migrated store
-  verifies; failures keep legacy keys authoritative and retry next startup.
+  verifies; failures keep legacy keys authoritative and retry next startup. v1/v2 stores
+  are no longer readable: their keys are detected (and eventually cleaned up after a
+  successful migration), but startup bootstraps instead of interpreting them and records
+  `bootstrapSkippedStoredDataPresent`.
 - R4: nothing stored at all → bootstrap from the open windows (genuinely first run).
 
 Every non-R0 outcome records an incident (`v4LoadRecovery`, `v3LoadSalvaged`,
-`staleV2FallbackUsed`, `v4MigrationFailed`, `journalReplay`) visible on the options page.
+`v4MigrationFailed`, `journalReplay`) visible on the options page.
 
 The boot snapshot (256-row sparse first paint) lives at `outline:v4:bootSnapshot`, written
 on a 10 s debounce off the interaction path — never inside a save flush. Runtime lifecycle

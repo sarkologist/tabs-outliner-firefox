@@ -3,10 +3,12 @@ import type { NodeId, OutlineNode } from "../model/types.js";
 import { isOutlinerSidebarNode } from "../model/outliner-page.js";
 import { DEFAULT_HISTORY_LIMIT, normalizeHistoryState, type HistoryState } from "./history.js";
 
-// v2/v3 are read-only legacy formats: the live store is v4 (storage-v4.ts plus
+// v3 is a read-only legacy format: the live store is v4 (storage-v4.ts plus
 // outline-journal.ts), and these keys/types/sizes survive only for the one-time
-// startup migration read. The matching legacy writers live in
-// storage-legacy-write.test-support.ts for migration-fixture tests.
+// startup migration read. v1/v2 keys are no longer readable - they exist below only
+// so startup can detect (and migration cleanup can delete) abandoned stores. The
+// matching v3 writer lives in storage-legacy-write.test-support.ts for
+// migration-fixture tests.
 export const STATE_KEY = "outlineState";
 export const HISTORY_KEY = "outlineHistory";
 export const STATE_V2_MANIFEST_KEY = "outlineState:v2:manifest";
@@ -20,18 +22,6 @@ export const INITIAL_TREE_SNAPSHOT_ROW_LIMIT = 256;
 
 export type StoredOutlineNode = Omit<OutlineNode, "childIds"> & {
   childCount: number;
-};
-
-export type StateV2NodeChunk = {
-  version: 2;
-  nodes: StoredOutlineNode[];
-};
-
-export type StateV2OrderPage = {
-  version: 2;
-  parentId: NodeId;
-  pageIndex: number;
-  childIds: NodeId[];
 };
 
 export type StateV3NodeShard = {
@@ -131,19 +121,6 @@ export type InitialTreeSnapshotProjectorOptions = {
   onProjectionBuilt?: (detail: { query: string; rowCount: number; nodeCount: number; matchCount: number }) => void;
 };
 
-export type StateV2Manifest = {
-  version: 2;
-  revision: number;
-  rootIds: NodeId[];
-  nodeCount: number;
-  closedCount: number;
-  nodeChunkSize: number;
-  orderPageSize: number;
-  nodeChunkKeys: string[];
-  orderPageKeys: string[];
-  initialSnapshot: InitialTreeSnapshot;
-};
-
 export type StateV3Manifest = {
   version: 3;
   revision: number;
@@ -171,7 +148,7 @@ type StateV3BootSnapshot = {
 
 export type LoadedOutlineState = {
   state: OutlineState;
-  format: "v2" | "v3" | "v4";
+  format: "v3" | "v4";
   requiresFullSave?: boolean;
   // Highest journal seq already reflected in the loaded snapshot; the controller replays
   // journal entries with seq greater than this on top of `state`.
@@ -179,9 +156,6 @@ export type LoadedOutlineState = {
   // True when the v3 load skipped unparseable shards or accepted partial order pages.
   salvaged?: boolean;
   repair?: StateStructureRepair;
-  // True when a present-but-unloadable v3 manifest forced a fall back to the frozen v2
-  // snapshot. The caller must surface this — it is a silent-time-travel risk.
-  staleV2Fallback?: boolean;
 };
 
 type StateV3LoadOutcome = {
@@ -244,51 +218,33 @@ export async function loadStateWithMetadata(
   options: LoadStateOptions = {}
 ): Promise<LoadedOutlineState | undefined> {
   const stored = await measureLoadPhase(options, "manifestRead", () =>
-    api.storage.local.get([STATE_V3_MANIFEST_KEY, STATE_V2_MANIFEST_KEY])
+    api.storage.local.get(STATE_V3_MANIFEST_KEY)
   );
   const v3Manifest = stored[STATE_V3_MANIFEST_KEY];
-  const v3ManifestPresent = isStateV3Manifest(v3Manifest);
-  if (v3ManifestPresent) {
-    const outcome = await loadStateV3FromManifest(v3Manifest, api, options);
-    if (outcome) {
-      return {
-        state: outcome.state,
-        format: "v3",
-        ...(stateV3ManifestRequiresFullSave(v3Manifest) || outcome.salvaged ? { requiresFullSave: true } : {}),
-        ...(outcome.salvaged ? { salvaged: true } : {}),
-        ...(outcome.repair ? { repair: outcome.repair } : {}),
-        ...(typeof v3Manifest.journalSeqIncluded === "number" ? { journalSeqIncluded: v3Manifest.journalSeqIncluded } : {})
-      };
-    }
+  if (!isStateV3Manifest(v3Manifest)) {
+    return undefined;
   }
-
-  const v2Manifest = stored[STATE_V2_MANIFEST_KEY];
-  if (isStateV2Manifest(v2Manifest)) {
-    const state = await loadStateV2FromManifest(v2Manifest, api);
-    if (state) {
-      // Falling back to the frozen v2 snapshot is only legitimate before migration. If a
-      // v3 manifest exists, this is a silent rollback the caller must be told about.
-      return {
-        state,
-        format: "v2",
-        ...(v3ManifestPresent ? { staleV2Fallback: true, requiresFullSave: true } : {})
-      };
-    }
-  }
-
-  // A v3 manifest exists but neither its shards nor a usable v2 snapshot loaded. Return an
-  // empty salvaged v3 state so the caller reconciles from runtime rather than silently
-  // bootstrapping a fresh tree on top of (now unreadable) stored data.
-  if (v3ManifestPresent) {
+  const outcome = await loadStateV3FromManifest(v3Manifest, api, options);
+  if (outcome) {
     return {
-      state: { version: 1, rootIds: [], nodes: {} },
+      state: outcome.state,
       format: "v3",
-      requiresFullSave: true,
-      salvaged: true
+      ...(stateV3ManifestRequiresFullSave(v3Manifest) || outcome.salvaged ? { requiresFullSave: true } : {}),
+      ...(outcome.salvaged ? { salvaged: true } : {}),
+      ...(outcome.repair ? { repair: outcome.repair } : {}),
+      ...(typeof v3Manifest.journalSeqIncluded === "number" ? { journalSeqIncluded: v3Manifest.journalSeqIncluded } : {})
     };
   }
 
-  return undefined;
+  // A v3 manifest exists but its shards did not load. Return an empty salvaged v3 state so
+  // the caller reconciles from runtime rather than silently bootstrapping a fresh tree on
+  // top of (now unreadable) stored data.
+  return {
+    state: { version: 1, rootIds: [], nodes: {} },
+    format: "v3",
+    requiresFullSave: true,
+    salvaged: true
+  };
 }
 
 export async function loadHistory(
@@ -306,8 +262,7 @@ export async function loadInitialTreeSnapshot(
   const stored = await api.storage.local.get([
     STATE_V4_BOOT_SNAPSHOT_KEY,
     STATE_V3_BOOT_SNAPSHOT_KEY,
-    STATE_V3_MANIFEST_KEY,
-    STATE_V2_MANIFEST_KEY
+    STATE_V3_MANIFEST_KEY
   ]);
   const bootSnapshot = stored[STATE_V4_BOOT_SNAPSHOT_KEY] ?? stored[STATE_V3_BOOT_SNAPSHOT_KEY];
   if (isStateV3BootSnapshot(bootSnapshot)) {
@@ -320,66 +275,7 @@ export async function loadInitialTreeSnapshot(
     return { ...cloneInitialTreeSnapshot(v3Manifest.initialSnapshot, true), fromStorage: true };
   }
 
-  const v2Manifest = stored[STATE_V2_MANIFEST_KEY];
-  return isStateV2Manifest(v2Manifest)
-    ? { ...cloneInitialTreeSnapshot(v2Manifest.initialSnapshot, true), fromStorage: true }
-    : undefined;
-}
-
-export async function loadStateV2(api: WebExtensionBrowser = browser): Promise<OutlineState | undefined> {
-  const stored = await api.storage.local.get(STATE_V2_MANIFEST_KEY);
-  const manifest = stored[STATE_V2_MANIFEST_KEY];
-  if (!isStateV2Manifest(manifest)) {
-    return undefined;
-  }
-
-  return loadStateV2FromManifest(manifest, api);
-}
-
-async function loadStateV2FromManifest(
-  manifest: StateV2Manifest,
-  api: WebExtensionBrowser
-): Promise<OutlineState | undefined> {
-  const keys = [...manifest.nodeChunkKeys, ...manifest.orderPageKeys];
-  const chunkItems = keys.length > 0 ? await api.storage.local.get(keys) : {};
-  const nodes: OutlineState["nodes"] = {};
-  for (const key of manifest.nodeChunkKeys) {
-    const chunk = chunkItems[key];
-    if (!isStateV2NodeChunk(chunk)) {
-      return undefined;
-    }
-    for (const storedNode of chunk.nodes) {
-      nodes[storedNode.id] = storedNodeToNode(storedNode);
-    }
-  }
-
-  const orderPagesByParent = new Map<NodeId, StateV2OrderPage[]>();
-  for (const key of manifest.orderPageKeys) {
-    const page = chunkItems[key];
-    if (!isStateV2OrderPage(page)) {
-      return undefined;
-    }
-    const pages = orderPagesByParent.get(page.parentId) ?? [];
-    pages.push(page);
-    orderPagesByParent.set(page.parentId, pages);
-  }
-
-  for (const [parentId, pages] of orderPagesByParent) {
-    const node = nodes[parentId];
-    if (!node) {
-      return undefined;
-    }
-    node.childIds = pages
-      .sort((left, right) => left.pageIndex - right.pageIndex)
-      .flatMap((page) => page.childIds);
-  }
-
-  const state: OutlineState = {
-    version: 1,
-    rootIds: [...manifest.rootIds],
-    nodes
-  };
-  return isOutlineState(state) ? state : undefined;
+  return undefined;
 }
 
 export async function loadStateV3(api: WebExtensionBrowser = browser): Promise<OutlineState | undefined> {
@@ -1146,18 +1042,6 @@ function isOutlineState(value: unknown): value is OutlineState {
   );
 }
 
-function isStateV2Manifest(value: unknown): value is StateV2Manifest {
-  return Boolean(
-    value &&
-      typeof value === "object" &&
-      (value as StateV2Manifest).version === 2 &&
-      typeof (value as StateV2Manifest).revision === "number" &&
-      Array.isArray((value as StateV2Manifest).rootIds) &&
-      Array.isArray((value as StateV2Manifest).nodeChunkKeys) &&
-      Array.isArray((value as StateV2Manifest).orderPageKeys) &&
-      isInitialTreeSnapshot((value as StateV2Manifest).initialSnapshot)
-  );
-}
 
 function isStateV3Manifest(value: unknown): value is StateV3Manifest {
   return Boolean(
@@ -1188,25 +1072,7 @@ function isStateV3BootSnapshot(value: unknown): value is StateV3BootSnapshot {
   );
 }
 
-function isStateV2NodeChunk(value: unknown): value is StateV2NodeChunk {
-  return Boolean(
-    value &&
-      typeof value === "object" &&
-      (value as StateV2NodeChunk).version === 2 &&
-      Array.isArray((value as StateV2NodeChunk).nodes)
-  );
-}
 
-function isStateV2OrderPage(value: unknown): value is StateV2OrderPage {
-  return Boolean(
-    value &&
-      typeof value === "object" &&
-      (value as StateV2OrderPage).version === 2 &&
-      typeof (value as StateV2OrderPage).parentId === "string" &&
-      typeof (value as StateV2OrderPage).pageIndex === "number" &&
-      Array.isArray((value as StateV2OrderPage).childIds)
-  );
-}
 
 function isStateV3NodeShard(value: unknown): value is StateV3NodeShard {
   return Boolean(
