@@ -70,7 +70,8 @@ import {
   outlineJournalDeltaWeight,
   replayJournal,
   type OutlineJournal,
-  type OutlineJournalAppendItem
+  type OutlineJournalAppendItem,
+  type OutlineJournalEntry
 } from "./outline-journal.js";
 import type {
   InitialTreeSnapshot,
@@ -127,7 +128,7 @@ import {
 } from "../model/outline.js";
 import { buildOutlineLookup, type OutlineLookup } from "../model/outline-lookup.js";
 import { exportPortableTree, portableTreeFilename, serializePortableTreeFile } from "../model/portable-tree.js";
-import type { NodeId, OutlineNode, OutlineState, ReconcileOptions, RestoredNode, RuntimeTab, RuntimeWindow } from "../model/types.js";
+import type { NodeId, OutlineNode, OutlineState, ReconcileOptions, RestoredNode, RuntimeTab, RuntimeWindow, RuntimeWindowProvenance } from "../model/types.js";
 import { createPerformanceTracer, type TraceDetail, type TraceSnapshot } from "../perf/trace.js";
 import {
   PROFILE_STORAGE_KEY,
@@ -1238,13 +1239,17 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         }
       }
       await persistWithBestEffortPatch(current, result.state, { saveSchedule });
-      await flushRuntimeProvenanceSaveIfChanged(current, result.state, runtimeIndexCandidateNodeIds, {
-        allowDeferredPlacementCheckpoint: isStructuralCommand(message.type),
-        reason: message.type
-      });
-      // The generic fallback handles broad, visible-first commands (e.g. importTree) whose
-      // durability stays deferred by design; journaling them is deferred to slice 2's
-      // coalescer so the ack never waits on a large journal write.
+      // A bounded structural relocation/flatten (moveNodeToNewWindow, flattenSubtree) reaches
+      // this fallback but still creates command-window runtime provenance that must survive a
+      // restart before the deferred snapshot lands (I-1) -- journal it before the ack like the
+      // other structural blocks. Broad commands without candidate ids (importTree) have no
+      // cheap bounded delta here and stay deferred to slice 2's coalescer.
+      if (!(runtimeIndexCandidateNodeIds && await appendCommandJournal(current, result.state, runtimeIndexCandidateNodeIds, message.type))) {
+        await flushRuntimeProvenanceSaveIfChanged(current, result.state, runtimeIndexCandidateNodeIds, {
+          allowDeferredPlacementCheckpoint: isStructuralCommand(message.type),
+          reason: message.type
+        });
+      }
       if (commandTransaction) {
         runtimeFacts.commitCommand(commandTransaction.id);
       }
@@ -2186,6 +2191,19 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         });
       }
       state = bootstrapFromWindows(windows, { now: now() });
+      // A journal with no loadable snapshot is a crash before the first save, not a fresh
+      // profile: the bootstrap reconstructs structure from the runtime snapshot but cannot
+      // tell a command-created, restored, or browser-created window from a saved one. The
+      // outline journal durably recorded those creations, so replay its provenance onto the
+      // bootstrap rather than silently downgrading every window to "saved" (RT-252).
+      const bootstrapProvenance = recoverWindowProvenanceFromJournal(state, windows, journalInit.entries);
+      if (bootstrapProvenance.changed) {
+        state = bootstrapProvenance.state;
+        await recordIncidentLog("bootstrapProvenanceRecovered", {
+          journalEntryCount: journalInit.entries.length,
+          ...outlineStateCountDetail(state)
+        });
+      }
       scheduleStateSave(state);
     }
     const prunedStartupState = pruneMissingEmptyCommandRuntimeWindows(state, windows);
@@ -2388,6 +2406,55 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       next = closeTab(next, tabId, { now: now(), closedBy: "outliner" });
     }
     return next;
+  }
+
+  // Re-establish live-window runtime provenance after a bootstrap that had no loadable
+  // snapshot (a crash before the first save). The bootstrap reconstructs structure from the
+  // runtime snapshot but cannot tell a command-created, restored, or browser-created window
+  // from a plain saved one. The outline journal is the durable record of those creations, so
+  // replay the latest provenance it holds for each still-live runtime window onto the
+  // bootstrap. Provenance is sticky (set at creation, never cleared) and is not part of
+  // `nodesMateriallyEqual`, so the change is reported explicitly here rather than via a diff.
+  function recoverWindowProvenanceFromJournal(
+    state: OutlineState,
+    windows: RuntimeWindow[],
+    journalEntries: readonly OutlineJournalEntry[]
+  ): { state: OutlineState; changed: boolean } {
+    const liveRuntimeWindowIds = new Set(windows.map((windowInfo) => windowInfo.id));
+    const provenanceByRuntimeWindowId = new Map<number, RuntimeWindowProvenance>();
+    const restoredByRuntimeWindowId = new Set<number>();
+    for (const entry of journalEntries) {
+      for (const node of entry.delta?.updatedNodes ?? []) {
+        if (!isLiveWindowNode(node) || !liveRuntimeWindowIds.has(node.live.windowId)) {
+          continue;
+        }
+        if (node.runtimeProvenance) {
+          provenanceByRuntimeWindowId.set(node.live.windowId, node.runtimeProvenance);
+        }
+        if (node.restoredFromClosed === true) {
+          restoredByRuntimeWindowId.add(node.live.windowId);
+        }
+      }
+    }
+    let next = state;
+    let changed = false;
+    for (const windowNode of liveWindowNodes(state)) {
+      const provenance = provenanceByRuntimeWindowId.get(windowNode.live.windowId);
+      const restored = restoredByRuntimeWindowId.has(windowNode.live.windowId);
+      const needsProvenance = provenance && !windowNode.runtimeProvenance;
+      const needsRestored = restored && windowNode.restoredFromClosed !== true;
+      if (!needsProvenance && !needsRestored) {
+        continue;
+      }
+      next = next === state ? cloneOutlineState(state) : next;
+      next.nodes[windowNode.id] = {
+        ...next.nodes[windowNode.id]!,
+        ...(needsProvenance ? { runtimeProvenance: provenance } : {}),
+        ...(needsRestored ? { restoredFromClosed: true } : {})
+      };
+      changed = true;
+    }
+    return { state: next, changed };
   }
 
   function recoverRelocationJournalEntry(

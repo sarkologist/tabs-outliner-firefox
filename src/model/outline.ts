@@ -578,11 +578,21 @@ function promoteForeignLiveWindowsAfterClosingWindow(
   }
 
   const closingWindow = requireNode(state, closingWindowNodeId);
-  const targetParentId = closingWindow.parentId;
+  // The closing window's immediate parent may itself be closed (e.g. a restored inner window
+  // nested in a closed outer window). Promoting the foreign live windows to that parent would
+  // strand live runtime resources under a closed window (RT-253), so clear every closed
+  // ancestor and anchor just after the top closed one (or at root) instead.
+  let anchorNodeId = closingWindowNodeId;
+  let targetParentNode = closingWindow.parentId ? state.nodes[closingWindow.parentId] : undefined;
+  while (targetParentNode && targetParentNode.status === "closed") {
+    anchorNodeId = targetParentNode.id;
+    targetParentNode = targetParentNode.parentId ? state.nodes[targetParentNode.parentId] : undefined;
+  }
+  const targetParentId = targetParentNode?.id;
   const targetSiblings = targetParentId
     ? cloneNodeForMutation(state, targetParentId).childIds
     : mutableRootIds(state, original);
-  const anchorIndex = targetSiblings.indexOf(closingWindowNodeId);
+  const anchorIndex = targetSiblings.indexOf(anchorNodeId);
   let insertionIndex = anchorIndex >= 0 ? anchorIndex + 1 : targetSiblings.length;
 
   for (const promotedWindowId of promotedWindowIds) {

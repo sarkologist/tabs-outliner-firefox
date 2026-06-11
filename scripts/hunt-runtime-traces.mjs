@@ -292,7 +292,8 @@ const REGRESSION_TRACE_IDS = [
   "sk-b3-undo-abrupt-restored-browser-swap",
   "mh-opener-chain-native-reorder",
   "qh-escape-command-created-double-reorder-complete",
-  "yh-runbook-r1-created-race-command-cohabit"
+  "yh-runbook-r1-created-race-command-cohabit",
+  "jh-relocate-direct-abrupt-old-updated"
 ];
 const DISCOVERY_TRACE_IDS = [
   "dh-restore-delayed-focus-refresh",
@@ -606,7 +607,6 @@ const DISCOVERY_TRACE_IDS = [
   "jh-restore-window-abrupt-missing",
   "jh-restore-after-redo-abrupt-query",
   "jh-restore-after-native-close-abrupt-session",
-  "jh-relocate-direct-abrupt-old-updated",
   "jh-relocate-group-abrupt-old-created",
   "jh-relocate-top-level-abrupt-missing",
   "jh-relocate-twice-abrupt-stale",

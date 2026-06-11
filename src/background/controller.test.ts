@@ -9846,7 +9846,7 @@ const RUNTIME_DOMAIN_DISCOVERY_TRACES: RuntimeDomainTrace[] = [
   {
     id: "jh-relocate-direct-abrupt-old-updated",
     title: "journal relocate direct abrupt old updated",
-    notes: "Lifecycle-journal crash probe for direct command relocation reconstructed after abrupt restart with stale old-window update.",
+    notes: "RT-252: command relocation creates a command window, an abrupt restart before the first save reaches the no-snapshot bootstrap, and the window's commandCreated provenance is recovered from the outline journal instead of downgrading to saved.",
     purpose: "discovery",
     origin: "agent-generated",
     tags: ["journal", "restart", "relocation", "stale-event", "updated-event"],
@@ -21399,7 +21399,8 @@ const RUNTIME_DOMAIN_DISCOVERED_FINDING_IDS = new Map<string, string[]>([
   ["xh-history-undo-after-native-move-restart", ["RT-218"]],
   ["ub-redo-journal-after-dual-native-drifts", ["RT-219"]],
   ["uc-redo-journal-dual-drift-complete-before-partial", ["RT-220"]],
-  ["uc-redo-journal-dual-drift-saved-tab-into-external", ["RT-221"]]
+  ["uc-redo-journal-dual-drift-saved-tab-into-external", ["RT-221"]],
+  ["jh-relocate-direct-abrupt-old-updated", ["RT-252"]]
 ]);
 
 function runtimeDomainTraceWithFindingMetadata(trace: RuntimeDomainTrace): RuntimeDomainTrace {
@@ -25645,9 +25646,18 @@ function assertRuntimeScopeProvenance(
 }
 
 function runtimeTraceAllowsBrowserCreatedProvenanceLoss(history: string[]): boolean {
+  // A browser-created window's provenance lives only in the coalesced runtime-event journal
+  // (Class B: up to 250 ms of event bookkeeping is lost on process death by design) and the
+  // not-yet-flushed snapshot. After an abrupt restart with neither, the bootstrap can only
+  // reconstruct the window as a plain saved one -- there is no durable record of its origin
+  // to replay (unlike command/restored windows, whose creation is journaled before the ack).
+  // Tolerate that accepted loss. The action serializes as `restartBackgroundAbrupt`, so match
+  // that alongside the older "abrupt restart" phrasing some trace titles use.
   return history.some((entry) => {
     const normalized = entry.toLowerCase();
-    return normalized.includes("abrupt restart") || normalized.includes("abruptrestart");
+    return normalized.includes("abrupt restart") ||
+      normalized.includes("abruptrestart") ||
+      normalized.includes("restartbackgroundabrupt");
   });
 }
 
@@ -30091,6 +30101,16 @@ describe("background controller lifecycle", () => {
 
   it("keeps session-only native closes when coalesced behind command close session echoes", async () => {
     await runGeneratedTrace(1277552076, 11);
+  });
+
+  // RT-253: closing an emptied restored inner window that is nested under a still-closed outer
+  // window must promote its foreign live child windows clear of every closed ancestor, not just
+  // up to the immediate (closed) parent -- otherwise a live tab is stranded under a closed window.
+  it("promotes foreign live windows clear of closed ancestors when an inner restored window empties", async () => {
+    await runGeneratedTrace(116881488, 48, {
+      adversarialRuntimeQueries: true,
+      adversarialConcurrency: true
+    });
   });
 
   it("preserves active tab state when a created-tab refresh races a grouping command", async () => {
