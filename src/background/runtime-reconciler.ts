@@ -346,8 +346,6 @@ export class RuntimeReconciler {
   }
 
   missingLiveTabIdsInOpenWindows(input: MissingLiveTabsInput): number[] {
-    const ignoredTabIds = input.ledger.ignoredTabIdsForRefresh();
-    const ignoredWindowIds = input.ledger.ignoredWindowIdsForRefresh();
     const openWindowIds = new Set(input.windows.map((windowInfo) => windowInfo.id));
     const openTabIds = new Set(
       input.windows.flatMap((windowInfo) => windowInfo.tabs ?? []).map((tab) => tab.id)

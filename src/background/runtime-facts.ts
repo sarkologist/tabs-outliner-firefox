@@ -1628,10 +1628,6 @@ export class RuntimeFactLedger {
     this.removedWindowIds.add(windowId);
   }
 
-  private observeLiveTab(tab: RuntimeTab): void {
-    this.observeLiveTabId(tab.id, tab.windowId);
-  }
-
   private observeLiveTabIfAccepted(tab: RuntimeTab): void {
     this.observeLiveTabIdIfAccepted(tab.id, tab.windowId);
   }

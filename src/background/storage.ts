@@ -1382,17 +1382,6 @@ function stateV3NodeShardItems(state: OutlineState): Map<string, StateV3NodeShar
   return items;
 }
 
-function stateV3NodeShard(state: OutlineState, shardIndex: number): StateV3NodeShard {
-  return {
-    version: 3,
-    shardIndex,
-    nodes: Object.values(state.nodes)
-      .filter((node) => stateV3NodeShardIndex(node.id) === shardIndex)
-      .map(nodeToStoredNode)
-      .sort((left, right) => left.id.localeCompare(right.id))
-  };
-}
-
 function stateV3OrderPageItems(state: OutlineState): Map<string, StateV3OrderPage> {
   const items = new Map<string, StateV3OrderPage>();
   for (const node of Object.values(state.nodes).sort((left, right) => left.id.localeCompare(right.id))) {

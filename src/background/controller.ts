@@ -78,9 +78,7 @@ import {
 import type {
   InitialTreeSnapshot,
   LoadStateOptions,
-  SaveStateOptions,
   StateLoadPhase,
-  StateSavePhase,
   StateStructureRepair
 } from "./storage.js";
 import {
@@ -6790,16 +6788,6 @@ function indexedLiveTabNodeByRuntimeId(
   const nodeId = index.liveTabNodeIdsByRuntimeId.get(tabId);
   const node = nodeId ? state.nodes[nodeId] : undefined;
   return isLiveTabNode(node) && node.live.tabId === tabId ? node : undefined;
-}
-
-function indexedLiveWindowNodeByRuntimeId(
-  state: OutlineState,
-  index: RuntimeStateIndex,
-  windowId: number
-): (OutlineNode & { live: { windowId: number } }) | undefined {
-  const nodeId = index.liveWindowNodeIdsByRuntimeId.get(windowId);
-  const node = nodeId ? state.nodes[nodeId] : undefined;
-  return isLiveWindowNode(node) && node.live.windowId === windowId ? node : undefined;
 }
 
 function runtimeTabNodeForFastPath(tab: RuntimeTab, nodeId: NodeId, parentId: NodeId, now: number): OutlineNode {
