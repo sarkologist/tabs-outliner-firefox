@@ -1131,3 +1131,31 @@ Phase 1 of `docs/storage-rearchitecture/02-IMPLEMENTATION-PLAN.md`: the pure v4 
 - Verification: `pnpm build`, full vitest (723), full playwright (279), and
   `perf-runtime-guard --hard-only` PASS across all 9 scenarios with unchanged budgets
   (mbStringified unmoved; delete-last-tab journalWrites still 1).
+
+### 2026-06-11: Simplification series - dead legacy write pipeline out of prod, shared helpers, profile-seed fidelity
+
+- Refactor-only series on `refactor/simplify` (5 commits): compiler-verified dead code
+  removal; one canonical `isLiveTabNode`/`isLiveWindowNode`/`liveTabNodes`/
+  `liveWindowNodes` + `cloneOutlineNode`/`cloneOutlineState` in `src/model/` replacing six
+  per-file copies; the dead v2/v3 *write* pipeline (~450 lines: `saveStateAndHistory`,
+  `outlineStateV3Changes`, incremental shard/order-page diffing, candidate promotion, save
+  phases) deleted from `storage.ts` with full-save fixture writers moved to
+  `storage-legacy-write.test-support.ts` (excluded from the shipped build; v2/v3 read/
+  migration ladder untouched); controller native-close + command-ack tail dedup; sidebar
+  hover-guide cleanup extraction. No algorithmic shape, transport shape, or save timing
+  change anywhere - the Current Asymptotics Audit table is unchanged.
+- Profile-harness fidelity finding: `profile-restore`/`profile-tab-open` previously seeded
+  fake storage with a v3 store, so every guarded run measured a one-time migration boot
+  rather than the steady-state v4 load; worse, handing the harness's in-memory model
+  objects directly to `loadStateV4` distorts hot model paths downstream (restore-last
+  `firstBroadcastMs` read 26-32ms). Seeds are now
+  `JSON.parse(JSON.stringify(outlineStateV4Snapshot(...).setItems))` - the round-trip
+  mimics the structured-clone shapes real `storage.local` returns and restored the
+  scenario to 18-22ms (pre-change v3-seed baseline: 20-21ms). Rule of thumb: fake-storage
+  seeds must cross a serialization boundary or hidden-class artifacts leak into measured
+  windows.
+- Verification: `pnpm check` green (oracle + vitest 714 passed | 2 skipped + build; the
+  nine deleted tests asserted dead v3 incremental-write behavior), `pnpm
+  perf:runtime-guard` PASS (9 scenarios, hard counters identical throughout the series),
+  `pnpm perf:sidebar-projection-guard` PASS (sparseHoverFrameMaxMs 6.3-6.8 across repeat
+  runs; one 8.3 outlier on a loaded machine prompted the reruns).
