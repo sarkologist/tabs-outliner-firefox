@@ -129,6 +129,95 @@ main {
   font-size: 12px;
 }
 
+.incident-help {
+  margin-bottom: 12px;
+  color: color-mix(in srgb, CanvasText 62%, transparent);
+  font-size: 12px;
+}
+
+.incident-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.incident-summary {
+  color: color-mix(in srgb, CanvasText 62%, transparent);
+  font-size: 12px;
+}
+
+.incident-list {
+  display: grid;
+  gap: 6px;
+  max-height: 320px;
+  margin: 12px 0 0;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+}
+
+.incident-row {
+  padding: 8px 10px;
+  border-left: 3px solid color-mix(in srgb, CanvasText 24%, transparent);
+  border-radius: 4px;
+  background: color-mix(in srgb, CanvasText 4%, Canvas);
+}
+
+.incident-row.is-warning {
+  border-left-color: #b7791f;
+  background: color-mix(in srgb, #b7791f 8%, Canvas);
+}
+
+.incident-row.is-error {
+  border-left-color: #c92525;
+  background: color-mix(in srgb, #c92525 8%, Canvas);
+}
+
+.incident-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.incident-event {
+  font-family:
+    ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    Consolas,
+    monospace;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.incident-time {
+  color: color-mix(in srgb, CanvasText 55%, transparent);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.incident-detail {
+  margin-top: 4px;
+  color: color-mix(in srgb, CanvasText 62%, transparent);
+  font-family:
+    ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    Consolas,
+    monospace;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.incident-empty {
+  padding: 8px 0;
+  color: color-mix(in srgb, CanvasText 55%, transparent);
+  font-size: 12px;
+}
+
 .shortcut-enabled {
   width: 18px;
   height: 18px;

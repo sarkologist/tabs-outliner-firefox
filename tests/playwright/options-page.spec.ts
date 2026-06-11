@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 
 import { APP_PREFERENCES_STORAGE_KEY, type AppPreferences } from "../../src/preferences";
 import { PROFILE_STORAGE_KEY } from "../../src/perf/profile";
+import { INCIDENT_LOG_STORAGE_KEY } from "../../src/background/incident-log";
 
 type ConsoleIssue = {
   kind: "console" | "pageerror" | "requestfailed";
@@ -265,10 +266,30 @@ test.describe("extension options page", () => {
     });
     expect(issues).toEqual([]);
   });
+
+  test("renders the storage incident log newest-first with severity classes", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadOptions(page);
+
+    const rows = page.locator("#incident-list .incident-row");
+    await expect(rows).toHaveCount(3);
+
+    // Newest entry (journalSpillGap) renders first and is flagged as a warning.
+    await expect(rows.first()).toContainText("journalSpillGap");
+    await expect(rows.first()).toHaveClass(/is-warning/);
+    await expect(rows.first()).toContainText("seq=3");
+
+    // Routine startup/migration events render as neutral info.
+    await expect(rows.nth(2)).toContainText("startupStateLoaded");
+    await expect(rows.nth(2)).toHaveClass(/is-info/);
+
+    await expect(page.locator("#incident-summary")).toHaveText("3 incidents · 1 warning");
+    expect(issues).toEqual([]);
+  });
 });
 
 async function loadOptions(page: Page): Promise<void> {
-  await page.addInitScript(({ preferencesKey, profileKey }) => {
+  await page.addInitScript(({ preferencesKey, profileKey, incidentKey, incidentEntries }) => {
     let savedPreferences: AppPreferences | undefined;
     let updatedCommandShortcut: string | undefined;
     const resetCommands: string[] = [];
@@ -338,7 +359,15 @@ async function loadOptions(page: Page): Promise<void> {
           addListener: () => undefined
         },
         local: {
-          get: async (key?: string) => key === preferencesKey ? { [preferencesKey]: savedPreferences } : {},
+          get: async (key?: string) => {
+            if (key === preferencesKey) {
+              return { [preferencesKey]: savedPreferences };
+            }
+            if (key === incidentKey) {
+              return { [incidentKey]: { version: 1, entries: incidentEntries } };
+            }
+            return {};
+          },
           set: async (items: Record<string, unknown>) => {
             savedPreferences = items[preferencesKey] as AppPreferences;
           },
@@ -421,7 +450,16 @@ async function loadOptions(page: Page): Promise<void> {
       tabs: {},
       sessions: {}
     };
-  }, { preferencesKey: APP_PREFERENCES_STORAGE_KEY, profileKey: PROFILE_STORAGE_KEY });
+  }, {
+    preferencesKey: APP_PREFERENCES_STORAGE_KEY,
+    profileKey: PROFILE_STORAGE_KEY,
+    incidentKey: INCIDENT_LOG_STORAGE_KEY,
+    incidentEntries: [
+      { version: 1, at: "2026-06-07T12:00:00.000Z", event: "startupStateLoaded", detail: { nodeCount: 12 } },
+      { version: 1, at: "2026-06-07T12:00:01.000Z", event: "v4MigrationComplete", detail: { nodeCount: 12 } },
+      { version: 1, at: "2026-06-07T12:00:02.000Z", event: "journalSpillGap", detail: { seq: 3 } }
+    ]
+  });
 
   await page.goto("/options/options.html");
   await expect(page.getByRole("heading", { name: "Options" })).toBeVisible();

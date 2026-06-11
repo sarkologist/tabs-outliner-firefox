@@ -83,6 +83,18 @@
           </div>
         </section>
 
+        <section class="settings-section" aria-labelledby="incident-heading">
+          <div class="section-heading">
+            <h2 id="incident-heading">Storage incidents</h2>
+          </div>
+          <p class="incident-help">Startup, migration, and recovery events recorded by the background page. Newest first.</p>
+          <div class="incident-controls">
+            <button id="incident-refresh" class="secondary-button" type="button">Refresh</button>
+            <p id="incident-summary" class="incident-summary" aria-live="polite">No incidents recorded.</p>
+          </div>
+          <ol id="incident-list" class="incident-list"></ol>
+        </section>
+
         <div id="errors" class="errors" role="alert" hidden></div>
 
         <div class="form-actions">

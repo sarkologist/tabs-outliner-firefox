@@ -28,6 +28,11 @@ import {
   performanceProfileEntryCount,
   type PerformanceProfileSnapshot
 } from "../perf/profile.js";
+import {
+  INCIDENT_LOG_STORAGE_KEY,
+  loadIncidentLog,
+  type IncidentLogEntry
+} from "../background/incident-log.js";
 
 const TOGGLE_SIDEBAR_COMMAND = "toggle-sidebar";
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -42,6 +47,29 @@ const SHORTCUT_ICON_BY_ACTION: Record<SidebarShortcutAction, string> = {
   zoomIn: "zoom-in",
   zoomOut: "zoom-out",
   zoomReset: "zoom-reset"
+};
+
+type IncidentSeverity = "error" | "warning" | "info";
+
+// Viewer-side classification for the background page's incident events (see
+// recordIncidentLog call sites in src/background/controller.ts). Anything not
+// listed renders as neutral "info", so a newly added event is never hidden.
+const INCIDENT_SEVERITY_BY_EVENT: Record<string, IncidentSeverity> = {
+  v4MigrationFailed: "error",
+  v4MigrationDeferredDegradedLoad: "error",
+  stateSaveFailed: "error",
+  automaticBackupFailure: "error",
+  v4LoadRecovery: "warning",
+  v3LoadSalvaged: "warning",
+  staleV2FallbackUsed: "warning",
+  bootstrapSkippedStoredDataPresent: "warning",
+  bootstrapProvenanceRecovered: "warning",
+  legacyKeysRetainedWithoutMigrationEvidence: "warning",
+  lifecycleJournalRecovery: "warning",
+  saveFlushAnomaly: "warning",
+  closedSubtreeGuardRestore: "warning",
+  storageLoadStructureRepair: "warning",
+  journalSpillGap: "warning"
 };
 
 const form = document.querySelector<HTMLFormElement>("#options-form");
@@ -59,6 +87,9 @@ const profileStop = document.querySelector<HTMLButtonElement>("#profile-stop");
 const profileReset = document.querySelector<HTMLButtonElement>("#profile-reset");
 const profileExport = document.querySelector<HTMLButtonElement>("#profile-export");
 const profileStatus = document.querySelector<HTMLElement>("#profile-status");
+const incidentRefresh = document.querySelector<HTMLButtonElement>("#incident-refresh");
+const incidentSummary = document.querySelector<HTMLElement>("#incident-summary");
+const incidentList = document.querySelector<HTMLOListElement>("#incident-list");
 
 type RecordingTarget =
   | {
@@ -85,6 +116,7 @@ async function initializeOptions(): Promise<void> {
   renderOptions();
   registerEvents();
   void refreshPerformanceProfileStatus();
+  void refreshIncidentLog();
 }
 
 function registerEvents(): void {
@@ -187,6 +219,10 @@ function registerEvents(): void {
     void exportPerformanceProfile();
   });
 
+  incidentRefresh?.addEventListener("click", () => {
+    void refreshIncidentLog();
+  });
+
   document.addEventListener("keydown", (event) => {
     if (!recordingTarget) {
       return;
@@ -232,11 +268,16 @@ function registerEvents(): void {
   }, { capture: true });
 
   browser.storage.onChanged.addListener((changes, areaName) => {
-    if (areaName !== "local" || !changes[AUTOMATIC_BACKUP_STATUS_STORAGE_KEY]) {
+    if (areaName !== "local") {
       return;
     }
-    automaticBackupStatus = normalizeAutomaticBackupStatus(changes[AUTOMATIC_BACKUP_STATUS_STORAGE_KEY].newValue);
-    renderBackupStatus();
+    if (changes[AUTOMATIC_BACKUP_STATUS_STORAGE_KEY]) {
+      automaticBackupStatus = normalizeAutomaticBackupStatus(changes[AUTOMATIC_BACKUP_STATUS_STORAGE_KEY].newValue);
+      renderBackupStatus();
+    }
+    if (changes[INCIDENT_LOG_STORAGE_KEY]) {
+      void refreshIncidentLog();
+    }
   });
 }
 
@@ -511,6 +552,105 @@ function showProfileStatus(message: string): void {
   if (profileStatus) {
     profileStatus.textContent = message;
   }
+}
+
+async function refreshIncidentLog(): Promise<void> {
+  const entries = await loadIncidentLog().catch(() => [] as IncidentLogEntry[]);
+  renderIncidentLog(entries);
+}
+
+function renderIncidentLog(entries: IncidentLogEntry[]): void {
+  if (incidentSummary) {
+    incidentSummary.textContent = incidentSummaryText(entries);
+  }
+  if (!incidentList) {
+    return;
+  }
+  if (entries.length === 0) {
+    incidentList.replaceChildren(incidentEmptyRow());
+    return;
+  }
+  // Newest first: entries are appended chronologically in storage.
+  incidentList.replaceChildren(...[...entries].reverse().map(incidentRow));
+}
+
+function incidentSummaryText(entries: IncidentLogEntry[]): string {
+  if (entries.length === 0) {
+    return "No incidents recorded.";
+  }
+  let errorCount = 0;
+  let warningCount = 0;
+  for (const entry of entries) {
+    const severity = incidentSeverity(entry.event);
+    if (severity === "error") {
+      errorCount += 1;
+    } else if (severity === "warning") {
+      warningCount += 1;
+    }
+  }
+  const parts = [`${entries.length} ${entries.length === 1 ? "incident" : "incidents"}`];
+  if (errorCount > 0) {
+    parts.push(`${errorCount} ${errorCount === 1 ? "error" : "errors"}`);
+  }
+  if (warningCount > 0) {
+    parts.push(`${warningCount} ${warningCount === 1 ? "warning" : "warnings"}`);
+  }
+  return parts.join(" · ");
+}
+
+function incidentRow(entry: IncidentLogEntry): HTMLLIElement {
+  const row = document.createElement("li");
+  row.className = `incident-row is-${incidentSeverity(entry.event)}`;
+
+  const header = document.createElement("div");
+  header.className = "incident-header";
+
+  const event = document.createElement("span");
+  event.className = "incident-event";
+  event.textContent = entry.event;
+
+  const time = document.createElement("time");
+  time.className = "incident-time";
+  time.dateTime = entry.at;
+  time.title = entry.at;
+  time.textContent = incidentTimeLabel(entry.at);
+
+  header.append(event, time);
+  row.append(header);
+
+  const detail = incidentDetailText(entry.detail);
+  if (detail) {
+    const detailLine = document.createElement("p");
+    detailLine.className = "incident-detail";
+    detailLine.textContent = detail;
+    row.append(detailLine);
+  }
+  return row;
+}
+
+function incidentEmptyRow(): HTMLLIElement {
+  const row = document.createElement("li");
+  row.className = "incident-empty";
+  row.textContent = "Nothing logged yet — startup and migration events appear here.";
+  return row;
+}
+
+function incidentSeverity(event: string): IncidentSeverity {
+  return INCIDENT_SEVERITY_BY_EVENT[event] ?? "info";
+}
+
+function incidentTimeLabel(at: string): string {
+  const date = new Date(at);
+  return Number.isNaN(date.getTime()) ? at : date.toLocaleString();
+}
+
+function incidentDetailText(detail: IncidentLogEntry["detail"]): string {
+  if (!detail) {
+    return "";
+  }
+  return Object.entries(detail)
+    .map(([key, value]) => `${key}=${value}`)
+    .join(" · ");
 }
 
 function showErrors(messages: string[]): void {
