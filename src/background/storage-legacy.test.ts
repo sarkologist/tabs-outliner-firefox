@@ -112,7 +112,7 @@ function mutateStoredV3Node(
   throw new Error(`missing stored v3 node ${nodeId}`);
 }
 
-describe("outline state v2 storage", () => {
+describe("initial tree snapshot projection", () => {
   it("builds query projection snapshots from the full outline state", () => {
     const state: OutlineState = {
       version: 1,
@@ -383,7 +383,7 @@ describe("outline state v2 storage", () => {
 
 });
 
-describe("outline state v3 storage", () => {
+describe("legacy v3 storage reads", () => {
   it("round-trips a full v3 save/load for a large state", async () => {
     const state = makeLargeState(1200, { activeTabIndex: 1199 });
     const api = fakeApi();

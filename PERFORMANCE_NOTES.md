@@ -1159,3 +1159,24 @@ Phase 1 of `docs/storage-rearchitecture/02-IMPLEMENTATION-PLAN.md`: the pure v4 
   perf:runtime-guard` PASS (9 scenarios, hard counters identical throughout the series),
   `pnpm perf:sidebar-projection-guard` PASS (sparseHoverFrameMaxMs 6.3-6.8 across repeat
   runs; one 8.3 outlier on a loaded machine prompted the reruns).
+
+### 2026-06-12: Round 2 - v2 removal, test type-checking, projector extraction
+
+- `feat(storage)!`: the v2 read/migration path is gone (user-approved). v2-only stores now
+  bootstrap with keys retained plus a `bootstrapSkippedStoredDataPresent` incident; the v3
+  ladder (R3) is unchanged. `loadInitialTreeSnapshot` reads one fewer key.
+- Test files are now actually type-checked (`pnpm check` runs `typecheck:test`): the old
+  tsconfig.test.json inherited the base exclude, so test/test-support files were never
+  checked and ~90 strictness errors had accumulated, including assertions that passed
+  vacuously (`loadStateV2` read-backs of a v4 store). Splitting the 1,109-entry runtime
+  domain trace table past tsc's TS2590 union limit re-enabled per-entry checking and
+  exposed one trace whose `nativeCloseWindow` order `"sessionChangedOnly"` was silently
+  running as `tabsRemovedOnly`; the fake runtime now implements the sessions-only window
+  close and the trace passes as authored.
+- `initial-tree-snapshot.ts` now owns the sparse first-paint projector (~500 lines moved
+  out of storage.ts; pure relocation). storage.ts is 623 lines of load/migration logic
+  (1,711 at branch start). No algorithmic, transport, or save-timing change in either
+  round - the Current Asymptotics Audit table is unchanged.
+- Verification: vitest 712 passed | 2 skipped; tsc clean on build and test configs;
+  `pnpm perf:runtime-guard` PASS (9 scenarios) and `pnpm perf:sidebar-projection-guard`
+  PASS (2 scenarios) after the extraction, hard counters unchanged throughout.
