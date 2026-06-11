@@ -26,6 +26,10 @@ export type OutlineDelta = {
 
 export type HistoryEntry = {
   version: 1;
+  // Ties the entry to the outline-journal record of its command (historyEntryId), letting
+  // startup replay rebuild missing entries idempotently. Absent on entries persisted
+  // before the id existed; those simply never match a journal record.
+  id?: string;
   commandType: TrackableHistoryCommandType;
   label: string;
   undo: OutlineDelta;
@@ -61,7 +65,7 @@ export function createHistoryEntry(
   commandType: TrackableHistoryCommandType,
   previous: OutlineState,
   next: OutlineState,
-  options: { candidateNodeIds?: readonly NodeId[]; diffMode?: HistoryDiffMode } = {}
+  options: { candidateNodeIds?: readonly NodeId[]; diffMode?: HistoryDiffMode; id?: string } = {}
 ): HistoryEntry | undefined {
   const diffMode = options.diffMode ?? "identity";
   const redo = deltaBetween(previous, next, diffMode, options.candidateNodeIds);
@@ -71,11 +75,21 @@ export function createHistoryEntry(
 
   return {
     version: 1,
+    id: options.id ?? newHistoryEntryId(),
     commandType,
     label: historyLabel(commandType),
     undo: deltaBetween(next, previous, diffMode, options.candidateNodeIds),
     redo
   };
+}
+
+export function newHistoryEntryId(): string {
+  return globalThis.crypto.randomUUID();
+}
+
+export function historyContainsEntryId(history: HistoryState, id: string): boolean {
+  return history.undoStack.some((entry) => entry.id === id) ||
+    history.redoStack.some((entry) => entry.id === id);
 }
 
 export function pushUndoEntry(
@@ -300,13 +314,14 @@ function isHistoryEntry(value: unknown): value is HistoryEntry {
   }
   const candidate = value as Partial<HistoryEntry>;
   return candidate.version === 1 &&
+    (candidate.id === undefined || typeof candidate.id === "string") &&
     isTrackableHistoryCommandType(candidate.commandType) &&
     typeof candidate.label === "string" &&
     isOutlineDelta(candidate.undo) &&
     isOutlineDelta(candidate.redo);
 }
 
-function isTrackableHistoryCommandType(value: unknown): value is TrackableHistoryCommandType {
+export function isTrackableHistoryCommandType(value: unknown): value is TrackableHistoryCommandType {
   return value === "moveNode" ||
     value === "moveNodeToNewWindow" ||
     value === "wrapNodeInGroup" ||
@@ -352,6 +367,7 @@ function isOutlineNode(value: unknown): value is OutlineNode {
 function cloneHistoryEntry(entry: HistoryEntry): HistoryEntry {
   return {
     version: 1,
+    ...(entry.id !== undefined ? { id: entry.id } : {}),
     commandType: entry.commandType,
     label: entry.label,
     undo: cloneDelta(entry.undo),

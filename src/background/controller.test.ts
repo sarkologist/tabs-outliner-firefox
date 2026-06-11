@@ -32596,6 +32596,70 @@ describe("background controller lifecycle", () => {
     expect(state.nodes["window:10"]?.title).not.toBe("Renamed");
   });
 
+  it("I-1: an acked delete stays undoable after an abrupt restart before any save", async () => {
+    const runtime = fakeRuntime(
+      [{ id: 10, focused: true, incognito: false }],
+      [
+        { id: 1, windowId: 10, index: 0, active: true, url: "https://one.example/", title: "One" },
+        { id: 2, windowId: 10, index: 1, active: false, url: "https://two.example/", title: "Two" }
+      ]
+    );
+    let controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    await controller.flushPendingSaves();
+    vi.mocked(runtime.api.tabs.remove).mockImplementationOnce(async (tabIds) => {
+      for (const tabId of Array.isArray(tabIds) ? tabIds : [tabIds]) {
+        removeRuntimeTabWithoutEvents(runtime, tabId);
+      }
+    });
+
+    expectCommandAck(await controller.handleMessage({ type: "deleteNode", nodeId: "tab:2" }), true);
+    // The deferred state+history flush never ran: only the journal carries the delete.
+
+    controller = restartControllerAbrupt(runtime);
+    const state = await controller.ensureState();
+    expect(state.nodes["tab:2"]).toBeUndefined();
+
+    // The undo entry rode the journal record, not the lost history save.
+    expect(await controller.handleMessage({ type: "getHistoryStatus" })).toMatchObject({
+      canUndo: true,
+      undoLabel: "Delete"
+    });
+    expectCommandAck(await controller.handleMessage({ type: "undo" }), true);
+    const undone = await controller.ensureState();
+    expect(undone.nodes["tab:2"]).toBeDefined();
+    expect(undone.nodes["window:10"]?.childIds).toContain("tab:2");
+  });
+
+  it("rebuilds only the un-persisted undo entries on journal replay (no duplicates)", async () => {
+    const runtime = fakeRuntime(
+      [{ id: 10, focused: true, incognito: false }],
+      [{ id: 1, windowId: 10, index: 0, active: true, url: "https://one.example/", title: "One" }]
+    );
+    let controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    await controller.flushPendingSaves();
+
+    // First rename is fully persisted (history + snapshot + journal prune); the second only
+    // reaches the journal. Replay must fold exactly the second entry onto the loaded stack.
+    expectCommandAck(await controller.handleMessage({ type: "renameGroup", nodeId: "window:10", title: "First" }), true);
+    await controller.flushPendingSaves();
+    expectCommandAck(await controller.handleMessage({ type: "renameGroup", nodeId: "window:10", title: "Second" }), true);
+
+    controller = restartControllerAbrupt(runtime);
+    const state = await controller.ensureState();
+    expect(state.nodes["window:10"]?.title).toBe("Second");
+
+    expect(await controller.handleMessage({ type: "getHistoryStatus" })).toMatchObject({
+      canUndo: true,
+      undoDepth: 2
+    });
+    expectCommandAck(await controller.handleMessage({ type: "undo" }), true);
+    expect((await controller.ensureState()).nodes["window:10"]?.title).toBe("First");
+    expectCommandAck(await controller.handleMessage({ type: "undo" }), true);
+    expect((await controller.ensureState()).nodes["window:10"]?.title).not.toBe("First");
+  });
+
   it("defers migration and keeps legacy keys when the legacy load was salvaged", async () => {
     const storedState = wideClosedTabState(50);
     const initialStorage = outlineStateV3Changes(storedState).setItems;

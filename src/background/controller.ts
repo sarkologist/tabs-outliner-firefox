@@ -67,8 +67,10 @@ import {
   JOURNAL_SPILL_NODE_LIMIT,
   JournalFullError,
   createOutlineJournal,
+  journalEntryAffectsHistory,
   outlineJournalDeltaWeight,
   replayJournal,
+  replayJournalWithHistory,
   type OutlineJournal,
   type OutlineJournalAppendItem,
   type OutlineJournalEntry
@@ -1019,8 +1021,9 @@ export function createBackgroundController(options: BackgroundControllerOptions)
               const deletePatchNodeIds = deleteTreeStructureCandidateNodeIds(current, recovered, message.nodeId);
               const saveSchedule = saveScheduleForCommand(message.type);
               installStateTransition(current, recovered, { candidateNodeIds: runtimeIndexCandidateNodeIds });
+              let recoveredDeleteHistoryEntryId: string | undefined;
               if (historyPrevious && isTrackableHistoryCommandType(message.type)) {
-                await recordHistoryEntry(message.type, historyPrevious, recovered, {
+                recoveredDeleteHistoryEntryId = await recordHistoryEntry(message.type, historyPrevious, recovered, {
                   candidateNodeIds: deletePatchNodeIds,
                   saveSchedule
                 });
@@ -1030,6 +1033,10 @@ export function createBackgroundController(options: BackgroundControllerOptions)
               );
               await broadcastTreeStructureUpdate(update);
               scheduleStateSave(recovered, saveSchedule, deletePatchNodeIds);
+              // The lifecycle deleteNode entry replays this state change after a crash, but
+              // the history entry above is only durable via the journal record (I-1 parity
+              // with the non-recovered delete path).
+              await appendCommandJournal(current, recovered, deletePatchNodeIds, message.type, "command", recoveredDeleteHistoryEntryId);
               if (commandTransaction) {
                 runtimeFacts.commitCommand(commandTransaction.id);
               }
@@ -1101,13 +1108,14 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       const deletePatchNodeIds = message.type === "deleteNode"
         ? deleteTreeStructureCandidateNodeIds(current, result.state, message.nodeId)
         : undefined;
+      let recordedHistoryEntryId: string | undefined;
       if (historyPrevious && isTrackableHistoryCommandType(message.type)) {
         const candidateNodeIds = message.type === "expandAncestors"
           ? expandAncestorNodeIds
           : message.type === "deleteNode"
             ? deletePatchNodeIds
             : historyCandidateNodeIds(message, historyPrevious, result.state) ?? runtimeIndexCandidateNodeIds;
-        await recordHistoryEntry(message.type, historyPrevious, result.state, {
+        recordedHistoryEntryId = await recordHistoryEntry(message.type, historyPrevious, result.state, {
           ...(candidateNodeIds ? { candidateNodeIds } : {}),
           saveSchedule
         });
@@ -1144,7 +1152,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         );
         await broadcastTreeStructureUpdate(update);
         scheduleStateSave(result.state, saveSchedule, deletePatchNodeIds ?? [message.nodeId]);
-        if (!(await appendCommandJournal(current, result.state, deletePatchNodeIds ?? [message.nodeId], message.type))) {
+        if (!(await appendCommandJournal(current, result.state, deletePatchNodeIds ?? [message.nodeId], message.type, "command", recordedHistoryEntryId))) {
           await flushRuntimeTruthSaveIfNeeded(current, result.state, deletePatchNodeIds ?? [message.nodeId]);
         }
         if (commandTransaction) {
@@ -1166,7 +1174,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         );
         await broadcastTreeStructureUpdate(update);
         scheduleStateSave(result.state, saveSchedule, runtimeIndexCandidateNodeIds);
-        if (!(await appendCommandJournal(current, result.state, runtimeIndexCandidateNodeIds, message.type))) {
+        if (!(await appendCommandJournal(current, result.state, runtimeIndexCandidateNodeIds, message.type, "command", recordedHistoryEntryId))) {
           await flushRuntimeProvenanceSaveIfChanged(current, result.state, runtimeIndexCandidateNodeIds, {
             allowDeferredPlacementCheckpoint: true,
             reason: message.type
@@ -1180,7 +1188,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       }
       if (message.type === "renameGroup") {
         await persistKnownNodeStateUpdate(current, result.state, message.nodeId);
-        await appendCommandJournal(current, result.state, [message.nodeId], message.type);
+        await appendCommandJournal(current, result.state, [message.nodeId], message.type, "command", recordedHistoryEntryId);
         if (commandTransaction) {
           runtimeFacts.commitCommand(commandTransaction.id);
         }
@@ -1188,7 +1196,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       }
       if (message.type === "toggleCollapsed") {
         await persistKnownNodeStateUpdate(current, result.state, message.nodeId);
-        await appendCommandJournalForKnownNodeIds(result.state, [message.nodeId], message.type);
+        await appendCommandJournalForKnownNodeIds(result.state, [message.nodeId], message.type, recordedHistoryEntryId);
         if (commandTransaction) {
           runtimeFacts.commitCommand(commandTransaction.id);
         }
@@ -1196,7 +1204,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       }
       if (message.type === "expandAncestors") {
         await persistKnownNodeStateUpdates(current, result.state, expandAncestorNodeIds ?? []);
-        await appendCommandJournalForKnownNodeIds(result.state, expandAncestorNodeIds ?? [], message.type);
+        await appendCommandJournalForKnownNodeIds(result.state, expandAncestorNodeIds ?? [], message.type, recordedHistoryEntryId);
         if (commandTransaction) {
           runtimeFacts.commitCommand(commandTransaction.id);
         }
@@ -1207,7 +1215,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         if (sameParentReorder) {
           await broadcastSameParentReorderUpdate(sameParentReorder);
           scheduleStateSave(result.state, saveSchedule, [sameParentReorder.parentId, sameParentReorder.movedNodeId]);
-          if (!(await appendCommandJournal(current, result.state, [sameParentReorder.parentId, sameParentReorder.movedNodeId], message.type))) {
+          if (!(await appendCommandJournal(current, result.state, [sameParentReorder.parentId, sameParentReorder.movedNodeId], message.type, "command", recordedHistoryEntryId))) {
             await flushRuntimeProvenanceSaveIfChanged(current, result.state, [sameParentReorder.parentId, sameParentReorder.movedNodeId], {
               allowDeferredPlacementCheckpoint: true,
               reason: message.type
@@ -1225,7 +1233,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
           );
           await broadcastTreeStructureUpdate(update);
           scheduleStateSave(result.state, saveSchedule, runtimeIndexCandidateNodeIds);
-          if (!(await appendCommandJournal(current, result.state, runtimeIndexCandidateNodeIds, message.type))) {
+          if (!(await appendCommandJournal(current, result.state, runtimeIndexCandidateNodeIds, message.type, "command", recordedHistoryEntryId))) {
             await flushRuntimeProvenanceSaveIfChanged(current, result.state, runtimeIndexCandidateNodeIds, {
               allowDeferredPlacementCheckpoint: true,
               reason: message.type
@@ -1244,7 +1252,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       // restart before the deferred snapshot lands (I-1) -- journal it before the ack like the
       // other structural blocks. Broad commands without candidate ids (importTree) have no
       // cheap bounded delta here and stay deferred to slice 2's coalescer.
-      if (!(runtimeIndexCandidateNodeIds && await appendCommandJournal(current, result.state, runtimeIndexCandidateNodeIds, message.type))) {
+      if (!(runtimeIndexCandidateNodeIds && await appendCommandJournal(current, result.state, runtimeIndexCandidateNodeIds, message.type, "command", recordedHistoryEntryId))) {
         await flushRuntimeProvenanceSaveIfChanged(current, result.state, runtimeIndexCandidateNodeIds, {
           allowDeferredPlacementCheckpoint: isStructuralCommand(message.type),
           reason: message.type
@@ -2071,7 +2079,24 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       ? journalInit.entries.filter((entry) => entry.seq > (loaded?.journalSeqIncluded ?? 0))
       : [];
     const journalReplayed = journalReplayEntries.length > 0;
-    const stored = journalReplayed ? replayJournal(loadedState!, journalReplayEntries) : loadedState;
+    let stored = loadedState;
+    if (journalReplayed && journalReplayEntries.some(journalEntryAffectsHistory)) {
+      // Replayed entries include history-tracked commands (or undo/redo moves) whose
+      // history save may not have landed before the crash: rebuild the undo entries from
+      // the journal fold so an acked command stays undoable across the restart.
+      const activePreferences = await ensurePreferences();
+      const historyReplayResult = replayJournalWithHistory(loadedState!, journalReplayEntries, {
+        history: await ensureHistory(),
+        limit: activePreferences.undoHistoryLimit
+      });
+      stored = historyReplayResult.state;
+      if (historyReplayResult.historyChanged) {
+        historyState = historyReplayResult.history;
+        scheduleHistorySave(historyState);
+      }
+    } else if (journalReplayed) {
+      stored = replayJournal(loadedState!, journalReplayEntries);
+    }
     if (journalReplayed) {
       await recordIncidentLog("journalReplay", {
         entryCount: journalReplayEntries.length,
@@ -2120,7 +2145,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     let completedDeleteClosePlans: RuntimeClosePlan[] = [];
     if (stored) {
       const lifecycleRecoveryHistory = lifecycleJournal.entries.some((entry) => entry.kind === "history")
-        ? await loadHistory(api)
+        ? historyState ?? await loadHistory(api)
         : undefined;
       const lifecycleRecovery = lifecycleJournal.entries.length > 0
         ? recoverRuntimeLifecycleJournal(repairState(stored), windows, lifecycleJournal, lifecycleRecoveryHistory)
@@ -2769,21 +2794,25 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     };
   }
 
+  // Returns the pushed entry's id so the caller can stamp it onto the command's outline
+  // journal record: the journal is durable at ack, the history save is not, and startup
+  // replay rebuilds the entry from the journal when the persisted history lacks the id.
   async function recordHistoryEntry(
     commandType: TrackableHistoryCommandType,
     previous: OutlineState,
     next: OutlineState,
     options: { candidateNodeIds?: readonly NodeId[]; saveSchedule?: SaveSchedule } = {}
-  ): Promise<void> {
+  ): Promise<string | undefined> {
     const entry = createHistoryEntry(commandType, previous, next, options);
     if (!entry) {
-      return;
+      return undefined;
     }
 
     const activePreferences = await ensurePreferences();
     historyState = pushUndoEntry(await ensureHistory(), entry, activePreferences.undoHistoryLimit);
     scheduleHistorySave(historyState, options.saveSchedule);
     broadcastHistoryStatusSoon(historyState);
+    return entry.id;
   }
 
   async function applyHistoryCommand(direction: "undo" | "redo"): Promise<CommandAck> {
@@ -2853,7 +2882,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     // the delta twice with conflicting merge semantics. Only the closed-only undos (no
     // lifecycle entry, the previously uncovered case) go through the outline journal.
     if (!runtimeLifecycleJournalEntry) {
-      await appendCommandJournal(current, next, persistResult.candidateNodeIds, direction, "historyReplay");
+      await appendCommandJournal(current, next, persistResult.candidateNodeIds, direction, "historyReplay", popped.entry.id);
     }
     scheduleHistorySave(historyState, saveSchedule);
     broadcastHistoryStatusSoon(historyState);
@@ -5519,7 +5548,8 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     next: OutlineState,
     candidateNodeIds: readonly NodeId[] | undefined,
     kind: OutlineJournalAppendItem["kind"],
-    label: string
+    label: string,
+    historyEntryId?: string
   ): OutlineJournalAppendItem | undefined {
     const delta = outlineMaterialDelta(previous, next, candidateNodeIds);
     const rootsChanged = !sameNodeIdList(previous.rootIds, next.rootIds);
@@ -5529,6 +5559,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     return {
       kind,
       label,
+      ...(historyEntryId !== undefined ? { historyEntryId } : {}),
       delta: {
         ...(delta.updatedNodes.length > 0 ? { updatedNodes: delta.updatedNodes } : {}),
         ...(delta.deletedNodeIds.length > 0 ? { deletedNodeIds: delta.deletedNodeIds } : {}),
@@ -5547,7 +5578,8 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     next: OutlineState,
     candidateNodeIds: readonly NodeId[] | undefined,
     label: string,
-    kind: "command" | "historyReplay" = "command"
+    kind: "command" | "historyReplay" = "command",
+    historyEntryId?: string
   ): Promise<boolean> {
     if (!outlineJournal) {
       return false;
@@ -5555,7 +5587,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     // Any coalesced event deltas captured before this command must land first so journal
     // seq order stays chronological (replay applies absolute node records in seq order).
     const queuedEventItems = drainPendingEventJournalItems();
-    const item = journalDeltaItem(previous, next, candidateNodeIds, kind, label);
+    const item = journalDeltaItem(previous, next, candidateNodeIds, kind, label, historyEntryId);
     if (!item) {
       // No durable change to record (e.g. a no-op move); nothing for the checkpoint to flush.
       await appendOutlineJournalItems(queuedEventItems);
@@ -5585,7 +5617,8 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   async function appendCommandJournalForKnownNodeIds(
     next: OutlineState,
     nodeIds: readonly NodeId[],
-    label: string
+    label: string,
+    historyEntryId?: string
   ): Promise<boolean> {
     if (!outlineJournal) {
       return false;
@@ -5599,7 +5632,15 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       await appendOutlineJournalItems(queuedEventItems);
       return true;
     }
-    const spilled = await appendOutlineJournalItems([...queuedEventItems, { kind: "command", label, delta: { updatedNodes } }]);
+    const spilled = await appendOutlineJournalItems([
+      ...queuedEventItems,
+      {
+        kind: "command",
+        label,
+        ...(historyEntryId !== undefined ? { historyEntryId } : {}),
+        delta: { updatedNodes }
+      }
+    ]);
     return !spilled;
   }
 

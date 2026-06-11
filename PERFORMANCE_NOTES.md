@@ -1110,3 +1110,24 @@ Phase 1 of `docs/storage-rearchitecture/02-IMPLEMENTATION-PLAN.md`: the pure v4 
   machine.
 - Verification: `pnpm build`, `pnpm exec vitest run`, `pnpm perf:runtime-guard`, regression
   trace corpus (`RUNTIME_TRACE_HUNT_PROFILE=regression pnpm trace-hunt:runtime`) all green.
+
+### 2026-06-11: Dogfooding fixes - stale boot snapshot + undo durability
+
+- Dogfooding (delete + immediate browser restart) surfaced two holes: the sidebar painted
+  a pre-delete tree from the storage-served boot snapshot and never converged until an
+  unrelated event, and the delete's undo entry (riding the 5-30s interaction save) was
+  lost while its state delta survived via the journal.
+- Sidebar: storage-served initial snapshots are now flagged `fromStorage`; on applying one
+  the sidebar schedules the existing deferred full hydration (750ms) unconditionally.
+  Live-served sparse snapshots keep the lazy hydrate-on-demand contract, so the 50k-node
+  first-paint path gains no eager state transfer (guarded by "does not auto-hydrate after
+  sparse first paint"). Cost: one deferred `getState` per sidebar boot only during the
+  background-still-loading race.
+- Journal: command entries now carry `historyEntryId` (~40 bytes per history-tracked
+  command entry; same write count). Startup replay rebuilds missing undo entries from the
+  journal fold (`replayJournalWithHistory`) with id-based dedup against the loaded
+  history; the fold's per-entry node-table copy runs only on the crash-recovery path.
+  The recovered-delete error path now journals its delta like the success path.
+- Verification: `pnpm build`, full vitest (723), full playwright (279), and
+  `perf-runtime-guard --hard-only` PASS across all 9 scenarios with unchanged budgets
+  (mbStringified unmoved; delete-last-tab journalWrites still 1).

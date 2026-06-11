@@ -1,4 +1,16 @@
 import type { NodeId, OutlineNode, OutlineState } from "../model/types.js";
+import {
+  createHistoryEntry,
+  historyContainsEntryId,
+  isTrackableHistoryCommandType,
+  popRedoEntry,
+  popUndoEntry,
+  pushRedoEntry,
+  pushUndoEntry,
+  pushUndoEntryPreservingRedo,
+  type HistoryState,
+  type TrackableHistoryCommandType
+} from "./history.js";
 
 // v4 mutation journal (pure module, unwired in this phase). The journal persists O(delta)
 // mutation records so an acked change survives a background restart before the snapshot is
@@ -28,6 +40,11 @@ export type OutlineJournalEntry = {
   label?: string;
   delta?: OutlineJournalDelta;
   spill?: true;
+  // Id of the undo-history entry this command/replay produced. Startup replay rebuilds the
+  // history entry from the delta when the persisted history (which rides the deferred
+  // snapshot flush) does not contain the id yet -- the journal is durable at ack, the
+  // history save is not.
+  historyEntryId?: string;
 };
 
 export type OutlineJournalAppendItem = {
@@ -38,6 +55,7 @@ export type OutlineJournalAppendItem = {
   // that fact (the snapshot save, not the journal, carries the change). Replay skips it;
   // a loader that replays past an unfolded marker knows the snapshot may miss a broad change.
   spill?: true;
+  historyEntryId?: string;
 };
 
 export type OutlineJournalAppendResult = {
@@ -194,6 +212,9 @@ export function createOutlineJournal(
       if (item.label !== undefined) {
         entry.label = item.label;
       }
+      if (item.historyEntryId !== undefined) {
+        entry.historyEntryId = item.historyEntryId;
+      }
       if (item.spill || (item.delta && deltaExceedsSpillLimit(item.delta))) {
         entry.spill = true;
         spilled = true;
@@ -328,6 +349,112 @@ export function replayJournal(state: OutlineState, entries: readonly OutlineJour
   return {
     version: state.version,
     rootIds: rootsChanged ? [...rootIds] : state.rootIds,
+    nodes
+  };
+}
+
+// True when startup replay must rebuild this entry's effect on the undo history: the entry
+// records a history-tracked command (push) or an undo/redo (stack move) whose history save
+// may not have landed before the crash. Spill markers carry no delta to rebuild from.
+export function journalEntryAffectsHistory(entry: OutlineJournalEntry): boolean {
+  if (entry.historyEntryId === undefined || entry.spill || !entry.delta) {
+    return false;
+  }
+  if (entry.kind === "command") {
+    return isTrackableHistoryCommandType(entry.label);
+  }
+  return entry.kind === "historyReplay" && (entry.label === "undo" || entry.label === "redo");
+}
+
+export type OutlineJournalHistoryReplayResult = {
+  state: OutlineState;
+  history: HistoryState;
+  historyChanged: boolean;
+};
+
+// replayJournal plus undo-history reconstruction. For each history-tracked command entry
+// whose id the loaded history does not contain, the history entry is rebuilt from the fold:
+// before-images are the fold state prior to the entry's delta, after-images the state past
+// it -- the journal needs no extra payload. historyReplay entries re-apply their stack move
+// (undo: top undo entry -> redo stack; redo: mirrored) and skip when the loaded history
+// already reflects it (id dedup), so any flush/crash interleaving converges. Copies the
+// node table per history-bearing entry; fine for the crash-recovery path's entry counts.
+export function replayJournalWithHistory(
+  state: OutlineState,
+  entries: readonly OutlineJournalEntry[],
+  options: { history: HistoryState; limit?: number }
+): OutlineJournalHistoryReplayResult {
+  let history = options.history;
+  let historyChanged = false;
+  if (entries.length === 0) {
+    return { state, history, historyChanged };
+  }
+
+  const ordered = [...entries].sort((left, right) => left.seq - right.seq);
+  let current: OutlineState = {
+    version: state.version,
+    rootIds: [...state.rootIds],
+    nodes: { ...state.nodes }
+  };
+  for (const entry of ordered) {
+    const delta = entry.delta;
+    if (!delta) {
+      continue;
+    }
+    const next = applyJournalDelta(current, delta);
+    if (journalEntryAffectsHistory(entry)) {
+      const entryId = entry.historyEntryId!;
+      if (entry.kind === "command") {
+        if (!historyContainsEntryId(history, entryId)) {
+          const touchedNodeIds = [
+            ...(delta.updatedNodes ?? []).map((node) => node.id),
+            ...(delta.deletedNodeIds ?? [])
+          ];
+          const rebuilt = createHistoryEntry(entry.label as TrackableHistoryCommandType, current, next, {
+            candidateNodeIds: touchedNodeIds,
+            diffMode: "material",
+            id: entryId
+          });
+          if (rebuilt) {
+            history = pushUndoEntry(history, rebuilt, options.limit);
+            historyChanged = true;
+          }
+        }
+      } else if (entry.label === "undo") {
+        if (
+          !history.redoStack.some((stackEntry) => stackEntry.id === entryId) &&
+          history.undoStack.at(-1)?.id === entryId
+        ) {
+          const popped = popUndoEntry(history);
+          history = pushRedoEntry(popped.history, popped.entry!, options.limit);
+          historyChanged = true;
+        }
+      } else if (
+        !history.undoStack.some((stackEntry) => stackEntry.id === entryId) &&
+        history.redoStack.at(-1)?.id === entryId
+      ) {
+        const popped = popRedoEntry(history);
+        history = pushUndoEntryPreservingRedo(popped.history, popped.entry!, options.limit);
+        historyChanged = true;
+      }
+    }
+    current = next;
+  }
+
+  return { state: current, history, historyChanged };
+}
+
+function applyJournalDelta(state: OutlineState, delta: OutlineJournalDelta): OutlineState {
+  const nodes: Record<NodeId, OutlineNode> = { ...state.nodes };
+  for (const node of delta.updatedNodes ?? []) {
+    nodes[node.id] = node;
+  }
+  for (const id of delta.deletedNodeIds ?? []) {
+    delete nodes[id];
+  }
+  return {
+    version: state.version,
+    rootIds: delta.rootIds ? [...delta.rootIds] : state.rootIds,
     nodes
   };
 }

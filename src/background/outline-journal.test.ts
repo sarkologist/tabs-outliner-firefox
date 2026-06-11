@@ -10,8 +10,10 @@ import {
   type OutlineJournalEntry,
   createOutlineJournal,
   journalTouchedNodeIds,
-  replayJournal
+  replayJournal,
+  replayJournalWithHistory
 } from "./outline-journal.js";
+import { createEmptyHistoryState, pushRedoEntry, pushUndoEntry } from "./history.js";
 
 function makeNode(id: NodeId, overrides: Partial<OutlineNode> = {}): OutlineNode {
   return {
@@ -230,5 +232,177 @@ describe("outline journal", () => {
     // The failed append left no slot or meta advance behind.
     expect(faulty.snapshot()[`${JOURNAL_SLOT_PREFIX}1`]).toBeUndefined();
     expect((faulty.snapshot()[JOURNAL_META_KEY] as { headSeq?: number }).headSeq).toBe(1);
+  });
+
+  it("round-trips historyEntryId on appended entries, including spill markers", async () => {
+    const faulty = createFaultyStorage();
+    const journal = createOutlineJournal(faulty.api, { epoch: 1, now: () => 1000 });
+    await journal.init();
+
+    await journal.append([
+      { kind: "command", label: "deleteNode", historyEntryId: "h-1", delta: { deletedNodeIds: ["tab:1"] } },
+      { kind: "command", label: "deleteNode", historyEntryId: "h-2", spill: true }
+    ]);
+
+    const reopened = createOutlineJournal(faulty.api, { epoch: 2 });
+    const result = await reopened.init();
+    expect(result.entries[0]?.historyEntryId).toBe("h-1");
+    expect(result.entries[1]).toMatchObject({ historyEntryId: "h-2", spill: true });
+  });
+});
+
+describe("replayJournalWithHistory", () => {
+  function journalEntry(
+    seq: number,
+    overrides: Partial<OutlineJournalEntry> & Pick<OutlineJournalEntry, "kind">
+  ): OutlineJournalEntry {
+    return { seq, epoch: 1, at: 1000, ...overrides };
+  }
+
+  it("rebuilds a missing undo entry for a history-tracked command from the fold states", () => {
+    const tab = makeNode("tab:1", { title: "One" });
+    const window = makeNode("window:10", { kind: "window", childIds: ["tab:1"] });
+    const state = makeState([window, tab], ["window:10"]);
+    const deletedParent = makeNode("window:10", { kind: "window", childIds: [], updatedAt: 2000 });
+
+    const result = replayJournalWithHistory(state, [
+      journalEntry(1, {
+        kind: "command",
+        label: "deleteNode",
+        historyEntryId: "h-1",
+        delta: { updatedNodes: [deletedParent], deletedNodeIds: ["tab:1"] }
+      })
+    ], { history: createEmptyHistoryState() });
+
+    expect(result.state.nodes["tab:1"]).toBeUndefined();
+    expect(result.historyChanged).toBe(true);
+    expect(result.history.undoStack).toHaveLength(1);
+    const entry = result.history.undoStack[0]!;
+    expect(entry.id).toBe("h-1");
+    expect(entry.commandType).toBe("deleteNode");
+    // Undo restores the before-images taken from the fold state.
+    expect(entry.undo.updatedNodes.map((node) => node.id).sort()).toEqual(["tab:1", "window:10"]);
+    expect(entry.undo.updatedNodes.find((node) => node.id === "window:10")?.childIds).toEqual(["tab:1"]);
+    expect(entry.redo.deletedNodeIds).toEqual(["tab:1"]);
+  });
+
+  it("does not duplicate an entry the loaded history already contains", () => {
+    const tab = makeNode("tab:1");
+    const state = makeState([tab], ["tab:1"]);
+    const persisted = pushUndoEntry(createEmptyHistoryState(), {
+      version: 1,
+      id: "h-1",
+      commandType: "renameGroup",
+      label: "Rename",
+      undo: { rootIds: ["tab:1"], updatedNodes: [tab], deletedNodeIds: [] },
+      redo: { rootIds: ["tab:1"], updatedNodes: [makeNode("tab:1", { title: "Renamed" })], deletedNodeIds: [] }
+    });
+
+    const result = replayJournalWithHistory(state, [
+      journalEntry(1, {
+        kind: "command",
+        label: "renameGroup",
+        historyEntryId: "h-1",
+        delta: { updatedNodes: [makeNode("tab:1", { title: "Renamed" })] }
+      })
+    ], { history: persisted });
+
+    expect(result.historyChanged).toBe(false);
+    expect(result.history.undoStack).toHaveLength(1);
+    // The state delta still applies even when the history push is deduplicated.
+    expect(result.state.nodes["tab:1"]?.title).toBe("Renamed");
+  });
+
+  it("replays an undo stack move and is idempotent when already reflected", () => {
+    const renamed = makeNode("tab:1", { title: "Renamed" });
+    const original = makeNode("tab:1", { title: "One" });
+    const state = makeState([renamed], ["tab:1"]);
+    const entry = {
+      version: 1 as const,
+      id: "h-1",
+      commandType: "renameGroup" as const,
+      label: "Rename",
+      undo: { rootIds: ["tab:1"], updatedNodes: [original], deletedNodeIds: [] },
+      redo: { rootIds: ["tab:1"], updatedNodes: [renamed], deletedNodeIds: [] }
+    };
+    const persisted = pushUndoEntry(createEmptyHistoryState(), entry);
+    const undoJournalEntry = journalEntry(2, {
+      kind: "historyReplay",
+      label: "undo",
+      historyEntryId: "h-1",
+      delta: { updatedNodes: [original] }
+    });
+
+    const result = replayJournalWithHistory(state, [undoJournalEntry], { history: persisted });
+    expect(result.historyChanged).toBe(true);
+    expect(result.history.undoStack).toHaveLength(0);
+    expect(result.history.redoStack.map((stackEntry) => stackEntry.id)).toEqual(["h-1"]);
+    expect(result.state.nodes["tab:1"]?.title).toBe("One");
+
+    // Same entry against a history that already moved h-1 to the redo stack: no-op.
+    const again = replayJournalWithHistory(state, [undoJournalEntry], { history: result.history });
+    expect(again.historyChanged).toBe(false);
+    expect(again.history.redoStack).toHaveLength(1);
+  });
+
+  it("replays a redo stack move preserving the remaining redo entries", () => {
+    const renamed = makeNode("tab:1", { title: "Renamed" });
+    const original = makeNode("tab:1", { title: "One" });
+    const state = makeState([original], ["tab:1"]);
+    const entry = {
+      version: 1 as const,
+      id: "h-1",
+      commandType: "renameGroup" as const,
+      label: "Rename",
+      undo: { rootIds: ["tab:1"], updatedNodes: [original], deletedNodeIds: [] },
+      redo: { rootIds: ["tab:1"], updatedNodes: [renamed], deletedNodeIds: [] }
+    };
+    const persisted = pushRedoEntry(createEmptyHistoryState(), entry);
+
+    const result = replayJournalWithHistory(state, [
+      journalEntry(3, {
+        kind: "historyReplay",
+        label: "redo",
+        historyEntryId: "h-1",
+        delta: { updatedNodes: [renamed] }
+      })
+    ], { history: persisted });
+
+    expect(result.historyChanged).toBe(true);
+    expect(result.history.redoStack).toHaveLength(0);
+    expect(result.history.undoStack.map((stackEntry) => stackEntry.id)).toEqual(["h-1"]);
+    expect(result.state.nodes["tab:1"]?.title).toBe("Renamed");
+  });
+
+  it("skips history for spill markers, untracked labels, runtime events, and id-less entries", () => {
+    const state = makeState([makeNode("tab:1")], ["tab:1"]);
+
+    const result = replayJournalWithHistory(state, [
+      journalEntry(1, { kind: "command", label: "deleteNode", historyEntryId: "h-1", spill: true }),
+      journalEntry(2, { kind: "runtimeEvent", label: "tabRemoved", delta: { updatedNodes: [makeNode("tab:1", { title: "Event" })] } }),
+      journalEntry(3, { kind: "command", label: "focusNode", historyEntryId: "h-2", delta: { updatedNodes: [makeNode("tab:1", { title: "Untracked" })] } }),
+      journalEntry(4, { kind: "command", label: "renameGroup", delta: { updatedNodes: [makeNode("tab:1", { title: "NoId" })] } })
+    ], { history: createEmptyHistoryState() });
+
+    expect(result.historyChanged).toBe(false);
+    expect(result.history.undoStack).toHaveLength(0);
+    expect(result.state.nodes["tab:1"]?.title).toBe("NoId");
+  });
+
+  it("enforces the undo limit while folding rebuilt entries", () => {
+    const state = makeState([makeNode("tab:1", { title: "t0" })], ["tab:1"]);
+    const entries = Array.from({ length: 4 }, (_value, index) =>
+      journalEntry(index + 1, {
+        kind: "command",
+        label: "renameGroup",
+        historyEntryId: `h-${index + 1}`,
+        delta: { updatedNodes: [makeNode("tab:1", { title: `t${index + 1}`, updatedAt: 1000 + index + 1 })] }
+      })
+    );
+
+    const result = replayJournalWithHistory(state, entries, { history: createEmptyHistoryState(), limit: 2 });
+
+    expect(result.history.undoStack.map((stackEntry) => stackEntry.id)).toEqual(["h-3", "h-4"]);
+    expect(result.state.nodes["tab:1"]?.title).toBe("t4");
   });
 });

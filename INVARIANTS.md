@@ -18,6 +18,12 @@ Each entry: statement, owner mechanism, what enforces/tests it today.
   ARCHITECTURE.md). Lifecycle commands additionally write `runtimeLifecycleJournal:v1`
   intents before browser side effects. Enforced by: `controller.test.ts` "I-1:" tests
   (restart-before-save, torn-snapshot crash), lifecycle recovery tests.
+  Undo parity: a history-tracked command's journal record carries its undo entry's id
+  (`historyEntryId`); startup replay rebuilds missing undo entries from the journal fold
+  (`replayJournalWithHistory`), so an acked command stays undoable across the same
+  restarts its state change survives. Spilled deltas are exempt (consistent with the
+  state-side spill exemption). Enforced by: `controller.test.ts` "I-1: an acked delete
+  stays undoable...", `outline-journal.test.ts` replayJournalWithHistory tests.
 - **I-2 — A loader never silently returns a state older than the newest acked mutation.**
   Owner: storage. Every non-R0 load outcome records an incident
   (`v4LoadRecovery`, `v3LoadSalvaged`, `staleV2FallbackUsed`, `journalReplay`) and forces
