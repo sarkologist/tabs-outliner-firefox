@@ -22,10 +22,9 @@ import {
   STATE_V2_MANIFEST_KEY,
   STATE_V3_MANIFEST_KEY,
   loadState,
-  loadStateV2,
-  outlineStateV2Items,
-  outlineStateV3Changes
+  loadStateV2
 } from "./storage.js";
+import { outlineStateV2Items, outlineStateV3Items } from "./storage-legacy-write.test-support.js";
 import { PORTABLE_TREE_SCHEMA } from "../model/portable-tree.js";
 import { runtimeTitleForOutlineTab } from "../model/outline.js";
 import type { OutlineState, RuntimeTab, RuntimeWindow } from "../model/types.js";
@@ -27008,7 +27007,7 @@ describe("background controller lifecycle", () => {
         }]))
       }
     };
-    const initialStorage = outlineStateV3Changes(storedState).setItems;
+    const initialStorage = outlineStateV3Items(storedState);
     const runtime = fakeRuntime([], [], { initialStorage });
     const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
 
@@ -27075,7 +27074,7 @@ describe("background controller lifecycle", () => {
         }
       }
     };
-    const initialStorage = outlineStateV3Changes(storedState).setItems;
+    const initialStorage = outlineStateV3Items(storedState);
     mutateStoredV3Node(initialStorage, "window:20", (node) => {
       node.parentId = "window:10";
     });
@@ -27140,7 +27139,7 @@ describe("background controller lifecycle", () => {
         }]))
       }
     };
-    const initialStorage = outlineStateV3Changes(storedState).setItems;
+    const initialStorage = outlineStateV3Items(storedState);
     // Corrupt one node shard: the old loader would fail the whole v3 read and bootstrap a
     // live-window-only tree, silently discarding the closed session.
     const shardKey = Object.keys(initialStorage).find((key) => key.startsWith("outlineState:v3:nodes:"));
@@ -27194,7 +27193,7 @@ describe("background controller lifecycle", () => {
 
   it("fully rewrites matching startup state when the v3 shard format changed", async () => {
     const storedState = wideClosedTabState(1200);
-    const initialStorage = outlineStateV3Changes(storedState).setItems;
+    const initialStorage = outlineStateV3Items(storedState);
     initialStorage[STATE_V3_MANIFEST_KEY] = {
       ...(initialStorage[STATE_V3_MANIFEST_KEY] as Record<string, unknown>),
       nodeShardCount: 256
@@ -27238,7 +27237,7 @@ describe("background controller lifecycle", () => {
 
   it("keeps legacy keys authoritative and retries when the v4 migration write fails", async () => {
     const storedState = wideClosedTabState(50);
-    const initialStorage = outlineStateV3Changes(storedState).setItems;
+    const initialStorage = outlineStateV3Items(storedState);
     const runtime = fakeRuntime(
       [{ id: 10, focused: true, incognito: false }],
       [],
@@ -27302,7 +27301,7 @@ describe("background controller lifecycle", () => {
         }
       ],
       [],
-      { initialStorage: outlineStateV3Changes(storedState).setItems }
+      { initialStorage: outlineStateV3Items(storedState) }
     );
     const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
     const { calls, value: state } = await countNodeTableObjectEntries(() => controller.ensureState());
@@ -27838,7 +27837,7 @@ describe("background controller lifecycle", () => {
           title: "Visible"
         }
       ],
-      { initialStorage: outlineStateV3Changes(storedState).setItems }
+      { initialStorage: outlineStateV3Items(storedState) }
     );
     const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
     await controller.ensureState();
@@ -32662,7 +32661,7 @@ describe("background controller lifecycle", () => {
 
   it("defers migration and keeps legacy keys when the legacy load was salvaged", async () => {
     const storedState = wideClosedTabState(50);
-    const initialStorage = outlineStateV3Changes(storedState).setItems;
+    const initialStorage = outlineStateV3Items(storedState);
     // Corrupt one v3 shard: the load salvages (partial tree) -- a possibly-transient fault
     // that must never become a permanent migration.
     const shardKey = Object.keys(initialStorage).find((key) => key.startsWith("outlineState:v3:nodes:"));
@@ -33221,7 +33220,7 @@ describe("background controller lifecycle", () => {
         }
       ],
       [],
-      { initialStorage: outlineStateV3Changes(storedState).setItems }
+      { initialStorage: outlineStateV3Items(storedState) }
     );
     const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
     const initialState = await controller.ensureState();
@@ -38588,7 +38587,7 @@ describe("background controller lifecycle", () => {
       [
         { id: 1, windowId: 10, index: 0, active: true, url: "https://one.example/", title: "One" }
       ],
-      { initialStorage: outlineStateV3Changes(storedState).setItems }
+      { initialStorage: outlineStateV3Items(storedState) }
     );
     const restoredTab: RuntimeTab = {
       id: 21,
@@ -38737,7 +38736,7 @@ describe("background controller lifecycle", () => {
       [
         { id: 1, windowId: 10, index: 0, active: true, url: "https://one.example/", title: "One" }
       ],
-      { initialStorage: outlineStateV3Changes(storedState).setItems }
+      { initialStorage: outlineStateV3Items(storedState) }
     );
     const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
     await controller.ensureState();
@@ -38839,7 +38838,7 @@ describe("background controller lifecycle", () => {
       [
         { id: 1, windowId: 10, index: 0, active: true, url: "https://one.example/", title: "One" }
       ],
-      { initialStorage: outlineStateV3Changes(storedState).setItems }
+      { initialStorage: outlineStateV3Items(storedState) }
     );
     let restoredWindowId: number | undefined;
     vi.mocked(runtime.api.sessions.restore).mockImplementation(async (sessionId: string) => {

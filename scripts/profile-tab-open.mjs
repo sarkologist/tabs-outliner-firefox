@@ -1,7 +1,7 @@
 import { performance } from "node:perf_hooks";
 
 import { createBackgroundController } from "../dist/background/controller.js";
-import { outlineStateV3Changes } from "../dist/background/storage.js";
+import { outlineStateV4Snapshot } from "../dist/background/storage-v4.js";
 import {
   defaultTabsForSidebarStartupShape,
   isSidebarStartupShape,
@@ -205,7 +205,7 @@ function makeStartupRuntime(tabCount, liveTabCount, shape) {
   const runtime = makeRuntime(liveTabCount);
   const state = makeSidebarStartupState({ shape, tabs: tabCount, liveTabs: liveTabCount });
   runtime.startupShapeStats = sidebarStartupShapeStats(state);
-  runtime.storage = new Map(Object.entries(outlineStateV3Changes(state).setItems));
+  runtime.storage = new Map(Object.entries(JSON.parse(JSON.stringify(outlineStateV4Snapshot(state, { epoch: 1, journalSeqIncluded: 0 }).setItems))));
   return runtime;
 }
 

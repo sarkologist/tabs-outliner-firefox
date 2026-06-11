@@ -2,7 +2,6 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   INITIAL_TREE_SNAPSHOT_ROW_LIMIT,
-  HISTORY_KEY,
   STATE_KEY,
   STATE_V2_MANIFEST_KEY,
   STATE_V3_BOOT_SNAPSHOT_KEY,
@@ -14,17 +13,11 @@ import {
   loadStateV3,
   createInitialTreeSnapshotProjector,
   initialTreeSnapshotForState,
-  outlineStateV2Items,
   outlineBootSnapshotItem,
-  outlineStateV3Changes,
-  saveState,
-  saveStateAndHistory,
-  type StateStructureRepair,
-  type StateSavePhase
+  type StateStructureRepair
 } from "./storage.js";
-import { reconcileWithWindows } from "../model/outline.js";
+import { outlineStateV2Items, outlineStateV3Items } from "./storage-legacy-write.test-support.js";
 import type { OutlineNode, OutlineState } from "../model/types.js";
-import { makeSidebarStartupState } from "../perf/sidebar-startup-shapes.js";
 import { generatedTraceConfig, generatedTraceTimeoutMs } from "../test/generated-traces.test-support.js";
 
 function makeLargeState(tabCount: number, options: { activeTabIndex?: number } = {}): OutlineState {
@@ -98,41 +91,7 @@ function fakeApi(items: Record<string, unknown> = {}): WebExtensionBrowser {
   } as never;
 }
 
-function moveLastTabToFront(state: OutlineState): OutlineState {
-  const windowNode = state.nodes["window:10"]!;
-  const movedId = windowNode.childIds.at(-1)!;
-  return {
-    version: state.version,
-    rootIds: state.rootIds,
-    nodes: {
-      ...state.nodes,
-      "window:10": {
-        ...windowNode,
-        childIds: [movedId, ...windowNode.childIds.slice(0, -1)]
-      }
-    }
-  };
-}
 
-function removeLastOrderPage(state: OutlineState): OutlineState {
-  const windowNode = state.nodes["window:10"]!;
-  const removedChildIds = windowNode.childIds.slice(-100);
-  const nodes = { ...state.nodes };
-  for (const nodeId of removedChildIds) {
-    delete nodes[nodeId];
-  }
-  return {
-    version: state.version,
-    rootIds: state.rootIds,
-    nodes: {
-      ...nodes,
-      "window:10": {
-        ...windowNode,
-        childIds: windowNode.childIds.slice(0, -100)
-      }
-    }
-  };
-}
 
 function mutateStoredV3Node(
   items: Record<string, unknown>,
@@ -448,7 +407,7 @@ describe("outline state v2 storage", () => {
 
   it("reports v3 hydration phases while loading metadata", async () => {
     const state = makeLargeState(1200);
-    const api = fakeApi(outlineStateV3Changes(state, { revision: 789 }).setItems);
+    const api = fakeApi(outlineStateV3Items(state, { revision: 789 }));
     const phases: Array<{ name: string; durationMs: number }> = [];
 
     const loaded = await loadStateWithMetadata(api, {
@@ -473,7 +432,7 @@ describe("outline state v2 storage", () => {
 
   it("marks v3 stores with a stale shard count for a full rewrite", async () => {
     const state = makeLargeState(50);
-    const items = outlineStateV3Changes(state).setItems;
+    const items = outlineStateV3Items(state);
     items[STATE_V3_MANIFEST_KEY] = {
       ...(items[STATE_V3_MANIFEST_KEY] as Record<string, unknown>),
       nodeShardCount: 256
@@ -487,78 +446,6 @@ describe("outline state v2 storage", () => {
     expect(loaded?.requiresFullSave).toBe(true);
   });
 
-  it("saves state using v3 keys by default", async () => {
-    const state = makeLargeState(20);
-    const api = fakeApi();
-
-    await saveState(state, api);
-
-    const saved = vi.mocked(api.storage.local.set).mock.calls.at(-1)?.[0];
-    expect(saved?.[STATE_KEY]).toBeUndefined();
-    expect(saved?.[STATE_V2_MANIFEST_KEY]).toBeUndefined();
-    expect(saved?.[STATE_V3_MANIFEST_KEY]).toBeDefined();
-    expect((saved?.[STATE_V3_MANIFEST_KEY] as { nodeShardCount?: number }).nodeShardCount).toBe(32);
-    await expect(loadStateV3(api)).resolves.toEqual(state);
-  });
-
-  it("saves history without reintroducing the v1 state key", async () => {
-    const state = makeLargeState(20);
-    const api = fakeApi();
-
-    await saveStateAndHistory(
-      state,
-      {
-        version: 1,
-        undoStack: [],
-        redoStack: []
-      },
-      api
-    );
-
-    const saved = vi.mocked(api.storage.local.set).mock.calls.at(-1)?.[0];
-    expect(saved?.[STATE_KEY]).toBeUndefined();
-    expect(saved?.[STATE_V2_MANIFEST_KEY]).toBeUndefined();
-    expect(saved?.[STATE_V3_MANIFEST_KEY]).toBeDefined();
-    expect(saved?.[HISTORY_KEY]).toEqual({ version: 1, undoStack: [], redoStack: [] });
-    await expect(loadStateV3(api)).resolves.toEqual(state);
-  });
-
-  it("reports v3 save phases with key counts", async () => {
-    const previous = makeLargeState(1100);
-    const next = removeLastOrderPage(previous);
-    const api = fakeApi();
-    const phases: StateSavePhase[] = [];
-    await saveState(previous, api);
-
-    await saveStateAndHistory(next, undefined, api, {
-      previousState: previous,
-      onPhase: (phase) => {
-        phases.push(phase);
-      }
-    });
-
-    expect(phases.map((phase) => phase.name)).toEqual([
-      "v3.changeBuild",
-      "storage.set",
-      "storage.remove"
-    ]);
-    expect(phases.every((phase) => phase.durationMs >= 0)).toBe(true);
-    expect(phases.find((phase) => phase.name === "v3.changeBuild")?.detail).toMatchObject({
-      fullSave: false,
-      setKeys: expect.any(Number),
-      removeKeys: expect.any(Number),
-      nodeShardSetKeys: expect.any(Number),
-      orderPageSetKeys: expect.any(Number),
-      orderPageRemoveKeys: expect.any(Number)
-    });
-    expect(phases.find((phase) => phase.name === "storage.set")?.detail).toMatchObject({
-      keys: expect.any(Number),
-      hasManifest: true
-    });
-    expect(phases.find((phase) => phase.name === "storage.remove")?.detail).toMatchObject({
-      keys: expect.any(Number)
-    });
-  });
 });
 
 describe("outline state v3 storage", () => {
@@ -566,7 +453,7 @@ describe("outline state v3 storage", () => {
     const state = makeLargeState(1200, { activeTabIndex: 1199 });
     const api = fakeApi();
 
-    await saveState(state, api);
+    await api.storage.local.set(outlineStateV3Items(state));
 
     const saved = vi.mocked(api.storage.local.set).mock.calls.at(-1)?.[0];
     expect(saved?.[STATE_KEY]).toBeUndefined();
@@ -647,7 +534,7 @@ describe("outline state v3 storage", () => {
         }
       }
     };
-    const items = outlineStateV3Changes(state, { revision: 321 }).setItems;
+    const items = outlineStateV3Items(state, { revision: 321 });
     mutateStoredV3Node(items, "window:20", (node) => {
       node.parentId = "window:10";
     });
@@ -693,14 +580,14 @@ describe("outline state v3 storage", () => {
     const v2State = makeLargeState(5);
     const v3State = makeLargeState(7, { activeTabIndex: 6 });
     const api = fakeApi(outlineStateV2Items(v2State, { revision: 10 }));
-    await saveState(v3State, api);
+    await api.storage.local.set(outlineStateV3Items(v3State));
 
     await expect(loadState(api)).resolves.toEqual(v3State);
   });
 
   it("salvages v3 when an order page is missing instead of failing the load", async () => {
     const state = makeLargeState(1500, { activeTabIndex: 0 });
-    const items = outlineStateV3Changes(state).setItems;
+    const items = outlineStateV3Items(state);
     const secondPageKey = Object.keys(items).find(
       (key) => key.startsWith("outlineState:v3:order:") && key.endsWith(":1")
     );
@@ -722,7 +609,7 @@ describe("outline state v3 storage", () => {
 
   it("salvages v3 when a shard is corrupt", async () => {
     const state = makeLargeState(400);
-    const items = outlineStateV3Changes(state).setItems;
+    const items = outlineStateV3Items(state);
     const shardKey = Object.keys(items).find((key) => key.startsWith("outlineState:v3:nodes:"));
     expect(shardKey).toBeDefined();
     items[shardKey!] = { not: "a shard" };
@@ -739,7 +626,7 @@ describe("outline state v3 storage", () => {
 
   it("does not fall back to v2 when a v3 manifest exists", async () => {
     const v3State = makeLargeState(300);
-    const items = outlineStateV3Changes(v3State).setItems;
+    const items = outlineStateV3Items(v3State);
     const shardKey = Object.keys(items).find((key) => key.startsWith("outlineState:v3:nodes:"));
     items[shardKey!] = { not: "a shard" };
     // A stale but structurally valid v2 manifest must NOT win over salvageable v3.
@@ -751,125 +638,11 @@ describe("outline state v3 storage", () => {
     expect(loaded?.salvaged).toBe(true);
   });
 
-  it("writes bounded incremental v3 shards and order pages for a large same-parent move", () => {
-    const previous = makeLargeState(50_000);
-    const next = moveLastTabToFront(previous);
-
-    const changes = outlineStateV3Changes(next, { previousState: previous, revision: 123 });
-    const setKeys = Object.keys(changes.setItems);
-
-    expect(changes.setItems[STATE_V3_MANIFEST_KEY]).toBeDefined();
-    expect(setKeys.filter((key) => key.includes(":nodes:"))).toHaveLength(0);
-    expect(setKeys.filter((key) => key.includes(":order:")).length).toBeGreaterThan(0);
-    expect(setKeys.filter((key) => key.includes(":order:")).length).toBeLessThan(60);
-    expect(setKeys.length).toBeLessThan(70);
-  }, 15_000);
-
-  it("builds dirty v3 node shards in one pass for order-page-heavy startup saves", () => {
-    const previous = makeSidebarStartupState({
-      shape: "order-page-heavy",
-      tabs: 19_433,
-      liveTabs: 50
-    });
-    const tabs = Array.from({ length: 51 }, (_, index) => {
-      const tabId = index < 50 ? index + 1 : 19_434;
-      return {
-        id: tabId,
-        windowId: 10,
-        index,
-        active: index === 50,
-        url: index < 50 ? `https://large.example/${tabId}` : "https://startup.example/",
-        title: index < 50 ? `Tab ${tabId}` : "Startup Tab 2"
-      };
-    });
-    const next = reconcileWithWindows(previous, [
-      {
-        id: 10,
-        incognito: false,
-        focused: true,
-        tabs
-      }
-    ], { now: 2000 }, {
-      closeMissing: false,
-      respectRuntimeTabOrder: true
-    });
-
-    const start = performance.now();
-    const changes = outlineStateV3Changes(next, { previousState: previous, revision: 123 });
-    const durationMs = performance.now() - start;
-    const setKeys = Object.keys(changes.setItems);
-    const nodeShardSetKeys = setKeys.filter((key) => key.includes(":nodes:")).length;
-
-    expect(changes.setItems[STATE_V3_MANIFEST_KEY]).toBeDefined();
-    expect(nodeShardSetKeys).toBeGreaterThan(0);
-    expect(nodeShardSetKeys).toBeLessThanOrEqual(32);
-    expect(durationMs).toBeLessThan(700);
-  }, 10_000);
-
-  it("keeps generated incremental v3 saves loadable as the exact next state", async () => {
-    const config = generatedTraceConfig({
-      defaultSeedCount: 8,
-      defaultSteps: 1,
-      soakSeedCount: 48,
-      soakSteps: 1
-    });
-    for (const seed of config.seeds) {
-      const previous = generatedStorageState(seed);
-      const next = generatedNextStorageState(previous, seed);
-      const api = fakeApi();
-      await saveState(previous, api);
-
-      await saveStateAndHistory(next, undefined, api, { previousState: previous });
-
-      await expect(loadStateV3(api), `seed ${seed}`).resolves.toEqual(next);
-    }
-  }, generatedTraceTimeoutMs(5_000, 60_000));
-
-  it("removes stale v3 order pages when a parent child list shrinks", async () => {
-    const previous = makeLargeState(1100);
-    const next = removeLastOrderPage(previous);
-    const api = fakeApi();
-    await saveState(previous, api);
-    vi.mocked(api.storage.local.set).mockClear();
-    vi.mocked(api.storage.local.remove).mockClear();
-
-    await saveStateAndHistory(next, undefined, api, { previousState: previous });
-
-    expect(vi.mocked(api.storage.local.remove)).toHaveBeenCalled();
-    await expect(loadStateV3(api)).resolves.toEqual(next);
-  });
-
-  it("promotes candidate v3 saves when node count decreases and candidates omit the deleted id", async () => {
-    const previous = makeLargeState(40);
-    const previousRoot = previous.nodes["window:10"]!;
-    const nodes = { ...previous.nodes };
-    delete nodes["tab:40"];
-    const next: OutlineState = {
-      ...previous,
-      nodes: {
-        ...nodes,
-        "window:10": {
-          ...previousRoot,
-          childIds: previousRoot.childIds.filter((nodeId) => nodeId !== "tab:40")
-        }
-      }
-    };
-    const api = fakeApi();
-    await saveState(previous, api);
-
-    await saveStateAndHistory(next, undefined, api, {
-      previousState: previous,
-      candidateNodeIds: ["window:10"]
-    });
-
-    await expect(loadStateV3(api)).resolves.toEqual(next);
-  });
-
   it("loads the boot snapshot from its own key before v2", async () => {
     const v2State = makeLargeState(20);
     const v3State = makeLargeState(800, { activeTabIndex: 799 });
     const api = fakeApi(outlineStateV2Items(v2State, { revision: 111 }));
-    await saveState(v3State, api);
+    await api.storage.local.set(outlineStateV3Items(v3State));
     await api.storage.local.set(outlineBootSnapshotItem(v3State, 222));
     vi.mocked(api.storage.local.get).mockClear();
 
@@ -881,25 +654,9 @@ describe("outline state v3 storage", () => {
     expect(api.storage.local.get).toHaveBeenCalledTimes(1);
   });
 
-  it("does not embed the initial snapshot in v3 save manifests", async () => {
-    const state = makeLargeState(50);
-    const incremental = outlineStateV3Changes(moveLastTabToFront(state), {
-      previousState: state,
-      revision: 2
-    });
-    const fullManifest = outlineStateV3Changes(state, { revision: 1 }).setItems[STATE_V3_MANIFEST_KEY] as Record<string, unknown>;
-    const incrementalManifest = incremental.setItems[STATE_V3_MANIFEST_KEY] as Record<string, unknown>;
-
-    expect(fullManifest.initialSnapshot).toBeUndefined();
-    expect(incrementalManifest.initialSnapshot).toBeUndefined();
-    expect(fullManifest.bootSnapshotRevision).toBe(1);
-    // A small same-parent move must not carry the 256-row snapshot in its manifest.
-    expect(JSON.stringify(incrementalManifest).length).toBeLessThan(2000);
-  });
-
   it("loads the embedded snapshot from older v3 manifests for back-compat", async () => {
     const state = makeLargeState(40, { activeTabIndex: 5 });
-    const items = outlineStateV3Changes(state).setItems;
+    const items = outlineStateV3Items(state);
     // Simulate an older manifest that still embeds the snapshot and has no boot snapshot key.
     items[STATE_V3_MANIFEST_KEY] = {
       ...(items[STATE_V3_MANIFEST_KEY] as Record<string, unknown>),
@@ -994,82 +751,7 @@ function generatedStorageState(seed: number): OutlineState {
   };
 }
 
-function generatedNextStorageState(previous: OutlineState, seed: number): OutlineState {
-  const next = cloneStorageState(previous);
-  const rng = seededRandom(seed * 997);
-  const parentsWithMultipleChildren = Object.values(next.nodes)
-    .filter((node) => node.childIds.length > 1)
-    .map((node) => node.id);
-  const reorderParentId = parentsWithMultipleChildren[Math.floor(rng() * parentsWithMultipleChildren.length)];
-  if (reorderParentId) {
-    const parent = next.nodes[reorderParentId]!;
-    const movedId = parent.childIds.pop();
-    if (movedId) {
-      parent.childIds.splice(Math.floor(rng() * (parent.childIds.length + 1)), 0, movedId);
-      parent.updatedAt += 1;
-    }
-  }
 
-  const group = Object.values(next.nodes).find((node) => node.kind === "group");
-  if (group) {
-    group.title = `Generated ${seed}`;
-    group.customTitle = group.title;
-    group.updatedAt += 1;
-  }
-
-  const insertParent = Object.values(next.nodes).find((node) => node.childIds.length > 0) ?? next.nodes[next.rootIds[0]!];
-  if (insertParent) {
-    const nodeId = `tab:${seed}:inserted`;
-    insertParent.childIds.splice(Math.floor(rng() * (insertParent.childIds.length + 1)), 0, nodeId);
-    next.nodes[nodeId] = {
-      id: nodeId,
-      kind: "tab",
-      status: "live",
-      parentId: insertParent.id,
-      childIds: [],
-      title: `Inserted ${seed}`,
-      url: `https://storage.example/${seed}/inserted`,
-      active: false,
-      collapsed: false,
-      createdAt: seed * 10_000,
-      updatedAt: seed * 10_000,
-      live: { tabId: seed * 10_000, windowId: 10 }
-    };
-    insertParent.updatedAt += 1;
-  }
-
-  const deleteCandidates = Object.values(next.nodes)
-    .filter((node) => node.parentId && node.childIds.length === 0 && node.id.includes(":"))
-  const deleteTarget = deleteCandidates.at(Math.floor(rng() * deleteCandidates.length));
-  if (deleteTarget?.parentId) {
-    const parent = next.nodes[deleteTarget.parentId];
-    if (parent) {
-      parent.childIds = parent.childIds.filter((childId) => childId !== deleteTarget.id);
-      parent.updatedAt += 1;
-    }
-    delete next.nodes[deleteTarget.id];
-  }
-
-  return next;
-}
-
-function cloneStorageState(state: OutlineState): OutlineState {
-  return {
-    version: state.version,
-    rootIds: [...state.rootIds],
-    nodes: Object.fromEntries(
-      Object.entries(state.nodes).map(([nodeId, node]) => [
-        nodeId,
-        {
-          ...node,
-          childIds: [...node.childIds],
-          ...(node.live ? { live: { ...node.live } } : {}),
-          ...(node.restore ? { restore: { ...node.restore } } : {})
-        }
-      ])
-    )
-  };
-}
 
 function seededRandom(seed: number): () => number {
   let state = seed >>> 0;

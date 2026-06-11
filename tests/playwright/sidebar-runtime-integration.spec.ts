@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 
-import { outlineStateV3Changes } from "../../src/background/storage";
+import { outlineStateV3Items } from "../../src/background/storage-legacy-write.test-support";
 import { bootstrapFromWindows, closeTab } from "../../src/model/outline";
 import type { OutlineState, RuntimeTab, RuntimeWindow } from "../../src/model/types";
 import {
@@ -90,7 +90,7 @@ test.describe("sidebar/runtime integration", () => {
     const harness = createHarness({
       windows: [runtimeWindow(1, true)],
       tabs: [tab(1, 1, 0, true, "Alpha")],
-      initialStorage: outlineStateV3Changes(stored).setItems
+      initialStorage: outlineStateV3Items(stored)
     });
     const sidebar = await loadSidebar(harness, page);
     sidebar.clearProtocol();
@@ -132,7 +132,7 @@ test.describe("sidebar/runtime integration", () => {
     const stored = bootstrapFromWindows(windowsWithTabs(large.windows, large.tabs), { now: NOW });
     const harness = createHarness({
       ...large,
-      initialStorage: outlineStateV3Changes(stored).setItems
+      initialStorage: outlineStateV3Items(stored)
     });
     const sidebar = await loadSidebar(harness, page);
     sidebar.clearProtocol();

@@ -3,7 +3,7 @@ import { performance } from "node:perf_hooks";
 import { createBackgroundController } from "../dist/background/controller.js";
 import { runCommand } from "../dist/background/commands.js";
 import { analyzeRestoreScope, planRestore } from "../dist/model/outline.js";
-import { outlineStateV3Changes } from "../dist/background/storage.js";
+import { outlineStateV4Snapshot } from "../dist/background/storage-v4.js";
 import { buildVisibleTreeProjection } from "../dist/sidebar/visible-tree.js";
 import {
   PROFILE_EVENT_NAMES,
@@ -267,7 +267,7 @@ function makeControllerRuntime(initialState) {
   const runtime = {
     windows: [{ id: 10, focused: true, incognito: false }],
     tabs: [],
-    storage: new Map(Object.entries(outlineStateV3Changes(initialState).setItems)),
+    storage: new Map(Object.entries(JSON.parse(JSON.stringify(outlineStateV4Snapshot(initialState, { epoch: 1, journalSeqIncluded: 0 }).setItems)))),
     restoreEcho: "final",
     ...createStorageMetrics(),
     ...createBroadcastMetrics(),
