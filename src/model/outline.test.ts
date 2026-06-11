@@ -2926,7 +2926,7 @@ describe("outline model", () => {
       }
     ], { now: 1000 }), "window:10", { now: 3000 });
     const wrapperId = wrapped.nodes["window:10"]?.parentId;
-    const nested = moveNode(wrapped, "window:20", { parentId: wrapperId, index: 1 });
+    const nested = moveNode(wrapped, "window:20", { parentId: wrapperId!, index: 1 });
 
     const moved = moveSubtreeToTopLevel(nested, "window:10", { now: 4000 });
 
@@ -3110,7 +3110,7 @@ describe("outline model", () => {
       }
     ], { now: 1000 }), "window:10", { now: 3000 });
     const wrapperId = wrapped.nodes["window:10"]?.parentId;
-    const nested = moveNode(wrapped, "window:20", { parentId: wrapperId, index: 1 });
+    const nested = moveNode(wrapped, "window:20", { parentId: wrapperId!, index: 1 });
 
     const moved = moveSubtreeToBottomTopLevel(nested, "window:10", { now: 4000 });
 

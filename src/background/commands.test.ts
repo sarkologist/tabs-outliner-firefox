@@ -420,7 +420,7 @@ describe("background commands", () => {
 
     await runCommand(state, adapter, { type: "restoreNode", nodeId: "tab:2" }, {
       restoreObserver: {
-        recordCreateAttempt: (attempt) => attempts.push(attempt)
+        recordCreateAttempt: (attempt) => { attempts.push(attempt); }
       }
     });
 
@@ -497,7 +497,7 @@ describe("background commands", () => {
 
     await runCommand(state, adapter, { type: "restoreNode", nodeId: "tab:5" }, {
       restoreObserver: {
-        recordCreateAttempt: (attempt) => attempts.push(attempt)
+        recordCreateAttempt: (attempt) => { attempts.push(attempt); }
       }
     });
 
@@ -545,7 +545,7 @@ describe("background commands", () => {
 
     await runCommand(state, adapter, { type: "restoreNode", nodeId: "window:20" }, {
       restoreObserver: {
-        recordCreateAttempt: (attempt) => attempts.push(attempt)
+        recordCreateAttempt: (attempt) => { attempts.push(attempt); }
       }
     });
 
@@ -605,7 +605,7 @@ describe("background commands", () => {
 
     await runCommand(moved.state, adapter, { type: "restoreNode", nodeId: placeholderId }, {
       restoreObserver: {
-        recordCreateAttempt: (attempt) => attempts.push(attempt)
+        recordCreateAttempt: (attempt) => { attempts.push(attempt); }
       }
     });
 
@@ -1579,7 +1579,7 @@ describe("background commands", () => {
       nodeId: "window:10"
     });
     const wrapperId = wrapped.state.nodes["window:10"]?.parentId;
-    const nested = moveNode(wrapped.state, "window:20", { parentId: wrapperId, index: 1 });
+    const nested = moveNode(wrapped.state, "window:20", { ...(wrapperId !== undefined ? { parentId: wrapperId } : {}), index: 1 });
     const adapter = fakeAdapter();
 
     const result = await runCommand(nested, adapter, {
@@ -3328,10 +3328,8 @@ describe("background commands", () => {
             sessionId: "session-imported-first"
           }
         },
-        [secondTab.id]: {
-          ...secondTab,
-          restore: undefined
-        }
+        // Drop the restore ref entirely (property absent, matching stored shapes).
+        [secondTab.id]: (({ restore: _restore, ...rest }) => rest)(secondTab)
       }
     };
     const adapter = fakeAdapter({

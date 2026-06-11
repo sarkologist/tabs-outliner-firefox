@@ -14,7 +14,7 @@ import {
   moveNode,
   moveTabToNewLiveWindow
 } from "../model/outline.js";
-import type { RuntimeTab, RuntimeWindow } from "../model/types.js";
+import type { OutlineState, RuntimeTab, RuntimeWindow } from "../model/types.js";
 
 const tabOne: RuntimeTab = {
   id: 1,
@@ -381,7 +381,7 @@ describe("runtime reconciliation ledger", () => {
     const ledger = new RuntimeFactLedger();
     ledger.reconstructFromState(state, [windowInfo(10, [tabOne, tabTwo])]);
 
-    ledger.recordNativeTabUpdated({ ...tabTwo, index: 0 }, { title: tabTwo.title });
+    ledger.recordNativeTabUpdated({ ...tabTwo, index: 0 }, { ...(tabTwo.title !== undefined ? { title: tabTwo.title } : {}) });
 
     expect(ledger.tabNeedsShapeCorroboration(2)).toBe(true);
   });
@@ -962,23 +962,23 @@ describe("runtime window scope index", () => {
       active: true,
       title: "Restored"
     };
-    const restored = {
+    const restored: OutlineState = {
       ...closed,
       nodes: {
         ...closed.nodes,
         "window:10": {
-          ...closed.nodes["window:10"],
+          ...closed.nodes["window:10"]!,
           status: "live",
           live: { windowId: 42 },
           restoredFromClosed: true
         },
         "tab:1": {
-          ...closed.nodes["tab:1"],
+          ...closed.nodes["tab:1"]!,
           status: "live",
           live: { tabId: 22, windowId: 42 },
           active: true,
           title: "Restored",
-          url: restoredTab.url,
+          ...(restoredTab.url !== undefined ? { url: restoredTab.url } : {}),
           restoredFromClosed: true
         }
       }
@@ -1045,7 +1045,7 @@ describe("runtime window scope index", () => {
   it("recognizes removed restored tabs by outline node id after runtime id reassignment", () => {
     const restoredTab = { ...tabOne, id: 4, windowId: 22 };
     const state = bootstrapFromWindows([windowInfo(22, [restoredTab])], { now: 1000 });
-    const restoredNodeState = {
+    const restoredNodeState: OutlineState = {
       ...state,
       nodes: {
         ...state.nodes,
@@ -1114,16 +1114,16 @@ describe("runtime window scope index", () => {
       nodes: {
         ...base.nodes,
         "tab:1": {
-          ...base.nodes["tab:1"],
+          ...base.nodes["tab:1"]!,
           live: { tabId: 1, windowId: 20 },
           parentId: "window:20"
         },
         "window:10": {
-          ...base.nodes["window:10"],
+          ...base.nodes["window:10"]!,
           childIds: []
         },
         "window:20": {
-          ...base.nodes["window:20"],
+          ...base.nodes["window:20"]!,
           childIds: ["tab:2", "tab:1"]
         }
       }

@@ -10,10 +10,10 @@ import { startupHoverGuardFailures } from "../../scripts/profile-startup-hover.m
 
 describe("sidebar projection perf guard", () => {
   it("selects scenarios and supports smoke run defaults", () => {
-    expect(selectProjectionGuardScenarios({ scenarios: "startup-hover" }).map((scenario) => scenario.id)).toEqual([
+    expect(selectProjectionGuardScenarios({ scenarios: "startup-hover" }).map((scenario: { id: string }) => scenario.id)).toEqual([
       "startup-hover"
     ]);
-    expect(selectProjectionGuardScenarios({ scenarios: "startup-hover,startup-scroll-away" }).map((scenario) => scenario.id))
+    expect(selectProjectionGuardScenarios({ scenarios: "startup-hover,startup-scroll-away" }).map((scenario: { id: string }) => scenario.id))
       .toEqual(["startup-hover", "startup-scroll-away"]);
 
     expect(parseProjectionGuardArgs(["--", "--smoke"], {})).toMatchObject({

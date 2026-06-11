@@ -530,7 +530,9 @@ describe("outline state v3 storage", () => {
     const repairs: StateStructureRepair[] = [];
 
     const loaded = await loadStateWithMetadata(fakeApi(items), {
-      onStructureRepair: (repair) => repairs.push(repair)
+      onStructureRepair: (repair) => {
+        repairs.push(repair);
+      }
     });
 
     expect(loaded?.format).toBe("v3");

@@ -35,8 +35,8 @@ describe("runtime perf guard", () => {
       ]
     };
 
-    expect(selectScenarios(config, { tags: "journal" }).map((scenario) => scenario.id)).toEqual(["close"]);
-    expect(selectScenarios(config, { scenarios: "focus" }).map((scenario) => scenario.id)).toEqual(["focus"]);
+    expect(selectScenarios(config, { tags: "journal" }).map((scenario: { id: string }) => scenario.id)).toEqual(["close"]);
+    expect(selectScenarios(config, { scenarios: "focus" }).map((scenario: { id: string }) => scenario.id)).toEqual(["focus"]);
   });
 
   it("fails hard counters and allows timing tolerance", () => {
@@ -62,7 +62,7 @@ describe("runtime perf guard", () => {
 
     expect(pass.passed).toBe(true);
     expect(fail.passed).toBe(false);
-    expect(fail.failures.map((failure) => failure.metric)).toEqual(["totalMeasuredMs", "saves"]);
+    expect(fail.failures.map((failure: { metric: string }) => failure.metric)).toEqual(["totalMeasuredMs", "saves"]);
   });
 
   it("treats timing failures as report-only in hard-only mode while hard counters still fail", () => {
@@ -78,8 +78,8 @@ describe("runtime perf guard", () => {
     const hardFailure = evaluateProfileResult(scenario, { totalMeasuredMs: 500, saves: 2 });
 
     // Hard-only semantics (CI): a scenario passes when its only failures are timing.
-    expect(timingOnly.failures.every((failure) => failure.reason === "timing")).toBe(true);
-    expect(hardFailure.failures.some((failure) => failure.reason === "hard-max")).toBe(true);
+    expect(timingOnly.failures.every((failure: { reason: string }) => failure.reason === "timing")).toBe(true);
+    expect(hardFailure.failures.some((failure: { reason: string }) => failure.reason === "hard-max")).toBe(true);
   });
 
   it("runs a smoke guard against a fixture command", () => {
@@ -116,7 +116,7 @@ describe("profile export analysis", () => {
       count: 1,
       maxMs: 220
     });
-    expect(analysis.warnings.map((warning) => warning.kind)).toEqual([
+    expect(analysis.warnings.map((warning: { kind: string }) => warning.kind)).toEqual([
       "repeated-initial-snapshot",
       "slow-save",
       "slow-runtime-event",

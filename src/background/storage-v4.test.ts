@@ -385,7 +385,7 @@ describe("outline state v4 storage", () => {
               ...model.nodes["window:10"]!,
               childIds: model.nodes["window:10"]!.childIds.filter((childId) => childId !== id)
             };
-            const nodes = { ...model.nodes, "window:10": windowNode };
+            const nodes: Record<NodeId, OutlineNode> = { ...model.nodes, "window:10": windowNode };
             delete nodes[id];
             model = { ...model, nodes };
             await journalAppend({ deletedNodeIds: [id], updatedNodes: [windowNode] });

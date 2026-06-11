@@ -14,7 +14,7 @@
     "perf:runtime-guard": "pnpm build && node scripts/perf-runtime-guard.mjs",
     "test:soak": "node scripts/run-generated-soak.mjs",
     "test:watch": "vitest",
-    "check": "pnpm run oracle:build && pnpm test && pnpm run build",
+    "check": "pnpm run oracle:build && pnpm test && pnpm run typecheck:test && pnpm run build",
     "perf:sidebar-projection-guard": "pnpm build && node scripts/perf-sidebar-projection-guard.mjs",
     "profile:tab-open": "node scripts/profile-tab-open.mjs",
     "profile:close": "node scripts/profile-close.mjs",
@@ -31,7 +31,8 @@
     "profile:startup-hover-loop": "node scripts/profile-startup-hover.mjs",
     "profile:startup-scroll-away": "node scripts/profile-startup-scroll-away.mjs",
     "autoresearch:accept": "node scripts/autoresearch-accept.mjs",
-    "verify:firefox-restore-order": "pnpm run build && node scripts/verify-firefox-restore-order.mjs"
+    "verify:firefox-restore-order": "pnpm run build && node scripts/verify-firefox-restore-order.mjs",
+    "typecheck:test": "tsc -p tsconfig.test.json --noEmit"
   },
   "devDependencies": {
     "@playwright/test": "^1.60.0",

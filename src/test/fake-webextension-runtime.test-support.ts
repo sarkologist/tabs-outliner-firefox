@@ -4,7 +4,7 @@ type Listener<TArgs extends unknown[]> = (...args: TArgs) => unknown | Promise<u
 
 export class FakeWebExtensionEvent<TArgs extends unknown[]> {
   private listeners: Listener<TArgs>[] = [];
-  private pending: Promise<unknown>[] = [];
+  private pending: PromiseLike<unknown>[] = [];
 
   addListener(listener: Listener<TArgs>): void {
     this.listeners.push(listener);
@@ -608,7 +608,11 @@ function windowTypeAllowed(windowInfo: FakeRuntimeWindow, windowTypes?: string[]
   return new Set(windowTypes ?? ["normal", "popup", "panel"]).has(windowInfo.type ?? "normal");
 }
 
-function normalizeCreatedTab(runtime: FakeWebExtensionRuntime, tab: RuntimeTab): RuntimeTab {
+function normalizeCreatedTab(
+  runtime: FakeWebExtensionRuntime,
+  // Historically callers may omit `index`; reindexWindowTabs assigns it after insertion.
+  tab: Omit<RuntimeTab, "index"> & { index?: number }
+): RuntimeTab {
   if (!runtime.windows.some((windowInfo) => windowInfo.id === tab.windowId)) {
     throw new Error(`Missing window for tab: ${tab.windowId}`);
   }
@@ -616,7 +620,7 @@ function normalizeCreatedTab(runtime: FakeWebExtensionRuntime, tab: RuntimeTab):
     ...tab,
     title: tab.title ?? tab.url ?? "Untitled",
     url: tab.url ?? "about:blank"
-  };
+  } as RuntimeTab;
 }
 
 async function createTab(runtime: FakeWebExtensionRuntime, tab: RuntimeTab, awaitListeners: boolean): Promise<void> {

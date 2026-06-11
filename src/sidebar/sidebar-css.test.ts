@@ -31,7 +31,7 @@ function cssRule(selector: string): string {
   const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\n/g, "\\s*");
   const match = sidebarCss.match(new RegExp(`${escapedSelector}\\s*\\{(?<body>[^}]*)\\}`, "m"));
   expect(match?.groups?.body, `Missing CSS rule for ${selector}`).toBeDefined();
-  return match!.groups!.body;
+  return match!.groups!.body!;
 }
 
 function mediaRule(query: string): string {

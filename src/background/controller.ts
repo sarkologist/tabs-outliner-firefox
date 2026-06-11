@@ -418,7 +418,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   let deferredPersistedStateCloneTimer: ReturnType<typeof setTimeout> | undefined;
   let historyState: HistoryState | undefined;
   let historyLoadInFlight: Promise<HistoryState> | undefined;
-  let historyWarmupTimer: number | undefined;
+  let historyWarmupTimer: ReturnType<typeof setTimeout> | undefined;
   let preferences: AppPreferences | undefined;
   let runtimeIndex: RuntimeStateIndex | undefined;
   const highPriorityMutations: ScheduledMutation[] = [];
@@ -436,8 +436,8 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   let pendingSaveHistory: HistoryState | undefined;
   let pendingSaveCandidateNodeIds: Set<NodeId> | undefined;
   let pendingSaveRequiresFullDiff = false;
-  let saveTimer: number | undefined;
-  let saveMaxTimer: number | undefined;
+  let saveTimer: ReturnType<typeof setTimeout> | undefined;
+  let saveMaxTimer: ReturnType<typeof setTimeout> | undefined;
   let saveInFlight: Promise<void> | undefined;
   let saveAfterInFlight = false;
   let saveAfterInFlightSchedule: SaveSchedule = "normal";
@@ -445,7 +445,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   let pendingSaveBatchStartedAt: number | undefined;
   let pendingSaveMaxDelayMs: number | undefined;
   let saveFailureBackoffIndex = 0;
-  let bootSnapshotTimer: number | undefined;
+  let bootSnapshotTimer: ReturnType<typeof setTimeout> | undefined;
   let outlineJournal: OutlineJournal | undefined;
   // The active v4 snapshot (manifest + the slot it occupies). Undefined until the first v4
   // load, migration, or full compaction of this session.
@@ -458,8 +458,8 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   // Unioned with the pending save's candidate shards to compute a compaction's dirty set.
   let journalTouchedSinceCompaction = new Set<number>();
   let pendingEventJournalItems: OutlineJournalAppendItem[] = [];
-  let eventJournalQuietTimer: number | undefined;
-  let eventJournalMaxTimer: number | undefined;
+  let eventJournalQuietTimer: ReturnType<typeof setTimeout> | undefined;
+  let eventJournalMaxTimer: ReturnType<typeof setTimeout> | undefined;
   let eventJournalBatchStartedAt: number | undefined;
   let pendingSaveSchedule: SaveSchedule | undefined;
   let nextRuntimeLifecycleJournalSequence = 1;

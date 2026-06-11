@@ -35,7 +35,7 @@ describe("autoresearch acceptance guard", () => {
   });
 
   it("selects lane correctness commands in runbook order", () => {
-    expect(correctnessCommandsForLanes(["runtime", "storage"]).map((command) => command.label)).toEqual([
+    expect(correctnessCommandsForLanes(["runtime", "storage"]).map((command: { label: string }) => command.label)).toEqual([
       "runtime oracle build",
       "runtime vitest corpus",
       "runtime build",
@@ -59,7 +59,7 @@ describe("autoresearch acceptance guard", () => {
       profileCommand: ["pnpm", "profile:fake"],
       appendResults: false,
       resultsPath: "/unused/results.tsv"
-    }, async (command) => {
+    }, async (command: { label: string }) => {
       commands.push(command.label);
       if (command.label === "profile") {
         return { stdout: JSON.stringify({ summary: { status: "keep" } }), stderr: "", exitCode: 0 };
@@ -89,7 +89,7 @@ describe("autoresearch acceptance guard", () => {
       profileCommand: ["pnpm", "profile:fake"],
       appendResults: false,
       resultsPath: "/unused/results.tsv"
-    }, async (command) => {
+    }, async (command: { label: string }) => {
       if (command.label === "profile") {
         return { stdout: JSON.stringify({ summary: { status: "keep" } }), stderr: "", exitCode: 0 };
       }

@@ -27,7 +27,7 @@ import {
 import { outlineStateV2Items, outlineStateV3Items } from "./storage-legacy-write.test-support.js";
 import { PORTABLE_TREE_SCHEMA } from "../model/portable-tree.js";
 import { runtimeTitleForOutlineTab } from "../model/outline.js";
-import type { OutlineState, RuntimeTab, RuntimeWindow } from "../model/types.js";
+import type { NodeId, OutlineNode, OutlineState, RuntimeTab, RuntimeWindow } from "../model/types.js";
 import { PROFILE_STORAGE_KEY } from "../perf/profile.js";
 import { APP_PREFERENCES_STORAGE_KEY, DEFAULT_APP_PREFERENCES } from "../preferences.js";
 import { generatedTraceConfig, generatedTraceTimeoutMs } from "../test/generated-traces.test-support.js";
@@ -158,7 +158,11 @@ type WindowCloseEventOrder =
   | "tabsRemovedThenWindowRemoved"
   | "windowRemovedThenTabsRemoved"
   | "windowRemovedOnly"
-  | "tabsRemovedOnly";
+  | "tabsRemovedOnly"
+  // The whole window disappears with only sessions.onChanged as evidence (no
+  // tabs.onRemoved / windows.onRemoved) - the reconciler must classify the
+  // missing window from session evidence plus scope provenance.
+  | "sessionChangedOnly";
 
 type FakeRuntimeOptions = {
   browserLikeTabRemove?: TabCloseEventOrder;
@@ -455,7 +459,7 @@ function fakeRuntime(windows: RuntimeWindow[], tabs: RuntimeTab[], options: Fake
         }),
         create: vi.fn(async (createData: FakeWindowCreateData = {}) =>
           createWindowFromBrowser(runtime, createData)
-        ),
+        ) as never,
         onFocusChanged: windowFocusChanged as never,
         onBoundsChanged: windowBoundsChanged as never,
         onRemoved: windowRemoved as never
@@ -731,7 +735,11 @@ async function setWindowStateFromBrowser(
   if (!windowInfo) {
     return;
   }
-  windowInfo.state = state;
+  if (state === undefined) {
+    delete windowInfo.state;
+  } else {
+    windowInfo.state = state;
+  }
   await runtime.events.windowBoundsChanged.emit(copyWindowWithoutTabs(windowInfo));
 }
 
@@ -860,6 +868,8 @@ async function closeRuntimeWindow(
       await tabsRemoved();
     } else if (order === "windowRemovedOnly") {
       await windowRemoved();
+    } else if (order === "sessionChangedOnly") {
+      await fireEvent(runtime.events.sessionChanged, options.awaitListeners);
     } else {
       await tabsRemoved();
     }
@@ -3777,7 +3787,9 @@ const RUNTIME_DOMAIN_TRACE_DEFINITIONS: RuntimeDomainTraceDefinition[] = [
   }
 ];
 
-const RUNTIME_DOMAIN_DISCOVERY_TRACES: RuntimeDomainTrace[] = [
+// Split into chunks only to stay under tsc's union-inference limit (TS2590) for
+// one giant literal; the table is a single list, chunk boundaries are arbitrary.
+const RUNTIME_DOMAIN_DISCOVERY_TRACES_CHUNK_1: RuntimeDomainTrace[] = [
   {
     id: "dh-restore-delayed-focus-refresh",
     title: "restore plus delayed runtime events across focus and refresh",
@@ -7847,6 +7859,9 @@ const RUNTIME_DOMAIN_DISCOVERY_TRACES: RuntimeDomainTrace[] = [
       { type: "manualRefreshWithReorderedQuery", window: { role: "firstRuntimeWindow" }, order: "rotateRight" }
     ]
   },
+];
+
+const RUNTIME_DOMAIN_DISCOVERY_TRACES_CHUNK_2: RuntimeDomainTrace[] = [
   {
     id: "ph-restore-delete-redo-first-query",
     title: "restore delete redo first query",
@@ -11719,6 +11734,9 @@ const RUNTIME_DOMAIN_DISCOVERY_TRACES: RuntimeDomainTrace[] = [
       { type: "staleLiveUpdatedEvent", staleTab: { capture: "mh-moved-meta-old" }, withStaleQuery: true }
     ]
   },
+];
+
+const RUNTIME_DOMAIN_DISCOVERY_TRACES_CHUNK_3: RuntimeDomainTrace[] = [
   {
     id: "mh-metadata-missing-reordered-query",
     title: "metadata missing reordered query",
@@ -15968,6 +15986,9 @@ const RUNTIME_DOMAIN_DISCOVERY_TRACES: RuntimeDomainTrace[] = [
       { type: "manualRefresh" }
     ]
   },
+];
+
+const RUNTIME_DOMAIN_DISCOVERY_TRACES_CHUNK_4: RuntimeDomainTrace[] = [
   {
     id: "qh-restart-native-open-partial-complete",
     title: "restart native open partial complete",
@@ -21229,6 +21250,13 @@ const RUNTIME_DOMAIN_DISCOVERY_TRACES: RuntimeDomainTrace[] = [
   }
 ];
 
+const RUNTIME_DOMAIN_DISCOVERY_TRACES: RuntimeDomainTrace[] = [
+  ...RUNTIME_DOMAIN_DISCOVERY_TRACES_CHUNK_1,
+  ...RUNTIME_DOMAIN_DISCOVERY_TRACES_CHUNK_2,
+  ...RUNTIME_DOMAIN_DISCOVERY_TRACES_CHUNK_3,
+  ...RUNTIME_DOMAIN_DISCOVERY_TRACES_CHUNK_4,
+];
+
 const RUNTIME_DOMAIN_DISCOVERED_FINDING_IDS = new Map<string, string[]>([
   ["dh-undo-redo-stale-refresh", ["RT-022"]],
   ["dh-history-redo-stale-created", ["RT-023"]],
@@ -22830,7 +22858,7 @@ function comparePureScriptOracleSnapshotsForId(
   if (!result.ok) {
     const rejected = {
       traceId,
-      step: result.error.step,
+      ...(result.error.step !== undefined ? { step: result.error.step } : {}),
       code: result.error.code,
       message: result.error.message
     };
@@ -22973,9 +23001,9 @@ function unsupportedGeneratedOracleComparison(details: {
     kind: "unsupported",
     traceId: details.traceId,
     reason: details.reason,
-    step: details.step,
-    operation: details.operation,
-    actionDelta: details.actionDelta
+    ...(details.step !== undefined ? { step: details.step } : {}),
+    ...(details.operation !== undefined ? { operation: details.operation } : {}),
+    ...(details.actionDelta !== undefined ? { actionDelta: details.actionDelta } : {})
   };
 }
 
@@ -23019,11 +23047,11 @@ function generatedOracleReportRecord(details: {
       ...base,
       unsupported: {
         reason: details.comparison.reason,
-        step: details.comparison.step,
-        operation: details.comparison.operation,
-        actionDelta: details.comparison.actionDelta,
-        code: details.comparison.code,
-        message: details.comparison.message
+        ...(details.comparison.step !== undefined ? { step: details.comparison.step } : {}),
+        ...(details.comparison.operation !== undefined ? { operation: details.comparison.operation } : {}),
+        ...(details.comparison.actionDelta !== undefined ? { actionDelta: details.comparison.actionDelta } : {}),
+        ...(details.comparison.code !== undefined ? { code: details.comparison.code } : {}),
+        ...(details.comparison.message !== undefined ? { message: details.comparison.message } : {})
       }
     };
   }
@@ -23031,7 +23059,7 @@ function generatedOracleReportRecord(details: {
     return {
       ...base,
       rejection: {
-        step: details.comparison.step,
+        ...(details.comparison.step !== undefined ? { step: details.comparison.step } : {}),
         code: details.comparison.code,
         message: details.comparison.message
       }
@@ -23681,10 +23709,10 @@ async function runDomainNativeMoveTabToWindow(
   const destination = resolveDomainWindow(context, action.window);
   await runNativeMoveTab(context, tab, {
     targetWindowId: destination.id,
-    index: action.index,
-    active: action.active,
-    captureStaleTabs: action.captureStaleTabs,
-    captureSourceWindowTabs: action.captureSourceWindowTabs
+    ...(action.index !== undefined ? { index: action.index } : {}),
+    ...(action.active !== undefined ? { active: action.active } : {}),
+    ...(action.captureStaleTabs !== undefined ? { captureStaleTabs: action.captureStaleTabs } : {}),
+    ...(action.captureSourceWindowTabs !== undefined ? { captureSourceWindowTabs: action.captureSourceWindowTabs } : {})
   });
 }
 
@@ -23707,8 +23735,8 @@ async function runDomainNativeMoveTabToNewWindow(
     targetWindowId: windowId,
     index: 0,
     active: action.active ?? true,
-    captureStaleTabs: action.captureStaleTabs,
-    captureSourceWindowTabs: action.captureSourceWindowTabs
+    ...(action.captureStaleTabs !== undefined ? { captureStaleTabs: action.captureStaleTabs } : {}),
+    ...(action.captureSourceWindowTabs !== undefined ? { captureSourceWindowTabs: action.captureSourceWindowTabs } : {})
   });
 }
 
@@ -23765,7 +23793,7 @@ async function runNativeMoveTab(
   if (!context.runtime.windows.some((windowInfo) => windowInfo.id === sourceWindowId)) {
     await context.runtime.events.windowRemoved.emit(sourceWindowId);
   }
-  await context.runtime.events.tabUpdated.emit(currentMoved.id, { title: currentMoved.title }, copyTab(currentMoved));
+  await context.runtime.events.tabUpdated.emit(currentMoved.id, { ...(currentMoved.title !== undefined ? { title: currentMoved.title } : {}) }, copyTab(currentMoved));
   if (currentMoved.active) {
     await context.runtime.events.windowFocusChanged.emit(currentMoved.windowId);
     await context.runtime.events.tabActivated.emit({
@@ -23848,7 +23876,7 @@ async function moveTabFromBrowserAndFlush(
   if (!runtime.windows.some((windowInfo) => windowInfo.id === before.windowId)) {
     await runtime.events.windowRemoved.emit(before.windowId);
   }
-  await runtime.events.tabUpdated.emit(currentMoved.id, { title: currentMoved.title }, copyTab(currentMoved));
+  await runtime.events.tabUpdated.emit(currentMoved.id, { ...(currentMoved.title !== undefined ? { title: currentMoved.title } : {}) }, copyTab(currentMoved));
   if (currentMoved.active) {
     await runtime.events.windowFocusChanged.emit(currentMoved.windowId);
     await runtime.events.tabActivated.emit({
@@ -24228,7 +24256,7 @@ function expectedClosedNodeIdsForOutlinerCloseNode(state: OutlineState, nodeId: 
         candidate.status === "live" &&
         candidate.live &&
         "windowId" in candidate.live &&
-        candidate.live.windowId === node.live.windowId;
+        candidate.live.windowId === node.live!.windowId;
     });
   }
 
@@ -24290,7 +24318,7 @@ function staleRuntimeTabsForDomainNode(
     if (node?.kind !== "tab" || node.status !== "live" || !node.live || !("tabId" in node.live)) {
       return [];
     }
-    const tab = context.runtime.tabs.find((candidate) => candidate.id === node.live.tabId);
+    const tab = context.runtime.tabs.find((candidate) => candidate.id === node.live!.tabId);
     return tab ? [copyTab(tab)] : [];
   });
 }
@@ -24507,8 +24535,8 @@ async function runDomainOutlinerRestoreNode(
 
   const after = (await context.controller.handleMessage({ type: "getState" })) as OutlineState;
   const restored = captureRestoredRuntimeResources(context, before, after, candidateNodeIds, {
-    tabs: captureRestoredTabs,
-    windows: captureRestoredWindows
+    ...(captureRestoredTabs !== undefined ? { tabs: captureRestoredTabs } : {}),
+    ...(captureRestoredWindows !== undefined ? { windows: captureRestoredWindows } : {})
   });
   recordPureScriptOracleAction(context, {
     type: "outlinerRestoreNode",
@@ -24568,8 +24596,8 @@ async function runDomainOutlinerRestoreNodeRejectingCreate(
   }
   const after = (await context.controller.handleMessage({ type: "getState" })) as OutlineState;
   const restored = captureRestoredRuntimeResources(context, before, after, candidateNodeIds, {
-    tabs: captureRestoredTabs,
-    windows: captureRestoredWindows
+    ...(captureRestoredTabs !== undefined ? { tabs: captureRestoredTabs } : {}),
+    ...(captureRestoredWindows !== undefined ? { windows: captureRestoredWindows } : {})
   });
   recordPureScriptOracleAction(context, {
     type: "outlinerRestoreNodeRejectingCreate",
@@ -24597,8 +24625,8 @@ async function runDomainOutlinerRestoreNodeThenAbruptRestart(
   expect((result as CommandAck).type).toBe("commandAck");
   const after = (await context.controller.handleMessage({ type: "getState" })) as OutlineState;
   const restored = captureRestoredRuntimeResources(context, before, after, candidateNodeIds, {
-    tabs: captureRestoredTabs,
-    windows: captureRestoredWindows
+    ...(captureRestoredTabs !== undefined ? { tabs: captureRestoredTabs } : {}),
+    ...(captureRestoredWindows !== undefined ? { windows: captureRestoredWindows } : {})
   });
   recordPureScriptOracleAction(context, {
     type: "outlinerRestoreNodeThenAbruptRestart",
@@ -24653,13 +24681,15 @@ function captureRestoredRuntimeResources(
       continue;
     }
     if (afterNode.kind === "tab" && afterNode.live && "tabId" in afterNode.live) {
-      const tab = context.runtime.tabs.find((candidate) => candidate.id === afterNode.live.tabId);
+      const live = afterNode.live;
+      const tab = context.runtime.tabs.find((candidate) => candidate.id === live.tabId);
       if (tab) {
         restoredTabs.push(copyTab(tab));
       }
     }
     if (afterNode.kind === "window" && afterNode.live && "windowId" in afterNode.live) {
-      const windowInfo = context.runtime.windows.find((candidate) => candidate.id === afterNode.live.windowId);
+      const live = afterNode.live;
+      const windowInfo = context.runtime.windows.find((candidate) => candidate.id === live.windowId);
       if (windowInfo) {
         restoredWindows.push({ ...windowInfo });
       }
@@ -24696,13 +24726,15 @@ function restoredRuntimeResourcesForGeneratedNodes(
       continue;
     }
     if (afterNode.kind === "tab" && afterNode.live && "tabId" in afterNode.live) {
-      const tab = context.runtime.tabs.find((candidate) => candidate.id === afterNode.live.tabId);
+      const live = afterNode.live;
+      const tab = context.runtime.tabs.find((candidate) => candidate.id === live.tabId);
       if (tab) {
         restoredTabs.push(copyTab(tab));
       }
     }
     if (afterNode.kind === "window" && afterNode.live && "windowId" in afterNode.live) {
-      const windowInfo = context.runtime.windows.find((candidate) => candidate.id === afterNode.live.windowId);
+      const live = afterNode.live;
+      const windowInfo = context.runtime.windows.find((candidate) => candidate.id === live.windowId);
       if (windowInfo) {
         restoredWindows.push(copyWindowWithoutTabs(windowInfo));
       }
@@ -25346,6 +25378,7 @@ async function runGeneratedGroupingTrace(): Promise<void> {
     nextTabId: 100,
     allocatedRuntimeTabIds: new Set(runtime.tabs.map((tab) => tab.id)),
     history: [],
+    oracleActions: [],
     nativeDeletedNodeIds: new Set(),
     commandDeletedNodeIds: new Set(),
     expectedClosedNodeIds: new Set(),
@@ -25444,13 +25477,8 @@ function assertRuntimeTruthOutline(
       );
       if (truthTab.title || truthTab.url) {
         const expectedTitle = runtimeTitleForOutlineTab(node, {
-          id: truthTab.tabId,
-          windowId: truthTab.windowId,
-          index: truthTab.index,
-          active: truthTab.active,
           ...(truthTab.title !== undefined ? { title: truthTab.title } : {}),
-          ...(truthTab.url !== undefined ? { url: truthTab.url } : {}),
-          ...(truthTab.favIconUrl !== undefined ? { favIconUrl: truthTab.favIconUrl } : {})
+          ...(truthTab.url !== undefined ? { url: truthTab.url } : {})
         }, {
           restoredFromClosed: node.restoredFromClosed === true
         });
@@ -26141,7 +26169,7 @@ function assertRuntimeProjectionInvariants(state: OutlineState, context: Generat
 
     const owningWindow = nearestWindowNode(state, node.id);
     invariant(
-      owningWindow?.live && "windowId" in owningWindow.live && owningWindow.live.windowId === node.live.windowId,
+      Boolean(owningWindow?.live && "windowId" in owningWindow.live && owningWindow.live.windowId === node.live.windowId),
       `live tab ${node.id} is not under its runtime window`,
       context.history
     );
@@ -28326,7 +28354,7 @@ describe("background controller lifecycle", () => {
       blockedSave.resolve();
       await flush;
     } finally {
-      vi.mocked(runtime.api.storage.local.set).mockImplementation(saveImplementation);
+      vi.mocked(runtime.api.storage.local.set).mockImplementation(saveImplementation!);
     }
 
     controller = restartControllerAbrupt(runtime);
@@ -28396,7 +28424,7 @@ describe("background controller lifecycle", () => {
     expectCommandAck(focusResponse, false);
     blockedSave.resolve();
     await flush;
-    vi.mocked(runtime.api.storage.local.set).mockImplementation(saveImplementation);
+    vi.mocked(runtime.api.storage.local.set).mockImplementation(saveImplementation!);
   });
 
   it("coalesces command-window structural move bursts into one eventual state save", async () => {
@@ -28463,7 +28491,7 @@ describe("background controller lifecycle", () => {
       const reloaded = await restartControllerAbrupt(runtime).ensureState();
       const movedRootTitles = reloaded.rootIds
         .map((nodeId) => reloaded.nodes[nodeId])
-        .filter((node) => node?.kind === "window" && node.status === "live")
+        .filter((node): node is OutlineNode => node?.kind === "window" && node.status === "live")
         .map((node) => node.childIds.map((childId) => reloaded.nodes[childId]?.title).join(","));
       expect(movedRootTitles).toContain("Two");
       expect(movedRootTitles).toContain("Three");
@@ -33400,8 +33428,8 @@ describe("background controller lifecycle", () => {
     await controller.handleMessage({ type: "restoreNode", nodeId: "tab:2" });
     await runtime.events.tabCreated.flush();
     await updateTabFromBrowser(runtime, 22, {
-      url: restoredTab.url,
-      title: restoredTab.title
+      ...(restoredTab.url !== undefined ? { url: restoredTab.url } : {}),
+      ...(restoredTab.title !== undefined ? { title: restoredTab.title } : {})
     });
     const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
 

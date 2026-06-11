@@ -3,7 +3,6 @@ import type { NodeId, OutlineNode, OutlineState } from "../model/types.js";
 import { DEFAULT_UNDO_HISTORY_LIMIT, normalizeUndoHistoryLimit } from "../preferences.js";
 
 export const DEFAULT_HISTORY_LIMIT = DEFAULT_UNDO_HISTORY_LIMIT;
-export const HISTORY_LIMIT = DEFAULT_HISTORY_LIMIT;
 
 export type TrackableHistoryCommandType =
   | "moveNode"

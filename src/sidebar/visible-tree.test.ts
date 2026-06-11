@@ -701,7 +701,10 @@ function wideState(
   tabCount: number,
   options: { activeTabIndex?: number; collapsedRoot?: boolean } = {}
 ): OutlineState {
-  const root = windowNode("window:1", [], { active: true, collapsed: options.collapsedRoot });
+  const root = windowNode("window:1", [], {
+    active: true,
+    ...(options.collapsedRoot !== undefined ? { collapsed: options.collapsedRoot } : {})
+  });
   const nodes: Record<NodeId, OutlineNode> = {
     [root.id]: root
   };
