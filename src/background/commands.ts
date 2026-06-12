@@ -17,7 +17,7 @@ import {
   wrapNodeInGroup
 } from "../model/outline.js";
 import { appendPortableTree } from "../model/portable-tree.js";
-import { isLiveTabNode, isLiveWindowNode, type LiveWindowNode } from "../model/live-nodes.js";
+import { isLiveTabNode, isLiveWindowNode, type LiveTabNode, type LiveWindowNode } from "../model/live-nodes.js";
 import type { RestoreScope } from "../model/outline.js";
 import type { NodeId, OutlineNode, OutlineState, RestoreCreateTarget, RestoredNode, RestorePlan, RuntimeTab } from "../model/types.js";
 
@@ -282,7 +282,7 @@ export async function runCommand(
       return commandResultFromNextState(state, await moveSubtreeToBottomTopLevelCommand(state, adapter, command.nodeId));
 
     case "flattenSubtree":
-      return commandResultFromNextState(state, flattenSubtreeOneLevel(state, command.nodeId));
+      return commandResultFromNextState(state, await flattenSubtreeCommand(state, adapter, command.nodeId));
 
     case "promoteChildren":
       return commandResultFromNextState(state, promoteChildrenOneLevel(state, command.nodeId));
@@ -442,7 +442,7 @@ function restoredTabRuntimeOwnerWindowIdForCloseNode(state: OutlineState, nodeId
     !isLiveTabNode(node) ||
     node.restoredFromClosed !== true ||
     hasLiveWindowAncestor(state, node.id) ||
-    hasLiveTabAncestorInRuntimeWindow(state, node.id, node.live.windowId)
+    hasLiveTabOutsideSubtreeInRuntimeWindow(state, node.id, node.live.windowId)
   ) {
     return undefined;
   }
@@ -467,21 +467,15 @@ function hasLiveWindowAncestor(state: OutlineState, nodeId: NodeId): boolean {
   return false;
 }
 
-function hasLiveTabAncestorInRuntimeWindow(state: OutlineState, nodeId: NodeId, windowId: number): boolean {
-  let currentId = state.nodes[nodeId]?.parentId;
-  const visited = new Set<NodeId>([nodeId]);
-  while (currentId && !visited.has(currentId)) {
-    visited.add(currentId);
-    const current = state.nodes[currentId];
-    if (!current) {
-      return false;
-    }
-    if (isLiveTabNode(current) && current.live.windowId === windowId) {
-      return true;
-    }
-    currentId = current.parentId;
-  }
-  return false;
+// A restored tab owns its runtime window for whole-window close only while it is
+// the window's last live tab in the outline (descendants excluded — closing a
+// subgroup owner takes its restored subtree's window down). Sibling restored tabs
+// sharing the runtime window block ownership so closing one cannot close the rest.
+function hasLiveTabOutsideSubtreeInRuntimeWindow(state: OutlineState, nodeId: NodeId, windowId: number): boolean {
+  const subtreeIds = new Set(collectSubtreeEntries(state, nodeId).map((entry) => entry.node.id));
+  return Object.values(state.nodes).some((node) => {
+    return !subtreeIds.has(node.id) && isLiveTabNode(node) && node.live.windowId === windowId;
+  });
 }
 
 type SubtreeEntry = {
@@ -1413,6 +1407,54 @@ async function moveSubtreeToBottomTopLevelCommand(
   return moveSubtreeToBottomTopLevel(state, nodeId, { now: Date.now() });
 }
 
+async function flattenSubtreeCommand(
+  state: OutlineState,
+  adapter: BrowserAdapter,
+  nodeId: NodeId
+): Promise<OutlineState> {
+  const next = flattenSubtreeOneLevel(state, nodeId);
+  if (next === state) {
+    return state;
+  }
+
+  // Flattening a live window child empties it and removes its node, leaving the
+  // promoted live tabs outlined under the flattened node but physically still in
+  // the old runtime window. When the flattened node sits in a live window, merge
+  // them for real — move the tabs into that window (the emptied source window
+  // closes itself once its last tab leaves) and update their runtime refs, like
+  // moveNode does. Without a live window ancestor (e.g. a saved shell) there is
+  // nothing to merge into physically and the outline result stands on its own.
+  const targetWindow = liveWindowAncestorOrSelf(next, nodeId);
+  if (!targetWindow) {
+    return next;
+  }
+
+  const foreignTabIds = liveTabNodesInSubtreeExcludingNestedLiveWindows(next, nodeId)
+    .filter((tabNode) => tabNode.live.windowId !== targetWindow.live.windowId)
+    .map((tabNode) => tabNode.live.tabId);
+  if (foreignTabIds.length === 0) {
+    return next;
+  }
+
+  await adapter.moveTabs(foreignTabIds, { windowId: targetWindow.live.windowId, index: -1 });
+  const merged = updateMovedLiveSubtreeRuntimeWindow(next, next, nodeId, targetWindow.live.windowId, Date.now());
+  await syncBrowserOrder(merged, adapter);
+  return merged;
+}
+
+function liveWindowAncestorOrSelf(state: OutlineState, nodeId: NodeId): LiveWindowNode | undefined {
+  let current = state.nodes[nodeId];
+  const visited = new Set<NodeId>();
+  while (current && !visited.has(current.id)) {
+    visited.add(current.id);
+    if (isLiveWindowNode(current)) {
+      return current;
+    }
+    current = current.parentId ? state.nodes[current.parentId] : undefined;
+  }
+  return undefined;
+}
+
 async function moveRemainingLiveSubtreeTabsIntoCreatedWindow(
   state: OutlineState,
   adapter: BrowserAdapter,
@@ -1747,7 +1789,11 @@ function liveTabIdsInSubtree(state: OutlineState, nodeId: NodeId): number[] {
 }
 
 function liveTabIdsInSubtreeExcludingNestedLiveWindows(state: OutlineState, nodeId: NodeId): number[] {
-  const tabIds: number[] = [];
+  return liveTabNodesInSubtreeExcludingNestedLiveWindows(state, nodeId).map((node) => node.live.tabId);
+}
+
+function liveTabNodesInSubtreeExcludingNestedLiveWindows(state: OutlineState, nodeId: NodeId): LiveTabNode[] {
+  const tabNodes: LiveTabNode[] = [];
   const visited = new Set<NodeId>();
   const stack = [nodeId];
 
@@ -1766,14 +1812,14 @@ function liveTabIdsInSubtreeExcludingNestedLiveWindows(state: OutlineState, node
       continue;
     }
     if (isLiveTabNode(node)) {
-      tabIds.push(node.live.tabId);
+      tabNodes.push(node);
     }
     for (let index = node.childIds.length - 1; index >= 0; index -= 1) {
       stack.push(node.childIds[index]!);
     }
   }
 
-  return tabIds;
+  return tabNodes;
 }
 
 function subtreeContainsLiveWindow(state: OutlineState, nodeId: NodeId): boolean {

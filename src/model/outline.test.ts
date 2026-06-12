@@ -2469,6 +2469,92 @@ describe("outline model", () => {
     expect(reconciled.nodes["tab:child"]).toMatchObject({ status: "live", live: { tabId: 11, windowId: 50 } });
   });
 
+  it("keeps a flattened restored subgroup's live tabs under the closed parent window", () => {
+    // Flattening a closed shell promotes a restored subgroup's children to
+    // siblings of the (now childless) owner. The owner's runtime-window claim
+    // must survive losing its children: the next reconcile used to create a
+    // browser-created window node for the still-open runtime window and pull
+    // every live tab out to top level instead of leaving them merged under the
+    // saved parent window.
+    const state: OutlineState = {
+      version: 1,
+      rootIds: ["window:parent"],
+      nodes: {
+        "window:parent": {
+          id: "window:parent",
+          kind: "window",
+          status: "closed",
+          childIds: ["tab:subgroup"],
+          title: "Saved parent",
+          collapsed: false,
+          createdAt: 1000,
+          updatedAt: 1000,
+          closedAt: 1000
+        },
+        "tab:subgroup": {
+          id: "tab:subgroup",
+          kind: "tab",
+          status: "live",
+          parentId: "window:parent",
+          childIds: ["tab:child"],
+          title: "Subgroup",
+          url: "https://subgroup.example/",
+          collapsed: false,
+          createdAt: 1000,
+          updatedAt: 1000,
+          restoredFromClosed: true,
+          live: { tabId: 10, windowId: 50 }
+        },
+        "tab:child": {
+          id: "tab:child",
+          kind: "tab",
+          status: "live",
+          parentId: "tab:subgroup",
+          childIds: [],
+          title: "Child",
+          url: "https://subgroup.example/child",
+          collapsed: false,
+          createdAt: 1000,
+          updatedAt: 1000,
+          restoredFromClosed: true,
+          live: { tabId: 11, windowId: 50 }
+        }
+      }
+    };
+
+    const flattened = flattenSubtreeOneLevel(state, "window:parent");
+    expect(flattened.nodes["window:parent"]?.childIds).toEqual(["tab:subgroup", "tab:child"]);
+
+    const reconciled = reconcileWithWindows(flattened, [
+      {
+        id: 50,
+        incognito: false,
+        focused: true,
+        tabs: [
+          { id: 10, windowId: 50, index: 0, active: true, url: "https://subgroup.example/", title: "Subgroup" },
+          { id: 11, windowId: 50, index: 1, active: false, url: "https://subgroup.example/child", title: "Child" }
+        ]
+      }
+    ], { now: 3000 });
+
+    expect(reconciled.nodes["tab:subgroup"]).toMatchObject({
+      status: "live",
+      parentId: "window:parent",
+      live: { tabId: 10, windowId: 50 }
+    });
+    expect(reconciled.nodes["tab:child"]).toMatchObject({
+      status: "live",
+      parentId: "window:parent",
+      live: { tabId: 11, windowId: 50 }
+    });
+    expect(reconciled.nodes["window:parent"]?.childIds).toEqual(["tab:subgroup", "tab:child"]);
+    // No browser-created window node may survive for the self-claimed window.
+    const liveWindowNodes = Object.values(reconciled.nodes).filter(
+      (node) => node.kind === "window" && node.status === "live"
+    );
+    expect(liveWindowNodes).toEqual([]);
+  });
+
   it("reattaches restored tab subgroup children when the subgroup tab closes", () => {
     const state: OutlineState = {
       version: 1,

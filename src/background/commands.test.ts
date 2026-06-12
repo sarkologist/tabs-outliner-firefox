@@ -110,6 +110,46 @@ function windowWithTabs(windowId: number, tabCount: number): RuntimeWindow {
   };
 }
 
+function closedShellWithRestoredTabs(
+  tabs: Array<{ id: string; tabId: number; parentId?: string; childIds?: string[] }>
+): OutlineState {
+  const state: OutlineState = {
+    version: 1,
+    rootIds: ["window:shell"],
+    nodes: {
+      "window:shell": {
+        id: "window:shell",
+        kind: "window",
+        status: "closed",
+        title: "Saved window",
+        childIds: tabs.filter((tab) => !tab.parentId).map((tab) => tab.id),
+        collapsed: false,
+        createdAt: 1000,
+        updatedAt: 1000,
+        closedAt: 1000,
+        restore: { sessionId: "session-shell" }
+      }
+    }
+  };
+  for (const tab of tabs) {
+    state.nodes[tab.id] = {
+      id: tab.id,
+      kind: "tab",
+      status: "live",
+      parentId: tab.parentId ?? "window:shell",
+      childIds: tab.childIds ?? [],
+      title: `Restored ${tab.tabId}`,
+      url: `https://restore.example/${tab.tabId}`,
+      collapsed: false,
+      createdAt: 1000,
+      updatedAt: 2000,
+      restoredFromClosed: true,
+      live: { tabId: tab.tabId, windowId: 42 }
+    };
+  }
+  return state;
+}
+
 async function importNestedSiblingGroup() {
   const imported = await runCommand(bootstrapFromWindows(runtimeWindows, { now: 1000 }), fakeAdapter(), {
     type: "importTree",
@@ -212,6 +252,42 @@ describe("background commands", () => {
     expect(adapter.closeTabs).toHaveBeenCalledWith([2]);
     expect(adapter.closeTab).not.toHaveBeenCalled();
     expect(adapter.closeWindow).toHaveBeenCalledWith(10);
+  });
+
+  it("closes only the targeted restored sibling tab, not its shared runtime window", async () => {
+    const state = closedShellWithRestoredTabs([
+      { id: "tab:101", tabId: 101 },
+      { id: "tab:102", tabId: 102 }
+    ]);
+    const adapter = fakeAdapter();
+
+    await runCommand(state, adapter, { type: "closeNode", nodeId: "tab:101" });
+
+    expect(adapter.closeWindow).not.toHaveBeenCalled();
+    expect(adapter.closeTabs).toHaveBeenCalledWith([101]);
+  });
+
+  it("closes the runtime window when the restored tab is its only live tab in the outline", async () => {
+    const state = closedShellWithRestoredTabs([{ id: "tab:101", tabId: 101 }]);
+    const adapter = fakeAdapter();
+
+    await runCommand(state, adapter, { type: "closeNode", nodeId: "tab:101" });
+
+    expect(adapter.closeWindow).toHaveBeenCalledWith(42);
+    expect(adapter.closeTabs).not.toHaveBeenCalled();
+  });
+
+  it("closes the runtime window for a restored subgroup owner whose other live tabs are its descendants", async () => {
+    const state = closedShellWithRestoredTabs([
+      { id: "tab:101", tabId: 101, childIds: ["tab:102"] },
+      { id: "tab:102", tabId: 102, parentId: "tab:101" }
+    ]);
+    const adapter = fakeAdapter();
+
+    await runCommand(state, adapter, { type: "closeNode", nodeId: "tab:101" });
+
+    expect(adapter.closeWindow).toHaveBeenCalledWith(42);
+    expect(adapter.closeTabs).not.toHaveBeenCalled();
   });
 
   it("closes live descendants for neutral outline groups without changing outline state immediately", async () => {
@@ -1431,6 +1507,51 @@ describe("background commands", () => {
 
     expect(result.state).toEqual(flattenSubtreeOneLevel(state, "window:10"));
     expect(adapter.moveTabs).not.toHaveBeenCalled();
+  });
+
+  it("physically merges a flattened nested live window's tabs into the parent live window", async () => {
+    const twoWindows: RuntimeWindow[] = [
+      {
+        id: 70,
+        focused: true,
+        incognito: false,
+        tabs: [{ id: 1, windowId: 70, index: 0, active: true, url: "https://a.example/", title: "A" }]
+      },
+      {
+        id: 50,
+        focused: false,
+        incognito: false,
+        tabs: [
+          { id: 10, windowId: 50, index: 0, active: true, url: "https://b.example/", title: "B" },
+          { id: 11, windowId: 50, index: 1, active: false, url: "https://c.example/", title: "C" }
+        ]
+      }
+    ];
+    // Drag live window 50's node under live window 70's node, then flatten 70.
+    const state = moveNode(bootstrapFromWindows(twoWindows, { now: 1000 }), "window:50", {
+      parentId: "window:70",
+      index: 1
+    });
+    const adapter = fakeAdapter();
+
+    const result = await runCommand(state, adapter, {
+      type: "flattenSubtree",
+      nodeId: "window:70"
+    });
+
+    // The promoted tabs move into the parent's runtime window (the emptied
+    // source window closes itself once its last tab leaves).
+    expect(adapter.moveTabs).toHaveBeenCalledWith([10, 11], { windowId: 70, index: -1 });
+    expect(result.state.nodes["window:50"]).toBeUndefined();
+    expect(result.state.nodes["window:70"]?.childIds).toEqual(["tab:1", "tab:10", "tab:11"]);
+    expect(result.state.nodes["tab:10"]).toMatchObject({
+      parentId: "window:70",
+      live: { tabId: 10, windowId: 70 }
+    });
+    expect(result.state.nodes["tab:11"]).toMatchObject({
+      parentId: "window:70",
+      live: { tabId: 11, windowId: 70 }
+    });
   });
 
   it("promotes children without asking Firefox to reorder tabs", async () => {

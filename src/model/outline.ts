@@ -216,6 +216,12 @@ export function reconcileWithWindows(
   // native drag-out into a new window). Used to invalidate stale restored-subgroup
   // self-ownership when reattaching live tabs below.
   const crossWindowMovedTabIds = new Set<NodeId>();
+  // Live window nodes that pre-date this pass. Window nodes created provisionally
+  // below must not break a childless restored tab's self-claim on its runtime
+  // window — they exist only as reattachment targets and are reaped when empty.
+  const preexistingLiveWindowRuntimeIds: ReadonlySet<number> = new Set(
+    lookup.liveWindowNodeIdsByRuntimeId.keys()
+  );
 
   for (const win of windows.filter((windowInfo) => !windowInfo.incognito)) {
     openWindowIds.add(win.id);
@@ -326,10 +332,10 @@ export function reconcileWithWindows(
         continue;
       }
       if (newlyPlacedNodeIds.has(nodeId)) {
-        ensureParent(next, nodeId, parentForNewRuntimeTab(next, lookup, tab, winId));
+        ensureParent(next, nodeId, parentForNewRuntimeTab(next, lookup, tab, winId, preexistingLiveWindowRuntimeIds));
         continue;
       }
-      if (!isUnderRuntimeWindow(next, nodeId, tab.windowId)) {
+      if (!isUnderRuntimeWindow(next, nodeId, tab.windowId, preexistingLiveWindowRuntimeIds)) {
         ensureParent(next, nodeId, winId);
       }
     }
@@ -374,14 +380,15 @@ export function reconcileWithWindows(
     }
   }
 
-  return finishRuntimeReconciliation(next, crossWindowMovedTabIds);
+  return finishRuntimeReconciliation(next, crossWindowMovedTabIds, preexistingLiveWindowRuntimeIds);
 }
 
 function finishRuntimeReconciliation(
   state: OutlineState,
-  crossWindowMovedTabIds: ReadonlySet<NodeId> = new Set<NodeId>()
+  crossWindowMovedTabIds: ReadonlySet<NodeId> = new Set<NodeId>(),
+  windowIdsWithLiveNodes?: ReadonlySet<number>
 ): OutlineState {
-  reattachLiveTabsToOwningWindows(state, crossWindowMovedTabIds);
+  reattachLiveTabsToOwningWindows(state, crossWindowMovedTabIds, windowIdsWithLiveNodes);
   normalizeReachableRoots(state);
   removeEmptyLiveContainers(state);
   normalizeReachableRoots(state);
@@ -636,7 +643,11 @@ function promoteForeignLiveWindowsAfterClosingWindow(
 // belong under a closed ancestor stay put: a window restored from closed, and a
 // live tab whose runtime owner is reachable up its own chain (handled just above
 // by reattachLiveTabsToOwningWindows / restored-subgroup ownership).
-function isStrandableLiveNode(state: OutlineState, node: OutlineNode): boolean {
+function isStrandableLiveNode(
+  state: OutlineState,
+  node: OutlineNode,
+  windowIdsWithLiveNodes?: ReadonlySet<number>
+): boolean {
   // A live window strands unless it is restored from closed (its own runtime
   // owner). A live tab strands only when no live runtime owner is reachable up
   // its chain — otherwise reattachLiveTabsToOwningWindows / restored-subgroup
@@ -645,14 +656,15 @@ function isStrandableLiveNode(state: OutlineState, node: OutlineNode): boolean {
     return node.restoredFromClosed !== true;
   }
   if (isLiveTabNode(node)) {
-    return nearestLiveRuntimeOwnerWindowId(state, node.id) === undefined;
+    return nearestLiveRuntimeOwnerWindowId(state, node.id, windowIdsWithLiveNodes) === undefined;
   }
   return false;
 }
 
 function promoteLiveNodesOutOfClosedAncestors(state: OutlineState): void {
+  const windowIdsWithLiveNodes = liveWindowRuntimeIds(state);
   const candidates = Object.values(state.nodes)
-    .filter((node) => Boolean(node.parentId) && isStrandableLiveNode(state, node))
+    .filter((node) => Boolean(node.parentId) && isStrandableLiveNode(state, node, windowIdsWithLiveNodes))
     .map((node) => node.id);
 
   // The incoming state may share its rootIds array with an upstream snapshot
@@ -2214,7 +2226,8 @@ function parentForNewRuntimeTab(
   state: OutlineState,
   lookup: OutlineLookup,
   tab: RuntimeTab,
-  fallbackWindowNodeId: NodeId
+  fallbackWindowNodeId: NodeId,
+  windowIdsWithLiveNodes?: ReadonlySet<number>
 ): NodeId {
   if (!shouldUseRuntimeOpenerParent(tab)) {
     return fallbackWindowNodeId;
@@ -2225,7 +2238,9 @@ function parentForNewRuntimeTab(
     return fallbackWindowNodeId;
   }
 
-  return isUnderRuntimeWindow(state, openerNodeId, tab.windowId) ? openerNodeId : fallbackWindowNodeId;
+  return isUnderRuntimeWindow(state, openerNodeId, tab.windowId, windowIdsWithLiveNodes)
+    ? openerNodeId
+    : fallbackWindowNodeId;
 }
 
 export function shouldUseRuntimeOpenerParent(
@@ -2234,8 +2249,13 @@ export function shouldUseRuntimeOpenerParent(
   return typeof tab.openerTabId === "number" && !isBlankRuntimeTabUrl(tab.url);
 }
 
-function isUnderRuntimeWindow(state: OutlineState, nodeId: NodeId, runtimeWindowId: number): boolean {
-  return nearestLiveRuntimeOwnerWindowId(state, nodeId) === runtimeWindowId;
+function isUnderRuntimeWindow(
+  state: OutlineState,
+  nodeId: NodeId,
+  runtimeWindowId: number,
+  windowIdsWithLiveNodes?: ReadonlySet<number>
+): boolean {
+  return nearestLiveRuntimeOwnerWindowId(state, nodeId, windowIdsWithLiveNodes) === runtimeWindowId;
 }
 
 function reattachLiveTabsToOwningWindows(
@@ -2248,7 +2268,12 @@ function reattachLiveTabsToOwningWindows(
   // window node for the new runtime window stays empty and gets reaped, leaving a
   // live tab with no window node. repairState/closeTab pass no evidence (the
   // default empty set), so they keep honoring restored-subgroup ownership.
-  crossWindowMovedTabIds: ReadonlySet<NodeId> = new Set<NodeId>()
+  crossWindowMovedTabIds: ReadonlySet<NodeId> = new Set<NodeId>(),
+  // During a reconcile pass, the runtime window ids whose live window nodes
+  // pre-date the pass; provisional nodes created by the pass must not invalidate
+  // a childless restored tab's self-claim (they would never be reaped otherwise).
+  // Outside a pass the current state is the durable truth, so default to it.
+  windowIdsWithLiveNodes?: ReadonlySet<number>
 ): void {
   const liveWindowNodeIdsByRuntimeId = new Map<number, NodeId>();
   for (const node of Object.values(state.nodes)) {
@@ -2256,6 +2281,7 @@ function reattachLiveTabsToOwningWindows(
       liveWindowNodeIdsByRuntimeId.set(node.live.windowId, node.id);
     }
   }
+  const claimBlockingWindowIds = windowIdsWithLiveNodes ?? new Set(liveWindowNodeIdsByRuntimeId.keys());
 
   for (const node of Object.values(state.nodes)) {
     if (!isLiveTabNode(node)) {
@@ -2264,7 +2290,7 @@ function reattachLiveTabsToOwningWindows(
 
     if (
       !crossWindowMovedTabIds.has(node.id) &&
-      nearestLiveRuntimeOwnerWindowId(state, node.id) === node.live.windowId
+      nearestLiveRuntimeOwnerWindowId(state, node.id, claimBlockingWindowIds) === node.live.windowId
     ) {
       continue;
     }
@@ -2278,7 +2304,16 @@ function reattachLiveTabsToOwningWindows(
   }
 }
 
-function nearestLiveRuntimeOwnerWindowId(state: OutlineState, nodeId: NodeId): number | undefined {
+function nearestLiveRuntimeOwnerWindowId(
+  state: OutlineState,
+  nodeId: NodeId,
+  // Runtime window ids that already have a durable live window node (excluding
+  // nodes provisionally created during an in-flight reconcile pass). When a live
+  // window node represents the runtime window, a childless restored tab must not
+  // self-claim it — the tab belongs under that node. Defaults to scanning the
+  // state, which is correct outside reconcile passes.
+  windowIdsWithLiveNodes?: ReadonlySet<number>
+): number | undefined {
   let current = state.nodes[nodeId];
   const visited = new Set<NodeId>();
   while (current) {
@@ -2290,11 +2325,30 @@ function nearestLiveRuntimeOwnerWindowId(state: OutlineState, nodeId: NodeId): n
       return current.live.windowId;
     }
     if (isRestoredTabSubgroupRuntimeOwner(current) && hasClosedAncestor(state, current.id)) {
-      return current.live.windowId;
+      // A restored subgroup owner (children present) always claims its runtime
+      // window. A childless restored tab — e.g. after a flatten promoted its
+      // children to siblings — claims only while no live window node represents
+      // that runtime window; otherwise the tab reattaches under the window node.
+      if (
+        current.childIds.length > 0 ||
+        !(windowIdsWithLiveNodes ?? liveWindowRuntimeIds(state)).has(current.live.windowId)
+      ) {
+        return current.live.windowId;
+      }
     }
     current = current.parentId ? state.nodes[current.parentId] : undefined;
   }
   return undefined;
+}
+
+function liveWindowRuntimeIds(state: OutlineState): ReadonlySet<number> {
+  const windowIds = new Set<number>();
+  for (const node of Object.values(state.nodes)) {
+    if (isLiveWindowNode(node)) {
+      windowIds.add(node.live.windowId);
+    }
+  }
+  return windowIds;
 }
 
 function hasClosedAncestor(state: OutlineState, nodeId: NodeId): boolean {
@@ -2317,11 +2371,14 @@ function hasClosedAncestor(state: OutlineState, nodeId: NodeId): boolean {
 function isRestoredTabSubgroupRuntimeOwner(
   node: OutlineNode
 ): node is OutlineNode & { live: { tabId: number; windowId: number } } {
+  // No children requirement: a flatten/promote can strip the owner's children
+  // (or promote a restored child to a sibling leaf) without changing which
+  // runtime window the restored tab owns — matching the close-path owner
+  // semantics (findRestoredTabRuntimeOwnerNode, restoredTabRuntimeOwnerWindowIdForCloseNode).
   return Boolean(
     node.kind === "tab" &&
       node.status === "live" &&
       node.restoredFromClosed === true &&
-      node.childIds.length > 0 &&
       node.live &&
       "tabId" in node.live
   );
