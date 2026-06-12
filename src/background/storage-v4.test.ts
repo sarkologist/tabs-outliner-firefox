@@ -275,7 +275,9 @@ describe("outline state v4 storage", () => {
       await journal.init();
 
       // In-memory model of what a correct store must reproduce after any restart.
-      let model = makeTree(20 + seed * 3);
+      // Bound the size by the seed (mod 16) so any random soak base seed yields a
+      // small tree; raw `seed * 3` overflowed JS max array length for large seeds.
+      let model = makeTree(20 + (seed % 16) * 3);
       let entries: OutlineJournalEntry[] = [];
       let nextNodeNumber = 1000;
       let seq = 0;
@@ -410,7 +412,10 @@ describe("outline state v4 storage", () => {
 });
 
 function seededRandom(seed: number): () => number {
-  let value = seed * 2654435761 % 2147483647;
+  // Coerce to uint32 and multiply with Math.imul so large soak seeds cannot
+  // overflow MAX_SAFE_INTEGER (raw `seed * 2654435761` lost precision past ~3.4M).
+  // `|| 1` keeps the Park-Miller state out of its 0 fixed point.
+  let value = ((Math.imul(seed >>> 0, 2654435761) >>> 0) % 2147483647) || 1;
   return () => {
     value = (value * 16807) % 2147483647;
     return (value - 1) / 2147483646;
