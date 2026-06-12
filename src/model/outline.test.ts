@@ -3225,8 +3225,11 @@ describe("outline model", () => {
     expect(repaired.nodes["tab:2"]?.parentId).toBe("tab:1");
   });
 
-  it("repairs stored state by pruning empty windows", () => {
+  it("prunes empty ephemeral windows but keeps empty closed windows during repair", () => {
     const state = bootstrapFromWindows(windows, { now: 1000 });
+    // A saved (closed) window whose tabs were all removed individually must
+    // survive an unscoped repair pass — reaping it here silently drops user
+    // data (the generated-trace soak caught exactly this regression).
     state.nodes["window:empty-parent"] = {
       id: "window:empty-parent",
       kind: "window",
@@ -3250,13 +3253,113 @@ describe("outline model", () => {
       updatedAt: 1000,
       closedAt: 1000
     };
-    state.rootIds.push("window:empty-parent");
+    // A live shell with no children is still ephemeral junk and gets reaped.
+    state.nodes["window:empty-live"] = {
+      id: "window:empty-live",
+      kind: "window",
+      status: "live",
+      childIds: [],
+      title: "Window",
+      collapsed: false,
+      createdAt: 1000,
+      updatedAt: 1000,
+      live: { windowId: 99 }
+    };
+    state.rootIds.push("window:empty-parent", "window:empty-live");
 
     const repaired = repairState(state);
 
-    expect(repaired.nodes["window:empty-child"]).toBeUndefined();
-    expect(repaired.nodes["window:empty-parent"]).toBeUndefined();
-    expect(repaired.rootIds).toEqual(["window:10"]);
+    expect(repaired.nodes["window:empty-child"]?.status).toBe("closed");
+    expect(repaired.nodes["window:empty-parent"]?.childIds).toEqual(["window:empty-child"]);
+    expect(repaired.nodes["window:empty-live"]).toBeUndefined();
+    expect(repaired.rootIds).toEqual(["window:10", "window:empty-parent"]);
+  });
+
+  it("keeps an emptied closed window when an unrelated command repairs state", () => {
+    // Reproduces the soak data-loss path: a closed window emptied earlier must
+    // not be garbage-collected when a later, unrelated wrapNodeInGroup funnels
+    // through repairState. window:20 stands in for that pre-emptied saved window.
+    const state = bootstrapFromWindows(windows, { now: 1000 });
+    state.nodes["window:20"] = {
+      id: "window:20",
+      kind: "window",
+      status: "closed",
+      childIds: [],
+      title: "Window",
+      collapsed: false,
+      createdAt: 1000,
+      updatedAt: 1000,
+      closedAt: 2000,
+      restore: { sessionId: "saved-window-20" }
+    };
+    state.rootIds.push("window:20");
+
+    const wrapped = wrapNodeInGroup(state, "tab:1", {
+      now: 3000,
+      liveWindow: { id: 42, focused: true, incognito: false }
+    });
+
+    expect(wrapped.nodes["window:20"]?.status).toBe("closed");
+    expect(wrapped.nodes["window:20"]?.childIds).toEqual([]);
+    expect(wrapped.nodes["window:20"]?.restore).toMatchObject({ sessionId: "saved-window-20" });
+  });
+
+  it("promotes a live window out of a closed ancestor during repair", () => {
+    // Now that closed shells are preserved, repair must keep the live-under-closed
+    // invariant itself: a non-restored live window stranded under a closed window
+    // (e.g. left there by history replay) is promoted out to just past it.
+    const stranded: OutlineState = {
+      version: 1,
+      rootIds: ["window:saved"],
+      nodes: {
+        "window:saved": {
+          id: "window:saved",
+          kind: "window",
+          status: "closed",
+          childIds: ["window:live"],
+          title: "Window",
+          collapsed: false,
+          createdAt: 1000,
+          updatedAt: 1000,
+          closedAt: 2000,
+          restore: { sessionId: "saved-window" }
+        },
+        "window:live": {
+          id: "window:live",
+          kind: "window",
+          status: "live",
+          parentId: "window:saved",
+          childIds: ["tab:live"],
+          title: "Window",
+          collapsed: false,
+          createdAt: 1000,
+          updatedAt: 1000,
+          live: { windowId: 42 }
+        },
+        "tab:live": {
+          id: "tab:live",
+          kind: "tab",
+          status: "live",
+          parentId: "window:live",
+          childIds: [],
+          title: "Live tab",
+          url: "https://live.example/",
+          collapsed: false,
+          createdAt: 1000,
+          updatedAt: 1000,
+          live: { tabId: 7, windowId: 42 }
+        }
+      }
+    };
+
+    const repaired = repairState(stranded);
+
+    expect(repaired.nodes["window:saved"]?.status).toBe("closed");
+    expect(repaired.nodes["window:saved"]?.childIds).not.toContain("window:live");
+    expect(repaired.nodes["window:live"]?.status).toBe("live");
+    expect(repaired.nodes["window:live"]?.parentId).toBeUndefined();
+    expect(repaired.nodes["tab:live"]?.parentId).toBe("window:live");
+    expect(repaired.rootIds).toEqual(["window:saved", "window:live"]);
   });
 
   it("reconciles stored closed nodes with currently open browser state", () => {

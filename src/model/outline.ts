@@ -477,6 +477,7 @@ export function repairState(state: OutlineState): OutlineState {
 
   reattachLiveTabsToOwningWindows(next);
   promoteClosedTabChildrenInLiveWindows(next);
+  promoteLiveNodesOutOfClosedAncestors(next);
 
   next.rootIds = uniqueIds([
     ...originalRootIds.filter((id) => !next.nodes[id]?.parentId),
@@ -611,6 +612,95 @@ function promoteForeignLiveWindowsAfterClosingWindow(
     }
     targetSiblings.splice(insertionIndex, 0, promotedWindowId);
     insertionIndex += 1;
+  }
+}
+
+// A live node must never sit under a closed ancestor — that strands live runtime
+// resources beneath a saved shell (the live-under-closed invariant). The unscoped
+// empty-window sweep used to enforce this implicitly by reaping the closed parent
+// once it emptied; now that repairState preserves closed windows, history replay
+// (preserveClosedNodesDuringHistoryReplay) can leave a live window — or a live tab
+// whose owning runtime window no longer has a live node — parented under a
+// re-closed shell, so repair promotes it back out, anchoring just past the topmost
+// closed ancestor (mirroring the RT-253 close path). Nodes that legitimately
+// belong under a closed ancestor stay put: a window restored from closed, and a
+// live tab whose runtime owner is reachable up its own chain (handled just above
+// by reattachLiveTabsToOwningWindows / restored-subgroup ownership).
+function isStrandableLiveNode(state: OutlineState, node: OutlineNode): boolean {
+  // A live window strands unless it is restored from closed (its own runtime
+  // owner). A live tab strands only when no live runtime owner is reachable up
+  // its chain — otherwise reattachLiveTabsToOwningWindows / restored-subgroup
+  // ownership keeps it correctly placed under that owner.
+  if (isLiveWindowNode(node)) {
+    return node.restoredFromClosed !== true;
+  }
+  if (isLiveTabNode(node)) {
+    return nearestLiveRuntimeOwnerWindowId(state, node.id) === undefined;
+  }
+  return false;
+}
+
+function promoteLiveNodesOutOfClosedAncestors(state: OutlineState): void {
+  const candidates = Object.values(state.nodes)
+    .filter((node) => Boolean(node.parentId) && isStrandableLiveNode(state, node))
+    .map((node) => node.id);
+
+  // The incoming state may share its rootIds array with an upstream snapshot
+  // (copyStateForNodeTableMutation does not clone it), so take ownership before
+  // splicing a promoted node into the root list.
+  let rootIdsOwned = false;
+  const ownedRootIds = (): NodeId[] => {
+    if (!rootIdsOwned) {
+      state.rootIds = [...state.rootIds];
+      rootIdsOwned = true;
+    }
+    return state.rootIds;
+  };
+
+  for (const nodeId of candidates) {
+    const node = state.nodes[nodeId];
+    if (!node || !node.parentId) {
+      continue;
+    }
+
+    let topmostClosedId: NodeId | undefined;
+    let blockedByLiveWindow = false;
+    let cursor: OutlineNode | undefined = state.nodes[node.parentId];
+    const seen = new Set<NodeId>();
+    while (cursor && !seen.has(cursor.id)) {
+      seen.add(cursor.id);
+      // A strandable live-window ancestor closer than any closed node is the real
+      // promotion root; it carries this node, so leave this one in place. A
+      // restored-from-closed live window stays put under its closed ancestor, so
+      // it does not shield its non-restored live descendants — those still need
+      // promoting out independently.
+      if (topmostClosedId === undefined && isLiveWindowNode(cursor) && cursor.restoredFromClosed !== true) {
+        blockedByLiveWindow = true;
+        break;
+      }
+      if (cursor.status === "closed") {
+        topmostClosedId = cursor.id;
+      }
+      cursor = cursor.parentId ? state.nodes[cursor.parentId] : undefined;
+    }
+    if (blockedByLiveWindow || topmostClosedId === undefined) {
+      continue;
+    }
+
+    const anchor = state.nodes[topmostClosedId]!;
+    const targetParentId = anchor.parentId && state.nodes[anchor.parentId] ? anchor.parentId : undefined;
+    const targetSiblings = targetParentId ? cloneNodeForMutation(state, targetParentId).childIds : ownedRootIds();
+    removeId(cloneNodeForMutation(state, node.parentId).childIds, nodeId);
+
+    const mutNode = cloneNodeForMutation(state, nodeId);
+    if (targetParentId) {
+      mutNode.parentId = targetParentId;
+    } else {
+      delete mutNode.parentId;
+    }
+
+    const anchorIndex = targetSiblings.indexOf(topmostClosedId);
+    targetSiblings.splice(anchorIndex >= 0 ? anchorIndex + 1 : targetSiblings.length, 0, nodeId);
   }
 }
 
@@ -1064,6 +1154,7 @@ export function moveTabToNewClosedWindow(
   }
 
   const next = cloneOutlineState(state);
+  const oldParentId = node.parentId;
   const newWindowNodeId = uniqueNodeId(next, `window:placeholder:${clock.now}`, clock.now);
   const sourceWindow = closedSingleTabSourceWindow(next, nodeId);
   next.nodes[newWindowNodeId] = {
@@ -1080,7 +1171,11 @@ export function moveTabToNewClosedWindow(
   };
 
   moveExistingNodeUnderNewWindow(next, nodeId, newWindowNodeId, clock.now, clock.rootIndex);
-  return repairState(next);
+  // Reap only the source container this relocation just emptied. repairState's
+  // unscoped sweep no longer collects closed shells, so the now-redundant source
+  // window (whose session was inherited by the placeholder above) is cleaned up
+  // here by id instead of by global garbage collection.
+  return removeEmptyWindowNodesFrom(repairState(next), oldParentId);
 }
 
 export function wrapNodeInGroup(
@@ -2451,6 +2546,21 @@ function closeSourceWindowIfRelocationEmptiedIt(
   sourceRuntimeWindowId: number,
   now: number
 ): OutlineState {
+  const relocated = closeEmptiedRelocationSource(state, sourceWindowNodeId, sourceRuntimeWindowId, now);
+  // A relocation can land a live window or tab under a closed ancestor — e.g.
+  // grouping a tab whose position sits inside a restored window that is itself
+  // nested in a closed shell. The unscoped sweep no longer reaps that shell, so
+  // normalize the live-under-closed invariant here (no-op when nothing strands).
+  promoteLiveNodesOutOfClosedAncestors(relocated);
+  return relocated;
+}
+
+function closeEmptiedRelocationSource(
+  state: OutlineState,
+  sourceWindowNodeId: NodeId | undefined,
+  sourceRuntimeWindowId: number,
+  now: number
+): OutlineState {
   if (!sourceWindowNodeId) {
     return state;
   }
@@ -2464,7 +2574,11 @@ function closeSourceWindowIfRelocationEmptiedIt(
     return state;
   }
 
-  return repairState(closeWindow(state, sourceRuntimeWindowId, { now }));
+  // Closing the emptied source converts it to a closed shell; reap that specific
+  // shell by id. repairState's unscoped sweep deliberately preserves closed
+  // windows now, so the cleanup of the window this relocation just emptied has
+  // to be scoped here rather than left to global garbage collection.
+  return removeEmptyWindowNodesFrom(repairState(closeWindow(state, sourceRuntimeWindowId, { now })), sourceWindowNodeId);
 }
 
 function sourceWindowHasOwnedLiveTabs(
@@ -2555,12 +2669,23 @@ function collectSubtreeIds(state: OutlineState, nodeId: NodeId): NodeId[] {
   return ids;
 }
 
+// The unscoped garbage collector only reaps live/ephemeral empty containers.
+// A closed (saved) window or group persists until it is explicitly deleted,
+// even after every child has been removed individually — reaping it here would
+// silently drop user data when an unrelated command later funnels through
+// repairState. Targeted cleanup of a container the caller just emptied (e.g. a
+// single-tab closed window whose tab was moved out) still goes through
+// removeEmptyWindowNodesFrom, which intentionally reaps closed shells.
+function isReapableEmptyContainer(node: OutlineNode): boolean {
+  return isContainerNode(node) && node.childIds.length === 0 && node.status !== "closed";
+}
+
 function removeEmptyWindowNodes(state: OutlineState): OutlineState {
   const queued = new Set<NodeId>();
   const queue: NodeId[] = [];
 
   for (const node of Object.values(state.nodes)) {
-    if (isContainerNode(node) && node.childIds.length === 0) {
+    if (isReapableEmptyContainer(node)) {
       queued.add(node.id);
       queue.push(node.id);
     }
@@ -2569,7 +2694,7 @@ function removeEmptyWindowNodes(state: OutlineState): OutlineState {
   while (queue.length > 0) {
     const nodeId = queue.pop()!;
     const node = state.nodes[nodeId];
-    if (!node || !isContainerNode(node) || node.childIds.length > 0) {
+    if (!node || !isReapableEmptyContainer(node)) {
       continue;
     }
 
@@ -2578,7 +2703,7 @@ function removeEmptyWindowNodes(state: OutlineState): OutlineState {
       const parent = state.nodes[parentId];
       if (parent) {
         removeId(parent.childIds, nodeId);
-        if (isContainerNode(parent) && parent.childIds.length === 0 && !queued.has(parent.id)) {
+        if (isReapableEmptyContainer(parent) && !queued.has(parent.id)) {
           queued.add(parent.id);
           queue.push(parent.id);
         }
