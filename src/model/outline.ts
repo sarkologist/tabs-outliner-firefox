@@ -212,6 +212,10 @@ export function reconcileWithWindows(
   const excludedClosedRestoreNodeIds = options.excludedClosedRestoreNodeIds ?? new Set<NodeId>();
   const openWindowIds = new Set<number>();
   const openTabIds = new Set<number>();
+  // Existing live tab nodes whose runtime window changed during this pass (e.g. a
+  // native drag-out into a new window). Used to invalidate stale restored-subgroup
+  // self-ownership when reattaching live tabs below.
+  const crossWindowMovedTabIds = new Set<NodeId>();
 
   for (const win of windows.filter((windowInfo) => !windowInfo.incognito)) {
     openWindowIds.add(win.id);
@@ -283,6 +287,9 @@ export function reconcileWithWindows(
           continue;
         }
 
+        if (isLiveTabNode(node) && node.live.windowId !== tab.windowId) {
+          crossWindowMovedTabIds.add(node.id);
+        }
         updateLiveTabNode(node, tab, clock.now);
         runtimeToNode.set(tab.id, existingTabId);
         continue;
@@ -367,11 +374,14 @@ export function reconcileWithWindows(
     }
   }
 
-  return finishRuntimeReconciliation(next);
+  return finishRuntimeReconciliation(next, crossWindowMovedTabIds);
 }
 
-function finishRuntimeReconciliation(state: OutlineState): OutlineState {
-  reattachLiveTabsToOwningWindows(state);
+function finishRuntimeReconciliation(
+  state: OutlineState,
+  crossWindowMovedTabIds: ReadonlySet<NodeId> = new Set<NodeId>()
+): OutlineState {
+  reattachLiveTabsToOwningWindows(state, crossWindowMovedTabIds);
   normalizeReachableRoots(state);
   removeEmptyLiveContainers(state);
   normalizeReachableRoots(state);
@@ -2228,7 +2238,18 @@ function isUnderRuntimeWindow(state: OutlineState, nodeId: NodeId, runtimeWindow
   return nearestLiveRuntimeOwnerWindowId(state, nodeId) === runtimeWindowId;
 }
 
-function reattachLiveTabsToOwningWindows(state: OutlineState): void {
+function reattachLiveTabsToOwningWindows(
+  state: OutlineState,
+  // Tabs whose runtime window changed during the reconcile pass that called us.
+  // A restored-tab subgroup owner self-claims its own runtime window via
+  // nearestLiveRuntimeOwnerWindowId (the walk starts at the node itself), so once
+  // the browser drags such a tab into a *different* window the self-claim is stale
+  // — it must not let the tab keep skipping reattachment, or the reconcile-created
+  // window node for the new runtime window stays empty and gets reaped, leaving a
+  // live tab with no window node. repairState/closeTab pass no evidence (the
+  // default empty set), so they keep honoring restored-subgroup ownership.
+  crossWindowMovedTabIds: ReadonlySet<NodeId> = new Set<NodeId>()
+): void {
   const liveWindowNodeIdsByRuntimeId = new Map<number, NodeId>();
   for (const node of Object.values(state.nodes)) {
     if (isLiveWindowNode(node)) {
@@ -2241,7 +2262,10 @@ function reattachLiveTabsToOwningWindows(state: OutlineState): void {
       continue;
     }
 
-    if (nearestLiveRuntimeOwnerWindowId(state, node.id) === node.live.windowId) {
+    if (
+      !crossWindowMovedTabIds.has(node.id) &&
+      nearestLiveRuntimeOwnerWindowId(state, node.id) === node.live.windowId
+    ) {
       continue;
     }
 

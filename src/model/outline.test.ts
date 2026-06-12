@@ -2378,6 +2378,97 @@ describe("outline model", () => {
     });
   });
 
+  it("reattaches a restored tab subgroup owner natively dragged out to a new window", () => {
+    // A restored subgroup owner self-claims its runtime window, which keeps it
+    // correctly nested while the browser still reports it in that window. But once
+    // it is natively dragged into a *new* window, the self-claim is stale: the new
+    // window must get a live window node that survives, not be reaped while the
+    // tab points at it with no node. Regression for soak seed 1301127742.
+    const state: OutlineState = {
+      version: 1,
+      rootIds: ["window:parent"],
+      nodes: {
+        "window:parent": {
+          id: "window:parent",
+          kind: "window",
+          status: "closed",
+          childIds: ["tab:subgroup"],
+          title: "Imported parent",
+          collapsed: false,
+          createdAt: 1000,
+          updatedAt: 1000,
+          closedAt: 1000
+        },
+        "tab:subgroup": {
+          id: "tab:subgroup",
+          kind: "tab",
+          status: "closed",
+          parentId: "window:parent",
+          childIds: ["tab:child"],
+          title: "Imported subgroup",
+          url: "https://subgroup.example/",
+          collapsed: false,
+          createdAt: 1000,
+          updatedAt: 1000,
+          closedAt: 1000,
+          restore: { url: "https://subgroup.example/", title: "Imported subgroup" }
+        },
+        "tab:child": {
+          id: "tab:child",
+          kind: "tab",
+          status: "closed",
+          parentId: "tab:subgroup",
+          childIds: [],
+          title: "Imported child",
+          url: "https://subgroup.example/child",
+          collapsed: false,
+          createdAt: 1000,
+          updatedAt: 1000,
+          closedAt: 1000,
+          restore: { url: "https://subgroup.example/child", title: "Imported child" }
+        }
+      }
+    };
+    const restored = restoreNodes(state, [
+      { nodeId: "tab:subgroup", tabId: 10, windowId: 50, url: "https://subgroup.example/", title: "Imported subgroup" },
+      { nodeId: "tab:child", tabId: 11, windowId: 50, url: "https://subgroup.example/child", title: "Imported child" }
+    ]);
+
+    // Runtime now reports tab 10 dragged into a brand-new window 60; tab 11 stays.
+    const reconciled = reconcileWithWindows(restored, [
+      {
+        id: 50,
+        incognito: false,
+        focused: false,
+        tabs: [{ id: 11, windowId: 50, index: 0, active: true, url: "https://subgroup.example/child", title: "Imported child" }]
+      },
+      {
+        id: 60,
+        incognito: false,
+        focused: true,
+        tabs: [{ id: 10, windowId: 60, index: 0, active: true, url: "https://subgroup.example/", title: "Imported subgroup" }]
+      }
+    ], { now: 3000 });
+
+    const liveWindowForRuntime = (runtimeWindowId: number): OutlineNode | undefined =>
+      Object.values(reconciled.nodes).find(
+        (node) => node.kind === "window" && node.status === "live" && node.live?.windowId === runtimeWindowId
+      );
+
+    // The new window 60 must have a surviving live window node, and the dragged
+    // subgroup owner must be reattached under it (out of the closed parent).
+    const window60 = liveWindowForRuntime(60);
+    expect(window60).toBeDefined();
+    expect(reconciled.nodes["tab:subgroup"]).toMatchObject({ status: "live", live: { tabId: 10, windowId: 60 } });
+    expect(reconciled.nodes["tab:subgroup"]?.parentId).toBe(window60!.id);
+    expect(window60!.childIds).toContain("tab:subgroup");
+
+    // The child stays in window 50, under a surviving live window node for 50.
+    const window50 = liveWindowForRuntime(50);
+    expect(window50).toBeDefined();
+    expect(reconciled.nodes["tab:child"]).toMatchObject({ status: "live", live: { tabId: 11, windowId: 50 } });
+  });
+
   it("reattaches restored tab subgroup children when the subgroup tab closes", () => {
     const state: OutlineState = {
       version: 1,
