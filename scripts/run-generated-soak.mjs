@@ -10,11 +10,20 @@ const files = [
   "src/sidebar/visible-tree.test.ts",
   "src/background/history.test.ts",
   "src/model/outline.test.ts",
-  "src/background/storage-v2.test.ts",
+  "src/background/storage-legacy.test.ts",
   // Storage-fault lane (W-4.2): generated mutate/journal/compact/fail/crash/restart runs
   // against the fault-injecting storage mock; every restart must reproduce the model.
   "src/background/storage-v4.test.ts"
 ];
+
+// Fail loudly if a listed lane no longer exists. Vitest treats a stale path as a
+// filter that matches nothing, so a rename would otherwise silently drop a lane.
+const missingFiles = files.filter((file) => !existsSync(new URL(`../${file}`, import.meta.url)));
+if (missingFiles.length > 0) {
+  console.error(`Generated trace soak: listed file(s) not found:\n  ${missingFiles.join("\n  ")}`);
+  console.error("Update the `files` list in scripts/run-generated-soak.mjs after a rename or move.");
+  process.exit(1);
+}
 
 const baseSeed = positiveIntegerEnv("SOAK_SEED")
   ?? positiveIntegerEnv("GENERATED_TRACE_BASE_SEED")
