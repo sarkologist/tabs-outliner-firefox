@@ -151,3 +151,48 @@ No storage-format change, no migration — no data-at-rest risk.
 - The `activeTabId` demo (§6) lands green as the acceptance test.
 - Outcome paragraph appended here and to `reconciliation-state-model.md`; `staleSuspect`
   subsumption (1c) carried forward as the next step.
+
+## 10. Execution outcome (2026-06-13): 1a landed; 1b increment-1 falsified
+
+**1a — done, committed (`2f42a36`).** All ~15 fact writes route through
+`mergeTabFact`/`mergeWindowFact` (identity bodies). Pure call-site rename, gate green
+(typecheck; vitest 720/2-skip, controller suite unmodified; soak `SOAK_SEED=20260613` 442/2-skip).
+This is a real, standalone win regardless of what follows: one seam for all fact writes.
+
+**1b increment-1 — implemented, falsified, reverted.** Added `incomingFactWins(cur, next)` rejecting
+a *same-epoch* `installedState` write that would overwrite a higher-confidence fact. Result: **4
+failures, 2 of them in the `controller.test.ts` contract suite** (`runtime fact active tab
+diverged`): `adversarial runtime concurrency traces` (seed 3) and the named regression trace
+`rt-direct-new-window-stale-activation-after-focus`. Plus a `runtime-reconciler.test.ts` failure
+whose **name is the invariant I broke**: *"keeps installed-state tab order ahead of stale accepted
+window shape order"* (`:432`).
+
+**Root cause.** The §4 hazard resolves to reading #1, and harder than stated: a rebuild's
+`installedState` facts are **not** weak bootstrap belief — they carry *committed outline truth* and
+**must** overwrite a *stale* `complete`/`eventLocal` fact. Mechanism in the failing trace: a stale
+activation snapshot writes a wrong `complete` fact for the window; the rebuild writes the correct
+`installedState` fact from the committed outline; increment-1 **rejected the correction**, so the
+believed active tab diverged from truth.
+
+**Implications (these change the plan and the audit):**
+
+1. **A static confidence rank is the wrong primitive.** `installedState` is not the lowest rank;
+   outline-derived facts are authoritative for committed truth. The real lever is `staleSuspect`
+   — *demoting a contradicted observation* (model merge rule 3) — not merge rule 1. So 1b-before-1c
+   is mis-ordered; precedence is **subordinate to** contradiction-demotion, not the other way round.
+2. **`staleSuspect` is not a self-contained primitive.** Detecting "this snapshot is stale" needs
+   the authoritative truth that today's corroboration/double-query machinery establishes. So the
+   "clean merge primitive" is entangled with the reconciler's stale-detection — i.e. most of the
+   existing complexity, not a thing that sits cleanly underneath it.
+3. **The audit over-counted accidental complexity.** The named invariant at
+   `runtime-reconciler.test.ts:432` looks like ad-hoc precedence (audit bucket a) but is
+   **essential**: it encodes outline-authority-over-stale-snapshots, a real correctness
+   requirement. The audit's circularity risk materialized — the model could *describe* the
+   precedence, but a faithful reimplementation *broke* it. Some of bucket (a) is bucket (c).
+
+**Net.** Bank 1a. Do **not** proceed to a static-rank 1b. The "make facts authoritative via a
+confidence rank" thesis is not supported by the contract tests; the essential complexity in this
+layer is larger than the audit's 33/45 estimate, concentrated in stale-snapshot handling. Next
+decision is re-scoped in the session summary: pivot to staleSuspect/corroboration-first, re-audit
+bucket (a) through the stale-snapshot lens, or stop the rewrite track and target the actual
+robustness/perf pain directly.
