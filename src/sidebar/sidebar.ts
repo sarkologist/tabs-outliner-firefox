@@ -1,5 +1,4 @@
 import type { BackgroundCommand } from "../background/commands.js";
-import type { CommandAck } from "../background/commands.js";
 import type { OutlineDiagnostics } from "../background/diagnostics.js";
 import type { HistoryStatus } from "../background/history.js";
 import {
@@ -55,6 +54,23 @@ import {
 } from "./drop-preview.js";
 import { mergePartialOutlineState } from "./partial-outline-state.js";
 import { normalizeSearchQuery, segmentSearchText } from "./search.js";
+import {
+  isActiveStateUpdated,
+  isCommandAck,
+  isExportTreeResponse,
+  isHistoryStatus,
+  isInitialTreeSnapshot,
+  isNodeStateUpdated,
+  isOutlineState,
+  isSameParentReorderUpdated,
+  isStateUpdated,
+  isTreeStructureUpdated,
+  messageType,
+  type ActiveStateUpdate,
+  type NodeStateUpdate,
+  type SameParentReorderUpdate,
+  type TreeStructureUpdate
+} from "./sidebar-messages.js";
 import {
   applyCrossParentLeafMoveTreeStructurePatchToProjection,
   applyInsertTreeStructurePatchToProjection,
@@ -301,13 +317,6 @@ type OpenSidebarWindowRequest = {
 
 type ExportTreeRequest = {
   type: "exportTree";
-};
-
-type ExportTreeResponse = {
-  type: "exportTree";
-  filename: string;
-  contentType: string;
-  content: string;
 };
 
 type SidebarNonEditInteractionMessage = {
@@ -5449,179 +5458,3 @@ function diagnosticsText(result: OutlineDiagnostics): string {
   return `Firefox ${result.runtimeTabCount}`;
 }
 
-function messageType(message: unknown): string {
-  return message && typeof message === "object" && typeof (message as { type?: unknown }).type === "string"
-    ? (message as { type: string }).type
-    : isOutlineState(message)
-      ? "OutlineState"
-      : "unknown";
-}
-
-function isStateUpdated(message: unknown): message is { type: "stateUpdated"; state: OutlineState } {
-  return Boolean(
-    message &&
-      typeof message === "object" &&
-      (message as { type?: unknown }).type === "stateUpdated" &&
-      (message as { state?: unknown }).state
-  );
-}
-
-function isInitialTreeSnapshot(message: unknown): message is InitialTreeSnapshot {
-  return Boolean(
-    message &&
-      typeof message === "object" &&
-      (message as { type?: unknown }).type === "initialTreeSnapshot" &&
-      (message as { version?: unknown }).version === 1 &&
-      isOutlineState((message as { state?: unknown }).state) &&
-      typeof (message as { revision?: unknown }).revision === "number" &&
-      typeof (message as { hydrating?: unknown }).hydrating === "boolean" &&
-      (message as { projection?: unknown }).projection &&
-      typeof (message as { projection?: unknown }).projection === "object" &&
-      Array.isArray((message as { projection: { rows?: unknown } }).projection.rows) &&
-      typeof (message as { projection: { totalRowCount?: unknown } }).projection.totalRowCount === "number" &&
-      Array.isArray((message as { projection: { visibleNodeIds?: unknown } }).projection.visibleNodeIds) &&
-      Array.isArray((message as { projection: { matchingNodeIds?: unknown } }).projection.matchingNodeIds)
-  );
-}
-
-type ActiveStateUpdate = {
-  nodeId: NodeId;
-  active: boolean;
-};
-
-type TreeStructureUpdate = {
-  type: "treeStructureUpdated";
-  deletedNodeIds: NodeId[];
-  updatedNodes: OutlineNode[];
-  rootIds: NodeId[];
-  deletedClosedCount: number;
-};
-
-type SameParentReorderUpdate = {
-  type: "sameParentReorderUpdated";
-  parentId: NodeId;
-  movedNodeId: NodeId;
-  fromIndex: number;
-  toIndex: number;
-  rootIds: NodeId[];
-};
-
-type NodeStateUpdate = {
-  type: "nodeStateUpdated";
-  updatedNodes: OutlineNode[];
-  closedCountDelta: number;
-};
-
-function isActiveStateUpdated(message: unknown): message is { type: "activeStateUpdated"; updates: ActiveStateUpdate[] } {
-  return Boolean(
-    message &&
-      typeof message === "object" &&
-      (message as { type?: unknown }).type === "activeStateUpdated" &&
-      Array.isArray((message as { updates?: unknown }).updates) &&
-      (message as { updates: unknown[] }).updates.every((update) =>
-        Boolean(
-          update &&
-            typeof update === "object" &&
-            typeof (update as { nodeId?: unknown }).nodeId === "string" &&
-            typeof (update as { active?: unknown }).active === "boolean"
-        )
-      )
-  );
-}
-
-function isNodeStateUpdated(message: unknown): message is NodeStateUpdate {
-  return Boolean(
-    message &&
-      typeof message === "object" &&
-      (message as { type?: unknown }).type === "nodeStateUpdated" &&
-      Array.isArray((message as { updatedNodes?: unknown }).updatedNodes) &&
-      (message as { updatedNodes: unknown[] }).updatedNodes.every((node) =>
-        Boolean(
-          node &&
-            typeof node === "object" &&
-            typeof (node as { id?: unknown }).id === "string" &&
-            Array.isArray((node as { childIds?: unknown }).childIds)
-        )
-      ) &&
-      typeof (message as { closedCountDelta?: unknown }).closedCountDelta === "number"
-  );
-}
-
-function isTreeStructureUpdated(message: unknown): message is TreeStructureUpdate {
-  return Boolean(
-    message &&
-      typeof message === "object" &&
-      (message as { type?: unknown }).type === "treeStructureUpdated" &&
-      Array.isArray((message as { deletedNodeIds?: unknown }).deletedNodeIds) &&
-      (message as { deletedNodeIds: unknown[] }).deletedNodeIds.every((nodeId) => typeof nodeId === "string") &&
-      Array.isArray((message as { updatedNodes?: unknown }).updatedNodes) &&
-      (message as { updatedNodes: unknown[] }).updatedNodes.every((node) =>
-        Boolean(
-          node &&
-            typeof node === "object" &&
-            typeof (node as { id?: unknown }).id === "string" &&
-            Array.isArray((node as { childIds?: unknown }).childIds)
-        )
-      ) &&
-      Array.isArray((message as { rootIds?: unknown }).rootIds) &&
-      (message as { rootIds: unknown[] }).rootIds.every((nodeId) => typeof nodeId === "string") &&
-      typeof (message as { deletedClosedCount?: unknown }).deletedClosedCount === "number"
-  );
-}
-
-function isSameParentReorderUpdated(message: unknown): message is SameParentReorderUpdate {
-  return Boolean(
-    message &&
-      typeof message === "object" &&
-      (message as { type?: unknown }).type === "sameParentReorderUpdated" &&
-      typeof (message as { parentId?: unknown }).parentId === "string" &&
-      typeof (message as { movedNodeId?: unknown }).movedNodeId === "string" &&
-      typeof (message as { fromIndex?: unknown }).fromIndex === "number" &&
-      typeof (message as { toIndex?: unknown }).toIndex === "number" &&
-      Array.isArray((message as { rootIds?: unknown }).rootIds) &&
-      (message as { rootIds: unknown[] }).rootIds.every((nodeId) => typeof nodeId === "string")
-  );
-}
-
-function isHistoryStatus(message: unknown): message is { type: "historyStatus" } & HistoryStatus {
-  return Boolean(
-    message &&
-      typeof message === "object" &&
-      (message as { type?: unknown }).type === "historyStatus" &&
-      typeof (message as { canUndo?: unknown }).canUndo === "boolean" &&
-      typeof (message as { canRedo?: unknown }).canRedo === "boolean" &&
-      typeof (message as { undoDepth?: unknown }).undoDepth === "number" &&
-      typeof (message as { redoDepth?: unknown }).redoDepth === "number"
-  );
-}
-
-function isCommandAck(message: unknown): message is CommandAck {
-  return Boolean(
-    message &&
-      typeof message === "object" &&
-      (message as { type?: unknown }).type === "commandAck" &&
-      typeof (message as { stateChanged?: unknown }).stateChanged === "boolean"
-  );
-}
-
-function isExportTreeResponse(message: unknown): message is ExportTreeResponse {
-  return Boolean(
-    message &&
-      typeof message === "object" &&
-      (message as { type?: unknown }).type === "exportTree" &&
-      typeof (message as { filename?: unknown }).filename === "string" &&
-      typeof (message as { contentType?: unknown }).contentType === "string" &&
-      typeof (message as { content?: unknown }).content === "string"
-  );
-}
-
-function isOutlineState(message: unknown): message is OutlineState {
-  return Boolean(
-    message &&
-      typeof message === "object" &&
-      (message as { version?: unknown }).version === 1 &&
-      Array.isArray((message as { rootIds?: unknown }).rootIds) &&
-      typeof (message as { nodes?: unknown }).nodes === "object" &&
-      (message as { nodes?: unknown }).nodes !== null
-  );
-}
