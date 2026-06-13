@@ -238,6 +238,20 @@ export class RuntimeFactLedger {
     return this.observationSequence;
   }
 
+  // Single chokepoint for every tab-fact write (reconciliation strangler — step 1a).
+  // Currently identity / last-write-wins: byte-for-byte equivalent to the scattered
+  // `tabShapeFacts.set` calls it replaced. Step 1b installs the (confidence, sequence)
+  // precedence rule here so all fact writes obey one merge policy. `tabId` always equals
+  // `fact.tabId` at every call site — a transitional param, dropped when 1b lands.
+  private mergeTabFact(tabId: number, fact: RuntimeTabShapeFact): void {
+    this.tabShapeFacts.set(tabId, fact);
+  }
+
+  // Single chokepoint for every window-fact write (see mergeTabFact). Identity in 1a.
+  private mergeWindowFact(windowId: number, fact: RuntimeWindowShapeFact): void {
+    this.windowShapeFacts.set(windowId, fact);
+  }
+
   private runtimeTabEvidence(
     kind: RuntimeTabEvidenceKind,
     tab: RuntimeTab,
@@ -288,7 +302,7 @@ export class RuntimeFactLedger {
         ) {
           this.structurallyFreshTabIds.add(tab.id);
         }
-        this.tabShapeFacts.set(tab.id, {
+        this.mergeTabFact(tab.id, {
           tabId: tab.id,
           windowId: tab.windowId,
           index: tab.index,
@@ -315,7 +329,7 @@ export class RuntimeFactLedger {
     sequence: number;
   }): void {
     const previousFact = this.windowShapeFacts.get(input.windowInfo.id);
-    this.windowShapeFacts.set(input.windowInfo.id, {
+    this.mergeWindowFact(input.windowInfo.id, {
       windowId: input.windowInfo.id,
       tabOrder: input.tabOrder ?? previousFact?.tabOrder ?? [],
       ...(typeof input.activeTabId === "number"
@@ -377,7 +391,7 @@ export class RuntimeFactLedger {
         tabIndexByRuntimeId.set(tabId, index);
       }
       if (scope.lifecycle === "live") {
-        this.windowShapeFacts.set(scope.runtimeWindowId, {
+        this.mergeWindowFact(scope.runtimeWindowId, {
           windowId: scope.runtimeWindowId,
           tabOrder,
           ...(typeof scope.activeTabId === "number" ? { activeTabId: scope.activeTabId } : {}),
@@ -398,7 +412,7 @@ export class RuntimeFactLedger {
         this.tabShapeFacts.delete(node.live.tabId);
         continue;
       }
-      this.tabShapeFacts.set(node.live.tabId, {
+      this.mergeTabFact(node.live.tabId, {
         tabId: node.live.tabId,
         windowId: node.live.windowId,
         ...(tabIndexByRuntimeId.has(node.live.tabId) ? { index: tabIndexByRuntimeId.get(node.live.tabId)! } : {}),
@@ -678,7 +692,7 @@ export class RuntimeFactLedger {
     for (const tabId of tabOrder) {
       this.reconstructedLiveTabIds.add(tabId);
     }
-    this.windowShapeFacts.set(windowId, {
+    this.mergeWindowFact(windowId, {
       windowId,
       tabOrder,
       ...(typeof scope.activeTabId === "number" ? { activeTabId: scope.activeTabId } : {}),
@@ -702,7 +716,7 @@ export class RuntimeFactLedger {
         this.tabShapeFacts.delete(tabNode.live.tabId);
         continue;
       }
-      this.tabShapeFacts.set(tabNode.live.tabId, {
+      this.mergeTabFact(tabNode.live.tabId, {
         tabId: tabNode.live.tabId,
         windowId,
         ...(indexByRuntimeId.has(tabNode.live.tabId) ? { index: indexByRuntimeId.get(tabNode.live.tabId)! } : {}),
@@ -1156,14 +1170,14 @@ export class RuntimeFactLedger {
     }
     const windowFact = this.windowShapeFacts.get(windowId);
     if (windowFact) {
-      this.windowShapeFacts.set(windowId, {
+      this.mergeWindowFact(windowId, {
         ...windowFact,
         activeTabId: tabId
       });
     }
     const tabFact = this.tabShapeFacts.get(tabId);
     if (tabFact) {
-      this.tabShapeFacts.set(tabId, {
+      this.mergeTabFact(tabId, {
         ...tabFact,
         active: true
       });
@@ -1171,7 +1185,7 @@ export class RuntimeFactLedger {
     if (typeof previousTabId === "number") {
       const previousFact = this.tabShapeFacts.get(previousTabId);
       if (previousFact) {
-        this.tabShapeFacts.set(previousTabId, {
+        this.mergeTabFact(previousTabId, {
           ...previousFact,
           active: false
         });
@@ -1206,7 +1220,7 @@ export class RuntimeFactLedger {
       if (tab.active && typeof previousWindowFact?.activeTabId === "number" && previousWindowFact.activeTabId !== tab.id) {
         const previousActiveFact = this.tabShapeFacts.get(previousWindowFact.activeTabId);
         if (previousActiveFact?.windowId === tab.windowId) {
-          this.tabShapeFacts.set(previousWindowFact.activeTabId, {
+          this.mergeTabFact(previousWindowFact.activeTabId, {
             ...previousActiveFact,
             active: false,
             source: "tabEvent",
@@ -1217,7 +1231,7 @@ export class RuntimeFactLedger {
         }
       }
 
-      this.tabShapeFacts.set(tab.id, {
+      this.mergeTabFact(tab.id, {
         tabId: tab.id,
         windowId: tab.windowId,
         index: tab.index,
@@ -1231,7 +1245,7 @@ export class RuntimeFactLedger {
         sequence: update.sequence
       });
 
-      this.windowShapeFacts.set(tab.windowId, {
+      this.mergeWindowFact(tab.windowId, {
         windowId: tab.windowId,
         tabOrder: update.preserveOrder
           ? runtimeOrderPreservingExistingTab(previousOrder, tab.id)
@@ -1273,10 +1287,10 @@ export class RuntimeFactLedger {
         tabOrder: fact.tabOrder.filter((candidate) => candidate !== tabId)
       };
       delete nextFact.activeTabId;
-      this.windowShapeFacts.set(windowId, nextFact);
+      this.mergeWindowFact(windowId, nextFact);
       return;
     }
-    this.windowShapeFacts.set(windowId, {
+    this.mergeWindowFact(windowId, {
       ...fact,
       tabOrder: fact.tabOrder.filter((candidate) => candidate !== tabId)
     });
