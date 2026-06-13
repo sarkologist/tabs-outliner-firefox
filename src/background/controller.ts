@@ -11,6 +11,7 @@ import {
   type AutomaticBackupStatus
 } from "./backups.js";
 import { createBrowserAdapter } from "./browser-adapter.js";
+import { createSidebarBroadcaster } from "./sidebar-broadcaster.js";
 import { normalizeBrowserCreateUrl } from "./browser-create-url.js";
 import {
   preserveClosedSubtreesAcrossNonDestructiveTransition,
@@ -406,12 +407,15 @@ const BOOT_SNAPSHOT_WRITE_DELAY_MS = 10000;
 const SIDEBAR_PROFILE_COLLECTION_DELAY_MS = 50;
 const TOGGLE_SIDEBAR_COMMAND = "toggle-sidebar";
 const SIDEBAR_WINDOW_PATH = "sidebar/sidebar.html";
-const SIDEBAR_PORT_NAME = "tabs-outliner-sidebar";
 
 export function createBackgroundController(options: BackgroundControllerOptions): BackgroundController {
   const { api, now = Date.now } = options;
   const adapter = options.adapter ?? createBrowserAdapter(api);
   const perfTrace = createPerformanceTracer("background");
+  const sidebarBroadcaster = createSidebarBroadcaster({
+    perfTrace,
+    sendRuntimeMessage: (message) => api.runtime.sendMessage(message)
+  });
   const initialTreeSnapshotProjector = createInitialTreeSnapshotProjector({
     onProjectionBuilt: (detail) => {
       perfTrace.mark("background.projection.build", {
@@ -491,7 +495,6 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   let sidebarWindowCreationInFlight = 0;
   const fullSizeOutlinerWindowIds = new Set<number>();
   const pendingSidebarProfileCollections = new Map<string, PendingSidebarProfileCollection>();
-  const sidebarPorts = new Set<WebExtensionPort>();
 
   api.runtime.onInstalled.addListener(() => {
     return initializeExtensionLifecycle().catch((error) => {
@@ -529,7 +532,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
   api.runtime.onMessage.addListener((message) => handleMessage(message));
   api.runtime.onConnect?.addListener((port) => {
-    handleSidebarPortConnected(port);
+    sidebarBroadcaster.registerPort(port);
   });
 
   api.storage.onChanged.addListener((changes, areaName) => {
@@ -820,20 +823,10 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     );
   }
 
-  function handleSidebarPortConnected(port: WebExtensionPort): void {
-    if (port.name !== SIDEBAR_PORT_NAME) {
-      return;
-    }
-
-    sidebarPorts.add(port);
-    port.onDisconnect.addListener(() => {
-      sidebarPorts.delete(port);
-    });
-  }
 
   async function handleNonTraceMessage(message: unknown): Promise<unknown> {
     if (isSidebarNonEditInteractionMessage(message)) {
-      postSidebarMessage({ type: "sidebarNonEditInteraction" });
+      sidebarBroadcaster.post({ type: "sidebarNonEditInteraction" });
       return { ok: true };
     }
 
@@ -4980,7 +4973,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     if (!state) {
       return;
     }
-    await broadcastWithTrace({ type: "stateUpdated", state });
+    await sidebarBroadcaster.broadcast({ type: "stateUpdated", state });
     scheduleStateSave(state, saveSchedule);
   }
 
@@ -5121,22 +5114,22 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     if (updates.length === 0) {
       return;
     }
-    await broadcastWithTrace({ type: "activeStateUpdated", updates });
+    await sidebarBroadcaster.broadcast({ type: "activeStateUpdated", updates });
   }
 
   async function broadcastTreeStructureUpdate(update: TreeStructureUpdate): Promise<void> {
-    await broadcastWithTrace(update);
+    await sidebarBroadcaster.broadcast(update);
   }
 
   async function broadcastSameParentReorderUpdate(update: SameParentReorderUpdate): Promise<void> {
-    await broadcastWithTrace(update);
+    await sidebarBroadcaster.broadcast(update);
   }
 
   async function broadcastNodeStateUpdate(update: NodeStateUpdate): Promise<void> {
     if (update.updatedNodes.length === 0) {
       return;
     }
-    await broadcastWithTrace(update);
+    await sidebarBroadcaster.broadcast(update);
   }
 
   function candidateNodeIdsForPatch(update: TreeStructureUpdate | NodeStateUpdate): NodeId[] {
@@ -5150,7 +5143,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   }
 
   async function broadcastHistoryStatus(history: HistoryState): Promise<void> {
-    await broadcastWithTrace(historyStatusMessage(history));
+    await sidebarBroadcaster.broadcast(historyStatusMessage(history));
   }
 
   function broadcastHistoryStatusSoon(history: HistoryState): void {
@@ -5861,51 +5854,6 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     return saveInFlight;
   }
 
-  function broadcastWithTrace(message: { type: string } & Record<string, unknown>): void {
-    perfTrace.measure("background.runtime.broadcast", { type: message.type }, () => {
-      postSidebarMessage(message);
-    });
-  }
-
-  function postSidebarMessage(message: { type: string } & Record<string, unknown>): void {
-    if (sidebarPorts.size > 0) {
-      postMessageToSidebarPorts(message);
-      return;
-    }
-
-    postFallbackRuntimeMessage(message);
-  }
-
-  function postMessageToSidebarPorts(message: { type: string } & Record<string, unknown>): void {
-    for (const port of [...sidebarPorts]) {
-      try {
-        port.postMessage(message);
-      } catch (error) {
-        sidebarPorts.delete(port);
-        perfTrace.mark("background.runtime.port.post.error", {
-          type: message.type,
-          message: errorText(error)
-        });
-      }
-    }
-  }
-
-  function postFallbackRuntimeMessage(message: { type: string } & Record<string, unknown>): void {
-    try {
-      void api.runtime.sendMessage(message).catch((error) => {
-        perfTrace.mark("background.runtime.broadcast.error", {
-          type: message.type,
-          message: errorText(error)
-        });
-      });
-    } catch (error) {
-      perfTrace.mark("background.runtime.broadcast.error", {
-        type: message.type,
-        message: errorText(error)
-      });
-    }
-  }
-
   async function recordIncidentLog(event: string, detail: IncidentLogDetail = {}): Promise<void> {
     try {
       await appendIncidentLogEntry(api, event, detail, { now });
@@ -6071,7 +6019,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         seenSidebarIds: new Set()
       };
       pendingSidebarProfileCollections.set(requestId, collection);
-      postSidebarMessage({ type: "collectSidebarPerformanceTrace", requestId });
+      sidebarBroadcaster.post({ type: "collectSidebarPerformanceTrace", requestId });
     });
     return sidebars;
   }
@@ -6090,11 +6038,11 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   }
 
   function sendSidebarPerformanceTraceEnabled(enabled: boolean): void {
-    postSidebarMessage({ type: "setSidebarPerformanceTraceEnabled", enabled });
+    sidebarBroadcaster.post({ type: "setSidebarPerformanceTraceEnabled", enabled });
   }
 
   function clearSidebarPerformanceTrace(): void {
-    postSidebarMessage({ type: "clearSidebarPerformanceTrace" });
+    sidebarBroadcaster.post({ type: "clearSidebarPerformanceTrace" });
   }
 
   async function reconcileMissingLiveTabsInOpenWindows(): Promise<ReconciledStateChange | undefined> {
