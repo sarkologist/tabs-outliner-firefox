@@ -781,6 +781,191 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     );
   }
 
+  type CommandFinalizeContext = {
+    message: BackgroundCommand;
+    current: OutlineState;
+    next: OutlineState;
+    saveSchedule: SaveSchedule;
+    runtimeIndexCandidateNodeIds: NodeId[] | undefined;
+    deletePatchNodeIds: NodeId[] | undefined;
+    expandAncestorNodeIds: NodeId[] | undefined;
+    restorePatchNodeIds: NodeId[] | undefined;
+    recordedHistoryEntryId: string | undefined;
+  };
+
+  type CommandFinalizer = (ctx: CommandFinalizeContext) => Promise<void>;
+
+  // Per-command post-processing for the mutating-command hub. After runCommand succeeds and the
+  // state transition is installed, each command type chooses how to broadcast, persist, journal,
+  // and (on a journal skip) flush. These finalizers hold that per-command knowledge so the hub
+  // body stays uniform; the hub still calls commitCommandAck() once after the finalizer returns.
+  // They are behaviour-preserving extractions of the former per-message.type dispatch branches.
+  const finalizeKnownNodeStateJournal = async (
+    ctx: CommandFinalizeContext,
+    nodeIds: readonly NodeId[]
+  ): Promise<void> => {
+    await persistKnownNodeStateUpdates(ctx.current, ctx.next, nodeIds);
+    await appendCommandJournalForKnownNodeIds(ctx.next, nodeIds, ctx.message.type, ctx.recordedHistoryEntryId);
+  };
+
+  const finalizeBestEffort: CommandFinalizer = async ({
+    message,
+    current,
+    next,
+    saveSchedule,
+    runtimeIndexCandidateNodeIds,
+    recordedHistoryEntryId
+  }) => {
+    await persistWithBestEffortPatch(current, next, { saveSchedule });
+    // A bounded structural relocation/flatten (moveNodeToNewWindow, flattenSubtree) reaches
+    // this fallback but still creates command-window runtime provenance that must survive a
+    // restart before the deferred snapshot lands (I-1) -- journal it before the ack like the
+    // other structural blocks. Broad commands without candidate ids (importTree) have no
+    // cheap bounded delta here and stay deferred to slice 2's coalescer.
+    if (!(runtimeIndexCandidateNodeIds && await appendCommandJournal(current, next, runtimeIndexCandidateNodeIds, message.type, "command", recordedHistoryEntryId))) {
+      await flushRuntimeProvenanceSaveIfChanged(current, next, runtimeIndexCandidateNodeIds, {
+        allowDeferredPlacementCheckpoint: isStructuralCommand(message.type),
+        reason: message.type
+      });
+    }
+  };
+
+  const finalizeStructuralTreePatch: CommandFinalizer = async ({
+    message,
+    current,
+    next,
+    saveSchedule,
+    runtimeIndexCandidateNodeIds,
+    recordedHistoryEntryId
+  }) => {
+    const update = perfTrace.measure("background.patch.build.treeStructure", { command: message.type }, () =>
+      runtimeIndexCandidateNodeIds
+        ? treeStructureUpdateFromCandidateNodeIds(current, next, runtimeIndexCandidateNodeIds)
+        : treeStructureUpdateFromStateChange(current, next)
+    );
+    await broadcastTreeStructureUpdate(update);
+    scheduleStateSave(next, saveSchedule, runtimeIndexCandidateNodeIds);
+    if (!(await appendCommandJournal(current, next, runtimeIndexCandidateNodeIds, message.type, "command", recordedHistoryEntryId))) {
+      await flushRuntimeProvenanceSaveIfChanged(current, next, runtimeIndexCandidateNodeIds, {
+        allowDeferredPlacementCheckpoint: true,
+        reason: message.type
+      });
+    }
+  };
+
+  const finalizeRestoreNode: CommandFinalizer = async ({
+    message,
+    current,
+    next,
+    saveSchedule,
+    restorePatchNodeIds
+  }) => {
+    if (message.type !== "restoreNode") {
+      return;
+    }
+    const restoreTreePatchNodeIds = restoreTreeStructureCandidateNodeIdsForClosedParentSubgroupRestore(
+      current,
+      next,
+      restorePatchNodeIds ?? [message.nodeId]
+    );
+    if (restoreTreePatchNodeIds) {
+      const update = perfTrace.measure("background.patch.build.treeStructure", { command: message.type }, () =>
+        treeStructureUpdateFromCandidateNodeIds(current, next, restoreTreePatchNodeIds, {
+          includeUnchanged: true
+        })
+      );
+      await broadcastTreeStructureUpdate(update);
+      scheduleStateSave(next, saveSchedule, candidateNodeIdsForPatch(update));
+    } else {
+      await persistWithNodeStateUpdate(current, next, restorePatchNodeIds, { saveSchedule });
+    }
+    if (!(await appendCommandJournal(current, next, restoreTreePatchNodeIds ?? restorePatchNodeIds, message.type))) {
+      await flushRuntimeProvenanceSaveIfChanged(current, next, restoreTreePatchNodeIds);
+    }
+  };
+
+  const finalizeDeleteNode: CommandFinalizer = async ({
+    message,
+    current,
+    next,
+    saveSchedule,
+    deletePatchNodeIds,
+    recordedHistoryEntryId
+  }) => {
+    if (message.type !== "deleteNode") {
+      return;
+    }
+    const update = perfTrace.measure("background.patch.build.treeStructure", { command: message.type }, () =>
+      treeStructureUpdateFromCandidateNodeIds(current, next, deletePatchNodeIds ?? [message.nodeId])
+    );
+    await broadcastTreeStructureUpdate(update);
+    scheduleStateSave(next, saveSchedule, deletePatchNodeIds ?? [message.nodeId]);
+    if (!(await appendCommandJournal(current, next, deletePatchNodeIds ?? [message.nodeId], message.type, "command", recordedHistoryEntryId))) {
+      await flushRuntimeTruthSaveIfNeeded(current, next, deletePatchNodeIds ?? [message.nodeId]);
+    }
+  };
+
+  const finalizeRenameGroup: CommandFinalizer = async ({
+    message,
+    current,
+    next,
+    recordedHistoryEntryId
+  }) => {
+    if (message.type !== "renameGroup") {
+      return;
+    }
+    await persistKnownNodeStateUpdate(current, next, message.nodeId);
+    await appendCommandJournal(current, next, [message.nodeId], message.type, "command", recordedHistoryEntryId);
+  };
+
+  const finalizeToggleCollapsed: CommandFinalizer = async (ctx) => {
+    if (ctx.message.type !== "toggleCollapsed") {
+      return;
+    }
+    await finalizeKnownNodeStateJournal(ctx, [ctx.message.nodeId]);
+  };
+
+  const finalizeExpandAncestors: CommandFinalizer = async (ctx) => {
+    await finalizeKnownNodeStateJournal(ctx, ctx.expandAncestorNodeIds ?? []);
+  };
+
+  const finalizeMoveNode: CommandFinalizer = async (ctx) => {
+    const { message, current, next, saveSchedule, runtimeIndexCandidateNodeIds, recordedHistoryEntryId } = ctx;
+    if (message.type !== "moveNode") {
+      await finalizeBestEffort(ctx);
+      return;
+    }
+    const sameParentReorder = sameParentReorderUpdateForMoveCommand(current, next, message);
+    if (sameParentReorder) {
+      await broadcastSameParentReorderUpdate(sameParentReorder);
+      scheduleStateSave(next, saveSchedule, [sameParentReorder.parentId, sameParentReorder.movedNodeId]);
+      if (!(await appendCommandJournal(current, next, [sameParentReorder.parentId, sameParentReorder.movedNodeId], message.type, "command", recordedHistoryEntryId))) {
+        await flushRuntimeProvenanceSaveIfChanged(current, next, [sameParentReorder.parentId, sameParentReorder.movedNodeId], {
+          allowDeferredPlacementCheckpoint: true,
+          reason: message.type
+        });
+      }
+      return;
+    }
+    if (runtimeIndexCandidateNodeIds) {
+      await finalizeStructuralTreePatch(ctx);
+      return;
+    }
+    await finalizeBestEffort(ctx);
+  };
+
+  const commandFinalizers: Partial<Record<BackgroundCommand["type"], CommandFinalizer>> = {
+    restoreNode: finalizeRestoreNode,
+    deleteNode: finalizeDeleteNode,
+    wrapNodeInGroup: finalizeStructuralTreePatch,
+    moveSubtreeToTopLevel: finalizeStructuralTreePatch,
+    moveSubtreeToBottomTopLevel: finalizeStructuralTreePatch,
+    promoteChildren: finalizeStructuralTreePatch,
+    renameGroup: finalizeRenameGroup,
+    toggleCollapsed: finalizeToggleCollapsed,
+    expandAncestors: finalizeExpandAncestors,
+    moveNode: finalizeMoveNode
+  };
 
   async function handleNonTraceMessage(message: unknown): Promise<unknown> {
     if (isSidebarNonEditInteractionMessage(message)) {
@@ -1081,115 +1266,18 @@ export function createBackgroundController(options: BackgroundControllerOptions)
           saveSchedule
         });
       }
-      if (message.type === "restoreNode") {
-        const restoreTreePatchNodeIds = restoreTreeStructureCandidateNodeIdsForClosedParentSubgroupRestore(
-          current,
-          result.state,
-          restorePatchNodeIds ?? [message.nodeId]
-        );
-        if (restoreTreePatchNodeIds) {
-          const update = perfTrace.measure("background.patch.build.treeStructure", { command: message.type }, () =>
-            treeStructureUpdateFromCandidateNodeIds(current, result.state, restoreTreePatchNodeIds, {
-              includeUnchanged: true
-            })
-          );
-          await broadcastTreeStructureUpdate(update);
-          scheduleStateSave(result.state, saveSchedule, candidateNodeIdsForPatch(update));
-        } else {
-          await persistWithNodeStateUpdate(current, result.state, restorePatchNodeIds, { saveSchedule });
-        }
-        if (!(await appendCommandJournal(current, result.state, restoreTreePatchNodeIds ?? restorePatchNodeIds, message.type))) {
-          await flushRuntimeProvenanceSaveIfChanged(current, result.state, restoreTreePatchNodeIds);
-        }
-        return commitCommandAck();
-      }
-      if (message.type === "deleteNode") {
-        const update = perfTrace.measure("background.patch.build.treeStructure", { command: message.type }, () =>
-          treeStructureUpdateFromCandidateNodeIds(current, result.state, deletePatchNodeIds ?? [message.nodeId])
-        );
-        await broadcastTreeStructureUpdate(update);
-        scheduleStateSave(result.state, saveSchedule, deletePatchNodeIds ?? [message.nodeId]);
-        if (!(await appendCommandJournal(current, result.state, deletePatchNodeIds ?? [message.nodeId], message.type, "command", recordedHistoryEntryId))) {
-          await flushRuntimeTruthSaveIfNeeded(current, result.state, deletePatchNodeIds ?? [message.nodeId]);
-        }
-        return commitCommandAck();
-      }
-      if (
-        message.type === "wrapNodeInGroup" ||
-        message.type === "moveSubtreeToTopLevel" ||
-        message.type === "moveSubtreeToBottomTopLevel" ||
-        message.type === "promoteChildren"
-      ) {
-        const update = perfTrace.measure("background.patch.build.treeStructure", { command: message.type }, () =>
-          runtimeIndexCandidateNodeIds
-            ? treeStructureUpdateFromCandidateNodeIds(current, result.state, runtimeIndexCandidateNodeIds)
-            : treeStructureUpdateFromStateChange(current, result.state)
-        );
-        await broadcastTreeStructureUpdate(update);
-        scheduleStateSave(result.state, saveSchedule, runtimeIndexCandidateNodeIds);
-        if (!(await appendCommandJournal(current, result.state, runtimeIndexCandidateNodeIds, message.type, "command", recordedHistoryEntryId))) {
-          await flushRuntimeProvenanceSaveIfChanged(current, result.state, runtimeIndexCandidateNodeIds, {
-            allowDeferredPlacementCheckpoint: true,
-            reason: message.type
-          });
-        }
-        return commitCommandAck();
-      }
-      if (message.type === "renameGroup") {
-        await persistKnownNodeStateUpdate(current, result.state, message.nodeId);
-        await appendCommandJournal(current, result.state, [message.nodeId], message.type, "command", recordedHistoryEntryId);
-        return commitCommandAck();
-      }
-      if (message.type === "toggleCollapsed") {
-        await persistKnownNodeStateUpdate(current, result.state, message.nodeId);
-        await appendCommandJournalForKnownNodeIds(result.state, [message.nodeId], message.type, recordedHistoryEntryId);
-        return commitCommandAck();
-      }
-      if (message.type === "expandAncestors") {
-        await persistKnownNodeStateUpdates(current, result.state, expandAncestorNodeIds ?? []);
-        await appendCommandJournalForKnownNodeIds(result.state, expandAncestorNodeIds ?? [], message.type, recordedHistoryEntryId);
-        return commitCommandAck();
-      }
-      if (message.type === "moveNode") {
-        const sameParentReorder = sameParentReorderUpdateForMoveCommand(current, result.state, message);
-        if (sameParentReorder) {
-          await broadcastSameParentReorderUpdate(sameParentReorder);
-          scheduleStateSave(result.state, saveSchedule, [sameParentReorder.parentId, sameParentReorder.movedNodeId]);
-          if (!(await appendCommandJournal(current, result.state, [sameParentReorder.parentId, sameParentReorder.movedNodeId], message.type, "command", recordedHistoryEntryId))) {
-            await flushRuntimeProvenanceSaveIfChanged(current, result.state, [sameParentReorder.parentId, sameParentReorder.movedNodeId], {
-              allowDeferredPlacementCheckpoint: true,
-              reason: message.type
-            });
-          }
-          return commitCommandAck();
-        }
-        if (runtimeIndexCandidateNodeIds) {
-          const update = perfTrace.measure("background.patch.build.treeStructure", { command: message.type }, () =>
-            treeStructureUpdateFromCandidateNodeIds(current, result.state, runtimeIndexCandidateNodeIds)
-          );
-          await broadcastTreeStructureUpdate(update);
-          scheduleStateSave(result.state, saveSchedule, runtimeIndexCandidateNodeIds);
-          if (!(await appendCommandJournal(current, result.state, runtimeIndexCandidateNodeIds, message.type, "command", recordedHistoryEntryId))) {
-            await flushRuntimeProvenanceSaveIfChanged(current, result.state, runtimeIndexCandidateNodeIds, {
-              allowDeferredPlacementCheckpoint: true,
-              reason: message.type
-            });
-          }
-          return commitCommandAck();
-        }
-      }
-      await persistWithBestEffortPatch(current, result.state, { saveSchedule });
-      // A bounded structural relocation/flatten (moveNodeToNewWindow, flattenSubtree) reaches
-      // this fallback but still creates command-window runtime provenance that must survive a
-      // restart before the deferred snapshot lands (I-1) -- journal it before the ack like the
-      // other structural blocks. Broad commands without candidate ids (importTree) have no
-      // cheap bounded delta here and stay deferred to slice 2's coalescer.
-      if (!(runtimeIndexCandidateNodeIds && await appendCommandJournal(current, result.state, runtimeIndexCandidateNodeIds, message.type, "command", recordedHistoryEntryId))) {
-        await flushRuntimeProvenanceSaveIfChanged(current, result.state, runtimeIndexCandidateNodeIds, {
-          allowDeferredPlacementCheckpoint: isStructuralCommand(message.type),
-          reason: message.type
-        });
-      }
+      const finalize = commandFinalizers[message.type] ?? finalizeBestEffort;
+      await finalize({
+        message,
+        current,
+        next: result.state,
+        saveSchedule,
+        runtimeIndexCandidateNodeIds,
+        deletePatchNodeIds,
+        expandAncestorNodeIds,
+        restorePatchNodeIds,
+        recordedHistoryEntryId
+      });
       return commitCommandAck();
     }, { reason: "command", command: message.type });
   }
