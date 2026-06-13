@@ -127,3 +127,7 @@ export function nodeIsReachableFromRoot(state: OutlineState, nodeId: NodeId): bo
   }
   return false;
 }
+
+export function uniqueDefinedNodeIds(nodeIds: Array<NodeId | undefined>): NodeId[] {
+  return [...new Set(nodeIds.filter((nodeId): nodeId is NodeId => Boolean(nodeId)))];
+}
