@@ -57,6 +57,13 @@ export type DeleteTreeStructurePatch = {
 
 export type InsertTreeStructurePatch = DeleteTreeStructurePatch;
 
+// A delete delta whose nodes are already gone from local state has nothing left to apply -- it is the
+// echo of an optimistically-applied delete (or a duplicated broadcast). Re-running the delete patch
+// would decrement node/closed counts a second time, so callers detect and skip it before mutating.
+export function isAlreadyAppliedDeletePatch(state: OutlineState, deletedNodeIds: readonly NodeId[]): boolean {
+  return deletedNodeIds.length > 0 && deletedNodeIds.every((nodeId) => !state.nodes[nodeId]);
+}
+
 type OutlineOrderEntry = {
   nodeId: NodeId;
   depth: number;

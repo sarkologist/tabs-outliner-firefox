@@ -9,6 +9,7 @@ import {
   applySameParentReorderTreeStructurePatchToProjection,
   buildVisibleTreeProjection,
   calculateVirtualRange,
+  isAlreadyAppliedDeletePatch,
   refreshVisibleRowStructure,
   sameParentReorderTreeStructurePatchInfo,
   type VisibleTreeProjection
@@ -620,6 +621,52 @@ describe("visible tree projection", () => {
       runGeneratedPatchEquivalenceTrace(seed, config.steps);
     }
   }, generatedTraceTimeoutMs(10_000, 120_000));
+});
+
+describe("isAlreadyAppliedDeletePatch", () => {
+  it("recognises a delete already reflected in state so the broadcast echo can be skipped", () => {
+    const state = outlineState([
+      windowNode("window:1", ["tab:1", "tab:2"], { active: true }),
+      tabNode("tab:1", "window:1", "One", [], { active: true }),
+      tabNode("tab:2", "window:1", "Two")
+    ]);
+    const projection = buildVisibleTreeProjection(state, "");
+    expect(projection.nodeCount).toBe(3);
+
+    const next = outlineState([
+      windowNode("window:1", ["tab:1"], { active: true }),
+      tabNode("tab:1", "window:1", "One", [], { active: true })
+    ]);
+    const deletePatch = {
+      deletedNodeIds: ["tab:2"],
+      updatedNodes: [next.nodes["window:1"]!],
+      rootIds: ["window:1"],
+      deletedClosedCount: 0
+    };
+
+    // Before the delete is applied, the node is still present -> the patch must run.
+    expect(isAlreadyAppliedDeletePatch(state, deletePatch.deletedNodeIds)).toBe(false);
+    expect(applyDeleteTreeStructurePatchToProjection(next, projection, deletePatch)).toBe(true);
+    expect(projection.nodeCount).toBe(2);
+
+    // The optimistic-delete echo carries the same delta after the node is gone. The guard flags it,
+    // so the sidebar skips re-applying it -- re-applying would double-decrement the counts below.
+    expect(isAlreadyAppliedDeletePatch(next, deletePatch.deletedNodeIds)).toBe(true);
+    applyDeleteTreeStructurePatchToProjection(next, projection, deletePatch);
+    expect(projection.nodeCount).toBeLessThan(2);
+  });
+
+  it("only flags deltas whose every deleted node is absent", () => {
+    const state = outlineState([
+      windowNode("window:1", ["tab:1"], { active: true }),
+      tabNode("tab:1", "window:1", "One", [], { active: true })
+    ]);
+
+    expect(isAlreadyAppliedDeletePatch(state, [])).toBe(false);
+    expect(isAlreadyAppliedDeletePatch(state, ["tab:1"])).toBe(false);
+    expect(isAlreadyAppliedDeletePatch(state, ["tab:1", "tab:404"])).toBe(false);
+    expect(isAlreadyAppliedDeletePatch(state, ["tab:404"])).toBe(true);
+  });
 });
 
 type GeneratedPatchOperation = {
