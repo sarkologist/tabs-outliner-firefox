@@ -13,6 +13,11 @@ import {
 import { createBrowserAdapter } from "./browser-adapter.js";
 import { createSidebarBroadcaster } from "./sidebar-broadcaster.js";
 import { createMutationScheduler } from "./mutation-scheduler.js";
+import {
+  outlineStateCountDetail,
+  emptyOutlineStateCountDetail,
+  outlineStateCountDeltaDetail
+} from "./outline-state-metrics.js";
 import { normalizeBrowserCreateUrl } from "./browser-create-url.js";
 import {
   preserveClosedSubtreesAcrossNonDestructiveTransition,
@@ -5716,71 +5721,6 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         message: errorText(error)
       });
     }
-  }
-
-  type OutlineStateCountDetail = {
-    nodeCount: number;
-    closedCount: number;
-    rootCount: number;
-    windowCount: number;
-    tabCount: number;
-  };
-
-  function outlineStateCountDetail(source: OutlineState): OutlineStateCountDetail {
-    let nodeCount = 0;
-    let closedCount = 0;
-    let windowCount = 0;
-    let tabCount = 0;
-    for (const nodeId in source.nodes) {
-      const node = source.nodes[nodeId];
-      if (!node) {
-        continue;
-      }
-      nodeCount += 1;
-      if (node.kind === "window") {
-        windowCount += 1;
-      } else if (node.kind === "tab") {
-        tabCount += 1;
-      }
-      if (node.status === "closed") {
-        closedCount += 1;
-      }
-    }
-    return {
-      nodeCount,
-      closedCount,
-      rootCount: source.rootIds.length,
-      windowCount,
-      tabCount
-    };
-  }
-
-  function emptyOutlineStateCountDetail(): OutlineStateCountDetail {
-    return {
-      nodeCount: 0,
-      closedCount: 0,
-      rootCount: 0,
-      windowCount: 0,
-      tabCount: 0
-    };
-  }
-
-  function outlineStateCountDeltaDetail(
-    previous: OutlineStateCountDetail,
-    next: OutlineStateCountDetail
-  ): IncidentLogDetail {
-    return {
-      previousNodeCount: previous.nodeCount,
-      nodeCountDelta: next.nodeCount - previous.nodeCount,
-      previousClosedCount: previous.closedCount,
-      closedCountDelta: next.closedCount - previous.closedCount,
-      previousRootCount: previous.rootCount,
-      rootCountDelta: next.rootCount - previous.rootCount,
-      previousWindowCount: previous.windowCount,
-      windowCountDelta: next.windowCount - previous.windowCount,
-      previousTabCount: previous.tabCount,
-      tabCountDelta: next.tabCount - previous.tabCount
-    };
   }
 
   function getDiagnosticsCoalesced(): Promise<OutlineDiagnostics> {
