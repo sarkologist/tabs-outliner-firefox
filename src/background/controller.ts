@@ -12,6 +12,7 @@ import {
 } from "./backups.js";
 import { createBrowserAdapter } from "./browser-adapter.js";
 import { createSidebarBroadcaster } from "./sidebar-broadcaster.js";
+import { createMutationScheduler } from "./mutation-scheduler.js";
 import { normalizeBrowserCreateUrl } from "./browser-create-url.js";
 import {
   preserveClosedSubtreesAcrossNonDestructiveTransition,
@@ -294,17 +295,6 @@ type RuntimeLifecycleJournalEntryRecovery = {
 type NativeTabCloseJournalEntry = Extract<RuntimeLifecycleJournalEntry, { kind: "nativeTabClose" }>;
 type NativeWindowCloseJournalEntry = Extract<RuntimeLifecycleJournalEntry, { kind: "nativeWindowClose" }>;
 
-type MutationPriority = "high" | "low";
-
-type ScheduledMutation<T = unknown> = {
-  operation: () => Promise<T>;
-  detail: TraceDetail | undefined;
-  priority: MutationPriority;
-  queuedAt: number;
-  resolve: (value: T) => void;
-  reject: (error: unknown) => void;
-};
-
 type ReconciledStateChange = {
   previous: OutlineState;
   next: OutlineState;
@@ -441,13 +431,6 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   let historyWarmupTimer: ReturnType<typeof setTimeout> | undefined;
   let preferences: AppPreferences | undefined;
   let runtimeIndex: RuntimeStateIndex | undefined;
-  const highPriorityMutations: ScheduledMutation[] = [];
-  const lowPriorityMutations: ScheduledMutation[] = [];
-  const schedulerIdleResolvers: Array<() => void> = [];
-  const highPrioritySchedulerIdleResolvers: Array<() => void> = [];
-  let schedulerRunning = false;
-  let schedulerDrainQueued = false;
-  let runningMutationPriority: MutationPriority | undefined;
   const stateCache = createStateCache(initializeState);
   let sessionChangedQueued = false;
   let pendingSessionChangedCount = 0;
@@ -495,6 +478,12 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   let sidebarWindowCreationInFlight = 0;
   const fullSizeOutlinerWindowIds = new Set<number>();
   const pendingSidebarProfileCollections = new Map<string, PendingSidebarProfileCollection>();
+
+  const mutationScheduler = createMutationScheduler({
+    perfTrace,
+    hasPendingRuntimeRefresh: () => pendingRuntimeRefresh !== undefined
+  });
+  const { enqueueMutation, waitForSchedulerIdle, waitForHighPrioritySchedulerIdle } = mutationScheduler;
 
   api.runtime.onInstalled.addListener(() => {
     return initializeExtensionLifecycle().catch((error) => {
@@ -4831,142 +4820,6 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       await broadcastActiveStateUpdate(focus.updates);
       return true;
     }, { reason: "commandWindowFocus" });
-  }
-
-  function enqueueMutation<T>(
-    operation: () => Promise<T>,
-    detail?: TraceDetail,
-    options: { priority?: MutationPriority } = {}
-  ): Promise<T> {
-    const priority = options.priority ?? "high";
-    const queuedAt = performance.now();
-    const mutationDetail = detail ? { ...detail } : undefined;
-    const promise = new Promise<T>((resolve, reject) => {
-      const mutation: ScheduledMutation<T> = {
-        operation,
-        detail: mutationDetail,
-        priority,
-        queuedAt,
-        resolve,
-        reject
-      };
-      if (priority === "high") {
-        highPriorityMutations.push(mutation as ScheduledMutation);
-      } else {
-        lowPriorityMutations.push(mutation as ScheduledMutation);
-      }
-      scheduleMutationDrain();
-    });
-    return promise;
-  }
-
-  function scheduleMutationDrain(): void {
-    if (schedulerRunning || schedulerDrainQueued) {
-      return;
-    }
-    schedulerDrainQueued = true;
-    void Promise.resolve().then(runScheduledMutations);
-  }
-
-  async function runScheduledMutations(): Promise<void> {
-    if (schedulerRunning) {
-      schedulerDrainQueued = false;
-      return;
-    }
-
-    schedulerDrainQueued = false;
-    schedulerRunning = true;
-    try {
-      for (;;) {
-        const mutation = highPriorityMutations.shift() ?? lowPriorityMutations.shift();
-        if (!mutation) {
-          return;
-        }
-        await runScheduledMutation(mutation);
-      }
-    } finally {
-      schedulerRunning = false;
-      if (highPriorityMutations.length > 0 || lowPriorityMutations.length > 0) {
-        scheduleMutationDrain();
-      } else {
-        notifySchedulerIdleIfNeeded();
-      }
-    }
-  }
-
-  async function runScheduledMutation(mutation: ScheduledMutation): Promise<void> {
-    const mutationDetail = {
-      ...mutation.detail,
-      priority: mutation.priority
-    };
-    perfTrace.mark("background.mutation.start", {
-      ...mutationDetail,
-      waitMs: Math.round(performance.now() - mutation.queuedAt)
-    });
-    runningMutationPriority = mutation.priority;
-    try {
-      const result = await perfTrace.measureAsync("background.mutation.run", mutationDetail, mutation.operation);
-      mutation.resolve(result);
-    } catch (error) {
-      mutation.reject(error);
-    } finally {
-      runningMutationPriority = undefined;
-      notifyHighPrioritySchedulerIdleIfNeeded();
-    }
-  }
-
-  function waitForSchedulerIdle(): Promise<void> {
-    if (isSchedulerIdle()) {
-      return Promise.resolve();
-    }
-
-    return new Promise((resolve) => {
-      schedulerIdleResolvers.push(resolve);
-    });
-  }
-
-  function waitForHighPrioritySchedulerIdle(): Promise<void> {
-    if (isHighPrioritySchedulerIdle()) {
-      return Promise.resolve();
-    }
-
-    return new Promise((resolve) => {
-      highPrioritySchedulerIdleResolvers.push(resolve);
-    });
-  }
-
-  function isSchedulerIdle(): boolean {
-    return !schedulerRunning &&
-      !schedulerDrainQueued &&
-      highPriorityMutations.length === 0 &&
-      lowPriorityMutations.length === 0 &&
-      !pendingRuntimeRefresh;
-  }
-
-  function isHighPrioritySchedulerIdle(): boolean {
-    return runningMutationPriority !== "high" && highPriorityMutations.length === 0;
-  }
-
-  function notifySchedulerIdleIfNeeded(): void {
-    if (!isSchedulerIdle() || schedulerIdleResolvers.length === 0) {
-      return;
-    }
-
-    const resolvers = schedulerIdleResolvers.splice(0);
-    for (const resolve of resolvers) {
-      resolve();
-    }
-  }
-
-  function notifyHighPrioritySchedulerIdleIfNeeded(): void {
-    if (!isHighPrioritySchedulerIdle() || highPrioritySchedulerIdleResolvers.length === 0) {
-      return;
-    }
-
-    const resolvers = highPrioritySchedulerIdleResolvers.splice(0);
-    for (const resolve of resolvers) {
-      resolve();
-    }
   }
 
   async function persistAndBroadcast(saveSchedule: SaveSchedule = "normal"): Promise<void> {
