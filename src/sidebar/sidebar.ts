@@ -1,5 +1,4 @@
 import type { BackgroundCommand } from "../background/commands.js";
-import type { OutlineDiagnostics } from "../background/diagnostics.js";
 import type { HistoryStatus } from "../background/history.js";
 import {
   INITIAL_TREE_SNAPSHOT_ROW_LIMIT,
@@ -29,7 +28,7 @@ import {
   scrollActiveTabIntoView,
   type ActiveTabScrollProjection
 } from "./active-scroll.js";
-import { createDiagnosticsScheduler } from "./diagnostics-scheduler.js";
+import { createDiagnosticsNotice } from "./diagnostics-notice.js";
 import {
   cutSubtreeRowRange,
   isRowInCutSubtree,
@@ -139,8 +138,6 @@ let currentZoom = DEFAULT_ZOOM;
 let appPreferences: AppPreferences = DEFAULT_APP_PREFERENCES;
 let wheelZoomDelta = 0;
 let currentSearchQuery = "";
-let diagnosticsNoticeUntil = 0;
-let diagnosticsNoticeTimer: number | undefined;
 let activeRename: RenameSession | undefined;
 let currentProjection: VisibleTreeProjection | undefined;
 let currentProjectionCoverage: SidebarProjectionCoverage | undefined;
@@ -211,9 +208,6 @@ let pendingRememberAcceptedRenderedProjectionTimer: number | undefined;
 let currentProjectionOwner: ProjectionOwner = { kind: "outline", query: "", revision: projectionOwnerRevision };
 
 const WHEEL_ZOOM_THRESHOLD_PX = 80;
-const DIAGNOSTICS_NOTICE_MS = 4000;
-const DIAGNOSTICS_REFRESH_DELAY_MS = 750;
-const DIAGNOSTICS_AFTER_NON_EDIT_INPUT_DELAY_MS = 1500;
 const FULL_STATE_HYDRATION_DELAY_MS = 750;
 const HOVER_MISSING_COVERAGE_HYDRATION_DELAY_MS = 150;
 const HYDRATION_AFTER_NON_EDIT_INPUT_DELAY_MS = 1000;
@@ -409,16 +403,13 @@ dropGuideLayer.className = "drop-guide-layer";
 dropGuideLayer.dataset.testid = "drop-guide-layer";
 dropGuideLayer.setAttribute("aria-hidden", "true");
 
-const diagnosticsScheduler = createDiagnosticsScheduler(loadDiagnostics, {
-  clock: {
-    setTimeout: (callback, delayMs) => window.setTimeout(callback, delayMs),
-    clearTimeout: (timerId) => window.clearTimeout(timerId)
-  },
-  delayMs: DIAGNOSTICS_REFRESH_DELAY_MS,
-  defer: diagnosticsNonEditInteractionDeferralMs
-});
 const perfTrace = createPerformanceTracer("sidebar", {
   enabled: storedProfileEnabled()
+});
+const diagnosticsNotice = createDiagnosticsNotice({
+  diagnostics,
+  perfTrace,
+  getLastNonEditInteractionAt: () => lastNonEditInteractionAt
 });
 
 installProfileConsole();
@@ -443,7 +434,7 @@ refresh?.addEventListener("click", () => {
 
 openOptions?.addEventListener("click", () => {
   void browser.runtime.openOptionsPage().catch(() => {
-    showDiagnosticsNotice("Options unavailable", { error: true });
+    diagnosticsNotice.show("Options unavailable", { error: true });
   });
 });
 
@@ -546,7 +537,7 @@ function handleBackgroundMessage(message: unknown): unknown {
       currentProjectionCoverage = undefined;
       invalidateSidebarWindowActiveTabTargets();
       render();
-      scheduleDiagnosticsLoad();
+      diagnosticsNotice.scheduleLoad();
       return;
     }
     if (isActiveStateUpdated(message)) {
@@ -555,17 +546,17 @@ function handleBackgroundMessage(message: unknown): unknown {
     }
     if (isNodeStateUpdated(message)) {
       applyNodeStateUpdate(message);
-      scheduleDiagnosticsLoad();
+      diagnosticsNotice.scheduleLoad();
       return;
     }
     if (isTreeStructureUpdated(message)) {
       applyTreeStructureUpdate(message);
-      scheduleDiagnosticsLoad();
+      diagnosticsNotice.scheduleLoad();
       return;
     }
     if (isSameParentReorderUpdated(message)) {
       applySameParentReorderUpdate(message);
-      scheduleDiagnosticsLoad();
+      diagnosticsNotice.scheduleLoad();
       return;
     }
     if (isHistoryStatus(message)) {
@@ -586,14 +577,14 @@ async function loadState(): Promise<void> {
         return;
       }
       applyInitialTreeSnapshot(bootSnapshot);
-      scheduleDiagnosticsLoad();
+      diagnosticsNotice.scheduleLoad();
       return;
     }
 
     const initial = await sendCommand({ type: "getInitialTreeSnapshot" });
     if (isInitialTreeSnapshot(initial) && shouldUseInitialTreeSnapshot(initial)) {
       applyInitialTreeSnapshot(initial);
-      scheduleDiagnosticsLoad();
+      diagnosticsNotice.scheduleLoad();
       return;
     }
 
@@ -638,7 +629,7 @@ async function hydrateFullState(): Promise<void> {
       updateHydrationControls();
       render();
       performance.mark("tabs-outliner.sidebar.hydration.complete");
-      scheduleDiagnosticsLoad();
+      diagnosticsNotice.scheduleLoad();
     });
   } catch (error) {
     hydratingFullState = false;
@@ -1533,7 +1524,7 @@ function registerSearchControls(): void {
 function registerPortableTreeControls(): void {
   exportTree?.addEventListener("click", () => {
     if (!currentState) {
-      showDiagnosticsNotice("Export unavailable until the tree loads", { error: true });
+      diagnosticsNotice.show("Export unavailable until the tree loads", { error: true });
       return;
     }
     void exportCurrentTree();
@@ -1541,7 +1532,7 @@ function registerPortableTreeControls(): void {
 
   importTree?.addEventListener("click", () => {
     if (!currentState) {
-      showDiagnosticsNotice("Import unavailable until the tree loads", { error: true });
+      diagnosticsNotice.show("Import unavailable until the tree loads", { error: true });
       return;
     }
     importTreeFile?.click();
@@ -1741,7 +1732,7 @@ function isEditableHistoryShortcutTarget(target: EventTarget | null): boolean {
 
 async function exportCurrentTree(): Promise<void> {
   if (!currentState) {
-    showDiagnosticsNotice("Export unavailable until loaded", { error: true });
+    diagnosticsNotice.show("Export unavailable until loaded", { error: true });
     return;
   }
 
@@ -1763,15 +1754,15 @@ async function exportCurrentTree(): Promise<void> {
     link.click();
     link.remove();
     window.setTimeout(() => URL.revokeObjectURL(url), 0);
-    showDiagnosticsNotice("Exported tree");
+    diagnosticsNotice.show("Exported tree");
   } catch (error) {
-    showDiagnosticsNotice(commandErrorText(error), { error: true });
+    diagnosticsNotice.show(commandErrorText(error), { error: true });
   }
 }
 
 async function importSelectedTreeFile(): Promise<void> {
   if (!currentState) {
-    showDiagnosticsNotice("Import unavailable until loaded", { error: true });
+    diagnosticsNotice.show("Import unavailable until loaded", { error: true });
     return;
   }
 
@@ -1783,9 +1774,9 @@ async function importSelectedTreeFile(): Promise<void> {
   try {
     const payload = JSON.parse(await file.text()) as unknown;
     await runAndRender({ type: "importTree", tree: payload });
-    showDiagnosticsNotice("Imported tree; saving in background");
+    diagnosticsNotice.show("Imported tree; saving in background");
   } catch (error) {
-    showDiagnosticsNotice(importErrorText(error), { error: true });
+    diagnosticsNotice.show(importErrorText(error), { error: true });
   } finally {
     if (importTreeFile) {
       importTreeFile.value = "";
@@ -2028,7 +2019,7 @@ async function loadRemoteSearchProjection(
       ) {
         return;
       }
-      showDiagnosticsNotice(commandErrorText(error), { error: true });
+      diagnosticsNotice.show(commandErrorText(error), { error: true });
     }
   }
 }
@@ -2093,7 +2084,7 @@ async function loadRemoteShowInTreeProjection(nodeId: NodeId): Promise<void> {
       if (!currentSearchQuery.trim() && restoreLastOutlineProjectionAfterRemoteFailure()) {
         return;
       }
-      showDiagnosticsNotice(commandErrorText(error), { error: true });
+      diagnosticsNotice.show(commandErrorText(error), { error: true });
     }
   }
 }
@@ -4339,7 +4330,7 @@ function handleTreeClick(event: MouseEvent): void {
     nodeStatus: node.status
   });
   if (!canRunHydratingRowAction(action, node)) {
-    showDiagnosticsNotice("Tree is still loading", { error: true });
+    diagnosticsNotice.show("Tree is still loading", { error: true });
     return;
   }
   releasePointerActionFocus(button, event);
@@ -4577,7 +4568,7 @@ function handleTreeKeydown(event: KeyboardEvent): void {
     event.stopPropagation();
     const shortcutNode = currentState?.nodes[shortcutNodeId];
     if (!shortcutNode || !canRunHydratingRowAction(shortcutAction, shortcutNode)) {
-      showDiagnosticsNotice("Tree is still loading", { error: true });
+      diagnosticsNotice.show("Tree is still loading", { error: true });
       return;
     }
     if (shortcutAction === "cut") {
@@ -4748,7 +4739,7 @@ function cutNodeForPaste(nodeId: NodeId): void {
   if (hydratingFullState && currentProjection && isSparseInitialProjection(currentProjection)) {
     scheduleFullStateHydration(0);
   }
-  showDiagnosticsNotice("Cut subtree");
+  diagnosticsNotice.show("Cut subtree");
   renderAfterLocalRowEdit();
 }
 
@@ -4756,7 +4747,7 @@ async function pasteCutAfter(targetNodeId: NodeId): Promise<void> {
   const state = currentState;
   const command = state ? pasteAfterCommand(state, pendingCutNodeId, targetNodeId) : undefined;
   if (!command) {
-    showDiagnosticsNotice("Cannot paste there", { error: true });
+    diagnosticsNotice.show("Cannot paste there", { error: true });
     return;
   }
 
@@ -4766,7 +4757,7 @@ async function pasteCutAfter(targetNodeId: NodeId): Promise<void> {
   }
 
   pendingCutNodeId = undefined;
-  showDiagnosticsNotice("Pasted subtree");
+  diagnosticsNotice.show("Pasted subtree");
   render();
 }
 
@@ -5159,7 +5150,7 @@ async function restoreNodeWithConfirmation(nodeId: NodeId): Promise<void> {
   try {
     scope = await restoreScopeForNode(state, nodeId);
   } catch (error) {
-    showDiagnosticsNotice(commandErrorText(error), { error: true });
+    diagnosticsNotice.show(commandErrorText(error), { error: true });
     return;
   }
   const locallyKnownScopeNodeIds = new Set<NodeId>(
@@ -5266,12 +5257,12 @@ async function runAndRender(command: BackgroundCommand): Promise<boolean> {
       currentProjectionCoverage = undefined;
       invalidateSidebarWindowActiveTabTargets();
       render();
-      scheduleDiagnosticsLoad();
+      diagnosticsNotice.scheduleLoad();
       return true;
     }
     return true;
   } catch (error) {
-    showDiagnosticsNotice(commandErrorText(error), { error: true });
+    diagnosticsNotice.show(commandErrorText(error), { error: true });
     return false;
   }
 }
@@ -5280,7 +5271,7 @@ async function openFullSizeSidebarWindow(): Promise<void> {
   try {
     await sendCommand({ type: "openSidebarWindow" });
   } catch (error) {
-    showDiagnosticsNotice(commandErrorText(error), { error: true });
+    diagnosticsNotice.show(commandErrorText(error), { error: true });
   }
 }
 
@@ -5316,82 +5307,5 @@ function showLoadError(error: unknown): void {
   if (diagnostics) {
     diagnostics.textContent = "reload or inspect errors";
   }
-}
-
-function showDiagnosticsNotice(message: string, options: { error?: boolean } = {}): void {
-  if (!diagnostics) {
-    return;
-  }
-
-  diagnosticsNoticeUntil = Date.now() + DIAGNOSTICS_NOTICE_MS;
-  diagnostics.textContent = message;
-  diagnostics.title = message;
-  diagnostics.classList.toggle("is-error", Boolean(options.error));
-
-  if (diagnosticsNoticeTimer) {
-    window.clearTimeout(diagnosticsNoticeTimer);
-  }
-
-  diagnosticsNoticeTimer = window.setTimeout(() => {
-    diagnosticsNoticeTimer = undefined;
-    diagnosticsNoticeUntil = 0;
-    diagnostics.classList.remove("is-error");
-    scheduleDiagnosticsLoad();
-  }, DIAGNOSTICS_NOTICE_MS);
-}
-
-function scheduleDiagnosticsLoad(): void {
-  diagnosticsScheduler.request();
-}
-
-function diagnosticsNonEditInteractionDeferralMs(): number | undefined {
-  if (!Number.isFinite(lastNonEditInteractionAt)) {
-    return undefined;
-  }
-
-  const idleMs = performance.now() - lastNonEditInteractionAt;
-  if (idleMs >= DIAGNOSTICS_AFTER_NON_EDIT_INPUT_DELAY_MS) {
-    return undefined;
-  }
-
-  const remainingMs = Math.ceil(DIAGNOSTICS_AFTER_NON_EDIT_INPUT_DELAY_MS - idleMs);
-  perfTrace.record("sidebar.diagnostics.defer", remainingMs, { reason: "recent-non-edit-interaction" });
-  return remainingMs;
-}
-
-async function loadDiagnostics(): Promise<void> {
-  await perfTrace.measureAsync("sidebar.diagnostics", async () => {
-    if (!diagnostics) {
-      return;
-    }
-    if (Date.now() < diagnosticsNoticeUntil) {
-      return;
-    }
-
-    diagnostics.classList.remove("is-error");
-
-    const result = (await browser.runtime.sendMessage({ type: "getDiagnostics" }).catch(() => undefined)) as
-      | OutlineDiagnostics
-      | undefined;
-    if (!result) {
-      diagnostics.textContent = "";
-      return;
-    }
-
-    diagnostics.textContent = diagnosticsText(result);
-    diagnostics.title = result.missingRuntimeTabIds.length
-      ? `Missing Firefox tab IDs: ${result.missingRuntimeTabIds.join(", ")}`
-      : "";
-  });
-}
-
-function diagnosticsText(result: OutlineDiagnostics): string {
-  if (result.missingRuntimeTabIds.length > 0) {
-    return `Firefox ${result.runtimeTabCount} / outline ${result.liveTabNodeCount} / missing ${result.missingRuntimeTabIds.length}`;
-  }
-  if (result.hiddenLiveTabNodeCount > 0) {
-    return `Firefox ${result.runtimeTabCount} / visible ${result.visibleLiveTabNodeCount}`;
-  }
-  return `Firefox ${result.runtimeTabCount}`;
 }
 
