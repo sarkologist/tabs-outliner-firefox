@@ -152,6 +152,7 @@ import {
   STATE_V4_MIGRATION_BACKUP_META_KEY,
   loadStateV4
 } from "./storage-v4.js";
+import { measureStorageCensus, storageCensusIncidentDetail } from "./storage-census.js";
 import {
   JOURNAL_META_KEY,
   journalEntryAffectsHistory,
@@ -417,6 +418,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   }>();
   let diagnosticsInFlight: Promise<OutlineDiagnostics> | undefined;
   let lastDiagnostics: { value: OutlineDiagnostics; atMs: number } | undefined;
+  let storageCensusInFlight = false;
   let automaticBackupInFlight: Promise<AutomaticBackupStatus> | undefined;
   let sidebarProfileRequestSequence = 0;
   let sidebarWindowCreationInFlight = 0;
@@ -5231,6 +5233,29 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     }
   }
 
+  // One-shot, opt-in storage census run when the user turns profiling on: it measures the
+  // live storage.local area (a ~1 KB probe `set` to fingerprint the backend, per-prefix byte
+  // breakdown, and the node-shard generation count as a leak signal) and records it to the
+  // incident log, which the options page shows and which exported profiles bundle in
+  // `snapshot.incidentLog`. This is the field measurement of the per-write cost ceiling that
+  // cannot be read from the repo -- see docs/storage-rearchitecture/04-STORAGE-WRITE-COST.md.
+  // It deliberately writes nothing to the perf trace (so it does not perturb a cleared trace);
+  // it is fire-and-forget so the slow get(null)/probe on a large store never blocks the toggle.
+  async function recordStorageCensus(): Promise<void> {
+    if (storageCensusInFlight) {
+      return;
+    }
+    storageCensusInFlight = true;
+    try {
+      const census = await measureStorageCensus(api, { now });
+      await recordIncidentLog("storageCensus", storageCensusIncidentDetail(census));
+    } catch (error) {
+      await recordIncidentLog("storageCensusError", { message: errorText(error) });
+    } finally {
+      storageCensusInFlight = false;
+    }
+  }
+
   async function handlePerformanceTraceMessage(
     message: PerformanceTraceMessage
   ): Promise<TraceSnapshot | PerformanceProfileSnapshot | { ok: true }> {
@@ -5239,6 +5264,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         perfTrace.setEnabled(true);
         perfTrace.mark("background.profile.enabled");
         await storePerformanceTracePreference(true);
+        void recordStorageCensus();
       } else {
         await storePerformanceTracePreference(false);
         perfTrace.mark("background.profile.disabled");
