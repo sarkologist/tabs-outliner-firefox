@@ -28780,6 +28780,40 @@ describe("background controller lifecycle", () => {
     expect(runtime.api.windows.getAll).toHaveBeenCalledTimes(1);
   });
 
+  it("reuses the diagnostics readout for repeated polls within the freshness window", async () => {
+    const runtime = fakeRuntime(
+      [{ id: 10, focused: true, incognito: false }],
+      [{ id: 1, windowId: 10, index: 0, active: true, url: "https://one.example/", title: "One" }]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    vi.mocked(runtime.api.windows.getAll).mockClear();
+
+    const first = await controller.handleMessage({ type: "getDiagnostics" });
+    const second = await controller.handleMessage({ type: "getDiagnostics" });
+
+    expect(second).toEqual(first);
+    // The second poll is served from the cached readout, so the browser is queried once.
+    expect(runtime.api.windows.getAll).toHaveBeenCalledTimes(1);
+  });
+
+  it("recomputes diagnostics once the freshness window elapses", async () => {
+    let clock = 1000;
+    const runtime = fakeRuntime(
+      [{ id: 10, focused: true, incognito: false }],
+      [{ id: 1, windowId: 10, index: 0, active: true, url: "https://one.example/", title: "One" }]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => clock });
+    await controller.ensureState();
+    vi.mocked(runtime.api.windows.getAll).mockClear();
+
+    await controller.handleMessage({ type: "getDiagnostics" });
+    clock += 60_000;
+    await controller.handleMessage({ type: "getDiagnostics" });
+
+    expect(runtime.api.windows.getAll).toHaveBeenCalledTimes(2);
+  });
+
   it("rebroadcasts sidebar non-edit interaction notices", async () => {
     const runtime = fakeRuntime([], []);
     const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });

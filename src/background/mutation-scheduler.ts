@@ -41,6 +41,8 @@ export type MutationScheduler = {
   waitForSchedulerIdle(): Promise<void>;
   /** Resolve once no high-priority mutation is running or queued (pending low-priority work may remain). */
   waitForHighPrioritySchedulerIdle(): Promise<void>;
+  /** Synchronous read of the same condition as waitForHighPrioritySchedulerIdle: no high-priority mutation running or queued. */
+  isHighPrioritySchedulerIdle(): boolean;
 };
 
 export function createMutationScheduler(deps: MutationSchedulerDeps): MutationScheduler {
@@ -190,5 +192,5 @@ export function createMutationScheduler(deps: MutationSchedulerDeps): MutationSc
     }
   }
 
-  return { enqueueMutation, waitForSchedulerIdle, waitForHighPrioritySchedulerIdle };
+  return { enqueueMutation, waitForSchedulerIdle, waitForHighPrioritySchedulerIdle, isHighPrioritySchedulerIdle };
 }

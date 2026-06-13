@@ -362,6 +362,12 @@ const RUNTIME_REFRESH_BATCH_DELAY_MS = 0;
 // the soak window (01-TARGET-ARCHITECTURE.md section 6).
 const MIGRATION_BACKUP_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const SIDEBAR_PROFILE_COLLECTION_DELAY_MS = 50;
+// Diagnostics are an advisory footer readout (a Firefox-vs-outline tab count), so a brief
+// staleness window is acceptable. Reusing the last result within this window collapses the
+// per-sidebar poll fan-out (3 sidebars re-arm after every command) into at most one
+// scheduler-idle wait + browser-window query per window, keeping diagnostics off the
+// single background thread's critical path while a command is in flight.
+const DIAGNOSTICS_RESULT_TTL_MS = 1000;
 const TOGGLE_SIDEBAR_COMMAND = "toggle-sidebar";
 const SIDEBAR_WINDOW_PATH = "sidebar/sidebar.html";
 
@@ -410,6 +416,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     completedWindowIds: Set<number>;
   }>();
   let diagnosticsInFlight: Promise<OutlineDiagnostics> | undefined;
+  let lastDiagnostics: { value: OutlineDiagnostics; atMs: number } | undefined;
   let automaticBackupInFlight: Promise<AutomaticBackupStatus> | undefined;
   let sidebarProfileRequestSequence = 0;
   let sidebarWindowCreationInFlight = 0;
@@ -420,7 +427,12 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     perfTrace,
     hasPendingRuntimeRefresh: () => pendingRuntimeRefresh !== undefined
   });
-  const { enqueueMutation, waitForSchedulerIdle, waitForHighPrioritySchedulerIdle } = mutationScheduler;
+  const {
+    enqueueMutation,
+    waitForSchedulerIdle,
+    waitForHighPrioritySchedulerIdle,
+    isHighPrioritySchedulerIdle
+  } = mutationScheduler;
 
   const persistence = createPersistenceCoordinator({
     api,
@@ -5102,9 +5114,22 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   }
 
   function getDiagnosticsCoalesced(): Promise<OutlineDiagnostics> {
+    // Serve the cached readout when it is still fresh, OR whenever a command (high-priority
+    // mutation) is queued or running: diagnostics await scheduler idle and then query the
+    // browser for live windows, so recomputing here would pile a scheduler-idle wait plus a
+    // browser-window query onto the single background thread right when the user is mid-edit.
+    // The readout is advisory; the next poll after the command settles refreshes it.
+    const cached = lastDiagnostics;
+    if (cached && (now() - cached.atMs < DIAGNOSTICS_RESULT_TTL_MS || !isHighPrioritySchedulerIdle())) {
+      return Promise.resolve(cached.value);
+    }
     diagnosticsInFlight ??= perfTrace.measureAsync("background.diagnostics", async () => {
-      await waitForSchedulerIdle();
-      return computeDiagnostics(await ensureState(), await getNormalWindows(api));
+      await perfTrace.measureAsync("background.diagnostics.waitForIdle", () => waitForSchedulerIdle());
+      const state = await ensureState();
+      const windows = await perfTrace.measureAsync("background.diagnostics.getWindows", () => getNormalWindows(api));
+      const value = computeDiagnostics(state, windows);
+      lastDiagnostics = { value, atMs: now() };
+      return value;
     }).finally(() => {
       diagnosticsInFlight = undefined;
     });
