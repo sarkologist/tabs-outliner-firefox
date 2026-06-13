@@ -50,6 +50,15 @@ import {
   statesMateriallyEqual
 } from "./state-equality.js";
 import {
+  addSubtreeNodeIds,
+  liveStructureChanged,
+  liveTabIdsInWindow,
+  liveTabNodeByRuntimeId,
+  liveTabNodesInSubtree,
+  liveWindowNodeByRuntimeId,
+  nodeIsReachableFromRoot
+} from "./live-node-queries.js";
+import {
   INITIAL_TREE_SNAPSHOT_ROW_LIMIT,
   createInitialTreeSnapshotProjector,
   initialTreeSnapshotForState
@@ -6720,27 +6729,6 @@ function collectRuntimeIndexCandidateNodeIds(
   return [...candidateNodeIds];
 }
 
-function addSubtreeNodeIds(state: OutlineState, nodeId: NodeId, result: Set<NodeId>): void {
-  const visited = new Set<NodeId>();
-  const stack = [nodeId];
-  while (stack.length > 0) {
-    const currentId = stack.pop()!;
-    if (visited.has(currentId)) {
-      continue;
-    }
-    visited.add(currentId);
-    result.add(currentId);
-
-    const node = state.nodes[currentId];
-    if (!node) {
-      continue;
-    }
-    for (let index = node.childIds.length - 1; index >= 0; index -= 1) {
-      stack.push(node.childIds[index]!);
-    }
-  }
-}
-
 function indexedLiveTabNodeByRuntimeId(
   state: OutlineState,
   index: RuntimeStateIndex,
@@ -7419,108 +7407,6 @@ function focusRuntimeWindowInPlace(
   index.activeWindowNodeId = targetNodeId;
 
   return { found: true, changed, updates };
-}
-
-function liveWindowNodeByRuntimeId(
-  state: OutlineState,
-  windowId: number
-): (OutlineNode & { live: { windowId: number } }) | undefined {
-  return Object.values(state.nodes).find((node): node is OutlineNode & { live: { windowId: number } } => {
-    return Boolean(
-      node.kind === "window" &&
-        node.status === "live" &&
-        node.live &&
-        "windowId" in node.live &&
-        node.live.windowId === windowId
-    );
-  });
-}
-
-function liveTabNodeByRuntimeId(
-  state: OutlineState,
-  tabId: number
-): (OutlineNode & { live: { tabId: number; windowId: number } }) | undefined {
-  return Object.values(state.nodes).find((node): node is OutlineNode & { live: { tabId: number; windowId: number } } =>
-    isLiveTabNode(node) && node.live.tabId === tabId
-  );
-}
-
-function liveTabIdsInWindow(state: OutlineState, windowId: number): number[] {
-  return Object.values(state.nodes).flatMap((node) => {
-    if (!isLiveTabNode(node) || node.live.windowId !== windowId) {
-      return [];
-    }
-    return [node.live.tabId];
-  });
-}
-
-function liveStructureChanged(previous: OutlineState, next: OutlineState): boolean {
-  return liveStructureSignature(previous) !== liveStructureSignature(next);
-}
-
-function liveStructureSignature(state: OutlineState): string {
-  return [
-    ...liveWindowNodes(state).map((node) =>
-      `window:${node.id}:${node.live.windowId}:${node.parentId ?? ""}:${node.childIds.join(",")}`
-    ),
-    ...liveTabNodes(state).map((node) =>
-      `tab:${node.id}:${node.live.tabId}:${node.live.windowId}:${node.parentId ?? ""}`
-    )
-  ].sort().join("|");
-}
-
-function liveTabNodesInSubtree(
-  state: OutlineState,
-  nodeId: NodeId
-): Array<OutlineNode & { live: { tabId: number; windowId: number } }> {
-  const nodes: Array<OutlineNode & { live: { tabId: number; windowId: number } }> = [];
-  const visited = new Set<NodeId>();
-  const stack = [nodeId];
-
-  while (stack.length > 0) {
-    const currentId = stack.pop()!;
-    if (visited.has(currentId)) {
-      continue;
-    }
-    visited.add(currentId);
-
-    const node = state.nodes[currentId];
-    if (!node) {
-      continue;
-    }
-    if (isLiveTabNode(node)) {
-      nodes.push(node);
-    }
-    for (let index = node.childIds.length - 1; index >= 0; index -= 1) {
-      stack.push(node.childIds[index]!);
-    }
-  }
-
-  return nodes;
-}
-
-function nodeIsReachableFromRoot(state: OutlineState, nodeId: NodeId): boolean {
-  const visited = new Set<NodeId>();
-  const stack = [...state.rootIds];
-  while (stack.length > 0) {
-    const currentId = stack.pop()!;
-    if (currentId === nodeId) {
-      return true;
-    }
-    if (visited.has(currentId)) {
-      continue;
-    }
-    visited.add(currentId);
-
-    const node = state.nodes[currentId];
-    if (!node) {
-      continue;
-    }
-    for (const childId of node.childIds) {
-      stack.push(childId);
-    }
-  }
-  return false;
 }
 
 function mergeCurrentLiveWindowSubtree(state: OutlineState, current: OutlineState, runtimeWindowId: number): void {
