@@ -200,3 +200,77 @@ the boundary and are forfeit — acceptable, since the behavior they pin is eith
 (bucket a) or re-encoded as input-layer facts with their own tests (bucket b). The riskiest new
 obligation is making the replica authoritative across MV3 restarts (I1 + #39), which is exactly
 the regime the existing soak and journal infrastructure already exercises.
+
+## 4. Re-audit through the stale-snapshot lens (2026-06-13) — §3 verdict CORRECTED
+
+§3 was too optimistic. Executing the first behavioral step (the fact-merge primitive, step 1b — see
+`reconciliation-strangler-step-1-merge-primitive.md` §10) installed a static confidence rank and it
+**broke 2 `controller.test.ts` contract traces** plus the named invariant
+`runtime-reconciler.test.ts:432` *"keeps installed-state tab order ahead of stale accepted window
+shape order."* That falsification motivated a re-audit of bucket (a) specifically for branches that
+exist to handle **stale / racy / contradictory** runtime observations. Two independent code reviews
+(reconciler cluster + controller corroboration cluster) reached the same conclusion.
+
+**The category error in §3.** §3 classed the corroboration/conflict branches as "theorems of the
+model" because a confidence-ranked replica can *react* to staleness (pick the higher-confidence
+fact). But it conflated **reacting to staleness** with **detecting staleness**. A static rank
+decides *which of two facts wins*; it cannot decide *that a fact is a lie*. Detection requires one
+of three things a `(epoch, sequence, confidence)` replica structurally lacks:
+
+1. **Re-query + arbitrate** — `corroborateMetadataEventEvidence` issues a second `tabs.query` and
+   trusts it (only verbatim comment, `controller.ts:3478`: *"One query may be the event-local stale
+   query result; use the next browser view as the current shape"*). A rank cannot trigger a fresh
+   observation.
+2. **Compare two equal-confidence observations** — `corroborateMissingOrMismatchedLiveTabs`,
+   `noEventSnapshotOrderConflictWindowIds` re-fetch `getNormalWindows` and keep the second only if
+   it contradicts the first. Both snapshots are `"complete"`; a rank has nothing to adjudicate with.
+3. **Epoch + `changedFields` provenance mask** — `tabEvidenceConflictsWithCurrentShape` rejects an
+   event whose *unclaimed* fields disagree with belief (`reconciler` ~1134-1161), and treats a
+   newer-epoch held fact as beating an older observation (`acceptedFact.scopeGeneration >
+   evidence.scopeGeneration`). The mask and epoch are not fact *values* a value-rank can compare.
+
+**The lynchpin is vaporware.** `staleSuspect` (model merge rule 3, demote-on-contradiction) has
+**zero producers** in non-test `src/` — only the type declaration at `runtime-facts.ts:17`. The
+"reproduces-free" argument for the whole cluster routed through merge rule 3. So the corroboration
+helpers are not *accidental duplication of* the model — they **are** the model's missing rule,
+implemented eagerly (re-query now) instead of lazily (demote a stored fact).
+
+### 4.1 Reclassification (bucket a → essential)
+
+| Audit # | Branch | Was | Now | Why |
+|---|---|---|---|---|
+| 15 | `eventTabsNeedShapeCorroboration` | a | **essential** | Initiates a second observation; not a fact-ranking. |
+| 16 | `tabEvidenceConflictsWithCurrentShape` (2a epoch, 2b created-on-known, 2d fresh-flag, 2f/2g unclaimed-mask) | a | **essential** | Epoch + per-event mask detection; orthogonal to confidence. (2c hybrid; 2e free *only* under a correct epoch-aware replica.) |
+| 24 | `suspiciousShapeTabIdsInWindows` | a | **essential** | Triggers the snapshot double-fetch + compare. |
+| 34 | `structurallyFreshTabIds` (hand-rolled `staleSuspect`) | a | **essential** | Transient distrust state set on every structural event; no fact-value equivalent. |
+| 36 | active-tab ladders | a | **essential** | Exactly the divergence 1b produced; outline-authority-over-stale-active. |
+| 44 | `corroborateMetadataEventEvidence` (double-read) | b | **essential** | Acquisition discipline ("API lies on first read"); not encodable as a single fact. |
+| 45 | `noEventSnapshotOrderConflict` (core) | b+a | **essential** | Two equal-confidence snapshots → re-fetch arbitration. |
+| 46 | `corroborateMissingOrMismatchedLiveTabs` (core) | b+a | **essential** | Same; the 4-detector fan-out is the only accidental part. |
+| 49 | fast-path gating | a | **essential** | The unclaimed-field conflict predicate *is* the staleness detector. |
+| 51 | `preserveClosedSubtreesForRuntimeTransition` | a | **essential in practice** | The 2026-06 data-loss guard; deletable only after *proving* the diff never targets non-live claims. |
+
+Genuinely accidental (audit's (a) stands): the diff fragments (#20-#23, #25), tombstone filters
+(#1-#2), no-op/ignored filtering, the confidence-gap case (#47, correctly (a)), and — importantly —
+the **fan-out shells** (four parallel detectors in #46; eight per-field branches in #16). Those are
+real but *shallow* accidental complexity: collapsing them is a refactor, and it carries the same
+regression risk 1b hit, because the mechanism underneath is essential.
+
+### 4.2 Corrected verdict
+
+- **Counts.** The essential set (irreducible policy `c` + essential stale-detection mechanism) grows
+  from §3's **2** to roughly **12-15**. The cheaply-removable "accidental" set shrinks from ~33 to
+  ~18-20, and what remains is the *fan-out and bookkeeping*, not the reconciliation mechanism.
+- **The "clean core" does not exist.** §3 promised a small confidence-ranked core under the mess.
+  The core *is* the corroboration machinery; it cannot be replaced by a rank because
+  detection-of-staleness ≠ ranking-of-facts, and the rule that was supposed to replace it
+  (`staleSuspect`) is unimplemented.
+- **A model-rewrite does not cheaply pay off.** The achievable simplification is bounded: collapse
+  the accidental fan-out (4 detectors → 1 parameterized pass; 8 field-branches → 1 mask-driven loop)
+  while *keeping* the re-query/compare mechanism. That is a contained refactor with real regression
+  risk, not a rearchitecture — and it does not shrink the essential surface.
+- **Original question revisited.** "Is the complexity mostly accidental?" For this subsystem: **no,
+  not mostly.** It is substantially essential, concentrated in stale/racy-observation handling — the
+  exact thing that makes the app robust against Chrome's lossy event stream. The §3 estimate was
+  inflated by the circularity its own §0 warned about: the model could *describe* the precedence,
+  but a faithful reimplementation *broke* it.
