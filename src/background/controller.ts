@@ -93,6 +93,22 @@ import {
   windowNodeIdForRuntime
 } from "./runtime-state-index.js";
 import {
+  type InitialTreeSnapshotWindowMessage,
+  type PerformanceTraceMessage,
+  type SidebarPerformanceTraceCollectedMessage,
+  hasOutlineRelevantTabUpdate,
+  isDiagnosticsRequest,
+  isExportTreeMessage,
+  isIncidentLogRequest,
+  isInitialTreeSnapshotMessage,
+  isInitialTreeSnapshotWindowMessage,
+  isOpenSidebarWindowMessage,
+  isPerformanceTraceMessage,
+  isSidebarNonEditInteractionMessage,
+  isSidebarPerformanceTraceCollectedMessage,
+  messageType
+} from "./message-guards.js";
+import {
   INITIAL_TREE_SNAPSHOT_ROW_LIMIT,
   createInitialTreeSnapshotProjector,
   initialTreeSnapshotForState
@@ -304,46 +320,11 @@ type NodeStateUpdate = {
   closedCountDelta: number;
 };
 
-type PerformanceTraceMessage =
-  | {
-      type: "setPerformanceTraceEnabled";
-      enabled: boolean;
-    }
-  | {
-      type: "clearPerformanceTrace";
-    }
-  | {
-      type: "getPerformanceTrace";
-    }
-  | {
-      type: "getPerformanceProfile";
-    };
 
-type SidebarPerformanceTraceCollectedMessage = {
-  type: "sidebarPerformanceTraceCollected";
-  requestId: string;
-  sidebar: LabeledTraceSnapshot;
-};
 
-type InitialTreeSnapshotMessage = {
-  type: "getInitialTreeSnapshot";
-};
 
-type InitialTreeSnapshotWindowMessage = {
-  type: "getInitialTreeSnapshotWindow" | "getTreeProjectionSlice";
-  centerRowIndex: number;
-  rowLimit?: number;
-  query?: string;
-  targetNodeId?: NodeId;
-};
 
-type OpenSidebarWindowMessage = {
-  type: "openSidebarWindow";
-};
 
-type ExportTreeMessage = {
-  type: "exportTree";
-};
 
 type ExportTreeResponse = {
   type: "exportTree";
@@ -352,9 +333,6 @@ type ExportTreeResponse = {
   content: string;
 };
 
-type SidebarNonEditInteractionMessage = {
-  type: "sidebarNonEditInteraction";
-};
 
 type PendingSidebarProfileCollection = {
   sidebars: LabeledTraceSnapshot[];
@@ -6955,110 +6933,3 @@ function isLiveRuntimeNode(node: OutlineNode | undefined): boolean {
   return Boolean(node?.status === "live" && node.live);
 }
 
-function isDiagnosticsRequest(message: unknown): message is { type: "getDiagnostics" } {
-  return Boolean(
-    message &&
-      typeof message === "object" &&
-      (message as { type?: unknown }).type === "getDiagnostics"
-  );
-}
-
-function isIncidentLogRequest(message: unknown): message is { type: "getIncidentLog" } {
-  return Boolean(
-    message &&
-      typeof message === "object" &&
-      (message as { type?: unknown }).type === "getIncidentLog"
-  );
-}
-
-function isInitialTreeSnapshotMessage(message: unknown): message is InitialTreeSnapshotMessage {
-  return Boolean(
-    message &&
-      typeof message === "object" &&
-      (message as { type?: unknown }).type === "getInitialTreeSnapshot"
-  );
-}
-
-function isInitialTreeSnapshotWindowMessage(message: unknown): message is InitialTreeSnapshotWindowMessage {
-  return Boolean(
-    message &&
-      typeof message === "object" &&
-      (
-        (message as { type?: unknown }).type === "getInitialTreeSnapshotWindow" ||
-        (message as { type?: unknown }).type === "getTreeProjectionSlice"
-      ) &&
-      typeof (message as { centerRowIndex?: unknown }).centerRowIndex === "number" &&
-      Number.isFinite((message as { centerRowIndex?: number }).centerRowIndex) &&
-      (
-        (message as { targetNodeId?: unknown }).targetNodeId === undefined ||
-        typeof (message as { targetNodeId?: unknown }).targetNodeId === "string"
-      ) &&
-      (
-        (message as { query?: unknown }).query === undefined ||
-        typeof (message as { query?: unknown }).query === "string"
-      )
-  );
-}
-
-function isOpenSidebarWindowMessage(message: unknown): message is OpenSidebarWindowMessage {
-  return Boolean(
-    message &&
-      typeof message === "object" &&
-      (message as { type?: unknown }).type === "openSidebarWindow"
-  );
-}
-
-function isExportTreeMessage(message: unknown): message is ExportTreeMessage {
-  return Boolean(
-    message &&
-      typeof message === "object" &&
-      (message as { type?: unknown }).type === "exportTree"
-  );
-}
-
-function isSidebarNonEditInteractionMessage(message: unknown): message is SidebarNonEditInteractionMessage {
-  return Boolean(
-    message &&
-      typeof message === "object" &&
-      (message as { type?: unknown }).type === "sidebarNonEditInteraction"
-  );
-}
-
-function isPerformanceTraceMessage(message: unknown): message is PerformanceTraceMessage {
-  if (!message || typeof message !== "object") {
-    return false;
-  }
-
-  const type = (message as { type?: unknown }).type;
-  return type === "getPerformanceTrace" ||
-    type === "getPerformanceProfile" ||
-    type === "clearPerformanceTrace" ||
-    (type === "setPerformanceTraceEnabled" && typeof (message as { enabled?: unknown }).enabled === "boolean");
-}
-
-function isSidebarPerformanceTraceCollectedMessage(
-  message: unknown
-): message is SidebarPerformanceTraceCollectedMessage {
-  if (!message || typeof message !== "object") {
-    return false;
-  }
-  const candidate = message as { type?: unknown; requestId?: unknown; sidebar?: unknown };
-  return candidate.type === "sidebarPerformanceTraceCollected" &&
-    typeof candidate.requestId === "string" &&
-    isLabeledTraceSnapshot(candidate.sidebar);
-}
-
-function messageType(message: unknown): string {
-  return message && typeof message === "object" && typeof (message as { type?: unknown }).type === "string"
-    ? (message as { type: string }).type
-    : "unknown";
-}
-
-function hasOutlineRelevantTabUpdate(changeInfo: Partial<RuntimeTab>): boolean {
-  return Boolean(
-    "active" in changeInfo ||
-      "favIconUrl" in changeInfo ||
-      "title" in changeInfo ||
-      "url" in changeInfo
-  );
-}
