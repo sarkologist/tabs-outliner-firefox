@@ -417,6 +417,12 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   }>();
   let diagnosticsInFlight: Promise<OutlineDiagnostics> | undefined;
   let lastDiagnostics: { value: OutlineDiagnostics; atMs: number } | undefined;
+  // Runtime-window snapshot reused by diagnostics so getNormalWindows (a browser
+  // windows.getAll + tabs.query that cost up to ~2.5s on a large session, and contend with
+  // the storage writes a delete triggers) runs only after a real tab/window event changes
+  // browser state, not on every poll. Both this and lastDiagnostics are cleared in
+  // queueRuntimeRefresh/queueRuntimeActivation when any runtime event is observed.
+  let diagnosticsRuntimeWindows: RuntimeWindow[] | undefined;
   let automaticBackupInFlight: Promise<AutomaticBackupStatus> | undefined;
   let sidebarProfileRequestSequence = 0;
   let sidebarWindowCreationInFlight = 0;
@@ -3510,6 +3516,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   }
 
   function queueRuntimeRefresh(eventTabs: RuntimeTabEvidence[] = [], options: RefreshOptions = {}): Promise<boolean> {
+    invalidateDiagnosticsRuntimeCache();
     const requestedCloseMissing = options.closeMissing ?? eventTabs.length === 0;
     const pending = pendingRuntimeRefresh ?? createPendingRuntimeRefresh();
     pendingRuntimeRefresh = pending;
@@ -3529,6 +3536,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   }
 
   function queueRuntimeActivation(activeInfo: { tabId: number; windowId: number }): Promise<boolean> {
+    invalidateDiagnosticsRuntimeCache();
     const pendingTab = pendingRuntimeRefresh?.eventTabsById.get(activeInfo.tabId);
     if (pendingRuntimeRefresh && pendingTab) {
       pendingRuntimeRefresh.activationByWindowId.set(activeInfo.windowId, activeInfo.tabId);
@@ -5184,6 +5192,14 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     }
   }
 
+  // A runtime tab/window event can change the live tab set the diagnostics readout counts,
+  // so drop both the cached result and the cached window snapshot; the next poll recomputes
+  // from a fresh browser query. Between events the snapshot is reused (no getNormalWindows).
+  function invalidateDiagnosticsRuntimeCache(): void {
+    lastDiagnostics = undefined;
+    diagnosticsRuntimeWindows = undefined;
+  }
+
   function getDiagnosticsCoalesced(): Promise<OutlineDiagnostics> {
     // Serve the cached readout when it is still fresh, OR whenever a command (high-priority
     // mutation) is queued or running: diagnostics await scheduler idle and then query the
@@ -5197,7 +5213,10 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     diagnosticsInFlight ??= perfTrace.measureAsync("background.diagnostics", async () => {
       await perfTrace.measureAsync("background.diagnostics.waitForIdle", () => waitForSchedulerIdle());
       const state = await ensureState();
-      const windows = await perfTrace.measureAsync("background.diagnostics.getWindows", () => getNormalWindows(api));
+      const windows = await perfTrace.measureAsync("background.diagnostics.getWindows", async () => {
+        diagnosticsRuntimeWindows ??= await getNormalWindows(api);
+        return diagnosticsRuntimeWindows;
+      });
       const value = computeDiagnostics(state, windows);
       lastDiagnostics = { value, atMs: now() };
       return value;
