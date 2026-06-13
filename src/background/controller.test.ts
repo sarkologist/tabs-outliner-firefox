@@ -28857,7 +28857,7 @@ describe("background controller lifecycle", () => {
     expect(runtime.api.windows.getAll).toHaveBeenCalledTimes(1);
   });
 
-  it("recomputes diagnostics once the freshness window elapses", async () => {
+  it("reuses the cached runtime-window snapshot across the result freshness window", async () => {
     let clock = 1000;
     const runtime = fakeRuntime(
       [{ id: 10, focused: true, incognito: false }],
@@ -28871,7 +28871,35 @@ describe("background controller lifecycle", () => {
     clock += 60_000;
     await controller.handleMessage({ type: "getDiagnostics" });
 
-    expect(runtime.api.windows.getAll).toHaveBeenCalledTimes(2);
+    // The result cache expired, so diagnostics recomputed -- but with no runtime event the
+    // window snapshot is reused, so the browser is not re-queried.
+    expect(runtime.api.windows.getAll).toHaveBeenCalledTimes(1);
+  });
+
+  it("refetches runtime windows for diagnostics after a tab/window event", async () => {
+    const runtime = fakeRuntime(
+      [{ id: 10, focused: true, incognito: false }],
+      [{ id: 1, windowId: 10, index: 0, active: true, url: "https://one.example/", title: "One" }]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+
+    const before = (await controller.handleMessage({ type: "getDiagnostics" })) as { runtimeTabCount: number };
+    expect(before.runtimeTabCount).toBe(1);
+
+    // A real tab create invalidates both the cached readout and the window snapshot, so the
+    // next poll reflects the new tab even within the result freshness window.
+    await createTabFromBrowser(runtime, {
+      id: 2,
+      windowId: 10,
+      index: 1,
+      active: true,
+      url: "https://two.example/",
+      title: "Two"
+    });
+
+    const after = (await controller.handleMessage({ type: "getDiagnostics" })) as { runtimeTabCount: number };
+    expect(after.runtimeTabCount).toBe(2);
   });
 
   it("rebroadcasts sidebar non-edit interaction notices", async () => {
