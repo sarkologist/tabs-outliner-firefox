@@ -25930,6 +25930,10 @@ function isV4ManifestWrite(items: Record<string, unknown>): boolean {
   return Object.keys(items).some((key) => key.startsWith("outline:v4:manifest:"));
 }
 
+function isOutlineJournalWrite(items: Record<string, unknown>): boolean {
+  return Object.keys(items).some((key) => key.startsWith("outline:v4:journal:"));
+}
+
 // What a restart would durably reproduce: the v4 snapshot plus the journal entries it does
 // not yet include, falling back to the legacy v3/v2 store for pre-migration fixtures.
 async function loadPersistedOutlineState(api: WebExtensionBrowser): Promise<OutlineState | undefined> {
@@ -27989,6 +27993,62 @@ describe("background controller lifecycle", () => {
     expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(1);
     finishSave();
     await flush;
+  });
+
+  it("does not wait for the outline-journal append before acknowledging a patched command", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://one.example/",
+          title: "One"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    await controller.flushPendingSaves();
+    vi.mocked(runtime.api.storage.local.set).mockClear();
+    runtime.broadcasts.length = 0;
+
+    // Hang the outline-journal append itself: on a large Firefox store this single
+    // storage.local.set is the ~0.7s cost on the command path. The ack and the patch
+    // broadcast must not wait for it (the durable write runs off the response path).
+    const blockedJournal = deferred<void>();
+    let hangNextJournalWrite = true;
+    const baseSet = vi.mocked(runtime.api.storage.local.set).getMockImplementation();
+    vi.mocked(runtime.api.storage.local.set).mockImplementation(async (items: Record<string, unknown>) => {
+      if (hangNextJournalWrite && isOutlineJournalWrite(items)) {
+        hangNextJournalWrite = false;
+        await blockedJournal.promise;
+      }
+      await baseSet?.(items);
+    });
+
+    const response = await Promise.race([
+      controller.handleMessage({ type: "toggleCollapsed", nodeId: "window:10" }),
+      waitForMacrotask().then(() => "blocked")
+    ]);
+
+    expectCommandAck(response, true);
+    expect(runtime.broadcasts.at(-1)).toMatchObject({
+      type: "nodeStateUpdated"
+    });
+
+    // Releasing the deferred append and flushing must settle journal + snapshot cleanly,
+    // so the durable write still happens -- it is only off the ack path, not skipped.
+    blockedJournal.resolve();
+    await controller.flushPendingSaves();
   });
 
   it("does not wait for sidebar broadcasts before acknowledging repeated structural commands", async () => {

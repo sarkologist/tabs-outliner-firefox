@@ -807,6 +807,57 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
   type CommandFinalizer = (ctx: CommandFinalizeContext) => Promise<void>;
 
+  // Command durability that the user must not wait on. By the time a finalizer reaches the
+  // journal append, the in-memory mutation is done and the tree patch is already broadcast, so
+  // every sidebar reflects the change. The only thing left is the outline-journal append -- a
+  // single storage.local.set whose cost scales with TOTAL stored data on Firefox (~0.7s on a
+  // 25k-node store), plus any spill-fallback save. Running those off the ack path drops that
+  // ~0.7s from the command's user-visible latency.
+  //
+  // Ordering and atomicity are preserved, NOT weakened: appendCommandJournal/...ForKnownNodeIds
+  // build their delta (cloning the affected nodes) and drain the queued event-journal items
+  // synchronously, and the journal's own opQueue (outline-journal.ts) serializes the actual
+  // storage write in call order. So `run` MUST be invoked synchronously -- that initiates the
+  // append (enqueues it on opQueue with a snapshot-correct delta) before the ack; only its await
+  // is deferred. The in-flight promise is tracked so flushPendingSaves() and idle waits drain it
+  // deterministically and a crash/suspend cannot silently drop a write that was never started.
+  //
+  // Crash safety (no worse than today): the tree patch is broadcast before the write today too,
+  // so the "UI shows it, disk does not yet" window already exists -- this only lets the ack land
+  // inside that same window. scheduleStateSave runs before each append, so the snapshot save is
+  // the durability backstop (I-1 Class B) if the deferred append is interrupted or re-spills.
+  const inFlightCommandDurability = new Set<Promise<void>>();
+  function deferCommandDurability(run: () => Promise<void>): void {
+    const settled = run()
+      .catch((error) => {
+        // The ack has already resolved, so this can no longer reject the command. The state
+        // save scheduled before the append is the backstop, so just record the failure.
+        perfTrace.mark("background.command.durability.error", { message: errorText(error) });
+      })
+      .finally(() => {
+        inFlightCommandDurability.delete(settled);
+      });
+    inFlightCommandDurability.add(settled);
+  }
+  async function waitForCommandDurabilityIdle(): Promise<void> {
+    while (inFlightCommandDurability.size > 0) {
+      await Promise.all([...inFlightCommandDurability]);
+    }
+  }
+  // Public flush also drains deferred command durability so callers that flush before reading
+  // storage see a fully settled journal + snapshot. The scheduled snapshot save is flushed FIRST
+  // (its storage.set is issued synchronously, preserving the "ack does not wait on persistence"
+  // timing that callers observe), then the deferred journal appends -- plus any spill-fallback
+  // save they trigger -- are drained, re-flushing once if a spill rescheduled a save. Internal
+  // callers keep using flushPendingSaves directly to avoid awaiting their own deferred work.
+  async function flushPendingSavesIncludingCommandDurability(): Promise<void> {
+    await flushPendingSaves();
+    await waitForCommandDurabilityIdle();
+    if (hasPendingOrInFlightSave()) {
+      await flushPendingSaves();
+    }
+  }
+
   // Per-command post-processing for the mutating-command hub. After runCommand succeeds and the
   // state transition is installed, each command type chooses how to broadcast, persist, journal,
   // and (on a journal skip) flush. These finalizers hold that per-command knowledge so the hub
@@ -817,7 +868,9 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     nodeIds: readonly NodeId[]
   ): Promise<void> => {
     await persistKnownNodeStateUpdates(ctx.current, ctx.next, nodeIds);
-    await appendCommandJournalForKnownNodeIds(ctx.next, nodeIds, ctx.message.type, ctx.recordedHistoryEntryId);
+    deferCommandDurability(async () => {
+      await appendCommandJournalForKnownNodeIds(ctx.next, nodeIds, ctx.message.type, ctx.recordedHistoryEntryId);
+    });
   };
 
   const finalizeBestEffort: CommandFinalizer = async ({
@@ -834,12 +887,14 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     // restart before the deferred snapshot lands (I-1) -- journal it before the ack like the
     // other structural blocks. Broad commands without candidate ids (importTree) have no
     // cheap bounded delta here and stay deferred to slice 2's coalescer.
-    if (!(runtimeIndexCandidateNodeIds && await appendCommandJournal(current, next, runtimeIndexCandidateNodeIds, message.type, "command", recordedHistoryEntryId))) {
-      await flushRuntimeProvenanceSaveIfChanged(current, next, runtimeIndexCandidateNodeIds, {
-        allowDeferredPlacementCheckpoint: isStructuralCommand(message.type),
-        reason: message.type
-      });
-    }
+    deferCommandDurability(async () => {
+      if (!(runtimeIndexCandidateNodeIds && await appendCommandJournal(current, next, runtimeIndexCandidateNodeIds, message.type, "command", recordedHistoryEntryId))) {
+        await flushRuntimeProvenanceSaveIfChanged(current, next, runtimeIndexCandidateNodeIds, {
+          allowDeferredPlacementCheckpoint: isStructuralCommand(message.type),
+          reason: message.type
+        });
+      }
+    });
   };
 
   const finalizeStructuralTreePatch: CommandFinalizer = async ({
@@ -857,12 +912,14 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     );
     await broadcastTreeStructureUpdate(update);
     scheduleStateSave(next, saveSchedule, runtimeIndexCandidateNodeIds);
-    if (!(await appendCommandJournal(current, next, runtimeIndexCandidateNodeIds, message.type, "command", recordedHistoryEntryId))) {
-      await flushRuntimeProvenanceSaveIfChanged(current, next, runtimeIndexCandidateNodeIds, {
-        allowDeferredPlacementCheckpoint: true,
-        reason: message.type
-      });
-    }
+    deferCommandDurability(async () => {
+      if (!(await appendCommandJournal(current, next, runtimeIndexCandidateNodeIds, message.type, "command", recordedHistoryEntryId))) {
+        await flushRuntimeProvenanceSaveIfChanged(current, next, runtimeIndexCandidateNodeIds, {
+          allowDeferredPlacementCheckpoint: true,
+          reason: message.type
+        });
+      }
+    });
   };
 
   const finalizeRestoreNode: CommandFinalizer = async ({
@@ -891,9 +948,11 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     } else {
       await persistWithNodeStateUpdate(current, next, restorePatchNodeIds, { saveSchedule });
     }
-    if (!(await appendCommandJournal(current, next, restoreTreePatchNodeIds ?? restorePatchNodeIds, message.type))) {
-      await flushRuntimeProvenanceSaveIfChanged(current, next, restoreTreePatchNodeIds);
-    }
+    deferCommandDurability(async () => {
+      if (!(await appendCommandJournal(current, next, restoreTreePatchNodeIds ?? restorePatchNodeIds, message.type))) {
+        await flushRuntimeProvenanceSaveIfChanged(current, next, restoreTreePatchNodeIds);
+      }
+    });
   };
 
   const finalizeDeleteNode: CommandFinalizer = async ({
@@ -912,9 +971,11 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     );
     await broadcastTreeStructureUpdate(update);
     scheduleStateSave(next, saveSchedule, deletePatchNodeIds ?? [message.nodeId]);
-    if (!(await appendCommandJournal(current, next, deletePatchNodeIds ?? [message.nodeId], message.type, "command", recordedHistoryEntryId))) {
-      await flushRuntimeTruthSaveIfNeeded(current, next, deletePatchNodeIds ?? [message.nodeId]);
-    }
+    deferCommandDurability(async () => {
+      if (!(await appendCommandJournal(current, next, deletePatchNodeIds ?? [message.nodeId], message.type, "command", recordedHistoryEntryId))) {
+        await flushRuntimeTruthSaveIfNeeded(current, next, deletePatchNodeIds ?? [message.nodeId]);
+      }
+    });
   };
 
   const finalizeRenameGroup: CommandFinalizer = async ({
@@ -927,7 +988,9 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       return;
     }
     await persistKnownNodeStateUpdate(current, next, message.nodeId);
-    await appendCommandJournal(current, next, [message.nodeId], message.type, "command", recordedHistoryEntryId);
+    deferCommandDurability(async () => {
+      await appendCommandJournal(current, next, [message.nodeId], message.type, "command", recordedHistoryEntryId);
+    });
   };
 
   const finalizeToggleCollapsed: CommandFinalizer = async (ctx) => {
@@ -951,12 +1014,14 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     if (sameParentReorder) {
       await broadcastSameParentReorderUpdate(sameParentReorder);
       scheduleStateSave(next, saveSchedule, [sameParentReorder.parentId, sameParentReorder.movedNodeId]);
-      if (!(await appendCommandJournal(current, next, [sameParentReorder.parentId, sameParentReorder.movedNodeId], message.type, "command", recordedHistoryEntryId))) {
-        await flushRuntimeProvenanceSaveIfChanged(current, next, [sameParentReorder.parentId, sameParentReorder.movedNodeId], {
-          allowDeferredPlacementCheckpoint: true,
-          reason: message.type
-        });
-      }
+      deferCommandDurability(async () => {
+        if (!(await appendCommandJournal(current, next, [sameParentReorder.parentId, sameParentReorder.movedNodeId], message.type, "command", recordedHistoryEntryId))) {
+          await flushRuntimeProvenanceSaveIfChanged(current, next, [sameParentReorder.parentId, sameParentReorder.movedNodeId], {
+            allowDeferredPlacementCheckpoint: true,
+            reason: message.type
+          });
+        }
+      });
       return;
     }
     if (runtimeIndexCandidateNodeIds) {
@@ -1197,8 +1262,11 @@ export function createBackgroundController(options: BackgroundControllerOptions)
               scheduleStateSave(recovered, saveSchedule, deletePatchNodeIds);
               // The lifecycle deleteNode entry replays this state change after a crash, but
               // the history entry above is only durable via the journal record (I-1 parity
-              // with the non-recovered delete path).
-              await appendCommandJournal(current, recovered, deletePatchNodeIds, message.type, "command", recoveredDeleteHistoryEntryId);
+              // with the non-recovered delete path). Deferred off the ack like the other
+              // delete path; scheduleStateSave above is the backstop.
+              deferCommandDurability(async () => {
+                await appendCommandJournal(current, recovered, deletePatchNodeIds, message.type, "command", recoveredDeleteHistoryEntryId);
+              });
               return commitCommandAck();
             }
           }
@@ -2894,7 +2962,10 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     // the delta twice with conflicting merge semantics. Only the closed-only undos (no
     // lifecycle entry, the previously uncovered case) go through the outline journal.
     if (!runtimeLifecycleJournalEntry) {
-      await appendCommandJournal(current, next, persistResult.candidateNodeIds, direction, "historyReplay", popped.entry.id);
+      const historyEntryId = popped.entry.id;
+      deferCommandDurability(async () => {
+        await appendCommandJournal(current, next, persistResult.candidateNodeIds, direction, "historyReplay", historyEntryId);
+      });
     }
     scheduleHistorySave(historyState, saveSchedule);
     broadcastHistoryStatusSoon(historyState);
@@ -5384,7 +5455,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     ensureState,
     handleMessage,
     refreshFromRuntime,
-    flushPendingSaves,
+    flushPendingSaves: flushPendingSavesIncludingCommandDurability,
     __debugRuntimeIndexStatus(): { warm: boolean; matchesState: boolean; reason: string } {
       return debugRuntimeIndexStatus();
     },
