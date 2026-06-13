@@ -141,3 +141,40 @@ the controller lacked); §2 names the sub-systems and where they live; §3 says 
 safely (two pure, three small factories), in risk order, and which core stays. The first cut
 (`sidebar-messages.ts`) is a ~175-line pure move with the dual test net (vitest + Playwright) as
 backstop — the low-risk shape Track A proved repeatedly on the controller.
+
+## 5. Execution outcome (2026-06-13)
+
+Done, each its own commit, every step gate-green (typecheck:test + vitest 720/2-skip + Playwright
+279; `pnpm run build` clean at the end; the `*.test.ts`/`*.spec.ts` unmodified throughout). **sidebar.ts
+5,627 → 5,187 (−440, −7.8%); 4 new modules.**
+
+| # | Module | Shape | Out | Note |
+|---|---|---|---|---|
+| 1 | `sidebar-messages.ts` | P | ~167 | 11 guards + 5 DTO types. Clean, as predicted. |
+| 2 | `restore-scope.ts` | P | ~63 | 5 pure helpers; `pluralize` duplicated locally; stateful `restore*` stayers import them back. |
+| 3 | `diagnostics-notice.ts` | F | ~86 | `createDiagnosticsNotice({diagnostics, perfTrace, getLastNonEditInteractionAt})`; ~27 call sites → `.show()`/`.scheduleLoad()`. |
+| 4 | `zoom-controller.ts` | F | ~124 | `createZoomController({getAppPreferences, requestVirtualRender})`; whole `./zoom.js` import moved in. |
+
+**Declined (left in place) — the map's §3 ranking held, with one correction:**
+
+- **Hover guide (`:3824–4305`) — NOT a disjoint slice (the §2/§3 "disjoint" label was wrong).** It is
+  **bidirectionally coupled to the render pipeline**: `renderRow` calls `applyHoverLineClasses(row,
+  rowInfo)` inline per row (`:3332`, `:3466`) and render/projection code reads hover state
+  (`isRenderableHoverLineScope(hoverLineScope)` at `:3194`, `:3243`). A `createHoverGuide` factory would
+  need ~8–9 deps (`tree`, `getCurrentProjection`, `getHydratingFullState`, `isSparseInitialProjection`,
+  `perfTrace`, `delaySinceEventTimeStampMs`, `rowForItem`, `rowIndexForItem`, `projectionRowByIndex`) **and**
+  a circular render↔hover import. Its core geometry (`hoverGuideSegmentsForRow`) reads `currentProjection`
+  + `hoverLineScope` directly, so even a "pure subset" collapses to ~40 lines of trivial helpers. It is
+  part of the irreducible render core — declined.
+- **Profile-trace console (`:1252–1390`)** — entangled debug plumbing: `perfTrace` is constructed with
+  `enabled: storedProfileEnabled()` (a chicken-and-egg with a profile factory that needs `perfTrace`),
+  its message guards are called from the core router, and `currentSidebarWindowId` is shared with
+  window-id loading. Low fear-reduction value, messy seam — declined.
+- **Sparse/remote projection orchestrator, drag-drop, rename** — as flagged in §3: read the core
+  state/projection bus; near-core. Not attempted.
+
+**Verdict:** the UI's clean, state-owning seams were the four above. The render/projection/hover/input
+tangle is genuinely interwoven (bidirectional coupling), so — exactly as the controller work declined
+the 12-dep glue lift — the right move was to stop here rather than relocate render-pipeline code behind
+leaky multi-dep interfaces. Fear-reduction came from the map + four self-contained modules with explicit
+boundaries, not from maximizing line count removed.
