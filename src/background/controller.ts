@@ -152,6 +152,7 @@ import {
   STATE_V4_MIGRATION_BACKUP_META_KEY,
   loadStateV4
 } from "./storage-v4.js";
+import { measureStorageCensus, storageCensusIncidentDetail } from "./storage-census.js";
 import {
   JOURNAL_META_KEY,
   journalEntryAffectsHistory,
@@ -417,6 +418,13 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   }>();
   let diagnosticsInFlight: Promise<OutlineDiagnostics> | undefined;
   let lastDiagnostics: { value: OutlineDiagnostics; atMs: number } | undefined;
+  let storageCensusInFlight = false;
+  // Runtime-window snapshot reused by diagnostics so getNormalWindows (a browser
+  // windows.getAll + tabs.query that cost up to ~2.5s on a large session, and contend with
+  // the storage writes a delete triggers) runs only after a real tab/window event changes
+  // browser state, not on every poll. Both this and lastDiagnostics are cleared in
+  // queueRuntimeRefresh/queueRuntimeActivation when any runtime event is observed.
+  let diagnosticsRuntimeWindows: RuntimeWindow[] | undefined;
   let automaticBackupInFlight: Promise<AutomaticBackupStatus> | undefined;
   let sidebarProfileRequestSequence = 0;
   let sidebarWindowCreationInFlight = 0;
@@ -3510,6 +3518,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   }
 
   function queueRuntimeRefresh(eventTabs: RuntimeTabEvidence[] = [], options: RefreshOptions = {}): Promise<boolean> {
+    invalidateDiagnosticsRuntimeCache();
     const requestedCloseMissing = options.closeMissing ?? eventTabs.length === 0;
     const pending = pendingRuntimeRefresh ?? createPendingRuntimeRefresh();
     pendingRuntimeRefresh = pending;
@@ -3529,6 +3538,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   }
 
   function queueRuntimeActivation(activeInfo: { tabId: number; windowId: number }): Promise<boolean> {
+    invalidateDiagnosticsRuntimeCache();
     const pendingTab = pendingRuntimeRefresh?.eventTabsById.get(activeInfo.tabId);
     if (pendingRuntimeRefresh && pendingTab) {
       pendingRuntimeRefresh.activationByWindowId.set(activeInfo.windowId, activeInfo.tabId);
@@ -5184,6 +5194,14 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     }
   }
 
+  // A runtime tab/window event can change the live tab set the diagnostics readout counts,
+  // so drop both the cached result and the cached window snapshot; the next poll recomputes
+  // from a fresh browser query. Between events the snapshot is reused (no getNormalWindows).
+  function invalidateDiagnosticsRuntimeCache(): void {
+    lastDiagnostics = undefined;
+    diagnosticsRuntimeWindows = undefined;
+  }
+
   function getDiagnosticsCoalesced(): Promise<OutlineDiagnostics> {
     // Serve the cached readout when it is still fresh, OR whenever a command (high-priority
     // mutation) is queued or running: diagnostics await scheduler idle and then query the
@@ -5197,7 +5215,10 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     diagnosticsInFlight ??= perfTrace.measureAsync("background.diagnostics", async () => {
       await perfTrace.measureAsync("background.diagnostics.waitForIdle", () => waitForSchedulerIdle());
       const state = await ensureState();
-      const windows = await perfTrace.measureAsync("background.diagnostics.getWindows", () => getNormalWindows(api));
+      const windows = await perfTrace.measureAsync("background.diagnostics.getWindows", async () => {
+        diagnosticsRuntimeWindows ??= await getNormalWindows(api);
+        return diagnosticsRuntimeWindows;
+      });
       const value = computeDiagnostics(state, windows);
       lastDiagnostics = { value, atMs: now() };
       return value;
@@ -5231,6 +5252,29 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     }
   }
 
+  // One-shot, opt-in storage census run when the user turns profiling on: it measures the
+  // live storage.local area (a ~1 KB probe `set` to fingerprint the backend, per-prefix byte
+  // breakdown, and the node-shard generation count as a leak signal) and records it to the
+  // incident log, which the options page shows and which exported profiles bundle in
+  // `snapshot.incidentLog`. This is the field measurement of the per-write cost ceiling that
+  // cannot be read from the repo -- see docs/storage-rearchitecture/04-STORAGE-WRITE-COST.md.
+  // It deliberately writes nothing to the perf trace (so it does not perturb a cleared trace);
+  // it is fire-and-forget so the slow get(null)/probe on a large store never blocks the toggle.
+  async function recordStorageCensus(): Promise<void> {
+    if (storageCensusInFlight) {
+      return;
+    }
+    storageCensusInFlight = true;
+    try {
+      const census = await measureStorageCensus(api, { now });
+      await recordIncidentLog("storageCensus", storageCensusIncidentDetail(census));
+    } catch (error) {
+      await recordIncidentLog("storageCensusError", { message: errorText(error) });
+    } finally {
+      storageCensusInFlight = false;
+    }
+  }
+
   async function handlePerformanceTraceMessage(
     message: PerformanceTraceMessage
   ): Promise<TraceSnapshot | PerformanceProfileSnapshot | { ok: true }> {
@@ -5239,6 +5283,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         perfTrace.setEnabled(true);
         perfTrace.mark("background.profile.enabled");
         await storePerformanceTracePreference(true);
+        void recordStorageCensus();
       } else {
         await storePerformanceTracePreference(false);
         perfTrace.mark("background.profile.disabled");
