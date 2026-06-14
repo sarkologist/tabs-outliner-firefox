@@ -2389,6 +2389,14 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     for (const plan of completedDeleteClosePlans) {
       runtimeFacts.recordCompletedClosePlanTombstones(plan);
     }
+    // Seed the diagnostics window snapshot from the startup query (which already ran here, fast, as
+    // part of the load). Otherwise the first getDiagnostics poll issues its OWN browser
+    // windows.getAll on the startup-critical path -- a call that costs several seconds under the load
+    // of the startup request burst (profiled at ~6s, vs ~70ms for the same call run calm) and blocks
+    // getState/hydration behind it. With the snapshot seeded, the first poll recomputes without a
+    // fetch; runtime events clear+refresh it as before. (We deliberately do NOT also precompute
+    // lastDiagnostics here -- that would add a second startup node-table traversal.)
+    diagnosticsRuntimeWindows = windows;
     return state;
   }
 

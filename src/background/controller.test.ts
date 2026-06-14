@@ -28956,6 +28956,8 @@ describe("background controller lifecycle", () => {
     );
     const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
     await controller.ensureState();
+    // Invalidate the startup-seeded diagnostics snapshot so this exercises a cold-cache fetch.
+    await createTabFromBrowser(runtime, { id: 2, windowId: 10, index: 1, active: true, url: "https://two.example/", title: "Two" });
     vi.mocked(runtime.api.windows.getAll).mockClear();
 
     const diagnostics = await Promise.all(
@@ -28973,6 +28975,8 @@ describe("background controller lifecycle", () => {
     );
     const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
     await controller.ensureState();
+    // Invalidate the startup-seeded diagnostics snapshot so the first poll below actually fetches.
+    await createTabFromBrowser(runtime, { id: 2, windowId: 10, index: 1, active: true, url: "https://two.example/", title: "Two" });
     vi.mocked(runtime.api.windows.getAll).mockClear();
 
     const first = await controller.handleMessage({ type: "getDiagnostics" });
@@ -28991,6 +28995,8 @@ describe("background controller lifecycle", () => {
     );
     const controller = createBackgroundController({ api: runtime.api, now: () => clock });
     await controller.ensureState();
+    // Invalidate the startup-seeded diagnostics snapshot so the first poll below actually fetches.
+    await createTabFromBrowser(runtime, { id: 2, windowId: 10, index: 1, active: true, url: "https://two.example/", title: "Two" });
     vi.mocked(runtime.api.windows.getAll).mockClear();
 
     await controller.handleMessage({ type: "getDiagnostics" });
@@ -29026,6 +29032,23 @@ describe("background controller lifecycle", () => {
 
     const after = (await controller.handleMessage({ type: "getDiagnostics" })) as { runtimeTabCount: number };
     expect(after.runtimeTabCount).toBe(2);
+  });
+
+  it("seeds the diagnostics readout at startup so the first poll needs no browser window query", async () => {
+    const runtime = fakeRuntime(
+      [{ id: 10, focused: true, incognito: false }],
+      [{ id: 1, windowId: 10, index: 0, active: true, url: "https://one.example/", title: "One" }]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    vi.mocked(runtime.api.windows.getAll).mockClear();
+
+    const diagnostics = (await controller.handleMessage({ type: "getDiagnostics" })) as { runtimeTabCount: number };
+
+    // The startup load already queried windows; the first poll reuses that snapshot instead of
+    // issuing its own windows.getAll on the startup-critical path (where it would block getState).
+    expect(runtime.api.windows.getAll).not.toHaveBeenCalled();
+    expect(diagnostics.runtimeTabCount).toBe(1);
   });
 
   it("rebroadcasts sidebar non-edit interaction notices", async () => {
