@@ -152,6 +152,11 @@ let revealHighlightNodeId: NodeId | undefined;
 let revealHighlightTimer: number | undefined;
 let sidebarWindowId: number | undefined;
 let sidebarWindowIdLoaded = false;
+// Whether this sidebar's browser window is the focused one. Only the focused window's sidebar fully
+// hydrates the tree; background sidebars stay on the sparse projection. undefined = unknown (no
+// windows API / query failed) -> treated as "may hydrate" so behavior is unchanged where we cannot tell.
+let sidebarWindowFocused: boolean | undefined;
+let sidebarWindowFocusListenerRegistered = false;
 let sidebarActiveTabTargetsRevision = 0;
 let sidebarActiveTabTargetsCacheRevision = -1;
 let sidebarActiveTabTargetsByWindow = new Map<number, NodeId>();
@@ -649,6 +654,15 @@ function hydrationTraceDetail(): TraceDetail {
 }
 
 function scheduleFullStateHydration(delayMs = FULL_STATE_HYDRATION_DELAY_MS): void {
+  // Only the focused window's sidebar holds the full tree. A background sidebar stays on the sparse
+  // projection (boot snapshot + on-demand viewport slices), which still displays and scrolls the
+  // tree -- this avoids every open sidebar pulling and holding its own copy of a large store at
+  // startup (the dominant cost with many windows open). It hydrates when its window gains focus
+  // (registerSidebarWindowFocusListener). Skip only when we KNOW the window is unfocused; an unknown
+  // focus state (no windows API) keeps the prior always-hydrate behavior.
+  if (sidebarWindowFocused === false) {
+    return;
+  }
   if (!hydratingFullState || fullStateHydrationInFlight || pendingFullHydrationTimer !== undefined) {
     return;
   }
@@ -1235,7 +1249,37 @@ async function loadSidebarWindowId(): Promise<void> {
   }
 
   sidebarWindowIdLoaded = true;
-  sidebarWindowId = await currentSidebarWindowId();
+  const windowInfo = await currentSidebarWindow();
+  sidebarWindowId = typeof windowInfo?.id === "number" ? windowInfo.id : undefined;
+  sidebarWindowFocused = typeof windowInfo?.focused === "boolean" ? windowInfo.focused : undefined;
+  registerSidebarWindowFocusListener();
+}
+
+// Track focus of this sidebar's window so only the focused sidebar hydrates the full tree. On
+// focus-gain a background sidebar hydrates now (it deferred while unfocused); losing focus keeps the
+// already-hydrated state (dropping it would re-pay hydration on every window switch).
+function registerSidebarWindowFocusListener(): void {
+  if (sidebarWindowFocusListenerRegistered) {
+    return;
+  }
+  const onFocusChanged = browser.windows?.onFocusChanged;
+  if (!onFocusChanged) {
+    return;
+  }
+  sidebarWindowFocusListenerRegistered = true;
+  onFocusChanged.addListener((windowId) => {
+    if (typeof sidebarWindowId !== "number") {
+      return;
+    }
+    const focused = windowId === sidebarWindowId;
+    if (focused === sidebarWindowFocused) {
+      return;
+    }
+    sidebarWindowFocused = focused;
+    if (focused) {
+      scheduleFullStateHydration(0);
+    }
+  });
 }
 
 async function loadSidebarPreferences(): Promise<void> {
@@ -1333,7 +1377,7 @@ function isSidebarNonEditInteractionMessage(message: unknown): message is Sideba
 }
 
 async function labeledSidebarPerformanceTrace(): Promise<LabeledTraceSnapshot> {
-  const windowId = await currentSidebarWindowId();
+  const windowId = (await currentSidebarWindow())?.id;
   return {
     id: windowId === undefined ? `sidebar-${sidebarProfileInstanceId}` : `sidebar-window-${windowId}`,
     label: windowId === undefined ? `Sidebar ${sidebarProfileInstanceId.slice(0, 8)}` : `Sidebar window ${windowId}`,
@@ -1343,13 +1387,12 @@ async function labeledSidebarPerformanceTrace(): Promise<LabeledTraceSnapshot> {
   };
 }
 
-async function currentSidebarWindowId(): Promise<number | undefined> {
+async function currentSidebarWindow(): Promise<{ id?: number; focused?: boolean } | undefined> {
   const getCurrent = browser.windows?.getCurrent;
   if (!getCurrent) {
     return undefined;
   }
-  const windowInfo = await getCurrent.call(browser.windows).catch(() => undefined);
-  return typeof windowInfo?.id === "number" ? windowInfo.id : undefined;
+  return getCurrent.call(browser.windows).catch(() => undefined);
 }
 
 function createSidebarProfileInstanceId(): string {
