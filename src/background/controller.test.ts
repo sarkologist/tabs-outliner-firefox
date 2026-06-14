@@ -28264,7 +28264,7 @@ describe("background controller lifecycle", () => {
       | undefined;
     const savedKeys = Object.keys(saved ?? {});
     // A same-parent reorder compacts only the touched shards (window + moved tab) plus the
-    // inactive v4 manifest slot -- never a full 32-shard rewrite.
+    // inactive v4 manifest slot -- never a full all-shard rewrite.
     expect(savedKeys.some((key) => key.startsWith("outline:v4:manifest:"))).toBe(true);
     const shardKeys = savedKeys.filter((key) => key.includes(":nodes:"));
     expect(shardKeys.length).toBeGreaterThan(0);
