@@ -120,6 +120,18 @@ Use these as starting targets, not hard promises:
 
 ## Progress Log
 
+### 2026-06-14: Finer v4 sharding (32 -> 256) to cut per-save bytes on the interaction path
+
+After the leak fix, the representative trace (`tabs-outliner-profile-2026-06-14(1).json`, clean 36 MB store) showed the remaining intermittent lag is bg-thread occupation from storage saves (~360-573 ms) plus runtime-event reconciliation (~400 ms) — both serialize the single background thread, delaying command acks / broadcasts / sidebar requests. The save cost is driven by **shard size**: a v4 save rewrites whole dirty shards, and at 32 shards a 25k-node store is ~1 MB/shard, so even a single-node change wrote ~1 MB.
+
+Measured on a realistic many-windows/few-tabs tree (≈ the user's shape), a one-tab save: **272 KB @32 → 85 KB @256** (the synthetic tree's 3,900 roots inflate the manifest floor; the user's store has 43 roots, so the shard dominates and the real win is ~8×: ~1 MB → ~140 KB → ~500 ms → ~70-100 ms). Bumping `STATE_V4_NODE_SHARD_COUNT` 32 -> 256 keeps ~100-140 nodes/shard.
+
+- **Migration (no data loss):** a store written at a legacy count still loads cleanly at r0 — `isStateV4Manifest` accepts `STATE_V4_LEGACY_SHARD_COUNTS` ({32}) in addition to the current count, and the loader reads whatever shard keys the manifest lists. The coordinator forces ONE full compaction when `currentV4Snapshot.manifest.shardGenerations.length !== STATE_V4_NODE_SHARD_COUNT`, re-sharding to 256; the old-count shard keys are GC'd over the next saves + the orphan sweep. Without the forced full, an incremental save would stamp the new-layout shards the old manifest never had at generation 0 (non-existent keys) and corrupt the snapshot.
+- **Tests:** storage-v4 re-shard round-trip (load 32-shard store -> full compaction -> reload exact state at 256); controller test that a 32-shard store re-shards on the first save (forced full compaction) and reloads exactly; existing literal-32 assertions switched to the constant.
+- **Trade-off:** load reads 256 shard keys instead of 32 (same total bytes; one batched `storage.local.get`). The manifest's `shardGenerations` is 256 ints (~1 KB, negligible). Real load latency at 256 keys is not measurable in the node harness — to watch on the next in-browser profile.
+- **`Current Asymptotics Audit` (Persistence row):** unchanged shape (`O(dirty shards)`), but the per-shard constant drops ~8x, so a single-node save now writes ~tens of KB instead of ~1 MB.
+- **Guards:** runtime-guard --hard-only PASS (9), sidebar-projection-guard PASS (2), storage-fault lane PASS (fault corpus + crash soak), 744 vitest (+2), typecheck + build clean.
+
 ### 2026-06-14: Pause diagnostics polling in hidden sidebars
 
 With the leak fixed, the remaining startup-period background cost was `sidebar.diagnostics`: each of the user's 7-9 open sidebars polls `getDiagnostics` (a background `getNormalWindows` ~0.4-1.5s) even when not visible. `loadDiagnostics` now early-returns when `document.hidden`, and a `visibilitychange` listener reschedules a load when the sidebar becomes visible — so only visible sidebars poll. `isDocumentHidden` is an injected dep on `createDiagnosticsNotice`. Advisory path (does not affect persisted state). Verified via `perf:sidebar-projection-guard` PASS + Playwright first-paint (visible path unchanged); not unit-testable in the node vitest env (the notice instantiates a `window.setTimeout` scheduler). `Current Asymptotics Audit`: unchanged (diagnostics is advisory Class C, off the durable-state asymptotics). Guards: runtime-guard --hard-only PASS, sidebar-projection-guard PASS, 742 vitest, typecheck + build clean.

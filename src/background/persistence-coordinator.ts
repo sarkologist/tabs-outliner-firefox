@@ -6,6 +6,7 @@ import {
 import {
   STATE_V4_MIGRATION_BACKUP_KEY,
   STATE_V4_MIGRATION_BACKUP_META_KEY,
+  STATE_V4_NODE_SHARD_COUNT,
   loadStateV4,
   outlineStateV4Snapshot,
   stateV4ShardIndexForNodeId,
@@ -366,7 +367,13 @@ export function createPersistenceCoordinator(deps: PersistenceCoordinatorDeps) {
           if (journalSeqIncluded !== undefined) {
             journalTouchedSinceCompaction = new Set();
           }
-          const fullCompaction = !candidateNodeIds || !currentV4Snapshot;
+          // A loaded store written at a different shard count must be re-sharded wholesale: an
+          // incremental write would stamp the new-layout shards the old manifest never had at
+          // generation 0 (non-existent keys), corrupting the snapshot. Force one full compaction.
+          const shardCountChanged =
+            currentV4Snapshot !== undefined &&
+            currentV4Snapshot.manifest.shardGenerations.length !== STATE_V4_NODE_SHARD_COUNT;
+          const fullCompaction = !candidateNodeIds || !currentV4Snapshot || shardCountChanged;
           const dirtyShardIndexes = fullCompaction
             ? undefined
             : new Set([

@@ -4,6 +4,7 @@ import type { NodeId, OutlineNode, OutlineState } from "../model/types.js";
 import { createFaultyStorage } from "../test/faulty-storage.test-support.js";
 import { generatedTraceConfig, generatedTraceTimeoutMs } from "../test/generated-traces.test-support.js";
 import { createOutlineJournal, replayJournal, type OutlineJournalEntry } from "./outline-journal.js";
+import { outlineNodeShardIndex } from "./storage.js";
 import {
   STATE_V4_MANIFEST_A_KEY,
   STATE_V4_MANIFEST_B_KEY,
@@ -467,6 +468,52 @@ describe("outline state v4 storage", () => {
 
     expect(result.removed).toBe(0);
     expect((await loadStateV4(faulty.api))?.state).toEqual(state);
+  });
+
+  it("re-shards a store written at a different shard count, preserving the exact state", async () => {
+    const state = makeTree(300);
+    const faulty = createFaultyStorage();
+    const oldCount = 32;
+    expect(oldCount).not.toBe(STATE_V4_NODE_SHARD_COUNT);
+
+    // Hand-build a store sharded at the old count (outlineStateV4Snapshot is bound to the current
+    // constant, so we cannot produce an old-count store through it).
+    const closedCount = Object.values(state.nodes).filter((node) => node.status === "closed").length;
+    const oldItems: Record<string, unknown> = {};
+    const shardGenerations: number[] = [];
+    for (let shardIndex = 0; shardIndex < oldCount; shardIndex += 1) {
+      const nodes = Object.values(state.nodes)
+        .filter((node) => outlineNodeShardIndex(node.id, oldCount) === shardIndex)
+        .sort((left, right) => left.id.localeCompare(right.id));
+      oldItems[stateV4NodeShardKey(shardIndex, 1)] = { version: 4, shardIndex, generation: 1, nodes };
+      shardGenerations.push(1);
+    }
+    oldItems[STATE_V4_MANIFEST_A_KEY] = {
+      version: 4, generation: 1, epoch: 0, journalSeqIncluded: 0,
+      rootIds: [...state.rootIds], nodeCount: Object.keys(state.nodes).length, closedCount,
+      shardGenerations, savedAt: 1
+    };
+    await faulty.api.storage.local.set(oldItems);
+
+    // Loads fine at the old shard count (load reads whatever the manifest lists).
+    const loaded = await loadStateV4(faulty.api);
+    expect(loaded?.recovery).toBe("r0");
+    expect(loaded?.manifest.shardGenerations).toHaveLength(oldCount);
+    expect(loaded?.state).toEqual(state);
+
+    // A full compaction (what the coordinator forces on a shard-count mismatch) re-shards to the
+    // current count and reloads to the exact state.
+    const snapshot = outlineStateV4Snapshot(loaded!.state, {
+      epoch: 0, journalSeqIncluded: 0, savedAt: 2,
+      previous: { manifest: loaded!.manifest, slot: loaded!.slot }
+    });
+    expect(snapshot.manifest.shardGenerations).toHaveLength(STATE_V4_NODE_SHARD_COUNT);
+    await applySnapshot(faulty, snapshot);
+
+    const reloaded = await loadStateV4(faulty.api);
+    expect(reloaded?.recovery).toBe("r0");
+    expect(reloaded?.manifest.shardGenerations).toHaveLength(STATE_V4_NODE_SHARD_COUNT);
+    expect(reloaded?.state).toEqual(state);
   });
 
   it("never sweeps blind when no manifest is parseable", async () => {

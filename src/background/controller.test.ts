@@ -13,6 +13,8 @@ import {
 import { createBackgroundController, type BackgroundController } from "./controller.js";
 import { createOutlineJournal, replayJournal } from "./outline-journal.js";
 import {
+  STATE_V4_MANIFEST_A_KEY,
+  STATE_V4_NODE_SHARD_COUNT,
   loadStateV4,
   outlineStateV4Snapshot,
   stateV4NodeShardKey,
@@ -27,7 +29,8 @@ import {
   STATE_V2_MANIFEST_KEY,
   STATE_V3_MANIFEST_KEY,
   loadStateWithMetadata,
-  outlineBootSnapshotItem
+  outlineBootSnapshotItem,
+  outlineNodeShardIndex
 } from "./storage.js";
 import { outlineStateV2Items, outlineStateV3Items } from "./storage-legacy-write.test-support.js";
 import { PORTABLE_TREE_SCHEMA } from "../model/portable-tree.js";
@@ -27257,7 +27260,7 @@ describe("background controller lifecycle", () => {
       | undefined;
     const savedKeys = Object.keys(saved ?? {});
     expect(savedKeys.some((key) => key.startsWith("outline:v4:manifest:"))).toBe(true);
-    expect(savedKeys.filter((key) => key.startsWith("outline:v4:nodes:"))).toHaveLength(32);
+    expect(savedKeys.filter((key) => key.startsWith("outline:v4:nodes:"))).toHaveLength(STATE_V4_NODE_SHARD_COUNT);
     const persisted = await loadPersistedOutlineState(runtime.api);
     expect(persisted?.nodes["tab:300"]?.title).toBe("Saved 300");
     // The legacy keys are deleted once the migrated store verifies, and a portable-tree
@@ -27451,6 +27454,42 @@ describe("background controller lifecycle", () => {
     const persisted = await loadPersistedOutlineState(runtime.api);
     expect(persisted?.nodes["tab:60"]).toBeUndefined();
     expect(persisted?.nodes["tab:7"]?.title).toBe("Gen2");
+  });
+
+  it("re-shards a v4 store written at a different shard count on the first save (forced full compaction)", async () => {
+    const state = wideClosedTabState(60);
+    const oldCount = 32;
+    expect(oldCount).not.toBe(STATE_V4_NODE_SHARD_COUNT);
+    // Hand-build a store sharded at the old count to simulate a pre-upgrade store.
+    const closedCount = Object.values(state.nodes).filter((node) => node.status === "closed").length;
+    const initialStorage: Record<string, unknown> = {};
+    const shardGenerations: number[] = [];
+    for (let shardIndex = 0; shardIndex < oldCount; shardIndex += 1) {
+      const nodes = Object.values(state.nodes)
+        .filter((node) => outlineNodeShardIndex(node.id, oldCount) === shardIndex)
+        .sort((left, right) => left.id.localeCompare(right.id));
+      initialStorage[stateV4NodeShardKey(shardIndex, 1)] = { version: 4, shardIndex, generation: 1, nodes };
+      shardGenerations.push(1);
+    }
+    initialStorage[STATE_V4_MANIFEST_A_KEY] = {
+      version: 4, generation: 1, epoch: 0, journalSeqIncluded: 0,
+      rootIds: [...state.rootIds], nodeCount: Object.keys(state.nodes).length, closedCount,
+      shardGenerations, savedAt: 1
+    };
+
+    const runtime = fakeRuntime([{ id: 10, focused: true, incognito: false }], [], { initialStorage });
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    await controller.handleMessage({ type: "deleteNode", nodeId: "tab:60" });
+    await controller.flushPendingSaves();
+
+    // The mismatch forced a full compaction at the new shard count; the store reloads exactly (an
+    // incremental write would have stamped non-existent gen-0 shards and corrupted the snapshot).
+    const reloaded = await loadStateV4(runtime.api);
+    expect(reloaded?.manifest.shardGenerations).toHaveLength(STATE_V4_NODE_SHARD_COUNT);
+    expect(reloaded?.state.nodes["tab:60"]).toBeUndefined();
+    expect(reloaded?.state.nodes["tab:1"]?.title).toBe("Saved 1");
+    expect(Object.keys(reloaded!.state.nodes)).toHaveLength(Object.keys(state.nodes).length - 1);
   });
 
   it("keeps generated oracle exploration opt-in outside the frozen gate", async () => {
