@@ -27366,6 +27366,51 @@ describe("background controller lifecycle", () => {
     expect(controller.__debugRuntimeIndexStatus()).toEqual({ warm: true, matchesState: true, reason: "" });
   });
 
+  it("persists a clean v4 startup reconciliation incrementally without dropping closed shards", async () => {
+    const storedState = wideClosedTabState(300);
+    const runtime = fakeRuntime(
+      [{ id: 10, focused: true, incognito: false }],
+      [
+        {
+          id: 9001,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://live.example/",
+          title: "Live"
+        }
+      ],
+      { initialStorage: outlineStateV4Snapshot(storedState, { epoch: 0, journalSeqIncluded: 0, savedAt: 1 }).setItems }
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+
+    await controller.handleMessage({ type: "setPerformanceTraceEnabled", enabled: true });
+    const inMemory = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    await controller.flushPendingSaves();
+
+    // The startup save folds the reconciled live tab into only the changed shards -- never a full
+    // 32-shard rewrite (the boot-time O(total-store) write that made startup janky).
+    const snapshot = await controller.handleMessage({ type: "getPerformanceTrace" });
+    const compactions = traceEntriesNamed(snapshot, "background.state.save.v4.compact");
+    expect(compactions.length).toBeGreaterThan(0);
+    expect(compactions.every((entry) => entry.detail?.fullCompaction === false)).toBe(true);
+    expect(compactions.every((entry) => (entry.detail?.dirtyShardCount as number) < 32)).toBe(true);
+
+    // Reloading reproduces the in-memory state: every closed tab survived the incremental save (a
+    // dropped shard would lose them) and the reconciled live tab is durable.
+    const persisted = await loadPersistedOutlineState(runtime.api);
+    expect(persisted).toBeDefined();
+    expect(Object.keys(persisted!.nodes)).toHaveLength(Object.keys(inMemory.nodes).length);
+    for (let index = 1; index <= 300; index += 1) {
+      expect(persisted!.nodes[`tab:${index}`]?.title).toBe(`Saved ${index}`);
+    }
+    const liveTabNode = Object.values(persisted!.nodes).find(
+      (node) => node.live && "tabId" in node.live && node.live.tabId === 9001
+    );
+    expect(liveTabNode).toBeDefined();
+    expect(persisted!.nodes["window:10"]?.childIds).toContain(liveTabNode!.id);
+  });
+
   it("keeps generated oracle exploration opt-in outside the frozen gate", async () => {
     const mismatch: PureScriptOracleComparison = {
       kind: "mismatch",

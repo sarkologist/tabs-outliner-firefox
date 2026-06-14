@@ -48,6 +48,7 @@ import { RuntimeReconciler } from "./runtime-reconciler.js";
 import { getNormalWindow, getNormalWindows, getNormalWindowsIncludingTabs } from "./runtime-snapshot.js";
 import { createStateCache } from "./state-cache.js";
 import {
+  changedNodeIdsSinceBaseline,
   nodesMateriallyEqual,
   runtimeWindowOrdersMatch,
   runtimeWindowTabOrder,
@@ -2171,6 +2172,19 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       ? journalInit.entries.filter((entry) => entry.seq > (loaded?.journalSeqIncluded ?? 0))
       : [];
     const journalReplayed = journalReplayEntries.length > 0;
+    // A load below clean R0 (recovery/repair) or one needing journal replay must fold into a fresh
+    // full snapshot so the next startup does not re-replay (and journalSeqIncluded advances past the
+    // replayed entries). A clean r0 v4 load can persist the startup reconciliation incrementally.
+    const loadedRequiresFullSave = loaded?.requiresFullSave === true || journalReplayed;
+    // Shards materially changed by startup reconciliation vs the loaded v4 baseline. The first save
+    // writes only these instead of a full O(total-store) rewrite (~32s on a 25k-node store): a clean
+    // v4 load already seeds currentV4Snapshot, so an incremental compaction is valid, and clean
+    // shards keep their stored value (same contract every post-startup save uses). Undefined keeps
+    // the full path for non-v4 or recovery/replay loads (their baseline diverges from on-disk).
+    const startupSaveCandidateNodeIds = (current: OutlineState): readonly NodeId[] | undefined =>
+      loaded?.format === "v4" && !loadedRequiresFullSave && loadedState
+        ? changedNodeIdsSinceBaseline(loadedState, current)
+        : undefined;
     let stored = loadedState;
     if (journalReplayed && journalReplayEntries.some(journalEntryAffectsHistory)) {
       // Replayed entries include history-tracked commands (or undo/redo moves) whose
@@ -2263,9 +2277,6 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         historyState = lifecycleRecovery.history;
       }
       const startupBase = lifecycleRecovery.state;
-      // A journal replay must be folded into a fresh full v3 snapshot so the next startup
-      // does not re-replay (and so journalSeqIncluded advances past the replayed entries).
-      const loadedRequiresFullSave = loaded?.requiresFullSave === true || journalReplayed;
       storedRuntimeMatch = runtimeSnapshotMateriallyMatchesState(startupBase, windows);
       if (storedRuntimeMatch.matches) {
         if (!runtimeLifecycleJournalChangedState && !loadedRequiresFullSave) {
@@ -2275,7 +2286,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         }
         state = startupBase;
         if (runtimeLifecycleJournalChangedState || !statesMateriallyEqual(stored, state) || loadedRequiresFullSave) {
-          scheduleStateSave(state);
+          scheduleStateSave(state, "normal", startupSaveCandidateNodeIds(state));
         }
       } else {
         lastPersistedState = !loadedRequiresFullSave
@@ -2288,7 +2299,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         const guarded = preserveClosedSubtreesForRuntimeTransition(startupBase, reconciled, { source: "startup" });
         state = statesEqualIgnoringUpdatedAt(startupBase, guarded.state) ? startupBase : guarded.state;
         if (!statesMateriallyEqual(stored, state) || loadedRequiresFullSave) {
-          scheduleStateSave(state);
+          scheduleStateSave(state, "normal", startupSaveCandidateNodeIds(state));
         }
       }
     } else {
@@ -2324,7 +2335,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       state = prunedStartupState;
       runtimeLifecycleJournalChangedState = true;
       lastPersistedState = undefined;
-      scheduleStateSave(state);
+      scheduleStateSave(state, "normal", startupSaveCandidateNodeIds(state));
     }
     if (consumedRuntimeLifecycleJournalEntryIds.length > 0) {
       if (
