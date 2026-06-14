@@ -120,6 +120,16 @@ Use these as starting targets, not hard promises:
 
 ## Progress Log
 
+### 2026-06-14: Seed the diagnostics window snapshot at startup (keep getWindows off the startup path)
+
+A clean-but-slow-system steady-state trace showed the first `getDiagnostics` poll issuing its own browser `windows.getAll` on the startup-critical path. Under the load of the startup request burst that call was profiled at ~6.3s (vs ~70ms for the same `getNormalWindows` run calm during the load), and `getState`/hydration queued behind it (~6s). The diagnostics window snapshot (`diagnosticsRuntimeWindows`) is reused between polls and only refetched after a runtime event — but it was cold at startup, so the first poll paid the full query exactly when the thread was busiest.
+
+`initializeState` already runs `getNormalWindows` (fast, as part of the load), so it now seeds `diagnosticsRuntimeWindows` with that snapshot before returning. The first poll recomputes off the seed with no browser query; runtime events clear+refresh it as before. We deliberately do NOT also precompute `lastDiagnostics` (that would add a second startup node-table traversal and regress the runtime-index-warming budget). Diagnostics is advisory (Class C), so reusing the startup snapshot for the first readout is correct — a runtime event between load and the first poll clears the seed and forces a fresh query.
+
+- Tests: new controller test (first poll after startup makes no `windows.getAll`); the three diagnostics-cache tests (coalescing / result-freshness / snapshot-reuse) now invalidate the seed with a tab event first so they still exercise a cold-cache fetch.
+- `Current Asymptotics Audit`: unchanged (diagnostics is advisory Class C, off the durable-state asymptotics).
+- Guards: runtime-guard --hard-only PASS (9), sidebar-projection-guard PASS (2), 746 vitest (+1), typecheck + build clean.
+
 ### 2026-06-14: Finer v4 sharding (32 -> 256) to cut per-save bytes on the interaction path
 
 After the leak fix, the representative trace (`tabs-outliner-profile-2026-06-14(1).json`, clean 36 MB store) showed the remaining intermittent lag is bg-thread occupation from storage saves (~360-573 ms) plus runtime-event reconciliation (~400 ms) — both serialize the single background thread, delaying command acks / broadcasts / sidebar requests. The save cost is driven by **shard size**: a v4 save rewrites whole dirty shards, and at 32 shards a 25k-node store is ~1 MB/shard, so even a single-node change wrote ~1 MB.
