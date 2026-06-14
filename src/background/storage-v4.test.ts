@@ -4,6 +4,7 @@ import type { NodeId, OutlineNode, OutlineState } from "../model/types.js";
 import { createFaultyStorage } from "../test/faulty-storage.test-support.js";
 import { generatedTraceConfig, generatedTraceTimeoutMs } from "../test/generated-traces.test-support.js";
 import { createOutlineJournal, replayJournal, type OutlineJournalEntry } from "./outline-journal.js";
+import { outlineNodeShardIndex } from "./storage.js";
 import {
   STATE_V4_MANIFEST_A_KEY,
   STATE_V4_MANIFEST_B_KEY,
@@ -52,6 +53,34 @@ async function applySnapshot(
   if (snapshot.removeKeysAfterCommit.length > 0) {
     await faulty.api.storage.local.remove(snapshot.removeKeysAfterCommit);
   }
+}
+
+// Hand-build a store sharded at an arbitrary count (outlineStateV4Snapshot is bound to the current
+// constant, so we cannot produce a legacy-count store through it). Used to exercise the 32 -> 256
+// migration and its torn-write fallback window.
+function oldCountStoreItems(
+  state: OutlineState,
+  shardCount: number,
+  generation: number,
+  slot: StateV4ManifestSlot
+): { items: Record<string, unknown>; manifest: StateV4Manifest } {
+  const items: Record<string, unknown> = {};
+  const shardGenerations: number[] = [];
+  const closedCount = Object.values(state.nodes).filter((node) => node.status === "closed").length;
+  for (let shardIndex = 0; shardIndex < shardCount; shardIndex += 1) {
+    const nodes = Object.values(state.nodes)
+      .filter((node) => outlineNodeShardIndex(node.id, shardCount) === shardIndex)
+      .sort((left, right) => left.id.localeCompare(right.id));
+    items[stateV4NodeShardKey(shardIndex, generation)] = { version: 4, shardIndex, generation, nodes };
+    shardGenerations.push(generation);
+  }
+  const manifest: StateV4Manifest = {
+    version: 4, generation, epoch: 0, journalSeqIncluded: 0,
+    rootIds: [...state.rootIds], nodeCount: Object.keys(state.nodes).length, closedCount,
+    shardGenerations, savedAt: generation
+  };
+  items[slot === "a" ? STATE_V4_MANIFEST_A_KEY : STATE_V4_MANIFEST_B_KEY] = manifest;
+  return { items, manifest };
 }
 
 describe("outline state v4 storage", () => {
@@ -467,6 +496,76 @@ describe("outline state v4 storage", () => {
 
     expect(result.removed).toBe(0);
     expect((await loadStateV4(faulty.api))?.state).toEqual(state);
+  });
+
+  it("re-shards a store written at a different shard count, preserving the exact state", async () => {
+    const state = makeTree(300);
+    const faulty = createFaultyStorage();
+    const oldCount = 32;
+    expect(oldCount).not.toBe(STATE_V4_NODE_SHARD_COUNT);
+
+    await faulty.api.storage.local.set(oldCountStoreItems(state, oldCount, 1, "a").items);
+
+    // Loads fine at the old shard count (load reads whatever the manifest lists).
+    const loaded = await loadStateV4(faulty.api);
+    expect(loaded?.recovery).toBe("r0");
+    expect(loaded?.manifest.shardGenerations).toHaveLength(oldCount);
+    expect(loaded?.state).toEqual(state);
+
+    // A full compaction (what the coordinator forces on a shard-count mismatch) re-shards to the
+    // current count and reloads to the exact state.
+    const snapshot = outlineStateV4Snapshot(loaded!.state, {
+      epoch: 0, journalSeqIncluded: 0, savedAt: 2,
+      previous: { manifest: loaded!.manifest, slot: loaded!.slot }
+    });
+    expect(snapshot.manifest.shardGenerations).toHaveLength(STATE_V4_NODE_SHARD_COUNT);
+    await applySnapshot(faulty, snapshot);
+
+    const reloaded = await loadStateV4(faulty.api);
+    expect(reloaded?.recovery).toBe("r0");
+    expect(reloaded?.manifest.shardGenerations).toHaveLength(STATE_V4_NODE_SHARD_COUNT);
+    expect(reloaded?.state).toEqual(state);
+  });
+
+  it("falls back to the intact old-count slot when the first re-shard compaction is torn", async () => {
+    const state = makeTree(120);
+    const faulty = createFaultyStorage();
+    const oldCount = 32;
+    expect(oldCount).not.toBe(STATE_V4_NODE_SHARD_COUNT);
+
+    // Pre-upgrade store: slot a = gen 10 (current, intact), slot b = gen 9 (the R1 fallback).
+    const slotA = oldCountStoreItems(state, oldCount, 10, "a");
+    const slotB = oldCountStoreItems(state, oldCount, 9, "b");
+    await faulty.api.storage.local.set({ ...slotB.items, ...slotA.items });
+
+    // The coordinator forces a full re-shard compaction on the count mismatch: previous = the
+    // current slot a (gen 10), collect = the fallback it evicts (slot b gen 9). The new 256-shard
+    // write targets slot b.
+    const reshard = outlineStateV4Snapshot(state, {
+      epoch: 0, journalSeqIncluded: 0, savedAt: 11,
+      previous: { manifest: slotA.manifest, slot: "a" },
+      collect: slotB.manifest
+    });
+    expect(reshard.slot).toBe("b");
+    expect(reshard.manifest.shardGenerations).toHaveLength(STATE_V4_NODE_SHARD_COUNT);
+    // It must never collect a surviving slot-a (gen 10) shard key -- that is the R1 fallback.
+    for (let shardIndex = 0; shardIndex < oldCount; shardIndex += 1) {
+      expect(reshard.removeKeysAfterCommit).not.toContain(stateV4NodeShardKey(shardIndex, 10));
+    }
+
+    // Tear the write: only the new manifest lands; its 256 shards do not. The GC of the evicted
+    // gen-9 keys still runs (models the post-resolve remove).
+    await faulty.api.storage.local.set({ [reshard.manifestKey]: reshard.setItems[reshard.manifestKey] });
+    if (reshard.removeKeysAfterCommit.length > 0) {
+      await faulty.api.storage.local.remove(reshard.removeKeysAfterCommit);
+    }
+
+    // The torn 256-shard slot is rejected; the intact 32-shard slot a loads at r1, state exact.
+    const loaded = await loadStateV4(faulty.api);
+    expect(loaded?.recovery).toBe("r1");
+    expect(loaded?.slot).toBe("a");
+    expect(loaded?.manifest.shardGenerations).toHaveLength(oldCount);
+    expect(loaded?.state).toEqual(state);
   });
 
   it("never sweeps blind when no manifest is parseable", async () => {

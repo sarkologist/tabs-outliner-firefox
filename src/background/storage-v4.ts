@@ -2,7 +2,7 @@ import type { NodeId, OutlineNode, OutlineState } from "../model/types.js";
 import { cloneOutlineNode } from "../model/outline.js";
 import { normalizeLoadedOutlineStructure, outlineNodeShardIndex, type StateStructureRepair } from "./storage.js";
 
-// v4 snapshot store: 32 generation-stamped node shards (childIds inline -- no order pages)
+// v4 snapshot store: STATE_V4_NODE_SHARD_COUNT (256) generation-stamped node shards (childIds inline -- no order pages)
 // plus double-buffered manifests. Consistency is verifiable from storage alone: a shard is
 // valid for a manifest only when its embedded generation matches the manifest's
 // shardGenerations entry, so a torn compaction can never be half-trusted. See
@@ -11,7 +11,17 @@ import { normalizeLoadedOutlineStructure, outlineNodeShardIndex, type StateStruc
 export const STATE_V4_MANIFEST_A_KEY = "outline:v4:manifest:a";
 export const STATE_V4_MANIFEST_B_KEY = "outline:v4:manifest:b";
 export const STATE_V4_NODE_SHARD_PREFIX = "outline:v4:nodes:";
-export const STATE_V4_NODE_SHARD_COUNT = 32;
+// Node count per shard ≈ total / SHARD_COUNT. A save rewrites whole dirty shards, so a single-node
+// change costs one shard's worth of bytes. 256 keeps that ~100-140 nodes (tens of KB) on a 25k-node
+// store instead of ~800 nodes (~1 MB at 32), cutting per-save storage cost ~8x on the interaction
+// path. A store written at a different count is re-sharded by a one-time full compaction on the
+// first save (the coordinator forces it when the loaded manifest's shard count differs).
+export const STATE_V4_NODE_SHARD_COUNT = 256;
+// Shard counts a stored manifest may legitimately have used before the current one. A store at a
+// legacy count still loads cleanly (r0) -- the loader reads whatever shard keys the manifest lists
+// -- and the coordinator re-shards it to the current count on the first save. Without this, a
+// count change would reject every existing manifest and force the degraded r2 salvage path.
+export const STATE_V4_LEGACY_SHARD_COUNTS: ReadonlySet<number> = new Set([32]);
 export const STATE_V4_MIGRATION_BACKUP_KEY = "outline:v4:migrationBackup";
 // Tiny side record for the multi-MB backup key: lets startup check migration evidence and
 // the backup's age without deserializing the backup itself.
@@ -396,7 +406,8 @@ function isStateV4Manifest(value: unknown): value is StateV4Manifest {
     typeof manifest.nodeCount === "number" &&
     typeof manifest.closedCount === "number" &&
     Array.isArray(manifest.shardGenerations) &&
-    manifest.shardGenerations.length === STATE_V4_NODE_SHARD_COUNT &&
+    (manifest.shardGenerations.length === STATE_V4_NODE_SHARD_COUNT ||
+      STATE_V4_LEGACY_SHARD_COUNTS.has(manifest.shardGenerations.length)) &&
     manifest.shardGenerations.every((generation) => typeof generation === "number") &&
     typeof manifest.savedAt === "number";
 }
