@@ -13,6 +13,7 @@ import {
   outlineStateV4Snapshot,
   stateV4NodeShardKey,
   stateV4ShardIndexForNodeId,
+  sweepOrphanedV4Shards,
   type StateV4Manifest,
   type StateV4ManifestSlot
 } from "./storage-v4.js";
@@ -409,6 +410,75 @@ describe("outline state v4 storage", () => {
       await restart();
     }
   }, generatedTraceTimeoutMs(30000, 300000));
+
+  it("sweeps orphaned shard generations the GC never collected, preserving both stored slots", async () => {
+    const state = makeTree(300);
+    const faulty = createFaultyStorage();
+    const full = outlineStateV4Snapshot(state, { epoch: 1, journalSeqIncluded: 0, savedAt: 5 });
+    await applySnapshot(faulty, full);
+    const next: OutlineState = {
+      ...state,
+      nodes: { ...state.nodes, "tab:7": { ...state.nodes["tab:7"]!, title: "Renamed" } }
+    };
+    const incremental = outlineStateV4Snapshot(next, {
+      epoch: 1,
+      journalSeqIncluded: 9,
+      savedAt: 6,
+      previous: { manifest: full.manifest, slot: full.slot },
+      dirtyShardIndexes: new Set([stateV4ShardIndexForNodeId("tab:7")])
+    });
+    await applySnapshot(faulty, incremental);
+
+    // Simulate the leak: orphaned shard keys from old generations no stored manifest references.
+    const orphanKeys = [
+      stateV4NodeShardKey(0, 90),
+      stateV4NodeShardKey(0, 91),
+      stateV4NodeShardKey(5, 92),
+      stateV4NodeShardKey(31, 93)
+    ];
+    await faulty.api.storage.local.set(
+      Object.fromEntries(orphanKeys.map((key) => [key, { version: 4, shardIndex: 0, generation: 90, nodes: [] }]))
+    );
+
+    const result = await sweepOrphanedV4Shards(faulty.api);
+
+    expect(result.removed).toBe(orphanKeys.length);
+    const after = await faulty.api.storage.local.get(null);
+    expect(orphanKeys.some((key) => key in after)).toBe(false);
+
+    // The exact model state still loads, and the R1 fallback slot (a, gen 1) stays fully present.
+    const loaded = await loadStateV4(faulty.api);
+    expect(loaded?.recovery).toBe("r0");
+    expect(loaded?.state).toEqual(next);
+    const aManifest = (await faulty.api.storage.local.get(STATE_V4_MANIFEST_A_KEY))[
+      STATE_V4_MANIFEST_A_KEY
+    ] as StateV4Manifest;
+    for (let shardIndex = 0; shardIndex < STATE_V4_NODE_SHARD_COUNT; shardIndex += 1) {
+      expect(stateV4NodeShardKey(shardIndex, aManifest.shardGenerations[shardIndex]!) in after).toBe(true);
+    }
+  });
+
+  it("removes nothing when every node-shard key is still referenced", async () => {
+    const state = makeTree(50);
+    const faulty = createFaultyStorage();
+    await applySnapshot(faulty, outlineStateV4Snapshot(state, { epoch: 1, journalSeqIncluded: 0, savedAt: 5 }));
+
+    const result = await sweepOrphanedV4Shards(faulty.api);
+
+    expect(result.removed).toBe(0);
+    expect((await loadStateV4(faulty.api))?.state).toEqual(state);
+  });
+
+  it("never sweeps blind when no manifest is parseable", async () => {
+    const faulty = createFaultyStorage();
+    const orphan = stateV4NodeShardKey(0, 1);
+    await faulty.api.storage.local.set({ [orphan]: { version: 4, shardIndex: 0, generation: 1, nodes: [] } });
+
+    const result = await sweepOrphanedV4Shards(faulty.api);
+
+    expect(result.removed).toBe(0);
+    expect(orphan in (await faulty.api.storage.local.get(null))).toBe(true);
+  });
 });
 
 function seededRandom(seed: number): () => number {

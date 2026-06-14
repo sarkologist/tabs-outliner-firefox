@@ -5,7 +5,11 @@ import {
   type InitialTreeSnapshot,
   type ProjectionSliceCoverage
 } from "../background/initial-tree-snapshot.js";
-import { analyzeRestoreScope, runtimeTitleForOutlineTab, type RestoreScope } from "../model/outline.js";
+import { analyzeRestoreScope, deleteNode, runtimeTitleForOutlineTab, type RestoreScope } from "../model/outline.js";
+import {
+  deleteTreeStructureCandidateNodeIds,
+  treeStructureUpdateFromCandidateNodeIds
+} from "../background/patch-updates.js";
 import { isOutlinerSidebarNode } from "../model/outliner-page.js";
 import type { NodeId, OutlineNode, OutlineState } from "../model/types.js";
 import {
@@ -82,6 +86,7 @@ import {
   applySameParentReorderTreeStructurePatchToProjection,
   buildVisibleTreeProjection,
   calculateVirtualRange,
+  isAlreadyAppliedDeletePatch,
   sameParentReorderTreeStructurePatchInfo,
   type SameParentReorderPatchInfo,
   type VirtualRange,
@@ -136,11 +141,6 @@ let scheduledVirtualRender = false;
 let preserveRenderedRowWindowOnce = false;
 let suppressActiveScrollOnce = false;
 let hoverLineScope: HoverLineScope | undefined;
-let pendingHoverLineScope: HoverLineScope | undefined;
-let pendingHoverGuideApply = false;
-let pendingHoverGuideReason: HoverGuideApplyReason = "pointer";
-let pendingHoverFeedbackTrace: HoverFeedbackTrace | undefined;
-let scheduledHoverGuideFrame: number | undefined;
 let lastNonEditInteractionAt = Number.NEGATIVE_INFINITY;
 let lastNonEditInteractionBroadcastAt = Number.NEGATIVE_INFINITY;
 let lastSparseViewportScrollIntentAt = Number.NEGATIVE_INFINITY;
@@ -397,7 +397,14 @@ const perfTrace = createPerformanceTracer("sidebar", {
 const diagnosticsNotice = createDiagnosticsNotice({
   diagnostics,
   perfTrace,
-  getLastNonEditInteractionAt: () => lastNonEditInteractionAt
+  getLastNonEditInteractionAt: () => lastNonEditInteractionAt,
+  isDocumentHidden: () => document.hidden
+});
+// A hidden sidebar stops polling getDiagnostics; refresh the count once it becomes visible again.
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) {
+    diagnosticsNotice.scheduleLoad();
+  }
 });
 const zoomController = createZoomController({
   getAppPreferences: () => appPreferences,
@@ -661,11 +668,6 @@ async function waitForHydrationRenderIdle(): Promise<number> {
 
   const startedAt = performance.now();
   while (true) {
-    if (pendingHoverGuideApply || scheduledHoverGuideFrame !== undefined) {
-      await nextAnimationFrame();
-      await nextAnimationFrame();
-    }
-
     const now = performance.now();
     const elapsedMs = now - startedAt;
     const idleMs = now - lastNonEditInteractionAt;
@@ -1607,7 +1609,7 @@ function registerVirtualViewport(): void {
         hydrating: hydratingFullState,
         rows: currentProjection?.rows.length ?? 0
       });
-      clearHoverLineScope({ immediate: true, reason: "scroll" });
+      clearHoverLineScope({ reason: "scroll" });
       if (!currentProjection || !isSparseInitialProjection(currentProjection)) {
         scheduleCurrentRowsRender();
       }
@@ -2684,6 +2686,12 @@ function applyTreeStructureUpdate(update: TreeStructureUpdate): void {
       return;
     }
 
+    if (isAlreadyAppliedDeletePatch(state, update.deletedNodeIds)) {
+      // Echo of a delete already applied locally (optimistic delete, or a duplicated broadcast).
+      // Re-running the projection patch would double-decrement node/closed counts, so absorb it.
+      return;
+    }
+
     const activeScrollNodeId = currentProjection ? activeScrollNodeIdForSidebarWindow(currentProjection) : undefined;
     const shouldRescrollActiveTab = activeScrollNodeId
       ? treeStructureUpdateTouchesNodeOrAncestor(state, update, activeScrollNodeId)
@@ -3746,7 +3754,7 @@ function handleTreePointerOver(event: PointerEvent): void {
     targetDepth: rowInfo.depth,
     ...(typeof rowInfo.parentRowIndex === "number" ? { parentRowIndex: rowInfo.parentRowIndex } : {})
   };
-  const outcome = !pendingHoverGuideApply && sameHoverLineScope(hoverLineScope, nextScope) ? "same-scope" : "hover-row";
+  const outcome = sameHoverLineScope(hoverLineScope, nextScope) ? "same-scope" : "hover-row";
   const detail = pointerInputDetail(event, outcome, rowInfo);
   recordInputDelay("sidebar.input.pointerDelay", event, detail);
   setHoverLineScope(nextScope, hoverFeedbackTrace(event, detail));
@@ -3892,95 +3900,34 @@ function delay(delayMs: number): Promise<void> {
 }
 
 function setHoverLineScope(scope: HoverLineScope, feedbackTrace?: HoverFeedbackTrace): void {
-  if (!pendingHoverGuideApply && sameHoverLineScope(hoverLineScope, scope)) {
-    return;
-  }
-
-  scheduleHoverLineScope(scope, "pointer", feedbackTrace);
+  applyHoverLineScopeNow(scope, "pointer", feedbackTrace);
 }
 
 function clearHoverLineScope(
   options: {
-    immediate?: boolean;
     reason?: HoverGuideApplyReason;
     feedbackTrace?: HoverFeedbackTrace | undefined;
   } = {}
 ): void {
-  if (!hoverLineScope && !pendingHoverGuideApply) {
-    return;
-  }
-
-  if (options.immediate) {
-    applyHoverLineScopeNow(undefined, options.reason ?? "pointer-clear", options.feedbackTrace);
-    return;
-  }
-
-  scheduleHoverLineScope(undefined, options.reason ?? "pointer-clear", options.feedbackTrace);
+  applyHoverLineScopeNow(undefined, options.reason ?? "pointer-clear", options.feedbackTrace);
 }
 
 function resetHoverLineScope(): void {
-  clearPendingHoverGuide();
   hoverLineScope = undefined;
 }
 
-function clearPendingHoverGuide(): void {
-  if (scheduledHoverGuideFrame !== undefined) {
-    window.cancelAnimationFrame(scheduledHoverGuideFrame);
-    scheduledHoverGuideFrame = undefined;
-  }
-  pendingHoverLineScope = undefined;
-  pendingHoverGuideReason = "pointer";
-  pendingHoverFeedbackTrace = undefined;
-  pendingHoverGuideApply = false;
-}
-
-function scheduleHoverLineScope(
-  scope: HoverLineScope | undefined,
-  reason: HoverGuideApplyReason,
-  feedbackTrace?: HoverFeedbackTrace
-): void {
-  if (shouldApplyHoverLineScopeImmediately()) {
-    applyHoverLineScopeNow(scope, reason, feedbackTrace);
-    return;
-  }
-
-  pendingHoverLineScope = scope;
-  pendingHoverGuideReason = reason;
-  pendingHoverFeedbackTrace = feedbackTrace;
-  pendingHoverGuideApply = true;
-
-  if (scheduledHoverGuideFrame !== undefined) {
-    return;
-  }
-
-  scheduledHoverGuideFrame = window.requestAnimationFrame(() => {
-    scheduledHoverGuideFrame = undefined;
-    if (!pendingHoverGuideApply) {
-      return;
-    }
-
-    const nextScope = pendingHoverLineScope;
-    const nextReason = pendingHoverGuideReason;
-    const nextFeedbackTrace = pendingHoverFeedbackTrace;
-    pendingHoverLineScope = undefined;
-    pendingHoverGuideReason = "pointer";
-    pendingHoverFeedbackTrace = undefined;
-    pendingHoverGuideApply = false;
-    applyHoverLineScopeNow(nextScope, nextReason, nextFeedbackTrace);
-  });
-}
-
-function shouldApplyHoverLineScopeImmediately(): boolean {
-  return Boolean(hydratingFullState && currentProjection && isSparseInitialProjection(currentProjection));
-}
-
+// Hover feedback is applied synchronously (not via requestAnimationFrame) so the guide paints in
+// the same compositor frame as the pointerover/scroll event that triggered it. Deferring to rAF
+// previously cost a full animation frame of latency; when the window's refresh driver is throttled
+// (many open windows/sidebars) that stretched hover feedback to hundreds of ms -- profiled up to
+// ~960ms with the sidebar main thread 98% idle. pointerover fires at most once per row entry and
+// applyHoverLineScopeToRenderedRows is a single DOM query plus cheap writes (~1-5ms), so there is
+// nothing to coalesce across frames.
 function applyHoverLineScopeNow(
   scope: HoverLineScope | undefined,
   reason: HoverGuideApplyReason,
   feedbackTrace?: HoverFeedbackTrace
 ): void {
-  clearPendingHoverGuide();
-
   if (scope ? sameHoverLineScope(hoverLineScope, scope) : !hoverLineScope) {
     return;
   }
@@ -4280,7 +4227,7 @@ function handleTreeClick(event: MouseEvent): void {
   }
 
   if (action === "delete") {
-    void runAndRender({ type: "deleteNode", nodeId: node.id });
+    void deleteNodeOptimistically(node);
   }
 }
 
@@ -5141,6 +5088,58 @@ async function runAndRender(command: BackgroundCommand): Promise<boolean> {
     diagnosticsNotice.show(commandErrorText(error), { error: true });
     return false;
   }
+}
+
+// Deleting a closed subtree is, on disk, an O(total-store) storage write on Firefox (~0.5-1.9s on a
+// 25k-node store) that also stalls delivery of the resulting tree-structure broadcast back to the
+// sidebar -- so waiting for that broadcast made each delete feel ~0.5s laggy (profiled). A
+// fully-closed subtree has no live side effects, so we reproduce the mutation locally with the exact
+// same pure functions the background uses (deleteNode + the delete tree-structure patch builder) and
+// apply it immediately. The background still runs the authoritative command; its echoed broadcast is
+// absorbed as a no-op (see applyTreeStructureUpdate's already-applied-delete short-circuit), and a
+// command failure re-hydrates from background truth. Live deletes keep the await-the-broadcast path:
+// they close real windows/tabs and must not be anticipated.
+async function deleteNodeOptimistically(node: OutlineNode): Promise<void> {
+  const state = currentState;
+  if (!state || !canDeleteNodeOptimistically(state, node)) {
+    void runAndRender({ type: "deleteNode", nodeId: node.id });
+    return;
+  }
+
+  const nextState = deleteNode(state, node.id, { allowLive: true });
+  const update = treeStructureUpdateFromCandidateNodeIds(
+    state,
+    nextState,
+    deleteTreeStructureCandidateNodeIds(state, nextState, node.id)
+  );
+  if (nextState === state || update.deletedNodeIds.length === 0) {
+    void runAndRender({ type: "deleteNode", nodeId: node.id });
+    return;
+  }
+
+  applyTreeStructureUpdate(update);
+
+  const ok = await runAndRender({ type: "deleteNode", nodeId: node.id });
+  if (!ok) {
+    // The optimistic removal is now ahead of background truth; resync from the authoritative store.
+    await hydrateFullState();
+  }
+}
+
+function canDeleteNodeOptimistically(state: OutlineState, node: OutlineNode): boolean {
+  const projection = currentProjection;
+  if (!projection || !state.nodes[node.id]) {
+    return false;
+  }
+  // Reproducing the mutation needs the full tree locally; skip during sparse hydration or search.
+  if (!currentStateFullyLoaded || isSparseInitialProjection(projection) || projection.isSearchActive) {
+    return false;
+  }
+  // A live node anywhere in the subtree closes real windows/tabs in the background -- never predict that.
+  if (node.status === "live") {
+    return false;
+  }
+  return !createLiveDescendantChecker(state)(node.id);
 }
 
 async function openFullSizeSidebarWindow(): Promise<void> {

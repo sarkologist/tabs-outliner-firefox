@@ -48,6 +48,7 @@ import { RuntimeReconciler } from "./runtime-reconciler.js";
 import { getNormalWindow, getNormalWindows, getNormalWindowsIncludingTabs } from "./runtime-snapshot.js";
 import { createStateCache } from "./state-cache.js";
 import {
+  changedNodeIdsSinceBaseline,
   nodesMateriallyEqual,
   runtimeWindowOrdersMatch,
   runtimeWindowTabOrder,
@@ -150,7 +151,8 @@ import {
 import {
   STATE_V4_MIGRATION_BACKUP_KEY,
   STATE_V4_MIGRATION_BACKUP_META_KEY,
-  loadStateV4
+  loadStateV4,
+  sweepOrphanedV4Shards
 } from "./storage-v4.js";
 import { measureStorageCensus, storageCensusIncidentDetail } from "./storage-census.js";
 import {
@@ -363,6 +365,9 @@ const RUNTIME_REFRESH_BATCH_DELAY_MS = 0;
 // the soak window (01-TARGET-ARCHITECTURE.md section 6).
 const MIGRATION_BACKUP_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const SIDEBAR_PROFILE_COLLECTION_DELAY_MS = 50;
+// Defer the one-time orphaned-shard sweep past startup so first paint, hydration, and early
+// interaction land first; its whole-store read is the same shape as the storage census.
+const ORPHAN_SHARD_SWEEP_DELAY_MS = 8000;
 // Diagnostics are an advisory footer readout (a Firefox-vs-outline tab count), so a brief
 // staleness window is acceptable. Reusing the last result within this window collapses the
 // per-sidebar poll fan-out (3 sidebars re-arm after every command) into at most one
@@ -419,6 +424,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   let diagnosticsInFlight: Promise<OutlineDiagnostics> | undefined;
   let lastDiagnostics: { value: OutlineDiagnostics; atMs: number } | undefined;
   let storageCensusInFlight = false;
+  let orphanShardSweepScheduled = false;
   // Runtime-window snapshot reused by diagnostics so getNormalWindows (a browser
   // windows.getAll + tabs.query that cost up to ~2.5s on a large session, and contend with
   // the storage writes a delete triggers) runs only after a real tab/window event changes
@@ -2116,7 +2122,14 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     const migrationBackupExportedAt = readMigrationBackupExportedAt(startupKeys[STATE_V4_MIGRATION_BACKUP_META_KEY]);
     let loaded: LoadedOutlineState | undefined;
     if (v4Loaded) {
-      adoptLoadedV4Snapshot(v4Loaded.manifest, v4Loaded.slot);
+      adoptLoadedV4Snapshot(
+        v4Loaded.manifest,
+        v4Loaded.slot,
+        v4Loaded.fallbackManifest && v4Loaded.fallbackSlot
+          ? { manifest: v4Loaded.fallbackManifest, slot: v4Loaded.fallbackSlot }
+          : undefined
+      );
+      scheduleOrphanShardSweep();
       loaded = {
         state: v4Loaded.state,
         format: "v4",
@@ -2171,6 +2184,19 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       ? journalInit.entries.filter((entry) => entry.seq > (loaded?.journalSeqIncluded ?? 0))
       : [];
     const journalReplayed = journalReplayEntries.length > 0;
+    // A load below clean R0 (recovery/repair) or one needing journal replay must fold into a fresh
+    // full snapshot so the next startup does not re-replay (and journalSeqIncluded advances past the
+    // replayed entries). A clean r0 v4 load can persist the startup reconciliation incrementally.
+    const loadedRequiresFullSave = loaded?.requiresFullSave === true || journalReplayed;
+    // Shards materially changed by startup reconciliation vs the loaded v4 baseline. The first save
+    // writes only these instead of a full O(total-store) rewrite (~32s on a 25k-node store): a clean
+    // v4 load already seeds currentV4Snapshot, so an incremental compaction is valid, and clean
+    // shards keep their stored value (same contract every post-startup save uses). Undefined keeps
+    // the full path for non-v4 or recovery/replay loads (their baseline diverges from on-disk).
+    const startupSaveCandidateNodeIds = (current: OutlineState): readonly NodeId[] | undefined =>
+      loaded?.format === "v4" && !loadedRequiresFullSave && loadedState
+        ? changedNodeIdsSinceBaseline(loadedState, current)
+        : undefined;
     let stored = loadedState;
     if (journalReplayed && journalReplayEntries.some(journalEntryAffectsHistory)) {
       // Replayed entries include history-tracked commands (or undo/redo moves) whose
@@ -2263,9 +2289,6 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         historyState = lifecycleRecovery.history;
       }
       const startupBase = lifecycleRecovery.state;
-      // A journal replay must be folded into a fresh full v3 snapshot so the next startup
-      // does not re-replay (and so journalSeqIncluded advances past the replayed entries).
-      const loadedRequiresFullSave = loaded?.requiresFullSave === true || journalReplayed;
       storedRuntimeMatch = runtimeSnapshotMateriallyMatchesState(startupBase, windows);
       if (storedRuntimeMatch.matches) {
         if (!runtimeLifecycleJournalChangedState && !loadedRequiresFullSave) {
@@ -2275,7 +2298,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         }
         state = startupBase;
         if (runtimeLifecycleJournalChangedState || !statesMateriallyEqual(stored, state) || loadedRequiresFullSave) {
-          scheduleStateSave(state);
+          scheduleStateSave(state, "normal", startupSaveCandidateNodeIds(state));
         }
       } else {
         lastPersistedState = !loadedRequiresFullSave
@@ -2288,7 +2311,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         const guarded = preserveClosedSubtreesForRuntimeTransition(startupBase, reconciled, { source: "startup" });
         state = statesEqualIgnoringUpdatedAt(startupBase, guarded.state) ? startupBase : guarded.state;
         if (!statesMateriallyEqual(stored, state) || loadedRequiresFullSave) {
-          scheduleStateSave(state);
+          scheduleStateSave(state, "normal", startupSaveCandidateNodeIds(state));
         }
       }
     } else {
@@ -2324,7 +2347,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       state = prunedStartupState;
       runtimeLifecycleJournalChangedState = true;
       lastPersistedState = undefined;
-      scheduleStateSave(state);
+      scheduleStateSave(state, "normal", startupSaveCandidateNodeIds(state));
     }
     if (consumedRuntimeLifecycleJournalEntryIds.length > 0) {
       if (
@@ -5272,6 +5295,32 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       await recordIncidentLog("storageCensusError", { message: errorText(error) });
     } finally {
       storageCensusInFlight = false;
+    }
+  }
+
+  // Reclaim leaked v4 node-shard generations (superseded copies of the tree that the shard GC never
+  // collected -- historically hundreds, growing the store into the GB range and making every
+  // whole-store read, including cold loads and the census, take tens of seconds). Off the startup
+  // critical path: deferred so first paint/hydration land first, then fire-and-forget. Runs once
+  // per session; with the GC baseline now seeded at startup the backlog does not re-accumulate.
+  function scheduleOrphanShardSweep(): void {
+    if (orphanShardSweepScheduled) {
+      return;
+    }
+    orphanShardSweepScheduled = true;
+    globalThis.setTimeout(() => {
+      void runOrphanShardSweep();
+    }, ORPHAN_SHARD_SWEEP_DELAY_MS);
+  }
+
+  async function runOrphanShardSweep(): Promise<void> {
+    try {
+      const result = await sweepOrphanedV4Shards(api);
+      if (result.removed > 0) {
+        await recordIncidentLog("orphanShardSweep", result);
+      }
+    } catch (error) {
+      await recordIncidentLog("orphanShardSweepError", { message: errorText(error) });
     }
   }
 

@@ -64,6 +64,11 @@ export type LoadStateV4Result = {
   recovery: "r0" | "r1" | "r2";
   repair?: StateStructureRepair;
   journalSeqIncluded: number;
+  // The other stored slot's manifest, when it is a valid v4 manifest. The next save evicts this
+  // slot, so seeding it as the GC baseline (previousV4Snapshot) lets the first post-startup save
+  // collect the shards it supersedes instead of leaking them (the per-startup shard-GC gap).
+  fallbackManifest?: StateV4Manifest;
+  fallbackSlot?: StateV4ManifestSlot;
 };
 
 export function stateV4ShardIndexForNodeId(nodeId: NodeId): number {
@@ -195,13 +200,15 @@ export async function loadStateV4(api: WebExtensionBrowser): Promise<LoadStateV4
     const candidate = candidates[index]!;
     const loaded = await loadStateV4FromManifest(candidate.manifest, api);
     if (loaded) {
+      const fallback = candidates.find((other) => other.slot !== candidate.slot);
       return {
         state: loaded.state,
         manifest: candidate.manifest,
         slot: candidate.slot,
         recovery: index === 0 ? "r0" : "r1",
         ...(loaded.repair ? { repair: loaded.repair } : {}),
-        journalSeqIncluded: candidate.manifest.journalSeqIncluded
+        journalSeqIncluded: candidate.manifest.journalSeqIncluded,
+        ...(fallback ? { fallbackManifest: fallback.manifest, fallbackSlot: fallback.slot } : {})
       };
     }
   }
@@ -226,6 +233,57 @@ export async function loadStateV4(api: WebExtensionBrowser): Promise<LoadStateV4
     ...(repair ? { repair } : {}),
     journalSeqIncluded
   };
+}
+
+const STATE_V4_ORPHAN_SWEEP_REMOVE_CHUNK = 256;
+
+export type SweepOrphanedV4ShardsResult = {
+  removed: number;
+  referenced: number;
+  scannedShardKeys: number;
+};
+
+// Remove node-shard keys that NO stored manifest references. v4 keeps the current generation plus
+// the other-slot (R1 fallback) generation; a key from any older generation is a superseded copy of
+// the tree, not data, so deleting it loses nothing. We reference the shard keys of BOTH stored
+// manifests (slot a + slot b), so both slots stay fully loadable -- only keys no slot points to are
+// removed. With no parseable manifest we cannot tell live from orphan, so we never sweep blind.
+//
+// The whole-store read mirrors the storage census and is the one expensive step; it is meant to run
+// off the startup critical path (deferred, fire-and-forget). Once the backlog is cleared and the
+// per-startup GC gap is closed, the store is small and this is cheap.
+export async function sweepOrphanedV4Shards(api: WebExtensionBrowser): Promise<SweepOrphanedV4ShardsResult> {
+  const manifestStore = await api.storage.local.get([STATE_V4_MANIFEST_A_KEY, STATE_V4_MANIFEST_B_KEY]);
+  const referenced = new Set<string>();
+  for (const slotKey of [STATE_V4_MANIFEST_A_KEY, STATE_V4_MANIFEST_B_KEY]) {
+    const manifest = manifestStore[slotKey];
+    if (isStateV4Manifest(manifest)) {
+      manifest.shardGenerations.forEach((generation, shardIndex) => {
+        referenced.add(stateV4NodeShardKey(shardIndex, generation));
+      });
+    }
+  }
+  if (referenced.size === 0) {
+    return { removed: 0, referenced: 0, scannedShardKeys: 0 };
+  }
+
+  const everything = await api.storage.local.get(null);
+  const orphanKeys: string[] = [];
+  let scannedShardKeys = 0;
+  for (const key of Object.keys(everything)) {
+    if (!key.startsWith(STATE_V4_NODE_SHARD_PREFIX)) {
+      continue;
+    }
+    scannedShardKeys += 1;
+    if (!referenced.has(key)) {
+      orphanKeys.push(key);
+    }
+  }
+
+  for (let index = 0; index < orphanKeys.length; index += STATE_V4_ORPHAN_SWEEP_REMOVE_CHUNK) {
+    await api.storage.local.remove(orphanKeys.slice(index, index + STATE_V4_ORPHAN_SWEEP_REMOVE_CHUNK));
+  }
+  return { removed: orphanKeys.length, referenced: referenced.size, scannedShardKeys };
 }
 
 async function loadStateV4FromManifest(
