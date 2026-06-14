@@ -40,7 +40,7 @@ function makeState(nodes: OutlineNode[], rootIds: NodeId[] = []): OutlineState {
 describe("outline journal", () => {
   it("round-trips appended entries in order with correct seq and epoch", async () => {
     const faulty = createFaultyStorage();
-    const journal = createOutlineJournal(faulty.api, { epoch: 7, now: () => 5000 });
+    const journal = createOutlineJournal(faulty.api.storage.local, { epoch: 7, now: () => 5000 });
     await journal.init();
 
     await journal.append([
@@ -48,7 +48,7 @@ describe("outline journal", () => {
       { kind: "command", label: "close", delta: { deletedNodeIds: ["tab:2"] } }
     ]);
 
-    const reopened = createOutlineJournal(faulty.api, { epoch: 8, now: () => 9000 });
+    const reopened = createOutlineJournal(faulty.api.storage.local, { epoch: 8, now: () => 9000 });
     const result = await reopened.init();
 
     expect(result.headSeq).toBe(2);
@@ -62,13 +62,13 @@ describe("outline journal", () => {
 
   it("writes an explicit spill marker item as a delta-less spill entry", async () => {
     const faulty = createFaultyStorage();
-    const journal = createOutlineJournal(faulty.api, { epoch: 1, now: () => 1000 });
+    const journal = createOutlineJournal(faulty.api.storage.local, { epoch: 1, now: () => 1000 });
     await journal.init();
 
     const result = await journal.append([{ kind: "command", label: "deleteNode", spill: true }]);
 
     expect(result.spilled).toBe(true);
-    const reopened = createOutlineJournal(faulty.api, { epoch: 2 });
+    const reopened = createOutlineJournal(faulty.api.storage.local, { epoch: 2 });
     const reloaded = await reopened.init();
     expect(reloaded.entries).toHaveLength(1);
     expect(reloaded.entries[0]).toMatchObject({ kind: "command", label: "deleteNode", spill: true });
@@ -77,14 +77,14 @@ describe("outline journal", () => {
 
   it("writes a spill marker without the delta when a delta exceeds the spill limits", async () => {
     const faulty = createFaultyStorage();
-    const journal = createOutlineJournal(faulty.api, { epoch: 1, now: () => 1000 });
+    const journal = createOutlineJournal(faulty.api.storage.local, { epoch: 1, now: () => 1000 });
     await journal.init();
 
     const hugeDelta = { updatedNodes: Array.from({ length: 2001 }, (_value, index) => makeNode(`tab:${index}`)) };
     const result = await journal.append([{ kind: "command", label: "import", delta: hugeDelta }]);
 
     expect(result.spilled).toBe(true);
-    const reopened = createOutlineJournal(faulty.api, { epoch: 2 });
+    const reopened = createOutlineJournal(faulty.api.storage.local, { epoch: 2 });
     const reloaded = await reopened.init();
     expect(reloaded.entries).toHaveLength(1);
     expect(reloaded.entries[0]?.spill).toBe(true);
@@ -93,7 +93,7 @@ describe("outline journal", () => {
 
   it("throws JournalFullError when the ring wraps without pruning", async () => {
     const faulty = createFaultyStorage();
-    const journal = createOutlineJournal(faulty.api, { epoch: 1, now: () => 1000 });
+    const journal = createOutlineJournal(faulty.api.storage.local, { epoch: 1, now: () => 1000 });
     await journal.init();
 
     for (let index = 0; index < JOURNAL_SLOT_COUNT; index += 1) {
@@ -106,7 +106,7 @@ describe("outline journal", () => {
 
   it("frees slots and advances tailSeq on prune", async () => {
     const faulty = createFaultyStorage();
-    const journal = createOutlineJournal(faulty.api, { epoch: 1, now: () => 1000 });
+    const journal = createOutlineJournal(faulty.api.storage.local, { epoch: 1, now: () => 1000 });
     await journal.init();
     await journal.append([{ kind: "command", delta: { updatedNodes: [makeNode("tab:1")] } }]);
     await journal.append([{ kind: "command", delta: { updatedNodes: [makeNode("tab:2")] } }]);
@@ -117,7 +117,7 @@ describe("outline journal", () => {
     expect(journal.pendingEntryCount()).toBe(1);
     expect(faulty.snapshot()[`${JOURNAL_SLOT_PREFIX}0`]).toBeUndefined();
 
-    const reopened = createOutlineJournal(faulty.api, { epoch: 2 });
+    const reopened = createOutlineJournal(faulty.api.storage.local, { epoch: 2 });
     const result = await reopened.init();
     expect(result.tailSeq).toBe(1);
     expect(result.entries.map((entry) => entry.seq)).toEqual([2]);
@@ -149,7 +149,7 @@ describe("outline journal", () => {
 
   it("stops at the last good seq when a slot is corrupt", async () => {
     const faulty = createFaultyStorage();
-    const journal = createOutlineJournal(faulty.api, { epoch: 1, now: () => 1000 });
+    const journal = createOutlineJournal(faulty.api.storage.local, { epoch: 1, now: () => 1000 });
     await journal.init();
     await journal.append([{ kind: "command", delta: { updatedNodes: [makeNode("tab:1")] } }]); // batch 0, seq 1
     await journal.append([{ kind: "command", delta: { updatedNodes: [makeNode("tab:2")] } }]); // batch 1, seq 2
@@ -158,7 +158,7 @@ describe("outline journal", () => {
     // Corrupt the second slot.
     await faulty.api.storage.local.set({ [`${JOURNAL_SLOT_PREFIX}1`]: { not: "a slot" } });
 
-    const reopened = createOutlineJournal(faulty.api, { epoch: 2 });
+    const reopened = createOutlineJournal(faulty.api.storage.local, { epoch: 2 });
     const result = await reopened.init();
 
     expect(result.entries.map((entry) => entry.seq)).toEqual([1]);
@@ -179,7 +179,7 @@ describe("outline journal", () => {
   it("serializes overlapping appends so they never share a seq or slot", async () => {
     const faulty = createFaultyStorage();
     faulty.setLatencyMs(15);
-    const journal = createOutlineJournal(faulty.api, { epoch: 1, now: () => 1000 });
+    const journal = createOutlineJournal(faulty.api.storage.local, { epoch: 1, now: () => 1000 });
     await journal.init();
 
     // Fire two appends without awaiting the first (models an event-coalescer timer flush
@@ -190,7 +190,7 @@ describe("outline journal", () => {
     ]);
 
     expect(first.seq).not.toBe(second.seq);
-    const reopened = createOutlineJournal(faulty.api, { epoch: 2 });
+    const reopened = createOutlineJournal(faulty.api.storage.local, { epoch: 2 });
     const result = await reopened.init();
     expect(result.entries.map((entry) => entry.label)).toEqual(["a", "b"]);
     expect(result.entries.map((entry) => entry.seq)).toEqual([1, 2]);
@@ -198,7 +198,7 @@ describe("outline journal", () => {
 
   it("serializes prune against a concurrent append so meta never references removed slots", async () => {
     const faulty = createFaultyStorage();
-    const journal = createOutlineJournal(faulty.api, { epoch: 1, now: () => 1000 });
+    const journal = createOutlineJournal(faulty.api.storage.local, { epoch: 1, now: () => 1000 });
     await journal.init();
     await journal.append([{ kind: "command", delta: { updatedNodes: [makeNode("tab:1")] } }]);
     await journal.append([{ kind: "command", delta: { updatedNodes: [makeNode("tab:2")] } }]);
@@ -210,7 +210,7 @@ describe("outline journal", () => {
     ]);
 
     expect(appended.seq).toBe(3);
-    const reopened = createOutlineJournal(faulty.api, { epoch: 2 });
+    const reopened = createOutlineJournal(faulty.api.storage.local, { epoch: 2 });
     const result = await reopened.init();
     expect(result.truncatedAtSeq).toBeUndefined();
     expect(result.entries.map((entry) => entry.seq)).toEqual([3]);
@@ -219,7 +219,7 @@ describe("outline journal", () => {
 
   it("leaves pending state unchanged and rethrows when an append set rejects", async () => {
     const faulty = createFaultyStorage();
-    const journal = createOutlineJournal(faulty.api, { epoch: 1, now: () => 1000 });
+    const journal = createOutlineJournal(faulty.api.storage.local, { epoch: 1, now: () => 1000 });
     await journal.init();
     await journal.append([{ kind: "command", delta: { updatedNodes: [makeNode("tab:1")] } }]);
     expect(journal.pendingEntryCount()).toBe(1);
@@ -236,7 +236,7 @@ describe("outline journal", () => {
 
   it("round-trips historyEntryId on appended entries, including spill markers", async () => {
     const faulty = createFaultyStorage();
-    const journal = createOutlineJournal(faulty.api, { epoch: 1, now: () => 1000 });
+    const journal = createOutlineJournal(faulty.api.storage.local, { epoch: 1, now: () => 1000 });
     await journal.init();
 
     await journal.append([
@@ -244,7 +244,7 @@ describe("outline journal", () => {
       { kind: "command", label: "deleteNode", historyEntryId: "h-2", spill: true }
     ]);
 
-    const reopened = createOutlineJournal(faulty.api, { epoch: 2 });
+    const reopened = createOutlineJournal(faulty.api.storage.local, { epoch: 2 });
     const result = await reopened.init();
     expect(result.entries[0]?.historyEntryId).toBe("h-1");
     expect(result.entries[1]).toMatchObject({ historyEntryId: "h-2", spill: true });
