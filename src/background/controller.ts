@@ -737,6 +737,15 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
   api.windows.onFocusChanged.addListener(async (windowId) => {
     await perfTrace.measureAsync("background.event.windows.onFocusChanged", { windowId }, async () => {
+      // Focus leaving all browser windows (WINDOW_ID_NONE) -- switching to another app, or the
+      // transient blur Firefox fires mid window-to-window switch before the new window's focus
+      // event -- does not change the tab tree, and the following focus-gain event reconciles. The
+      // refresh this would otherwise queue is never absorbed (no real window is focused) so it
+      // always runs the full O(w log w + n) reconciliation on the single background thread, exactly
+      // when the user is switching windows/apps. Skip it; the next real focus event does the work.
+      if (windowId === api.windows.WINDOW_ID_NONE) {
+        return;
+      }
       if (await shouldIgnoreSidebarWindowFocus(windowId)) {
         return;
       }

@@ -26741,6 +26741,40 @@ describe("background controller lifecycle", () => {
     expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(0);
   });
 
+  it("skips the runtime refresh when focus leaves all browser windows (WINDOW_ID_NONE)", async () => {
+    const runtime = fakeRuntime(
+      [
+        { id: 10, focused: true, incognito: false },
+        { id: 20, focused: false, incognito: false }
+      ],
+      [
+        { id: 1, windowId: 10, index: 0, active: true, url: "https://one.example/", title: "One" },
+        { id: 2, windowId: 20, index: 0, active: false, url: "https://two.example/", title: "Two" }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    vi.mocked(runtime.api.windows.getAll).mockClear();
+    vi.mocked(runtime.api.tabs.query).mockClear();
+    vi.mocked(runtime.api.storage.local.set).mockClear();
+    runtime.broadcasts.length = 0;
+
+    // Focus leaving all browser windows (switching apps, or Firefox's transient mid-switch blur)
+    // must not trigger any reconciliation -- the tab tree is unchanged.
+    await runtime.events.windowFocusChanged.emit(runtime.api.windows.WINDOW_ID_NONE);
+    await waitForMacrotask();
+
+    expect(runtime.api.windows.getAll).not.toHaveBeenCalled();
+    expect(runtime.api.tabs.query).not.toHaveBeenCalled();
+    expect(stateBroadcasts(runtime.broadcasts)).toHaveLength(0);
+    expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(0);
+
+    // The skip is specific to WINDOW_ID_NONE: a real window gaining native focus still reconciles.
+    await focusWindowFromBrowser(runtime, 20);
+    await waitForMacrotask();
+    expect(runtime.api.windows.getAll).toHaveBeenCalled();
+  });
+
   it("records opt-in performance trace entries", async () => {
     const runtime = fakeRuntime(
       [
