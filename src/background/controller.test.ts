@@ -27397,12 +27397,12 @@ describe("background controller lifecycle", () => {
     await controller.flushPendingSaves();
 
     // The startup save folds the reconciled live tab into only the changed shards -- never a full
-    // 32-shard rewrite (the boot-time O(total-store) write that made startup janky).
+    // all-shard rewrite (the boot-time O(total-store) write that made startup janky).
     const snapshot = await controller.handleMessage({ type: "getPerformanceTrace" });
     const compactions = traceEntriesNamed(snapshot, "background.state.save.v4.compact");
     expect(compactions.length).toBeGreaterThan(0);
     expect(compactions.every((entry) => entry.detail?.fullCompaction === false)).toBe(true);
-    expect(compactions.every((entry) => (entry.detail?.dirtyShardCount as number) < 32)).toBe(true);
+    expect(compactions.every((entry) => (entry.detail?.dirtyShardCount as number) < STATE_V4_NODE_SHARD_COUNT)).toBe(true);
 
     // Reloading reproduces the in-memory state: every closed tab survived the incremental save (a
     // dropped shard would lose them) and the reconciled live tab is durable.
@@ -29700,7 +29700,7 @@ describe("background controller lifecycle", () => {
       dirtyShardCount: expect.any(Number)
     });
     expect(saveDetail?.dirtyShardCount).toBeGreaterThan(0);
-    expect(saveDetail?.dirtyShardCount).toBeLessThan(32);
+    expect(saveDetail?.dirtyShardCount).toBeLessThan(STATE_V4_NODE_SHARD_COUNT);
   });
 
   it("preserves externally created single-tab windows when browser close only reports through sessions", async () => {

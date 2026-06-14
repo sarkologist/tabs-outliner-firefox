@@ -2,7 +2,7 @@ import type { NodeId, OutlineNode, OutlineState } from "../model/types.js";
 import { cloneOutlineNode } from "../model/outline.js";
 import { normalizeLoadedOutlineStructure, outlineNodeShardIndex, type StateStructureRepair } from "./storage.js";
 
-// v4 snapshot store: 32 generation-stamped node shards (childIds inline -- no order pages)
+// v4 snapshot store: STATE_V4_NODE_SHARD_COUNT (256) generation-stamped node shards (childIds inline -- no order pages)
 // plus double-buffered manifests. Consistency is verifiable from storage alone: a shard is
 // valid for a manifest only when its embedded generation matches the manifest's
 // shardGenerations entry, so a torn compaction can never be half-trusted. See
