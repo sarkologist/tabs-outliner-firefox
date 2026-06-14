@@ -120,6 +120,10 @@ Use these as starting targets, not hard promises:
 
 ## Progress Log
 
+### 2026-06-14: Pause diagnostics polling in hidden sidebars
+
+With the leak fixed, the remaining startup-period background cost was `sidebar.diagnostics`: each of the user's 7-9 open sidebars polls `getDiagnostics` (a background `getNormalWindows` ~0.4-1.5s) even when not visible. `loadDiagnostics` now early-returns when `document.hidden`, and a `visibilitychange` listener reschedules a load when the sidebar becomes visible — so only visible sidebars poll. `isDocumentHidden` is an injected dep on `createDiagnosticsNotice`. Advisory path (does not affect persisted state). Verified via `perf:sidebar-projection-guard` PASS + Playwright first-paint (visible path unchanged); not unit-testable in the node vitest env (the notice instantiates a `window.setTimeout` scheduler). `Current Asymptotics Audit`: unchanged (diagnostics is advisory Class C, off the durable-state asymptotics). Guards: runtime-guard --hard-only PASS, sidebar-projection-guard PASS, 742 vitest, typecheck + build clean.
+
 ### 2026-06-14: Fix the v4 shard-GC leak (1.95 GB / 584 orphaned generations) — the real startup-cost root
 
 In-browser census (incident log) on the user's store showed `totalBytes: 1.95 GB`, `nodeShardKeyCount: 2801`, `nodeShardDistinctGenerations: 584` — the v4 store is meant to keep ~2 generations (~64 shard keys). Old generations were never collected, growing ~1 generation per startup. `loadStateV4` stayed fast (<0.84s — it reads only the current 32 shards via the manifest), but any whole-store read — a cold load, and the profiling census's `storage.local.get(null)` — had to chew 1.95 GB → ~27s, and that read (e.g. fired by enabling profiling) serialized startup's `journal.init`/`getState`/hydration behind it (~27–33s). **The orphaned shards are superseded copies of the tree, not data; reclaiming them loses nothing** (the user explicitly ruled out pruning history — this isn't that).

@@ -10,6 +10,10 @@ type DiagnosticsNoticeDeps = {
   diagnostics: HTMLSpanElement | null;
   perfTrace: PerformanceTracer;
   getLastNonEditInteractionAt: () => number;
+  // True when this sidebar document is not visible (minimized/occluded window). A hidden sidebar
+  // skips the getDiagnostics round-trip so background sidebars stop polling the single background
+  // thread; scheduleLoad on visibilitychange refreshes the count when it returns.
+  isDocumentHidden: () => boolean;
 };
 
 export type DiagnosticsNotice = {
@@ -18,7 +22,7 @@ export type DiagnosticsNotice = {
 };
 
 export function createDiagnosticsNotice(deps: DiagnosticsNoticeDeps): DiagnosticsNotice {
-  const { diagnostics, perfTrace, getLastNonEditInteractionAt } = deps;
+  const { diagnostics, perfTrace, getLastNonEditInteractionAt, isDocumentHidden } = deps;
 
   let diagnosticsNoticeUntil = 0;
   let diagnosticsNoticeTimer: number | undefined;
@@ -75,6 +79,12 @@ export function createDiagnosticsNotice(deps: DiagnosticsNoticeDeps): Diagnostic
   }
 
   async function loadDiagnostics(): Promise<void> {
+    // Skip the background getDiagnostics round-trip while this sidebar is hidden -- a sidebar the
+    // user is not looking at should not keep polling the single background thread. The
+    // visibilitychange handler reschedules a load when it becomes visible again.
+    if (isDocumentHidden()) {
+      return;
+    }
     await perfTrace.measureAsync("sidebar.diagnostics", async () => {
       if (!diagnostics) {
         return;

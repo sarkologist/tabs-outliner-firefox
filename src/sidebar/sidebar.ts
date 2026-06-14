@@ -397,7 +397,14 @@ const perfTrace = createPerformanceTracer("sidebar", {
 const diagnosticsNotice = createDiagnosticsNotice({
   diagnostics,
   perfTrace,
-  getLastNonEditInteractionAt: () => lastNonEditInteractionAt
+  getLastNonEditInteractionAt: () => lastNonEditInteractionAt,
+  isDocumentHidden: () => document.hidden
+});
+// A hidden sidebar stops polling getDiagnostics; refresh the count once it becomes visible again.
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) {
+    diagnosticsNotice.scheduleLoad();
+  }
 });
 const zoomController = createZoomController({
   getAppPreferences: () => appPreferences,
