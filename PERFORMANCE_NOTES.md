@@ -120,6 +120,17 @@ Use these as starting targets, not hard promises:
 
 ## Progress Log
 
+### 2026-06-14: Fix the v4 shard-GC leak (1.95 GB / 584 orphaned generations) — the real startup-cost root
+
+In-browser census (incident log) on the user's store showed `totalBytes: 1.95 GB`, `nodeShardKeyCount: 2801`, `nodeShardDistinctGenerations: 584` — the v4 store is meant to keep ~2 generations (~64 shard keys). Old generations were never collected, growing ~1 generation per startup. `loadStateV4` stayed fast (<0.84s — it reads only the current 32 shards via the manifest), but any whole-store read — a cold load, and the profiling census's `storage.local.get(null)` — had to chew 1.95 GB → ~27s, and that read (e.g. fired by enabling profiling) serialized startup's `journal.init`/`getState`/hydration behind it (~27–33s). **The orphaned shards are superseded copies of the tree, not data; reclaiming them loses nothing** (the user explicitly ruled out pruning history — this isn't that).
+
+- **Leak cause:** `adoptLoadedV4Snapshot` reset `previousV4Snapshot = undefined` at startup, so the first post-startup compaction passed no `collect` and never GC'd the manifest slot it overwrote. Over hundreds of startups that slot's superseded shards accumulated.
+- **Leak fix (commit pending):** `loadStateV4` now returns the other stored slot's manifest (`fallbackManifest`/`fallbackSlot`); `adoptLoadedV4Snapshot` seeds `previousV4Snapshot` from it, so the first save collects normally. New controller test asserts the first post-startup save collects the evicted slot's superseded shard (would leak without the seed).
+- **Backlog cleanup:** `sweepOrphanedV4Shards(api)` removes every `outline:v4:nodes:*` key not referenced by either stored manifest (both slots → both stay loadable; never sweeps with no parseable manifest). Run once per session, deferred 8s off the startup critical path, fire-and-forget; records an `orphanShardSweep` incident. Self-limiting once the backlog clears + the leak is closed. 3 storage-v4 tests: reclaims orphans while preserving the exact model state + R1 slot; no-op when all referenced; never sweeps blind.
+- **Impact:** store returns to ~MB, so whole-store reads (cold load, census) drop from ~27s to sub-second; startup stops queuing behind them. The earlier incremental-startup-save fix (d133d9f) is what keeps per-save cost `O(dirty shards)`; this stops the store itself from growing unboundedly.
+- **Guards (run before commit this time):** `perf-runtime-guard --hard-only` PASS (9), `perf:sidebar-projection-guard` PASS (2), storage-fault lane PASS (fault corpus 13 + crash soak), 742 vitest (+4), typecheck + build clean.
+- **`Current Asymptotics Audit`:** the Persistence-row load shape (current manifest + 32 shards) is unchanged; this fix removes an unbounded *constant-factor* leak (stored bytes were growing without bound), restoring the intended ~2-generation footprint so whole-store reads stay bounded.
+
 ### 2026-06-14: UI smoothness — sync hover, optimistic closed-delete, incremental startup save
 
 Three changes from in-browser `tabsOutlinerProfile` traces on a ~25.7k-node store (61 live). Branch `perf/ui-interaction-smoothness`. **Process note:** the guards below were run *after* the commits (a5bb527, d133d9f), not before, contrary to the AGENTS.md pre-commit rule — recorded here to remediate. No budget moved.

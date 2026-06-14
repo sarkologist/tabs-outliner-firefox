@@ -12,7 +12,12 @@ import {
 } from "./backups.js";
 import { createBackgroundController, type BackgroundController } from "./controller.js";
 import { createOutlineJournal, replayJournal } from "./outline-journal.js";
-import { loadStateV4, outlineStateV4Snapshot } from "./storage-v4.js";
+import {
+  loadStateV4,
+  outlineStateV4Snapshot,
+  stateV4NodeShardKey,
+  stateV4ShardIndexForNodeId
+} from "./storage-v4.js";
 import type { CommandAck } from "./commands.js";
 import { INCIDENT_LOG_STORAGE_KEY, loadIncidentLog } from "./incident-log.js";
 import { RUNTIME_LIFECYCLE_JOURNAL_KEY } from "./runtime-lifecycle-journal.js";
@@ -27409,6 +27414,43 @@ describe("background controller lifecycle", () => {
     );
     expect(liveTabNode).toBeDefined();
     expect(persisted!.nodes["window:10"]?.childIds).toContain(liveTabNode!.id);
+  });
+
+  it("collects the evicted slot's superseded shards on the first save after startup (no per-startup shard leak)", async () => {
+    const changedNodeId = "tab:7";
+    const dirtyShard = stateV4ShardIndexForNodeId(changedNodeId);
+    const state1 = wideClosedTabState(60);
+    const full = outlineStateV4Snapshot(state1, { epoch: 0, journalSeqIncluded: 0, savedAt: 1 });
+    const state2: OutlineState = {
+      ...state1,
+      nodes: { ...state1.nodes, [changedNodeId]: { ...state1.nodes[changedNodeId]!, title: "Gen2" } }
+    };
+    const incremental = outlineStateV4Snapshot(state2, {
+      epoch: 0,
+      journalSeqIncluded: 0,
+      savedAt: 2,
+      previous: { manifest: full.manifest, slot: full.slot },
+      dirtyShardIndexes: new Set([dirtyShard])
+    });
+    // Both manifest slots populated (a=gen1, b=gen2). The gen-1 copy of the dirty shard is the
+    // slot-a-exclusive key the first post-startup compaction must collect rather than leak.
+    const initialStorage = { ...full.setItems, ...incremental.setItems };
+    const evictableKey = stateV4NodeShardKey(dirtyShard, 1);
+    expect(evictableKey in initialStorage).toBe(true);
+
+    const runtime = fakeRuntime([{ id: 10, focused: true, incognito: false }], [], { initialStorage });
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    await controller.handleMessage({ type: "deleteNode", nodeId: "tab:60" });
+    await controller.flushPendingSaves();
+
+    // Seeding the GC baseline from the fallback slot lets this first save collect the superseded
+    // gen-1 shard; without the fix it would leak (the per-startup shard-GC gap).
+    const stored = await runtime.api.storage.local.get(null);
+    expect(evictableKey in stored).toBe(false);
+    const persisted = await loadPersistedOutlineState(runtime.api);
+    expect(persisted?.nodes["tab:60"]).toBeUndefined();
+    expect(persisted?.nodes["tab:7"]?.title).toBe("Gen2");
   });
 
   it("keeps generated oracle exploration opt-in outside the frozen gate", async () => {

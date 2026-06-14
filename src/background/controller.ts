@@ -151,7 +151,8 @@ import {
 import {
   STATE_V4_MIGRATION_BACKUP_KEY,
   STATE_V4_MIGRATION_BACKUP_META_KEY,
-  loadStateV4
+  loadStateV4,
+  sweepOrphanedV4Shards
 } from "./storage-v4.js";
 import { measureStorageCensus, storageCensusIncidentDetail } from "./storage-census.js";
 import {
@@ -364,6 +365,9 @@ const RUNTIME_REFRESH_BATCH_DELAY_MS = 0;
 // the soak window (01-TARGET-ARCHITECTURE.md section 6).
 const MIGRATION_BACKUP_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const SIDEBAR_PROFILE_COLLECTION_DELAY_MS = 50;
+// Defer the one-time orphaned-shard sweep past startup so first paint, hydration, and early
+// interaction land first; its whole-store read is the same shape as the storage census.
+const ORPHAN_SHARD_SWEEP_DELAY_MS = 8000;
 // Diagnostics are an advisory footer readout (a Firefox-vs-outline tab count), so a brief
 // staleness window is acceptable. Reusing the last result within this window collapses the
 // per-sidebar poll fan-out (3 sidebars re-arm after every command) into at most one
@@ -420,6 +424,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   let diagnosticsInFlight: Promise<OutlineDiagnostics> | undefined;
   let lastDiagnostics: { value: OutlineDiagnostics; atMs: number } | undefined;
   let storageCensusInFlight = false;
+  let orphanShardSweepScheduled = false;
   // Runtime-window snapshot reused by diagnostics so getNormalWindows (a browser
   // windows.getAll + tabs.query that cost up to ~2.5s on a large session, and contend with
   // the storage writes a delete triggers) runs only after a real tab/window event changes
@@ -2117,7 +2122,14 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     const migrationBackupExportedAt = readMigrationBackupExportedAt(startupKeys[STATE_V4_MIGRATION_BACKUP_META_KEY]);
     let loaded: LoadedOutlineState | undefined;
     if (v4Loaded) {
-      adoptLoadedV4Snapshot(v4Loaded.manifest, v4Loaded.slot);
+      adoptLoadedV4Snapshot(
+        v4Loaded.manifest,
+        v4Loaded.slot,
+        v4Loaded.fallbackManifest && v4Loaded.fallbackSlot
+          ? { manifest: v4Loaded.fallbackManifest, slot: v4Loaded.fallbackSlot }
+          : undefined
+      );
+      scheduleOrphanShardSweep();
       loaded = {
         state: v4Loaded.state,
         format: "v4",
@@ -5283,6 +5295,32 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       await recordIncidentLog("storageCensusError", { message: errorText(error) });
     } finally {
       storageCensusInFlight = false;
+    }
+  }
+
+  // Reclaim leaked v4 node-shard generations (superseded copies of the tree that the shard GC never
+  // collected -- historically hundreds, growing the store into the GB range and making every
+  // whole-store read, including cold loads and the census, take tens of seconds). Off the startup
+  // critical path: deferred so first paint/hydration land first, then fire-and-forget. Runs once
+  // per session; with the GC baseline now seeded at startup the backlog does not re-accumulate.
+  function scheduleOrphanShardSweep(): void {
+    if (orphanShardSweepScheduled) {
+      return;
+    }
+    orphanShardSweepScheduled = true;
+    globalThis.setTimeout(() => {
+      void runOrphanShardSweep();
+    }, ORPHAN_SHARD_SWEEP_DELAY_MS);
+  }
+
+  async function runOrphanShardSweep(): Promise<void> {
+    try {
+      const result = await sweepOrphanedV4Shards(api);
+      if (result.removed > 0) {
+        await recordIncidentLog("orphanShardSweep", result);
+      }
+    } catch (error) {
+      await recordIncidentLog("orphanShardSweepError", { message: errorText(error) });
     }
   }
 

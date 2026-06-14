@@ -810,9 +810,17 @@ export function createPersistenceCoordinator(deps: PersistenceCoordinatorDeps) {
     return perfTrace.measureAsync("background.journal.init", () => outlineJournal!.init());
   }
 
-  function adoptLoadedV4Snapshot(manifest: StateV4Manifest, slot: StateV4ManifestSlot): void {
+  function adoptLoadedV4Snapshot(
+    manifest: StateV4Manifest,
+    slot: StateV4ManifestSlot,
+    fallback?: V4SnapshotRef
+  ): void {
     currentV4Snapshot = { manifest, slot };
-    previousV4Snapshot = undefined;
+    // Seed the GC baseline from the other stored slot so the first post-startup compaction collects
+    // the shards it supersedes instead of leaking them (the per-startup shard-GC gap that grew the
+    // store to hundreds of orphaned generations). Absent only when the other slot has no valid
+    // manifest, in which case the deferred orphan sweep reclaims any leaked keys.
+    previousV4Snapshot = fallback;
   }
 
   // Whether anything still needs persisting (queued or mid-write); lets the controller decide
