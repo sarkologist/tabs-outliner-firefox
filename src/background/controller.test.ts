@@ -25949,7 +25949,7 @@ async function loadPersistedOutlineState(api: WebExtensionBrowser): Promise<Outl
   if (!v4) {
     return loadStateWithMetadata(api).then((loaded) => loaded?.state);
   }
-  const journal = createOutlineJournal(api, { epoch: 0 });
+  const journal = createOutlineJournal(api.storage.local, { epoch: 0 });
   const init = await journal.init();
   return replayJournal(v4.state, init.entries.filter((entry) => entry.seq > v4.journalSeqIncluded));
 }

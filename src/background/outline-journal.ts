@@ -1,4 +1,5 @@
 import type { NodeId, OutlineNode, OutlineState } from "../model/types.js";
+import type { KeyValueStore } from "./key-value-store.js";
 import {
   createHistoryEntry,
   historyContainsEntryId,
@@ -113,7 +114,7 @@ function slotKey(batch: number): string {
 }
 
 export function createOutlineJournal(
-  api: WebExtensionBrowser,
+  store: KeyValueStore,
   options: { epoch: number; now?: () => number }
 ): OutlineJournal {
   const now = options.now ?? Date.now;
@@ -140,7 +141,7 @@ export function createOutlineJournal(
   }
 
   async function init(): Promise<OutlineJournalInitResult> {
-    const storedMeta = (await api.storage.local.get(JOURNAL_META_KEY))[JOURNAL_META_KEY];
+    const storedMeta = (await store.get(JOURNAL_META_KEY))[JOURNAL_META_KEY];
     const meta = normalizeMeta(storedMeta);
     if (!meta) {
       headSeq = 0;
@@ -154,7 +155,7 @@ export function createOutlineJournal(
     for (let batch = meta.firstBatch; batch < meta.nextBatch; batch += 1) {
       slotKeys.push(slotKey(batch));
     }
-    const slotStore = slotKeys.length > 0 ? await api.storage.local.get(slotKeys) : {};
+    const slotStore = slotKeys.length > 0 ? await store.get(slotKeys) : {};
 
     const entries: OutlineJournalEntry[] = [];
     const recovered: LiveBatch[] = [];
@@ -235,7 +236,7 @@ export function createOutlineJournal(
     };
     // One set writes the slot and advances meta together. If it rejects, no in-memory state
     // changes (pendingEntryCount unchanged) and the caller decides whether to retry.
-    await api.storage.local.set({ [slotKey(batchIndex)]: slot, [JOURNAL_META_KEY]: meta });
+    await store.set({ [slotKey(batchIndex)]: slot, [JOURNAL_META_KEY]: meta });
 
     headSeq = seq;
     nextBatch = batchIndex + 1;
@@ -271,11 +272,11 @@ export function createOutlineJournal(
       firstBatch: remaining.length > 0 ? remaining[0]!.batch : nextBatch,
       nextBatch
     };
-    await api.storage.local.set({ [JOURNAL_META_KEY]: meta });
+    await store.set({ [JOURNAL_META_KEY]: meta });
     // Freed slot keys are outside [firstBatch, nextBatch) now, so a failed remove only leaves
     // harmless garbage that init ignores and the next prune/compaction collects.
     if (removeKeys.length > 0) {
-      await api.storage.local.remove(removeKeys);
+      await store.remove(removeKeys);
     }
 
     liveBatches = remaining;

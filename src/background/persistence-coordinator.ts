@@ -22,6 +22,7 @@ import {
   type OutlineJournalAppendItem
 } from "./outline-journal.js";
 import { outlineMaterialDelta, type HistoryState } from "./history.js";
+import { storageLocalKvStore, type KeyValueStore } from "./key-value-store.js";
 import { sameNodeIdList, statesMateriallyEqual } from "./state-equality.js";
 import { uniqueDefinedNodeIds } from "./live-node-queries.js";
 import { cloneOutlineNode } from "../model/outline.js";
@@ -76,6 +77,10 @@ type V4SnapshotRef = { manifest: StateV4Manifest; slot: StateV4ManifestSlot };
 
 export type PersistenceCoordinatorDeps = {
   api: WebExtensionBrowser;
+  // Backing store for the hot-path outline journal. Defaults to a `storage.local` pass-through;
+  // a later step injects an IndexedDB-backed store here so journal appends stop paying the
+  // whole-store-rewrite cost. See docs/storage-rearchitecture/04-STORAGE-WRITE-COST.md section 6.
+  journalStore?: KeyValueStore;
   perfTrace: PerformanceTracer;
   now: () => number;
   getState: () => OutlineState | undefined;
@@ -89,6 +94,7 @@ export type PersistenceCoordinatorDeps = {
 export function createPersistenceCoordinator(deps: PersistenceCoordinatorDeps) {
   const {
     api,
+    journalStore = storageLocalKvStore(api),
     perfTrace,
     now,
     getState,
@@ -813,7 +819,7 @@ export function createPersistenceCoordinator(deps: PersistenceCoordinatorDeps) {
   }
 
   async function createAndInitJournal(epoch: number) {
-    outlineJournal = createOutlineJournal(api, { epoch, now });
+    outlineJournal = createOutlineJournal(journalStore, { epoch, now });
     return perfTrace.measureAsync("background.journal.init", () => outlineJournal!.init());
   }
 

@@ -120,6 +120,19 @@ Use these as starting targets, not hard promises:
 
 ## Progress Log
 
+### 2026-06-14: Storage write-cost fix step 1 — `KeyValueStore` port for the journal (pure refactor)
+
+First step of the IndexedDB migration (docs/storage-rearchitecture/04-STORAGE-WRITE-COST.md §6). The profiles established that the remaining per-action background cost is two environment-bound halves: browser-API reconciliation (`tabs.query`/`windows.getAll`, not app-side reducible — see the focus/activation entries) and **`storage.local` writes** (the legacy Firefox JSON backend rewrites the whole area on every `set`, so even a ~1 KB journal append costs O(total store) = 0.5–6.7 s in this profile's census probes). The fix for the storage half is to move the bulk store (hot-path journal first, node shards later) onto an extension-owned IndexedDB store where a put is O(payload).
+
+This step introduces the seam only — **no behavior change, no IndexedDB yet**:
+- New `src/background/key-value-store.ts`: a minimal `KeyValueStore` port (`get`/`set`/`remove`, the exact subset the journal uses) + `storageLocalKvStore(api)`, a byte-for-byte `storage.local` pass-through.
+- `createOutlineJournal` now takes a `KeyValueStore` instead of the raw `WebExtensionBrowser`; the persistence coordinator constructs it from an injectable `journalStore` dep that defaults to `storageLocalKvStore(api)`. Step 2 swaps that default for an IndexedDB-backed store with no further journal changes.
+- The fake `storage.local` already satisfies the port, so journal unit tests inject `faulty.api.storage.local` directly (no new mock — the §6.3 objection answered).
+
+- **Tests:** new `key-value-store.test.ts` (adapter delegates the string/array/null `get` shapes, set/remove, and propagates `set` failures through the adapter).
+- **`Current Asymptotics Audit`:** unchanged — `storageLocalKvStore` is a pass-through; this is a no-op refactor whose only purpose is to make the journal's substrate injectable. The Persistence-row write cost changes in step 2 (journal → IDB).
+- **Guards:** full vitest 750 (+2), typecheck (src + test) + build clean, `perf-runtime-guard --hard-only` PASS (9), `perf:sidebar-projection-guard` PASS (2), and the **storage-fault lane** (W-4/W-8, required for save-shape-adjacent changes) PASS — fault corpus (torn/failed/crash/restart) + crash soak, exercising the journal through the new seam.
+
 ### 2026-06-14: Skip the runtime refresh when focus leaves all browser windows (WINDOW_ID_NONE)
 
 The first interaction trace carrying both #12 (focus-gated hydration) and #13 (boot-snapshot coalescing) — `tabs-outliner-profile-2026-06-14(1) copy 6.json`, a 93 s window-switching capture — confirmed the startup herd is gone (**zero** `background.state.initialSnapshot.load` in the window). The newly-dominant cost is **`background.event.windows.onFocusChanged`**: 9 events, avg 334 ms, max 790 ms. Firefox fires focus changes in pairs — first `windowId: -1` (`WINDOW_ID_NONE`, focus leaving all windows) then the new window id — and the trace shows the `-1` half consistently costs 207–790 ms. Reason: `recordNativeWindowFocused(-1)` is never a command fast-path, so the handler falls to `queueRuntimeRefresh([], { focusWindowId: -1 })`, and that refresh is **never absorbed** (`focusedWindowIds.has(-1)` is always false — no real window is focused), so it always runs the full `O(w log w + n)` reconciliation + browser snapshot on the single background thread, right when the user is switching windows/apps. This compounds with #12, which made focus-gain also hydrate the newly-focused sidebar.

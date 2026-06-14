@@ -301,7 +301,7 @@ describe("outline state v4 storage", () => {
     for (const seed of config.seeds) {
       const random = seededRandom(seed);
       const faulty = createFaultyStorage();
-      const journal = createOutlineJournal(faulty.api, { epoch: 1, now: () => 1000 });
+      const journal = createOutlineJournal(faulty.api.storage.local, { epoch: 1, now: () => 1000 });
       await journal.init();
 
       // In-memory model of what a correct store must reproduce after any restart.
@@ -374,7 +374,7 @@ describe("outline state v4 storage", () => {
       const restart = async (): Promise<void> => {
         const loaded = await loadStateV4(faulty.api);
         expect(loaded, `seed ${seed}: store must load after restart`).toBeDefined();
-        const reopened = createOutlineJournal(faulty.api, { epoch: 2, now: () => 2000 });
+        const reopened = createOutlineJournal(faulty.api.storage.local, { epoch: 2, now: () => 2000 });
         const init = await reopened.init();
         const replayable = init.entries.filter((entry) => entry.seq > loaded!.journalSeqIncluded);
         const recovered = replayJournal(loaded!.state, replayable);
