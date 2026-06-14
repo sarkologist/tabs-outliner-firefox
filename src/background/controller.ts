@@ -408,6 +408,10 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   let historyState: HistoryState | undefined;
   let historyLoadInFlight: Promise<HistoryState> | undefined;
   let historyWarmupTimer: ReturnType<typeof setTimeout> | undefined;
+  // Before the full state is in memory, every booting sidebar asks for the sparse boot snapshot.
+  // With many windows open they arrive together and would each read the same persisted snapshot
+  // key off the single background thread; share one in-flight read instead (see initialTreeSnapshot).
+  let initialTreeSnapshotLoadInFlight: Promise<InitialTreeSnapshot | undefined> | undefined;
   let preferences: AppPreferences | undefined;
   let runtimeIndex: RuntimeStateIndex | undefined;
   const stateCache = createStateCache(initializeState);
@@ -2016,9 +2020,17 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       return initialTreeSnapshotFromFullState(state, false);
     }
 
-    const snapshot = await perfTrace.measureAsync("background.state.initialSnapshot.load", () =>
+    // Coalesce concurrent boot-snapshot reads: many sidebars boot at once (one per open window)
+    // and all hit this branch while the full state is still loading, so without sharing they each
+    // read the same ~MB snapshot key, serialized on the single background thread. The read is a
+    // pure storage.local.get + clone and its result is structure-cloned again per sendMessage
+    // recipient, so handing the same in-flight result to every caller is safe.
+    initialTreeSnapshotLoadInFlight ??= perfTrace.measureAsync("background.state.initialSnapshot.load", () =>
       loadInitialTreeSnapshot(api)
-    );
+    ).finally(() => {
+      initialTreeSnapshotLoadInFlight = undefined;
+    });
+    const snapshot = await initialTreeSnapshotLoadInFlight;
     if (snapshot) {
       return snapshot;
     }

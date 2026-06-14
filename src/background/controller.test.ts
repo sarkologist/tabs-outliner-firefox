@@ -27870,6 +27870,61 @@ describe("background controller lifecycle", () => {
     expect(hydrated).toEqual(fullState);
   });
 
+  it("coalesces concurrent boot-snapshot reads from many booting sidebars into one storage read", async () => {
+    const runtime = fakeRuntime(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false
+        }
+      ],
+      Array.from({ length: 300 }, (_value, index) => ({
+        id: index + 1,
+        windowId: 10,
+        index,
+        active: index === 0,
+        url: `https://example.test/${index + 1}`,
+        title: `Tab ${index + 1}`
+      }))
+    );
+    const seeded = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    const fullState = await seeded.ensureState();
+    await runtime.api.storage.local.set({
+      ...outlineStateV4Snapshot(fullState, { epoch: 1, journalSeqIncluded: 0 }).setItems,
+      ...outlineBootSnapshotItem(fullState, 321)
+    });
+    vi.mocked(runtime.api.storage.local.get).mockClear();
+
+    // A fresh background (state not yet in memory) receives one getInitialTreeSnapshot per open
+    // window at once, the way every sidebar boots together after an extension reload.
+    const controller = createBackgroundController({ api: runtime.api, now: () => 2000 });
+    const snapshots = (await Promise.all(
+      Array.from({ length: 8 }, () => controller.handleMessage({ type: "getInitialTreeSnapshot" }))
+    )) as Array<{ type?: string; revision?: number; hydrating?: boolean } | undefined>;
+
+    for (const snapshot of snapshots) {
+      expect(snapshot?.type).toBe("initialTreeSnapshot");
+      expect(snapshot?.revision).toBe(321);
+      expect(snapshot?.hydrating).toBe(true);
+    }
+    const bootSnapshotReads = vi
+      .mocked(runtime.api.storage.local.get)
+      .mock.calls.filter(([keys]) => Array.isArray(keys) && keys.includes("outline:v4:bootSnapshot"));
+    expect(bootSnapshotReads).toHaveLength(1);
+
+    // After the shared read settles a later boot reads again (the in-flight promise is cleared),
+    // and once the full state is warm no further boot-snapshot storage reads happen at all.
+    const afterState = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(afterState).toEqual(fullState);
+    vi.mocked(runtime.api.storage.local.get).mockClear();
+    await controller.handleMessage({ type: "getInitialTreeSnapshot" });
+    const warmBootSnapshotReads = vi
+      .mocked(runtime.api.storage.local.get)
+      .mock.calls.filter(([keys]) => Array.isArray(keys) && keys.includes("outline:v4:bootSnapshot"));
+    expect(warmBootSnapshotReads).toHaveLength(0);
+  });
+
   it("serves a bounded initial tree snapshot when the background state is already warm", async () => {
     const runtime = fakeRuntime(
       [
