@@ -156,13 +156,13 @@ import {
 } from "./storage-v4.js";
 import { measureStorageCensus, storageCensusIncidentDetail } from "./storage-census.js";
 import {
-  JOURNAL_META_KEY,
   journalEntryAffectsHistory,
   replayJournal,
   replayJournalWithHistory,
   type OutlineJournalEntry
 } from "./outline-journal.js";
 import type { InitialTreeSnapshot } from "./initial-tree-snapshot.js";
+import type { KeyValueStore } from "./key-value-store.js";
 import type {
   LoadStateOptions,
   StateLoadPhase,
@@ -357,6 +357,10 @@ type RuntimeEventTabsFastPathResult =
 export type BackgroundControllerOptions = {
   api: WebExtensionBrowser;
   adapter?: BrowserAdapter;
+  // Backing store for the hot-path outline journal. Production injects an IndexedDB-backed store
+  // so journal appends stop paying storage.local's whole-store-rewrite cost; when omitted it
+  // defaults to a storage.local pass-through (today's behavior), which the test suite relies on.
+  journalStore?: KeyValueStore;
   now?: () => number;
 };
 
@@ -454,6 +458,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
   const persistence = createPersistenceCoordinator({
     api,
+    ...(options.journalStore ? { journalStore: options.journalStore } : {}),
     perfTrace,
     now,
     getState: () => state,
@@ -2130,7 +2135,6 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       perfTrace.measureAsync("background.state.load", () => loadStateV4(api)),
       loadRuntimeLifecycleJournal(api),
       api.storage.local.get([
-        JOURNAL_META_KEY,
         STATE_V3_MANIFEST_KEY,
         STATE_V2_MANIFEST_KEY,
         STATE_KEY,
@@ -2198,8 +2202,9 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     }
     // Construct the journal with a fresh epoch (prior + 1) and replay any acked deltas that
     // the loaded snapshot does not yet reflect (crash between journal append and compaction).
-    const priorEpoch = readJournalEpoch(startupKeys[JOURNAL_META_KEY]);
-    const journalInit = await createAndInitJournal(priorEpoch + 1);
+    // The journal's epoch (prior + 1) is derived inside the coordinator from the journal's own
+    // store, which after the IndexedDB migration is no longer storage.local.
+    const journalInit = await createAndInitJournal();
     const loadedState = loaded?.state;
     const journalReplayEntries = loadedState
       ? journalInit.entries.filter((entry) => entry.seq > (loaded?.journalSeqIncluded ?? 0))
@@ -5208,13 +5213,6 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   // Pure parsers for stored journal/migration metadata, read only by the boot path. (The
   // save engine and journal moved to the persistence coordinator; these stayed behind because
   // initializeState is their sole consumer.)
-  function readJournalEpoch(value: unknown): number {
-    if (value && typeof value === "object" && typeof (value as { epoch?: unknown }).epoch === "number") {
-      return (value as { epoch: number }).epoch;
-    }
-    return 0;
-  }
-
   function readMigrationBackupExportedAt(value: unknown): number | undefined {
     if (value && typeof value === "object" && typeof (value as { exportedAt?: unknown }).exportedAt === "number") {
       return (value as { exportedAt: number }).exportedAt;

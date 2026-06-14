@@ -26775,6 +26775,43 @@ describe("background controller lifecycle", () => {
     expect(runtime.api.windows.getAll).toHaveBeenCalled();
   });
 
+  it("boots and stays functional when the journal store (IndexedDB) is unavailable", async () => {
+    const runtime = fakeRuntime(
+      [{ id: 10, focused: true, incognito: false }],
+      [{ id: 1, windowId: 10, index: 0, active: true, url: "https://one.example/", title: "One" }]
+    );
+    // A journal store whose every operation rejects, like IndexedDB in a private-browsing window,
+    // with the IDB pref disabled, or on a corrupt profile database.
+    const failingJournalStore = {
+      get: async () => {
+        throw new Error("IndexedDB unavailable");
+      },
+      set: async () => {
+        throw new Error("IndexedDB unavailable");
+      },
+      remove: async () => {
+        throw new Error("IndexedDB unavailable");
+      }
+    };
+    const controller = createBackgroundController({
+      api: runtime.api,
+      journalStore: failingJournalStore,
+      now: () => 1000
+    });
+
+    // Startup must not be blocked by the journal substrate (the durable tree is in the v4 snapshot).
+    const state = await controller.ensureState();
+    expect(state.nodes["tab:1"]?.title).toBe("One");
+    const incidentLog = await loadIncidentLog(runtime.api);
+    expect(incidentLog.some((entry) => entry.event === "journalStoreUnavailable")).toBe(true);
+
+    // The session runs journal-less: commands still ack and persist via the deferred snapshot save.
+    expectCommandAck(await controller.handleMessage({ type: "deleteNode", nodeId: "tab:1" }), true);
+    await controller.flushPendingSaves();
+    const after = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(after.nodes["tab:1"]).toBeUndefined();
+  });
+
   it("records opt-in performance trace entries", async () => {
     const runtime = fakeRuntime(
       [
