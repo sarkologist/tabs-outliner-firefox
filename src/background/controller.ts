@@ -2376,17 +2376,36 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         STATE_V4_MANIFEST_A_KEY,
         STATE_V4_MANIFEST_B_KEY
       ]);
-      // A v4 manifest with no loadable shards means the tree exists but its shard store is
-      // unreachable (e.g. IndexedDB temporarily unavailable after the shard migration). Bootstrapping
-      // from windows here would overwrite the manifest and orphan the real data, so refuse: surface a
-      // load error and retry next startup, when the shard store may be back. The portable-tree backup
-      // (storage.local, within its TTL) remains the manual recovery path.
-      if (shardStoreExternal && (storedKeys[STATE_V4_MANIFEST_A_KEY] || storedKeys[STATE_V4_MANIFEST_B_KEY])) {
+      // Existing v4 state can live in the shard store (IndexedDB: manifest + shards after Step 4)
+      // and/or on storage.local (the manifest before Step 4, or a pre-#17 shard store). A v4 store we
+      // could not load means the tree exists but its store is unreachable (e.g. IndexedDB temporarily
+      // unavailable). Bootstrapping from windows would orphan that data -- and a later successful save
+      // would overwrite it -- so refuse whenever a manifest is present in EITHER location, or the
+      // external shard store is unreadable (we cannot then confirm absence; a transiently-unavailable
+      // IndexedDB must never be mistaken for a fresh profile). Retry next startup, when the store may
+      // be back. The portable-tree backup (storage.local, within its TTL) remains the manual path.
+      let storeManifestPresent = false;
+      let storeUnreadable = false;
+      if (shardStoreExternal) {
+        try {
+          const inStore = await shardStore.get([STATE_V4_MANIFEST_A_KEY, STATE_V4_MANIFEST_B_KEY]);
+          storeManifestPresent =
+            inStore[STATE_V4_MANIFEST_A_KEY] !== undefined || inStore[STATE_V4_MANIFEST_B_KEY] !== undefined;
+        } catch {
+          storeUnreadable = true;
+        }
+      }
+      const localManifestPresent = Boolean(
+        storedKeys[STATE_V4_MANIFEST_A_KEY] || storedKeys[STATE_V4_MANIFEST_B_KEY]
+      );
+      if (shardStoreExternal && (localManifestPresent || storeManifestPresent || storeUnreadable)) {
         await recordIncidentLog("bootstrapSkippedShardStoreUnreachable", {
           hasManifestA: Boolean(storedKeys[STATE_V4_MANIFEST_A_KEY]),
-          hasManifestB: Boolean(storedKeys[STATE_V4_MANIFEST_B_KEY])
+          hasManifestB: Boolean(storedKeys[STATE_V4_MANIFEST_B_KEY]),
+          storeManifestPresent,
+          storeUnreadable
         });
-        throw new Error("v4 manifest present but no shards loadable; refusing to bootstrap over existing data");
+        throw new Error("v4 manifest present or shard store unreadable; refusing to bootstrap over existing data");
       }
       if (storedKeys[STATE_V3_MANIFEST_KEY] || storedKeys[STATE_V2_MANIFEST_KEY] || storedKeys[STATE_KEY]) {
         await recordIncidentLog("bootstrapSkippedStoredDataPresent", {
