@@ -26921,6 +26921,68 @@ describe("background controller lifecycle", () => {
     expect(incidentLog.some((entry) => entry.event === "shardStoreUnavailable" || entry.event === "v4ShardMigrationFailed")).toBe(true);
   });
 
+  it("does not run the orphan shard sweep when the shard store is external (split-save race fix)", async () => {
+    vi.useFakeTimers();
+    try {
+      const runtime = fakeRuntime([], []); // empty runtime: no post-load reconciliation save
+      // An in-memory KeyValueStore stands in for IndexedDB so it counts as an external shard store
+      // (without fake-indexeddb's internal timers fighting vi's fake timers).
+      const mem = new Map<string, unknown>();
+      const memStore = {
+        get: async (keys?: string | string[] | null) => {
+          if (keys === null || keys === undefined) {
+            return Object.fromEntries(mem);
+          }
+          const list = typeof keys === "string" ? [keys] : keys;
+          return Object.fromEntries(list.map((key) => [key, mem.get(key)]));
+        },
+        set: async (items: Record<string, unknown>) => {
+          for (const [key, value] of Object.entries(items)) {
+            mem.set(key, value);
+          }
+        },
+        remove: async (keys: string | string[]) => {
+          for (const key of typeof keys === "string" ? [keys] : keys) {
+            mem.delete(key);
+          }
+        }
+      };
+      // Seed a real v4 store (so the load path schedules the sweep): manifest -> storage.local,
+      // shards -> the external store, exactly as a split save lays them out.
+      const seedState: OutlineState = {
+        version: 1,
+        rootIds: ["tab:seed"],
+        nodes: {
+          "tab:seed": { id: "tab:seed", kind: "tab", status: "closed", childIds: [], title: "Seed", collapsed: false, createdAt: 1, updatedAt: 1 }
+        }
+      };
+      const snap = outlineStateV4Snapshot(seedState, { epoch: 1, journalSeqIncluded: 0, savedAt: 1 });
+      for (const [key, value] of Object.entries(snap.setItems)) {
+        if (key.startsWith("outline:v4:nodes:")) {
+          mem.set(key, value);
+        } else {
+          await runtime.api.storage.local.set({ [key]: value });
+        }
+      }
+      // Plant a shard key no manifest references. The sweep deletes "unreferenced" shards by
+      // scanning, which during a split save can hit live shards a not-yet-committed manifest
+      // references -- so it must be disabled for an external store. If it ran it would remove this.
+      const orphanKey = "outline:v4:nodes:00:999999";
+      mem.set(orphanKey, { version: 4, shardIndex: 0, generation: 999999, nodes: [] });
+
+      const controller = createBackgroundController({ api: runtime.api, journalStore: memStore, shardStore: memStore, now: () => 1000 });
+      await controller.ensureState();
+
+      await vi.advanceTimersByTimeAsync(20000); // well past the 8s sweep delay
+
+      expect(mem.has(orphanKey)).toBe(true);
+      const incidentLog = await loadIncidentLog(runtime.api);
+      expect(incidentLog.some((entry) => entry.event === "orphanShardSweep")).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("records opt-in performance trace entries", async () => {
     const runtime = fakeRuntime(
       [
