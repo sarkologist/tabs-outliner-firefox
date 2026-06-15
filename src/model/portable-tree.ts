@@ -109,6 +109,33 @@ export function appendPortableTree(
   return next;
 }
 
+// Restore-from-export (REPLACE): build a fresh outline whose top-level roots ARE the export's
+// roots. Unlike appendPortableTree -- which nests everything under one new "Imported tabs" group
+// for merge-append -- restore preserves the export's own top-level shape, because the result
+// replaces the whole stored outline (the restoreTree recovery command). Every node imports as
+// `status:"closed"` (a portable export carries no live browser state); the next startup reconcile
+// re-attaches any currently-open windows as live nodes alongside these closed roots. Throws on an
+// empty export so a corrupt/empty file can never silently wipe the outline to nothing.
+export function restorePortableTree(payload: unknown, clock: Clock): OutlineState {
+  const tree = parseImportTree(payload);
+  if (tree.roots.length === 0) {
+    throw invalidPortableTree("cannot restore from an export with no roots");
+  }
+
+  const next: OutlineState = { version: 1, rootIds: [], nodes: {} };
+  const context: AppendContext = {
+    now: clock.now,
+    nextIdIndex: 0,
+    usedIds: new Set<NodeId>()
+  };
+
+  for (const root of tree.roots) {
+    next.rootIds.push(appendPortableNode(next, root, undefined, context));
+  }
+
+  return next;
+}
+
 function portableNodesFromOutline(state: OutlineState, node: OutlineNode): PortableTreeNode[] {
   const output = new Map<NodeId, PortableTreeNode[]>();
   const expanded = new Set<NodeId>();

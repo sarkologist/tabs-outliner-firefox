@@ -390,6 +390,9 @@ export function createFakeWebExtensionRuntime(
       openOptionsPage: async () => {
         sideEffects.push({ kind: "runtime.openOptionsPage", args: [] });
       },
+      reload: () => {
+        sideEffects.push({ kind: "runtime.reload", args: [] });
+      },
       sendMessage: async (message) => {
         const payload = clone(message);
         protocol.push({ kind: "background.broadcast", message: payload });

@@ -114,6 +114,8 @@ const openOptions = document.querySelector<HTMLButtonElement>("#open-options");
 const exportTree = document.querySelector<HTMLButtonElement>("#export-tree");
 const importTree = document.querySelector<HTMLButtonElement>("#import-tree");
 const importTreeFile = document.querySelector<HTMLInputElement>("#import-tree-file");
+const restoreTree = document.querySelector<HTMLButtonElement>("#restore-tree");
+const restoreTreeFile = document.querySelector<HTMLInputElement>("#restore-tree-file");
 const openSidebarWindow = document.querySelector<HTMLButtonElement>("#open-sidebar-window");
 const rootDropSurface = document.querySelector<HTMLElement>("main");
 const tree = document.querySelector<HTMLElement>("#tree");
@@ -1520,6 +1522,15 @@ function registerPortableTreeControls(): void {
   importTreeFile?.addEventListener("change", () => {
     void importSelectedTreeFile();
   });
+
+  // Restore is a recovery action, so it stays available even when the tree failed to load.
+  restoreTree?.addEventListener("click", () => {
+    restoreTreeFile?.click();
+  });
+
+  restoreTreeFile?.addEventListener("change", () => {
+    void restoreSelectedTreeFile();
+  });
 }
 
 function registerToolbarOverflowControls(): void {
@@ -1771,6 +1782,59 @@ function importErrorText(error: unknown): string {
     return `Import failed: ${error.message}`;
   }
   return "Import failed";
+}
+
+async function restoreSelectedTreeFile(): Promise<void> {
+  const file = restoreTreeFile?.files?.[0];
+  if (!file) {
+    return;
+  }
+
+  const confirmed = window.confirm(
+    "Restore from file?\n\n" +
+      "This REPLACES your entire outline with the contents of this file and reloads the extension. " +
+      "Any currently-open windows will reappear as live tabs, so you may end up with duplicate copies " +
+      "to remove by hand. This cannot be undone."
+  );
+  if (!confirmed) {
+    if (restoreTreeFile) {
+      restoreTreeFile.value = "";
+    }
+    return;
+  }
+
+  try {
+    const payload = JSON.parse(await file.text()) as unknown;
+    diagnosticsNotice.show("Restoring; the extension will reload…");
+    // On success the background reloads the whole extension, tearing this page down before (or
+    // around) the response arrives -- a missing response is therefore the expected happy path.
+    // Only an explicit { ok: false } means a real failure we should surface.
+    const response = await browser.runtime
+      .sendMessage({ type: "restoreTree", tree: payload })
+      .catch(() => undefined);
+    if (response && typeof response === "object" && (response as { ok?: unknown }).ok === false) {
+      diagnosticsNotice.show(restoreErrorText((response as { error?: unknown }).error), { error: true });
+    }
+  } catch (error) {
+    diagnosticsNotice.show(restoreErrorText(error), { error: true });
+  } finally {
+    if (restoreTreeFile) {
+      restoreTreeFile.value = "";
+    }
+  }
+}
+
+function restoreErrorText(error: unknown): string {
+  if (error instanceof SyntaxError) {
+    return "Restore failed: invalid JSON";
+  }
+  if (error instanceof Error) {
+    return `Restore failed: ${error.message}`;
+  }
+  if (typeof error === "string" && error) {
+    return `Restore failed: ${error}`;
+  }
+  return "Restore failed";
 }
 
 function isSearchFocusEvent(event: KeyboardEvent): boolean {

@@ -31,6 +31,8 @@ import {
   STATE_KEY,
   STATE_V2_MANIFEST_KEY,
   STATE_V3_MANIFEST_KEY,
+  STATE_V4_BOOT_SNAPSHOT_KEY,
+  loadHistory,
   loadStateWithMetadata,
   outlineBootSnapshotItem,
   outlineNodeShardIndex
@@ -363,6 +365,7 @@ function fakeRuntime(windows: RuntimeWindow[], tabs: RuntimeTab[], options: Fake
         onMessage: new FakeEvent<[unknown, { tab?: RuntimeTab }]>() as never,
         getURL: vi.fn((path: string) => `moz-extension://extension-id/${path}`),
         openOptionsPage: vi.fn(async () => undefined),
+        reload: vi.fn(() => undefined),
         sendMessage: vi.fn(async (message: unknown) => {
           broadcasts.push(message);
           return undefined;
@@ -26978,6 +26981,220 @@ describe("background controller lifecycle", () => {
       expect(mem.has(orphanKey)).toBe(true);
       const incidentLog = await loadIncidentLog(runtime.api);
       expect(incidentLog.some((entry) => entry.event === "orphanShardSweep")).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("restoreTree replaces the whole outline, resets history, and reloads (recovery)", async () => {
+    // A live session: one open window with a tab, which the controller bootstraps as a live tree.
+    const runtime = fakeRuntime(
+      [{ id: 10, focused: true, incognito: false }],
+      [{ id: 1, windowId: 10, index: 0, active: true, url: "https://live.example/", title: "Live Tab" }]
+    );
+    // External shard+journal store (stands in for IndexedDB), reused across the simulated reload.
+    const mem = new Map<string, unknown>();
+    const memStore = {
+      get: async (keys?: string | string[] | null) => {
+        if (keys === null || keys === undefined) {
+          return Object.fromEntries(mem);
+        }
+        const list = typeof keys === "string" ? [keys] : keys;
+        return Object.fromEntries(list.map((key) => [key, mem.get(key)]));
+      },
+      set: async (items: Record<string, unknown>) => {
+        for (const [key, value] of Object.entries(items)) {
+          mem.set(key, value);
+        }
+      },
+      remove: async (keys: string | string[]) => {
+        for (const key of typeof keys === "string" ? [keys] : keys) {
+          mem.delete(key);
+        }
+      }
+    };
+
+    const controller = createBackgroundController({ api: runtime.api, journalStore: memStore, shardStore: memStore, now: () => 1000 });
+    await controller.ensureState();
+    await controller.flushPendingSaves();
+
+    // Seed undo history so the reset has teeth, and a stale boot snapshot so the clear has teeth.
+    expectCommandAck(await controller.handleMessage({ type: "renameGroup", nodeId: "window:10", title: "Renamed" }), true);
+    expect(await controller.handleMessage({ type: "getHistoryStatus" })).toMatchObject({ canUndo: true });
+    await runtime.api.storage.local.set({ [STATE_V4_BOOT_SNAPSHOT_KEY]: { stale: true } });
+
+    const payload = {
+      schema: PORTABLE_TREE_SCHEMA,
+      version: 1,
+      exportedAt: "2026-06-15T00:00:00.000Z",
+      roots: [
+        { kind: "window", title: "Restored A", children: [{ kind: "tab", title: "Restored Tab A", url: "https://a.example/", children: [] }] },
+        { kind: "window", title: "Restored B", children: [] }
+      ]
+    };
+
+    const response = await controller.handleMessage({ type: "restoreTree", tree: payload });
+    expect(response).toEqual({ ok: true });
+    expect(vi.mocked(runtime.api.runtime.reload)).toHaveBeenCalledTimes(1);
+
+    // In-memory history was reset.
+    expect(await controller.handleMessage({ type: "getHistoryStatus" })).toMatchObject({ canUndo: false, canRedo: false });
+
+    // The persisted v4 store is now exactly the imported tree: two top-level CLOSED windows, the
+    // live bootstrap replaced, no import-group wrapper, no leftover live "Live Tab".
+    const persisted = await loadStateV4(runtime.api, memStore);
+    expect(persisted).toBeDefined();
+    const restored = persisted!.state;
+    expect(restored.rootIds.map((id) => restored.nodes[id]?.title)).toEqual(["Restored A", "Restored B"]);
+    for (const node of Object.values(restored.nodes)) {
+      expect(node.status).toBe("closed");
+    }
+    expect(Object.values(restored.nodes).some((node) => node.title === "Live Tab")).toBe(false);
+
+    // Persisted history is empty and the stale boot snapshot was cleared.
+    const history = await loadHistory(runtime.api);
+    expect(history.undoStack).toHaveLength(0);
+    expect(history.redoStack).toHaveLength(0);
+    expect((await runtime.api.storage.local.get(STATE_V4_BOOT_SNAPSHOT_KEY))[STATE_V4_BOOT_SNAPSHOT_KEY]).toBeUndefined();
+
+    // Simulated reload: a fresh controller on the same storage re-loads the restored tree AND
+    // reconciles the still-open window back as a live node (the user's open windows return).
+    clearFakeRuntimeListeners(runtime);
+    const reloaded = createBackgroundController({ api: runtime.api, journalStore: memStore, shardStore: memStore, now: () => 2000 });
+    const reloadedState = await reloaded.ensureState();
+    const reloadedTitles = Object.values(reloadedState.nodes).map((node) => node.title);
+    expect(reloadedTitles).toContain("Restored A");
+    expect(reloadedTitles).toContain("Restored B");
+    expect(reloadedState.nodes["window:10"]?.status).toBe("live");
+  });
+
+  it("restoreTree recovers even when the existing store cannot load (manifest present, shards gone)", async () => {
+    const runtime = fakeRuntime(
+      [{ id: 10, focused: true, incognito: false }],
+      [{ id: 1, windowId: 10, index: 0, active: true, url: "https://live.example/", title: "Live Tab" }]
+    );
+    const mem = new Map<string, unknown>();
+    const memStore = {
+      get: async (keys?: string | string[] | null) => {
+        if (keys === null || keys === undefined) {
+          return Object.fromEntries(mem);
+        }
+        const list = typeof keys === "string" ? [keys] : keys;
+        return Object.fromEntries(list.map((key) => [key, mem.get(key)]));
+      },
+      set: async (items: Record<string, unknown>) => {
+        for (const [key, value] of Object.entries(items)) {
+          mem.set(key, value);
+        }
+      },
+      remove: async (keys: string | string[]) => {
+        for (const key of typeof keys === "string" ? [keys] : keys) {
+          mem.delete(key);
+        }
+      }
+    };
+
+    // Corruption this command exists to recover from: a valid v4 manifest on storage.local whose
+    // shards are absent from the external store ("manifest present but no shards loadable").
+    const seedState: OutlineState = {
+      version: 1,
+      rootIds: ["tab:gone"],
+      nodes: { "tab:gone": { id: "tab:gone", kind: "tab", status: "closed", childIds: [], title: "Gone", collapsed: false, createdAt: 1, updatedAt: 1 } }
+    };
+    const snap = outlineStateV4Snapshot(seedState, { epoch: 1, journalSeqIncluded: 0, savedAt: 1 });
+    for (const [key, value] of Object.entries(snap.setItems)) {
+      if (!key.startsWith("outline:v4:nodes:")) {
+        await runtime.api.storage.local.set({ [key]: value }); // manifest only; shards dropped on purpose
+      }
+    }
+
+    const controller = createBackgroundController({ api: runtime.api, journalStore: memStore, shardStore: memStore, now: () => 1000 });
+    // The store genuinely fails to load (the bootstrap-over guard fires).
+    await expect(controller.ensureState()).rejects.toThrow(/refusing to bootstrap/);
+
+    const payload = {
+      schema: PORTABLE_TREE_SCHEMA,
+      version: 1,
+      exportedAt: "2026-06-15T00:00:00.000Z",
+      roots: [{ kind: "window", title: "Recovered", children: [{ kind: "tab", title: "Recovered Tab", url: "https://r.example/", children: [] }] }]
+    };
+
+    // Restore must still succeed despite the unloadable store, and the result must load cleanly.
+    const response = await controller.handleMessage({ type: "restoreTree", tree: payload });
+    expect(response).toEqual({ ok: true });
+    expect(vi.mocked(runtime.api.runtime.reload)).toHaveBeenCalledTimes(1);
+
+    const persisted = await loadStateV4(runtime.api, memStore);
+    expect(persisted!.state.rootIds.map((id) => persisted!.state.nodes[id]?.title)).toEqual(["Recovered"]);
+
+    clearFakeRuntimeListeners(runtime);
+    const reloaded = createBackgroundController({ api: runtime.api, journalStore: memStore, shardStore: memStore, now: () => 2000 });
+    const reloadedState = await reloaded.ensureState();
+    expect(Object.values(reloadedState.nodes).map((node) => node.title)).toContain("Recovered");
+  });
+
+  it("restoreTree rolls back and does not silently persist the replacement when the save fails", async () => {
+    vi.useFakeTimers();
+    try {
+      const runtime = fakeRuntime(
+        [{ id: 10, focused: true, incognito: false }],
+        [{ id: 1, windowId: 10, index: 0, active: true, url: "https://live.example/", title: "Live Tab" }]
+      );
+      const mem = new Map<string, unknown>();
+      // set() fails exactly once (the restore save's shard write), then works again -- so if a
+      // post-failure retry survived, it WOULD land the replacement, giving the assertion teeth.
+      let failNextSet = false;
+      const memStore = {
+        get: async (keys?: string | string[] | null) => {
+          if (keys === null || keys === undefined) {
+            return Object.fromEntries(mem);
+          }
+          const list = typeof keys === "string" ? [keys] : keys;
+          return Object.fromEntries(list.map((key) => [key, mem.get(key)]));
+        },
+        set: async (items: Record<string, unknown>) => {
+          if (failNextSet) {
+            failNextSet = false;
+            throw new Error("shard write failed");
+          }
+          for (const [key, value] of Object.entries(items)) {
+            mem.set(key, value);
+          }
+        },
+        remove: async (keys: string | string[]) => {
+          for (const key of typeof keys === "string" ? [keys] : keys) {
+            mem.delete(key);
+          }
+        }
+      };
+
+      const controller = createBackgroundController({ api: runtime.api, journalStore: memStore, shardStore: memStore, now: () => 1000 });
+      await controller.ensureState();
+      await controller.flushPendingSaves();
+
+      failNextSet = true;
+      const payload = {
+        schema: PORTABLE_TREE_SCHEMA,
+        version: 1,
+        exportedAt: "2026-06-15T00:00:00.000Z",
+        roots: [{ kind: "window", title: "Should Not Land", children: [] }]
+      };
+
+      const response = await controller.handleMessage({ type: "restoreTree", tree: payload });
+      expect(response).toMatchObject({ ok: false });
+      // A failed restore must NOT reload (that would boot from a store that lost the old tree).
+      expect(vi.mocked(runtime.api.runtime.reload)).not.toHaveBeenCalled();
+
+      // In-memory session rolled back to the pre-restore live tree.
+      const memState = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+      expect(memState.nodes["window:10"]?.status).toBe("live");
+      expect(Object.values(memState.nodes).some((node) => node.title === "Should Not Land")).toBe(false);
+
+      // The failed save's armed retry was discarded: advancing past the backoff persists nothing.
+      await vi.advanceTimersByTimeAsync(30000);
+      const after = await loadStateV4(runtime.api, memStore);
+      expect(after!.state.nodes["window:10"]).toBeDefined();
+      expect(Object.values(after!.state.nodes).some((node) => node.title === "Should Not Land")).toBe(false);
     } finally {
       vi.useRealTimers();
     }

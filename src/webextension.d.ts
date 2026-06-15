@@ -96,6 +96,7 @@ type WebExtensionBrowserApi = {
     sendMessage(message: unknown): Promise<unknown>;
     getURL(path: string): string;
     openOptionsPage(): Promise<void>;
+    reload(): void;
   };
   downloads: {
     download(options: WebExtensionDownloadOptions): Promise<number>;

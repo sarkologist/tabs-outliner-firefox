@@ -113,6 +113,7 @@ import {
   isInitialTreeSnapshotWindowMessage,
   isOpenSidebarWindowMessage,
   isPerformanceTraceMessage,
+  isRestoreTreeMessage,
   isSidebarNonEditInteractionMessage,
   isSidebarPerformanceTraceCollectedMessage,
   messageType
@@ -146,6 +147,8 @@ import {
   STATE_KEY,
   STATE_V2_MANIFEST_KEY,
   STATE_V3_MANIFEST_KEY,
+  STATE_V3_BOOT_SNAPSHOT_KEY,
+  STATE_V4_BOOT_SNAPSHOT_KEY,
   type LoadedOutlineState
 } from "./storage.js";
 import {
@@ -171,6 +174,7 @@ import type {
 } from "./storage.js";
 import {
   applyOutlineDelta,
+  createEmptyHistoryState,
   createHistoryEntry,
   historyStatus,
   normalizeHistoryState,
@@ -215,7 +219,7 @@ import {
 } from "../model/outline.js";
 import { buildOutlineLookup, type OutlineLookup } from "../model/outline-lookup.js";
 import { isLiveTabNode, isLiveWindowNode, liveTabNodes, liveWindowNodes } from "../model/live-nodes.js";
-import { exportPortableTree, portableTreeFilename, serializePortableTreeFile } from "../model/portable-tree.js";
+import { exportPortableTree, portableTreeFilename, restorePortableTree, serializePortableTreeFile } from "../model/portable-tree.js";
 import type { NodeId, OutlineNode, OutlineState, ReconcileOptions, RestoredNode, RuntimeTab, RuntimeWindow, RuntimeWindowProvenance } from "../model/types.js";
 import { createPerformanceTracer, type TraceDetail, type TraceSnapshot } from "../perf/trace.js";
 import {
@@ -317,6 +321,8 @@ type ExportTreeResponse = {
   contentType: "application/json";
   content: string;
 };
+
+type RestoreTreeResponse = { ok: true } | { ok: false; error: string };
 
 
 type PendingSidebarProfileCollection = {
@@ -488,6 +494,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     hasPendingOrInFlightSave,
     pausePendingSaveTimers,
     resumePendingSaveTimers,
+    discardPendingSaves,
     appendCommandJournal,
     appendCommandJournalForKnownNodeIds,
     queueRuntimeEventJournal,
@@ -1120,6 +1127,10 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
     if (isExportTreeMessage(message)) {
       return exportPortableTreeFromBackground();
+    }
+
+    if (isRestoreTreeMessage(message)) {
+      return restoreTreeFromBackground(message.tree);
     }
 
     if (!isBackgroundCommand(message)) {
@@ -2029,6 +2040,84 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       contentType: "application/json",
       content: serializePortableTreeFile(payload)
     };
+  }
+
+  // Disaster-recovery: REPLACE the entire stored outline with an imported portable-tree export,
+  // then reload the extension so the tested startup path re-loads the restored tree and
+  // reconciles the live browser session. The import lands as closed nodes; currently-open
+  // windows reappear as live nodes on the next startup alongside the restored closed snapshots
+  // (the user dedupes those by hand). Unlike importTree (appendPortableTree), this does not merge
+  // into the existing tree -- it overwrites it.
+  async function restoreTreeFromBackground(tree: unknown): Promise<RestoreTreeResponse> {
+    // Validate BEFORE touching state or storage, so a malformed/empty file changes nothing and
+    // surfaces an error the sidebar can show without a reload.
+    let base: OutlineState;
+    try {
+      base = restorePortableTree(tree, { now: now() });
+    } catch (error) {
+      return { ok: false, error: errorText(error) };
+    }
+
+    // Snapshot the pre-restore session so a failed save can roll the in-memory state back to
+    // exactly where it was (the on-disk store is untouched on failure -- shadow paging keeps the
+    // old manifest authoritative until a new one commits).
+    const previousState = state;
+    const previousHistory = historyState;
+    const previousRuntimeIndex = runtimeIndex;
+
+    try {
+      await enqueueMutation(async () => {
+        // Settle any in-flight initial load, but do NOT require it to succeed: restore exists
+        // precisely to recover from a store that no longer loads (e.g. a v4 manifest whose shards
+        // are gone), where ensureState() throws the bootstrap-over guard. The replacement
+        // overwrites the whole store regardless, and the journal is still initialized during the
+        // refused load, so the full-compaction save below stamps journalSeqIncluded + prunes.
+        await ensureState().catch(() => undefined);
+        detachPersistedStateBaselineForMutation();
+        state = base;
+        replaceCachedState(base);
+        runtimeIndex = buildRuntimeStateIndex(base);
+
+        // The undo history references the old tree's node ids, which no longer exist; reset it.
+        historyState = createEmptyHistoryState();
+
+        // Force a full-compaction save (no candidate ids) so the v4 store is rebuilt to exactly
+        // the restored tree. The save stamps journalSeqIncluded at the journal head and prunes
+        // it, so no stale mutation replays on top of the restored tree after the reload.
+        scheduleStateSave(base);
+        scheduleHistorySave(historyState);
+        await flushPendingSaves();
+
+        // The sparse boot snapshot is written on a debounce the reload would pre-empt; clear the
+        // stale pre-restore copy so the next boot paints the restored tree, not the old one.
+        try {
+          await api.storage.local.remove([STATE_V4_BOOT_SNAPSHOT_KEY, STATE_V3_BOOT_SNAPSHOT_KEY]);
+        } catch {
+          // Best-effort: a stale boot snapshot is a brief first-paint flash, never data loss.
+        }
+      }, { reason: "restoreTreeReplace" });
+    } catch (error) {
+      // The save failed. The on-disk store is intact (shadow paging), so do NOT reload. Drop the
+      // failed save's armed retry -- otherwise it would silently persist the replacement later
+      // WITHOUT the live-session reconcile a reload performs -- and roll the in-memory session
+      // back to the pre-restore tree so nothing observable changed.
+      discardPendingSaves();
+      if (previousState) {
+        state = previousState;
+        replaceCachedState(previousState);
+        runtimeIndex = previousRuntimeIndex;
+        historyState = previousHistory;
+      }
+      void recordIncidentLog("restoreTreeReplaceFailed", { message: errorText(error) });
+      return { ok: false, error: errorText(error) };
+    }
+
+    void recordIncidentLog("restoreTreeReplace", {
+      restoredRootCount: base.rootIds.length,
+      restoredNodeCount: Object.keys(base.nodes).length
+    });
+    api.runtime.reload();
+    return { ok: true };
   }
 
   async function shouldIgnoreSidebarWindowFocus(windowId: number): Promise<boolean> {

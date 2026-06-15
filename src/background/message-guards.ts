@@ -45,6 +45,13 @@ export type ExportTreeMessage = {
   type: "exportTree";
 };
 
+export type RestoreTreeMessage = {
+  type: "restoreTree";
+  // The parsed portable-tree export (or Chrome Tab Outliner array). Left as `unknown` here;
+  // the background validates it via restorePortableTree, which throws on a malformed payload.
+  tree: unknown;
+};
+
 export type SidebarNonEditInteractionMessage = {
   type: "sidebarNonEditInteraction";
 };
@@ -107,6 +114,15 @@ export function isExportTreeMessage(message: unknown): message is ExportTreeMess
     message &&
       typeof message === "object" &&
       (message as { type?: unknown }).type === "exportTree"
+  );
+}
+
+export function isRestoreTreeMessage(message: unknown): message is RestoreTreeMessage {
+  return Boolean(
+    message &&
+      typeof message === "object" &&
+      (message as { type?: unknown }).type === "restoreTree" &&
+      "tree" in (message as object)
   );
 }
 
