@@ -43,7 +43,10 @@ the relevant paths, know which gate covers you:
 - [ARCHITECTURE.md](ARCHITECTURE.md) — current architecture: domain/package layering,
   main design decisions, and tradeoffs. Start here for the big picture.
 - [INVARIANTS.md](INVARIANTS.md) — numbered registry of the invariants the system enforces
-  (`I-1..I-15`), each with its owner mechanism and what tests/guards defend it.
+  (`I-1..I-n`), each with its owner mechanism and what tests/guards defend it.
+- [docs/PROJECT_STATE.md](docs/PROJECT_STATE.md) — what's happening *now*: in-flight work,
+  storage-migration status, open PRs, and current posture (the context that isn't in
+  `main`'s code).
 
 ## Performance (the perf harness)
 
