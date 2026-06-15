@@ -5368,6 +5368,20 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   // critical path: deferred so first paint/hydration land first, then fire-and-forget. Runs once
   // per session; with the GC baseline now seeded at startup the backlog does not re-accumulate.
   function scheduleOrphanShardSweep(): void {
+    // DATA-LOSS FIX: the sweep deletes shard keys "no stored manifest references", reading the
+    // stored manifests + scanning the shard store. With an external (IndexedDB) shard store the save
+    // is split across substrates -- shards are written+committed to IndexedDB BEFORE the manifest is
+    // committed to storage.local -- so during that window the just-written shards are not yet
+    // referenced by any stored manifest. This fire-and-forget sweep (not serialized with saves) could
+    // run in that window, delete those live shards, and then the manifest commit lands referencing
+    // them -> the next load can't read them -> r2 salvage re-roots orphans and drops nodes. On the
+    // legacy storage.local path the save was one atomic set, so this could not happen. The per-save GC
+    // (removeKeysAfterCommit, serialized within the save) + the previousV4Snapshot seeding keep
+    // generations bounded without this scan, so skip the sweep entirely when the shard store is
+    // external. (A save-serialized sweep could be re-added later if orphan accumulation is ever seen.)
+    if (shardStoreExternal) {
+      return;
+    }
     if (orphanShardSweepScheduled) {
       return;
     }
