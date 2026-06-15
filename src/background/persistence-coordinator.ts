@@ -760,6 +760,31 @@ export function createPersistenceCoordinator(deps: PersistenceCoordinatorDeps) {
     await outlineJournal.prune(throughSeq);
   }
 
+  // One-time move of the undo history off storage.local onto the bulk (shard) store. History is
+  // losable (the undo stack, not the tree) and loadHistory falls back to storage.local, so this is
+  // a plain copy-then-delete -- a no-op once the destination has it or storage.local has none, and a
+  // failure just leaves storage.local authoritative. Runs only with an external store; must finish
+  // before the first loadHistory so the storage.local copy is gone by the time it is read from IDB.
+  async function migrateHistoryToStore(): Promise<void> {
+    if (!shardStoreExternal) {
+      return;
+    }
+    try {
+      const inStore = await shardStore.get(HISTORY_KEY);
+      if (inStore[HISTORY_KEY] !== undefined) {
+        return;
+      }
+      const onLocal = await api.storage.local.get(HISTORY_KEY);
+      if (onLocal[HISTORY_KEY] === undefined) {
+        return;
+      }
+      await shardStore.set({ [HISTORY_KEY]: onLocal[HISTORY_KEY] });
+      await api.storage.local.remove(HISTORY_KEY);
+    } catch (error) {
+      await recordIncidentLog("v4HistoryMigrationFailed", { message: errorText(error) });
+    }
+  }
+
   // One-time v3/v2 -> v4 migration: write a complete v4 store from the loaded legacy state,
   // read it back and verify it reproduces that state exactly, write a portable-tree backup,
   // and only then delete the legacy keys. Any failure removes the just-written v4 keys so
@@ -943,9 +968,16 @@ export function createPersistenceCoordinator(deps: PersistenceCoordinatorDeps) {
     }
     const shardItems: Record<string, unknown> = {};
     const localItems: Record<string, unknown> = {};
+    let historyItem: Record<string, unknown> | undefined;
     for (const [key, value] of Object.entries(setItems)) {
       if (key.startsWith(STATE_V4_NODE_SHARD_PREFIX)) {
         shardItems[key] = value;
+      } else if (key === HISTORY_KEY) {
+        // History rides the bulk (shard) store too, but is committed AFTER the manifest (below) so
+        // a crash leaves history BEHIND the tree, not ahead. History-behind is the case the journal
+        // already recovers (rebuilding undo entries from historyEntryId); history-ahead would risk
+        // an undo entry for a change the loaded tree lacks.
+        historyItem = { [key]: value };
       } else {
         localItems[key] = value;
       }
@@ -954,7 +986,10 @@ export function createPersistenceCoordinator(deps: PersistenceCoordinatorDeps) {
       await shardStore.set(shardItems);
     }
     if (Object.keys(localItems).length > 0) {
-      await api.storage.local.set(localItems);
+      await api.storage.local.set(localItems); // manifest = the shadow-paging commit point
+    }
+    if (historyItem) {
+      await shardStore.set(historyItem);
     }
   }
 
@@ -1038,6 +1073,7 @@ export function createPersistenceCoordinator(deps: PersistenceCoordinatorDeps) {
     compactOutlineJournal,
     migrateLegacyStateToV4,
     loadV4WithShardMigration,
+    migrateHistoryToStore,
     deleteLegacyStateKeys,
     createAndInitJournal,
     adoptLoadedV4Snapshot

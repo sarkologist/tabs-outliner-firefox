@@ -31,6 +31,7 @@ import {
   STATE_KEY,
   STATE_V2_MANIFEST_KEY,
   STATE_V3_MANIFEST_KEY,
+  loadHistory,
   loadStateWithMetadata,
   outlineBootSnapshotItem,
   outlineNodeShardIndex
@@ -26981,6 +26982,52 @@ describe("background controller lifecycle", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("stores undo history in IndexedDB (not storage.local) and loads it from there", async () => {
+    const runtime = fakeRuntime(
+      [{ id: 10, focused: true, incognito: false }],
+      [
+        { id: 1, windowId: 10, index: 0, active: true, url: "https://one.example/", title: "One" },
+        { id: 2, windowId: 10, index: 1, active: false, url: "https://two.example/", title: "Two" }
+      ]
+    );
+    const idb = indexedDbKvStore("controller-history-idb", "kv");
+    const controller = createBackgroundController({ api: runtime.api, journalStore: idb, shardStore: idb, now: () => 1000 });
+    await controller.ensureState();
+
+    // A history-tracked command produces an undo entry that the save persists.
+    expectCommandAck(await controller.handleMessage({ type: "deleteNode", nodeId: "tab:2" }), true);
+    await controller.flushPendingSaves();
+
+    // The undo history rides the IndexedDB bulk store, not storage.local.
+    expect((await idb.get(HISTORY_KEY))[HISTORY_KEY]).toBeDefined();
+    expect((await runtime.api.storage.local.get(HISTORY_KEY))[HISTORY_KEY]).toBeUndefined();
+    // loadHistory reads it back from the store with a real undo entry.
+    const loaded = await loadHistory(runtime.api, undefined, idb);
+    expect(loaded.undoStack.length).toBeGreaterThan(0);
+  });
+
+  it("migrates an existing storage.local undo history onto IndexedDB on boot", async () => {
+    const runtime = fakeRuntime(
+      [{ id: 10, focused: true, incognito: false }],
+      [{ id: 1, windowId: 10, index: 0, active: true, url: "https://one.example/", title: "One" }]
+    );
+    const seeded = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    const fullState = await seeded.ensureState();
+    await runtime.api.storage.local.set({
+      ...outlineStateV4Snapshot(fullState, { epoch: 1, journalSeqIncluded: 0 }).setItems,
+      [HISTORY_KEY]: { version: 1, undoStack: [], redoStack: [] }
+    });
+    expect((await runtime.api.storage.local.get(HISTORY_KEY))[HISTORY_KEY]).toBeDefined();
+
+    const idb = indexedDbKvStore("controller-history-migrate", "kv");
+    const controller = createBackgroundController({ api: runtime.api, journalStore: idb, shardStore: idb, now: () => 2000 });
+    await controller.ensureState();
+
+    // History moved to IndexedDB and was removed from storage.local.
+    expect((await idb.get(HISTORY_KEY))[HISTORY_KEY]).toBeDefined();
+    expect((await runtime.api.storage.local.get(HISTORY_KEY))[HISTORY_KEY]).toBeUndefined();
   });
 
   it("records opt-in performance trace entries", async () => {

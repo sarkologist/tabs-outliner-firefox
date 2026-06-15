@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import type { OutlineNode, OutlineState } from "../model/types.js";
 import { createFaultyStorage } from "../test/faulty-storage.test-support.js";
+import { HISTORY_KEY, loadHistory } from "./storage.js";
 import { indexedDbKvStore } from "./indexed-db-kv-store.js";
 import { storageLocalKvStore, type KeyValueStore } from "./key-value-store.js";
 import {
@@ -113,6 +114,30 @@ describe("storage-v4 with shards on IndexedDB", () => {
     expect(removed).toBeGreaterThan(0);
     expect(local.snapshot()[STATE_V4_MANIFEST_A_KEY]).toBeDefined();
     expect(Object.keys(local.snapshot()).some((key) => key.startsWith(STATE_V4_NODE_SHARD_PREFIX))).toBe(false);
+  });
+
+  it("loadHistory re-checks the store after a double-miss (migration race safety)", async () => {
+    const local = createFaultyStorage(); // storage.local has no history (migration removed it)
+    let storeGets = 0;
+    const emptyStore: KeyValueStore = {
+      get: async () => {
+        storeGets += 1;
+        return {};
+      },
+      set: async () => undefined,
+      remove: async () => undefined
+    };
+    await loadHistory(local.api, undefined, emptyStore);
+    // store read once up front, storage.local once, then the store re-checked = 2 store reads.
+    expect(storeGets).toBe(2);
+  });
+
+  it("loadHistory falls back to storage.local when the store has no history", async () => {
+    const local = createFaultyStorage();
+    await local.api.storage.local.set({ [HISTORY_KEY]: { version: 1, undoStack: [], redoStack: [] } });
+    const idb = indexedDbKvStore("history-fallback", "kv");
+    const loaded = await loadHistory(local.api, undefined, idb);
+    expect(loaded).toEqual({ version: 1, undoStack: [], redoStack: [] });
   });
 
   it("sweepOrphanedV4Shards removes an unreferenced shard generation from the shard store", async () => {

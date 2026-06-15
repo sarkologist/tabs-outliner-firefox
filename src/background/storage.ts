@@ -1,6 +1,7 @@
 import type { OutlineState } from "../model/types.js";
 import type { NodeId, OutlineNode } from "../model/types.js";
 import { DEFAULT_HISTORY_LIMIT, normalizeHistoryState, type HistoryState } from "./history.js";
+import { storageLocalKvStore, type KeyValueStore } from "./key-value-store.js";
 import {
   cloneInitialTreeSnapshot,
   initialTreeSnapshotForState,
@@ -166,10 +167,23 @@ export async function loadStateWithMetadata(
 
 export async function loadHistory(
   api: WebExtensionBrowser = browser,
-  limit = DEFAULT_HISTORY_LIMIT
+  limit = DEFAULT_HISTORY_LIMIT,
+  // The undo history lives in `store` (IndexedDB in production); falls back to storage.local so a
+  // pre-migration store, or a transient shard-store hiccup during the one-time move, never silently
+  // resets the undo stack. Default is the storage.local pass-through (today's behavior).
+  store: KeyValueStore = storageLocalKvStore(api)
 ): Promise<HistoryState> {
-  const stored = await api.storage.local.get(HISTORY_KEY);
-  return normalizeHistoryState(stored[HISTORY_KEY], limit);
+  let value = (await store.get(HISTORY_KEY))[HISTORY_KEY];
+  if (value === undefined) {
+    value = (await api.storage.local.get(HISTORY_KEY))[HISTORY_KEY];
+  }
+  if (value === undefined) {
+    // Both missed. A concurrent storage.local -> store migration could have moved the history
+    // between the two reads above (store read before its write, storage.local read after its
+    // delete), so re-check the store before concluding the undo stack is empty.
+    value = (await store.get(HISTORY_KEY))[HISTORY_KEY];
+  }
+  return normalizeHistoryState(value, limit);
 }
 
 
