@@ -295,7 +295,10 @@ const REGRESSION_TRACE_IDS = [
   "yh-runbook-r1-created-race-command-cohabit",
   "jh-relocate-direct-abrupt-old-updated",
   "ra-escape-restored-fullscreen-native-move-history",
-  "yh-rung2-restored-history-partial-sandwich"
+  "yh-rung2-restored-history-partial-sandwich",
+  "dl-b5-closed-child-restored-parent-reclose",
+  "cl-b2-restored-window-child-closed-parent-reclosed",
+  "cl-b6-restored-runtime-id-second-generation"
 ];
 const DISCOVERY_TRACE_IDS = [
   "dh-restore-delayed-focus-refresh",
@@ -1177,11 +1180,9 @@ const DISCOVERY_TRACE_IDS = [
   "dl-b4-closed-window-command-cohabitation-redo",
   "dl-b4-closed-window-fullscreen-focus-reject",
   "dl-b5-same-url-tab-bucket-roundtrip",
-  "dl-b5-closed-child-restored-parent-reclose",
   "cl-b1-passive-closed-window-many-native-drifts",
   "cl-b1-closed-tab-survives-owner-reorder-and-session",
   "cl-b1-browser-closed-known-window-no-window-event",
-  "cl-b2-restored-window-child-closed-parent-reclosed",
   "cl-b2-close-restore-reject-reclose-multitab",
   "cl-b2-closed-subtree-history-redo-skew",
   "cl-b3-two-closed-same-url-tabs-restore-one",
@@ -1197,7 +1198,6 @@ const DISCOVERY_TRACE_IDS = [
   "cl-b5-passive-victim-windowonly-query-split",
   "cl-b6-closed-leaf-stale-created-query-split",
   "cl-b6-opener-grandchild-closed-stale-parent",
-  "cl-b6-restored-runtime-id-second-generation",
   "cl-b6-command-window-same-url-foreign-guest"
 ];
 const ALL_TRACE_IDS = [...REGRESSION_TRACE_IDS, ...DISCOVERY_TRACE_IDS];

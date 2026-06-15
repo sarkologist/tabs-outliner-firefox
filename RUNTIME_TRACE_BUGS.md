@@ -7385,3 +7385,37 @@ action: {"type":"outlinerUndo"} -->
 - Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=yh-rung2-restored-history-partial-sandwich pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
 - Duplicate evidence for RT-255: the same `outlinerUndo`-over-browser-move active-flag divergence, varying the restored scope (a late sibling tab + partial snapshot instead of fullscreen window state). Same root cause and same fix.
 - Status: **fixed** (covered by the RT-255 harness fix; promoted to regression).
+### RT-257 unexpected tabs.move side effect restoring a multi-tab closed window
+<!-- signature: unexpected runtime side effects ... tabs.move([3,4], {"windowId":21,"index":0})
+domain trace: dl-b5-closed-child-restored-parent-reclose
+action: {"type":"outlinerRestoreNodeThenAbruptRestart","node":{"nodeId":"window:20"}} -->
+
+- First seen: 2026-06-15 (discovery runtime-trace hunt on `main`).
+- Trace id: `dl-b5-closed-child-restored-parent-reclose` (duplicate signatures: `cl-b2-restored-window-child-closed-parent-reclosed` = RT-258, `cl-b6-restored-runtime-id-second-generation` = RT-259).
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dl-b5-closed-child-restored-parent-reclose pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Pre-existing: reproduces identically on plain `main`; orthogonal to the storage IndexedDB work (the restore side-effect plan does not touch save/load/manifest).
+- Shape: a 2-tab window (`window:20` = its original tab plus an added "extra" tab) is TO-closed then restored via `outlinerRestoreNodeThenAbruptRestart`. The restore assertion permits only `tabs.create`/`windows.create`/`sessions.restore`, but restoring the window emitted an extra `tabs.move([3,4], {windowId:21, index:0})`.
+- Root cause: `restoreClosedWindowCreateBatch` restores a multi-tab closed window with one `createWindow({url:[...]})`, matches the created tabs back to the outline plans by URL, then unconditionally called `moveRestoredTabsIntoOutlineOrder` to force outline order. When the browser already created the tabs in outline order (the common case — `createWindow` honors the url-array order, and the fake runtime mirrors that), the move is a no-op that still emits a redundant `tabs.move`. The abrupt-restart side-effect window attributes it to the restore, which the oracle does not expect a restore to perform.
+- Fix (`commands.ts`): `moveRestoredTabsIntoOutlineOrder` now receives the created window's current tab order (`createdWindow.tabs` sorted by index) and skips the move when the restored tabs are already the window's front run in order (`restoredTabIdsAlreadyAtWindowFront`). It still fires when the browser genuinely created the tabs out of order, so the order-repair purpose of the function is preserved. Both branches are covered by new targeted `commands.test.ts` unit tests.
+- Verification: the three traces pass; `commands.test.ts` 79/79; full regression domain-trace suite (incl. PureScript oracle) green; `pnpm test` 774 pass / 2 skip; `pnpm perf:runtime-guard --hard-only` PASS (9 scenarios, hard counters — the change only removes one browser move from the restore path). Promoted to the regression corpus (`purpose: "regression"` + `REGRESSION_TRACE_IDS`).
+- Status: **fixed**.
+
+### RT-258 unexpected tabs.move restoring a multi-tab closed window (duplicate of RT-257)
+<!-- signature: unexpected runtime side effects ... tabs.move([3,4], {"windowId":21,"index":0})
+domain trace: cl-b2-restored-window-child-closed-parent-reclosed
+action: {"type":"outlinerRestoreNodeThenAbruptRestart","node":{"nodeId":"window:20"}} -->
+
+- First seen: 2026-06-15 (discovery runtime-trace hunt on `main`).
+- Trace id: `cl-b2-restored-window-child-closed-parent-reclosed`.
+- Duplicate evidence for RT-257: the same redundant restore-time `tabs.move` on a 2-tab restored window, varying the reclose/stale-event tail. Same root cause and fix.
+- Status: **fixed** (covered by the RT-257 `commands.ts` fix; promoted to regression).
+
+### RT-259 unexpected tabs.move restoring a multi-tab closed window (duplicate of RT-257)
+<!-- signature: unexpected runtime side effects ... tabs.move([3,4], {"windowId":21,"index":0})
+domain trace: cl-b6-restored-runtime-id-second-generation
+action: {"type":"outlinerRestoreNodeThenAbruptRestart","node":{"nodeId":"window:20"}} -->
+
+- First seen: 2026-06-15 (discovery runtime-trace hunt on `main`).
+- Trace id: `cl-b6-restored-runtime-id-second-generation`.
+- Duplicate evidence for RT-257: the redundant restore-time `tabs.move` reproduced on the first restore generation of a restore/reclose/restore-again sequence. Same root cause and fix.
+- Status: **fixed** (covered by the RT-257 `commands.ts` fix; promoted to regression).
