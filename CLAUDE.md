@@ -3,6 +3,12 @@
 These instructions are authoritative and override default assistant behavior
 (including the default "commit only when asked").
 
+## Orientation
+
+Start at [AGENTS.md](AGENTS.md) (working agreements + a start-here map) and
+[REPO_MAP.md](REPO_MAP.md) (the knowledge-base index). Read the doc cluster relevant to
+your task rather than the whole tree.
+
 ## Git workflow
 
 When making any code change in this repository:
