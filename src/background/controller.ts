@@ -496,6 +496,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     compactOutlineJournal,
     migrateLegacyStateToV4,
     loadV4WithShardMigration,
+    migrateHistoryToStore,
     deleteLegacyStateKeys,
     createAndInitJournal,
     adoptLoadedV4Snapshot
@@ -2107,7 +2108,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       return historyState;
     }
 
-    historyLoadInFlight ??= loadHistory(api, activePreferences.undoHistoryLimit)
+    historyLoadInFlight ??= loadHistory(api, activePreferences.undoHistoryLimit, shardStore)
       .then((loaded) => normalizeHistoryState(loaded, activePreferences.undoHistoryLimit))
       .finally(() => {
         historyLoadInFlight = undefined;
@@ -2154,7 +2155,12 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         STATE_V3_MANIFEST_KEY,
         STATE_V2_MANIFEST_KEY,
         STATE_KEY
-      ])
+      ]),
+      // Move the undo history off storage.local onto the bulk store (no-op once moved / when no
+      // external store). Finishes before the lifecycle-recovery loadHistory below; the lazy
+      // ensureHistory path is not serialized behind this, so loadHistory re-checks the store on a
+      // double-miss to stay race-safe against this migration's storage.local delete.
+      migrateHistoryToStore()
     ]);
     const legacyKeysPresent = Boolean(
       startupKeys[STATE_V3_MANIFEST_KEY] || startupKeys[STATE_V2_MANIFEST_KEY] || startupKeys[STATE_KEY]
@@ -2304,7 +2310,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     let completedDeleteClosePlans: RuntimeClosePlan[] = [];
     if (stored) {
       const lifecycleRecoveryHistory = lifecycleJournal.entries.some((entry) => entry.kind === "history")
-        ? historyState ?? await loadHistory(api)
+        ? historyState ?? await loadHistory(api, undefined, shardStore)
         : undefined;
       const lifecycleRecovery = lifecycleJournal.entries.length > 0
         ? recoverRuntimeLifecycleJournal(repairState(stored), windows, lifecycleJournal, lifecycleRecoveryHistory)
