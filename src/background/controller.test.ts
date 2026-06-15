@@ -15,6 +15,7 @@ import {
 import { createBackgroundController, type BackgroundController } from "./controller.js";
 import { createOutlineJournal, replayJournal } from "./outline-journal.js";
 import { indexedDbKvStore } from "./indexed-db-kv-store.js";
+import { statesMateriallyEqual } from "./state-equality.js";
 import {
   STATE_V4_MANIFEST_A_KEY,
   STATE_V4_NODE_SHARD_COUNT,
@@ -26976,6 +26977,93 @@ describe("background controller lifecycle", () => {
     await expect(controller.ensureState()).rejects.toThrow(/refusing to bootstrap/);
     expect((await loadIncidentLog(runtime.api)).some((entry) => entry.event === "bootstrapSkippedShardStoreUnreachable")).toBe(true);
   });
+
+  // Generated soak of the EXTERNAL (IndexedDB) coordinator path -- the surface the storage-fault
+  // lane + storage-v4 property test (which run the default storage.local path) do not cover. Drives
+  // the real coordinator through generated grow/churn/shrink mutations against an IndexedDB store,
+  // verifying after every save that the store round-trips the exact tree (atomic shards+manifest
+  // commit + manifest-in-IndexedDB load), and across reload restarts that every closed node
+  // survives. Soak-scaled via GENERATED_TRACE_* (pnpm test:soak).
+  it("round-trips generated mutation + restart cycles on an IndexedDB store (Step 4 external-path soak)", async () => {
+    const config = generatedTraceConfig({
+      defaultSeedCount: 2,
+      defaultSteps: 20,
+      soakSeedCount: 8,
+      soakSteps: 120
+    });
+    for (const seed of config.seeds) {
+      const rng = seededRandom(seed);
+      const runtime = fakeRuntime(
+        [{ id: 10, focused: true, incognito: false }],
+        [{ id: 1, windowId: 10, index: 0, active: true, url: "https://one.example/", title: "One" }]
+      );
+      const idb = indexedDbKvStore(`soak-step4-${seed}`, "kv");
+      let controller = createBackgroundController({ api: runtime.api, journalStore: idb, shardStore: idb, now: () => 1000 });
+      await controller.ensureState();
+
+      for (let step = 0; step < config.steps; step += 1) {
+        const roll = rng();
+        if (roll < 0.4) {
+          // Grow: append a small tree (new shards -> compaction + manifest generation bump).
+          await controller.handleMessage({
+            type: "importTree",
+            tree: {
+              schema: PORTABLE_TREE_SCHEMA,
+              version: 1,
+              exportedAt: "2026-06-15T00:00:00.000Z",
+              roots: [{
+                kind: "window",
+                title: `G${seed}-${step}`,
+                children: [{ kind: "tab", title: `t${step}`, url: `https://x.example/${seed}/${step}`, children: [] }]
+              }]
+            }
+          });
+        } else if (roll < 0.7) {
+          // Churn: rename a random window/group node (incremental compaction of one shard).
+          const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+          const groups = Object.values(state.nodes).filter((node) => node.kind === "window");
+          if (groups.length > 0) {
+            await controller.handleMessage({ type: "renameGroup", nodeId: pickOne(rng, groups).id, title: `r${step}` });
+          }
+        } else if (roll < 0.85) {
+          // Shrink: delete a random imported (closed) node/subtree.
+          const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+          const deletable = Object.values(state.nodes).filter((node) => node.id.startsWith("imported:"));
+          if (deletable.length > 0) {
+            await controller.handleMessage({ type: "deleteNode", nodeId: pickOne(rng, deletable).id });
+          }
+        } else {
+          // Restart (reload): a fresh controller on the same IndexedDB store. Every closed node
+          // present before the restart must still be present after it (live nodes get reconciled).
+          await controller.flushPendingSaves();
+          const before = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+          clearFakeRuntimeListeners(runtime);
+          controller = createBackgroundController({ api: runtime.api, journalStore: idb, shardStore: idb, now: () => 2000 + step });
+          const after = await controller.ensureState();
+          const closedBefore = Object.values(before.nodes).filter((node) => node.status === "closed");
+          const survived = closedBefore.every((node) => after.nodes[node.id] !== undefined);
+          expect(survived, `seed ${seed} step ${step}: closed nodes must survive a reload`).toBe(true);
+          continue;
+        }
+
+        // Durability oracle: once the save flushes, the IndexedDB store must round-trip the exact
+        // in-memory tree (atomic shards+manifest commit, manifest loaded from IndexedDB), and the
+        // manifest must NOT be on storage.local.
+        await controller.flushPendingSaves();
+        const inMemory = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+        const persisted = await loadStateV4(runtime.api, idb, idb);
+        expect(persisted?.recovery, `seed ${seed} step ${step}: clean r0 load from IndexedDB`).toBe("r0");
+        expect(
+          statesMateriallyEqual(persisted!.state, inMemory),
+          `seed ${seed} step ${step}: IndexedDB round-trips the saved tree`
+        ).toBe(true);
+        expect(
+          Object.keys(await runtime.api.storage.local.get(null)).some((key) => key.startsWith("outline:v4:manifest:")),
+          `seed ${seed} step ${step}: manifest lives in IndexedDB, not storage.local`
+        ).toBe(false);
+      }
+    }
+  }, generatedTraceTimeoutMs(30000, 300000));
 
   it("aborts the shard migration on a torn IndexedDB copy and keeps storage.local authoritative", async () => {
     const runtime = fakeRuntime(
