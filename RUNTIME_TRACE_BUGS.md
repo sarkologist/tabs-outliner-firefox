@@ -7359,3 +7359,29 @@ generated trace: adversarial runtime concurrency, soak seed 116881491 -->
 - Pre-existing: fails byte-identically on baseline with the RT-253 fix stashed; it was masked by the earlier 116881488 failure in the same soak run, not introduced by the RT-253 fix.
 - Shape: distinct from RT-253 — a closed (restorable) window node `window:30` that the lifecycle-expectation oracle tracks as preserved goes **missing** from the outline before it can be restored, i.e. closed-subtree *loss* rather than live-under-closed. Likely a separate reconciliation/close-classification or closed-subtree-guard interaction; not the foreign-window-promotion path RT-253 fixed.
 - Status: documented, not fixed (separate finding; out of scope for the RT-252/RT-253 fix pass).
+
+### RT-255 truth tab active flag diverged after history-undo over a browser-authored move
+<!-- signature: truth tab <id> active flag diverged (outline=false, runtime=true)
+domain trace: ra-escape-restored-fullscreen-native-move-history
+action: {"type":"outlinerUndo"} -->
+
+- First seen: 2026-06-15 (discovery runtime-trace hunt on `main`).
+- Trace id: `ra-escape-restored-fullscreen-native-move-history` (duplicate signature: `yh-rung2-restored-history-partial-sandwich`, RT-256).
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=ra-escape-restored-fullscreen-native-move-history pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Pre-existing: reproduces identically on plain `main`; orthogonal to the storage IndexedDB work (no save/load/manifest path is involved). Same family as RT-217/RT-218 (history replay over a browser-authored active change).
+- Shape: a group command moves tab 1 into a command window; `window:20` is TO-closed then restored across an abrupt restart; a native move brings the restored tab into `window:10` as the active tab (`active:true`); then `outlinerUndo` of the group replays the pre-group delta (tab 1 active in `window:10`). The browser-authored active tab (tab 3) must survive the structural undo. At trace end the truth model reports tab 3 `active=true` while the outline has `active=false`.
+- Root cause: **test-harness gap, not a controller bug.** The undo's `syncBrowserOrder` issues `tabs.move([1,2,3], {windowId:10, index:0})`, relocating the still-active tab 1 (from the command window) into `window:10`, which already had active tab 3. The fake runtime's `api.tabs.move` mock copied each tab's `active` flag verbatim, leaving **two** tabs flagged active in one window — a state Firefox never produces (`tabs.move` does not activate the moved tab; the destination keeps its active tab and the arriving tab goes inactive). The controller correctly trusts the browser's single active tab, but with two actives the post-undo reconcile and the truth model picked different tabs, so they diverged. In a real browser only tab 3 would be active and the reconcile would keep it.
+- Fix (`controller.test.ts`): model Firefox's one-active-tab-per-window invariant in the harness — after `api.tabs.move`, when a move leaves a window with more than one active tab, keep the destination's existing (non-incoming) active tab and clear the arriving tab's flag (`resolveDuplicateActiveTabsAfterMove`). It deliberately never invents an active tab in a window that had none, so the pre-existing "active tab moved out, none promoted yet" case (regression trace `po-outliner-relocation`) is left untouched. No `controller.ts` change was needed — the controller was already correct.
+- Verification: `ra-escape-restored-fullscreen-native-move-history` and `yh-rung2-restored-history-partial-sandwich` pass; full regression domain-trace suite (incl. PureScript oracle) green; `pnpm test` 774/2-skip; `pnpm perf:runtime-guard --hard-only` PASS (9 scenarios, hard counters). Promoted to `REGRESSION_TRACE_IDS` / `purpose: "regression"`.
+- Status: **fixed** (harness realism fix; controller already correct).
+
+### RT-256 truth tab active flag diverged after history-undo (duplicate of RT-255)
+<!-- signature: truth tab <id> active flag diverged (outline=false, runtime=true)
+domain trace: yh-rung2-restored-history-partial-sandwich
+action: {"type":"outlinerUndo"} -->
+
+- First seen: 2026-06-15 (discovery runtime-trace hunt on `main`).
+- Trace id: `yh-rung2-restored-history-partial-sandwich`.
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=yh-rung2-restored-history-partial-sandwich pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Duplicate evidence for RT-255: the same `outlinerUndo`-over-browser-move active-flag divergence, varying the restored scope (a late sibling tab + partial snapshot instead of fullscreen window state). Same root cause and same fix.
+- Status: **fixed** (covered by the RT-255 harness fix; promoted to regression).

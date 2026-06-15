@@ -293,7 +293,9 @@ const REGRESSION_TRACE_IDS = [
   "mh-opener-chain-native-reorder",
   "qh-escape-command-created-double-reorder-complete",
   "yh-runbook-r1-created-race-command-cohabit",
-  "jh-relocate-direct-abrupt-old-updated"
+  "jh-relocate-direct-abrupt-old-updated",
+  "ra-escape-restored-fullscreen-native-move-history",
+  "yh-rung2-restored-history-partial-sandwich"
 ];
 const DISCOVERY_TRACE_IDS = [
   "dh-restore-delayed-focus-refresh",
@@ -993,7 +995,6 @@ const DISCOVERY_TRACE_IDS = [
   "ra-rung1-external-restore-delete-history",
   "ra-escape-external-opener-restored-history-partial",
   "ra-escape-command-crash-external-sibling-close",
-  "ra-escape-restored-fullscreen-native-move-history",
   "ra-escape-two-external-windows-history-restart",
   "ra-escape-browser-delete-restore-stale-order",
   "ra-escape-focus-reject-session-close-partial",
@@ -1070,7 +1071,6 @@ const DISCOVERY_TRACE_IDS = [
   "yh-rung1-window-state-transfer-stale-echo",
   "yh-rung2-history-after-three-scope-cohabit",
   "yh-rung2-session-close-mixed-survivors",
-  "yh-rung2-restored-history-partial-sandwich",
   "yh-rung2-closed-external-restored-command-sibling",
   "yh-rung2-fullscreen-command-restored-partial",
   "yh-rung2-focus-other-window-mixed-close",

@@ -515,9 +515,22 @@ function fakeRuntime(windows: RuntimeWindow[], tabs: RuntimeTab[], options: Fake
           await createTabFromBrowser(runtime, tab, { awaitListeners: false });
           return copyTab(runtime.tabs.find((candidate) => candidate.id === tab.id) ?? tab);
         }),
-        move: vi.fn(async (tabIds: number | number[], moveProperties: { windowId?: number; index: number }) =>
-          moveTabsFromBrowser(runtime, tabIds, moveProperties)
-        ),
+        move: vi.fn(async (tabIds: number | number[], moveProperties: { windowId?: number; index: number }) => {
+          const ids = Array.isArray(tabIds) ? tabIds : [tabIds];
+          const targetWindowId = moveProperties.windowId
+            ?? runtime.tabs.find((tab) => tab.id === ids[0])?.windowId;
+          const incomingTabIds = new Set(
+            ids.filter((id) => {
+              const tab = runtime.tabs.find((candidate) => candidate.id === id);
+              return tab !== undefined && typeof targetWindowId === "number" && tab.windowId !== targetWindowId;
+            })
+          );
+          const moved = moveTabsFromBrowser(runtime, tabIds, moveProperties);
+          if (typeof targetWindowId === "number") {
+            resolveDuplicateActiveTabsAfterMove(runtime, targetWindowId, incomingTabIds);
+          }
+          return moved;
+        }),
         onActivated: tabActivated as never,
         onAttached: tabAttached as never,
         onCreated: tabCreated as never,
@@ -16991,7 +17004,7 @@ const RUNTIME_DOMAIN_DISCOVERY_TRACES_CHUNK_4: RuntimeDomainTrace[] = [
     id: "ra-escape-restored-fullscreen-native-move-history",
     title: "real-shape escape restored fullscreen native move history",
     notes: "Final escape: restored fullscreen window, browser-authored move, old history replay, and stale restored event.",
-    purpose: "discovery",
+    purpose: "regression",
     origin: "agent-generated",
     tags: ["real-user", "restored", "fullscreen", "native-move", "history", "stale-event"],
     assertions: ["runtimeMetadata"],
@@ -18492,7 +18505,7 @@ const RUNTIME_DOMAIN_DISCOVERY_TRACES_CHUNK_4: RuntimeDomainTrace[] = [
     id: "yh-rung2-restored-history-partial-sandwich",
     title: "mixed provenance restored history partial sandwich",
     notes: "Restored scope gets browser edits, a partial snapshot arrives, then unrelated history replay must preserve live shape.",
-    purpose: "discovery",
+    purpose: "regression",
     origin: "agent-generated",
     tags: ["mixed-provenance", "restored", "history", "partial-snapshot", "native-move", "stale-event"],
     assertions: ["runtimeMetadata"],
@@ -23908,6 +23921,29 @@ function ensureWindowHasActiveTab(runtime: FakeRuntime, windowId: number): void 
   const firstTabId = tabs[0]!.id;
   runtime.tabs = runtime.tabs.map((tab) => tab.windowId === windowId
     ? { ...tab, active: tab.id === firstTabId }
+    : copyTab(tab));
+}
+
+// Firefox keeps exactly one active tab per window. `tabs.move` does not activate the moved tab,
+// so when an active tab arrives from another window the destination's existing active tab stays
+// active and the arriving tab loses its active flag. Mirror only that conflict here: when a move
+// leaves a window with more than one active tab, keep the destination's existing (non-incoming)
+// active tab. This never invents an active tab in a window that had none — the pre-existing
+// "active tab moved out, none promoted yet" harness state is left untouched so the controller's
+// event-derived view and the runtime truth stay in agreement.
+function resolveDuplicateActiveTabsAfterMove(
+  runtime: FakeRuntime,
+  windowId: number,
+  incomingTabIds: ReadonlySet<number>
+): void {
+  const tabs = tabsInRuntimeWindow(runtime, windowId);
+  const activeTabs = tabs.filter((tab) => tab.active);
+  if (activeTabs.length <= 1) {
+    return;
+  }
+  const winnerId = (activeTabs.find((tab) => !incomingTabIds.has(tab.id)) ?? activeTabs[0]!).id;
+  runtime.tabs = runtime.tabs.map((tab) => tab.windowId === windowId
+    ? { ...tab, active: tab.id === winnerId }
     : copyTab(tab));
 }
 
