@@ -305,6 +305,52 @@ export function createOutlineJournal(
   };
 }
 
+// One-time substrate migration: copy the journal (meta + live slots) from `from` to `to` when
+// `to` has no journal yet, then drop the source keys. Used to move the journal off `storage.local`
+// onto IndexedDB on the first run after the substrate swap, WITHOUT losing entries a crash left
+// unreplayed. Order is copy-then-remove so a crash mid-migration keeps the source authoritative
+// (to.set failed -> source intact, retried next run) or leaves only harmless source garbage
+// (from.remove failed -> destination authoritative, source ignored). A no-op when the destination
+// already has a journal (it is authoritative) or the source has none; safe when from === to.
+export async function migrateJournalStore(from: KeyValueStore, to: KeyValueStore): Promise<boolean> {
+  const destinationMeta = normalizeMeta((await to.get(JOURNAL_META_KEY))[JOURNAL_META_KEY]);
+  if (destinationMeta) {
+    return false;
+  }
+  const sourceMetaRaw = (await from.get(JOURNAL_META_KEY))[JOURNAL_META_KEY];
+  const sourceMeta = normalizeMeta(sourceMetaRaw);
+  if (!sourceMeta) {
+    return false;
+  }
+
+  // Read the physical slot keys the source meta references. A corrupt over-span meta could
+  // otherwise build an unbounded key array; only JOURNAL_SLOT_COUNT distinct physical keys can
+  // exist (slotKey is taken mod the slot count) and the destination init re-validates anyway, so
+  // dedupe and cap.
+  const slotKeySet = new Set<string>();
+  for (
+    let batch = sourceMeta.firstBatch;
+    batch < sourceMeta.nextBatch && slotKeySet.size < JOURNAL_SLOT_COUNT;
+    batch += 1
+  ) {
+    slotKeySet.add(slotKey(batch));
+  }
+  const slotKeys = [...slotKeySet];
+  const slotStore = slotKeys.length > 0 ? await from.get(slotKeys) : {};
+  const copy: Record<string, unknown> = { [JOURNAL_META_KEY]: sourceMetaRaw };
+  for (const key of slotKeys) {
+    const slot = slotStore[key];
+    if (slot !== undefined) {
+      copy[key] = slot;
+    }
+  }
+
+  await to.set(copy);
+  // Destination now durably holds the journal; only then drop the source keys.
+  await from.remove([JOURNAL_META_KEY, ...slotKeys]);
+  return true;
+}
+
 export function journalTouchedNodeIds(entries: readonly OutlineJournalEntry[]): Set<NodeId> {
   const touched = new Set<NodeId>();
   for (const entry of entries) {

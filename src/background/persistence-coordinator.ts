@@ -14,9 +14,11 @@ import {
   type StateV4ManifestSlot
 } from "./storage-v4.js";
 import {
+  JOURNAL_META_KEY,
   JOURNAL_SPILL_NODE_LIMIT,
   JournalFullError,
   createOutlineJournal,
+  migrateJournalStore,
   outlineJournalDeltaWeight,
   type OutlineJournal,
   type OutlineJournalAppendItem
@@ -818,9 +820,50 @@ export function createPersistenceCoordinator(deps: PersistenceCoordinatorDeps) {
     return saveInFlight;
   }
 
-  async function createAndInitJournal(epoch: number) {
-    outlineJournal = createOutlineJournal(journalStore, { epoch, now });
+  async function initJournalOnStore(store: KeyValueStore) {
+    // The next session's epoch is the prior epoch + 1, read from wherever the journal now lives.
+    const storedMeta = (await store.get(JOURNAL_META_KEY))[JOURNAL_META_KEY];
+    const priorEpoch = storedMeta && typeof storedMeta === "object" &&
+      typeof (storedMeta as { epoch?: unknown }).epoch === "number"
+      ? (storedMeta as { epoch: number }).epoch
+      : 0;
+    outlineJournal = createOutlineJournal(store, { epoch: priorEpoch + 1, now });
     return perfTrace.measureAsync("background.journal.init", () => outlineJournal!.init());
+  }
+
+  async function createAndInitJournal() {
+    try {
+      // Move the journal off storage.local onto the injected store (IndexedDB in production) on the
+      // first run after the substrate swap; a no-op once migrated, and when journalStore is the
+      // storage.local pass-through (the test/default path). Must run before the epoch read so the
+      // new substrate carries the prior meta.
+      await perfTrace.measureAsync("background.journal.migrate", () =>
+        migrateJournalStore(storageLocalKvStore(api), journalStore)
+      );
+      return await initJournalOnStore(journalStore);
+    } catch (error) {
+      // The journal substrate (IndexedDB in production) is unavailable or flaky -- a private-
+      // browsing window, a disabled IDB pref, disk pressure, or a corrupt profile database. The
+      // journal must never block startup (the durable tree lives in the v4 snapshot, not the
+      // journal). If the storage.local journal still exists (migration has not completed) keep
+      // using it this session and retry the move next run; otherwise (already migrated to the now-
+      // unreachable store) run journal-less -- prior entries stay safe in the unreachable store for
+      // a working session, and the deferred snapshot save covers durability meanwhile. No entries
+      // are lost either way.
+      await recordIncidentLog("journalStoreUnavailable", { message: errorText(error) });
+      const localStore = storageLocalKvStore(api);
+      const localMeta = (await localStore.get(JOURNAL_META_KEY))[JOURNAL_META_KEY];
+      if (localMeta && typeof localMeta === "object") {
+        // storage.local still has a journal -> migration has not completed, so it is authoritative.
+        // (A second consecutive IDB fault after an earlier completed migration cannot reach here:
+        // that migration removed the local meta. Even if a stale local journal were somehow re-
+        // adopted, replay is epoch-stamped + journalSeqIncluded-gated + idempotent -> redundant
+        // replay at worst, never loss.)
+        return initJournalOnStore(localStore);
+      }
+      outlineJournal = undefined;
+      return { headSeq: 0, tailSeq: 0, entries: [] };
+    }
   }
 
   function adoptLoadedV4Snapshot(
