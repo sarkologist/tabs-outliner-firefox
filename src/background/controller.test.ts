@@ -1,3 +1,5 @@
+import "fake-indexeddb/auto";
+
 import { createRequire } from "node:module";
 import { appendFileSync, mkdirSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -12,6 +14,7 @@ import {
 } from "./backups.js";
 import { createBackgroundController, type BackgroundController } from "./controller.js";
 import { createOutlineJournal, replayJournal } from "./outline-journal.js";
+import { indexedDbKvStore } from "./indexed-db-kv-store.js";
 import {
   STATE_V4_MANIFEST_A_KEY,
   STATE_V4_NODE_SHARD_COUNT,
@@ -26810,6 +26813,112 @@ describe("background controller lifecycle", () => {
     await controller.flushPendingSaves();
     const after = (await controller.handleMessage({ type: "getState" })) as OutlineState;
     expect(after.nodes["tab:1"]).toBeUndefined();
+  });
+
+  it("migrates storage.local shards to the shard store (IndexedDB) on boot and reloads the exact tree", async () => {
+    const runtime = fakeRuntime(
+      [{ id: 10, focused: true, incognito: false }],
+      [{ id: 1, windowId: 10, index: 0, active: true, url: "https://one.example/", title: "One" }]
+    );
+    // Seed the pre-migration layout: a v4 store with shards + manifest on storage.local.
+    const seeded = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    const fullState = await seeded.ensureState();
+    await runtime.api.storage.local.set(outlineStateV4Snapshot(fullState, { epoch: 1, journalSeqIncluded: 0 }).setItems);
+    const beforeKeys = Object.keys(await runtime.api.storage.local.get(null));
+    expect(beforeKeys.some((key) => key.startsWith("outline:v4:nodes:"))).toBe(true);
+
+    const idb = indexedDbKvStore("controller-shard-migrate", "kv");
+    const controller = createBackgroundController({ api: runtime.api, journalStore: idb, shardStore: idb, now: () => 2000 });
+    const state = await controller.ensureState();
+    expect(state.nodes["tab:1"]?.title).toBe("One");
+    expect(state.nodes["window:10"]).toBeDefined();
+
+    // Shards moved to IndexedDB; storage.local no longer holds any shard keys (manifest stays).
+    const afterLocalKeys = Object.keys(await runtime.api.storage.local.get(null));
+    expect(afterLocalKeys.some((key) => key.startsWith("outline:v4:nodes:"))).toBe(false);
+    expect(afterLocalKeys.some((key) => key.startsWith("outline:v4:manifest:"))).toBe(true);
+    expect(Object.keys(await idb.get(null)).some((key) => key.startsWith("outline:v4:nodes:"))).toBe(true);
+    const incidentLog = await loadIncidentLog(runtime.api);
+    expect(incidentLog.some((entry) => entry.event === "v4ShardMigrationComplete")).toBe(true);
+
+    // A fresh controller on the same stores loads from IndexedDB without re-migrating.
+    const reopened = createBackgroundController({ api: runtime.api, journalStore: idb, shardStore: idb, now: () => 3000 });
+    const reloaded = await reopened.ensureState();
+    expect(reloaded.nodes["tab:1"]?.title).toBe("One");
+  });
+
+  it("aborts the shard migration on a torn IndexedDB copy and keeps storage.local authoritative", async () => {
+    const runtime = fakeRuntime(
+      [{ id: 10, focused: true, incognito: false }],
+      [{ id: 1, windowId: 10, index: 0, active: true, url: "https://one.example/", title: "One" }]
+    );
+    const seeded = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    const fullState = await seeded.ensureState();
+    await runtime.api.storage.local.set(outlineStateV4Snapshot(fullState, { epoch: 1, journalSeqIncluded: 0 }).setItems);
+
+    // A shard store whose first multi-key write lands only partially (a torn IndexedDB copy).
+    const realIdb = indexedDbKvStore("controller-torn-shard", "kv");
+    let tornArmed = true;
+    const tornShardStore = {
+      get: (keys?: string | string[] | null) => realIdb.get(keys),
+      set: (items: Record<string, unknown>) => {
+        const entries = Object.entries(items);
+        if (tornArmed && entries.length > 1) {
+          tornArmed = false;
+          return realIdb.set(Object.fromEntries(entries.slice(0, 1))); // drop all but the first key
+        }
+        return realIdb.set(items);
+      },
+      remove: (keys: string | string[]) => realIdb.remove(keys)
+    };
+    const controller = createBackgroundController({
+      api: runtime.api,
+      journalStore: indexedDbKvStore("controller-torn-journal", "kv"),
+      shardStore: tornShardStore,
+      now: () => 2000
+    });
+
+    // Boots correctly (from storage.local, which is untouched because the torn copy failed verify).
+    const state = await controller.ensureState();
+    expect(state.nodes["tab:1"]?.title).toBe("One");
+    expect(Object.keys(await runtime.api.storage.local.get(null)).some((key) => key.startsWith("outline:v4:nodes:"))).toBe(true);
+    const incidentLog = await loadIncidentLog(runtime.api);
+    expect(incidentLog.some((entry) => entry.event === "v4ShardMigrationFailed")).toBe(true);
+    expect(incidentLog.some((entry) => entry.event === "v4ShardMigrationComplete")).toBe(false);
+  });
+
+  it("boots from storage.local shards when the shard store (IndexedDB) is unavailable", async () => {
+    const runtime = fakeRuntime(
+      [{ id: 10, focused: true, incognito: false }],
+      [{ id: 1, windowId: 10, index: 0, active: true, url: "https://one.example/", title: "One" }]
+    );
+    const seeded = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    const fullState = await seeded.ensureState();
+    await runtime.api.storage.local.set(outlineStateV4Snapshot(fullState, { epoch: 1, journalSeqIncluded: 0 }).setItems);
+
+    const failingStore = {
+      get: async () => {
+        throw new Error("IndexedDB unavailable");
+      },
+      set: async () => {
+        throw new Error("IndexedDB unavailable");
+      },
+      remove: async () => {
+        throw new Error("IndexedDB unavailable");
+      }
+    };
+    const controller = createBackgroundController({
+      api: runtime.api,
+      journalStore: failingStore,
+      shardStore: failingStore,
+      now: () => 2000
+    });
+    const state = await controller.ensureState();
+    expect(state.nodes["tab:1"]?.title).toBe("One");
+    // Migration did not run, so the storage.local shards are untouched and authoritative.
+    expect(Object.keys(await runtime.api.storage.local.get(null)).some((key) => key.startsWith("outline:v4:nodes:"))).toBe(true);
+    const incidentLog = await loadIncidentLog(runtime.api);
+    expect(incidentLog.some((entry) => entry.event === "shardStoreUnavailable" || entry.event === "v4ShardMigrationFailed")).toBe(true);
   });
 
   it("records opt-in performance trace entries", async () => {

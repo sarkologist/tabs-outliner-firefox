@@ -7,9 +7,14 @@ import {
   STATE_V4_MIGRATION_BACKUP_KEY,
   STATE_V4_MIGRATION_BACKUP_META_KEY,
   STATE_V4_NODE_SHARD_COUNT,
+  STATE_V4_NODE_SHARD_PREFIX,
+  copyStateV4Shards,
+  deleteAllStateV4ShardKeys,
   loadStateV4,
   outlineStateV4Snapshot,
+  stateV4NodeShardKey,
   stateV4ShardIndexForNodeId,
+  type LoadStateV4Result,
   type StateV4Manifest,
   type StateV4ManifestSlot
 } from "./storage-v4.js";
@@ -83,6 +88,11 @@ export type PersistenceCoordinatorDeps = {
   // a later step injects an IndexedDB-backed store here so journal appends stop paying the
   // whole-store-rewrite cost. See docs/storage-rearchitecture/04-STORAGE-WRITE-COST.md section 6.
   journalStore?: KeyValueStore;
+  // Backing store for the bulk node shards. When provided (IndexedDB in production) shard saves
+  // go there instead of storage.local -- the manifest (a small pointer) stays on storage.local as
+  // the shadow-paging commit point. When ABSENT, the save path stays byte-identical to today
+  // (one combined storage.local set) so the perf guard + existing tests are unaffected.
+  shardStore?: KeyValueStore;
   perfTrace: PerformanceTracer;
   now: () => number;
   getState: () => OutlineState | undefined;
@@ -106,6 +116,11 @@ export function createPersistenceCoordinator(deps: PersistenceCoordinatorDeps) {
     recordIncidentLog,
     clearCompletedRuntimeLifecycleJournalEntriesAfterSave
   } = deps;
+  // Shards live in shardStore when one is injected (IndexedDB in production); otherwise they stay
+  // on storage.local exactly as before. `shardStoreExternal` gates the save split, the migration,
+  // and the storage.local-shard deletion so the default path is byte-identical to today.
+  const shardStoreExternal = deps.shardStore !== undefined;
+  const shardStore: KeyValueStore = deps.shardStore ?? storageLocalKvStore(api);
 
   let pendingSaveState: OutlineState | undefined;
   let pendingSaveHistory: HistoryState | undefined;
@@ -411,14 +426,16 @@ export function createPersistenceCoordinator(deps: PersistenceCoordinatorDeps) {
           setItems[HISTORY_KEY] = nextHistory;
         }
         if (Object.keys(setItems).length > 0) {
-          await api.storage.local.set(setItems);
+          await commitV4SnapshotItems(setItems);
         }
         if (v4Snapshot) {
           previousV4Snapshot = currentV4Snapshot;
           currentV4Snapshot = { manifest: v4Snapshot.manifest, slot: v4Snapshot.slot };
           if (v4Snapshot.removeKeysAfterCommit.length > 0) {
             // Keys no stored manifest references anymore; a failed remove is harmless garbage.
-            void api.storage.local.remove(v4Snapshot.removeKeysAfterCommit).catch((error) => {
+            // These are always node-shard keys, so they go to the shard store (storage.local by
+            // default, IndexedDB in production).
+            void shardStore.remove(v4Snapshot.removeKeysAfterCommit).catch((error) => {
               perfTrace.mark("background.state.save.v4.gc.error", { message: errorText(error) });
             });
           }
@@ -761,9 +778,11 @@ export function createPersistenceCoordinator(deps: PersistenceCoordinatorDeps) {
     };
     try {
       await perfTrace.measureAsync("background.state.migration.write", () =>
-        api.storage.local.set(writtenItems)
+        // Shards go to the shard store (IndexedDB in production), manifest + boot snapshot to
+        // storage.local -- same split as a normal save.
+        commitV4SnapshotItems(writtenItems)
       );
-      const verify = await loadStateV4(api);
+      const verify = await loadStateV4(api, shardStore);
       if (!verify || verify.recovery !== "r0" || !statesMateriallyEqual(verify.state, stored)) {
         throw new Error(verify ? `verification mismatch (${verify.recovery})` : "verification load failed");
       }
@@ -785,8 +804,100 @@ export function createPersistenceCoordinator(deps: PersistenceCoordinatorDeps) {
     } catch (error) {
       currentV4Snapshot = undefined;
       previousV4Snapshot = undefined;
-      await api.storage.local.remove(Object.keys(writtenItems)).catch(() => undefined);
+      await rollbackV4SnapshotItems(writtenItems).catch(() => undefined);
       await recordIncidentLog("v4MigrationFailed", { message: errorText(error) });
+    }
+  }
+
+  // Undo a partial migration/save write across both substrates (mirror of commitV4SnapshotItems).
+  async function rollbackV4SnapshotItems(setItems: Record<string, unknown>): Promise<void> {
+    const keys = Object.keys(setItems);
+    if (!shardStoreExternal) {
+      await api.storage.local.remove(keys);
+      return;
+    }
+    const shardKeys = keys.filter((key) => key.startsWith(STATE_V4_NODE_SHARD_PREFIX));
+    const localKeys = keys.filter((key) => !key.startsWith(STATE_V4_NODE_SHARD_PREFIX));
+    if (shardKeys.length > 0) {
+      await shardStore.remove(shardKeys).catch(() => undefined);
+    }
+    if (localKeys.length > 0) {
+      await api.storage.local.remove(localKeys).catch(() => undefined);
+    }
+  }
+
+  // Load the v4 snapshot, migrating the bulk node shards from storage.local onto the external shard
+  // store (IndexedDB) on the first run. Returns the authoritative loaded result so the caller does
+  // NOT re-read the whole tree (the load is the dominant startup read). Without an external shard
+  // store this is just loadStateV4 against storage.local -- today's behavior.
+  //
+  // Verify-before-delete, mirroring the v3->v4 migration: copy the live shards across, confirm a
+  // fresh r0 load from the shard store materially equals the authoritative state, write a portable-
+  // tree backup, and only then delete the storage.local shards. Any shard-store error (unavailable,
+  // flaky, or verify mismatch) is caught: storage.local shards are untouched (deleted only after the
+  // verify passes), so it falls back to loading them and retries the move next startup. Never throws.
+  async function loadV4WithShardMigration(): Promise<LoadStateV4Result | undefined> {
+    if (!shardStoreExternal) {
+      return loadStateV4(api, shardStore);
+    }
+    try {
+      // Already on the shard store? A clean r0 load means the shards are there; REUSE it (no second
+      // full read) and only clean up storage.local shards lingering from a crash mid-delete. The
+      // targeted get of the referenced keys is cheap when they are absent (the steady state).
+      const onShardStore = await loadStateV4(api, shardStore);
+      if (onShardStore && onShardStore.recovery === "r0") {
+        const referencedKeys = onShardStore.manifest.shardGenerations.map((generation, shardIndex) =>
+          stateV4NodeShardKey(shardIndex, generation)
+        );
+        const lingeringLocal = await api.storage.local.get(referencedKeys);
+        if (referencedKeys.some((key) => lingeringLocal[key] !== undefined)) {
+          await deleteAllStateV4ShardKeys(storageLocalKvStore(api));
+        }
+        return onShardStore;
+      }
+      // Not on the shard store: load the authoritative store from storage.local (legacy location).
+      const fromLocal = await loadStateV4(api, storageLocalKvStore(api));
+      if (!fromLocal || fromLocal.recovery !== "r0") {
+        // Nothing clean to migrate (fresh profile, or a store only the salvage path can read); use
+        // whatever loaded -- the shard-store result if any, else the storage.local result.
+        return onShardStore ?? fromLocal;
+      }
+      return await perfTrace.measureAsync("background.state.shardMigration", async () => {
+        const manifests = [fromLocal.manifest, ...(fromLocal.fallbackManifest ? [fromLocal.fallbackManifest] : [])];
+        // Copy both slots' shards so the surviving R1 fallback slot stays loadable on the shard
+        // store too. The fallback copy is best-effort (copyStateV4Shards skips keys absent in the
+        // source); only the current manifest (r0) is verified below, which is the authoritative tree.
+        await copyStateV4Shards(storageLocalKvStore(api), shardStore, manifests);
+        // Verify the shard store now reloads the exact tree before deleting anything.
+        const verify = await loadStateV4(api, shardStore);
+        if (!verify || verify.recovery !== "r0" || !statesMateriallyEqual(verify.state, fromLocal.state)) {
+          throw new Error(verify ? `shard migration verification mismatch (${verify.recovery})` : "shard migration verification load failed");
+        }
+        // Temporary portable-tree backup (reuses the migration-backup key + its startup TTL expiry):
+        // the only-copy window opens when the storage.local shards are deleted below, so keep an
+        // independent copy until the IndexedDB substrate has soaked.
+        await api.storage.local.set({
+          [STATE_V4_MIGRATION_BACKUP_KEY]: {
+            version: 1,
+            exportedAt: now(),
+            tree: exportPortableTree(fromLocal.state, { now: now() })
+          },
+          [STATE_V4_MIGRATION_BACKUP_META_KEY]: { version: 1, exportedAt: now() }
+        });
+        const removed = await deleteAllStateV4ShardKeys(storageLocalKvStore(api));
+        await recordIncidentLog("v4ShardMigrationComplete", {
+          ...outlineStateCountDetail(fromLocal.state),
+          removedStorageLocalShardKeys: removed
+        });
+        // Return the shard-store-loaded result so the caller adopts the post-migration snapshot.
+        return verify;
+      });
+    } catch (error) {
+      // Shard store unavailable/flaky or verify failed: storage.local shards are untouched (verify-
+      // before-delete), so load from there and retry the move next run. undefined -> the controller's
+      // bootstrap guard refuses to overwrite a present manifest. Never blocks startup.
+      await recordIncidentLog("v4ShardMigrationFailed", { message: errorText(error) });
+      return loadStateV4(api, storageLocalKvStore(api)).catch(() => undefined);
     }
   }
 
@@ -818,6 +929,33 @@ export function createPersistenceCoordinator(deps: PersistenceCoordinatorDeps) {
       }
     });
     return saveInFlight;
+  }
+
+  // Commit a v4 save's items. With an external shard store (IndexedDB), write the shards there
+  // first, then the manifest + history + boot snapshot to storage.local -- the manifest write is
+  // the shadow-paging commit point, so a crash after the shards land but before it leaves the new
+  // shards as orphans (swept later) and the prior manifest still authoritative. With no external
+  // shard store the whole set is one storage.local write, byte-identical to before.
+  async function commitV4SnapshotItems(setItems: Record<string, unknown>): Promise<void> {
+    if (!shardStoreExternal) {
+      await api.storage.local.set(setItems);
+      return;
+    }
+    const shardItems: Record<string, unknown> = {};
+    const localItems: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(setItems)) {
+      if (key.startsWith(STATE_V4_NODE_SHARD_PREFIX)) {
+        shardItems[key] = value;
+      } else {
+        localItems[key] = value;
+      }
+    }
+    if (Object.keys(shardItems).length > 0) {
+      await shardStore.set(shardItems);
+    }
+    if (Object.keys(localItems).length > 0) {
+      await api.storage.local.set(localItems);
+    }
   }
 
   async function initJournalOnStore(store: KeyValueStore) {
@@ -899,6 +1037,7 @@ export function createPersistenceCoordinator(deps: PersistenceCoordinatorDeps) {
     flushEventJournalQueue,
     compactOutlineJournal,
     migrateLegacyStateToV4,
+    loadV4WithShardMigration,
     deleteLegacyStateKeys,
     createAndInitJournal,
     adoptLoadedV4Snapshot

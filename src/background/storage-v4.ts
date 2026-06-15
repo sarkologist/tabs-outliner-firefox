@@ -1,5 +1,6 @@
 import type { NodeId, OutlineNode, OutlineState } from "../model/types.js";
 import { cloneOutlineNode } from "../model/outline.js";
+import { storageLocalKvStore, type KeyValueStore } from "./key-value-store.js";
 import { normalizeLoadedOutlineStructure, outlineNodeShardIndex, type StateStructureRepair } from "./storage.js";
 
 // v4 snapshot store: STATE_V4_NODE_SHARD_COUNT (256) generation-stamped node shards (childIds inline -- no order pages)
@@ -193,7 +194,13 @@ export function outlineStateV4Snapshot(
   return { setItems, removeKeysAfterCommit, manifest, manifestKey, slot };
 }
 
-export async function loadStateV4(api: WebExtensionBrowser): Promise<LoadStateV4Result | undefined> {
+// Manifests (small double-buffered pointers) always live on storage.local; the bulk node shards
+// live in `shardStore` -- IndexedDB in production, a storage.local pass-through by default (today's
+// behavior, what tests/guard use). See docs/storage-rearchitecture/04-STORAGE-WRITE-COST.md section 6.
+export async function loadStateV4(
+  api: WebExtensionBrowser,
+  shardStore: KeyValueStore = storageLocalKvStore(api)
+): Promise<LoadStateV4Result | undefined> {
   const stored = await api.storage.local.get([STATE_V4_MANIFEST_A_KEY, STATE_V4_MANIFEST_B_KEY]);
   const candidates: Array<{ manifest: StateV4Manifest; slot: StateV4ManifestSlot }> = [];
   const manifestA = stored[STATE_V4_MANIFEST_A_KEY];
@@ -208,7 +215,7 @@ export async function loadStateV4(api: WebExtensionBrowser): Promise<LoadStateV4
 
   for (let index = 0; index < candidates.length; index += 1) {
     const candidate = candidates[index]!;
-    const loaded = await loadStateV4FromManifest(candidate.manifest, api);
+    const loaded = await loadStateV4FromManifest(candidate.manifest, shardStore);
     if (loaded) {
       const fallback = candidates.find((other) => other.slot !== candidate.slot);
       return {
@@ -227,7 +234,7 @@ export async function loadStateV4(api: WebExtensionBrowser): Promise<LoadStateV4
   // repaired. journalSeqIncluded falls back to the most conservative (lowest) parseable
   // value so the caller replays as much journal as possible; replay is an idempotent
   // overwrite, so replaying already-folded entries is harmless.
-  const salvage = await salvageStateV4(api);
+  const salvage = await salvageStateV4(shardStore);
   if (!salvage) {
     return undefined;
   }
@@ -262,7 +269,10 @@ export type SweepOrphanedV4ShardsResult = {
 // The whole-store read mirrors the storage census and is the one expensive step; it is meant to run
 // off the startup critical path (deferred, fire-and-forget). Once the backlog is cleared and the
 // per-startup GC gap is closed, the store is small and this is cheap.
-export async function sweepOrphanedV4Shards(api: WebExtensionBrowser): Promise<SweepOrphanedV4ShardsResult> {
+export async function sweepOrphanedV4Shards(
+  api: WebExtensionBrowser,
+  shardStore: KeyValueStore = storageLocalKvStore(api)
+): Promise<SweepOrphanedV4ShardsResult> {
   const manifestStore = await api.storage.local.get([STATE_V4_MANIFEST_A_KEY, STATE_V4_MANIFEST_B_KEY]);
   const referenced = new Set<string>();
   for (const slotKey of [STATE_V4_MANIFEST_A_KEY, STATE_V4_MANIFEST_B_KEY]) {
@@ -277,7 +287,9 @@ export async function sweepOrphanedV4Shards(api: WebExtensionBrowser): Promise<S
     return { removed: 0, referenced: 0, scannedShardKeys: 0 };
   }
 
-  const everything = await api.storage.local.get(null);
+  // Shards live in shardStore (IndexedDB in production); its get(null) also returns the journal
+  // keys it shares the store with, but the shard prefix filter below ignores those.
+  const everything = await shardStore.get(null);
   const orphanKeys: string[] = [];
   let scannedShardKeys = 0;
   for (const key of Object.keys(everything)) {
@@ -291,19 +303,64 @@ export async function sweepOrphanedV4Shards(api: WebExtensionBrowser): Promise<S
   }
 
   for (let index = 0; index < orphanKeys.length; index += STATE_V4_ORPHAN_SWEEP_REMOVE_CHUNK) {
-    await api.storage.local.remove(orphanKeys.slice(index, index + STATE_V4_ORPHAN_SWEEP_REMOVE_CHUNK));
+    await shardStore.remove(orphanKeys.slice(index, index + STATE_V4_ORPHAN_SWEEP_REMOVE_CHUNK));
   }
   return { removed: orphanKeys.length, referenced: referenced.size, scannedShardKeys };
 }
 
+// Copy the node shards referenced by the given manifests from one store to another, verbatim
+// (same keys + generations, so the manifests still resolve against the destination). Skips keys
+// absent in the source; the caller verifies via a fresh loadStateV4 before trusting the copy.
+// Used by the one-time storage.local -> IndexedDB shard migration (both slots, so the R1 fallback
+// stays loadable on the destination too).
+export async function copyStateV4Shards(
+  from: KeyValueStore,
+  to: KeyValueStore,
+  manifests: readonly StateV4Manifest[]
+): Promise<number> {
+  const keys = new Set<string>();
+  for (const manifest of manifests) {
+    manifest.shardGenerations.forEach((generation, shardIndex) => {
+      keys.add(stateV4NodeShardKey(shardIndex, generation));
+    });
+  }
+  if (keys.size === 0) {
+    return 0;
+  }
+  const sourceItems = await from.get([...keys]);
+  const toWrite: Record<string, unknown> = {};
+  for (const key of keys) {
+    if (sourceItems[key] !== undefined) {
+      toWrite[key] = sourceItems[key];
+    }
+  }
+  const writeCount = Object.keys(toWrite).length;
+  if (writeCount > 0) {
+    await to.set(toWrite);
+  }
+  return writeCount;
+}
+
+// Remove every node-shard key from a store (current + superseded generations). Used to drop the
+// storage.local shards once they are migrated to IndexedDB and verified. Reads the whole store once
+// (the keys are not enumerable otherwise); a one-time cost on the migration path.
+export async function deleteAllStateV4ShardKeys(store: KeyValueStore): Promise<number> {
+  const everything = await store.get(null);
+  const shardKeys = Object.keys(everything).filter((key) => key.startsWith(STATE_V4_NODE_SHARD_PREFIX));
+  for (let index = 0; index < shardKeys.length; index += STATE_V4_ORPHAN_SWEEP_REMOVE_CHUNK) {
+    await store.remove(shardKeys.slice(index, index + STATE_V4_ORPHAN_SWEEP_REMOVE_CHUNK));
+  }
+  return shardKeys.length;
+}
+
 async function loadStateV4FromManifest(
   manifest: StateV4Manifest,
-  api: WebExtensionBrowser
+  shardStore: KeyValueStore
 ): Promise<{ state: OutlineState; repair?: StateStructureRepair } | undefined> {
   const shardKeys = manifest.shardGenerations.map((generation, shardIndex) =>
     stateV4NodeShardKey(shardIndex, generation)
   );
-  const shardItems = await api.storage.local.get(shardKeys);
+  const shardItems = await shardStore.get(shardKeys);
   const nodes: OutlineState["nodes"] = {};
   for (let shardIndex = 0; shardIndex < shardKeys.length; shardIndex += 1) {
     const shard = shardItems[shardKeys[shardIndex]!];
@@ -331,9 +388,9 @@ async function loadStateV4FromManifest(
 }
 
 async function salvageStateV4(
-  api: WebExtensionBrowser
+  shardStore: KeyValueStore
 ): Promise<{ state: OutlineState; manifest: StateV4Manifest } | undefined> {
-  const everything = await api.storage.local.get(null);
+  const everything = await shardStore.get(null);
   const bestByShard = new Map<number, StateV4NodeShard>();
   for (const key of Object.keys(everything)) {
     if (!key.startsWith(STATE_V4_NODE_SHARD_PREFIX)) {
@@ -384,12 +441,15 @@ async function salvageStateV4(
   return { state, manifest };
 }
 
-export async function hasAnyStateV4Keys(api: WebExtensionBrowser): Promise<boolean> {
+export async function hasAnyStateV4Keys(
+  api: WebExtensionBrowser,
+  shardStore: KeyValueStore = storageLocalKvStore(api)
+): Promise<boolean> {
   const stored = await api.storage.local.get([STATE_V4_MANIFEST_A_KEY, STATE_V4_MANIFEST_B_KEY]);
   if (stored[STATE_V4_MANIFEST_A_KEY] !== undefined || stored[STATE_V4_MANIFEST_B_KEY] !== undefined) {
     return true;
   }
-  const everything = await api.storage.local.get(null);
+  const everything = await shardStore.get(null);
   return Object.keys(everything).some((key) => key.startsWith(STATE_V4_NODE_SHARD_PREFIX));
 }
 

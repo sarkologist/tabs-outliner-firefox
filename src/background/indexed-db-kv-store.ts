@@ -9,12 +9,37 @@ import type { KeyValueStore } from "./key-value-store.js";
 // The KeyValueStore contract mirrors the `storage.local` subset the journal uses: `get` of a
 // string / array / null(=all), `set` of a record, `remove` of a string / array. Missing keys come
 // back `undefined` (the journal's validators treat that as "absent"), matching the in-memory mock.
+// A wedged IndexedDB operation (a stuck `onblocked`, an OS-level disk stall, or a corrupt database
+// that hangs rather than erroring) would otherwise never settle. Since these stores sit on the
+// startup-critical path, bound every op: on timeout it rejects so the caller's fallback runs
+// (journal -> journal-less; shards -> storage.local authoritative). Generous enough not to trip on
+// a genuinely slow disk (the legacy storage.local backend was seen up to ~6.7 s for a 1 KB write).
+const IDB_OPERATION_TIMEOUT_MS = 30000;
+
+function withTimeout<T>(operation: Promise<T>, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`indexedDB ${label} timed out after ${IDB_OPERATION_TIMEOUT_MS}ms`));
+    }, IDB_OPERATION_TIMEOUT_MS);
+    operation.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      }
+    );
+  });
+}
+
 export function indexedDbKvStore(dbName: string, storeName: string): KeyValueStore {
   let dbPromise: Promise<IDBDatabase> | undefined;
 
   function openDb(): Promise<IDBDatabase> {
     if (!dbPromise) {
-      dbPromise = new Promise<IDBDatabase>((resolve, reject) => {
+      dbPromise = withTimeout(new Promise<IDBDatabase>((resolve, reject) => {
         const request = indexedDB.open(dbName, 1);
         request.onupgradeneeded = () => {
           const db = request.result;
@@ -25,8 +50,9 @@ export function indexedDbKvStore(dbName: string, storeName: string): KeyValueSto
         request.onsuccess = () => resolve(request.result);
         request.onerror = () => reject(request.error ?? new Error(`indexedDB.open(${dbName}) failed`));
         request.onblocked = () => reject(new Error(`indexedDB.open(${dbName}) blocked`));
-      }).catch((error) => {
-        // Let a transient open failure be retried on the next call rather than poisoning the store.
+      }), `open(${dbName})`).catch((error) => {
+        // Let a transient open failure (or timeout) be retried on the next call rather than
+        // poisoning the store with a permanently-rejected cached promise.
         dbPromise = undefined;
         throw error;
       });
@@ -36,7 +62,7 @@ export function indexedDbKvStore(dbName: string, storeName: string): KeyValueSto
 
   async function get(keys: string | string[] | null = null): Promise<Record<string, unknown>> {
     const db = await openDb();
-    return new Promise<Record<string, unknown>>((resolve, reject) => {
+    return withTimeout(new Promise<Record<string, unknown>>((resolve, reject) => {
       const tx = db.transaction(storeName, "readonly");
       const store = tx.objectStore(storeName);
       const result: Record<string, unknown> = {};
@@ -63,12 +89,12 @@ export function indexedDbKvStore(dbName: string, storeName: string): KeyValueSto
       }
       tx.onerror = () => reject(tx.error);
       tx.onabort = () => reject(tx.error ?? new Error("indexedDB read transaction aborted"));
-    });
+    }), "get");
   }
 
   async function set(items: Record<string, unknown>): Promise<void> {
     const db = await openDb();
-    return new Promise<void>((resolve, reject) => {
+    return withTimeout(new Promise<void>((resolve, reject) => {
       const tx = db.transaction(storeName, "readwrite");
       const store = tx.objectStore(storeName);
       for (const [key, value] of Object.entries(items)) {
@@ -77,7 +103,7 @@ export function indexedDbKvStore(dbName: string, storeName: string): KeyValueSto
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);
       tx.onabort = () => reject(tx.error ?? new Error("indexedDB write transaction aborted"));
-    });
+    }), "set");
   }
 
   async function remove(keys: string | string[]): Promise<void> {
@@ -86,7 +112,7 @@ export function indexedDbKvStore(dbName: string, storeName: string): KeyValueSto
     if (keyList.length === 0) {
       return;
     }
-    return new Promise<void>((resolve, reject) => {
+    return withTimeout(new Promise<void>((resolve, reject) => {
       const tx = db.transaction(storeName, "readwrite");
       const store = tx.objectStore(storeName);
       for (const key of keyList) {
@@ -95,7 +121,7 @@ export function indexedDbKvStore(dbName: string, storeName: string): KeyValueSto
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);
       tx.onabort = () => reject(tx.error ?? new Error("indexedDB delete transaction aborted"));
-    });
+    }), "remove");
   }
 
   return { get, set, remove };

@@ -149,9 +149,10 @@ import {
   type LoadedOutlineState
 } from "./storage.js";
 import {
+  STATE_V4_MANIFEST_A_KEY,
+  STATE_V4_MANIFEST_B_KEY,
   STATE_V4_MIGRATION_BACKUP_KEY,
   STATE_V4_MIGRATION_BACKUP_META_KEY,
-  loadStateV4,
   sweepOrphanedV4Shards
 } from "./storage-v4.js";
 import { measureStorageCensus, storageCensusIncidentDetail } from "./storage-census.js";
@@ -162,7 +163,7 @@ import {
   type OutlineJournalEntry
 } from "./outline-journal.js";
 import type { InitialTreeSnapshot } from "./initial-tree-snapshot.js";
-import type { KeyValueStore } from "./key-value-store.js";
+import { storageLocalKvStore, type KeyValueStore } from "./key-value-store.js";
 import type {
   LoadStateOptions,
   StateLoadPhase,
@@ -361,6 +362,10 @@ export type BackgroundControllerOptions = {
   // so journal appends stop paying storage.local's whole-store-rewrite cost; when omitted it
   // defaults to a storage.local pass-through (today's behavior), which the test suite relies on.
   journalStore?: KeyValueStore;
+  // Backing store for the bulk node shards. Production injects the same IndexedDB store as the
+  // journal (distinct key prefixes); when omitted the shards stay on storage.local (today's
+  // behavior). When provided, startup migrates the storage.local shards onto it (verify-before-delete).
+  shardStore?: KeyValueStore;
   now?: () => number;
 };
 
@@ -384,6 +389,11 @@ const SIDEBAR_WINDOW_PATH = "sidebar/sidebar.html";
 export function createBackgroundController(options: BackgroundControllerOptions): BackgroundController {
   const { api, now = Date.now } = options;
   const adapter = options.adapter ?? createBrowserAdapter(api);
+  // Where the bulk node shards live for load/sweep. Production injects an IndexedDB store; absent ->
+  // storage.local (today's behavior). The coordinator independently sees options.shardStore to
+  // decide the save split + migration (a defaulted store must NOT trigger either).
+  const shardStore: KeyValueStore = options.shardStore ?? storageLocalKvStore(api);
+  const shardStoreExternal = options.shardStore !== undefined;
   const perfTrace = createPerformanceTracer("background");
   const sidebarBroadcaster = createSidebarBroadcaster({
     perfTrace,
@@ -459,6 +469,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   const persistence = createPersistenceCoordinator({
     api,
     ...(options.journalStore ? { journalStore: options.journalStore } : {}),
+    ...(options.shardStore ? { shardStore: options.shardStore } : {}),
     perfTrace,
     now,
     getState: () => state,
@@ -484,6 +495,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     flushEventJournalQueue,
     compactOutlineJournal,
     migrateLegacyStateToV4,
+    loadV4WithShardMigration,
     deleteLegacyStateKeys,
     createAndInitJournal,
     adoptLoadedV4Snapshot
@@ -2132,19 +2144,26 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   async function initializeState(): Promise<OutlineState> {
     const [windows, v4Loaded, lifecycleJournal, startupKeys] = await Promise.all([
       perfTrace.measureAsync("background.runtime.getWindows", () => getNormalWindows(api)),
-      perfTrace.measureAsync("background.state.load", () => loadStateV4(api)),
+      // Loads the v4 snapshot AND migrates the bulk shards onto the external shard store (IndexedDB)
+      // on the first run, returning the authoritative post-migration result -- so the dominant
+      // startup read happens once, in parallel with getNormalWindows. Verify-before-delete; a shard-
+      // store error falls back to the storage.local shards; never blocks startup.
+      perfTrace.measureAsync("background.state.load", () => loadV4WithShardMigration()),
       loadRuntimeLifecycleJournal(api),
       api.storage.local.get([
         STATE_V3_MANIFEST_KEY,
         STATE_V2_MANIFEST_KEY,
-        STATE_KEY,
-        STATE_V4_MIGRATION_BACKUP_META_KEY
+        STATE_KEY
       ])
     ]);
     const legacyKeysPresent = Boolean(
       startupKeys[STATE_V3_MANIFEST_KEY] || startupKeys[STATE_V2_MANIFEST_KEY] || startupKeys[STATE_KEY]
     );
-    const migrationBackupExportedAt = readMigrationBackupExportedAt(startupKeys[STATE_V4_MIGRATION_BACKUP_META_KEY]);
+    // Read the migration-backup meta AFTER the load: the shard migration (inside
+    // loadV4WithShardMigration above) writes it, so reading it concurrently in the Promise.all could
+    // race and make the TTL-expiry below delete the just-written backup.
+    const migrationBackupMeta = await api.storage.local.get(STATE_V4_MIGRATION_BACKUP_META_KEY);
+    const migrationBackupExportedAt = readMigrationBackupExportedAt(migrationBackupMeta[STATE_V4_MIGRATION_BACKUP_META_KEY]);
     let loaded: LoadedOutlineState | undefined;
     if (v4Loaded) {
       adoptLoadedV4Snapshot(
@@ -2344,7 +2363,25 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       // Nothing loadable. Bootstrapping from windows is only safe on a genuinely fresh
       // profile; if any stored outline keys exist, the bootstrap would overwrite them, so
       // record an incident rather than letting that happen silently.
-      const storedKeys = await api.storage.local.get([STATE_V3_MANIFEST_KEY, STATE_V2_MANIFEST_KEY, STATE_KEY]);
+      const storedKeys = await api.storage.local.get([
+        STATE_V3_MANIFEST_KEY,
+        STATE_V2_MANIFEST_KEY,
+        STATE_KEY,
+        STATE_V4_MANIFEST_A_KEY,
+        STATE_V4_MANIFEST_B_KEY
+      ]);
+      // A v4 manifest with no loadable shards means the tree exists but its shard store is
+      // unreachable (e.g. IndexedDB temporarily unavailable after the shard migration). Bootstrapping
+      // from windows here would overwrite the manifest and orphan the real data, so refuse: surface a
+      // load error and retry next startup, when the shard store may be back. The portable-tree backup
+      // (storage.local, within its TTL) remains the manual recovery path.
+      if (shardStoreExternal && (storedKeys[STATE_V4_MANIFEST_A_KEY] || storedKeys[STATE_V4_MANIFEST_B_KEY])) {
+        await recordIncidentLog("bootstrapSkippedShardStoreUnreachable", {
+          hasManifestA: Boolean(storedKeys[STATE_V4_MANIFEST_A_KEY]),
+          hasManifestB: Boolean(storedKeys[STATE_V4_MANIFEST_B_KEY])
+        });
+        throw new Error("v4 manifest present but no shards loadable; refusing to bootstrap over existing data");
+      }
       if (storedKeys[STATE_V3_MANIFEST_KEY] || storedKeys[STATE_V2_MANIFEST_KEY] || storedKeys[STATE_KEY]) {
         await recordIncidentLog("bootstrapSkippedStoredDataPresent", {
           hasV3Manifest: Boolean(storedKeys[STATE_V3_MANIFEST_KEY]),
@@ -5342,7 +5379,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
   async function runOrphanShardSweep(): Promise<void> {
     try {
-      const result = await sweepOrphanedV4Shards(api);
+      const result = await sweepOrphanedV4Shards(api, shardStore);
       if (result.removed > 0) {
         await recordIncidentLog("orphanShardSweep", result);
       }
