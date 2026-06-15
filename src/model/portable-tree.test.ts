@@ -7,6 +7,7 @@ import {
   exportPortableTree,
   portableTreeBackupFilename,
   portableTreeFilename,
+  restorePortableTree,
   serializePortableTreeFile
 } from "./portable-tree.js";
 import type { OutlineNode, OutlineState, RuntimeWindow } from "./types.js";
@@ -707,6 +708,75 @@ describe("portable tree files", () => {
     ).toThrow(/Invalid portable tree/);
 
     expect(state).toEqual(before);
+  });
+});
+
+describe("restorePortableTree", () => {
+  it("makes the export roots the top-level roots (no import-group wrapper)", () => {
+    const payload = {
+      schema: PORTABLE_TREE_SCHEMA,
+      version: 1,
+      exportedAt: "2026-06-15T12:00:00.000Z",
+      roots: [
+        {
+          kind: "window",
+          title: "Window One",
+          children: [
+            { kind: "tab", title: "Tab A", url: "https://a.example/", children: [] }
+          ]
+        },
+        {
+          kind: "window",
+          title: "Window Two",
+          children: [
+            { kind: "tab", title: "Tab B", url: "https://b.example/", children: [] }
+          ]
+        }
+      ]
+    };
+
+    const restored = restorePortableTree(payload, { now: 5000 });
+
+    // The two exported windows become the top-level roots directly -- not nested under a
+    // single "Imported tabs" group the way appendPortableTree would merge them.
+    expect(restored.version).toBe(1);
+    expect(restored.rootIds).toHaveLength(2);
+    const windowOne = nodeByTitle(restored, "Window One");
+    const windowTwo = nodeByTitle(restored, "Window Two");
+    expect(restored.rootIds).toEqual([windowOne.id, windowTwo.id]);
+    expect(windowOne.parentId).toBeUndefined();
+    expect(windowTwo.parentId).toBeUndefined();
+
+    const tabA = nodeByTitle(restored, "Tab A");
+    expect(windowOne.childIds).toEqual([tabA.id]);
+    expect(tabA.parentId).toBe(windowOne.id);
+
+    // Every node imports closed (a portable export carries no live state).
+    for (const node of Object.values(restored.nodes)) {
+      expect(node.status).toBe("closed");
+      expect(node.live).toBeUndefined();
+    }
+    expect(tabA.restore).toEqual({ url: "https://a.example/", title: "Tab A" });
+  });
+
+  it("throws on an export with no roots so it can never wipe the outline to empty", () => {
+    expect(() =>
+      restorePortableTree(
+        {
+          schema: PORTABLE_TREE_SCHEMA,
+          version: 1,
+          exportedAt: "2026-06-15T12:00:00.000Z",
+          roots: []
+        },
+        { now: 5000 }
+      )
+    ).toThrow(/no roots/);
+  });
+
+  it("rejects a malformed payload", () => {
+    expect(() => restorePortableTree({ schema: "wrong" }, { now: 5000 })).toThrow(
+      /Invalid portable tree/
+    );
   });
 });
 

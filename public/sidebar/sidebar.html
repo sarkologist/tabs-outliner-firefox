@@ -81,6 +81,10 @@
             <svg class="button-icon" aria-hidden="true"><use href="#icon-import"></use></svg>
             <span>Import tree</span>
           </button>
+          <button id="restore-tree" class="overflow-menu-item" type="button" role="menuitem" title="Restore from file (replace)" aria-label="Restore from file (replace)">
+            <svg class="button-icon" aria-hidden="true"><use href="#icon-import"></use></svg>
+            <span>Restore from file (replace)</span>
+          </button>
           <button id="refresh" class="overflow-menu-item" type="button" role="menuitem" title="Repair outline" aria-label="Repair outline">
             <svg class="button-icon" aria-hidden="true"><use href="#icon-refresh"></use></svg>
             <span>Repair outline</span>
@@ -101,6 +105,7 @@
       </button>
     </header>
     <input id="import-tree-file" type="file" accept="application/json,.json,.tree" hidden />
+    <input id="restore-tree-file" type="file" accept="application/json,.json,.tree" hidden />
     <main>
       <p id="empty" class="empty" hidden>No tabs captured yet.</p>
       <ol id="tree" class="tree" aria-label="Tab outline"></ol>

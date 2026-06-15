@@ -330,6 +330,20 @@ export function createPersistenceCoordinator(deps: PersistenceCoordinatorDeps) {
     }
     schedulePendingSave(schedule ?? "normal");
   }
+  // Abandon any not-yet-committed save: clear the debounce/retry timers, drop the queued snapshot
+  // and history, and reset the failure backoff. The restore command's failure path uses this so a
+  // failed full-replace save cannot be silently re-persisted later by an armed retry timer (which
+  // would land the replacement without the live-session reconcile a reload performs). A save that
+  // is already in flight is not interrupted -- callers await flushPendingSaves() first.
+  function discardPendingSaves(): void {
+    clearSaveTimers();
+    pendingSaveState = undefined;
+    pendingSaveHistory = undefined;
+    pendingSaveCandidateNodeIds = undefined;
+    pendingSaveRequiresFullDiff = false;
+    saveAfterInFlight = false;
+    saveFailureBackoffIndex = 0;
+  }
 
   function saveScheduleTiming(schedule: SaveSchedule): { quietDelayMs: number; maxDelayMs: number } {
     return schedule === "interaction"
@@ -1030,6 +1044,7 @@ export function createPersistenceCoordinator(deps: PersistenceCoordinatorDeps) {
     hasPendingOrInFlightSave,
     pausePendingSaveTimers,
     resumePendingSaveTimers,
+    discardPendingSaves,
     appendCommandJournal,
     appendCommandJournalForKnownNodeIds,
     queueRuntimeEventJournal,
