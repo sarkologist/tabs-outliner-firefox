@@ -29,7 +29,7 @@ Each entry: statement, owner mechanism, what enforces/tests it today.
   (`v4LoadRecovery`, `v3LoadSalvaged`, `staleV2FallbackUsed`, `journalReplay`) and forces
   a fresh full snapshot generation. `bootstrapFromWindows` over stored data records
   `bootstrapSkippedStoredDataPresent`. Enforced by: `storage-v4.test.ts` ladder tests,
-  `storage-v2.test.ts` salvage tests, controller startup-salvage tests.
+  `storage-legacy.test.ts` salvage tests, controller startup-salvage tests.
 - **I-3 — Storage consistency is verifiable from storage alone.**
   Owner: storage (shadow paging). A v4 shard is trusted only when its embedded generation
   matches the manifest's `shardGenerations` entry; manifests are double-buffered; no
