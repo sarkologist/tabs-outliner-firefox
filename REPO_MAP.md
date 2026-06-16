@@ -48,6 +48,14 @@ the relevant paths, know which gate covers you:
   storage-migration status, open PRs, and current posture (the context that isn't in
   `main`'s code).
 
+## Repo health & gardening
+
+- [docs/QUALITY.md](docs/QUALITY.md) — the debt scoreboard: the mechanically-tracked
+  metrics (boundaries, debt ratchets, doc integrity) and their baselines.
+- [docs/repo-gardening.md](docs/repo-gardening.md) — the recurring "garbage collection"
+  pass: what the deterministic gates cover, what the scheduled gardener checks by judgment,
+  and how it reports (proposes, never automerges).
+
 ## Performance (the perf harness)
 
 - [PERFORMANCE_NOTES.md](PERFORMANCE_NOTES.md) — 📚 the performance decision log
