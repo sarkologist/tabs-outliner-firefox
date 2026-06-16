@@ -93,8 +93,11 @@ Separate from runtime reconciliation; covers how the sidebar projects/hydrates t
   prompt: current sparse cells, threat model, coverage targets.
 - [SIDEBAR_PROJECTION_BUGS.md](SIDEBAR_PROJECTION_BUGS.md) — catalog of projection bugs
   (`PT-*`).
-- [REMOTE_PROJECTION_REWRITE.md](REMOTE_PROJECTION_REWRITE.md) — the goal/non-goals of
-  moving the sidebar to a projection client of the background-owned outline.
+- [REMOTE_PROJECTION_REWRITE.md](REMOTE_PROJECTION_REWRITE.md) — **SHIPPED** (all five
+  phases on `main`, 2026-05-26): the design/rationale (goal, non-goals, phase map) for
+  moving the sidebar to a sparse projection client of the background-owned outline. Its
+  `Progress` log is frozen at the merge; current health lives in `SIDEBAR_PROJECTION_BUGS.md`
+  + the projection perf guard.
 
 ## Reconciliation state-model work (analysis)
 

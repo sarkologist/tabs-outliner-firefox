@@ -2,7 +2,7 @@
 
 A snapshot of in-flight work and current posture that is **not** derivable from `main`'s
 code or git history alone. Update this when a PR lands or a new effort starts; keep it
-short so it stays cheap to maintain. Last updated: **2026-06-15**.
+short so it stays cheap to maintain. Last updated: **2026-06-16**.
 
 > Why this file exists: the richest project context (decisions, the current effort, known
 > hazards) otherwise lives only in a maintainer's head or local tooling — invisible to a
@@ -33,6 +33,16 @@ In flight:
 
 Not touched by storage work: the reconciliation path (`getNormalWindows` on
 focus/activation) stays environment-bound and load-bearing.
+
+## Sidebar posture — remote projection (completed arc)
+
+The sidebar is a **sparse projection client** of the background-owned outline: it renders
+bounded row windows and supports export, import, search, rename, and guarded
+cut/paste/restore **without full local hydration**. Full `getState` is a fallback for
+diagnostics or explicitly broad workflows, not the default. Shipped on `main` 2026-05-26;
+design/rationale in [REMOTE_PROJECTION_REWRITE.md](../REMOTE_PROJECTION_REWRITE.md), live
+health (the `PT-*` projection hunt; no open findings at last run) in
+[SIDEBAR_PROJECTION_BUGS.md](../SIDEBAR_PROJECTION_BUGS.md).
 
 ## Open PRs
 
