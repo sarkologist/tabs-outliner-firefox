@@ -573,6 +573,18 @@ Restored-scope browser-action discovery started from 234 regression traces and 5
 - Fullscreen note: the domain trace DSL now supports `nativeSetWindowState`; keep old `sh-*` traces frozen and add fresh neutral fullscreen probes in the next sweep.
 - Perf guard is not part of discovery. It applies to the later fix/pass promotion step if this sweep records findings.
 
+## Convergence Sweep 2026-06-16 (post RT-255 through RT-259)
+
+After RT-255/RT-256 (history-undo over a browser-authored native-move active-flag divergence — fixed as a fake-runtime one-active-per-window harness gap) and RT-257/RT-258/RT-259 (restoring a multi-tab closed window emitted a redundant `tabs.move` — fixed by skipping the no-op reorder), this sweep ran the adversarial loop to its stop condition to confirm the corpus stopped surfacing new bugs. It added 13 neutral `cv-*` discovery traces across three full active mutation blocks; all blocks were clean (0 new distinct signatures), so the discovery corpus baseline is 284 regression / 911 discovery traces. Add future convergence probes as neutral `cv-*` discovery traces; do not mutate fixed `rt-*`, `bh-*`, `ph-*`, `lh-*`, `hh-*`, `jh-*`, `nh-*`, `mh-*`, `oh-*`, `wh-*`, `sh-*`, `fh-*`, `xh-*`, `qh-*`, `ca-*`, `ra-*`, `yh-*`, `sa-*`, `sk-*`, `dl-*`, `cl-*`, or `ur-*` repros.
+
+- Block 1 (Rung 0, neighbors of the two fixed basins): 3-tab closed-window restore reorder, restore + undo/redo of the restore command, redo-of-group after a browser native-move set the active tab, two cross-window native moves with active drift, restore + native-move-out + reclose. 5 traces, clean.
+- Block 2 (Rung 1, one axis changed; subagent-scout-diversified): cross-window move then stale created echo carrying the old window, external window outliving an opener-source close, restore-rejecting-create then undo, and a drag burst that drains and auto-removes the source window. 4 traces, clean.
+- Block 3 (Rung 2, combined axes + temporal heat; subagent-scout-diversified): group-then-abrupt-restart racing a stale created echo, restore + in-window opener-link child + re-activation on the new ids, crash mid-restore of the focused window, and an opener parent moved cross-window with a stale updated echo plus a missing-window partial snapshot. 4 traces, clean.
+- Bug yield: none. The one replay failure (`cv-r2-opener-stale-updated-missing-window-snapshot`) was a harness precondition (`staleLiveUpdatedEvent` needs a `captureStaleTabs` snapshot, not a plain `captureTab`); the trace was corrected before the block was counted, not recorded as a finding.
+- Coverage movement: `sampled-clean` for restore-reorder neighbors, history-of-a-restore, redo-over-native-move, multi-window browser-authored active drift, opener-outlives-source, restore-rejection + undo, source-window auto-remove drag bursts, group-crash vs stale-created dedupe, post-restore opener/active on fresh ids, crash-mid-restore dedupe, and opener-cross-window + stale-updated + partial-snapshot. These probe neighbors of the RT-255..259 basins rather than wholly new architecture joints, so the affected cells remain sampled, not `covered/regression-backed`.
+- Subagent scouts: three proposal-only scouts (browser/runtime, model/history, sparse/user-behavior) supplied mutation ideas for Blocks 2-3; the main thread owned all edits, replay, corpus runs, and dedupe, and the scout threads were closed when proposals were collected.
+- Perf guard is not part of discovery. No findings, so no fix/promote pass was required.
+
 ## Hunt Procedure
 
 Procedure intentionally lives in [RUNTIME_TRACE_HUNT_RUNBOOK.md](./RUNTIME_TRACE_HUNT_RUNBOOK.md). Keep this guide as data: DSL, invariants, coverage, sparse targets, and historical sweep notes.

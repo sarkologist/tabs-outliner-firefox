@@ -1198,7 +1198,20 @@ const DISCOVERY_TRACE_IDS = [
   "cl-b5-passive-victim-windowonly-query-split",
   "cl-b6-closed-leaf-stale-created-query-split",
   "cl-b6-opener-grandchild-closed-stale-parent",
-  "cl-b6-command-window-same-url-foreign-guest"
+  "cl-b6-command-window-same-url-foreign-guest",
+  "cv-b1-restore-three-tab-window-reclose",
+  "cv-b1-restore-undo-redo-window",
+  "cv-b1-redo-group-after-native-move-active",
+  "cv-b1-two-cross-window-native-moves-active",
+  "cv-b1-restore-native-move-out-reclose",
+  "cv-r1-crosswin-move-stale-created-echo",
+  "cv-r1-external-window-outlives-opener-close",
+  "cv-r1-restore-rejecting-create-then-undo",
+  "cv-r1-burst-drain-source-window-autoremove",
+  "cv-r2-group-crash-then-stale-created",
+  "cv-r2-restored-window-open-link-child-reactivate",
+  "cv-r2-crash-mid-restore-focused-window",
+  "cv-r2-opener-stale-updated-missing-window-snapshot"
 ];
 const ALL_TRACE_IDS = [...REGRESSION_TRACE_IDS, ...DISCOVERY_TRACE_IDS];
 const TRACE_TAGS = new Map([
