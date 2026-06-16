@@ -293,7 +293,12 @@ const REGRESSION_TRACE_IDS = [
   "mh-opener-chain-native-reorder",
   "qh-escape-command-created-double-reorder-complete",
   "yh-runbook-r1-created-race-command-cohabit",
-  "jh-relocate-direct-abrupt-old-updated"
+  "jh-relocate-direct-abrupt-old-updated",
+  "ra-escape-restored-fullscreen-native-move-history",
+  "yh-rung2-restored-history-partial-sandwich",
+  "dl-b5-closed-child-restored-parent-reclose",
+  "cl-b2-restored-window-child-closed-parent-reclosed",
+  "cl-b6-restored-runtime-id-second-generation"
 ];
 const DISCOVERY_TRACE_IDS = [
   "dh-restore-delayed-focus-refresh",
@@ -993,7 +998,6 @@ const DISCOVERY_TRACE_IDS = [
   "ra-rung1-external-restore-delete-history",
   "ra-escape-external-opener-restored-history-partial",
   "ra-escape-command-crash-external-sibling-close",
-  "ra-escape-restored-fullscreen-native-move-history",
   "ra-escape-two-external-windows-history-restart",
   "ra-escape-browser-delete-restore-stale-order",
   "ra-escape-focus-reject-session-close-partial",
@@ -1070,7 +1074,6 @@ const DISCOVERY_TRACE_IDS = [
   "yh-rung1-window-state-transfer-stale-echo",
   "yh-rung2-history-after-three-scope-cohabit",
   "yh-rung2-session-close-mixed-survivors",
-  "yh-rung2-restored-history-partial-sandwich",
   "yh-rung2-closed-external-restored-command-sibling",
   "yh-rung2-fullscreen-command-restored-partial",
   "yh-rung2-focus-other-window-mixed-close",
@@ -1177,11 +1180,9 @@ const DISCOVERY_TRACE_IDS = [
   "dl-b4-closed-window-command-cohabitation-redo",
   "dl-b4-closed-window-fullscreen-focus-reject",
   "dl-b5-same-url-tab-bucket-roundtrip",
-  "dl-b5-closed-child-restored-parent-reclose",
   "cl-b1-passive-closed-window-many-native-drifts",
   "cl-b1-closed-tab-survives-owner-reorder-and-session",
   "cl-b1-browser-closed-known-window-no-window-event",
-  "cl-b2-restored-window-child-closed-parent-reclosed",
   "cl-b2-close-restore-reject-reclose-multitab",
   "cl-b2-closed-subtree-history-redo-skew",
   "cl-b3-two-closed-same-url-tabs-restore-one",
@@ -1197,8 +1198,20 @@ const DISCOVERY_TRACE_IDS = [
   "cl-b5-passive-victim-windowonly-query-split",
   "cl-b6-closed-leaf-stale-created-query-split",
   "cl-b6-opener-grandchild-closed-stale-parent",
-  "cl-b6-restored-runtime-id-second-generation",
-  "cl-b6-command-window-same-url-foreign-guest"
+  "cl-b6-command-window-same-url-foreign-guest",
+  "cv-b1-restore-three-tab-window-reclose",
+  "cv-b1-restore-undo-redo-window",
+  "cv-b1-redo-group-after-native-move-active",
+  "cv-b1-two-cross-window-native-moves-active",
+  "cv-b1-restore-native-move-out-reclose",
+  "cv-r1-crosswin-move-stale-created-echo",
+  "cv-r1-external-window-outlives-opener-close",
+  "cv-r1-restore-rejecting-create-then-undo",
+  "cv-r1-burst-drain-source-window-autoremove",
+  "cv-r2-group-crash-then-stale-created",
+  "cv-r2-restored-window-open-link-child-reactivate",
+  "cv-r2-crash-mid-restore-focused-window",
+  "cv-r2-opener-stale-updated-missing-window-snapshot"
 ];
 const ALL_TRACE_IDS = [...REGRESSION_TRACE_IDS, ...DISCOVERY_TRACE_IDS];
 const TRACE_TAGS = new Map([

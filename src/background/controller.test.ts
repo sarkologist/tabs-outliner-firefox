@@ -516,9 +516,22 @@ function fakeRuntime(windows: RuntimeWindow[], tabs: RuntimeTab[], options: Fake
           await createTabFromBrowser(runtime, tab, { awaitListeners: false });
           return copyTab(runtime.tabs.find((candidate) => candidate.id === tab.id) ?? tab);
         }),
-        move: vi.fn(async (tabIds: number | number[], moveProperties: { windowId?: number; index: number }) =>
-          moveTabsFromBrowser(runtime, tabIds, moveProperties)
-        ),
+        move: vi.fn(async (tabIds: number | number[], moveProperties: { windowId?: number; index: number }) => {
+          const ids = Array.isArray(tabIds) ? tabIds : [tabIds];
+          const targetWindowId = moveProperties.windowId
+            ?? runtime.tabs.find((tab) => tab.id === ids[0])?.windowId;
+          const incomingTabIds = new Set(
+            ids.filter((id) => {
+              const tab = runtime.tabs.find((candidate) => candidate.id === id);
+              return tab !== undefined && typeof targetWindowId === "number" && tab.windowId !== targetWindowId;
+            })
+          );
+          const moved = moveTabsFromBrowser(runtime, tabIds, moveProperties);
+          if (typeof targetWindowId === "number") {
+            resolveDuplicateActiveTabsAfterMove(runtime, targetWindowId, incomingTabIds);
+          }
+          return moved;
+        }),
         onActivated: tabActivated as never,
         onAttached: tabAttached as never,
         onCreated: tabCreated as never,
@@ -16992,7 +17005,7 @@ const RUNTIME_DOMAIN_DISCOVERY_TRACES_CHUNK_4: RuntimeDomainTrace[] = [
     id: "ra-escape-restored-fullscreen-native-move-history",
     title: "real-shape escape restored fullscreen native move history",
     notes: "Final escape: restored fullscreen window, browser-authored move, old history replay, and stale restored event.",
-    purpose: "discovery",
+    purpose: "regression",
     origin: "agent-generated",
     tags: ["real-user", "restored", "fullscreen", "native-move", "history", "stale-event"],
     assertions: ["runtimeMetadata"],
@@ -18493,7 +18506,7 @@ const RUNTIME_DOMAIN_DISCOVERY_TRACES_CHUNK_4: RuntimeDomainTrace[] = [
     id: "yh-rung2-restored-history-partial-sandwich",
     title: "mixed provenance restored history partial sandwich",
     notes: "Restored scope gets browser edits, a partial snapshot arrives, then unrelated history replay must preserve live shape.",
-    purpose: "discovery",
+    purpose: "regression",
     origin: "agent-generated",
     tags: ["mixed-provenance", "restored", "history", "partial-snapshot", "native-move", "stale-event"],
     assertions: ["runtimeMetadata"],
@@ -20852,7 +20865,7 @@ const RUNTIME_DOMAIN_DISCOVERY_TRACES_CHUNK_4: RuntimeDomainTrace[] = [
     id: "dl-b5-closed-child-restored-parent-reclose",
     title: "data loss block5 closed child restored parent reclose",
     notes: "Data-loss block 5: a restored multi-tab parent has one child TO-closed, gains a new child, and is then reclosed across abrupt restart without losing earlier closed children.",
-    purpose: "discovery",
+    purpose: "regression",
     origin: "agent-generated",
     tags: ["data-loss", "closed-subtree", "persistence", "restored", "multi-tab", "outliner-close", "restart", "stale-event", "side-effects"],
     assertions: ["runtimeSideEffects", "closedSubtreePersistence"],
@@ -20929,7 +20942,7 @@ const RUNTIME_DOMAIN_DISCOVERY_TRACES_CHUNK_4: RuntimeDomainTrace[] = [
     id: "cl-b2-restored-window-child-closed-parent-reclosed",
     title: "closed loss block2 restored window child closed parent reclosed",
     notes: "Closed-loss block 2: a restored multi-tab window has a restored child TO-closed, gains a late child, and is reclosed across abrupt restart without losing closed records.",
-    purpose: "discovery",
+    purpose: "regression",
     origin: "agent-generated",
     tags: ["closed-loss-hunt", "closed-subtree", "persistence", "restored", "multi-tab", "outliner-close", "restart", "stale-event", "side-effects"],
     assertions: ["runtimeSideEffects", "closedSubtreePersistence"],
@@ -21223,7 +21236,7 @@ const RUNTIME_DOMAIN_DISCOVERY_TRACES_CHUNK_4: RuntimeDomainTrace[] = [
     id: "cl-b6-restored-runtime-id-second-generation",
     title: "closed loss block6 restored runtime id second generation",
     notes: "Closed-loss block 6: a closed window restored, reclosed, restored again, and reclosed again keeps its closed subtree across stale evidence from both runtime generations.",
-    purpose: "discovery",
+    purpose: "regression",
     origin: "agent-generated",
     tags: ["closed-loss-hunt", "closed-subtree", "persistence", "restore", "outliner-close", "restart", "stale-event", "stale-query", "metadata", "side-effects"],
     assertions: ["runtimeSideEffects", "runtimeMetadata", "closedSubtreePersistence"],
@@ -21258,6 +21271,211 @@ const RUNTIME_DOMAIN_DISCOVERY_TRACES_CHUNK_4: RuntimeDomainTrace[] = [
       { type: "outlinerCloseNodeThenAbruptRestart", node: { tab: { tabId: 2 } }, captureStaleTabs: "cl-b6-command-owner-close-old" },
       { type: "staleLiveCreatedEvent", staleTab: { capture: "cl-b6-shared-guest-old" }, withStaleQuery: true },
       { type: "restartBackground" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "cv-b1-restore-three-tab-window-reclose",
+    title: "convergence b1 restore three tab window reclose",
+    notes: "Threat model: restoring a 3-tab closed window must not emit a redundant reorder side effect, and the restore survives abrupt restart without losing closed records.",
+    purpose: "discovery",
+    origin: "threat-model",
+    tags: ["restore", "multi-tab", "closed-subtree", "persistence", "outliner-close", "restart", "side-effects"],
+    assertions: ["runtimeSideEffects", "closedSubtreePersistence"],
+    actions: [
+      { type: "openTab", window: { windowId: 20 }, active: false, title: "CV B1 extra one", url: "https://cv.example/b1-extra-1", captureTab: "cv-b1-extra-1" },
+      { type: "openTab", window: { windowId: 20 }, active: false, title: "CV B1 extra two", url: "https://cv.example/b1-extra-2", captureTab: "cv-b1-extra-2" },
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:20" }, captureRestoredTabs: "cv-b1-restored-tabs", captureRestoredWindows: "cv-b1-restored-window" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "cv-b1-restore-undo-redo-window",
+    title: "convergence b1 restore undo redo window",
+    notes: "Threat model: restore a closed window, then undo and redo the restore; live/closed shape and active flags must converge with runtime truth across the history of a restore command.",
+    purpose: "discovery",
+    origin: "threat-model",
+    tags: ["restore", "history", "undo-redo", "closed-subtree", "persistence", "side-effects"],
+    assertions: ["runtimeSideEffects", "runtimeMetadata", "closedSubtreePersistence"],
+    actions: [
+      { type: "openTab", window: { windowId: 20 }, active: false, title: "CV B1 ur extra", url: "https://cv.example/b1-ur-extra", captureTab: "cv-b1-ur-extra" },
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNode", node: { nodeId: "window:20" }, captureRestoredTabs: "cv-b1-ur-restored-tabs", captureRestoredWindows: "cv-b1-ur-restored-window" },
+      { type: "outlinerUndo" },
+      { type: "outlinerRedo" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "cv-b1-redo-group-after-native-move-active",
+    title: "convergence b1 redo group after native move active",
+    notes: "Threat model: a group is undone, then a browser-authored move makes a foreign tab active in the source window; redoing the group must keep active flags agreeing with runtime truth (redo sibling of the undo-over-native-move basin).",
+    purpose: "discovery",
+    origin: "threat-model",
+    tags: ["history", "undo-redo", "native-move", "group", "activation", "side-effects"],
+    assertions: ["runtimeMetadata", "runtimeSideEffects"],
+    actions: [
+      { type: "outlinerGroupTab", tab: { tabId: 1 }, captureStaleTabs: "cv-b1-redo-group-old" },
+      { type: "outlinerUndo" },
+      { type: "nativeMoveTabToWindow", tab: { tabId: 3 }, window: { windowId: 10 }, index: 0, active: true, captureStaleTabs: "cv-b1-redo-native-old" },
+      { type: "outlinerRedo" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "cv-b1-two-cross-window-native-moves-active",
+    title: "convergence b1 two cross window native moves active",
+    notes: "Threat model: two browser-authored cross-window moves that each set a new active tab must leave each window with exactly one active tab agreeing with runtime truth (pure browser-authored multi-window active drift).",
+    purpose: "discovery",
+    origin: "threat-model",
+    tags: ["native-move", "activation", "multi-window", "side-effects"],
+    assertions: ["runtimeMetadata", "runtimeSideEffects"],
+    actions: [
+      { type: "openTab", window: { windowId: 20 }, active: false, title: "CV B1 w20 sib", url: "https://cv.example/b1-w20-sib", captureTab: "cv-b1-w20-sib" },
+      { type: "nativeMoveTabToWindow", tab: { tabId: 1 }, window: { windowId: 20 }, index: 0, active: true, captureStaleTabs: "cv-b1-move-a-old" },
+      { type: "nativeMoveTabToWindow", tab: { tabId: 3 }, window: { windowId: 10 }, index: 0, active: true, captureStaleTabs: "cv-b1-move-b-old" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "cv-b1-restore-native-move-out-reclose",
+    title: "convergence b1 restore native move out reclose",
+    notes: "Threat model: restore a 2-tab closed window, browser-move one restored tab into another window as active, then TO-reclose the remaining restored window across abrupt restart.",
+    purpose: "discovery",
+    origin: "threat-model",
+    tags: ["restore", "native-move", "activation", "outliner-close", "closed-subtree", "persistence", "restart", "side-effects"],
+    assertions: ["runtimeSideEffects", "closedSubtreePersistence"],
+    actions: [
+      { type: "openTab", window: { windowId: 20 }, active: false, title: "CV B1 rno extra", url: "https://cv.example/b1-rno-extra", captureTab: "cv-b1-rno-extra" },
+      { type: "outlinerCloseWindow", window: { windowId: 20 } },
+      { type: "outlinerRestoreNode", node: { nodeId: "window:20" }, captureRestoredTabs: "cv-b1-rno-restored-tabs", captureRestoredWindows: "cv-b1-rno-restored-window" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "cv-b1-rno-restored-tabs" }, window: { windowId: 10 }, index: 0, active: true, captureStaleTabs: "cv-b1-rno-moved-old" },
+      { type: "outlinerCloseNodeThenAbruptRestart", node: { window: { capture: "cv-b1-rno-restored-window" } }, captureStaleTabs: "cv-b1-rno-reclose-old" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "cv-r1-crosswin-move-stale-created-echo",
+    title: "convergence r1 cross window move stale created echo",
+    notes: "Threat model: a browser-authored cross-window move makes a tab active in its new window; a delayed stale created echo carrying the old window association must not resurrect or duplicate the tab in its former window.",
+    purpose: "discovery",
+    origin: "threat-model",
+    tags: ["native-move", "stale-event", "stale-query", "activation", "multi-window", "side-effects"],
+    assertions: ["runtimeSideEffects", "runtimeMetadata"],
+    actions: [
+      { type: "nativeMoveTabToWindow", tab: { tabId: 2 }, window: { windowId: 20 }, index: 1, active: true, captureStaleTabs: "cv-r1-move-old" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "cv-r1-move-old" }, withStaleQuery: true },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "cv-r1-external-window-outlives-opener-close",
+    title: "convergence r1 external window outlives opener close",
+    notes: "Threat model: a link opened from a parent tab is detached into its own browser window, then the opener source tab is natively closed; the externally spawned window must survive and not be re-tied to the dead opener.",
+    purpose: "discovery",
+    origin: "threat-model",
+    tags: ["opener", "native-move", "native-close", "multi-window", "side-effects"],
+    assertions: ["runtimeSideEffects", "runtimeMetadata"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: true, title: "CV R1 docs", url: "https://cv.example/r1-docs", captureTab: "cv-r1-docs" },
+      { type: "openTab", window: { windowId: 10 }, active: true, openerTab: { capture: "cv-r1-docs" }, title: "CV R1 popped", url: "https://cv.example/r1-popped", captureTab: "cv-r1-popped" },
+      { type: "nativeMoveTabToNewWindow", tab: { capture: "cv-r1-popped" }, active: true, captureWindow: "cv-r1-popwin", captureStaleTabs: "cv-r1-pop-old" },
+      { type: "nativeCloseTab", tab: { capture: "cv-r1-docs" } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "cv-r1-restore-rejecting-create-then-undo",
+    title: "convergence r1 restore rejecting create then undo",
+    notes: "Threat model: a closed tab is restored but the browser create side effect rejects after partially happening; a later undo must not strand or double-remove a tab the browser actually created, and the closed subtree must hold no live resources.",
+    purpose: "discovery",
+    origin: "threat-model",
+    tags: ["restore", "command-rejection", "undo-redo", "closed-subtree", "side-effects"],
+    assertions: ["runtimeSideEffects", "closedSubtreePersistence"],
+    actions: [
+      { type: "outlinerCloseTab", tab: { tabId: 2 } },
+      { type: "outlinerRestoreNodeRejectingCreate", node: { nodeId: "tab:2" }, captureRestoredTabs: "cv-r1-rej-restored" },
+      { type: "manualRefresh" },
+      { type: "outlinerUndo" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "cv-r1-burst-drain-source-window-autoremove",
+    title: "convergence r1 burst drain source window autoremove",
+    notes: "Threat model: a rapid drag burst moves every tab out of the focused window into a new window, emptying and auto-removing the source; ownership and order must converge with no resource left mapped to the removed window.",
+    purpose: "discovery",
+    origin: "threat-model",
+    tags: ["native-move", "multi-window", "runtime-scope-order", "side-effects"],
+    assertions: ["runtimeSideEffects", "runtimeScopeOrder"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, title: "CV R1 drain extra", url: "https://cv.example/r1-drain-extra", captureTab: "cv-r1-drain-extra" },
+      { type: "nativeMoveTabToNewWindow", tab: { tabId: 1 }, active: true, captureWindow: "cv-r1-spawn", captureStaleTabs: "cv-r1-drain-old-1" },
+      { type: "nativeMoveTabToWindow", tab: { tabId: 2 }, window: { capture: "cv-r1-spawn" }, index: 1, active: false },
+      { type: "nativeMoveTabToWindow", tab: { capture: "cv-r1-drain-extra" }, window: { capture: "cv-r1-spawn" }, index: 2, active: false },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "cv-r2-group-crash-then-stale-created",
+    title: "convergence r2 group crash then stale created",
+    notes: "Threat model: a group command writes its lifecycle journal then the background crashes before saves/events settle; a pre-crash created echo for the grouped tab must not duplicate or lose it against journal recovery.",
+    purpose: "discovery",
+    origin: "threat-model",
+    tags: ["group", "history", "journal", "restart", "stale-event", "side-effects"],
+    assertions: ["runtimeMetadata", "runtimeSideEffects"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, title: "CV R2 t4", url: "https://cv.example/r2-t4", captureTab: "cv-r2-t4" },
+      { type: "outlinerGroupTabThenAbruptRestart", tab: { capture: "cv-r2-t4" }, captureStaleTabs: "cv-r2-t4-old" },
+      { type: "staleLiveCreatedEvent", staleTab: { capture: "cv-r2-t4-old" }, withStaleQuery: true },
+      { type: "manualRefreshWithStaleQuery", staleTab: { capture: "cv-r2-t4-old" } }
+    ]
+  },
+  {
+    id: "cv-r2-restored-window-open-link-child-reactivate",
+    title: "convergence r2 restored window open link child reactivate",
+    notes: "Threat model: after a closed window is restored with fresh runtime ids, a link child opened inside it and a re-activation of the restored tab must resolve openers and active state against the new ids, not the stale pre-restore ids.",
+    purpose: "discovery",
+    origin: "threat-model",
+    tags: ["restore", "opener", "activation", "runtime-scope-order", "metadata"],
+    assertions: ["runtimeMetadata", "runtimeScopeOrder"],
+    actions: [
+      { type: "nativeCloseWindow", window: { windowId: 20 }, order: "windowRemovedThenTabsRemoved" },
+      { type: "outlinerRestoreNode", node: { nodeId: "window:20" }, captureRestoredTabs: "cv-r2-retab", captureRestoredWindows: "cv-r2-rewin" },
+      { type: "openTab", window: { capture: "cv-r2-rewin" }, active: true, openerTab: { capture: "cv-r2-retab" }, title: "CV R2 restored child", url: "https://cv.example/r2-restored-child", captureTab: "cv-r2-child" },
+      { type: "activateTab", tab: { capture: "cv-r2-retab" } },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "cv-r2-crash-mid-restore-focused-window",
+    title: "convergence r2 crash mid restore focused window",
+    notes: "Threat model: the focused window is closed then restored, but the background crashes mid-restore before the new ids persist; on reboot the closed subtree must resolve to a single instance with no duplicate live-and-closed window.",
+    purpose: "discovery",
+    origin: "threat-model",
+    tags: ["restore", "restart", "closed-subtree", "metadata", "side-effects"],
+    assertions: ["runtimeMetadata", "runtimeSideEffects"],
+    actions: [
+      { type: "nativeCloseWindow", window: { windowId: 10 }, order: "windowRemovedThenTabsRemoved" },
+      { type: "outlinerRestoreNodeThenAbruptRestart", node: { nodeId: "window:10" }, captureRestoredTabs: "cv-r2-re10-tabs", captureRestoredWindows: "cv-r2-re10-win" },
+      { type: "manualRefresh" }
+    ]
+  },
+  {
+    id: "cv-r2-opener-stale-updated-missing-window-snapshot",
+    title: "convergence r2 opener cross window stale updated missing window snapshot",
+    notes: "Threat model: an opener parent is moved cross-window (leaving its child's opener edge dangling) while a stale updated echo claims the parent is still in its old window, and the very next snapshot transiently omits the window the parent actually moved to. Neither the stale echo may resurrect the parent in its old window, nor the partial snapshot delete the omitted live window's tabs.",
+    purpose: "discovery",
+    origin: "threat-model",
+    tags: ["opener", "native-move", "stale-event", "partial-snapshot", "multi-window", "metadata", "side-effects"],
+    assertions: ["runtimeMetadata", "runtimeSideEffects"],
+    actions: [
+      { type: "openTab", window: { windowId: 10 }, active: false, openerTab: { tabId: 1 }, title: "CV R2 parent", url: "https://cv.example/r2-parent", captureTab: "cv-r2-parent" },
+      { type: "openTab", window: { windowId: 10 }, active: false, openerTab: { capture: "cv-r2-parent" }, title: "CV R2 child", url: "https://cv.example/r2-child", captureTab: "cv-r2-child2" },
+      { type: "nativeMoveTabToWindow", tab: { capture: "cv-r2-parent" }, window: { windowId: 20 }, index: 1, active: false, captureStaleTabs: "cv-r2-parent-old" },
+      { type: "staleLiveUpdatedEvent", staleTab: { capture: "cv-r2-parent-old" }, withStaleQuery: true },
+      { type: "manualRefreshWithMissingWindowQuery", window: { windowId: 20 } },
       { type: "manualRefresh" }
     ]
   }
@@ -23909,6 +24127,29 @@ function ensureWindowHasActiveTab(runtime: FakeRuntime, windowId: number): void 
   const firstTabId = tabs[0]!.id;
   runtime.tabs = runtime.tabs.map((tab) => tab.windowId === windowId
     ? { ...tab, active: tab.id === firstTabId }
+    : copyTab(tab));
+}
+
+// Firefox keeps exactly one active tab per window. `tabs.move` does not activate the moved tab,
+// so when an active tab arrives from another window the destination's existing active tab stays
+// active and the arriving tab loses its active flag. Mirror only that conflict here: when a move
+// leaves a window with more than one active tab, keep the destination's existing (non-incoming)
+// active tab. This never invents an active tab in a window that had none — the pre-existing
+// "active tab moved out, none promoted yet" harness state is left untouched so the controller's
+// event-derived view and the runtime truth stay in agreement.
+function resolveDuplicateActiveTabsAfterMove(
+  runtime: FakeRuntime,
+  windowId: number,
+  incomingTabIds: ReadonlySet<number>
+): void {
+  const tabs = tabsInRuntimeWindow(runtime, windowId);
+  const activeTabs = tabs.filter((tab) => tab.active);
+  if (activeTabs.length <= 1) {
+    return;
+  }
+  const winnerId = (activeTabs.find((tab) => !incomingTabIds.has(tab.id)) ?? activeTabs[0]!).id;
+  runtime.tabs = runtime.tabs.map((tab) => tab.windowId === windowId
+    ? { ...tab, active: tab.id === winnerId }
     : copyTab(tab));
 }
 

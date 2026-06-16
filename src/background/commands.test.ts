@@ -847,6 +847,72 @@ describe("background commands", () => {
     expect(result.state.nodes["tab:3"]?.live).toEqual({ tabId: 202, windowId: 42 });
   });
 
+  it("skips the restore reorder when the browser created the window tabs in outline order", async () => {
+    const state = closeWindow(bootstrapFromWindows([
+      {
+        id: 20,
+        focused: true,
+        incognito: false,
+        tabs: [
+          { id: 1, windowId: 20, index: 0, active: true, url: "https://example.com/one", title: "One" },
+          { id: 2, windowId: 20, index: 1, active: false, url: "https://example.com/two", title: "Two" }
+        ]
+      }
+    ], { now: 1000 }), 20, { now: 2000 });
+    const adapter = fakeAdapter();
+
+    const result = await runCommand(state, adapter, { type: "restoreNode", nodeId: "window:20" });
+
+    // The browser already returns the created tabs in url (outline) order, so the order-correction
+    // move would be a no-op that still emits a redundant tabs.move runtime side effect. It must be
+    // skipped (this is the redundant move an abrupt restart later flags as an unexpected restore
+    // side effect on the just-restored window).
+    expect(adapter.moveTabs).not.toHaveBeenCalled();
+    expect(result.state.nodes["tab:1"]?.live).toEqual({ tabId: 200, windowId: 42 });
+    expect(result.state.nodes["tab:2"]?.live).toEqual({ tabId: 201, windowId: 42 });
+  });
+
+  it("reorders restored window tabs when the browser created them out of outline order", async () => {
+    const state = closeWindow(bootstrapFromWindows([
+      {
+        id: 20,
+        focused: true,
+        incognito: false,
+        tabs: [
+          { id: 1, windowId: 20, index: 0, active: true, url: "https://example.com/one", title: "One" },
+          { id: 2, windowId: 20, index: 1, active: false, url: "https://example.com/two", title: "Two" }
+        ]
+      }
+    ], { now: 1000 }), 20, { now: 2000 });
+    // Browser returns the created tabs in reversed physical order relative to the requested urls.
+    const adapter = fakeAdapter({
+      createWindow: vi.fn(async ({ url }) => {
+        const urls = Array.isArray(url) ? url : url ? [url] : [];
+        const reversed = [...urls].reverse();
+        return {
+          id: 42,
+          focused: true,
+          incognito: false,
+          tabs: reversed.map((tabUrl, index) => ({
+            id: 200 + index,
+            windowId: 42,
+            index,
+            active: index === 0,
+            url: tabUrl,
+            title: tabUrl
+          }))
+        };
+      })
+    });
+
+    await runCommand(state, adapter, { type: "restoreNode", nodeId: "window:20" });
+
+    // tab:1 (url one) matched the tab created at physical index 1 (id 201); tab:2 (url two) matched
+    // index 0 (id 200). Outline order [tab:1, tab:2] = [201, 200] differs from physical [200, 201],
+    // so the order-correction move still fires to repair the genuinely out-of-order window.
+    expect(adapter.moveTabs).toHaveBeenCalledWith([201, 200], { windowId: 42, index: 0 });
+  });
+
   it("restores renamed closed tab groups with one multi-url window create", async () => {
     let state: OutlineState = bootstrapFromWindows(runtimeWindows, { now: 1000 });
     state = closeTab(state, 1, { now: 2001, sessionId: "session-tab-1" });

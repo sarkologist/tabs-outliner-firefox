@@ -7359,3 +7359,67 @@ generated trace: adversarial runtime concurrency, soak seed 116881491 -->
 - Pre-existing: fails byte-identically on baseline with the RT-253 fix stashed; it was masked by the earlier 116881488 failure in the same soak run, not introduced by the RT-253 fix.
 - Shape: distinct from RT-253 — a closed (restorable) window node `window:30` that the lifecycle-expectation oracle tracks as preserved goes **missing** from the outline before it can be restored, i.e. closed-subtree *loss* rather than live-under-closed. Likely a separate reconciliation/close-classification or closed-subtree-guard interaction; not the foreign-window-promotion path RT-253 fixed.
 - Status: documented, not fixed (separate finding; out of scope for the RT-252/RT-253 fix pass).
+
+### RT-255 truth tab active flag diverged after history-undo over a browser-authored move
+<!-- signature: truth tab <id> active flag diverged (outline=false, runtime=true)
+domain trace: ra-escape-restored-fullscreen-native-move-history
+action: {"type":"outlinerUndo"} -->
+
+- First seen: 2026-06-15 (discovery runtime-trace hunt on `main`).
+- Trace id: `ra-escape-restored-fullscreen-native-move-history` (duplicate signature: `yh-rung2-restored-history-partial-sandwich`, RT-256).
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=ra-escape-restored-fullscreen-native-move-history pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Pre-existing: reproduces identically on plain `main`; orthogonal to the storage IndexedDB work (no save/load/manifest path is involved). Same family as RT-217/RT-218 (history replay over a browser-authored active change).
+- Shape: a group command moves tab 1 into a command window; `window:20` is TO-closed then restored across an abrupt restart; a native move brings the restored tab into `window:10` as the active tab (`active:true`); then `outlinerUndo` of the group replays the pre-group delta (tab 1 active in `window:10`). The browser-authored active tab (tab 3) must survive the structural undo. At trace end the truth model reports tab 3 `active=true` while the outline has `active=false`.
+- Root cause: **test-harness gap, not a controller bug.** The undo's `syncBrowserOrder` issues `tabs.move([1,2,3], {windowId:10, index:0})`, relocating the still-active tab 1 (from the command window) into `window:10`, which already had active tab 3. The fake runtime's `api.tabs.move` mock copied each tab's `active` flag verbatim, leaving **two** tabs flagged active in one window — a state Firefox never produces (`tabs.move` does not activate the moved tab; the destination keeps its active tab and the arriving tab goes inactive). The controller correctly trusts the browser's single active tab, but with two actives the post-undo reconcile and the truth model picked different tabs, so they diverged. In a real browser only tab 3 would be active and the reconcile would keep it.
+- Fix (`controller.test.ts`): model Firefox's one-active-tab-per-window invariant in the harness — after `api.tabs.move`, when a move leaves a window with more than one active tab, keep the destination's existing (non-incoming) active tab and clear the arriving tab's flag (`resolveDuplicateActiveTabsAfterMove`). It deliberately never invents an active tab in a window that had none, so the pre-existing "active tab moved out, none promoted yet" case (regression trace `po-outliner-relocation`) is left untouched. No `controller.ts` change was needed — the controller was already correct.
+- Verification: `ra-escape-restored-fullscreen-native-move-history` and `yh-rung2-restored-history-partial-sandwich` pass; full regression domain-trace suite (incl. PureScript oracle) green; `pnpm test` 774/2-skip; `pnpm perf:runtime-guard --hard-only` PASS (9 scenarios, hard counters). Promoted to `REGRESSION_TRACE_IDS` / `purpose: "regression"`.
+- Status: **fixed** (harness realism fix; controller already correct).
+
+### RT-256 truth tab active flag diverged after history-undo (duplicate of RT-255)
+<!-- signature: truth tab <id> active flag diverged (outline=false, runtime=true)
+domain trace: yh-rung2-restored-history-partial-sandwich
+action: {"type":"outlinerUndo"} -->
+
+- First seen: 2026-06-15 (discovery runtime-trace hunt on `main`).
+- Trace id: `yh-rung2-restored-history-partial-sandwich`.
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=yh-rung2-restored-history-partial-sandwich pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Duplicate evidence for RT-255: the same `outlinerUndo`-over-browser-move active-flag divergence, varying the restored scope (a late sibling tab + partial snapshot instead of fullscreen window state). Same root cause and same fix.
+- Status: **fixed** (covered by the RT-255 harness fix; promoted to regression).
+### RT-257 unexpected tabs.move side effect restoring a multi-tab closed window
+<!-- signature: unexpected runtime side effects ... tabs.move([3,4], {"windowId":21,"index":0})
+domain trace: dl-b5-closed-child-restored-parent-reclose
+action: {"type":"outlinerRestoreNodeThenAbruptRestart","node":{"nodeId":"window:20"}} -->
+
+- First seen: 2026-06-15 (discovery runtime-trace hunt on `main`).
+- Trace id: `dl-b5-closed-child-restored-parent-reclose` (duplicate signatures: `cl-b2-restored-window-child-closed-parent-reclosed` = RT-258, `cl-b6-restored-runtime-id-second-generation` = RT-259).
+- Repro: `env RUNTIME_DOMAIN_TRACE_HUNT=1 RUNTIME_TRACE_HUNT_TRACE_IDS=dl-b5-closed-child-restored-parent-reclose pnpm exec vitest run src/background/controller.test.ts --testNamePattern "adversarial runtime domain traces" --reporter=dot`
+- Pre-existing: reproduces identically on plain `main`; orthogonal to the storage IndexedDB work (the restore side-effect plan does not touch save/load/manifest).
+- Shape: a 2-tab window (`window:20` = its original tab plus an added "extra" tab) is TO-closed then restored via `outlinerRestoreNodeThenAbruptRestart`. The restore assertion permits only `tabs.create`/`windows.create`/`sessions.restore`, but restoring the window emitted an extra `tabs.move([3,4], {windowId:21, index:0})`.
+- Root cause: `restoreClosedWindowCreateBatch` restores a multi-tab closed window with one `createWindow({url:[...]})`, matches the created tabs back to the outline plans by URL, then unconditionally called `moveRestoredTabsIntoOutlineOrder` to force outline order. When the browser already created the tabs in outline order (the common case — `createWindow` honors the url-array order, and the fake runtime mirrors that), the move is a no-op that still emits a redundant `tabs.move`. The abrupt-restart side-effect window attributes it to the restore, which the oracle does not expect a restore to perform.
+- Fix (`commands.ts`): `moveRestoredTabsIntoOutlineOrder` now receives the created window's current tab order (`createdWindow.tabs` sorted by index) and skips the move when the restored tabs are already the window's front run in order (`restoredTabIdsAlreadyAtWindowFront`). It still fires when the browser genuinely created the tabs out of order, so the order-repair purpose of the function is preserved. Both branches are covered by new targeted `commands.test.ts` unit tests.
+- Verification: the three traces pass; `commands.test.ts` 79/79; full regression domain-trace suite (incl. PureScript oracle) green; `pnpm test` 774 pass / 2 skip; `pnpm perf:runtime-guard --hard-only` PASS (9 scenarios, hard counters — the change only removes one browser move from the restore path). Promoted to the regression corpus (`purpose: "regression"` + `REGRESSION_TRACE_IDS`).
+- Status: **fixed**.
+
+### RT-258 unexpected tabs.move restoring a multi-tab closed window (duplicate of RT-257)
+<!-- signature: unexpected runtime side effects ... tabs.move([3,4], {"windowId":21,"index":0})
+domain trace: cl-b2-restored-window-child-closed-parent-reclosed
+action: {"type":"outlinerRestoreNodeThenAbruptRestart","node":{"nodeId":"window:20"}} -->
+
+- First seen: 2026-06-15 (discovery runtime-trace hunt on `main`).
+- Trace id: `cl-b2-restored-window-child-closed-parent-reclosed`.
+- Duplicate evidence for RT-257: the same redundant restore-time `tabs.move` on a 2-tab restored window, varying the reclose/stale-event tail. Same root cause and fix.
+- Status: **fixed** (covered by the RT-257 `commands.ts` fix; promoted to regression).
+
+### RT-259 unexpected tabs.move restoring a multi-tab closed window (duplicate of RT-257)
+<!-- signature: unexpected runtime side effects ... tabs.move([3,4], {"windowId":21,"index":0})
+domain trace: cl-b6-restored-runtime-id-second-generation
+action: {"type":"outlinerRestoreNodeThenAbruptRestart","node":{"nodeId":"window:20"}} -->
+
+- First seen: 2026-06-15 (discovery runtime-trace hunt on `main`).
+- Trace id: `cl-b6-restored-runtime-id-second-generation`.
+- Duplicate evidence for RT-257: the redundant restore-time `tabs.move` reproduced on the first restore generation of a restore/reclose/restore-again sequence. Same root cause and fix.
+- Status: **fixed** (covered by the RT-257 `commands.ts` fix; promoted to regression).
+
+<!-- hunt-corpus-run: {"at":"2026-06-15T21:21:12.337Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["closed-subtree","data-loss","fullscreen","history","known-finding","mixed-provenance","multi-tab","native-move","outliner-close","partial-snapshot","persistence","real-user","restart","restored","side-effects","stale-event"],"firstTraceId":"ra-escape-restored-fullscreen-native-move-history","lastTraceId":"cl-b6-restored-runtime-id-second-generation","runs":5,"processRuns":1,"batchSize":20,"batchFailures":0,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->
+
+<!-- hunt-corpus-run: {"at":"2026-06-16T07:56:51.682Z","mode":"agent-corpus-run","profile":"discovery","coverageTags":["activation","breadth","browser-drift-history","browserCreated","bug-rich","calibration","closed-subtree","command-rejection","commandCreated","complete-refresh","created-event","cross-axis","data-loss","delayed-event","delete","delete-rejection","event-order","focus","fresh-event","fullscreen","group","history","history-boundary","history-strict-shape","journal","manual-refresh","metadata","mixed-provenance","multi-tab","multi-window","native-close","native-move","native-open","nested","nested-window","opener","oracle-hunt","outliner-close","paired-echo","partial-close","partial-snapshot","persistence","post-recovery","race","real-user","reconciliation","redo","relocation","reparenting","restart","restore","restored","restored-scope","runtime-order","runtime-scope-order","runtimeMetadata","same-url","saved","scope-order-hunt","scope-routing","scope-shape","session","shape-fact","side-effects","snapshot-confidence","soak-complement","stale-event","stale-query","startup-adjacent","subagent","tombstone","transaction-boundary","undo-redo","unknown","updated-event","window-scope","window-state"],"firstTraceId":"dh-restore-delayed-focus-refresh","lastTraceId":"cl-b6-command-window-same-url-foreign-guest","runs":898,"processRuns":45,"batchSize":20,"batchFailures":0,"completedCorpus":true,"failures":0,"duplicateFailures":0,"newFindings":0} -->

@@ -797,7 +797,10 @@ async function restoreClosedWindowCreateBatch(
       }
     }
 
-    await moveRestoredTabsIntoOutlineOrder(adapter, createdWindow.id, restored);
+    const createdTabIdsInIndexOrder = [...(createdWindow.tabs ?? [])]
+      .sort((left, right) => (left.index ?? 0) - (right.index ?? 0))
+      .map((tab) => tab.id);
+    await moveRestoredTabsIntoOutlineOrder(adapter, createdWindow.id, restored, createdTabIdsInIndexOrder);
 
     return restored;
   } catch (error) {
@@ -872,12 +875,21 @@ async function restoreClosedWindowCreateBatchWithIndividualTabs(
 async function moveRestoredTabsIntoOutlineOrder(
   adapter: BrowserAdapter,
   windowId: number,
-  restoredNodes: readonly RestoredNode[]
+  restoredNodes: readonly RestoredNode[],
+  currentTabIdsInIndexOrder: readonly number[]
 ): Promise<void> {
   const restoredTabIds = restoredNodes.flatMap((restoredNode) =>
     typeof restoredNode.tabId === "number" ? [restoredNode.tabId] : []
   );
   if (restoredTabIds.length <= 1) {
+    return;
+  }
+  // The reorder only exists to repair a window whose browser-created tabs came back out of
+  // outline order. When the browser already created them in order (the common case), the move is
+  // a no-op that still emits a redundant `tabs.move` runtime side effect — which, after an abrupt
+  // restart re-runs reconciliation against the just-restored window, surfaces as an unexpected
+  // restore side effect. Skip the move when the restored tabs are already the window's front run.
+  if (restoredTabIdsAlreadyAtWindowFront(restoredTabIds, currentTabIdsInIndexOrder)) {
     return;
   }
 
@@ -886,6 +898,16 @@ async function moveRestoredTabsIntoOutlineOrder(
   } catch {
     // Keep the restored nodes; a failed order correction should not duplicate the already-created window.
   }
+}
+
+function restoredTabIdsAlreadyAtWindowFront(
+  restoredTabIds: readonly number[],
+  currentTabIdsInIndexOrder: readonly number[]
+): boolean {
+  if (currentTabIdsInIndexOrder.length < restoredTabIds.length) {
+    return false;
+  }
+  return restoredTabIds.every((tabId, index) => currentTabIdsInIndexOrder[index] === tabId);
 }
 
 function windowCreateBatchHasNestedTabs(

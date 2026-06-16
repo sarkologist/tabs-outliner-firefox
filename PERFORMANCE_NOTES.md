@@ -120,6 +120,15 @@ Use these as starting targets, not hard promises:
 
 ## Progress Log
 
+### 2026-06-15: Runtime-trace fixes — restore reorder no-op (RT-257/258/259) + harness one-active-per-window (RT-255/256)
+
+Two pre-existing runtime-domain trace findings on `main` (surfaced by the expanded discovery corpus, orthogonal to the storage IndexedDB work). Neither changes save timing or save shape.
+
+- **RT-257/258/259 (Family B, `commands.ts`):** restoring a multi-tab closed window via the URL-batch path (`restoreClosedWindowCreateBatch`) unconditionally called `moveRestoredTabsIntoOutlineOrder`, emitting a `tabs.move` even when the browser had already created the tabs in outline order — a redundant browser side effect the restore oracle rejects. Fix skips the move when the restored tabs are already the window's front run in order; it still fires for a genuinely out-of-order window. This only **removes** work from the restore path (one fewer `tabs.move`), so it cannot regress runtime latency.
+- **RT-255/256 (Family A, `controller.test.ts` only):** test-harness realism fix — the fake runtime's `api.tabs.move` left two tabs flagged active in one window when a history-undo `syncBrowserOrder` moved an active tab into a window that already had one (Firefox never produces this). No production code changed; the controller was already correct.
+
+- **Guards:** `pnpm test` 774 pass / 2 skip; `perf-runtime-guard --hard-only` PASS (9 scenarios, hard counters). The lone report-only note is `command-group-live-leaf firstBroadcastMs=149` (timing budget 120) — machine variance on the 50k-node synthetic, unrelated to these changes (Family A is test-only; Family B only touches the restore path, not the group command). No budget movement. Storage-fault lane not required (no save-timing/shape change).
+
 ### 2026-06-15: Storage write-cost fix step 4 — manifest → IndexedDB (atomic save; closes the #19 split-save class)
 
 The final step of the IndexedDB migration. After #17/#18, the bulk (shards + journal + history) lives in IndexedDB but the double-buffered v4 **manifest** still lived on storage.local, written SEPARATELY after the shards — a cross-substrate split with no atomicity. That split is the structural root of the #19 data-loss bug (an orphan sweep deleting shards in the window between the shard write and the manifest commit; #19 fixed it by disabling the sweep). Step 4 moves the manifest into the same IndexedDB store so a save writes **shards + manifest in ONE atomic transaction** (`indexedDbKvStore.set` is one IDB transaction). There is no longer a moment where new shards exist without the manifest, so the split-save class is closed structurally, not just by disabling the sweep.
