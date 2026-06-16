@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { NodeId, OutlineNode, OutlineState } from "../model/types.js";
 import { createFaultyStorage } from "../test/faulty-storage.test-support.js";
 import { generatedTraceConfig, generatedTraceTimeoutMs } from "../test/generated-traces.test-support.js";
-import { createOutlineJournal, replayJournal, type OutlineJournalEntry } from "./outline-journal.js";
+import { createOutlineJournal, replayJournal, type OutlineJournalEntry, type OutlineJournalEntryKind } from "./outline-journal.js";
 import { outlineNodeShardIndex } from "./storage.js";
 import {
   STATE_V4_MANIFEST_A_KEY,
@@ -310,6 +310,8 @@ describe("outline state v4 storage", () => {
       let model = makeTree(20 + (seed % 16) * 3);
       let entries: OutlineJournalEntry[] = [];
       let nextNodeNumber = 1000;
+      let rootWindowNumber = 100;
+      const journalKinds: OutlineJournalEntryKind[] = ["command", "runtimeEvent", "historyReplay", "recovery"];
       let seq = 0;
       let active: { manifest: StateV4Manifest; slot: StateV4ManifestSlot } | undefined;
       let evictable: StateV4Manifest | undefined;
@@ -321,10 +323,10 @@ describe("outline state v4 storage", () => {
         updatedNodes?: OutlineNode[];
         deletedNodeIds?: NodeId[];
         rootIds?: NodeId[];
-      }): Promise<void> => {
+      }, kind: OutlineJournalEntryKind = "command"): Promise<void> => {
         seq += 1;
-        const entry: OutlineJournalEntry = { seq, epoch: 1, at: 1000, kind: "command", delta };
-        await journal.append([{ kind: "command", delta }]);
+        const entry: OutlineJournalEntry = { seq, epoch: 1, at: 1000, kind, delta };
+        await journal.append([{ kind, delta }]);
         entries.push(entry);
         for (const node of delta.updatedNodes ?? []) {
           dirty.add(stateV4ShardIndexForNodeId(node.id));
@@ -393,34 +395,78 @@ describe("outline state v4 storage", () => {
       for (let step = 0; step < config.steps; step += 1) {
         const roll = random();
         if (roll < 0.45) {
-          // Mutate: add, rename, or delete a node, journaling the delta.
-          const ids = Object.keys(model.nodes).filter((id) => id !== "window:10");
+          // Mutate the model and journal the delta. Mix single-node edits with multi-shard bulk
+          // edits (a whole window subtree at once) and root-set churn so the incremental
+          // compaction path sees large dirty sets and rootIds changes, and rotate the journal
+          // entry kind so all four kinds round-trip through storage + replay.
+          const w10 = model.nodes["window:10"]!;
           const action = random();
-          if (action < 0.4 || ids.length === 0) {
+          const kind = journalKinds[Math.floor(random() * journalKinds.length)]!;
+          const addUnderPrimary = async (): Promise<void> => {
             nextNodeNumber += 1;
             const id = `tab:${nextNodeNumber}`;
-            const node = makeNode(id, { parentId: "window:10" });
-            const windowNode = {
-              ...model.nodes["window:10"]!,
-              childIds: [...model.nodes["window:10"]!.childIds, id]
-            };
+            const node = makeNode(id, { parentId: "window:10", url: `https://example.test/${id}` });
+            const windowNode = { ...w10, childIds: [...w10.childIds, id] };
             model = { ...model, nodes: { ...model.nodes, [id]: node, "window:10": windowNode } };
-            await journalAppend({ updatedNodes: [node, windowNode] });
-          } else if (action < 0.7) {
-            const id = ids[Math.floor(random() * ids.length)]!;
+            await journalAppend({ updatedNodes: [node, windowNode] }, kind);
+          };
+          if (action < 0.3) {
+            await addUnderPrimary();
+          } else if (action < 0.45 && w10.childIds.length > 0) {
+            // Single rename of a window:10 child (one dirty shard).
+            const id = w10.childIds[Math.floor(random() * w10.childIds.length)]!;
             const renamed = { ...model.nodes[id]!, title: `Renamed ${step}` };
             model = { ...model, nodes: { ...model.nodes, [id]: renamed } };
-            await journalAppend({ updatedNodes: [renamed] });
-          } else {
-            const id = ids[Math.floor(random() * ids.length)]!;
-            const windowNode = {
-              ...model.nodes["window:10"]!,
-              childIds: model.nodes["window:10"]!.childIds.filter((childId) => childId !== id)
-            };
+            await journalAppend({ updatedNodes: [renamed] }, kind);
+          } else if (action < 0.6 && w10.childIds.length > 0) {
+            // Single delete of a window:10 child.
+            const id = w10.childIds[Math.floor(random() * w10.childIds.length)]!;
+            const windowNode = { ...w10, childIds: w10.childIds.filter((childId) => childId !== id) };
             const nodes: Record<NodeId, OutlineNode> = { ...model.nodes, "window:10": windowNode };
             delete nodes[id];
             model = { ...model, nodes };
-            await journalAppend({ deletedNodeIds: [id], updatedNodes: [windowNode] });
+            await journalAppend({ deletedNodeIds: [id], updatedNodes: [windowNode] }, kind);
+          } else if (action < 0.85) {
+            // Bulk add: a new root window with several tabs in ONE delta -> the dirty set spans
+            // many shards and rootIds grows (multi-shard incremental compaction + root churn).
+            rootWindowNumber += 1;
+            const windowId = `window:${rootWindowNumber}`;
+            const childCount = 4 + Math.floor(random() * 12);
+            const children = Array.from({ length: childCount }, () => {
+              nextNodeNumber += 1;
+              return makeNode(`tab:${nextNodeNumber}`, { parentId: windowId, url: `https://example.test/tab:${nextNodeNumber}` });
+            });
+            const windowNode = makeNode(windowId, { kind: "window", childIds: children.map((child) => child.id) });
+            const rootIds = [...model.rootIds, windowId];
+            model = {
+              ...model,
+              rootIds,
+              nodes: { ...model.nodes, [windowId]: windowNode, ...Object.fromEntries(children.map((child) => [child.id, child])) }
+            };
+            await journalAppend({ updatedNodes: [windowNode, ...children], rootIds }, kind);
+          } else {
+            const extraRoots = model.rootIds.filter((id) => id !== "window:10");
+            if (extraRoots.length === 0) {
+              await addUnderPrimary();
+            } else if (random() < 0.6) {
+              // Bulk delete: remove a root window and all its tabs in ONE delta (multi-shard
+              // delete + rootIds shrinks).
+              const windowId = extraRoots[Math.floor(random() * extraRoots.length)]!;
+              const subtreeIds = [windowId, ...model.nodes[windowId]!.childIds];
+              const rootIds = model.rootIds.filter((id) => id !== windowId);
+              const nodes: Record<NodeId, OutlineNode> = { ...model.nodes };
+              for (const id of subtreeIds) {
+                delete nodes[id];
+              }
+              model = { ...model, rootIds, nodes };
+              await journalAppend({ deletedNodeIds: subtreeIds, rootIds }, kind);
+            } else {
+              // Pure root reorder: rootIds changes with NO node delta -> the next compaction bumps
+              // a generation and rewrites only the manifest's rootIds (no dirty shards).
+              const rootIds = [...model.rootIds].reverse();
+              model = { ...model, rootIds };
+              await journalAppend({ rootIds }, kind);
+            }
           }
         } else if (roll < 0.65) {
           await compact("ok");
