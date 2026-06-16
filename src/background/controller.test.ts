@@ -15,6 +15,7 @@ import {
 import { createBackgroundController, type BackgroundController } from "./controller.js";
 import { createOutlineJournal, replayJournal } from "./outline-journal.js";
 import { indexedDbKvStore } from "./indexed-db-kv-store.js";
+import { statesMateriallyEqual } from "./state-equality.js";
 import {
   STATE_V4_MANIFEST_A_KEY,
   STATE_V4_NODE_SHARD_COUNT,
@@ -27075,19 +27076,235 @@ describe("background controller lifecycle", () => {
     expect(state.nodes["tab:1"]?.title).toBe("One");
     expect(state.nodes["window:10"]).toBeDefined();
 
-    // Shards moved to IndexedDB; storage.local no longer holds any shard keys (manifest stays).
+    // Shards AND the manifest moved to IndexedDB (Step 4); storage.local holds neither now.
     const afterLocalKeys = Object.keys(await runtime.api.storage.local.get(null));
     expect(afterLocalKeys.some((key) => key.startsWith("outline:v4:nodes:"))).toBe(false);
-    expect(afterLocalKeys.some((key) => key.startsWith("outline:v4:manifest:"))).toBe(true);
-    expect(Object.keys(await idb.get(null)).some((key) => key.startsWith("outline:v4:nodes:"))).toBe(true);
+    expect(afterLocalKeys.some((key) => key.startsWith("outline:v4:manifest:"))).toBe(false);
+    const idbKeys = Object.keys(await idb.get(null));
+    expect(idbKeys.some((key) => key.startsWith("outline:v4:nodes:"))).toBe(true);
+    expect(idbKeys.some((key) => key.startsWith("outline:v4:manifest:"))).toBe(true);
     const incidentLog = await loadIncidentLog(runtime.api);
     expect(incidentLog.some((entry) => entry.event === "v4ShardMigrationComplete")).toBe(true);
+    expect(incidentLog.some((entry) => entry.event === "v4ManifestMigrationComplete")).toBe(true);
 
     // A fresh controller on the same stores loads from IndexedDB without re-migrating.
     const reopened = createBackgroundController({ api: runtime.api, journalStore: idb, shardStore: idb, now: () => 3000 });
     const reloaded = await reopened.ensureState();
     expect(reloaded.nodes["tab:1"]?.title).toBe("One");
   });
+
+  it("writes the manifest into the shard store on save and reloads it from there (Step 4 atomic save)", async () => {
+    const runtime = fakeRuntime(
+      [{ id: 10, focused: true, incognito: false }],
+      [{ id: 1, windowId: 10, index: 0, active: true, url: "https://one.example/", title: "One" }]
+    );
+    const idb = indexedDbKvStore("controller-manifest-atomic", "kv");
+    const controller = createBackgroundController({ api: runtime.api, journalStore: idb, shardStore: idb, now: () => 1000 });
+    await controller.ensureState();
+    expectCommandAck(await controller.handleMessage({ type: "renameGroup", nodeId: "window:10", title: "Renamed" }), true);
+    await controller.flushPendingSaves();
+
+    // The manifest lives in the shard store (IndexedDB) alongside the shards, never on storage.local:
+    // a save writes them in one atomic transaction.
+    const idbKeys = Object.keys(await idb.get(null));
+    expect(idbKeys.some((key) => key.startsWith("outline:v4:manifest:"))).toBe(true);
+    expect(idbKeys.some((key) => key.startsWith("outline:v4:nodes:"))).toBe(true);
+    expect(Object.keys(await runtime.api.storage.local.get(null)).some((key) => key.startsWith("outline:v4:manifest:"))).toBe(false);
+
+    // A fresh controller loads the manifest + shards back from IndexedDB.
+    const reopened = createBackgroundController({ api: runtime.api, journalStore: idb, shardStore: idb, now: () => 2000 });
+    const reloaded = await reopened.ensureState();
+    expect(reloaded.nodes["tab:1"]?.title).toBe("One");
+    expect(reloaded.nodes["window:10"]).toBeDefined();
+  });
+
+  it("migrates a storage.local manifest (shards already in IndexedDB) into the shard store on boot", async () => {
+    const runtime = fakeRuntime(
+      [{ id: 10, focused: true, incognito: false }],
+      [{ id: 1, windowId: 10, index: 0, active: true, url: "https://one.example/", title: "One" }]
+    );
+    const idb = indexedDbKvStore("controller-manifest-p3", "kv");
+    // The actual upgrade path for current users (post-#17/#18, pre-Step4): shards in IndexedDB,
+    // manifest still on storage.local. Lay that out exactly.
+    const seeded = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    const fullState = await seeded.ensureState();
+    const seededV4 = Object.keys(await runtime.api.storage.local.get(null)).filter((key) => key.startsWith("outline:v4:"));
+    if (seededV4.length > 0) {
+      await runtime.api.storage.local.remove(seededV4);
+    }
+    const snap = outlineStateV4Snapshot(fullState, { epoch: 1, journalSeqIncluded: 0 });
+    const shardItems: Record<string, unknown> = {};
+    const manifestItems: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(snap.setItems)) {
+      if (key.startsWith("outline:v4:nodes:")) {
+        shardItems[key] = value;
+      } else {
+        manifestItems[key] = value;
+      }
+    }
+    await idb.set(shardItems);
+    await runtime.api.storage.local.set(manifestItems);
+    expect(Object.keys(await runtime.api.storage.local.get(null)).some((key) => key.startsWith("outline:v4:manifest:"))).toBe(true);
+
+    const controller = createBackgroundController({ api: runtime.api, journalStore: idb, shardStore: idb, now: () => 2000 });
+    const state = await controller.ensureState();
+    expect(state.nodes["tab:1"]?.title).toBe("One");
+
+    // The manifest moved to IndexedDB and was removed from storage.local.
+    expect(Object.keys(await idb.get(null)).some((key) => key.startsWith("outline:v4:manifest:"))).toBe(true);
+    expect(Object.keys(await runtime.api.storage.local.get(null)).some((key) => key.startsWith("outline:v4:manifest:"))).toBe(false);
+    expect((await loadIncidentLog(runtime.api)).some((entry) => entry.event === "v4ManifestMigrationComplete")).toBe(true);
+
+    // A fresh controller then loads everything from IndexedDB (the P4 steady state).
+    const reopened = createBackgroundController({ api: runtime.api, journalStore: idb, shardStore: idb, now: () => 3000 });
+    expect((await reopened.ensureState()).nodes["tab:1"]?.title).toBe("One");
+  });
+
+  it("keeps storage.local shards as a complete fallback when the manifest migration fails (Step 4)", async () => {
+    const runtime = fakeRuntime(
+      [{ id: 10, focused: true, incognito: false }],
+      [{ id: 1, windowId: 10, index: 0, active: true, url: "https://one.example/", title: "One" }]
+    );
+    // Seed the pre-#17 layout: shards + manifest both on storage.local.
+    const seeded = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    const fullState = await seeded.ensureState();
+    await runtime.api.storage.local.set(outlineStateV4Snapshot(fullState, { epoch: 1, journalSeqIncluded: 0 }).setItems);
+
+    // A shard store that copies shards fine but fails any write that includes a manifest key, so the
+    // shard migration succeeds but the manifest migration does not.
+    const realIdb = indexedDbKvStore("controller-manifest-fail", "kv");
+    const failManifestStore = {
+      get: (keys?: string | string[] | null) => realIdb.get(keys),
+      set: (items: Record<string, unknown>) =>
+        Object.keys(items).some((key) => key.startsWith("outline:v4:manifest:"))
+          ? Promise.reject(new Error("manifest write failed"))
+          : realIdb.set(items),
+      remove: (keys: string | string[]) => realIdb.remove(keys)
+    };
+
+    const controller = createBackgroundController({ api: runtime.api, journalStore: failManifestStore, shardStore: failManifestStore, now: () => 2000 });
+    const state = await controller.ensureState();
+    expect(state.nodes["tab:1"]?.title).toBe("One");
+
+    // The manifest migration failed, so storage.local KEEPS both the shards AND the manifest -- a
+    // complete, loadable fallback (never a manifest without its shards). Retried next startup.
+    const localKeys = Object.keys(await runtime.api.storage.local.get(null));
+    expect(localKeys.some((key) => key.startsWith("outline:v4:nodes:"))).toBe(true);
+    expect(localKeys.some((key) => key.startsWith("outline:v4:manifest:"))).toBe(true);
+    expect((await loadIncidentLog(runtime.api)).some((entry) => entry.event === "v4ManifestMigrationFailed")).toBe(true);
+  });
+
+  it("refuses to bootstrap over a v4 store in IndexedDB when the shard store is unreadable (no data loss)", async () => {
+    const runtime = fakeRuntime(
+      [{ id: 10, focused: true, incognito: false }],
+      [{ id: 1, windowId: 10, index: 0, active: true, url: "https://one.example/", title: "One" }]
+    );
+    // A real Step-4 store: manifest + shards both in IndexedDB.
+    const realIdb = indexedDbKvStore("controller-guard-idb", "kv");
+    const setup = createBackgroundController({ api: runtime.api, journalStore: realIdb, shardStore: realIdb, now: () => 1000 });
+    await setup.ensureState();
+    await setup.flushPendingSaves();
+    expect(Object.keys(await realIdb.get(null)).some((key) => key.startsWith("outline:v4:manifest:"))).toBe(true);
+
+    // Boot with a shard store that throws on every op (IndexedDB transiently unavailable). With the
+    // manifest now in IndexedDB (not storage.local), the load cannot confirm the absence of a v4
+    // store, so it must refuse to bootstrap over the real data rather than overwrite it.
+    const downStore = {
+      get: async () => { throw new Error("IndexedDB unavailable"); },
+      set: async () => { throw new Error("IndexedDB unavailable"); },
+      remove: async () => { throw new Error("IndexedDB unavailable"); }
+    };
+    const controller = createBackgroundController({ api: runtime.api, journalStore: downStore, shardStore: downStore, now: () => 2000 });
+    await expect(controller.ensureState()).rejects.toThrow(/refusing to bootstrap/);
+    expect((await loadIncidentLog(runtime.api)).some((entry) => entry.event === "bootstrapSkippedShardStoreUnreachable")).toBe(true);
+  });
+
+  // Generated soak of the EXTERNAL (IndexedDB) coordinator path -- the surface the storage-fault
+  // lane + storage-v4 property test (which run the default storage.local path) do not cover. Drives
+  // the real coordinator through generated grow/churn/shrink mutations against an IndexedDB store,
+  // verifying after every save that the store round-trips the exact tree (atomic shards+manifest
+  // commit + manifest-in-IndexedDB load), and across reload restarts that every closed node
+  // survives. Soak-scaled via GENERATED_TRACE_* (pnpm test:soak).
+  it("round-trips generated mutation + restart cycles on an IndexedDB store (Step 4 external-path soak)", async () => {
+    const config = generatedTraceConfig({
+      defaultSeedCount: 2,
+      defaultSteps: 20,
+      soakSeedCount: 8,
+      soakSteps: 120
+    });
+    for (const seed of config.seeds) {
+      const rng = seededRandom(seed);
+      const runtime = fakeRuntime(
+        [{ id: 10, focused: true, incognito: false }],
+        [{ id: 1, windowId: 10, index: 0, active: true, url: "https://one.example/", title: "One" }]
+      );
+      const idb = indexedDbKvStore(`soak-step4-${seed}`, "kv");
+      let controller = createBackgroundController({ api: runtime.api, journalStore: idb, shardStore: idb, now: () => 1000 });
+      await controller.ensureState();
+
+      for (let step = 0; step < config.steps; step += 1) {
+        const roll = rng();
+        if (roll < 0.4) {
+          // Grow: append a small tree (new shards -> compaction + manifest generation bump).
+          await controller.handleMessage({
+            type: "importTree",
+            tree: {
+              schema: PORTABLE_TREE_SCHEMA,
+              version: 1,
+              exportedAt: "2026-06-15T00:00:00.000Z",
+              roots: [{
+                kind: "window",
+                title: `G${seed}-${step}`,
+                children: [{ kind: "tab", title: `t${step}`, url: `https://x.example/${seed}/${step}`, children: [] }]
+              }]
+            }
+          });
+        } else if (roll < 0.7) {
+          // Churn: rename a random window/group node (incremental compaction of one shard).
+          const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+          const groups = Object.values(state.nodes).filter((node) => node.kind === "window");
+          if (groups.length > 0) {
+            await controller.handleMessage({ type: "renameGroup", nodeId: pickOne(rng, groups).id, title: `r${step}` });
+          }
+        } else if (roll < 0.85) {
+          // Shrink: delete a random imported (closed) node/subtree.
+          const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+          const deletable = Object.values(state.nodes).filter((node) => node.id.startsWith("imported:"));
+          if (deletable.length > 0) {
+            await controller.handleMessage({ type: "deleteNode", nodeId: pickOne(rng, deletable).id });
+          }
+        } else {
+          // Restart (reload): a fresh controller on the same IndexedDB store. Every closed node
+          // present before the restart must still be present after it (live nodes get reconciled).
+          await controller.flushPendingSaves();
+          const before = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+          clearFakeRuntimeListeners(runtime);
+          controller = createBackgroundController({ api: runtime.api, journalStore: idb, shardStore: idb, now: () => 2000 + step });
+          const after = await controller.ensureState();
+          const closedBefore = Object.values(before.nodes).filter((node) => node.status === "closed");
+          const survived = closedBefore.every((node) => after.nodes[node.id] !== undefined);
+          expect(survived, `seed ${seed} step ${step}: closed nodes must survive a reload`).toBe(true);
+          continue;
+        }
+
+        // Durability oracle: once the save flushes, the IndexedDB store must round-trip the exact
+        // in-memory tree (atomic shards+manifest commit, manifest loaded from IndexedDB), and the
+        // manifest must NOT be on storage.local.
+        await controller.flushPendingSaves();
+        const inMemory = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+        const persisted = await loadStateV4(runtime.api, idb, idb);
+        expect(persisted?.recovery, `seed ${seed} step ${step}: clean r0 load from IndexedDB`).toBe("r0");
+        expect(
+          statesMateriallyEqual(persisted!.state, inMemory),
+          `seed ${seed} step ${step}: IndexedDB round-trips the saved tree`
+        ).toBe(true);
+        expect(
+          Object.keys(await runtime.api.storage.local.get(null)).some((key) => key.startsWith("outline:v4:manifest:")),
+          `seed ${seed} step ${step}: manifest lives in IndexedDB, not storage.local`
+        ).toBe(false);
+      }
+    }
+  }, generatedTraceTimeoutMs(30000, 300000));
 
   it("aborts the shard migration on a torn IndexedDB copy and keeps storage.local authoritative", async () => {
     const runtime = fakeRuntime(

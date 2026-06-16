@@ -1,5 +1,25 @@
 # Repository Instructions
 
+## Start here (map)
+
+New to this repo, or a fresh agent run? **[REPO_MAP.md](REPO_MAP.md) is the full
+knowledge-base index** — read the cluster relevant to your task, not everything. Quick
+pointers:
+
+- **Architecture / big picture:** [ARCHITECTURE.md](ARCHITECTURE.md). **Invariants the
+  system enforces:** [INVARIANTS.md](INVARIANTS.md) (`I-1..I-n`).
+- **Touching save/load/journal/reconciliation/projection/patch paths?** Read the perf
+  rules below, run the guards, and log in [PERFORMANCE_NOTES.md](PERFORMANCE_NOTES.md).
+- **Hunting a bug class?** Use the runbook: runtime →
+  [RUNTIME_TRACE_HUNT_RUNBOOK.md](RUNTIME_TRACE_HUNT_RUNBOOK.md), sidebar projection →
+  [SIDEBAR_PROJECTION_HUNT_RUNBOOK.md](SIDEBAR_PROJECTION_HUNT_RUNBOOK.md).
+- **Git workflow:** [CLAUDE.md](CLAUDE.md).
+
+The map is mechanically checked: when you add a doc, add it to `REPO_MAP.md` (the vitest
+`docs-index` test and `node scripts/check-docs-index.mjs` fail otherwise).
+
+## Working agreements
+
 - Feel free to challenge assumptions and suggest a better way.
 - When working on a new feature, use a feature branch, make incremental commits, and merge to `main` only when the user is satisfied.
 - Use red-green TDD for behavior changes: write or update a failing test first, make it pass with the smallest change, then refactor if needed.

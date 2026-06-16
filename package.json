@@ -15,6 +15,7 @@
     "test:soak": "node scripts/run-generated-soak.mjs",
     "test:watch": "vitest",
     "check": "pnpm run oracle:build && pnpm test && pnpm run typecheck:test && pnpm run build",
+    "check:docs": "node scripts/check-docs-index.mjs",
     "perf:sidebar-projection-guard": "pnpm build && node scripts/perf-sidebar-projection-guard.mjs",
     "profile:tab-open": "node scripts/profile-tab-open.mjs",
     "profile:close": "node scripts/profile-close.mjs",
