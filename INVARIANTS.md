@@ -84,3 +84,14 @@ Each entry: statement, owner mechanism, what enforces/tests it today.
   gate search/export/import/drag/mutating actions until full hydration.**
   Owner: controller scheduler + sidebar. Enforced by: controller scheduler tests,
   sidebar gating tests.
+
+## Architecture / module boundaries
+
+- **I-16 — `src/` layers depend only "forward".** `model/` is the pure domain core and
+  imports no other layer; `background/` (outline owner) and `perf/` (instrumentation) do
+  not import the UI (`sidebar/`/`options/`); the sidebar does not import `options/`.
+  Owner: the module import graph. Enforced by:
+  `src/test/architecture-boundaries.test.ts` (a structural scan of production imports).
+  Known not-yet-enforced edge: `sidebar -> background` — the sidebar still imports
+  background directly while it migrates to a pure projection client (REMOTE_PROJECTION_REWRITE.md);
+  lock it in once those imports are gone.
