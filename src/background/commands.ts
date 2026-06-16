@@ -16,7 +16,7 @@ import {
   updateMovedLiveSubtreeRuntimeWindow,
   wrapNodeInGroup
 } from "../model/outline.js";
-import { appendPortableTree } from "../model/portable-tree.js";
+import { appendPortableSubtreesAtTopLevel, appendPortableTree } from "../model/portable-tree.js";
 import { isLiveTabNode, isLiveWindowNode, type LiveTabNode, type LiveWindowNode } from "../model/live-nodes.js";
 import type { RestoreScope } from "../model/outline.js";
 import type { NodeId, OutlineNode, OutlineState, RestoreCreateTarget, RestoredNode, RestorePlan, RuntimeTab } from "../model/types.js";
@@ -95,6 +95,10 @@ export type BackgroundCommand =
       tree: unknown;
     }
   | {
+      type: "importSubtreeToTopLevel";
+      tree: unknown;
+    }
+  | {
       type: "undo";
     }
   | {
@@ -125,6 +129,7 @@ export const BACKGROUND_COMMAND_TYPES = [
   "expandAncestors",
   "renameGroup",
   "importTree",
+  "importSubtreeToTopLevel",
   "undo",
   "redo",
   "getHistoryStatus",
@@ -218,6 +223,7 @@ const STRUCTURAL_COMMAND_TYPES = {
   expandAncestors: false,
   renameGroup: false,
   importTree: true,
+  importSubtreeToTopLevel: true,
   undo: false,
   redo: false,
   getHistoryStatus: false,
@@ -336,6 +342,9 @@ export async function runCommand(
 
     case "importTree":
       return commandResultFromNextState(state, appendPortableTree(state, command.tree, { now: Date.now() }));
+
+    case "importSubtreeToTopLevel":
+      return commandResultFromNextState(state, appendPortableSubtreesAtTopLevel(state, command.tree, { now: Date.now() }));
 
     case "deleteNode": {
       if (!state.nodes[command.nodeId]) {

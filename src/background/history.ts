@@ -28,6 +28,7 @@ const TRACKABLE_HISTORY_COMMAND_TYPES = {
   expandAncestors: true,
   renameGroup: true,
   importTree: true,
+  importSubtreeToTopLevel: true,
   undo: false,
   redo: false,
   getHistoryStatus: false,
@@ -301,6 +302,7 @@ function historyLabel(commandType: TrackableHistoryCommandType): string {
     case "renameGroup":
       return "Rename";
     case "importTree":
+    case "importSubtreeToTopLevel":
       return "Import";
     case "deleteNode":
       return "Delete";

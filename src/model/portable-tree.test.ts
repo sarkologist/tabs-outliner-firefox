@@ -3,8 +3,10 @@ import { describe, expect, it } from "vitest";
 import { bootstrapFromWindows, closeTab, renameGroup, wrapNodeInGroup } from "./outline.js";
 import {
   PORTABLE_TREE_SCHEMA,
+  appendPortableSubtreesAtTopLevel,
   appendPortableTree,
   exportPortableTree,
+  parsePortableImport,
   portableTreeBackupFilename,
   portableTreeFilename,
   serializePortableTreeFile
@@ -707,6 +709,148 @@ describe("portable tree files", () => {
     ).toThrow(/Invalid portable tree/);
 
     expect(state).toEqual(before);
+  });
+});
+
+describe("append portable subtrees at top level", () => {
+  const importPayload = (roots: unknown[]) => ({
+    schema: PORTABLE_TREE_SCHEMA,
+    version: 1,
+    exportedAt: "2026-05-16T12:00:00.000Z",
+    roots
+  });
+
+  const windowWithChild = {
+    kind: "window",
+    title: "Imported Window",
+    children: [
+      {
+        kind: "tab",
+        title: "Imported Child",
+        url: "https://imported.example/child",
+        children: []
+      }
+    ]
+  };
+
+  it("appends each portable root as a new top-level node with no import-group wrapper", () => {
+    const state = bootstrapFromWindows(runtimeWindows, { now: 1000 });
+    const looseTab = { kind: "tab", title: "Loose Tab", url: "https://loose.example/", children: [] };
+
+    const appended = appendPortableSubtreesAtTopLevel(
+      state,
+      importPayload([windowWithChild, looseTab]),
+      { now: 5000 }
+    );
+
+    // Existing roots are preserved in order; the two imported roots are appended after them.
+    expect(appended.rootIds.slice(0, state.rootIds.length)).toEqual(state.rootIds);
+    expect(appended.rootIds).toHaveLength(state.rootIds.length + 2);
+
+    const importedWindow = nodeByTitle(appended, "Imported Window");
+    const importedChild = nodeByTitle(appended, "Imported Child");
+    const importedLooseTab = nodeByTitle(appended, "Loose Tab");
+
+    // The imported nodes are themselves the new top-level roots: appendPortableTree would have
+    // inserted exactly one extra "Group" wrapper root instead of these two. (Note the live
+    // window from bootstrap is itself titled "Group" — outline.ts default — so a wrapper can't
+    // be detected by title; the root-slice identity below is the precise check.)
+    expect(appended.rootIds.slice(state.rootIds.length)).toEqual([importedWindow.id, importedLooseTab.id]);
+
+    expect(importedWindow.parentId).toBeUndefined();
+    expect(importedWindow.customTitle).toBe("Imported Window");
+    expect(importedWindow.childIds).toEqual([importedChild.id]);
+    expect(importedChild.parentId).toBe(importedWindow.id);
+    expect(importedLooseTab.parentId).toBeUndefined();
+    expect(importedLooseTab.restore).toEqual({ url: "https://loose.example/", title: "Loose Tab" });
+
+    for (const node of [importedWindow, importedChild, importedLooseTab]) {
+      expect(node.status).toBe("closed");
+      expect(node.live).toBeUndefined();
+      expect(node.createdAt).toBe(5000);
+      expect(node.id.startsWith("imported:")).toBe(true);
+    }
+  });
+
+  it("imports a single selected subtree as one independent top-level node", () => {
+    const state = bootstrapFromWindows(runtimeWindows, { now: 1000 });
+
+    const appended = appendPortableSubtreesAtTopLevel(state, importPayload([windowWithChild]), { now: 5000 });
+
+    expect(appended.rootIds).toHaveLength(state.rootIds.length + 1);
+    const importedWindow = appended.nodes[appended.rootIds.at(-1)!]!;
+    expect(importedWindow.title).toBe("Imported Window");
+    expect(importedWindow.parentId).toBeUndefined();
+    expect(importedWindow.childIds).toHaveLength(1);
+  });
+
+  it("creates independent fresh nodes when the same subtree is imported more than once", () => {
+    const state = bootstrapFromWindows(runtimeWindows, { now: 1000 });
+
+    const once = appendPortableSubtreesAtTopLevel(state, importPayload([windowWithChild]), { now: 5000 });
+    // Same clock value on purpose: ids must still be unique (no collision, no dedupe).
+    const twice = appendPortableSubtreesAtTopLevel(once, importPayload([windowWithChild]), { now: 5000 });
+
+    expect(twice.rootIds).toHaveLength(state.rootIds.length + 2);
+    const firstImportId = once.rootIds.at(-1)!;
+    const secondImportId = twice.rootIds.at(-1)!;
+    expect(secondImportId).not.toBe(firstImportId);
+
+    // Both imports survive independently — no merge, no dedupe.
+    const importedWindows = Object.values(twice.nodes).filter((node) => node.title === "Imported Window");
+    const importedChildren = Object.values(twice.nodes).filter((node) => node.title === "Imported Child");
+    expect(importedWindows).toHaveLength(2);
+    expect(importedChildren).toHaveLength(2);
+    expect(new Set(importedWindows.map((node) => node.id)).size).toBe(2);
+  });
+
+  it("leaves state unchanged for empty payloads", () => {
+    const state = bootstrapFromWindows(runtimeWindows, { now: 1000 });
+
+    expect(appendPortableSubtreesAtTopLevel(state, importPayload([]), { now: 5000 })).toBe(state);
+  });
+
+  it("preserves object identity for existing nodes", () => {
+    const state = bootstrapFromWindows(runtimeWindows, { now: 1000 });
+
+    const appended = appendPortableSubtreesAtTopLevel(state, importPayload([windowWithChild]), { now: 5000 });
+
+    expect(appended.nodes["window:10"]).toBe(state.nodes["window:10"]);
+    expect(appended.nodes["tab:1"]).toBe(state.nodes["tab:1"]);
+  });
+
+  it("does not mutate the original state", () => {
+    const state = bootstrapFromWindows(runtimeWindows, { now: 1000 });
+    const before = structuredClone(state);
+
+    appendPortableSubtreesAtTopLevel(state, importPayload([windowWithChild]), { now: 5000 });
+
+    expect(state).toEqual(before);
+  });
+});
+
+describe("parsePortableImport", () => {
+  it("normalizes a portable file into renderable roots", () => {
+    const roots = parsePortableImport({
+      schema: PORTABLE_TREE_SCHEMA,
+      version: 1,
+      exportedAt: "2026-05-16T12:00:00.000Z",
+      roots: [
+        {
+          kind: "window",
+          title: "Window",
+          children: [{ kind: "tab", title: "Tab", url: "https://example.test/", children: [] }]
+        }
+      ]
+    });
+
+    expect(roots).toHaveLength(1);
+    expect(roots[0]!.title).toBe("Window");
+    expect(roots[0]!.children[0]!.url).toBe("https://example.test/");
+  });
+
+  it("throws on an invalid payload", () => {
+    expect(() => parsePortableImport({ schema: "wrong" })).toThrow(/Invalid portable tree/);
   });
 });
 

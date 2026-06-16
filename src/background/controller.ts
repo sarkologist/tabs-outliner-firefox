@@ -111,6 +111,7 @@ import {
   isIncidentLogRequest,
   isInitialTreeSnapshotMessage,
   isInitialTreeSnapshotWindowMessage,
+  isOpenImportViewerWindowMessage,
   isOpenSidebarWindowMessage,
   isPerformanceTraceMessage,
   isSidebarNonEditInteractionMessage,
@@ -386,6 +387,7 @@ const ORPHAN_SHARD_SWEEP_DELAY_MS = 8000;
 const DIAGNOSTICS_RESULT_TTL_MS = 1000;
 const TOGGLE_SIDEBAR_COMMAND = "toggle-sidebar";
 const SIDEBAR_WINDOW_PATH = "sidebar/sidebar.html";
+const IMPORT_VIEWER_WINDOW_PATH = "viewer/viewer.html";
 
 export function createBackgroundController(options: BackgroundControllerOptions): BackgroundController {
   const { api, now = Date.now } = options;
@@ -1118,6 +1120,10 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
     if (isOpenSidebarWindowMessage(message)) {
       return openSidebarWindow();
+    }
+
+    if (isOpenImportViewerWindowMessage(message)) {
+      return openImportViewerWindow();
     }
 
     if (isExportTreeMessage(message)) {
@@ -2009,6 +2015,27 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       const windowInfo = await perfTrace.measureAsync("background.sidebarWindow.open", () =>
         api.windows.create({
           url: api.runtime.getURL(SIDEBAR_WINDOW_PATH),
+          type: "popup",
+          state: "maximized",
+          focused: true
+        })
+      );
+      fullSizeOutlinerWindowIds.add(windowInfo.id);
+      return { ok: true };
+    } finally {
+      sidebarWindowCreationInFlight = Math.max(0, sidebarWindowCreationInFlight - 1);
+    }
+  }
+
+  // The read-only exported-tree viewer (a separate extension page). Opened as a popup window so
+  // it stays distinct from the main sidebar; like the full-size sidebar window it is tracked and
+  // type:"popup" so its focus never drives outline reconciliation (getNormalWindows filters it).
+  async function openImportViewerWindow(): Promise<{ ok: true }> {
+    sidebarWindowCreationInFlight += 1;
+    try {
+      const windowInfo = await perfTrace.measureAsync("background.importViewerWindow.open", () =>
+        api.windows.create({
+          url: api.runtime.getURL(IMPORT_VIEWER_WINDOW_PATH),
           type: "popup",
           state: "maximized",
           focused: true

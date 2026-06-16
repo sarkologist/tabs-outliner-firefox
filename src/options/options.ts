@@ -89,6 +89,7 @@ const profileStop = document.querySelector<HTMLButtonElement>("#profile-stop");
 const profileReset = document.querySelector<HTMLButtonElement>("#profile-reset");
 const profileExport = document.querySelector<HTMLButtonElement>("#profile-export");
 const profileStatus = document.querySelector<HTMLElement>("#profile-status");
+const openImportViewer = document.querySelector<HTMLButtonElement>("#open-import-viewer");
 const incidentRefresh = document.querySelector<HTMLButtonElement>("#incident-refresh");
 const incidentSummary = document.querySelector<HTMLElement>("#incident-summary");
 const incidentList = document.querySelector<HTMLOListElement>("#incident-list");
@@ -219,6 +220,10 @@ function registerEvents(): void {
 
   profileExport?.addEventListener("click", () => {
     void exportPerformanceProfile();
+  });
+
+  openImportViewer?.addEventListener("click", () => {
+    void openImportViewerWindow();
   });
 
   incidentRefresh?.addEventListener("click", () => {
@@ -553,6 +558,15 @@ function storeProfileEnabled(enabled: boolean): void {
 function showProfileStatus(message: string): void {
   if (profileStatus) {
     profileStatus.textContent = message;
+  }
+}
+
+async function openImportViewerWindow(): Promise<void> {
+  try {
+    clearErrors();
+    await browser.runtime.sendMessage({ type: "openImportViewerWindow" });
+  } catch {
+    showErrors(["Could not open the exported-tree viewer."]);
   }
 }
 

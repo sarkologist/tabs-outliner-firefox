@@ -8,11 +8,12 @@ This document explains the current architecture and the main design decisions be
 
 Tab Session Outliner is a Firefox Manifest V3 sidebar extension. Its job is to keep a durable outline of live tabs, live windows, recently closed tabs/windows, and user-created groups.
 
-The extension has three main surfaces:
+The extension has four surfaces:
 
 - [background/index.ts](./src/background/index.ts) starts the background controller and owns browser-runtime synchronization, persistence, command handling, history, automatic backups, and broadcasts.
 - [public/sidebar/sidebar.html](./public/sidebar/sidebar.html) loads [sidebar-boot.ts](./src/sidebar/sidebar-boot.ts) first, then the full [sidebar.ts](./src/sidebar/sidebar.ts) app. The sidebar renders and edits the outline.
-- [public/options/options.html](./public/options/options.html) loads [options.ts](./src/options/options.ts) for shortcuts, undo-history settings, automatic-backup settings, and performance-profile export.
+- [public/options/options.html](./public/options/options.html) loads [options.ts](./src/options/options.ts) for shortcuts, undo-history settings, automatic-backup settings, performance-profile export, and opening the exported-tree viewer.
+- [public/viewer/viewer.html](./public/viewer/viewer.html) loads [viewer.ts](./src/viewer/viewer.ts): a read-only viewer for an exported portable tree whose only node actions are expand/collapse and import-to-top-level (see [docs/exported-tree-viewer.md](./docs/exported-tree-viewer.md)).
 
 The build is intentionally simple: TypeScript compiles `src/` to `dist/`, then [scripts/copy-static.mjs](./scripts/copy-static.mjs) copies `public/` into `dist/`.
 
@@ -83,7 +84,7 @@ This keeps startup from doing unnecessary storage writes and avoids blocking fir
 
 ### Commands
 
-The sidebar sends typed commands from [commands.ts](./src/background/commands.ts): `focusNode`, `closeNode`, `restoreNode`, `deleteNode`, `moveNode`, `moveNodeToNewWindow`, `wrapNodeInGroup`, `flattenSubtree`, `promoteChildren`, `toggleCollapsed`, `expandAncestors`, `renameGroup`, `importTree`, `undo`, `redo`, and read-only requests. It also sends `openSidebarWindow` as a controller request outside the main command union.
+The sidebar sends typed commands from [commands.ts](./src/background/commands.ts): `focusNode`, `closeNode`, `restoreNode`, `deleteNode`, `moveNode`, `moveNodeToNewWindow`, `wrapNodeInGroup`, `flattenSubtree`, `promoteChildren`, `toggleCollapsed`, `expandAncestors`, `renameGroup`, `importTree`, `undo`, `redo`, and read-only requests. The exported-tree viewer sends `importSubtreeToTopLevel` (append a selected portable subtree as new top-level node(s)). It also sends `openSidebarWindow`, and the options page `openImportViewerWindow`, as controller requests outside the main command union.
 
 `runCommand` handles the browser side effects and model update for each command. The controller wraps it with:
 

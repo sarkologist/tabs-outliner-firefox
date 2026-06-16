@@ -47,6 +47,9 @@ the relevant paths, know which gate covers you:
 - [docs/PROJECT_STATE.md](docs/PROJECT_STATE.md) — what's happening *now*: in-flight work,
   storage-migration status, open PRs, and current posture (the context that isn't in
   `main`'s code).
+- [docs/exported-tree-viewer.md](docs/exported-tree-viewer.md) — the read-only exported-tree
+  viewer surface: open it from the options page, browse a portable-tree export, and import a
+  node + subtree into the live outline as new top-level node(s).
 
 ## Task recipes & test harness (last-mile)
 

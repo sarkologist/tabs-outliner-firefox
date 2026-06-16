@@ -286,6 +286,16 @@ test.describe("extension options page", () => {
     await expect(page.locator("#incident-summary")).toHaveText("3 incidents · 1 warning");
     expect(issues).toEqual([]);
   });
+
+  test("opens the exported-tree viewer window from the options page", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadOptions(page);
+
+    await page.getByRole("button", { name: "Open exported-tree viewer" }).click();
+
+    await expect(runtimeMessages(page)).resolves.toContainEqual({ type: "openImportViewerWindow" });
+    expect(issues).toEqual([]);
+  });
 });
 
 async function loadOptions(page: Page): Promise<void> {

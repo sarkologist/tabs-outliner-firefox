@@ -10,6 +10,8 @@
 //   background — owns the outline + runtime reconciliation/persistence. May use model/perf.
 //   sidebar    — the UI projection client. May use model/perf (and, for now, background).
 //   options    — the options page (a separate UI entry point).
+//   viewer     — the read-only exported-tree viewer page (a leaf UI surface). Uses only model;
+//                talks to the background solely via runtime messages, never direct imports.
 //   perf       — cross-cutting instrumentation. May reach into background/model by design.
 //
 // NOT YET ENFORCED (tracked, intentionally allowed today): `sidebar -> background` (~11
@@ -26,23 +28,28 @@ const SRC = fileURLToPath(new URL("..", import.meta.url)); // .../src
 const FORBIDDEN: { from: string; to: string[]; why: string }[] = [
   {
     from: "model",
-    to: ["background", "sidebar", "options", "perf", "(root)"],
+    to: ["background", "sidebar", "options", "viewer", "perf", "(root)"],
     why: "model/ is the pure domain core; it must not import other layers.",
   },
   {
     from: "background",
-    to: ["sidebar", "options"],
-    why: "background/ owns the outline; it must not depend on the UI (sidebar/options).",
+    to: ["sidebar", "options", "viewer"],
+    why: "background/ owns the outline; it must not depend on the UI (sidebar/options/viewer).",
   },
   {
     from: "perf",
-    to: ["sidebar", "options"],
+    to: ["sidebar", "options", "viewer"],
     why: "perf/ instrumentation must not depend on the UI layers.",
   },
   {
     from: "sidebar",
-    to: ["options"],
-    why: "the sidebar must not depend on the options page.",
+    to: ["options", "viewer"],
+    why: "the sidebar must not depend on the options page or the viewer page.",
+  },
+  {
+    from: "viewer",
+    to: ["background", "sidebar", "options"],
+    why: "the viewer is a leaf UI surface; it uses only model/ and talks to the background via messages.",
   },
 ];
 

@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Tab Session Outliner — Exported tree viewer</title>
+    <link rel="stylesheet" href="./viewer.css" />
+  </head>
+  <body>
+    <header class="page-header">
+      <h1>Exported tree viewer</h1>
+      <p class="page-intro">
+        Open a previously exported tree to inspect it. The export is read-only here — the only
+        action on a node is <strong>Import</strong>, which appends that node and its entire
+        subtree to your current outline as new top-level node(s). Importing never changes the
+        exported file, and importing the same node again creates independent new nodes.
+      </p>
+    </header>
+    <main>
+      <div class="toolbar">
+        <button id="viewer-load" class="primary-button" type="button">Load exported tree…</button>
+        <input
+          id="viewer-file"
+          class="visually-hidden"
+          type="file"
+          accept="application/json,.json"
+          aria-label="Exported tree file"
+        />
+        <p id="viewer-status" class="viewer-status" role="status" aria-live="polite"></p>
+      </div>
+
+      <p id="viewer-empty" class="viewer-empty">
+        No tree loaded yet. Choose an exported <code>tabs-outliner-tree-*.json</code> file to begin.
+      </p>
+
+      <ul id="viewer-tree" class="viewer-tree" role="tree" aria-label="Exported tree"></ul>
+    </main>
+    <script type="module" src="./viewer.js"></script>
+  </body>
+</html>
