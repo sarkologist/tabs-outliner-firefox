@@ -1,0 +1,13 @@
+{
+  "comment": "Debt ratchet baselines — enforced by src/test/debt-ratchet.test.ts, scored in docs/QUALITY.md, tended per docs/repo-gardening.md. Each number may only move DOWN: lower it when you pay debt down; raising it (or adding to allowedLargeFiles) is a deliberate, reviewed debt acknowledgment.",
+  "sidebarToBackgroundEdges": 11,
+  "todoComments": 0,
+  "largeFileThresholdLines": 1500,
+  "allowedLargeFiles": [
+    "background/controller.ts",
+    "sidebar/sidebar.ts",
+    "model/outline.ts",
+    "background/runtime-facts.ts",
+    "background/commands.ts"
+  ]
+}
