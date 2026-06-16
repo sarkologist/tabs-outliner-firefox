@@ -1,5 +1,21 @@
 # Sidebar Remote Projection Rewrite
 
+**Status: SHIPPED — all five phases on `main` (2026-05-26).** Landed from branch
+`codex/sidebar-remote-projection-20260526` (tip `246ea25`), now buried well inside `main`'s
+history. The sidebar runs as a **sparse projection client** of the background-owned outline
+by default; full `getState` hydration is a fallback only.
+
+The `Progress` and `Verification Log` sections below are the **as-landed record, frozen at
+2026-05-26** — do not read them as current state. For live health instead:
+
+- open findings + fix analysis → [SIDEBAR_PROJECTION_BUGS.md](SIDEBAR_PROJECTION_BUGS.md)
+  (post-merge hardening drove this well past "first slice" via the `PT-*` projection hunt;
+  no open findings at the last run),
+- perf budget → `pnpm perf:sidebar-projection-guard`,
+- run a fresh hunt → [SIDEBAR_PROJECTION_HUNT_RUNBOOK.md](SIDEBAR_PROJECTION_HUNT_RUNBOOK.md).
+
+This doc is retained for the design/rationale (goal, non-goals, phase map).
+
 ## Goal
 
 Move the sidebar from "hydrate a full local outline before full use" toward "render and operate as a projection client of the background-owned outline".
@@ -82,6 +98,10 @@ The target is to keep first paint, hover, and scroll-away bounded by sparse snap
   - Added coverage for stale search responses after clear, show-in-tree target slices, and background title patches while search remains active.
   - Fixed sparse tree-structure patches so visible rows update before falling back to a remote projection refresh.
   - Fixed remote projection rendering so active/reveal scrolls that land outside the returned sparse rows immediately request the missing viewport slice.
+- Post-merge (2026-05-27 onward): hardening moved to the `PT-*` sidebar projection hunt —
+  see [SIDEBAR_PROJECTION_BUGS.md](SIDEBAR_PROJECTION_BUGS.md) for the live finding/fix
+  catalog and [SIDEBAR_PROJECTION_HUNT_RUNBOOK.md](SIDEBAR_PROJECTION_HUNT_RUNBOOK.md) to
+  run a fresh hunt. This Progress log is not maintained past 2026-05-26.
 
 ## Verification Log
 
