@@ -194,14 +194,19 @@ export function outlineStateV4Snapshot(
   return { setItems, removeKeysAfterCommit, manifest, manifestKey, slot };
 }
 
-// Manifests (small double-buffered pointers) always live on storage.local; the bulk node shards
-// live in `shardStore` -- IndexedDB in production, a storage.local pass-through by default (today's
-// behavior, what tests/guard use). See docs/storage-rearchitecture/04-STORAGE-WRITE-COST.md section 6.
+// The bulk node shards live in `shardStore`; the double-buffered manifest pointers live in
+// `manifestStore`. Both default to a storage.local pass-through (today's behavior, what the default
+// path + tests/guard use). In production both are the IndexedDB store, so a save writes shards and
+// manifest in ONE atomic transaction (Step 4 -- closes the cross-substrate split-save window). The
+// manifest store is a separate param so the coordinator can read the manifest from storage.local
+// (shards from IndexedDB) during the one-time manifest migration window.
+// See docs/storage-rearchitecture/04-STORAGE-WRITE-COST.md section 6.
 export async function loadStateV4(
   api: WebExtensionBrowser,
-  shardStore: KeyValueStore = storageLocalKvStore(api)
+  shardStore: KeyValueStore = storageLocalKvStore(api),
+  manifestStore: KeyValueStore = storageLocalKvStore(api)
 ): Promise<LoadStateV4Result | undefined> {
-  const stored = await api.storage.local.get([STATE_V4_MANIFEST_A_KEY, STATE_V4_MANIFEST_B_KEY]);
+  const stored = await manifestStore.get([STATE_V4_MANIFEST_A_KEY, STATE_V4_MANIFEST_B_KEY]);
   const candidates: Array<{ manifest: StateV4Manifest; slot: StateV4ManifestSlot }> = [];
   const manifestA = stored[STATE_V4_MANIFEST_A_KEY];
   const manifestB = stored[STATE_V4_MANIFEST_B_KEY];
@@ -449,8 +454,14 @@ export async function hasAnyStateV4Keys(
   if (stored[STATE_V4_MANIFEST_A_KEY] !== undefined || stored[STATE_V4_MANIFEST_B_KEY] !== undefined) {
     return true;
   }
+  // The shard store carries both the shards and (after Step 4) the manifest, so a present manifest
+  // OR any shard key there counts as existing v4 state.
   const everything = await shardStore.get(null);
-  return Object.keys(everything).some((key) => key.startsWith(STATE_V4_NODE_SHARD_PREFIX));
+  return Object.keys(everything).some((key) =>
+    key.startsWith(STATE_V4_NODE_SHARD_PREFIX) ||
+    key === STATE_V4_MANIFEST_A_KEY ||
+    key === STATE_V4_MANIFEST_B_KEY
+  );
 }
 
 function isStateV4Manifest(value: unknown): value is StateV4Manifest {
