@@ -21,7 +21,7 @@ The map is mechanically checked: when you add a doc, add it to `REPO_MAP.md` (th
 ## Working agreements
 
 - Feel free to challenge assumptions and suggest a better way.
-- When working on a new feature, use a feature branch, make incremental commits, and merge to `main` only when the user is satisfied.
+- When working on a new feature, use a feature branch, make incremental commits, and open a pull request to land it; merge to `main` only when the user is satisfied (`main` is protected, so a PR is the only path — see [CLAUDE.md](CLAUDE.md)).
 - Use red-green TDD for behavior changes: write or update a failing test first, make it pass with the smallest change, then refactor if needed.
 - For browser UI behavior, prefer Playwright tests that drive the real built extension/UI with deterministic fixtures. Run them with `pnpm exec playwright test`.
 - In Playwright coverage, assert both visible behavior and app/runtime state where practical: DOM/accessibility state, console errors, failed network requests, tree invariants, persisted state, and `tabsOutlinerProfile` traces when relevant.
