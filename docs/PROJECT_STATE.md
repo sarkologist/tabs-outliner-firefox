@@ -2,7 +2,7 @@
 
 A snapshot of in-flight work and current posture that is **not** derivable from `main`'s
 code or git history alone. Update this when a PR lands or a new effort starts; keep it
-short so it stays cheap to maintain. Last updated: **2026-06-16**.
+short so it stays cheap to maintain. Last updated: **2026-06-17**.
 
 > Why this file exists: the richest project context (decisions, the current effort, known
 > hazards) otherwise lives only in a maintainer's head or local tooling — invisible to a
@@ -19,17 +19,16 @@ extension-owned IndexedDB, so every `storage.local` write becomes ~ms. Design pa
 Merged to `main`:
 
 - Step 1 (KV-port) → Step 2 (journal→IDB) → Step 3 (node shards→IDB) → Step 3b
-  (undo-history→IDB). `main` now keeps journal, shards, and history in IndexedDB.
+  (undo-history→IDB) → Step 4 (manifest→IDB, PR #21). `main` now keeps journal, shards,
+  history, and the manifest in IndexedDB; a normal save writes only to IndexedDB.
 - **Data-loss fix (PR #19).** The Step-3 split save (shards→IDB, *then*
   manifest→`storage.local`) was non-atomic, and the orphan sweep could delete
   just-written shards as "orphans" → ~660 nodes lost while dogfooding. Fixed by disabling
   the sweep when the shard store is external.
 
-In flight:
-
-- **PR #21 — Step 4: manifest→IDB** (branch `storage/manifest-indexeddb`). Collapses the
-  double-buffered manifest into an atomic IDB save. Once it lands, `storage.local` holds
-  only manifest/boot/incident/prefs (~KB) and the per-write ceiling is fully lifted.
+The migration is **complete** (Step 4, PR #21): the manifest now lives in IndexedDB too, so
+a normal save writes only to IndexedDB and `storage.local` retains only the boot snapshot,
+incident log, and preferences (~KB). The per-write ceiling is fully lifted.
 
 Not touched by storage work: the reconciliation path (`getNormalWindows` on
 focus/activation) stays environment-bound and load-bearing.
@@ -46,7 +45,6 @@ health (the `PT-*` projection hunt; no open findings at last run) in
 
 ## Open PRs
 
-- **#21** `storage/manifest-indexeddb` — storage Step 4 (above).
 - **#20** `feat/restore-tree-replace` — restore-from-export (REPLACE) recovery command.
   Intentionally **kept open, not merged**: recovery insurance, not a feature to ship now.
 

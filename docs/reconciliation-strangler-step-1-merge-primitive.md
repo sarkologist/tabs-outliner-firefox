@@ -1,6 +1,9 @@
 # Reconciliation strangler — Step 1 (re-sequenced): the fact-merge primitive
 
-Status: scoping only (2026-06-13). No code changes yet. Supersedes
+Status: **1a shipped, remainder deferred.** The `merge{Tab,Window}Fact` write chokepoint
+(`src/background/runtime-facts.ts`, currently identity / last-write-wins) landed on `main` (step 1a);
+step 1b (static-confidence precedence) was tried and reverted; later increments stay deferred.
+Originally scoped 2026-06-13. Supersedes
 [`reconciliation-strangler-step-1.md`](./reconciliation-strangler-step-1.md) as Step 1 — that
 doc's `activeTabId` collapse is now the *demonstration* that runs on top of this primitive (see §6).
 Companion model: [`reconciliation-state-model.md`](./reconciliation-state-model.md).
