@@ -18,7 +18,6 @@ import {
 } from "./storage.js";
 import { outlineStateV2Items, outlineStateV3Items } from "./storage-legacy-write.test-support.js";
 import type { OutlineNode, OutlineState } from "../model/types.js";
-import { generatedTraceConfig, generatedTraceTimeoutMs } from "../test/generated-traces.test-support.js";
 
 function makeLargeState(tabCount: number, options: { activeTabIndex?: number } = {}): OutlineState {
   const activeTabIndex = options.activeTabIndex ?? 0;
@@ -607,7 +606,9 @@ describe("legacy v3 storage reads", () => {
   });
 });
 
-function generatedStorageState(seed: number): OutlineState {
+// Parked helper: currently uncalled. `_`-prefixed (not deleted) to satisfy no-unused-vars
+// without dropping the seeded state-generator the storage tests may want again.
+function _generatedStorageState(seed: number): OutlineState {
   const rng = seededRandom(seed);
   const root: OutlineNode = {
     id: "window:10",

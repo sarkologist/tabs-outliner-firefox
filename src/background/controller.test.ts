@@ -26359,7 +26359,10 @@ function assertRuntimeMetadataAssertion(state: OutlineState, context: GeneratedT
   }
 }
 
-function assertRuntimeIndexWarmForGeneratedTrace(context: GeneratedTraceContext): void {
+// Parked invariant helper: currently unwired from the generated-trace replay. Kept (and
+// `_`-prefixed to satisfy no-unused-vars) rather than deleted — a follow-up decides whether
+// to re-wire or retire it.
+function _assertRuntimeIndexWarmForGeneratedTrace(context: GeneratedTraceContext): void {
   const status = context.controller.__debugRuntimeIndexStatus();
   invariant(status.warm, "runtime index was cold after generated operation", context.history);
   invariant(status.matchesState, `runtime index diverged after generated operation: ${status.reason}`, context.history);
@@ -26400,7 +26403,11 @@ function assertStructureInvariants(state: OutlineState, history: string[]): void
   }
 }
 
-function assertRuntimeProjectionInvariants(state: OutlineState, context: GeneratedTraceContext): void {
+// Parked invariant helper: currently unwired from the generated-trace replay (it asserts the
+// runtime/outline active-flag agreement that has historically surfaced harness realism gaps).
+// Kept (and `_`-prefixed to satisfy no-unused-vars) rather than deleted — a follow-up decides
+// whether to re-wire or retire it.
+function _assertRuntimeProjectionInvariants(state: OutlineState, context: GeneratedTraceContext): void {
   invariantEqual(liveTabIds(state), sortedRuntimeTabIds(context.runtime), "live tab IDs match runtime tabs", context.history);
   invariantEqual(
     liveWindowIds(state),

@@ -315,7 +315,7 @@ describe("outline state v4 storage", () => {
       let seq = 0;
       let active: { manifest: StateV4Manifest; slot: StateV4ManifestSlot } | undefined;
       let evictable: StateV4Manifest | undefined;
-      let includedSeq = 0;
+      let _includedSeq = 0;
       let dirty = new Set<number>();
       let fullCompactionNeeded = true;
 
@@ -367,7 +367,7 @@ describe("outline state v4 storage", () => {
         entries = entries.filter((entry) => entry.seq > seq);
         evictable = active?.manifest;
         active = { manifest: snapshot.manifest, slot: snapshot.slot };
-        includedSeq = seq;
+        _includedSeq = seq;
         dirty = new Set();
         fullCompactionNeeded = false;
         return "survived";
@@ -384,7 +384,7 @@ describe("outline state v4 storage", () => {
         // Continue the run from the recovered position.
         active = { manifest: loaded!.manifest, slot: loaded!.slot };
         evictable = undefined;
-        includedSeq = loaded!.journalSeqIncluded;
+        _includedSeq = loaded!.journalSeqIncluded;
         seq = Math.max(seq, init.headSeq);
         fullCompactionNeeded = true;
         dirty = new Set();
