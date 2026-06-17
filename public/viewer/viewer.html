@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Tab Session Outliner — Exported tree viewer</title>
+    <!-- Reuse the main sidebar tree styling so viewed nodes look exactly like the live outline. -->
+    <link rel="stylesheet" href="../sidebar/sidebar.css" />
+    <link rel="stylesheet" href="./viewer.css" />
+  </head>
+  <body>
+    <svg class="icon-sprite" aria-hidden="true" focusable="false">
+      <symbol id="icon-chevron-right" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6" /></symbol>
+      <symbol id="icon-chevron-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6" /></symbol>
+      <symbol id="icon-import" viewBox="0 0 24 24"><path d="M12 2.5v12" /><path d="m7 9.5 5 5 5-5" /><path d="M5 15v4h14v-4" /></symbol>
+    </svg>
+    <header class="viewer-header">
+      <h1>Exported tree viewer</h1>
+      <p class="viewer-intro">
+        Read-only view of an exported tree. The only action on a node is <strong>Import</strong>,
+        which appends that node and its entire subtree to your current outline as new top-level
+        node(s). Importing never changes the exported file.
+      </p>
+      <div class="viewer-toolbar">
+        <button id="viewer-load" class="viewer-load-button" type="button">Load exported tree…</button>
+        <input
+          id="viewer-file"
+          class="visually-hidden"
+          type="file"
+          accept="application/json,.json,.tree"
+          aria-label="Exported tree file"
+        />
+        <p id="viewer-status" class="viewer-status" role="status" aria-live="polite"></p>
+      </div>
+    </header>
+    <main>
+      <p id="viewer-empty" class="viewer-empty">
+        No tree loaded yet. Choose an exported <code>tabs-outliner-tree-*.json</code> file to begin.
+      </p>
+      <ol id="viewer-tree" class="tree" aria-label="Exported tree"></ol>
+    </main>
+    <script type="module" src="./viewer.js"></script>
+  </body>
+</html>

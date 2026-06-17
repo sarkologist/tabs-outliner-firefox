@@ -111,6 +111,7 @@ import {
   isIncidentLogRequest,
   isInitialTreeSnapshotMessage,
   isInitialTreeSnapshotWindowMessage,
+  isOpenImportViewerWindowMessage,
   isOpenSidebarWindowMessage,
   isPerformanceTraceMessage,
   isSidebarNonEditInteractionMessage,
@@ -386,6 +387,7 @@ const ORPHAN_SHARD_SWEEP_DELAY_MS = 8000;
 const DIAGNOSTICS_RESULT_TTL_MS = 1000;
 const TOGGLE_SIDEBAR_COMMAND = "toggle-sidebar";
 const SIDEBAR_WINDOW_PATH = "sidebar/sidebar.html";
+const IMPORT_VIEWER_WINDOW_PATH = "viewer/viewer.html";
 
 export function createBackgroundController(options: BackgroundControllerOptions): BackgroundController {
   const { api, now = Date.now } = options;
@@ -1118,6 +1120,10 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
     if (isOpenSidebarWindowMessage(message)) {
       return openSidebarWindow();
+    }
+
+    if (isOpenImportViewerWindowMessage(message)) {
+      return openImportViewerWindow();
     }
 
     if (isExportTreeMessage(message)) {
@@ -2003,12 +2009,16 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     return automaticBackupInFlight;
   }
 
-  async function openSidebarWindow(): Promise<{ ok: true }> {
+  // Open an extension page in its own maximized popup window and track it in
+  // fullSizeOutlinerWindowIds. The window is type:"popup" so getNormalWindows filters it out of
+  // reconciliation, and the in-flight counter keeps its transient focus from being treated as a
+  // real-window focus change. Both the full-size sidebar and the exported-tree viewer use this.
+  async function openTrackedOutlinerPopup(path: string, traceLabel: string): Promise<{ ok: true }> {
     sidebarWindowCreationInFlight += 1;
     try {
-      const windowInfo = await perfTrace.measureAsync("background.sidebarWindow.open", () =>
+      const windowInfo = await perfTrace.measureAsync(traceLabel, () =>
         api.windows.create({
-          url: api.runtime.getURL(SIDEBAR_WINDOW_PATH),
+          url: api.runtime.getURL(path),
           type: "popup",
           state: "maximized",
           focused: true
@@ -2019,6 +2029,14 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     } finally {
       sidebarWindowCreationInFlight = Math.max(0, sidebarWindowCreationInFlight - 1);
     }
+  }
+
+  function openSidebarWindow(): Promise<{ ok: true }> {
+    return openTrackedOutlinerPopup(SIDEBAR_WINDOW_PATH, "background.sidebarWindow.open");
+  }
+
+  function openImportViewerWindow(): Promise<{ ok: true }> {
+    return openTrackedOutlinerPopup(IMPORT_VIEWER_WINDOW_PATH, "background.importViewerWindow.open");
   }
 
   async function exportPortableTreeFromBackground(): Promise<ExportTreeResponse> {

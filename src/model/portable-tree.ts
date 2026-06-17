@@ -69,14 +69,16 @@ export function portableTreeBackupFilename(date = new Date()): string {
   return `${PORTABLE_TREE_BACKUP_DIRECTORY}/${portableTreeFilename(date)}`;
 }
 
-export function appendPortableTree(
-  state: OutlineState,
-  payload: unknown,
-  clock: Clock
-): OutlineState {
+// Shared prologue for the two import entry points: parse + validate the payload, bail on an
+// empty import, copy-on-write the state, and build the id-minting context. usedIds is seeded
+// from every existing node id and root id so freshly minted ids can never collide (the
+// correctness guarantee both importers rely on). Returns undefined when there is nothing to add.
+type PortableAppendStart = { tree: ImportTree; next: OutlineState; context: AppendContext };
+
+function beginPortableAppend(state: OutlineState, payload: unknown, clock: Clock): PortableAppendStart | undefined {
   const tree = parseImportTree(payload);
   if (tree.roots.length === 0) {
-    return state;
+    return undefined;
   }
 
   const next = copyStateForAppend(state);
@@ -85,6 +87,20 @@ export function appendPortableTree(
     nextIdIndex: 0,
     usedIds: new Set([...Object.keys(next.nodes), ...next.rootIds])
   };
+
+  return { tree, next, context };
+}
+
+export function appendPortableTree(
+  state: OutlineState,
+  payload: unknown,
+  clock: Clock
+): OutlineState {
+  const start = beginPortableAppend(state, payload, clock);
+  if (!start) {
+    return state;
+  }
+  const { tree, next, context } = start;
 
   const importGroupId = nextPortableNodeId("window", context);
   const importGroup: OutlineNode = {
@@ -107,6 +123,35 @@ export function appendPortableTree(
   }
 
   return next;
+}
+
+// Append each parsed root as its own NEW top-level node (with its entire subtree), minting
+// fresh ids and leaving existing nodes/roots untouched. Unlike appendPortableTree this does
+// not wrap the import in a synthetic group node: the selected node itself becomes top-level.
+// Importing the same payload again always creates independent new nodes (no merge, no dedupe);
+// usedIds carries every existing id so a repeated import at the same clock value cannot collide.
+export function appendPortableSubtreesAtTopLevel(
+  state: OutlineState,
+  payload: unknown,
+  clock: Clock
+): OutlineState {
+  const start = beginPortableAppend(state, payload, clock);
+  if (!start) {
+    return state;
+  }
+  const { tree, next, context } = start;
+
+  for (const root of tree.roots) {
+    next.rootIds.push(appendPortableNode(next, root, undefined, context));
+  }
+
+  return next;
+}
+
+// Parse an exported-tree payload (portable or legacy Chrome Tab Outliner format) into the
+// normalized renderable roots a read-only viewer can display without touching outline state.
+export function parsePortableImport(payload: unknown): PortableTreeNode[] {
+  return parseImportTree(payload).roots;
 }
 
 function portableNodesFromOutline(state: OutlineState, node: OutlineNode): PortableTreeNode[] {

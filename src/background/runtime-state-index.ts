@@ -393,6 +393,7 @@ export function runtimeIndexCandidateNodeIdsForCommand(
       });
 
     case "importTree":
+    case "importSubtreeToTopLevel":
       return undefined;
 
     case "getState":

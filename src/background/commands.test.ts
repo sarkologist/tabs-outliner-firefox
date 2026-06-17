@@ -1955,6 +1955,44 @@ describe("background commands", () => {
     });
   });
 
+  it("imports a subtree to top level as new root node(s) without an import-group wrapper", async () => {
+    const state: OutlineState = bootstrapFromWindows(runtimeWindows, { now: 1000 });
+    const adapter = fakeAdapter();
+
+    const result = await runCommand(state, adapter, {
+      type: "importSubtreeToTopLevel",
+      tree: {
+        schema: PORTABLE_TREE_SCHEMA,
+        version: 1,
+        exportedAt: "2026-05-16T12:00:00.000Z",
+        roots: [
+          {
+            kind: "window",
+            title: "Imported Window",
+            children: [
+              { kind: "tab", title: "Imported Tab", url: "https://imported.example/", children: [] }
+            ]
+          }
+        ]
+      }
+    });
+
+    expect(adapter.createTab).not.toHaveBeenCalled();
+    expect(adapter.createWindow).not.toHaveBeenCalled();
+    expect(adapter.moveTabs).not.toHaveBeenCalled();
+    expect(result.changed).toBe(true);
+
+    const importedWindow = Object.values(result.state.nodes).find((node) => node.title === "Imported Window");
+    const importedTab = Object.values(result.state.nodes).find((node) => node.title === "Imported Tab");
+    // The imported window is itself a new top-level root — not nested under a wrapper group.
+    expect(importedWindow?.parentId).toBeUndefined();
+    expect(result.state.rootIds).toContain(importedWindow?.id);
+    expect(result.state.rootIds.slice(0, state.rootIds.length)).toEqual(state.rootIds);
+    expect(importedWindow?.status).toBe("closed");
+    expect(importedTab?.parentId).toBe(importedWindow?.id);
+    expect(importedTab?.restore).toEqual({ url: "https://imported.example/", title: "Imported Tab" });
+  });
+
   it("keeps a restored imported subgroup attached to its parent group", async () => {
     const state: OutlineState = bootstrapFromWindows(runtimeWindows, { now: 1000 });
     const adapter = fakeAdapter();
@@ -3805,6 +3843,7 @@ describe("command type classification", () => {
     expandAncestors: false,
     renameGroup: false,
     importTree: true,
+    importSubtreeToTopLevel: true,
     undo: false,
     redo: false,
     getHistoryStatus: false,
@@ -3829,6 +3868,7 @@ describe("command type classification", () => {
     expandAncestors: true,
     renameGroup: true,
     importTree: true,
+    importSubtreeToTopLevel: true,
     undo: false,
     redo: false,
     getHistoryStatus: false,

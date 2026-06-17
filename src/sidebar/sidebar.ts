@@ -115,6 +115,7 @@ const exportTree = document.querySelector<HTMLButtonElement>("#export-tree");
 const importTree = document.querySelector<HTMLButtonElement>("#import-tree");
 const importTreeFile = document.querySelector<HTMLInputElement>("#import-tree-file");
 const openSidebarWindow = document.querySelector<HTMLButtonElement>("#open-sidebar-window");
+const openImportViewer = document.querySelector<HTMLButtonElement>("#open-import-viewer");
 const rootDropSurface = document.querySelector<HTMLElement>("main");
 const tree = document.querySelector<HTMLElement>("#tree");
 const empty = document.querySelector<HTMLElement>("#empty");
@@ -307,6 +308,10 @@ type OpenSidebarWindowRequest = {
   type: "openSidebarWindow";
 };
 
+type OpenImportViewerWindowRequest = {
+  type: "openImportViewerWindow";
+};
+
 type ExportTreeRequest = {
   type: "exportTree";
 };
@@ -442,6 +447,10 @@ openOptions?.addEventListener("click", () => {
 
 openSidebarWindow?.addEventListener("click", () => {
   void openFullSizeSidebarWindow();
+});
+
+openImportViewer?.addEventListener("click", () => {
+  void openImportViewerWindow();
 });
 
 rootDropSurface?.addEventListener("dragover", (event) => {
@@ -5193,6 +5202,14 @@ async function openFullSizeSidebarWindow(): Promise<void> {
   }
 }
 
+async function openImportViewerWindow(): Promise<void> {
+  try {
+    await sendCommand({ type: "openImportViewerWindow" });
+  } catch (error) {
+    diagnosticsNotice.show(commandErrorText(error), { error: true });
+  }
+}
+
 async function sendCommand(
   command:
     | BackgroundCommand
@@ -5200,6 +5217,7 @@ async function sendCommand(
     | InitialTreeSnapshotWindowRequest
     | TreeProjectionSliceRequest
     | OpenSidebarWindowRequest
+    | OpenImportViewerWindowRequest
     | ExportTreeRequest
 ): Promise<unknown> {
   const response = await perfTrace.measureAsync("sidebar.command", { command: command.type }, () =>

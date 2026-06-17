@@ -41,6 +41,10 @@ export type OpenSidebarWindowMessage = {
   type: "openSidebarWindow";
 };
 
+export type OpenImportViewerWindowMessage = {
+  type: "openImportViewerWindow";
+};
+
 export type ExportTreeMessage = {
   type: "exportTree";
 };
@@ -99,6 +103,14 @@ export function isOpenSidebarWindowMessage(message: unknown): message is OpenSid
     message &&
       typeof message === "object" &&
       (message as { type?: unknown }).type === "openSidebarWindow"
+  );
+}
+
+export function isOpenImportViewerWindowMessage(message: unknown): message is OpenImportViewerWindowMessage {
+  return Boolean(
+    message &&
+      typeof message === "object" &&
+      (message as { type?: unknown }).type === "openImportViewerWindow"
   );
 }
 

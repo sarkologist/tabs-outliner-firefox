@@ -1,0 +1,78 @@
+/* The exported-tree viewer reuses sidebar.css for the tree rows so viewed nodes look exactly
+   like the live outline (same row height, icons, twisty, title, hover-revealed actions). These
+   rules add only the page chrome (header/toolbar) and the overrides needed to render the tree in
+   normal document flow instead of the sidebar's virtual-scroll absolute positioning. */
+
+.viewer-header {
+  flex: 0 0 auto;
+  padding: 12px 14px;
+  border-bottom: 1px solid color-mix(in srgb, CanvasText 18%, transparent);
+}
+
+.viewer-header h1 {
+  margin: 0 0 4px;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.viewer-intro {
+  margin: 0 0 10px;
+  max-width: 760px;
+  color: color-mix(in srgb, CanvasText 62%, transparent);
+}
+
+.viewer-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px;
+}
+
+.viewer-load-button {
+  font: inherit;
+  padding: 6px 14px;
+  border: 1px solid Highlight;
+  border-radius: 6px;
+  background: color-mix(in srgb, Highlight 12%, Canvas);
+  color: inherit;
+  cursor: pointer;
+}
+
+.viewer-load-button:hover {
+  background: color-mix(in srgb, Highlight 20%, Canvas);
+}
+
+.viewer-load-button:focus-visible {
+  outline: 2px solid Highlight;
+  outline-offset: 1px;
+}
+
+.viewer-status {
+  margin: 0;
+  color: color-mix(in srgb, CanvasText 62%, transparent);
+}
+
+.viewer-status.is-error {
+  color: color-mix(in srgb, #d23 78%, CanvasText);
+}
+
+.viewer-empty {
+  margin: 20px 14px;
+  color: color-mix(in srgb, CanvasText 60%, transparent);
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* The viewer virtualizes exactly like the main tree: sidebar.css already gives .tree
+   position:relative and .node position:absolute, and viewer.ts sizes #viewer-tree to the full
+   row count and positions each rendered row by translateY(index). No positioning override here. */
