@@ -1,0 +1,24 @@
+# Build output / generated / vendored — never format
+dist/
+coverage/
+test-results/
+playwright-report/
+web-ext-artifacts/
+.cache/
+node_modules/
+oracle/
+public/
+
+# Lockfile + workspace manifests (tool-owned formatting)
+pnpm-lock.yaml
+
+# Local profiling exports + portable-tree dumps (huge data blobs)
+/tabs-outliner-profile-*.json
+/tabs-outliner-tree-*.json
+
+# Large generated/data fixtures (not hand-edited source)
+src/perf/fixtures/
+
+# Knowledge-base docs are prose, not code: reflowing them would create a huge,
+# blame-polluting diff for no functional gain. Format code, not the manual.
+*.md
