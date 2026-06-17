@@ -21,8 +21,10 @@ as input — no new format.
 - The viewer **reuses `sidebar.css`** and the same node-row markup
   (`.node` / `.node-row` / twisty / `.node-title` / hover-revealed `.node-actions`), so a viewed
   node looks exactly like a node in the live outline — the only difference is that the single
-  available row action is **Import**. It renders every visible row in normal flow (no virtual
-  scrolling), which is fine for a read-only viewer of typical exports.
+  available row action is **Import**. It **virtualizes** the same way the main tree does (only
+  the viewport slice of rows is in the DOM, absolutely positioned by `translateY(index)`), so it
+  stays smooth on large exports — e.g. a 24k-node tree renders in ~200 ms with ~40 DOM rows
+  instead of ~3 s with 24k rows.
 
 ## Read-only contract
 

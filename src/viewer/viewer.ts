@@ -18,9 +18,16 @@ const SVG_NS = "http://www.w3.org/2000/svg";
 
 const fileInput = document.querySelector<HTMLInputElement>("#viewer-file");
 const loadButton = document.querySelector<HTMLButtonElement>("#viewer-load");
+const scrollHost = document.querySelector<HTMLElement>("main");
 const treeContainer = document.querySelector<HTMLOListElement>("#viewer-tree");
 const statusLine = document.querySelector<HTMLElement>("#viewer-status");
 const emptyState = document.querySelector<HTMLElement>("#viewer-empty");
+
+// Row height (the sidebar's --node-row-height) — every row is one fixed-height line, which is
+// what lets the viewer virtualize the same way the main tree does.
+const ROW_HEIGHT =
+  parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--node-row-height")) || 18;
+const OVERSCAN_ROWS = 8;
 
 // Portable nodes carry no id or collapse state, so the viewer wraps them: a stable path id (for
 // selectors/debugging), the depth (for the same indentation the sidebar uses), and per-node
@@ -34,6 +41,13 @@ type ViewerNode = {
 };
 
 let roots: ViewerNode[] = [];
+// The flat list of currently-visible rows (a collapse-respecting DFS), and the viewport slice of
+// it that is actually in the DOM. Only the slice is materialized — exactly like the main tree's
+// virtual scroller — so cost is O(viewport), not O(tree), on load, scroll, and expand/collapse.
+let visible: ViewerNode[] = [];
+let renderedStart = -1;
+let renderedEnd = -1;
+let scrollScheduled = false;
 
 registerEvents();
 renderTree();
@@ -45,6 +59,21 @@ function registerEvents(): void {
   fileInput?.addEventListener("change", () => {
     void loadSelectedFile();
   });
+  scrollHost?.addEventListener(
+    "scroll",
+    () => {
+      if (scrollScheduled) {
+        return;
+      }
+      scrollScheduled = true;
+      requestAnimationFrame(() => {
+        scrollScheduled = false;
+        renderViewport();
+      });
+    },
+    { passive: true }
+  );
+  window.addEventListener("resize", () => renderViewport(true));
 }
 
 async function loadSelectedFile(): Promise<void> {
@@ -99,16 +128,44 @@ function visibleRows(): ViewerNode[] {
   return rows;
 }
 
+// Recompute the visible-row list and repaint the viewport. Called on load and on every
+// expand/collapse. Recomputing the flat list is O(tree) array bookkeeping (no DOM); only the
+// viewport slice touches the DOM.
 function renderTree(): void {
-  if (treeContainer) {
-    treeContainer.replaceChildren(...visibleRows().map(renderRow));
-  }
+  visible = visibleRows();
   if (emptyState) {
     emptyState.hidden = roots.length > 0;
   }
+  renderViewport(true);
 }
 
-function renderRow(viewerNode: ViewerNode): HTMLLIElement {
+// Materialize only the rows in (or near) the viewport. The container is sized to the full row
+// count so the scrollbar is honest, and each row is absolutely positioned by its global index —
+// the same virtual-scroll technique the main sidebar uses (sidebar.css already positions .node).
+function renderViewport(force = false): void {
+  if (!treeContainer) {
+    return;
+  }
+  treeContainer.style.height = `${visible.length * ROW_HEIGHT}px`;
+
+  const scrollTop = scrollHost?.scrollTop ?? 0;
+  const viewportHeight = scrollHost?.clientHeight || window.innerHeight;
+  const start = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN_ROWS);
+  const end = Math.min(visible.length, Math.ceil((scrollTop + viewportHeight) / ROW_HEIGHT) + OVERSCAN_ROWS);
+  if (!force && start === renderedStart && end === renderedEnd) {
+    return;
+  }
+  renderedStart = start;
+  renderedEnd = end;
+
+  const rows: HTMLLIElement[] = [];
+  for (let index = start; index < end; index += 1) {
+    rows.push(renderRow(visible[index]!, index));
+  }
+  treeContainer.replaceChildren(...rows);
+}
+
+function renderRow(viewerNode: ViewerNode, index: number): HTMLLIElement {
   const node = viewerNode.node;
   const label = nodeLabel(node);
   const hasChildren = viewerNode.children.length > 0;
@@ -123,6 +180,7 @@ function renderRow(viewerNode: ViewerNode): HTMLLIElement {
   if (hasChildren) {
     item.setAttribute("aria-expanded", String(!viewerNode.collapsed));
   }
+  item.style.transform = `translateY(${index * ROW_HEIGHT}px)`;
 
   const row = document.createElement("div");
   row.className = "node-row";

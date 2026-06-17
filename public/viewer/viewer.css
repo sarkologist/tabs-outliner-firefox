@@ -73,12 +73,6 @@
   border: 0;
 }
 
-/* Render the tree top-to-bottom in normal flow. The sidebar absolutely positions each .node by
-   row index for virtual scrolling; the viewer renders every visible row and lets them stack. */
-#viewer-tree.tree {
-  position: static;
-}
-
-#viewer-tree .node {
-  position: static;
-}
+/* The viewer virtualizes exactly like the main tree: sidebar.css already gives .tree
+   position:relative and .node position:absolute, and viewer.ts sizes #viewer-tree to the full
+   row count and positions each rendered row by translateY(index). No positioning override here. */

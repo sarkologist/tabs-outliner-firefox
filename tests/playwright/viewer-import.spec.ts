@@ -99,6 +99,44 @@ test.describe("exported-tree viewer", () => {
     expect(viewer.issues).toEqual([]);
   });
 
+  test("virtualizes a large tree: bounded DOM, scrolling reveals deeper rows", async ({ page }) => {
+    const harness = createHarness(runtimeFixture(1, ["Alpha"]));
+    const viewer = await loadViewer(harness, page);
+
+    // ~2k visible rows (default-expanded). The main tree stays smooth at this size by rendering
+    // only the viewport; the viewer must too.
+    const big = {
+      schema: PORTABLE_TREE_SCHEMA,
+      version: 1,
+      exportedAt: "2026-06-17T00:00:00.000Z",
+      roots: Array.from({ length: 40 }, (_value, r) => ({
+        kind: "window",
+        title: `Window ${r}`,
+        children: Array.from({ length: 50 }, (_v, t) => ({
+          kind: "tab",
+          title: `Tab ${r}.${t}`,
+          url: `https://example.test/${r}/${t}`,
+          children: []
+        }))
+      }))
+    };
+    await loadExport(page, big);
+
+    // Only the viewport slice is materialized — not all ~2040 nodes.
+    const rendered = await page.locator("#viewer-tree .node").count();
+    expect(rendered).toBeGreaterThan(0);
+    expect(rendered).toBeLessThan(150);
+
+    // The last row is far below the fold; scrolling to the bottom reveals it (virtual scroll).
+    await expect(page.getByText("Tab 39.49", { exact: true })).toHaveCount(0);
+    await page.locator("main").evaluate((host) => {
+      host.scrollTop = host.scrollHeight;
+    });
+    await expect(page.getByText("Tab 39.49", { exact: true })).toBeVisible();
+
+    expect(viewer.issues).toEqual([]);
+  });
+
   test("opens the read-only viewer as its own popup window from the background", async () => {
     const harness = createHarness(runtimeFixture(1, ["Alpha"]));
 
