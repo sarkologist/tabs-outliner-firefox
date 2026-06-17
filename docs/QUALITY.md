@@ -23,7 +23,9 @@ it when you improve a metric; raise it only as a deliberate, reviewed acknowledg
 Large production files (grandfathered into `allowedLargeFiles`; trending down via
 decomposition — see [controller map](controller-factory-map.md) and
 [sidebar map](sidebar-map.md)): `background/controller.ts`, `sidebar/sidebar.ts`,
-`model/outline.ts`, `background/runtime-facts.ts`, `background/commands.ts`.
+`model/outline.ts`, `background/runtime-facts.ts`, `background/commands.ts`, and
+`sidebar/visible-tree.ts` (the last crossed the 1500-line threshold via the one-time
+Prettier reformat's line-wrapping, not new logic).
 
 ## Paying down
 

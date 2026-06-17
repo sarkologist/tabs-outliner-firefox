@@ -8,6 +8,7 @@
     "sidebar/sidebar.ts",
     "model/outline.ts",
     "background/runtime-facts.ts",
-    "background/commands.ts"
+    "background/commands.ts",
+    "sidebar/visible-tree.ts"
   ]
 }
