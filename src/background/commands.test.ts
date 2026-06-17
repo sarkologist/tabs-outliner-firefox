@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { BrowserAdapter } from "./adapter.js";
-import { isBackgroundCommand, runCommand, syncBrowserOrder } from "./commands.js";
+import { BACKGROUND_COMMAND_TYPES, isBackgroundCommand, isStructuralCommand, runCommand, syncBrowserOrder } from "./commands.js";
 import type { BackgroundCommand, RestoreCreateAttempt } from "./commands.js";
+import { isTrackableHistoryCommandType } from "./history.js";
 import {
   LARGE_RESTORE_NODE_THRESHOLD,
   bootstrapFromWindows,
@@ -3776,5 +3777,81 @@ describe("background commands", () => {
     expect(adapter.createTab).not.toHaveBeenCalled();
     expect(adapter.createWindow).not.toHaveBeenCalled();
     expect(adapter.moveTabs).not.toHaveBeenCalled();
+  });
+});
+
+describe("command type classification", () => {
+  // Expected classifications are transcribed *independently* from the pre-refactor predicates,
+  // so a fat-fingered entry in the production tables (commands.ts `STRUCTURAL_COMMAND_TYPES`,
+  // history.ts `TRACKABLE_HISTORY_COMMAND_TYPES`) is caught here and an accidental future
+  // reclassification fails loudly. `satisfies Record<BackgroundCommand["type"], boolean>` forces
+  // a decision for every command type, so adding a command without updating these maps is a
+  // compile error too — the same exhaustiveness guarantee the production tables now carry.
+  const expectedStructural = {
+    getState: false,
+    focusNode: false,
+    closeNode: false,
+    restoreNode: true,
+    analyzeRestoreScope: false,
+    deleteNode: true,
+    moveNode: true,
+    moveNodeToNewWindow: true,
+    wrapNodeInGroup: true,
+    moveSubtreeToTopLevel: true,
+    moveSubtreeToBottomTopLevel: true,
+    flattenSubtree: true,
+    promoteChildren: true,
+    toggleCollapsed: false,
+    expandAncestors: false,
+    renameGroup: false,
+    importTree: true,
+    undo: false,
+    redo: false,
+    getHistoryStatus: false,
+    refresh: false
+  } satisfies Record<BackgroundCommand["type"], boolean>;
+
+  const expectedTrackable = {
+    getState: false,
+    focusNode: false,
+    closeNode: false,
+    restoreNode: false,
+    analyzeRestoreScope: false,
+    deleteNode: true,
+    moveNode: true,
+    moveNodeToNewWindow: true,
+    wrapNodeInGroup: true,
+    moveSubtreeToTopLevel: true,
+    moveSubtreeToBottomTopLevel: true,
+    flattenSubtree: true,
+    promoteChildren: true,
+    toggleCollapsed: true,
+    expandAncestors: true,
+    renameGroup: true,
+    importTree: true,
+    undo: false,
+    redo: false,
+    getHistoryStatus: false,
+    refresh: false
+  } satisfies Record<BackgroundCommand["type"], boolean>;
+
+  it("classifies every BackgroundCommand type as structural or not", () => {
+    for (const type of BACKGROUND_COMMAND_TYPES) {
+      expect(isStructuralCommand(type)).toBe(expectedStructural[type]);
+    }
+  });
+
+  it("classifies every BackgroundCommand type as history-trackable or not", () => {
+    for (const type of BACKGROUND_COMMAND_TYPES) {
+      expect(isTrackableHistoryCommandType(type)).toBe(expectedTrackable[type]);
+    }
+  });
+
+  it("rejects non-command values as history-trackable (persisted-data guard)", () => {
+    // The guard also validates deserialized history entries, so it must reject arbitrary
+    // strings and non-strings, not only mis-classify within the known command union.
+    expect(isTrackableHistoryCommandType("frobnicate")).toBe(false);
+    expect(isTrackableHistoryCommandType(undefined)).toBe(false);
+    expect(isTrackableHistoryCommandType(123)).toBe(false);
   });
 });

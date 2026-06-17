@@ -194,6 +194,40 @@ export function isBackgroundCommand(message: unknown): message is BackgroundComm
   return typeof type === "string" && BACKGROUND_COMMAND_TYPE_SET.has(type);
 }
 
+// Structural commands change the outline's *shape* (placement or existence of nodes) rather
+// than only metadata. They take the faster "interaction" save schedule and allow the
+// deferred-placement checkpoint (see `saveScheduleForCommand` / `allowDeferredPlacementCheckpoint`
+// in the controller). Keyed by command type and checked with
+// `satisfies Record<BackgroundCommand["type"], boolean>`, so adding a `BackgroundCommand`
+// without classifying it here is a COMPILE error — never a silent "treated as non-structural".
+const STRUCTURAL_COMMAND_TYPES = {
+  getState: false,
+  focusNode: false,
+  closeNode: false,
+  restoreNode: true,
+  analyzeRestoreScope: false,
+  deleteNode: true,
+  moveNode: true,
+  moveNodeToNewWindow: true,
+  wrapNodeInGroup: true,
+  moveSubtreeToTopLevel: true,
+  moveSubtreeToBottomTopLevel: true,
+  flattenSubtree: true,
+  promoteChildren: true,
+  toggleCollapsed: false,
+  expandAncestors: false,
+  renameGroup: false,
+  importTree: true,
+  undo: false,
+  redo: false,
+  getHistoryStatus: false,
+  refresh: false
+} satisfies Record<BackgroundCommand["type"], boolean>;
+
+export function isStructuralCommand(type: BackgroundCommand["type"]): boolean {
+  return STRUCTURAL_COMMAND_TYPES[type];
+}
+
 export async function runCommand(
   state: OutlineState,
   adapter: BrowserAdapter,

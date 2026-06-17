@@ -395,7 +395,22 @@ export function runtimeIndexCandidateNodeIdsForCommand(
     case "importTree":
       return undefined;
 
+    case "getState":
+    case "focusNode":
+    case "analyzeRestoreScope":
+    case "undo":
+    case "redo":
+    case "getHistoryStatus":
+    case "refresh":
+      // These commands seed no runtime-index candidates: they touch no structural node that
+      // reconciliation must re-key (read-only state, history navigation, or a plain refresh).
+      return [];
+
     default:
+      // Exhaustiveness guard: a newly-added BackgroundCommand type that is not classified
+      // above makes `command` non-`never` here and fails `satisfies never` at compile time,
+      // forcing an explicit decision instead of silently falling through to the [] fallback.
+      command satisfies never;
       return [];
   }
 }

@@ -1,22 +1,50 @@
 import { cloneOutlineNode } from "../model/outline.js";
+import type { BackgroundCommand } from "./commands.js";
 import type { NodeId, OutlineNode, OutlineState } from "../model/types.js";
 import { DEFAULT_UNDO_HISTORY_LIMIT, normalizeUndoHistoryLimit } from "../preferences.js";
 
 export const DEFAULT_HISTORY_LIMIT = DEFAULT_UNDO_HISTORY_LIMIT;
 
-export type TrackableHistoryCommandType =
-  | "moveNode"
-  | "moveNodeToNewWindow"
-  | "wrapNodeInGroup"
-  | "moveSubtreeToTopLevel"
-  | "moveSubtreeToBottomTopLevel"
-  | "flattenSubtree"
-  | "promoteChildren"
-  | "toggleCollapsed"
-  | "expandAncestors"
-  | "renameGroup"
-  | "importTree"
-  | "deleteNode";
+// Single source of truth for which command types produce an undo/redo history entry.
+// `as const satisfies Record<BackgroundCommand["type"], boolean>` makes adding a command a
+// COMPILE error here until it is classified, and the union type, the runtime guard, and the
+// `historyLabel` switch are all derived from this one table — so they can no longer drift
+// apart silently (previously a hand-kept union plus two duplicated OR-chain predicates).
+const TRACKABLE_HISTORY_COMMAND_TYPES = {
+  getState: false,
+  focusNode: false,
+  closeNode: false,
+  restoreNode: false,
+  analyzeRestoreScope: false,
+  deleteNode: true,
+  moveNode: true,
+  moveNodeToNewWindow: true,
+  wrapNodeInGroup: true,
+  moveSubtreeToTopLevel: true,
+  moveSubtreeToBottomTopLevel: true,
+  flattenSubtree: true,
+  promoteChildren: true,
+  toggleCollapsed: true,
+  expandAncestors: true,
+  renameGroup: true,
+  importTree: true,
+  undo: false,
+  redo: false,
+  getHistoryStatus: false,
+  refresh: false
+} as const satisfies Record<BackgroundCommand["type"], boolean>;
+
+export type TrackableHistoryCommandType = {
+  [K in keyof typeof TRACKABLE_HISTORY_COMMAND_TYPES]: (typeof TRACKABLE_HISTORY_COMMAND_TYPES)[K] extends true
+    ? K
+    : never;
+}[keyof typeof TRACKABLE_HISTORY_COMMAND_TYPES];
+
+const TRACKABLE_HISTORY_COMMAND_TYPE_SET: ReadonlySet<string> = new Set(
+  Object.entries(TRACKABLE_HISTORY_COMMAND_TYPES)
+    .filter(([, tracked]) => tracked)
+    .map(([type]) => type)
+);
 
 export type OutlineDelta = {
   rootIds: NodeId[];
@@ -305,18 +333,7 @@ function isHistoryEntry(value: unknown): value is HistoryEntry {
 }
 
 export function isTrackableHistoryCommandType(value: unknown): value is TrackableHistoryCommandType {
-  return value === "moveNode" ||
-    value === "moveNodeToNewWindow" ||
-    value === "wrapNodeInGroup" ||
-    value === "moveSubtreeToTopLevel" ||
-    value === "moveSubtreeToBottomTopLevel" ||
-    value === "flattenSubtree" ||
-    value === "promoteChildren" ||
-    value === "toggleCollapsed" ||
-    value === "expandAncestors" ||
-    value === "renameGroup" ||
-    value === "importTree" ||
-    value === "deleteNode";
+  return typeof value === "string" && TRACKABLE_HISTORY_COMMAND_TYPE_SET.has(value);
 }
 
 function isOutlineDelta(value: unknown): value is OutlineDelta {
