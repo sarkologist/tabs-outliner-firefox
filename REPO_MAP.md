@@ -48,6 +48,21 @@ the relevant paths, know which gate covers you:
   storage-migration status, open PRs, and current posture (the context that isn't in
   `main`'s code).
 
+## Task recipes & test harness (last-mile)
+
+The "recipe" layer between ARCHITECTURE's layer model and the source — the exact touch-points
+and harness contract for the most common changes, so the last mile is doc-reading, not
+source-archaeology.
+
+- [docs/adding-a-command.md](docs/adding-a-command.md) — the concrete site list for adding a
+  surface command (mirrors `importTree`), and which sites are compiler-enforced after the
+  exhaustive-classification refactor (add the union variant, then let `tsc` walk you to the
+  rest).
+- [docs/playwright-harness.md](docs/playwright-harness.md) — the sidebar-runtime Playwright
+  harness contract (mandatory for browser coverage): real background controller in-process, a
+  fake runtime, the page-side `window.browser` *subset* (no `windows.create`), and `load()`'s
+  hardcoded sidebar path.
+
 ## Repo health & gardening
 
 - [docs/QUALITY.md](docs/QUALITY.md) — the debt scoreboard: the mechanically-tracked
@@ -98,6 +113,10 @@ Separate from runtime reconciliation; covers how the sidebar projects/hydrates t
   moving the sidebar to a sparse projection client of the background-owned outline. Its
   `Progress` log is frozen at the merge; current health lives in `SIDEBAR_PROJECTION_BUGS.md`
   + the projection perf guard.
+- [docs/known-playwright-failures.md](docs/known-playwright-failures.md) — triage of the two
+  reds in the local `pnpm test:playwright` run: a `sidebar-first-paint` parallel-load flake
+  (known) and a real pre-existing projection regression (`psh-two-sidebars-restored-delete…`,
+  green at `b46d619`, red at `main`; not run by CI). Includes bisect bounds.
 
 ## Reconciliation state-model work (analysis)
 

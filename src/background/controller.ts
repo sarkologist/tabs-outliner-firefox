@@ -26,7 +26,7 @@ import {
 } from "./closed-subtree-guard.js";
 import { computeDiagnostics, type OutlineDiagnostics } from "./diagnostics.js";
 import { appendIncidentLogEntry, loadIncidentLog, type IncidentLogDetail } from "./incident-log.js";
-import { isBackgroundCommand, planCloseNodeRuntimeClose, planLiveSubtreeClose, runCommand, syncBrowserOrder } from "./commands.js";
+import { isBackgroundCommand, isStructuralCommand, planCloseNodeRuntimeClose, planLiveSubtreeClose, runCommand, syncBrowserOrder } from "./commands.js";
 import type { BackgroundCommand, CommandAck, RestoreCreateAttempt, RuntimeClosePlan } from "./commands.js";
 import {
   RuntimeFactLedger,
@@ -179,6 +179,7 @@ import {
   pushRedoEntry,
   pushUndoEntry,
   pushUndoEntryPreservingRedo,
+  isTrackableHistoryCommandType,
   type HistoryState,
   type HistoryEntry,
   type HistoryStatus,
@@ -5691,21 +5692,6 @@ function historyStatusMessage(history: HistoryState): { type: "historyStatus" } 
   };
 }
 
-function isTrackableHistoryCommandType(value: string): value is TrackableHistoryCommandType {
-  return value === "moveNode" ||
-    value === "moveNodeToNewWindow" ||
-    value === "wrapNodeInGroup" ||
-    value === "moveSubtreeToTopLevel" ||
-    value === "moveSubtreeToBottomTopLevel" ||
-    value === "flattenSubtree" ||
-    value === "promoteChildren" ||
-    value === "toggleCollapsed" ||
-    value === "expandAncestors" ||
-    value === "renameGroup" ||
-    value === "importTree" ||
-    value === "deleteNode";
-}
-
 function stateWithClonedNode(state: OutlineState, nodeId: NodeId): OutlineState {
   return stateWithClonedNodes(state, [nodeId]);
 }
@@ -5885,19 +5871,6 @@ function addAncestorNodeIds(
 
 function saveScheduleForCommand(type: BackgroundCommand["type"]): SaveSchedule {
   return isStructuralCommand(type) ? "interaction" : "normal";
-}
-
-function isStructuralCommand(type: BackgroundCommand["type"]): boolean {
-  return type === "moveNode" ||
-    type === "moveNodeToNewWindow" ||
-    type === "restoreNode" ||
-    type === "wrapNodeInGroup" ||
-    type === "moveSubtreeToTopLevel" ||
-    type === "moveSubtreeToBottomTopLevel" ||
-    type === "flattenSubtree" ||
-    type === "promoteChildren" ||
-    type === "deleteNode" ||
-    type === "importTree";
 }
 
 function commandOwnedActiveTabsByWindowId(

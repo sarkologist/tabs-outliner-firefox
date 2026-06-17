@@ -21,5 +21,9 @@ When making any code change in this repository:
 3. **If the working tree is already dirty** with changes you did not just make,
    create a git worktree (`git worktree add <path> -b <branch> main`) and do the
    new work there so it stays isolated from the existing changes.
+4. **Open a pull request for all work.** `main` is protected — direct commits and
+   pushes are blocked — so every branch lands on `main` through a PR. Open one for
+   the work (even small changes); never merge to `main` directly, and merge only
+   when the user is satisfied.
 
 Keep unrelated changes on separate branches and in separate commits.

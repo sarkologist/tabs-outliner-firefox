@@ -258,6 +258,11 @@ function parseCli(argv) {
       options.json = true;
     } else if (arg === "--list") {
       options.list = true;
+    } else if (arg === "--") {
+      // Tolerate the bare argument separator that `pnpm run <script> -- --hard-only`
+      // forwards into argv, so the intuitive wrapper invocation works as well as the
+      // canonical `node scripts/perf-runtime-guard.mjs --hard-only`.
+      continue;
     } else {
       throw new Error(`Unknown argument ${arg}`);
     }
