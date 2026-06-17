@@ -13,13 +13,13 @@ import {
 import { createBrowserAdapter } from "./browser-adapter.js";
 import { createSidebarBroadcaster } from "./sidebar-broadcaster.js";
 import { createMutationScheduler } from "./mutation-scheduler.js";
+import { createDiagnosticsCoordinator } from "./diagnostics-coordinator.js";
 import { outlineStateCountDetail } from "./outline-state-metrics.js";
 import { createPersistenceCoordinator, type SaveSchedule } from "./persistence-coordinator.js";
 import {
   preserveClosedSubtreesAcrossNonDestructiveTransition,
   type ClosedSubtreeGuardResult
 } from "./closed-subtree-guard.js";
-import { computeDiagnostics, type OutlineDiagnostics } from "./diagnostics.js";
 import { appendIncidentLogEntry, loadIncidentLog, type IncidentLogDetail } from "./incident-log.js";
 import { isBackgroundCommand, isStructuralCommand, planCloseNodeRuntimeClose, planLiveSubtreeClose, runCommand, syncBrowserOrder } from "./commands.js";
 import type { BackgroundCommand, CommandAck, RestoreCreateAttempt, RuntimeClosePlan } from "./commands.js";
@@ -362,12 +362,6 @@ const SIDEBAR_PROFILE_COLLECTION_DELAY_MS = 50;
 // Defer the one-time orphaned-shard sweep past startup so first paint, hydration, and early
 // interaction land first; its whole-store read is the same shape as the storage census.
 const ORPHAN_SHARD_SWEEP_DELAY_MS = 8000;
-// Diagnostics are an advisory footer readout (a Firefox-vs-outline tab count), so a brief
-// staleness window is acceptable. Reusing the last result within this window collapses the
-// per-sidebar poll fan-out (3 sidebars re-arm after every command) into at most one
-// scheduler-idle wait + browser-window query per window, keeping diagnostics off the
-// single background thread's critical path while a command is in flight.
-const DIAGNOSTICS_RESULT_TTL_MS = 1000;
 const TOGGLE_SIDEBAR_COMMAND = "toggle-sidebar";
 const SIDEBAR_WINDOW_PATH = "sidebar/sidebar.html";
 const IMPORT_VIEWER_WINDOW_PATH = "viewer/viewer.html";
@@ -425,16 +419,8 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     completedTabIds: Set<number>;
     completedWindowIds: Set<number>;
   }>();
-  let diagnosticsInFlight: Promise<OutlineDiagnostics> | undefined;
-  let lastDiagnostics: { value: OutlineDiagnostics; atMs: number } | undefined;
   let storageCensusInFlight = false;
   let orphanShardSweepScheduled = false;
-  // Runtime-window snapshot reused by diagnostics so getNormalWindows (a browser
-  // windows.getAll + tabs.query that cost up to ~2.5s on a large session, and contend with
-  // the storage writes a delete triggers) runs only after a real tab/window event changes
-  // browser state, not on every poll. Both this and lastDiagnostics are cleared in
-  // queueRuntimeRefresh/queueRuntimeActivation when any runtime event is observed.
-  let diagnosticsRuntimeWindows: RuntimeWindow[] | undefined;
   let automaticBackupInFlight: Promise<AutomaticBackupStatus> | undefined;
   let sidebarProfileRequestSequence = 0;
   let sidebarWindowCreationInFlight = 0;
@@ -485,6 +471,15 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     createAndInitJournal,
     adoptLoadedV4Snapshot
   } = persistence;
+
+  const diagnostics = createDiagnosticsCoordinator({
+    api,
+    perfTrace,
+    now,
+    ensureState,
+    waitForSchedulerIdle,
+    isHighPrioritySchedulerIdle
+  });
 
   api.runtime.onInstalled.addListener(() => {
     return initializeExtensionLifecycle().catch((error) => {
@@ -1080,7 +1075,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     }
 
     if (isDiagnosticsRequest(message)) {
-      return getDiagnosticsCoalesced();
+      return diagnostics.getReadout();
     }
 
     if (isIncidentLogRequest(message)) {
@@ -2482,9 +2477,9 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     // windows.getAll on the startup-critical path -- a call that costs several seconds under the load
     // of the startup request burst (profiled at ~6s, vs ~70ms for the same call run calm) and blocks
     // getState/hydration behind it. With the snapshot seeded, the first poll recomputes without a
-    // fetch; runtime events clear+refresh it as before. (We deliberately do NOT also precompute
-    // lastDiagnostics here -- that would add a second startup node-table traversal.)
-    diagnosticsRuntimeWindows = windows;
+    // fetch; runtime events clear+refresh it as before. (We deliberately seed only the window
+    // snapshot, not the cached readout -- that would add a second startup node-table traversal.)
+    diagnostics.seedRuntimeWindows(windows);
     return state;
   }
 
@@ -3635,7 +3630,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   }
 
   function queueRuntimeRefresh(eventTabs: RuntimeTabEvidence[] = [], options: RefreshOptions = {}): Promise<boolean> {
-    invalidateDiagnosticsRuntimeCache();
+    diagnostics.invalidateRuntimeCache();
     const requestedCloseMissing = options.closeMissing ?? eventTabs.length === 0;
     const pending = pendingRuntimeRefresh ?? createPendingRuntimeRefresh();
     pendingRuntimeRefresh = pending;
@@ -3655,7 +3650,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   }
 
   function queueRuntimeActivation(activeInfo: { tabId: number; windowId: number }): Promise<boolean> {
-    invalidateDiagnosticsRuntimeCache();
+    diagnostics.invalidateRuntimeCache();
     const pendingTab = pendingRuntimeRefresh?.eventTabsById.get(activeInfo.tabId);
     if (pendingRuntimeRefresh && pendingTab) {
       pendingRuntimeRefresh.activationByWindowId.set(activeInfo.windowId, activeInfo.tabId);
@@ -5302,40 +5297,6 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         message: errorText(error)
       });
     }
-  }
-
-  // A runtime tab/window event can change the live tab set the diagnostics readout counts,
-  // so drop both the cached result and the cached window snapshot; the next poll recomputes
-  // from a fresh browser query. Between events the snapshot is reused (no getNormalWindows).
-  function invalidateDiagnosticsRuntimeCache(): void {
-    lastDiagnostics = undefined;
-    diagnosticsRuntimeWindows = undefined;
-  }
-
-  function getDiagnosticsCoalesced(): Promise<OutlineDiagnostics> {
-    // Serve the cached readout when it is still fresh, OR whenever a command (high-priority
-    // mutation) is queued or running: diagnostics await scheduler idle and then query the
-    // browser for live windows, so recomputing here would pile a scheduler-idle wait plus a
-    // browser-window query onto the single background thread right when the user is mid-edit.
-    // The readout is advisory; the next poll after the command settles refreshes it.
-    const cached = lastDiagnostics;
-    if (cached && (now() - cached.atMs < DIAGNOSTICS_RESULT_TTL_MS || !isHighPrioritySchedulerIdle())) {
-      return Promise.resolve(cached.value);
-    }
-    diagnosticsInFlight ??= perfTrace.measureAsync("background.diagnostics", async () => {
-      await perfTrace.measureAsync("background.diagnostics.waitForIdle", () => waitForSchedulerIdle());
-      const state = await ensureState();
-      const windows = await perfTrace.measureAsync("background.diagnostics.getWindows", async () => {
-        diagnosticsRuntimeWindows ??= await getNormalWindows(api);
-        return diagnosticsRuntimeWindows;
-      });
-      const value = computeDiagnostics(state, windows);
-      lastDiagnostics = { value, atMs: now() };
-      return value;
-    }).finally(() => {
-      diagnosticsInFlight = undefined;
-    });
-    return diagnosticsInFlight;
   }
 
   async function applyStoredPerformanceTracePreference(): Promise<void> {

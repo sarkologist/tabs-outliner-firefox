@@ -89,3 +89,43 @@ are and where they live; §3 says which 3 can be lifted out safely and which cor
 developer can now navigate the factory by sub-system, and the first safe extraction
 (`SidebarBroadcaster`) is a ~120-line, single-state-slice move with the test net as backstop —
 exactly the low-risk shape Track A proved five times.
+
+## 5. Execution log + remaining seams (what's done, what's left)
+
+**Done and on `main` (the §3 roadmap is fully delivered):**
+
+1. `SidebarBroadcaster` (`sidebar-broadcaster.ts`) — broadcast/port transport (#9). Owns `sidebarPorts`.
+2. `MutationScheduler` (`mutation-scheduler.ts`) + `PersistenceCoordinator` (`persistence-coordinator.ts`)
+   — the scheduler queues and the save-engine + outline-journal + v4-snapshot state (#2/#8).
+3. Per-command post-processing collapsed to an **in-factory `commandFinalizers` table** (#3). The
+   optional further *module-lift* of that table was **declined**: it owns no state slice and would need
+   a ~12-dep glue interface — a worse cost/benefit than the stateful cuts above.
+
+**Added beyond the original roadmap — `DiagnosticsCoordinator` (`diagnostics-coordinator.ts`):** the
+cached, advisory diagnostics **readout** — a leaf cluster the §1 table ranked lowest-entanglement
+("Perf tracing … `diagnosticsInFlight`"). Owns the 3 readout vars (`diagnosticsInFlight`,
+`lastDiagnostics`, `diagnosticsRuntimeWindows`) + `DIAGNOSTICS_RESULT_TTL_MS`. Public surface
+`getReadout` / `invalidateRuntimeCache` / `seedRuntimeWindows`; 6 injected deps (`api`, `perfTrace`,
+`now`, `ensureState`, the two scheduler-idle predicates). 4 call sites (1 read, 1 boot seed, 2
+runtime-refresh invalidations). Behaviour-preserving verbatim move; `controller.test.ts` unmodified;
+new `diagnostics-coordinator.test.ts` locks the cache/seed/invalidate/coalesce contract. It only
+*reads* canonical state via `ensureState` and never mutates the outline — genuinely disjoint from the
+state triad.
+
+**Remaining seams — honest disposition (diminishing returns from here):**
+
+| Cluster | Verdict | Why |
+|---|---|---|
+| `automaticBackupInFlight` + `handleAutomaticBackupAlarm` | **Next safe leaf cut** (`BackupCoordinator`) | Fire-and-forget, ~1 var, low coupling. Same proven shape as `DiagnosticsCoordinator`, smaller. |
+| Storage maintenance: `storageCensusInFlight`, `orphanShardSweepScheduled` (+ `recordStorageCensus`/`*OrphanShardSweep`) | **Possible leaf cut** | Fire-and-forget storage hygiene; deps differ from the readout (`recordIncidentLog`, `shardStore`, census/sweep helpers), so kept separate from `DiagnosticsCoordinator` to preserve cohesion. |
+| History (`historyState`/`historyLoadInFlight`/`historyWarmupTimer`) | **Entangled — weigh later** | The load/warmup state is separable, but `applyHistoryCommand` advances the canonical state through `installStateTransition` (the core). A `HistoryCoordinator` could own load/warmup only; the command path stays. |
+| Sidebar window/profile (`sidebarWindowCreationInFlight`, `fullSizeOutlinerWindowIds`, profile-collection vars) | **Wider seam** | Not one concept: `fullSizeOutlinerWindowIds` is read by the browser event handlers (#3); profile collection is its own thing. Partial cuts only. |
+| Runtime-refresh coalescing (`pendingRuntimeRefresh`, `sessionChangedQueued`, …) + the refresh orchestrator (#5) | **Near-core — leave** | Cohesive ("make state match observed runtime") but it *reconciles into* the canonical state via `installStateTransition`. Extracting it is the reconciler rewrite already ruled out (`reconciliation-state-model.md`: complexity is substantially essential). |
+| State triad + `runtimeFacts` + `installStateTransition` + command-exec (#4) + lifecycle recovery (#2) | **Irreducible core — leave** | The §3 verdict; the clean-room rewrite we declined. |
+
+**Bottom line:** after `DiagnosticsCoordinator`, the cheap state-owning leaf cuts left are
+`BackupCoordinator` and the storage-maintenance pair — each removes ~1–2 vars from the bus in the same
+low-risk shape. Beyond those, what remains is either the irreducible reconciliation/command core or
+wider/entangled seams; the line of diminishing returns is close. Fear-reduction here comes from named,
+disjoint, explicitly-wired collaborators with the test net as backstop — not from maximising lines
+removed.
