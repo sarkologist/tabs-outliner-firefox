@@ -48,6 +48,17 @@ the relevant paths, know which gate covers you:
   storage-migration status, open PRs, and current posture (the context that isn't in
   `main`'s code).
 
+## Task recipes & test harness (last-mile)
+
+The "recipe" layer between ARCHITECTURE's layer model and the source — the exact touch-points
+and harness contract for the most common changes, so the last mile is doc-reading, not
+source-archaeology.
+
+- [docs/playwright-harness.md](docs/playwright-harness.md) — the sidebar-runtime Playwright
+  harness contract (mandatory for browser coverage): real background controller in-process, a
+  fake runtime, the page-side `window.browser` *subset* (no `windows.create`), and `load()`'s
+  hardcoded sidebar path.
+
 ## Repo health & gardening
 
 - [docs/QUALITY.md](docs/QUALITY.md) — the debt scoreboard: the mechanically-tracked
