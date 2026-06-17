@@ -630,7 +630,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       windowIds: [windowId]
     });
     markRuntimeLifecycleJournalEntryForClearAfterSave(runtimeLifecycleJournalEntry);
-    const persistedCandidates = await persistWithNodeStateUpdate(current, next);
+    const persistedCandidates = persistWithNodeStateUpdate(current, next);
     queueRuntimeEventJournal(current, next, persistedCandidates, options.eventName);
   }
 
@@ -704,7 +704,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
           windowIds: []
         });
         markRuntimeLifecycleJournalEntryForClearAfterSave(runtimeLifecycleJournalEntry);
-        const persistedCandidates = await persistWithNodeStateUpdate(current, next);
+        const persistedCandidates = persistWithNodeStateUpdate(current, next);
         queueRuntimeEventJournal(current, next, persistedCandidates, "tabs.onRemoved");
       }, { reason: "tabs.onRemoved" });
     });
@@ -787,7 +787,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
               for (const entry of reconciled.runtimeLifecycleJournalEntries ?? []) {
                 markRuntimeLifecycleJournalEntryForClearAfterSave(entry);
               }
-              const persistedCandidates = await persistWithNodeStateUpdate(reconciled.previous, reconciled.next);
+              const persistedCandidates = persistWithNodeStateUpdate(reconciled.previous, reconciled.next);
               queueRuntimeEventJournal(reconciled.previous, reconciled.next, persistedCandidates, "sessions.onChanged");
             }
           }
@@ -829,7 +829,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     recordedHistoryEntryId: string | undefined;
   };
 
-  type CommandFinalizer = (ctx: CommandFinalizeContext) => Promise<void>;
+  type CommandFinalizer = (ctx: CommandFinalizeContext) => void;
 
   // Command durability that the user must not wait on. By the time a finalizer reaches the
   // journal append, the in-memory mutation is done and the tree patch is already broadcast, so
@@ -887,17 +887,17 @@ export function createBackgroundController(options: BackgroundControllerOptions)
   // and (on a journal skip) flush. These finalizers hold that per-command knowledge so the hub
   // body stays uniform; the hub still calls commitCommandAck() once after the finalizer returns.
   // They are behaviour-preserving extractions of the former per-message.type dispatch branches.
-  const finalizeKnownNodeStateJournal = async (
+  const finalizeKnownNodeStateJournal = (
     ctx: CommandFinalizeContext,
     nodeIds: readonly NodeId[]
-  ): Promise<void> => {
-    await persistKnownNodeStateUpdates(ctx.current, ctx.next, nodeIds);
+  ): void => {
+    persistKnownNodeStateUpdates(ctx.current, ctx.next, nodeIds);
     deferCommandDurability(async () => {
       await appendCommandJournalForKnownNodeIds(ctx.next, nodeIds, ctx.message.type, ctx.recordedHistoryEntryId);
     });
   };
 
-  const finalizeBestEffort: CommandFinalizer = async ({
+  const finalizeBestEffort: CommandFinalizer = ({
     message,
     current,
     next,
@@ -905,7 +905,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     runtimeIndexCandidateNodeIds,
     recordedHistoryEntryId
   }) => {
-    await persistWithBestEffortPatch(current, next, { saveSchedule });
+    persistWithBestEffortPatch(current, next, { saveSchedule });
     // A bounded structural relocation/flatten (moveNodeToNewWindow, flattenSubtree) reaches
     // this fallback but still creates command-window runtime provenance that must survive a
     // restart before the deferred snapshot lands (I-1) -- journal it before the ack like the
@@ -921,7 +921,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     });
   };
 
-  const finalizeStructuralTreePatch: CommandFinalizer = async ({
+  const finalizeStructuralTreePatch: CommandFinalizer = ({
     message,
     current,
     next,
@@ -934,7 +934,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         ? treeStructureUpdateFromCandidateNodeIds(current, next, runtimeIndexCandidateNodeIds)
         : treeStructureUpdateFromStateChange(current, next)
     );
-    await broadcastTreeStructureUpdate(update);
+    broadcastTreeStructureUpdate(update);
     scheduleStateSave(next, saveSchedule, runtimeIndexCandidateNodeIds);
     deferCommandDurability(async () => {
       if (!(await appendCommandJournal(current, next, runtimeIndexCandidateNodeIds, message.type, "command", recordedHistoryEntryId))) {
@@ -946,7 +946,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     });
   };
 
-  const finalizeRestoreNode: CommandFinalizer = async ({
+  const finalizeRestoreNode: CommandFinalizer = ({
     message,
     current,
     next,
@@ -967,10 +967,10 @@ export function createBackgroundController(options: BackgroundControllerOptions)
           includeUnchanged: true
         })
       );
-      await broadcastTreeStructureUpdate(update);
+      broadcastTreeStructureUpdate(update);
       scheduleStateSave(next, saveSchedule, candidateNodeIdsForPatch(update));
     } else {
-      await persistWithNodeStateUpdate(current, next, restorePatchNodeIds, { saveSchedule });
+      persistWithNodeStateUpdate(current, next, restorePatchNodeIds, { saveSchedule });
     }
     deferCommandDurability(async () => {
       if (!(await appendCommandJournal(current, next, restoreTreePatchNodeIds ?? restorePatchNodeIds, message.type))) {
@@ -979,7 +979,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     });
   };
 
-  const finalizeDeleteNode: CommandFinalizer = async ({
+  const finalizeDeleteNode: CommandFinalizer = ({
     message,
     current,
     next,
@@ -993,7 +993,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     const update = perfTrace.measure("background.patch.build.treeStructure", { command: message.type }, () =>
       treeStructureUpdateFromCandidateNodeIds(current, next, deletePatchNodeIds ?? [message.nodeId])
     );
-    await broadcastTreeStructureUpdate(update);
+    broadcastTreeStructureUpdate(update);
     scheduleStateSave(next, saveSchedule, deletePatchNodeIds ?? [message.nodeId]);
     deferCommandDurability(async () => {
       if (!(await appendCommandJournal(current, next, deletePatchNodeIds ?? [message.nodeId], message.type, "command", recordedHistoryEntryId))) {
@@ -1002,7 +1002,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     });
   };
 
-  const finalizeRenameGroup: CommandFinalizer = async ({
+  const finalizeRenameGroup: CommandFinalizer = ({
     message,
     current,
     next,
@@ -1011,32 +1011,32 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     if (message.type !== "renameGroup") {
       return;
     }
-    await persistKnownNodeStateUpdate(current, next, message.nodeId);
+    persistKnownNodeStateUpdate(current, next, message.nodeId);
     deferCommandDurability(async () => {
       await appendCommandJournal(current, next, [message.nodeId], message.type, "command", recordedHistoryEntryId);
     });
   };
 
-  const finalizeToggleCollapsed: CommandFinalizer = async (ctx) => {
+  const finalizeToggleCollapsed: CommandFinalizer = (ctx) => {
     if (ctx.message.type !== "toggleCollapsed") {
       return;
     }
-    await finalizeKnownNodeStateJournal(ctx, [ctx.message.nodeId]);
+    finalizeKnownNodeStateJournal(ctx, [ctx.message.nodeId]);
   };
 
-  const finalizeExpandAncestors: CommandFinalizer = async (ctx) => {
-    await finalizeKnownNodeStateJournal(ctx, ctx.expandAncestorNodeIds ?? []);
+  const finalizeExpandAncestors: CommandFinalizer = (ctx) => {
+    finalizeKnownNodeStateJournal(ctx, ctx.expandAncestorNodeIds ?? []);
   };
 
-  const finalizeMoveNode: CommandFinalizer = async (ctx) => {
+  const finalizeMoveNode: CommandFinalizer = (ctx) => {
     const { message, current, next, saveSchedule, runtimeIndexCandidateNodeIds, recordedHistoryEntryId } = ctx;
     if (message.type !== "moveNode") {
-      await finalizeBestEffort(ctx);
+      finalizeBestEffort(ctx);
       return;
     }
     const sameParentReorder = sameParentReorderUpdateForMoveCommand(current, next, message);
     if (sameParentReorder) {
-      await broadcastSameParentReorderUpdate(sameParentReorder);
+      broadcastSameParentReorderUpdate(sameParentReorder);
       scheduleStateSave(next, saveSchedule, [sameParentReorder.parentId, sameParentReorder.movedNodeId]);
       deferCommandDurability(async () => {
         if (!(await appendCommandJournal(current, next, [sameParentReorder.parentId, sameParentReorder.movedNodeId], message.type, "command", recordedHistoryEntryId))) {
@@ -1049,10 +1049,10 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       return;
     }
     if (runtimeIndexCandidateNodeIds) {
-      await finalizeStructuralTreePatch(ctx);
+      finalizeStructuralTreePatch(ctx);
       return;
     }
-    await finalizeBestEffort(ctx);
+    finalizeBestEffort(ctx);
   };
 
   const commandFinalizers: Partial<Record<BackgroundCommand["type"], CommandFinalizer>> = {
@@ -1286,7 +1286,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
               const update = perfTrace.measure("background.patch.build.treeStructure", { command: message.type }, () =>
                 treeStructureUpdateFromCandidateNodeIds(current, recovered, deletePatchNodeIds)
               );
-              await broadcastTreeStructureUpdate(update);
+              broadcastTreeStructureUpdate(update);
               scheduleStateSave(recovered, saveSchedule, deletePatchNodeIds);
               // The lifecycle deleteNode entry replays this state change after a crash, but
               // the history entry above is only durable via the journal record (I-1 parity
@@ -1375,7 +1375,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         });
       }
       const finalize = commandFinalizers[message.type] ?? finalizeBestEffort;
-      await finalize({
+      finalize({
         message,
         current,
         next: result.state,
@@ -3073,7 +3073,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     historyState = direction === "undo"
       ? pushRedoEntry(popped.history, popped.entry, activePreferences.undoHistoryLimit)
       : pushUndoEntryPreservingRedo(popped.history, popped.entry, activePreferences.undoHistoryLimit);
-    const persistResult = await persistWithBestEffortPatch(current, next, { diffMode: "material", saveSchedule });
+    const persistResult = persistWithBestEffortPatch(current, next, { diffMode: "material", saveSchedule });
     // History replay must be durable before its ack like any other mutating command: the
     // command it reverts is already in the outline journal, and a restart that replays that
     // entry with no counter-entry would resurrect the change the user saw undone. Undos that
@@ -3924,7 +3924,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
         replaceCachedState(state);
         runtimeIndex = fastPath.index;
         runtimeFacts.recordAcceptedRuntimeTabScopeUpdates(fastPath.runtimeScopeUpdates);
-        await persistKnownRuntimeFastPathUpdate(fastPath.update, state);
+        persistKnownRuntimeFastPathUpdate(fastPath.update, state);
         // The fast path mutates state in place, so the journal delta comes from the update
         // payload; when queued, the coalesced append replaces the checkpoint flush.
         if (!queueRuntimeEventJournalFromUpdate(fastPath.update, "runtimeFastPath")) {
@@ -4000,7 +4000,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       rebuildRuntimeIndex: true,
       runtimeWindows: acceptedRuntimeWindowsForRefresh ?? windows
     });
-    const persistResult = await persistWithBestEffortPatch(current, next, { diffMode: "material" });
+    const persistResult = persistWithBestEffortPatch(current, next, { diffMode: "material" });
     if (!queueRuntimeEventJournal(current, next, persistResult.candidateNodeIds, "refreshSnapshot")) {
       await flushRuntimeTruthSaveIfNeeded(current, next, persistResult.candidateNodeIds);
     }
@@ -5051,7 +5051,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       replaceCachedState(current);
       runtimeIndex = index;
       runtimeFacts.recordInstalledActiveTab(activeInfo.tabId, activeInfo.windowId, activeInfo.previousTabId);
-      await broadcastActiveStateUpdate(activation.updates);
+      broadcastActiveStateUpdate(activation.updates);
       return true;
     }, { reason: "commandFocusActivation" });
   }
@@ -5077,32 +5077,32 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       state = current;
       replaceCachedState(current);
       runtimeIndex = index;
-      await broadcastActiveStateUpdate(focus.updates);
+      broadcastActiveStateUpdate(focus.updates);
       return true;
     }, { reason: "commandWindowFocus" });
   }
 
-  async function persistAndBroadcast(saveSchedule: SaveSchedule = "normal"): Promise<void> {
+  function persistAndBroadcast(saveSchedule: SaveSchedule = "normal"): void {
     if (!state) {
       return;
     }
-    await sidebarBroadcaster.broadcast({ type: "stateUpdated", state });
+    sidebarBroadcaster.broadcast({ type: "stateUpdated", state });
     scheduleStateSave(state, saveSchedule);
   }
 
-  async function persistWithNodeStateUpdate(
+  function persistWithNodeStateUpdate(
     previous: OutlineState,
     next: OutlineState,
     candidateNodeIds?: readonly NodeId[],
     options: { saveSchedule?: SaveSchedule } = {}
-  ): Promise<readonly NodeId[] | undefined> {
+  ): readonly NodeId[] | undefined {
     const update = perfTrace.measure("background.patch.build.nodeState", {
       candidateNodeCount: candidateNodeIds?.length ?? 0
     }, () => candidateNodeIds
       ? nodeStateUpdateForNodeIds(previous, next, candidateNodeIds)
       : nodeStateUpdateFromStateChange(previous, next));
     if (isUsefulNodeStateUpdate(update, next)) {
-      await broadcastNodeStateUpdate(update);
+      broadcastNodeStateUpdate(update);
       // The patch enumerates exactly the changed nodes, so it is a complete candidate set
       // for the compactor's dirty shards even when the caller had none to thread.
       const persistedCandidateNodeIds = candidateNodeIds ?? candidateNodeIdsForPatch(update);
@@ -5110,7 +5110,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       return persistedCandidateNodeIds;
     }
 
-    const fallback = await persistWithBestEffortPatch(previous, next, {
+    const fallback = persistWithBestEffortPatch(previous, next, {
       diffMode: "material",
       skipNodeState: true,
       ...(options.saveSchedule ? { saveSchedule: options.saveSchedule } : {})
@@ -5118,26 +5118,26 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     return fallback.candidateNodeIds;
   }
 
-  async function persistKnownNodeStateUpdate(previous: OutlineState, next: OutlineState, nodeId: NodeId): Promise<void> {
-    await persistKnownNodeStateUpdates(previous, next, [nodeId]);
+  function persistKnownNodeStateUpdate(previous: OutlineState, next: OutlineState, nodeId: NodeId): void {
+    persistKnownNodeStateUpdates(previous, next, [nodeId]);
   }
 
-  async function persistKnownNodeStateUpdates(
+  function persistKnownNodeStateUpdates(
     previous: OutlineState,
     next: OutlineState,
     nodeIds: readonly NodeId[]
-  ): Promise<void> {
+  ): void {
     const uniqueIds = uniqueDefinedNodeIds([...nodeIds]);
     const updatedNodes = uniqueIds.flatMap((nodeId) => {
       const node = next.nodes[nodeId];
       return node ? [node] : [];
     });
     if (updatedNodes.length === 0 || updatedNodes.length !== uniqueIds.length) {
-      await persistWithBestEffortPatch(previous, next, { diffMode: "material", skipNodeState: true });
+      persistWithBestEffortPatch(previous, next, { diffMode: "material", skipNodeState: true });
       return;
     }
 
-    await broadcastNodeStateUpdate({
+    broadcastNodeStateUpdate({
       type: "nodeStateUpdated",
       updatedNodes,
       closedCountDelta: 0
@@ -5145,23 +5145,23 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     scheduleStateSave(next, "normal", uniqueIds);
   }
 
-  async function persistKnownRuntimeFastPathUpdate(
+  function persistKnownRuntimeFastPathUpdate(
     update: TreeStructureUpdate | NodeStateUpdate,
     next: OutlineState
-  ): Promise<void> {
+  ): void {
     if (update.type === "treeStructureUpdated") {
-      await broadcastTreeStructureUpdate(update);
+      broadcastTreeStructureUpdate(update);
     } else {
-      await broadcastNodeStateUpdate(update);
+      broadcastNodeStateUpdate(update);
     }
     scheduleStateSave(next, "normal", candidateNodeIdsForPatch(update));
   }
 
-  async function persistWithBestEffortPatch(
+  function persistWithBestEffortPatch(
     previous: OutlineState,
     next: OutlineState,
     options: BestEffortPatchOptions = {}
-  ): Promise<BestEffortPatchResult> {
+  ): BestEffortPatchResult {
     const diffMode = options.diffMode ?? "identity";
     if (!options.skipNodeState) {
       const nodeUpdate = perfTrace.measure("background.patch.build.nodeState", {
@@ -5170,7 +5170,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       }, () => nodeStateUpdateFromStateChange(previous, next, { diffMode }));
       if (isUsefulNodeStateUpdate(nodeUpdate, next)) {
         const candidateNodeIds = candidateNodeIdsForPatch(nodeUpdate);
-        await broadcastNodeStateUpdate(nodeUpdate);
+        broadcastNodeStateUpdate(nodeUpdate);
         scheduleStateSave(next, options.saveSchedule, candidateNodeIds);
         return { candidateNodeIds, usedFullState: false };
       }
@@ -5181,7 +5181,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     );
     if (isUsefulTreeStructureUpdate(treeUpdate, next)) {
       const candidateNodeIds = candidateNodeIdsForPatch(treeUpdate);
-      await broadcastTreeStructureUpdate(treeUpdate);
+      broadcastTreeStructureUpdate(treeUpdate);
       scheduleStateSave(next, options.saveSchedule, candidateNodeIds);
       return { candidateNodeIds, usedFullState: false };
     }
@@ -5193,7 +5193,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       }, () => nodeStateUpdateFromStateChange(previous, next, { diffMode: "material" }));
       if (isUsefulNodeStateUpdate(nodeUpdate, next)) {
         const candidateNodeIds = candidateNodeIdsForPatch(nodeUpdate);
-        await broadcastNodeStateUpdate(nodeUpdate);
+        broadcastNodeStateUpdate(nodeUpdate);
         scheduleStateSave(next, options.saveSchedule, candidateNodeIds);
         return { candidateNodeIds, usedFullState: false };
       }
@@ -5206,12 +5206,12 @@ export function createBackgroundController(options: BackgroundControllerOptions)
       );
     if (diffMode !== "material" && isUsefulTreeStructureUpdate(semanticTreeUpdate, next)) {
       const candidateNodeIds = candidateNodeIdsForPatch(semanticTreeUpdate);
-      await broadcastTreeStructureUpdate(semanticTreeUpdate);
+      broadcastTreeStructureUpdate(semanticTreeUpdate);
       scheduleStateSave(next, options.saveSchedule, candidateNodeIds);
       return { candidateNodeIds, usedFullState: false };
     }
 
-    await persistAndBroadcast(options.saveSchedule);
+    persistAndBroadcast(options.saveSchedule);
     return { usedFullState: true };
   }
 
@@ -5223,26 +5223,26 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     return update.updatedNodes.length < Object.keys(next.nodes).length;
   }
 
-  async function broadcastActiveStateUpdate(updates: ActiveStateUpdate[]): Promise<void> {
+  function broadcastActiveStateUpdate(updates: ActiveStateUpdate[]): void {
     if (updates.length === 0) {
       return;
     }
-    await sidebarBroadcaster.broadcast({ type: "activeStateUpdated", updates });
+    sidebarBroadcaster.broadcast({ type: "activeStateUpdated", updates });
   }
 
-  async function broadcastTreeStructureUpdate(update: TreeStructureUpdate): Promise<void> {
-    await sidebarBroadcaster.broadcast(update);
+  function broadcastTreeStructureUpdate(update: TreeStructureUpdate): void {
+    sidebarBroadcaster.broadcast(update);
   }
 
-  async function broadcastSameParentReorderUpdate(update: SameParentReorderUpdate): Promise<void> {
-    await sidebarBroadcaster.broadcast(update);
+  function broadcastSameParentReorderUpdate(update: SameParentReorderUpdate): void {
+    sidebarBroadcaster.broadcast(update);
   }
 
-  async function broadcastNodeStateUpdate(update: NodeStateUpdate): Promise<void> {
+  function broadcastNodeStateUpdate(update: NodeStateUpdate): void {
     if (update.updatedNodes.length === 0) {
       return;
     }
-    await sidebarBroadcaster.broadcast(update);
+    sidebarBroadcaster.broadcast(update);
   }
 
   function candidateNodeIdsForPatch(update: TreeStructureUpdate | NodeStateUpdate): NodeId[] {
@@ -5255,14 +5255,16 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     return uniqueDefinedNodeIds(update.updatedNodes.map((node) => node.id));
   }
 
-  async function broadcastHistoryStatus(history: HistoryState): Promise<void> {
-    await sidebarBroadcaster.broadcast(historyStatusMessage(history));
+  function broadcastHistoryStatus(history: HistoryState): void {
+    sidebarBroadcaster.broadcast(historyStatusMessage(history));
   }
 
   function broadcastHistoryStatusSoon(history: HistoryState): void {
-    void broadcastHistoryStatus(history).catch((error) => {
+    try {
+      broadcastHistoryStatus(history);
+    } catch (error) {
       perfTrace.mark("background.runtime.broadcast.historyStatus.error", { message: errorText(error) });
-    });
+    }
   }
 
   // Pure parsers for stored journal/migration metadata, read only by the boot path. (The
