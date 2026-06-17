@@ -69,14 +69,16 @@ export function portableTreeBackupFilename(date = new Date()): string {
   return `${PORTABLE_TREE_BACKUP_DIRECTORY}/${portableTreeFilename(date)}`;
 }
 
-export function appendPortableTree(
-  state: OutlineState,
-  payload: unknown,
-  clock: Clock
-): OutlineState {
+// Shared prologue for the two import entry points: parse + validate the payload, bail on an
+// empty import, copy-on-write the state, and build the id-minting context. usedIds is seeded
+// from every existing node id and root id so freshly minted ids can never collide (the
+// correctness guarantee both importers rely on). Returns undefined when there is nothing to add.
+type PortableAppendStart = { tree: ImportTree; next: OutlineState; context: AppendContext };
+
+function beginPortableAppend(state: OutlineState, payload: unknown, clock: Clock): PortableAppendStart | undefined {
   const tree = parseImportTree(payload);
   if (tree.roots.length === 0) {
-    return state;
+    return undefined;
   }
 
   const next = copyStateForAppend(state);
@@ -85,6 +87,20 @@ export function appendPortableTree(
     nextIdIndex: 0,
     usedIds: new Set([...Object.keys(next.nodes), ...next.rootIds])
   };
+
+  return { tree, next, context };
+}
+
+export function appendPortableTree(
+  state: OutlineState,
+  payload: unknown,
+  clock: Clock
+): OutlineState {
+  const start = beginPortableAppend(state, payload, clock);
+  if (!start) {
+    return state;
+  }
+  const { tree, next, context } = start;
 
   const importGroupId = nextPortableNodeId("window", context);
   const importGroup: OutlineNode = {
@@ -119,17 +135,11 @@ export function appendPortableSubtreesAtTopLevel(
   payload: unknown,
   clock: Clock
 ): OutlineState {
-  const tree = parseImportTree(payload);
-  if (tree.roots.length === 0) {
+  const start = beginPortableAppend(state, payload, clock);
+  if (!start) {
     return state;
   }
-
-  const next = copyStateForAppend(state);
-  const context: AppendContext = {
-    now: clock.now,
-    nextIdIndex: 0,
-    usedIds: new Set([...Object.keys(next.nodes), ...next.rootIds])
-  };
+  const { tree, next, context } = start;
 
   for (const root of tree.roots) {
     next.rootIds.push(appendPortableNode(next, root, undefined, context));

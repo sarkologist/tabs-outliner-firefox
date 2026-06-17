@@ -19,11 +19,6 @@ const treeContainer = document.querySelector<HTMLUListElement>("#viewer-tree");
 const statusLine = document.querySelector<HTMLElement>("#viewer-status");
 const emptyState = document.querySelector<HTMLElement>("#viewer-empty");
 
-// exportedAt is required by the portable-tree parser when an import is sent back to the
-// background. We keep the loaded file's value when present so re-imports round-trip faithfully,
-// and otherwise stamp the moment the file was opened.
-let loadedExportedAt = new Date().toISOString();
-
 registerEvents();
 renderRoots([]);
 
@@ -44,7 +39,6 @@ async function loadSelectedFile(): Promise<void> {
 
   try {
     const payload = JSON.parse(await file.text()) as unknown;
-    loadedExportedAt = exportedAtFromPayload(payload);
     const roots = parsePortableImport(payload);
     renderRoots(roots);
     setStatus(
@@ -166,13 +160,15 @@ async function importNode(node: PortableTreeNode, label: string, button: HTMLBut
       tree: {
         schema: PORTABLE_TREE_SCHEMA,
         version: 1,
-        exportedAt: loadedExportedAt,
+        // exportedAt is required by the parser but never read after import (node timestamps
+        // come from the background clock); stamp the moment of import.
+        exportedAt: new Date().toISOString(),
         roots: [node]
       }
     });
     setStatus(`Imported ${label} to your outline`);
-  } catch (error) {
-    setStatus(importErrorText(error), true);
+  } catch {
+    setStatus(importErrorText(), true);
   } finally {
     button.disabled = false;
   }
@@ -180,17 +176,6 @@ async function importNode(node: PortableTreeNode, label: string, button: HTMLBut
 
 function nodeLabel(node: PortableTreeNode): string {
   return node.title.trim() || node.url || "Untitled";
-}
-
-function exportedAtFromPayload(payload: unknown): string {
-  if (
-    payload &&
-    typeof payload === "object" &&
-    typeof (payload as { exportedAt?: unknown }).exportedAt === "string"
-  ) {
-    return (payload as { exportedAt: string }).exportedAt;
-  }
-  return new Date().toISOString();
 }
 
 function setStatus(message: string, isError = false): void {
@@ -205,14 +190,20 @@ function loadErrorText(error: unknown): string {
   if (error instanceof SyntaxError) {
     return "Could not load file: invalid JSON";
   }
-  if (error instanceof Error && error.message.startsWith("Invalid portable tree")) {
+  // Both the portable parser ("Invalid portable tree: …") and the legacy Chrome Tab Outliner
+  // parser ("Invalid Chrome Tab Outliner tree: …") signal a recognized-but-malformed file.
+  if (
+    error instanceof Error &&
+    (error.message.startsWith("Invalid portable tree") ||
+      error.message.startsWith("Invalid Chrome Tab Outliner tree"))
+  ) {
     return "Could not load file: not a Tab Session Outliner export";
   }
   return "Could not load file";
 }
 
-function importErrorText(error: unknown): string {
-  return error instanceof Error && error.message
-    ? `Import failed: ${error.message}`
-    : "Import failed";
+function importErrorText(): string {
+  // The reject reason from a background sendMessage is an internal string, not a vetted user
+  // message; keep the surfaced text generic and stable (mirrors loadErrorText's friendly mapping).
+  return "Import failed";
 }
