@@ -25,7 +25,7 @@ the relevant paths, know which gate covers you:
 | Command | What it guards |
 | --- | --- |
 | `pnpm lint` | ESLint 9 + typescript-eslint (flat config `eslint.config.js`). Type-aware rules on production `src/` that strict tsc does **not** give: `no-floating-promises`, `no-misused-promises`, `require-await`, `switch-exhaustiveness-check`, `consistent-type-imports`, plus unused-vars and the pristine-invariant base (`no-explicit-any`, `ban-ts-comment`). Folded into `check`. |
-| `pnpm format:check` | Prettier formatting (config present; the one-time `prettier --write` across the tree is a pending follow-up, so this is **not** yet folded into `check`). |
+| `pnpm format:check` | Prettier formatting (config `.prettierrc.json`). The one-time `prettier --write` across the tree has been applied (reformat commit recorded in `.git-blame-ignore-revs`), so this is folded into `check`. |
 | `pnpm test` | Unit/contract/property + generated-trace suites (vitest, `src/**/*.test.ts`). |
 | `pnpm run typecheck:test` | Tests are type-checked, not just run. |
 | `pnpm perf:runtime-guard` | Save/load/journal/reconciliation/broadcast cost budgets. CI enforces the hard counters (`--hard-only`). Budgets live in `scripts/runtime-perf-budgets.json` (a reviewed contract — see [AGENTS.md](AGENTS.md)). |
