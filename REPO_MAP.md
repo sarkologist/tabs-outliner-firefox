@@ -113,6 +113,10 @@ Separate from runtime reconciliation; covers how the sidebar projects/hydrates t
   moving the sidebar to a sparse projection client of the background-owned outline. Its
   `Progress` log is frozen at the merge; current health lives in `SIDEBAR_PROJECTION_BUGS.md`
   + the projection perf guard.
+- [docs/known-playwright-failures.md](docs/known-playwright-failures.md) — triage of the two
+  reds in the local `pnpm test:playwright` run: a `sidebar-first-paint` parallel-load flake
+  (known) and a real pre-existing projection regression (`psh-two-sidebars-restored-delete…`,
+  green at `b46d619`, red at `main`; not run by CI). Includes bisect bounds.
 
 ## Reconciliation state-model work (analysis)
 
