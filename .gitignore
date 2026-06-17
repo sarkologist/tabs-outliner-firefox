@@ -21,3 +21,10 @@ autoresearch/acceptance/*.log
 autoresearch/sidebar-startup-storage-fanout/*.tsv
 autoresearch/sidebar-startup-storage-fanout/*.log
 .DS_Store
+
+# Local profiling exports + tooling scratch files (never commit). Anchored to the repo root
+# and matched by exact prefix so they can't shadow tracked configs (package.json,
+# tsconfig.json, …) the way a broad `*.json` rule would.
+/tabs-outliner-profile-*.json
+/tabs-outliner-tree-*.json
+/.psc-ide-port
