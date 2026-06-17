@@ -5,22 +5,38 @@ import {
 } from "../model/portable-tree.js";
 
 // Read-only viewer for an exported Tab Session Outliner tree (the portable-tree format, or a
-// legacy Chrome Tab Outliner export). It renders a navigable nested outline whose only actions
-// are expand/collapse and "Import": appending a node together with its entire subtree to the
-// live outline as new top-level node(s). The exported tree is never mutated by the viewer.
+// legacy Chrome Tab Outliner export). It renders the export with the SAME look as the live
+// outline (it reuses sidebar.css and the same node-row markup), and the only action on a node is
+// "Import": appending that node together with its entire subtree to the live outline as new
+// top-level node(s). The exported tree is never mutated by the viewer.
 //
-// This is a separate extension page (opened in its own popup window via the options page), not
-// part of the sidebar. It imports only from the pure model layer and talks to the background
-// solely through runtime messages, so it stays a leaf UI surface (see I-16 boundary lint).
+// This is a separate extension page (opened in its own popup window from the sidebar overflow
+// menu). It imports only from the pure model layer and talks to the background solely through
+// runtime messages, so it stays a leaf UI surface (see I-16 boundary lint).
+
+const SVG_NS = "http://www.w3.org/2000/svg";
 
 const fileInput = document.querySelector<HTMLInputElement>("#viewer-file");
 const loadButton = document.querySelector<HTMLButtonElement>("#viewer-load");
-const treeContainer = document.querySelector<HTMLUListElement>("#viewer-tree");
+const treeContainer = document.querySelector<HTMLOListElement>("#viewer-tree");
 const statusLine = document.querySelector<HTMLElement>("#viewer-status");
 const emptyState = document.querySelector<HTMLElement>("#viewer-empty");
 
+// Portable nodes carry no id or collapse state, so the viewer wraps them: a stable path id (for
+// selectors/debugging), the depth (for the same indentation the sidebar uses), and per-node
+// collapse state. Mirrors the main tree, which is a flat list of visible rows indented by depth.
+type ViewerNode = {
+  node: PortableTreeNode;
+  id: string;
+  depth: number;
+  children: ViewerNode[];
+  collapsed: boolean;
+};
+
+let roots: ViewerNode[] = [];
+
 registerEvents();
-renderRoots([]);
+renderTree();
 
 function registerEvents(): void {
   loadButton?.addEventListener("click", () => {
@@ -39,15 +55,16 @@ async function loadSelectedFile(): Promise<void> {
 
   try {
     const payload = JSON.parse(await file.text()) as unknown;
-    const roots = parsePortableImport(payload);
-    renderRoots(roots);
+    roots = buildViewerNodes(parsePortableImport(payload));
+    renderTree();
     setStatus(
       roots.length > 0
         ? `Loaded ${file.name} — ${roots.length} top-level node${roots.length === 1 ? "" : "s"}`
         : `Loaded ${file.name} — no importable nodes`
     );
   } catch (error) {
-    renderRoots([]);
+    roots = [];
+    renderTree();
     setStatus(loadErrorText(error), true);
   } finally {
     // Allow re-selecting the same file (a no-op "change" otherwise).
@@ -57,99 +74,115 @@ async function loadSelectedFile(): Promise<void> {
   }
 }
 
-function renderRoots(roots: PortableTreeNode[]): void {
-  if (!treeContainer) {
-    return;
+function buildViewerNodes(portableRoots: PortableTreeNode[]): ViewerNode[] {
+  const build = (node: PortableTreeNode, id: string, depth: number): ViewerNode => ({
+    node,
+    id,
+    depth,
+    collapsed: false,
+    children: node.children.map((child, index) => build(child, `${id}.${index}`, depth + 1))
+  });
+  return portableRoots.map((node, index) => build(node, String(index), 0));
+}
+
+// The rows visible right now: a depth-first walk that skips the descendants of collapsed nodes,
+// exactly like the sidebar's visible-tree projection.
+function visibleRows(): ViewerNode[] {
+  const rows: ViewerNode[] = [];
+  const walk = (viewerNode: ViewerNode): void => {
+    rows.push(viewerNode);
+    if (!viewerNode.collapsed) {
+      viewerNode.children.forEach(walk);
+    }
+  };
+  roots.forEach(walk);
+  return rows;
+}
+
+function renderTree(): void {
+  if (treeContainer) {
+    treeContainer.replaceChildren(...visibleRows().map(renderRow));
   }
-  treeContainer.replaceChildren(...roots.map((root) => renderNode(root)));
   if (emptyState) {
     emptyState.hidden = roots.length > 0;
   }
 }
 
-function renderNode(node: PortableTreeNode): HTMLLIElement {
+function renderRow(viewerNode: ViewerNode): HTMLLIElement {
+  const node = viewerNode.node;
+  const label = nodeLabel(node);
+  const hasChildren = viewerNode.children.length > 0;
+
+  // is-closed because an export is saved (not live) content — the same dimmed styling the live
+  // outline gives closed nodes.
   const item = document.createElement("li");
-  item.className = "viewer-node";
+  item.className = `node node-${node.kind} is-closed`;
+  item.dataset.viewerNodeId = viewerNode.id;
   item.setAttribute("role", "treeitem");
+  item.setAttribute("aria-level", String(viewerNode.depth + 1));
+  if (hasChildren) {
+    item.setAttribute("aria-expanded", String(!viewerNode.collapsed));
+  }
 
   const row = document.createElement("div");
-  row.className = "viewer-row";
+  row.className = "node-row";
+  row.style.setProperty("--depth", String(viewerNode.depth));
 
-  const label = nodeLabel(node);
-  const hasChildren = node.children.length > 0;
+  // Twisty chevron (disabled placeholder for leaves, exactly like the sidebar — keeps alignment).
+  const twisty = document.createElement("button");
+  twisty.className = "icon-button twisty";
+  twisty.type = "button";
+  twisty.disabled = !hasChildren;
   if (hasChildren) {
-    item.setAttribute("aria-expanded", "false");
-    row.append(createTwisty(item, node, label));
-  } else {
-    const spacer = document.createElement("span");
-    spacer.className = "viewer-twisty-spacer";
-    spacer.setAttribute("aria-hidden", "true");
-    row.append(spacer);
+    twisty.title = viewerNode.collapsed ? "Expand" : "Collapse";
+    twisty.setAttribute("aria-label", `${viewerNode.collapsed ? "Expand" : "Collapse"} ${label}`);
+    twisty.append(iconElement(viewerNode.collapsed ? "chevron-right" : "chevron-down"));
+    twisty.addEventListener("click", () => {
+      viewerNode.collapsed = !viewerNode.collapsed;
+      renderTree();
+    });
   }
+  row.append(twisty);
 
+  // Read-only label: a plain span (not an interactive control) so the only action is Import.
+  const labelElement = document.createElement("span");
+  labelElement.className = "node-label";
+  labelElement.title = node.url ? `${label} — ${node.url}` : label;
   const title = document.createElement("span");
-  title.className = "viewer-title";
+  title.className = "node-title";
   title.textContent = label;
-  row.append(title);
+  labelElement.append(title);
+  row.append(labelElement);
 
-  if (node.url) {
-    const url = document.createElement("span");
-    url.className = "viewer-url";
-    url.textContent = node.url;
-    row.append(url);
-  }
+  // The single available action — Import — uses the same hover-revealed node-actions affordance
+  // and icon-button styling as the live outline's row actions.
+  const actions = document.createElement("span");
+  actions.className = "node-actions";
+  const importButton = document.createElement("button");
+  importButton.className = "icon-button action";
+  importButton.type = "button";
+  importButton.dataset.testid = "viewer-import";
+  importButton.title = "Import to top level";
+  importButton.setAttribute("aria-label", `Import ${label} to top level`);
+  importButton.append(iconElement("import"));
+  importButton.addEventListener("click", () => {
+    void importNode(node, label, importButton);
+  });
+  actions.append(importButton);
+  row.append(actions);
 
-  row.append(createImportButton(node, label));
   item.append(row);
   return item;
 }
 
-function createTwisty(item: HTMLLIElement, node: PortableTreeNode, label: string): HTMLButtonElement {
-  const twisty = document.createElement("button");
-  twisty.type = "button";
-  twisty.className = "viewer-twisty";
-  twisty.setAttribute("aria-label", `Expand ${label}`);
-
-  let childGroup: HTMLUListElement | undefined;
-  twisty.addEventListener("click", () => {
-    const expanded = item.getAttribute("aria-expanded") === "true";
-    if (expanded) {
-      item.setAttribute("aria-expanded", "false");
-      twisty.setAttribute("aria-label", `Expand ${label}`);
-      if (childGroup) {
-        childGroup.hidden = true;
-      }
-      return;
-    }
-
-    // Children are rendered lazily on first expand so a large export does not build its whole
-    // DOM up front; collapsing keeps the rendered children and just hides them.
-    if (!childGroup) {
-      childGroup = document.createElement("ul");
-      childGroup.className = "viewer-group";
-      childGroup.setAttribute("role", "group");
-      childGroup.append(...node.children.map((child) => renderNode(child)));
-      item.append(childGroup);
-    }
-    childGroup.hidden = false;
-    item.setAttribute("aria-expanded", "true");
-    twisty.setAttribute("aria-label", `Collapse ${label}`);
-  });
-
-  return twisty;
-}
-
-function createImportButton(node: PortableTreeNode, label: string): HTMLButtonElement {
-  const button = document.createElement("button");
-  button.type = "button";
-  button.className = "viewer-import";
-  button.dataset.testid = "viewer-import";
-  button.textContent = "Import";
-  button.setAttribute("aria-label", `Import ${label} to top level`);
-  button.addEventListener("click", () => {
-    void importNode(node, label, button);
-  });
-  return button;
+function iconElement(name: string): SVGSVGElement {
+  const svg = document.createElementNS(SVG_NS, "svg");
+  svg.classList.add("button-icon");
+  svg.setAttribute("aria-hidden", "true");
+  const use = document.createElementNS(SVG_NS, "use");
+  use.setAttribute("href", `#icon-${name}`);
+  svg.append(use);
+  return svg;
 }
 
 async function importNode(node: PortableTreeNode, label: string, button: HTMLButtonElement): Promise<void> {

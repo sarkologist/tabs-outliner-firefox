@@ -55,6 +55,18 @@ test.describe("sidebar undo/redo controls", () => {
     expect(issues).toEqual([]);
   });
 
+  test("opens the exported-tree viewer from the overflow menu", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadSidebar(page, { canUndo: false, canRedo: false });
+    await clearSentCommands(page);
+
+    await page.getByRole("button", { name: "More actions" }).click();
+    await page.getByRole("menuitem", { name: "View exported tree" }).click();
+
+    await expect(sentCommands(page)).resolves.toEqual(["openImportViewerWindow"]);
+    expect(issues).toEqual([]);
+  });
+
   test("supports keyboard shortcuts outside editable fields", async ({ page }) => {
     const issues = collectPageIssues(page);
     await loadSidebar(page, { canUndo: true, canRedo: true, undoLabel: "Move", redoLabel: "Move" });

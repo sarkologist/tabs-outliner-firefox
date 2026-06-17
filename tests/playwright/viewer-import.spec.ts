@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 
 import { PORTABLE_TREE_SCHEMA } from "../../src/model/portable-tree";
 import type { OutlineState, RuntimeTab, RuntimeWindow } from "../../src/model/types";
@@ -27,33 +27,37 @@ const EXPORT_FILE = {
 };
 
 test.describe("exported-tree viewer", () => {
-  test("renders a read-only outline, expands/collapses, and imports a subtree to top level", async ({ page }) => {
+  test("renders like the main tree (read-only), expands/collapses, and imports to top level", async ({ page }) => {
     const harness = createHarness(runtimeFixture(1, ["Alpha"]));
     const viewer = await loadViewer(harness, page);
     const rootCountBefore = (await harness.state()).rootIds.length;
 
     await loadExport(page, EXPORT_FILE);
 
-    // Both exported roots render as tree items; nested children stay collapsed until expanded.
-    await expect(page.getByRole("treeitem")).toHaveCount(2);
+    // Same node-row markup as the live outline: every node is a .node treeitem with a .node-title.
+    await expect(page.locator("#viewer-tree .node")).toHaveCount(3);
+    await expect(page.getByRole("treeitem")).toHaveCount(3);
+    // Default-expanded, exactly like the main tree — the nested child is visible without action.
     await expect(page.getByText("Saved Window", { exact: true })).toBeVisible();
+    await expect(page.getByText("Saved Tab", { exact: true })).toBeVisible();
     await expect(page.getByText("Loose Saved Tab", { exact: true })).toBeVisible();
-    await expect(page.getByText("Saved Tab", { exact: true })).toHaveCount(0);
 
-    // Read-only: the only per-node actions are expand/collapse and Import — no edit controls.
-    for (const action of ["Close", "Delete", "Restore", "Rename", "Move", "Group"]) {
+    // Read-only: the only per-node controls are the twisty and the (hover-revealed) Import action —
+    // no rename/move/delete/close/restore/cut/group, and rows are not draggable.
+    for (const action of ["Close", "Delete", "Restore", "Rename", "Move", "Group", "Cut", "Paste", "Flatten"]) {
       await expect(page.getByRole("button", { name: new RegExp(action, "i") })).toHaveCount(0);
     }
     await expect(page.locator("[draggable=true]")).toHaveCount(0);
 
-    // Expand reveals the subtree; collapse hides it again.
+    // Collapse hides the subtree; expand brings it back (same twisty behavior as the sidebar).
+    await page.getByRole("button", { name: "Collapse Saved Window" }).click();
+    await expect(page.getByText("Saved Tab", { exact: true })).toHaveCount(0);
+    await expect(page.getByRole("treeitem")).toHaveCount(2);
     await page.getByRole("button", { name: "Expand Saved Window" }).click();
     await expect(page.getByText("Saved Tab", { exact: true })).toBeVisible();
-    await page.getByRole("button", { name: "Collapse Saved Window" }).click();
-    await expect(page.getByText("Saved Tab", { exact: true })).toBeHidden();
 
     // Import the "Saved Window" subtree into the live outline.
-    await page.getByRole("button", { name: "Import Saved Window to top level" }).click();
+    await importByLabel(page, "Saved Window");
     await harness.waitForIdle();
 
     const afterImport = await harness.state();
@@ -63,17 +67,15 @@ test.describe("exported-tree viewer", () => {
     expect(importedRoots[0]!.parentId).toBeUndefined();
     expect(afterImport.rootIds).toHaveLength(rootCountBefore + 1);
 
-    // The imported subtree came along (fresh closed nodes), and the live "Alpha" window is intact.
     const importedChild = importedRoots[0]!.childIds
       .map((childId) => afterImport.nodes[childId])
-      .find((node) => node?.title === "Saved Tab");
+      .find((child) => child?.title === "Saved Tab");
     expect(importedChild?.status).toBe("closed");
     expect(importedChild?.restore).toEqual({ url: "https://saved.example/", title: "Saved Tab" });
     expect(Object.values(afterImport.nodes).some((node) => node.title === "Alpha" && node.status === "live")).toBe(true);
 
     // The exported view itself is never mutated by an import.
-    await expect(page.getByRole("treeitem")).toHaveCount(2);
-    await expect(page.getByText("Saved Window", { exact: true })).toBeVisible();
+    await expect(page.locator("#viewer-tree .node")).toHaveCount(3);
 
     expect(viewer.issues).toEqual([]);
   });
@@ -84,16 +86,14 @@ test.describe("exported-tree viewer", () => {
 
     await loadExport(page, EXPORT_FILE);
 
-    const importButton = page.getByRole("button", { name: "Import Loose Saved Tab to top level" });
-    await importButton.click();
+    await importByLabel(page, "Loose Saved Tab");
     await harness.waitForIdle();
-    await importButton.click();
+    await importByLabel(page, "Loose Saved Tab");
     await harness.waitForIdle();
 
     const state = await harness.state();
     const imported = topLevelNodesByTitle(state, "Loose Saved Tab");
     expect(imported).toHaveLength(2);
-    // Independent identities — no merge, no dedupe.
     expect(new Set(imported.map((node) => node.id)).size).toBe(2);
 
     expect(viewer.issues).toEqual([]);
@@ -127,6 +127,15 @@ async function loadExport(page: Page, payload: unknown): Promise<void> {
     buffer: Buffer.from(JSON.stringify(payload))
   });
   await expect(page.getByRole("treeitem").first()).toBeVisible();
+}
+
+// The Import action is hover-revealed (the same node-actions affordance as the live outline) and
+// thus absent from the a11y tree until shown, so locate the row by its always-visible title text,
+// hover to reveal the action, then click — mirrors how the sidebar spec drives row actions.
+async function importByLabel(page: Page, label: string): Promise<void> {
+  const row: Locator = page.locator(".node-row", { has: page.getByText(label, { exact: true }) }).first();
+  await row.hover();
+  await page.getByRole("button", { name: `Import ${label} to top level` }).click();
 }
 
 function topLevelNodesByTitle(state: OutlineState, title: string) {

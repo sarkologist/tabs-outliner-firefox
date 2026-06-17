@@ -1,71 +1,64 @@
-:root {
-  color-scheme: light dark;
-  --viewer-fg: #1d1f23;
-  --viewer-muted: #5b6470;
-  --viewer-border: #d4d8de;
-  --viewer-accent: #2c5fb3;
-  --viewer-row-hover: rgba(44, 95, 179, 0.08);
-  --viewer-error: #b3261e;
+/* The exported-tree viewer reuses sidebar.css for the tree rows so viewed nodes look exactly
+   like the live outline (same row height, icons, twisty, title, hover-revealed actions). These
+   rules add only the page chrome (header/toolbar) and the overrides needed to render the tree in
+   normal document flow instead of the sidebar's virtual-scroll absolute positioning. */
+
+.viewer-header {
+  flex: 0 0 auto;
+  padding: 12px 14px;
+  border-bottom: 1px solid color-mix(in srgb, CanvasText 18%, transparent);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --viewer-fg: #e6e8ec;
-    --viewer-muted: #9aa3af;
-    --viewer-border: #3a3f47;
-    --viewer-accent: #6ea0ff;
-    --viewer-row-hover: rgba(110, 160, 255, 0.12);
-    --viewer-error: #ff8a80;
-  }
+.viewer-header h1 {
+  margin: 0 0 4px;
+  font-size: 16px;
+  font-weight: 700;
 }
 
-* {
-  box-sizing: border-box;
-}
-
-body {
-  margin: 0;
-  padding: 24px;
-  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
-  font-size: 14px;
-  line-height: 1.5;
-  color: var(--viewer-fg);
-}
-
-.page-header {
+.viewer-intro {
+  margin: 0 0 10px;
   max-width: 760px;
+  color: color-mix(in srgb, CanvasText 62%, transparent);
 }
 
-h1 {
-  font-size: 20px;
-  margin: 0 0 8px;
-}
-
-.page-intro {
-  margin: 0 0 20px;
-  color: var(--viewer-muted);
-}
-
-.toolbar {
+.viewer-toolbar {
   display: flex;
-  align-items: center;
-  gap: 16px;
-  margin-bottom: 16px;
   flex-wrap: wrap;
+  align-items: center;
+  gap: 14px;
 }
 
-.primary-button {
+.viewer-load-button {
   font: inherit;
-  padding: 8px 16px;
-  border: 1px solid var(--viewer-accent);
+  padding: 6px 14px;
+  border: 1px solid Highlight;
   border-radius: 6px;
-  background: var(--viewer-accent);
-  color: #fff;
+  background: color-mix(in srgb, Highlight 12%, Canvas);
+  color: inherit;
   cursor: pointer;
 }
 
-.primary-button:hover {
-  filter: brightness(1.05);
+.viewer-load-button:hover {
+  background: color-mix(in srgb, Highlight 20%, Canvas);
+}
+
+.viewer-load-button:focus-visible {
+  outline: 2px solid Highlight;
+  outline-offset: 1px;
+}
+
+.viewer-status {
+  margin: 0;
+  color: color-mix(in srgb, CanvasText 62%, transparent);
+}
+
+.viewer-status.is-error {
+  color: color-mix(in srgb, #d23 78%, CanvasText);
+}
+
+.viewer-empty {
+  margin: 20px 14px;
+  color: color-mix(in srgb, CanvasText 60%, transparent);
 }
 
 .visually-hidden {
@@ -80,110 +73,12 @@ h1 {
   border: 0;
 }
 
-.viewer-status {
-  margin: 0;
-  color: var(--viewer-muted);
+/* Render the tree top-to-bottom in normal flow. The sidebar absolutely positions each .node by
+   row index for virtual scrolling; the viewer renders every visible row and lets them stack. */
+#viewer-tree.tree {
+  position: static;
 }
 
-.viewer-status.is-error {
-  color: var(--viewer-error);
-}
-
-.viewer-empty {
-  color: var(--viewer-muted);
-  border: 1px dashed var(--viewer-border);
-  border-radius: 8px;
-  padding: 24px;
-  text-align: center;
-}
-
-.viewer-tree,
-.viewer-group {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-
-.viewer-group {
-  padding-left: 22px;
-  border-left: 1px solid var(--viewer-border);
-  margin-left: 10px;
-}
-
-.viewer-group[hidden] {
-  display: none;
-}
-
-.viewer-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 3px 6px;
-  border-radius: 6px;
-}
-
-.viewer-row:hover {
-  background: var(--viewer-row-hover);
-}
-
-.viewer-twisty,
-.viewer-twisty-spacer {
-  flex: none;
-  width: 18px;
-  height: 18px;
-}
-
-.viewer-twisty {
-  border: none;
-  background: transparent;
-  color: var(--viewer-muted);
-  cursor: pointer;
-  padding: 0;
-  font-size: 12px;
-}
-
-.viewer-twisty::before {
-  content: "▸";
-  display: inline-block;
-}
-
-[aria-expanded="true"] > .viewer-row > .viewer-twisty::before {
-  content: "▾";
-}
-
-.viewer-title {
-  font-weight: 500;
-  white-space: nowrap;
-}
-
-.viewer-url {
-  color: var(--viewer-muted);
-  font-size: 12px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 480px;
-}
-
-.viewer-import {
-  flex: none;
-  margin-left: auto;
-  font: inherit;
-  font-size: 12px;
-  padding: 2px 12px;
-  border: 1px solid var(--viewer-border);
-  border-radius: 999px;
-  background: transparent;
-  color: var(--viewer-accent);
-  cursor: pointer;
-}
-
-.viewer-import:hover {
-  border-color: var(--viewer-accent);
-  background: var(--viewer-row-hover);
-}
-
-.viewer-import:disabled {
-  opacity: 0.5;
-  cursor: progress;
+#viewer-tree .node {
+  position: static;
 }

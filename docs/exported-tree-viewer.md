@@ -11,20 +11,25 @@ as input — no new format.
 - A standalone extension page, [public/viewer/viewer.html](../public/viewer/viewer.html) +
   [src/viewer/viewer.ts](../src/viewer/viewer.ts), opened in its own popup window (distinct
   from the main sidebar).
-- Opened from the **options page** ("Exported tree viewer" → "Open exported-tree viewer"),
-  which sends an `openImportViewerWindow` controller request; the background opens the popup
-  via `windows.create` (mirrors `openSidebarWindow`). Because the window is `type: "popup"`,
+- Opened from the **sidebar overflow menu** (⋯ → "View exported tree"), which sends an
+  `openImportViewerWindow` controller request; the background opens the popup via
+  `windows.create` (mirrors `openSidebarWindow`). Because the window is `type: "popup"`,
   `getNormalWindows` filters it, so it never enters the outline or drives reconciliation.
 - The user loads an exported `tabs-outliner-tree-*.json` file (portable format, or a legacy
   Chrome Tab Outliner export — both handled by the model parser) and sees it rendered as a
   nested, navigable outline.
+- The viewer **reuses `sidebar.css`** and the same node-row markup
+  (`.node` / `.node-row` / twisty / `.node-title` / hover-revealed `.node-actions`), so a viewed
+  node looks exactly like a node in the live outline — the only difference is that the single
+  available row action is **Import**. It renders every visible row in normal flow (no virtual
+  scrolling), which is fine for a read-only viewer of typical exports.
 
 ## Read-only contract
 
 The viewed tree is **strictly read-only**: no rename/move/delete/close/restore/drag. The only
 per-node actions are:
 
-1. **Expand / collapse** a subtree (children render lazily on first expand).
+1. **Expand / collapse** a subtree (default-expanded, like the live outline).
 2. **Import** — append that node together with its entire subtree to the current live outline
    as new **top-level** node(s).
 
@@ -50,7 +55,7 @@ per-node actions are:
 ## Tests
 
 - Unit: model + command append-to-top-level (`portable-tree.test.ts`, `commands.test.ts`).
-- Browser: read-only render, expand/collapse, import-to-top-level end-to-end, repeated-import
-  independence, and the background popup open
+- Browser: main-tree-style read-only render, expand/collapse, import-to-top-level end-to-end,
+  repeated-import independence, and the background popup open
   ([tests/playwright/viewer-import.spec.ts](../tests/playwright/viewer-import.spec.ts)); the
-  options entry point in `tests/playwright/options-page.spec.ts`.
+  sidebar overflow-menu entry point in `tests/playwright/sidebar-undo-redo.spec.ts`.
