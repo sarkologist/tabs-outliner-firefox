@@ -54,6 +54,10 @@ The "recipe" layer between ARCHITECTURE's layer model and the source — the exa
 and harness contract for the most common changes, so the last mile is doc-reading, not
 source-archaeology.
 
+- [docs/adding-a-command.md](docs/adding-a-command.md) — the concrete site list for adding a
+  surface command (mirrors `importTree`), and which sites are compiler-enforced after the
+  exhaustive-classification refactor (add the union variant, then let `tsc` walk you to the
+  rest).
 - [docs/playwright-harness.md](docs/playwright-harness.md) — the sidebar-runtime Playwright
   harness contract (mandatory for browser coverage): real background controller in-process, a
   fake runtime, the page-side `window.browser` *subset* (no `windows.create`), and `load()`'s
