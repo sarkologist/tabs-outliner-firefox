@@ -1,6 +1,6 @@
 # `sidebar.ts` map (UI decomposition)
 
-Status: analysis only (2026-06-13). No code changes. Purpose: make the 5,627-line
+Status: analysis only (2026-06-13). No code changes. Purpose: make the 5,247-line
 `src/sidebar/sidebar.ts` navigable and lay out a *safe* decomposition order, mirroring what
 [docs/controller-factory-map.md](controller-factory-map.md) did for the background factory.
 Rationale + the proven strangler loop live in [[controller-decomposition]] (memory).

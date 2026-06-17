@@ -1,7 +1,8 @@
 # `createBackgroundController` factory map (Track B)
 
-Status: analysis only (2026-06-13). No code changes. Purpose: make the ~5,856-line
-`createBackgroundController` factory (`src/background/controller.ts:411–6267`) navigable, and lay
+Status: analysis only (2026-06-13). No code changes. Purpose: make the ~5,305-line
+`createBackgroundController` factory (`src/background/controller.ts:392–5697`, the bulk of a
+6,055-line file) navigable, and lay
 out a *safe* decomposition order. This is Track B's cheap precursor — map before you cut. Companion:
 the maintainability rationale and Track A progress are in [[controller-decomposition]] (memory).
 

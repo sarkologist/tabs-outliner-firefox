@@ -1,6 +1,10 @@
 # Reconciliation strangler — Step 1: make `activeTabId` a derived fact
 
-Status: scoping only (2026-06-13). No code changes yet. Companion to
+Status: **superseded as Step 1** by
+[`reconciliation-strangler-step-1-merge-primitive.md`](./reconciliation-strangler-step-1-merge-primitive.md)
+(re-sequenced 2026-06-13). The merge primitive's **1a** write-chokepoint shipped on `main`, but the
+`activeTabId` collapse scoped in this doc rides on the precedence rule that has **not** shipped
+(step 1b was reverted), so this collapse has not landed. Companion to
 [`reconciliation-state-model.md`](./reconciliation-state-model.md) (the target model + audit).
 
 ## 0. Why this doc exists
