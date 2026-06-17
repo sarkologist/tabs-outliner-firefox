@@ -249,6 +249,14 @@ function recordDeletedNodeIds(nodeIds: Iterable<NodeId>): void {
   }
 }
 
+// True only when this sidebar previously recorded deleting every one of these nodes (an optimistic
+// delete, an earlier broadcast, or a full-state replacement). For a fully-loaded sidebar a node being
+// absent from local state already implies we removed it, but a sparse projection is missing most nodes
+// simply because it never loaded them -- so absence alone cannot prove a delete was already applied.
+function deletePatchAlreadyRecordedLocally(deletedNodeIds: readonly NodeId[]): boolean {
+  return deletedNodeIds.every((nodeId) => deletedNodeRevisionById.has(nodeId));
+}
+
 function restoreScopeContainsNodeDeletedAfter(
   scope: RestoreScope,
   revision: number
@@ -2738,9 +2746,19 @@ function applyTreeStructureUpdate(update: TreeStructureUpdate): void {
       return;
     }
 
-    if (isAlreadyAppliedDeletePatch(state, update.deletedNodeIds)) {
+    if (
+      isAlreadyAppliedDeletePatch(state, update.deletedNodeIds) &&
+      deletePatchAlreadyRecordedLocally(update.deletedNodeIds)
+    ) {
       // Echo of a delete already applied locally (optimistic delete, or a duplicated broadcast).
       // Re-running the projection patch would double-decrement node/closed counts, so absorb it.
+      //
+      // `isAlreadyAppliedDeletePatch` alone (every deleted node absent from local state) is only safe
+      // for a fully-loaded sidebar. A sparse/search projection is missing most nodes because it never
+      // loaded them, so a first-time out-of-view delete would otherwise be misread as an echo and its
+      // authoritative node/closed-count decrement skipped -- the I-14 violation that left a search-mode
+      // sidebar's total stale. Requiring that we actually recorded deleting these nodes keeps genuine
+      // echoes absorbed in both modes while letting a real out-of-view delete update the counts.
       return;
     }
 

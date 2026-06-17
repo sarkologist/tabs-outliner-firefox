@@ -120,6 +120,14 @@ Use these as starting targets, not hard promises:
 
 ## Progress Log
 
+### 2026-06-17: Projection fix — out-of-view delete updates a search-mode sidebar's total (PT-039)
+
+Correctness fix on the sidebar `treeStructureUpdated` delete patch path (performance-relevant by the AGENTS.md rule even though the motive was correctness). The optimistic-delete echo guard `isAlreadyAppliedDeletePatch` (added 2026-06-13 in `a5bb527`) absorbed any delete patch whose nodes were all absent from local state, skipping the `nodeCount` decrement; for a sparse/search sidebar that absorbed a *real* out-of-view delete, leaving the total stale (`1 match / 1001 items` instead of `999`). The fix additionally requires that the sidebar recorded deleting those nodes (`deletePatchAlreadyRecordedLocally`, backed by the existing `deletedNodeRevisionById` ledger) before short-circuiting. See `PT-039` in `SIDEBAR_PROJECTION_BUGS.md`.
+
+- **Asymptotics:** `Current Asymptotics Audit` table unchanged. The change does not alter algorithmic/transport/save shape; a first-time out-of-view delete in a sparse sidebar now takes the existing `O(rows)` `applyDeleteTreeStructurePatchToProjection` path (still no remote refill / no `getState`) instead of an `O(deletedIds)` early return — strictly the same complexity class for the visible projection.
+- **Guards:** `node scripts/perf-runtime-guard.mjs --hard-only` PASS (9 scenarios, hard counters). `pnpm perf:sidebar-projection-guard` PASS (2 scenarios, 5 runs: startup-hover `firstPaintMaxMs≈15`, sparse-hover frame ≤3.3 ms; startup-scroll-away `rowsVisibleMsMax≈9.4`, 0 hydration requests). No budget changes. Full vitest 797 pass/2 skip; projection hunt corpus 212/212 (`--workers=1`). The save-shape storage-fault lane was not required (no save-timing or save-shape change).
+- **CI:** `playwright.ci.config.ts` no longer ignores `sidebar-projection-hunt.spec.ts` (deterministic, ~1.5 min at `workers:1`), so projection regressions are now CI-visible; only the timing-variance perf/profile specs remain ignored.
+
 ### 2026-06-15: Runtime-trace fixes — restore reorder no-op (RT-257/258/259) + harness one-active-per-window (RT-255/256)
 
 Two pre-existing runtime-domain trace findings on `main` (surfaced by the expanded discovery corpus, orthogonal to the storage IndexedDB work). Neither changes save timing or save shape.
