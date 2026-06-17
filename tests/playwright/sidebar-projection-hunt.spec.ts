@@ -10899,7 +10899,7 @@ function installProjectionHuntHarness(options: {
     resolve: (value: unknown) => void;
     reject: (error: Error) => void;
   }> = [];
-  let fullState = initialFullState();
+  const fullState = initialFullState();
   let fullStateResolver: ((value: unknown) => void) | undefined;
   let fullStateResolveQueued = false;
   let restoreScopeResolver: ((value: unknown) => void) | undefined;

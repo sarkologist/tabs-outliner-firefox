@@ -17,6 +17,7 @@ it when you improve a metric; raise it only as a deliberate, reviewed acknowledg
 | Module-layer boundaries | clean | `model/` pure; `background/`+`perf/` ↛ UI; sidebar ↛ options (I-16) | `src/test/architecture-boundaries.test.ts` |
 | Doc citation integrity | valid | `INVARIANTS.md` cites only files that exist | `src/test/doc-freshness.test.ts` |
 | Knowledge-base index | complete | every tracked doc is in `REPO_MAP.md` | `scripts/check-docs-index.mjs` |
+| Lint (ESLint, type-aware) | clean | `pnpm lint` green: async-safety (`no-floating-promises`/`no-misused-promises`), exhaustiveness, type-only imports, unused-vars, no-`any` | `eslint.config.js` (folded into `check`) |
 
 Large production files (grandfathered into `allowedLargeFiles`; trending down via
 decomposition — see [controller map](controller-factory-map.md) and

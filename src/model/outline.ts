@@ -206,7 +206,7 @@ export function reconcileWithWindows(
   clock: Clock,
   options: ReconcileOptions = {}
 ): OutlineState {
-  let next = cloneOutlineState(state);
+  const next = cloneOutlineState(state);
   let lookup = buildOutlineLookup(next);
   const closeMissing = options.closeMissing ?? true;
   const excludedClosedRestoreNodeIds = options.excludedClosedRestoreNodeIds ?? new Set<NodeId>();

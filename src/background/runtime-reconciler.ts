@@ -302,7 +302,7 @@ export class RuntimeReconciler {
   }
 
   classifyMissingLiveTabRemoval(
-    state: OutlineState,
+    _state: OutlineState,
     ledger: RuntimeFactLedger,
     tabId: number
   ): MissingLiveTabRemovalDecision {

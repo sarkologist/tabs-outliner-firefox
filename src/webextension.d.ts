@@ -1,5 +1,4 @@
-import type { OutlineState, RuntimeTab, RuntimeWindow, RuntimeWindowState } from "./model/types.js";
-import type { HistoryStatus } from "./background/history.js";
+import type { RuntimeTab, RuntimeWindow, RuntimeWindowState } from "./model/types.js";
 
 type Listener<T extends (...args: never[]) => unknown> = {
   addListener(listener: T): void;
@@ -140,16 +139,6 @@ type WebExtensionBrowserApi = {
     onChanged: Listener<() => void | Promise<void>>;
   };
 };
-
-type OutlineMessage =
-  | {
-      type: "stateUpdated";
-      state: OutlineState;
-    }
-  | ({
-      type: "historyStatus";
-    } & HistoryStatus)
-  | import("./background/commands.js").BackgroundCommand;
 
 declare global {
   type WebExtensionBrowser = WebExtensionBrowserApi;

@@ -13,13 +13,8 @@ import {
 import { createBrowserAdapter } from "./browser-adapter.js";
 import { createSidebarBroadcaster } from "./sidebar-broadcaster.js";
 import { createMutationScheduler } from "./mutation-scheduler.js";
-import {
-  outlineStateCountDetail,
-  emptyOutlineStateCountDetail,
-  outlineStateCountDeltaDetail
-} from "./outline-state-metrics.js";
+import { outlineStateCountDetail } from "./outline-state-metrics.js";
 import { createPersistenceCoordinator, type SaveSchedule } from "./persistence-coordinator.js";
-import { normalizeBrowserCreateUrl } from "./browser-create-url.js";
 import {
   preserveClosedSubtreesAcrossNonDestructiveTransition,
   type ClosedSubtreeGuardResult
@@ -49,7 +44,6 @@ import { getNormalWindow, getNormalWindows, getNormalWindowsIncludingTabs } from
 import { createStateCache } from "./state-cache.js";
 import {
   changedNodeIdsSinceBaseline,
-  nodesMateriallyEqual,
   runtimeWindowOrdersMatch,
   runtimeWindowTabOrder,
   sameNumberList,
@@ -80,16 +74,10 @@ import {
 } from "./history-replay.js";
 import {
   type RuntimeStateIndex,
-  addRuntimeIndexNode,
   buildRuntimeStateIndex,
   buildRuntimeStateIndexFromLookup,
   canonicalWindowIdFromNodeId,
-  collectRuntimeIndexCandidateNodeIds,
   indexedLiveTabNodeByRuntimeId,
-  nearestWindowNodeId,
-  pruneRuntimeIndexClosedRestoreCandidates,
-  pruneRuntimeIndexWindowTabSets,
-  removeRuntimeIndexNode,
   runtimeIndexCandidateNodeIdsForCommand,
   runtimeIndexCandidateNodeIdsForTabRemoval,
   runtimeIndexCandidateNodeIdsForWindowRemoval,
@@ -97,7 +85,6 @@ import {
   runtimeStateIndexMismatchReason,
   runtimeTabNodeForFastPath,
   tabNodeIdForRuntime,
-  updateRuntimeIndexClosedRestoreCandidateCount,
   updateRuntimeTabNodeForFastPath,
   windowNodeIdForRuntime
 } from "./runtime-state-index.js";
@@ -127,7 +114,6 @@ import {
   deleteTreeStructureCandidateNodeIds,
   isUsefulTreeStructureUpdate,
   liveTabNodeWouldChange,
-  nodeChangedForPatch,
   nodeStateUpdateFromStateChange,
   nodeStateUpdateForNodeIds,
   runtimeSnapshotMateriallyMatchesState,
@@ -211,18 +197,15 @@ import {
   reconcileWithWindows,
   repairState,
   restoreNodes,
-  runtimeTitleForOutlineTab,
   shouldUseRuntimeOpenerParent,
   wrapNodeInGroup
 } from "../model/outline.js";
-import { buildOutlineLookup, type OutlineLookup } from "../model/outline-lookup.js";
 import { isLiveTabNode, isLiveWindowNode, liveTabNodes, liveWindowNodes } from "../model/live-nodes.js";
 import { exportPortableTree, portableTreeFilename, serializePortableTreeFile } from "../model/portable-tree.js";
 import type { NodeId, OutlineNode, OutlineState, ReconcileOptions, RestoredNode, RuntimeTab, RuntimeWindow, RuntimeWindowProvenance } from "../model/types.js";
 import { createPerformanceTracer, type TraceDetail, type TraceSnapshot } from "../perf/trace.js";
 import {
   PROFILE_STORAGE_KEY,
-  isLabeledTraceSnapshot,
   type LabeledTraceSnapshot,
   type PerformanceProfileSnapshot
 } from "../perf/profile.js";
@@ -495,8 +478,6 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     appendCommandJournalForKnownNodeIds,
     queueRuntimeEventJournal,
     queueRuntimeEventJournalFromUpdate,
-    flushEventJournalQueue,
-    compactOutlineJournal,
     migrateLegacyStateToV4,
     loadV4WithShardMigration,
     migrateHistoryToStore,
@@ -778,8 +759,8 @@ export function createBackgroundController(options: BackgroundControllerOptions)
     });
   });
 
-  api.windows.onBoundsChanged?.addListener(async (windowInfo) => {
-    await perfTrace.measureAsync("background.event.windows.onBoundsChanged", { windowId: windowInfo.id }, async () => {
+  api.windows.onBoundsChanged?.addListener((windowInfo) => {
+    perfTrace.measure("background.event.windows.onBoundsChanged", { windowId: windowInfo.id }, () => {
       if (fullSizeOutlinerWindowIds.has(windowInfo.id)) {
         return;
       }
@@ -2997,9 +2978,7 @@ export function createBackgroundController(options: BackgroundControllerOptions)
 
   function stateLoadTraceOptions(): LoadStateOptions {
     const options: LoadStateOptions = {
-      onStructureRepair: (repair) => {
-        recordStorageLoadStructureRepair(repair);
-      }
+      onStructureRepair: (repair) => recordStorageLoadStructureRepair(repair)
     };
     if (perfTrace.isEnabled()) {
       options.onPhase = (phase) => {
