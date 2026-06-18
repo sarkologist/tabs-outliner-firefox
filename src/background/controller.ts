@@ -4616,31 +4616,43 @@ export function createBackgroundController(
     options: { includeOrderMismatches?: boolean } = {}
   ): Promise<RuntimeWindow[]> {
     const includeOrderMismatches = options.includeOrderMismatches ?? true;
-    const missingTabIds = runtimeReconciler.missingLiveTabIdsInOpenWindows({
-      windows,
-      state: current,
-      ledger: runtimeFacts
-    });
-    const mismatchedTabIds = runtimeReconciler.mismatchedLiveTabIdsInWindows({
-      windows,
-      state: current,
-      index,
-      ledger: runtimeFacts
-    });
-    const suspiciousShapeTabIds = runtimeReconciler.suspiciousShapeTabIdsInWindows({
-      windows,
-      state: current,
-      index,
-      ledger: runtimeFacts
-    });
-    const orderMismatchedWindowIds = includeOrderMismatches
-      ? runtimeReconciler.orderMismatchedWindowIdsInWindows({
-          windows,
-          state: current,
-          index,
-          ledger: runtimeFacts
-        })
-      : [];
+    // The discrepancy detectors, each a closure over one snapshot. The same four run on the current
+    // snapshot and again on the fresh corroborating snapshot, so defining them once keeps the two
+    // passes identical. orderMismatches are gated here, so the disabled detector is never run.
+    const detectMissingTabIds = (snapshot: RuntimeWindow[]): number[] =>
+      runtimeReconciler.missingLiveTabIdsInOpenWindows({
+        windows: snapshot,
+        state: current,
+        ledger: runtimeFacts
+      });
+    const detectMismatchedTabIds = (snapshot: RuntimeWindow[]): number[] =>
+      runtimeReconciler.mismatchedLiveTabIdsInWindows({
+        windows: snapshot,
+        state: current,
+        index,
+        ledger: runtimeFacts
+      });
+    const detectSuspiciousShapeTabIds = (snapshot: RuntimeWindow[]): number[] =>
+      runtimeReconciler.suspiciousShapeTabIdsInWindows({
+        windows: snapshot,
+        state: current,
+        index,
+        ledger: runtimeFacts
+      });
+    const detectOrderMismatchedWindowIds = (snapshot: RuntimeWindow[]): number[] =>
+      includeOrderMismatches
+        ? runtimeReconciler.orderMismatchedWindowIdsInWindows({
+            windows: snapshot,
+            state: current,
+            index,
+            ledger: runtimeFacts
+          })
+        : [];
+
+    const missingTabIds = detectMissingTabIds(windows);
+    const mismatchedTabIds = detectMismatchedTabIds(windows);
+    const suspiciousShapeTabIds = detectSuspiciousShapeTabIds(windows);
+    const orderMismatchedWindowIds = detectOrderMismatchedWindowIds(windows);
     if (
       missingTabIds.length === 0 &&
       mismatchedTabIds.length === 0 &&
@@ -4667,46 +4679,22 @@ export function createBackgroundController(
       ledger: runtimeFacts,
       confidence: "complete"
     });
-    const corroboratedMissingTabIds = new Set(
-      runtimeReconciler.missingLiveTabIdsInOpenWindows({
-        windows: corroboratingWindows,
-        state: current,
-        ledger: runtimeFacts
+
+    // A discrepancy seen in the current snapshot but not reproduced by the fresh, complete-confidence
+    // snapshot was a stale read. Re-run every detector on the corroborating snapshot (via map, so all
+    // run unconditionally as before — do not collapse into a short-circuiting `||`) and trust the
+    // fresh snapshot if any symptom goes unconfirmed.
+    const contradicted = [
+      { firstIds: missingTabIds, detect: detectMissingTabIds },
+      { firstIds: mismatchedTabIds, detect: detectMismatchedTabIds },
+      { firstIds: suspiciousShapeTabIds, detect: detectSuspiciousShapeTabIds },
+      { firstIds: orderMismatchedWindowIds, detect: detectOrderMismatchedWindowIds }
+    ]
+      .map(({ firstIds, detect }) => {
+        const corroborated = new Set(detect(corroboratingWindows));
+        return firstIds.some((id) => !corroborated.has(id));
       })
-    );
-    const corroboratedMismatchedTabIds = new Set(
-      runtimeReconciler.mismatchedLiveTabIdsInWindows({
-        windows: corroboratingWindows,
-        state: current,
-        index,
-        ledger: runtimeFacts
-      })
-    );
-    const corroboratedSuspiciousShapeTabIds = new Set(
-      runtimeReconciler.suspiciousShapeTabIdsInWindows({
-        windows: corroboratingWindows,
-        state: current,
-        index,
-        ledger: runtimeFacts
-      })
-    );
-    const corroboratedOrderMismatchedWindowIds = includeOrderMismatches
-      ? new Set(
-          runtimeReconciler.orderMismatchedWindowIdsInWindows({
-            windows: corroboratingWindows,
-            state: current,
-            index,
-            ledger: runtimeFacts
-          })
-        )
-      : new Set<number>();
-    const contradicted =
-      missingTabIds.some((tabId) => !corroboratedMissingTabIds.has(tabId)) ||
-      mismatchedTabIds.some((tabId) => !corroboratedMismatchedTabIds.has(tabId)) ||
-      suspiciousShapeTabIds.some((tabId) => !corroboratedSuspiciousShapeTabIds.has(tabId)) ||
-      orderMismatchedWindowIds.some(
-        (windowId) => !corroboratedOrderMismatchedWindowIds.has(windowId)
-      );
+      .some((symptomContradicted) => symptomContradicted);
 
     return contradicted ? corroboratingWindows : windows;
   }
