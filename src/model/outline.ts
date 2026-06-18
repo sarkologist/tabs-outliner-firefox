@@ -1447,7 +1447,14 @@ export function moveSubtreeToBottomTopLevel(
   }
 
   const moving = next.nodes[movingNodeId];
-  if (!moving?.parentId) {
+  if (!moving) {
+    return next;
+  }
+  // Wrapping a live tab that was its window's only tab empties that source window, which
+  // `wrapNodeInGroup` then removes -- promoting the wrapper to a top-level node sitting in the
+  // source window's old slot, NOT at the bottom. The relocation still needs to push it to the
+  // end, so only short-circuit when the wrapper is already the last root.
+  if (!moving.parentId && next.rootIds.at(-1) === movingNodeId) {
     return next;
   }
 

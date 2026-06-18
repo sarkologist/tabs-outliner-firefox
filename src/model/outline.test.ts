@@ -3430,6 +3430,58 @@ describe("outline model", () => {
     expect(moved.nodes["tab:2"]?.live).toEqual({ tabId: 2, windowId: 42 });
   });
 
+  it("lands the wrapper at the bottom when moving a window's only tab to the bottom top level", () => {
+    // Regression: wrapping the only tab of window:10 empties and removes that source window,
+    // promoting the wrapper into window:10's old (top) slot. The relocation must still push the
+    // wrapper to the bottom -- previously it short-circuited and left it at the top.
+    const state = bootstrapFromWindows(
+      [
+        {
+          id: 10,
+          incognito: false,
+          focused: true,
+          tabs: [
+            {
+              id: 1,
+              windowId: 10,
+              index: 0,
+              active: true,
+              url: "https://solo.example/",
+              title: "Solo"
+            }
+          ]
+        },
+        {
+          id: 20,
+          incognito: false,
+          focused: false,
+          tabs: [
+            {
+              id: 2,
+              windowId: 20,
+              index: 0,
+              active: true,
+              url: "https://keep.example/",
+              title: "Keep"
+            }
+          ]
+        }
+      ],
+      { now: 1000 }
+    );
+
+    const moved = moveSubtreeToBottomTopLevel(state, "tab:1", {
+      now: 3000,
+      liveWindow: { id: 42, focused: true, incognito: false }
+    });
+
+    expect(moved.nodes["window:10"]).toBeUndefined();
+    expect(moved.rootIds).toEqual(["window:20", "window:42"]);
+    expect(moved.rootIds.at(-1)).toBe("window:42");
+    expect(moved.nodes["window:42"]?.childIds).toEqual(["tab:1"]);
+    expect(moved.nodes["tab:1"]?.parentId).toBe("window:42");
+  });
+
   it("moves nested group-like subtrees to the bottom top level", () => {
     const wrapped = wrapNodeInGroup(
       bootstrapFromWindows(
