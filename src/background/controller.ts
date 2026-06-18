@@ -14,6 +14,7 @@ import { createBrowserAdapter } from "./browser-adapter.js";
 import { createSidebarBroadcaster } from "./sidebar-broadcaster.js";
 import { createMutationScheduler } from "./mutation-scheduler.js";
 import { createDiagnosticsCoordinator } from "./diagnostics-coordinator.js";
+import { createStorageMaintenanceCoordinator } from "./storage-maintenance-coordinator.js";
 import { outlineStateCountDetail } from "./outline-state-metrics.js";
 import { createPersistenceCoordinator, type SaveSchedule } from "./persistence-coordinator.js";
 import {
@@ -156,10 +157,8 @@ import {
   STATE_V4_MANIFEST_A_KEY,
   STATE_V4_MANIFEST_B_KEY,
   STATE_V4_MIGRATION_BACKUP_KEY,
-  STATE_V4_MIGRATION_BACKUP_META_KEY,
-  sweepOrphanedV4Shards
+  STATE_V4_MIGRATION_BACKUP_META_KEY
 } from "./storage-v4.js";
-import { measureStorageCensus, storageCensusIncidentDetail } from "./storage-census.js";
 import {
   journalEntryAffectsHistory,
   replayJournal,
@@ -383,9 +382,6 @@ const RUNTIME_REFRESH_BATCH_DELAY_MS = 0;
 // the soak window (01-TARGET-ARCHITECTURE.md section 6).
 const MIGRATION_BACKUP_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const SIDEBAR_PROFILE_COLLECTION_DELAY_MS = 50;
-// Defer the one-time orphaned-shard sweep past startup so first paint, hydration, and early
-// interaction land first; its whole-store read is the same shape as the storage census.
-const ORPHAN_SHARD_SWEEP_DELAY_MS = 8000;
 const TOGGLE_SIDEBAR_COMMAND = "toggle-sidebar";
 const SIDEBAR_WINDOW_PATH = "sidebar/sidebar.html";
 const IMPORT_VIEWER_WINDOW_PATH = "viewer/viewer.html";
@@ -448,8 +444,6 @@ export function createBackgroundController(
       completedWindowIds: Set<number>;
     }
   >();
-  let storageCensusInFlight = false;
-  let orphanShardSweepScheduled = false;
   let automaticBackupInFlight: Promise<AutomaticBackupStatus> | undefined;
   let sidebarProfileRequestSequence = 0;
   let sidebarWindowCreationInFlight = 0;
@@ -508,6 +502,14 @@ export function createBackgroundController(
     ensureState,
     waitForSchedulerIdle,
     isHighPrioritySchedulerIdle
+  });
+
+  const storageMaintenance = createStorageMaintenanceCoordinator({
+    api,
+    shardStore,
+    shardStoreExternal,
+    now,
+    recordIncidentLog
   });
 
   api.runtime.onInstalled.addListener(() => {
@@ -2525,7 +2527,7 @@ export function createBackgroundController(
           ? { manifest: v4Loaded.fallbackManifest, slot: v4Loaded.fallbackSlot }
           : undefined
       );
-      scheduleOrphanShardSweep();
+      storageMaintenance.scheduleOrphanSweep();
       loaded = {
         state: v4Loaded.state,
         format: "v4",
@@ -6134,69 +6136,6 @@ export function createBackgroundController(
     }
   }
 
-  // One-shot, opt-in storage census run when the user turns profiling on: it measures the
-  // live storage.local area (a ~1 KB probe `set` to fingerprint the backend, per-prefix byte
-  // breakdown, and the node-shard generation count as a leak signal) and records it to the
-  // incident log, which the options page shows and which exported profiles bundle in
-  // `snapshot.incidentLog`. This is the field measurement of the per-write cost ceiling that
-  // cannot be read from the repo -- see docs/storage-rearchitecture/04-STORAGE-WRITE-COST.md.
-  // It deliberately writes nothing to the perf trace (so it does not perturb a cleared trace);
-  // it is fire-and-forget so the slow get(null)/probe on a large store never blocks the toggle.
-  async function recordStorageCensus(): Promise<void> {
-    if (storageCensusInFlight) {
-      return;
-    }
-    storageCensusInFlight = true;
-    try {
-      const census = await measureStorageCensus(api, { now });
-      await recordIncidentLog("storageCensus", storageCensusIncidentDetail(census));
-    } catch (error) {
-      await recordIncidentLog("storageCensusError", { message: errorText(error) });
-    } finally {
-      storageCensusInFlight = false;
-    }
-  }
-
-  // Reclaim leaked v4 node-shard generations (superseded copies of the tree that the shard GC never
-  // collected -- historically hundreds, growing the store into the GB range and making every
-  // whole-store read, including cold loads and the census, take tens of seconds). Off the startup
-  // critical path: deferred so first paint/hydration land first, then fire-and-forget. Runs once
-  // per session; with the GC baseline now seeded at startup the backlog does not re-accumulate.
-  function scheduleOrphanShardSweep(): void {
-    // DATA-LOSS FIX: the sweep deletes shard keys "no stored manifest references", reading the
-    // stored manifests + scanning the shard store. With an external (IndexedDB) shard store the save
-    // is split across substrates -- shards are written+committed to IndexedDB BEFORE the manifest is
-    // committed to storage.local -- so during that window the just-written shards are not yet
-    // referenced by any stored manifest. This fire-and-forget sweep (not serialized with saves) could
-    // run in that window, delete those live shards, and then the manifest commit lands referencing
-    // them -> the next load can't read them -> r2 salvage re-roots orphans and drops nodes. On the
-    // legacy storage.local path the save was one atomic set, so this could not happen. The per-save GC
-    // (removeKeysAfterCommit, serialized within the save) + the previousV4Snapshot seeding keep
-    // generations bounded without this scan, so skip the sweep entirely when the shard store is
-    // external. (A save-serialized sweep could be re-added later if orphan accumulation is ever seen.)
-    if (shardStoreExternal) {
-      return;
-    }
-    if (orphanShardSweepScheduled) {
-      return;
-    }
-    orphanShardSweepScheduled = true;
-    globalThis.setTimeout(() => {
-      void runOrphanShardSweep();
-    }, ORPHAN_SHARD_SWEEP_DELAY_MS);
-  }
-
-  async function runOrphanShardSweep(): Promise<void> {
-    try {
-      const result = await sweepOrphanedV4Shards(api, shardStore);
-      if (result.removed > 0) {
-        await recordIncidentLog("orphanShardSweep", result);
-      }
-    } catch (error) {
-      await recordIncidentLog("orphanShardSweepError", { message: errorText(error) });
-    }
-  }
-
   async function handlePerformanceTraceMessage(
     message: PerformanceTraceMessage
   ): Promise<TraceSnapshot | PerformanceProfileSnapshot | { ok: true }> {
@@ -6205,7 +6144,7 @@ export function createBackgroundController(
         perfTrace.setEnabled(true);
         perfTrace.mark("background.profile.enabled");
         await storePerformanceTracePreference(true);
-        void recordStorageCensus();
+        void storageMaintenance.recordCensus();
       } else {
         await storePerformanceTracePreference(false);
         perfTrace.mark("background.profile.disabled");
