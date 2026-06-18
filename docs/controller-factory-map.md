@@ -112,20 +112,28 @@ new `diagnostics-coordinator.test.ts` locks the cache/seed/invalidate/coalesce c
 *reads* canonical state via `ensureState` and never mutates the outline — genuinely disjoint from the
 state triad.
 
+**Then `StorageMaintenanceCoordinator` (`storage-maintenance-coordinator.ts`):** the two
+fire-and-forget storage-hygiene operations that run off the critical path and record to the incident
+log — the opt-in storage **census** (on profiling-on) and the one-shot orphaned-shard **sweep** (boot,
+deferred). Owns `storageCensusInFlight` + `orphanShardSweepScheduled` + `ORPHAN_SHARD_SWEEP_DELAY_MS`;
+public surface `recordCensus` / `scheduleOrphanSweep`; 5 injected deps (`api`, `shardStore`,
+`shardStoreExternal`, `now`, `recordIncidentLog`). 2 call sites (boot, profile-toggle). Neither
+operation reads or mutates the outline state. Verbatim move; `controller.test.ts` unmodified; new
+`storage-maintenance-coordinator.test.ts` mocks the census/sweep primitives to lock the guards, the
+skip-when-external rule, and the incident-log event names.
+
 **Remaining seams — honest disposition (diminishing returns from here):**
 
 | Cluster | Verdict | Why |
 |---|---|---|
-| `automaticBackupInFlight` + `handleAutomaticBackupAlarm` | **Next safe leaf cut** (`BackupCoordinator`) | Fire-and-forget, ~1 var, low coupling. Same proven shape as `DiagnosticsCoordinator`, smaller. |
-| Storage maintenance: `storageCensusInFlight`, `orphanShardSweepScheduled` (+ `recordStorageCensus`/`*OrphanShardSweep`) | **Possible leaf cut** | Fire-and-forget storage hygiene; deps differ from the readout (`recordIncidentLog`, `shardStore`, census/sweep helpers), so kept separate from `DiagnosticsCoordinator` to preserve cohesion. |
+| `automaticBackupInFlight` + `handleAutomaticBackupAlarm` | **Next safe leaf cut** (`BackupCoordinator`) — the last cheap one | Fire-and-forget, ~1 var. Same proven shape; more scattered than the prior cuts (alarm setup + handler + export + a stray clear), so a slightly wider seam. |
 | History (`historyState`/`historyLoadInFlight`/`historyWarmupTimer`) | **Entangled — weigh later** | The load/warmup state is separable, but `applyHistoryCommand` advances the canonical state through `installStateTransition` (the core). A `HistoryCoordinator` could own load/warmup only; the command path stays. |
 | Sidebar window/profile (`sidebarWindowCreationInFlight`, `fullSizeOutlinerWindowIds`, profile-collection vars) | **Wider seam** | Not one concept: `fullSizeOutlinerWindowIds` is read by the browser event handlers (#3); profile collection is its own thing. Partial cuts only. |
 | Runtime-refresh coalescing (`pendingRuntimeRefresh`, `sessionChangedQueued`, …) + the refresh orchestrator (#5) | **Near-core — leave** | Cohesive ("make state match observed runtime") but it *reconciles into* the canonical state via `installStateTransition`. Extracting it is the reconciler rewrite already ruled out (`reconciliation-state-model.md`: complexity is substantially essential). |
 | State triad + `runtimeFacts` + `installStateTransition` + command-exec (#4) + lifecycle recovery (#2) | **Irreducible core — leave** | The §3 verdict; the clean-room rewrite we declined. |
 
-**Bottom line:** after `DiagnosticsCoordinator`, the cheap state-owning leaf cuts left are
-`BackupCoordinator` and the storage-maintenance pair — each removes ~1–2 vars from the bus in the same
-low-risk shape. Beyond those, what remains is either the irreducible reconciliation/command core or
-wider/entangled seams; the line of diminishing returns is close. Fear-reduction here comes from named,
-disjoint, explicitly-wired collaborators with the test net as backstop — not from maximising lines
-removed.
+**Bottom line:** after `DiagnosticsCoordinator` and `StorageMaintenanceCoordinator`, the last cheap
+state-owning leaf cut is `BackupCoordinator` (~1 var, same low-risk shape). Beyond it, what remains is
+either the irreducible reconciliation/command core or wider/entangled seams; the line of diminishing
+returns is reached. Fear-reduction here comes from named, disjoint, explicitly-wired collaborators with
+the test net as backstop — not from maximising lines removed.
