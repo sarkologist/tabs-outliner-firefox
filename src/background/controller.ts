@@ -4434,6 +4434,8 @@ export function createBackgroundController(
   // `getNormalWindowShells` (windows.getAll, populate:false), skipping the expensive all-tabs
   // query -- and flip to whichever window is *actually* focused, not the event's window id.
   // Anything ambiguous falls back to the full reconcile below:
+  //   - the outline already has >1 active live window (drift the full reconcile would heal by
+  //     rewriting every window active flag; the in-place flip clears only one — see guard);
   //   - the focused window read fails, or not exactly one normal window is focused;
   //   - `found === false`: the focused window is unknown (just created / node closed) -- the
   //     full snapshot must discover and attach it (browserCreated provenance);
@@ -4446,16 +4448,35 @@ export function createBackgroundController(
     current: OutlineState,
     index: RuntimeStateIndex,
     eventTabs: RuntimeTabEvidence[],
+    closeMissing: boolean,
     options: RefreshOptions
   ): Promise<boolean | "fallback"> {
     if (
       eventTabs.length > 0 ||
-      options.closeMissing === true ||
+      closeMissing ||
       options.forceSnapshot === true ||
       (options.activationByWindowId?.size ?? 0) > 0 ||
       (options.focusWindowIds?.size ?? 0) === 0
     ) {
       return "fallback";
+    }
+    // Convergence guard. The full reconcile rewrites *every* window node's `active` flag from
+    // runtime truth, so it heals a drifted state that has more than one active live window
+    // (a single-focused-window invariant violation). `focusRuntimeWindowInPlace` only clears
+    // the one window the warm index tracks as active, so on such a drifted state it could leave
+    // a stale non-focused window active. That is volatile/cosmetic (focus highlight, not saved),
+    // but to stay at exact parity with the old path, fall back to the full reconcile whenever
+    // the outline is not already in a clean single-active state. The normal case (0 or 1 active
+    // window) is unaffected.
+    let activeLiveWindowCount = 0;
+    for (const windowNodeId of index.liveWindowNodeIdsByRuntimeId.values()) {
+      const windowNode = current.nodes[windowNodeId];
+      if (isLiveWindowNode(windowNode) && windowNode.active === true) {
+        activeLiveWindowCount += 1;
+        if (activeLiveWindowCount > 1) {
+          return "fallback";
+        }
+      }
     }
     const shells = await perfTrace.measureAsync(
       "background.runtime.getWindowShells",
@@ -4495,6 +4516,7 @@ export function createBackgroundController(
       current,
       index,
       eventTabs,
+      closeMissing,
       options
     );
     if (nativeFocusGain !== "fallback") {

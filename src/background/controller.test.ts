@@ -46998,6 +46998,57 @@ describe("background controller lifecycle", () => {
     expect(state.nodes["tab:3"]?.status).toBe("live");
   });
 
+  it("falls back to a full reconcile when the outline has more than one active window", async () => {
+    // Drifted state: two live windows (20, 30) are active at once — a single-focused-window
+    // invariant violation. `focusRuntimeWindowInPlace` clears only the one window the warm
+    // index tracks, so a pure in-place flip toward window 10 would leave a stale active window.
+    // The narrow path must detect the multi-active drift and fall back to the full reconcile,
+    // which rewrites every window's active flag from runtime truth and converges to exactly one.
+    const runtime = fakeRuntime(
+      [
+        { id: 10, focused: false, incognito: false },
+        { id: 20, focused: true, incognito: false },
+        { id: 30, focused: true, incognito: false }
+      ],
+      [
+        { id: 1, windowId: 10, index: 0, active: true, url: "https://one.example/", title: "One" },
+        { id: 2, windowId: 20, index: 0, active: true, url: "https://two.example/", title: "Two" },
+        {
+          id: 3,
+          windowId: 30,
+          index: 0,
+          active: true,
+          url: "https://three.example/",
+          title: "Three"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    const booted = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    const activeWindowsAtBoot = Object.values(booted.nodes).filter(
+      (node) => node.kind === "window" && node.status === "live" && node.active === true
+    );
+    // Premise check: the seeded runtime really did drift the outline to >1 active window.
+    expect(activeWindowsAtBoot.length).toBe(2);
+
+    vi.mocked(runtime.api.tabs.query).mockClear();
+    runtime.broadcasts.length = 0;
+
+    await focusWindowFromBrowser(runtime, 10);
+    await waitForMacrotask();
+
+    const after = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    const activeWindows = Object.values(after.nodes).filter(
+      (node) => node.kind === "window" && node.status === "live" && node.active === true
+    );
+    // Fell back to the full reconcile (which runs the global tabs.query) and healed to exactly
+    // one active window — the focused one.
+    expect(runtime.api.tabs.query).toHaveBeenCalled();
+    expect(activeWindows.map((node) => node.id)).toEqual(["window:10"]);
+    expect(after.nodes["window:20"]?.active).toBe(false);
+    expect(after.nodes["window:30"]?.active).toBe(false);
+  });
+
   it("boots and stays functional when the journal store (IndexedDB) is unavailable", async () => {
     const runtime = fakeRuntime(
       [{ id: 10, focused: true, incognito: false }],
