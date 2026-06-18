@@ -114,6 +114,21 @@ describe("storage maintenance coordinator — orphan sweep", () => {
     expect(sweepOrphanedV4Shards).toHaveBeenCalledTimes(1);
   });
 
+  it("defers the sweep by the documented one-shot delay (ORPHAN_SHARD_SWEEP_DELAY_MS = 8000ms)", async () => {
+    vi.mocked(sweepOrphanedV4Shards).mockResolvedValue({ removed: 0 } as never);
+    const { coordinator } = createHarness({ shardStoreExternal: false });
+
+    coordinator.scheduleOrphanSweep();
+
+    // Still pending one tick before the delay elapses...
+    await vi.advanceTimersByTimeAsync(8000 - 1);
+    expect(sweepOrphanedV4Shards).not.toHaveBeenCalled();
+
+    // ...and fires exactly at the delay (locks the constant against drift to 0/1/etc).
+    await vi.advanceTimersByTimeAsync(1);
+    expect(sweepOrphanedV4Shards).toHaveBeenCalledTimes(1);
+  });
+
   it("records the result only when shards were reclaimed", async () => {
     vi.mocked(sweepOrphanedV4Shards).mockResolvedValue({ removed: 3 } as never);
     const { coordinator, incidents } = createHarness({ shardStoreExternal: false });
