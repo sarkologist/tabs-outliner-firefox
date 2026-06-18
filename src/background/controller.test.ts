@@ -46869,10 +46869,133 @@ describe("background controller lifecycle", () => {
     expect(stateBroadcasts(runtime.broadcasts)).toHaveLength(0);
     expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(0);
 
-    // The skip is specific to WINDOW_ID_NONE: a real window gaining native focus still reconciles.
+    // The skip is specific to WINDOW_ID_NONE: a real window gaining native focus still
+    // corroborates the focus against fresh window shells (windows.getAll, populate:false) and
+    // flips the active flag in place -- but it must NOT run the expensive global tabs.query.
     await focusWindowFromBrowser(runtime, 20);
     await waitForMacrotask();
     expect(runtime.api.windows.getAll).toHaveBeenCalled();
+    expect(runtime.api.tabs.query).not.toHaveBeenCalled();
+  });
+
+  it("applies a native window focus-gain in place without an all-tabs snapshot", async () => {
+    const runtime = fakeRuntime(
+      [
+        { id: 10, focused: true, incognito: false },
+        { id: 20, focused: false, incognito: false }
+      ],
+      [
+        { id: 1, windowId: 10, index: 0, active: true, url: "https://one.example/", title: "One" },
+        { id: 2, windowId: 20, index: 0, active: true, url: "https://two.example/", title: "Two" }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    vi.mocked(runtime.api.windows.getAll).mockClear();
+    vi.mocked(runtime.api.tabs.query).mockClear();
+    vi.mocked(runtime.api.storage.local.set).mockClear();
+    runtime.broadcasts.length = 0;
+
+    // User alt-tabs from window 10 to window 20. The only durable delta is the window active
+    // flag, so the controller flips it in place after a cheap window-shell read -- it must NOT
+    // clone the tree or run the global tabs.query (the dominant focus-switch cost on large
+    // sessions), and it must not save (window focus is volatile/re-derived on load).
+    await focusWindowFromBrowser(runtime, 20);
+    await waitForMacrotask();
+
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(state.nodes["window:10"]?.active).toBe(false);
+    expect(state.nodes["window:20"]?.active).toBe(true);
+    expect(runtime.api.windows.getAll).toHaveBeenCalledWith({
+      populate: false,
+      windowTypes: ["normal"]
+    });
+    expect(runtime.api.tabs.query).not.toHaveBeenCalled();
+    const broadcasts = stateBroadcasts(runtime.broadcasts);
+    expect(broadcasts).toHaveLength(1);
+    expect(broadcasts[0]).toEqual({
+      type: "activeStateUpdated",
+      updates: [
+        { nodeId: "window:10", active: false },
+        { nodeId: "window:20", active: true }
+      ]
+    });
+    expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(0);
+  });
+
+  it("corrects a stale native focus event against fresh window truth", async () => {
+    const runtime = fakeRuntime(
+      [
+        { id: 10, focused: true, incognito: false },
+        { id: 20, focused: false, incognito: false }
+      ],
+      [
+        { id: 1, windowId: 10, index: 0, active: true, url: "https://one.example/", title: "One" },
+        { id: 2, windowId: 20, index: 0, active: true, url: "https://two.example/", title: "Two" }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    vi.mocked(runtime.api.tabs.query).mockClear();
+    runtime.broadcasts.length = 0;
+
+    // The focus event names window 10, but by the time the deferred refresh runs the browser
+    // truth is window 20 focused (e.g. a command re-focused a different window in between). The
+    // narrow path must trust fresh window truth over the stale event id, so window 20 ends up
+    // active -- not the event's window 10. (This is the shape the concurrent-focus generated
+    // traces exercise; trusting the event id here would resurrect the wrong active window.)
+    runtime.windows = [
+      { id: 10, focused: false, incognito: false },
+      { id: 20, focused: true, incognito: false }
+    ];
+    await runtime.events.windowFocusChanged.emit(10);
+    await waitForMacrotask();
+
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(state.nodes["window:10"]?.active).toBe(false);
+    expect(state.nodes["window:20"]?.active).toBe(true);
+    expect(runtime.api.tabs.query).not.toHaveBeenCalled();
+  });
+
+  it("falls back to a full snapshot when a native focus-gain targets an unknown window", async () => {
+    const runtime = fakeRuntime(
+      [{ id: 10, focused: true, incognito: false }],
+      [{ id: 1, windowId: 10, index: 0, active: true, url: "https://one.example/", title: "One" }]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    vi.mocked(runtime.api.tabs.query).mockClear();
+    runtime.broadcasts.length = 0;
+
+    // A window the outline has never seen (its tabs.onCreated was dropped or reordered) becomes
+    // focused. The narrow path cannot flip focus to an unknown node (focusRuntimeWindowInPlace
+    // returns found === false), so it must fall back to the full snapshot, which discovers and
+    // attaches the window and its tab. This is the "keep fallbacks" guarantee for the case the
+    // narrow read cannot resolve.
+    runtime.windows = [
+      { id: 10, focused: false, incognito: false },
+      { id: 30, focused: true, incognito: false }
+    ];
+    runtime.tabs = [
+      ...runtime.tabs,
+      {
+        id: 3,
+        windowId: 30,
+        index: 0,
+        active: true,
+        url: "https://three.example/",
+        title: "Three"
+      }
+    ];
+    await runtime.events.windowFocusChanged.emit(30);
+    await waitForMacrotask();
+
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(runtime.api.tabs.query).toHaveBeenCalled();
+    expect(state.nodes["window:30"]?.status).toBe("live");
+    expect(state.nodes["window:30"]?.active).toBe(true);
+    expect(state.nodes["window:10"]?.active).toBe(false);
+    expect(state.nodes["tab:3"]?.status).toBe("live");
   });
 
   it("boots and stays functional when the journal store (IndexedDB) is unavailable", async () => {
