@@ -122,18 +122,31 @@ operation reads or mutates the outline state. Verbatim move; `controller.test.ts
 `storage-maintenance-coordinator.test.ts` mocks the census/sweep primitives to lock the guards, the
 skip-when-external rule, and the incident-log event names.
 
+**Then `BackupCoordinator` (`backup-coordinator.ts`):** the automatic periodic backup — the alarm
+lifecycle (create/clear `AUTOMATIC_BACKUP_ALARM_NAME`) and the one-in-flight export run. Owns
+`automaticBackupInFlight`; public surface `configure` / `handleAlarm` / `disable`; 7 injected deps
+(`api`, `perfTrace`, `now`, `ensureState`, `ensurePreferences`, `waitForSchedulerIdle`,
+`recordIncidentLog`). The controller keeps only the backup *alarm listener* (its name filter is the
+entry point, like the sidebar `onConnect`) and delegates; 4 call sites move (boot + preference-enable
+→ `configure`, the alarm → `handleAlarm`, preference-disable → `disable`). Verbatim move (the perf mark
+`background.backup.export` and the `automaticBackup*` incident events preserved); `controller.test.ts`
+unmodified (its 40 backup assertions are the oracle); new `backup-coordinator.test.ts` (10 tests) mocks
+the backup primitives and locks the enabled/disabled branches, run-if-due vs run-immediately, the alarm
+scheduling/clearing, and the in-flight guard.
+
 **Remaining seams — honest disposition (diminishing returns from here):**
 
 | Cluster | Verdict | Why |
 |---|---|---|
-| `automaticBackupInFlight` + `handleAutomaticBackupAlarm` | **Next safe leaf cut** (`BackupCoordinator`) — the last cheap one | Fire-and-forget, ~1 var. Same proven shape; more scattered than the prior cuts (alarm setup + handler + export + a stray clear), so a slightly wider seam. |
 | History (`historyState`/`historyLoadInFlight`/`historyWarmupTimer`) | **Entangled — weigh later** | The load/warmup state is separable, but `applyHistoryCommand` advances the canonical state through `installStateTransition` (the core). A `HistoryCoordinator` could own load/warmup only; the command path stays. |
 | Sidebar window/profile (`sidebarWindowCreationInFlight`, `fullSizeOutlinerWindowIds`, profile-collection vars) | **Wider seam** | Not one concept: `fullSizeOutlinerWindowIds` is read by the browser event handlers (#3); profile collection is its own thing. Partial cuts only. |
 | Runtime-refresh coalescing (`pendingRuntimeRefresh`, `sessionChangedQueued`, …) + the refresh orchestrator (#5) | **Near-core — leave** | Cohesive ("make state match observed runtime") but it *reconciles into* the canonical state via `installStateTransition`. Extracting it is the reconciler rewrite already ruled out (`reconciliation-state-model.md`: complexity is substantially essential). |
 | State triad + `runtimeFacts` + `installStateTransition` + command-exec (#4) + lifecycle recovery (#2) | **Irreducible core — leave** | The §3 verdict; the clean-room rewrite we declined. |
 
-**Bottom line:** after `DiagnosticsCoordinator` and `StorageMaintenanceCoordinator`, the last cheap
-state-owning leaf cut is `BackupCoordinator` (~1 var, same low-risk shape). Beyond it, what remains is
-either the irreducible reconciliation/command core or wider/entangled seams; the line of diminishing
-returns is reached. Fear-reduction here comes from named, disjoint, explicitly-wired collaborators with
-the test net as backstop — not from maximising lines removed.
+**Bottom line:** `DiagnosticsCoordinator`, `StorageMaintenanceCoordinator`, and `BackupCoordinator`
+exhaust the cheap, state-owning leaf cuts. What remains is either the irreducible reconciliation/command
+core or wider/entangled seams (history reads core via `installStateTransition`; the refresh orchestrator
+reconciles *into* state; sidebar window/profile is read by the event handlers) — none worth the
+risk-to-value at this point. Fear-reduction here came from named, disjoint, explicitly-wired
+collaborators with the test net as backstop, not from maximising lines removed. **Stop here** unless a
+specific maintenance need reopens one of the entangled seams.
