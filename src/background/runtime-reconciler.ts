@@ -1174,6 +1174,10 @@ function commandRelocatedMetadataEvidenceForCurrentScope(
   };
 }
 
+// Metadata fields that mark evidence stale when it drifts from current belief while the event does
+// not claim to change them — the same "unclaimed field disagrees" rule applied per field.
+const RUNTIME_TAB_METADATA_FIELDS = ["title", "url", "favIconUrl"] as const;
+
 function tabEvidenceConflictsWithCurrentShape(
   state: OutlineState,
   index: RuntimeStateIndexForReconciliation,
@@ -1231,39 +1235,21 @@ function tabEvidenceConflictsWithCurrentShape(
     return true;
   }
 
-  if (
-    !evidence.changedFields.has("title") &&
-    evidence.tab.title !== undefined &&
-    evidence.tab.title !== node.title
-  ) {
-    return true;
-  }
-
-  if (
-    !evidence.changedFields.has("url") &&
-    evidence.tab.url !== undefined &&
-    evidence.tab.url !== node.url
-  ) {
-    return true;
-  }
-
-  if (
-    !evidence.changedFields.has("favIconUrl") &&
-    evidence.tab.favIconUrl !== undefined &&
-    evidence.tab.favIconUrl !== node.favIconUrl
-  ) {
-    return true;
+  for (const field of RUNTIME_TAB_METADATA_FIELDS) {
+    if (
+      !evidence.changedFields.has(field) &&
+      evidence.tab[field] !== undefined &&
+      evidence.tab[field] !== node[field]
+    ) {
+      return true;
+    }
   }
 
   return false;
 }
 
 function tabMetadataEvidenceChanged(evidence: RuntimeTabEvidence): boolean {
-  return (
-    evidence.changedFields.has("title") ||
-    evidence.changedFields.has("url") ||
-    evidence.changedFields.has("favIconUrl")
-  );
+  return RUNTIME_TAB_METADATA_FIELDS.some((field) => evidence.changedFields.has(field));
 }
 
 function projectedRuntimeTabIndex(
