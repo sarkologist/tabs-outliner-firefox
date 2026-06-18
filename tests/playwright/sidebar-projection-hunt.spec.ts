@@ -1057,6 +1057,34 @@ test.describe("sidebar projection hunt", () => {
     expect(issues).toEqual([]);
   });
 
+  test("psh move-to-bottom broadcast clears the stale sparse row for a relocated top-level node", async ({
+    page
+  }) => {
+    const issues = collectPageIssues(page);
+    await loadSparseNamedGroupSidebar(page, { fullStatePending: true });
+    await expect(nodeRow(page, "window:named-group")).toBeVisible();
+
+    const result = await page.evaluate(async () => {
+      const api = projectionHuntApi();
+      const sparseBefore = api.sparseRequestCount();
+      // Another sidebar moved window:named-group to the bottom (after the unloaded window:tail).
+      api.emitMoveToBottomTopLevelPatch("window:named-group");
+      await api.waitForIdleFrames(2);
+      return {
+        sparseRequested: api.sparseRequestCount() - sparseBefore,
+        // It is now the last root, past the unloaded tail, so it must leave the top viewport
+        // immediately -- not linger in its old slot until a slow background refill lands.
+        stillShowsRelocatedNodeAtTop: Boolean(
+          document.querySelector("[data-node-id='window:named-group']")
+        ),
+        visibleRows: api.visibleRows()
+      };
+    });
+
+    expect(result.stillShowsRelocatedNodeAtTop).toBe(false);
+    expect(issues).toEqual([]);
+  });
+
   test("psh-rename-input-undo-shortcut-stays-local-during-hydration", async ({ page }) => {
     const issues = collectPageIssues(page);
     await loadLargeSparseSidebar(page, {
@@ -12321,6 +12349,7 @@ type ProjectionHuntApi = {
   emitAppendTabPatch(tabId: number): void;
   emitDeletePatch(nodeIds: string[]): void;
   emitMovePatch(nodeId: string, parentId: string, index: number): void;
+  emitMoveToBottomTopLevelPatch(nodeId: string): void;
   emitCollapsedPatch(nodeId: string, collapsed: boolean): void;
   emitTitlePatch(nodeId: string, title: string): void;
   emitFullStateBroadcast(): void;
@@ -12422,6 +12451,7 @@ function installProjectionHuntHarness(options: {
     emitAppendTabPatch,
     emitDeletePatch,
     emitMovePatch,
+    emitMoveToBottomTopLevelPatch,
     emitCollapsedPatch,
     emitTitlePatch,
     emitFullStateBroadcast,
@@ -12661,6 +12691,26 @@ function installProjectionHuntHarness(options: {
     const insertionIndex = Math.max(0, Math.min(parent.childIds.length, index));
     parent.childIds.splice(insertionIndex, 0, nodeId);
     node.parentId = parentId;
+    emit(treeStructureUpdate(previous, fullState, []));
+  }
+
+  // Mirrors a "Move to bottom" (moveSubtreeToBottomTopLevel) on a group-like node: detach it from
+  // its current parent/rootIds slot and append it as the last top-level node.
+  function emitMoveToBottomTopLevelPatch(nodeId: string) {
+    const previous = structuredClone(fullState);
+    const node = fullState.nodes[nodeId] as { parentId?: string; updatedAt?: number } | undefined;
+    if (!node) {
+      throw new Error(`Cannot move ${nodeId} to the bottom top level`);
+    }
+    for (const candidate of Object.values(fullState.nodes) as Array<{ childIds?: string[] }>) {
+      if (Array.isArray(candidate.childIds)) {
+        candidate.childIds = candidate.childIds.filter((childId) => childId !== nodeId);
+      }
+    }
+    fullState.rootIds = fullState.rootIds.filter((rootId: string) => rootId !== nodeId);
+    fullState.rootIds.push(nodeId);
+    delete node.parentId;
+    node.updatedAt = now + 1;
     emit(treeStructureUpdate(previous, fullState, []));
   }
 

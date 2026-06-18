@@ -2931,6 +2931,7 @@ function applyTreeStructureUpdate(update: TreeStructureUpdate): void {
       const shouldRefreshSparseProjectionAfterLocalPatch = Boolean(
         currentProjection && hydratingFullState && isSparseInitialProjection(currentProjection)
       );
+      const previousRootIds = state.rootIds;
       const deletedNodeIds = new Set(update.deletedNodeIds);
       recordDeletedNodeIds(deletedNodeIds);
       for (const nodeId of deletedNodeIds) {
@@ -3027,7 +3028,14 @@ function applyTreeStructureUpdate(update: TreeStructureUpdate): void {
           return;
         }
 
-        if (removeRelocatedRowsFromSparseOutlineProjection(state, currentProjection, update)) {
+        if (
+          removeRelocatedRowsFromSparseOutlineProjection(
+            state,
+            currentProjection,
+            update,
+            previousRootIds
+          )
+        ) {
           refreshProjectionActiveTabTarget(state, currentProjection);
           currentCutRowRange = cutSubtreeRowRange(currentProjection.rows, pendingCutNodeId);
           updateProjectionChrome(currentProjection);
@@ -3212,7 +3220,8 @@ function refreshLastOutlineProjectionAfterTreeStructureUpdate(
 function removeRelocatedRowsFromSparseOutlineProjection(
   state: OutlineState,
   projection: VisibleTreeProjection,
-  update: TreeStructureUpdate
+  update: TreeStructureUpdate,
+  previousRootIds: readonly NodeId[]
 ): boolean {
   if (
     projection.isSearchActive ||
@@ -3228,6 +3237,34 @@ function removeRelocatedRowsFromSparseOutlineProjection(
   const rowsByNodeId = new Map(projection.rows.map((row) => [row.nodeId, row]));
   for (const node of update.updatedNodes) {
     const row = rowsByNodeId.get(node.id);
+    // A node whose parent changed (including to/from the top level) or whose top-level slot moved is
+    // no longer where its visible row sits -- e.g. "Move to bottom" makes it the last root, past
+    // any unloaded tail. The childIndex heuristic below only catches nested same-window shuffles and
+    // skips top-level nodes, so without this a relocated group lingered in its old slot until the
+    // background refill landed (slow on a large store). Drop its whole visible subtree now; the
+    // refill re-renders it at its new position if that intersects the viewport.
+    if (row) {
+      const previousParentId =
+        typeof row.parentRowIndex === "number"
+          ? projection.rows[row.parentRowIndex]?.nodeId
+          : undefined;
+      const parentChanged = previousParentId !== node.parentId;
+      const rootSlotChanged = previousRootIds.indexOf(node.id) !== update.rootIds.indexOf(node.id);
+      if (parentChanged || rootSlotChanged) {
+        const startPosition = projection.rows.indexOf(row);
+        if (startPosition >= 0) {
+          rowsToRemove.add(row.nodeId);
+          for (let position = startPosition + 1; position < projection.rows.length; position += 1) {
+            const subtreeRow = projection.rows[position];
+            if (!subtreeRow || subtreeRow.depth <= row.depth) {
+              break;
+            }
+            rowsToRemove.add(subtreeRow.nodeId);
+          }
+        }
+        continue;
+      }
+    }
     const parent = node.parentId ? state.nodes[node.parentId] : undefined;
     if (node.childIds.length > 0) {
       for (const candidate of projection.rows) {
