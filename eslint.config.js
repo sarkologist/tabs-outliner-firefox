@@ -99,12 +99,11 @@ export default tseslint.config(
       // Broadcasts"); genuinely dropped awaits are real bugs to fix.
       "@typescript-eslint/no-floating-promises": ["error", { ignoreVoid: true }],
       "@typescript-eslint/no-misused-promises": "error",
-      // NOTE: `await-thenable` is intentionally NOT enabled yet. Its only findings are
-      // vestigial `await`s on the now-synchronous sidebar-broadcaster (the "Do Not Await
-      // Sidebar Broadcasts" design). Fixing them properly means de-async-ing a chain of
-      // ~20 awaited call sites on the perf-critical controller broadcast path — a separate,
-      // guarded refactor, out of scope for adopting the gate. Tracked as a follow-up.
-      // Flags `async` functions that never await — pairs with the rules above.
+      // Flags `await` on a non-thenable -- e.g. awaiting the synchronous sidebar-broadcaster
+      // ("Do Not Await Sidebar Broadcasts"). The 6 controller broadcast wrappers and the sync
+      // persist/finalizer chain that calls them are deliberately non-async so this holds.
+      "@typescript-eslint/await-thenable": "error",
+      // Flags `async` functions that never await -- pairs with the rules above.
       "@typescript-eslint/require-await": "error",
       // Complements the compiler-exhaustive command classification: a `switch` over a union
       // must cover every case (a `default` counts as exhaustive).

@@ -120,6 +120,21 @@ Use these as starting targets, not hard promises:
 
 ## Progress Log
 
+### 2026-06-17: Make the sidebar-broadcast wrappers synchronous + enable `await-thenable`
+
+The 6 controller broadcast wrappers (`persistAndBroadcast`, `broadcastActiveStateUpdate`, `broadcastTreeStructureUpdate`, `broadcastSameParentReorderUpdate`, `broadcastNodeStateUpdate`, `broadcastHistoryStatus`) were `async` and `await`-ed the **synchronous** `sidebarBroadcaster.broadcast()` (a `void`; see ARCHITECTURE.md "Do Not Await Sidebar Broadcasts"). Each vestigial `await` inserted a microtask hop *after* the (already-synchronous) post but *before* the statements that follow it — `scheduleStateSave`, the deferred journal append (`deferCommandDurability`), and echo handling. Dropping `async`/`await` removes those hops so the post → save-schedule → durability-enqueue sequence runs in one synchronous tick (strictly more atomic, fewer interleavings; the broadcast still posts at the same instant, and `deferCommandDurability` is still invoked synchronously as its contract requires).
+
+Because `await-thenable` and `require-await` are in tension on this layer (awaiting a now-`void` value is flagged, and de-async-ing a wrapper leaves its callers awaiting a non-thenable, which then have no `await` of their own), the change cascades — all forced, all genuinely synchronous since the only real async work (journal/snapshot writes) is already deferred fire-and-forget:
+
+- **Tier 1 — 5 persist helpers** went sync: `persistWithBestEffortPatch`, `persistWithNodeStateUpdate`, `persistKnownNodeStateUpdates`, `persistKnownNodeStateUpdate`, `persistKnownRuntimeFastPathUpdate`.
+- **Tier 2 — command finalizers**: `CommandFinalizer` is now `(ctx) => void`; all 10 finalizers plus `finalizeKnownNodeStateJournal` went sync (each builds a patch, broadcasts, `scheduleStateSave`s, and `deferCommandDurability`s — no synchronous await work remains).
+- **Tier 3 — outer callers** (event listeners, the command hub, history replay, focus/activation) keep their own `await ensureState()`/journal awaits and stay `async`; they just drop the redundant `await` (35 call sites total).
+
+`@typescript-eslint/await-thenable` is now enabled in `eslint.config.js` (production block) with the deferral NOTE removed; `require-await` (already on) is the completeness check that no de-async was missed.
+
+- **Asymptotics:** `Current Asymptotics Audit` table unchanged. No algorithmic/transport/save-shape change — only microtask scheduling on the broadcast path. The broadcast still posts synchronously; saves and journal appends keep their existing deferral.
+- **Guards:** `node scripts/perf-runtime-guard.mjs --hard-only` PASS (9 scenarios, all hard counters; broadcast/save/journalWrite/storageSet counts identical to baseline). `pnpm perf:sidebar-projection-guard` PASS (2 scenarios, 5 runs). Full vitest 803 pass / 2 skip (incl. `controller.test.ts` 287 with the lifecycle/soak/adversarial/runtime-trace traces); `typecheck:test` + `build` green; `pnpm lint` clean with the new rule. No budget changes. The only timing note is the chronic, pre-existing `command-group-live-leaf firstBroadcastMs` miss (155 vs report-only 138 — a never-moved budget documented under the 2026-06-10 P0.1 entry; `main` misses it identically), which is report-only under `--hard-only` and cannot be caused by this change since it edits only code that runs *after* the first broadcast. Save-shape storage-fault lane not required (no save-timing/shape change).
+
 ### 2026-06-17: Projection fix — out-of-view delete updates a search-mode sidebar's total (PT-039)
 
 Correctness fix on the sidebar `treeStructureUpdated` delete patch path (performance-relevant by the AGENTS.md rule even though the motive was correctness). The optimistic-delete echo guard `isAlreadyAppliedDeletePatch` (added 2026-06-13 in `a5bb527`) absorbed any delete patch whose nodes were all absent from local state, skipping the `nodeCount` decrement; for a sparse/search sidebar that absorbed a *real* out-of-view delete, leaving the total stale (`1 match / 1001 items` instead of `999`). The fix additionally requires that the sidebar recorded deleting those nodes (`deletePatchAlreadyRecordedLocally`, backed by the existing `deletedNodeRevisionById` ledger) before short-circuiting. See `PT-039` in `SIDEBAR_PROJECTION_BUGS.md`.
