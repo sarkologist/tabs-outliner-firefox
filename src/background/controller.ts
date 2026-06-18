@@ -6,6 +6,7 @@ import { createMutationScheduler } from "./mutation-scheduler.js";
 import { createDiagnosticsCoordinator } from "./diagnostics-coordinator.js";
 import { createStorageMaintenanceCoordinator } from "./storage-maintenance-coordinator.js";
 import { createBackupCoordinator } from "./backup-coordinator.js";
+import { createHistoryLoader } from "./history-loader.js";
 import { outlineStateCountDetail } from "./outline-state-metrics.js";
 import { createPersistenceCoordinator, type SaveSchedule } from "./persistence-coordinator.js";
 import {
@@ -413,8 +414,6 @@ export function createBackgroundController(
   let lastPersistedState: OutlineState | undefined;
   let deferredPersistedStateCloneTimer: ReturnType<typeof setTimeout> | undefined;
   let historyState: HistoryState | undefined;
-  let historyLoadInFlight: Promise<HistoryState> | undefined;
-  let historyWarmupTimer: ReturnType<typeof setTimeout> | undefined;
   // Before the full state is in memory, every booting sidebar asks for the sparse boot snapshot.
   // With many windows open they arrive together and would each read the same persisted snapshot
   // key off the single background thread; share one in-flight read instead (see initialTreeSnapshot).
@@ -510,6 +509,17 @@ export function createBackgroundController(
     ensurePreferences,
     waitForSchedulerIdle,
     recordIncidentLog
+  });
+
+  const historyLoader = createHistoryLoader({
+    api,
+    shardStore,
+    perfTrace,
+    ensurePreferences,
+    getHistoryState: () => historyState,
+    setHistoryState: (history) => {
+      historyState = history;
+    }
   });
 
   api.runtime.onInstalled.addListener(() => {
@@ -1274,13 +1284,13 @@ export function createBackgroundController(
 
     if (isInitialTreeSnapshotMessage(message)) {
       const snapshot = await initialTreeSnapshot();
-      scheduleHistoryWarmup();
+      historyLoader.scheduleWarmup();
       return snapshot;
     }
 
     if (isInitialTreeSnapshotWindowMessage(message)) {
       const snapshot = await initialTreeSnapshotWindow(message);
-      scheduleHistoryWarmup();
+      historyLoader.scheduleWarmup();
       return snapshot;
     }
 
@@ -1301,7 +1311,7 @@ export function createBackgroundController(
     }
 
     if (message.type === "getHistoryStatus") {
-      return historyStatusMessage(await ensureHistory());
+      return historyStatusMessage(await historyLoader.ensure());
     }
 
     if (message.type === "analyzeRestoreScope") {
@@ -2249,7 +2259,7 @@ export function createBackgroundController(
 
   async function initializeExtensionLifecycle(): Promise<void> {
     await ensureState();
-    scheduleHistoryWarmup();
+    historyLoader.scheduleWarmup();
     await backup.configure({ runIfDue: true });
   }
 
@@ -2377,41 +2387,6 @@ export function createBackgroundController(
     );
   }
 
-  async function ensureHistory(): Promise<HistoryState> {
-    const activePreferences = await ensurePreferences();
-    if (historyState) {
-      return historyState;
-    }
-
-    historyLoadInFlight ??= loadHistory(api, activePreferences.undoHistoryLimit, shardStore)
-      .then((loaded) => normalizeHistoryState(loaded, activePreferences.undoHistoryLimit))
-      .finally(() => {
-        historyLoadInFlight = undefined;
-      });
-    historyState = await historyLoadInFlight;
-    return historyState;
-  }
-
-  function warmHistoryCache(): void {
-    if (historyState || historyLoadInFlight) {
-      return;
-    }
-    void ensureHistory().catch((error) => {
-      perfTrace.mark("background.history.warm.error", { message: errorText(error) });
-    });
-  }
-
-  function scheduleHistoryWarmup(): void {
-    if (historyState || historyLoadInFlight || typeof historyWarmupTimer === "number") {
-      return;
-    }
-
-    historyWarmupTimer = globalThis.setTimeout(() => {
-      historyWarmupTimer = undefined;
-      warmHistoryCache();
-    }, 0);
-  }
-
   async function ensurePreferences(): Promise<AppPreferences> {
     preferences ??= await loadAppPreferences(api);
     return preferences;
@@ -2535,7 +2510,7 @@ export function createBackgroundController(
       // the journal fold so an acked command stays undoable across the restart.
       const activePreferences = await ensurePreferences();
       const historyReplayResult = replayJournalWithHistory(loadedState!, journalReplayEntries, {
-        history: await ensureHistory(),
+        history: await historyLoader.ensure(),
         limit: activePreferences.undoHistoryLimit
       });
       stored = historyReplayResult.state;
@@ -3387,14 +3362,18 @@ export function createBackgroundController(
     }
 
     const activePreferences = await ensurePreferences();
-    historyState = pushUndoEntry(await ensureHistory(), entry, activePreferences.undoHistoryLimit);
+    historyState = pushUndoEntry(
+      await historyLoader.ensure(),
+      entry,
+      activePreferences.undoHistoryLimit
+    );
     scheduleHistorySave(historyState, options.saveSchedule);
     broadcastHistoryStatusSoon(historyState);
     return entry.id;
   }
 
   async function applyHistoryCommand(direction: "undo" | "redo"): Promise<CommandAck> {
-    const history = await ensureHistory();
+    const history = await historyLoader.ensure();
     const popped = direction === "undo" ? popUndoEntry(history) : popRedoEntry(history);
     if (!popped.entry) {
       return commandAck(false);
