@@ -46,7 +46,14 @@ export function dropPlacementForNode(
   }
 
   if (mode === "inside") {
-    return placementForTargetParent(state, source, target.id, target.childIds.length, mode, target.id);
+    return placementForTargetParent(
+      state,
+      source,
+      target.id,
+      target.childIds.length,
+      mode,
+      target.id
+    );
   }
 
   const siblings = siblingsForTarget(state, target);
@@ -75,7 +82,10 @@ export function dropPlacementForNode(
   );
 }
 
-export function dropPlacementForRoot(state: OutlineState, sourceId: NodeId): RootDropPlacement | undefined {
+export function dropPlacementForRoot(
+  state: OutlineState,
+  sourceId: NodeId
+): RootDropPlacement | undefined {
   const source = state.nodes[sourceId];
   if (!source) {
     return undefined;
@@ -122,7 +132,8 @@ function placementForRootTarget(
   }
 
   const sourceIndex = sourceSiblings.indexOf(source.id);
-  const adjustedIndex = !source.parentId && sourceIndex >= 0 && sourceIndex < rawIndex ? rawIndex - 1 : rawIndex;
+  const adjustedIndex =
+    !source.parentId && sourceIndex >= 0 && sourceIndex < rawIndex ? rawIndex - 1 : rawIndex;
 
   return {
     kind: "root",
@@ -148,9 +159,10 @@ function placementForTargetParent(
   }
 
   const sourceIndex = sourceSiblings.indexOf(source.id);
-  const adjustedIndex = source.parentId === parentId && sourceIndex >= 0 && sourceIndex < rawIndex
-    ? rawIndex - 1
-    : rawIndex;
+  const adjustedIndex =
+    source.parentId === parentId && sourceIndex >= 0 && sourceIndex < rawIndex
+      ? rawIndex - 1
+      : rawIndex;
 
   return {
     kind: "node",
@@ -163,7 +175,7 @@ function placementForTargetParent(
 }
 
 function siblingsForTarget(state: OutlineState, target: OutlineNode): NodeId[] {
-  return target.parentId ? state.nodes[target.parentId]?.childIds ?? [] : state.rootIds;
+  return target.parentId ? (state.nodes[target.parentId]?.childIds ?? []) : state.rootIds;
 }
 
 function isDescendant(state: OutlineState, candidateId: NodeId, ancestorId: NodeId): boolean {

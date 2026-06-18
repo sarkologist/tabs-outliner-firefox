@@ -6,7 +6,9 @@ type ConsoleIssue = {
 };
 
 test.describe("sidebar search result show in tree", () => {
-  test("clears search, expands ancestors, and scrolls the full tree to the result", async ({ page }) => {
+  test("clears search, expands ancestors, and scrolls the full tree to the result", async ({
+    page
+  }) => {
     const issues = collectPageIssues(page);
     await loadSidebar(page);
 
@@ -14,9 +16,13 @@ test.describe("sidebar search result show in tree", () => {
     await expect(page.getByRole("treeitem")).toHaveCount(3);
 
     await nodeRow(page, "window:1").hover();
-    await expect(nodeRow(page, "window:1").getByRole("button", { name: "Show in tree" })).toHaveCount(0);
+    await expect(
+      nodeRow(page, "window:1").getByRole("button", { name: "Show in tree" })
+    ).toHaveCount(0);
     await nodeRow(page, "tab:parent").hover();
-    await expect(nodeRow(page, "tab:parent").getByRole("button", { name: "Show in tree" })).toHaveCount(0);
+    await expect(
+      nodeRow(page, "tab:parent").getByRole("button", { name: "Show in tree" })
+    ).toHaveCount(0);
 
     await nodeRow(page, "tab:target").hover();
     await nodeRow(page, "tab:target").getByRole("button", { name: "Show in tree" }).click();
@@ -31,7 +37,9 @@ test.describe("sidebar search result show in tree", () => {
       parentCollapsed: false
     });
     expect(await scrollTop(page)).toBeGreaterThan(500);
-    await expect(page.locator(`${nodeSelector("tab:target")}.is-reveal-highlight`)).toHaveCount(0, { timeout: 2500 });
+    await expect(page.locator(`${nodeSelector("tab:target")}.is-reveal-highlight`)).toHaveCount(0, {
+      timeout: 2500
+    });
     expect(issues).toEqual([]);
   });
 
@@ -51,9 +59,17 @@ test.describe("sidebar search result show in tree", () => {
     expect(await scrollTop(page)).toBeGreaterThan(15_000);
 
     const metrics = await page.evaluate(() => {
-      const messages = (window as typeof window & {
-        __showInTreeMessages?: Array<{ type: string; query: string; centerRowIndex: number; targetNodeId?: string }>;
-      }).__showInTreeMessages ?? [];
+      const messages =
+        (
+          window as typeof window & {
+            __showInTreeMessages?: Array<{
+              type: string;
+              query: string;
+              centerRowIndex: number;
+              targetNodeId?: string;
+            }>;
+          }
+        ).__showInTreeMessages ?? [];
       return {
         projectionRequests: messages
           .filter((message) => message.type === "getTreeProjectionSlice")
@@ -84,7 +100,10 @@ async function loadSidebar(page: Page): Promise<void> {
     window.browser = {
       runtime: {
         sendMessage: async (message: unknown) => {
-          const type = typeof message === "object" && message ? (message as { type?: unknown }).type : undefined;
+          const type =
+            typeof message === "object" && message
+              ? (message as { type?: unknown }).type
+              : undefined;
           if (type === "getInitialTreeSnapshot") {
             return undefined;
           }
@@ -185,7 +204,12 @@ async function loadSparseSidebar(page: Page): Promise<void> {
     const targetRowIndex = 900;
     const parentRowIndex = 899;
     const targetNodeId = "tab:target";
-    const messages: Array<{ type: string; query: string; centerRowIndex: number; targetNodeId?: string }> = [];
+    const messages: Array<{
+      type: string;
+      query: string;
+      centerRowIndex: number;
+      targetNodeId?: string;
+    }> = [];
     const listeners: Array<(message: unknown) => void> = [];
 
     Object.assign(window as typeof window & { __showInTreeMessages?: typeof messages }, {
@@ -195,26 +219,48 @@ async function loadSparseSidebar(page: Page): Promise<void> {
     window.browser = {
       runtime: {
         sendMessage: async (message: unknown) => {
-          const type = typeof message === "object" && message ? String((message as { type?: unknown }).type) : "";
-          const query = typeof message === "object" && message && typeof (message as { query?: unknown }).query === "string"
-            ? (message as { query: string }).query
-            : "";
-          const centerRowIndex = typeof message === "object" && message &&
+          const type =
+            typeof message === "object" && message
+              ? String((message as { type?: unknown }).type)
+              : "";
+          const query =
+            typeof message === "object" &&
+            message &&
+            typeof (message as { query?: unknown }).query === "string"
+              ? (message as { query: string }).query
+              : "";
+          const centerRowIndex =
+            typeof message === "object" &&
+            message &&
             typeof (message as { centerRowIndex?: unknown }).centerRowIndex === "number"
-            ? (message as { centerRowIndex: number }).centerRowIndex
-            : 0;
-          const requestedTargetNodeId = typeof message === "object" && message &&
+              ? (message as { centerRowIndex: number }).centerRowIndex
+              : 0;
+          const requestedTargetNodeId =
+            typeof message === "object" &&
+            message &&
             typeof (message as { targetNodeId?: unknown }).targetNodeId === "string"
-            ? (message as { targetNodeId: string }).targetNodeId
-            : undefined;
-          messages.push({ type, query, centerRowIndex, ...(requestedTargetNodeId ? { targetNodeId: requestedTargetNodeId } : {}) });
+              ? (message as { targetNodeId: string }).targetNodeId
+              : undefined;
+          messages.push({
+            type,
+            query,
+            centerRowIndex,
+            ...(requestedTargetNodeId ? { targetNodeId: requestedTargetNodeId } : {})
+          });
 
           if (type === "getInitialTreeSnapshot") {
             return snapshotFromRows([windowRow(), ...tabRows(1, 256)]);
           }
           if (type === "getTreeProjectionSlice") {
             if (query) {
-              return snapshotFromRows([windowRow({ search: true }), parentRow({ search: true }), targetRow({ search: true })], query);
+              return snapshotFromRows(
+                [
+                  windowRow({ search: true }),
+                  parentRow({ search: true }),
+                  targetRow({ search: true })
+                ],
+                query
+              );
             }
             const center = requestedTargetNodeId === targetNodeId ? targetRowIndex : centerRowIndex;
             return nonSearchSlice(center);
@@ -295,7 +341,10 @@ async function loadSparseSidebar(page: Page): Promise<void> {
       return rows;
     }
 
-    function snapshotFromRows(rows: Array<Record<string, unknown> & { nodeId: string; index: number }>, query = "") {
+    function snapshotFromRows(
+      rows: Array<Record<string, unknown> & { nodeId: string; index: number }>,
+      query = ""
+    ) {
       const loadedNodeIds = new Set(rows.map((row) => row.nodeId));
       return {
         type: "initialTreeSnapshot",
@@ -352,7 +401,9 @@ async function loadSparseSidebar(page: Page): Promise<void> {
         title: "Window",
         active: true,
         collapsed: false,
-        childIds: windowChildIds().filter((nodeId) => loadedNodeIds.size === 0 || loadedNodeIds.has(nodeId)),
+        childIds: windowChildIds().filter(
+          (nodeId) => loadedNodeIds.size === 0 || loadedNodeIds.has(nodeId)
+        ),
         createdAt: now,
         updatedAt: now,
         live: { windowId: 1 }
@@ -363,7 +414,10 @@ async function loadSparseSidebar(page: Page): Promise<void> {
       return [
         ...Array.from({ length: parentRowIndex - 1 }, (_value, index) => `tab:${index + 1}`),
         "tab:parent",
-        ...Array.from({ length: totalRows - targetRowIndex - 1 }, (_value, index) => `tab:${targetRowIndex + 1 + index}`)
+        ...Array.from(
+          { length: totalRows - targetRowIndex - 1 },
+          (_value, index) => `tab:${targetRowIndex + 1 + index}`
+        )
       ];
     }
 
@@ -375,7 +429,8 @@ async function loadSparseSidebar(page: Page): Promise<void> {
         parentId: "window:1",
         title: "Container",
         url: "https://show-in-tree.example/container",
-        childIds: !options.loadedNodeIds || options.loadedNodeIds.has(targetNodeId) ? [targetNodeId] : [],
+        childIds:
+          !options.loadedNodeIds || options.loadedNodeIds.has(targetNodeId) ? [targetNodeId] : [],
         collapsed: options.collapsed ?? false,
         createdAt: now,
         updatedAt: now,
@@ -508,9 +563,11 @@ async function outlineCollapseState(page: Page): Promise<{
   parentCollapsed: boolean | undefined;
 }> {
   return page.evaluate(() => {
-    const state = (window as typeof window & {
-      __outlineState?: { nodes?: Record<string, { collapsed?: boolean }> };
-    }).__outlineState;
+    const state = (
+      window as typeof window & {
+        __outlineState?: { nodes?: Record<string, { collapsed?: boolean }> };
+      }
+    ).__outlineState;
     return {
       windowCollapsed: state?.nodes?.["window:1"]?.collapsed,
       parentCollapsed: state?.nodes?.["tab:parent"]?.collapsed
@@ -533,7 +590,10 @@ function collectPageIssues(page: Page): ConsoleIssue[] {
     issues.push({ kind: "pageerror", text: error.message });
   });
   page.on("requestfailed", (request) => {
-    issues.push({ kind: "requestfailed", text: `${request.url()} ${request.failure()?.errorText ?? ""}` });
+    issues.push({
+      kind: "requestfailed",
+      text: `${request.url()} ${request.failure()?.errorText ?? ""}`
+    });
   });
   return issues;
 }

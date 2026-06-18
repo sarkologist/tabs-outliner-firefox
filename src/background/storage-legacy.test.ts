@@ -90,15 +90,17 @@ function fakeApi(items: Record<string, unknown> = {}): WebExtensionBrowser {
   } as never;
 }
 
-
-
 function mutateStoredV3Node(
   items: Record<string, unknown>,
   nodeId: string,
   mutate: (node: Record<string, unknown>) => void
 ): void {
   for (const value of Object.values(items)) {
-    if (!value || typeof value !== "object" || !Array.isArray((value as { nodes?: unknown }).nodes)) {
+    if (
+      !value ||
+      typeof value !== "object" ||
+      !Array.isArray((value as { nodes?: unknown }).nodes)
+    ) {
       continue;
     }
     for (const node of (value as { nodes: unknown[] }).nodes) {
@@ -352,15 +354,17 @@ describe("initial tree snapshot projection", () => {
 
     expect(loaded?.state).toEqual(state);
     expect(loaded?.format).toBe("v3");
-    expect(phases.map((phase) => phase.name)).toEqual(expect.arrayContaining([
-      "manifestRead",
-      "v3.nodeShardRead",
-      "v3.nodeMaterialize",
-      "v3.orderPageKeys",
-      "v3.orderPageRead",
-      "v3.orderAttach",
-      "v3.validation"
-    ]));
+    expect(phases.map((phase) => phase.name)).toEqual(
+      expect.arrayContaining([
+        "manifestRead",
+        "v3.nodeShardRead",
+        "v3.nodeMaterialize",
+        "v3.orderPageKeys",
+        "v3.orderPageRead",
+        "v3.orderAttach",
+        "v3.validation"
+      ])
+    );
     expect(phases.every((phase) => phase.durationMs >= 0)).toBe(true);
   });
 
@@ -379,7 +383,6 @@ describe("initial tree snapshot projection", () => {
     expect(loaded?.format).toBe("v3");
     expect(loaded?.requiresFullSave).toBe(true);
   });
-
 });
 
 describe("legacy v3 storage reads", () => {
@@ -394,7 +397,9 @@ describe("legacy v3 storage reads", () => {
     expect(saved?.[STATE_V2_MANIFEST_KEY]).toBeUndefined();
     expect(saved?.[STATE_V3_MANIFEST_KEY]).toBeDefined();
     await expect(loadStateV3(api)).resolves.toEqual(state);
-    await expect(loadStateWithMetadata(api).then((loaded) => loaded?.state)).resolves.toEqual(state);
+    await expect(loadStateWithMetadata(api).then((loaded) => loaded?.state)).resolves.toEqual(
+      state
+    );
   });
 
   it("loads v3 structure from manifest roots and order pages over stale parent ids", async () => {
@@ -516,7 +521,9 @@ describe("legacy v3 storage reads", () => {
     const api = fakeApi(outlineStateV2Items(v2State, { revision: 10 }));
     await api.storage.local.set(outlineStateV3Items(v3State));
 
-    await expect(loadStateWithMetadata(api).then((loaded) => loaded?.state)).resolves.toEqual(v3State);
+    await expect(loadStateWithMetadata(api).then((loaded) => loaded?.state)).resolves.toEqual(
+      v3State
+    );
   });
 
   it("salvages v3 when an order page is missing instead of failing the load", async () => {
@@ -688,8 +695,6 @@ function _generatedStorageState(seed: number): OutlineState {
     nodes
   };
 }
-
-
 
 function seededRandom(seed: number): () => number {
   let state = seed >>> 0;

@@ -152,9 +152,7 @@ function stateV3NodeShardKeys(state: OutlineState): string[] {
   for (const node of Object.values(state.nodes)) {
     shardIndexes.add(stateV3NodeShardIndex(node.id));
   }
-  return [...shardIndexes]
-    .sort((left, right) => left - right)
-    .map(stateV3NodeShardKey);
+  return [...shardIndexes].sort((left, right) => left - right).map(stateV3NodeShardKey);
 }
 
 function stateV3NodeShardItems(state: OutlineState): Map<string, StateV3NodeShard> {
@@ -179,7 +177,9 @@ function stateV3NodeShardItems(state: OutlineState): Map<string, StateV3NodeShar
 
 function stateV3OrderPageItems(state: OutlineState): Map<string, StateV3OrderPage> {
   const items = new Map<string, StateV3OrderPage>();
-  for (const node of Object.values(state.nodes).sort((left, right) => left.id.localeCompare(right.id))) {
+  for (const node of Object.values(state.nodes).sort((left, right) =>
+    left.id.localeCompare(right.id)
+  )) {
     for (let index = 0; index < node.childIds.length; index += STATE_V3_ORDER_PAGE_SIZE) {
       const pageIndex = index / STATE_V3_ORDER_PAGE_SIZE;
       items.set(stateV3OrderPageKey(node.id, pageIndex), {

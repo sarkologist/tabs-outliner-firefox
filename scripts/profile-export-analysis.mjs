@@ -54,10 +54,15 @@ export function analyzePerformanceProfileExport(profile, options = {}) {
   );
   const eventEntries = measured.filter((entry) => /\.event\./.test(entry.name));
   const saveEntries = measured.filter((entry) => entry.name === "background.state.save");
-  const diagnosticsEntries = measured.filter((entry) => entry.name === "background.diagnostics" || entry.name === "sidebar.diagnostics");
-  const diagnosticsDeferredEntries = measured.filter((entry) => entry.name === "sidebar.diagnostics.defer");
+  const diagnosticsEntries = measured.filter(
+    (entry) => entry.name === "background.diagnostics" || entry.name === "sidebar.diagnostics"
+  );
+  const diagnosticsDeferredEntries = measured.filter(
+    (entry) => entry.name === "sidebar.diagnostics.defer"
+  );
   const initialSnapshotMessages = runtimeMessages.filter(
-    (entry) => entry.detail?.type === "getInitialTreeSnapshotWindow" ||
+    (entry) =>
+      entry.detail?.type === "getInitialTreeSnapshotWindow" ||
       entry.detail?.type === "getInitialTreeSnapshot"
   );
 
@@ -129,18 +134,24 @@ export function collectTraceEntries(profile) {
   }
   const entries = [];
   if (Array.isArray(snapshot.background?.entries)) {
-    entries.push(...snapshot.background.entries.map((entry) => ({ ...entry, profileSource: "background" })));
+    entries.push(
+      ...snapshot.background.entries.map((entry) => ({ ...entry, profileSource: "background" }))
+    );
   }
   if (Array.isArray(snapshot.sidebar?.entries)) {
-    entries.push(...snapshot.sidebar.entries.map((entry) => ({ ...entry, profileSource: "sidebar" })));
+    entries.push(
+      ...snapshot.sidebar.entries.map((entry) => ({ ...entry, profileSource: "sidebar" }))
+    );
   }
   if (Array.isArray(snapshot.sidebars)) {
     for (const sidebar of snapshot.sidebars) {
       if (Array.isArray(sidebar?.snapshot?.entries)) {
-        entries.push(...sidebar.snapshot.entries.map((entry) => ({
-          ...entry,
-          profileSource: sidebar.label ?? sidebar.id ?? "sidebar"
-        })));
+        entries.push(
+          ...sidebar.snapshot.entries.map((entry) => ({
+            ...entry,
+            profileSource: sidebar.label ?? sidebar.id ?? "sidebar"
+          }))
+        );
       }
     }
   }
@@ -149,32 +160,50 @@ export function collectTraceEntries(profile) {
 
 export function analyzeStartupStorageFanoutProfileExport(profile) {
   const entries = collectTraceEntries(profile);
-  const backgroundStateLoad = summarizeMatchingEntries(entries, (entry) => entry.name === "background.state.load");
+  const backgroundStateLoad = summarizeMatchingEntries(
+    entries,
+    (entry) => entry.name === "background.state.load"
+  );
   const nodeShardRead = summarizeLoadPhase(entries, "background.state.load.v3.nodeShardRead");
   const orderPageRead = summarizeLoadPhase(entries, "background.state.load.v3.orderPageRead");
   const manifestRead = summarizeLoadPhase(entries, "background.state.load.manifestRead");
   const nodeMaterialize = summarizeLoadPhase(entries, "background.state.load.v3.nodeMaterialize");
   const orderAttach = summarizeLoadPhase(entries, "background.state.load.v3.orderAttach");
-  const sidebarHydration = summarizeMatchingEntries(entries, (entry) => entry.name === "sidebar.hydration");
-  const sidebarGetState = summarizeMatchingEntries(entries, (entry) =>
-    entry.name === "sidebar.command" && entry.detail?.command === "getState"
+  const sidebarHydration = summarizeMatchingEntries(
+    entries,
+    (entry) => entry.name === "sidebar.hydration"
   );
-  const backgroundGetState = summarizeMatchingEntries(entries, (entry) =>
-    entry.name === "background.runtime.message" && entry.detail?.type === "getState"
+  const sidebarGetState = summarizeMatchingEntries(
+    entries,
+    (entry) => entry.name === "sidebar.command" && entry.detail?.command === "getState"
   );
-  const projectionSlice = summarizeMatchingEntries(entries, (entry) =>
-    entry.name === "background.runtime.message" && entry.detail?.type === "getTreeProjectionSlice"
+  const backgroundGetState = summarizeMatchingEntries(
+    entries,
+    (entry) => entry.name === "background.runtime.message" && entry.detail?.type === "getState"
   );
-  const initialSnapshot = summarizeMatchingEntries(entries, (entry) =>
-    entry.name === "background.runtime.message" && (
-      entry.detail?.type === "getInitialTreeSnapshot" ||
-      entry.detail?.type === "getInitialTreeSnapshotWindow"
-    )
+  const projectionSlice = summarizeMatchingEntries(
+    entries,
+    (entry) =>
+      entry.name === "background.runtime.message" && entry.detail?.type === "getTreeProjectionSlice"
   );
-  const saveSummary = summarizeMatchingEntries(entries, (entry) => entry.name === "background.state.save");
-  const runtimeEvents = summarizeMatchingEntries(entries, (entry) => /^background\.event\./.test(entry.name));
-  const diagnostics = summarizeMatchingEntries(entries, (entry) =>
-    entry.name === "background.diagnostics" ||
+  const initialSnapshot = summarizeMatchingEntries(
+    entries,
+    (entry) =>
+      entry.name === "background.runtime.message" &&
+      (entry.detail?.type === "getInitialTreeSnapshot" ||
+        entry.detail?.type === "getInitialTreeSnapshotWindow")
+  );
+  const saveSummary = summarizeMatchingEntries(
+    entries,
+    (entry) => entry.name === "background.state.save"
+  );
+  const runtimeEvents = summarizeMatchingEntries(entries, (entry) =>
+    /^background\.event\./.test(entry.name)
+  );
+  const diagnostics = summarizeMatchingEntries(
+    entries,
+    (entry) =>
+      entry.name === "background.diagnostics" ||
       entry.name === "sidebar.diagnostics" ||
       entry.name === "sidebar.diagnostics.defer"
   );
@@ -209,24 +238,23 @@ export function analyzeStartupStorageFanoutProfileExport(profile) {
 }
 
 export function formatStartupStorageFanoutAnalysis(analysis) {
-  return [
-    `Startup storage fanout profile: ${analysis.exportedAt ?? "(unknown date)"}`,
-    `Primary startup max: ${analysis.primaryMs}ms`,
-    `Background state load: max=${analysis.backgroundStateLoad.maxMs}ms`,
-    `Node shard read: max=${analysis.nodeShardRead.maxMs}ms keys=${analysis.nodeShardRead.maxKeys}`,
-    `Order page read: max=${analysis.orderPageRead.maxMs}ms keys=${analysis.orderPageRead.maxKeys}`,
-    `Sidebar hydration: max=${analysis.sidebarHydration.maxMs}ms median=${analysis.sidebarHydration.medianMs}ms`,
-    `Sidebar getState command: max=${analysis.sidebarGetState.maxMs}ms`,
-    `Background getState: max=${analysis.backgroundGetState.maxMs}ms`,
-    `Projection slice: max=${analysis.projectionSlice.maxMs}ms`,
-    `Saves: count=${analysis.saveSummary.count} max=${analysis.saveSummary.maxMs}ms`
-  ].join("\n") + "\n";
+  return (
+    [
+      `Startup storage fanout profile: ${analysis.exportedAt ?? "(unknown date)"}`,
+      `Primary startup max: ${analysis.primaryMs}ms`,
+      `Background state load: max=${analysis.backgroundStateLoad.maxMs}ms`,
+      `Node shard read: max=${analysis.nodeShardRead.maxMs}ms keys=${analysis.nodeShardRead.maxKeys}`,
+      `Order page read: max=${analysis.orderPageRead.maxMs}ms keys=${analysis.orderPageRead.maxKeys}`,
+      `Sidebar hydration: max=${analysis.sidebarHydration.maxMs}ms median=${analysis.sidebarHydration.medianMs}ms`,
+      `Sidebar getState command: max=${analysis.sidebarGetState.maxMs}ms`,
+      `Background getState: max=${analysis.backgroundGetState.maxMs}ms`,
+      `Projection slice: max=${analysis.projectionSlice.maxMs}ms`,
+      `Saves: count=${analysis.saveSummary.count} max=${analysis.saveSummary.maxMs}ms`
+    ].join("\n") + "\n"
+  );
 }
 
-export function startupStorageFanoutTsvRow(
-  analysis,
-  options = {}
-) {
+export function startupStorageFanoutTsvRow(analysis, options = {}) {
   return [
     options.timestamp ?? new Date().toISOString(),
     options.tag ?? "",
@@ -245,7 +273,9 @@ export function startupStorageFanoutTsvRow(
     analysis.saveSummary.maxMs,
     analysis.saveSummary.count,
     options.description ?? ""
-  ].map(tsvCell).join("\t");
+  ]
+    .map(tsvCell)
+    .join("\t");
 }
 
 export function appendStartupStorageFanoutTsv(resultsPath, row) {
@@ -263,11 +293,15 @@ export function formatProfileExportAnalysis(analysis) {
     "Top durations:"
   ];
   for (const row of analysis.topDurations) {
-    lines.push(`- ${row.name}: count=${row.count} total=${row.totalMs}ms avg=${row.avgMs}ms max=${row.maxMs}ms`);
+    lines.push(
+      `- ${row.name}: count=${row.count} total=${row.totalMs}ms avg=${row.avgMs}ms max=${row.maxMs}ms`
+    );
   }
   lines.push("", "Runtime message types:");
   for (const row of analysis.runtimeMessageTypes) {
-    lines.push(`- ${row.name}: count=${row.count} total=${row.totalMs}ms avg=${row.avgMs}ms max=${row.maxMs}ms`);
+    lines.push(
+      `- ${row.name}: count=${row.count} total=${row.totalMs}ms avg=${row.avgMs}ms max=${row.maxMs}ms`
+    );
   }
   lines.push(
     "",
@@ -277,7 +311,9 @@ export function formatProfileExportAnalysis(analysis) {
     `Initial snapshot requests: ${analysis.repeatedInitialSnapshotRequests}`
   );
   if (analysis.maxRuntimeEvent) {
-    lines.push(`Max runtime event: ${analysis.maxRuntimeEvent.name} ${analysis.maxRuntimeEvent.durationMs}ms`);
+    lines.push(
+      `Max runtime event: ${analysis.maxRuntimeEvent.name} ${analysis.maxRuntimeEvent.durationMs}ms`
+    );
   }
   if (analysis.warnings.length > 0) {
     lines.push("", "Warnings:");
@@ -332,17 +368,21 @@ function summarizeEntries(entries) {
 }
 
 function summarizeMatchingEntries(entries, predicate) {
-  return summarizeDurationValues(entries
-    .filter(predicate)
-    .map(entryDurationMs)
-    .filter((value) => typeof value === "number" && Number.isFinite(value)));
+  return summarizeDurationValues(
+    entries
+      .filter(predicate)
+      .map(entryDurationMs)
+      .filter((value) => typeof value === "number" && Number.isFinite(value))
+  );
 }
 
 function summarizeLoadPhase(entries, name) {
   const phaseEntries = entries.filter((entry) => entry.name === name);
-  const summary = summarizeDurationValues(phaseEntries
-    .map(entryDurationMs)
-    .filter((value) => typeof value === "number" && Number.isFinite(value)));
+  const summary = summarizeDurationValues(
+    phaseEntries
+      .map(entryDurationMs)
+      .filter((value) => typeof value === "number" && Number.isFinite(value))
+  );
   return {
     ...summary,
     maxKeys: Math.max(0, ...phaseEntries.map((entry) => numericDetail(entry, "keys")))
@@ -398,7 +438,10 @@ function maxDuration(entries) {
 }
 
 function maxEntry(entries) {
-  return entries.reduce((max, entry) => !max || entry.durationMs > max.durationMs ? entry : max, undefined);
+  return entries.reduce(
+    (max, entry) => (!max || entry.durationMs > max.durationMs ? entry : max),
+    undefined
+  );
 }
 
 function round(value) {
@@ -441,7 +484,9 @@ function parseCliArgs(argv) {
   }
 
   if (!options.profilePath) {
-    throw new Error("Usage: node scripts/profile-export-analysis.mjs <profile-export.json> [--tag <tag>] [--description <text>] [--append-results] [--results <path>] [--json]");
+    throw new Error(
+      "Usage: node scripts/profile-export-analysis.mjs <profile-export.json> [--tag <tag>] [--description <text>] [--append-results] [--results <path>] [--json]"
+    );
   }
   return options;
 }
@@ -459,10 +504,16 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
       appendStartupStorageFanoutTsv(options.resultsPath, row);
     }
     if (options.json) {
-      console.log(JSON.stringify({
-        analysis,
-        ...(options.appendResults ? { resultsPath: options.resultsPath, tsvRow: row } : {})
-      }, null, 2));
+      console.log(
+        JSON.stringify(
+          {
+            analysis,
+            ...(options.appendResults ? { resultsPath: options.resultsPath, tsvRow: row } : {})
+          },
+          null,
+          2
+        )
+      );
     } else {
       console.log(formatStartupStorageFanoutAnalysis(analysis));
       if (options.appendResults) {

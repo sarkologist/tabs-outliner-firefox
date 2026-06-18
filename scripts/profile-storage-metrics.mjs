@@ -118,8 +118,10 @@ function isJournalOnlySet(items) {
 }
 
 function isJournalKey(key) {
-  return key === RUNTIME_LIFECYCLE_JOURNAL_KEY ||
+  return (
+    key === RUNTIME_LIFECYCLE_JOURNAL_KEY ||
     key === STATE_V3_BOOT_SNAPSHOT_KEY ||
     key === STATE_V4_BOOT_SNAPSHOT_KEY ||
-    key.startsWith(OUTLINE_JOURNAL_PREFIX);
+    key.startsWith(OUTLINE_JOURNAL_PREFIX)
+  );
 }

@@ -89,7 +89,12 @@ export type InitialTreeSnapshotProjector = {
 };
 
 export type InitialTreeSnapshotProjectorOptions = {
-  onProjectionBuilt?: (detail: { query: string; rowCount: number; nodeCount: number; matchCount: number }) => void;
+  onProjectionBuilt?: (detail: {
+    query: string;
+    rowCount: number;
+    nodeCount: number;
+    matchCount: number;
+  }) => void;
 };
 
 export function initialTreeSnapshotForState(
@@ -97,7 +102,11 @@ export function initialTreeSnapshotForState(
   options: InitialTreeSnapshotOptions = {}
 ): InitialTreeSnapshot {
   const query = normalizeInitialSnapshotQuery(options.query ?? "");
-  return initialTreeSnapshotFromProjection(state, buildInitialTreeProjection(state, query), options);
+  return initialTreeSnapshotFromProjection(
+    state,
+    buildInitialTreeProjection(state, query),
+    options
+  );
 }
 
 export function createInitialTreeSnapshotProjector(
@@ -207,7 +216,9 @@ function buildInitialTreeProjection(state: OutlineState, query: string): Initial
 
     const visibleChildCount = query
       ? node.childIds.filter((childId) => visibleNodeIdSet.has(childId)).length
-      : node.collapsed ? 0 : node.childIds.length;
+      : node.collapsed
+        ? 0
+        : node.childIds.length;
     const isSearchMatch = query ? matchingNodeIds.has(node.id) : false;
     const index = allRows.length;
     if (node.id === activeTabNodeId) {
@@ -292,7 +303,9 @@ function initialTreeSnapshotFromProjection(
         .map((row) => row.nodeId),
       visibleNodeIds: rows.map((row) => row.nodeId),
       ...(projection.activeTabNodeId ? { activeTabNodeId: projection.activeTabNodeId } : {}),
-      ...(typeof projection.activeTabRowIndex === "number" ? { activeTabRowIndex: projection.activeTabRowIndex } : {}),
+      ...(typeof projection.activeTabRowIndex === "number"
+        ? { activeTabRowIndex: projection.activeTabRowIndex }
+        : {}),
       totalRowCount: projection.rows.length,
       nodeCount: projection.nodeCount,
       closedCount: projection.closedCount,
@@ -328,7 +341,8 @@ function collectInitialSnapshotOrderEntries(state: OutlineState): InitialSnapsho
       continue;
     }
 
-    const insideActiveWindow = entry.insideActiveWindow || Boolean(node.kind === "window" && node.active);
+    const insideActiveWindow =
+      entry.insideActiveWindow || Boolean(node.kind === "window" && node.active);
     entries.push({
       ...entry,
       insideActiveWindow
@@ -352,7 +366,10 @@ function normalizeInitialSnapshotQuery(query: string): string {
 }
 
 function initialSnapshotNodeMatchesQuery(node: OutlineNode, query: string): boolean {
-  return initialSnapshotTextMatchesQuery(node.title, query) || initialSnapshotTextMatchesQuery(node.url, query);
+  return (
+    initialSnapshotTextMatchesQuery(node.title, query) ||
+    initialSnapshotTextMatchesQuery(node.url, query)
+  );
 }
 
 function initialSnapshotTextMatchesQuery(value: string | undefined, query: string): boolean {
@@ -446,7 +463,10 @@ function refreshInitialRowStructure(rows: InitialTreeRow[]): void {
   }
 }
 
-export function cloneInitialTreeSnapshot(snapshot: InitialTreeSnapshot, hydrating: boolean): InitialTreeSnapshot {
+export function cloneInitialTreeSnapshot(
+  snapshot: InitialTreeSnapshot,
+  hydrating: boolean
+): InitialTreeSnapshot {
   return {
     ...snapshot,
     hydrating,
@@ -454,7 +474,10 @@ export function cloneInitialTreeSnapshot(snapshot: InitialTreeSnapshot, hydratin
       version: 1,
       rootIds: [...snapshot.state.rootIds],
       nodes: Object.fromEntries(
-        Object.entries(snapshot.state.nodes).map(([nodeId, node]) => [nodeId, { ...node, childIds: [...node.childIds] }])
+        Object.entries(snapshot.state.nodes).map(([nodeId, node]) => [
+          nodeId,
+          { ...node, childIds: [...node.childIds] }
+        ])
       )
     },
     projection: {
@@ -477,28 +500,26 @@ export function cloneInitialTreeSnapshot(snapshot: InitialTreeSnapshot, hydratin
   };
 }
 
-
 export function isOutlineState(value: unknown): value is OutlineState {
   return Boolean(
     value &&
-      typeof value === "object" &&
-      (value as OutlineState).version === 1 &&
-      Array.isArray((value as OutlineState).rootIds) &&
-      typeof (value as OutlineState).nodes === "object"
+    typeof value === "object" &&
+    (value as OutlineState).version === 1 &&
+    Array.isArray((value as OutlineState).rootIds) &&
+    typeof (value as OutlineState).nodes === "object"
   );
 }
 
 export function isInitialTreeSnapshot(value: unknown): value is InitialTreeSnapshot {
   return Boolean(
     value &&
-      typeof value === "object" &&
-      (value as InitialTreeSnapshot).type === "initialTreeSnapshot" &&
-      (value as InitialTreeSnapshot).version === 1 &&
-      typeof (value as InitialTreeSnapshot).revision === "number" &&
-      isOutlineState((value as InitialTreeSnapshot).state) &&
-      (value as InitialTreeSnapshot).projection &&
-      typeof (value as InitialTreeSnapshot).projection === "object" &&
-      Array.isArray((value as InitialTreeSnapshot).projection.rows)
+    typeof value === "object" &&
+    (value as InitialTreeSnapshot).type === "initialTreeSnapshot" &&
+    (value as InitialTreeSnapshot).version === 1 &&
+    typeof (value as InitialTreeSnapshot).revision === "number" &&
+    isOutlineState((value as InitialTreeSnapshot).state) &&
+    (value as InitialTreeSnapshot).projection &&
+    typeof (value as InitialTreeSnapshot).projection === "object" &&
+    Array.isArray((value as InitialTreeSnapshot).projection.rows)
   );
 }
-

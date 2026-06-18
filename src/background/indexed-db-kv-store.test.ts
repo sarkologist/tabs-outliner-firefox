@@ -34,7 +34,10 @@ describe("indexedDbKvStore", () => {
     await first.set({ meta: { epoch: 7 }, "slot:0": [1, 2, 3] });
 
     const second = indexedDbKvStore("kv-test-persist", "kv");
-    expect(await second.get(["meta", "slot:0"])).toEqual({ meta: { epoch: 7 }, "slot:0": [1, 2, 3] });
+    expect(await second.get(["meta", "slot:0"])).toEqual({
+      meta: { epoch: 7 },
+      "slot:0": [1, 2, 3]
+    });
   });
 
   it("treats a multi-key set as one transaction and remove of an empty list as a no-op", async () => {

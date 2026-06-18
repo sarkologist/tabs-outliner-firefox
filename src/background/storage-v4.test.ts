@@ -2,8 +2,16 @@ import { describe, expect, it } from "vitest";
 
 import type { NodeId, OutlineNode, OutlineState } from "../model/types.js";
 import { createFaultyStorage } from "../test/faulty-storage.test-support.js";
-import { generatedTraceConfig, generatedTraceTimeoutMs } from "../test/generated-traces.test-support.js";
-import { createOutlineJournal, replayJournal, type OutlineJournalEntry, type OutlineJournalEntryKind } from "./outline-journal.js";
+import {
+  generatedTraceConfig,
+  generatedTraceTimeoutMs
+} from "../test/generated-traces.test-support.js";
+import {
+  createOutlineJournal,
+  replayJournal,
+  type OutlineJournalEntry,
+  type OutlineJournalEntryKind
+} from "./outline-journal.js";
 import { outlineNodeShardIndex } from "./storage.js";
 import {
   STATE_V4_MANIFEST_A_KEY,
@@ -40,7 +48,12 @@ function makeTree(tabCount: number): OutlineState {
     rootIds: ["window:10"],
     nodes: {
       "window:10": makeNode("window:10", { kind: "window", childIds: [...childIds] }),
-      ...Object.fromEntries(childIds.map((id) => [id, makeNode(id, { parentId: "window:10", url: `https://example.test/${id}` })]))
+      ...Object.fromEntries(
+        childIds.map((id) => [
+          id,
+          makeNode(id, { parentId: "window:10", url: `https://example.test/${id}` })
+        ])
+      )
     }
   };
 }
@@ -71,13 +84,24 @@ function oldCountStoreItems(
     const nodes = Object.values(state.nodes)
       .filter((node) => outlineNodeShardIndex(node.id, shardCount) === shardIndex)
       .sort((left, right) => left.id.localeCompare(right.id));
-    items[stateV4NodeShardKey(shardIndex, generation)] = { version: 4, shardIndex, generation, nodes };
+    items[stateV4NodeShardKey(shardIndex, generation)] = {
+      version: 4,
+      shardIndex,
+      generation,
+      nodes
+    };
     shardGenerations.push(generation);
   }
   const manifest: StateV4Manifest = {
-    version: 4, generation, epoch: 0, journalSeqIncluded: 0,
-    rootIds: [...state.rootIds], nodeCount: Object.keys(state.nodes).length, closedCount,
-    shardGenerations, savedAt: generation
+    version: 4,
+    generation,
+    epoch: 0,
+    journalSeqIncluded: 0,
+    rootIds: [...state.rootIds],
+    nodeCount: Object.keys(state.nodes).length,
+    closedCount,
+    shardGenerations,
+    savedAt: generation
   };
   items[slot === "a" ? STATE_V4_MANIFEST_A_KEY : STATE_V4_MANIFEST_B_KEY] = manifest;
   return { items, manifest };
@@ -133,8 +157,9 @@ describe("outline state v4 storage", () => {
     expect(incremental.slot).toBe("b");
     expect(incremental.manifest.generation).toBe(2);
     expect(incremental.manifest.shardGenerations[dirtyShard]).toBe(2);
-    expect(incremental.manifest.shardGenerations.filter((generation) => generation === 1))
-      .toHaveLength(STATE_V4_NODE_SHARD_COUNT - 1);
+    expect(
+      incremental.manifest.shardGenerations.filter((generation) => generation === 1)
+    ).toHaveLength(STATE_V4_NODE_SHARD_COUNT - 1);
     // The gen-1 shard is still referenced by the manifest left in slot a (the R1 fallback),
     // so nothing is collectable yet.
     expect(incremental.removeKeysAfterCommit).toEqual([]);
@@ -279,7 +304,9 @@ describe("outline state v4 storage", () => {
     const forged: StateV4Manifest = {
       ...full.manifest,
       generation: 9,
-      shardGenerations: full.manifest.shardGenerations.map((generation, index) => (index === 0 ? 9 : generation))
+      shardGenerations: full.manifest.shardGenerations.map((generation, index) =>
+        index === 0 ? 9 : generation
+      )
     };
     await faulty.api.storage.local.set({ [STATE_V4_MANIFEST_A_KEY]: forged });
 
@@ -289,202 +316,243 @@ describe("outline state v4 storage", () => {
     expect(Object.keys(loaded!.state.nodes)).toHaveLength(41);
   });
 
-  it("keeps generated compactions, journal replays, crashes, and restarts loadable as the exact model state", async () => {
-    // The storage-fault soak lane (docs/storage-rearchitecture 03-WORKFLOW-FIXES W-4.2):
-    // pnpm test:soak scales this to more seeds and longer runs via GENERATED_TRACE_* env.
-    const config = generatedTraceConfig({
-      defaultSeedCount: 4,
-      defaultSteps: 60,
-      soakSeedCount: 16,
-      soakSteps: 400
-    });
-    for (const seed of config.seeds) {
-      const random = seededRandom(seed);
-      const faulty = createFaultyStorage();
-      const journal = createOutlineJournal(faulty.api.storage.local, { epoch: 1, now: () => 1000 });
-      await journal.init();
-
-      // In-memory model of what a correct store must reproduce after any restart.
-      // Bound the size by the seed (mod 16) so any random soak base seed yields a
-      // small tree; raw `seed * 3` overflowed JS max array length for large seeds.
-      let model = makeTree(20 + (seed % 16) * 3);
-      let entries: OutlineJournalEntry[] = [];
-      let nextNodeNumber = 1000;
-      let rootWindowNumber = 100;
-      const journalKinds: OutlineJournalEntryKind[] = ["command", "runtimeEvent", "historyReplay", "recovery"];
-      let seq = 0;
-      let active: { manifest: StateV4Manifest; slot: StateV4ManifestSlot } | undefined;
-      let evictable: StateV4Manifest | undefined;
-      let _includedSeq = 0;
-      let dirty = new Set<number>();
-      let fullCompactionNeeded = true;
-
-      const journalAppend = async (delta: {
-        updatedNodes?: OutlineNode[];
-        deletedNodeIds?: NodeId[];
-        rootIds?: NodeId[];
-      }, kind: OutlineJournalEntryKind = "command"): Promise<void> => {
-        seq += 1;
-        const entry: OutlineJournalEntry = { seq, epoch: 1, at: 1000, kind, delta };
-        await journal.append([{ kind, delta }]);
-        entries.push(entry);
-        for (const node of delta.updatedNodes ?? []) {
-          dirty.add(stateV4ShardIndexForNodeId(node.id));
-        }
-        for (const id of delta.deletedNodeIds ?? []) {
-          dirty.add(stateV4ShardIndexForNodeId(id));
-        }
-      };
-
-      const compact = async (mode: "ok" | "fail" | "crash"): Promise<"survived" | "crashed"> => {
-        const snapshot = outlineStateV4Snapshot(model, {
+  it(
+    "keeps generated compactions, journal replays, crashes, and restarts loadable as the exact model state",
+    async () => {
+      // The storage-fault soak lane (docs/storage-rearchitecture 03-WORKFLOW-FIXES W-4.2):
+      // pnpm test:soak scales this to more seeds and longer runs via GENERATED_TRACE_* env.
+      const config = generatedTraceConfig({
+        defaultSeedCount: 4,
+        defaultSteps: 60,
+        soakSeedCount: 16,
+        soakSteps: 400
+      });
+      for (const seed of config.seeds) {
+        const random = seededRandom(seed);
+        const faulty = createFaultyStorage();
+        const journal = createOutlineJournal(faulty.api.storage.local, {
           epoch: 1,
-          journalSeqIncluded: seq,
-          savedAt: seq,
-          ...(active && !fullCompactionNeeded ? { previous: active, dirtyShardIndexes: dirty } : (active ? { previous: active } : {})),
-          ...(active && evictable ? { collect: evictable } : {})
+          now: () => 1000
         });
-        if (mode === "fail") {
-          faulty.failNextSet();
-          await expect(faulty.api.storage.local.set(snapshot.setItems)).rejects.toThrow();
-          // Observed failure: keep the old manifest and force a full rewrite next time.
-          fullCompactionNeeded = true;
-          return "survived";
-        }
-        if (mode === "crash") {
-          // Torn-but-resolved write, then the post-commit GC runs (as production does on any
-          // resolved set), then process death. The GC must never delete keys the surviving
-          // fallback manifest still references.
-          faulty.tearNextSet(1 + Math.floor(random() * Object.keys(snapshot.setItems).length));
-          await faulty.api.storage.local.set(snapshot.setItems);
-          if (snapshot.removeKeysAfterCommit.length > 0) {
-            await faulty.api.storage.local.remove(snapshot.removeKeysAfterCommit);
+        await journal.init();
+
+        // In-memory model of what a correct store must reproduce after any restart.
+        // Bound the size by the seed (mod 16) so any random soak base seed yields a
+        // small tree; raw `seed * 3` overflowed JS max array length for large seeds.
+        let model = makeTree(20 + (seed % 16) * 3);
+        let entries: OutlineJournalEntry[] = [];
+        let nextNodeNumber = 1000;
+        let rootWindowNumber = 100;
+        const journalKinds: OutlineJournalEntryKind[] = [
+          "command",
+          "runtimeEvent",
+          "historyReplay",
+          "recovery"
+        ];
+        let seq = 0;
+        let active: { manifest: StateV4Manifest; slot: StateV4ManifestSlot } | undefined;
+        let evictable: StateV4Manifest | undefined;
+        let _includedSeq = 0;
+        let dirty = new Set<number>();
+        let fullCompactionNeeded = true;
+
+        const journalAppend = async (
+          delta: {
+            updatedNodes?: OutlineNode[];
+            deletedNodeIds?: NodeId[];
+            rootIds?: NodeId[];
+          },
+          kind: OutlineJournalEntryKind = "command"
+        ): Promise<void> => {
+          seq += 1;
+          const entry: OutlineJournalEntry = { seq, epoch: 1, at: 1000, kind, delta };
+          await journal.append([{ kind, delta }]);
+          entries.push(entry);
+          for (const node of delta.updatedNodes ?? []) {
+            dirty.add(stateV4ShardIndexForNodeId(node.id));
           }
-          return "crashed";
-        }
-        await applySnapshot(faulty, snapshot);
-        await journal.prune(seq);
-        entries = entries.filter((entry) => entry.seq > seq);
-        evictable = active?.manifest;
-        active = { manifest: snapshot.manifest, slot: snapshot.slot };
-        _includedSeq = seq;
-        dirty = new Set();
-        fullCompactionNeeded = false;
-        return "survived";
-      };
+          for (const id of delta.deletedNodeIds ?? []) {
+            dirty.add(stateV4ShardIndexForNodeId(id));
+          }
+        };
 
-      const restart = async (): Promise<void> => {
-        const loaded = await loadStateV4(faulty.api);
-        expect(loaded, `seed ${seed}: store must load after restart`).toBeDefined();
-        const reopened = createOutlineJournal(faulty.api.storage.local, { epoch: 2, now: () => 2000 });
-        const init = await reopened.init();
-        const replayable = init.entries.filter((entry) => entry.seq > loaded!.journalSeqIncluded);
-        const recovered = replayJournal(loaded!.state, replayable);
-        expect(recovered, `seed ${seed}: restart must reproduce the model`).toEqual(model);
-        // Continue the run from the recovered position.
-        active = { manifest: loaded!.manifest, slot: loaded!.slot };
-        evictable = undefined;
-        _includedSeq = loaded!.journalSeqIncluded;
-        seq = Math.max(seq, init.headSeq);
-        fullCompactionNeeded = true;
-        dirty = new Set();
-      };
-
-      await compact("ok");
-
-      for (let step = 0; step < config.steps; step += 1) {
-        const roll = random();
-        if (roll < 0.45) {
-          // Mutate the model and journal the delta. Mix single-node edits with multi-shard bulk
-          // edits (a whole window subtree at once) and root-set churn so the incremental
-          // compaction path sees large dirty sets and rootIds changes, and rotate the journal
-          // entry kind so all four kinds round-trip through storage + replay.
-          const w10 = model.nodes["window:10"]!;
-          const action = random();
-          const kind = journalKinds[Math.floor(random() * journalKinds.length)]!;
-          const addUnderPrimary = async (): Promise<void> => {
-            nextNodeNumber += 1;
-            const id = `tab:${nextNodeNumber}`;
-            const node = makeNode(id, { parentId: "window:10", url: `https://example.test/${id}` });
-            const windowNode = { ...w10, childIds: [...w10.childIds, id] };
-            model = { ...model, nodes: { ...model.nodes, [id]: node, "window:10": windowNode } };
-            await journalAppend({ updatedNodes: [node, windowNode] }, kind);
-          };
-          if (action < 0.3) {
-            await addUnderPrimary();
-          } else if (action < 0.45 && w10.childIds.length > 0) {
-            // Single rename of a window:10 child (one dirty shard).
-            const id = w10.childIds[Math.floor(random() * w10.childIds.length)]!;
-            const renamed = { ...model.nodes[id]!, title: `Renamed ${step}` };
-            model = { ...model, nodes: { ...model.nodes, [id]: renamed } };
-            await journalAppend({ updatedNodes: [renamed] }, kind);
-          } else if (action < 0.6 && w10.childIds.length > 0) {
-            // Single delete of a window:10 child.
-            const id = w10.childIds[Math.floor(random() * w10.childIds.length)]!;
-            const windowNode = { ...w10, childIds: w10.childIds.filter((childId) => childId !== id) };
-            const nodes: Record<NodeId, OutlineNode> = { ...model.nodes, "window:10": windowNode };
-            delete nodes[id];
-            model = { ...model, nodes };
-            await journalAppend({ deletedNodeIds: [id], updatedNodes: [windowNode] }, kind);
-          } else if (action < 0.85) {
-            // Bulk add: a new root window with several tabs in ONE delta -> the dirty set spans
-            // many shards and rootIds grows (multi-shard incremental compaction + root churn).
-            rootWindowNumber += 1;
-            const windowId = `window:${rootWindowNumber}`;
-            const childCount = 4 + Math.floor(random() * 12);
-            const children = Array.from({ length: childCount }, () => {
-              nextNodeNumber += 1;
-              return makeNode(`tab:${nextNodeNumber}`, { parentId: windowId, url: `https://example.test/tab:${nextNodeNumber}` });
-            });
-            const windowNode = makeNode(windowId, { kind: "window", childIds: children.map((child) => child.id) });
-            const rootIds = [...model.rootIds, windowId];
-            model = {
-              ...model,
-              rootIds,
-              nodes: { ...model.nodes, [windowId]: windowNode, ...Object.fromEntries(children.map((child) => [child.id, child])) }
-            };
-            await journalAppend({ updatedNodes: [windowNode, ...children], rootIds }, kind);
-          } else {
-            const extraRoots = model.rootIds.filter((id) => id !== "window:10");
-            if (extraRoots.length === 0) {
-              await addUnderPrimary();
-            } else if (random() < 0.6) {
-              // Bulk delete: remove a root window and all its tabs in ONE delta (multi-shard
-              // delete + rootIds shrinks).
-              const windowId = extraRoots[Math.floor(random() * extraRoots.length)]!;
-              const subtreeIds = [windowId, ...model.nodes[windowId]!.childIds];
-              const rootIds = model.rootIds.filter((id) => id !== windowId);
-              const nodes: Record<NodeId, OutlineNode> = { ...model.nodes };
-              for (const id of subtreeIds) {
-                delete nodes[id];
-              }
-              model = { ...model, rootIds, nodes };
-              await journalAppend({ deletedNodeIds: subtreeIds, rootIds }, kind);
-            } else {
-              // Pure root reorder: rootIds changes with NO node delta -> the next compaction bumps
-              // a generation and rewrites only the manifest's rootIds (no dirty shards).
-              const rootIds = [...model.rootIds].reverse();
-              model = { ...model, rootIds };
-              await journalAppend({ rootIds }, kind);
+        const compact = async (mode: "ok" | "fail" | "crash"): Promise<"survived" | "crashed"> => {
+          const snapshot = outlineStateV4Snapshot(model, {
+            epoch: 1,
+            journalSeqIncluded: seq,
+            savedAt: seq,
+            ...(active && !fullCompactionNeeded
+              ? { previous: active, dirtyShardIndexes: dirty }
+              : active
+                ? { previous: active }
+                : {}),
+            ...(active && evictable ? { collect: evictable } : {})
+          });
+          if (mode === "fail") {
+            faulty.failNextSet();
+            await expect(faulty.api.storage.local.set(snapshot.setItems)).rejects.toThrow();
+            // Observed failure: keep the old manifest and force a full rewrite next time.
+            fullCompactionNeeded = true;
+            return "survived";
+          }
+          if (mode === "crash") {
+            // Torn-but-resolved write, then the post-commit GC runs (as production does on any
+            // resolved set), then process death. The GC must never delete keys the surviving
+            // fallback manifest still references.
+            faulty.tearNextSet(1 + Math.floor(random() * Object.keys(snapshot.setItems).length));
+            await faulty.api.storage.local.set(snapshot.setItems);
+            if (snapshot.removeKeysAfterCommit.length > 0) {
+              await faulty.api.storage.local.remove(snapshot.removeKeysAfterCommit);
             }
+            return "crashed";
           }
-        } else if (roll < 0.65) {
-          await compact("ok");
-        } else if (roll < 0.75) {
-          await compact("fail");
-        } else if (roll < 0.85) {
-          const outcome = await compact("crash");
-          if (outcome === "crashed") {
+          await applySnapshot(faulty, snapshot);
+          await journal.prune(seq);
+          entries = entries.filter((entry) => entry.seq > seq);
+          evictable = active?.manifest;
+          active = { manifest: snapshot.manifest, slot: snapshot.slot };
+          _includedSeq = seq;
+          dirty = new Set();
+          fullCompactionNeeded = false;
+          return "survived";
+        };
+
+        const restart = async (): Promise<void> => {
+          const loaded = await loadStateV4(faulty.api);
+          expect(loaded, `seed ${seed}: store must load after restart`).toBeDefined();
+          const reopened = createOutlineJournal(faulty.api.storage.local, {
+            epoch: 2,
+            now: () => 2000
+          });
+          const init = await reopened.init();
+          const replayable = init.entries.filter((entry) => entry.seq > loaded!.journalSeqIncluded);
+          const recovered = replayJournal(loaded!.state, replayable);
+          expect(recovered, `seed ${seed}: restart must reproduce the model`).toEqual(model);
+          // Continue the run from the recovered position.
+          active = { manifest: loaded!.manifest, slot: loaded!.slot };
+          evictable = undefined;
+          _includedSeq = loaded!.journalSeqIncluded;
+          seq = Math.max(seq, init.headSeq);
+          fullCompactionNeeded = true;
+          dirty = new Set();
+        };
+
+        await compact("ok");
+
+        for (let step = 0; step < config.steps; step += 1) {
+          const roll = random();
+          if (roll < 0.45) {
+            // Mutate the model and journal the delta. Mix single-node edits with multi-shard bulk
+            // edits (a whole window subtree at once) and root-set churn so the incremental
+            // compaction path sees large dirty sets and rootIds changes, and rotate the journal
+            // entry kind so all four kinds round-trip through storage + replay.
+            const w10 = model.nodes["window:10"]!;
+            const action = random();
+            const kind = journalKinds[Math.floor(random() * journalKinds.length)]!;
+            const addUnderPrimary = async (): Promise<void> => {
+              nextNodeNumber += 1;
+              const id = `tab:${nextNodeNumber}`;
+              const node = makeNode(id, {
+                parentId: "window:10",
+                url: `https://example.test/${id}`
+              });
+              const windowNode = { ...w10, childIds: [...w10.childIds, id] };
+              model = { ...model, nodes: { ...model.nodes, [id]: node, "window:10": windowNode } };
+              await journalAppend({ updatedNodes: [node, windowNode] }, kind);
+            };
+            if (action < 0.3) {
+              await addUnderPrimary();
+            } else if (action < 0.45 && w10.childIds.length > 0) {
+              // Single rename of a window:10 child (one dirty shard).
+              const id = w10.childIds[Math.floor(random() * w10.childIds.length)]!;
+              const renamed = { ...model.nodes[id]!, title: `Renamed ${step}` };
+              model = { ...model, nodes: { ...model.nodes, [id]: renamed } };
+              await journalAppend({ updatedNodes: [renamed] }, kind);
+            } else if (action < 0.6 && w10.childIds.length > 0) {
+              // Single delete of a window:10 child.
+              const id = w10.childIds[Math.floor(random() * w10.childIds.length)]!;
+              const windowNode = {
+                ...w10,
+                childIds: w10.childIds.filter((childId) => childId !== id)
+              };
+              const nodes: Record<NodeId, OutlineNode> = {
+                ...model.nodes,
+                "window:10": windowNode
+              };
+              delete nodes[id];
+              model = { ...model, nodes };
+              await journalAppend({ deletedNodeIds: [id], updatedNodes: [windowNode] }, kind);
+            } else if (action < 0.85) {
+              // Bulk add: a new root window with several tabs in ONE delta -> the dirty set spans
+              // many shards and rootIds grows (multi-shard incremental compaction + root churn).
+              rootWindowNumber += 1;
+              const windowId = `window:${rootWindowNumber}`;
+              const childCount = 4 + Math.floor(random() * 12);
+              const children = Array.from({ length: childCount }, () => {
+                nextNodeNumber += 1;
+                return makeNode(`tab:${nextNodeNumber}`, {
+                  parentId: windowId,
+                  url: `https://example.test/tab:${nextNodeNumber}`
+                });
+              });
+              const windowNode = makeNode(windowId, {
+                kind: "window",
+                childIds: children.map((child) => child.id)
+              });
+              const rootIds = [...model.rootIds, windowId];
+              model = {
+                ...model,
+                rootIds,
+                nodes: {
+                  ...model.nodes,
+                  [windowId]: windowNode,
+                  ...Object.fromEntries(children.map((child) => [child.id, child]))
+                }
+              };
+              await journalAppend({ updatedNodes: [windowNode, ...children], rootIds }, kind);
+            } else {
+              const extraRoots = model.rootIds.filter((id) => id !== "window:10");
+              if (extraRoots.length === 0) {
+                await addUnderPrimary();
+              } else if (random() < 0.6) {
+                // Bulk delete: remove a root window and all its tabs in ONE delta (multi-shard
+                // delete + rootIds shrinks).
+                const windowId = extraRoots[Math.floor(random() * extraRoots.length)]!;
+                const subtreeIds = [windowId, ...model.nodes[windowId]!.childIds];
+                const rootIds = model.rootIds.filter((id) => id !== windowId);
+                const nodes: Record<NodeId, OutlineNode> = { ...model.nodes };
+                for (const id of subtreeIds) {
+                  delete nodes[id];
+                }
+                model = { ...model, rootIds, nodes };
+                await journalAppend({ deletedNodeIds: subtreeIds, rootIds }, kind);
+              } else {
+                // Pure root reorder: rootIds changes with NO node delta -> the next compaction bumps
+                // a generation and rewrites only the manifest's rootIds (no dirty shards).
+                const rootIds = [...model.rootIds].reverse();
+                model = { ...model, rootIds };
+                await journalAppend({ rootIds }, kind);
+              }
+            }
+          } else if (roll < 0.65) {
+            await compact("ok");
+          } else if (roll < 0.75) {
+            await compact("fail");
+          } else if (roll < 0.85) {
+            const outcome = await compact("crash");
+            if (outcome === "crashed") {
+              await restart();
+            }
+          } else {
             await restart();
           }
-        } else {
-          await restart();
         }
-      }
 
-      await restart();
-    }
-  }, generatedTraceTimeoutMs(30000, 300000));
+        await restart();
+      }
+    },
+    generatedTraceTimeoutMs(30000, 300000)
+  );
 
   it("sweeps orphaned shard generations the GC never collected, preserving both stored slots", async () => {
     const state = makeTree(300);
@@ -512,7 +580,9 @@ describe("outline state v4 storage", () => {
       stateV4NodeShardKey(31, 93)
     ];
     await faulty.api.storage.local.set(
-      Object.fromEntries(orphanKeys.map((key) => [key, { version: 4, shardIndex: 0, generation: 90, nodes: [] }]))
+      Object.fromEntries(
+        orphanKeys.map((key) => [key, { version: 4, shardIndex: 0, generation: 90, nodes: [] }])
+      )
     );
 
     const result = await sweepOrphanedV4Shards(faulty.api);
@@ -529,14 +599,19 @@ describe("outline state v4 storage", () => {
       STATE_V4_MANIFEST_A_KEY
     ] as StateV4Manifest;
     for (let shardIndex = 0; shardIndex < STATE_V4_NODE_SHARD_COUNT; shardIndex += 1) {
-      expect(stateV4NodeShardKey(shardIndex, aManifest.shardGenerations[shardIndex]!) in after).toBe(true);
+      expect(
+        stateV4NodeShardKey(shardIndex, aManifest.shardGenerations[shardIndex]!) in after
+      ).toBe(true);
     }
   });
 
   it("removes nothing when every node-shard key is still referenced", async () => {
     const state = makeTree(50);
     const faulty = createFaultyStorage();
-    await applySnapshot(faulty, outlineStateV4Snapshot(state, { epoch: 1, journalSeqIncluded: 0, savedAt: 5 }));
+    await applySnapshot(
+      faulty,
+      outlineStateV4Snapshot(state, { epoch: 1, journalSeqIncluded: 0, savedAt: 5 })
+    );
 
     const result = await sweepOrphanedV4Shards(faulty.api);
 
@@ -561,7 +636,9 @@ describe("outline state v4 storage", () => {
     // A full compaction (what the coordinator forces on a shard-count mismatch) re-shards to the
     // current count and reloads to the exact state.
     const snapshot = outlineStateV4Snapshot(loaded!.state, {
-      epoch: 0, journalSeqIncluded: 0, savedAt: 2,
+      epoch: 0,
+      journalSeqIncluded: 0,
+      savedAt: 2,
       previous: { manifest: loaded!.manifest, slot: loaded!.slot }
     });
     expect(snapshot.manifest.shardGenerations).toHaveLength(STATE_V4_NODE_SHARD_COUNT);
@@ -588,7 +665,9 @@ describe("outline state v4 storage", () => {
     // current slot a (gen 10), collect = the fallback it evicts (slot b gen 9). The new 256-shard
     // write targets slot b.
     const reshard = outlineStateV4Snapshot(state, {
-      epoch: 0, journalSeqIncluded: 0, savedAt: 11,
+      epoch: 0,
+      journalSeqIncluded: 0,
+      savedAt: 11,
       previous: { manifest: slotA.manifest, slot: "a" },
       collect: slotB.manifest
     });
@@ -601,7 +680,9 @@ describe("outline state v4 storage", () => {
 
     // Tear the write: only the new manifest lands; its 256 shards do not. The GC of the evicted
     // gen-9 keys still runs (models the post-resolve remove).
-    await faulty.api.storage.local.set({ [reshard.manifestKey]: reshard.setItems[reshard.manifestKey] });
+    await faulty.api.storage.local.set({
+      [reshard.manifestKey]: reshard.setItems[reshard.manifestKey]
+    });
     if (reshard.removeKeysAfterCommit.length > 0) {
       await faulty.api.storage.local.remove(reshard.removeKeysAfterCommit);
     }
@@ -617,7 +698,9 @@ describe("outline state v4 storage", () => {
   it("never sweeps blind when no manifest is parseable", async () => {
     const faulty = createFaultyStorage();
     const orphan = stateV4NodeShardKey(0, 1);
-    await faulty.api.storage.local.set({ [orphan]: { version: 4, shardIndex: 0, generation: 1, nodes: [] } });
+    await faulty.api.storage.local.set({
+      [orphan]: { version: 4, shardIndex: 0, generation: 1, nodes: [] }
+    });
 
     const result = await sweepOrphanedV4Shards(faulty.api);
 
@@ -630,7 +713,7 @@ function seededRandom(seed: number): () => number {
   // Coerce to uint32 and multiply with Math.imul so large soak seeds cannot
   // overflow MAX_SAFE_INTEGER (raw `seed * 2654435761` lost precision past ~3.4M).
   // `|| 1` keeps the Park-Miller state out of its 0 fixed point.
-  let value = ((Math.imul(seed >>> 0, 2654435761) >>> 0) % 2147483647) || 1;
+  let value = (Math.imul(seed >>> 0, 2654435761) >>> 0) % 2147483647 || 1;
   return () => {
     value = (value * 16807) % 2147483647;
     return (value - 1) / 2147483646;

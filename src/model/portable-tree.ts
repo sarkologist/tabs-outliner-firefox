@@ -1,9 +1,4 @@
-import type {
-  Clock,
-  NodeId,
-  OutlineNode,
-  OutlineState
-} from "./types.js";
+import type { Clock, NodeId, OutlineNode, OutlineState } from "./types.js";
 
 export const PORTABLE_TREE_SCHEMA = "tabs-outliner-tree";
 export const PORTABLE_TREE_BACKUP_DIRECTORY = "tabs-outliner-backups";
@@ -75,7 +70,11 @@ export function portableTreeBackupFilename(date = new Date()): string {
 // correctness guarantee both importers rely on). Returns undefined when there is nothing to add.
 type PortableAppendStart = { tree: ImportTree; next: OutlineState; context: AppendContext };
 
-function beginPortableAppend(state: OutlineState, payload: unknown, clock: Clock): PortableAppendStart | undefined {
+function beginPortableAppend(
+  state: OutlineState,
+  payload: unknown,
+  clock: Clock
+): PortableAppendStart | undefined {
   const tree = parseImportTree(payload);
   if (tree.roots.length === 0) {
     return undefined;
@@ -185,7 +184,10 @@ function portableNodesFromOutline(state: OutlineState, node: OutlineNode): Porta
   return output.get(node.id) ?? [];
 }
 
-function portableNodesFromNode(node: OutlineNode, children: PortableTreeNode[]): PortableTreeNode[] {
+function portableNodesFromNode(
+  node: OutlineNode,
+  children: PortableTreeNode[]
+): PortableTreeNode[] {
   if (isOutlinerSidebarNode(node)) {
     return children;
   }
@@ -270,14 +272,15 @@ function createPortableOutlineNode(
   context: AppendContext
 ): NodeId {
   const nodeId = nextPortableNodeId(portable.kind, context);
-  const importedGroupTitle = portable.kind === "window" ? normalizeImportedGroupTitle(portable.title) : undefined;
+  const importedGroupTitle =
+    portable.kind === "window" ? normalizeImportedGroupTitle(portable.title) : undefined;
   const node: OutlineNode = {
     id: nodeId,
     kind: portable.kind,
     status: "closed",
     ...(parentId ? { parentId } : {}),
     childIds: [],
-    title: portable.kind === "window" ? importedGroupTitle ?? IMPORT_GROUP_TITLE : portable.title,
+    title: portable.kind === "window" ? (importedGroupTitle ?? IMPORT_GROUP_TITLE) : portable.title,
     ...(importedGroupTitle ? { customTitle: importedGroupTitle } : {}),
     ...(portable.url ? { url: portable.url } : {}),
     ...(portable.favIconUrl ? { favIconUrl: portable.favIconUrl } : {}),
@@ -364,10 +367,7 @@ function parseChromeTabOutlinerTree(payload: unknown[]): ImportTree {
   };
 }
 
-function parseChromeTabOutlinerRecord(
-  entry: unknown,
-  index: number
-): ChromeTabOutlinerRecord[] {
+function parseChromeTabOutlinerRecord(entry: unknown, index: number): ChromeTabOutlinerRecord[] {
   if (!Array.isArray(entry)) {
     if (isRecord(entry)) {
       return [];
@@ -417,11 +417,15 @@ function nearestChromeTabOutlinerParent(
   return undefined;
 }
 
-function portableNodesFromChromeTabOutlinerRecord(record: ChromeTabOutlinerRecord): PortableTreeNode[] {
+function portableNodesFromChromeTabOutlinerRecord(
+  record: ChromeTabOutlinerRecord
+): PortableTreeNode[] {
   const payload = record.payload;
   const data = chromeData(payload);
   const marks = chromeMarks(payload);
-  const children = record.children.flatMap((child) => portableNodesFromChromeTabOutlinerRecord(child));
+  const children = record.children.flatMap((child) =>
+    portableNodesFromChromeTabOutlinerRecord(child)
+  );
   const url = optionalString(data.url);
   const favIconUrl = optionalString(data.favIconUrl);
   const title = chromeNodeTitle(payload, data, marks, url);
@@ -542,7 +546,9 @@ function parsePortableNode(payload: unknown, path: string): PortableTreeNode {
   const node: PortableTreeNode = {
     kind: value.kind,
     title: value.title,
-    children: value.children.map((child, index) => parsePortableNode(child, `${path}.children[${index}]`))
+    children: value.children.map((child, index) =>
+      parsePortableNode(child, `${path}.children[${index}]`)
+    )
   };
 
   if ("url" in value) {

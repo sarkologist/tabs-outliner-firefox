@@ -33,6 +33,6 @@ it("INVARIANTS.md cites only source/test files that still exist", () => {
   expect(
     missing,
     `INVARIANTS.md cites file(s) that no longer exist (probably renamed): ${missing.join(", ")}. ` +
-      'Update the "Enforced by:" citation to the current file.',
+      'Update the "Enforced by:" citation to the current file.'
   ).toEqual([]);
 });

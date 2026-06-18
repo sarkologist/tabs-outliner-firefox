@@ -98,9 +98,13 @@ describe("portable tree files", () => {
   });
 
   it("creates stable export filenames and serialized JSON files", () => {
-    const exported = exportPortableTree(bootstrapFromWindows(runtimeWindows, { now: 1000 }), { now: 3000 });
+    const exported = exportPortableTree(bootstrapFromWindows(runtimeWindows, { now: 1000 }), {
+      now: 3000
+    });
 
-    expect(portableTreeFilename(new Date("2026-05-19T13:20:00.000Z"))).toBe("tabs-outliner-tree-2026-05-19.json");
+    expect(portableTreeFilename(new Date("2026-05-19T13:20:00.000Z"))).toBe(
+      "tabs-outliner-tree-2026-05-19.json"
+    );
     expect(portableTreeBackupFilename(new Date("2026-05-19T13:20:00.000Z"))).toBe(
       "tabs-outliner-backups/tabs-outliner-tree-2026-05-19.json"
     );
@@ -108,9 +112,14 @@ describe("portable tree files", () => {
   });
 
   it("exports renamed group titles", () => {
-    const state = renameGroup(bootstrapFromWindows(runtimeWindows, { now: 1000 }), "window:10", "Research", {
-      now: 2000
-    });
+    const state = renameGroup(
+      bootstrapFromWindows(runtimeWindows, { now: 1000 }),
+      "window:10",
+      "Research",
+      {
+        now: 2000
+      }
+    );
 
     const exported = exportPortableTree(state, { now: 3000 });
 
@@ -118,7 +127,11 @@ describe("portable tree files", () => {
   });
 
   it("exports neutral outline groups as portable window groups", () => {
-    const state = wrapNodeInGroup(bootstrapFromWindows(runtimeWindows, { now: 1000 }), "window:10", { now: 2000 });
+    const state = wrapNodeInGroup(
+      bootstrapFromWindows(runtimeWindows, { now: 1000 }),
+      "window:10",
+      { now: 2000 }
+    );
 
     const exported = exportPortableTree(state, { now: 3000 });
 
@@ -147,55 +160,58 @@ describe("portable tree files", () => {
   });
 
   it("omits the outliner sidebar page from exports", () => {
-    const state = bootstrapFromWindows([
-      {
-        id: 10,
-        focused: true,
-        incognito: false,
-        tabs: [
-          {
-            id: 1,
-            windowId: 10,
-            index: 0,
-            active: true,
-            url: "moz-extension://extension-id/sidebar/sidebar.html",
-            title: "Tab Session Outliner"
-          },
-          {
-            id: 2,
-            windowId: 10,
-            index: 1,
-            active: false,
-            openerTabId: 1,
-            url: "https://example.com/kept-child",
-            title: "Kept Child"
-          },
-          {
-            id: 3,
-            windowId: 10,
-            index: 2,
-            active: false,
-            url: "https://example.com/sibling",
-            title: "Kept Sibling"
-          }
-        ]
-      },
-      {
-        id: 20,
-        focused: false,
-        incognito: false,
-        tabs: [
-          {
-            id: 4,
-            windowId: 20,
-            index: 0,
-            active: true,
-            url: "file:///Users/sark/code/tabs-outliner/public/sidebar/sidebar.html",
-            title: "tabs-outliner/public/sidebar/sidebar.html"
-          }
-        ]
-      }
-    ], { now: 1000 });
+    const state = bootstrapFromWindows(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false,
+          tabs: [
+            {
+              id: 1,
+              windowId: 10,
+              index: 0,
+              active: true,
+              url: "moz-extension://extension-id/sidebar/sidebar.html",
+              title: "Tab Session Outliner"
+            },
+            {
+              id: 2,
+              windowId: 10,
+              index: 1,
+              active: false,
+              openerTabId: 1,
+              url: "https://example.com/kept-child",
+              title: "Kept Child"
+            },
+            {
+              id: 3,
+              windowId: 10,
+              index: 2,
+              active: false,
+              url: "https://example.com/sibling",
+              title: "Kept Sibling"
+            }
+          ]
+        },
+        {
+          id: 20,
+          focused: false,
+          incognito: false,
+          tabs: [
+            {
+              id: 4,
+              windowId: 20,
+              index: 0,
+              active: true,
+              url: "file:///Users/sark/code/tabs-outliner/public/sidebar/sidebar.html",
+              title: "tabs-outliner/public/sidebar/sidebar.html"
+            }
+          ]
+        }
+      ],
+      { now: 1000 }
+    );
 
     const exported = exportPortableTree(state, { now: 3000 });
 
@@ -301,7 +317,15 @@ describe("portable tree files", () => {
     expect(nestedTab.parentId).toBe(nestedWindow.id);
     expect(looseTab.parentId).toBe(importGroup.id);
 
-    for (const node of [importGroup, importedWindow, importedParent, importedChild, nestedWindow, nestedTab, looseTab]) {
+    for (const node of [
+      importGroup,
+      importedWindow,
+      importedParent,
+      importedChild,
+      nestedWindow,
+      nestedTab,
+      looseTab
+    ]) {
       expect(node.status).toBe("closed");
       expect(node.collapsed).toBe(false);
       expect(node.createdAt).toBe(5000);
@@ -496,7 +520,17 @@ describe("portable tree files", () => {
     expect(liveWindow.childIds).toEqual([liveTab.id]);
     expect(rootTab.parentId).toBe(importGroup.id);
 
-    for (const node of [importGroup, research, parent, child, reading, nested, liveWindow, liveTab, rootTab]) {
+    for (const node of [
+      importGroup,
+      research,
+      parent,
+      child,
+      reading,
+      nested,
+      liveWindow,
+      liveTab,
+      rootTab
+    ]) {
       expect(node.status).toBe("closed");
       expect(node.collapsed).toBe(false);
       expect(node.createdAt).toBe(5000);
@@ -577,7 +611,9 @@ describe("portable tree files", () => {
 
     const appended = appendPortableTree(state, payload, { now: 5000 });
 
-    expect(JSON.stringify(appended)).not.toContain("chrome-extension://eggkanocgddhmamlbiijnphhppkpkmkl");
+    expect(JSON.stringify(appended)).not.toContain(
+      "chrome-extension://eggkanocgddhmamlbiijnphhppkpkmkl"
+    );
     const importGroup = appended.nodes[appended.rootIds.at(-1)!]!;
     const popup = appended.nodes[importGroup.childIds[0]!]!;
     const promoted = nodeByTitle(appended, "Promoted Child");
@@ -591,18 +627,22 @@ describe("portable tree files", () => {
     const before = structuredClone(state);
 
     expect(() =>
-      appendPortableTree(state, [
+      appendPortableTree(
+        state,
         [
-          2001,
-          {
-            data: {
-              title: "Broken",
-              url: "https://broken.example/"
-            }
-          },
-          [0, "not a number"]
-        ]
-      ], { now: 5000 })
+          [
+            2001,
+            {
+              data: {
+                title: "Broken",
+                url: "https://broken.example/"
+              }
+            },
+            [0, "not a number"]
+          ]
+        ],
+        { now: 5000 }
+      )
     ).toThrow(/Invalid Chrome Tab Outliner tree/);
 
     expect(state).toEqual(before);
@@ -674,17 +714,23 @@ describe("portable tree files", () => {
     expect(importGroup.childIds).toEqual([root.id, afterRoot.id]);
     expect(root.childIds).toEqual([first.id, second.id]);
     expect(first.childIds).toEqual([firstChild.id]);
-    expect([root, first, firstChild, second, afterRoot].every((node) => node.status === "closed")).toBe(true);
+    expect(
+      [root, first, firstChild, second, afterRoot].every((node) => node.status === "closed")
+    ).toBe(true);
   });
 
   it("does not create an empty import group for empty imports", () => {
     const state = bootstrapFromWindows(runtimeWindows, { now: 1000 });
-    const appended = appendPortableTree(state, {
-      schema: PORTABLE_TREE_SCHEMA,
-      version: 1,
-      exportedAt: "2026-05-16T12:00:00.000Z",
-      roots: []
-    }, { now: 5000 });
+    const appended = appendPortableTree(
+      state,
+      {
+        schema: PORTABLE_TREE_SCHEMA,
+        version: 1,
+        exportedAt: "2026-05-16T12:00:00.000Z",
+        roots: []
+      },
+      { now: 5000 }
+    );
 
     expect(appended).toEqual(state);
   });
@@ -694,18 +740,22 @@ describe("portable tree files", () => {
     const before = structuredClone(state);
 
     expect(() =>
-      appendPortableTree(state, {
-        schema: PORTABLE_TREE_SCHEMA,
-        version: 1,
-        exportedAt: "2026-05-16T12:00:00.000Z",
-        roots: [
-          {
-            kind: "tab",
-            title: "Broken",
-            children: "not an array"
-          }
-        ]
-      }, { now: 5000 })
+      appendPortableTree(
+        state,
+        {
+          schema: PORTABLE_TREE_SCHEMA,
+          version: 1,
+          exportedAt: "2026-05-16T12:00:00.000Z",
+          roots: [
+            {
+              kind: "tab",
+              title: "Broken",
+              children: "not an array"
+            }
+          ]
+        },
+        { now: 5000 }
+      )
     ).toThrow(/Invalid portable tree/);
 
     expect(state).toEqual(before);
@@ -735,7 +785,12 @@ describe("append portable subtrees at top level", () => {
 
   it("appends each portable root as a new top-level node with no import-group wrapper", () => {
     const state = bootstrapFromWindows(runtimeWindows, { now: 1000 });
-    const looseTab = { kind: "tab", title: "Loose Tab", url: "https://loose.example/", children: [] };
+    const looseTab = {
+      kind: "tab",
+      title: "Loose Tab",
+      url: "https://loose.example/",
+      children: []
+    };
 
     const appended = appendPortableSubtreesAtTopLevel(
       state,
@@ -755,7 +810,10 @@ describe("append portable subtrees at top level", () => {
     // inserted exactly one extra "Group" wrapper root instead of these two. (Note the live
     // window from bootstrap is itself titled "Group" — outline.ts default — so a wrapper can't
     // be detected by title; the root-slice identity below is the precise check.)
-    expect(appended.rootIds.slice(state.rootIds.length)).toEqual([importedWindow.id, importedLooseTab.id]);
+    expect(appended.rootIds.slice(state.rootIds.length)).toEqual([
+      importedWindow.id,
+      importedLooseTab.id
+    ]);
 
     expect(importedWindow.parentId).toBeUndefined();
     expect(importedWindow.customTitle).toBe("Imported Window");
@@ -775,7 +833,9 @@ describe("append portable subtrees at top level", () => {
   it("imports a single selected subtree as one independent top-level node", () => {
     const state = bootstrapFromWindows(runtimeWindows, { now: 1000 });
 
-    const appended = appendPortableSubtreesAtTopLevel(state, importPayload([windowWithChild]), { now: 5000 });
+    const appended = appendPortableSubtreesAtTopLevel(state, importPayload([windowWithChild]), {
+      now: 5000
+    });
 
     expect(appended.rootIds).toHaveLength(state.rootIds.length + 1);
     const importedWindow = appended.nodes[appended.rootIds.at(-1)!]!;
@@ -787,9 +847,13 @@ describe("append portable subtrees at top level", () => {
   it("creates independent fresh nodes when the same subtree is imported more than once", () => {
     const state = bootstrapFromWindows(runtimeWindows, { now: 1000 });
 
-    const once = appendPortableSubtreesAtTopLevel(state, importPayload([windowWithChild]), { now: 5000 });
+    const once = appendPortableSubtreesAtTopLevel(state, importPayload([windowWithChild]), {
+      now: 5000
+    });
     // Same clock value on purpose: ids must still be unique (no collision, no dedupe).
-    const twice = appendPortableSubtreesAtTopLevel(once, importPayload([windowWithChild]), { now: 5000 });
+    const twice = appendPortableSubtreesAtTopLevel(once, importPayload([windowWithChild]), {
+      now: 5000
+    });
 
     expect(twice.rootIds).toHaveLength(state.rootIds.length + 2);
     const firstImportId = once.rootIds.at(-1)!;
@@ -797,8 +861,12 @@ describe("append portable subtrees at top level", () => {
     expect(secondImportId).not.toBe(firstImportId);
 
     // Both imports survive independently — no merge, no dedupe.
-    const importedWindows = Object.values(twice.nodes).filter((node) => node.title === "Imported Window");
-    const importedChildren = Object.values(twice.nodes).filter((node) => node.title === "Imported Child");
+    const importedWindows = Object.values(twice.nodes).filter(
+      (node) => node.title === "Imported Window"
+    );
+    const importedChildren = Object.values(twice.nodes).filter(
+      (node) => node.title === "Imported Child"
+    );
     expect(importedWindows).toHaveLength(2);
     expect(importedChildren).toHaveLength(2);
     expect(new Set(importedWindows.map((node) => node.id)).size).toBe(2);
@@ -813,7 +881,9 @@ describe("append portable subtrees at top level", () => {
   it("preserves object identity for existing nodes", () => {
     const state = bootstrapFromWindows(runtimeWindows, { now: 1000 });
 
-    const appended = appendPortableSubtreesAtTopLevel(state, importPayload([windowWithChild]), { now: 5000 });
+    const appended = appendPortableSubtreesAtTopLevel(state, importPayload([windowWithChild]), {
+      now: 5000
+    });
 
     expect(appended.nodes["window:10"]).toBe(state.nodes["window:10"]);
     expect(appended.nodes["tab:1"]).toBe(state.nodes["tab:1"]);

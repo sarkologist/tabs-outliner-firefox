@@ -1,7 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { BrowserAdapter } from "./adapter.js";
-import { BACKGROUND_COMMAND_TYPES, isBackgroundCommand, isStructuralCommand, runCommand, syncBrowserOrder } from "./commands.js";
+import {
+  BACKGROUND_COMMAND_TYPES,
+  isBackgroundCommand,
+  isStructuralCommand,
+  runCommand,
+  syncBrowserOrder
+} from "./commands.js";
 import type { BackgroundCommand, RestoreCreateAttempt } from "./commands.js";
 import { isTrackableHistoryCommandType } from "./history.js";
 import {
@@ -152,40 +158,44 @@ function closedShellWithRestoredTabs(
 }
 
 async function importNestedSiblingGroup() {
-  const imported = await runCommand(bootstrapFromWindows(runtimeWindows, { now: 1000 }), fakeAdapter(), {
-    type: "importTree",
-    tree: {
-      schema: PORTABLE_TREE_SCHEMA,
-      version: 1,
-      exportedAt: "2026-05-16T12:00:00.000Z",
-      roots: [
-        {
-          kind: "window",
-          title: "Imported outer group",
-          children: [
-            {
-              kind: "window",
-              title: "Imported inner group",
-              children: [
-                {
-                  kind: "tab",
-                  title: "Imported first tab",
-                  url: "https://imported.example/first",
-                  children: []
-                },
-                {
-                  kind: "tab",
-                  title: "Imported second tab",
-                  url: "https://imported.example/second",
-                  children: []
-                }
-              ]
-            }
-          ]
-        }
-      ]
+  const imported = await runCommand(
+    bootstrapFromWindows(runtimeWindows, { now: 1000 }),
+    fakeAdapter(),
+    {
+      type: "importTree",
+      tree: {
+        schema: PORTABLE_TREE_SCHEMA,
+        version: 1,
+        exportedAt: "2026-05-16T12:00:00.000Z",
+        roots: [
+          {
+            kind: "window",
+            title: "Imported outer group",
+            children: [
+              {
+                kind: "window",
+                title: "Imported inner group",
+                children: [
+                  {
+                    kind: "tab",
+                    title: "Imported first tab",
+                    url: "https://imported.example/first",
+                    children: []
+                  },
+                  {
+                    kind: "tab",
+                    title: "Imported second tab",
+                    url: "https://imported.example/second",
+                    children: []
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
     }
-  });
+  );
   const nodeByTitle = (title: string) =>
     Object.values(imported.state.nodes).find((node) => node.title === title)!;
   return {
@@ -294,7 +304,10 @@ describe("background commands", () => {
   it("closes live descendants for neutral outline groups without changing outline state immediately", async () => {
     const state = bootstrapFromWindows(runtimeWindows, { now: 1000 });
     const groupingAdapter = fakeAdapter();
-    const grouped = await runCommand(state, groupingAdapter, { type: "wrapNodeInGroup", nodeId: "window:10" });
+    const grouped = await runCommand(state, groupingAdapter, {
+      type: "wrapNodeInGroup",
+      nodeId: "window:10"
+    });
     const innerGroupId = grouped.state.nodes["window:10"]?.parentId;
     const nested = await runCommand(grouped.state, groupingAdapter, {
       type: "wrapNodeInGroup",
@@ -388,22 +401,25 @@ describe("background commands", () => {
 
   it("batches large live tab subtree deletes into one runtime close", async () => {
     const tabCount = 100;
-    const state = bootstrapFromWindows([
-      {
-        id: 10,
-        focused: true,
-        incognito: false,
-        tabs: Array.from({ length: tabCount }, (_value, index) => ({
-          id: index + 1,
-          windowId: 10,
-          index,
-          active: index === 0,
-          ...(index > 0 ? { openerTabId: index } : {}),
-          url: `https://example.com/${index + 1}`,
-          title: `Tab ${index + 1}`
-        }))
-      }
-    ], { now: 1000 });
+    const state = bootstrapFromWindows(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false,
+          tabs: Array.from({ length: tabCount }, (_value, index) => ({
+            id: index + 1,
+            windowId: 10,
+            index,
+            active: index === 0,
+            ...(index > 0 ? { openerTabId: index } : {}),
+            url: `https://example.com/${index + 1}`,
+            title: `Tab ${index + 1}`
+          }))
+        }
+      ],
+      { now: 1000 }
+    );
     const adapter = fakeAdapter();
 
     const result = await runCommand(state, adapter, { type: "deleteNode", nodeId: "tab:1" });
@@ -495,11 +511,18 @@ describe("background commands", () => {
     });
     const attempts: RestoreCreateAttempt[] = [];
 
-    await runCommand(state, adapter, { type: "restoreNode", nodeId: "tab:2" }, {
-      restoreObserver: {
-        recordCreateAttempt: (attempt) => { attempts.push(attempt); }
+    await runCommand(
+      state,
+      adapter,
+      { type: "restoreNode", nodeId: "tab:2" },
+      {
+        restoreObserver: {
+          recordCreateAttempt: (attempt) => {
+            attempts.push(attempt);
+          }
+        }
       }
-    });
+    );
 
     expect(attempts).toEqual([
       {
@@ -551,32 +574,46 @@ describe("background commands", () => {
   });
 
   it("records restore window create attempts for command-side recovery", async () => {
-    const state = closeWindow(bootstrapFromWindows([
-      ...runtimeWindows,
-      {
-        id: 20,
-        focused: false,
-        incognito: false,
-        tabs: [
+    const state = closeWindow(
+      bootstrapFromWindows(
+        [
+          ...runtimeWindows,
           {
-            id: 5,
-            windowId: 20,
-            index: 0,
-            active: true,
-            url: "https://solo.example/",
-            title: "Solo"
+            id: 20,
+            focused: false,
+            incognito: false,
+            tabs: [
+              {
+                id: 5,
+                windowId: 20,
+                index: 0,
+                active: true,
+                url: "https://solo.example/",
+                title: "Solo"
+              }
+            ]
           }
-        ]
-      }
-    ], { now: 1000 }), 20, { now: 2000 });
+        ],
+        { now: 1000 }
+      ),
+      20,
+      { now: 2000 }
+    );
     const adapter = fakeAdapter();
     const attempts: RestoreCreateAttempt[] = [];
 
-    await runCommand(state, adapter, { type: "restoreNode", nodeId: "tab:5" }, {
-      restoreObserver: {
-        recordCreateAttempt: (attempt) => { attempts.push(attempt); }
+    await runCommand(
+      state,
+      adapter,
+      { type: "restoreNode", nodeId: "tab:5" },
+      {
+        restoreObserver: {
+          recordCreateAttempt: (attempt) => {
+            attempts.push(attempt);
+          }
+        }
       }
-    });
+    );
 
     expect(attempts).toEqual([
       {
@@ -592,39 +629,53 @@ describe("background commands", () => {
   });
 
   it("records multi-tab closed-window restore create attempts for command-side recovery", async () => {
-    const state = closeWindow(bootstrapFromWindows([
-      {
-        id: 20,
-        focused: true,
-        incognito: false,
-        tabs: [
+    const state = closeWindow(
+      bootstrapFromWindows(
+        [
           {
-            id: 5,
-            windowId: 20,
-            index: 0,
-            active: true,
-            url: "https://one.example/",
-            title: "One"
-          },
-          {
-            id: 6,
-            windowId: 20,
-            index: 1,
-            active: false,
-            url: "https://two.example/",
-            title: "Two"
+            id: 20,
+            focused: true,
+            incognito: false,
+            tabs: [
+              {
+                id: 5,
+                windowId: 20,
+                index: 0,
+                active: true,
+                url: "https://one.example/",
+                title: "One"
+              },
+              {
+                id: 6,
+                windowId: 20,
+                index: 1,
+                active: false,
+                url: "https://two.example/",
+                title: "Two"
+              }
+            ]
           }
-        ]
-      }
-    ], { now: 1000 }), 20, { now: 2000 });
+        ],
+        { now: 1000 }
+      ),
+      20,
+      { now: 2000 }
+    );
     const adapter = fakeAdapter();
     const attempts: RestoreCreateAttempt[] = [];
 
-    await runCommand(state, adapter, { type: "restoreNode", nodeId: "window:20" }, {
-      restoreObserver: {
-        recordCreateAttempt: (attempt) => { attempts.push(attempt); }
+    await runCommand(
+      state,
+      adapter,
+      { type: "restoreNode", nodeId: "window:20" },
+      {
+        restoreObserver: {
+          recordCreateAttempt: (attempt) => {
+            attempts.push(attempt);
+          }
+        }
       }
-    });
+    );
 
     expect(attempts).toEqual([
       {
@@ -659,18 +710,19 @@ describe("background commands", () => {
         id: 42,
         focused: true,
         incognito: false,
-        tabs: typeof tabId === "number"
-          ? [
-              {
-                id: tabId,
-                windowId: 42,
-                index: 0,
-                active: true,
-                url: "https://example.com/parent",
-                title: "Parent"
-              }
-            ]
-          : []
+        tabs:
+          typeof tabId === "number"
+            ? [
+                {
+                  id: tabId,
+                  windowId: 42,
+                  index: 0,
+                  active: true,
+                  url: "https://example.com/parent",
+                  title: "Parent"
+                }
+              ]
+            : []
       }))
     });
     const moved = await runCommand(state, adapter, {
@@ -680,11 +732,18 @@ describe("background commands", () => {
     const placeholderId = moved.state.rootIds.at(-1)!;
     const attempts: RestoreCreateAttempt[] = [];
 
-    await runCommand(moved.state, adapter, { type: "restoreNode", nodeId: placeholderId }, {
-      restoreObserver: {
-        recordCreateAttempt: (attempt) => { attempts.push(attempt); }
+    await runCommand(
+      moved.state,
+      adapter,
+      { type: "restoreNode", nodeId: placeholderId },
+      {
+        restoreObserver: {
+          recordCreateAttempt: (attempt) => {
+            attempts.push(attempt);
+          }
+        }
       }
-    });
+    );
 
     expect(attempts).toEqual([
       {
@@ -699,46 +758,53 @@ describe("background commands", () => {
   });
 
   it("does not use broad order sync to pull browser-detached tabs across windows", async () => {
-    const state = moveNode(bootstrapFromWindows([
-      {
-        id: 10,
-        focused: true,
-        incognito: false,
-        tabs: [
+    const state = moveNode(
+      bootstrapFromWindows(
+        [
           {
-            id: 1,
-            windowId: 10,
-            index: 0,
-            active: true,
-            url: "https://source.example/one",
-            title: "Source One"
+            id: 10,
+            focused: true,
+            incognito: false,
+            tabs: [
+              {
+                id: 1,
+                windowId: 10,
+                index: 0,
+                active: true,
+                url: "https://source.example/one",
+                title: "Source One"
+              },
+              {
+                id: 2,
+                windowId: 10,
+                index: 1,
+                active: false,
+                url: "https://source.example/two",
+                title: "Source Two"
+              }
+            ]
           },
           {
-            id: 2,
-            windowId: 10,
-            index: 1,
-            active: false,
-            url: "https://source.example/two",
-            title: "Source Two"
+            id: 20,
+            focused: false,
+            incognito: false,
+            tabs: [
+              {
+                id: 3,
+                windowId: 20,
+                index: 0,
+                active: true,
+                url: "https://detached.example/",
+                title: "Detached"
+              }
+            ]
           }
-        ]
-      },
-      {
-        id: 20,
-        focused: false,
-        incognito: false,
-        tabs: [
-          {
-            id: 3,
-            windowId: 20,
-            index: 0,
-            active: true,
-            url: "https://detached.example/",
-            title: "Detached"
-          }
-        ]
-      }
-    ], { now: 1000 }), "tab:2", { parentId: "window:20", index: 1 });
+        ],
+        { now: 1000 }
+      ),
+      "tab:2",
+      { parentId: "window:20", index: 1 }
+    );
     const adapter = fakeAdapter();
 
     await syncBrowserOrder(state, adapter);
@@ -755,10 +821,12 @@ describe("background commands", () => {
     const state = stateWithClosedTabs(LARGE_RESTORE_NODE_THRESHOLD + 1);
     const adapter = fakeAdapter();
 
-    await expect(runCommand(state, adapter, {
-      type: "restoreNode",
-      nodeId: "window:10"
-    })).rejects.toThrow(/26 restorable closed nodes/);
+    await expect(
+      runCommand(state, adapter, {
+        type: "restoreNode",
+        nodeId: "window:10"
+      })
+    ).rejects.toThrow(/26 restorable closed nodes/);
 
     expect(adapter.restoreSession).not.toHaveBeenCalled();
     expect(adapter.createTab).not.toHaveBeenCalled();
@@ -795,50 +863,53 @@ describe("background commands", () => {
   });
 
   it("restores closed window URL fallbacks with one multi-url window create", async () => {
-    const state = closeWindow(bootstrapFromWindows([
-      {
-        id: 20,
-        focused: true,
-        incognito: false,
-        tabs: [
+    const state = closeWindow(
+      bootstrapFromWindows(
+        [
           {
-            id: 1,
-            windowId: 20,
-            index: 0,
-            active: true,
-            url: "https://example.com/one",
-            title: "One"
-          },
-          {
-            id: 2,
-            windowId: 20,
-            index: 1,
-            active: false,
-            url: "https://example.com/two",
-            title: "Two"
-          },
-          {
-            id: 3,
-            windowId: 20,
-            index: 2,
-            active: false,
-            url: "https://example.com/three",
-            title: "Three"
+            id: 20,
+            focused: true,
+            incognito: false,
+            tabs: [
+              {
+                id: 1,
+                windowId: 20,
+                index: 0,
+                active: true,
+                url: "https://example.com/one",
+                title: "One"
+              },
+              {
+                id: 2,
+                windowId: 20,
+                index: 1,
+                active: false,
+                url: "https://example.com/two",
+                title: "Two"
+              },
+              {
+                id: 3,
+                windowId: 20,
+                index: 2,
+                active: false,
+                url: "https://example.com/three",
+                title: "Three"
+              }
+            ]
           }
-        ]
-      }
-    ], { now: 1000 }), 20, { now: 2000 });
+        ],
+        { now: 1000 }
+      ),
+      20,
+      { now: 2000 }
+    );
     const adapter = fakeAdapter();
 
     const result = await runCommand(state, adapter, { type: "restoreNode", nodeId: "window:20" });
 
     expect(adapter.createWindow).toHaveBeenCalledTimes(1);
     expect(adapter.createWindow).toHaveBeenCalledWith({
-      url: [
-        "https://example.com/one",
-        "https://example.com/two",
-        "https://example.com/three"
-      ]
+      url: ["https://example.com/one", "https://example.com/two", "https://example.com/three"]
     });
     expect(adapter.createTab).not.toHaveBeenCalled();
     expect(result.state.nodes["window:20"]?.live).toEqual({ windowId: 42 });
@@ -849,17 +920,38 @@ describe("background commands", () => {
   });
 
   it("skips the restore reorder when the browser created the window tabs in outline order", async () => {
-    const state = closeWindow(bootstrapFromWindows([
-      {
-        id: 20,
-        focused: true,
-        incognito: false,
-        tabs: [
-          { id: 1, windowId: 20, index: 0, active: true, url: "https://example.com/one", title: "One" },
-          { id: 2, windowId: 20, index: 1, active: false, url: "https://example.com/two", title: "Two" }
-        ]
-      }
-    ], { now: 1000 }), 20, { now: 2000 });
+    const state = closeWindow(
+      bootstrapFromWindows(
+        [
+          {
+            id: 20,
+            focused: true,
+            incognito: false,
+            tabs: [
+              {
+                id: 1,
+                windowId: 20,
+                index: 0,
+                active: true,
+                url: "https://example.com/one",
+                title: "One"
+              },
+              {
+                id: 2,
+                windowId: 20,
+                index: 1,
+                active: false,
+                url: "https://example.com/two",
+                title: "Two"
+              }
+            ]
+          }
+        ],
+        { now: 1000 }
+      ),
+      20,
+      { now: 2000 }
+    );
     const adapter = fakeAdapter();
 
     const result = await runCommand(state, adapter, { type: "restoreNode", nodeId: "window:20" });
@@ -874,17 +966,38 @@ describe("background commands", () => {
   });
 
   it("reorders restored window tabs when the browser created them out of outline order", async () => {
-    const state = closeWindow(bootstrapFromWindows([
-      {
-        id: 20,
-        focused: true,
-        incognito: false,
-        tabs: [
-          { id: 1, windowId: 20, index: 0, active: true, url: "https://example.com/one", title: "One" },
-          { id: 2, windowId: 20, index: 1, active: false, url: "https://example.com/two", title: "Two" }
-        ]
-      }
-    ], { now: 1000 }), 20, { now: 2000 });
+    const state = closeWindow(
+      bootstrapFromWindows(
+        [
+          {
+            id: 20,
+            focused: true,
+            incognito: false,
+            tabs: [
+              {
+                id: 1,
+                windowId: 20,
+                index: 0,
+                active: true,
+                url: "https://example.com/one",
+                title: "One"
+              },
+              {
+                id: 2,
+                windowId: 20,
+                index: 1,
+                active: false,
+                url: "https://example.com/two",
+                title: "Two"
+              }
+            ]
+          }
+        ],
+        { now: 1000 }
+      ),
+      20,
+      { now: 2000 }
+    );
     // Browser returns the created tabs in reversed physical order relative to the requested urls.
     const adapter = fakeAdapter({
       createWindow: vi.fn(async ({ url }) => {
@@ -968,38 +1081,41 @@ describe("background commands", () => {
   });
 
   it("restores a closed tab moved into a previously closed window after that window session", async () => {
-    let state = bootstrapFromWindows([
-      {
-        id: 10,
-        focused: true,
-        incognito: false,
-        tabs: [
-          {
-            id: 1,
-            windowId: 10,
-            index: 0,
-            active: true,
-            url: "https://original.example/",
-            title: "Original"
-          }
-        ]
-      },
-      {
-        id: 20,
-        focused: false,
-        incognito: false,
-        tabs: [
-          {
-            id: 2,
-            windowId: 20,
-            index: 0,
-            active: true,
-            url: "https://detached.example/",
-            title: "Detached"
-          }
-        ]
-      }
-    ], { now: 1000 });
+    let state = bootstrapFromWindows(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false,
+          tabs: [
+            {
+              id: 1,
+              windowId: 10,
+              index: 0,
+              active: true,
+              url: "https://original.example/",
+              title: "Original"
+            }
+          ]
+        },
+        {
+          id: 20,
+          focused: false,
+          incognito: false,
+          tabs: [
+            {
+              id: 2,
+              windowId: 20,
+              index: 0,
+              active: true,
+              url: "https://detached.example/",
+              title: "Detached"
+            }
+          ]
+        }
+      ],
+      { now: 1000 }
+    );
     state = closeWindow(state, 20, { now: 2000, sessionId: "session-window-20" });
     state = closeWindow(state, 10, { now: 3000, sessionId: "session-window-10" });
     state = moveNode(state, "tab:2", { parentId: "window:10", index: 1 });
@@ -1052,38 +1168,41 @@ describe("background commands", () => {
   });
 
   it("restores an earlier closed tab moved into a window session that returns no tab list", async () => {
-    let state = bootstrapFromWindows([
-      {
-        id: 10,
-        focused: true,
-        incognito: false,
-        tabs: [
-          {
-            id: 1,
-            windowId: 10,
-            index: 0,
-            active: true,
-            url: "https://calendar.example/week",
-            title: "Google Calendar - Week of May 25, 2026"
-          }
-        ]
-      },
-      {
-        id: 20,
-        focused: false,
-        incognito: false,
-        tabs: [
-          {
-            id: 2,
-            windowId: 20,
-            index: 0,
-            active: true,
-            url: "https://calendar.example/week",
-            title: "Google Calendar - Week of May 25, 2026"
-          }
-        ]
-      }
-    ], { now: 1000 });
+    let state = bootstrapFromWindows(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false,
+          tabs: [
+            {
+              id: 1,
+              windowId: 10,
+              index: 0,
+              active: true,
+              url: "https://calendar.example/week",
+              title: "Google Calendar - Week of May 25, 2026"
+            }
+          ]
+        },
+        {
+          id: 20,
+          focused: false,
+          incognito: false,
+          tabs: [
+            {
+              id: 2,
+              windowId: 20,
+              index: 0,
+              active: true,
+              url: "https://calendar.example/week",
+              title: "Google Calendar - Week of May 25, 2026"
+            }
+          ]
+        }
+      ],
+      { now: 1000 }
+    );
     state = closeWindow(state, 20, { now: 2000, sessionId: "session-window-20" });
     state = closeWindow(state, 10, { now: 3000, sessionId: "session-window-10" });
     state = moveNode(state, "tab:2", { parentId: "window:10", index: 1 });
@@ -1125,23 +1244,26 @@ describe("background commands", () => {
   });
 
   it("restores a single-tab closed window when the browser returns a tab session", async () => {
-    let state = bootstrapFromWindows([
-      {
-        id: 10,
-        focused: true,
-        incognito: false,
-        tabs: [
-          {
-            id: 1,
-            windowId: 10,
-            index: 0,
-            active: true,
-            url: "https://calendar.example/week",
-            title: "Google Calendar - Week of May 25, 2026"
-          }
-        ]
-      }
-    ], { now: 1000 });
+    let state = bootstrapFromWindows(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false,
+          tabs: [
+            {
+              id: 1,
+              windowId: 10,
+              index: 0,
+              active: true,
+              url: "https://calendar.example/week",
+              title: "Google Calendar - Week of May 25, 2026"
+            }
+          ]
+        }
+      ],
+      { now: 1000 }
+    );
     state = closeWindow(state, 10, { now: 2000, sessionId: "session-window-10" });
     const adapter = fakeAdapter({
       restoreSession: vi.fn(async () => ({
@@ -1164,38 +1286,41 @@ describe("background commands", () => {
   });
 
   it("moves a restored tab session into its current outline window", async () => {
-    let state = bootstrapFromWindows([
-      {
-        id: 10,
-        focused: true,
-        incognito: false,
-        tabs: [
-          {
-            id: 1,
-            windowId: 10,
-            index: 0,
-            active: true,
-            url: "https://calendar.example/week",
-            title: "Google Calendar - Week of May 25, 2026"
-          }
-        ]
-      },
-      {
-        id: 20,
-        focused: false,
-        incognito: false,
-        tabs: [
-          {
-            id: 2,
-            windowId: 20,
-            index: 0,
-            active: true,
-            url: "https://calendar.example/week",
-            title: "Google Calendar - Week of May 25, 2026"
-          }
-        ]
-      }
-    ], { now: 1000 });
+    let state = bootstrapFromWindows(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false,
+          tabs: [
+            {
+              id: 1,
+              windowId: 10,
+              index: 0,
+              active: true,
+              url: "https://calendar.example/week",
+              title: "Google Calendar - Week of May 25, 2026"
+            }
+          ]
+        },
+        {
+          id: 20,
+          focused: false,
+          incognito: false,
+          tabs: [
+            {
+              id: 2,
+              windowId: 20,
+              index: 0,
+              active: true,
+              url: "https://calendar.example/week",
+              title: "Google Calendar - Week of May 25, 2026"
+            }
+          ]
+        }
+      ],
+      { now: 1000 }
+    );
     state = closeTab(state, 2, { now: 2000, sessionId: "session-tab-2" });
     state = closeTab(state, 1, { now: 3000, sessionId: "session-tab-1" });
     state = moveNode(state, "tab:2", { parentId: "window:10", index: 1 });
@@ -1223,38 +1348,41 @@ describe("background commands", () => {
   });
 
   it("restores a nested closed detached window moved under a previously closed group", async () => {
-    let state = bootstrapFromWindows([
-      {
-        id: 10,
-        focused: true,
-        incognito: false,
-        tabs: [
-          {
-            id: 1,
-            windowId: 10,
-            index: 0,
-            active: true,
-            url: "https://calendar.example/week",
-            title: "Google Calendar - Week of May 25, 2026"
-          }
-        ]
-      },
-      {
-        id: 20,
-        focused: false,
-        incognito: false,
-        tabs: [
-          {
-            id: 2,
-            windowId: 20,
-            index: 0,
-            active: true,
-            url: "https://calendar.example/week",
-            title: "Google Calendar - Week of May 25, 2026"
-          }
-        ]
-      }
-    ], { now: 1000 });
+    let state = bootstrapFromWindows(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false,
+          tabs: [
+            {
+              id: 1,
+              windowId: 10,
+              index: 0,
+              active: true,
+              url: "https://calendar.example/week",
+              title: "Google Calendar - Week of May 25, 2026"
+            }
+          ]
+        },
+        {
+          id: 20,
+          focused: false,
+          incognito: false,
+          tabs: [
+            {
+              id: 2,
+              windowId: 20,
+              index: 0,
+              active: true,
+              url: "https://calendar.example/week",
+              title: "Google Calendar - Week of May 25, 2026"
+            }
+          ]
+        }
+      ],
+      { now: 1000 }
+    );
     state = closeWindow(state, 20, { now: 2000, sessionId: "session-window-20" });
     state = closeWindow(state, 10, { now: 3000, sessionId: "session-window-10" });
     state = moveNode(state, "window:20", { parentId: "window:10", index: 1 });
@@ -1290,27 +1418,34 @@ describe("background commands", () => {
 
   it("uses the owning closed window session when restoring its only tab", async () => {
     const url = "moz-extension://one-sec/dashboard.html";
-    const state = closeWindow(bootstrapFromWindows([
-      ...runtimeWindows,
-      {
-        id: 20,
-        focused: false,
-        incognito: false,
-        tabs: [
+    const state = closeWindow(
+      bootstrapFromWindows(
+        [
+          ...runtimeWindows,
           {
-            id: 5,
-            windowId: 20,
-            index: 0,
-            active: true,
-            url,
-            title: "Dashboard | one sec"
+            id: 20,
+            focused: false,
+            incognito: false,
+            tabs: [
+              {
+                id: 5,
+                windowId: 20,
+                index: 0,
+                active: true,
+                url,
+                title: "Dashboard | one sec"
+              }
+            ]
           }
-        ]
+        ],
+        { now: 1000 }
+      ),
+      20,
+      {
+        now: 2000,
+        sessionId: "session-window-20"
       }
-    ], { now: 1000 }), 20, {
-      now: 2000,
-      sessionId: "session-window-20"
-    });
+    );
     const adapter = fakeAdapter({
       restoreSession: vi.fn(async () => ({
         window: {
@@ -1347,27 +1482,34 @@ describe("background commands", () => {
   });
 
   it("restores a tab from a closed single-tab window into a new window", async () => {
-    const state = closeWindow(bootstrapFromWindows([
-      ...runtimeWindows,
-      {
-        id: 20,
-        focused: false,
-        incognito: false,
-        tabs: [
+    const state = closeWindow(
+      bootstrapFromWindows(
+        [
+          ...runtimeWindows,
           {
-            id: 5,
-            windowId: 20,
-            index: 0,
-            active: true,
-            url: "https://solo.example/",
-            title: "Solo"
+            id: 20,
+            focused: false,
+            incognito: false,
+            tabs: [
+              {
+                id: 5,
+                windowId: 20,
+                index: 0,
+                active: true,
+                url: "https://solo.example/",
+                title: "Solo"
+              }
+            ]
           }
-        ]
+        ],
+        { now: 1000 }
+      ),
+      20,
+      {
+        now: 2000,
+        sessionId: "session-window-20"
       }
-    ], { now: 1000 }), 20, {
-      now: 2000,
-      sessionId: "session-window-20"
-    });
+    );
     const adapter = fakeAdapter();
 
     const result = await runCommand(state, adapter, { type: "restoreNode", nodeId: "tab:5" });
@@ -1384,31 +1526,38 @@ describe("background commands", () => {
   });
 
   it("restores a closed new-tab node in a live window as browser-safe about blank", async () => {
-    const state = closeTab(bootstrapFromWindows([
-      {
-        id: 10,
-        focused: true,
-        incognito: false,
-        tabs: [
+    const state = closeTab(
+      bootstrapFromWindows(
+        [
           {
-            id: 1,
-            windowId: 10,
-            index: 0,
-            active: true,
-            url: "https://example.com/",
-            title: "Example"
-          },
-          {
-            id: 2,
-            windowId: 10,
-            index: 1,
-            active: false,
-            url: "about:newtab",
-            title: "New Tab"
+            id: 10,
+            focused: true,
+            incognito: false,
+            tabs: [
+              {
+                id: 1,
+                windowId: 10,
+                index: 0,
+                active: true,
+                url: "https://example.com/",
+                title: "Example"
+              },
+              {
+                id: 2,
+                windowId: 10,
+                index: 1,
+                active: false,
+                url: "about:newtab",
+                title: "New Tab"
+              }
+            ]
           }
-        ]
-      }
-    ], { now: 1000 }), 2, { now: 2000 });
+        ],
+        { now: 1000 }
+      ),
+      2,
+      { now: 2000 }
+    );
     const adapter = fakeAdapter();
 
     const result = await runCommand(state, adapter, { type: "restoreNode", nodeId: "tab:2" });
@@ -1419,43 +1568,54 @@ describe("background commands", () => {
       active: false,
       index: 1
     });
-    expect(adapter.createTab).not.toHaveBeenCalledWith(expect.objectContaining({ url: "about:newtab" }));
+    expect(adapter.createTab).not.toHaveBeenCalledWith(
+      expect.objectContaining({ url: "about:newtab" })
+    );
     expect(result.state.nodes["tab:2"]?.status).toBe("live");
     expect(result.state.nodes["tab:2"]?.live).toEqual({ tabId: 99, windowId: 10 });
   });
 
   it("restores a closed blank-only window with browser-safe about blank urls", async () => {
-    const state = closeWindow(bootstrapFromWindows([
-      {
-        id: 20,
-        focused: true,
-        incognito: false,
-        tabs: [
+    const state = closeWindow(
+      bootstrapFromWindows(
+        [
           {
-            id: 5,
-            windowId: 20,
-            index: 0,
-            active: true,
-            url: "about:newtab",
-            title: "New Tab"
-          },
-          {
-            id: 6,
-            windowId: 20,
-            index: 1,
-            active: false,
-            url: "about:blank",
-            title: "New Tab"
+            id: 20,
+            focused: true,
+            incognito: false,
+            tabs: [
+              {
+                id: 5,
+                windowId: 20,
+                index: 0,
+                active: true,
+                url: "about:newtab",
+                title: "New Tab"
+              },
+              {
+                id: 6,
+                windowId: 20,
+                index: 1,
+                active: false,
+                url: "about:blank",
+                title: "New Tab"
+              }
+            ]
           }
-        ]
-      }
-    ], { now: 1000 }), 20, { now: 2000 });
+        ],
+        { now: 1000 }
+      ),
+      20,
+      { now: 2000 }
+    );
     const adapter = fakeAdapter();
 
     const result = await runCommand(state, adapter, { type: "restoreNode", nodeId: "window:20" });
 
     expect(adapter.createWindow).toHaveBeenCalledWith({ url: ["about:blank", "about:blank"] });
-    expect(adapter.createWindow).not.toHaveBeenCalledWith(expect.objectContaining({ url: expect.arrayContaining(["about:newtab"]) }));
+    expect(adapter.createWindow).not.toHaveBeenCalledWith(
+      expect.objectContaining({ url: expect.arrayContaining(["about:newtab"]) })
+    );
     expect(result.state.nodes["window:20"]?.status).toBe("live");
     expect(result.state.nodes["tab:5"]?.live).toEqual({ tabId: 200, windowId: 42 });
     expect(result.state.nodes["tab:6"]?.live).toEqual({ tabId: 201, windowId: 42 });
@@ -1463,27 +1623,34 @@ describe("background commands", () => {
 
   it("does not fall through to child url restore when a window session reports no tabs yet", async () => {
     const url = "about:debugging#/runtime/this-firefox";
-    const state = closeWindow(bootstrapFromWindows([
-      ...runtimeWindows,
-      {
-        id: 20,
-        focused: false,
-        incognito: false,
-        tabs: [
+    const state = closeWindow(
+      bootstrapFromWindows(
+        [
+          ...runtimeWindows,
           {
-            id: 5,
-            windowId: 20,
-            index: 0,
-            active: true,
-            url,
-            title: "Debugging - Runtime / this-firefox"
+            id: 20,
+            focused: false,
+            incognito: false,
+            tabs: [
+              {
+                id: 5,
+                windowId: 20,
+                index: 0,
+                active: true,
+                url,
+                title: "Debugging - Runtime / this-firefox"
+              }
+            ]
           }
-        ]
+        ],
+        { now: 1000 }
+      ),
+      20,
+      {
+        now: 2000,
+        sessionId: "session-window-20"
       }
-    ], { now: 1000 }), 20, {
-      now: 2000,
-      sessionId: "session-window-20"
-    });
+    );
     const adapter = fakeAdapter({
       restoreSession: vi.fn(async () => ({
         window: {
@@ -1528,21 +1695,24 @@ describe("background commands", () => {
 
   it("moves one leaf tab instead of syncing a whole 50k-tab window after drag/drop", async () => {
     const tabCount = 50_000;
-    const state: OutlineState = bootstrapFromWindows([
-      {
-        id: 10,
-        focused: true,
-        incognito: false,
-        tabs: Array.from({ length: tabCount }, (_value, index) => ({
-          id: index + 1,
-          windowId: 10,
-          index,
-          active: index === 0,
-          url: `https://large.example/${index + 1}`,
-          title: `Tab ${index + 1}`
-        }))
-      }
-    ], { now: 1000 });
+    const state: OutlineState = bootstrapFromWindows(
+      [
+        {
+          id: 10,
+          focused: true,
+          incognito: false,
+          tabs: Array.from({ length: tabCount }, (_value, index) => ({
+            id: index + 1,
+            windowId: 10,
+            index,
+            active: index === 0,
+            url: `https://large.example/${index + 1}`,
+            title: `Tab ${index + 1}`
+          }))
+        }
+      ],
+      { now: 1000 }
+    );
     const adapter = fakeAdapter();
 
     const result = await runCommand(state, adapter, {
@@ -1561,10 +1731,14 @@ describe("background commands", () => {
   });
 
   it("flattens outline subtrees without asking Firefox to reorder tabs", async () => {
-    const state: OutlineState = moveNode(bootstrapFromWindows(runtimeWindows, { now: 1000 }), "tab:3", {
-      parentId: "tab:2",
-      index: 0
-    });
+    const state: OutlineState = moveNode(
+      bootstrapFromWindows(runtimeWindows, { now: 1000 }),
+      "tab:3",
+      {
+        parentId: "tab:2",
+        index: 0
+      }
+    );
     const adapter = fakeAdapter();
 
     const result = await runCommand(state, adapter, {
@@ -1582,7 +1756,9 @@ describe("background commands", () => {
         id: 70,
         focused: true,
         incognito: false,
-        tabs: [{ id: 1, windowId: 70, index: 0, active: true, url: "https://a.example/", title: "A" }]
+        tabs: [
+          { id: 1, windowId: 70, index: 0, active: true, url: "https://a.example/", title: "A" }
+        ]
       },
       {
         id: 50,
@@ -1731,43 +1907,53 @@ describe("background commands", () => {
   });
 
   it("moves group-like subtrees to top level without touching Firefox", async () => {
-    const wrapped = await runCommand(bootstrapFromWindows([
-      {
-        id: 10,
-        focused: true,
-        incognito: false,
-        tabs: [
+    const wrapped = await runCommand(
+      bootstrapFromWindows(
+        [
           {
-            id: 1,
-            windowId: 10,
-            index: 0,
-            active: true,
-            url: "https://one.example/",
-            title: "One"
-          }
-        ]
-      },
-      {
-        id: 20,
-        focused: false,
-        incognito: false,
-        tabs: [
+            id: 10,
+            focused: true,
+            incognito: false,
+            tabs: [
+              {
+                id: 1,
+                windowId: 10,
+                index: 0,
+                active: true,
+                url: "https://one.example/",
+                title: "One"
+              }
+            ]
+          },
           {
-            id: 2,
-            windowId: 20,
-            index: 0,
-            active: true,
-            url: "https://two.example/",
-            title: "Two"
+            id: 20,
+            focused: false,
+            incognito: false,
+            tabs: [
+              {
+                id: 2,
+                windowId: 20,
+                index: 0,
+                active: true,
+                url: "https://two.example/",
+                title: "Two"
+              }
+            ]
           }
-        ]
+        ],
+        { now: 1000 }
+      ),
+      fakeAdapter(),
+      {
+        type: "wrapNodeInGroup",
+        nodeId: "window:10"
       }
-    ], { now: 1000 }), fakeAdapter(), {
-      type: "wrapNodeInGroup",
-      nodeId: "window:10"
-    });
+    );
     const wrapperId = wrapped.state.nodes["window:10"]?.parentId;
-    const nested = moveNode(wrapped.state, "window:20", { ...(wrapperId !== undefined ? { parentId: wrapperId } : {}), index: 1 });
+    const nested = moveNode(wrapped.state, "window:20", {
+      ...(wrapperId !== undefined ? { parentId: wrapperId } : {}),
+      index: 1
+    });
     const adapter = fakeAdapter();
 
     const result = await runCommand(nested, adapter, {
@@ -1805,24 +1991,27 @@ describe("background commands", () => {
   });
 
   it("wraps live tabs before moving them to the bottom top level", async () => {
-    const state: OutlineState = bootstrapFromWindows([
-      ...runtimeWindows,
-      {
-        id: 20,
-        focused: false,
-        incognito: false,
-        tabs: [
-          {
-            id: 20,
-            windowId: 20,
-            index: 0,
-            active: true,
-            url: "https://last.example/",
-            title: "Last"
-          }
-        ]
-      }
-    ], { now: 1000 });
+    const state: OutlineState = bootstrapFromWindows(
+      [
+        ...runtimeWindows,
+        {
+          id: 20,
+          focused: false,
+          incognito: false,
+          tabs: [
+            {
+              id: 20,
+              windowId: 20,
+              index: 0,
+              active: true,
+              url: "https://last.example/",
+              title: "Last"
+            }
+          ]
+        }
+      ],
+      { now: 1000 }
+    );
     const adapter = fakeAdapter();
 
     const result = await runCommand(state, adapter, {
@@ -1839,24 +2028,27 @@ describe("background commands", () => {
   });
 
   it("moves root group-like rows to the bottom top level without touching Firefox", async () => {
-    const state: OutlineState = bootstrapFromWindows([
-      ...runtimeWindows,
-      {
-        id: 20,
-        focused: false,
-        incognito: false,
-        tabs: [
-          {
-            id: 20,
-            windowId: 20,
-            index: 0,
-            active: true,
-            url: "https://last.example/",
-            title: "Last"
-          }
-        ]
-      }
-    ], { now: 1000 });
+    const state: OutlineState = bootstrapFromWindows(
+      [
+        ...runtimeWindows,
+        {
+          id: 20,
+          focused: false,
+          incognito: false,
+          tabs: [
+            {
+              id: 20,
+              windowId: 20,
+              index: 0,
+              active: true,
+              url: "https://last.example/",
+              title: "Last"
+            }
+          ]
+        }
+      ],
+      { now: 1000 }
+    );
     const adapter = fakeAdapter();
 
     const result = await runCommand(state, adapter, {
@@ -1940,9 +2132,15 @@ describe("background commands", () => {
     expect(adapter.createWindow).not.toHaveBeenCalled();
     expect(adapter.moveTabs).not.toHaveBeenCalled();
 
-    const importedWindow = Object.values(result.state.nodes).find((node) => node.title === "Imported Window");
-    const importGroup = importedWindow?.parentId ? result.state.nodes[importedWindow.parentId] : undefined;
-    const importedTab = Object.values(result.state.nodes).find((node) => node.title === "Imported Tab");
+    const importedWindow = Object.values(result.state.nodes).find(
+      (node) => node.title === "Imported Window"
+    );
+    const importGroup = importedWindow?.parentId
+      ? result.state.nodes[importedWindow.parentId]
+      : undefined;
+    const importedTab = Object.values(result.state.nodes).find(
+      (node) => node.title === "Imported Tab"
+    );
     expect(importGroup?.title).toBe("Group");
     expect(importGroup?.parentId).toBeUndefined();
     expect(importGroup?.status).toBe("closed");
@@ -1982,15 +2180,22 @@ describe("background commands", () => {
     expect(adapter.moveTabs).not.toHaveBeenCalled();
     expect(result.changed).toBe(true);
 
-    const importedWindow = Object.values(result.state.nodes).find((node) => node.title === "Imported Window");
-    const importedTab = Object.values(result.state.nodes).find((node) => node.title === "Imported Tab");
+    const importedWindow = Object.values(result.state.nodes).find(
+      (node) => node.title === "Imported Window"
+    );
+    const importedTab = Object.values(result.state.nodes).find(
+      (node) => node.title === "Imported Tab"
+    );
     // The imported window is itself a new top-level root — not nested under a wrapper group.
     expect(importedWindow?.parentId).toBeUndefined();
     expect(result.state.rootIds).toContain(importedWindow?.id);
     expect(result.state.rootIds.slice(0, state.rootIds.length)).toEqual(state.rootIds);
     expect(importedWindow?.status).toBe("closed");
     expect(importedTab?.parentId).toBe(importedWindow?.id);
-    expect(importedTab?.restore).toEqual({ url: "https://imported.example/", title: "Imported Tab" });
+    expect(importedTab?.restore).toEqual({
+      url: "https://imported.example/",
+      title: "Imported Tab"
+    });
   });
 
   it("keeps a restored imported subgroup attached to its parent group", async () => {
@@ -2030,8 +2235,12 @@ describe("background commands", () => {
         ]
       }
     });
-    const importedParent = Object.values(imported.state.nodes).find((node) => node.title === "Imported parent group");
-    const importedSubgroup = Object.values(imported.state.nodes).find((node) => node.title === "Imported subgroup");
+    const importedParent = Object.values(imported.state.nodes).find(
+      (node) => node.title === "Imported parent group"
+    );
+    const importedSubgroup = Object.values(imported.state.nodes).find(
+      (node) => node.title === "Imported subgroup"
+    );
     const importedTabs = ["Imported subgroup first", "Imported subgroup second"].map((title) =>
       Object.values(imported.state.nodes).find((node) => node.title === title)
     );
@@ -2137,18 +2346,19 @@ describe("background commands", () => {
           id: 42,
           focused: true,
           incognito: false,
-          tabs: typeof tabId === "number"
-            ? [
-                {
-                  id: tabId,
-                  windowId: 42,
-                  index: 0,
-                  active: true,
-                  url: "https://imported.example/first",
-                  title: "Imported first tab"
-                }
-              ]
-            : []
+          tabs:
+            typeof tabId === "number"
+              ? [
+                  {
+                    id: tabId,
+                    windowId: 42,
+                    index: 0,
+                    active: true,
+                    url: "https://imported.example/first",
+                    title: "Imported first tab"
+                  }
+                ]
+              : []
         };
       })
     });
@@ -2229,18 +2439,19 @@ describe("background commands", () => {
           id: 42,
           focused: true,
           incognito: false,
-          tabs: typeof tabId === "number"
-            ? [
-                {
-                  id: tabId,
-                  windowId: 42,
-                  index: 0,
-                  active: true,
-                  url: "https://imported.example/first",
-                  title: "Imported first tab"
-                }
-              ]
-            : []
+          tabs:
+            typeof tabId === "number"
+              ? [
+                  {
+                    id: tabId,
+                    windowId: 42,
+                    index: 0,
+                    active: true,
+                    url: "https://imported.example/first",
+                    title: "Imported first tab"
+                  }
+                ]
+              : []
         };
       })
     });
@@ -2283,47 +2494,51 @@ describe("background commands", () => {
   });
 
   it("restores one imported leaf tab by materializing its nearest ancestor window group", async () => {
-    const imported = await runCommand(bootstrapFromWindows(runtimeWindows, { now: 1000 }), fakeAdapter(), {
-      type: "importTree",
-      tree: {
-        schema: PORTABLE_TREE_SCHEMA,
-        version: 1,
-        exportedAt: "2026-05-16T12:00:00.000Z",
-        roots: [
-          {
-            kind: "window",
-            title: "Imported outer group",
-            children: [
-              {
-                kind: "window",
-                title: "Imported inner group",
-                children: [
-                  {
-                    kind: "tab",
-                    title: "Imported parent tab",
-                    url: "https://imported.example/parent",
-                    children: [
-                      {
-                        kind: "tab",
-                        title: "Imported child tab",
-                        url: "https://imported.example/child",
-                        children: []
-                      },
-                      {
-                        kind: "tab",
-                        title: "Imported sibling tab",
-                        url: "https://imported.example/sibling",
-                        children: []
-                      }
-                    ]
-                  }
-                ]
-              }
-            ]
-          }
-        ]
+    const imported = await runCommand(
+      bootstrapFromWindows(runtimeWindows, { now: 1000 }),
+      fakeAdapter(),
+      {
+        type: "importTree",
+        tree: {
+          schema: PORTABLE_TREE_SCHEMA,
+          version: 1,
+          exportedAt: "2026-05-16T12:00:00.000Z",
+          roots: [
+            {
+              kind: "window",
+              title: "Imported outer group",
+              children: [
+                {
+                  kind: "window",
+                  title: "Imported inner group",
+                  children: [
+                    {
+                      kind: "tab",
+                      title: "Imported parent tab",
+                      url: "https://imported.example/parent",
+                      children: [
+                        {
+                          kind: "tab",
+                          title: "Imported child tab",
+                          url: "https://imported.example/child",
+                          children: []
+                        },
+                        {
+                          kind: "tab",
+                          title: "Imported sibling tab",
+                          url: "https://imported.example/sibling",
+                          children: []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
       }
-    });
+    );
     const nodeByTitle = (title: string) =>
       Object.values(imported.state.nodes).find((node) => node.title === title)!;
     const outer = nodeByTitle("Imported outer group");
@@ -2377,47 +2592,51 @@ describe("background commands", () => {
   });
 
   it("restores one imported leaf tab session by materializing its nearest ancestor window group", async () => {
-    const imported = await runCommand(bootstrapFromWindows(runtimeWindows, { now: 1000 }), fakeAdapter(), {
-      type: "importTree",
-      tree: {
-        schema: PORTABLE_TREE_SCHEMA,
-        version: 1,
-        exportedAt: "2026-05-16T12:00:00.000Z",
-        roots: [
-          {
-            kind: "window",
-            title: "Imported outer group",
-            children: [
-              {
-                kind: "window",
-                title: "Imported inner group",
-                children: [
-                  {
-                    kind: "tab",
-                    title: "Imported parent tab",
-                    url: "https://imported.example/parent",
-                    children: [
-                      {
-                        kind: "tab",
-                        title: "Imported child tab",
-                        url: "https://imported.example/child",
-                        children: []
-                      },
-                      {
-                        kind: "tab",
-                        title: "Imported sibling tab",
-                        url: "https://imported.example/sibling",
-                        children: []
-                      }
-                    ]
-                  }
-                ]
-              }
-            ]
-          }
-        ]
+    const imported = await runCommand(
+      bootstrapFromWindows(runtimeWindows, { now: 1000 }),
+      fakeAdapter(),
+      {
+        type: "importTree",
+        tree: {
+          schema: PORTABLE_TREE_SCHEMA,
+          version: 1,
+          exportedAt: "2026-05-16T12:00:00.000Z",
+          roots: [
+            {
+              kind: "window",
+              title: "Imported outer group",
+              children: [
+                {
+                  kind: "window",
+                  title: "Imported inner group",
+                  children: [
+                    {
+                      kind: "tab",
+                      title: "Imported parent tab",
+                      url: "https://imported.example/parent",
+                      children: [
+                        {
+                          kind: "tab",
+                          title: "Imported child tab",
+                          url: "https://imported.example/child",
+                          children: []
+                        },
+                        {
+                          kind: "tab",
+                          title: "Imported sibling tab",
+                          url: "https://imported.example/sibling",
+                          children: []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
       }
-    });
+    );
     const nodeByTitle = (title: string) =>
       Object.values(imported.state.nodes).find((node) => node.title === title)!;
     const outer = nodeByTitle("Imported outer group");
@@ -2457,18 +2676,19 @@ describe("background commands", () => {
           id: 42,
           focused: true,
           incognito: false,
-          tabs: typeof tabId === "number"
-            ? [
-                {
-                  id: tabId,
-                  windowId: 42,
-                  index: 0,
-                  active: true,
-                  url: "https://imported.example/child",
-                  title: "Imported child tab"
-                }
-              ]
-            : []
+          tabs:
+            typeof tabId === "number"
+              ? [
+                  {
+                    id: tabId,
+                    windowId: 42,
+                    index: 0,
+                    active: true,
+                    url: "https://imported.example/child",
+                    title: "Imported child tab"
+                  }
+                ]
+              : []
         };
       })
     });
@@ -2554,10 +2774,18 @@ describe("background commands", () => {
         ]
       }
     });
-    const importedParent = Object.values(imported.state.nodes).find((node) => node.title === "Imported parent group");
-    const importedSubgroup = Object.values(imported.state.nodes).find((node) => node.title === "Imported subgroup");
-    const importedParentTab = Object.values(imported.state.nodes).find((node) => node.title === "Imported parent tab");
-    const importedChild = Object.values(imported.state.nodes).find((node) => node.title === "Imported nested child");
+    const importedParent = Object.values(imported.state.nodes).find(
+      (node) => node.title === "Imported parent group"
+    );
+    const importedSubgroup = Object.values(imported.state.nodes).find(
+      (node) => node.title === "Imported subgroup"
+    );
+    const importedParentTab = Object.values(imported.state.nodes).find(
+      (node) => node.title === "Imported parent tab"
+    );
+    const importedChild = Object.values(imported.state.nodes).find(
+      (node) => node.title === "Imported nested child"
+    );
 
     expect(importedParent).toBeDefined();
     expect(importedSubgroup).toBeDefined();
@@ -2651,10 +2879,15 @@ describe("background commands", () => {
         ]
       }
     });
-    const importedSubgroup = Object.values(imported.state.nodes).find((node) => node.title === "Imported subgroup");
-    const importedTabs = ["Imported first", "Imported second", "Imported third", "Imported fourth"].map((title) =>
-      Object.values(imported.state.nodes).find((node) => node.title === title)
+    const importedSubgroup = Object.values(imported.state.nodes).find(
+      (node) => node.title === "Imported subgroup"
     );
+    const importedTabs = [
+      "Imported first",
+      "Imported second",
+      "Imported third",
+      "Imported fourth"
+    ].map((title) => Object.values(imported.state.nodes).find((node) => node.title === title));
     expect(importedSubgroup).toBeDefined();
     expect(importedTabs.every(Boolean)).toBe(true);
 
@@ -2666,7 +2899,9 @@ describe("background commands", () => {
     expect(adapter.createWindow).toHaveBeenCalledWith({
       url: "https://imported.example/1"
     });
-    expect(vi.mocked(adapter.createTab).mock.calls.map(([createProperties]) => createProperties)).toEqual([
+    expect(
+      vi.mocked(adapter.createTab).mock.calls.map(([createProperties]) => createProperties)
+    ).toEqual([
       {
         url: "https://imported.example/2",
         windowId: 42,
@@ -2761,7 +2996,9 @@ describe("background commands", () => {
         ]
       }
     });
-    const importedSubgroup = Object.values(imported.state.nodes).find((node) => node.title === "Imported subgroup");
+    const importedSubgroup = Object.values(imported.state.nodes).find(
+      (node) => node.title === "Imported subgroup"
+    );
 
     expect(importedSubgroup).toBeDefined();
 
@@ -2773,7 +3010,9 @@ describe("background commands", () => {
     expect(adapter.createWindow).toHaveBeenCalledWith({
       url: "https://imported.example/1"
     });
-    expect(vi.mocked(adapter.createTab).mock.calls.map(([createProperties]) => createProperties)).toEqual([
+    expect(
+      vi.mocked(adapter.createTab).mock.calls.map(([createProperties]) => createProperties)
+    ).toEqual([
       {
         url: "https://imported.example/2",
         windowId: 42,
@@ -2813,7 +3052,9 @@ describe("background commands", () => {
       "https://imported.example/5",
       "https://imported.example/6"
     ]) {
-      const node = Object.values(restored.state.nodes).find((candidate) => candidate.kind === "tab" && candidate.url === url);
+      const node = Object.values(restored.state.nodes).find(
+        (candidate) => candidate.kind === "tab" && candidate.url === url
+      );
       expect(node).toMatchObject({
         status: "live",
         live: { windowId: 42 }
@@ -2830,13 +3071,13 @@ describe("background commands", () => {
         const tabUrl = Array.isArray(url) ? url[0] : url;
         const tab = tabUrl
           ? {
-            id: nextTabId++,
-            windowId: 42,
-            index: 0,
-            active: true,
-            url: tabUrl,
-            title: tabUrl
-          }
+              id: nextTabId++,
+              windowId: 42,
+              index: 0,
+              active: true,
+              url: tabUrl,
+              title: tabUrl
+            }
           : undefined;
         if (tab) {
           tabIdByUrl.set(tab.url, tab.id);
@@ -2923,7 +3164,9 @@ describe("background commands", () => {
         ]
       }
     });
-    const importedSubgroup = Object.values(imported.state.nodes).find((node) => node.title === "Imported subgroup");
+    const importedSubgroup = Object.values(imported.state.nodes).find(
+      (node) => node.title === "Imported subgroup"
+    );
 
     expect(importedSubgroup).toBeDefined();
 
@@ -2935,7 +3178,9 @@ describe("background commands", () => {
     expect(adapter.createWindow).toHaveBeenCalledWith({
       url: "https://imported.example/1"
     });
-    expect(vi.mocked(adapter.createTab).mock.calls.map(([createProperties]) => createProperties)).toEqual([
+    expect(
+      vi.mocked(adapter.createTab).mock.calls.map(([createProperties]) => createProperties)
+    ).toEqual([
       {
         url: "https://imported.example/2",
         windowId: 42,
@@ -3021,10 +3266,18 @@ describe("background commands", () => {
         ]
       ]
     });
-    const importGroup = Object.values(imported.state.nodes).find((node) => node.title === "Chrome Tab Outliner import");
-    const importedParent = Object.values(imported.state.nodes).find((node) => node.title === "Research");
-    const importedSubgroup = Object.values(imported.state.nodes).find((node) => node.title === "Imported subgroup");
-    const importedChild = Object.values(imported.state.nodes).find((node) => node.title === "Imported subgroup child");
+    const importGroup = Object.values(imported.state.nodes).find(
+      (node) => node.title === "Chrome Tab Outliner import"
+    );
+    const importedParent = Object.values(imported.state.nodes).find(
+      (node) => node.title === "Research"
+    );
+    const importedSubgroup = Object.values(imported.state.nodes).find(
+      (node) => node.title === "Imported subgroup"
+    );
+    const importedChild = Object.values(imported.state.nodes).find(
+      (node) => node.title === "Imported subgroup child"
+    );
 
     expect(importGroup).toBeDefined();
     expect(importedParent).toBeDefined();
@@ -3145,7 +3398,9 @@ describe("background commands", () => {
         ]
       }
     });
-    const importedWindow = Object.values(imported.state.nodes).find((node) => node.title === "Imported Window")!;
+    const importedWindow = Object.values(imported.state.nodes).find(
+      (node) => node.title === "Imported Window"
+    )!;
     const importGroup = imported.state.nodes[importedWindow.parentId!]!;
 
     const restored = await runCommand(imported.state, adapter, {
@@ -3153,9 +3408,15 @@ describe("background commands", () => {
       nodeId: importGroup.id
     });
 
-    const debugging = Object.values(restored.state.nodes).find((node) => node.title === "Debugging");
-    const restorable = Object.values(restored.state.nodes).find((node) => node.title === "Restorable");
-    expect(adapter.createWindow).not.toHaveBeenCalledWith({ url: "about:debugging#/runtime/this-firefox" });
+    const debugging = Object.values(restored.state.nodes).find(
+      (node) => node.title === "Debugging"
+    );
+    const restorable = Object.values(restored.state.nodes).find(
+      (node) => node.title === "Restorable"
+    );
+    expect(adapter.createWindow).not.toHaveBeenCalledWith({
+      url: "about:debugging#/runtime/this-firefox"
+    });
     expect(adapter.createWindow).toHaveBeenCalledWith({ url: "https://restorable.example/" });
     expect(debugging?.status).toBe("closed");
     expect(debugging?.restore?.url).toBe("about:debugging#/runtime/this-firefox");
@@ -3170,18 +3431,19 @@ describe("background commands", () => {
         id: 42,
         focused: true,
         incognito: false,
-        tabs: typeof tabId === "number"
-          ? [
-              {
-                id: tabId,
-                windowId: 42,
-                index: 0,
-                active: true,
-                url: "https://example.com/",
-                title: "Example"
-              }
-            ]
-          : []
+        tabs:
+          typeof tabId === "number"
+            ? [
+                {
+                  id: tabId,
+                  windowId: 42,
+                  index: 0,
+                  active: true,
+                  url: "https://example.com/",
+                  title: "Example"
+                }
+              ]
+            : []
       }))
     });
 
@@ -3210,18 +3472,19 @@ describe("background commands", () => {
         id: 42,
         focused: true,
         incognito: false,
-        tabs: typeof tabId === "number"
-          ? [
-              {
-                id: tabId,
-                windowId: 42,
-                index: 0,
-                active: true,
-                url: "https://example.com/",
-                title: "Example"
-              }
-            ]
-          : []
+        tabs:
+          typeof tabId === "number"
+            ? [
+                {
+                  id: tabId,
+                  windowId: 42,
+                  index: 0,
+                  active: true,
+                  url: "https://example.com/",
+                  title: "Example"
+                }
+              ]
+            : []
       }))
     });
 
@@ -3286,18 +3549,19 @@ describe("background commands", () => {
           id: 42,
           focused: true,
           incognito: false,
-          tabs: typeof tabId === "number"
-            ? [
-                {
-                  id: tabId,
-                  windowId: 42,
-                  index: 0,
-                  active: true,
-                  url: "about:debugging#/runtime/this-firefox",
-                  title: "Debugging - Runtime / this-firefox"
-                }
-              ]
-            : []
+          tabs:
+            typeof tabId === "number"
+              ? [
+                  {
+                    id: tabId,
+                    windowId: 42,
+                    index: 0,
+                    active: true,
+                    url: "about:debugging#/runtime/this-firefox",
+                    title: "Debugging - Runtime / this-firefox"
+                  }
+                ]
+              : []
         };
       })
     });
@@ -3321,27 +3585,34 @@ describe("background commands", () => {
   });
 
   it("restores a root-dropped lone child tab through its source closed window session", async () => {
-    const state = closeWindow(bootstrapFromWindows([
-      ...runtimeWindows,
-      {
-        id: 20,
-        focused: false,
-        incognito: false,
-        tabs: [
+    const state = closeWindow(
+      bootstrapFromWindows(
+        [
+          ...runtimeWindows,
           {
-            id: 5,
-            windowId: 20,
-            index: 0,
-            active: true,
-            url: "about:debugging#/runtime/this-firefox",
-            title: "Debugging - Runtime / this-firefox"
+            id: 20,
+            focused: false,
+            incognito: false,
+            tabs: [
+              {
+                id: 5,
+                windowId: 20,
+                index: 0,
+                active: true,
+                url: "about:debugging#/runtime/this-firefox",
+                title: "Debugging - Runtime / this-firefox"
+              }
+            ]
           }
-        ]
+        ],
+        { now: 1000 }
+      ),
+      20,
+      {
+        now: 2000,
+        sessionId: "session-window-20"
       }
-    ], { now: 1000 }), 20, {
-      now: 2000,
-      sessionId: "session-window-20"
-    });
+    );
     const adapter = fakeAdapter({
       restoreSession: vi.fn(async () => ({
         window: {
@@ -3384,27 +3655,34 @@ describe("background commands", () => {
   });
 
   it("restores a lone-child placeholder through its source closed window session", async () => {
-    const state = closeWindow(bootstrapFromWindows([
-      ...runtimeWindows,
-      {
-        id: 20,
-        focused: false,
-        incognito: false,
-        tabs: [
+    const state = closeWindow(
+      bootstrapFromWindows(
+        [
+          ...runtimeWindows,
           {
-            id: 5,
-            windowId: 20,
-            index: 0,
-            active: true,
-            url: "about:debugging#/runtime/this-firefox",
-            title: "Debugging - Runtime / this-firefox"
+            id: 20,
+            focused: false,
+            incognito: false,
+            tabs: [
+              {
+                id: 5,
+                windowId: 20,
+                index: 0,
+                active: true,
+                url: "about:debugging#/runtime/this-firefox",
+                title: "Debugging - Runtime / this-firefox"
+              }
+            ]
           }
-        ]
+        ],
+        { now: 1000 }
+      ),
+      20,
+      {
+        now: 2000,
+        sessionId: "session-window-20"
       }
-    ], { now: 1000 }), 20, {
-      now: 2000,
-      sessionId: "session-window-20"
-    });
+    );
     const adapter = fakeAdapter({
       restoreSession: vi.fn(async () => ({
         window: {
@@ -3471,18 +3749,19 @@ describe("background commands", () => {
           id: 42,
           focused: true,
           incognito: false,
-          tabs: typeof tabId === "number"
-            ? [
-                {
-                  id: tabId,
-                  windowId: 42,
-                  index: 0,
-                  active: true,
-                  url: "about:debugging#/runtime/this-firefox",
-                  title: "Debugging - Runtime / this-firefox"
-                }
-              ]
-            : []
+          tabs:
+            typeof tabId === "number"
+              ? [
+                  {
+                    id: tabId,
+                    windowId: 42,
+                    index: 0,
+                    active: true,
+                    url: "about:debugging#/runtime/this-firefox",
+                    title: "Debugging - Runtime / this-firefox"
+                  }
+                ]
+              : []
         };
       })
     });
@@ -3509,40 +3788,47 @@ describe("background commands", () => {
   it("restores url siblings into a closed imported group window created by a child tab session", async () => {
     const sessionOnlyUrl = "about:debugging#/runtime/this-firefox";
     const siblingUrl = "https://calendar.example/week";
-    const imported = await runCommand(bootstrapFromWindows(runtimeWindows, { now: 1000 }), fakeAdapter(), {
-      type: "importTree",
-      tree: {
-        schema: PORTABLE_TREE_SCHEMA,
-        version: 1,
-        exportedAt: "2026-05-18T12:00:00.000Z",
-        roots: [
-          {
-            kind: "window",
-            title: "Imported group",
-            children: [
-              {
-                kind: "tab",
-                title: "First imported",
-                url: sessionOnlyUrl,
-                children: []
-              },
-              {
-                kind: "tab",
-                title: "Second imported",
-                url: siblingUrl,
-                children: []
-              }
-            ]
-          }
-        ]
+    const imported = await runCommand(
+      bootstrapFromWindows(runtimeWindows, { now: 1000 }),
+      fakeAdapter(),
+      {
+        type: "importTree",
+        tree: {
+          schema: PORTABLE_TREE_SCHEMA,
+          version: 1,
+          exportedAt: "2026-05-18T12:00:00.000Z",
+          roots: [
+            {
+              kind: "window",
+              title: "Imported group",
+              children: [
+                {
+                  kind: "tab",
+                  title: "First imported",
+                  url: sessionOnlyUrl,
+                  children: []
+                },
+                {
+                  kind: "tab",
+                  title: "Second imported",
+                  url: siblingUrl,
+                  children: []
+                }
+              ]
+            }
+          ]
+        }
       }
-    });
-    const importedGroup = Object.values(imported.state.nodes)
-      .find((node) => node.kind === "window" && node.title === "Imported group")!;
-    const firstTab = Object.values(imported.state.nodes)
-      .find((node) => node.kind === "tab" && node.title === "First imported")!;
-    const secondTab = Object.values(imported.state.nodes)
-      .find((node) => node.kind === "tab" && node.title === "Second imported")!;
+    );
+    const importedGroup = Object.values(imported.state.nodes).find(
+      (node) => node.kind === "window" && node.title === "Imported group"
+    )!;
+    const firstTab = Object.values(imported.state.nodes).find(
+      (node) => node.kind === "tab" && node.title === "First imported"
+    )!;
+    const secondTab = Object.values(imported.state.nodes).find(
+      (node) => node.kind === "tab" && node.title === "Second imported"
+    )!;
     const state: OutlineState = {
       ...imported.state,
       nodes: {
@@ -3612,7 +3898,10 @@ describe("background commands", () => {
       }))
     });
 
-    const restored = await runCommand(state, adapter, { type: "restoreNode", nodeId: importedGroup.id });
+    const restored = await runCommand(state, adapter, {
+      type: "restoreNode",
+      nodeId: importedGroup.id
+    });
 
     expect(adapter.restoreSession).toHaveBeenCalledWith("session-imported-first");
     expect(adapter.createWindow).toHaveBeenCalledTimes(1);
@@ -3629,44 +3918,52 @@ describe("background commands", () => {
   });
 
   it("restores imported url descendants after a reclosed group window session reports no tabs yet", async () => {
-    const imported = await runCommand(bootstrapFromWindows(runtimeWindows, { now: 1000 }), fakeAdapter(), {
-      type: "importTree",
-      tree: {
-        schema: PORTABLE_TREE_SCHEMA,
-        version: 1,
-        exportedAt: "2026-05-18T12:00:00.000Z",
-        roots: [
-          {
-            kind: "window",
-            title: "Imported group",
-            children: [
-              {
-                kind: "tab",
-                title: "First imported",
-                url: "https://images.example/first.jpg",
-                children: []
-              },
-              {
-                kind: "tab",
-                title: "Second imported",
-                url: "https://images.example/second.jpg",
-                children: []
-              },
-              {
-                kind: "tab",
-                title: "Third imported",
-                url: "https://images.example/third.jpg",
-                children: []
-              }
-            ]
-          }
-        ]
+    const imported = await runCommand(
+      bootstrapFromWindows(runtimeWindows, { now: 1000 }),
+      fakeAdapter(),
+      {
+        type: "importTree",
+        tree: {
+          schema: PORTABLE_TREE_SCHEMA,
+          version: 1,
+          exportedAt: "2026-05-18T12:00:00.000Z",
+          roots: [
+            {
+              kind: "window",
+              title: "Imported group",
+              children: [
+                {
+                  kind: "tab",
+                  title: "First imported",
+                  url: "https://images.example/first.jpg",
+                  children: []
+                },
+                {
+                  kind: "tab",
+                  title: "Second imported",
+                  url: "https://images.example/second.jpg",
+                  children: []
+                },
+                {
+                  kind: "tab",
+                  title: "Third imported",
+                  url: "https://images.example/third.jpg",
+                  children: []
+                }
+              ]
+            }
+          ]
+        }
       }
-    });
-    const importedGroup = Object.values(imported.state.nodes)
-      .find((node) => node.kind === "window" && node.title === "Imported group")!;
-    const importedTabs = ["First imported", "Second imported", "Third imported"].map((title) =>
-      Object.values(imported.state.nodes).find((node) => node.kind === "tab" && node.title === title)!
+    );
+    const importedGroup = Object.values(imported.state.nodes).find(
+      (node) => node.kind === "window" && node.title === "Imported group"
+    )!;
+    const importedTabs = ["First imported", "Second imported", "Third imported"].map(
+      (title) =>
+        Object.values(imported.state.nodes).find(
+          (node) => node.kind === "tab" && node.title === title
+        )!
     );
     const restampedNodes: OutlineState["nodes"] = {
       ...imported.state.nodes,
@@ -3713,7 +4010,10 @@ describe("background commands", () => {
       }))
     });
 
-    const restored = await runCommand(state, adapter, { type: "restoreNode", nodeId: importedGroup.id });
+    const restored = await runCommand(state, adapter, {
+      type: "restoreNode",
+      nodeId: importedGroup.id
+    });
 
     expect(adapter.restoreSession).toHaveBeenCalledWith("session-imported-window");
     expect(adapter.createWindow).not.toHaveBeenCalled();
@@ -3778,7 +4078,10 @@ describe("background commands", () => {
     state.nodes["tab:1"]!.collapsed = true;
     state.nodes["tab:2"]!.collapsed = true;
 
-    const result = await runCommand(state, adapter, { type: "expandAncestors", nodeId: "tab:2" } as BackgroundCommand);
+    const result = await runCommand(state, adapter, {
+      type: "expandAncestors",
+      nodeId: "tab:2"
+    } as BackgroundCommand);
 
     expect(result.changed).toBe(true);
     expect(result.state).toBe(state);
@@ -3798,7 +4101,10 @@ describe("background commands", () => {
     const state = bootstrapFromWindows(runtimeWindows, { now: 1000 });
     const adapter = fakeAdapter();
 
-    const visible = await runCommand(state, adapter, { type: "expandAncestors", nodeId: "tab:1" } as BackgroundCommand);
+    const visible = await runCommand(state, adapter, {
+      type: "expandAncestors",
+      nodeId: "tab:1"
+    } as BackgroundCommand);
     const missing = await runCommand(state, adapter, {
       type: "expandAncestors",
       nodeId: "tab:missing"

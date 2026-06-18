@@ -12,7 +12,9 @@ import {
 const NOW = 1_700_000_000_000;
 
 test.describe("sidebar/runtime integration", () => {
-  test("external native tab open reaches the real sidebar through background patches", async ({ page }) => {
+  test("external native tab open reaches the real sidebar through background patches", async ({
+    page
+  }) => {
     const harness = createHarness(runtimeFixture(1, ["Alpha"]));
     const sidebar = await loadSidebar(harness, page);
     sidebar.clearProtocol();
@@ -23,7 +25,9 @@ test.describe("sidebar/runtime integration", () => {
 
     expect(harness.runtime.runtimeTabOrder(1)).toEqual([1, 2]);
     await harness.assertCleanBackground();
-    expect(messageTypes(sidebar.protocol(), "background.broadcast")).toContain("treeStructureUpdated");
+    expect(messageTypes(sidebar.protocol(), "background.broadcast")).toContain(
+      "treeStructureUpdated"
+    );
     expect(messageTypes(sidebar.protocol(), "page.sendMessage")).not.toContain("getState");
     expect(harness.runtime.sideEffects.slice(sideEffectCount)).toEqual([]);
     await expectNodeVisible(page, "tab:2", "Beta");
@@ -43,12 +47,16 @@ test.describe("sidebar/runtime integration", () => {
     await harness.assertCleanBackground();
     expect(liveTabOrder(await harness.state(), 1)).toEqual([3, 1, 2]);
     await expect(visibleNodeIds(page)).resolves.toEqual(["window:1", "tab:3", "tab:1", "tab:2"]);
-    expect(messageTypes(sidebar.protocol(), "background.broadcast")).toContain("treeStructureUpdated");
+    expect(messageTypes(sidebar.protocol(), "background.broadcast")).toContain(
+      "treeStructureUpdated"
+    );
     expect(messageTypes(sidebar.protocol(), "page.sendMessage")).not.toContain("getState");
     expect(sidebar.issues).toEqual([]);
   });
 
-  test("external native close removes the live row without stale resurrection", async ({ page }) => {
+  test("external native close removes the live row without stale resurrection", async ({
+    page
+  }) => {
     const harness = createHarness(runtimeFixture(1, ["Alpha", "Beta"]));
     const sidebar = await loadSidebar(harness, page);
     sidebar.clearProtocol();
@@ -68,7 +76,9 @@ test.describe("sidebar/runtime integration", () => {
     expect(sidebar.issues).toEqual([]);
   });
 
-  test("sidebar close command closes fake browser resources and updates the DOM by broadcast", async ({ page }) => {
+  test("sidebar close command closes fake browser resources and updates the DOM by broadcast", async ({
+    page
+  }) => {
     const harness = createHarness(runtimeFixture(1, ["Alpha", "Beta"]));
     const sidebar = await loadSidebar(harness, page);
     sidebar.clearProtocol();
@@ -85,7 +95,9 @@ test.describe("sidebar/runtime integration", () => {
     expect(sidebar.issues).toEqual([]);
   });
 
-  test("sidebar restore command creates browser resources and rehydrates live metadata", async ({ page }) => {
+  test("sidebar restore command creates browser resources and rehydrates live metadata", async ({
+    page
+  }) => {
     const stored = closedTabStorageFixture();
     const harness = createHarness({
       windows: [runtimeWindow(1, true)],
@@ -107,7 +119,9 @@ test.describe("sidebar/runtime integration", () => {
     expect(sidebar.issues).toEqual([]);
   });
 
-  test("undo after runtime drift preserves runtime-scope order in sidebar rows", async ({ page }) => {
+  test("undo after runtime drift preserves runtime-scope order in sidebar rows", async ({
+    page
+  }) => {
     const harness = createHarness(runtimeFixture(1, ["Alpha", "Beta", "Gamma"]));
     const sidebar = await loadSidebar(harness, page);
     sidebar.clearProtocol();
@@ -123,11 +137,15 @@ test.describe("sidebar/runtime integration", () => {
     await harness.assertCleanBackground();
     expect(liveTabOrder(await harness.state(), 1)).toEqual([3, 1, 2]);
     await expect(visibleNodeIds(page)).resolves.toEqual(["window:1", "tab:3", "tab:1", "tab:2"]);
-    expect(messageTypes(sidebar.protocol(), "page.sendMessage")).toEqual(expect.arrayContaining(["toggleCollapsed", "undo"]));
+    expect(messageTypes(sidebar.protocol(), "page.sendMessage")).toEqual(
+      expect.arrayContaining(["toggleCollapsed", "undo"])
+    );
     expect(sidebar.issues).toEqual([]);
   });
 
-  test("sparse search projection absorbs a runtime update without full hydration", async ({ page }) => {
+  test("sparse search projection absorbs a runtime update without full hydration", async ({
+    page
+  }) => {
     const large = largeRuntimeFixture(420);
     const stored = bootstrapFromWindows(windowsWithTabs(large.windows, large.tabs), { now: NOW });
     const harness = createHarness({
@@ -151,7 +169,10 @@ test.describe("sidebar/runtime integration", () => {
     expect(sidebar.issues).toEqual([]);
   });
 
-  test("two sidebars receive one runtime event without corrupting local projection intent", async ({ page, context }) => {
+  test("two sidebars receive one runtime event without corrupting local projection intent", async ({
+    page,
+    context
+  }) => {
     const harness = createHarness(runtimeFixture(1, ["Alpha", "Beta"]));
     const first = await loadSidebar(harness, page);
     const secondPage = await context.newPage();
@@ -170,8 +191,12 @@ test.describe("sidebar/runtime integration", () => {
     await expectNodeVisible(page, "tab:3", "Gamma");
     await expect(secondPage.getByRole("searchbox", { name: "Search tabs" })).toHaveValue("Beta");
     await expect(secondPage.locator(nodeSelector("tab:3"))).toHaveCount(0);
-    expect(messageTypes(first.protocol(), "background.broadcast")).toContain("treeStructureUpdated");
-    expect(messageTypes(second.protocol(), "background.broadcast")).toContain("treeStructureUpdated");
+    expect(messageTypes(first.protocol(), "background.broadcast")).toContain(
+      "treeStructureUpdated"
+    );
+    expect(messageTypes(second.protocol(), "background.broadcast")).toContain(
+      "treeStructureUpdated"
+    );
     expect(first.issues).toEqual([]);
     expect(second.issues).toEqual([]);
     await secondPage.close();
@@ -200,7 +225,10 @@ function createHarness(fixture: {
   });
 }
 
-function runtimeFixture(windowId: number, titles: string[]): { windows: RuntimeWindow[]; tabs: RuntimeTab[] } {
+function runtimeFixture(
+  windowId: number,
+  titles: string[]
+): { windows: RuntimeWindow[]; tabs: RuntimeTab[] } {
   return {
     windows: [runtimeWindow(windowId, true)],
     tabs: titles.map((title, index) => tab(index + 1, windowId, index, index === 0, title))
@@ -224,7 +252,13 @@ function runtimeWindow(id: number, focused: boolean): RuntimeWindow {
   };
 }
 
-function tab(id: number, windowId: number, index: number, active: boolean, title: string): RuntimeTab {
+function tab(
+  id: number,
+  windowId: number,
+  index: number,
+  active: boolean,
+  title: string
+): RuntimeTab {
   return {
     id,
     windowId,
@@ -245,19 +279,29 @@ function windowsWithTabs(windows: RuntimeWindow[], tabs: RuntimeTab[]): RuntimeW
 }
 
 function closedTabStorageFixture(): OutlineState {
-  const liveState = bootstrapFromWindows(windowsWithTabs(
-    [runtimeWindow(1, true)],
-    [tab(1, 1, 0, true, "Alpha"), tab(2, 1, 1, false, "Beta")]
-  ), { now: NOW });
+  const liveState = bootstrapFromWindows(
+    windowsWithTabs(
+      [runtimeWindow(1, true)],
+      [tab(1, 1, 0, true, "Alpha"), tab(2, 1, 1, false, "Beta")]
+    ),
+    { now: NOW }
+  );
   return closeTab(liveState, 2, { now: NOW + 1 });
 }
 
-function messageTypes(log: ReturnType<AttachedSidebarPage["protocol"]>, kind: "page.sendMessage" | "background.broadcast"): string[] {
+function messageTypes(
+  log: ReturnType<AttachedSidebarPage["protocol"]>,
+  kind: "page.sendMessage" | "background.broadcast"
+): string[] {
   return log
     .filter((entry) => entry.kind === kind)
     .map((entry) => entry.message)
     .filter((message): message is { type: string } =>
-      Boolean(message && typeof message === "object" && typeof (message as { type?: unknown }).type === "string")
+      Boolean(
+        message &&
+        typeof message === "object" &&
+        typeof (message as { type?: unknown }).type === "string"
+      )
     )
     .map((message) => message.type);
 }
@@ -275,12 +319,13 @@ async function visibleNodeIds(page: Page): Promise<string[]> {
 }
 
 function liveTabOrder(state: OutlineState, windowId: number): number[] {
-  const windowNode = Object.values(state.nodes).find((node) =>
-    node.kind === "window" &&
-    node.status === "live" &&
-    node.live &&
-    "windowId" in node.live &&
-    node.live.windowId === windowId
+  const windowNode = Object.values(state.nodes).find(
+    (node) =>
+      node.kind === "window" &&
+      node.status === "live" &&
+      node.live &&
+      "windowId" in node.live &&
+      node.live.windowId === windowId
   );
   if (!windowNode) {
     return [];

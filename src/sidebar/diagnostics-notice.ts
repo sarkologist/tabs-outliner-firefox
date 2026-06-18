@@ -74,7 +74,9 @@ export function createDiagnosticsNotice(deps: DiagnosticsNoticeDeps): Diagnostic
     }
 
     const remainingMs = Math.ceil(DIAGNOSTICS_AFTER_NON_EDIT_INPUT_DELAY_MS - idleMs);
-    perfTrace.record("sidebar.diagnostics.defer", remainingMs, { reason: "recent-non-edit-interaction" });
+    perfTrace.record("sidebar.diagnostics.defer", remainingMs, {
+      reason: "recent-non-edit-interaction"
+    });
     return remainingMs;
   }
 
@@ -95,9 +97,9 @@ export function createDiagnosticsNotice(deps: DiagnosticsNoticeDeps): Diagnostic
 
       diagnostics.classList.remove("is-error");
 
-      const result = (await browser.runtime.sendMessage({ type: "getDiagnostics" }).catch(() => undefined)) as
-        | OutlineDiagnostics
-        | undefined;
+      const result = (await browser.runtime
+        .sendMessage({ type: "getDiagnostics" })
+        .catch(() => undefined)) as OutlineDiagnostics | undefined;
       if (!result) {
         diagnostics.textContent = "";
         return;

@@ -34,14 +34,16 @@ const goodProfiles = {
 
 describe("drag/drop autoresearch profile", () => {
   it("parses labeled Playwright console JSON", () => {
-    const profiles = parseProfileLines([
-      "noise before",
-      `drag-drop-50k ${JSON.stringify(goodProfiles["drag-drop-50k"])}`,
-      `drag-drop-50k-drop ${JSON.stringify(goodProfiles["drag-drop-50k-drop"])}`,
-      `hover-guide-50k ${JSON.stringify(goodProfiles["hover-guide-50k"])}`,
-      `hover-scroll-50k ${JSON.stringify(goodProfiles["hover-scroll-50k"])}`,
-      `input-delay-profile ${JSON.stringify(goodProfiles["input-delay-profile"])}`
-    ].join("\n"));
+    const profiles = parseProfileLines(
+      [
+        "noise before",
+        `drag-drop-50k ${JSON.stringify(goodProfiles["drag-drop-50k"])}`,
+        `drag-drop-50k-drop ${JSON.stringify(goodProfiles["drag-drop-50k-drop"])}`,
+        `hover-guide-50k ${JSON.stringify(goodProfiles["hover-guide-50k"])}`,
+        `hover-scroll-50k ${JSON.stringify(goodProfiles["hover-scroll-50k"])}`,
+        `input-delay-profile ${JSON.stringify(goodProfiles["input-delay-profile"])}`
+      ].join("\n")
+    );
 
     expect(profiles["drag-drop-50k"]).toMatchObject({ p95Ms: 4.2 });
     expect(profiles["drag-drop-50k-drop"].summary).toHaveLength(2);
@@ -83,14 +85,20 @@ describe("drag/drop autoresearch profile", () => {
   });
 
   it("requires a baseline improvement for experiments", () => {
-    const candidate = summarizeDragDropRuns([
-      { run: 1, profiles: goodProfiles },
-      { run: 2, profiles: goodProfiles }
-    ], { baselineMs: 60 });
-    const flat = summarizeDragDropRuns([
-      { run: 1, profiles: goodProfiles },
-      { run: 2, profiles: goodProfiles }
-    ], { baselineMs: 56 });
+    const candidate = summarizeDragDropRuns(
+      [
+        { run: 1, profiles: goodProfiles },
+        { run: 2, profiles: goodProfiles }
+      ],
+      { baselineMs: 60 }
+    );
+    const flat = summarizeDragDropRuns(
+      [
+        { run: 1, profiles: goodProfiles },
+        { run: 2, profiles: goodProfiles }
+      ],
+      { baselineMs: 56 }
+    );
 
     expect(candidate.status).toBe("candidate-keep");
     expect(flat.status).toBe("discard");
@@ -116,13 +124,15 @@ describe("drag/drop autoresearch profile", () => {
     };
     const summary = summarizeDragDropRuns([{ run: 1, profiles: badProfiles }]);
 
-    expect(dragDropGuardFailures(summary, {
-      dropProfiles: [badProfiles["drag-drop-50k-drop"]],
-      dragoverProfiles: [badProfiles["drag-drop-50k"]],
-      hoverProfiles: [badProfiles["hover-guide-50k"]],
-      hoverScrollProfiles: [badProfiles["hover-scroll-50k"]],
-      inputDelayProfiles: []
-    })).toEqual([
+    expect(
+      dragDropGuardFailures(summary, {
+        dropProfiles: [badProfiles["drag-drop-50k-drop"]],
+        dragoverProfiles: [badProfiles["drag-drop-50k"]],
+        hoverProfiles: [badProfiles["hover-guide-50k"]],
+        hoverScrollProfiles: [badProfiles["hover-scroll-50k"]],
+        inputDelayProfiles: []
+      })
+    ).toEqual([
       "missing input-delay-profile output",
       "drop visible update must stay below 90ms",
       "drop tree-structure patch must stay below 12ms",
@@ -149,11 +159,15 @@ describe("drag/drop autoresearch profile", () => {
   });
 
   it("marks nonzero Playwright runs as discardable profile failures", () => {
-    const summary = summarizeDragDropRuns([{ run: 1, profiles: goodProfiles, commandFailed: true }]);
+    const summary = summarizeDragDropRuns([
+      { run: 1, profiles: goodProfiles, commandFailed: true }
+    ]);
 
     expect(summary.status).toBe("discard");
     expect(summary.playwrightFailureCount).toBe(1);
-    expect(summary.guardFailures).toContain("Playwright drag/drop spec must pass without hard failures");
+    expect(summary.guardFailures).toContain(
+      "Playwright drag/drop spec must pass without hard failures"
+    );
   });
 
   it("formats TSV rows for ignored autoresearch results", () => {

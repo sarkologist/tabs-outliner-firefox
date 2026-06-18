@@ -16,10 +16,10 @@ export function generatedTraceConfig(options: {
   const baseSeed = positiveIntegerEnv("GENERATED_TRACE_BASE_SEED") ?? 1;
   const seedCount =
     positiveIntegerEnv("GENERATED_TRACE_SEED_COUNT") ??
-    (soak ? options.soakSeedCount ?? options.defaultSeedCount : options.defaultSeedCount);
+    (soak ? (options.soakSeedCount ?? options.defaultSeedCount) : options.defaultSeedCount);
   const steps =
     positiveIntegerEnv("GENERATED_TRACE_STEPS") ??
-    (soak ? options.soakSteps ?? options.defaultSteps : options.defaultSteps);
+    (soak ? (options.soakSteps ?? options.defaultSteps) : options.defaultSteps);
 
   return {
     baseSeed,

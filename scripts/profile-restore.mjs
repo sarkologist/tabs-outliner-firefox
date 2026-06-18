@@ -249,7 +249,10 @@ function applyNodeStateUpdate(runtime, update) {
   for (const node of update.updatedNodes) {
     runtime.sidebarState.nodes[node.id] = node;
   }
-  runtime.sidebarProjection.closedCount = Math.max(0, runtime.sidebarProjection.closedCount + update.closedCountDelta);
+  runtime.sidebarProjection.closedCount = Math.max(
+    0,
+    runtime.sidebarProjection.closedCount + update.closedCountDelta
+  );
 
   for (const row of runtime.sidebarProjection.rows) {
     const node = updatedNodes.get(row.nodeId);
@@ -267,7 +270,15 @@ function makeControllerRuntime(initialState) {
   const runtime = {
     windows: [{ id: 10, focused: true, incognito: false }],
     tabs: [],
-    storage: new Map(Object.entries(JSON.parse(JSON.stringify(outlineStateV4Snapshot(initialState, { epoch: 1, journalSeqIncluded: 0 }).setItems)))),
+    storage: new Map(
+      Object.entries(
+        JSON.parse(
+          JSON.stringify(
+            outlineStateV4Snapshot(initialState, { epoch: 1, journalSeqIncluded: 0 }).setItems
+          )
+        )
+      )
+    ),
     restoreEcho: "final",
     ...createStorageMetrics(),
     ...createBroadcastMetrics(),
@@ -415,10 +426,14 @@ function fakeControllerAdapter(runtime) {
             title: "New Tab"
           });
           if (runtime.restoreEcho === "transient") {
-            runtime.events.tabUpdated.dispatch(tab.id, {
-              url: tab.url,
-              title: tab.title
-            }, { ...tab });
+            runtime.events.tabUpdated.dispatch(
+              tab.id,
+              {
+                url: tab.url,
+                title: tab.title
+              },
+              { ...tab }
+            );
           }
         } else {
           runtime.events.tabCreated.dispatch({ ...tab });
@@ -455,14 +470,20 @@ async function profileCommand(options) {
   const { adapter, calls } = fakeAdapter();
 
   const sidebarScope = measure(() => analyzeRestoreScope(state, nodeId));
-  const command = await measureAsync(() => runCommand(state, adapter, { type: "restoreNode", nodeId }));
+  const command = await measureAsync(() =>
+    runCommand(state, adapter, { type: "restoreNode", nodeId })
+  );
   const saved = measureJson({ outlineState: command.value.state });
   const candidateNodeIds = restorePatchCandidateNodeIds(state, nodeId);
-  const nodeUpdate = measure(() => nodeStateUpdateForNodeIds(state, command.value.state, candidateNodeIds));
+  const nodeUpdate = measure(() =>
+    nodeStateUpdateForNodeIds(state, command.value.state, candidateNodeIds)
+  );
   const broadcast = measureJson(nodeUpdate.value);
   const sidebarState = state;
   const sidebarProjection = buildVisibleTreeProjection(sidebarState, "");
-  const patch = measure(() => applyNodeStateUpdate({ sidebarState, sidebarProjection }, nodeUpdate.value));
+  const patch = measure(() =>
+    applyNodeStateUpdate({ sidebarState, sidebarProjection }, nodeUpdate.value)
+  );
 
   return {
     scenario: options.scenario,
@@ -476,7 +497,9 @@ async function profileCommand(options) {
     broadcastStringifyMs: Math.round(broadcast.ms),
     projectionMs: 0,
     nodePatchMs: Math.round(patch.ms),
-    totalMeasuredMs: Math.round(sidebarScope.ms + command.ms + nodeUpdate.ms + saved.ms + broadcast.ms + patch.ms),
+    totalMeasuredMs: Math.round(
+      sidebarScope.ms + command.ms + nodeUpdate.ms + saved.ms + broadcast.ms + patch.ms
+    ),
     mbStringified: Math.round((saved.value.length + broadcast.value.length) / 1024 / 1024),
     changed: command.value.changed,
     createTabCalls: calls.createTab,
@@ -509,15 +532,21 @@ async function profileControllerEventEcho(options) {
   runtime.firstBroadcastMs = undefined;
   resetEventCounts(runtime.eventCounts);
 
-  const command = await measureAsync(() => controller.handleMessage({ type: "restoreNode", nodeId }));
+  const command = await measureAsync(() =>
+    controller.handleMessage({ type: "restoreNode", nodeId })
+  );
   const eventEcho = await measureAsync(() => flushProfileEvents(runtime.events));
   if (options.echo === "transient-separated") {
     const restoredTab = runtime.tabs.at(-1);
     if (restoredTab) {
-      runtime.events.tabUpdated.dispatch(restoredTab.id, {
-        url: restoredTab.url,
-        title: restoredTab.title
-      }, { ...restoredTab });
+      runtime.events.tabUpdated.dispatch(
+        restoredTab.id,
+        {
+          url: restoredTab.url,
+          title: restoredTab.title
+        },
+        { ...restoredTab }
+      );
     }
   }
   const updateEcho = await measureAsync(() => flushProfileEvents(runtime.events));

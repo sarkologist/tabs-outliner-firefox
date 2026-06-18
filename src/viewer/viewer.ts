@@ -26,7 +26,8 @@ const emptyState = document.querySelector<HTMLElement>("#viewer-empty");
 // Row height (the sidebar's --node-row-height) — every row is one fixed-height line, which is
 // what lets the viewer virtualize the same way the main tree does.
 const ROW_HEIGHT =
-  parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--node-row-height")) || 18;
+  parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--node-row-height")) ||
+  18;
 const OVERSCAN_ROWS = 8;
 
 // Portable nodes carry no id or collapse state, so the viewer wraps them: a stable path id (for
@@ -151,7 +152,10 @@ function renderViewport(force = false): void {
   const scrollTop = scrollHost?.scrollTop ?? 0;
   const viewportHeight = scrollHost?.clientHeight || window.innerHeight;
   const start = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN_ROWS);
-  const end = Math.min(visible.length, Math.ceil((scrollTop + viewportHeight) / ROW_HEIGHT) + OVERSCAN_ROWS);
+  const end = Math.min(
+    visible.length,
+    Math.ceil((scrollTop + viewportHeight) / ROW_HEIGHT) + OVERSCAN_ROWS
+  );
   if (!force && start === renderedStart && end === renderedEnd) {
     return;
   }
@@ -243,7 +247,11 @@ function iconElement(name: string): SVGSVGElement {
   return svg;
 }
 
-async function importNode(node: PortableTreeNode, label: string, button: HTMLButtonElement): Promise<void> {
+async function importNode(
+  node: PortableTreeNode,
+  label: string,
+  button: HTMLButtonElement
+): Promise<void> {
   button.disabled = true;
   try {
     await browser.runtime.sendMessage({

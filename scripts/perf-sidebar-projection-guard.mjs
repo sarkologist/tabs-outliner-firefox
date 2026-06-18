@@ -104,10 +104,12 @@ export async function runSidebarProjectionGuard(options = {}) {
 
   const results = [];
   for (const scenario of scenarios) {
-    results.push(await runProjectionScenarioWithRetry(scenario, {
-      runs: options.runs ?? DEFAULT_RUNS,
-      retries: options.retries ?? DEFAULT_RETRIES
-    }));
+    results.push(
+      await runProjectionScenarioWithRetry(scenario, {
+        runs: options.runs ?? DEFAULT_RUNS,
+        retries: options.retries ?? DEFAULT_RETRIES
+      })
+    );
   }
 
   return {
@@ -177,7 +179,9 @@ export function formatSidebarProjectionGuardSummary(summary) {
         .slice(0, -1)
         .flatMap((attempt) => attempt.guardFailures)
         .join("; ");
-      lines.push(`  passed after retry${previousFailures ? `; prior failure: ${previousFailures}` : ""}`);
+      lines.push(
+        `  passed after retry${previousFailures ? `; prior failure: ${previousFailures}` : ""}`
+      );
     }
     for (const failure of result.guardFailures) {
       lines.push(`  ${failure}`);

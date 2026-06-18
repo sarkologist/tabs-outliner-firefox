@@ -71,7 +71,11 @@ describe("outline journal", () => {
     const reopened = createOutlineJournal(faulty.api.storage.local, { epoch: 2 });
     const reloaded = await reopened.init();
     expect(reloaded.entries).toHaveLength(1);
-    expect(reloaded.entries[0]).toMatchObject({ kind: "command", label: "deleteNode", spill: true });
+    expect(reloaded.entries[0]).toMatchObject({
+      kind: "command",
+      label: "deleteNode",
+      spill: true
+    });
     expect(reloaded.entries[0]?.delta).toBeUndefined();
   });
 
@@ -80,7 +84,9 @@ describe("outline journal", () => {
     const journal = createOutlineJournal(faulty.api.storage.local, { epoch: 1, now: () => 1000 });
     await journal.init();
 
-    const hugeDelta = { updatedNodes: Array.from({ length: 2001 }, (_value, index) => makeNode(`tab:${index}`)) };
+    const hugeDelta = {
+      updatedNodes: Array.from({ length: 2001 }, (_value, index) => makeNode(`tab:${index}`))
+    };
     const result = await journal.append([{ kind: "command", label: "import", delta: hugeDelta }]);
 
     expect(result.spilled).toBe(true);
@@ -97,11 +103,14 @@ describe("outline journal", () => {
     await journal.init();
 
     for (let index = 0; index < JOURNAL_SLOT_COUNT; index += 1) {
-      await journal.append([{ kind: "command", delta: { updatedNodes: [makeNode(`tab:${index}`)] } }]);
+      await journal.append([
+        { kind: "command", delta: { updatedNodes: [makeNode(`tab:${index}`)] } }
+      ]);
     }
 
-    await expect(journal.append([{ kind: "command", delta: { updatedNodes: [makeNode("tab:overflow")] } }]))
-      .rejects.toBeInstanceOf(JournalFullError);
+    await expect(
+      journal.append([{ kind: "command", delta: { updatedNodes: [makeNode("tab:overflow")] } }])
+    ).rejects.toBeInstanceOf(JournalFullError);
   });
 
   it("frees slots and advances tailSeq on prune", async () => {
@@ -125,13 +134,29 @@ describe("outline journal", () => {
 
   it("replayJournal applies updates, deletes, and root replacement; is identity for untouched and no-op for empty", () => {
     const base = makeState(
-      [makeNode("tab:1", { title: "one" }), makeNode("tab:2", { title: "two" }), makeNode("tab:3", { title: "three" })],
+      [
+        makeNode("tab:1", { title: "one" }),
+        makeNode("tab:2", { title: "two" }),
+        makeNode("tab:3", { title: "three" })
+      ],
       ["tab:1", "tab:2", "tab:3"]
     );
 
     const entries: OutlineJournalEntry[] = [
-      { seq: 1, epoch: 1, at: 1, kind: "command", delta: { updatedNodes: [makeNode("tab:1", { title: "renamed", childIds: ["tab:9"] })] } },
-      { seq: 2, epoch: 1, at: 2, kind: "command", delta: { deletedNodeIds: ["tab:2"], rootIds: ["tab:1", "tab:3"] } }
+      {
+        seq: 1,
+        epoch: 1,
+        at: 1,
+        kind: "command",
+        delta: { updatedNodes: [makeNode("tab:1", { title: "renamed", childIds: ["tab:9"] })] }
+      },
+      {
+        seq: 2,
+        epoch: 1,
+        at: 2,
+        kind: "command",
+        delta: { deletedNodeIds: ["tab:2"], rootIds: ["tab:1", "tab:3"] }
+      }
     ];
 
     const next = replayJournal(base, entries);
@@ -168,7 +193,13 @@ describe("outline journal", () => {
 
   it("journalTouchedNodeIds is the union of updated and deleted ids", () => {
     const entries: OutlineJournalEntry[] = [
-      { seq: 1, epoch: 1, at: 1, kind: "command", delta: { updatedNodes: [makeNode("tab:1"), makeNode("tab:2")] } },
+      {
+        seq: 1,
+        epoch: 1,
+        at: 1,
+        kind: "command",
+        delta: { updatedNodes: [makeNode("tab:1"), makeNode("tab:2")] }
+      },
       { seq: 2, epoch: 1, at: 2, kind: "command", delta: { deletedNodeIds: ["tab:2", "tab:3"] } },
       { seq: 3, epoch: 1, at: 3, kind: "recovery", spill: true }
     ];
@@ -185,8 +216,12 @@ describe("outline journal", () => {
     // Fire two appends without awaiting the first (models an event-coalescer timer flush
     // overlapping a command append across the storage await).
     const [first, second] = await Promise.all([
-      journal.append([{ kind: "runtimeEvent", label: "a", delta: { updatedNodes: [makeNode("tab:1")] } }]),
-      journal.append([{ kind: "command", label: "b", delta: { updatedNodes: [makeNode("tab:2")] } }])
+      journal.append([
+        { kind: "runtimeEvent", label: "a", delta: { updatedNodes: [makeNode("tab:1")] } }
+      ]),
+      journal.append([
+        { kind: "command", label: "b", delta: { updatedNodes: [makeNode("tab:2")] } }
+      ])
     ]);
 
     expect(first.seq).not.toBe(second.seq);
@@ -206,7 +241,9 @@ describe("outline journal", () => {
     faulty.setLatencyMs(15);
     const [, appended] = await Promise.all([
       journal.prune(2),
-      journal.append([{ kind: "command", label: "later", delta: { updatedNodes: [makeNode("tab:3")] } }])
+      journal.append([
+        { kind: "command", label: "later", delta: { updatedNodes: [makeNode("tab:3")] } }
+      ])
     ]);
 
     expect(appended.seq).toBe(3);
@@ -225,8 +262,9 @@ describe("outline journal", () => {
     expect(journal.pendingEntryCount()).toBe(1);
 
     faulty.failNextSet(new Error("disk full"));
-    await expect(journal.append([{ kind: "command", delta: { updatedNodes: [makeNode("tab:2")] } }]))
-      .rejects.toThrow("disk full");
+    await expect(
+      journal.append([{ kind: "command", delta: { updatedNodes: [makeNode("tab:2")] } }])
+    ).rejects.toThrow("disk full");
 
     expect(journal.pendingEntryCount()).toBe(1);
     // The failed append left no slot or meta advance behind.
@@ -240,7 +278,12 @@ describe("outline journal", () => {
     await journal.init();
 
     await journal.append([
-      { kind: "command", label: "deleteNode", historyEntryId: "h-1", delta: { deletedNodeIds: ["tab:1"] } },
+      {
+        kind: "command",
+        label: "deleteNode",
+        historyEntryId: "h-1",
+        delta: { deletedNodeIds: ["tab:1"] }
+      },
       { kind: "command", label: "deleteNode", historyEntryId: "h-2", spill: true }
     ]);
 
@@ -265,14 +308,18 @@ describe("replayJournalWithHistory", () => {
     const state = makeState([window, tab], ["window:10"]);
     const deletedParent = makeNode("window:10", { kind: "window", childIds: [], updatedAt: 2000 });
 
-    const result = replayJournalWithHistory(state, [
-      journalEntry(1, {
-        kind: "command",
-        label: "deleteNode",
-        historyEntryId: "h-1",
-        delta: { updatedNodes: [deletedParent], deletedNodeIds: ["tab:1"] }
-      })
-    ], { history: createEmptyHistoryState() });
+    const result = replayJournalWithHistory(
+      state,
+      [
+        journalEntry(1, {
+          kind: "command",
+          label: "deleteNode",
+          historyEntryId: "h-1",
+          delta: { updatedNodes: [deletedParent], deletedNodeIds: ["tab:1"] }
+        })
+      ],
+      { history: createEmptyHistoryState() }
+    );
 
     expect(result.state.nodes["tab:1"]).toBeUndefined();
     expect(result.historyChanged).toBe(true);
@@ -282,7 +329,9 @@ describe("replayJournalWithHistory", () => {
     expect(entry.commandType).toBe("deleteNode");
     // Undo restores the before-images taken from the fold state.
     expect(entry.undo.updatedNodes.map((node) => node.id).sort()).toEqual(["tab:1", "window:10"]);
-    expect(entry.undo.updatedNodes.find((node) => node.id === "window:10")?.childIds).toEqual(["tab:1"]);
+    expect(entry.undo.updatedNodes.find((node) => node.id === "window:10")?.childIds).toEqual([
+      "tab:1"
+    ]);
     expect(entry.redo.deletedNodeIds).toEqual(["tab:1"]);
   });
 
@@ -295,17 +344,25 @@ describe("replayJournalWithHistory", () => {
       commandType: "renameGroup",
       label: "Rename",
       undo: { rootIds: ["tab:1"], updatedNodes: [tab], deletedNodeIds: [] },
-      redo: { rootIds: ["tab:1"], updatedNodes: [makeNode("tab:1", { title: "Renamed" })], deletedNodeIds: [] }
+      redo: {
+        rootIds: ["tab:1"],
+        updatedNodes: [makeNode("tab:1", { title: "Renamed" })],
+        deletedNodeIds: []
+      }
     });
 
-    const result = replayJournalWithHistory(state, [
-      journalEntry(1, {
-        kind: "command",
-        label: "renameGroup",
-        historyEntryId: "h-1",
-        delta: { updatedNodes: [makeNode("tab:1", { title: "Renamed" })] }
-      })
-    ], { history: persisted });
+    const result = replayJournalWithHistory(
+      state,
+      [
+        journalEntry(1, {
+          kind: "command",
+          label: "renameGroup",
+          historyEntryId: "h-1",
+          delta: { updatedNodes: [makeNode("tab:1", { title: "Renamed" })] }
+        })
+      ],
+      { history: persisted }
+    );
 
     expect(result.historyChanged).toBe(false);
     expect(result.history.undoStack).toHaveLength(1);
@@ -359,14 +416,18 @@ describe("replayJournalWithHistory", () => {
     };
     const persisted = pushRedoEntry(createEmptyHistoryState(), entry);
 
-    const result = replayJournalWithHistory(state, [
-      journalEntry(3, {
-        kind: "historyReplay",
-        label: "redo",
-        historyEntryId: "h-1",
-        delta: { updatedNodes: [renamed] }
-      })
-    ], { history: persisted });
+    const result = replayJournalWithHistory(
+      state,
+      [
+        journalEntry(3, {
+          kind: "historyReplay",
+          label: "redo",
+          historyEntryId: "h-1",
+          delta: { updatedNodes: [renamed] }
+        })
+      ],
+      { history: persisted }
+    );
 
     expect(result.historyChanged).toBe(true);
     expect(result.history.redoStack).toHaveLength(0);
@@ -377,12 +438,34 @@ describe("replayJournalWithHistory", () => {
   it("skips history for spill markers, untracked labels, runtime events, and id-less entries", () => {
     const state = makeState([makeNode("tab:1")], ["tab:1"]);
 
-    const result = replayJournalWithHistory(state, [
-      journalEntry(1, { kind: "command", label: "deleteNode", historyEntryId: "h-1", spill: true }),
-      journalEntry(2, { kind: "runtimeEvent", label: "tabRemoved", delta: { updatedNodes: [makeNode("tab:1", { title: "Event" })] } }),
-      journalEntry(3, { kind: "command", label: "focusNode", historyEntryId: "h-2", delta: { updatedNodes: [makeNode("tab:1", { title: "Untracked" })] } }),
-      journalEntry(4, { kind: "command", label: "renameGroup", delta: { updatedNodes: [makeNode("tab:1", { title: "NoId" })] } })
-    ], { history: createEmptyHistoryState() });
+    const result = replayJournalWithHistory(
+      state,
+      [
+        journalEntry(1, {
+          kind: "command",
+          label: "deleteNode",
+          historyEntryId: "h-1",
+          spill: true
+        }),
+        journalEntry(2, {
+          kind: "runtimeEvent",
+          label: "tabRemoved",
+          delta: { updatedNodes: [makeNode("tab:1", { title: "Event" })] }
+        }),
+        journalEntry(3, {
+          kind: "command",
+          label: "focusNode",
+          historyEntryId: "h-2",
+          delta: { updatedNodes: [makeNode("tab:1", { title: "Untracked" })] }
+        }),
+        journalEntry(4, {
+          kind: "command",
+          label: "renameGroup",
+          delta: { updatedNodes: [makeNode("tab:1", { title: "NoId" })] }
+        })
+      ],
+      { history: createEmptyHistoryState() }
+    );
 
     expect(result.historyChanged).toBe(false);
     expect(result.history.undoStack).toHaveLength(0);
@@ -396,11 +479,16 @@ describe("replayJournalWithHistory", () => {
         kind: "command",
         label: "renameGroup",
         historyEntryId: `h-${index + 1}`,
-        delta: { updatedNodes: [makeNode("tab:1", { title: `t${index + 1}`, updatedAt: 1000 + index + 1 })] }
+        delta: {
+          updatedNodes: [makeNode("tab:1", { title: `t${index + 1}`, updatedAt: 1000 + index + 1 })]
+        }
       })
     );
 
-    const result = replayJournalWithHistory(state, entries, { history: createEmptyHistoryState(), limit: 2 });
+    const result = replayJournalWithHistory(state, entries, {
+      history: createEmptyHistoryState(),
+      limit: 2
+    });
 
     expect(result.history.undoStack.map((stackEntry) => stackEntry.id)).toEqual(["h-3", "h-4"]);
     expect(result.state.nodes["tab:1"]?.title).toBe("t4");

@@ -117,8 +117,10 @@ export function newHistoryEntryId(): string {
 }
 
 export function historyContainsEntryId(history: HistoryState, id: string): boolean {
-  return history.undoStack.some((entry) => entry.id === id) ||
-    history.redoStack.some((entry) => entry.id === id);
+  return (
+    history.undoStack.some((entry) => entry.id === id) ||
+    history.redoStack.some((entry) => entry.id === id)
+  );
 }
 
 export function pushUndoEntry(
@@ -160,7 +162,10 @@ export function pushUndoEntryPreservingRedo(
   };
 }
 
-export function popUndoEntry(history: HistoryState): { entry?: HistoryEntry; history: HistoryState } {
+export function popUndoEntry(history: HistoryState): {
+  entry?: HistoryEntry;
+  history: HistoryState;
+} {
   const entry = history.undoStack.at(-1);
   return {
     ...(entry ? { entry } : {}),
@@ -172,7 +177,10 @@ export function popUndoEntry(history: HistoryState): { entry?: HistoryEntry; his
   };
 }
 
-export function popRedoEntry(history: HistoryState): { entry?: HistoryEntry; history: HistoryState } {
+export function popRedoEntry(history: HistoryState): {
+  entry?: HistoryEntry;
+  history: HistoryState;
+} {
   const entry = history.redoStack.at(-1);
   return {
     ...(entry ? { entry } : {}),
@@ -243,9 +251,13 @@ function deltaBetween(
   diffMode: HistoryDiffMode,
   candidateNodeIds?: readonly NodeId[]
 ): OutlineDelta {
-  const previousNodeIds = candidateNodeIds ? uniqueNodeIds(candidateNodeIds) : Object.keys(previous.nodes);
+  const previousNodeIds = candidateNodeIds
+    ? uniqueNodeIds(candidateNodeIds)
+    : Object.keys(previous.nodes);
   const nextNodeIds = candidateNodeIds ? uniqueNodeIds(candidateNodeIds) : Object.keys(next.nodes);
-  const deletedNodeIds = previousNodeIds.filter((nodeId) => previous.nodes[nodeId] && !next.nodes[nodeId]);
+  const deletedNodeIds = previousNodeIds.filter(
+    (nodeId) => previous.nodes[nodeId] && !next.nodes[nodeId]
+  );
   const updatedNodes: OutlineNode[] = [];
 
   for (const nodeId of nextNodeIds) {
@@ -275,9 +287,11 @@ function nodeChanged(previous: OutlineNode, next: OutlineNode, diffMode: History
 }
 
 function deltaHasChanges(delta: OutlineDelta, previous: OutlineState): boolean {
-  return delta.deletedNodeIds.length > 0 ||
+  return (
+    delta.deletedNodeIds.length > 0 ||
     delta.updatedNodes.length > 0 ||
-    !sameNodeIdList(delta.rootIds, previous.rootIds);
+    !sameNodeIdList(delta.rootIds, previous.rootIds)
+  );
 }
 
 function historyLabel(commandType: TrackableHistoryCommandType): string {
@@ -314,11 +328,13 @@ function isHistoryState(value: unknown): value is HistoryState {
     return false;
   }
   const candidate = value as Partial<HistoryState>;
-  return candidate.version === 1 &&
+  return (
+    candidate.version === 1 &&
     Array.isArray(candidate.undoStack) &&
     Array.isArray(candidate.redoStack) &&
     candidate.undoStack.every(isHistoryEntry) &&
-    candidate.redoStack.every(isHistoryEntry);
+    candidate.redoStack.every(isHistoryEntry)
+  );
 }
 
 function isHistoryEntry(value: unknown): value is HistoryEntry {
@@ -326,15 +342,19 @@ function isHistoryEntry(value: unknown): value is HistoryEntry {
     return false;
   }
   const candidate = value as Partial<HistoryEntry>;
-  return candidate.version === 1 &&
+  return (
+    candidate.version === 1 &&
     (candidate.id === undefined || typeof candidate.id === "string") &&
     isTrackableHistoryCommandType(candidate.commandType) &&
     typeof candidate.label === "string" &&
     isOutlineDelta(candidate.undo) &&
-    isOutlineDelta(candidate.redo);
+    isOutlineDelta(candidate.redo)
+  );
 }
 
-export function isTrackableHistoryCommandType(value: unknown): value is TrackableHistoryCommandType {
+export function isTrackableHistoryCommandType(
+  value: unknown
+): value is TrackableHistoryCommandType {
   return typeof value === "string" && TRACKABLE_HISTORY_COMMAND_TYPE_SET.has(value);
 }
 
@@ -343,26 +363,28 @@ function isOutlineDelta(value: unknown): value is OutlineDelta {
     return false;
   }
   const candidate = value as Partial<OutlineDelta>;
-  return Array.isArray(candidate.rootIds) &&
+  return (
+    Array.isArray(candidate.rootIds) &&
     candidate.rootIds.every((nodeId) => typeof nodeId === "string") &&
     Array.isArray(candidate.updatedNodes) &&
     candidate.updatedNodes.every(isOutlineNode) &&
     Array.isArray(candidate.deletedNodeIds) &&
-    candidate.deletedNodeIds.every((nodeId) => typeof nodeId === "string");
+    candidate.deletedNodeIds.every((nodeId) => typeof nodeId === "string")
+  );
 }
 
 function isOutlineNode(value: unknown): value is OutlineNode {
   return Boolean(
     value &&
-      typeof value === "object" &&
-      typeof (value as { id?: unknown }).id === "string" &&
-      typeof (value as { kind?: unknown }).kind === "string" &&
-      typeof (value as { status?: unknown }).status === "string" &&
-      Array.isArray((value as { childIds?: unknown }).childIds) &&
-      typeof (value as { title?: unknown }).title === "string" &&
-      typeof (value as { collapsed?: unknown }).collapsed === "boolean" &&
-      typeof (value as { createdAt?: unknown }).createdAt === "number" &&
-      typeof (value as { updatedAt?: unknown }).updatedAt === "number"
+    typeof value === "object" &&
+    typeof (value as { id?: unknown }).id === "string" &&
+    typeof (value as { kind?: unknown }).kind === "string" &&
+    typeof (value as { status?: unknown }).status === "string" &&
+    Array.isArray((value as { childIds?: unknown }).childIds) &&
+    typeof (value as { title?: unknown }).title === "string" &&
+    typeof (value as { collapsed?: unknown }).collapsed === "boolean" &&
+    typeof (value as { createdAt?: unknown }).createdAt === "number" &&
+    typeof (value as { updatedAt?: unknown }).updatedAt === "number"
   );
 }
 
@@ -386,7 +408,8 @@ function cloneDelta(delta: OutlineDelta): OutlineDelta {
 }
 
 function nodesMateriallyEqual(previous: OutlineNode, next: OutlineNode): boolean {
-  return previous.id === next.id &&
+  return (
+    previous.id === next.id &&
     previous.kind === next.kind &&
     previous.status === next.status &&
     previous.parentId === next.parentId &&
@@ -402,7 +425,8 @@ function nodesMateriallyEqual(previous: OutlineNode, next: OutlineNode): boolean
     previous.closedAt === next.closedAt &&
     previous.restoredFromClosed === next.restoredFromClosed &&
     liveRefsEqual(previous.live, next.live) &&
-    restoreRefsEqual(previous.restore, next.restore);
+    restoreRefsEqual(previous.restore, next.restore)
+  );
 }
 
 function liveRefsEqual(previous: OutlineNode["live"], next: OutlineNode["live"]): boolean {
@@ -410,12 +434,16 @@ function liveRefsEqual(previous: OutlineNode["live"], next: OutlineNode["live"])
 }
 
 function restoreRefsEqual(previous: OutlineNode["restore"], next: OutlineNode["restore"]): boolean {
-  return previous?.sessionId === next?.sessionId &&
+  return (
+    previous?.sessionId === next?.sessionId &&
     previous?.url === next?.url &&
     previous?.title === next?.title &&
-    previous?.favIconUrl === next?.favIconUrl;
+    previous?.favIconUrl === next?.favIconUrl
+  );
 }
 
 function sameNodeIdList(previous: readonly NodeId[], next: readonly NodeId[]): boolean {
-  return previous.length === next.length && previous.every((nodeId, index) => nodeId === next[index]);
+  return (
+    previous.length === next.length && previous.every((nodeId, index) => nodeId === next[index])
+  );
 }

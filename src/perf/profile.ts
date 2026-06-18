@@ -36,7 +36,9 @@ export type PerformanceProfileExport = {
   summary: TraceSummaryRow[];
 };
 
-export function summarizePerformanceProfile(snapshot: PerformanceProfileSources): TraceSummaryRow[] {
+export function summarizePerformanceProfile(
+  snapshot: PerformanceProfileSources
+): TraceSummaryRow[] {
   return summarizeTraceEvents([
     ...(snapshot.background?.entries ?? []),
     ...sidebarTraceSnapshots(snapshot).flatMap((sidebar) => sidebar.entries)
@@ -44,12 +46,17 @@ export function summarizePerformanceProfile(snapshot: PerformanceProfileSources)
 }
 
 export function performanceProfileEntryCount(snapshot: PerformanceProfileSources): number {
-  return (snapshot.background?.entries.length ?? 0) +
-    sidebarTraceSnapshots(snapshot).reduce((sum, sidebar) => sum + sidebar.entries.length, 0);
+  return (
+    (snapshot.background?.entries.length ?? 0) +
+    sidebarTraceSnapshots(snapshot).reduce((sum, sidebar) => sum + sidebar.entries.length, 0)
+  );
 }
 
 export function performanceProfileEnabled(snapshot: PerformanceProfileSources): boolean {
-  return Boolean(snapshot.background?.enabled || sidebarTraceSnapshots(snapshot).some((sidebar) => sidebar.enabled));
+  return Boolean(
+    snapshot.background?.enabled ||
+    sidebarTraceSnapshots(snapshot).some((sidebar) => sidebar.enabled)
+  );
 }
 
 export function createPerformanceProfileExport(
@@ -91,9 +98,11 @@ export function isTraceSnapshot(value: unknown): value is TraceSnapshot {
     return false;
   }
   const snapshot = value as { enabled?: unknown; maxEntries?: unknown; entries?: unknown };
-  return typeof snapshot.enabled === "boolean" &&
+  return (
+    typeof snapshot.enabled === "boolean" &&
     typeof snapshot.maxEntries === "number" &&
-    Array.isArray(snapshot.entries);
+    Array.isArray(snapshot.entries)
+  );
 }
 
 export function isLabeledTraceSnapshot(value: unknown): value is LabeledTraceSnapshot {
@@ -107,11 +116,13 @@ export function isLabeledTraceSnapshot(value: unknown): value is LabeledTraceSna
     windowId?: unknown;
     url?: unknown;
   };
-  return typeof snapshot.id === "string" &&
+  return (
+    typeof snapshot.id === "string" &&
     typeof snapshot.label === "string" &&
     isTraceSnapshot(snapshot.snapshot) &&
     (snapshot.windowId === undefined || typeof snapshot.windowId === "number") &&
-    (snapshot.url === undefined || typeof snapshot.url === "string");
+    (snapshot.url === undefined || typeof snapshot.url === "string")
+  );
 }
 
 export function isPerformanceProfileSnapshot(value: unknown): value is PerformanceProfileSnapshot {
@@ -125,37 +136,58 @@ export function isPerformanceProfileSnapshot(value: unknown): value is Performan
     sidebar?: unknown;
     sidebars?: unknown;
   };
-  return isTraceSnapshot(snapshot.background) &&
+  return (
+    isTraceSnapshot(snapshot.background) &&
     (snapshot.incidentLog === undefined || isIncidentLog(snapshot.incidentLog)) &&
     (snapshot.portableTree === undefined || isPortableTreeFile(snapshot.portableTree)) &&
     (snapshot.sidebar === undefined || isTraceSnapshot(snapshot.sidebar)) &&
     (snapshot.sidebars === undefined ||
-      (Array.isArray(snapshot.sidebars) && snapshot.sidebars.every(isLabeledTraceSnapshot)));
+      (Array.isArray(snapshot.sidebars) && snapshot.sidebars.every(isLabeledTraceSnapshot)))
+  );
 }
 
 function isPortableTreeFile(value: unknown): value is PortableTreeFile {
   if (!value || typeof value !== "object") {
     return false;
   }
-  const tree = value as { schema?: unknown; version?: unknown; exportedAt?: unknown; roots?: unknown };
-  return tree.schema === "tabs-outliner-tree" &&
+  const tree = value as {
+    schema?: unknown;
+    version?: unknown;
+    exportedAt?: unknown;
+    roots?: unknown;
+  };
+  return (
+    tree.schema === "tabs-outliner-tree" &&
     tree.version === 1 &&
     typeof tree.exportedAt === "string" &&
-    Array.isArray(tree.roots);
+    Array.isArray(tree.roots)
+  );
 }
 
 function isIncidentLog(value: unknown): value is IncidentLogEntry[] {
-  return Array.isArray(value) && value.every((entry) => {
-    if (!entry || typeof entry !== "object") {
-      return false;
-    }
-    const candidate = entry as { version?: unknown; at?: unknown; event?: unknown; detail?: unknown };
-    return candidate.version === 1 &&
-      typeof candidate.at === "string" &&
-      typeof candidate.event === "string" &&
-      (candidate.detail === undefined ||
-        (typeof candidate.detail === "object" && candidate.detail !== null && !Array.isArray(candidate.detail)));
-  });
+  return (
+    Array.isArray(value) &&
+    value.every((entry) => {
+      if (!entry || typeof entry !== "object") {
+        return false;
+      }
+      const candidate = entry as {
+        version?: unknown;
+        at?: unknown;
+        event?: unknown;
+        detail?: unknown;
+      };
+      return (
+        candidate.version === 1 &&
+        typeof candidate.at === "string" &&
+        typeof candidate.event === "string" &&
+        (candidate.detail === undefined ||
+          (typeof candidate.detail === "object" &&
+            candidate.detail !== null &&
+            !Array.isArray(candidate.detail)))
+      );
+    })
+  );
 }
 
 function sidebarTraceSnapshots(snapshot: PerformanceProfileSources): TraceSnapshot[] {

@@ -3,7 +3,10 @@ import { describe, expect, it, vi } from "vitest";
 import { getNormalWindows, getNormalWindowsIncludingTabs } from "./runtime-snapshot.js";
 import type { RuntimeTab, RuntimeWindow } from "../model/types.js";
 
-function snapshotApi(windows: RuntimeWindow[], tabs: RuntimeTab[]): Pick<WebExtensionBrowser, "windows" | "tabs"> {
+function snapshotApi(
+  windows: RuntimeWindow[],
+  tabs: RuntimeTab[]
+): Pick<WebExtensionBrowser, "windows" | "tabs"> {
   return {
     windows: {
       WINDOW_ID_NONE: -1,

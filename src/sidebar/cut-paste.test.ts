@@ -21,24 +21,39 @@ describe("cut/paste shortcut helpers", () => {
       tagName: "BUTTON"
     };
 
-    expect(keyboardCutPasteAction({ key: "x", metaKey: true, ctrlKey: false, altKey: false, shiftKey: false }, target))
-      .toBe("cut");
-    expect(keyboardCutPasteAction({ key: "V", metaKey: false, ctrlKey: true, altKey: false, shiftKey: false }, target))
-      .toBe("paste");
+    expect(
+      keyboardCutPasteAction(
+        { key: "x", metaKey: true, ctrlKey: false, altKey: false, shiftKey: false },
+        target
+      )
+    ).toBe("cut");
+    expect(
+      keyboardCutPasteAction(
+        { key: "V", metaKey: false, ctrlKey: true, altKey: false, shiftKey: false },
+        target
+      )
+    ).toBe("paste");
     expect(nodeIdForCutPasteTarget(target)).toBe("tab:a");
   });
 
   it("ignores shortcuts from editable targets", () => {
     expect(isCutPasteShortcutEligibleTarget({ nodeId: "tab:a", tagName: "INPUT" })).toBe(false);
     expect(isCutPasteShortcutEligibleTarget({ nodeId: "tab:a", tagName: "TEXTAREA" })).toBe(false);
-    expect(isCutPasteShortcutEligibleTarget({ nodeId: "tab:a", tagName: "BUTTON", isContentEditable: true })).toBe(
-      false
-    );
     expect(
-      keyboardCutPasteAction({ key: "x", metaKey: true, ctrlKey: false, altKey: false, shiftKey: false }, {
+      isCutPasteShortcutEligibleTarget({
         nodeId: "tab:a",
-        tagName: "INPUT"
+        tagName: "BUTTON",
+        isContentEditable: true
       })
+    ).toBe(false);
+    expect(
+      keyboardCutPasteAction(
+        { key: "x", metaKey: true, ctrlKey: false, altKey: false, shiftKey: false },
+        {
+          nodeId: "tab:a",
+          tagName: "INPUT"
+        }
+      )
     ).toBeUndefined();
   });
 
@@ -54,13 +69,25 @@ describe("cut/paste shortcut helpers", () => {
     };
 
     expect(
-      keyboardCutPasteAction({ key: "k", metaKey: true, ctrlKey: false, altKey: true, shiftKey: false }, target, shortcuts)
+      keyboardCutPasteAction(
+        { key: "k", metaKey: true, ctrlKey: false, altKey: true, shiftKey: false },
+        target,
+        shortcuts
+      )
     ).toBe("cut");
     expect(
-      keyboardCutPasteAction({ key: "x", metaKey: true, ctrlKey: false, altKey: false, shiftKey: false }, target, shortcuts)
+      keyboardCutPasteAction(
+        { key: "x", metaKey: true, ctrlKey: false, altKey: false, shiftKey: false },
+        target,
+        shortcuts
+      )
     ).toBeUndefined();
     expect(
-      keyboardCutPasteAction({ key: "v", metaKey: true, ctrlKey: false, altKey: false, shiftKey: false }, target, shortcuts)
+      keyboardCutPasteAction(
+        { key: "v", metaKey: true, ctrlKey: false, altKey: false, shiftKey: false },
+        target,
+        shortcuts
+      )
     ).toBeUndefined();
   });
 });
@@ -144,7 +171,13 @@ describe("pasteAfterCommand", () => {
     const range = cutSubtreeRowRange(rows, "tab:a");
 
     expect(range).toEqual({ startIndex: 1, endIndex: 4 });
-    expect(rows.map((row) => isRowInCutSubtree(row, range))).toEqual([false, true, true, true, false]);
+    expect(rows.map((row) => isRowInCutSubtree(row, range))).toEqual([
+      false,
+      true,
+      true,
+      true,
+      false
+    ]);
   });
 });
 
@@ -180,7 +213,9 @@ describe("cut/paste generated traces", () => {
   });
 });
 
-function isMoveNodeCommand(command: BackgroundCommand | undefined): command is Extract<BackgroundCommand, { type: "moveNode" }> {
+function isMoveNodeCommand(
+  command: BackgroundCommand | undefined
+): command is Extract<BackgroundCommand, { type: "moveNode" }> {
   return command?.type === "moveNode";
 }
 
@@ -224,7 +259,11 @@ function groupNode(childIds: NodeId[], parentId?: NodeId): OutlineNode {
   };
 }
 
-function tabNode(id: NodeId, parentId: NodeId, tabId = Number(id.replace(/\D/g, "")) || 1): OutlineNode {
+function tabNode(
+  id: NodeId,
+  parentId: NodeId,
+  tabId = Number(id.replace(/\D/g, "")) || 1
+): OutlineNode {
   return {
     id,
     kind: "tab",
@@ -273,7 +312,9 @@ function hasCycle(state: OutlineState, nodeId: NodeId): boolean {
   return false;
 }
 
-function liveRefsByNodeId(state: OutlineState): Record<NodeId, { tabId?: number; windowId?: number }> {
+function liveRefsByNodeId(
+  state: OutlineState
+): Record<NodeId, { tabId?: number; windowId?: number }> {
   return Object.fromEntries(
     Object.entries(state.nodes)
       .filter(([, node]) => node.live)

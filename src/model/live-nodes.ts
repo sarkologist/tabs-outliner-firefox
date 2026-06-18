@@ -4,11 +4,15 @@ export type LiveTabNode = OutlineNode & { live: { tabId: number; windowId: numbe
 export type LiveWindowNode = OutlineNode & { live: { windowId: number } };
 
 export function isLiveTabNode(node: OutlineNode | undefined): node is LiveTabNode {
-  return Boolean(node?.kind === "tab" && node.status === "live" && node.live && "tabId" in node.live);
+  return Boolean(
+    node?.kind === "tab" && node.status === "live" && node.live && "tabId" in node.live
+  );
 }
 
 export function isLiveWindowNode(node: OutlineNode | undefined): node is LiveWindowNode {
-  return Boolean(node?.kind === "window" && node.status === "live" && node.live && "windowId" in node.live);
+  return Boolean(
+    node?.kind === "window" && node.status === "live" && node.live && "windowId" in node.live
+  );
 }
 
 export function liveTabNodes(state: OutlineState): LiveTabNode[] {

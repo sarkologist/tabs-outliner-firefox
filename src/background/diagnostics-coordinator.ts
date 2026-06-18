@@ -49,8 +49,11 @@ export type DiagnosticsCoordinator = {
   seedRuntimeWindows(windows: RuntimeWindow[]): void;
 };
 
-export function createDiagnosticsCoordinator(deps: DiagnosticsCoordinatorDeps): DiagnosticsCoordinator {
-  const { api, perfTrace, now, ensureState, waitForSchedulerIdle, isHighPrioritySchedulerIdle } = deps;
+export function createDiagnosticsCoordinator(
+  deps: DiagnosticsCoordinatorDeps
+): DiagnosticsCoordinator {
+  const { api, perfTrace, now, ensureState, waitForSchedulerIdle, isHighPrioritySchedulerIdle } =
+    deps;
 
   let diagnosticsInFlight: Promise<OutlineDiagnostics> | undefined;
   let lastDiagnostics: { value: OutlineDiagnostics; atMs: number } | undefined;
@@ -80,22 +83,32 @@ export function createDiagnosticsCoordinator(deps: DiagnosticsCoordinatorDeps): 
     // browser-window query onto the single background thread right when the user is mid-edit.
     // The readout is advisory; the next poll after the command settles refreshes it.
     const cached = lastDiagnostics;
-    if (cached && (now() - cached.atMs < DIAGNOSTICS_RESULT_TTL_MS || !isHighPrioritySchedulerIdle())) {
+    if (
+      cached &&
+      (now() - cached.atMs < DIAGNOSTICS_RESULT_TTL_MS || !isHighPrioritySchedulerIdle())
+    ) {
       return Promise.resolve(cached.value);
     }
-    diagnosticsInFlight ??= perfTrace.measureAsync("background.diagnostics", async () => {
-      await perfTrace.measureAsync("background.diagnostics.waitForIdle", () => waitForSchedulerIdle());
-      const state = await ensureState();
-      const windows = await perfTrace.measureAsync("background.diagnostics.getWindows", async () => {
-        diagnosticsRuntimeWindows ??= await getNormalWindows(api);
-        return diagnosticsRuntimeWindows;
+    diagnosticsInFlight ??= perfTrace
+      .measureAsync("background.diagnostics", async () => {
+        await perfTrace.measureAsync("background.diagnostics.waitForIdle", () =>
+          waitForSchedulerIdle()
+        );
+        const state = await ensureState();
+        const windows = await perfTrace.measureAsync(
+          "background.diagnostics.getWindows",
+          async () => {
+            diagnosticsRuntimeWindows ??= await getNormalWindows(api);
+            return diagnosticsRuntimeWindows;
+          }
+        );
+        const value = computeDiagnostics(state, windows);
+        lastDiagnostics = { value, atMs: now() };
+        return value;
+      })
+      .finally(() => {
+        diagnosticsInFlight = undefined;
       });
-      const value = computeDiagnostics(state, windows);
-      lastDiagnostics = { value, atMs: now() };
-      return value;
-    }).finally(() => {
-      diagnosticsInFlight = undefined;
-    });
     return diagnosticsInFlight;
   }
 

@@ -84,19 +84,22 @@ describe("performance profile helpers", () => {
     const background = traceSnapshot([
       { source: "background", name: "background.save", atMs: 1000, durationMs: 4 }
     ]);
-    const payload = createPerformanceProfileExport({
-      background,
-      sidebars: [
-        {
-          id: "sidebar-window-7",
-          label: "Sidebar window 7",
-          windowId: 7,
-          snapshot: traceSnapshot([
-            { source: "sidebar", name: "sidebar.render", atMs: 1001, durationMs: 2 }
-          ])
-        }
-      ]
-    }, { now: 3000 });
+    const payload = createPerformanceProfileExport(
+      {
+        background,
+        sidebars: [
+          {
+            id: "sidebar-window-7",
+            label: "Sidebar window 7",
+            windowId: 7,
+            snapshot: traceSnapshot([
+              { source: "sidebar", name: "sidebar.render", atMs: 1001, durationMs: 2 }
+            ])
+          }
+        ]
+      },
+      { now: 3000 }
+    );
 
     expect(payload).toEqual({
       schema: "tabs-outliner-profile",
@@ -131,7 +134,9 @@ describe("performance profile helpers", () => {
         }
       ]
     });
-    expect(performanceProfileFilename(new Date(2026, 4, 9))).toBe("tabs-outliner-profile-2026-05-09.json");
+    expect(performanceProfileFilename(new Date(2026, 4, 9))).toBe(
+      "tabs-outliner-profile-2026-05-09.json"
+    );
   });
 });
 

@@ -14,35 +14,42 @@ import {
 describe("app preferences", () => {
   it("loads defaults for missing or malformed preference data", () => {
     expect(normalizeAppPreferences(undefined)).toEqual(DEFAULT_APP_PREFERENCES);
-    expect(normalizeAppPreferences({ version: 1, undoHistoryLimit: "lots", shortcuts: {} })).toEqual(
-      DEFAULT_APP_PREFERENCES
-    );
-    expect(normalizeAppPreferences({
-      version: 1,
-      undoHistoryLimit: 30,
-      shortcuts: DEFAULT_APP_PREFERENCES.shortcuts
-    }).automaticBackups).toEqual({ enabled: false });
-    expect(normalizeAppPreferences({
-      version: 1,
-      undoHistoryLimit: 30,
-      shortcuts: DEFAULT_APP_PREFERENCES.shortcuts,
-      automaticBackups: { enabled: true }
-    }).automaticBackups).toEqual({ enabled: true });
-    expect(normalizeAppPreferences({
-      version: 1,
-      undoHistoryLimit: 30,
-      shortcuts: DEFAULT_APP_PREFERENCES.shortcuts,
-      automaticBackups: { enabled: "yes" }
-    }).automaticBackups).toEqual({ enabled: false });
+    expect(
+      normalizeAppPreferences({ version: 1, undoHistoryLimit: "lots", shortcuts: {} })
+    ).toEqual(DEFAULT_APP_PREFERENCES);
+    expect(
+      normalizeAppPreferences({
+        version: 1,
+        undoHistoryLimit: 30,
+        shortcuts: DEFAULT_APP_PREFERENCES.shortcuts
+      }).automaticBackups
+    ).toEqual({ enabled: false });
+    expect(
+      normalizeAppPreferences({
+        version: 1,
+        undoHistoryLimit: 30,
+        shortcuts: DEFAULT_APP_PREFERENCES.shortcuts,
+        automaticBackups: { enabled: true }
+      }).automaticBackups
+    ).toEqual({ enabled: true });
+    expect(
+      normalizeAppPreferences({
+        version: 1,
+        undoHistoryLimit: 30,
+        shortcuts: DEFAULT_APP_PREFERENCES.shortcuts,
+        automaticBackups: { enabled: "yes" }
+      }).automaticBackups
+    ).toEqual({ enabled: false });
   });
 
   it("clamps undo history length to the supported range", () => {
-    expect(normalizeAppPreferences({ ...DEFAULT_APP_PREFERENCES, undoHistoryLimit: -1 }).undoHistoryLimit).toBe(
-      MIN_UNDO_HISTORY_LIMIT
-    );
-    expect(normalizeAppPreferences({ ...DEFAULT_APP_PREFERENCES, undoHistoryLimit: 500 }).undoHistoryLimit).toBe(
-      MAX_UNDO_HISTORY_LIMIT
-    );
+    expect(
+      normalizeAppPreferences({ ...DEFAULT_APP_PREFERENCES, undoHistoryLimit: -1 }).undoHistoryLimit
+    ).toBe(MIN_UNDO_HISTORY_LIMIT);
+    expect(
+      normalizeAppPreferences({ ...DEFAULT_APP_PREFERENCES, undoHistoryLimit: 500 })
+        .undoHistoryLimit
+    ).toBe(MAX_UNDO_HISTORY_LIMIT);
   });
 
   it("normalizes keyboard shortcut combos for stable storage and matching", () => {
@@ -65,7 +72,9 @@ describe("app preferences", () => {
     expect(sidebarShortcutDuplicates(preferences.shortcuts)).toEqual([
       { combo: "Accel+Z", actions: ["search", "undo"] }
     ]);
-    expect(validateAppPreferences(preferences)).toEqual(["Shortcut Accel+Z is assigned more than once."]);
+    expect(validateAppPreferences(preferences)).toEqual([
+      "Shortcut Accel+Z is assigned more than once."
+    ]);
   });
 
   it("matches default accelerators and shifted zoom aliases", () => {
@@ -88,13 +97,16 @@ describe("app preferences", () => {
       })
     ).toBe(true);
     expect(
-      shortcutMatchesEvent({ enabled: false, combo: "Accel+Z" }, {
-        key: "z",
-        ctrlKey: true,
-        metaKey: false,
-        altKey: false,
-        shiftKey: false
-      })
+      shortcutMatchesEvent(
+        { enabled: false, combo: "Accel+Z" },
+        {
+          key: "z",
+          ctrlKey: true,
+          metaKey: false,
+          altKey: false,
+          shiftKey: false
+        }
+      )
     ).toBe(false);
   });
 });

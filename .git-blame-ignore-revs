@@ -1,0 +1,9 @@
+# Revisions to ignore in `git blame` (mechanical reformats, no logic changes).
+#
+# Enable locally:
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+# GitHub applies this file automatically in its blame view.
+
+# style: format with prettier — one-time `prettier --write .` across the tree
+# applying the .prettierrc.json added in PR #34 (printWidth 100, no logic changes).
+c9e5f249001d638dcf0dc5259030bf35ad1d20eb

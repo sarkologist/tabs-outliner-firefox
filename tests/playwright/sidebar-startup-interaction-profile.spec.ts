@@ -10,58 +10,68 @@ const ACTIVE_TAB_ID = 40_000;
 const TARGET_NODE_ID = `tab:${ACTIVE_TAB_ID}`;
 
 test.describe("sidebar startup interaction profile", () => {
-  test("profiles sparse first paint below the startup interaction budget", async ({ page }, testInfo) => {
+  test("profiles sparse first paint below the startup interaction budget", async ({
+    page
+  }, testInfo) => {
     const issues = collectPageIssues(page);
 
-    await page.addInitScript(({ snapshot }) => {
-      window.localStorage.setItem("tabsOutlinerProfileEnabled", "true");
-      const messages: Array<{ type: string; at: number }> = [];
-      (window as typeof window & { __sidebarBootMessages?: typeof messages }).__sidebarBootMessages = messages;
-      window.browser = {
-        runtime: {
-          sendMessage: async (message: unknown) => {
-            const type = typeof message === "object" && message ? String((message as { type?: unknown }).type) : "";
-            messages.push({ type, at: performance.now() });
-            if (type === "getInitialTreeSnapshot") {
-              return structuredClone(snapshot);
-            }
-            if (type === "getState") {
-              return new Promise(() => undefined);
-            }
-            if (
-              type === "getDiagnostics" ||
-              type === "getPerformanceTrace" ||
-              type === "setPerformanceTraceEnabled" ||
-              type === "clearPerformanceTrace"
-            ) {
-              return undefined;
-            }
-            return { ok: true };
+    await page.addInitScript(
+      ({ snapshot }) => {
+        window.localStorage.setItem("tabsOutlinerProfileEnabled", "true");
+        const messages: Array<{ type: string; at: number }> = [];
+        (
+          window as typeof window & { __sidebarBootMessages?: typeof messages }
+        ).__sidebarBootMessages = messages;
+        window.browser = {
+          runtime: {
+            sendMessage: async (message: unknown) => {
+              const type =
+                typeof message === "object" && message
+                  ? String((message as { type?: unknown }).type)
+                  : "";
+              messages.push({ type, at: performance.now() });
+              if (type === "getInitialTreeSnapshot") {
+                return structuredClone(snapshot);
+              }
+              if (type === "getState") {
+                return new Promise(() => undefined);
+              }
+              if (
+                type === "getDiagnostics" ||
+                type === "getPerformanceTrace" ||
+                type === "setPerformanceTraceEnabled" ||
+                type === "clearPerformanceTrace"
+              ) {
+                return undefined;
+              }
+              return { ok: true };
+            },
+            onMessage: {
+              addListener: () => undefined
+            },
+            connect: () => ({
+              onMessage: { addListener: () => undefined },
+              onDisconnect: { addListener: () => undefined }
+            })
           },
-          onMessage: {
-            addListener: () => undefined
+          storage: {
+            local: {
+              get: async () => ({}),
+              set: async () => undefined
+            },
+            onChanged: {
+              addListener: () => undefined
+            }
           },
-          connect: () => ({
-            onMessage: { addListener: () => undefined },
-            onDisconnect: { addListener: () => undefined }
-          })
-        },
-        storage: {
-          local: {
-            get: async () => ({}),
-            set: async () => undefined
-          },
-          onChanged: {
-            addListener: () => undefined
+          windows: {
+            getCurrent: async () => ({ id: 1 })
           }
-        },
-        windows: {
-          getCurrent: async () => ({ id: 1 })
-        }
-      };
-    }, {
-      snapshot: fixtureActiveCenteredSnapshot(TAB_COUNT, ACTIVE_TAB_ID)
-    });
+        };
+      },
+      {
+        snapshot: fixtureActiveCenteredSnapshot(TAB_COUNT, ACTIVE_TAB_ID)
+      }
+    );
 
     await page.goto("/sidebar/sidebar.html");
     await expect(page.locator(`.node[data-node-id='${TARGET_NODE_ID}'].is-active`)).toBeVisible();
@@ -71,9 +81,12 @@ test.describe("sidebar startup interaction profile", () => {
       const snapshot = await window.tabsOutlinerProfile?.snapshot();
       const summary = await window.tabsOutlinerProfile?.summary();
       const entries = snapshot?.sidebar.entries ?? [];
-      const messages = (window as typeof window & { __sidebarBootMessages?: Array<{ type: string; at: number }> })
-        .__sidebarBootMessages ?? [];
-      const target = document.querySelector<HTMLElement>(`.node[data-node-id="${CSS.escape(targetNodeId)}"]`);
+      const messages =
+        (window as typeof window & { __sidebarBootMessages?: Array<{ type: string; at: number }> })
+          .__sidebarBootMessages ?? [];
+      const target = document.querySelector<HTMLElement>(
+        `.node[data-node-id="${CSS.escape(targetNodeId)}"]`
+      );
       const tree = document.querySelector<HTMLElement>("#tree");
       const viewport = document.querySelector<HTMLElement>("main");
       const renderedRows = document.querySelectorAll(".node").length;
@@ -86,13 +99,19 @@ test.describe("sidebar startup interaction profile", () => {
         scrollTop: viewport?.scrollTop ?? 0,
         renderedRows,
         actionButtons,
-        initialSnapshotRequests: messages.filter((message) => message.type === "getInitialTreeSnapshot").length,
+        initialSnapshotRequests: messages.filter(
+          (message) => message.type === "getInitialTreeSnapshot"
+        ).length,
         hydrationRequests: messages.filter((message) => message.type === "getState").length,
-        initialSnapshotRender: summary?.find((row) => row.name === "sidebar.render.initialSnapshot"),
-        initialSnapshotEntries: entries.filter((entry) => entry.name === "sidebar.render.initialSnapshot").map((entry) => ({
-          durationMs: entry.durationMs,
-          detail: entry.detail
-        }))
+        initialSnapshotRender: summary?.find(
+          (row) => row.name === "sidebar.render.initialSnapshot"
+        ),
+        initialSnapshotEntries: entries
+          .filter((entry) => entry.name === "sidebar.render.initialSnapshot")
+          .map((entry) => ({
+            durationMs: entry.durationMs,
+            detail: entry.detail
+          }))
       };
     }, TARGET_NODE_ID);
 
@@ -113,54 +132,62 @@ test.describe("sidebar startup interaction profile", () => {
   test("profiles hover feedback against a sparse startup snapshot", async ({ page }, testInfo) => {
     const issues = collectPageIssues(page);
 
-    await page.addInitScript(({ snapshot }) => {
-      const messages: Array<{ type: string; at: number }> = [];
-      (window as typeof window & { __sidebarBootMessages?: typeof messages }).__sidebarBootMessages = messages;
-      window.browser = {
-        runtime: {
-          sendMessage: async (message: unknown) => {
-            const type = typeof message === "object" && message ? String((message as { type?: unknown }).type) : "";
-            messages.push({ type, at: performance.now() });
-            if (type === "getInitialTreeSnapshot") {
-              return structuredClone(snapshot);
-            }
-            if (type === "getState") {
-              return new Promise(() => undefined);
-            }
-            if (
-              type === "getDiagnostics" ||
-              type === "getPerformanceTrace" ||
-              type === "setPerformanceTraceEnabled" ||
-              type === "clearPerformanceTrace"
-            ) {
-              return undefined;
-            }
-            return { ok: true };
+    await page.addInitScript(
+      ({ snapshot }) => {
+        const messages: Array<{ type: string; at: number }> = [];
+        (
+          window as typeof window & { __sidebarBootMessages?: typeof messages }
+        ).__sidebarBootMessages = messages;
+        window.browser = {
+          runtime: {
+            sendMessage: async (message: unknown) => {
+              const type =
+                typeof message === "object" && message
+                  ? String((message as { type?: unknown }).type)
+                  : "";
+              messages.push({ type, at: performance.now() });
+              if (type === "getInitialTreeSnapshot") {
+                return structuredClone(snapshot);
+              }
+              if (type === "getState") {
+                return new Promise(() => undefined);
+              }
+              if (
+                type === "getDiagnostics" ||
+                type === "getPerformanceTrace" ||
+                type === "setPerformanceTraceEnabled" ||
+                type === "clearPerformanceTrace"
+              ) {
+                return undefined;
+              }
+              return { ok: true };
+            },
+            onMessage: {
+              addListener: () => undefined
+            },
+            connect: () => ({
+              onMessage: { addListener: () => undefined },
+              onDisconnect: { addListener: () => undefined }
+            })
           },
-          onMessage: {
-            addListener: () => undefined
+          storage: {
+            local: {
+              get: async () => ({}),
+              set: async () => undefined
+            },
+            onChanged: {
+              addListener: () => undefined
+            }
           },
-          connect: () => ({
-            onMessage: { addListener: () => undefined },
-            onDisconnect: { addListener: () => undefined }
-          })
-        },
-        storage: {
-          local: {
-            get: async () => ({}),
-            set: async () => undefined
-          },
-          onChanged: {
-            addListener: () => undefined
+          windows: {
+            getCurrent: async () => ({ id: 1 })
           }
-        },
-        windows: {
-          getCurrent: async () => ({ id: 1 })
-        }
-      };
-    }, {
-      snapshot: fixtureActiveCenteredSnapshot(TAB_COUNT, ACTIVE_TAB_ID)
-    });
+        };
+      },
+      {
+        snapshot: fixtureActiveCenteredSnapshot(TAB_COUNT, ACTIVE_TAB_ID)
+      }
+    );
 
     await page.goto("/sidebar/sidebar.html");
     await expect(page.locator(`.node[data-node-id='${TARGET_NODE_ID}'].is-active`)).toBeVisible();
@@ -171,18 +198,22 @@ test.describe("sidebar startup interaction profile", () => {
     });
 
     const result = await page.evaluate(async (targetNodeId) => {
-      const row = document.querySelector(`.node[data-node-id="${CSS.escape(targetNodeId)}"] > .node-row`);
+      const row = document.querySelector(
+        `.node[data-node-id="${CSS.escape(targetNodeId)}"] > .node-row`
+      );
       if (!(row instanceof HTMLElement)) {
         throw new Error(`Missing target row for ${targetNodeId}`);
       }
 
       const rect = row.getBoundingClientRect();
-      row.dispatchEvent(new PointerEvent("pointerover", {
-        bubbles: true,
-        clientX: rect.left + 20,
-        clientY: rect.top + rect.height / 2,
-        pointerType: "mouse"
-      }));
+      row.dispatchEvent(
+        new PointerEvent("pointerover", {
+          bubbles: true,
+          clientX: rect.left + 20,
+          clientY: rect.top + rect.height / 2,
+          pointerType: "mouse"
+        })
+      );
 
       await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
       await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
@@ -191,14 +222,21 @@ test.describe("sidebar startup interaction profile", () => {
       const summary = await window.tabsOutlinerProfile?.summary();
       const entries = snapshot?.sidebar.entries ?? [];
       const pointerEntries = entries.filter((entry) => entry.name === "sidebar.input.pointerDelay");
-      const hoverFeedbackEntries = entries.filter((entry) => entry.name === "sidebar.input.hoverFeedbackDelay");
-      const hoverFrameEntries = entries.filter((entry) => entry.name === "sidebar.input.hoverFrameDelay");
+      const hoverFeedbackEntries = entries.filter(
+        (entry) => entry.name === "sidebar.input.hoverFeedbackDelay"
+      );
+      const hoverFrameEntries = entries.filter(
+        (entry) => entry.name === "sidebar.input.hoverFrameDelay"
+      );
       const hoverGuideEntries = entries.filter((entry) => entry.name === "sidebar.hoverGuide");
-      const messages = (window as typeof window & { __sidebarBootMessages?: Array<{ type: string; at: number }> })
-        .__sidebarBootMessages ?? [];
+      const messages =
+        (window as typeof window & { __sidebarBootMessages?: Array<{ type: string; at: number }> })
+          .__sidebarBootMessages ?? [];
       const tree = document.querySelector<HTMLElement>("#tree");
       const viewport = document.querySelector<HTMLElement>("main");
-      const target = document.querySelector<HTMLElement>(`.node[data-node-id="${CSS.escape(targetNodeId)}"]`);
+      const target = document.querySelector<HTMLElement>(
+        `.node[data-node-id="${CSS.escape(targetNodeId)}"]`
+      );
       const actionButtonsAfterHover = target?.querySelectorAll(".node-actions .icon-button") ?? [];
       const actionButtonLabelsAfterHover = Array.from(actionButtonsAfterHover, (button) =>
         button instanceof HTMLElement ? button.ariaLabel || button.title : ""
@@ -212,9 +250,13 @@ test.describe("sidebar startup interaction profile", () => {
         actionButtonsAfterHover: actionButtonsAfterHover.length,
         actionButtonLabelsAfterHover,
         hydrationRequests: messages.filter((message) => message.type === "getState").length,
-        initialSnapshotRequests: messages.filter((message) => message.type === "getInitialTreeSnapshot").length,
+        initialSnapshotRequests: messages.filter(
+          (message) => message.type === "getInitialTreeSnapshot"
+        ).length,
         pointerOutcomes: pointerEntries.map((entry) => entry.detail?.outcome ?? "none"),
-        clearMissingRowCount: pointerEntries.filter((entry) => entry.detail?.outcome === "clear-missing-row").length,
+        clearMissingRowCount: pointerEntries.filter(
+          (entry) => entry.detail?.outcome === "clear-missing-row"
+        ).length,
         hoverFeedbackCount: hoverFeedbackEntries.length,
         hoverFrameCount: hoverFrameEntries.length,
         hoverGuideCount: hoverGuideEntries.length,
@@ -245,61 +287,71 @@ test.describe("sidebar startup interaction profile", () => {
     expect(issues).toEqual([]);
   });
 
-  test("keeps startup hover sparse without automatic full hydration", async ({ page }, testInfo) => {
+  test("keeps startup hover sparse without automatic full hydration", async ({
+    page
+  }, testInfo) => {
     test.setTimeout(90_000);
     const issues = collectPageIssues(page);
 
-    await page.addInitScript(({ snapshot, fullState }) => {
-      const messages: Array<{ type: string; at: number }> = [];
-      (window as typeof window & {
-        __sidebarBootMessages?: typeof messages;
-      }).__sidebarBootMessages = messages;
-      window.browser = {
-        runtime: {
-          sendMessage: async (message: unknown) => {
-            const type = typeof message === "object" && message ? String((message as { type?: unknown }).type) : "";
-            messages.push({ type, at: performance.now() });
-            if (type === "getInitialTreeSnapshot") {
-              return structuredClone(snapshot);
-            }
-            if (type === "getState") {
-              return structuredClone(fullState);
-            }
-            if (
-              type === "getDiagnostics" ||
-              type === "getPerformanceTrace" ||
-              type === "setPerformanceTraceEnabled" ||
-              type === "clearPerformanceTrace"
-            ) {
-              return undefined;
-            }
-            return { ok: true };
-          },
-          onMessage: {
-            addListener: () => undefined
-          },
-          connect: () => ({
-            onMessage: { addListener: () => undefined },
-            onDisconnect: { addListener: () => undefined }
-          })
-        },
-        storage: {
-          local: {
-            get: async () => ({}),
-            set: async () => undefined
-          },
-          onChanged: {
-            addListener: () => undefined
+    await page.addInitScript(
+      ({ snapshot, fullState }) => {
+        const messages: Array<{ type: string; at: number }> = [];
+        (
+          window as typeof window & {
+            __sidebarBootMessages?: typeof messages;
           }
-        },
-        windows: {
-          getCurrent: async () => ({ id: 1 })
-        }
-      };
-    }, {
-      snapshot: fixtureActiveCenteredSnapshot(TAB_COUNT, ACTIVE_TAB_ID),
-      fullState: fixtureFullState(TAB_COUNT, ACTIVE_TAB_ID)
-    });
+        ).__sidebarBootMessages = messages;
+        window.browser = {
+          runtime: {
+            sendMessage: async (message: unknown) => {
+              const type =
+                typeof message === "object" && message
+                  ? String((message as { type?: unknown }).type)
+                  : "";
+              messages.push({ type, at: performance.now() });
+              if (type === "getInitialTreeSnapshot") {
+                return structuredClone(snapshot);
+              }
+              if (type === "getState") {
+                return structuredClone(fullState);
+              }
+              if (
+                type === "getDiagnostics" ||
+                type === "getPerformanceTrace" ||
+                type === "setPerformanceTraceEnabled" ||
+                type === "clearPerformanceTrace"
+              ) {
+                return undefined;
+              }
+              return { ok: true };
+            },
+            onMessage: {
+              addListener: () => undefined
+            },
+            connect: () => ({
+              onMessage: { addListener: () => undefined },
+              onDisconnect: { addListener: () => undefined }
+            })
+          },
+          storage: {
+            local: {
+              get: async () => ({}),
+              set: async () => undefined
+            },
+            onChanged: {
+              addListener: () => undefined
+            }
+          },
+          windows: {
+            getCurrent: async () => ({ id: 1 })
+          }
+        };
+      },
+      {
+        snapshot: fixtureActiveCenteredSnapshot(TAB_COUNT, ACTIVE_TAB_ID),
+        fullState: fixtureFullState(TAB_COUNT, ACTIVE_TAB_ID)
+      }
+    );
 
     await page.goto("/sidebar/sidebar.html");
     await expect(page.locator(`.node[data-node-id='${TARGET_NODE_ID}'].is-active`)).toBeVisible();
@@ -310,18 +362,22 @@ test.describe("sidebar startup interaction profile", () => {
     });
 
     const result = await page.evaluate(async (targetNodeId) => {
-      const row = document.querySelector(`.node[data-node-id="${CSS.escape(targetNodeId)}"] > .node-row`);
+      const row = document.querySelector(
+        `.node[data-node-id="${CSS.escape(targetNodeId)}"] > .node-row`
+      );
       if (!(row instanceof HTMLElement)) {
         throw new Error(`Missing target row for ${targetNodeId}`);
       }
 
       const rect = row.getBoundingClientRect();
-      row.dispatchEvent(new PointerEvent("pointerover", {
-        bubbles: true,
-        clientX: rect.left + 20,
-        clientY: rect.top + rect.height / 2,
-        pointerType: "mouse"
-      }));
+      row.dispatchEvent(
+        new PointerEvent("pointerover", {
+          bubbles: true,
+          clientX: rect.left + 20,
+          clientY: rect.top + rect.height / 2,
+          pointerType: "mouse"
+        })
+      );
       await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
       await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
       await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
@@ -329,7 +385,9 @@ test.describe("sidebar startup interaction profile", () => {
         `.node[data-node-id="${CSS.escape(targetNodeId)}"] > .node-row`
       );
       const actionStripAfterHover = rowAfterHover?.querySelector<HTMLElement>(".node-actions");
-      const closeButtonAfterHover = rowAfterHover?.querySelector<HTMLElement>('[data-action="close-node"]');
+      const closeButtonAfterHover = rowAfterHover?.querySelector<HTMLElement>(
+        '[data-action="close-node"]'
+      );
       const tree = document.querySelector("#tree");
       const detachCounts = {
         row: 0,
@@ -345,10 +403,16 @@ test.describe("sidebar startup interaction profile", () => {
             if (rowAfterHover && (node === rowAfterHover || node.contains(rowAfterHover))) {
               detachCounts.row += 1;
             }
-            if (actionStripAfterHover && (node === actionStripAfterHover || node.contains(actionStripAfterHover))) {
+            if (
+              actionStripAfterHover &&
+              (node === actionStripAfterHover || node.contains(actionStripAfterHover))
+            ) {
               detachCounts.actionStrip += 1;
             }
-            if (closeButtonAfterHover && (node === closeButtonAfterHover || node.contains(closeButtonAfterHover))) {
+            if (
+              closeButtonAfterHover &&
+              (node === closeButtonAfterHover || node.contains(closeButtonAfterHover))
+            ) {
               detachCounts.closeButton += 1;
             }
           }
@@ -359,19 +423,27 @@ test.describe("sidebar startup interaction profile", () => {
       }
       await new Promise<void>((resolve) => window.setTimeout(resolve, 900));
 
-      const messages = (window as typeof window & { __sidebarBootMessages?: Array<{ type: string; at: number }> })
-        .__sidebarBootMessages ?? [];
-      const hydrationRequestsBeforeIdle = messages.filter((message) => message.type === "getState").length;
+      const messages =
+        (window as typeof window & { __sidebarBootMessages?: Array<{ type: string; at: number }> })
+          .__sidebarBootMessages ?? [];
+      const hydrationRequestsBeforeIdle = messages.filter(
+        (message) => message.type === "getState"
+      ).length;
       await new Promise<void>((resolve) => window.setTimeout(resolve, 600));
-      const messagesAfterIdle = (window as typeof window & { __sidebarBootMessages?: Array<{ type: string; at: number }> })
-        .__sidebarBootMessages ?? [];
+      const messagesAfterIdle =
+        (window as typeof window & { __sidebarBootMessages?: Array<{ type: string; at: number }> })
+          .__sidebarBootMessages ?? [];
       const snapshot = await window.tabsOutlinerProfile?.snapshot();
       const summary = await window.tabsOutlinerProfile?.summary();
       const entries = snapshot?.sidebar.entries ?? [];
-      const target = document.querySelector<HTMLElement>(`.node[data-node-id="${CSS.escape(targetNodeId)}"]`);
+      const target = document.querySelector<HTMLElement>(
+        `.node[data-node-id="${CSS.escape(targetNodeId)}"]`
+      );
       const rowAfterIdle = target?.querySelector<HTMLElement>(":scope > .node-row");
       const actionStripAfterIdle = rowAfterIdle?.querySelector<HTMLElement>(".node-actions");
-      const closeButtonAfterIdle = rowAfterIdle?.querySelector<HTMLElement>('[data-action="close-node"]');
+      const closeButtonAfterIdle = rowAfterIdle?.querySelector<HTMLElement>(
+        '[data-action="close-node"]'
+      );
       const actionButtonsAfterIdle = target?.querySelectorAll(".node-actions .icon-button") ?? [];
       const actionButtonLabelsAfterIdle = Array.from(actionButtonsAfterIdle, (button) =>
         button instanceof HTMLElement ? button.ariaLabel || button.title : ""
@@ -390,12 +462,18 @@ test.describe("sidebar startup interaction profile", () => {
         closeButtonPreservedAcrossIdle: closeButtonAfterHover === closeButtonAfterIdle,
         detachedAfterHover: detachCounts,
         hydrationRequestsBeforeIdle,
-        hydrationRequestsAfterIdle: messagesAfterIdle.filter((message) => message.type === "getState").length,
-        pointerEntries: entries.filter((entry) => entry.name === "sidebar.input.pointerDelay").map((entry) => entry.detail),
-        hoverFrameEntries: entries.filter((entry) => entry.name === "sidebar.input.hoverFrameDelay").map((entry) => ({
-          durationMs: entry.durationMs,
-          detail: entry.detail
-        }))
+        hydrationRequestsAfterIdle: messagesAfterIdle.filter(
+          (message) => message.type === "getState"
+        ).length,
+        pointerEntries: entries
+          .filter((entry) => entry.name === "sidebar.input.pointerDelay")
+          .map((entry) => entry.detail),
+        hoverFrameEntries: entries
+          .filter((entry) => entry.name === "sidebar.input.hoverFrameDelay")
+          .map((entry) => ({
+            durationMs: entry.durationMs,
+            detail: entry.detail
+          }))
       };
     }, TARGET_NODE_ID);
 
@@ -422,80 +500,88 @@ test.describe("sidebar startup interaction profile", () => {
   test("allows closing a covered visible row while the sidebar is sparse", async ({ page }) => {
     const issues = collectPageIssues(page);
 
-    await page.addInitScript(({ snapshot, targetNodeId }) => {
-      const messages: unknown[] = [];
-      const listeners: Array<(message: unknown) => void> = [];
-      (window as typeof window & { __sidebarBootMessages?: typeof messages }).__sidebarBootMessages = messages;
-      window.browser = {
-        runtime: {
-          sendMessage: async (message: unknown) => {
-            messages.push(structuredClone(message));
-            const type = typeof message === "object" && message ? String((message as { type?: unknown }).type) : "";
-            if (type === "getInitialTreeSnapshot") {
-              return structuredClone(snapshot);
-            }
-            if (type === "getState") {
-              return new Promise(() => undefined);
-            }
-            if (type === "closeNode") {
-              const node = structuredClone(snapshot.state.nodes[targetNodeId]);
-              delete node.live;
-              node.status = "closed";
-              node.active = false;
-              node.closedAt = 1_700_000_001_000;
-              node.restore = {
-                url: node.url,
-                title: node.title,
-                favIconUrl: node.favIconUrl
-              };
-              window.setTimeout(() => {
-                for (const listener of listeners) {
-                  listener({
-                    type: "nodeStateUpdated",
-                    updatedNodes: [node],
-                    closedCountDelta: 1
-                  });
-                }
-              }, 0);
-              return { type: "commandAck", stateChanged: true };
-            }
-            if (
-              type === "getDiagnostics" ||
-              type === "getPerformanceTrace" ||
-              type === "setPerformanceTraceEnabled" ||
-              type === "clearPerformanceTrace"
-            ) {
-              return undefined;
-            }
-            return { type: "commandAck", stateChanged: false };
+    await page.addInitScript(
+      ({ snapshot, targetNodeId }) => {
+        const messages: unknown[] = [];
+        const listeners: Array<(message: unknown) => void> = [];
+        (
+          window as typeof window & { __sidebarBootMessages?: typeof messages }
+        ).__sidebarBootMessages = messages;
+        window.browser = {
+          runtime: {
+            sendMessage: async (message: unknown) => {
+              messages.push(structuredClone(message));
+              const type =
+                typeof message === "object" && message
+                  ? String((message as { type?: unknown }).type)
+                  : "";
+              if (type === "getInitialTreeSnapshot") {
+                return structuredClone(snapshot);
+              }
+              if (type === "getState") {
+                return new Promise(() => undefined);
+              }
+              if (type === "closeNode") {
+                const node = structuredClone(snapshot.state.nodes[targetNodeId]);
+                delete node.live;
+                node.status = "closed";
+                node.active = false;
+                node.closedAt = 1_700_000_001_000;
+                node.restore = {
+                  url: node.url,
+                  title: node.title,
+                  favIconUrl: node.favIconUrl
+                };
+                window.setTimeout(() => {
+                  for (const listener of listeners) {
+                    listener({
+                      type: "nodeStateUpdated",
+                      updatedNodes: [node],
+                      closedCountDelta: 1
+                    });
+                  }
+                }, 0);
+                return { type: "commandAck", stateChanged: true };
+              }
+              if (
+                type === "getDiagnostics" ||
+                type === "getPerformanceTrace" ||
+                type === "setPerformanceTraceEnabled" ||
+                type === "clearPerformanceTrace"
+              ) {
+                return undefined;
+              }
+              return { type: "commandAck", stateChanged: false };
+            },
+            onMessage: {
+              addListener: (listener: (message: unknown) => void) => {
+                listeners.push(listener);
+              }
+            },
+            connect: () => ({
+              onMessage: { addListener: () => undefined },
+              onDisconnect: { addListener: () => undefined }
+            })
           },
-          onMessage: {
-            addListener: (listener: (message: unknown) => void) => {
-              listeners.push(listener);
+          storage: {
+            local: {
+              get: async () => ({}),
+              set: async () => undefined
+            },
+            onChanged: {
+              addListener: () => undefined
             }
           },
-          connect: () => ({
-            onMessage: { addListener: () => undefined },
-            onDisconnect: { addListener: () => undefined }
-          })
-        },
-        storage: {
-          local: {
-            get: async () => ({}),
-            set: async () => undefined
-          },
-          onChanged: {
-            addListener: () => undefined
+          windows: {
+            getCurrent: async () => ({ id: 1 })
           }
-        },
-        windows: {
-          getCurrent: async () => ({ id: 1 })
-        }
-      };
-    }, {
-      snapshot: fixtureActiveCenteredSnapshot(TAB_COUNT, ACTIVE_TAB_ID),
-      targetNodeId: TARGET_NODE_ID
-    });
+        };
+      },
+      {
+        snapshot: fixtureActiveCenteredSnapshot(TAB_COUNT, ACTIVE_TAB_ID),
+        targetNodeId: TARGET_NODE_ID
+      }
+    );
 
     await page.goto("/sidebar/sidebar.html");
     const target = page.locator(`.node[data-node-id='${TARGET_NODE_ID}']`);
@@ -506,91 +592,112 @@ test.describe("sidebar startup interaction profile", () => {
     await expect(target).toHaveClass(/is-closed/);
     await expect(target.getByRole("button", { name: "Close", exact: true })).toHaveCount(0);
     const messages = await page.evaluate(() =>
-      ((window as typeof window & { __sidebarBootMessages?: unknown[] }).__sidebarBootMessages ?? [])
-        .filter((message) => typeof message === "object" && message && (message as { type?: unknown }).type === "closeNode")
+      (
+        (window as typeof window & { __sidebarBootMessages?: unknown[] }).__sidebarBootMessages ??
+        []
+      ).filter(
+        (message) =>
+          typeof message === "object" &&
+          message &&
+          (message as { type?: unknown }).type === "closeNode"
+      )
     );
     expect(messages).toEqual([{ type: "closeNode", nodeId: TARGET_NODE_ID }]);
     expect(issues).toEqual([]);
   });
 
-  test("keeps sibling sidebar sparse after another sidebar reports interaction", async ({ page }, testInfo) => {
+  test("keeps sibling sidebar sparse after another sidebar reports interaction", async ({
+    page
+  }, testInfo) => {
     const issues = collectPageIssues(page);
 
-    await page.addInitScript(({ snapshot, fullState }) => {
-      const messages: Array<{ type: string; at: number }> = [];
-      const portListeners: Array<(message: unknown) => void> = [];
-      Object.assign(window as typeof window & {
-        __sidebarBootMessages?: typeof messages;
-        __remoteSidebarInteractionAt?: number;
-      }, {
-        __sidebarBootMessages: messages
-      });
-
-      function emitRemoteSidebarInteraction(): void {
-        (window as typeof window & { __remoteSidebarInteractionAt?: number }).__remoteSidebarInteractionAt =
-          performance.now();
-        for (const listener of portListeners) {
-          listener({ type: "sidebarNonEditInteraction" });
-        }
-      }
-
-      window.browser = {
-        runtime: {
-          sendMessage: async (message: unknown) => {
-            const type = typeof message === "object" && message ? String((message as { type?: unknown }).type) : "";
-            messages.push({ type, at: performance.now() });
-            if (type === "getInitialTreeSnapshot") {
-              window.setTimeout(emitRemoteSidebarInteraction, 50);
-              return structuredClone(snapshot);
-            }
-            if (type === "getState") {
-              return structuredClone(fullState);
-            }
-            if (
-              type === "getDiagnostics" ||
-              type === "getPerformanceTrace" ||
-              type === "setPerformanceTraceEnabled" ||
-              type === "clearPerformanceTrace"
-            ) {
-              return undefined;
-            }
-            return { ok: true };
+    await page.addInitScript(
+      ({ snapshot, fullState }) => {
+        const messages: Array<{ type: string; at: number }> = [];
+        const portListeners: Array<(message: unknown) => void> = [];
+        Object.assign(
+          window as typeof window & {
+            __sidebarBootMessages?: typeof messages;
+            __remoteSidebarInteractionAt?: number;
           },
-          onMessage: {
-            addListener: () => undefined
-          },
-          connect: () => ({
-            onMessage: {
-              addListener: (listener: (message: unknown) => void) => {
-                portListeners.push(listener);
-              }
-            },
-            onDisconnect: { addListener: () => undefined }
-          })
-        },
-        storage: {
-          local: {
-            get: async () => ({}),
-            set: async () => undefined
-          },
-          onChanged: {
-            addListener: () => undefined
+          {
+            __sidebarBootMessages: messages
           }
-        },
-        windows: {
-          getCurrent: async () => ({ id: 1 })
+        );
+
+        function emitRemoteSidebarInteraction(): void {
+          (
+            window as typeof window & { __remoteSidebarInteractionAt?: number }
+          ).__remoteSidebarInteractionAt = performance.now();
+          for (const listener of portListeners) {
+            listener({ type: "sidebarNonEditInteraction" });
+          }
         }
-      };
-    }, {
-      snapshot: fixtureActiveCenteredSnapshot(TAB_COUNT, ACTIVE_TAB_ID),
-      fullState: fixtureFullState(TAB_COUNT, ACTIVE_TAB_ID)
-    });
+
+        window.browser = {
+          runtime: {
+            sendMessage: async (message: unknown) => {
+              const type =
+                typeof message === "object" && message
+                  ? String((message as { type?: unknown }).type)
+                  : "";
+              messages.push({ type, at: performance.now() });
+              if (type === "getInitialTreeSnapshot") {
+                window.setTimeout(emitRemoteSidebarInteraction, 50);
+                return structuredClone(snapshot);
+              }
+              if (type === "getState") {
+                return structuredClone(fullState);
+              }
+              if (
+                type === "getDiagnostics" ||
+                type === "getPerformanceTrace" ||
+                type === "setPerformanceTraceEnabled" ||
+                type === "clearPerformanceTrace"
+              ) {
+                return undefined;
+              }
+              return { ok: true };
+            },
+            onMessage: {
+              addListener: () => undefined
+            },
+            connect: () => ({
+              onMessage: {
+                addListener: (listener: (message: unknown) => void) => {
+                  portListeners.push(listener);
+                }
+              },
+              onDisconnect: { addListener: () => undefined }
+            })
+          },
+          storage: {
+            local: {
+              get: async () => ({}),
+              set: async () => undefined
+            },
+            onChanged: {
+              addListener: () => undefined
+            }
+          },
+          windows: {
+            getCurrent: async () => ({ id: 1 })
+          }
+        };
+      },
+      {
+        snapshot: fixtureActiveCenteredSnapshot(TAB_COUNT, ACTIVE_TAB_ID),
+        fullState: fixtureFullState(TAB_COUNT, ACTIVE_TAB_ID)
+      }
+    );
 
     await page.goto("/sidebar/sidebar.html");
     await expect(page.locator(`.node[data-node-id='${TARGET_NODE_ID}'].is-active`)).toBeVisible();
     await page.waitForFunction(() => {
-      return typeof (window as typeof window & { __remoteSidebarInteractionAt?: number }).__remoteSidebarInteractionAt ===
-        "number";
+      return (
+        typeof (window as typeof window & { __remoteSidebarInteractionAt?: number })
+          .__remoteSidebarInteractionAt === "number"
+      );
     });
 
     const result = await page.evaluate(async () => {
@@ -600,11 +707,15 @@ test.describe("sidebar startup interaction profile", () => {
       };
       const remoteInteractionAt = state.__remoteSidebarInteractionAt ?? performance.now();
       const waitUntil = (targetTime: number) =>
-        new Promise<void>((resolve) => window.setTimeout(resolve, Math.max(0, targetTime - performance.now())));
+        new Promise<void>((resolve) =>
+          window.setTimeout(resolve, Math.max(0, targetTime - performance.now()))
+        );
 
       await waitUntil(remoteInteractionAt + 900);
       const messagesBeforeIdle = state.__sidebarBootMessages ?? [];
-      const hydrationRequestsBeforeIdle = messagesBeforeIdle.filter((message) => message.type === "getState").length;
+      const hydrationRequestsBeforeIdle = messagesBeforeIdle.filter(
+        (message) => message.type === "getState"
+      ).length;
 
       await waitUntil(remoteInteractionAt + 1250);
       const messagesAfterIdle = state.__sidebarBootMessages ?? [];
@@ -614,7 +725,9 @@ test.describe("sidebar startup interaction profile", () => {
         remoteInteractionAt,
         firstHydrationAt,
         hydrationRequestsBeforeIdle,
-        hydrationRequestsAfterIdle: messagesAfterIdle.filter((message) => message.type === "getState").length
+        hydrationRequestsAfterIdle: messagesAfterIdle.filter(
+          (message) => message.type === "getState"
+        ).length
       };
     });
 
@@ -705,7 +818,9 @@ function fixtureActiveCenteredSnapshot(tabCount: number, activeTabId: number) {
   };
 }
 
-function fixtureCoverageForRows(rows: Array<{ nodeId: string; index: number; subtreeEndIndex: number }>) {
+function fixtureCoverageForRows(
+  rows: Array<{ nodeId: string; index: number; subtreeEndIndex: number }>
+) {
   const startRowIndex = rows[0]?.index ?? 0;
   const endRowIndex = rows.length > 0 ? (rows.at(-1)?.index ?? startRowIndex) + 1 : startRowIndex;
   return {
@@ -772,20 +887,30 @@ function collectPageIssues(page: Page): ConsoleIssue[] {
     issues.push({ kind: "pageerror", text: error.message });
   });
   page.on("requestfailed", (request) => {
-    issues.push({ kind: "requestfailed", text: `${request.url()} ${request.failure()?.errorText ?? ""}` });
+    issues.push({
+      kind: "requestfailed",
+      text: `${request.url()} ${request.failure()?.errorText ?? ""}`
+    });
   });
   return issues;
 }
 
 async function waitForProfileSummaryRow(page: Page, rowName: string): Promise<void> {
-  await expect.poll(async () => page.evaluate(async (name) => {
-    const summary = await window.tabsOutlinerProfile?.summary();
-    return summary?.some((row) =>
-      row.name === name &&
-      typeof row.maxMs === "number" &&
-      Number.isFinite(row.maxMs)
-    ) ?? false;
-  }, rowName), {
-    message: `profile summary should include ${rowName}`
-  }).toBe(true);
+  await expect
+    .poll(
+      async () =>
+        page.evaluate(async (name) => {
+          const summary = await window.tabsOutlinerProfile?.summary();
+          return (
+            summary?.some(
+              (row) =>
+                row.name === name && typeof row.maxMs === "number" && Number.isFinite(row.maxMs)
+            ) ?? false
+          );
+        }, rowName),
+      {
+        message: `profile summary should include ${rowName}`
+      }
+    )
+    .toBe(true);
 }

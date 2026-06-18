@@ -18,11 +18,14 @@ it when you improve a metric; raise it only as a deliberate, reviewed acknowledg
 | Doc citation integrity | valid | `INVARIANTS.md` cites only files that exist | `src/test/doc-freshness.test.ts` |
 | Knowledge-base index | complete | every tracked doc is in `REPO_MAP.md` | `scripts/check-docs-index.mjs` |
 | Lint (ESLint, type-aware) | clean | `pnpm lint` green: async-safety (`no-floating-promises`/`no-misused-promises`), exhaustiveness, type-only imports, unused-vars, no-`any` | `eslint.config.js` (folded into `check`) |
+| Formatting (Prettier) | clean | `pnpm format:check` green; one-time `prettier --write` reformat applied (recorded in `.git-blame-ignore-revs`) | `.prettierrc.json` (folded into `check`) |
 
 Large production files (grandfathered into `allowedLargeFiles`; trending down via
 decomposition — see [controller map](controller-factory-map.md) and
 [sidebar map](sidebar-map.md)): `background/controller.ts`, `sidebar/sidebar.ts`,
-`model/outline.ts`, `background/runtime-facts.ts`, `background/commands.ts`.
+`model/outline.ts`, `background/runtime-facts.ts`, `background/commands.ts`, and
+`sidebar/visible-tree.ts` (the last crossed the 1500-line threshold via the one-time
+Prettier reformat's line-wrapping, not new logic).
 
 ## Paying down
 

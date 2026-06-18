@@ -2,7 +2,9 @@ import type { RuntimeTab, RuntimeWindow } from "../model/types.js";
 
 type RuntimeSnapshotApi = Pick<WebExtensionBrowser, "tabs" | "windows">;
 
-export async function getNormalWindows(api: RuntimeSnapshotApi = browser): Promise<RuntimeWindow[]> {
+export async function getNormalWindows(
+  api: RuntimeSnapshotApi = browser
+): Promise<RuntimeWindow[]> {
   const windows = await api.windows.getAll({
     populate: false,
     windowTypes: ["normal"]
@@ -75,11 +77,16 @@ function windowWithTabId(windows: RuntimeWindow[], tabId: number): RuntimeWindow
   return windows.find((windowInfo) => windowInfo.tabs?.some((candidate) => candidate.id === tabId));
 }
 
-export async function getNormalWindow(api: RuntimeSnapshotApi, windowId: number): Promise<RuntimeWindow | undefined> {
-  const windowInfo = await api.windows.get(windowId, {
-    populate: false,
-    windowTypes: ["normal"]
-  }).catch(() => undefined);
+export async function getNormalWindow(
+  api: RuntimeSnapshotApi,
+  windowId: number
+): Promise<RuntimeWindow | undefined> {
+  const windowInfo = await api.windows
+    .get(windowId, {
+      populate: false,
+      windowTypes: ["normal"]
+    })
+    .catch(() => undefined);
   if (!windowInfo || windowInfo.incognito) {
     return undefined;
   }

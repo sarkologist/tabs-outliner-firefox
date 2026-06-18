@@ -21,7 +21,7 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../
 
 describe("runtime perf guard", () => {
   it("parses JSON profile output after pnpm command noise", () => {
-    expect(parseProfileJson("> profile\n{\"totalMeasuredMs\":12,\"saves\":1}\n")).toEqual({
+    expect(parseProfileJson('> profile\n{"totalMeasuredMs":12,"saves":1}\n')).toEqual({
       totalMeasuredMs: 12,
       saves: 1
     });
@@ -35,8 +35,12 @@ describe("runtime perf guard", () => {
       ]
     };
 
-    expect(selectScenarios(config, { tags: "journal" }).map((scenario: { id: string }) => scenario.id)).toEqual(["close"]);
-    expect(selectScenarios(config, { scenarios: "focus" }).map((scenario: { id: string }) => scenario.id)).toEqual(["focus"]);
+    expect(
+      selectScenarios(config, { tags: "journal" }).map((scenario: { id: string }) => scenario.id)
+    ).toEqual(["close"]);
+    expect(
+      selectScenarios(config, { scenarios: "focus" }).map((scenario: { id: string }) => scenario.id)
+    ).toEqual(["focus"]);
   });
 
   it("fails hard counters and allows timing tolerance", () => {
@@ -62,7 +66,10 @@ describe("runtime perf guard", () => {
 
     expect(pass.passed).toBe(true);
     expect(fail.passed).toBe(false);
-    expect(fail.failures.map((failure: { metric: string }) => failure.metric)).toEqual(["totalMeasuredMs", "saves"]);
+    expect(fail.failures.map((failure: { metric: string }) => failure.metric)).toEqual([
+      "totalMeasuredMs",
+      "saves"
+    ]);
   });
 
   it("treats timing failures as report-only in hard-only mode while hard counters still fail", () => {
@@ -78,16 +85,24 @@ describe("runtime perf guard", () => {
     const hardFailure = evaluateProfileResult(scenario, { totalMeasuredMs: 500, saves: 2 });
 
     // Hard-only semantics (CI): a scenario passes when its only failures are timing.
-    expect(timingOnly.failures.every((failure: { reason: string }) => failure.reason === "timing")).toBe(true);
-    expect(hardFailure.failures.some((failure: { reason: string }) => failure.reason === "hard-max")).toBe(true);
+    expect(
+      timingOnly.failures.every((failure: { reason: string }) => failure.reason === "timing")
+    ).toBe(true);
+    expect(
+      hardFailure.failures.some((failure: { reason: string }) => failure.reason === "hard-max")
+    ).toBe(true);
   });
 
   it("runs a smoke guard against a fixture command", () => {
     const budget = path.join(repoRoot, "src/perf/fixtures/runtime-perf-budget-smoke.json");
-    const result = spawnSync("node", ["scripts/perf-runtime-guard.mjs", "--budget", budget, "--json"], {
-      cwd: repoRoot,
-      encoding: "utf8"
-    });
+    const result = spawnSync(
+      "node",
+      ["scripts/perf-runtime-guard.mjs", "--budget", budget, "--json"],
+      {
+        cwd: repoRoot,
+        encoding: "utf8"
+      }
+    );
 
     expect(result.status).toBe(0);
     const summary = JSON.parse(result.stdout);
@@ -152,6 +167,8 @@ describe("profile export analysis", () => {
     });
     expect(STARTUP_STORAGE_FANOUT_TSV_HEADER).toContain("node_shard_read_max_ms");
     expect(row).toContain("20260526-storage");
-    expect(row).toContain("\t410\t310\t200\t256\t80\t7062\t350\t350\t360\t330\t410\t220\t1\tfixture");
+    expect(row).toContain(
+      "\t410\t310\t200\t256\t80\t7062\t350\t350\t360\t330\t410\t220\t1\tfixture"
+    );
   });
 });

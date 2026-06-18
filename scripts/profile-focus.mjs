@@ -145,7 +145,7 @@ function makeRuntime(tabCount) {
     },
     storage: {
       local: {
-        get: async (key) => typeof key === "string" ? { [key]: undefined } : {},
+        get: async (key) => (typeof key === "string" ? { [key]: undefined } : {}),
         set: async (items) => {
           recordProfileStorageSet(runtime, items, measure);
         },
@@ -181,11 +181,15 @@ function makeRuntime(tabCount) {
         if (!tab) {
           throw new Error(`Missing tab ${tabId}`);
         }
-        const previous = runtime.tabs.find((candidate) => candidate.windowId === tab.windowId && candidate.active);
+        const previous = runtime.tabs.find(
+          (candidate) => candidate.windowId === tab.windowId && candidate.active
+        );
         if (updateProperties.active) {
-          runtime.tabs = runtime.tabs.map((candidate) => candidate.windowId === tab.windowId
-            ? { ...candidate, active: candidate.id === tabId }
-            : { ...candidate });
+          runtime.tabs = runtime.tabs.map((candidate) =>
+            candidate.windowId === tab.windowId
+              ? { ...candidate, active: candidate.id === tabId }
+              : { ...candidate }
+          );
           runtime.events.tabActivated.dispatch({
             tabId,
             windowId: tab.windowId,
@@ -269,7 +273,8 @@ function refreshProjectionActiveWindowFlags(state, projection) {
     const parentInsideActiveWindow = row.depth > 0 ? activeByDepth[row.depth - 1] === true : false;
     const node = state.nodes[row.nodeId];
     row.insideActiveWindow = parentInsideActiveWindow;
-    activeByDepth[row.depth] = parentInsideActiveWindow || Boolean(node?.kind === "window" && node.active);
+    activeByDepth[row.depth] =
+      parentInsideActiveWindow || Boolean(node?.kind === "window" && node.active);
   }
 }
 
@@ -281,9 +286,10 @@ async function profile(options) {
   runtime.sidebarState = await controller.handleMessage({ type: "getState" });
   runtime.sidebarProjection = buildVisibleTreeProjection(runtime.sidebarState, "");
   await settleProfileBackgroundWork();
-  const tabIds = options.scenario === "successive-command-event-echo"
-    ? successiveTabIds(options.tabs, options.count)
-    : [targetTabId(options.tabs, options.target)];
+  const tabIds =
+    options.scenario === "successive-command-event-echo"
+      ? successiveTabIds(options.tabs, options.count)
+      : [targetTabId(options.tabs, options.target)];
   const nodeIds = tabIds.map((tabId) => `tab:${tabId}`);
 
   resetStorageMetrics(runtime);
@@ -299,7 +305,9 @@ async function profile(options) {
   let eventEchoMs = 0;
   let lastAck;
   for (const nodeId of nodeIds) {
-    const command = await measureAsync(() => controller.handleMessage({ type: "focusNode", nodeId }));
+    const command = await measureAsync(() =>
+      controller.handleMessage({ type: "focusNode", nodeId })
+    );
     const eventEcho = await measureAsync(() => flushProfileEvents(runtime.events));
     commandMs += command.ms;
     eventEchoMs += eventEcho.ms;

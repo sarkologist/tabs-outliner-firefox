@@ -1,8 +1,4 @@
-import {
-  HISTORY_KEY,
-  STATE_KEY,
-  outlineBootSnapshotItem
-} from "./storage.js";
+import { HISTORY_KEY, STATE_KEY, outlineBootSnapshotItem } from "./storage.js";
 import {
   STATE_V4_MANIFEST_A_KEY,
   STATE_V4_MANIFEST_B_KEY,
@@ -234,9 +230,12 @@ export function createPersistenceCoordinator(deps: PersistenceCoordinatorDeps) {
     if (saveMaxTimer !== undefined) {
       globalThis.clearTimeout(saveMaxTimer);
     }
-    saveMaxTimer = globalThis.setTimeout(() => {
-      void flushScheduledSave();
-    }, Math.max(0, pendingSaveBatchStartedAt + pendingSaveMaxDelayMs - scheduledAt));
+    saveMaxTimer = globalThis.setTimeout(
+      () => {
+        void flushScheduledSave();
+      },
+      Math.max(0, pendingSaveBatchStartedAt + pendingSaveMaxDelayMs - scheduledAt)
+    );
   }
 
   async function flushPendingSaves(): Promise<void> {
@@ -333,7 +332,10 @@ export function createPersistenceCoordinator(deps: PersistenceCoordinatorDeps) {
     schedulePendingSave(schedule ?? "normal");
   }
 
-  function saveScheduleTiming(schedule: SaveSchedule): { quietDelayMs: number; maxDelayMs: number } {
+  function saveScheduleTiming(schedule: SaveSchedule): {
+    quietDelayMs: number;
+    maxDelayMs: number;
+  } {
     return schedule === "interaction"
       ? {
           quietDelayMs: INTERACTION_STATE_SAVE_QUIET_DELAY_MS,
@@ -373,11 +375,13 @@ export function createPersistenceCoordinator(deps: PersistenceCoordinatorDeps) {
     // snapshot reflects every journaled delta up to the current headSeq and those entries
     // can be pruned. For an older queued snapshot, leave it unstamped (loader replays all,
     // idempotently). Captured synchronously so it pairs with nextState atomically.
-    const journalSeqIncluded = nextState && nextState === getState() ? outlineJournal?.headSeq() : undefined;
+    const journalSeqIncluded =
+      nextState && nextState === getState() ? outlineJournal?.headSeq() : undefined;
     // A compaction of the current state subsumes every queued (not yet appended) event
     // delta: their content is in the snapshot, so they are dropped on success and restored
     // on failure. Items queued during the write stay queued (they may postdate nextState).
-    const subsumedEventItems = journalSeqIncluded !== undefined ? drainPendingEventJournalItems() : [];
+    const subsumedEventItems =
+      journalSeqIncluded !== undefined ? drainPendingEventJournalItems() : [];
     try {
       await perfTrace.measureAsync("background.state.save", async () => {
         const setItems: Record<string, unknown> = {};
@@ -407,7 +411,8 @@ export function createPersistenceCoordinator(deps: PersistenceCoordinatorDeps) {
               ]);
           v4Snapshot = outlineStateV4Snapshot(nextState, {
             epoch: outlineJournal?.epoch() ?? 0,
-            journalSeqIncluded: journalSeqIncluded ?? currentV4Snapshot?.manifest.journalSeqIncluded ?? 0,
+            journalSeqIncluded:
+              journalSeqIncluded ?? currentV4Snapshot?.manifest.journalSeqIncluded ?? 0,
             savedAt: now(),
             ...(currentV4Snapshot ? { previous: currentV4Snapshot } : {}),
             // This write evicts the manifest two compactions back from its slot; only the
@@ -418,7 +423,9 @@ export function createPersistenceCoordinator(deps: PersistenceCoordinatorDeps) {
           Object.assign(setItems, v4Snapshot.setItems);
           perfTrace.mark("background.state.save.v4.compact", {
             fullCompaction,
-            dirtyShardCount: dirtyShardIndexes ? dirtyShardIndexes.size : v4Snapshot.manifest.shardGenerations.length,
+            dirtyShardCount: dirtyShardIndexes
+              ? dirtyShardIndexes.size
+              : v4Snapshot.manifest.shardGenerations.length,
             setKeys: Object.keys(v4Snapshot.setItems).length,
             removeKeys: v4Snapshot.removeKeysAfterCommit.length,
             generation: v4Snapshot.manifest.generation
@@ -452,7 +459,11 @@ export function createPersistenceCoordinator(deps: PersistenceCoordinatorDeps) {
       throw error;
     }
     saveFailureBackoffIndex = 0;
-    if (journalSeqIncluded !== undefined && outlineJournal && outlineJournal.pendingEntryCount() > 0) {
+    if (
+      journalSeqIncluded !== undefined &&
+      outlineJournal &&
+      outlineJournal.pendingEntryCount() > 0
+    ) {
       await outlineJournal.prune(journalSeqIncluded);
     }
     if (saveIncidentDetail && nextCountDetail) {
@@ -499,7 +510,10 @@ export function createPersistenceCoordinator(deps: PersistenceCoordinatorDeps) {
   }
 
   function armSaveFailureRetryTimer(): void {
-    const delayMs = SAVE_FAILURE_BACKOFF_MS[Math.min(saveFailureBackoffIndex, SAVE_FAILURE_BACKOFF_MS.length - 1)];
+    const delayMs =
+      SAVE_FAILURE_BACKOFF_MS[
+        Math.min(saveFailureBackoffIndex, SAVE_FAILURE_BACKOFF_MS.length - 1)
+      ];
     saveFailureBackoffIndex += 1;
     if (saveTimer !== undefined) {
       globalThis.clearTimeout(saveTimer);
@@ -682,9 +696,12 @@ export function createPersistenceCoordinator(deps: PersistenceCoordinatorDeps) {
       void flushEventJournalQueue();
     }, EVENT_JOURNAL_QUIET_DELAY_MS);
     if (eventJournalMaxTimer === undefined) {
-      eventJournalMaxTimer = globalThis.setTimeout(() => {
-        void flushEventJournalQueue();
-      }, Math.max(0, eventJournalBatchStartedAt + EVENT_JOURNAL_MAX_DELAY_MS - scheduledAt));
+      eventJournalMaxTimer = globalThis.setTimeout(
+        () => {
+          void flushEventJournalQueue();
+        },
+        Math.max(0, eventJournalBatchStartedAt + EVENT_JOURNAL_MAX_DELAY_MS - scheduledAt)
+      );
     }
   }
 
@@ -724,8 +741,10 @@ export function createPersistenceCoordinator(deps: PersistenceCoordinatorDeps) {
       return false;
     }
     try {
-      const result = await perfTrace.measureAsync("background.journal.append", { entries: items.length }, () =>
-        outlineJournal!.append(items)
+      const result = await perfTrace.measureAsync(
+        "background.journal.append",
+        { entries: items.length },
+        () => outlineJournal!.append(items)
       );
       for (const item of items) {
         for (const node of item.delta?.updatedNodes ?? []) {
@@ -806,12 +825,20 @@ export function createPersistenceCoordinator(deps: PersistenceCoordinatorDeps) {
       return true;
     }
     try {
-      const onLocal = await api.storage.local.get([STATE_V4_MANIFEST_A_KEY, STATE_V4_MANIFEST_B_KEY]);
-      if (onLocal[STATE_V4_MANIFEST_A_KEY] === undefined && onLocal[STATE_V4_MANIFEST_B_KEY] === undefined) {
+      const onLocal = await api.storage.local.get([
+        STATE_V4_MANIFEST_A_KEY,
+        STATE_V4_MANIFEST_B_KEY
+      ]);
+      if (
+        onLocal[STATE_V4_MANIFEST_A_KEY] === undefined &&
+        onLocal[STATE_V4_MANIFEST_B_KEY] === undefined
+      ) {
         return true; // nothing on storage.local: already migrated (or fresh)
       }
       const inStore = await shardStore.get([STATE_V4_MANIFEST_A_KEY, STATE_V4_MANIFEST_B_KEY]);
-      const copied = inStore[STATE_V4_MANIFEST_A_KEY] === undefined && inStore[STATE_V4_MANIFEST_B_KEY] === undefined;
+      const copied =
+        inStore[STATE_V4_MANIFEST_A_KEY] === undefined &&
+        inStore[STATE_V4_MANIFEST_B_KEY] === undefined;
       if (copied) {
         // Copy BOTH slots in one atomic set so the double-buffer (R1 fallback) survives intact.
         const copy: Record<string, unknown> = {};
@@ -827,14 +854,26 @@ export function createPersistenceCoordinator(deps: PersistenceCoordinatorDeps) {
       // deleting the storage.local manifest, so a bad copy never leaves the manifest only in a store
       // that cannot reproduce the tree.
       const verify = await loadStateV4(api, shardStore, shardStore);
-      if (!verify || verify.recovery !== "r0" || !statesMateriallyEqual(verify.state, expectedState)) {
+      if (
+        !verify ||
+        verify.recovery !== "r0" ||
+        !statesMateriallyEqual(verify.state, expectedState)
+      ) {
         if (copied) {
-          await shardStore.remove([STATE_V4_MANIFEST_A_KEY, STATE_V4_MANIFEST_B_KEY]).catch(() => undefined);
+          await shardStore
+            .remove([STATE_V4_MANIFEST_A_KEY, STATE_V4_MANIFEST_B_KEY])
+            .catch(() => undefined);
         }
-        throw new Error(verify ? `manifest migration verify mismatch (${verify.recovery})` : "manifest migration verify load failed");
+        throw new Error(
+          verify
+            ? `manifest migration verify mismatch (${verify.recovery})`
+            : "manifest migration verify load failed"
+        );
       }
       await api.storage.local.remove([STATE_V4_MANIFEST_A_KEY, STATE_V4_MANIFEST_B_KEY]);
-      await recordIncidentLog("v4ManifestMigrationComplete", { ...outlineStateCountDetail(expectedState) });
+      await recordIncidentLog("v4ManifestMigrationComplete", {
+        ...outlineStateCountDetail(expectedState)
+      });
       return true;
     } catch (error) {
       await recordIncidentLog("v4ManifestMigrationFailed", { message: errorText(error) });
@@ -867,7 +906,9 @@ export function createPersistenceCoordinator(deps: PersistenceCoordinatorDeps) {
       // Verify from the shard store (manifest + shards both there, matching the atomic commit).
       const verify = await loadStateV4(api, shardStore, shardStore);
       if (!verify || verify.recovery !== "r0" || !statesMateriallyEqual(verify.state, stored)) {
-        throw new Error(verify ? `verification mismatch (${verify.recovery})` : "verification load failed");
+        throw new Error(
+          verify ? `verification mismatch (${verify.recovery})` : "verification load failed"
+        );
       }
       currentV4Snapshot = { manifest: snapshot.manifest, slot: snapshot.slot };
       previousV4Snapshot = undefined;
@@ -954,7 +995,10 @@ export function createPersistenceCoordinator(deps: PersistenceCoordinatorDeps) {
         return onStore ?? withLocalManifest ?? fromLocal;
       }
       return await perfTrace.measureAsync("background.state.shardMigration", async () => {
-        const manifests = [fromLocal.manifest, ...(fromLocal.fallbackManifest ? [fromLocal.fallbackManifest] : [])];
+        const manifests = [
+          fromLocal.manifest,
+          ...(fromLocal.fallbackManifest ? [fromLocal.fallbackManifest] : [])
+        ];
         // Copy both slots' shards so the surviving R1 fallback slot stays loadable on the shard
         // store too. The fallback copy is best-effort (copyStateV4Shards skips keys absent in the
         // source); only the current manifest (r0) is verified below, which is the authoritative tree.
@@ -962,8 +1006,16 @@ export function createPersistenceCoordinator(deps: PersistenceCoordinatorDeps) {
         // Verify the shard store now reloads the exact tree (manifest still on storage.local here)
         // before deleting anything.
         const verify = await loadStateV4(api, shardStore);
-        if (!verify || verify.recovery !== "r0" || !statesMateriallyEqual(verify.state, fromLocal.state)) {
-          throw new Error(verify ? `shard migration verification mismatch (${verify.recovery})` : "shard migration verification load failed");
+        if (
+          !verify ||
+          verify.recovery !== "r0" ||
+          !statesMateriallyEqual(verify.state, fromLocal.state)
+        ) {
+          throw new Error(
+            verify
+              ? `shard migration verification mismatch (${verify.recovery})`
+              : "shard migration verification load failed"
+          );
         }
         // Temporary portable-tree backup (reuses the migration-backup key + its startup TTL expiry):
         // the only-copy window opens when the storage.local shards are deleted below, so keep an
@@ -1016,17 +1068,21 @@ export function createPersistenceCoordinator(deps: PersistenceCoordinatorDeps) {
     if (referencedKeys.some((key) => lingering[key] !== undefined)) {
       await deleteAllStateV4ShardKeys(storageLocalKvStore(api));
     }
-    if (lingering[STATE_V4_MANIFEST_A_KEY] !== undefined || lingering[STATE_V4_MANIFEST_B_KEY] !== undefined) {
+    if (
+      lingering[STATE_V4_MANIFEST_A_KEY] !== undefined ||
+      lingering[STATE_V4_MANIFEST_B_KEY] !== undefined
+    ) {
       await api.storage.local.remove([STATE_V4_MANIFEST_A_KEY, STATE_V4_MANIFEST_B_KEY]);
     }
   }
 
   async function deleteLegacyStateKeys(): Promise<void> {
     const everything = await api.storage.local.get(null);
-    const legacyKeys = Object.keys(everything).filter((key) =>
-      key === STATE_KEY ||
-      key.startsWith("outlineState:v2:") ||
-      key.startsWith("outlineState:v3:")
+    const legacyKeys = Object.keys(everything).filter(
+      (key) =>
+        key === STATE_KEY ||
+        key.startsWith("outlineState:v2:") ||
+        key.startsWith("outlineState:v3:")
     );
     if (legacyKeys.length > 0) {
       await api.storage.local.remove(legacyKeys);
@@ -1037,7 +1093,11 @@ export function createPersistenceCoordinator(deps: PersistenceCoordinatorDeps) {
     nextHistory: HistoryState | undefined,
     candidateNodeIds?: readonly NodeId[]
   ): Promise<void> {
-    saveInFlight = saveStateAndHistoryNowWithTrace(nextState, nextHistory, candidateNodeIds).finally(() => {
+    saveInFlight = saveStateAndHistoryNowWithTrace(
+      nextState,
+      nextHistory,
+      candidateNodeIds
+    ).finally(() => {
       saveInFlight = undefined;
       if (saveAfterInFlight) {
         const schedule = saveAfterInFlightSchedule;
@@ -1096,10 +1156,12 @@ export function createPersistenceCoordinator(deps: PersistenceCoordinatorDeps) {
   async function initJournalOnStore(store: KeyValueStore) {
     // The next session's epoch is the prior epoch + 1, read from wherever the journal now lives.
     const storedMeta = (await store.get(JOURNAL_META_KEY))[JOURNAL_META_KEY];
-    const priorEpoch = storedMeta && typeof storedMeta === "object" &&
+    const priorEpoch =
+      storedMeta &&
+      typeof storedMeta === "object" &&
       typeof (storedMeta as { epoch?: unknown }).epoch === "number"
-      ? (storedMeta as { epoch: number }).epoch
-      : 0;
+        ? (storedMeta as { epoch: number }).epoch
+        : 0;
     outlineJournal = createOutlineJournal(store, { epoch: priorEpoch + 1, now });
     return perfTrace.measureAsync("background.journal.init", () => outlineJournal!.init());
   }

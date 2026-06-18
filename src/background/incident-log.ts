@@ -25,7 +25,9 @@ let appendQueue = Promise.resolve();
 // authoritative and lets appends do a single `set` with no per-append `get`.
 const cachedEntriesByApi = new WeakMap<WebExtensionBrowser, IncidentLogEntry[]>();
 
-export async function loadIncidentLog(api: WebExtensionBrowser = browser): Promise<IncidentLogEntry[]> {
+export async function loadIncidentLog(
+  api: WebExtensionBrowser = browser
+): Promise<IncidentLogEntry[]> {
   const stored = await api.storage.local.get(INCIDENT_LOG_STORAGE_KEY);
   return normalizeIncidentLog(stored[INCIDENT_LOG_STORAGE_KEY]).entries;
 }
@@ -109,12 +111,17 @@ function normalizeIncidentLogEntry(value: unknown): IncidentLogEntry[] {
     return [];
   }
   const entry = value as { version?: unknown; at?: unknown; event?: unknown; detail?: unknown };
-  if (entry.version !== INCIDENT_LOG_VERSION || typeof entry.at !== "string" || typeof entry.event !== "string") {
+  if (
+    entry.version !== INCIDENT_LOG_VERSION ||
+    typeof entry.at !== "string" ||
+    typeof entry.event !== "string"
+  ) {
     return [];
   }
-  const normalized = entry.detail && typeof entry.detail === "object" && !Array.isArray(entry.detail)
-    ? normalizedDetail(entry.detail as Record<string, unknown>)
-    : undefined;
+  const normalized =
+    entry.detail && typeof entry.detail === "object" && !Array.isArray(entry.detail)
+      ? normalizedDetail(entry.detail as Record<string, unknown>)
+      : undefined;
   const result: IncidentLogEntry = {
     version: INCIDENT_LOG_VERSION,
     at: entry.at,
@@ -136,5 +143,10 @@ function normalizedDetail(detail: Record<string, unknown>): IncidentLogEntry["de
 }
 
 function isIncidentLogDetailStoredValue(value: unknown): value is string | number | boolean | null {
-  return value === null || typeof value === "string" || typeof value === "number" || typeof value === "boolean";
+  return (
+    value === null ||
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean"
+  );
 }

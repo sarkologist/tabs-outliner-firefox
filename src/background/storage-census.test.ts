@@ -78,7 +78,9 @@ describe("storage census", () => {
     const { api } = createFaultyStorage(representativeStore());
     const result = await measureStorageCensus(api, { probe: false });
     for (let index = 1; index < result.byPrefix.length; index += 1) {
-      expect(result.byPrefix[index - 1]!.bytes).toBeGreaterThanOrEqual(result.byPrefix[index]!.bytes);
+      expect(result.byPrefix[index - 1]!.bytes).toBeGreaterThanOrEqual(
+        result.byPrefix[index]!.bytes
+      );
     }
   });
 

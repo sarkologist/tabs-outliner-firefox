@@ -147,10 +147,14 @@ export async function loadStateWithMetadata(
     return {
       state: outcome.state,
       format: "v3",
-      ...(stateV3ManifestRequiresFullSave(v3Manifest) || outcome.salvaged ? { requiresFullSave: true } : {}),
+      ...(stateV3ManifestRequiresFullSave(v3Manifest) || outcome.salvaged
+        ? { requiresFullSave: true }
+        : {}),
       ...(outcome.salvaged ? { salvaged: true } : {}),
       ...(outcome.repair ? { repair: outcome.repair } : {}),
-      ...(typeof v3Manifest.journalSeqIncluded === "number" ? { journalSeqIncluded: v3Manifest.journalSeqIncluded } : {})
+      ...(typeof v3Manifest.journalSeqIncluded === "number"
+        ? { journalSeqIncluded: v3Manifest.journalSeqIncluded }
+        : {})
     };
   }
 
@@ -186,7 +190,6 @@ export async function loadHistory(
   return normalizeHistoryState(value, limit);
 }
 
-
 export async function loadInitialTreeSnapshot(
   api: WebExtensionBrowser = browser
 ): Promise<InitialTreeSnapshot | undefined> {
@@ -209,7 +212,9 @@ export async function loadInitialTreeSnapshot(
   return undefined;
 }
 
-export async function loadStateV3(api: WebExtensionBrowser = browser): Promise<OutlineState | undefined> {
+export async function loadStateV3(
+  api: WebExtensionBrowser = browser
+): Promise<OutlineState | undefined> {
   const stored = await api.storage.local.get(STATE_V3_MANIFEST_KEY);
   const manifest = stored[STATE_V3_MANIFEST_KEY];
   if (!isStateV3Manifest(manifest)) {
@@ -227,9 +232,10 @@ async function loadStateV3FromManifest(
   const shardItems: Record<string, unknown> = await measureLoadPhase(
     options,
     "v3.nodeShardRead",
-    () => manifest.nodeShardKeys.length > 0
-      ? api.storage.local.get(manifest.nodeShardKeys)
-      : Promise.resolve({}),
+    () =>
+      manifest.nodeShardKeys.length > 0
+        ? api.storage.local.get(manifest.nodeShardKeys)
+        : Promise.resolve({}),
     { keys: manifest.nodeShardKeys.length }
   );
   const nodes: OutlineState["nodes"] = {};
@@ -266,13 +272,16 @@ async function loadStateV3FromManifest(
   const orderPageKeys = await measureLoadPhase(
     options,
     "v3.orderPageKeys",
-    () => storedNodesWithChildren.flatMap((node) => orderPageKeysForStoredNode(node, manifest.orderPageSize)),
+    () =>
+      storedNodesWithChildren.flatMap((node) =>
+        orderPageKeysForStoredNode(node, manifest.orderPageSize)
+      ),
     { parents: storedNodesWithChildren.length }
   );
   const orderPageItems: Record<string, unknown> = await measureLoadPhase(
     options,
     "v3.orderPageRead",
-    () => orderPageKeys.length > 0 ? api.storage.local.get(orderPageKeys) : Promise.resolve({}),
+    () => (orderPageKeys.length > 0 ? api.storage.local.get(orderPageKeys) : Promise.resolve({})),
     { keys: orderPageKeys.length }
   );
   let orderSalvageCount = 0;
@@ -290,7 +299,11 @@ async function loadStateV3FromManifest(
         let truncated = false;
         for (let pageIndex = 0; pageIndex < pageCount; pageIndex += 1) {
           const page = orderPageItems[stateV3OrderPageKey(storedNode.id, pageIndex)];
-          if (!isStateV3OrderPage(page) || page.parentId !== storedNode.id || page.pageIndex !== pageIndex) {
+          if (
+            !isStateV3OrderPage(page) ||
+            page.parentId !== storedNode.id ||
+            page.pageIndex !== pageIndex
+          ) {
             // Salvage: keep the valid prefix of the child order; structure repair re-roots
             // the children we could not place.
             truncated = true;
@@ -351,7 +364,9 @@ export function normalizeLoadedOutlineStructure(
   const rootIds: NodeId[] = [];
   const rootIdSet = new Set<NodeId>();
   const manifestRootIds = uniqueNodeIds(originalRootIds);
-  const manifestRootIdSet = new Set<NodeId>(manifestRootIds.filter((nodeId) => Boolean(state.nodes[nodeId])));
+  const manifestRootIdSet = new Set<NodeId>(
+    manifestRootIds.filter((nodeId) => Boolean(state.nodes[nodeId]))
+  );
   const reached = new Set<NodeId>();
   let parentMismatchCount = 0;
   let staleRootParentCount = 0;
@@ -533,16 +548,11 @@ export function outlineBootSnapshotItem(
 }
 
 function stateV3ManifestRequiresFullSave(manifest: StateV3Manifest): boolean {
-  return manifest.nodeShardCount !== STATE_V3_NODE_SHARD_COUNT ||
-    manifest.orderPageSize !== STATE_V3_ORDER_PAGE_SIZE;
+  return (
+    manifest.nodeShardCount !== STATE_V3_NODE_SHARD_COUNT ||
+    manifest.orderPageSize !== STATE_V3_ORDER_PAGE_SIZE
+  );
 }
-
-
-
-
-
-
-
 
 function uniqueNodeIds(nodeIds: readonly NodeId[]): NodeId[] {
   return [...new Set(nodeIds.filter(Boolean))];
@@ -569,69 +579,62 @@ export function outlineNodeShardIndex(nodeId: NodeId, shardCount: number): numbe
   return (hash >>> 0) % shardCount;
 }
 
-
-
 export function stateV3OrderPageKey(parentId: NodeId, pageIndex: number): string {
   return `${STATE_V3_ORDER_PAGE_PREFIX}${encodeURIComponent(parentId)}:${pageIndex}`;
 }
 
-
-
-
-
-
 function isStateV3Manifest(value: unknown): value is StateV3Manifest {
   return Boolean(
     value &&
-      typeof value === "object" &&
-      (value as StateV3Manifest).version === 3 &&
-      typeof (value as StateV3Manifest).revision === "number" &&
-      Array.isArray((value as StateV3Manifest).rootIds) &&
-      typeof (value as StateV3Manifest).nodeCount === "number" &&
-      typeof (value as StateV3Manifest).closedCount === "number" &&
-      typeof (value as StateV3Manifest).nodeShardCount === "number" &&
-      Array.isArray((value as StateV3Manifest).nodeShardKeys) &&
-      typeof (value as StateV3Manifest).orderPageSize === "number" &&
-      // New manifests store the snapshot in its own key; older ones embed it inline. Accept
-      // either, but if an inline snapshot is present it must be well-formed.
-      ((value as StateV3Manifest).initialSnapshot === undefined ||
-        isInitialTreeSnapshot((value as StateV3Manifest).initialSnapshot))
+    typeof value === "object" &&
+    (value as StateV3Manifest).version === 3 &&
+    typeof (value as StateV3Manifest).revision === "number" &&
+    Array.isArray((value as StateV3Manifest).rootIds) &&
+    typeof (value as StateV3Manifest).nodeCount === "number" &&
+    typeof (value as StateV3Manifest).closedCount === "number" &&
+    typeof (value as StateV3Manifest).nodeShardCount === "number" &&
+    Array.isArray((value as StateV3Manifest).nodeShardKeys) &&
+    typeof (value as StateV3Manifest).orderPageSize === "number" &&
+    // New manifests store the snapshot in its own key; older ones embed it inline. Accept
+    // either, but if an inline snapshot is present it must be well-formed.
+    ((value as StateV3Manifest).initialSnapshot === undefined ||
+      isInitialTreeSnapshot((value as StateV3Manifest).initialSnapshot))
   );
 }
 
 function isStateV3BootSnapshot(value: unknown): value is StateV3BootSnapshot {
   return Boolean(
     value &&
-      typeof value === "object" &&
-      (value as StateV3BootSnapshot).version === 3 &&
-      typeof (value as StateV3BootSnapshot).revision === "number" &&
-      isInitialTreeSnapshot((value as StateV3BootSnapshot).snapshot)
+    typeof value === "object" &&
+    (value as StateV3BootSnapshot).version === 3 &&
+    typeof (value as StateV3BootSnapshot).revision === "number" &&
+    isInitialTreeSnapshot((value as StateV3BootSnapshot).snapshot)
   );
 }
-
-
 
 function isStateV3NodeShard(value: unknown): value is StateV3NodeShard {
   return Boolean(
     value &&
-      typeof value === "object" &&
-      (value as StateV3NodeShard).version === 3 &&
-      typeof (value as StateV3NodeShard).shardIndex === "number" &&
-      Array.isArray((value as StateV3NodeShard).nodes)
+    typeof value === "object" &&
+    (value as StateV3NodeShard).version === 3 &&
+    typeof (value as StateV3NodeShard).shardIndex === "number" &&
+    Array.isArray((value as StateV3NodeShard).nodes)
   );
 }
 
 function isStateV3OrderPage(value: unknown): value is StateV3OrderPage {
   return Boolean(
     value &&
-      typeof value === "object" &&
-      (value as StateV3OrderPage).version === 3 &&
-      typeof (value as StateV3OrderPage).parentId === "string" &&
-      typeof (value as StateV3OrderPage).pageIndex === "number" &&
-      Array.isArray((value as StateV3OrderPage).childIds)
+    typeof value === "object" &&
+    (value as StateV3OrderPage).version === 3 &&
+    typeof (value as StateV3OrderPage).parentId === "string" &&
+    typeof (value as StateV3OrderPage).pageIndex === "number" &&
+    Array.isArray((value as StateV3OrderPage).childIds)
   );
 }
 
 function sameNodeIdList(previous: readonly NodeId[], next: readonly NodeId[]): boolean {
-  return previous.length === next.length && previous.every((nodeId, index) => nodeId === next[index]);
+  return (
+    previous.length === next.length && previous.every((nodeId, index) => nodeId === next[index])
+  );
 }

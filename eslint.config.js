@@ -30,8 +30,8 @@ const noUnusedVars = [
     caughtErrors: "all",
     caughtErrorsIgnorePattern: "^_",
     destructuredArrayIgnorePattern: "^_",
-    ignoreRestSiblings: true,
-  },
+    ignoreRestSiblings: true
+  }
 ];
 
 export default tseslint.config(
@@ -47,8 +47,8 @@ export default tseslint.config(
       "node_modules/**",
       "oracle/**", // PureScript oracle + its vendored JS — not ours to lint
       "public/**", // static assets
-      "autoresearch/**/*.tsv",
-    ],
+      "autoresearch/**/*.tsv"
+    ]
   },
 
   // --- Plain JS (.mjs scripts + this config): non-type-aware, node globals ---
@@ -58,11 +58,11 @@ export default tseslint.config(
     languageOptions: {
       ecmaVersion: 2023,
       sourceType: "module",
-      globals: { ...globals.node },
+      globals: { ...globals.node }
     },
     rules: {
-      "no-unused-vars": noUnusedVars,
-    },
+      "no-unused-vars": noUnusedVars
+    }
   },
 
   // --- TypeScript: non-type-checked recommended base (locks in pristine invariants) ---
@@ -77,9 +77,9 @@ export default tseslint.config(
       // This rule is syntactic, so it is safe to run repo-wide (not just type-aware blocks).
       "@typescript-eslint/consistent-type-imports": [
         "error",
-        { prefer: "type-imports", fixStyle: "separate-type-imports" },
-      ],
-    },
+        { prefer: "type-imports", fixStyle: "separate-type-imports" }
+      ]
+    }
   },
 
   // --- Production `src/`: the TYPE-AWARE high-value rules strict tsc does NOT give ---
@@ -89,8 +89,8 @@ export default tseslint.config(
     languageOptions: {
       parserOptions: {
         projectService: true,
-        tsconfigRootDir: import.meta.dirname,
-      },
+        tsconfigRootDir: import.meta.dirname
+      }
     },
     rules: {
       // THE prize. This codebase is heavily async (runtime ports, the mutation scheduler,
@@ -109,23 +109,19 @@ export default tseslint.config(
       // must cover every case (a `default` counts as exhaustive).
       "@typescript-eslint/switch-exhaustiveness-check": [
         "error",
-        { considerDefaultExhaustiveForUnions: true },
-      ],
-    },
+        { considerDefaultExhaustiveForUnions: true }
+      ]
+    }
   },
 
   // --- Tests, test-support, Playwright specs: lighter, non-type-aware ---
   {
-    files: [
-      "src/**/*.test.ts",
-      "src/**/*.test-support.ts",
-      "tests/**/*.ts",
-    ],
+    files: ["src/**/*.test.ts", "src/**/*.test-support.ts", "tests/**/*.ts"],
     languageOptions: {
-      globals: { ...globals.node, ...globals.browser },
-    },
+      globals: { ...globals.node, ...globals.browser }
+    }
   },
 
   // Turn off any stylistic rules that would fight Prettier. Must be last.
-  eslintConfigPrettier,
+  eslintConfigPrettier
 );

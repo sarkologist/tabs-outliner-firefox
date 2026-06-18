@@ -46,7 +46,10 @@ export function createFaultyStorage(initial: Record<string, unknown> = {}): Faul
           }
           if (key && typeof key === "object") {
             return Object.fromEntries(
-              Object.entries(key).map(([name, fallback]) => [name, store.has(name) ? store.get(name) : fallback])
+              Object.entries(key).map(([name, fallback]) => [
+                name,
+                store.has(name) ? store.get(name) : fallback
+              ])
             );
           }
           return Object.fromEntries(store);
@@ -61,7 +64,8 @@ export function createFaultyStorage(initial: Record<string, unknown> = {}): Faul
             throw error;
           }
           const entries = Object.entries(items);
-          const applied = tearKeepKeys !== undefined ? entries.slice(0, Math.max(0, tearKeepKeys)) : entries;
+          const applied =
+            tearKeepKeys !== undefined ? entries.slice(0, Math.max(0, tearKeepKeys)) : entries;
           tearKeepKeys = undefined;
           for (const [name, value] of applied) {
             store.set(name, value);

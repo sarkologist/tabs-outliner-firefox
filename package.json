@@ -18,7 +18,7 @@
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "check": "pnpm run lint && pnpm run oracle:build && pnpm test && pnpm run typecheck:test && pnpm run build",
+    "check": "pnpm run lint && pnpm run format:check && pnpm run oracle:build && pnpm test && pnpm run typecheck:test && pnpm run build",
     "check:docs": "node scripts/check-docs-index.mjs",
     "perf:sidebar-projection-guard": "pnpm build && node scripts/perf-sidebar-projection-guard.mjs",
     "profile:tab-open": "node scripts/profile-tab-open.mjs",

@@ -4,9 +4,7 @@
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
-const checker = fileURLToPath(
-  new URL("../../scripts/check-docs-index.mjs", import.meta.url),
-);
+const checker = fileURLToPath(new URL("../../scripts/check-docs-index.mjs", import.meta.url));
 
 it("REPO_MAP.md catalogs every tracked doc and has no dangling links", () => {
   try {

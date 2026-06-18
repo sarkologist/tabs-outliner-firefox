@@ -41,12 +41,15 @@ const runtimeWindows: RuntimeWindow[] = [
 
 describe("diagnostics", () => {
   it("reports runtime tabs missing from the outline model", () => {
-    const state = bootstrapFromWindows([
-      {
-        ...runtimeWindows[0]!,
-        tabs: runtimeWindows[0]!.tabs!.slice(0, 2)
-      }
-    ], { now: 1000 });
+    const state = bootstrapFromWindows(
+      [
+        {
+          ...runtimeWindows[0]!,
+          tabs: runtimeWindows[0]!.tabs!.slice(0, 2)
+        }
+      ],
+      { now: 1000 }
+    );
 
     expect(computeDiagnostics(state, runtimeWindows)).toEqual({
       runtimeTabCount: 3,

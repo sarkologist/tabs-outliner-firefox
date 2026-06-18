@@ -1,4 +1,10 @@
-import type { OutlineNode, OutlineState, RuntimeTab, RuntimeWindow, RuntimeWindowState } from "../model/types.js";
+import type {
+  OutlineNode,
+  OutlineState,
+  RuntimeTab,
+  RuntimeWindow,
+  RuntimeWindowState
+} from "../model/types.js";
 
 type Listener<TArgs extends unknown[]> = (...args: TArgs) => unknown | Promise<unknown>;
 
@@ -123,11 +129,15 @@ export type FakeWebExtensionRuntime = {
     command: FakeWebExtensionEvent<[string]>;
     runtimeMessage: FakeWebExtensionEvent<[unknown, { tab?: RuntimeTab }]>;
     storageChanged: FakeWebExtensionEvent<[Record<string, StorageChange>, string]>;
-    tabActivated: FakeWebExtensionEvent<[{ tabId: number; windowId: number; previousTabId?: number }]>;
+    tabActivated: FakeWebExtensionEvent<
+      [{ tabId: number; windowId: number; previousTabId?: number }]
+    >;
     tabAttached: FakeWebExtensionEvent<[number, { newWindowId: number; newPosition: number }]>;
     tabCreated: FakeWebExtensionEvent<[RuntimeTab]>;
     tabDetached: FakeWebExtensionEvent<[number, { oldWindowId: number; oldPosition: number }]>;
-    tabMoved: FakeWebExtensionEvent<[number, { windowId: number; fromIndex: number; toIndex: number }]>;
+    tabMoved: FakeWebExtensionEvent<
+      [number, { windowId: number; fromIndex: number; toIndex: number }]
+    >;
     tabRemoved: FakeWebExtensionEvent<[number, { windowId: number; isWindowClosing: boolean }]>;
     tabUpdated: FakeWebExtensionEvent<[number, Partial<RuntimeTab>, RuntimeTab]>;
     windowBoundsChanged: FakeWebExtensionEvent<[RuntimeWindow]>;
@@ -148,10 +158,18 @@ export type FakeWebExtensionRuntime = {
     listener: (changes: Record<string, StorageChange>, areaName: string) => void | Promise<void>
   ): () => void;
   sendMessageFromPage(message: unknown): Promise<unknown>;
-  createTabFromBrowser(tab: Partial<RuntimeTab> & Pick<RuntimeTab, "windowId">): Promise<RuntimeTab>;
-  updateTabFromBrowser(tabId: number, changes: Partial<RuntimeTab>): Promise<RuntimeTab | undefined>;
+  createTabFromBrowser(
+    tab: Partial<RuntimeTab> & Pick<RuntimeTab, "windowId">
+  ): Promise<RuntimeTab>;
+  updateTabFromBrowser(
+    tabId: number,
+    changes: Partial<RuntimeTab>
+  ): Promise<RuntimeTab | undefined>;
   activateTabFromBrowser(tabId: number): Promise<void>;
-  moveTabFromBrowser(tabId: number, moveProperties: { windowId?: number; index: number }): Promise<RuntimeTab | undefined>;
+  moveTabFromBrowser(
+    tabId: number,
+    moveProperties: { windowId?: number; index: number }
+  ): Promise<RuntimeTab | undefined>;
   closeTabFromBrowser(tabId: number): Promise<void>;
   createWindowFromBrowser(createData?: FakeWindowCreateData): Promise<RuntimeWindow>;
   closeWindowFromBrowser(windowId: number): Promise<void>;
@@ -174,12 +192,22 @@ export function createFakeWebExtensionRuntime(
   const command = new FakeWebExtensionEvent<[string]>();
   const runtimeMessage = new FakeWebExtensionEvent<[unknown, { tab?: RuntimeTab }]>();
   const storageChanged = new FakeWebExtensionEvent<[Record<string, StorageChange>, string]>();
-  const tabActivated = new FakeWebExtensionEvent<[{ tabId: number; windowId: number; previousTabId?: number }]>();
-  const tabAttached = new FakeWebExtensionEvent<[number, { newWindowId: number; newPosition: number }]>();
+  const tabActivated = new FakeWebExtensionEvent<
+    [{ tabId: number; windowId: number; previousTabId?: number }]
+  >();
+  const tabAttached = new FakeWebExtensionEvent<
+    [number, { newWindowId: number; newPosition: number }]
+  >();
   const tabCreated = new FakeWebExtensionEvent<[RuntimeTab]>();
-  const tabDetached = new FakeWebExtensionEvent<[number, { oldWindowId: number; oldPosition: number }]>();
-  const tabMoved = new FakeWebExtensionEvent<[number, { windowId: number; fromIndex: number; toIndex: number }]>();
-  const tabRemoved = new FakeWebExtensionEvent<[number, { windowId: number; isWindowClosing: boolean }]>();
+  const tabDetached = new FakeWebExtensionEvent<
+    [number, { oldWindowId: number; oldPosition: number }]
+  >();
+  const tabMoved = new FakeWebExtensionEvent<
+    [number, { windowId: number; fromIndex: number; toIndex: number }]
+  >();
+  const tabRemoved = new FakeWebExtensionEvent<
+    [number, { windowId: number; isWindowClosing: boolean }]
+  >();
   const tabUpdated = new FakeWebExtensionEvent<[number, Partial<RuntimeTab>, RuntimeTab]>();
   const windowBoundsChanged = new FakeWebExtensionEvent<[RuntimeWindow]>();
   const windowFocusChanged = new FakeWebExtensionEvent<[number]>();
@@ -197,7 +225,8 @@ export function createFakeWebExtensionRuntime(
   const runtimeBroadcasts: unknown[] = [];
 
   let nextTabId = options.nextTabId ?? Math.max(0, ...tabs.map((tab) => tab.id)) + 1;
-  let nextWindowId = options.nextWindowId ?? Math.max(0, ...windows.map((windowInfo) => windowInfo.id)) + 1;
+  let nextWindowId =
+    options.nextWindowId ?? Math.max(0, ...windows.map((windowInfo) => windowInfo.id)) + 1;
 
   const runtime: FakeWebExtensionRuntime = {
     windows: windows.map((windowInfo) => ({
@@ -249,7 +278,9 @@ export function createFakeWebExtensionRuntime(
       const next = normalizeCreatedTab(runtime, {
         id: tab.id ?? nextTabId++,
         windowId: tab.windowId,
-        index: tab.index ?? runtime.tabs.filter((candidate) => candidate.windowId === tab.windowId).length,
+        index:
+          tab.index ??
+          runtime.tabs.filter((candidate) => candidate.windowId === tab.windowId).length,
         active: tab.active ?? true,
         ...(tab.openerTabId !== undefined ? { openerTabId: tab.openerTabId } : {}),
         ...(tab.url !== undefined ? { url: tab.url } : {}),
@@ -268,10 +299,14 @@ export function createFakeWebExtensionRuntime(
       if (!tab) {
         return;
       }
-      const previous = runtime.tabs.find((candidate) => candidate.windowId === tab.windowId && candidate.active);
-      runtime.tabs = runtime.tabs.map((candidate) => candidate.windowId === tab.windowId
-        ? { ...candidate, active: candidate.id === tabId }
-        : copyTab(candidate));
+      const previous = runtime.tabs.find(
+        (candidate) => candidate.windowId === tab.windowId && candidate.active
+      );
+      runtime.tabs = runtime.tabs.map((candidate) =>
+        candidate.windowId === tab.windowId
+          ? { ...candidate, active: candidate.id === tabId }
+          : copyTab(candidate)
+      );
       const activeInfo: { tabId: number; windowId: number; previousTabId?: number } = {
         tabId,
         windowId: tab.windowId
@@ -289,12 +324,19 @@ export function createFakeWebExtensionRuntime(
       const oldWindowId = tab.windowId;
       const oldPosition = tab.index;
       const targetWindowId = moveProperties.windowId ?? oldWindowId;
-      const moved = moveTabs(runtime, [tabId], { windowId: targetWindowId, index: moveProperties.index })[0];
+      const moved = moveTabs(runtime, [tabId], {
+        windowId: targetWindowId,
+        index: moveProperties.index
+      })[0];
       if (!moved) {
         return undefined;
       }
       if (targetWindowId === oldWindowId) {
-        await tabMoved.emit(tabId, { windowId: targetWindowId, fromIndex: oldPosition, toIndex: moved.index });
+        await tabMoved.emit(tabId, {
+          windowId: targetWindowId,
+          fromIndex: oldPosition,
+          toIndex: moved.index
+        });
       } else {
         await tabDetached.emit(tabId, { oldWindowId, oldPosition });
         await tabAttached.emit(tabId, { newWindowId: targetWindowId, newPosition: moved.index });
@@ -305,7 +347,12 @@ export function createFakeWebExtensionRuntime(
       await closeTab(runtime, tabId, true);
     },
     async createWindowFromBrowser(createData = {}) {
-      const windowInfo = createWindow(runtime, createData, () => nextWindowId++, () => nextTabId++);
+      const windowInfo = createWindow(
+        runtime,
+        createData,
+        () => nextWindowId++,
+        () => nextTabId++
+      );
       for (const tab of windowInfo.tabs ?? []) {
         await tabCreated.emit(copyTab(tab));
       }
@@ -352,9 +399,13 @@ export function createFakeWebExtensionRuntime(
         sideEffects.push({ kind: "alarms.create", args: [name, clone(alarmInfo)] });
         alarms.set(name, {
           name,
-          scheduledTime: alarmInfo.when ??
-            Date.now() + Math.max(0, alarmInfo.delayInMinutes ?? alarmInfo.periodInMinutes ?? 0) * 60 * 1000,
-          ...(typeof alarmInfo.periodInMinutes === "number" ? { periodInMinutes: alarmInfo.periodInMinutes } : {})
+          scheduledTime:
+            alarmInfo.when ??
+            Date.now() +
+              Math.max(0, alarmInfo.delayInMinutes ?? alarmInfo.periodInMinutes ?? 0) * 60 * 1000,
+          ...(typeof alarmInfo.periodInMinutes === "number"
+            ? { periodInMinutes: alarmInfo.periodInMinutes }
+            : {})
         });
       },
       clear: async (name) => {
@@ -394,7 +445,9 @@ export function createFakeWebExtensionRuntime(
         const payload = clone(message);
         protocol.push({ kind: "background.broadcast", message: payload });
         runtimeBroadcasts.push(payload);
-        await Promise.all([...runtimeBroadcastListeners].map((listener) => listener(clone(payload))));
+        await Promise.all(
+          [...runtimeBroadcastListeners].map((listener) => listener(clone(payload)))
+        );
         return undefined;
       }
     },
@@ -470,7 +523,12 @@ export function createFakeWebExtensionRuntime(
       },
       create: async (createData = {}) => {
         sideEffects.push({ kind: "windows.create", args: [clone(createData)] });
-        return createWindow(runtime, createData, () => nextWindowId++, () => nextTabId++);
+        return createWindow(
+          runtime,
+          createData,
+          () => nextWindowId++,
+          () => nextTabId++
+        );
       },
       onFocusChanged: windowFocusChanged as never,
       onBoundsChanged: windowBoundsChanged as never,
@@ -513,7 +571,10 @@ export function createFakeWebExtensionRuntime(
         const ids = Array.isArray(tabIds) ? tabIds : [tabIds];
         sideEffects.push({ kind: "tabs.move", args: [clone(ids), clone(moveProperties)] });
         const moved = moveTabs(runtime, ids, {
-          windowId: moveProperties.windowId ?? runtime.tabs.find((tab) => tab.id === ids[0])?.windowId ?? focusedWindowId(runtime),
+          windowId:
+            moveProperties.windowId ??
+            runtime.tabs.find((tab) => tab.id === ids[0])?.windowId ??
+            focusedWindowId(runtime),
           index: moveProperties.index
         });
         return Array.isArray(tabIds) ? moved.map(copyTab) : copyTab(moved[0]!);
@@ -560,7 +621,9 @@ export function createFakeWebExtensionRuntime(
 
   async function emitStorageChanged(changes: Record<string, StorageChange>): Promise<void> {
     await storageChanged.emit(clone(changes), "local");
-    await Promise.all([...storageChangeListeners].map((listener) => listener(clone(changes), "local")));
+    await Promise.all(
+      [...storageChangeListeners].map((listener) => listener(clone(changes), "local"))
+    );
   }
 
   return runtime;
@@ -574,7 +637,9 @@ function storageGet(
     return storage.has(key) ? { [key]: clone(storage.get(key)) } : {};
   }
   if (Array.isArray(key)) {
-    return Object.fromEntries(key.flatMap((entry) => storage.has(entry) ? [[entry, clone(storage.get(entry))]] : []));
+    return Object.fromEntries(
+      key.flatMap((entry) => (storage.has(entry) ? [[entry, clone(storage.get(entry))]] : []))
+    );
   }
   if (key && typeof key === "object") {
     const result: Record<string, unknown> = {};
@@ -586,7 +651,11 @@ function storageGet(
   return Object.fromEntries([...storage.entries()].map(([entry, value]) => [entry, clone(value)]));
 }
 
-function windowForApi(runtime: FakeWebExtensionRuntime, windowInfo: FakeRuntimeWindow, populate?: boolean): RuntimeWindow {
+function windowForApi(
+  runtime: FakeWebExtensionRuntime,
+  windowInfo: FakeRuntimeWindow,
+  populate?: boolean
+): RuntimeWindow {
   const windowCopy = copyWindowWithoutTabs(windowInfo);
   if (!populate) {
     return windowCopy;
@@ -600,7 +669,10 @@ function windowForApi(runtime: FakeWebExtensionRuntime, windowInfo: FakeRuntimeW
   };
 }
 
-function matchingWindows(runtime: FakeWebExtensionRuntime, windowTypes?: string[]): FakeRuntimeWindow[] {
+function matchingWindows(
+  runtime: FakeWebExtensionRuntime,
+  windowTypes?: string[]
+): FakeRuntimeWindow[] {
   return runtime.windows.filter((windowInfo) => windowTypeAllowed(windowInfo, windowTypes));
 }
 
@@ -623,7 +695,11 @@ function normalizeCreatedTab(
   } as RuntimeTab;
 }
 
-async function createTab(runtime: FakeWebExtensionRuntime, tab: RuntimeTab, awaitListeners: boolean): Promise<void> {
+async function createTab(
+  runtime: FakeWebExtensionRuntime,
+  tab: RuntimeTab,
+  awaitListeners: boolean
+): Promise<void> {
   insertTab(runtime, tab);
   await fire(runtime.events.tabCreated, awaitListeners, copyTab(tab));
 }
@@ -639,11 +715,15 @@ async function updateTab(
     return undefined;
   }
   if (changes.active) {
-    runtime.tabs = runtime.tabs.map((candidate) => candidate.windowId === existing.windowId
-      ? { ...candidate, active: candidate.id === tabId }
-      : copyTab(candidate));
+    runtime.tabs = runtime.tabs.map((candidate) =>
+      candidate.windowId === existing.windowId
+        ? { ...candidate, active: candidate.id === tabId }
+        : copyTab(candidate)
+    );
   }
-  runtime.tabs = runtime.tabs.map((candidate) => candidate.id === tabId ? { ...candidate, ...changes } : candidate);
+  runtime.tabs = runtime.tabs.map((candidate) =>
+    candidate.id === tabId ? { ...candidate, ...changes } : candidate
+  );
   const updated = runtime.tabs.find((candidate) => candidate.id === tabId);
   if (!updated) {
     return undefined;
@@ -653,13 +733,15 @@ async function updateTab(
 }
 
 function insertTab(runtime: FakeWebExtensionRuntime, tab: RuntimeTab): void {
-  runtime.tabs = runtime.tabs.map((candidate) => candidate.windowId === tab.windowId
-    ? {
-        ...candidate,
-        index: candidate.index >= tab.index ? candidate.index + 1 : candidate.index,
-        ...(tab.active ? { active: false } : {})
-      }
-    : candidate);
+  runtime.tabs = runtime.tabs.map((candidate) =>
+    candidate.windowId === tab.windowId
+      ? {
+          ...candidate,
+          index: candidate.index >= tab.index ? candidate.index + 1 : candidate.index,
+          ...(tab.active ? { active: false } : {})
+        }
+      : candidate
+  );
   runtime.tabs.push(copyTab(tab));
   reindexWindowTabs(runtime, tab.windowId);
 }
@@ -685,7 +767,11 @@ function moveTabs(
     .sort((left, right) => left.index - right.index)
     .map(copyTab);
   const boundedIndex = Math.max(0, Math.min(moveProperties.index, targetTabs.length));
-  targetTabs.splice(boundedIndex, 0, ...moving.map((tab) => ({ ...tab, windowId: targetWindowId })));
+  targetTabs.splice(
+    boundedIndex,
+    0,
+    ...moving.map((tab) => ({ ...tab, windowId: targetWindowId }))
+  );
   const reindexedTargetTabs = targetTabs.map((tab, index) => ({ ...tab, index }));
   runtime.tabs = [
     ...remaining.filter((tab) => tab.windowId !== targetWindowId).map(copyTab),
@@ -694,16 +780,24 @@ function moveTabs(
   for (const windowId of [...affectedWindowIds].filter((windowId) => windowId !== targetWindowId)) {
     reindexWindowTabs(runtime, windowId);
   }
-  removeEmptyRuntimeWindows(runtime, [...affectedWindowIds].filter((windowId) => windowId !== targetWindowId));
+  removeEmptyRuntimeWindows(
+    runtime,
+    [...affectedWindowIds].filter((windowId) => windowId !== targetWindowId)
+  );
   return moving.map((tab) => copyTab(runtime.tabs.find((candidate) => candidate.id === tab.id)!));
 }
 
-async function closeTab(runtime: FakeWebExtensionRuntime, tabId: number, awaitListeners: boolean): Promise<void> {
+async function closeTab(
+  runtime: FakeWebExtensionRuntime,
+  tabId: number,
+  awaitListeners: boolean
+): Promise<void> {
   const tab = runtime.tabs.find((candidate) => candidate.id === tabId);
   if (!tab) {
     return;
   }
-  const windowWillBecomeEmpty = runtime.tabs.filter((candidate) => candidate.windowId === tab.windowId).length === 1;
+  const windowWillBecomeEmpty =
+    runtime.tabs.filter((candidate) => candidate.windowId === tab.windowId).length === 1;
   runtime.tabs = runtime.tabs.filter((candidate) => candidate.id !== tabId);
   reindexWindowTabs(runtime, tab.windowId);
   if (windowWillBecomeEmpty) {
@@ -719,7 +813,11 @@ async function closeTab(runtime: FakeWebExtensionRuntime, tabId: number, awaitLi
   await fire(runtime.events.sessionChanged, awaitListeners);
 }
 
-async function closeWindow(runtime: FakeWebExtensionRuntime, windowId: number, awaitListeners: boolean): Promise<void> {
+async function closeWindow(
+  runtime: FakeWebExtensionRuntime,
+  windowId: number,
+  awaitListeners: boolean
+): Promise<void> {
   const removedTabs = runtime.tabs
     .filter((tab) => tab.windowId === windowId)
     .sort((left, right) => left.index - right.index)
@@ -727,7 +825,10 @@ async function closeWindow(runtime: FakeWebExtensionRuntime, windowId: number, a
   runtime.tabs = runtime.tabs.filter((tab) => tab.windowId !== windowId);
   runtime.windows = runtime.windows.filter((windowInfo) => windowInfo.id !== windowId);
   for (const tab of removedTabs) {
-    await fire(runtime.events.tabRemoved, awaitListeners, tab.id, { windowId, isWindowClosing: true });
+    await fire(runtime.events.tabRemoved, awaitListeners, tab.id, {
+      windowId,
+      isWindowClosing: true
+    });
   }
   await fire(runtime.events.windowRemoved, awaitListeners, windowId);
   await fire(runtime.events.sessionChanged, awaitListeners);
@@ -761,7 +862,11 @@ function createWindow(
     };
   }
 
-  const urls = Array.isArray(createData.url) ? createData.url : createData.url ? [createData.url] : [];
+  const urls = Array.isArray(createData.url)
+    ? createData.url
+    : createData.url
+      ? [createData.url]
+      : [];
   const createdTabs = urls.map((url, index) => ({
     id: nextTabId(),
     windowId,
@@ -813,12 +918,16 @@ function removeEmptyRuntimeWindows(runtime: FakeWebExtensionRuntime, windowIds: 
   }
   runtime.windows = runtime.windows.filter((windowInfo) => !emptyWindowIds.has(windowInfo.id));
   if (!runtime.windows.some((windowInfo) => windowInfo.focused) && runtime.windows[0]) {
-    runtime.windows = runtime.windows.map((windowInfo, index) => ({ ...windowInfo, focused: index === 0 }));
+    runtime.windows = runtime.windows.map((windowInfo, index) => ({
+      ...windowInfo,
+      focused: index === 0
+    }));
   }
 }
 
 function focusedWindowId(runtime: FakeWebExtensionRuntime): number {
-  const windowId = runtime.windows.find((windowInfo) => windowInfo.focused)?.id ?? runtime.windows[0]?.id;
+  const windowId =
+    runtime.windows.find((windowInfo) => windowInfo.focused)?.id ?? runtime.windows[0]?.id;
   if (typeof windowId !== "number") {
     throw new Error("Cannot choose a focused window");
   }
@@ -860,13 +969,19 @@ function runtimeModelInvariantReport(
   return {
     duplicateLiveTabIds: duplicates(liveTabIds),
     duplicateLiveWindowIds: duplicates(liveWindowIds),
-    missingRuntimeTabIds: [...runtimeTabIds].filter((tabId) => !liveTabIds.includes(tabId)).sort(numberSort),
+    missingRuntimeTabIds: [...runtimeTabIds]
+      .filter((tabId) => !liveTabIds.includes(tabId))
+      .sort(numberSort),
     staleLiveTabIds: liveTabIds.filter((tabId) => !runtimeTabIds.has(tabId)).sort(numberSort),
-    staleLiveWindowIds: liveWindowIds.filter((windowId) => !runtimeWindowIds.has(windowId)).sort(numberSort)
+    staleLiveWindowIds: liveWindowIds
+      .filter((windowId) => !runtimeWindowIds.has(windowId))
+      .sort(numberSort)
   };
 }
 
-function isLiveTabNode(node: OutlineNode): node is OutlineNode & { live: { tabId: number; windowId: number } } {
+function isLiveTabNode(
+  node: OutlineNode
+): node is OutlineNode & { live: { tabId: number; windowId: number } } {
   return Boolean(node.live && "tabId" in node.live && typeof node.live.tabId === "number");
 }
 
@@ -900,5 +1015,7 @@ function clone<T>(value: T): T {
 }
 
 function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
-  return Boolean(value && typeof value === "object" && "then" in value && typeof value.then === "function");
+  return Boolean(
+    value && typeof value === "object" && "then" in value && typeof value.then === "function"
+  );
 }

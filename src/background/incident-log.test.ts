@@ -11,11 +11,16 @@ describe("incident log", () => {
     const api = fakeApi();
 
     for (let index = 0; index < 105; index += 1) {
-      await appendIncidentLogEntry(api, `event-${index}`, {
-        index
-      }, {
-        now: () => Date.parse("2026-06-07T12:00:00.000Z") + index
-      });
+      await appendIncidentLogEntry(
+        api,
+        `event-${index}`,
+        {
+          index
+        },
+        {
+          now: () => Date.parse("2026-06-07T12:00:00.000Z") + index
+        }
+      );
     }
 
     const entries = await loadIncidentLog(api);
@@ -27,19 +32,28 @@ describe("incident log", () => {
   it("serializes concurrent appends so entries are not overwritten", async () => {
     const api = fakeApi();
 
-    await Promise.all(Array.from({ length: 5 }, (_value, index) =>
-      appendIncidentLogEntry(api, `concurrent-${index}`, {
-        index
-      }, {
-        now: () => Date.parse("2026-06-07T12:00:00.000Z") + index
-      })
-    ));
+    await Promise.all(
+      Array.from({ length: 5 }, (_value, index) =>
+        appendIncidentLogEntry(
+          api,
+          `concurrent-${index}`,
+          {
+            index
+          },
+          {
+            now: () => Date.parse("2026-06-07T12:00:00.000Z") + index
+          }
+        )
+      )
+    );
 
     await expect(loadIncidentLog(api)).resolves.toEqual(
-      Array.from({ length: 5 }, (_value, index) => expect.objectContaining({
-        event: `concurrent-${index}`,
-        detail: { index }
-      }))
+      Array.from({ length: 5 }, (_value, index) =>
+        expect.objectContaining({
+          event: `concurrent-${index}`,
+          detail: { index }
+        })
+      )
     );
   });
 
@@ -48,19 +62,26 @@ describe("incident log", () => {
     const getMock = vi.mocked(api.storage.local.get);
 
     for (let index = 0; index < 3; index += 1) {
-      await appendIncidentLogEntry(api, `event-${index}`, { index }, {
-        now: () => Date.parse("2026-06-07T12:00:00.000Z") + index
-      });
+      await appendIncidentLogEntry(
+        api,
+        `event-${index}`,
+        { index },
+        {
+          now: () => Date.parse("2026-06-07T12:00:00.000Z") + index
+        }
+      );
     }
 
     expect(getMock).toHaveBeenCalledTimes(1);
 
     const entries = await loadIncidentLog(api);
     expect(entries).toEqual(
-      Array.from({ length: 3 }, (_value, index) => expect.objectContaining({
-        event: `event-${index}`,
-        detail: { index }
-      }))
+      Array.from({ length: 3 }, (_value, index) =>
+        expect.objectContaining({
+          event: `event-${index}`,
+          detail: { index }
+        })
+      )
     );
   });
 

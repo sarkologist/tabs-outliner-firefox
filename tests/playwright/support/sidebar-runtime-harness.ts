@@ -1,6 +1,9 @@
 import type { Page } from "@playwright/test";
 
-import { createBackgroundController, type BackgroundController } from "../../../src/background/controller";
+import {
+  createBackgroundController,
+  type BackgroundController
+} from "../../../src/background/controller";
 import type { OutlineDiagnostics } from "../../../src/background/diagnostics";
 import type { OutlineState, RuntimeTab, RuntimeWindow } from "../../../src/model/types";
 import {
@@ -42,7 +45,9 @@ export type SidebarRuntimeHarness = {
   assertCleanBackground(): Promise<void>;
 };
 
-export function createSidebarRuntimeHarness(options: SidebarRuntimeHarnessOptions): SidebarRuntimeHarness {
+export function createSidebarRuntimeHarness(
+  options: SidebarRuntimeHarnessOptions
+): SidebarRuntimeHarness {
   const runtime = createFakeWebExtensionRuntime(options.windows, options.tabs, {
     ...(options.initialStorage ? { initialStorage: options.initialStorage } : {})
   });
@@ -56,7 +61,9 @@ export function createSidebarRuntimeHarness(options: SidebarRuntimeHarnessOption
     await Promise.all([...attachedPages].map((page) => dispatchRuntimeMessage(page, message)));
   });
   runtime.addStorageChangeListener(async (changes, areaName) => {
-    await Promise.all([...attachedPages].map((page) => dispatchStorageChange(page, changes, areaName)));
+    await Promise.all(
+      [...attachedPages].map((page) => dispatchStorageChange(page, changes, areaName))
+    );
   });
 
   async function attachPage(page: Page): Promise<AttachedSidebarPage> {
@@ -86,7 +93,10 @@ export function createSidebarRuntimeHarness(options: SidebarRuntimeHarnessOption
     await page.addInitScript(() => {
       const runtimeListeners: Array<(message: unknown) => unknown> = [];
       const storageListeners: Array<
-        (changes: Record<string, { oldValue?: unknown; newValue?: unknown }>, areaName: string) => unknown
+        (
+          changes: Record<string, { oldValue?: unknown; newValue?: unknown }>,
+          areaName: string
+        ) => unknown
       > = [];
       const testWindow = window as typeof window & {
         __tabsOutlinerDispatchRuntimeMessage?: (message: unknown) => Promise<void>;
@@ -194,7 +204,9 @@ export function createSidebarRuntimeHarness(options: SidebarRuntimeHarnessOption
   async function waitForIdle(): Promise<void> {
     for (let pass = 0; pass < 6; pass += 1) {
       await runtime.flush();
-      await Promise.all([...attachedPages].map((page) => page.waitForTimeout(0).catch(() => undefined)));
+      await Promise.all(
+        [...attachedPages].map((page) => page.waitForTimeout(0).catch(() => undefined))
+      );
       await waitForMacrotask();
       await runtime.flush();
       await controller.handleMessage({ type: "getDiagnostics" }).catch(() => undefined);
@@ -216,7 +228,9 @@ export function createSidebarRuntimeHarness(options: SidebarRuntimeHarnessOption
     runtime.assertRuntimeModelInvariants(currentState);
     const currentDiagnostics = await diagnostics();
     if (currentDiagnostics.missingRuntimeTabIds.length > 0) {
-      throw new Error(`Missing runtime tabs: ${currentDiagnostics.missingRuntimeTabIds.join(", ")}`);
+      throw new Error(
+        `Missing runtime tabs: ${currentDiagnostics.missingRuntimeTabIds.join(", ")}`
+      );
     }
   }
 
@@ -242,18 +256,25 @@ function collectPageIssues(page: Page): ConsoleIssue[] {
     issues.push({ kind: "pageerror", text: error.message });
   });
   page.on("requestfailed", (request) => {
-    issues.push({ kind: "requestfailed", text: `${request.url()} ${request.failure()?.errorText ?? ""}` });
+    issues.push({
+      kind: "requestfailed",
+      text: `${request.url()} ${request.failure()?.errorText ?? ""}`
+    });
   });
   return issues;
 }
 
 async function dispatchRuntimeMessage(page: Page, message: unknown): Promise<void> {
-  await page.evaluate(async (payload) => {
-    const dispatch = (window as typeof window & {
-      __tabsOutlinerDispatchRuntimeMessage?: (message: unknown) => Promise<void>;
-    }).__tabsOutlinerDispatchRuntimeMessage;
-    await dispatch?.(payload);
-  }, message).catch(() => undefined);
+  await page
+    .evaluate(async (payload) => {
+      const dispatch = (
+        window as typeof window & {
+          __tabsOutlinerDispatchRuntimeMessage?: (message: unknown) => Promise<void>;
+        }
+      ).__tabsOutlinerDispatchRuntimeMessage;
+      await dispatch?.(payload);
+    }, message)
+    .catch(() => undefined);
 }
 
 async function dispatchStorageChange(
@@ -261,15 +282,22 @@ async function dispatchStorageChange(
   changes: Record<string, { oldValue?: unknown; newValue?: unknown }>,
   areaName: string
 ): Promise<void> {
-  await page.evaluate(async ({ payload, area }) => {
-    const dispatch = (window as typeof window & {
-      __tabsOutlinerDispatchStorageChange?: (
-        changes: Record<string, { oldValue?: unknown; newValue?: unknown }>,
-        areaName: string
-      ) => Promise<void>;
-    }).__tabsOutlinerDispatchStorageChange;
-    await dispatch?.(payload, area);
-  }, { payload: changes, area: areaName }).catch(() => undefined);
+  await page
+    .evaluate(
+      async ({ payload, area }) => {
+        const dispatch = (
+          window as typeof window & {
+            __tabsOutlinerDispatchStorageChange?: (
+              changes: Record<string, { oldValue?: unknown; newValue?: unknown }>,
+              areaName: string
+            ) => Promise<void>;
+          }
+        ).__tabsOutlinerDispatchStorageChange;
+        await dispatch?.(payload, area);
+      },
+      { payload: changes, area: areaName }
+    )
+    .catch(() => undefined);
 }
 
 function waitForMacrotask(): Promise<void> {

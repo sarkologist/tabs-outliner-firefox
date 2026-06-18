@@ -30,23 +30,26 @@ export function liveWindowNodeByRuntimeId(
   state: OutlineState,
   windowId: number
 ): (OutlineNode & { live: { windowId: number } }) | undefined {
-  return Object.values(state.nodes).find((node): node is OutlineNode & { live: { windowId: number } } => {
-    return Boolean(
-      node.kind === "window" &&
+  return Object.values(state.nodes).find(
+    (node): node is OutlineNode & { live: { windowId: number } } => {
+      return Boolean(
+        node.kind === "window" &&
         node.status === "live" &&
         node.live &&
         "windowId" in node.live &&
         node.live.windowId === windowId
-    );
-  });
+      );
+    }
+  );
 }
 
 export function liveTabNodeByRuntimeId(
   state: OutlineState,
   tabId: number
 ): (OutlineNode & { live: { tabId: number; windowId: number } }) | undefined {
-  return Object.values(state.nodes).find((node): node is OutlineNode & { live: { tabId: number; windowId: number } } =>
-    isLiveTabNode(node) && node.live.tabId === tabId
+  return Object.values(state.nodes).find(
+    (node): node is OutlineNode & { live: { tabId: number; windowId: number } } =>
+      isLiveTabNode(node) && node.live.tabId === tabId
   );
 }
 
@@ -65,13 +68,16 @@ export function liveStructureChanged(previous: OutlineState, next: OutlineState)
 
 export function liveStructureSignature(state: OutlineState): string {
   return [
-    ...liveWindowNodes(state).map((node) =>
-      `window:${node.id}:${node.live.windowId}:${node.parentId ?? ""}:${node.childIds.join(",")}`
+    ...liveWindowNodes(state).map(
+      (node) =>
+        `window:${node.id}:${node.live.windowId}:${node.parentId ?? ""}:${node.childIds.join(",")}`
     ),
-    ...liveTabNodes(state).map((node) =>
-      `tab:${node.id}:${node.live.tabId}:${node.live.windowId}:${node.parentId ?? ""}`
+    ...liveTabNodes(state).map(
+      (node) => `tab:${node.id}:${node.live.tabId}:${node.live.windowId}:${node.parentId ?? ""}`
     )
-  ].sort().join("|");
+  ]
+    .sort()
+    .join("|");
 }
 
 export function liveTabNodesInSubtree(

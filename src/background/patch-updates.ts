@@ -1,7 +1,13 @@
 import { isLiveTabNode } from "../model/live-nodes.js";
 import { projectLiveTabs, runtimeTitleForOutlineTab } from "../model/outline.js";
 import { buildOutlineLookup, type OutlineLookup } from "../model/outline-lookup.js";
-import type { NodeId, OutlineNode, OutlineState, RuntimeTab, RuntimeWindow } from "../model/types.js";
+import type {
+  NodeId,
+  OutlineNode,
+  OutlineState,
+  RuntimeTab,
+  RuntimeWindow
+} from "../model/types.js";
 import type { BackgroundCommand } from "./commands.js";
 import { addSubtreeNodeIds, uniqueDefinedNodeIds } from "./live-node-queries.js";
 import { nodesMateriallyEqual, sameNodeIdList } from "./state-equality.js";
@@ -54,7 +60,9 @@ export function treeStructureUpdateFromStateChange(
       updatedNodes.push(node);
     }
   }
-  const deletedClosedCount = deletedNodeIds.filter((nodeId) => previous.nodes[nodeId]?.status === "closed").length;
+  const deletedClosedCount = deletedNodeIds.filter(
+    (nodeId) => previous.nodes[nodeId]?.status === "closed"
+  ).length;
 
   return {
     type: "treeStructureUpdated",
@@ -123,7 +131,9 @@ export function treeStructureUpdateFromCandidateNodeIds(
   const diffMode = options.diffMode ?? "identity";
   const includeUnchanged = options.includeUnchanged ?? false;
   const uniqueCandidateNodeIds = uniqueDefinedNodeIds([...candidateNodeIds]);
-  const deletedNodeIds = uniqueCandidateNodeIds.filter((nodeId) => previous.nodes[nodeId] && !next.nodes[nodeId]);
+  const deletedNodeIds = uniqueCandidateNodeIds.filter(
+    (nodeId) => previous.nodes[nodeId] && !next.nodes[nodeId]
+  );
   const updatedNodes: OutlineNode[] = [];
   for (const nodeId of uniqueCandidateNodeIds) {
     const node = next.nodes[nodeId];
@@ -135,7 +145,9 @@ export function treeStructureUpdateFromCandidateNodeIds(
       updatedNodes.push(node);
     }
   }
-  const deletedClosedCount = deletedNodeIds.filter((nodeId) => previous.nodes[nodeId]?.status === "closed").length;
+  const deletedClosedCount = deletedNodeIds.filter(
+    (nodeId) => previous.nodes[nodeId]?.status === "closed"
+  ).length;
 
   return {
     type: "treeStructureUpdated",
@@ -168,7 +180,10 @@ export function deleteTreeStructureCandidateNodeIds(
   return [...candidateNodeIds];
 }
 
-export function isUsefulTreeStructureUpdate(update: TreeStructureUpdate, next: OutlineState): boolean {
+export function isUsefulTreeStructureUpdate(
+  update: TreeStructureUpdate,
+  next: OutlineState
+): boolean {
   const changedNodeCount = update.deletedNodeIds.length + update.updatedNodes.length;
   if (changedNodeCount === 0) {
     return false;
@@ -177,7 +192,10 @@ export function isUsefulTreeStructureUpdate(update: TreeStructureUpdate, next: O
   return changedNodeCount < Object.keys(next.nodes).length;
 }
 
-export function runtimeSnapshotMateriallyMatchesState(state: OutlineState, windows: RuntimeWindow[]): RuntimeSnapshotMatch {
+export function runtimeSnapshotMateriallyMatchesState(
+  state: OutlineState,
+  windows: RuntimeWindow[]
+): RuntimeSnapshotMatch {
   const lookup = buildOutlineLookup(state);
   const normalWindows = windows.filter((windowInfo) => !windowInfo.incognito);
   if (lookup.liveWindowNodeIdsByRuntimeId.size !== normalWindows.length) {
@@ -197,7 +215,9 @@ export function runtimeSnapshotMateriallyMatchesState(state: OutlineState, windo
       .sort((left, right) => left.index - right.index);
     runtimeTabCount += tabs.length;
 
-    const projectedTabs = projectLiveTabs(state, windowNodeId, lookup).filter((tab) => tab.windowId === windowInfo.id);
+    const projectedTabs = projectLiveTabs(state, windowNodeId, lookup).filter(
+      (tab) => tab.windowId === windowInfo.id
+    );
     if (projectedTabs.length !== tabs.length) {
       return { matches: false, lookup };
     }
@@ -224,12 +244,17 @@ export function runtimeSnapshotMateriallyMatchesState(state: OutlineState, windo
   };
 }
 
-export function liveTabNodeWouldChange(node: OutlineNode & { live: { tabId: number; windowId: number } }, tab: RuntimeTab): boolean {
+export function liveTabNodeWouldChange(
+  node: OutlineNode & { live: { tabId: number; windowId: number } },
+  tab: RuntimeTab
+): boolean {
   const nextTitle = runtimeTitleForOutlineTab(node, tab);
-  return node.active !== tab.active ||
+  return (
+    node.active !== tab.active ||
     (tab.url !== undefined && node.url !== tab.url) ||
     node.title !== nextTitle ||
-    (tab.favIconUrl !== undefined && node.favIconUrl !== tab.favIconUrl);
+    (tab.favIconUrl !== undefined && node.favIconUrl !== tab.favIconUrl)
+  );
 }
 
 export function nodeStateUpdateFromStateChange(
@@ -239,7 +264,10 @@ export function nodeStateUpdateFromStateChange(
 ): NodeStateUpdate | undefined {
   const diffMode = options.diffMode ?? "identity";
   const nextNodeIds = Object.keys(next.nodes);
-  if (!sameNodeIdList(previous.rootIds, next.rootIds) || Object.keys(previous.nodes).length !== nextNodeIds.length) {
+  if (
+    !sameNodeIdList(previous.rootIds, next.rootIds) ||
+    Object.keys(previous.nodes).length !== nextNodeIds.length
+  ) {
     return undefined;
   }
 
@@ -254,7 +282,10 @@ export function nodeStateUpdateFromStateChange(
     if (!nodeChangedForPatch(previousNode, node, diffMode)) {
       continue;
     }
-    if (previousNode.parentId !== node.parentId || !sameNodeIdList(previousNode.childIds, node.childIds)) {
+    if (
+      previousNode.parentId !== node.parentId ||
+      !sameNodeIdList(previousNode.childIds, node.childIds)
+    ) {
       return undefined;
     }
     updatedNodes.push(node);
@@ -292,7 +323,10 @@ export function nodeStateUpdateForNodeIds(
     if (!nodeChangedForPatch(previousNode, node, diffMode)) {
       continue;
     }
-    if (previousNode.parentId !== node.parentId || !sameNodeIdList(previousNode.childIds, node.childIds)) {
+    if (
+      previousNode.parentId !== node.parentId ||
+      !sameNodeIdList(previousNode.childIds, node.childIds)
+    ) {
       return undefined;
     }
     updatedNodes.push(node);
@@ -308,7 +342,10 @@ export function nodeStateUpdateForNodeIds(
   };
 }
 
-export function nodeChangedForPatch(previous: OutlineNode, next: OutlineNode, diffMode: StateDiffMode): boolean {
+export function nodeChangedForPatch(
+  previous: OutlineNode,
+  next: OutlineNode,
+  diffMode: StateDiffMode
+): boolean {
   return diffMode === "material" ? !nodesMateriallyEqual(previous, next) : previous !== next;
 }
-

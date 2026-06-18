@@ -39,18 +39,22 @@ export function indexedDbKvStore(dbName: string, storeName: string): KeyValueSto
 
   function openDb(): Promise<IDBDatabase> {
     if (!dbPromise) {
-      dbPromise = withTimeout(new Promise<IDBDatabase>((resolve, reject) => {
-        const request = indexedDB.open(dbName, 1);
-        request.onupgradeneeded = () => {
-          const db = request.result;
-          if (!db.objectStoreNames.contains(storeName)) {
-            db.createObjectStore(storeName);
-          }
-        };
-        request.onsuccess = () => resolve(request.result);
-        request.onerror = () => reject(request.error ?? new Error(`indexedDB.open(${dbName}) failed`));
-        request.onblocked = () => reject(new Error(`indexedDB.open(${dbName}) blocked`));
-      }), `open(${dbName})`).catch((error) => {
+      dbPromise = withTimeout(
+        new Promise<IDBDatabase>((resolve, reject) => {
+          const request = indexedDB.open(dbName, 1);
+          request.onupgradeneeded = () => {
+            const db = request.result;
+            if (!db.objectStoreNames.contains(storeName)) {
+              db.createObjectStore(storeName);
+            }
+          };
+          request.onsuccess = () => resolve(request.result);
+          request.onerror = () =>
+            reject(request.error ?? new Error(`indexedDB.open(${dbName}) failed`));
+          request.onblocked = () => reject(new Error(`indexedDB.open(${dbName}) blocked`));
+        }),
+        `open(${dbName})`
+      ).catch((error) => {
         // Let a transient open failure (or timeout) be retried on the next call rather than
         // poisoning the store with a permanently-rejected cached promise.
         dbPromise = undefined;
@@ -62,48 +66,54 @@ export function indexedDbKvStore(dbName: string, storeName: string): KeyValueSto
 
   async function get(keys: string | string[] | null = null): Promise<Record<string, unknown>> {
     const db = await openDb();
-    return withTimeout(new Promise<Record<string, unknown>>((resolve, reject) => {
-      const tx = db.transaction(storeName, "readonly");
-      const store = tx.objectStore(storeName);
-      const result: Record<string, unknown> = {};
-      if (keys === null) {
-        const keyRequest = store.getAllKeys();
-        const valueRequest = store.getAll();
-        tx.oncomplete = () => {
-          const storedKeys = keyRequest.result;
-          const storedValues = valueRequest.result;
-          storedKeys.forEach((key, index) => {
-            result[String(key)] = storedValues[index];
-          });
-          resolve(result);
-        };
-      } else {
-        const keyList = typeof keys === "string" ? [keys] : keys;
-        for (const key of keyList) {
-          const request = store.get(key);
-          request.onsuccess = () => {
-            result[key] = request.result;
+    return withTimeout(
+      new Promise<Record<string, unknown>>((resolve, reject) => {
+        const tx = db.transaction(storeName, "readonly");
+        const store = tx.objectStore(storeName);
+        const result: Record<string, unknown> = {};
+        if (keys === null) {
+          const keyRequest = store.getAllKeys();
+          const valueRequest = store.getAll();
+          tx.oncomplete = () => {
+            const storedKeys = keyRequest.result;
+            const storedValues = valueRequest.result;
+            storedKeys.forEach((key, index) => {
+              result[String(key)] = storedValues[index];
+            });
+            resolve(result);
           };
+        } else {
+          const keyList = typeof keys === "string" ? [keys] : keys;
+          for (const key of keyList) {
+            const request = store.get(key);
+            request.onsuccess = () => {
+              result[key] = request.result;
+            };
+          }
+          tx.oncomplete = () => resolve(result);
         }
-        tx.oncomplete = () => resolve(result);
-      }
-      tx.onerror = () => reject(tx.error);
-      tx.onabort = () => reject(tx.error ?? new Error("indexedDB read transaction aborted"));
-    }), "get");
+        tx.onerror = () => reject(tx.error);
+        tx.onabort = () => reject(tx.error ?? new Error("indexedDB read transaction aborted"));
+      }),
+      "get"
+    );
   }
 
   async function set(items: Record<string, unknown>): Promise<void> {
     const db = await openDb();
-    return withTimeout(new Promise<void>((resolve, reject) => {
-      const tx = db.transaction(storeName, "readwrite");
-      const store = tx.objectStore(storeName);
-      for (const [key, value] of Object.entries(items)) {
-        store.put(value, key);
-      }
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
-      tx.onabort = () => reject(tx.error ?? new Error("indexedDB write transaction aborted"));
-    }), "set");
+    return withTimeout(
+      new Promise<void>((resolve, reject) => {
+        const tx = db.transaction(storeName, "readwrite");
+        const store = tx.objectStore(storeName);
+        for (const [key, value] of Object.entries(items)) {
+          store.put(value, key);
+        }
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+        tx.onabort = () => reject(tx.error ?? new Error("indexedDB write transaction aborted"));
+      }),
+      "set"
+    );
   }
 
   async function remove(keys: string | string[]): Promise<void> {
@@ -112,16 +122,19 @@ export function indexedDbKvStore(dbName: string, storeName: string): KeyValueSto
     if (keyList.length === 0) {
       return;
     }
-    return withTimeout(new Promise<void>((resolve, reject) => {
-      const tx = db.transaction(storeName, "readwrite");
-      const store = tx.objectStore(storeName);
-      for (const key of keyList) {
-        store.delete(key);
-      }
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
-      tx.onabort = () => reject(tx.error ?? new Error("indexedDB delete transaction aborted"));
-    }), "remove");
+    return withTimeout(
+      new Promise<void>((resolve, reject) => {
+        const tx = db.transaction(storeName, "readwrite");
+        const store = tx.objectStore(storeName);
+        for (const key of keyList) {
+          store.delete(key);
+        }
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+        tx.onabort = () => reject(tx.error ?? new Error("indexedDB delete transaction aborted"));
+      }),
+      "remove"
+    );
   }
 
   return { get, set, remove };

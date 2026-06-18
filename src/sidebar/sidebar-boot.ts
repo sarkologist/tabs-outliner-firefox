@@ -32,7 +32,9 @@ async function bootSidebar(): Promise<void> {
 }
 
 async function loadInitialSnapshot(): Promise<InitialTreeSnapshot | undefined> {
-  const response = await browser.runtime.sendMessage({ type: "getInitialTreeSnapshot" }).catch(() => undefined);
+  const response = await browser.runtime
+    .sendMessage({ type: "getInitialTreeSnapshot" })
+    .catch(() => undefined);
   return isInitialTreeSnapshot(response) ? response : undefined;
 }
 
@@ -89,8 +91,14 @@ function scrollToSnapshotActiveTarget(snapshot: InitialTreeSnapshot): void {
   const targetTop = activeRowIndex * rowHeight;
   const targetBottom = targetTop + rowHeight;
   const viewportHeight = scrollContainer.clientHeight || window.innerHeight;
-  const desiredTop = Math.max(0, targetTop - Math.max(rowHeight * 2, (viewportHeight - rowHeight) / 2));
-  if (targetTop < scrollContainer.scrollTop || targetBottom > scrollContainer.scrollTop + viewportHeight) {
+  const desiredTop = Math.max(
+    0,
+    targetTop - Math.max(rowHeight * 2, (viewportHeight - rowHeight) / 2)
+  );
+  if (
+    targetTop < scrollContainer.scrollTop ||
+    targetBottom > scrollContainer.scrollTop + viewportHeight
+  ) {
     scrollContainer.scrollTop = desiredTop;
   }
 }
@@ -135,7 +143,7 @@ function renderBootRow(
   label.disabled = true;
   const titleText = node.title || "Untitled";
   const labelText = node.url ? `${titleText} - ${node.url}` : titleText;
-  label.title = node.status === "closed" ? `Restore ${labelText}` : node.url ?? titleText;
+  label.title = node.status === "closed" ? `Restore ${labelText}` : (node.url ?? titleText);
   label.ariaLabel = node.status === "closed" ? `Restore ${labelText}` : labelText;
   const title = document.createElement("span");
   title.className = "node-title";
@@ -148,7 +156,9 @@ function renderBootRow(
 }
 
 function currentRowHeight(): number {
-  const value = window.getComputedStyle(document.documentElement).getPropertyValue("--node-row-height");
+  const value = window
+    .getComputedStyle(document.documentElement)
+    .getPropertyValue("--node-row-height");
   const parsed = Number.parseFloat(value);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 18;
 }
@@ -164,28 +174,33 @@ function afterPaint(): Promise<void> {
 function isInitialTreeSnapshot(value: unknown): value is InitialTreeSnapshot {
   return Boolean(
     value &&
-      typeof value === "object" &&
-      (value as { type?: unknown }).type === "initialTreeSnapshot" &&
-      (value as { version?: unknown }).version === 1 &&
-      typeof (value as { revision?: unknown }).revision === "number" &&
-      typeof (value as { hydrating?: unknown }).hydrating === "boolean" &&
-      isOutlineState((value as { state?: unknown }).state) &&
-      (value as { projection?: unknown }).projection &&
-      typeof (value as { projection?: unknown }).projection === "object" &&
-      Array.isArray((value as { projection: { rows?: unknown } }).projection.rows) &&
-      typeof (value as { projection: { totalRowCount?: unknown } }).projection.totalRowCount === "number" &&
-      Array.isArray((value as { projection: { visibleNodeIds?: unknown } }).projection.visibleNodeIds) &&
-      Array.isArray((value as { projection: { matchingNodeIds?: unknown } }).projection.matchingNodeIds)
+    typeof value === "object" &&
+    (value as { type?: unknown }).type === "initialTreeSnapshot" &&
+    (value as { version?: unknown }).version === 1 &&
+    typeof (value as { revision?: unknown }).revision === "number" &&
+    typeof (value as { hydrating?: unknown }).hydrating === "boolean" &&
+    isOutlineState((value as { state?: unknown }).state) &&
+    (value as { projection?: unknown }).projection &&
+    typeof (value as { projection?: unknown }).projection === "object" &&
+    Array.isArray((value as { projection: { rows?: unknown } }).projection.rows) &&
+    typeof (value as { projection: { totalRowCount?: unknown } }).projection.totalRowCount ===
+      "number" &&
+    Array.isArray(
+      (value as { projection: { visibleNodeIds?: unknown } }).projection.visibleNodeIds
+    ) &&
+    Array.isArray(
+      (value as { projection: { matchingNodeIds?: unknown } }).projection.matchingNodeIds
+    )
   );
 }
 
 function isOutlineState(value: unknown): boolean {
   return Boolean(
     value &&
-      typeof value === "object" &&
-      (value as { version?: unknown }).version === 1 &&
-      Array.isArray((value as { rootIds?: unknown }).rootIds) &&
-      (value as { nodes?: unknown }).nodes &&
-      typeof (value as { nodes?: unknown }).nodes === "object"
+    typeof value === "object" &&
+    (value as { version?: unknown }).version === 1 &&
+    Array.isArray((value as { rootIds?: unknown }).rootIds) &&
+    (value as { nodes?: unknown }).nodes &&
+    typeof (value as { nodes?: unknown }).nodes === "object"
   );
 }

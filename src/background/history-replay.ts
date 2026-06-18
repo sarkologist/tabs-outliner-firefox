@@ -38,7 +38,11 @@ export function deleteHistoryReplayTabNode(state: OutlineState, nodeId: NodeId):
   delete state.nodes[nodeId];
 }
 
-export function moveHistoryReplayNodeToParent(state: OutlineState, nodeId: NodeId, parentId: NodeId): void {
+export function moveHistoryReplayNodeToParent(
+  state: OutlineState,
+  nodeId: NodeId,
+  parentId: NodeId
+): void {
   const node = cloneNodeForHistoryMutation(state, nodeId);
   const parent = cloneNodeForHistoryMutation(state, parentId);
   if (!node || !parent) {
@@ -101,7 +105,11 @@ export function deleteHistoryReplaySubtree(state: OutlineState, nodeId: NodeId):
   }
 }
 
-export function replaceLiveWindowIdInSubtree(state: OutlineState, windowNodeId: NodeId, windowId: number): void {
+export function replaceLiveWindowIdInSubtree(
+  state: OutlineState,
+  windowNodeId: NodeId,
+  windowId: number
+): void {
   const windowNode = cloneNodeForHistoryMutation(state, windowNodeId);
   if (isLiveWindowNode(windowNode)) {
     windowNode.live = { windowId };
@@ -112,7 +120,12 @@ export function replaceLiveWindowIdInSubtree(state: OutlineState, windowNodeId: 
   }
 }
 
-export function updateLiveTabRef(state: OutlineState, nodeId: NodeId, tabId: number, windowId: number): void {
+export function updateLiveTabRef(
+  state: OutlineState,
+  nodeId: NodeId,
+  tabId: number,
+  windowId: number
+): void {
   const node = cloneNodeForHistoryMutation(state, nodeId);
   if (!node || node.kind !== "tab") {
     return;
@@ -124,7 +137,10 @@ export function updateLiveTabRef(state: OutlineState, nodeId: NodeId, tabId: num
   delete node.restore;
 }
 
-export function cloneNodeForHistoryMutation(state: OutlineState, nodeId: NodeId): OutlineNode | undefined {
+export function cloneNodeForHistoryMutation(
+  state: OutlineState,
+  nodeId: NodeId
+): OutlineNode | undefined {
   const node = state.nodes[nodeId];
   if (!node) {
     return undefined;

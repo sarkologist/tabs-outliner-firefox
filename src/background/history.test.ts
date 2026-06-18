@@ -20,7 +20,10 @@ import {
   wrapNodeInGroup
 } from "../model/outline.js";
 import type { NodeId, OutlineNode, OutlineState, RuntimeWindow } from "../model/types.js";
-import { generatedTraceConfig, generatedTraceTimeoutMs } from "../test/generated-traces.test-support.js";
+import {
+  generatedTraceConfig,
+  generatedTraceTimeoutMs
+} from "../test/generated-traces.test-support.js";
 
 const runtimeWindows: RuntimeWindow[] = [
   {
@@ -82,9 +85,20 @@ describe("outline history", () => {
     const entry = createHistoryEntry("moveNode", previous, next);
 
     expect(entry).toBeDefined();
-    expect(entry?.redo.updatedNodes.map((node) => node.id).sort()).toEqual(["tab:1", "tab:2", "window:10"]);
-    expect(entry?.undo.updatedNodes.map((node) => node.id).sort()).toEqual(["tab:1", "tab:2", "window:10"]);
-    expect(applyOutlineDelta(next, entry!.undo).nodes["window:10"]?.childIds).toEqual(["tab:1", "tab:2"]);
+    expect(entry?.redo.updatedNodes.map((node) => node.id).sort()).toEqual([
+      "tab:1",
+      "tab:2",
+      "window:10"
+    ]);
+    expect(entry?.undo.updatedNodes.map((node) => node.id).sort()).toEqual([
+      "tab:1",
+      "tab:2",
+      "window:10"
+    ]);
+    expect(applyOutlineDelta(next, entry!.undo).nodes["window:10"]?.childIds).toEqual([
+      "tab:1",
+      "tab:2"
+    ]);
     expect(applyOutlineDelta(previous, entry!.redo).nodes["tab:1"]?.childIds).toEqual(["tab:2"]);
   });
 
@@ -115,7 +129,11 @@ describe("outline history", () => {
     for (let index = 0; index < DEFAULT_HISTORY_LIMIT + 3; index += 1) {
       history = pushUndoEntry(
         history,
-        createHistoryEntry("renameGroup", emptyStateWithWindowTitle(`Before ${index}`), emptyStateWithWindowTitle(`After ${index}`))!
+        createHistoryEntry(
+          "renameGroup",
+          emptyStateWithWindowTitle(`Before ${index}`),
+          emptyStateWithWindowTitle(`After ${index}`)
+        )!
       );
     }
 
@@ -135,7 +153,11 @@ describe("outline history", () => {
     for (let index = 0; index < 5; index += 1) {
       history = pushUndoEntry(
         history,
-        createHistoryEntry("renameGroup", emptyStateWithWindowTitle(`Before ${index}`), emptyStateWithWindowTitle(`After ${index}`))!,
+        createHistoryEntry(
+          "renameGroup",
+          emptyStateWithWindowTitle(`Before ${index}`),
+          emptyStateWithWindowTitle(`After ${index}`)
+        )!,
         2
       );
     }
@@ -144,12 +166,19 @@ describe("outline history", () => {
     for (let index = 0; index < 5; index += 1) {
       redoHistory = pushRedoEntry(
         redoHistory,
-        createHistoryEntry("renameGroup", emptyStateWithWindowTitle(`Redo before ${index}`), emptyStateWithWindowTitle(`Redo after ${index}`))!,
+        createHistoryEntry(
+          "renameGroup",
+          emptyStateWithWindowTitle(`Redo before ${index}`),
+          emptyStateWithWindowTitle(`Redo after ${index}`)
+        )!,
         3
       );
     }
 
-    expect(history.undoStack.map((entry) => entry.undo.updatedNodes[0]?.title)).toEqual(["Before 3", "Before 4"]);
+    expect(history.undoStack.map((entry) => entry.undo.updatedNodes[0]?.title)).toEqual([
+      "Before 3",
+      "Before 4"
+    ]);
     expect(redoHistory.redoStack.map((entry) => entry.undo.updatedNodes[0]?.title)).toEqual([
       "Redo before 2",
       "Redo before 3",
@@ -162,7 +191,11 @@ describe("outline history", () => {
     for (let index = 0; index < 6; index += 1) {
       history = pushUndoEntry(
         history,
-        createHistoryEntry("renameGroup", emptyStateWithWindowTitle(`Before ${index}`), emptyStateWithWindowTitle(`After ${index}`))!
+        createHistoryEntry(
+          "renameGroup",
+          emptyStateWithWindowTitle(`Before ${index}`),
+          emptyStateWithWindowTitle(`After ${index}`)
+        )!
       );
     }
 
@@ -175,17 +208,21 @@ describe("outline history", () => {
     ]);
   });
 
-  it("round-trips undo and redo deltas across generated structural traces", () => {
-    const config = generatedTraceConfig({
-      defaultSeedCount: 24,
-      defaultSteps: 18,
-      soakSeedCount: 96,
-      soakSteps: 48
-    });
-    for (const seed of config.seeds) {
-      runGeneratedHistoryTrace(seed, config.steps);
-    }
-  }, generatedTraceTimeoutMs(10_000, 120_000));
+  it(
+    "round-trips undo and redo deltas across generated structural traces",
+    () => {
+      const config = generatedTraceConfig({
+        defaultSeedCount: 24,
+        defaultSteps: 18,
+        soakSeedCount: 96,
+        soakSteps: 48
+      });
+      for (const seed of config.seeds) {
+        runGeneratedHistoryTrace(seed, config.steps);
+      }
+    },
+    generatedTraceTimeoutMs(10_000, 120_000)
+  );
 });
 
 function runGeneratedHistoryTrace(seed: number, steps: number): void {
@@ -230,12 +267,17 @@ function generatedHistoryOperation(
 
   for (const operation of operationOrder) {
     const result =
-      operation === 0 ? generatedMoveOperation(state, rng, now) :
-      operation === 1 ? generatedWrapOperation(state, rng, now) :
-      operation === 2 ? generatedFlattenOperation(state, rng) :
-      operation === 3 ? generatedPromoteOperation(state, rng) :
-      operation === 4 ? generatedRenameOperation(state, rng, now) :
-      generatedDeleteOperation(state, rng);
+      operation === 0
+        ? generatedMoveOperation(state, rng, now)
+        : operation === 1
+          ? generatedWrapOperation(state, rng, now)
+          : operation === 2
+            ? generatedFlattenOperation(state, rng)
+            : operation === 3
+              ? generatedPromoteOperation(state, rng)
+              : operation === 4
+                ? generatedRenameOperation(state, rng, now)
+                : generatedDeleteOperation(state, rng);
     if (result && result.next !== state) {
       return result;
     }
@@ -244,13 +286,19 @@ function generatedHistoryOperation(
   return undefined;
 }
 
-function generatedMoveOperation(state: OutlineState, rng: () => number, now: number): GeneratedHistoryOperation | undefined {
+function generatedMoveOperation(
+  state: OutlineState,
+  rng: () => number,
+  now: number
+): GeneratedHistoryOperation | undefined {
   const nodeId = pickOne(rng, movableNodeIds(state));
   if (!nodeId) {
     return undefined;
   }
   const parentId = pickOne(rng, validMoveParentIds(state, nodeId));
-  const siblingCount = parentId ? state.nodes[parentId]?.childIds.length ?? 0 : state.rootIds.length;
+  const siblingCount = parentId
+    ? (state.nodes[parentId]?.childIds.length ?? 0)
+    : state.rootIds.length;
   const next = moveNode(state, nodeId, {
     ...(parentId ? { parentId } : {}),
     index: Math.floor(rng() * (siblingCount + 1)),
@@ -263,7 +311,11 @@ function generatedMoveOperation(state: OutlineState, rng: () => number, now: num
   };
 }
 
-function generatedWrapOperation(state: OutlineState, rng: () => number, now: number): GeneratedHistoryOperation | undefined {
+function generatedWrapOperation(
+  state: OutlineState,
+  rng: () => number,
+  now: number
+): GeneratedHistoryOperation | undefined {
   const nodeId = pickOne(rng, movableNodeIds(state));
   if (!nodeId) {
     return undefined;
@@ -275,31 +327,56 @@ function generatedWrapOperation(state: OutlineState, rng: () => number, now: num
   };
 }
 
-function generatedFlattenOperation(state: OutlineState, rng: () => number): GeneratedHistoryOperation | undefined {
+function generatedFlattenOperation(
+  state: OutlineState,
+  rng: () => number
+): GeneratedHistoryOperation | undefined {
   const nodeId = pickOne(
     rng,
     Object.values(state.nodes)
-      .filter((node) => node.childIds.some((childId) => (state.nodes[childId]?.childIds.length ?? 0) > 0))
+      .filter((node) =>
+        node.childIds.some((childId) => (state.nodes[childId]?.childIds.length ?? 0) > 0)
+      )
       .map((node) => node.id)
   );
   return nodeId
-    ? { name: `flatten ${nodeId}`, commandType: "flattenSubtree", next: flattenSubtreeOneLevel(state, nodeId) }
+    ? {
+        name: `flatten ${nodeId}`,
+        commandType: "flattenSubtree",
+        next: flattenSubtreeOneLevel(state, nodeId)
+      }
     : undefined;
 }
 
-function generatedPromoteOperation(state: OutlineState, rng: () => number): GeneratedHistoryOperation | undefined {
+function generatedPromoteOperation(
+  state: OutlineState,
+  rng: () => number
+): GeneratedHistoryOperation | undefined {
   const nodeId = pickOne(
     rng,
     Object.values(state.nodes)
-      .filter((node) => node.parentId && node.childIds.length > 0 && !(node.kind === "window" && node.status === "live"))
+      .filter(
+        (node) =>
+          node.parentId &&
+          node.childIds.length > 0 &&
+          !(node.kind === "window" && node.status === "live")
+      )
       .map((node) => node.id)
   );
   return nodeId
-    ? { name: `promote ${nodeId}`, commandType: "promoteChildren", next: promoteChildrenOneLevel(state, nodeId) }
+    ? {
+        name: `promote ${nodeId}`,
+        commandType: "promoteChildren",
+        next: promoteChildrenOneLevel(state, nodeId)
+      }
     : undefined;
 }
 
-function generatedRenameOperation(state: OutlineState, rng: () => number, now: number): GeneratedHistoryOperation | undefined {
+function generatedRenameOperation(
+  state: OutlineState,
+  rng: () => number,
+  now: number
+): GeneratedHistoryOperation | undefined {
   const nodeId = pickOne(
     rng,
     Object.values(state.nodes)
@@ -307,11 +384,18 @@ function generatedRenameOperation(state: OutlineState, rng: () => number, now: n
       .map((node) => node.id)
   );
   return nodeId
-    ? { name: `rename ${nodeId}`, commandType: "renameGroup", next: renameGroup(state, nodeId, `Generated ${now}`, { now }) }
+    ? {
+        name: `rename ${nodeId}`,
+        commandType: "renameGroup",
+        next: renameGroup(state, nodeId, `Generated ${now}`, { now })
+      }
     : undefined;
 }
 
-function generatedDeleteOperation(state: OutlineState, rng: () => number): GeneratedHistoryOperation | undefined {
+function generatedDeleteOperation(
+  state: OutlineState,
+  rng: () => number
+): GeneratedHistoryOperation | undefined {
   const nodeId = pickOne(rng, movableNodeIds(state));
   return nodeId
     ? { name: `delete ${nodeId}`, commandType: "deleteNode", next: deleteNode(state, nodeId) }
@@ -399,7 +483,11 @@ function validMoveParentIds(state: OutlineState, nodeId: NodeId): NodeId[] {
     .map((node) => node.id);
 }
 
-function isDescendantForTest(state: OutlineState, candidateId: NodeId, ancestorId: NodeId): boolean {
+function isDescendantForTest(
+  state: OutlineState,
+  candidateId: NodeId,
+  ancestorId: NodeId
+): boolean {
   let current = state.nodes[candidateId];
   const visited = new Set<NodeId>();
   while (current?.parentId && !visited.has(current.id)) {
@@ -414,7 +502,9 @@ function isDescendantForTest(state: OutlineState, candidateId: NodeId, ancestorI
 
 function expectValidOutline(state: OutlineState, history: string[]): void {
   expect(new Set(state.rootIds).size, history.join("\n")).toBe(state.rootIds.length);
-  expect(reachableNodeIdsForHistory(state), history.join("\n")).toEqual(Object.keys(state.nodes).sort());
+  expect(reachableNodeIdsForHistory(state), history.join("\n")).toEqual(
+    Object.keys(state.nodes).sort()
+  );
   for (const rootId of state.rootIds) {
     expect(state.nodes[rootId], history.join("\n")).toBeDefined();
     expect(state.nodes[rootId]?.parentId, history.join("\n")).toBeUndefined();

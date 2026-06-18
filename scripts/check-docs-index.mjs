@@ -16,7 +16,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 
 const repoRoot = execFileSync("git", ["rev-parse", "--show-toplevel"], {
-  encoding: "utf8",
+  encoding: "utf8"
 }).trim();
 
 const INDEX = "REPO_MAP.md";
@@ -28,7 +28,7 @@ const read = (rel) => readFileSync(path.join(repoRoot, rel), "utf8");
 // All tracked markdown files (includes anything currently staged).
 const trackedMd = execFileSync("git", ["ls-files", "*.md"], {
   encoding: "utf8",
-  cwd: repoRoot,
+  cwd: repoRoot
 })
   .split("\n")
   .map((s) => s.trim())
@@ -59,7 +59,7 @@ if (missing.length) {
   errors.push(
     `${missing.length} tracked doc(s) are not catalogued in ${INDEX}:\n` +
       missing.map((f) => `  - ${f}`).join("\n") +
-      `\n  Fix: add a one-line "[<name>](<path>)" entry under the right section of ${INDEX}.`,
+      `\n  Fix: add a one-line "[<name>](<path>)" entry under the right section of ${INDEX}.`
   );
 }
 
@@ -70,7 +70,7 @@ for (const src of LINK_SOURCES) {
     errors.push(
       `${src} links to markdown file(s) not tracked in git:\n` +
         dangling.map((t) => `  - ${t}`).join("\n") +
-        `\n  Fix: correct the path, or 'git add' the file if it belongs in the repo.`,
+        `\n  Fix: correct the path, or 'git add' the file if it belongs in the repo.`
     );
   }
 }
@@ -82,5 +82,5 @@ if (errors.length) {
 
 console.log(
   `✓ docs index OK: ${trackedMd.length} tracked markdown files, all catalogued in ` +
-    `${INDEX}; all ${LINK_SOURCES.join("/")} markdown links resolve.`,
+    `${INDEX}; all ${LINK_SOURCES.join("/")} markdown links resolve.`
 );

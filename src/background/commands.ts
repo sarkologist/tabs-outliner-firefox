@@ -17,9 +17,22 @@ import {
   wrapNodeInGroup
 } from "../model/outline.js";
 import { appendPortableSubtreesAtTopLevel, appendPortableTree } from "../model/portable-tree.js";
-import { isLiveTabNode, isLiveWindowNode, type LiveTabNode, type LiveWindowNode } from "../model/live-nodes.js";
+import {
+  isLiveTabNode,
+  isLiveWindowNode,
+  type LiveTabNode,
+  type LiveWindowNode
+} from "../model/live-nodes.js";
 import type { RestoreScope } from "../model/outline.js";
-import type { NodeId, OutlineNode, OutlineState, RestoreCreateTarget, RestoredNode, RestorePlan, RuntimeTab } from "../model/types.js";
+import type {
+  NodeId,
+  OutlineNode,
+  OutlineState,
+  RestoreCreateTarget,
+  RestoredNode,
+  RestorePlan,
+  RuntimeTab
+} from "../model/types.js";
 
 export type BackgroundCommand =
   | {
@@ -136,7 +149,10 @@ export const BACKGROUND_COMMAND_TYPES = [
   "refresh"
 ] as const satisfies readonly BackgroundCommand["type"][];
 
-type MissingBackgroundCommandTypes = Exclude<BackgroundCommand["type"], (typeof BACKGROUND_COMMAND_TYPES)[number]>;
+type MissingBackgroundCommandTypes = Exclude<
+  BackgroundCommand["type"],
+  (typeof BACKGROUND_COMMAND_TYPES)[number]
+>;
 const backgroundCommandTypesAreExhaustive: Record<MissingBackgroundCommandTypes, never> = {};
 void backgroundCommandTypesAreExhaustive;
 
@@ -274,7 +290,10 @@ export async function runCommand(
       if (scope.requiresConfirmation && !command.confirmedLargeRestore) {
         throw new Error(largeRestoreConfirmationError(scope));
       }
-      return commandResultFromNextState(state, await restoreNode(state, adapter, command.nodeId, context.restoreObserver));
+      return commandResultFromNextState(
+        state,
+        await restoreNode(state, adapter, command.nodeId, context.restoreObserver)
+      );
     }
 
     case "analyzeRestoreScope":
@@ -283,7 +302,10 @@ export async function runCommand(
     case "moveNode": {
       const node = state.nodes[command.nodeId];
       if (node?.kind === "tab" && !command.parentId) {
-        return commandResultFromNextState(state, await moveNodeToNewWindow(state, adapter, command.nodeId, command.index));
+        return commandResultFromNextState(
+          state,
+          await moveNodeToNewWindow(state, adapter, command.nodeId, command.index)
+        );
       }
 
       let next = moveNode(state, command.nodeId, {
@@ -310,19 +332,34 @@ export async function runCommand(
     }
 
     case "moveNodeToNewWindow":
-      return commandResultFromNextState(state, await moveNodeToNewWindow(state, adapter, command.nodeId, command.index));
+      return commandResultFromNextState(
+        state,
+        await moveNodeToNewWindow(state, adapter, command.nodeId, command.index)
+      );
 
     case "wrapNodeInGroup":
-      return commandResultFromNextState(state, await wrapNodeInGroupCommand(state, adapter, command.nodeId));
+      return commandResultFromNextState(
+        state,
+        await wrapNodeInGroupCommand(state, adapter, command.nodeId)
+      );
 
     case "moveSubtreeToTopLevel":
-      return commandResultFromNextState(state, await moveSubtreeToTopLevelCommand(state, adapter, command.nodeId));
+      return commandResultFromNextState(
+        state,
+        await moveSubtreeToTopLevelCommand(state, adapter, command.nodeId)
+      );
 
     case "moveSubtreeToBottomTopLevel":
-      return commandResultFromNextState(state, await moveSubtreeToBottomTopLevelCommand(state, adapter, command.nodeId));
+      return commandResultFromNextState(
+        state,
+        await moveSubtreeToBottomTopLevelCommand(state, adapter, command.nodeId)
+      );
 
     case "flattenSubtree":
-      return commandResultFromNextState(state, await flattenSubtreeCommand(state, adapter, command.nodeId));
+      return commandResultFromNextState(
+        state,
+        await flattenSubtreeCommand(state, adapter, command.nodeId)
+      );
 
     case "promoteChildren":
       return commandResultFromNextState(state, promoteChildrenOneLevel(state, command.nodeId));
@@ -338,13 +375,22 @@ export async function runCommand(
         : unchangedCommandResult(state);
 
     case "renameGroup":
-      return commandResultFromNextState(state, renameGroup(state, command.nodeId, command.title, { now: Date.now() }));
+      return commandResultFromNextState(
+        state,
+        renameGroup(state, command.nodeId, command.title, { now: Date.now() })
+      );
 
     case "importTree":
-      return commandResultFromNextState(state, appendPortableTree(state, command.tree, { now: Date.now() }));
+      return commandResultFromNextState(
+        state,
+        appendPortableTree(state, command.tree, { now: Date.now() })
+      );
 
     case "importSubtreeToTopLevel":
-      return commandResultFromNextState(state, appendPortableSubtreesAtTopLevel(state, command.tree, { now: Date.now() }));
+      return commandResultFromNextState(
+        state,
+        appendPortableSubtreesAtTopLevel(state, command.tree, { now: Date.now() })
+      );
 
     case "deleteNode": {
       if (!state.nodes[command.nodeId]) {
@@ -352,7 +398,10 @@ export async function runCommand(
       }
 
       await closeLiveSubtree(state, adapter, command.nodeId);
-      return commandResultFromNextState(state, deleteNode(state, command.nodeId, { allowLive: true }));
+      return commandResultFromNextState(
+        state,
+        deleteNode(state, command.nodeId, { allowLive: true })
+      );
     }
   }
 }
@@ -479,7 +528,10 @@ export function planCloseNodeRuntimeClose(state: OutlineState, nodeId: NodeId): 
   return planLiveSubtreeClose(state, nodeId);
 }
 
-function restoredTabRuntimeOwnerWindowIdForCloseNode(state: OutlineState, nodeId: NodeId): number | undefined {
+function restoredTabRuntimeOwnerWindowIdForCloseNode(
+  state: OutlineState,
+  nodeId: NodeId
+): number | undefined {
   const node = state.nodes[nodeId];
   if (
     !isLiveTabNode(node) ||
@@ -514,7 +566,11 @@ function hasLiveWindowAncestor(state: OutlineState, nodeId: NodeId): boolean {
 // the window's last live tab in the outline (descendants excluded — closing a
 // subgroup owner takes its restored subtree's window down). Sibling restored tabs
 // sharing the runtime window block ownership so closing one cannot close the rest.
-function hasLiveTabOutsideSubtreeInRuntimeWindow(state: OutlineState, nodeId: NodeId, windowId: number): boolean {
+function hasLiveTabOutsideSubtreeInRuntimeWindow(
+  state: OutlineState,
+  nodeId: NodeId,
+  windowId: number
+): boolean {
   const subtreeIds = new Set(collectSubtreeEntries(state, nodeId).map((entry) => entry.node.id));
   return Object.values(state.nodes).some((node) => {
     return !subtreeIds.has(node.id) && isLiveTabNode(node) && node.live.windowId === windowId;
@@ -526,10 +582,7 @@ type SubtreeEntry = {
   depth: number;
 };
 
-function collectSubtreeEntries(
-  state: OutlineState,
-  nodeId: NodeId
-): SubtreeEntry[] {
+function collectSubtreeEntries(state: OutlineState, nodeId: NodeId): SubtreeEntry[] {
   const entries: SubtreeEntry[] = [];
   const visited = new Set<NodeId>();
   const stack: Array<{ nodeId: NodeId; depth: number }> = [{ nodeId, depth: 0 }];
@@ -600,7 +653,14 @@ async function restoreNode(
       continue;
     }
 
-    const createBatch = closedWindowCreateBatchPlans(next, plans, index, pendingNodeIds, coveredNodeIds, restoredWindowNodeIds);
+    const createBatch = closedWindowCreateBatchPlans(
+      next,
+      plans,
+      index,
+      pendingNodeIds,
+      coveredNodeIds,
+      restoredWindowNodeIds
+    );
     if (createBatch.length > 1 && plan.windowNodeId) {
       const restoredNodes = await restoreClosedWindowCreateBatch(
         next,
@@ -612,7 +672,12 @@ async function restoreNode(
       );
       if (restoredNodes.length > 0) {
         appendRestoredNodes(restoredNodes);
-        const coverage = restoredWindowDescendantCoverage(next, plan.windowNodeId, plans, restoredNodes);
+        const coverage = restoredWindowDescendantCoverage(
+          next,
+          plan.windowNodeId,
+          plans,
+          restoredNodes
+        );
         if (coverage.coveredWindowDescendants) {
           restoredWindowNodeIds.add(plan.windowNodeId);
         } else {
@@ -628,13 +693,20 @@ async function restoreNode(
     const restoredNodes = await runRestorePlan(next, adapter, plan, nodeId, restoreObserver);
     if (restoredNodes.length > 0) {
       appendRestoredNodes(restoredNodes);
-      const restoredWindowNodeId = restoredNodes.find((restored) => next.nodes[restored.nodeId]?.kind === "window")?.nodeId;
+      const restoredWindowNodeId = restoredNodes.find(
+        (restored) => next.nodes[restored.nodeId]?.kind === "window"
+      )?.nodeId;
       const restoredTabSubgroupNodeId = restoredNodes.find((restored) => {
         const restoredNode = next.nodes[restored.nodeId];
         return restoredNode?.kind === "tab" && restoredNode.childIds.length > 0;
       })?.nodeId;
       if (restoredWindowNodeId) {
-        const coverage = restoredWindowDescendantCoverage(next, restoredWindowNodeId, plans, restoredNodes);
+        const coverage = restoredWindowDescendantCoverage(
+          next,
+          restoredWindowNodeId,
+          plans,
+          restoredNodes
+        );
         if (coverage.coveredWindowDescendants) {
           restoredWindowNodeIds.add(restoredWindowNodeId);
         } else {
@@ -702,8 +774,9 @@ function restoredWindowRestoredAnyPlannedDescendant(
   windowNodeId: NodeId,
   restoredNodes: RestoredNode[]
 ): boolean {
-  return restoredNodes.some((restored) =>
-    restored.nodeId !== windowNodeId && isDescendantOfNode(state, restored.nodeId, windowNodeId)
+  return restoredNodes.some(
+    (restored) =>
+      restored.nodeId !== windowNodeId && isDescendantOfNode(state, restored.nodeId, windowNodeId)
   );
 }
 
@@ -713,7 +786,11 @@ function restoredWindowShellCoveredDescendantNodeIds(
   plans: RestorePlan[]
 ): NodeId[] {
   const windowNode = state.nodes[windowNodeId];
-  if (windowNode?.kind !== "window" || windowNode.status !== "closed" || typeof windowNode.closedAt !== "number") {
+  if (
+    windowNode?.kind !== "window" ||
+    windowNode.status !== "closed" ||
+    typeof windowNode.closedAt !== "number"
+  ) {
     return [];
   }
 
@@ -724,7 +801,11 @@ function restoredWindowShellCoveredDescendantNodeIds(
     }
 
     const node = state.nodes[plan.nodeId];
-    if (node?.status === "closed" && node.closedAt === windowNode.closedAt && !isImportedNodeId(node.id)) {
+    if (
+      node?.status === "closed" &&
+      node.closedAt === windowNode.closedAt &&
+      !isImportedNodeId(node.id)
+    ) {
       coveredNodeIds.push(plan.nodeId);
     }
   }
@@ -749,10 +830,7 @@ function closedWindowCreateBatchPlans(
   }
 
   const plannedWindow = state.nodes[firstPlan.windowNodeId];
-  if (
-    plannedWindow?.kind !== "window" ||
-    plannedWindow.status !== "closed"
-  ) {
+  if (plannedWindow?.kind !== "window" || plannedWindow.status !== "closed") {
     return [];
   }
 
@@ -786,7 +864,11 @@ function tabCreateBatchPlanFromRestorePlan(
 
   const target = plan.kind === "create" ? plan.target : plan.fallbackTarget;
   return target
-    ? { nodeId: plan.nodeId, url: createUrlForRestoreTarget(target), windowNodeId: plan.windowNodeId }
+    ? {
+        nodeId: plan.nodeId,
+        url: createUrlForRestoreTarget(target),
+        windowNodeId: plan.windowNodeId
+      }
     : undefined;
 }
 
@@ -832,9 +914,8 @@ async function restoreClosedWindowCreateBatch(
 
     for (const plan of plans) {
       const matchingIndex = availableTabs.findIndex((tab) => tab.url === plan.url);
-      const [tab] = matchingIndex >= 0
-        ? availableTabs.splice(matchingIndex, 1)
-        : availableTabs.splice(0, 1);
+      const [tab] =
+        matchingIndex >= 0 ? availableTabs.splice(matchingIndex, 1) : availableTabs.splice(0, 1);
       if (tab) {
         restored.push(restoredTabFromRuntime(plan.nodeId, tab));
       }
@@ -843,7 +924,12 @@ async function restoreClosedWindowCreateBatch(
     const createdTabIdsInIndexOrder = [...(createdWindow.tabs ?? [])]
       .sort((left, right) => (left.index ?? 0) - (right.index ?? 0))
       .map((tab) => tab.id);
-    await moveRestoredTabsIntoOutlineOrder(adapter, createdWindow.id, restored, createdTabIdsInIndexOrder);
+    await moveRestoredTabsIntoOutlineOrder(
+      adapter,
+      createdWindow.id,
+      restored,
+      createdTabIdsInIndexOrder
+    );
 
     return restored;
   } catch (error) {
@@ -981,7 +1067,12 @@ async function runRestorePlan(
 ): Promise<RestoredNode[]> {
   if (plan.kind === "session") {
     if (shouldCreateClosedWindowDestination(state, plan)) {
-      const restoredInWindow = await restoreSessionIntoClosedWindowDestination(state, adapter, plan, restoreObserver);
+      const restoredInWindow = await restoreSessionIntoClosedWindowDestination(
+        state,
+        adapter,
+        plan,
+        restoreObserver
+      );
       if (restoredInWindow.length > 0) {
         return restoredInWindow;
       }
@@ -998,12 +1089,28 @@ async function runRestorePlan(
     }
 
     if (plan.fallbackTarget) {
-      return tryCreateFallbackTab(state, adapter, plan.nodeId, plan.fallbackTarget, plan.windowNodeId, restoreRootNodeId, restoreObserver);
+      return tryCreateFallbackTab(
+        state,
+        adapter,
+        plan.nodeId,
+        plan.fallbackTarget,
+        plan.windowNodeId,
+        restoreRootNodeId,
+        restoreObserver
+      );
     }
     return [];
   }
 
-  return tryCreateFallbackTab(state, adapter, plan.nodeId, plan.target, plan.windowNodeId, restoreRootNodeId, restoreObserver);
+  return tryCreateFallbackTab(
+    state,
+    adapter,
+    plan.nodeId,
+    plan.target,
+    plan.windowNodeId,
+    restoreRootNodeId,
+    restoreObserver
+  );
 }
 
 async function moveRestoredTabsIntoPlannedLiveWindow(
@@ -1092,13 +1199,11 @@ async function restoreSessionIntoClosedWindowDestination(
       createData
     });
     const createdWindow = await adapter.createWindow(createData);
-    const movedTab =
-      createdWindow.tabs?.find((tab) => tab.id === restoredSession.tab?.id) ??
-      {
-        ...restoredSession.tab,
-        windowId: createdWindow.id,
-        index: 0
-      };
+    const movedTab = createdWindow.tabs?.find((tab) => tab.id === restoredSession.tab?.id) ?? {
+      ...restoredSession.tab,
+      windowId: createdWindow.id,
+      index: 0
+    };
 
     return [
       {
@@ -1118,7 +1223,15 @@ async function restoreSessionIntoClosedWindowDestination(
   }
 
   return plan.fallbackTarget
-    ? tryCreateFallbackTab(state, adapter, plan.nodeId, plan.fallbackTarget, plan.windowNodeId, plan.windowNodeId, restoreObserver)
+    ? tryCreateFallbackTab(
+        state,
+        adapter,
+        plan.nodeId,
+        plan.fallbackTarget,
+        plan.windowNodeId,
+        plan.windowNodeId,
+        restoreObserver
+      )
     : [];
 }
 
@@ -1130,8 +1243,8 @@ function shouldCreateClosedWindowDestination(state: OutlineState, plan: RestoreP
   const plannedNode = state.nodes[plan.nodeId];
   return Boolean(
     plannedNode?.kind === "tab" &&
-      plannedNode.childIds.length === 0 &&
-      isClosedWindowAncestorForLeafTabRestore(state, plan.windowNodeId, plan.nodeId)
+    plannedNode.childIds.length === 0 &&
+    isClosedWindowAncestorForLeafTabRestore(state, plan.windowNodeId, plan.nodeId)
   );
 }
 
@@ -1144,10 +1257,10 @@ function isClosedWindowAncestorForLeafTabRestore(
   const plannedNode = state.nodes[tabNodeId];
   return Boolean(
     plannedNode?.kind === "tab" &&
-      plannedNode.childIds.length === 0 &&
-      plannedWindow?.kind === "window" &&
-      plannedWindow.status === "closed" &&
-      isDescendantOfNode(state, tabNodeId, windowNodeId)
+    plannedNode.childIds.length === 0 &&
+    plannedWindow?.kind === "window" &&
+    plannedWindow.status === "closed" &&
+    isDescendantOfNode(state, tabNodeId, windowNodeId)
   );
 }
 
@@ -1188,7 +1301,11 @@ async function createFallbackTab(
       active: false,
       index: restoredTabTargetIndex(
         state,
-        topmostLiveTabAncestorInRuntimeWindow(state, liveTabAncestor.id, liveTabAncestor.live.windowId).id,
+        topmostLiveTabAncestorInRuntimeWindow(
+          state,
+          liveTabAncestor.id,
+          liveTabAncestor.live.windowId
+        ).id,
         nodeId
       )
     };
@@ -1209,12 +1326,14 @@ async function createFallbackTab(
     plannedNode?.kind === "tab"
   ) {
     const onlyClosedTabInWindow = closedWindowHasOnlyTab(state, windowNodeId, nodeId);
-    const restoreWindowNode = isClosedWindowAncestorForLeafTabRestore(state, windowNodeId, nodeId) ||
+    const restoreWindowNode =
+      isClosedWindowAncestorForLeafTabRestore(state, windowNodeId, nodeId) ||
       onlyClosedTabInWindow ||
       shouldRestoreClosedWindowDestinationForScope(state, windowNodeId, restoreRootNodeId);
-    const sessionRestored = restoreWindowNode && onlyClosedTabInWindow
-      ? await restoreClosedWindowSessionForTab(state, adapter, nodeId, plannedWindow)
-      : [];
+    const sessionRestored =
+      restoreWindowNode && onlyClosedTabInWindow
+        ? await restoreClosedWindowSessionForTab(state, adapter, nodeId, plannedWindow)
+        : [];
     if (sessionRestored.length > 0) {
       return sessionRestored;
     }
@@ -1274,7 +1393,10 @@ async function createFallbackTab(
   return [restoredTabFromRuntime(nodeId, created)];
 }
 
-function nearestLiveTabAncestor(state: OutlineState, nodeId: NodeId): OutlineState["nodes"][string] | undefined {
+function nearestLiveTabAncestor(
+  state: OutlineState,
+  nodeId: NodeId
+): OutlineState["nodes"][string] | undefined {
   const visited = new Set<NodeId>([nodeId]);
   let currentId = state.nodes[nodeId]?.parentId;
   while (currentId && !visited.has(currentId)) {
@@ -1283,7 +1405,12 @@ function nearestLiveTabAncestor(state: OutlineState, nodeId: NodeId): OutlineSta
     if (!current) {
       return undefined;
     }
-    if (current.kind === "tab" && current.status === "live" && current.live && "tabId" in current.live) {
+    if (
+      current.kind === "tab" &&
+      current.status === "live" &&
+      current.live &&
+      "tabId" in current.live
+    ) {
       return current;
     }
     currentId = current.parentId;
@@ -1331,7 +1458,15 @@ async function tryCreateFallbackTab(
   restoreRootNodeId?: NodeId,
   restoreObserver?: RestoreObserver
 ): Promise<RestoredNode[]> {
-  return createFallbackTab(state, adapter, nodeId, target, windowNodeId, restoreRootNodeId, restoreObserver);
+  return createFallbackTab(
+    state,
+    adapter,
+    nodeId,
+    target,
+    windowNodeId,
+    restoreRootNodeId,
+    restoreObserver
+  );
 }
 
 function shouldRestoreClosedWindowDestinationForScope(
@@ -1341,7 +1476,8 @@ function shouldRestoreClosedWindowDestinationForScope(
 ): boolean {
   return Boolean(
     restoreRootNodeId &&
-      (windowNodeId === restoreRootNodeId || isDescendantOfNode(state, windowNodeId, restoreRootNodeId))
+    (windowNodeId === restoreRootNodeId ||
+      isDescendantOfNode(state, windowNodeId, restoreRootNodeId))
   );
 }
 
@@ -1502,7 +1638,13 @@ async function flattenSubtreeCommand(
   }
 
   await adapter.moveTabs(foreignTabIds, { windowId: targetWindow.live.windowId, index: -1 });
-  const merged = updateMovedLiveSubtreeRuntimeWindow(next, next, nodeId, targetWindow.live.windowId, Date.now());
+  const merged = updateMovedLiveSubtreeRuntimeWindow(
+    next,
+    next,
+    nodeId,
+    targetWindow.live.windowId,
+    Date.now()
+  );
   await syncBrowserOrder(merged, adapter);
   return merged;
 }
@@ -1527,8 +1669,9 @@ async function moveRemainingLiveSubtreeTabsIntoCreatedWindow(
   createdFromTabId: number,
   windowId: number
 ): Promise<void> {
-  const remainingTabIds = liveTabIdsInSubtreeExcludingNestedLiveWindows(state, nodeId)
-    .filter((tabId) => tabId !== createdFromTabId);
+  const remainingTabIds = liveTabIdsInSubtreeExcludingNestedLiveWindows(state, nodeId).filter(
+    (tabId) => tabId !== createdFromTabId
+  );
 
   if (remainingTabIds.length > 0) {
     await adapter.moveTabs(remainingTabIds, { windowId, index: 1 });
@@ -1597,12 +1740,16 @@ async function restoreClosedWindowSessionForTab(
   }
 
   try {
-    const restored = restoredFromSession(state, {
-      kind: "session",
-      nodeId,
-      sessionId,
-      windowNodeId: windowNode.id
-    }, await adapter.restoreSession(sessionId));
+    const restored = restoredFromSession(
+      state,
+      {
+        kind: "session",
+        nodeId,
+        sessionId,
+        windowNodeId: windowNode.id
+      },
+      await adapter.restoreSession(sessionId)
+    );
 
     return restored.some((node) => node.nodeId === nodeId && typeof node.tabId === "number")
       ? restored
@@ -1682,7 +1829,11 @@ function matchingRestoredTabIndex(node: OutlineNode, tabs: RuntimeTab[]): number
   return tabs.findIndex((tab) => tab.url === url);
 }
 
-function closedWindowHasOnlyTab(state: OutlineState, windowNodeId: NodeId, tabNodeId: NodeId): boolean {
+function closedWindowHasOnlyTab(
+  state: OutlineState,
+  windowNodeId: NodeId,
+  tabNodeId: NodeId
+): boolean {
   const tabNodeIds = collectSubtreeEntries(state, windowNodeId)
     .map((entry) => entry.node)
     .filter((node) => node.kind === "tab" && node.status === "closed")
@@ -1723,7 +1874,10 @@ function hasAncestor(nodeId: NodeId, ancestorIds: Set<NodeId>, state: OutlineSta
   return false;
 }
 
-export async function syncBrowserOrder(state: OutlineState, adapter: BrowserAdapter): Promise<void> {
+export async function syncBrowserOrder(
+  state: OutlineState,
+  adapter: BrowserAdapter
+): Promise<void> {
   const liveWindows = Object.values(state.nodes)
     .filter((node): node is LiveWindowNode => isLiveWindowNode(node))
     .sort((left, right) => firstVisibleIndex(state, left.id) - firstVisibleIndex(state, right.id));
@@ -1792,7 +1946,10 @@ async function syncMovedSubtreeBrowserOrder(
       if (tabIndex < 0) {
         return false;
       }
-      await adapter.moveTabs([node.live.tabId], { windowId: parent.live.windowId, index: tabIndex });
+      await adapter.moveTabs([node.live.tabId], {
+        windowId: parent.live.windowId,
+        index: tabIndex
+      });
       return true;
     }
   }
@@ -1808,8 +1965,9 @@ async function syncMovedSubtreeBrowserOrder(
   }
 
   const movedTabIdSet = new Set(movedTabIds);
-  const targetWindowTabs = projectLiveTabs(state, targetWindow.id)
-    .filter((tab) => tab.windowId === targetWindow.live.windowId);
+  const targetWindowTabs = projectLiveTabs(state, targetWindow.id).filter(
+    (tab) => tab.windowId === targetWindow.live.windowId
+  );
   const targetIndex = targetWindowTabs.findIndex((tab) => movedTabIdSet.has(tab.tabId));
   if (targetIndex < 0) {
     return false;
@@ -1822,7 +1980,10 @@ async function syncMovedSubtreeBrowserOrder(
     return false;
   }
 
-  await adapter.moveTabs(movedTabsInTargetOrder, { windowId: targetWindow.live.windowId, index: targetIndex });
+  await adapter.moveTabs(movedTabsInTargetOrder, {
+    windowId: targetWindow.live.windowId,
+    index: targetIndex
+  });
   return true;
 }
 
@@ -1853,11 +2014,19 @@ function liveTabIdsInSubtree(state: OutlineState, nodeId: NodeId): number[] {
   return tabIds;
 }
 
-function liveTabIdsInSubtreeExcludingNestedLiveWindows(state: OutlineState, nodeId: NodeId): number[] {
-  return liveTabNodesInSubtreeExcludingNestedLiveWindows(state, nodeId).map((node) => node.live.tabId);
+function liveTabIdsInSubtreeExcludingNestedLiveWindows(
+  state: OutlineState,
+  nodeId: NodeId
+): number[] {
+  return liveTabNodesInSubtreeExcludingNestedLiveWindows(state, nodeId).map(
+    (node) => node.live.tabId
+  );
 }
 
-function liveTabNodesInSubtreeExcludingNestedLiveWindows(state: OutlineState, nodeId: NodeId): LiveTabNode[] {
+function liveTabNodesInSubtreeExcludingNestedLiveWindows(
+  state: OutlineState,
+  nodeId: NodeId
+): LiveTabNode[] {
   const tabNodes: LiveTabNode[] = [];
   const visited = new Set<NodeId>();
   const stack = [nodeId];
@@ -1987,4 +2156,3 @@ function nearestLiveWindow(state: OutlineState, nodeId: NodeId): LiveWindowNode 
     .find((node): node is LiveWindowNode => isLiveWindowNode(node));
   return firstLiveWindow;
 }
-

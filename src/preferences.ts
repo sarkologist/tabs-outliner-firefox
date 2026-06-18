@@ -88,7 +88,9 @@ type ParsedShortcutCombo = {
   key: string;
 };
 
-export async function loadAppPreferences(api: WebExtensionBrowser = browser): Promise<AppPreferences> {
+export async function loadAppPreferences(
+  api: WebExtensionBrowser = browser
+): Promise<AppPreferences> {
   const stored = await api.storage.local.get(APP_PREFERENCES_STORAGE_KEY);
   return normalizeAppPreferences(stored[APP_PREFERENCES_STORAGE_KEY]);
 }
@@ -97,7 +99,9 @@ export async function saveAppPreferences(
   preferences: AppPreferences,
   api: WebExtensionBrowser = browser
 ): Promise<void> {
-  await api.storage.local.set({ [APP_PREFERENCES_STORAGE_KEY]: normalizeAppPreferences(preferences) });
+  await api.storage.local.set({
+    [APP_PREFERENCES_STORAGE_KEY]: normalizeAppPreferences(preferences)
+  });
 }
 
 export function normalizeAppPreferences(value: unknown): AppPreferences {
@@ -114,13 +118,16 @@ export function normalizeAppPreferences(value: unknown): AppPreferences {
 }
 
 export function normalizeUndoHistoryLimit(value: unknown): number {
-  const limit = typeof value === "number" && Number.isFinite(value)
-    ? Math.trunc(value)
-    : DEFAULT_UNDO_HISTORY_LIMIT;
+  const limit =
+    typeof value === "number" && Number.isFinite(value)
+      ? Math.trunc(value)
+      : DEFAULT_UNDO_HISTORY_LIMIT;
   return Math.min(MAX_UNDO_HISTORY_LIMIT, Math.max(MIN_UNDO_HISTORY_LIMIT, limit));
 }
 
-export function normalizeSidebarShortcuts(value: unknown): Record<SidebarShortcutAction, ShortcutPreference> {
+export function normalizeSidebarShortcuts(
+  value: unknown
+): Record<SidebarShortcutAction, ShortcutPreference> {
   const source = isRecord(value) ? value : {};
   return Object.fromEntries(
     SIDEBAR_SHORTCUT_DEFINITIONS.map(({ action, defaultCombo }) => {
@@ -143,7 +150,8 @@ export function normalizeSidebarShortcuts(value: unknown): Record<SidebarShortcu
 export function normalizeAutomaticBackups(value: unknown): AutomaticBackupPreferences {
   const source = isRecord(value) ? value : {};
   return {
-    enabled: typeof source.enabled === "boolean" ? source.enabled : DEFAULT_AUTOMATIC_BACKUPS.enabled
+    enabled:
+      typeof source.enabled === "boolean" ? source.enabled : DEFAULT_AUTOMATIC_BACKUPS.enabled
   };
 }
 
@@ -206,7 +214,10 @@ export function comboFromKeyboardEvent(event: ShortcutKeyboardEvent): string {
   ].join("+");
 }
 
-export function shortcutMatchesEvent(preference: ShortcutPreference, event: ShortcutKeyboardEvent): boolean {
+export function shortcutMatchesEvent(
+  preference: ShortcutPreference,
+  event: ShortcutKeyboardEvent
+): boolean {
   if (!preference.enabled) {
     return false;
   }
@@ -217,10 +228,12 @@ export function shortcutMatchesEvent(preference: ShortcutPreference, event: Shor
 
   const eventKey = normalizeShortcutKey(event.key);
   const shiftedAlias = !parsed.shift && event.shiftKey && isShiftedAlias(parsed.key, eventKey);
-  return parsed.accel === (event.ctrlKey || event.metaKey) &&
+  return (
+    parsed.accel === (event.ctrlKey || event.metaKey) &&
     parsed.alt === event.altKey &&
     (parsed.shift === event.shiftKey || shiftedAlias) &&
-    (parsed.key === eventKey || isShiftedAlias(parsed.key, eventKey));
+    (parsed.key === eventKey || isShiftedAlias(parsed.key, eventKey))
+  );
 }
 
 export function sidebarShortcutDuplicates(

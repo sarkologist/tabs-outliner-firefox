@@ -10,11 +10,16 @@ test.describe("sidebar first paint", () => {
     const issues = collectPageIssues(page);
     await page.addInitScript((snapshot) => {
       const messages: Array<{ type: string; at: number }> = [];
-      (window as typeof window & { __sidebarBootMessages?: typeof messages }).__sidebarBootMessages = messages;
+      (
+        window as typeof window & { __sidebarBootMessages?: typeof messages }
+      ).__sidebarBootMessages = messages;
       window.browser = {
         runtime: {
           sendMessage: async (message: unknown) => {
-            const type = typeof message === "object" && message ? String((message as { type?: unknown }).type) : "";
+            const type =
+              typeof message === "object" && message
+                ? String((message as { type?: unknown }).type)
+                : "";
             messages.push({ type, at: performance.now() });
             if (type === "getInitialTreeSnapshot") {
               return structuredClone(snapshot);
@@ -50,14 +55,19 @@ test.describe("sidebar first paint", () => {
     await expect(page.locator("#state-count")).toHaveText("50001 items / 0 saved");
 
     const metrics = await page.evaluate(() => {
-      const messages = (window as typeof window & { __sidebarBootMessages?: Array<{ type: string; at: number }> })
-        .__sidebarBootMessages ?? [];
-      const firstRowsAt = performance.getEntriesByName("tabs-outliner.boot.firstRows").at(-1)?.startTime;
+      const messages =
+        (window as typeof window & { __sidebarBootMessages?: Array<{ type: string; at: number }> })
+          .__sidebarBootMessages ?? [];
+      const firstRowsAt = performance
+        .getEntriesByName("tabs-outliner.boot.firstRows")
+        .at(-1)?.startTime;
       const firstHydrationAt = messages.find((message) => message.type === "getState")?.at;
       return {
         firstRowsAt,
         firstHydrationAt,
-        initialSnapshotRequests: messages.filter((message) => message.type === "getInitialTreeSnapshot").length,
+        initialSnapshotRequests: messages.filter(
+          (message) => message.type === "getInitialTreeSnapshot"
+        ).length,
         visibleRows: document.querySelectorAll(".node").length
       };
     });
@@ -72,68 +82,82 @@ test.describe("sidebar first paint", () => {
     expect(issues).toEqual([]);
   });
 
-  test("does not reveal a top slice before hydration when the snapshot misses the active tab", async ({ page }) => {
+  test("does not reveal a top slice before hydration when the snapshot misses the active tab", async ({
+    page
+  }) => {
     const issues = collectPageIssues(page);
-    await page.addInitScript(({ snapshot, fullState }) => {
-      const messages: Array<{ type: string; at: number }> = [];
-      let resolveGetState: ((state: unknown) => void) | undefined;
-      Object.assign(window as typeof window & {
-        __sidebarBootMessages?: typeof messages;
-        __resolveSidebarGetState?: () => void;
-      }, {
-        __sidebarBootMessages: messages,
-        __resolveSidebarGetState: () => resolveGetState?.(structuredClone(fullState))
-      });
-      window.browser = {
-        runtime: {
-          sendMessage: async (message: unknown) => {
-            const type = typeof message === "object" && message ? String((message as { type?: unknown }).type) : "";
-            messages.push({ type, at: performance.now() });
-            if (type === "getInitialTreeSnapshot") {
-              return structuredClone(snapshot);
-            }
-            if (type === "getState") {
-              return new Promise((resolve) => {
-                resolveGetState = resolve;
-              });
-            }
-            if (
-              type === "getDiagnostics" ||
-              type === "getPerformanceTrace" ||
-              type === "setPerformanceTraceEnabled" ||
-              type === "clearPerformanceTrace"
-            ) {
-              return undefined;
-            }
-            return { ok: true };
+    await page.addInitScript(
+      ({ snapshot, fullState }) => {
+        const messages: Array<{ type: string; at: number }> = [];
+        let resolveGetState: ((state: unknown) => void) | undefined;
+        Object.assign(
+          window as typeof window & {
+            __sidebarBootMessages?: typeof messages;
+            __resolveSidebarGetState?: () => void;
           },
-          onMessage: {
-            addListener: () => undefined
+          {
+            __sidebarBootMessages: messages,
+            __resolveSidebarGetState: () => resolveGetState?.(structuredClone(fullState))
           }
-        },
-        storage: {
-          local: {
-            get: async () => ({}),
-            set: async () => undefined
+        );
+        window.browser = {
+          runtime: {
+            sendMessage: async (message: unknown) => {
+              const type =
+                typeof message === "object" && message
+                  ? String((message as { type?: unknown }).type)
+                  : "";
+              messages.push({ type, at: performance.now() });
+              if (type === "getInitialTreeSnapshot") {
+                return structuredClone(snapshot);
+              }
+              if (type === "getState") {
+                return new Promise((resolve) => {
+                  resolveGetState = resolve;
+                });
+              }
+              if (
+                type === "getDiagnostics" ||
+                type === "getPerformanceTrace" ||
+                type === "setPerformanceTraceEnabled" ||
+                type === "clearPerformanceTrace"
+              ) {
+                return undefined;
+              }
+              return { ok: true };
+            },
+            onMessage: {
+              addListener: () => undefined
+            }
+          },
+          storage: {
+            local: {
+              get: async () => ({}),
+              set: async () => undefined
+            }
           }
-        }
-      };
-    }, {
-      snapshot: fixtureInitialSnapshot(500, { activeTabInSnapshot: false }),
-      fullState: fixtureFullState(500, 400)
-    });
+        };
+      },
+      {
+        snapshot: fixtureInitialSnapshot(500, { activeTabInSnapshot: false }),
+        fullState: fixtureFullState(500, 400)
+      }
+    );
 
     await page.goto("/sidebar/sidebar.html");
     await page.waitForFunction(() => {
-      const messages = (window as typeof window & { __sidebarBootMessages?: Array<{ type: string }> })
-        .__sidebarBootMessages ?? [];
+      const messages =
+        (window as typeof window & { __sidebarBootMessages?: Array<{ type: string }> })
+          .__sidebarBootMessages ?? [];
       return messages.some((message) => message.type === "getState");
     });
     await expect(page.locator("body")).toHaveAttribute("data-sidebar-booting", "");
     await expect(page.getByRole("treeitem")).toHaveCount(0);
 
     await page.evaluate(() => {
-      (window as typeof window & { __resolveSidebarGetState?: () => void }).__resolveSidebarGetState?.();
+      (
+        window as typeof window & { __resolveSidebarGetState?: () => void }
+      ).__resolveSidebarGetState?.();
     });
 
     await expect(page.locator(".node[data-node-id='tab:400'].is-active")).toBeVisible();
@@ -143,53 +167,64 @@ test.describe("sidebar first paint", () => {
 
   test("paints an active-centered sparse snapshot without full hydration", async ({ page }) => {
     const issues = collectPageIssues(page);
-    await page.addInitScript((snapshot) => {
-      const messages: Array<{ type: string; at: number }> = [];
-      (window as typeof window & { __sidebarBootMessages?: typeof messages }).__sidebarBootMessages = messages;
-      window.browser = {
-        runtime: {
-          sendMessage: async (message: unknown) => {
-            const type = typeof message === "object" && message ? String((message as { type?: unknown }).type) : "";
-            messages.push({ type, at: performance.now() });
-            if (type === "getInitialTreeSnapshot") {
-              return structuredClone(snapshot);
+    await page.addInitScript(
+      (snapshot) => {
+        const messages: Array<{ type: string; at: number }> = [];
+        (
+          window as typeof window & { __sidebarBootMessages?: typeof messages }
+        ).__sidebarBootMessages = messages;
+        window.browser = {
+          runtime: {
+            sendMessage: async (message: unknown) => {
+              const type =
+                typeof message === "object" && message
+                  ? String((message as { type?: unknown }).type)
+                  : "";
+              messages.push({ type, at: performance.now() });
+              if (type === "getInitialTreeSnapshot") {
+                return structuredClone(snapshot);
+              }
+              if (type === "getState") {
+                return new Promise(() => undefined);
+              }
+              if (
+                type === "getDiagnostics" ||
+                type === "getPerformanceTrace" ||
+                type === "setPerformanceTraceEnabled" ||
+                type === "clearPerformanceTrace"
+              ) {
+                return undefined;
+              }
+              return { ok: true };
+            },
+            onMessage: {
+              addListener: () => undefined
             }
-            if (type === "getState") {
-              return new Promise(() => undefined);
-            }
-            if (
-              type === "getDiagnostics" ||
-              type === "getPerformanceTrace" ||
-              type === "setPerformanceTraceEnabled" ||
-              type === "clearPerformanceTrace"
-            ) {
-              return undefined;
-            }
-            return { ok: true };
           },
-          onMessage: {
-            addListener: () => undefined
+          storage: {
+            local: {
+              get: async () => ({}),
+              set: async () => undefined
+            }
           }
-        },
-        storage: {
-          local: {
-            get: async () => ({}),
-            set: async () => undefined
-          }
-        }
-      };
-    }, fixtureActiveCenteredSnapshot(500, 400));
+        };
+      },
+      fixtureActiveCenteredSnapshot(500, 400)
+    );
 
     await page.goto("/sidebar/sidebar.html");
     await expect(page.locator(".node[data-node-id='tab:400'].is-active")).toBeVisible();
 
     const metrics = await page.evaluate(() => {
-      const messages = (window as typeof window & { __sidebarBootMessages?: Array<{ type: string; at: number }> })
-        .__sidebarBootMessages ?? [];
+      const messages =
+        (window as typeof window & { __sidebarBootMessages?: Array<{ type: string; at: number }> })
+          .__sidebarBootMessages ?? [];
       return {
         hydrationRequests: messages.filter((message) => message.type === "getState").length,
         scrollTop: document.querySelector("main")?.scrollTop ?? 0,
-        treeHeight: Number.parseFloat((document.querySelector<HTMLElement>("#tree")?.style.height ?? "0").replace("px", ""))
+        treeHeight: Number.parseFloat(
+          (document.querySelector<HTMLElement>("#tree")?.style.height ?? "0").replace("px", "")
+        )
       };
     });
 
@@ -199,49 +234,59 @@ test.describe("sidebar first paint", () => {
     expect(issues).toEqual([]);
   });
 
-  test("replaces a stale boot snapshot with background truth without user interaction", async ({ page }) => {
+  test("replaces a stale boot snapshot with background truth without user interaction", async ({
+    page
+  }) => {
     const issues = collectPageIssues(page);
-    await page.addInitScript(({ snapshot, fullState }) => {
-      const messages: Array<{ type: string; at: number }> = [];
-      (window as typeof window & { __sidebarBootMessages?: typeof messages }).__sidebarBootMessages = messages;
-      window.browser = {
-        runtime: {
-          sendMessage: async (message: unknown) => {
-            const type = typeof message === "object" && message ? String((message as { type?: unknown }).type) : "";
-            messages.push({ type, at: performance.now() });
-            if (type === "getInitialTreeSnapshot") {
-              return structuredClone(snapshot);
+    await page.addInitScript(
+      ({ snapshot, fullState }) => {
+        const messages: Array<{ type: string; at: number }> = [];
+        (
+          window as typeof window & { __sidebarBootMessages?: typeof messages }
+        ).__sidebarBootMessages = messages;
+        window.browser = {
+          runtime: {
+            sendMessage: async (message: unknown) => {
+              const type =
+                typeof message === "object" && message
+                  ? String((message as { type?: unknown }).type)
+                  : "";
+              messages.push({ type, at: performance.now() });
+              if (type === "getInitialTreeSnapshot") {
+                return structuredClone(snapshot);
+              }
+              if (type === "getState") {
+                return structuredClone(fullState);
+              }
+              if (
+                type === "getDiagnostics" ||
+                type === "getPerformanceTrace" ||
+                type === "setPerformanceTraceEnabled" ||
+                type === "clearPerformanceTrace"
+              ) {
+                return undefined;
+              }
+              return { ok: true };
+            },
+            onMessage: {
+              addListener: () => undefined
             }
-            if (type === "getState") {
-              return structuredClone(fullState);
-            }
-            if (
-              type === "getDiagnostics" ||
-              type === "getPerformanceTrace" ||
-              type === "setPerformanceTraceEnabled" ||
-              type === "clearPerformanceTrace"
-            ) {
-              return undefined;
-            }
-            return { ok: true };
           },
-          onMessage: {
-            addListener: () => undefined
+          storage: {
+            local: {
+              get: async () => ({}),
+              set: async () => undefined
+            }
           }
-        },
-        storage: {
-          local: {
-            get: async () => ({}),
-            set: async () => undefined
-          }
-        }
-      };
-    }, {
-      // The boot snapshot still contains tab:99, whose journaled delete the stored
-      // snapshot missed (the background serves it while its own startup load runs).
-      snapshot: fixtureStaleBootSnapshot(),
-      fullState: fixtureFullState(3, 1)
-    });
+        };
+      },
+      {
+        // The boot snapshot still contains tab:99, whose journaled delete the stored
+        // snapshot missed (the background serves it while its own startup load runs).
+        snapshot: fixtureStaleBootSnapshot(),
+        fullState: fixtureFullState(3, 1)
+      }
+    );
 
     await page.goto("/sidebar/sidebar.html");
     // Stale paint first: the phantom node is visible without any interaction...
@@ -251,102 +296,134 @@ test.describe("sidebar first paint", () => {
     await expect(page.locator(".node[data-node-id='tab:99']")).toHaveCount(0, { timeout: 5000 });
     await expect(page.locator(".node[data-node-id='tab:3']")).toBeVisible();
 
-    const hydrationRequests = await page.evaluate(() =>
-      ((window as typeof window & { __sidebarBootMessages?: Array<{ type: string }> }).__sidebarBootMessages ?? [])
-        .filter((message) => message.type === "getState").length
+    const hydrationRequests = await page.evaluate(
+      () =>
+        (
+          (window as typeof window & { __sidebarBootMessages?: Array<{ type: string }> })
+            .__sidebarBootMessages ?? []
+        ).filter((message) => message.type === "getState").length
     );
     expect(hydrationRequests).toBeGreaterThanOrEqual(1);
     expect(issues).toEqual([]);
   });
 
-  test("exports and imports through the background when a sparse snapshot omits collapsed descendants", async ({ page }) => {
+  test("exports and imports through the background when a sparse snapshot omits collapsed descendants", async ({
+    page
+  }) => {
     const issues = collectPageIssues(page);
-    await page.addInitScript(({ snapshot, fullState, searchSnapshot }) => {
-      const messages: Array<{ type: string; at: number; query?: string }> = [];
-      let resolveGetState: ((state: unknown) => void) | undefined;
-      Object.assign(window as typeof window & {
-        __sidebarBootMessages?: typeof messages;
-        __resolveSidebarGetState?: () => void;
-        __lastSidebarDownload?: { filename: string; href: string };
-        __lastSidebarImport?: unknown;
-        __sidebarSearchSnapshot?: unknown;
-      }, {
-        __sidebarBootMessages: messages,
-        __resolveSidebarGetState: () => resolveGetState?.(structuredClone(fullState)),
-        __sidebarSearchSnapshot: searchSnapshot
-      });
-      const originalAnchorClick = HTMLAnchorElement.prototype.click;
-      HTMLAnchorElement.prototype.click = function click() {
-        if (this.download) {
-          (window as typeof window & {
+    await page.addInitScript(
+      ({ snapshot, fullState, searchSnapshot }) => {
+        const messages: Array<{ type: string; at: number; query?: string }> = [];
+        let resolveGetState: ((state: unknown) => void) | undefined;
+        Object.assign(
+          window as typeof window & {
+            __sidebarBootMessages?: typeof messages;
+            __resolveSidebarGetState?: () => void;
             __lastSidebarDownload?: { filename: string; href: string };
-          }).__lastSidebarDownload = { filename: this.download, href: this.href };
-          return;
-        }
-        return originalAnchorClick.call(this);
-      };
-      window.browser = {
-        runtime: {
-          sendMessage: async (message: unknown) => {
-            const type = typeof message === "object" && message ? String((message as { type?: unknown }).type) : "";
-            const query = typeof message === "object" && message && typeof (message as { query?: unknown }).query === "string"
-              ? (message as { query: string }).query
-              : undefined;
-            messages.push({ type, at: performance.now(), ...(query !== undefined ? { query } : {}) });
-            if (type === "getInitialTreeSnapshot") {
-              return structuredClone(snapshot);
-            }
-            if (type === "getState") {
-              return new Promise((resolve) => {
-                resolveGetState = resolve;
-              });
-            }
-            if (type === "exportTree") {
-              return {
-                type: "exportTree",
-                filename: "tabs-outliner-tree-2026-05-26.json",
-                contentType: "application/json",
-                content: "{\"schema\":\"tabs-outliner-tree\",\"version\":1,\"exportedAt\":\"2026-05-26T00:00:00.000Z\",\"roots\":[]}\n"
-              };
-            }
-            if (type === "importTree") {
-              (window as typeof window & { __lastSidebarImport?: unknown }).__lastSidebarImport =
-                (message as { tree?: unknown }).tree;
-              return { ok: true };
-            }
-            if (type === "getTreeProjectionSlice" && (message as { query?: unknown }).query === "hidden 42") {
-              return structuredClone((window as typeof window & { __sidebarSearchSnapshot?: unknown })
-                .__sidebarSearchSnapshot);
-            }
-            if (type === "getTreeProjectionSlice" && (message as { query?: unknown }).query === undefined) {
-              return structuredClone(snapshot);
-            }
-            if (
-              type === "getDiagnostics" ||
-              type === "getPerformanceTrace" ||
-              type === "setPerformanceTraceEnabled" ||
-              type === "clearPerformanceTrace"
-            ) {
-              return undefined;
-            }
-            return { ok: true };
+            __lastSidebarImport?: unknown;
+            __sidebarSearchSnapshot?: unknown;
           },
-          onMessage: {
-            addListener: () => undefined
+          {
+            __sidebarBootMessages: messages,
+            __resolveSidebarGetState: () => resolveGetState?.(structuredClone(fullState)),
+            __sidebarSearchSnapshot: searchSnapshot
           }
-        },
-        storage: {
-          local: {
-            get: async () => ({}),
-            set: async () => undefined
+        );
+        const originalAnchorClick = HTMLAnchorElement.prototype.click;
+        HTMLAnchorElement.prototype.click = function click() {
+          if (this.download) {
+            (
+              window as typeof window & {
+                __lastSidebarDownload?: { filename: string; href: string };
+              }
+            ).__lastSidebarDownload = { filename: this.download, href: this.href };
+            return;
           }
-        }
-      };
-    }, {
-      snapshot: fixtureCollapsedPartialSnapshot(100),
-      fullState: fixtureCollapsedFullState(100),
-      searchSnapshot: fixtureCollapsedSearchSnapshot(100, 42)
-    });
+          return originalAnchorClick.call(this);
+        };
+        window.browser = {
+          runtime: {
+            sendMessage: async (message: unknown) => {
+              const type =
+                typeof message === "object" && message
+                  ? String((message as { type?: unknown }).type)
+                  : "";
+              const query =
+                typeof message === "object" &&
+                message &&
+                typeof (message as { query?: unknown }).query === "string"
+                  ? (message as { query: string }).query
+                  : undefined;
+              messages.push({
+                type,
+                at: performance.now(),
+                ...(query !== undefined ? { query } : {})
+              });
+              if (type === "getInitialTreeSnapshot") {
+                return structuredClone(snapshot);
+              }
+              if (type === "getState") {
+                return new Promise((resolve) => {
+                  resolveGetState = resolve;
+                });
+              }
+              if (type === "exportTree") {
+                return {
+                  type: "exportTree",
+                  filename: "tabs-outliner-tree-2026-05-26.json",
+                  contentType: "application/json",
+                  content:
+                    '{"schema":"tabs-outliner-tree","version":1,"exportedAt":"2026-05-26T00:00:00.000Z","roots":[]}\n'
+                };
+              }
+              if (type === "importTree") {
+                (window as typeof window & { __lastSidebarImport?: unknown }).__lastSidebarImport =
+                  (message as { tree?: unknown }).tree;
+                return { ok: true };
+              }
+              if (
+                type === "getTreeProjectionSlice" &&
+                (message as { query?: unknown }).query === "hidden 42"
+              ) {
+                return structuredClone(
+                  (window as typeof window & { __sidebarSearchSnapshot?: unknown })
+                    .__sidebarSearchSnapshot
+                );
+              }
+              if (
+                type === "getTreeProjectionSlice" &&
+                (message as { query?: unknown }).query === undefined
+              ) {
+                return structuredClone(snapshot);
+              }
+              if (
+                type === "getDiagnostics" ||
+                type === "getPerformanceTrace" ||
+                type === "setPerformanceTraceEnabled" ||
+                type === "clearPerformanceTrace"
+              ) {
+                return undefined;
+              }
+              return { ok: true };
+            },
+            onMessage: {
+              addListener: () => undefined
+            }
+          },
+          storage: {
+            local: {
+              get: async () => ({}),
+              set: async () => undefined
+            }
+          }
+        };
+      },
+      {
+        snapshot: fixtureCollapsedPartialSnapshot(100),
+        fullState: fixtureCollapsedFullState(100),
+        searchSnapshot: fixtureCollapsedSearchSnapshot(100, 42)
+      }
+    );
 
     await page.goto("/sidebar/sidebar.html");
     await expect(page.locator(".node[data-node-id='group:hidden']")).toBeVisible();
@@ -358,17 +435,21 @@ test.describe("sidebar first paint", () => {
     await expect(page.locator("#import-tree")).toBeEnabled();
     await page.locator("#export-tree").click();
     await page.waitForFunction(() => {
-      const messages = (window as typeof window & { __sidebarBootMessages?: Array<{ type: string }> })
-        .__sidebarBootMessages ?? [];
+      const messages =
+        (window as typeof window & { __sidebarBootMessages?: Array<{ type: string }> })
+          .__sidebarBootMessages ?? [];
       return messages.some((message) => message.type === "exportTree");
     });
 
     const exportMetrics = await page.evaluate(() => {
-      const messages = (window as typeof window & { __sidebarBootMessages?: Array<{ type: string }> })
-        .__sidebarBootMessages ?? [];
-      const download = (window as typeof window & {
-        __lastSidebarDownload?: { filename: string; href: string };
-      }).__lastSidebarDownload;
+      const messages =
+        (window as typeof window & { __sidebarBootMessages?: Array<{ type: string }> })
+          .__sidebarBootMessages ?? [];
+      const download = (
+        window as typeof window & {
+          __lastSidebarDownload?: { filename: string; href: string };
+        }
+      ).__lastSidebarDownload;
       return {
         exportRequests: messages.filter((message) => message.type === "exportTree").length,
         hydrationRequests: messages.filter((message) => message.type === "getState").length,
@@ -405,17 +486,23 @@ test.describe("sidebar first paint", () => {
       buffer: Buffer.from(JSON.stringify(importedTree))
     });
     await page.waitForFunction(() => {
-      const messages = (window as typeof window & { __sidebarBootMessages?: Array<{ type: string }> })
-        .__sidebarBootMessages ?? [];
+      const messages =
+        (window as typeof window & { __sidebarBootMessages?: Array<{ type: string }> })
+          .__sidebarBootMessages ?? [];
       return messages.some((message) => message.type === "importTree");
     });
 
     const importMetrics = await page.evaluate(() => {
-      const messages = (window as typeof window & { __sidebarBootMessages?: Array<{ type: string }> })
-        .__sidebarBootMessages ?? [];
-      const imported = (window as typeof window & { __lastSidebarImport?: {
-        roots?: Array<{ title?: string; children?: Array<{ title?: string }> }>;
-      } }).__lastSidebarImport;
+      const messages =
+        (window as typeof window & { __sidebarBootMessages?: Array<{ type: string }> })
+          .__sidebarBootMessages ?? [];
+      const imported = (
+        window as typeof window & {
+          __lastSidebarImport?: {
+            roots?: Array<{ title?: string; children?: Array<{ title?: string }> }>;
+          };
+        }
+      ).__lastSidebarImport;
       return {
         importRequests: messages.filter((message) => message.type === "importTree").length,
         hydrationRequests: messages.filter((message) => message.type === "getState").length,
@@ -433,21 +520,29 @@ test.describe("sidebar first paint", () => {
     await expect(page.locator("#search")).toBeEnabled();
     await page.locator("#search").fill("hidden 42");
     await page.waitForFunction(() => {
-      const messages = (window as typeof window & {
-        __sidebarBootMessages?: Array<{ type: string; query?: string }>;
-      }).__sidebarBootMessages ?? [];
-      return messages.some((message) => message.type === "getTreeProjectionSlice" && message.query === "hidden 42");
+      const messages =
+        (
+          window as typeof window & {
+            __sidebarBootMessages?: Array<{ type: string; query?: string }>;
+          }
+        ).__sidebarBootMessages ?? [];
+      return messages.some(
+        (message) => message.type === "getTreeProjectionSlice" && message.query === "hidden 42"
+      );
     });
     await expect(page.locator(".node[data-node-id='hidden:42']")).toBeVisible();
     await expect(page.locator("#state-count")).toHaveText("1 match / 103 items");
 
     const searchMetrics = await page.evaluate(() => {
-      const messages = (window as typeof window & {
-        __sidebarBootMessages?: Array<{ type: string; query?: string }>;
-      }).__sidebarBootMessages ?? [];
+      const messages =
+        (
+          window as typeof window & {
+            __sidebarBootMessages?: Array<{ type: string; query?: string }>;
+          }
+        ).__sidebarBootMessages ?? [];
       return {
-        searchRequests: messages.filter((message) =>
-          message.type === "getTreeProjectionSlice" && message.query === "hidden 42"
+        searchRequests: messages.filter(
+          (message) => message.type === "getTreeProjectionSlice" && message.query === "hidden 42"
         ).length,
         hydrationRequests: messages.filter((message) => message.type === "getState").length
       };
@@ -459,10 +554,15 @@ test.describe("sidebar first paint", () => {
 
     await page.locator("#clear-search").click();
     await page.waitForFunction(() => {
-      const messages = (window as typeof window & {
-        __sidebarBootMessages?: Array<{ type: string; query?: string }>;
-      }).__sidebarBootMessages ?? [];
-      return messages.some((message) => message.type === "getTreeProjectionSlice" && message.query === undefined);
+      const messages =
+        (
+          window as typeof window & {
+            __sidebarBootMessages?: Array<{ type: string; query?: string }>;
+          }
+        ).__sidebarBootMessages ?? [];
+      return messages.some(
+        (message) => message.type === "getTreeProjectionSlice" && message.query === undefined
+      );
     });
     await expect(page.locator("#search")).toHaveValue("");
     await expect(page.locator(".node[data-node-id='tab:1']")).toBeVisible();
@@ -471,12 +571,15 @@ test.describe("sidebar first paint", () => {
     await expect(page.locator("#state-count")).toHaveText("103 items / 101 saved");
 
     const clearMetrics = await page.evaluate(() => {
-      const messages = (window as typeof window & {
-        __sidebarBootMessages?: Array<{ type: string; query?: string }>;
-      }).__sidebarBootMessages ?? [];
+      const messages =
+        (
+          window as typeof window & {
+            __sidebarBootMessages?: Array<{ type: string; query?: string }>;
+          }
+        ).__sidebarBootMessages ?? [];
       return {
-        clearRequests: messages.filter((message) =>
-          message.type === "getTreeProjectionSlice" && message.query === undefined
+        clearRequests: messages.filter(
+          (message) => message.type === "getTreeProjectionSlice" && message.query === undefined
         ).length,
         hydrationRequests: messages.filter((message) => message.type === "getState").length
       };
@@ -488,8 +591,9 @@ test.describe("sidebar first paint", () => {
     await page.waitForTimeout(900);
 
     const beforeHydration = await page.evaluate(() => {
-      const messages = (window as typeof window & { __sidebarBootMessages?: Array<{ type: string }> })
-        .__sidebarBootMessages ?? [];
+      const messages =
+        (window as typeof window & { __sidebarBootMessages?: Array<{ type: string }> })
+          .__sidebarBootMessages ?? [];
       return {
         hydrationRequests: messages.filter((message) => message.type === "getState").length
       };
@@ -503,58 +607,76 @@ test.describe("sidebar first paint", () => {
 
   test("coalesces sparse remote search typing to the final query", async ({ page }) => {
     const issues = collectPageIssues(page);
-    await page.addInitScript(({ snapshot, searchSnapshot }) => {
-      const messages: Array<{ type: string; at: number; query?: string }> = [];
-      Object.assign(window as typeof window & {
-        __sidebarBootMessages?: typeof messages;
-        __sidebarSearchSnapshot?: unknown;
-      }, {
-        __sidebarBootMessages: messages,
-        __sidebarSearchSnapshot: searchSnapshot
-      });
-      window.browser = {
-        runtime: {
-          sendMessage: async (message: unknown) => {
-            const type = typeof message === "object" && message ? String((message as { type?: unknown }).type) : "";
-            const query = typeof message === "object" && message && typeof (message as { query?: unknown }).query === "string"
-              ? (message as { query: string }).query
-              : undefined;
-            messages.push({ type, at: performance.now(), ...(query !== undefined ? { query } : {}) });
-            if (type === "getInitialTreeSnapshot") {
-              return structuredClone(snapshot);
-            }
-            if (type === "getState") {
-              return new Promise(() => undefined);
-            }
-            if (type === "getTreeProjectionSlice" && query === "hidden 42") {
-              return structuredClone((window as typeof window & { __sidebarSearchSnapshot?: unknown })
-                .__sidebarSearchSnapshot);
-            }
-            if (
-              type === "getDiagnostics" ||
-              type === "getPerformanceTrace" ||
-              type === "setPerformanceTraceEnabled" ||
-              type === "clearPerformanceTrace"
-            ) {
-              return undefined;
-            }
-            return { ok: true };
+    await page.addInitScript(
+      ({ snapshot, searchSnapshot }) => {
+        const messages: Array<{ type: string; at: number; query?: string }> = [];
+        Object.assign(
+          window as typeof window & {
+            __sidebarBootMessages?: typeof messages;
+            __sidebarSearchSnapshot?: unknown;
           },
-          onMessage: {
-            addListener: () => undefined
+          {
+            __sidebarBootMessages: messages,
+            __sidebarSearchSnapshot: searchSnapshot
           }
-        },
-        storage: {
-          local: {
-            get: async () => ({}),
-            set: async () => undefined
+        );
+        window.browser = {
+          runtime: {
+            sendMessage: async (message: unknown) => {
+              const type =
+                typeof message === "object" && message
+                  ? String((message as { type?: unknown }).type)
+                  : "";
+              const query =
+                typeof message === "object" &&
+                message &&
+                typeof (message as { query?: unknown }).query === "string"
+                  ? (message as { query: string }).query
+                  : undefined;
+              messages.push({
+                type,
+                at: performance.now(),
+                ...(query !== undefined ? { query } : {})
+              });
+              if (type === "getInitialTreeSnapshot") {
+                return structuredClone(snapshot);
+              }
+              if (type === "getState") {
+                return new Promise(() => undefined);
+              }
+              if (type === "getTreeProjectionSlice" && query === "hidden 42") {
+                return structuredClone(
+                  (window as typeof window & { __sidebarSearchSnapshot?: unknown })
+                    .__sidebarSearchSnapshot
+                );
+              }
+              if (
+                type === "getDiagnostics" ||
+                type === "getPerformanceTrace" ||
+                type === "setPerformanceTraceEnabled" ||
+                type === "clearPerformanceTrace"
+              ) {
+                return undefined;
+              }
+              return { ok: true };
+            },
+            onMessage: {
+              addListener: () => undefined
+            }
+          },
+          storage: {
+            local: {
+              get: async () => ({}),
+              set: async () => undefined
+            }
           }
-        }
-      };
-    }, {
-      snapshot: fixtureCollapsedPartialSnapshot(100),
-      searchSnapshot: fixtureCollapsedSearchSnapshot(100, 42)
-    });
+        };
+      },
+      {
+        snapshot: fixtureCollapsedPartialSnapshot(100),
+        searchSnapshot: fixtureCollapsedSearchSnapshot(100, 42)
+      }
+    );
 
     await page.goto("/sidebar/sidebar.html");
     await expect(page.locator("#search")).toBeEnabled();
@@ -565,28 +687,40 @@ test.describe("sidebar first paint", () => {
       input.value = "";
       for (const character of query) {
         input.value += character;
-        input.dispatchEvent(new InputEvent("input", {
-          bubbles: true,
-          inputType: "insertText",
-          data: character
-        }));
+        input.dispatchEvent(
+          new InputEvent("input", {
+            bubbles: true,
+            inputType: "insertText",
+            data: character
+          })
+        );
       }
     }, "hidden 42");
     await page.waitForFunction(() => {
-      const messages = (window as typeof window & {
-        __sidebarBootMessages?: Array<{ type: string; query?: string }>;
-      }).__sidebarBootMessages ?? [];
-      return messages.some((message) => message.type === "getTreeProjectionSlice" && message.query === "hidden 42");
+      const messages =
+        (
+          window as typeof window & {
+            __sidebarBootMessages?: Array<{ type: string; query?: string }>;
+          }
+        ).__sidebarBootMessages ?? [];
+      return messages.some(
+        (message) => message.type === "getTreeProjectionSlice" && message.query === "hidden 42"
+      );
     });
     await expect(page.locator(".node[data-node-id='hidden:42']")).toBeVisible();
 
     const metrics = await page.evaluate(() => {
-      const messages = (window as typeof window & {
-        __sidebarBootMessages?: Array<{ type: string; query?: string }>;
-      }).__sidebarBootMessages ?? [];
+      const messages =
+        (
+          window as typeof window & {
+            __sidebarBootMessages?: Array<{ type: string; query?: string }>;
+          }
+        ).__sidebarBootMessages ?? [];
       return {
         searchQueries: messages
-          .filter((message) => message.type === "getTreeProjectionSlice" && message.query !== undefined)
+          .filter(
+            (message) => message.type === "getTreeProjectionSlice" && message.query !== undefined
+          )
           .map((message) => message.query),
         hydrationRequests: messages.filter((message) => message.type === "getState").length
       };
@@ -599,63 +733,83 @@ test.describe("sidebar first paint", () => {
     expect(issues).toEqual([]);
   });
 
-  test("clears sparse remote search through the background after sparse merges know every node id", async ({ page }) => {
+  test("clears sparse remote search through the background after sparse merges know every node id", async ({
+    page
+  }) => {
     const issues = collectPageIssues(page);
-    await page.addInitScript(({ snapshot, searchSnapshot }) => {
-      const messages: Array<{ type: string; at: number; query?: string }> = [];
-      Object.assign(window as typeof window & {
-        __sidebarBootMessages?: typeof messages;
-        __sidebarSearchSnapshot?: unknown;
-      }, {
-        __sidebarBootMessages: messages,
-        __sidebarSearchSnapshot: searchSnapshot
-      });
-      window.browser = {
-        runtime: {
-          sendMessage: async (message: unknown) => {
-            const type = typeof message === "object" && message ? String((message as { type?: unknown }).type) : "";
-            const query = typeof message === "object" && message && typeof (message as { query?: unknown }).query === "string"
-              ? (message as { query: string }).query
-              : undefined;
-            messages.push({ type, at: performance.now(), ...(query !== undefined ? { query } : {}) });
-            if (type === "getInitialTreeSnapshot") {
-              return structuredClone(snapshot);
-            }
-            if (type === "getState") {
-              return new Promise(() => undefined);
-            }
-            if (type === "getTreeProjectionSlice" && query === "hidden 1") {
-              return structuredClone((window as typeof window & { __sidebarSearchSnapshot?: unknown })
-                .__sidebarSearchSnapshot);
-            }
-            if (type === "getTreeProjectionSlice" && query === undefined) {
-              return structuredClone(snapshot);
-            }
-            if (
-              type === "getDiagnostics" ||
-              type === "getPerformanceTrace" ||
-              type === "setPerformanceTraceEnabled" ||
-              type === "clearPerformanceTrace"
-            ) {
-              return undefined;
-            }
-            return { ok: true };
+    await page.addInitScript(
+      ({ snapshot, searchSnapshot }) => {
+        const messages: Array<{ type: string; at: number; query?: string }> = [];
+        Object.assign(
+          window as typeof window & {
+            __sidebarBootMessages?: typeof messages;
+            __sidebarSearchSnapshot?: unknown;
           },
-          onMessage: {
-            addListener: () => undefined
+          {
+            __sidebarBootMessages: messages,
+            __sidebarSearchSnapshot: searchSnapshot
           }
-        },
-        storage: {
-          local: {
-            get: async () => ({}),
-            set: async () => undefined
+        );
+        window.browser = {
+          runtime: {
+            sendMessage: async (message: unknown) => {
+              const type =
+                typeof message === "object" && message
+                  ? String((message as { type?: unknown }).type)
+                  : "";
+              const query =
+                typeof message === "object" &&
+                message &&
+                typeof (message as { query?: unknown }).query === "string"
+                  ? (message as { query: string }).query
+                  : undefined;
+              messages.push({
+                type,
+                at: performance.now(),
+                ...(query !== undefined ? { query } : {})
+              });
+              if (type === "getInitialTreeSnapshot") {
+                return structuredClone(snapshot);
+              }
+              if (type === "getState") {
+                return new Promise(() => undefined);
+              }
+              if (type === "getTreeProjectionSlice" && query === "hidden 1") {
+                return structuredClone(
+                  (window as typeof window & { __sidebarSearchSnapshot?: unknown })
+                    .__sidebarSearchSnapshot
+                );
+              }
+              if (type === "getTreeProjectionSlice" && query === undefined) {
+                return structuredClone(snapshot);
+              }
+              if (
+                type === "getDiagnostics" ||
+                type === "getPerformanceTrace" ||
+                type === "setPerformanceTraceEnabled" ||
+                type === "clearPerformanceTrace"
+              ) {
+                return undefined;
+              }
+              return { ok: true };
+            },
+            onMessage: {
+              addListener: () => undefined
+            }
+          },
+          storage: {
+            local: {
+              get: async () => ({}),
+              set: async () => undefined
+            }
           }
-        }
-      };
-    }, {
-      snapshot: fixtureCollapsedPartialSnapshot(1),
-      searchSnapshot: fixtureCollapsedSearchSnapshot(1, 1)
-    });
+        };
+      },
+      {
+        snapshot: fixtureCollapsedPartialSnapshot(1),
+        searchSnapshot: fixtureCollapsedSearchSnapshot(1, 1)
+      }
+    );
 
     let releaseSidebarImport: () => void = () => undefined;
     const sidebarImportRelease = new Promise<void>((resolve) => {
@@ -677,35 +831,48 @@ test.describe("sidebar first paint", () => {
     await sidebarImportPaused;
     await page.locator("#search").fill("hidden 1");
     releaseSidebarImport();
-    await page.waitForFunction(() =>
-      performance.getEntriesByName("tabs-outliner.boot.fullAppImport.end").length > 0
+    await page.waitForFunction(
+      () => performance.getEntriesByName("tabs-outliner.boot.fullAppImport.end").length > 0
     );
     await page.waitForFunction(() => {
-      const messages = (window as typeof window & {
-        __sidebarBootMessages?: Array<{ type: string; query?: string }>;
-      }).__sidebarBootMessages ?? [];
-      return messages.some((message) => message.type === "getTreeProjectionSlice" && message.query === "hidden 1");
+      const messages =
+        (
+          window as typeof window & {
+            __sidebarBootMessages?: Array<{ type: string; query?: string }>;
+          }
+        ).__sidebarBootMessages ?? [];
+      return messages.some(
+        (message) => message.type === "getTreeProjectionSlice" && message.query === "hidden 1"
+      );
     });
     await expect(page.locator(".node[data-node-id='hidden\\:1']")).toBeVisible();
 
     await page.locator("#clear-search").click();
     await page.waitForFunction(() => {
-      const messages = (window as typeof window & {
-        __sidebarBootMessages?: Array<{ type: string; query?: string }>;
-      }).__sidebarBootMessages ?? [];
-      return messages.some((message) => message.type === "getTreeProjectionSlice" && message.query === undefined);
+      const messages =
+        (
+          window as typeof window & {
+            __sidebarBootMessages?: Array<{ type: string; query?: string }>;
+          }
+        ).__sidebarBootMessages ?? [];
+      return messages.some(
+        (message) => message.type === "getTreeProjectionSlice" && message.query === undefined
+      );
     });
     await expect(page.locator("#search")).toHaveValue("");
     await expect(page.locator(".node[data-node-id='tab\\:1']")).toBeVisible();
     await expect(page.locator("#state-count")).toHaveText("4 items / 2 saved");
 
     const metrics = await page.evaluate(() => {
-      const messages = (window as typeof window & {
-        __sidebarBootMessages?: Array<{ type: string; query?: string }>;
-      }).__sidebarBootMessages ?? [];
+      const messages =
+        (
+          window as typeof window & {
+            __sidebarBootMessages?: Array<{ type: string; query?: string }>;
+          }
+        ).__sidebarBootMessages ?? [];
       return {
-        clearRequests: messages.filter((message) =>
-          message.type === "getTreeProjectionSlice" && message.query === undefined
+        clearRequests: messages.filter(
+          (message) => message.type === "getTreeProjectionSlice" && message.query === undefined
         ).length,
         hydrationRequests: messages.filter((message) => message.type === "getState").length
       };
@@ -718,80 +885,97 @@ test.describe("sidebar first paint", () => {
     expect(issues).toEqual([]);
   });
 
-  test("refreshes sparse projection through the background after undo before full hydration", async ({ page }) => {
+  test("refreshes sparse projection through the background after undo before full hydration", async ({
+    page
+  }) => {
     const issues = collectPageIssues(page);
-    await page.addInitScript(({ snapshot, refreshedSnapshot, undoUpdate }) => {
-      const messages: Array<{ type: string; at: number; centerRowIndex?: number }> = [];
-      const listeners: Array<(message: unknown) => void> = [];
-      Object.assign(window as typeof window & {
-        __sidebarBootMessages?: typeof messages;
-      }, {
-        __sidebarBootMessages: messages
-      });
-      window.browser = {
-        runtime: {
-          sendMessage: async (message: unknown) => {
-            const type = typeof message === "object" && message ? String((message as { type?: unknown }).type) : "";
-            const centerRowIndex = typeof message === "object" && message &&
-              typeof (message as { centerRowIndex?: unknown }).centerRowIndex === "number"
-              ? (message as { centerRowIndex: number }).centerRowIndex
-              : undefined;
-            messages.push({ type, at: performance.now(), ...(centerRowIndex !== undefined ? { centerRowIndex } : {}) });
-            if (type === "getInitialTreeSnapshot") {
-              return structuredClone(snapshot);
-            }
-            if (type === "getHistoryStatus") {
-              return {
-                type: "historyStatus",
-                canUndo: true,
-                canRedo: false,
-                undoDepth: 1,
-                redoDepth: 0,
-                undoLabel: "Move"
-              };
-            }
-            if (type === "undo") {
-              window.queueMicrotask(() => {
-                for (const listener of listeners) {
-                  listener(structuredClone(undoUpdate));
-                }
-              });
-              return { type: "commandAck", stateChanged: true };
-            }
-            if (type === "getTreeProjectionSlice") {
-              return structuredClone(refreshedSnapshot);
-            }
-            if (type === "getState") {
-              return new Promise(() => undefined);
-            }
-            if (
-              type === "getDiagnostics" ||
-              type === "getPerformanceTrace" ||
-              type === "setPerformanceTraceEnabled" ||
-              type === "clearPerformanceTrace"
-            ) {
-              return undefined;
-            }
-            return { ok: true };
+    await page.addInitScript(
+      ({ snapshot, refreshedSnapshot, undoUpdate }) => {
+        const messages: Array<{ type: string; at: number; centerRowIndex?: number }> = [];
+        const listeners: Array<(message: unknown) => void> = [];
+        Object.assign(
+          window as typeof window & {
+            __sidebarBootMessages?: typeof messages;
           },
-          onMessage: {
-            addListener: (listener: (message: unknown) => void) => {
-              listeners.push(listener);
+          {
+            __sidebarBootMessages: messages
+          }
+        );
+        window.browser = {
+          runtime: {
+            sendMessage: async (message: unknown) => {
+              const type =
+                typeof message === "object" && message
+                  ? String((message as { type?: unknown }).type)
+                  : "";
+              const centerRowIndex =
+                typeof message === "object" &&
+                message &&
+                typeof (message as { centerRowIndex?: unknown }).centerRowIndex === "number"
+                  ? (message as { centerRowIndex: number }).centerRowIndex
+                  : undefined;
+              messages.push({
+                type,
+                at: performance.now(),
+                ...(centerRowIndex !== undefined ? { centerRowIndex } : {})
+              });
+              if (type === "getInitialTreeSnapshot") {
+                return structuredClone(snapshot);
+              }
+              if (type === "getHistoryStatus") {
+                return {
+                  type: "historyStatus",
+                  canUndo: true,
+                  canRedo: false,
+                  undoDepth: 1,
+                  redoDepth: 0,
+                  undoLabel: "Move"
+                };
+              }
+              if (type === "undo") {
+                window.queueMicrotask(() => {
+                  for (const listener of listeners) {
+                    listener(structuredClone(undoUpdate));
+                  }
+                });
+                return { type: "commandAck", stateChanged: true };
+              }
+              if (type === "getTreeProjectionSlice") {
+                return structuredClone(refreshedSnapshot);
+              }
+              if (type === "getState") {
+                return new Promise(() => undefined);
+              }
+              if (
+                type === "getDiagnostics" ||
+                type === "getPerformanceTrace" ||
+                type === "setPerformanceTraceEnabled" ||
+                type === "clearPerformanceTrace"
+              ) {
+                return undefined;
+              }
+              return { ok: true };
+            },
+            onMessage: {
+              addListener: (listener: (message: unknown) => void) => {
+                listeners.push(listener);
+              }
+            }
+          },
+          storage: {
+            local: {
+              get: async () => ({}),
+              set: async () => undefined
             }
           }
-        },
-        storage: {
-          local: {
-            get: async () => ({}),
-            set: async () => undefined
-          }
-        }
-      };
-    }, {
-      snapshot: fixtureInitialSnapshot(1_000),
-      refreshedSnapshot: fixtureInitialSnapshot(1_000),
-      undoUpdate: fixtureSparseUnsafeUndoUpdate()
-    });
+        };
+      },
+      {
+        snapshot: fixtureInitialSnapshot(1_000),
+        refreshedSnapshot: fixtureInitialSnapshot(1_000),
+        undoUpdate: fixtureSparseUnsafeUndoUpdate()
+      }
+    );
 
     await page.goto("/sidebar/sidebar.html");
     await expect(page.locator(".node[data-node-id='tab\\:1']")).toBeVisible();
@@ -799,9 +983,12 @@ test.describe("sidebar first paint", () => {
 
     await page.locator("#undo-history").click();
     await page.waitForFunction(() => {
-      const messages = (window as typeof window & {
-        __sidebarBootMessages?: Array<{ type: string }>;
-      }).__sidebarBootMessages ?? [];
+      const messages =
+        (
+          window as typeof window & {
+            __sidebarBootMessages?: Array<{ type: string }>;
+          }
+        ).__sidebarBootMessages ?? [];
       return messages.some((message) => message.type === "getTreeProjectionSlice");
     });
 
@@ -809,12 +996,16 @@ test.describe("sidebar first paint", () => {
     await expect(page.locator(".node")).toHaveCount(256);
 
     const metrics = await page.evaluate(() => {
-      const messages = (window as typeof window & {
-        __sidebarBootMessages?: Array<{ type: string }>;
-      }).__sidebarBootMessages ?? [];
+      const messages =
+        (
+          window as typeof window & {
+            __sidebarBootMessages?: Array<{ type: string }>;
+          }
+        ).__sidebarBootMessages ?? [];
       return {
         undoRequests: messages.filter((message) => message.type === "undo").length,
-        projectionRequests: messages.filter((message) => message.type === "getTreeProjectionSlice").length,
+        projectionRequests: messages.filter((message) => message.type === "getTreeProjectionSlice")
+          .length,
         hydrationRequests: messages.filter((message) => message.type === "getState").length
       };
     });
@@ -827,70 +1018,90 @@ test.describe("sidebar first paint", () => {
     expect(issues).toEqual([]);
   });
 
-  test("refreshes sparse remote search when background updates arrive for the same query", async ({ page }) => {
+  test("refreshes sparse remote search when background updates arrive for the same query", async ({
+    page
+  }) => {
     const issues = collectPageIssues(page);
-    await page.addInitScript(({ snapshot, searchSnapshots }) => {
-      const messages: Array<{ type: string; at: number; query?: string }> = [];
-      const listeners: Array<(message: unknown) => void> = [];
-      const pendingSearchSnapshots = [...searchSnapshots];
-      Object.assign(window as typeof window & {
-        __sidebarBootMessages?: typeof messages;
-        __emitSidebarMessage?: (message: unknown) => void;
-      }, {
-        __sidebarBootMessages: messages,
-        __emitSidebarMessage: (message: unknown) => {
-          for (const listener of listeners) {
-            listener(structuredClone(message));
-          }
-        }
-      });
-      window.browser = {
-        runtime: {
-          sendMessage: async (message: unknown) => {
-            const type = typeof message === "object" && message ? String((message as { type?: unknown }).type) : "";
-            const query = typeof message === "object" && message && typeof (message as { query?: unknown }).query === "string"
-              ? (message as { query: string }).query
-              : undefined;
-            messages.push({ type, at: performance.now(), ...(query !== undefined ? { query } : {}) });
-            if (type === "getInitialTreeSnapshot") {
-              return structuredClone(snapshot);
-            }
-            if (type === "getState") {
-              return new Promise(() => undefined);
-            }
-            if (type === "getTreeProjectionSlice" && query === "hidden 42") {
-              return structuredClone(pendingSearchSnapshots.shift() ?? pendingSearchSnapshots.at(-1));
-            }
-            if (
-              type === "getDiagnostics" ||
-              type === "getPerformanceTrace" ||
-              type === "setPerformanceTraceEnabled" ||
-              type === "clearPerformanceTrace"
-            ) {
-              return undefined;
-            }
-            return { ok: true };
+    await page.addInitScript(
+      ({ snapshot, searchSnapshots }) => {
+        const messages: Array<{ type: string; at: number; query?: string }> = [];
+        const listeners: Array<(message: unknown) => void> = [];
+        const pendingSearchSnapshots = [...searchSnapshots];
+        Object.assign(
+          window as typeof window & {
+            __sidebarBootMessages?: typeof messages;
+            __emitSidebarMessage?: (message: unknown) => void;
           },
-          onMessage: {
-            addListener: (listener: (message: unknown) => void) => {
-              listeners.push(listener);
+          {
+            __sidebarBootMessages: messages,
+            __emitSidebarMessage: (message: unknown) => {
+              for (const listener of listeners) {
+                listener(structuredClone(message));
+              }
             }
           }
-        },
-        storage: {
-          local: {
-            get: async () => ({}),
-            set: async () => undefined
+        );
+        window.browser = {
+          runtime: {
+            sendMessage: async (message: unknown) => {
+              const type =
+                typeof message === "object" && message
+                  ? String((message as { type?: unknown }).type)
+                  : "";
+              const query =
+                typeof message === "object" &&
+                message &&
+                typeof (message as { query?: unknown }).query === "string"
+                  ? (message as { query: string }).query
+                  : undefined;
+              messages.push({
+                type,
+                at: performance.now(),
+                ...(query !== undefined ? { query } : {})
+              });
+              if (type === "getInitialTreeSnapshot") {
+                return structuredClone(snapshot);
+              }
+              if (type === "getState") {
+                return new Promise(() => undefined);
+              }
+              if (type === "getTreeProjectionSlice" && query === "hidden 42") {
+                return structuredClone(
+                  pendingSearchSnapshots.shift() ?? pendingSearchSnapshots.at(-1)
+                );
+              }
+              if (
+                type === "getDiagnostics" ||
+                type === "getPerformanceTrace" ||
+                type === "setPerformanceTraceEnabled" ||
+                type === "clearPerformanceTrace"
+              ) {
+                return undefined;
+              }
+              return { ok: true };
+            },
+            onMessage: {
+              addListener: (listener: (message: unknown) => void) => {
+                listeners.push(listener);
+              }
+            }
+          },
+          storage: {
+            local: {
+              get: async () => ({}),
+              set: async () => undefined
+            }
           }
-        }
-      };
-    }, {
-      snapshot: fixtureCollapsedPartialSnapshot(100),
-      searchSnapshots: [
-        fixtureSparseSearchWindowSnapshot("hidden 42", 320, 32, 500),
-        fixtureCollapsedSearchSnapshot(100, 42, { totalRowCount: 500 })
-      ]
-    });
+        };
+      },
+      {
+        snapshot: fixtureCollapsedPartialSnapshot(100),
+        searchSnapshots: [
+          fixtureSparseSearchWindowSnapshot("hidden 42", 320, 32, 500),
+          fixtureCollapsedSearchSnapshot(100, 42, { totalRowCount: 500 })
+        ]
+      }
+    );
 
     await page.goto("/sidebar/sidebar.html");
     await expect(page.locator("#search")).toBeEnabled();
@@ -899,19 +1110,26 @@ test.describe("sidebar first paint", () => {
       const input = element as HTMLInputElement;
       input.focus();
       input.value = query;
-      input.dispatchEvent(new InputEvent("input", {
-        bubbles: true,
-        inputType: "insertText",
-        data: query
-      }));
+      input.dispatchEvent(
+        new InputEvent("input", {
+          bubbles: true,
+          inputType: "insertText",
+          data: query
+        })
+      );
     }, "hidden 42");
     await page.waitForFunction(() => {
-      const messages = (window as typeof window & {
-        __sidebarBootMessages?: Array<{ type: string; query?: string }>;
-      }).__sidebarBootMessages ?? [];
-      return messages.filter((message) =>
-        message.type === "getTreeProjectionSlice" && message.query === "hidden 42"
-      ).length >= 1;
+      const messages =
+        (
+          window as typeof window & {
+            __sidebarBootMessages?: Array<{ type: string; query?: string }>;
+          }
+        ).__sidebarBootMessages ?? [];
+      return (
+        messages.filter(
+          (message) => message.type === "getTreeProjectionSlice" && message.query === "hidden 42"
+        ).length >= 1
+      );
     });
     await expect(page.locator(".node[data-node-id='hidden:42']")).toHaveCount(0);
     await page.locator("main").evaluate((element) => {
@@ -921,7 +1139,9 @@ test.describe("sidebar first paint", () => {
     const firstSearchRequestCount = await sparseSearchRequestCount(page, "hidden 42");
 
     await page.evaluate((node) => {
-      (window as typeof window & { __emitSidebarMessage?: (message: unknown) => void }).__emitSidebarMessage?.({
+      (
+        window as typeof window & { __emitSidebarMessage?: (message: unknown) => void }
+      ).__emitSidebarMessage?.({
         type: "nodeStateUpdated",
         updatedNodes: [node],
         closedCountDelta: 0
@@ -929,22 +1149,32 @@ test.describe("sidebar first paint", () => {
     }, hiddenTabNode(42));
 
     await page.waitForFunction((previousCount) => {
-      const messages = (window as typeof window & {
-        __sidebarBootMessages?: Array<{ type: string; query?: string }>;
-      }).__sidebarBootMessages ?? [];
-      return messages.filter((message) =>
-        message.type === "getTreeProjectionSlice" && message.query === "hidden 42"
-      ).length > previousCount;
+      const messages =
+        (
+          window as typeof window & {
+            __sidebarBootMessages?: Array<{ type: string; query?: string }>;
+          }
+        ).__sidebarBootMessages ?? [];
+      return (
+        messages.filter(
+          (message) => message.type === "getTreeProjectionSlice" && message.query === "hidden 42"
+        ).length > previousCount
+      );
     }, firstSearchRequestCount);
     await expect(page.locator(".node[data-node-id='hidden:42']")).toBeInViewport();
 
     const metrics = await page.evaluate(() => {
-      const messages = (window as typeof window & {
-        __sidebarBootMessages?: Array<{ type: string; query?: string }>;
-      }).__sidebarBootMessages ?? [];
+      const messages =
+        (
+          window as typeof window & {
+            __sidebarBootMessages?: Array<{ type: string; query?: string }>;
+          }
+        ).__sidebarBootMessages ?? [];
       return {
         searchQueries: messages
-          .filter((message) => message.type === "getTreeProjectionSlice" && message.query !== undefined)
+          .filter(
+            (message) => message.type === "getTreeProjectionSlice" && message.query !== undefined
+          )
           .map((message) => message.query),
         hydrationRequests: messages.filter((message) => message.type === "getState").length
       };
@@ -958,62 +1188,72 @@ test.describe("sidebar first paint", () => {
 
   test("does not auto-hydrate after sparse first paint", async ({ page }) => {
     const issues = collectPageIssues(page);
-    await page.addInitScript(({ snapshot, fullState }) => {
-      window.localStorage.setItem("tabsOutlinerProfileEnabled", "true");
-      const messages: Array<{ type: string; at: number }> = [];
-      (window as typeof window & { __sidebarBootMessages?: typeof messages }).__sidebarBootMessages = messages;
-      window.browser = {
-        runtime: {
-          sendMessage: async (message: unknown) => {
-            const type = typeof message === "object" && message ? String((message as { type?: unknown }).type) : "";
-            messages.push({ type, at: performance.now() });
-            if (type === "getInitialTreeSnapshot") {
-              return structuredClone(snapshot);
-            }
-            if (type === "getState") {
-              return structuredClone(fullState);
-            }
-            if (
-              type === "getDiagnostics" ||
-              type === "getPerformanceTrace" ||
-              type === "setPerformanceTraceEnabled" ||
-              type === "clearPerformanceTrace"
-            ) {
-              return undefined;
-            }
-            return { ok: true };
+    await page.addInitScript(
+      ({ snapshot, fullState }) => {
+        window.localStorage.setItem("tabsOutlinerProfileEnabled", "true");
+        const messages: Array<{ type: string; at: number }> = [];
+        (
+          window as typeof window & { __sidebarBootMessages?: typeof messages }
+        ).__sidebarBootMessages = messages;
+        window.browser = {
+          runtime: {
+            sendMessage: async (message: unknown) => {
+              const type =
+                typeof message === "object" && message
+                  ? String((message as { type?: unknown }).type)
+                  : "";
+              messages.push({ type, at: performance.now() });
+              if (type === "getInitialTreeSnapshot") {
+                return structuredClone(snapshot);
+              }
+              if (type === "getState") {
+                return structuredClone(fullState);
+              }
+              if (
+                type === "getDiagnostics" ||
+                type === "getPerformanceTrace" ||
+                type === "setPerformanceTraceEnabled" ||
+                type === "clearPerformanceTrace"
+              ) {
+                return undefined;
+              }
+              return { ok: true };
+            },
+            onMessage: {
+              addListener: () => undefined
+            },
+            connect: () => ({
+              onMessage: { addListener: () => undefined },
+              onDisconnect: { addListener: () => undefined }
+            })
           },
-          onMessage: {
-            addListener: () => undefined
+          storage: {
+            local: {
+              get: async () => ({}),
+              set: async () => undefined
+            },
+            onChanged: {
+              addListener: () => undefined
+            }
           },
-          connect: () => ({
-            onMessage: { addListener: () => undefined },
-            onDisconnect: { addListener: () => undefined }
-          })
-        },
-        storage: {
-          local: {
-            get: async () => ({}),
-            set: async () => undefined
-          },
-          onChanged: {
-            addListener: () => undefined
+          windows: {
+            getCurrent: async () => ({ id: 1 })
           }
-        },
-        windows: {
-          getCurrent: async () => ({ id: 1 })
-        }
-      };
-    }, {
-      snapshot: fixtureInitialSnapshot(500),
-      fullState: fixtureFullState(500, 1)
-    });
+        };
+      },
+      {
+        snapshot: fixtureInitialSnapshot(500),
+        fullState: fixtureFullState(500, 1)
+      }
+    );
 
     await page.goto("/sidebar/sidebar.html");
     await expect(page.locator(".node[data-node-id='tab:1']")).toBeVisible();
     await expect(page.locator("#search")).toBeEnabled();
     await page.waitForFunction(() => {
-      const fullAppImportEnd = performance.getEntriesByName("tabs-outliner.boot.fullAppImport.end").at(-1)?.startTime;
+      const fullAppImportEnd = performance
+        .getEntriesByName("tabs-outliner.boot.fullAppImport.end")
+        .at(-1)?.startTime;
       return typeof fullAppImportEnd === "number" && performance.now() - fullAppImportEnd > 900;
     });
     await expect(page.locator("#search")).toBeEnabled();
@@ -1021,8 +1261,9 @@ test.describe("sidebar first paint", () => {
 
     const metrics = await page.evaluate(async () => {
       const mark = (name: string) => performance.getEntriesByName(name).at(-1)?.startTime;
-      const messages = (window as typeof window & { __sidebarBootMessages?: Array<{ type: string; at: number }> })
-        .__sidebarBootMessages ?? [];
+      const messages =
+        (window as typeof window & { __sidebarBootMessages?: Array<{ type: string; at: number }> })
+          .__sidebarBootMessages ?? [];
       return {
         initialSnapshotStart: mark("tabs-outliner.boot.initialSnapshot.start"),
         initialSnapshotEnd: mark("tabs-outliner.boot.initialSnapshot.end"),
@@ -1031,7 +1272,9 @@ test.describe("sidebar first paint", () => {
         fullAppImportEnd: mark("tabs-outliner.boot.fullAppImport.end"),
         hydrationStart: mark("tabs-outliner.sidebar.hydration.start"),
         hydrationComplete: mark("tabs-outliner.sidebar.hydration.complete"),
-        initialSnapshotRequests: messages.filter((message) => message.type === "getInitialTreeSnapshot").length,
+        initialSnapshotRequests: messages.filter(
+          (message) => message.type === "getInitialTreeSnapshot"
+        ).length,
         hydrationRequests: messages.filter((message) => message.type === "getState").length,
         hydrationTrace: (await window.tabsOutlinerProfile?.summary())?.find(
           (row) => row.name === "sidebar.hydration"
@@ -1056,7 +1299,10 @@ test.describe("sidebar first paint", () => {
 function fixtureInitialSnapshot(tabCount: number, options: { activeTabInSnapshot?: boolean } = {}) {
   const now = 1_700_000_000_000;
   const loadedTabCount = 255;
-  const loadedTabIds = Array.from({ length: loadedTabCount }, (_value, index) => `tab:${index + 1}`);
+  const loadedTabIds = Array.from(
+    { length: loadedTabCount },
+    (_value, index) => `tab:${index + 1}`
+  );
   const activeTabInSnapshot = options.activeTabInSnapshot ?? true;
   const rows = [
     {
@@ -1391,7 +1637,10 @@ function fixtureCollapsedPartialSnapshot(hiddenTabCount: number) {
 
 function fixtureCollapsedFullState(hiddenTabCount: number) {
   const now = 1_700_000_000_000;
-  const hiddenTabIds = Array.from({ length: hiddenTabCount }, (_value, index) => `hidden:${index + 1}`);
+  const hiddenTabIds = Array.from(
+    { length: hiddenTabCount },
+    (_value, index) => `hidden:${index + 1}`
+  );
   return {
     version: 1,
     rootIds: ["window:1"],
@@ -1434,26 +1683,28 @@ function fixtureCollapsedFullState(hiddenTabCount: number) {
         updatedAt: now,
         closedAt: now
       },
-      ...Object.fromEntries(hiddenTabIds.map((id, index) => [
-        id,
-        {
+      ...Object.fromEntries(
+        hiddenTabIds.map((id, index) => [
           id,
-          kind: "tab",
-          status: "closed",
-          parentId: "group:hidden",
-          childIds: [],
-          title: `Hidden ${index + 1}`,
-          url: `https://hidden.example/${index + 1}`,
-          collapsed: false,
-          createdAt: now,
-          updatedAt: now,
-          closedAt: now + index + 1,
-          restore: {
+          {
+            id,
+            kind: "tab",
+            status: "closed",
+            parentId: "group:hidden",
+            childIds: [],
+            title: `Hidden ${index + 1}`,
             url: `https://hidden.example/${index + 1}`,
-            title: `Hidden ${index + 1}`
+            collapsed: false,
+            createdAt: now,
+            updatedAt: now,
+            closedAt: now + index + 1,
+            restore: {
+              url: `https://hidden.example/${index + 1}`,
+              title: `Hidden ${index + 1}`
+            }
           }
-        }
-      ]))
+        ])
+      )
     }
   };
 }
@@ -1629,25 +1880,27 @@ function fixtureSparseSearchWindowSnapshot(
     state: {
       version: 1,
       rootIds: rows.map((row) => row.nodeId),
-      nodes: Object.fromEntries(rows.map((row) => [
-        row.nodeId,
-        {
-          id: row.nodeId,
-          kind: "tab",
-          status: "closed",
-          childIds: [],
-          title: `Search result ${row.index}`,
-          url: `https://search.example/${row.index}`,
-          collapsed: false,
-          createdAt: now,
-          updatedAt: now,
-          closedAt: now + row.index,
-          restore: {
+      nodes: Object.fromEntries(
+        rows.map((row) => [
+          row.nodeId,
+          {
+            id: row.nodeId,
+            kind: "tab",
+            status: "closed",
+            childIds: [],
+            title: `Search result ${row.index}`,
             url: `https://search.example/${row.index}`,
-            title: `Search result ${row.index}`
+            collapsed: false,
+            createdAt: now,
+            updatedAt: now,
+            closedAt: now + row.index,
+            restore: {
+              url: `https://search.example/${row.index}`,
+              title: `Search result ${row.index}`
+            }
           }
-        }
-      ]))
+        ])
+      )
     },
     projection: {
       query,
@@ -1767,18 +2020,24 @@ function collectPageIssues(page: Page): ConsoleIssue[] {
     issues.push({ kind: "pageerror", text: error.message });
   });
   page.on("requestfailed", (request) => {
-    issues.push({ kind: "requestfailed", text: `${request.url()} ${request.failure()?.errorText ?? ""}` });
+    issues.push({
+      kind: "requestfailed",
+      text: `${request.url()} ${request.failure()?.errorText ?? ""}`
+    });
   });
   return issues;
 }
 
 async function sparseSearchRequestCount(page: Page, query: string): Promise<number> {
   return page.evaluate((expectedQuery) => {
-    const messages = (window as typeof window & {
-      __sidebarBootMessages?: Array<{ type: string; query?: string }>;
-    }).__sidebarBootMessages ?? [];
-    return messages.filter((message) =>
-      message.type === "getTreeProjectionSlice" && message.query === expectedQuery
+    const messages =
+      (
+        window as typeof window & {
+          __sidebarBootMessages?: Array<{ type: string; query?: string }>;
+        }
+      ).__sidebarBootMessages ?? [];
+    return messages.filter(
+      (message) => message.type === "getTreeProjectionSlice" && message.query === expectedQuery
     ).length;
   }, query);
 }

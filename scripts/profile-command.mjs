@@ -50,21 +50,23 @@ function parseArgs(argv) {
   if (!Number.isFinite(options.tabs) || options.tabs < 2) {
     throw new Error("--tabs must be an integer >= 2");
   }
-  if (![
-    "rename-window",
-    "toggle-window",
-    "move-leaf",
-    "group-live-leaf",
-    "move-top-level-live-leaf",
-    "command-relocation-echo",
-    "command-existing-window-relocation-echo",
-    "structural-save-pressure",
-    "flatten-window",
-    "import-small",
-    "import-large",
-    "compaction-after-burst",
-    "refresh-noop"
-  ].includes(options.scenario)) {
+  if (
+    ![
+      "rename-window",
+      "toggle-window",
+      "move-leaf",
+      "group-live-leaf",
+      "move-top-level-live-leaf",
+      "command-relocation-echo",
+      "command-existing-window-relocation-echo",
+      "structural-save-pressure",
+      "flatten-window",
+      "import-small",
+      "import-large",
+      "compaction-after-burst",
+      "refresh-noop"
+    ].includes(options.scenario)
+  ) {
     throw new Error(
       "--scenario must be rename-window, toggle-window, move-leaf, group-live-leaf, move-top-level-live-leaf, command-relocation-echo, command-existing-window-relocation-echo, structural-save-pressure, flatten-window, import-small, import-large, compaction-after-burst, or refresh-noop"
     );
@@ -152,7 +154,7 @@ function makeRuntime(tabCount, scenario) {
     },
     storage: {
       local: {
-        get: async (key) => typeof key === "string" ? { [key]: undefined } : {},
+        get: async (key) => (typeof key === "string" ? { [key]: undefined } : {}),
         set: async (items) => {
           if (runtime.stateSaveDelayMs > 0 && isStateSnapshotSave(items)) {
             runtime.delayedStateSaveCount += 1;
@@ -183,7 +185,8 @@ function makeRuntime(tabCount, scenario) {
       create: async () => {
         throw new Error("not implemented");
       },
-      move: async (tabIds, moveProperties) => moveTabs(runtime, tabIds, moveProperties, { count: true }),
+      move: async (tabIds, moveProperties) =>
+        moveTabs(runtime, tabIds, moveProperties, { count: true }),
       onCreated: events.tabCreated,
       onUpdated: events.tabUpdated,
       onActivated: events.tabActivated,
@@ -225,7 +228,11 @@ function createWindow(runtime, createData = {}) {
       };
     }
 
-    const urls = Array.isArray(createData.url) ? createData.url : createData.url ? [createData.url] : [];
+    const urls = Array.isArray(createData.url)
+      ? createData.url
+      : createData.url
+        ? [createData.url]
+        : [];
     const firstTabId = Math.max(0, ...runtime.tabs.map((tab) => tab.id)) + 1;
     const tabs = urls.map((url, index) => ({
       id: firstTabId + index,
@@ -286,7 +293,11 @@ function moveTabs(runtime, tabIds, moveProperties, options = {}) {
       .sort((left, right) => left.index - right.index)
       .map((tab) => ({ ...tab }));
     const boundedIndex = Math.max(0, Math.min(moveProperties.index, targetTabs.length));
-    targetTabs.splice(boundedIndex, 0, ...moving.map((tab) => ({ ...tab, windowId: targetWindowId })));
+    targetTabs.splice(
+      boundedIndex,
+      0,
+      ...moving.map((tab) => ({ ...tab, windowId: targetWindowId }))
+    );
 
     const previousActiveByWindowId = new Map(
       runtime.tabs.filter((tab) => tab.active).map((tab) => [tab.windowId, tab.id])
@@ -300,12 +311,14 @@ function moveTabs(runtime, tabIds, moveProperties, options = {}) {
     ];
     for (const windowId of affectedWindowIds) {
       let index = 0;
-      runtime.tabs = runtime.tabs.map((tab) => tab.windowId === windowId
-        ? {
-            ...tab,
-            index: index++
-          }
-        : tab);
+      runtime.tabs = runtime.tabs.map((tab) =>
+        tab.windowId === windowId
+          ? {
+              ...tab,
+              index: index++
+            }
+          : tab
+      );
     }
 
     const movedById = new Map(runtime.tabs.map((tab) => [tab.id, tab]));
@@ -315,10 +328,14 @@ function moveTabs(runtime, tabIds, moveProperties, options = {}) {
     });
     if (options.dispatch !== false) {
       for (const tab of moved) {
-        runtime.events.tabUpdated.dispatch(tab.id, {
-          index: tab.index,
-          windowId: tab.windowId
-        }, { ...tab });
+        runtime.events.tabUpdated.dispatch(
+          tab.id,
+          {
+            index: tab.index,
+            windowId: tab.windowId
+          },
+          { ...tab }
+        );
         if (tab.active) {
           runtime.events.tabActivated.dispatch({
             tabId: tab.id,
@@ -375,9 +392,16 @@ function commandForScenario(scenario, tabCount, runtime) {
   }
   if (scenario === "command-existing-window-relocation-echo") {
     if (!runtime.existingCommandWindowNodeId) {
-      throw new Error("command-existing-window-relocation-echo requires a prepared destination window");
+      throw new Error(
+        "command-existing-window-relocation-echo requires a prepared destination window"
+      );
     }
-    return { type: "moveNode", nodeId: `tab:${tabCount}`, parentId: runtime.existingCommandWindowNodeId, index: 1 };
+    return {
+      type: "moveNode",
+      nodeId: `tab:${tabCount}`,
+      parentId: runtime.existingCommandWindowNodeId,
+      index: 1
+    };
   }
   if (scenario === "structural-save-pressure") {
     return { type: "moveSubtreeToTopLevel", nodeId: `tab:${tabCount}` };
@@ -489,12 +513,30 @@ function applyTreeStructureUpdate(runtime, update) {
 
 function applyProjectionTreeStructureUpdate(runtime, update) {
   if (update.deletedNodeIds.length === 0) {
-    return applySameParentReorderTreeStructurePatchToProjection(runtime.sidebarState, runtime.sidebarProjection, update) ||
-      applyCrossParentLeafMoveTreeStructurePatchToProjection(runtime.sidebarState, runtime.sidebarProjection, update) ||
-      applyInsertTreeStructurePatchToProjection(runtime.sidebarState, runtime.sidebarProjection, update);
+    return (
+      applySameParentReorderTreeStructurePatchToProjection(
+        runtime.sidebarState,
+        runtime.sidebarProjection,
+        update
+      ) ||
+      applyCrossParentLeafMoveTreeStructurePatchToProjection(
+        runtime.sidebarState,
+        runtime.sidebarProjection,
+        update
+      ) ||
+      applyInsertTreeStructurePatchToProjection(
+        runtime.sidebarState,
+        runtime.sidebarProjection,
+        update
+      )
+    );
   }
 
-  return applyDeleteTreeStructurePatchToProjection(runtime.sidebarState, runtime.sidebarProjection, update);
+  return applyDeleteTreeStructurePatchToProjection(
+    runtime.sidebarState,
+    runtime.sidebarProjection,
+    update
+  );
 }
 
 async function profile(options) {
@@ -533,17 +575,21 @@ async function profile(options) {
   runtime.delayedStateSaveCount = 0;
   runtime.stateSaveDelayMs = options.scenario === "structural-save-pressure" ? 250 : 0;
 
-  const command = await measureAsync(() => options.scenario === "compaction-after-burst"
-    ? runCompactionBurst(controller, options.tabs)
-    : controller.handleMessage(commandForScenario(options.scenario, options.tabs, runtime)));
+  const command = await measureAsync(() =>
+    options.scenario === "compaction-after-burst"
+      ? runCompactionBurst(controller, options.tabs)
+      : controller.handleMessage(commandForScenario(options.scenario, options.tabs, runtime))
+  );
   runtime.primaryCommandAcked = true;
   dispatchScenarioNativeEchoes(runtime, options.scenario, options.tabs);
   const eventEcho = await measureAsync(() => flushProfileEvents(runtime.events));
-  const followUp = options.scenario === "structural-save-pressure"
-    ? await measureFollowUpDuringDeferredSave(controller, runtime)
-    : undefined;
+  const followUp =
+    options.scenario === "structural-save-pressure"
+      ? await measureFollowUpDuringDeferredSave(controller, runtime)
+      : undefined;
   const current = await controller.handleMessage({ type: "getState" });
-  const saveFlush = followUp?.saveFlush ?? await measureAsync(() => controller.flushPendingSaves());
+  const saveFlush =
+    followUp?.saveFlush ?? (await measureAsync(() => controller.flushPendingSaves()));
   const trace = traceBackground
     ? await controller.handleMessage({ type: "getPerformanceTrace" })
     : undefined;
@@ -557,11 +603,13 @@ async function profile(options) {
     totalMeasuredMs: Math.round(command.ms + eventEcho.ms),
     saveFlushMs: Math.round(saveFlush.ms),
     totalWithSaveFlushMs: Math.round(command.ms + eventEcho.ms + saveFlush.ms),
-    ...(followUp ? {
-      followUpCommandMs: Math.round(followUp.command.ms),
-      stateSaveStartedBeforeAck: runtime.stateSaveStartedBeforeAck,
-      delayedStateSaveCount: runtime.delayedStateSaveCount
-    } : {}),
+    ...(followUp
+      ? {
+          followUpCommandMs: Math.round(followUp.command.ms),
+          stateSaveStartedBeforeAck: runtime.stateSaveStartedBeforeAck,
+          delayedStateSaveCount: runtime.delayedStateSaveCount
+        }
+      : {}),
     firstBroadcastMs: Math.round(runtime.firstBroadcastMs ?? 0),
     ...storageMetricsResult(runtime),
     broadcastStringifyMs: Math.round(runtime.broadcastStringifyMs),
@@ -577,7 +625,9 @@ async function profile(options) {
     moveTabsMs: Math.round(runtime.moveTabsMs),
     eventCounts: eventCountsSnapshot(runtime.eventCounts),
     eventCount: eventCountsTotal(runtime.eventCounts),
-    ...(traceBackground ? { trace: summarizeTrace(trace), traceSummary: summarizeTraceSummary(trace) } : {}),
+    ...(traceBackground
+      ? { trace: summarizeTrace(trace), traceSummary: summarizeTraceSummary(trace) }
+      : {}),
     ack: command.value,
     nodes: Object.keys(current.nodes).length,
     rootShape: summarizeRootShape(current)
@@ -590,11 +640,17 @@ async function runCompactionBurst(controller, tabCount) {
   let lastAck;
   for (let index = 0; index < 20; index += 1) {
     const kind = index % 3;
-    const message = kind === 0
-      ? { type: "renameGroup", nodeId: "window:10", title: `Burst ${index}` }
-      : kind === 1
-        ? { type: "toggleCollapsed", nodeId: "window:10" }
-        : { type: "moveNode", nodeId: `tab:${(index % tabCount) + 1}`, parentId: "window:10", index: 0 };
+    const message =
+      kind === 0
+        ? { type: "renameGroup", nodeId: "window:10", title: `Burst ${index}` }
+        : kind === 1
+          ? { type: "toggleCollapsed", nodeId: "window:10" }
+          : {
+              type: "moveNode",
+              nodeId: `tab:${(index % tabCount) + 1}`,
+              parentId: "window:10",
+              index: 0
+            };
     lastAck = await controller.handleMessage(message);
   }
   return lastAck;
@@ -603,7 +659,9 @@ async function runCompactionBurst(controller, tabCount) {
 async function measureFollowUpDuringDeferredSave(controller, runtime) {
   const saveFlushPromise = measureAsync(() => controller.flushPendingSaves());
   await waitForDelayedStateSaveStart(runtime);
-  const command = await measureAsync(() => controller.handleMessage({ type: "focusNode", nodeId: "tab:1" }));
+  const command = await measureAsync(() =>
+    controller.handleMessage({ type: "focusNode", nodeId: "tab:1" })
+  );
   const saveFlush = await saveFlushPromise;
   return { command, saveFlush };
 }
@@ -619,8 +677,8 @@ function isStateSnapshotSave(items) {
   if (!items || typeof items !== "object" || Array.isArray(items)) {
     return false;
   }
-  return Object.keys(items).some((key) =>
-    key === "outlineState:v3:manifest" || key.startsWith("outline:v4:manifest:")
+  return Object.keys(items).some(
+    (key) => key === "outlineState:v3:manifest" || key.startsWith("outline:v4:manifest:")
   );
 }
 
@@ -632,7 +690,10 @@ const result = await profile(parseArgs(process.argv.slice(2)));
 console.log(JSON.stringify(result, null, 2));
 
 function dispatchScenarioNativeEchoes(runtime, scenario, tabCount) {
-  if (scenario !== "command-relocation-echo" && scenario !== "command-existing-window-relocation-echo") {
+  if (
+    scenario !== "command-relocation-echo" &&
+    scenario !== "command-existing-window-relocation-echo"
+  ) {
     return;
   }
 
@@ -676,7 +737,9 @@ function summarizeTraceSummary(trace) {
   const entries = Array.isArray(trace?.entries) ? trace.entries : [];
   const measured = entries.filter((entry) => typeof entry.durationMs === "number");
   return {
-    byName: Object.fromEntries(summarizeBy(measured, (entry) => entry.name).map((row) => [row.name, row])),
+    byName: Object.fromEntries(
+      summarizeBy(measured, (entry) => entry.name).map((row) => [row.name, row])
+    ),
     runtimeMessageTypes: Object.fromEntries(
       summarizeBy(
         measured.filter((entry) => entry.name === "background.runtime.message"),
@@ -686,12 +749,13 @@ function summarizeTraceSummary(trace) {
     mutationRuns: Object.fromEntries(
       summarizeBy(
         measured.filter((entry) => entry.name === "background.mutation.run"),
-        (entry) => [
-          entry.detail?.reason ?? "",
-          entry.detail?.command ?? "",
-          entry.detail?.source ?? "",
-          entry.detail?.priority ?? ""
-        ].join("/")
+        (entry) =>
+          [
+            entry.detail?.reason ?? "",
+            entry.detail?.command ?? "",
+            entry.detail?.source ?? "",
+            entry.detail?.priority ?? ""
+          ].join("/")
       ).map((row) => [row.name, row])
     )
   };
@@ -730,7 +794,8 @@ function summarizeRootShape(state) {
     rootCount: rootIds.length,
     missingRootCount: roots.filter((node) => !node).length,
     windowRootCount: roots.filter((node) => node?.kind === "window").length,
-    liveWindowRootCount: roots.filter((node) => node?.kind === "window" && node.status === "live").length,
+    liveWindowRootCount: roots.filter((node) => node?.kind === "window" && node.status === "live")
+      .length,
     tabRootCount: roots.filter((node) => node?.kind === "tab").length,
     groupRootCount: roots.filter((node) => node?.kind === "group").length,
     childCounts: roots.map((node) => node?.childIds?.length ?? 0)

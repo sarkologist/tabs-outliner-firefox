@@ -22,7 +22,11 @@ export function preserveClosedSubtreesAcrossNonDestructiveTransition(
   };
 
   for (const [nodeId, previousNode] of Object.entries(previous.nodes)) {
-    if (previousNode.status !== "closed" || allowDeletedNodeIds.has(nodeId) || restoredNodeIds.has(nodeId)) {
+    if (
+      previousNode.status !== "closed" ||
+      allowDeletedNodeIds.has(nodeId) ||
+      restoredNodeIds.has(nodeId)
+    ) {
       continue;
     }
     const nextNode = next.nodes[nodeId];
@@ -34,7 +38,13 @@ export function preserveClosedSubtreesAcrossNonDestructiveTransition(
     }
 
     const restoreRootId = closedAncestorRoot(previous, nodeId);
-    const copiedRootId = copyClosedSubtree(previous, mutable(), restoreRootId, allowDeletedNodeIds, restoredNodeIds);
+    const copiedRootId = copyClosedSubtree(
+      previous,
+      mutable(),
+      restoreRootId,
+      allowDeletedNodeIds,
+      restoredNodeIds
+    );
     if (copiedRootId) {
       attachRestoredSubtreeRoot(previous, mutable(), copiedRootId);
     }
@@ -103,7 +113,11 @@ function copyClosedSubtree(
   return copiedNodeIds.has(nodeId) ? nodeId : undefined;
 }
 
-function attachRestoredSubtreeRoot(previous: OutlineState, target: OutlineState, nodeId: NodeId): void {
+function attachRestoredSubtreeRoot(
+  previous: OutlineState,
+  target: OutlineState,
+  nodeId: NodeId
+): void {
   const previousNode = previous.nodes[nodeId];
   const targetNode = target.nodes[nodeId];
   if (!previousNode || !targetNode) {
@@ -115,7 +129,11 @@ function attachRestoredSubtreeRoot(previous: OutlineState, target: OutlineState,
   if (parentId && targetParent) {
     targetNode.parentId = parentId;
     const mutableParent = cloneTargetNodeForMutation(target, parentId);
-    insertNodeIdLikePrevious(mutableParent.childIds, previous.nodes[parentId]?.childIds ?? [], nodeId);
+    insertNodeIdLikePrevious(
+      mutableParent.childIds,
+      previous.nodes[parentId]?.childIds ?? [],
+      nodeId
+    );
     removeNodeId(target.rootIds, nodeId);
     return;
   }
@@ -131,7 +149,11 @@ function cloneTargetNodeForMutation(state: OutlineState, nodeId: NodeId) {
   return cloned;
 }
 
-function insertNodeIdLikePrevious(targetIds: NodeId[], previousIds: readonly NodeId[], nodeId: NodeId): void {
+function insertNodeIdLikePrevious(
+  targetIds: NodeId[],
+  previousIds: readonly NodeId[],
+  nodeId: NodeId
+): void {
   if (targetIds.includes(nodeId)) {
     return;
   }
