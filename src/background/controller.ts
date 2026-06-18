@@ -55,6 +55,7 @@ import { RuntimeReconciler } from "./runtime-reconciler.js";
 import {
   getNormalWindow,
   getNormalWindows,
+  getNormalWindowShells,
   getNormalWindowsIncludingTabs
 } from "./runtime-snapshot.js";
 import { createStateCache } from "./state-cache.js";
@@ -258,6 +259,7 @@ type RefreshOptions = {
   closeMissing?: boolean;
   activationByWindowId?: ReadonlyMap<number, number>;
   focusWindowId?: number;
+  focusWindowIds?: ReadonlySet<number>;
   forceSnapshot?: boolean;
 };
 
@@ -4395,6 +4397,7 @@ export function createBackgroundController(
       const changed = await refreshFromRuntimeNow(eventTabs, {
         closeMissing: pending.closeMissing,
         activationByWindowId: pending.activationByWindowId,
+        focusWindowIds: pending.focusWindowIds,
         forceSnapshot: pending.forceSnapshot
       });
       for (const caller of pending.callers) {
@@ -4409,6 +4412,99 @@ export function createBackgroundController(
     }
   }
 
+  // Narrow path for a native window focus-gain (`windows.onFocusChanged` for a real window).
+  // The only material delta of a pure focus switch is the window `active` flag -- exactly
+  // what `focusRuntimeWindowInPlace` computes for the command-owned focus echo. The broad
+  // refresh below would clone the whole tree and re-reconcile every window through
+  // `reconcileWithWindows` just to derive that one flag, and on the user's 7-9 window session
+  // the global `tabs.query` inside getNormalWindows is the dominant focus-switch latency
+  // (environment-bound, up to ~2.5s). So flip the flag in place and skip the all-tabs snapshot.
+  //
+  // Reached only for a *pure* focus-gain refresh: no event tabs, no coalesced activation,
+  // `closeMissing === false`, not a forced snapshot, with at least one focused window queued.
+  // Focus-gain already uses `partial` confidence and never proves absence on this path, so
+  // narrowing forfeits no close/delete detection the broad query provided -- a partial
+  // snapshot could not close a missing resource anyway. Every tab-shape change has its own
+  // event path with its own fast-path/corroboration; the focus refresh was only a redundant
+  // re-sync for them.
+  //
+  // The native focus event is NOT trusted blindly: it can be stale (e.g. a command focuses a
+  // different window between the event firing and this deferred refresh running). We corroborate
+  // against fresh runtime truth -- but only the window focused-flags via
+  // `getNormalWindowShells` (windows.getAll, populate:false), skipping the expensive all-tabs
+  // query -- and flip to whichever window is *actually* focused, not the event's window id.
+  // Anything ambiguous falls back to the full reconcile below:
+  //   - the outline already has >1 active live window (drift the full reconcile would heal by
+  //     rewriting every window active flag; the in-place flip clears only one — see guard);
+  //   - the focused window read fails, or not exactly one normal window is focused;
+  //   - `found === false`: the focused window is unknown (just created / node closed) -- the
+  //     full snapshot must discover and attach it (browserCreated provenance);
+  //   - a previously-active window that is no longer a live window node (focus echo guard);
+  //   - any coalesced event/activation/forceSnapshot.
+  // Invariants: we mutate only the `active` flag of known live window nodes, so live refs
+  // still map to runtime (I-9), runtime-window scopes and closed subtrees are untouched
+  // (I-11/I-12), and the warm index's `activeWindowNodeId` is updated in place.
+  async function tryNativeFocusGainInPlaceForRefresh(
+    current: OutlineState,
+    index: RuntimeStateIndex,
+    eventTabs: RuntimeTabEvidence[],
+    closeMissing: boolean,
+    options: RefreshOptions
+  ): Promise<boolean | "fallback"> {
+    if (
+      eventTabs.length > 0 ||
+      closeMissing ||
+      options.forceSnapshot === true ||
+      (options.activationByWindowId?.size ?? 0) > 0 ||
+      (options.focusWindowIds?.size ?? 0) === 0
+    ) {
+      return "fallback";
+    }
+    // Convergence guard. The full reconcile rewrites *every* window node's `active` flag from
+    // runtime truth, so it heals a drifted state that has more than one active live window
+    // (a single-focused-window invariant violation). `focusRuntimeWindowInPlace` only clears
+    // the one window the warm index tracks as active, so on such a drifted state it could leave
+    // a stale non-focused window active. That is volatile/cosmetic (focus highlight, not saved),
+    // but to stay at exact parity with the old path, fall back to the full reconcile whenever
+    // the outline is not already in a clean single-active state. The normal case (0 or 1 active
+    // window) is unaffected.
+    let activeLiveWindowCount = 0;
+    for (const windowNodeId of index.liveWindowNodeIdsByRuntimeId.values()) {
+      const windowNode = current.nodes[windowNodeId];
+      if (isLiveWindowNode(windowNode) && windowNode.active === true) {
+        activeLiveWindowCount += 1;
+        if (activeLiveWindowCount > 1) {
+          return "fallback";
+        }
+      }
+    }
+    const shells = await perfTrace.measureAsync(
+      "background.runtime.getWindowShells",
+      { focusWindowCount: options.focusWindowIds?.size ?? 0 },
+      () => getNormalWindowShells(api).catch(() => undefined)
+    );
+    if (!shells) {
+      return "fallback";
+    }
+    const focusedWindows = shells.filter((windowInfo) => windowInfo.focused);
+    if (focusedWindows.length !== 1) {
+      return "fallback";
+    }
+    detachPersistedStateBaselineForMutation();
+    const focus = focusRuntimeWindowInPlace(current, index, focusedWindows[0]!.id);
+    if (!focus.found) {
+      return "fallback";
+    }
+    if (!focus.changed) {
+      return false;
+    }
+    state = current;
+    replaceCachedState(current);
+    runtimeIndex = index;
+    broadcastActiveStateUpdate(focus.updates);
+    return true;
+  }
+
   async function refreshFromRuntimeNow(
     eventTabs: RuntimeTabEvidence[] = [],
     options: RefreshOptions = {}
@@ -4416,6 +4512,16 @@ export function createBackgroundController(
     const current = await ensureState();
     const closeMissing = options.closeMissing ?? eventTabs.length === 0;
     const index = runtimeIndexForState(current);
+    const nativeFocusGain = await tryNativeFocusGainInPlaceForRefresh(
+      current,
+      index,
+      eventTabs,
+      closeMissing,
+      options
+    );
+    if (nativeFocusGain !== "fallback") {
+      return nativeFocusGain;
+    }
     const currentEventEvidence = runtimeReconciler.filterEventTabsForReconciliation({
       eventTabs,
       state: current,

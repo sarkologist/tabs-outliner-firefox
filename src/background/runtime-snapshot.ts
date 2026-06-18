@@ -77,6 +77,22 @@ function windowWithTabId(windows: RuntimeWindow[], tabId: number): RuntimeWindow
   return windows.find((windowInfo) => windowInfo.tabs?.some((candidate) => candidate.id === tabId));
 }
 
+// Window shells only: the focused/state flags and ids of the current normal windows,
+// WITHOUT the global `tabs.query` that dominates getNormalWindows. Used to corroborate a
+// native window focus-gain against fresh truth (which window is actually focused) before
+// flipping the active flag in place, while skipping the expensive all-tabs snapshot.
+export async function getNormalWindowShells(
+  api: RuntimeSnapshotApi = browser
+): Promise<RuntimeWindow[]> {
+  const windows = await api.windows.getAll({
+    populate: false,
+    windowTypes: ["normal"]
+  });
+  return windows
+    .filter((windowInfo) => !windowInfo.incognito)
+    .map((windowInfo) => ({ ...windowInfo, tabs: [] }));
+}
+
 export async function getNormalWindow(
   api: RuntimeSnapshotApi,
   windowId: number
