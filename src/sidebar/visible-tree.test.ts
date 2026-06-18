@@ -14,7 +14,9 @@ import {
   calculateVirtualRange,
   isAlreadyAppliedDeletePatch,
   refreshVisibleRowStructure,
+  removeRelocatedRowsFromSparseOutlineProjection,
   sameParentReorderTreeStructurePatchInfo,
+  type DeleteTreeStructurePatch,
   type VisibleTreeProjection
 } from "./visible-tree.js";
 
@@ -1128,4 +1130,197 @@ function tabNode(
     updatedAt: 1,
     live: { tabId: Number(id.replace(/\D/g, "")) || 1, windowId: 1 }
   };
+}
+
+// A "Move to bottom" (or any move-to-top-level) relocates a node to a different rootIds slot. On a
+// SPARSE projection the apply* strategies above bail, and removeRelocatedRowsFromSparseOutlineProjection
+// drops the relocated rows locally so they do not linger in their old slot until the background refill
+// lands. The invariant: after that local drop, the still-visible rows must remain a SUBSEQUENCE of the
+// post-relocation full projection -- a stale row (relocation not applied) or a mispositioned row lands
+// out of order and breaks it. This is the coverage that was missing: the generated equivalence trace
+// above only exercises wrap/insert/delete on the FULL projection, never relocations on the sparse path,
+// so the move-to-top-level branch (`if (!parent) continue`) had no generated coverage.
+describe("sparse relocation projection patches", () => {
+  it(
+    "keeps sparse projections free of stale relocated rows across generated traces",
+    () => {
+      const config = generatedTraceConfig({
+        defaultSeedCount: 32,
+        defaultSteps: 16,
+        soakSeedCount: 128,
+        soakSteps: 48
+      });
+      for (const seed of config.seeds) {
+        runGeneratedSparseRelocationTrace(seed, config.steps);
+      }
+    },
+    generatedTraceTimeoutMs(10_000, 120_000)
+  );
+});
+
+type SparseRelocation = {
+  name: string;
+  next: OutlineState;
+  update: DeleteTreeStructurePatch;
+  previousRootIds: NodeId[];
+};
+
+function runGeneratedSparseRelocationTrace(seed: number, steps: number): void {
+  let state = relocationBaseState(seed);
+  const rng = seededRandom(seed);
+  const history = [`seed ${seed}`];
+
+  for (let step = 0; step < steps; step += 1) {
+    const operation = relocateGroupLikeNodeOperation(state, rng);
+    if (!operation) {
+      break;
+    }
+    history.push(`step ${step + 1}: ${operation.name}`);
+
+    const fullOld = buildVisibleTreeProjection(state, "");
+    if (fullOld.rows.length >= 2) {
+      const windowSize = 1 + Math.floor(rng() * (fullOld.rows.length - 1));
+      const sparse = sparseWindowOf(fullOld, windowSize);
+      // Drives the real sparse local-patch the sidebar runs (the sidebar gates this on hydration).
+      removeRelocatedRowsFromSparseOutlineProjection(
+        operation.next,
+        sparse,
+        operation.update,
+        operation.previousRootIds
+      );
+      const remaining = sparse.rows.map((row) => row.nodeId);
+      const postProjection = buildVisibleTreeProjection(operation.next, "").rows.map(
+        (row) => row.nodeId
+      );
+      const detail = `${history.join("\n")}\nwindow=${windowSize}\nremaining=${JSON.stringify(
+        remaining
+      )}\npostProjection=${JSON.stringify(postProjection)}`;
+      expect(isRowSubsequence(remaining, postProjection), detail).toBe(true);
+    }
+
+    state = operation.next;
+  }
+}
+
+function relocateGroupLikeNodeOperation(
+  state: OutlineState,
+  rng: () => number
+): SparseRelocation | undefined {
+  const projection = buildVisibleTreeProjection(state, "");
+  // Only group-like nodes (window/group) relocate to the top level without wrapping; pick ones whose
+  // move leaves no emptied parent (so the broadcast carries no delete -- removeRelocated's domain).
+  const candidates = projection.rows
+    .map((row) => row.nodeId)
+    .filter((nodeId) => {
+      const node = state.nodes[nodeId];
+      if (!node || (node.kind !== "window" && node.kind !== "group")) {
+        return false;
+      }
+      if (node.parentId) {
+        const parent = state.nodes[node.parentId];
+        return Boolean(parent && parent.childIds.length > 1);
+      }
+      return state.rootIds.length > 1;
+    });
+  const targetId = pickOne(rng, candidates);
+  const target = targetId ? state.nodes[targetId] : undefined;
+  if (!targetId || !target) {
+    return undefined;
+  }
+
+  const next: OutlineState = {
+    version: state.version,
+    rootIds: [...state.rootIds],
+    nodes: { ...state.nodes }
+  };
+  const updatedNodes: OutlineNode[] = [];
+
+  if (target.parentId) {
+    // Nested group -> top-level bottom (source window survives).
+    const oldParent = { ...next.nodes[target.parentId]! };
+    oldParent.childIds = oldParent.childIds.filter((childId) => childId !== targetId);
+    next.nodes[oldParent.id] = oldParent;
+    updatedNodes.push(oldParent);
+    next.rootIds = [...next.rootIds, targetId];
+    const moved: OutlineNode = { ...target, childIds: [...target.childIds] };
+    delete moved.parentId;
+    moved.updatedAt = (moved.updatedAt ?? 0) + 1;
+    next.nodes[targetId] = moved;
+    updatedNodes.push(moved);
+    return {
+      name: `relocate nested ${targetId} -> top-level bottom`,
+      next,
+      update: {
+        deletedNodeIds: [],
+        updatedNodes,
+        rootIds: [...next.rootIds],
+        deletedClosedCount: 0
+      },
+      previousRootIds: [...state.rootIds]
+    };
+  }
+
+  // Top-level window/group -> a different top-level slot (reorder; never empties anything).
+  const currentIndex = next.rootIds.indexOf(targetId);
+  const withoutTarget = next.rootIds.filter((rootId) => rootId !== targetId);
+  let insertIndex = Math.floor(rng() * (withoutTarget.length + 1));
+  if (insertIndex === currentIndex) {
+    insertIndex = (insertIndex + 1) % (withoutTarget.length + 1);
+  }
+  next.rootIds = [...withoutTarget];
+  next.rootIds.splice(insertIndex, 0, targetId);
+  const moved: OutlineNode = { ...target, childIds: [...target.childIds] };
+  moved.updatedAt = (moved.updatedAt ?? 0) + 1;
+  next.nodes[targetId] = moved;
+  updatedNodes.push(moved);
+  return {
+    name: `reorder top-level ${targetId} ${currentIndex}->${insertIndex}`,
+    next,
+    update: { deletedNodeIds: [], updatedNodes, rootIds: [...next.rootIds], deletedClosedCount: 0 },
+    previousRootIds: [...state.rootIds]
+  };
+}
+
+function relocationBaseState(seed: number): OutlineState {
+  const windowCount = 3 + (seed % 3);
+  const nodes: Record<NodeId, OutlineNode> = {};
+  const rootIds: NodeId[] = [];
+  for (let w = 1; w <= windowCount; w += 1) {
+    const windowId = `window:${w}`;
+    const groupId = `group:${w}`;
+    const tabA = `tab:${w}-1`;
+    const tabB = `tab:${w}-2`;
+    const groupTabA = `tab:${w}-g1`;
+    const groupTabB = `tab:${w}-g2`;
+    nodes[windowId] = windowNode(windowId, [tabA, tabB, groupId], { active: w === 1 });
+    rootIds.push(windowId);
+    nodes[tabA] = tabNode(tabA, windowId, `W${w} A`, [], { active: w === 1 });
+    nodes[tabB] = tabNode(tabB, windowId, `W${w} B`);
+    nodes[groupId] = groupNode(groupId, [groupTabA, groupTabB], windowId);
+    nodes[groupTabA] = tabNode(groupTabA, groupId, `W${w} G1`);
+    nodes[groupTabB] = tabNode(groupTabB, groupId, `W${w} G2`);
+  }
+  return { version: 1, rootIds, nodes };
+}
+
+function sparseWindowOf(full: VisibleTreeProjection, count: number): VisibleTreeProjection {
+  const rows = full.rows.slice(0, count).map((row) => ({ ...row }));
+  return {
+    ...full,
+    rows,
+    visibleNodeIds: rows.map((row) => row.nodeId),
+    visibleNodeIdSet: new Set(rows.map((row) => row.nodeId)),
+    matchingNodeIds: new Set(full.matchingNodeIds),
+    totalRowCount: full.rows.length
+  };
+}
+
+function isRowSubsequence(candidate: readonly NodeId[], sequence: readonly NodeId[]): boolean {
+  let index = 0;
+  for (const nodeId of sequence) {
+    if (index < candidate.length && candidate[index] === nodeId) {
+      index += 1;
+    }
+  }
+  return index === candidate.length;
 }
