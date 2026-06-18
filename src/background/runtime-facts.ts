@@ -21,7 +21,7 @@ import type {
   RuntimeWindowProvenance
 } from "../model/types.js";
 
-export type RuntimeSnapshotConfidence = "complete" | "partial" | "eventLocal" | "staleSuspect";
+export type RuntimeSnapshotConfidence = "complete" | "partial" | "eventLocal";
 export type RuntimeShapeFactConfidence = RuntimeSnapshotConfidence | "installedState";
 export type RuntimeTabEvidenceKind = "created" | "updated";
 export type RuntimeTabEvidenceField =

@@ -96,7 +96,7 @@ describe("runtime reconciliation ledger", () => {
       state: moved,
       index: buildRuntimeStateIndexForReconciliation(moved),
       ledger,
-      confidence: "staleSuspect"
+      confidence: "eventLocal"
     });
 
     expect(

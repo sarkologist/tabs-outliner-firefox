@@ -197,7 +197,6 @@ Snapshot confidence is explicit:
 - `complete`: a broad runtime snapshot that can prove absence.
 - `partial`: an intentionally incomplete query result.
 - `eventLocal`: evidence near one browser event.
-- `staleSuspect`: evidence known to be vulnerable to old-window or delayed-echo races.
 
 The current reconciler keeps the following rules centralized:
 
