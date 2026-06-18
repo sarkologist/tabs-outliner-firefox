@@ -6,9 +6,7 @@ export const SIDEBAR_STARTUP_BASE_SCENARIOS = [
   "startup-stored-unchanged"
 ] as const;
 
-export const SIDEBAR_STARTUP_REAL_BROWSER_SCENARIOS = [
-  "startup-real-browser-fanout"
-] as const;
+export const SIDEBAR_STARTUP_REAL_BROWSER_SCENARIOS = ["startup-real-browser-fanout"] as const;
 
 export const SIDEBAR_STARTUP_SCENARIOS = [
   ...SIDEBAR_STARTUP_BASE_SCENARIOS,
@@ -53,7 +51,7 @@ export const SIDEBAR_STARTUP_RESULTS_TSV_HEADER = [
   "description"
 ].join("\t");
 
-export type SidebarStartupScenario = typeof SIDEBAR_STARTUP_SCENARIOS[number];
+export type SidebarStartupScenario = (typeof SIDEBAR_STARTUP_SCENARIOS)[number];
 
 export type SidebarStartupProfileResult = {
   scenario: SidebarStartupScenario;
@@ -139,27 +137,38 @@ export function summarizeSidebarStartupProfile(
   const warm = resultsForScenario(results, "startup-warm-initial-snapshot");
   const stored = resultsForScenario(results, "startup-stored-unchanged");
   const realBrowser = resultsForScenario(results, "startup-real-browser-fanout");
-  const primaryMedianMs = shape === "real-browser-20260526"
-    ? median(requiredNumbers(realBrowser, "totalMs"))
-    : median(requiredNumbers(initial, "totalWithHydrationMs"));
+  const primaryMedianMs =
+    shape === "real-browser-20260526"
+      ? median(requiredNumbers(realBrowser, "totalMs"))
+      : median(requiredNumbers(initial, "totalWithHydrationMs"));
   const hydrationValues = numberValues(initial, "hydrateMs");
-  const hydrationMedianMs = shape === "real-browser-20260526"
-    ? median(numberValues(realBrowser, "getStateMedianMs"))
-    : median(hydrationValues.length > 0 ? hydrationValues : requiredNumbers(initial, "totalWithHydrationMs"));
-  const storedStartupMedianMs = shape === "real-browser-20260526" ? 0 : median(requiredNumbers(stored, "totalMs"));
-  const warmSnapshotMedianMs = shape === "real-browser-20260526" ? 0 : median(requiredNumbers(warm, "totalMs"));
+  const hydrationMedianMs =
+    shape === "real-browser-20260526"
+      ? median(numberValues(realBrowser, "getStateMedianMs"))
+      : median(
+          hydrationValues.length > 0
+            ? hydrationValues
+            : requiredNumbers(initial, "totalWithHydrationMs")
+        );
+  const storedStartupMedianMs =
+    shape === "real-browser-20260526" ? 0 : median(requiredNumbers(stored, "totalMs"));
+  const warmSnapshotMedianMs =
+    shape === "real-browser-20260526" ? 0 : median(requiredNumbers(warm, "totalMs"));
   const snapshotRows = Math.max(0, ...numberValues(results, "snapshotRows"));
   const snapshotNodes = Math.max(0, ...numberValues(results, "snapshotNodes"));
   const saves = sum(results, "saves");
   const broadcasts = sum(results, "broadcasts");
   const eventCount = sum(results, "eventCount");
   const phaseMedianMs = startupPhaseMedianMs(results);
-  const runs = shape === "real-browser-20260526"
-    ? realBrowser.length
-    : Math.min(initial.length, warm.length, stored.length);
+  const runs =
+    shape === "real-browser-20260526"
+      ? realBrowser.length
+      : Math.min(initial.length, warm.length, stored.length);
   const guardFailures = startupGuardFailures({
     shape,
-    missingScenarios: expectedScenarios.filter((scenario) => resultsForScenario(results, scenario).length === 0),
+    missingScenarios: expectedScenarios.filter(
+      (scenario) => resultsForScenario(results, scenario).length === 0
+    ),
     runs,
     saves,
     broadcasts,
@@ -177,7 +186,9 @@ export function summarizeSidebarStartupProfile(
     primaryScenario,
     tabs: median(requiredNumbers(results, "tabs")),
     liveTabs: median(numberValues(results, "liveTabs")),
-    totalNodes: median(totalNodeValues.length > 0 ? totalNodeValues : numberValues(results, "nodes")),
+    totalNodes: median(
+      totalNodeValues.length > 0 ? totalNodeValues : numberValues(results, "nodes")
+    ),
     parentsWithChildren: median(numberValues(results, "parentsWithChildren")),
     runs,
     primaryMedianMs,
@@ -187,7 +198,9 @@ export function summarizeSidebarStartupProfile(
     ...(shape === "real-browser-20260526"
       ? {
           realMimicMedianMs: primaryMedianMs,
-          realMimicInitialSnapshotMedianMs: median(numberValues(realBrowser, "initialSnapshotMedianMs")),
+          realMimicInitialSnapshotMedianMs: median(
+            numberValues(realBrowser, "initialSnapshotMedianMs")
+          ),
           realMimicInitialSnapshotMaxMs: median(numberValues(realBrowser, "initialSnapshotMaxMs")),
           realMimicGetStateMedianMs: median(numberValues(realBrowser, "getStateMedianMs")),
           realMimicGetStateMaxMs: median(numberValues(realBrowser, "getStateMaxMs")),
@@ -229,7 +242,10 @@ export function median(values: readonly number[]): number {
   return round(((sorted[midpoint - 1] ?? 0) + (sorted[midpoint] ?? 0)) / 2);
 }
 
-export function formatSidebarStartupTsvRow(summary: SidebarStartupSummary, fields: SidebarStartupTsvFields): string {
+export function formatSidebarStartupTsvRow(
+  summary: SidebarStartupSummary,
+  fields: SidebarStartupTsvFields
+): string {
   return [
     fields.timestamp,
     fields.tag,
@@ -263,10 +279,14 @@ export function formatSidebarStartupTsvRow(summary: SidebarStartupSummary, field
     summary.guardWarnings.join("; "),
     JSON.stringify(summary.phaseMedianMs),
     fields.description
-  ].map(tsvCell).join("\t");
+  ]
+    .map(tsvCell)
+    .join("\t");
 }
 
-export function sidebarStartupScenariosForShape(shape: SidebarStartupShape): readonly SidebarStartupScenario[] {
+export function sidebarStartupScenariosForShape(
+  shape: SidebarStartupShape
+): readonly SidebarStartupScenario[] {
   return shape === "real-browser-20260526"
     ? SIDEBAR_STARTUP_REAL_BROWSER_SCENARIOS
     : SIDEBAR_STARTUP_BASE_SCENARIOS;
@@ -309,7 +329,9 @@ function sum<K extends keyof SidebarStartupProfileResult>(
   return numberValues(results, key).reduce((total, value) => total + value, 0);
 }
 
-function startupPhaseMedianMs(results: readonly SidebarStartupProfileResult[]): Record<string, number> {
+function startupPhaseMedianMs(
+  results: readonly SidebarStartupProfileResult[]
+): Record<string, number> {
   const valuesByPhase = new Map<string, number[]>();
   for (const result of results) {
     for (const [phase, value] of Object.entries(result.phaseMs ?? {})) {
@@ -352,7 +374,9 @@ function startupGuardFailures(metrics: {
   if (metrics.shape === "real-browser-20260526") {
     const expectedEventCount = metrics.runs * SIDEBAR_STARTUP_REAL_BROWSER_EVENT_COUNT;
     if (metrics.eventCount !== expectedEventCount) {
-      failures.push(`startup real-browser fanout must process exactly ${expectedEventCount} runtime events`);
+      failures.push(
+        `startup real-browser fanout must process exactly ${expectedEventCount} runtime events`
+      );
     }
   } else if (metrics.eventCount > 0) {
     failures.push("startup scenarios must not process runtime events during measurement");
@@ -366,10 +390,7 @@ function startupGuardFailures(metrics: {
   return failures;
 }
 
-function startupGuardWarnings(metrics: {
-  shape: SidebarStartupShape;
-  saves: number;
-}): string[] {
+function startupGuardWarnings(metrics: { shape: SidebarStartupShape; saves: number }): string[] {
   const warnings: string[] = [];
   if (metrics.shape === "real-browser-20260526" && metrics.saves > 0) {
     warnings.push("startup real-browser fanout saved during diagnostic measurement");
@@ -395,7 +416,11 @@ function improvementDetails(
 }
 
 function tsvCell(value: string | number | undefined): string {
-  return value === undefined ? "" : String(value).replace(/[\t\r\n]+/g, " ").trim();
+  return value === undefined
+    ? ""
+    : String(value)
+        .replace(/[\t\r\n]+/g, " ")
+        .trim();
 }
 
 function round(value: number): number {

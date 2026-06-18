@@ -11,21 +11,23 @@ import {
 
 describe("autoresearch acceptance guard", () => {
   it("parses lanes and the profile command after --", () => {
-    expect(parseAcceptanceArgs([
-      "--lanes",
-      "runtime,projection",
-      "--tag",
-      "20260603-test",
-      "--description",
-      "candidate",
-      "--append-results",
-      "--",
-      "pnpm",
-      "profile:background-reconciliation",
-      "--",
-      "--runs",
-      "5"
-    ])).toMatchObject({
+    expect(
+      parseAcceptanceArgs([
+        "--lanes",
+        "runtime,projection",
+        "--tag",
+        "20260603-test",
+        "--description",
+        "candidate",
+        "--append-results",
+        "--",
+        "pnpm",
+        "profile:background-reconciliation",
+        "--",
+        "--runs",
+        "5"
+      ])
+    ).toMatchObject({
       lanes: ["runtime", "projection"],
       tag: "20260603-test",
       description: "candidate",
@@ -35,7 +37,11 @@ describe("autoresearch acceptance guard", () => {
   });
 
   it("selects lane correctness commands in runbook order", () => {
-    expect(correctnessCommandsForLanes(["runtime", "storage"]).map((command: { label: string }) => command.label)).toEqual([
+    expect(
+      correctnessCommandsForLanes(["runtime", "storage"]).map(
+        (command: { label: string }) => command.label
+      )
+    ).toEqual([
       "runtime oracle build",
       "runtime vitest corpus",
       "runtime build",
@@ -46,26 +52,35 @@ describe("autoresearch acceptance guard", () => {
   });
 
   it("parses noisy profiler JSON output", () => {
-    const profile = parseProfileJson(`preface\n${JSON.stringify({ summary: { status: "keep" } })}\nepilogue`);
+    const profile = parseProfileJson(
+      `preface\n${JSON.stringify({ summary: { status: "keep" } })}\nepilogue`
+    );
     expect(profile).toEqual({ summary: { status: "keep" } });
   });
 
   it("keeps a perf candidate only after correctness lanes pass", async () => {
     const commands: string[] = [];
-    const accepted = await acceptAutoresearchCandidate({
-      lanes: ["runtime"],
-      tag: "20260603-test",
-      description: "candidate",
-      profileCommand: ["pnpm", "profile:fake"],
-      appendResults: false,
-      resultsPath: "/unused/results.tsv"
-    }, async (command: { label: string }) => {
-      commands.push(command.label);
-      if (command.label === "profile") {
-        return { stdout: JSON.stringify({ summary: { status: "keep" } }), stderr: "", exitCode: 0 };
+    const accepted = await acceptAutoresearchCandidate(
+      {
+        lanes: ["runtime"],
+        tag: "20260603-test",
+        description: "candidate",
+        profileCommand: ["pnpm", "profile:fake"],
+        appendResults: false,
+        resultsPath: "/unused/results.tsv"
+      },
+      async (command: { label: string }) => {
+        commands.push(command.label);
+        if (command.label === "profile") {
+          return {
+            stdout: JSON.stringify({ summary: { status: "keep" } }),
+            stderr: "",
+            exitCode: 0
+          };
+        }
+        return { stdout: "", stderr: "", exitCode: 0 };
       }
-      return { stdout: "", stderr: "", exitCode: 0 };
-    });
+    );
 
     expect(accepted.summary).toMatchObject({
       perfStatus: "candidate-keep",
@@ -82,28 +97,37 @@ describe("autoresearch acceptance guard", () => {
   });
 
   it("discards a perf keep when correctness fails", async () => {
-    const accepted = await acceptAutoresearchCandidate({
-      lanes: ["projection"],
-      tag: "20260603-test",
-      description: "candidate",
-      profileCommand: ["pnpm", "profile:fake"],
-      appendResults: false,
-      resultsPath: "/unused/results.tsv"
-    }, async (command: { label: string }) => {
-      if (command.label === "profile") {
-        return { stdout: JSON.stringify({ summary: { status: "keep" } }), stderr: "", exitCode: 0 };
+    const accepted = await acceptAutoresearchCandidate(
+      {
+        lanes: ["projection"],
+        tag: "20260603-test",
+        description: "candidate",
+        profileCommand: ["pnpm", "profile:fake"],
+        appendResults: false,
+        resultsPath: "/unused/results.tsv"
+      },
+      async (command: { label: string }) => {
+        if (command.label === "profile") {
+          return {
+            stdout: JSON.stringify({ summary: { status: "keep" } }),
+            stderr: "",
+            exitCode: 0
+          };
+        }
+        return command.label === "projection hunt"
+          ? { stdout: "", stderr: "projection failed", exitCode: 1 }
+          : { stdout: "", stderr: "", exitCode: 0 };
       }
-      return command.label === "projection hunt"
-        ? { stdout: "", stderr: "projection failed", exitCode: 1 }
-        : { stdout: "", stderr: "", exitCode: 0 };
-    });
+    );
 
     expect(accepted.summary).toMatchObject({
       perfStatus: "candidate-keep",
       correctnessStatus: "fail",
       finalStatus: "discard-correctness"
     });
-    expect(accepted.summary.correctnessFailures).toEqual(["projection hunt failed with exit code 1"]);
+    expect(accepted.summary.correctnessFailures).toEqual([
+      "projection hunt failed with exit code 1"
+    ]);
   });
 
   it("records acceptance decisions as TSV", () => {

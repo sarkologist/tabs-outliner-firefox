@@ -76,7 +76,9 @@ const INCIDENT_SEVERITY_BY_EVENT: Record<string, IncidentSeverity> = {
 
 const form = document.querySelector<HTMLFormElement>("#options-form");
 const undoHistoryLimit = document.querySelector<HTMLInputElement>("#undo-history-limit");
-const automaticBackupsEnabled = document.querySelector<HTMLInputElement>("#automatic-backups-enabled");
+const automaticBackupsEnabled = document.querySelector<HTMLInputElement>(
+  "#automatic-backups-enabled"
+);
 const backupStatus = document.querySelector<HTMLElement>("#backup-status");
 const shortcutList = document.querySelector<HTMLOListElement>("#shortcut-list");
 const globalShortcut = document.querySelector<HTMLButtonElement>("#global-shortcut");
@@ -225,56 +227,62 @@ function registerEvents(): void {
     void refreshIncidentLog();
   });
 
-  document.addEventListener("keydown", (event) => {
-    if (!recordingTarget) {
-      return;
-    }
-    event.preventDefault();
-    event.stopPropagation();
+  document.addEventListener(
+    "keydown",
+    (event) => {
+      if (!recordingTarget) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
 
-    if (event.key === "Escape") {
+      if (event.key === "Escape") {
+        recordingTarget = undefined;
+        renderOptions();
+        showStatus("");
+        return;
+      }
+
+      if (recordingTarget.type === "sidebar") {
+        const combo = comboFromKeyboardEvent(event);
+        if (!combo) {
+          showStatus("Press another key");
+          return;
+        }
+        preferences = normalizeAppPreferences({
+          ...preferences,
+          shortcuts: {
+            ...preferences.shortcuts,
+            [recordingTarget.action]: {
+              ...preferences.shortcuts[recordingTarget.action],
+              combo
+            }
+          }
+        });
+      } else {
+        const shortcut = nativeCommandShortcutFromEvent(event);
+        if (!shortcut) {
+          showStatus("Press another key");
+          return;
+        }
+        nativeSidebarShortcut = shortcut;
+      }
+
       recordingTarget = undefined;
       renderOptions();
       showStatus("");
-      return;
-    }
-
-    if (recordingTarget.type === "sidebar") {
-      const combo = comboFromKeyboardEvent(event);
-      if (!combo) {
-        showStatus("Press another key");
-        return;
-      }
-      preferences = normalizeAppPreferences({
-        ...preferences,
-        shortcuts: {
-          ...preferences.shortcuts,
-          [recordingTarget.action]: {
-            ...preferences.shortcuts[recordingTarget.action],
-            combo
-          }
-        }
-      });
-    } else {
-      const shortcut = nativeCommandShortcutFromEvent(event);
-      if (!shortcut) {
-        showStatus("Press another key");
-        return;
-      }
-      nativeSidebarShortcut = shortcut;
-    }
-
-    recordingTarget = undefined;
-    renderOptions();
-    showStatus("");
-  }, { capture: true });
+    },
+    { capture: true }
+  );
 
   browser.storage.onChanged.addListener((changes, areaName) => {
     if (areaName !== "local") {
       return;
     }
     if (changes[AUTOMATIC_BACKUP_STATUS_STORAGE_KEY]) {
-      automaticBackupStatus = normalizeAutomaticBackupStatus(changes[AUTOMATIC_BACKUP_STATUS_STORAGE_KEY].newValue);
+      automaticBackupStatus = normalizeAutomaticBackupStatus(
+        changes[AUTOMATIC_BACKUP_STATUS_STORAGE_KEY].newValue
+      );
       renderBackupStatus();
     }
     if (changes[INCIDENT_LOG_STORAGE_KEY]) {
@@ -304,7 +312,10 @@ function renderBackups(): void {
 
 function renderBackupStatus(): void {
   if (backupStatus) {
-    backupStatus.textContent = automaticBackupStatusText(automaticBackupStatus, preferences.automaticBackups.enabled);
+    backupStatus.textContent = automaticBackupStatusText(
+      automaticBackupStatus,
+      preferences.automaticBackups.enabled
+    );
   }
 }
 
@@ -376,9 +387,8 @@ function renderGlobalShortcut(): void {
   if (!globalShortcut) {
     return;
   }
-  globalShortcut.textContent = recordingTarget?.type === "global"
-    ? "Press keys"
-    : comboLabel(nativeSidebarShortcut);
+  globalShortcut.textContent =
+    recordingTarget?.type === "global" ? "Press keys" : comboLabel(nativeSidebarShortcut);
   globalShortcut.classList.toggle("is-recording", recordingTarget?.type === "global");
 }
 
@@ -525,7 +535,9 @@ async function refreshPerformanceProfileStatus(): Promise<void> {
 }
 
 async function loadPerformanceProfile(): Promise<PerformanceProfileSnapshot> {
-  const response = await browser.runtime.sendMessage({ type: "getPerformanceProfile" }).catch(() => undefined);
+  const response = await browser.runtime
+    .sendMessage({ type: "getPerformanceProfile" })
+    .catch(() => undefined);
   if (!isPerformanceProfileSnapshot(response)) {
     throw new Error("Profile unavailable");
   }

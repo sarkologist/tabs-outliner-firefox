@@ -13,7 +13,11 @@ export function mergePartialOutlineState(
   const nodes: OutlineState["nodes"] = { ...current.nodes };
   for (const [nodeId, node] of Object.entries(incoming.nodes)) {
     const currentNode = current.nodes[nodeId];
-    nodes[nodeId] = mergePartialOutlineNode(currentNode, node, completeSiblingParentIds.has(nodeId));
+    nodes[nodeId] = mergePartialOutlineNode(
+      currentNode,
+      node,
+      completeSiblingParentIds.has(nodeId)
+    );
   }
 
   return {
@@ -68,6 +72,5 @@ function mergeKnownRootIds(
   incoming: readonly NodeId[],
   nodes: OutlineState["nodes"]
 ): NodeId[] {
-  return mergeKnownNodeIds(current, incoming)
-    .filter((nodeId) => !nodes[nodeId]?.parentId);
+  return mergeKnownNodeIds(current, incoming).filter((nodeId) => !nodes[nodeId]?.parentId);
 }

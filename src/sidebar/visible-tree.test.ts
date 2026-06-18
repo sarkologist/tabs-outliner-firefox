@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import type { NodeId, OutlineNode, OutlineState } from "../model/types.js";
-import { generatedTraceConfig, generatedTraceTimeoutMs } from "../test/generated-traces.test-support.js";
+import {
+  generatedTraceConfig,
+  generatedTraceTimeoutMs
+} from "../test/generated-traces.test-support.js";
 import {
   applyDeleteTreeStructurePatchToProjection,
   applyCrossParentLeafMoveTreeStructurePatchToProjection,
@@ -23,19 +26,16 @@ describe("visible tree projection", () => {
     const rowHeight = 18;
     const viewportHeight = 720;
     const overscan = 24;
-    const positions = [
-      0,
-      rowHeight * 12_345,
-      rowHeight * 49_500,
-      rowHeight * rowCount
-    ];
+    const positions = [0, rowHeight * 12_345, rowHeight * 49_500, rowHeight * rowCount];
 
     for (const scrollTop of positions) {
       const range = calculateVirtualRange(rowCount, scrollTop, viewportHeight, rowHeight, overscan);
 
       expect(range.start).toBeGreaterThanOrEqual(0);
       expect(range.end).toBeLessThanOrEqual(rowCount);
-      expect(range.end - range.start).toBeLessThanOrEqual(Math.ceil(viewportHeight / rowHeight) + overscan * 2);
+      expect(range.end - range.start).toBeLessThanOrEqual(
+        Math.ceil(viewportHeight / rowHeight) + overscan * 2
+      );
       expect(range.totalHeight).toBe(rowCount * rowHeight);
       expect(range.offsetTop).toBe(range.start * rowHeight);
     }
@@ -300,12 +300,14 @@ describe("visible tree projection", () => {
       childIds: [...next.nodes[movedNodeId]!.childIds]
     };
 
-    expect(sameParentReorderTreeStructurePatchInfo(next, projection, {
-      deletedNodeIds: [],
-      updatedNodes: [root, next.nodes[movedNodeId]!],
-      rootIds: ["window:1"],
-      deletedClosedCount: 0
-    })).toEqual({
+    expect(
+      sameParentReorderTreeStructurePatchInfo(next, projection, {
+        deletedNodeIds: [],
+        updatedNodes: [root, next.nodes[movedNodeId]!],
+        rootIds: ["window:1"],
+        deletedClosedCount: 0
+      })
+    ).toEqual({
       parentId: "window:1",
       parentRowIndex: 0,
       movedNodeId,
@@ -354,13 +356,7 @@ describe("visible tree projection", () => {
       "tab:c",
       "tab:b"
     ]);
-    expect(projection.visibleNodeIds).toEqual([
-      "window:1",
-      "tab:a",
-      "window:2",
-      "tab:c",
-      "tab:b"
-    ]);
+    expect(projection.visibleNodeIds).toEqual(["window:1", "tab:a", "window:2", "tab:c", "tab:b"]);
     expect(projection.rows[0]).toMatchObject({
       nodeId: "window:1",
       index: 0,
@@ -402,12 +398,14 @@ describe("visible tree projection", () => {
       childIds: [...next.nodes[movedNodeId]!.childIds]
     };
 
-    expect(sameParentReorderTreeStructurePatchInfo(next, projection, {
-      deletedNodeIds: [],
-      updatedNodes: [root, next.nodes[movedNodeId]!],
-      rootIds: ["window:1"],
-      deletedClosedCount: 0
-    })).toBeUndefined();
+    expect(
+      sameParentReorderTreeStructurePatchInfo(next, projection, {
+        deletedNodeIds: [],
+        updatedNodes: [root, next.nodes[movedNodeId]!],
+        rootIds: ["window:1"],
+        deletedClosedCount: 0
+      })
+    ).toBeUndefined();
   });
 
   it("applies active-search delete patches without rebuilding the projection", () => {
@@ -565,18 +563,24 @@ describe("visible tree projection", () => {
 
     const applied = applyInsertTreeStructurePatchToProjection(next, projection, {
       deletedNodeIds: [],
-      updatedNodes: [next.nodes["window:1"]!, next.nodes["group:wrapper"]!, next.nodes["tab:target"]!],
+      updatedNodes: [
+        next.nodes["window:1"]!,
+        next.nodes["group:wrapper"]!,
+        next.nodes["tab:target"]!
+      ],
       rootIds: ["window:1"],
       deletedClosedCount: 0
     });
 
     expect(applied).toBe(true);
-    expect(projection.rows.map(({ nodeId, depth, parentRowIndex, subtreeEndIndex }) => ({
-      nodeId,
-      depth,
-      parentRowIndex,
-      subtreeEndIndex
-    }))).toEqual([
+    expect(
+      projection.rows.map(({ nodeId, depth, parentRowIndex, subtreeEndIndex }) => ({
+        nodeId,
+        depth,
+        parentRowIndex,
+        subtreeEndIndex
+      }))
+    ).toEqual([
       { nodeId: "window:1", depth: 0, parentRowIndex: undefined, subtreeEndIndex: 7 },
       { nodeId: "tab:previous", depth: 1, parentRowIndex: 0, subtreeEndIndex: 3 },
       { nodeId: "tab:previous-child", depth: 2, parentRowIndex: 1, subtreeEndIndex: 3 },
@@ -610,17 +614,21 @@ describe("visible tree projection", () => {
     expect(projection.visibleNodeIds).toEqual(["window:1", "tab:1"]);
   });
 
-  it("keeps incremental insert and delete patches equivalent to fresh projections across generated traces", () => {
-    const config = generatedTraceConfig({
-      defaultSeedCount: 24,
-      defaultSteps: 12,
-      soakSeedCount: 96,
-      soakSteps: 48
-    });
-    for (const seed of config.seeds) {
-      runGeneratedPatchEquivalenceTrace(seed, config.steps);
-    }
-  }, generatedTraceTimeoutMs(10_000, 120_000));
+  it(
+    "keeps incremental insert and delete patches equivalent to fresh projections across generated traces",
+    () => {
+      const config = generatedTraceConfig({
+        defaultSeedCount: 24,
+        defaultSteps: 12,
+        soakSeedCount: 96,
+        soakSteps: 48
+      });
+      for (const seed of config.seeds) {
+        runGeneratedPatchEquivalenceTrace(seed, config.steps);
+      }
+    },
+    generatedTraceTimeoutMs(10_000, 120_000)
+  );
 });
 
 describe("isAlreadyAppliedDeletePatch", () => {
@@ -688,8 +696,20 @@ function runGeneratedPatchEquivalenceTrace(seed: number, steps: number): void {
     const preferredOperation = step % 3;
     const operation =
       generatedPatchOperation(state, preferredOperation, rng, nextTabOrdinal, nextGroupOrdinal) ??
-      generatedPatchOperation(state, (preferredOperation + 1) % 3, rng, nextTabOrdinal, nextGroupOrdinal) ??
-      generatedPatchOperation(state, (preferredOperation + 2) % 3, rng, nextTabOrdinal, nextGroupOrdinal);
+      generatedPatchOperation(
+        state,
+        (preferredOperation + 1) % 3,
+        rng,
+        nextTabOrdinal,
+        nextGroupOrdinal
+      ) ??
+      generatedPatchOperation(
+        state,
+        (preferredOperation + 2) % 3,
+        rng,
+        nextTabOrdinal,
+        nextGroupOrdinal
+      );
     if (!operation) {
       break;
     }
@@ -759,7 +779,9 @@ function wideState(
   for (let index = 1; index <= tabCount; index += 1) {
     const id = `tab:${index}`;
     root.childIds.push(id);
-    nodes[id] = tabNode(id, "window:1", `Tab ${index}`, [], { active: index === options.activeTabIndex });
+    nodes[id] = tabNode(id, "window:1", `Tab ${index}`, [], {
+      active: index === options.activeTabIndex
+    });
   }
 
   return {

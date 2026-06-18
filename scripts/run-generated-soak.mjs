@@ -21,17 +21,19 @@ const files = [
 const missingFiles = files.filter((file) => !existsSync(new URL(`../${file}`, import.meta.url)));
 if (missingFiles.length > 0) {
   console.error(`Generated trace soak: listed file(s) not found:\n  ${missingFiles.join("\n  ")}`);
-  console.error("Update the `files` list in scripts/run-generated-soak.mjs after a rename or move.");
+  console.error(
+    "Update the `files` list in scripts/run-generated-soak.mjs after a rename or move."
+  );
   process.exit(1);
 }
 
-const baseSeed = positiveIntegerEnv("SOAK_SEED")
-  ?? positiveIntegerEnv("GENERATED_TRACE_BASE_SEED")
-  ?? randomInt(1, 0x7fffffff);
-const seedCount = positiveIntegerEnv("SOAK_SEED_COUNT")
-  ?? positiveIntegerEnv("GENERATED_TRACE_SEED_COUNT");
-const steps = positiveIntegerEnv("SOAK_STEPS")
-  ?? positiveIntegerEnv("GENERATED_TRACE_STEPS");
+const baseSeed =
+  positiveIntegerEnv("SOAK_SEED") ??
+  positiveIntegerEnv("GENERATED_TRACE_BASE_SEED") ??
+  randomInt(1, 0x7fffffff);
+const seedCount =
+  positiveIntegerEnv("SOAK_SEED_COUNT") ?? positiveIntegerEnv("GENERATED_TRACE_SEED_COUNT");
+const steps = positiveIntegerEnv("SOAK_STEPS") ?? positiveIntegerEnv("GENERATED_TRACE_STEPS");
 const oracleMode = process.env.GENERATED_TRACE_ORACLE_MODE ?? "gated";
 const oracleReport = process.env.GENERATED_TRACE_ORACLE_REPORT;
 
@@ -60,7 +62,10 @@ const generatedTraceEnv = {
   GENERATED_TRACE_SOAK: "1",
   GENERATED_TRACE_BASE_SEED: String(baseSeed)
 };
-const oracleEntryPoint = new URL("../oracle/purescript/output/TabsOutliner.Oracle/index.js", import.meta.url);
+const oracleEntryPoint = new URL(
+  "../oracle/purescript/output/TabsOutliner.Oracle/index.js",
+  import.meta.url
+);
 const pnpmCommand = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
 
 if (seedCount) {
@@ -78,12 +83,7 @@ if (!existsSync(oracleEntryPoint)) {
   }
 }
 
-const vitestExitCode = await runPnpm([
-  "exec",
-  "vitest",
-  "run",
-  ...files
-], {
+const vitestExitCode = await runPnpm(["exec", "vitest", "run", ...files], {
   env: {
     ...process.env,
     ...generatedTraceEnv

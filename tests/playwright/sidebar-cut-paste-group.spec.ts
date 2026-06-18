@@ -19,7 +19,12 @@ test.describe("sidebar cut/paste with groups", () => {
     await expect(page.getByRole("treeitem")).toHaveCount(4);
     await expect(page.locator(nodeSelector("window:1"))).toHaveAttribute("aria-level", "1");
     await expect(page.locator(nodeSelector("window:1"))).toHaveAttribute("data-row-index", "2");
-    await expect(visibleNodeOrder(page)).resolves.toEqual(["window:2", "tab:b", "window:1", "tab:a"]);
+    await expect(visibleNodeOrder(page)).resolves.toEqual([
+      "window:2",
+      "tab:b",
+      "window:1",
+      "tab:a"
+    ]);
     await expect(outlineRootIds(page)).resolves.toEqual(["window:2", "window:1"]);
     expect(issues).toEqual([]);
   });
@@ -35,7 +40,10 @@ async function loadSidebar(page: Page): Promise<void> {
     window.browser = {
       runtime: {
         sendMessage: async (message: unknown) => {
-          const type = typeof message === "object" && message ? (message as { type?: unknown }).type : undefined;
+          const type =
+            typeof message === "object" && message
+              ? (message as { type?: unknown }).type
+              : undefined;
           if (type === "getInitialTreeSnapshot") {
             return undefined;
           }
@@ -111,7 +119,9 @@ async function loadSidebar(page: Page): Promise<void> {
       const oldSiblings = oldParentId ? outline.nodes[oldParentId]?.childIds : outline.rootIds;
       removeId(oldSiblings, command.nodeId);
 
-      const newSiblings = command.parentId ? outline.nodes[command.parentId]?.childIds : outline.rootIds;
+      const newSiblings = command.parentId
+        ? outline.nodes[command.parentId]?.childIds
+        : outline.rootIds;
       if (!newSiblings) {
         return;
       }
@@ -136,7 +146,11 @@ async function loadSidebar(page: Page): Promise<void> {
       let currentId = startNodeId;
       while (currentId) {
         const current = outline.nodes[currentId];
-        if (!current || (current.kind !== "window" && current.kind !== "group") || current.childIds.length > 0) {
+        if (
+          !current ||
+          (current.kind !== "window" && current.kind !== "group") ||
+          current.childIds.length > 0
+        ) {
           return;
         }
 
@@ -156,9 +170,13 @@ async function loadSidebar(page: Page): Promise<void> {
       previous: { rootIds: string[]; nodes: Record<string, unknown> },
       next: { rootIds: string[]; nodes: Record<string, unknown> }
     ) {
-      const deletedNodeIds = Object.keys(previous.nodes).filter((nodeId) => !(nodeId in next.nodes));
+      const deletedNodeIds = Object.keys(previous.nodes).filter(
+        (nodeId) => !(nodeId in next.nodes)
+      );
       const updatedNodes = Object.keys(next.nodes)
-        .filter((nodeId) => JSON.stringify(previous.nodes[nodeId]) !== JSON.stringify(next.nodes[nodeId]))
+        .filter(
+          (nodeId) => JSON.stringify(previous.nodes[nodeId]) !== JSON.stringify(next.nodes[nodeId])
+        )
         .map((nodeId) => next.nodes[nodeId]);
       return {
         type: "treeStructureUpdated",
@@ -203,7 +221,8 @@ async function visibleNodeOrder(page: Page): Promise<string[]> {
 
 async function outlineRootIds(page: Page): Promise<string[]> {
   return page.evaluate(() => [
-    ...(((window as typeof window & { __outlineState?: { rootIds?: string[] } }).__outlineState?.rootIds) ?? [])
+    ...((window as typeof window & { __outlineState?: { rootIds?: string[] } }).__outlineState
+      ?.rootIds ?? [])
   ]);
 }
 
@@ -218,7 +237,10 @@ function collectPageIssues(page: Page): ConsoleIssue[] {
     issues.push({ kind: "pageerror", text: error.message });
   });
   page.on("requestfailed", (request) => {
-    issues.push({ kind: "requestfailed", text: `${request.url()} ${request.failure()?.errorText ?? ""}` });
+    issues.push({
+      kind: "requestfailed",
+      text: `${request.url()} ${request.failure()?.errorText ?? ""}`
+    });
   });
   return issues;
 }

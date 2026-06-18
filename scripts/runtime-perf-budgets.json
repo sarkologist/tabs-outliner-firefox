@@ -5,23 +5,9 @@
     {
       "id": "close-last-tab-removed-then-session",
       "pnpmScript": "profile:close",
-      "args": [
-        "--tabs",
-        "50000",
-        "--target",
-        "last",
-        "--order",
-        "tabRemovedThenSessionChanged"
-      ],
+      "args": ["--tabs", "50000", "--target", "last", "--order", "tabRemovedThenSessionChanged"],
       "smoke": {
-        "args": [
-          "--tabs",
-          "1000",
-          "--target",
-          "last",
-          "--order",
-          "tabRemovedThenSessionChanged"
-        ],
+        "args": ["--tabs", "1000", "--target", "last", "--order", "tabRemovedThenSessionChanged"],
         "budget": {
           "firstBroadcastMs": 40,
           "totalMeasuredMs": 60,
@@ -36,11 +22,7 @@
           "statusBroadcasts": 0
         }
       },
-      "tags": [
-        "close",
-        "native-close",
-        "journal"
-      ],
+      "tags": ["close", "native-close", "journal"],
       "budget": {
         "firstBroadcastMs": 55,
         "totalMeasuredMs": 103,
@@ -58,23 +40,9 @@
     {
       "id": "close-last-session-then-tab-removed",
       "pnpmScript": "profile:close",
-      "args": [
-        "--tabs",
-        "50000",
-        "--target",
-        "last",
-        "--order",
-        "sessionChangedThenTabRemoved"
-      ],
+      "args": ["--tabs", "50000", "--target", "last", "--order", "sessionChangedThenTabRemoved"],
       "smoke": {
-        "args": [
-          "--tabs",
-          "1000",
-          "--target",
-          "last",
-          "--order",
-          "sessionChangedThenTabRemoved"
-        ],
+        "args": ["--tabs", "1000", "--target", "last", "--order", "sessionChangedThenTabRemoved"],
         "budget": {
           "firstBroadcastMs": 40,
           "totalMeasuredMs": 60,
@@ -89,12 +57,7 @@
           "statusBroadcasts": 0
         }
       },
-      "tags": [
-        "close",
-        "native-close",
-        "journal",
-        "session"
-      ],
+      "tags": ["close", "native-close", "journal", "session"],
       "budget": {
         "firstBroadcastMs": 94,
         "totalMeasuredMs": 156,
@@ -145,10 +108,7 @@
           "statusBroadcasts": 0
         }
       },
-      "tags": [
-        "restore",
-        "journal"
-      ],
+      "tags": ["restore", "journal"],
       "budget": {
         "firstBroadcastMs": 22,
         "totalMeasuredMs": 124,
@@ -164,19 +124,9 @@
     {
       "id": "delete-last-tab",
       "pnpmScript": "profile:delete",
-      "args": [
-        "--tabs",
-        "50000",
-        "--target",
-        "last"
-      ],
+      "args": ["--tabs", "50000", "--target", "last"],
       "smoke": {
-        "args": [
-          "--tabs",
-          "1000",
-          "--target",
-          "last"
-        ],
+        "args": ["--tabs", "1000", "--target", "last"],
         "budget": {
           "firstBroadcastMs": 40,
           "totalMeasuredMs": 80,
@@ -189,10 +139,7 @@
           "statusBroadcasts": 1
         }
       },
-      "tags": [
-        "delete",
-        "journal"
-      ],
+      "tags": ["delete", "journal"],
       "budget": {
         "firstBroadcastMs": 55,
         "totalMeasuredMs": 113,
@@ -208,19 +155,9 @@
     {
       "id": "focus-last-tab",
       "pnpmScript": "profile:focus",
-      "args": [
-        "--tabs",
-        "50000",
-        "--target",
-        "last"
-      ],
+      "args": ["--tabs", "50000", "--target", "last"],
       "smoke": {
-        "args": [
-          "--tabs",
-          "1000",
-          "--target",
-          "last"
-        ],
+        "args": ["--tabs", "1000", "--target", "last"],
         "budget": {
           "firstBroadcastMs": 30,
           "totalMeasuredMs": 40,
@@ -233,9 +170,7 @@
           "statusBroadcasts": 0
         }
       },
-      "tags": [
-        "focus"
-      ],
+      "tags": ["focus"],
       "budget": {
         "firstBroadcastMs": 20,
         "totalMeasuredMs": 46,
@@ -251,19 +186,9 @@
     {
       "id": "command-group-live-leaf",
       "pnpmScript": "profile:command",
-      "args": [
-        "--tabs",
-        "50000",
-        "--scenario",
-        "group-live-leaf"
-      ],
+      "args": ["--tabs", "50000", "--scenario", "group-live-leaf"],
       "smoke": {
-        "args": [
-          "--tabs",
-          "1000",
-          "--scenario",
-          "group-live-leaf"
-        ],
+        "args": ["--tabs", "1000", "--scenario", "group-live-leaf"],
         "budget": {
           "firstBroadcastMs": 80,
           "totalMeasuredMs": 120,
@@ -276,11 +201,7 @@
           "statusBroadcasts": 1
         }
       },
-      "tags": [
-        "relocation",
-        "journal",
-        "focus"
-      ],
+      "tags": ["relocation", "journal", "focus"],
       "budget": {
         "firstBroadcastMs": 120,
         "totalMeasuredMs": 180,
@@ -296,19 +217,9 @@
     {
       "id": "command-move-leaf",
       "pnpmScript": "profile:command",
-      "args": [
-        "--tabs",
-        "50000",
-        "--scenario",
-        "move-leaf"
-      ],
+      "args": ["--tabs", "50000", "--scenario", "move-leaf"],
       "smoke": {
-        "args": [
-          "--tabs",
-          "1000",
-          "--scenario",
-          "move-leaf"
-        ],
+        "args": ["--tabs", "1000", "--scenario", "move-leaf"],
         "budget": {
           "firstBroadcastMs": 60,
           "totalMeasuredMs": 80,
@@ -321,10 +232,7 @@
           "statusBroadcasts": 1
         }
       },
-      "tags": [
-        "relocation",
-        "history"
-      ],
+      "tags": ["relocation", "history"],
       "budget": {
         "firstBroadcastMs": 139,
         "totalMeasuredMs": 221,
@@ -340,16 +248,8 @@
     {
       "id": "compaction-after-burst",
       "pnpmScript": "profile:command",
-      "args": [
-        "--tabs",
-        "1000",
-        "--scenario",
-        "compaction-after-burst"
-      ],
-      "tags": [
-        "journal",
-        "compaction"
-      ],
+      "args": ["--tabs", "1000", "--scenario", "compaction-after-burst"],
+      "tags": ["journal", "compaction"],
       "budget": {
         "firstBroadcastMs": 20,
         "totalMeasuredMs": 60,
@@ -365,19 +265,9 @@
     {
       "id": "command-refresh-noop",
       "pnpmScript": "profile:command",
-      "args": [
-        "--tabs",
-        "50000",
-        "--scenario",
-        "refresh-noop"
-      ],
+      "args": ["--tabs", "50000", "--scenario", "refresh-noop"],
       "smoke": {
-        "args": [
-          "--tabs",
-          "1000",
-          "--scenario",
-          "refresh-noop"
-        ],
+        "args": ["--tabs", "1000", "--scenario", "refresh-noop"],
         "budget": {
           "totalMeasuredMs": 80,
           "totalWithSaveFlushMs": 80,
@@ -389,9 +279,7 @@
           "statusBroadcasts": 0
         }
       },
-      "tags": [
-        "manual-refresh"
-      ],
+      "tags": ["manual-refresh"],
       "budget": {
         "totalMeasuredMs": 123,
         "totalWithSaveFlushMs": 123,

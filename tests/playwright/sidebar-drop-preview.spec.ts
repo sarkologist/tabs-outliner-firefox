@@ -6,7 +6,9 @@ type ConsoleIssue = {
 };
 
 test.describe("sidebar drag/drop target preview", () => {
-  test("draws destination guides for an after drop below an expanded subtree", async ({ page }, testInfo) => {
+  test("draws destination guides for an after drop below an expanded subtree", async ({
+    page
+  }, testInfo) => {
     const issues = collectPageIssues(page);
     await loadSidebar(page);
 
@@ -20,14 +22,18 @@ test.describe("sidebar drag/drop target preview", () => {
     expect(issues).toEqual([]);
   });
 
-  test("draws child-depth guides for an inside drop at the end of an expanded subtree", async ({ page }, testInfo) => {
+  test("draws child-depth guides for an inside drop at the end of an expanded subtree", async ({
+    page
+  }, testInfo) => {
     const issues = collectPageIssues(page);
     await loadSidebar(page);
 
     await dragFromTo(page, "tab:b", "tab:a", "inside");
 
     await expect(dropMarker(page)).toHaveClass(/drop-inside/);
-    await expect(page.locator(".node[data-node-id='tab\\:a'] > .node-row.drop-inside-target")).toBeVisible();
+    await expect(
+      page.locator(".node[data-node-id='tab\\:a'] > .node-row.drop-inside-target")
+    ).toBeVisible();
     await expect(dropGuideLayer(page).locator(".drop-guide-vertical")).toHaveCount(1);
     await expect(dropGuideLayer(page).locator(".drop-guide-horizontal")).toHaveCount(1);
     await expect(markerState(page)).resolves.toMatchObject({ depth: 2, rowIndex: 4 });
@@ -60,7 +66,10 @@ async function loadSidebar(page: Page): Promise<void> {
     window.browser = {
       runtime: {
         sendMessage: async (message: unknown) => {
-          const type = typeof message === "object" && message ? (message as { type?: unknown }).type : undefined;
+          const type =
+            typeof message === "object" && message
+              ? (message as { type?: unknown }).type
+              : undefined;
           if (type === "getState") {
             return structuredClone(state);
           }
@@ -100,7 +109,12 @@ async function loadSidebar(page: Page): Promise<void> {
   await expect(page.getByRole("treeitem")).toHaveCount(6);
 }
 
-async function dragFromTo(page: Page, sourceId: string, targetId: string, mode: "before" | "inside" | "after"): Promise<void> {
+async function dragFromTo(
+  page: Page,
+  sourceId: string,
+  targetId: string,
+  mode: "before" | "inside" | "after"
+): Promise<void> {
   await startDrag(page, sourceId);
   const target = page.locator(nodeRowSelector(targetId));
   const box = await target.boundingBox();
@@ -109,7 +123,11 @@ async function dragFromTo(page: Page, sourceId: string, targetId: string, mode: 
   }
 
   const clientY =
-    mode === "before" ? box.y + 1 : mode === "after" ? box.y + box.height - 1 : box.y + box.height / 2;
+    mode === "before"
+      ? box.y + 1
+      : mode === "after"
+        ? box.y + box.height - 1
+        : box.y + box.height / 2;
   await target.dispatchEvent("dragover", {
     bubbles: true,
     cancelable: true,
@@ -147,7 +165,9 @@ async function markerState(page: Page): Promise<{ depth: number; rowIndex: numbe
     );
     return {
       depth: Number.parseInt(element.style.getPropertyValue("--depth"), 10),
-      rowIndex: Math.round((element.getBoundingClientRect().top - tree.getBoundingClientRect().top) / rowHeight)
+      rowIndex: Math.round(
+        (element.getBoundingClientRect().top - tree.getBoundingClientRect().top) / rowHeight
+      )
     };
   });
 }
@@ -178,7 +198,10 @@ function collectPageIssues(page: Page): ConsoleIssue[] {
     issues.push({ kind: "pageerror", text: error.message });
   });
   page.on("requestfailed", (request) => {
-    issues.push({ kind: "requestfailed", text: `${request.url()} ${request.failure()?.errorText ?? ""}` });
+    issues.push({
+      kind: "requestfailed",
+      text: `${request.url()} ${request.failure()?.errorText ?? ""}`
+    });
   });
   return issues;
 }

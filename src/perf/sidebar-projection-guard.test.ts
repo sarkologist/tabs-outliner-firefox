@@ -10,18 +10,25 @@ import { startupHoverGuardFailures } from "../../scripts/profile-startup-hover.m
 
 describe("sidebar projection perf guard", () => {
   it("selects scenarios and supports smoke run defaults", () => {
-    expect(selectProjectionGuardScenarios({ scenarios: "startup-hover" }).map((scenario: { id: string }) => scenario.id)).toEqual([
-      "startup-hover"
-    ]);
-    expect(selectProjectionGuardScenarios({ scenarios: "startup-hover,startup-scroll-away" }).map((scenario: { id: string }) => scenario.id))
-      .toEqual(["startup-hover", "startup-scroll-away"]);
+    expect(
+      selectProjectionGuardScenarios({ scenarios: "startup-hover" }).map(
+        (scenario: { id: string }) => scenario.id
+      )
+    ).toEqual(["startup-hover"]);
+    expect(
+      selectProjectionGuardScenarios({ scenarios: "startup-hover,startup-scroll-away" }).map(
+        (scenario: { id: string }) => scenario.id
+      )
+    ).toEqual(["startup-hover", "startup-scroll-away"]);
 
     expect(parseProjectionGuardArgs(["--", "--smoke"], {})).toMatchObject({
       runs: 1,
       retries: 1,
       smoke: true
     });
-    expect(parseProjectionGuardArgs(["--retries", "2"], { SIDEBAR_PROJECTION_GUARD_RUNS: "3" })).toMatchObject({
+    expect(
+      parseProjectionGuardArgs(["--retries", "2"], { SIDEBAR_PROJECTION_GUARD_RUNS: "3" })
+    ).toMatchObject({
       runs: 3,
       retries: 2
     });
@@ -60,7 +67,9 @@ describe("sidebar projection perf guard", () => {
 
     expect(passing.passed).toBe(true);
     expect(failing.passed).toBe(false);
-    expect(failing.guardFailures).toEqual(["sparse hover must materialize action buttons for the hovered row"]);
+    expect(failing.guardFailures).toEqual([
+      "sparse hover must materialize action buttons for the hovered row"
+    ]);
     expect(discardOnly.passed).toBe(false);
     expect(discardOnly.guardFailures).toEqual(["profile status is discard"]);
   });
@@ -79,12 +88,16 @@ describe("sidebar projection perf guard", () => {
     };
     const profileGroups = {
       firstPaintProfiles: [{}],
-      sparseHoverProfiles: [{
-        actionButtonLabelsAfterHover: ["Group", "Close", "Delete"]
-      }],
-      sparseIdleProfiles: [{
-        actionButtonLabelsAfterIdle: ["Cut", "Move to top level", "Paste"]
-      }],
+      sparseHoverProfiles: [
+        {
+          actionButtonLabelsAfterHover: ["Group", "Close", "Delete"]
+        }
+      ],
+      sparseIdleProfiles: [
+        {
+          actionButtonLabelsAfterIdle: ["Cut", "Move to top level", "Paste"]
+        }
+      ],
       remoteIdleProfiles: [{}]
     };
 

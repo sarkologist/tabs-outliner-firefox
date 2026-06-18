@@ -134,7 +134,7 @@ function makeRuntime(tabCount, order) {
     },
     storage: {
       local: {
-        get: async (key) => typeof key === "string" ? { [key]: undefined } : {},
+        get: async (key) => (typeof key === "string" ? { [key]: undefined } : {}),
         set: async (items) => {
           recordProfileStorageSet(runtime, items, measure);
         },
@@ -201,19 +201,22 @@ function closeRuntimeTab(runtime, tabId, order) {
 
   runtime.tabs = runtime.tabs
     .filter((candidate) => candidate.id !== tabId)
-    .map((candidate) => candidate.windowId === tab.windowId && candidate.index > tab.index
-      ? { ...candidate, index: candidate.index - 1 }
-      : candidate);
+    .map((candidate) =>
+      candidate.windowId === tab.windowId && candidate.index > tab.index
+        ? { ...candidate, index: candidate.index - 1 }
+        : candidate
+    );
   runtime.recentlyClosed = {
     tab: {
       sessionId: `session-tab-${tab.id}`
     }
   };
 
-  const tabRemoved = () => runtime.events.tabRemoved.dispatch(tab.id, {
-    windowId: tab.windowId,
-    isWindowClosing: false
-  });
+  const tabRemoved = () =>
+    runtime.events.tabRemoved.dispatch(tab.id, {
+      windowId: tab.windowId,
+      isWindowClosing: false
+    });
   const sessionChanged = () => runtime.events.sessionChanged.dispatch();
 
   if (order === "sessionChangedThenTabRemoved") {
@@ -258,7 +261,10 @@ function applyNodeStateUpdate(runtime, update) {
   for (const node of update.updatedNodes) {
     runtime.sidebarState.nodes[node.id] = node;
   }
-  runtime.sidebarProjection.closedCount = Math.max(0, runtime.sidebarProjection.closedCount + update.closedCountDelta);
+  runtime.sidebarProjection.closedCount = Math.max(
+    0,
+    runtime.sidebarProjection.closedCount + update.closedCountDelta
+  );
 
   for (const row of runtime.sidebarProjection.rows) {
     const node = updatedNodes.get(row.nodeId);

@@ -52,18 +52,26 @@ describe("sidebar startup profile shapes", () => {
       liveTabNodes: 50,
       parentsWithChildren: ORDER_PAGE_HEAVY_PARENT_COUNT
     });
-    expect(Object.values(state.nodes).filter((node) => node.kind === "group" && node.parentId === "window:10"))
-      .toHaveLength(100);
-    expect(Object.values(state.nodes).filter((node) => node.kind === "group" && node.parentId !== "window:10"))
-      .toHaveLength(ORDER_PAGE_HEAVY_LEAF_GROUPS);
+    expect(
+      Object.values(state.nodes).filter(
+        (node) => node.kind === "group" && node.parentId === "window:10"
+      )
+    ).toHaveLength(100);
+    expect(
+      Object.values(state.nodes).filter(
+        (node) => node.kind === "group" && node.parentId !== "window:10"
+      )
+    ).toHaveLength(ORDER_PAGE_HEAVY_LEAF_GROUPS);
     expect(Object.values(state.nodes).filter((node) => node.childIds.length > 1024)).toEqual([]);
   });
 
   it("rejects order-page-heavy runs that cannot give every leaf group a tab child", () => {
-    expect(() => validateSidebarStartupShapeOptions({
-      shape: "order-page-heavy",
-      tabs: ORDER_PAGE_HEAVY_LEAF_GROUPS + 49,
-      liveTabs: 50
-    })).toThrow(/every leaf group/i);
+    expect(() =>
+      validateSidebarStartupShapeOptions({
+        shape: "order-page-heavy",
+        tabs: ORDER_PAGE_HEAVY_LEAF_GROUPS + 49,
+        liveTabs: 50
+      })
+    ).toThrow(/every leaf group/i);
   });
 });

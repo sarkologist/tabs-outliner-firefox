@@ -95,13 +95,15 @@ async function runStartupMatrix(options) {
   const scenarios = sidebarStartupScenariosForShape(options.shape);
   for (let runIndex = 0; runIndex < options.runs; runIndex += 1) {
     for (const scenario of scenarios) {
-      results.push(await runScenario({
-        shape: options.shape,
-        tabs: options.tabs,
-        liveTabs: options.liveTabs,
-        scenario,
-        runIndex: runIndex + 1
-      }));
+      results.push(
+        await runScenario({
+          shape: options.shape,
+          tabs: options.tabs,
+          liveTabs: options.liveTabs,
+          scenario,
+          runIndex: runIndex + 1
+        })
+      );
     }
   }
 
@@ -112,7 +114,7 @@ async function runStartupMatrix(options) {
       : {})
   });
   const timestamp = new Date().toISOString();
-  const commit = options.commit ?? await currentCommit();
+  const commit = options.commit ?? (await currentCommit());
   const tsvRow = formatSidebarStartupTsvRow(summary, {
     timestamp,
     tag: options.tag,
@@ -140,20 +142,24 @@ async function runStartupMatrix(options) {
 }
 
 async function runScenario({ shape, tabs, liveTabs, scenario, runIndex }) {
-  const { stdout } = await execFileAsync(process.execPath, [
-    profileTabOpenScript,
-    "--shape",
-    shape,
-    "--tabs",
-    String(tabs),
-    "--live-tabs",
-    String(liveTabs),
-    "--scenario",
-    scenario
-  ], {
-    cwd: rootDir,
-    maxBuffer: 1024 * 1024 * 16
-  });
+  const { stdout } = await execFileAsync(
+    process.execPath,
+    [
+      profileTabOpenScript,
+      "--shape",
+      shape,
+      "--tabs",
+      String(tabs),
+      "--live-tabs",
+      String(liveTabs),
+      "--scenario",
+      scenario
+    ],
+    {
+      cwd: rootDir,
+      maxBuffer: 1024 * 1024 * 16
+    }
+  );
 
   return {
     run: runIndex,
@@ -165,13 +171,17 @@ function parseProfileJson(stdout, scenario) {
   try {
     return JSON.parse(stdout);
   } catch (error) {
-    throw new Error(`Could not parse ${scenario} profile output as JSON: ${error.message}\n${stdout}`);
+    throw new Error(
+      `Could not parse ${scenario} profile output as JSON: ${error.message}\n${stdout}`
+    );
   }
 }
 
 async function currentCommit() {
   try {
-    const { stdout } = await execFileAsync("git", ["rev-parse", "--short=7", "HEAD"], { cwd: rootDir });
+    const { stdout } = await execFileAsync("git", ["rev-parse", "--short=7", "HEAD"], {
+      cwd: rootDir
+    });
     return stdout.trim();
   } catch {
     return "unknown";
@@ -180,7 +190,10 @@ async function currentCommit() {
 
 async function appendResultsTsv(resultsPath, row) {
   await mkdir(dirname(resultsPath), { recursive: true });
-  if (!existsSync(resultsPath) || (await readFile(resultsPath, "utf8").catch(() => "")).trim() === "") {
+  if (
+    !existsSync(resultsPath) ||
+    (await readFile(resultsPath, "utf8").catch(() => "")).trim() === ""
+  ) {
     await writeFile(resultsPath, `${SIDEBAR_STARTUP_RESULTS_TSV_HEADER}\n`);
   }
   await appendFile(resultsPath, `${row}\n`);

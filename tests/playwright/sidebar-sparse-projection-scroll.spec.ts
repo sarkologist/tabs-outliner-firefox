@@ -42,13 +42,19 @@ test.describe("sidebar sparse projection scrolling", () => {
         await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
       };
       const waitForSparseRequest = async () => {
-        await (window as typeof window & { __waitForSparseRequest?: () => Promise<void> }).__waitForSparseRequest?.();
+        await (
+          window as typeof window & { __waitForSparseRequest?: () => Promise<void> }
+        ).__waitForSparseRequest?.();
       };
       const resolveNextSparseSlice = () => {
-        (window as typeof window & { __resolveNextSparseSlice?: () => void }).__resolveNextSparseSlice?.();
+        (
+          window as typeof window & { __resolveNextSparseSlice?: () => void }
+        ).__resolveNextSparseSlice?.();
       };
       const sparseRequestCount = () =>
-        (window as typeof window & { __sparseRequestCount?: () => number }).__sparseRequestCount?.() ?? 0;
+        (
+          window as typeof window & { __sparseRequestCount?: () => number }
+        ).__sparseRequestCount?.() ?? 0;
 
       await nextFrame();
       await nextFrame();
@@ -82,7 +88,9 @@ test.describe("sidebar sparse projection scrolling", () => {
     expect(issues).toEqual([]);
   });
 
-  test("keeps manual scroll position when a sparse slice replaces the active slice", async ({ page }) => {
+  test("keeps manual scroll position when a sparse slice replaces the active slice", async ({
+    page
+  }) => {
     const issues = collectPageIssues(page);
     await loadSidebar(page);
 
@@ -98,10 +106,14 @@ test.describe("sidebar sparse projection scrolling", () => {
         return Number.isFinite(parsed) && parsed > 0 ? parsed : 18;
       })();
       const waitForSparseRequest = async () => {
-        await (window as typeof window & { __waitForSparseRequest?: () => Promise<void> }).__waitForSparseRequest?.();
+        await (
+          window as typeof window & { __waitForSparseRequest?: () => Promise<void> }
+        ).__waitForSparseRequest?.();
       };
       const resolveNextSparseSlice = () => {
-        (window as typeof window & { __resolveNextSparseSlice?: () => void }).__resolveNextSparseSlice?.();
+        (
+          window as typeof window & { __resolveNextSparseSlice?: () => void }
+        ).__resolveNextSparseSlice?.();
       };
       const nextFrame = async () => {
         await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
@@ -130,7 +142,9 @@ test.describe("sidebar sparse projection scrolling", () => {
     expect(issues).toEqual([]);
   });
 
-  test("reveals a browser-duplicated active tab after manual sparse scrolling", async ({ page }) => {
+  test("reveals a browser-duplicated active tab after manual sparse scrolling", async ({
+    page
+  }) => {
     const issues = collectPageIssues(page);
     await loadSidebar(page);
 
@@ -149,19 +163,32 @@ test.describe("sidebar sparse projection scrolling", () => {
         await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
       };
       const waitForSparseRequestCount = async (count: number) => {
-        await (window as typeof window & {
-          __waitForSparseRequestCount?: (count: number) => Promise<void>;
-        }).__waitForSparseRequestCount?.(count);
+        await (
+          window as typeof window & {
+            __waitForSparseRequestCount?: (count: number) => Promise<void>;
+          }
+        ).__waitForSparseRequestCount?.(count);
       };
       const resolveNextSparseSlice = () => {
-        (window as typeof window & { __resolveNextSparseSlice?: () => void }).__resolveNextSparseSlice?.();
+        (
+          window as typeof window & { __resolveNextSparseSlice?: () => void }
+        ).__resolveNextSparseSlice?.();
       };
       const sparseRequestCount = () =>
-        (window as typeof window & { __sparseRequestCount?: () => number }).__sparseRequestCount?.() ?? 0;
+        (
+          window as typeof window & { __sparseRequestCount?: () => number }
+        ).__sparseRequestCount?.() ?? 0;
       const lastSparseRequest = () =>
-        (window as typeof window & {
-          __lastSparseRequest?: () => { centerRowIndex: number; rowLimit: number; query: string; targetNodeId?: string };
-        }).__lastSparseRequest?.();
+        (
+          window as typeof window & {
+            __lastSparseRequest?: () => {
+              centerRowIndex: number;
+              rowLimit: number;
+              query: string;
+              targetNodeId?: string;
+            };
+          }
+        ).__lastSparseRequest?.();
       const duplicateActiveTab = () => {
         (window as typeof window & { __duplicateActiveTab?: () => void }).__duplicateActiveTab?.();
       };
@@ -181,14 +208,19 @@ test.describe("sidebar sparse projection scrolling", () => {
       await nextFrame();
       await nextFrame();
 
-      const duplicateRow = document.querySelector<HTMLElement>(".node[data-node-id='tab\\:duplicate']");
+      const duplicateRow = document.querySelector<HTMLElement>(
+        ".node[data-node-id='tab\\:duplicate']"
+      );
       return {
         duplicateRequest,
         duplicateVisible: Boolean(duplicateRow),
         duplicateActive: duplicateRow?.classList.contains("is-active") ?? false,
         duplicateRowIndex: Number.parseInt(duplicateRow?.dataset.rowIndex ?? "", 10),
         scrollTop: viewport.scrollTop,
-        duplicateCenteredScrollTop: Math.max(0, 801 * rowHeight + rowHeight / 2 - viewport.clientHeight / 2)
+        duplicateCenteredScrollTop: Math.max(
+          0,
+          801 * rowHeight + rowHeight / 2 - viewport.clientHeight / 2
+        )
       };
     });
 
@@ -201,7 +233,9 @@ test.describe("sidebar sparse projection scrolling", () => {
     expect(issues).toEqual([]);
   });
 
-  test("reveals a browser-created tab in a detached window outside the sparse rows", async ({ page }) => {
+  test("reveals a browser-created tab in a detached window outside the sparse rows", async ({
+    page
+  }) => {
     const issues = collectPageIssues(page);
     await loadSidebar(page);
 
@@ -220,24 +254,41 @@ test.describe("sidebar sparse projection scrolling", () => {
         await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
       };
       const waitForSparseRequestCount = async (count: number) => {
-        await (window as typeof window & {
-          __waitForSparseRequestCount?: (count: number) => Promise<void>;
-        }).__waitForSparseRequestCount?.(count);
+        await (
+          window as typeof window & {
+            __waitForSparseRequestCount?: (count: number) => Promise<void>;
+          }
+        ).__waitForSparseRequestCount?.(count);
       };
       const resolveNextSparseSlice = () => {
-        (window as typeof window & { __resolveNextSparseSlice?: () => void }).__resolveNextSparseSlice?.();
+        (
+          window as typeof window & { __resolveNextSparseSlice?: () => void }
+        ).__resolveNextSparseSlice?.();
       };
       const sparseRequestCount = () =>
-        (window as typeof window & { __sparseRequestCount?: () => number }).__sparseRequestCount?.() ?? 0;
+        (
+          window as typeof window & { __sparseRequestCount?: () => number }
+        ).__sparseRequestCount?.() ?? 0;
       const lastSparseRequest = () =>
-        (window as typeof window & {
-          __lastSparseRequest?: () => { centerRowIndex: number; rowLimit: number; query: string; targetNodeId?: string };
-        }).__lastSparseRequest?.();
+        (
+          window as typeof window & {
+            __lastSparseRequest?: () => {
+              centerRowIndex: number;
+              rowLimit: number;
+              query: string;
+              targetNodeId?: string;
+            };
+          }
+        ).__lastSparseRequest?.();
       const detachActiveTabToNewWindow = () => {
-        (window as typeof window & { __detachActiveTabToNewWindow?: () => void }).__detachActiveTabToNewWindow?.();
+        (
+          window as typeof window & { __detachActiveTabToNewWindow?: () => void }
+        ).__detachActiveTabToNewWindow?.();
       };
       const createTabInDetachedWindow = () => {
-        (window as typeof window & { __createTabInDetachedWindow?: () => void }).__createTabInDetachedWindow?.();
+        (
+          window as typeof window & { __createTabInDetachedWindow?: () => void }
+        ).__createTabInDetachedWindow?.();
       };
 
       const requestsBeforeDetach = sparseRequestCount();
@@ -257,7 +308,9 @@ test.describe("sidebar sparse projection scrolling", () => {
       await nextFrame();
       await nextFrame();
 
-      const createdRow = document.querySelector<HTMLElement>(".node[data-node-id='tab\\:detached-new']");
+      const createdRow = document.querySelector<HTMLElement>(
+        ".node[data-node-id='tab\\:detached-new']"
+      );
       return {
         detachRequest,
         createRequest,
@@ -284,7 +337,9 @@ test.describe("sidebar sparse projection scrolling", () => {
     expect(issues).toEqual([]);
   });
 
-  test("uses an older sparse response if it still covers the current scrollbar jump", async ({ page }) => {
+  test("uses an older sparse response if it still covers the current scrollbar jump", async ({
+    page
+  }) => {
     const issues = collectPageIssues(page);
     await loadSidebar(page);
 
@@ -315,15 +370,21 @@ test.describe("sidebar sparse projection scrolling", () => {
         await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
       };
       const waitForSparseRequestCount = async (count: number) => {
-        await (window as typeof window & {
-          __waitForSparseRequestCount?: (count: number) => Promise<void>;
-        }).__waitForSparseRequestCount?.(count);
+        await (
+          window as typeof window & {
+            __waitForSparseRequestCount?: (count: number) => Promise<void>;
+          }
+        ).__waitForSparseRequestCount?.(count);
       };
       const resolveSparseSliceAt = (index: number) => {
-        (window as typeof window & { __resolveSparseSliceAt?: (index: number) => void }).__resolveSparseSliceAt?.(index);
+        (
+          window as typeof window & { __resolveSparseSliceAt?: (index: number) => void }
+        ).__resolveSparseSliceAt?.(index);
       };
       const sparseRequestCount = () =>
-        (window as typeof window & { __sparseRequestCount?: () => number }).__sparseRequestCount?.() ?? 0;
+        (
+          window as typeof window & { __sparseRequestCount?: () => number }
+        ).__sparseRequestCount?.() ?? 0;
 
       await nextFrame();
       await nextFrame();
@@ -356,7 +417,9 @@ test.describe("sidebar sparse projection scrolling", () => {
     expect(issues).toEqual([]);
   });
 
-  test("paints an intersecting stale search response during a fast scrollbar jump", async ({ page }) => {
+  test("paints an intersecting stale search response during a fast scrollbar jump", async ({
+    page
+  }) => {
     const issues = collectPageIssues(page);
     await loadSidebar(page);
 
@@ -388,23 +451,31 @@ test.describe("sidebar sparse projection scrolling", () => {
         await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
       };
       const waitForSparseRequestCount = async (count: number) => {
-        await (window as typeof window & {
-          __waitForSparseRequestCount?: (count: number) => Promise<void>;
-        }).__waitForSparseRequestCount?.(count);
+        await (
+          window as typeof window & {
+            __waitForSparseRequestCount?: (count: number) => Promise<void>;
+          }
+        ).__waitForSparseRequestCount?.(count);
       };
       const resolveSparseSliceAt = (index: number) => {
-        (window as typeof window & { __resolveSparseSliceAt?: (index: number) => void }).__resolveSparseSliceAt?.(index);
+        (
+          window as typeof window & { __resolveSparseSliceAt?: (index: number) => void }
+        ).__resolveSparseSliceAt?.(index);
       };
       const sparseRequestCount = () =>
-        (window as typeof window & { __sparseRequestCount?: () => number }).__sparseRequestCount?.() ?? 0;
+        (
+          window as typeof window & { __sparseRequestCount?: () => number }
+        ).__sparseRequestCount?.() ?? 0;
 
       search.focus();
       search.value = "needle";
-      search.dispatchEvent(new InputEvent("input", {
-        bubbles: true,
-        inputType: "insertText",
-        data: "needle"
-      }));
+      search.dispatchEvent(
+        new InputEvent("input", {
+          bubbles: true,
+          inputType: "insertText",
+          data: "needle"
+        })
+      );
       await waitForSparseRequestCount(1);
       resolveSparseSliceAt(0);
       await nextFrame();
@@ -440,7 +511,9 @@ test.describe("sidebar sparse projection scrolling", () => {
     expect(issues).toEqual([]);
   });
 
-  test("does not refetch forever when the bottom viewport rounds past total rows", async ({ page }) => {
+  test("does not refetch forever when the bottom viewport rounds past total rows", async ({
+    page
+  }) => {
     const issues = collectPageIssues(page);
     await loadSidebar(page);
 
@@ -456,15 +529,21 @@ test.describe("sidebar sparse projection scrolling", () => {
         return Number.isFinite(parsed) && parsed > 0 ? parsed : 18;
       })();
       const waitForSparseRequestCount = async (count: number) => {
-        await (window as typeof window & {
-          __waitForSparseRequestCount?: (count: number) => Promise<void>;
-        }).__waitForSparseRequestCount?.(count);
+        await (
+          window as typeof window & {
+            __waitForSparseRequestCount?: (count: number) => Promise<void>;
+          }
+        ).__waitForSparseRequestCount?.(count);
       };
       const resolveSparseSliceAt = (index: number) => {
-        (window as typeof window & { __resolveSparseSliceAt?: (index: number) => void }).__resolveSparseSliceAt?.(index);
+        (
+          window as typeof window & { __resolveSparseSliceAt?: (index: number) => void }
+        ).__resolveSparseSliceAt?.(index);
       };
       const sparseRequestCount = () =>
-        (window as typeof window & { __sparseRequestCount?: () => number }).__sparseRequestCount?.() ?? 0;
+        (
+          window as typeof window & { __sparseRequestCount?: () => number }
+        ).__sparseRequestCount?.() ?? 0;
       const nextFrame = async () => {
         await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
       };
@@ -524,135 +603,145 @@ async function loadSidebar(page: Page): Promise<void> {
       resolve: (value: unknown) => void;
     }> = [];
 
-    Object.assign(window as typeof window & {
-      __sparseRequestCount?: () => number;
-      __lastSparseRequest?: () => { centerRowIndex: number; rowLimit: number; query: string; targetNodeId?: string } | undefined;
-      __waitForSparseRequest?: () => Promise<void>;
-      __waitForSparseRequestCount?: (count: number) => Promise<void>;
-      __waitForRuntimeMessage?: (type: string) => Promise<void>;
-      __resolveNextSparseSlice?: () => void;
-      __resolveSparseSliceAt?: (index: number) => void;
-      __duplicateActiveTab?: () => void;
-      __detachActiveTabToNewWindow?: () => void;
-      __createTabInDetachedWindow?: () => void;
-    }, {
-      __sparseRequestCount: () => sparseRequests.length,
-      __lastSparseRequest: () => sparseRequests.at(-1),
-      __waitForSparseRequest: async () => {
-        await (window as typeof window & {
-          __waitForSparseRequestCount?: (count: number) => Promise<void>;
-        }).__waitForSparseRequestCount?.(1);
+    Object.assign(
+      window as typeof window & {
+        __sparseRequestCount?: () => number;
+        __lastSparseRequest?: () =>
+          | { centerRowIndex: number; rowLimit: number; query: string; targetNodeId?: string }
+          | undefined;
+        __waitForSparseRequest?: () => Promise<void>;
+        __waitForSparseRequestCount?: (count: number) => Promise<void>;
+        __waitForRuntimeMessage?: (type: string) => Promise<void>;
+        __resolveNextSparseSlice?: () => void;
+        __resolveSparseSliceAt?: (index: number) => void;
+        __duplicateActiveTab?: () => void;
+        __detachActiveTabToNewWindow?: () => void;
+        __createTabInDetachedWindow?: () => void;
       },
-      __waitForSparseRequestCount: async (count: number) => {
-        for (let index = 0; index < 60; index += 1) {
-          if (sparseRequests.length >= count) {
+      {
+        __sparseRequestCount: () => sparseRequests.length,
+        __lastSparseRequest: () => sparseRequests.at(-1),
+        __waitForSparseRequest: async () => {
+          await (
+            window as typeof window & {
+              __waitForSparseRequestCount?: (count: number) => Promise<void>;
+            }
+          ).__waitForSparseRequestCount?.(1);
+        },
+        __waitForSparseRequestCount: async (count: number) => {
+          for (let index = 0; index < 60; index += 1) {
+            if (sparseRequests.length >= count) {
+              return;
+            }
+            await new Promise<void>((resolve) => window.setTimeout(resolve, 16));
+          }
+          throw new Error(`Timed out waiting for ${count} sparse slice request(s)`);
+        },
+        __waitForRuntimeMessage: async (expectedType: string) => {
+          for (let index = 0; index < 60; index += 1) {
+            if (runtimeMessages.includes(expectedType)) {
+              return;
+            }
+            await new Promise<void>((resolve) => window.setTimeout(resolve, 16));
+          }
+          throw new Error(`Timed out waiting for runtime message ${expectedType}`);
+        },
+        __resolveNextSparseSlice: () => {
+          const index = pendingResponses.length - 1;
+          (
+            window as typeof window & { __resolveSparseSliceAt?: (index: number) => void }
+          ).__resolveSparseSliceAt?.(index);
+        },
+        __resolveSparseSliceAt: (index: number) => {
+          const pending = pendingResponses[index];
+          if (!pending) {
+            throw new Error(`No sparse slice request at index ${index}`);
+          }
+          pendingResponses.splice(index, 1);
+          pending.resolve(
+            sliceSnapshot(
+              pending.request.centerRowIndex,
+              pending.request.rowLimit,
+              pending.request.query,
+              pending.request.targetNodeId
+            )
+          );
+        },
+        __duplicateActiveTab: () => {
+          if (duplicateInserted) {
             return;
           }
-          await new Promise<void>((resolve) => window.setTimeout(resolve, 16));
-        }
-        throw new Error(`Timed out waiting for ${count} sparse slice request(s)`);
-      },
-      __waitForRuntimeMessage: async (expectedType: string) => {
-        for (let index = 0; index < 60; index += 1) {
-          if (runtimeMessages.includes(expectedType)) {
+          if (activeTabDetached) {
             return;
           }
-          await new Promise<void>((resolve) => window.setTimeout(resolve, 16));
-        }
-        throw new Error(`Timed out waiting for runtime message ${expectedType}`);
-      },
-      __resolveNextSparseSlice: () => {
-        const index = pendingResponses.length - 1;
-        (window as typeof window & { __resolveSparseSliceAt?: (index: number) => void }).__resolveSparseSliceAt?.(index);
-      },
-      __resolveSparseSliceAt: (index: number) => {
-        const pending = pendingResponses[index];
-        if (!pending) {
-          throw new Error(`No sparse slice request at index ${index}`);
-        }
-        pendingResponses.splice(index, 1);
-        pending.resolve(sliceSnapshot(
-          pending.request.centerRowIndex,
-          pending.request.rowLimit,
-          pending.request.query,
-          pending.request.targetNodeId
-        ));
-      },
-      __duplicateActiveTab: () => {
-        if (duplicateInserted) {
-          return;
-        }
-        if (activeTabDetached) {
-          return;
-        }
-        duplicateInserted = true;
-        totalRows += 1;
-        activeTabNodeId = duplicateNodeId;
-        const message = {
-          type: "treeStructureUpdated",
-          deletedNodeIds: [],
-          updatedNodes: [
-            windowNode(),
-            outlineTabNode("tab:800"),
-            outlineTabNode(duplicateNodeId)
-          ],
-          rootIds: ["window:1"],
-          deletedClosedCount: 0
-        };
-        for (const listener of listeners) {
-          listener(structuredClone(message));
-        }
-      },
-      __detachActiveTabToNewWindow: () => {
-        if (activeTabDetached) {
-          return;
-        }
-        activeTabDetached = true;
-        totalRows += 1;
-        activeTabNodeId = "tab:800";
-        const message = {
-          type: "treeStructureUpdated",
-          deletedNodeIds: [],
-          updatedNodes: [
-            windowNode(),
-            detachedWindowNode(),
-            outlineTabNode("tab:800")
-          ],
-          rootIds: ["window:1", detachedWindowNodeId],
-          deletedClosedCount: 0
-        };
-        for (const listener of listeners) {
-          listener(structuredClone(message));
-        }
-      },
-      __createTabInDetachedWindow: () => {
-        if (!activeTabDetached || detachedNewTabInserted) {
-          return;
-        }
-        detachedNewTabInserted = true;
-        totalRows += 1;
-        activeTabNodeId = detachedNewTabNodeId;
-        const message = {
-          type: "treeStructureUpdated",
-          deletedNodeIds: [],
-          updatedNodes: [
-            detachedWindowNode(),
-            outlineTabNode("tab:800"),
-            outlineTabNode(detachedNewTabNodeId)
-          ],
-          rootIds: ["window:1", detachedWindowNodeId],
-          deletedClosedCount: 0
-        };
-        for (const listener of listeners) {
-          listener(structuredClone(message));
+          duplicateInserted = true;
+          totalRows += 1;
+          activeTabNodeId = duplicateNodeId;
+          const message = {
+            type: "treeStructureUpdated",
+            deletedNodeIds: [],
+            updatedNodes: [
+              windowNode(),
+              outlineTabNode("tab:800"),
+              outlineTabNode(duplicateNodeId)
+            ],
+            rootIds: ["window:1"],
+            deletedClosedCount: 0
+          };
+          for (const listener of listeners) {
+            listener(structuredClone(message));
+          }
+        },
+        __detachActiveTabToNewWindow: () => {
+          if (activeTabDetached) {
+            return;
+          }
+          activeTabDetached = true;
+          totalRows += 1;
+          activeTabNodeId = "tab:800";
+          const message = {
+            type: "treeStructureUpdated",
+            deletedNodeIds: [],
+            updatedNodes: [windowNode(), detachedWindowNode(), outlineTabNode("tab:800")],
+            rootIds: ["window:1", detachedWindowNodeId],
+            deletedClosedCount: 0
+          };
+          for (const listener of listeners) {
+            listener(structuredClone(message));
+          }
+        },
+        __createTabInDetachedWindow: () => {
+          if (!activeTabDetached || detachedNewTabInserted) {
+            return;
+          }
+          detachedNewTabInserted = true;
+          totalRows += 1;
+          activeTabNodeId = detachedNewTabNodeId;
+          const message = {
+            type: "treeStructureUpdated",
+            deletedNodeIds: [],
+            updatedNodes: [
+              detachedWindowNode(),
+              outlineTabNode("tab:800"),
+              outlineTabNode(detachedNewTabNodeId)
+            ],
+            rootIds: ["window:1", detachedWindowNodeId],
+            deletedClosedCount: 0
+          };
+          for (const listener of listeners) {
+            listener(structuredClone(message));
+          }
         }
       }
-    });
+    );
 
     window.browser = {
       runtime: {
         sendMessage: async (message: unknown) => {
-          const type = typeof message === "object" && message ? String((message as { type?: unknown }).type) : "";
+          const type =
+            typeof message === "object" && message
+              ? String((message as { type?: unknown }).type)
+              : "";
           runtimeMessages.push(type);
           if (type === "getInitialTreeSnapshot") {
             return initialSnapshot();
@@ -660,13 +749,20 @@ async function loadSidebar(page: Page): Promise<void> {
           if (type === "getTreeProjectionSlice") {
             const centerRowIndex = Number((message as { centerRowIndex?: unknown }).centerRowIndex);
             const rowLimit = Number((message as { rowLimit?: unknown }).rowLimit);
-            const query = typeof (message as { query?: unknown }).query === "string"
-              ? (message as { query: string }).query
-              : "";
-            const targetNodeId = typeof (message as { targetNodeId?: unknown }).targetNodeId === "string"
-              ? (message as { targetNodeId: string }).targetNodeId
-              : undefined;
-            const request = { centerRowIndex, rowLimit, query, ...(targetNodeId ? { targetNodeId } : {}) };
+            const query =
+              typeof (message as { query?: unknown }).query === "string"
+                ? (message as { query: string }).query
+                : "";
+            const targetNodeId =
+              typeof (message as { targetNodeId?: unknown }).targetNodeId === "string"
+                ? (message as { targetNodeId: string }).targetNodeId
+                : undefined;
+            const request = {
+              centerRowIndex,
+              rowLimit,
+              query,
+              ...(targetNodeId ? { targetNodeId } : {})
+            };
             sparseRequests.push(request);
             return new Promise((resolve) => {
               pendingResponses.push({ request, resolve });
@@ -704,16 +800,18 @@ async function loadSidebar(page: Page): Promise<void> {
     };
 
     function initialSnapshot() {
-      const rows = [
-        windowRow(),
-        ...outlineRows(760, 840)
-      ];
+      const rows = [windowRow(), ...outlineRows(760, 840)];
       return snapshotFromRows(rows);
     }
 
-    function sliceSnapshot(centerRowIndex: number, rowLimit: number, query = "", targetNodeId?: string) {
+    function sliceSnapshot(
+      centerRowIndex: number,
+      rowLimit: number,
+      query = "",
+      targetNodeId?: string
+    ) {
       const requestedCenterRowIndex = targetNodeId
-        ? rowIndexForNodeId(targetNodeId) ?? centerRowIndex
+        ? (rowIndexForNodeId(targetNodeId) ?? centerRowIndex)
         : centerRowIndex;
       const half = Math.floor(Math.max(1, rowLimit) / 2);
       const start = Math.max(query ? 0 : 1, Math.floor(requestedCenterRowIndex) - half);
@@ -721,7 +819,10 @@ async function loadSidebar(page: Page): Promise<void> {
       return snapshotFromRows(query ? searchRows(start, end) : outlineRows(start, end), query);
     }
 
-    function snapshotFromRows(rows: Array<Record<string, unknown> & { nodeId: string }>, query = "") {
+    function snapshotFromRows(
+      rows: Array<Record<string, unknown> & { nodeId: string }>,
+      query = ""
+    ) {
       const activeTabRowIndex = rowIndexForNodeId(activeTabNodeId);
       const rootIds = activeTabDetached ? ["window:1", detachedWindowNodeId] : ["window:1"];
       return {
@@ -738,7 +839,10 @@ async function loadSidebar(page: Page): Promise<void> {
             ...rows
               .filter((row) => row.nodeId.startsWith("tab:") || row.nodeId.startsWith("search:"))
               .map((row) => {
-                return [row.nodeId, query ? searchNode(Number(row.index)) : outlineTabNode(row.nodeId)];
+                return [
+                  row.nodeId,
+                  query ? searchNode(Number(row.index)) : outlineTabNode(row.nodeId)
+                ];
               })
           ])
         },
@@ -809,7 +913,8 @@ async function loadSidebar(page: Page): Promise<void> {
 
     function outlineTabNode(nodeId: string) {
       const tabId = runtimeTabIdForNodeId(nodeId);
-      const inDetachedWindow = activeTabDetached && (nodeId === "tab:800" || nodeId === detachedNewTabNodeId);
+      const inDetachedWindow =
+        activeTabDetached && (nodeId === "tab:800" || nodeId === detachedNewTabNodeId);
       return {
         id: nodeId,
         kind: "tab",
@@ -955,33 +1060,38 @@ async function loadSidebar(page: Page): Promise<void> {
     }
 
     function outlineRows(startInclusive: number, endExclusive: number) {
-      const rows = Array.from({ length: Math.max(0, endExclusive - startInclusive) }, (_value, index) => {
-        const rowIndex = startInclusive + index;
-        const nodeId = nodeIdForRowIndex(rowIndex);
-        if (!nodeId) {
-          return undefined;
+      const rows = Array.from(
+        { length: Math.max(0, endExclusive - startInclusive) },
+        (_value, index) => {
+          const rowIndex = startInclusive + index;
+          const nodeId = nodeIdForRowIndex(rowIndex);
+          if (!nodeId) {
+            return undefined;
+          }
+          if (nodeId === detachedWindowNodeId) {
+            return detachedWindowRow();
+          }
+          const insideDetachedWindow =
+            activeTabDetached && (nodeId === "tab:800" || nodeId === detachedNewTabNodeId);
+          return {
+            nodeId,
+            depth: insideDetachedWindow ? 1 : 1,
+            index: rowIndex,
+            parentRowIndex: insideDetachedWindow ? 1_000 : 0,
+            subtreeEndIndex: rowIndex + 1,
+            childCount: 0,
+            visibleChildCount: 0,
+            expanded: true,
+            searchRevealsCollapsedChildren: false,
+            isSearchMatch: false,
+            isSearchPath: false,
+            insideActiveWindow: insideDetachedWindow || !activeTabDetached
+          };
         }
-        if (nodeId === detachedWindowNodeId) {
-          return detachedWindowRow();
-        }
-        const insideDetachedWindow = activeTabDetached &&
-          (nodeId === "tab:800" || nodeId === detachedNewTabNodeId);
-        return {
-          nodeId,
-          depth: insideDetachedWindow ? 1 : 1,
-          index: rowIndex,
-          parentRowIndex: insideDetachedWindow ? 1_000 : 0,
-          subtreeEndIndex: rowIndex + 1,
-          childCount: 0,
-          visibleChildCount: 0,
-          expanded: true,
-          searchRevealsCollapsedChildren: false,
-          isSearchMatch: false,
-          isSearchPath: false,
-          insideActiveWindow: insideDetachedWindow || !activeTabDetached
-        };
-      });
-      return rows.filter((row): row is Record<string, unknown> & { nodeId: string } => Boolean(row));
+      );
+      return rows.filter((row): row is Record<string, unknown> & { nodeId: string } =>
+        Boolean(row)
+      );
     }
 
     function searchRows(startInclusive: number, endExclusive: number) {
@@ -1007,9 +1117,11 @@ async function loadSidebar(page: Page): Promise<void> {
   await page.goto("/sidebar/sidebar.html");
   await expect(page.locator(".node[data-node-id='tab\\:800'].is-active")).toBeVisible();
   await page.evaluate(async () => {
-    await (window as typeof window & {
-      __waitForRuntimeMessage?: (type: string) => Promise<void>;
-    }).__waitForRuntimeMessage?.("getHistoryStatus");
+    await (
+      window as typeof window & {
+        __waitForRuntimeMessage?: (type: string) => Promise<void>;
+      }
+    ).__waitForRuntimeMessage?.("getHistoryStatus");
   });
 }
 
@@ -1024,7 +1136,10 @@ function collectPageIssues(page: Page): ConsoleIssue[] {
     issues.push({ kind: "pageerror", text: error.message });
   });
   page.on("requestfailed", (request) => {
-    issues.push({ kind: "requestfailed", text: `${request.url()} ${request.failure()?.errorText ?? ""}` });
+    issues.push({
+      kind: "requestfailed",
+      text: `${request.url()} ${request.failure()?.errorText ?? ""}`
+    });
   });
   return issues;
 }

@@ -62,38 +62,39 @@ function makeState(tabCount) {
   for (let index = 1; index <= tabCount; index += 1) {
     const id = `tab:${index}`;
     root.childIds.push(id);
-    state.nodes[id] = index === 1
-      ? {
-          id,
-          kind: "tab",
-          status: "live",
-          parentId: root.id,
-          childIds: [],
-          title: "Live Tab",
-          url: "https://diagnostics.example/live",
-          active: true,
-          collapsed: false,
-          createdAt: 1000,
-          updatedAt: 1000,
-          live: { tabId: 1, windowId: 10 }
-        }
-      : {
-          id,
-          kind: "tab",
-          status: "closed",
-          parentId: root.id,
-          childIds: [],
-          title: `Saved ${index}`,
-          url: `https://diagnostics.example/${index}`,
-          collapsed: false,
-          createdAt: 1000,
-          updatedAt: 1000,
-          closedAt: 2000 + index,
-          restore: {
-            url: `https://diagnostics.example/${index}`,
-            title: `Saved ${index}`
+    state.nodes[id] =
+      index === 1
+        ? {
+            id,
+            kind: "tab",
+            status: "live",
+            parentId: root.id,
+            childIds: [],
+            title: "Live Tab",
+            url: "https://diagnostics.example/live",
+            active: true,
+            collapsed: false,
+            createdAt: 1000,
+            updatedAt: 1000,
+            live: { tabId: 1, windowId: 10 }
           }
-        };
+        : {
+            id,
+            kind: "tab",
+            status: "closed",
+            parentId: root.id,
+            childIds: [],
+            title: `Saved ${index}`,
+            url: `https://diagnostics.example/${index}`,
+            collapsed: false,
+            createdAt: 1000,
+            updatedAt: 1000,
+            closedAt: 2000 + index,
+            restore: {
+              url: `https://diagnostics.example/${index}`,
+              title: `Saved ${index}`
+            }
+          };
   }
 
   return state;

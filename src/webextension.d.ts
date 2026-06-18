@@ -100,9 +100,13 @@ type WebExtensionBrowserApi = {
     download(options: WebExtensionDownloadOptions): Promise<number>;
   };
   storage: {
-    onChanged: Listener<(changes: Record<string, StorageChange>, areaName: string) => void | Promise<void>>;
+    onChanged: Listener<
+      (changes: Record<string, StorageChange>, areaName: string) => void | Promise<void>
+    >;
     local: {
-      get(key?: string | string[] | Record<string, unknown> | null): Promise<Record<string, unknown>>;
+      get(
+        key?: string | string[] | Record<string, unknown> | null
+      ): Promise<Record<string, unknown>>;
       set(items: Record<string, unknown>): Promise<void>;
       remove(keys: string | string[]): Promise<void>;
     };
@@ -110,9 +114,15 @@ type WebExtensionBrowserApi = {
   windows: {
     WINDOW_ID_NONE: number;
     getCurrent(getInfo?: { populate?: boolean; windowTypes?: string[] }): Promise<RuntimeWindow>;
-    get(windowId: number, getInfo?: { populate?: boolean; windowTypes?: string[] }): Promise<RuntimeWindow>;
+    get(
+      windowId: number,
+      getInfo?: { populate?: boolean; windowTypes?: string[] }
+    ): Promise<RuntimeWindow>;
     getAll(getInfo?: { populate?: boolean; windowTypes?: string[] }): Promise<RuntimeWindow[]>;
-    update(windowId: number, updateInfo: { focused?: boolean; state?: RuntimeWindowState }): Promise<RuntimeWindow>;
+    update(
+      windowId: number,
+      updateInfo: { focused?: boolean; state?: RuntimeWindowState }
+    ): Promise<RuntimeWindow>;
     remove(windowId: number): Promise<void>;
     create(createData: WebExtensionWindowCreateData): Promise<RuntimeWindow>;
     onFocusChanged: Listener<(windowId: number) => void | Promise<void>>;
@@ -123,15 +133,50 @@ type WebExtensionBrowserApi = {
     query(queryInfo: Record<string, unknown>): Promise<RuntimeTab[]>;
     update(tabId: number, updateProperties: { active?: boolean }): Promise<RuntimeTab>;
     remove(tabId: number | number[]): Promise<void>;
-    create(createProperties: { url: string; windowId?: number; active?: boolean }): Promise<RuntimeTab>;
-    move(tabIds: number | number[], moveProperties: { windowId?: number; index: number }): Promise<RuntimeTab | RuntimeTab[]>;
-    onActivated: Listener<(activeInfo: { tabId: number; windowId: number; previousTabId?: number }) => void | Promise<void>>;
-    onAttached?: Listener<(tabId: number, attachInfo: { newWindowId: number; newPosition: number }) => void | Promise<void>>;
+    create(createProperties: {
+      url: string;
+      windowId?: number;
+      active?: boolean;
+    }): Promise<RuntimeTab>;
+    move(
+      tabIds: number | number[],
+      moveProperties: { windowId?: number; index: number }
+    ): Promise<RuntimeTab | RuntimeTab[]>;
+    onActivated: Listener<
+      (activeInfo: {
+        tabId: number;
+        windowId: number;
+        previousTabId?: number;
+      }) => void | Promise<void>
+    >;
+    onAttached?: Listener<
+      (
+        tabId: number,
+        attachInfo: { newWindowId: number; newPosition: number }
+      ) => void | Promise<void>
+    >;
     onCreated: Listener<(tab: RuntimeTab) => void | Promise<void>>;
-    onDetached?: Listener<(tabId: number, detachInfo: { oldWindowId: number; oldPosition: number }) => void | Promise<void>>;
-    onMoved?: Listener<(tabId: number, moveInfo: { windowId: number; fromIndex: number; toIndex: number }) => void | Promise<void>>;
-    onUpdated: Listener<(tabId: number, changeInfo: Partial<RuntimeTab>, tab: RuntimeTab) => void | Promise<void>>;
-    onRemoved: Listener<(tabId: number, removeInfo: { windowId: number; isWindowClosing: boolean }) => void | Promise<void>>;
+    onDetached?: Listener<
+      (
+        tabId: number,
+        detachInfo: { oldWindowId: number; oldPosition: number }
+      ) => void | Promise<void>
+    >;
+    onMoved?: Listener<
+      (
+        tabId: number,
+        moveInfo: { windowId: number; fromIndex: number; toIndex: number }
+      ) => void | Promise<void>
+    >;
+    onUpdated: Listener<
+      (tabId: number, changeInfo: Partial<RuntimeTab>, tab: RuntimeTab) => void | Promise<void>
+    >;
+    onRemoved: Listener<
+      (
+        tabId: number,
+        removeInfo: { windowId: number; isWindowClosing: boolean }
+      ) => void | Promise<void>
+    >;
   };
   sessions: {
     getRecentlyClosed(filter?: { maxResults?: number }): Promise<WebExtensionSession[]>;

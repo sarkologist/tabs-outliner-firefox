@@ -76,7 +76,10 @@ export function parseArgs(argv) {
   if (!Number.isFinite(options.runs) || options.runs < 1) {
     throw new Error("--runs must be a positive integer");
   }
-  if (options.baselineMs !== undefined && (!Number.isFinite(options.baselineMs) || options.baselineMs <= 0)) {
+  if (
+    options.baselineMs !== undefined &&
+    (!Number.isFinite(options.baselineMs) || options.baselineMs <= 0)
+  ) {
     throw new Error("--baseline-ms must be a positive number");
   }
 
@@ -117,16 +120,14 @@ export async function runDragDropLoop(options) {
 
 async function runProfile(run) {
   try {
-    const { stdout, stderr } = await execFileAsync("pnpm", [
-      "exec",
-      "playwright",
-      "test",
-      testFile,
-      "--reporter=list"
-    ], {
-      cwd: rootDir,
-      maxBuffer: 1024 * 1024 * 64
-    });
+    const { stdout, stderr } = await execFileAsync(
+      "pnpm",
+      ["exec", "playwright", "test", testFile, "--reporter=list"],
+      {
+        cwd: rootDir,
+        maxBuffer: 1024 * 1024 * 64
+      }
+    );
 
     return {
       run,
@@ -165,9 +166,15 @@ export function summarizeDragDropRuns(results, options = {}) {
   const inputDelayProfiles = profileValues(results, "input-delay-profile");
   const playwrightFailureCount = results.filter((result) => result.commandFailed).length;
 
-  const dropDurations = dropProfiles.map((profile) => profile.dropDispatchToVisibleMs).filter(isFiniteNumber);
-  const dropTotalDurations = dropProfiles.map((profile) => profile.elapsedMs).filter(isFiniteNumber);
-  const dragoverSetupDurations = dropProfiles.map((profile) => profile.dragoverSetupMs).filter(isFiniteNumber);
+  const dropDurations = dropProfiles
+    .map((profile) => profile.dropDispatchToVisibleMs)
+    .filter(isFiniteNumber);
+  const dropTotalDurations = dropProfiles
+    .map((profile) => profile.elapsedMs)
+    .filter(isFiniteNumber);
+  const dragoverSetupDurations = dropProfiles
+    .map((profile) => profile.dragoverSetupMs)
+    .filter(isFiniteNumber);
   const dropTreePatchDurations = dropProfiles
     .map((profile) => summaryMetric(profile, "sidebar.patch.treeStructure", "totalMs"))
     .filter(isFiniteNumber);
@@ -178,16 +185,20 @@ export function summarizeDragDropRuns(results, options = {}) {
     .map((profile) => summaryMetric(profile, "sidebar.projection.build", "count") ?? 0)
     .filter(isFiniteNumber);
   const dragoverP95Values = dragoverProfiles.map((profile) => profile.p95Ms).filter(isFiniteNumber);
-  const hoverGuideValues = hoverProfiles.map((profile) => profile.hoverGuide?.maxMs).filter(isFiniteNumber);
+  const hoverGuideValues = hoverProfiles
+    .map((profile) => profile.hoverGuide?.maxMs)
+    .filter(isFiniteNumber);
   const hoverScrollVirtualRowsValues = hoverScrollProfiles
     .map((profile) => profile.virtualRows?.maxMs)
     .filter(isFiniteNumber);
 
   const baselineMs = options.baselineMs;
-  const requiredImprovementMs = typeof baselineMs === "number" ? round(Math.min(baselineMs * 0.1, 5)) : undefined;
-  const targetDropMedianMs = typeof baselineMs === "number" && typeof requiredImprovementMs === "number"
-    ? round(baselineMs - requiredImprovementMs)
-    : undefined;
+  const requiredImprovementMs =
+    typeof baselineMs === "number" ? round(Math.min(baselineMs * 0.1, 5)) : undefined;
+  const targetDropMedianMs =
+    typeof baselineMs === "number" && typeof requiredImprovementMs === "number"
+      ? round(baselineMs - requiredImprovementMs)
+      : undefined;
 
   const summary = {
     runs: results.length,
@@ -270,7 +281,9 @@ export function dragDropGuardFailures(summary, profiles) {
     typeof summary.targetDropMedianMs === "number" &&
     summary.dropMedianMs > summary.targetDropMedianMs
   ) {
-    failures.push(`drop median must improve by at least ${summary.requiredImprovementMs}ms from baseline`);
+    failures.push(
+      `drop median must improve by at least ${summary.requiredImprovementMs}ms from baseline`
+    );
   }
   return failures;
 }
@@ -292,7 +305,9 @@ export function formatDragDropTsvRow(summary, fields) {
     summary.hoverScrollVirtualRowsMaxMs,
     summary.status,
     fields.description
-  ].map(tsvCell).join("\t");
+  ]
+    .map(tsvCell)
+    .join("\t");
 }
 
 function profileValues(results, label) {
@@ -313,7 +328,9 @@ function summaryMetric(profile, name, metric) {
 
 async function currentCommit() {
   try {
-    const { stdout } = await execFileAsync("git", ["rev-parse", "--short=7", "HEAD"], { cwd: rootDir });
+    const { stdout } = await execFileAsync("git", ["rev-parse", "--short=7", "HEAD"], {
+      cwd: rootDir
+    });
     return stdout.trim();
   } catch {
     return "unknown";
@@ -322,7 +339,10 @@ async function currentCommit() {
 
 async function appendResultsTsv(resultsPath, row) {
   await mkdir(dirname(resultsPath), { recursive: true });
-  if (!existsSync(resultsPath) || (await readFile(resultsPath, "utf8").catch(() => "")).trim() === "") {
+  if (
+    !existsSync(resultsPath) ||
+    (await readFile(resultsPath, "utf8").catch(() => "")).trim() === ""
+  ) {
     await writeFile(resultsPath, `${DRAG_DROP_RESULTS_TSV_HEADER}\n`);
   }
   await appendFile(resultsPath, `${row}\n`);
@@ -364,7 +384,9 @@ function round(value) {
 }
 
 function tsvCell(value) {
-  return String(value).replace(/[\t\r\n]+/g, " ").trim();
+  return String(value)
+    .replace(/[\t\r\n]+/g, " ")
+    .trim();
 }
 
 async function main() {

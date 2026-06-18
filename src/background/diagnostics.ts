@@ -10,7 +10,10 @@ export type OutlineDiagnostics = {
   missingRuntimeTabIds: number[];
 };
 
-export function computeDiagnostics(state: OutlineState, runtimeWindows: RuntimeWindow[]): OutlineDiagnostics {
+export function computeDiagnostics(
+  state: OutlineState,
+  runtimeWindows: RuntimeWindow[]
+): OutlineDiagnostics {
   const runtimeTabIds = new Set(
     runtimeWindows.flatMap((windowInfo) => windowInfo.tabs ?? []).map((tab) => tab.id)
   );
@@ -77,4 +80,3 @@ function countVisibleLiveTabs(state: OutlineState): number {
 
   return count;
 }
-

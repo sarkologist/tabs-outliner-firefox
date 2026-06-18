@@ -97,16 +97,14 @@ export async function runStartupScrollAwayLoop(options) {
 }
 
 async function runProfile(run) {
-  const { stdout, stderr } = await execFileAsync("pnpm", [
-    "exec",
-    "playwright",
-    "test",
-    testFile,
-    "--reporter=list"
-  ], {
-    cwd: rootDir,
-    maxBuffer: 1024 * 1024 * 16
-  });
+  const { stdout, stderr } = await execFileAsync(
+    "pnpm",
+    ["exec", "playwright", "test", testFile, "--reporter=list"],
+    {
+      cwd: rootDir,
+      maxBuffer: 1024 * 1024 * 16
+    }
+  );
 
   return {
     run,
@@ -128,16 +126,26 @@ export function parseProfile(output) {
 export function summarize(results) {
   const profiles = results.map((result) => result.profile);
   const targetRows = profiles.map((profile) => profile.targetRowIndex).filter(isFiniteNumber);
-  const expectedRows = profiles.map((profile) => profile.expectedViewportRows).filter(isFiniteNumber);
-  const visibleRows = profiles.map((profile) => profile.visibleRowsAfterScroll).filter(isFiniteNumber);
+  const expectedRows = profiles
+    .map((profile) => profile.expectedViewportRows)
+    .filter(isFiniteNumber);
+  const visibleRows = profiles
+    .map((profile) => profile.visibleRowsAfterScroll)
+    .filter(isFiniteNumber);
   const missingRows = profiles.map((profile) => profile.missingViewportRows).filter(isFiniteNumber);
   const rowsVisibleMs = profiles.map((profile) => profile.rowsVisibleMs).filter(isFiniteNumber);
-  const followOnMissingRows = profiles.map((profile) => profile.followOnMissingViewportRows).filter(isFiniteNumber);
+  const followOnMissingRows = profiles
+    .map((profile) => profile.followOnMissingViewportRows)
+    .filter(isFiniteNumber);
   const followOnSparseWindowRequests = profiles
     .map((profile) => profile.followOnSparseWindowRequests)
     .filter(isFiniteNumber);
-  const hydrationRequests = profiles.map((profile) => profile.hydrationRequests).filter(isFiniteNumber);
-  const scrollDelayValues = profiles.map((profile) => profile.scrollDelay?.maxMs).filter(isFiniteNumber);
+  const hydrationRequests = profiles
+    .map((profile) => profile.hydrationRequests)
+    .filter(isFiniteNumber);
+  const scrollDelayValues = profiles
+    .map((profile) => profile.scrollDelay?.maxMs)
+    .filter(isFiniteNumber);
 
   const summary = {
     runs: results.length,
@@ -206,12 +214,16 @@ function formatTsvRow(summary, fields) {
     summary.scrollDelayMaxMs,
     summary.status,
     fields.description
-  ].map(tsvCell).join("\t");
+  ]
+    .map(tsvCell)
+    .join("\t");
 }
 
 async function currentCommit() {
   try {
-    const { stdout } = await execFileAsync("git", ["rev-parse", "--short=7", "HEAD"], { cwd: rootDir });
+    const { stdout } = await execFileAsync("git", ["rev-parse", "--short=7", "HEAD"], {
+      cwd: rootDir
+    });
     return stdout.trim();
   } catch {
     return "unknown";
@@ -220,7 +232,10 @@ async function currentCommit() {
 
 async function appendResultsTsv(resultsPath, row) {
   await mkdir(dirname(resultsPath), { recursive: true });
-  if (!existsSync(resultsPath) || (await readFile(resultsPath, "utf8").catch(() => "")).trim() === "") {
+  if (
+    !existsSync(resultsPath) ||
+    (await readFile(resultsPath, "utf8").catch(() => "")).trim() === ""
+  ) {
     await writeFile(resultsPath, `${STARTUP_SCROLL_AWAY_RESULTS_TSV_HEADER}\n`);
   }
   await appendFile(resultsPath, `${row}\n`);
@@ -262,7 +277,9 @@ function round(value) {
 }
 
 function tsvCell(value) {
-  return String(value).replace(/[\t\r\n]+/g, " ").trim();
+  return String(value)
+    .replace(/[\t\r\n]+/g, " ")
+    .trim();
 }
 
 async function main() {

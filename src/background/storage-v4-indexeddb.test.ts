@@ -82,7 +82,9 @@ describe("storage-v4 with shards on IndexedDB", () => {
     await writeV4Split(local.api, idb, state);
 
     // No shards on storage.local -- only the manifest pointer.
-    expect(Object.keys(local.snapshot()).some((key) => key.startsWith(STATE_V4_NODE_SHARD_PREFIX))).toBe(false);
+    expect(
+      Object.keys(local.snapshot()).some((key) => key.startsWith(STATE_V4_NODE_SHARD_PREFIX))
+    ).toBe(false);
     expect(local.snapshot()[STATE_V4_MANIFEST_A_KEY]).toBeDefined();
 
     const loaded = await loadStateV4(local.api, idb);
@@ -97,7 +99,9 @@ describe("storage-v4 with shards on IndexedDB", () => {
     await local.api.storage.local.set(snapshot.setItems); // fully on storage.local (legacy layout)
 
     const idb = indexedDbKvStore("v4-idb-copy", "kv");
-    const copied = await copyStateV4Shards(storageLocalKvStore(local.api), idb, [snapshot.manifest]);
+    const copied = await copyStateV4Shards(storageLocalKvStore(local.api), idb, [
+      snapshot.manifest
+    ]);
     expect(copied).toBeGreaterThan(0);
 
     const loaded = await loadStateV4(local.api, idb);
@@ -107,13 +111,19 @@ describe("storage-v4 with shards on IndexedDB", () => {
 
   it("deleteAllStateV4ShardKeys removes only the shard keys, leaving the manifest", async () => {
     const local = createFaultyStorage();
-    const snapshot = outlineStateV4Snapshot(sampleState(), { epoch: 1, journalSeqIncluded: 0, savedAt: 1 });
+    const snapshot = outlineStateV4Snapshot(sampleState(), {
+      epoch: 1,
+      journalSeqIncluded: 0,
+      savedAt: 1
+    });
     await local.api.storage.local.set(snapshot.setItems);
 
     const removed = await deleteAllStateV4ShardKeys(storageLocalKvStore(local.api));
     expect(removed).toBeGreaterThan(0);
     expect(local.snapshot()[STATE_V4_MANIFEST_A_KEY]).toBeDefined();
-    expect(Object.keys(local.snapshot()).some((key) => key.startsWith(STATE_V4_NODE_SHARD_PREFIX))).toBe(false);
+    expect(
+      Object.keys(local.snapshot()).some((key) => key.startsWith(STATE_V4_NODE_SHARD_PREFIX))
+    ).toBe(false);
   });
 
   it("loadHistory re-checks the store after a double-miss (migration race safety)", async () => {
@@ -134,7 +144,9 @@ describe("storage-v4 with shards on IndexedDB", () => {
 
   it("loadHistory falls back to storage.local when the store has no history", async () => {
     const local = createFaultyStorage();
-    await local.api.storage.local.set({ [HISTORY_KEY]: { version: 1, undoStack: [], redoStack: [] } });
+    await local.api.storage.local.set({
+      [HISTORY_KEY]: { version: 1, undoStack: [], redoStack: [] }
+    });
     const idb = indexedDbKvStore("history-fallback", "kv");
     const loaded = await loadHistory(local.api, undefined, idb);
     expect(loaded).toEqual({ version: 1, undoStack: [], redoStack: [] });

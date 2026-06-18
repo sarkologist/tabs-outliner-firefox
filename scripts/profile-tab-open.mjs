@@ -71,9 +71,7 @@ function parseArgs(argv) {
     throw new Error("--updates must be a non-negative integer");
   }
   if (!PROFILE_SCENARIOS.includes(options.scenario)) {
-    throw new Error(
-      `--scenario must be ${PROFILE_SCENARIOS.join(", ")}`
-    );
+    throw new Error(`--scenario must be ${PROFILE_SCENARIOS.join(", ")}`);
   }
 
   return options;
@@ -132,7 +130,9 @@ function makeRuntime(tabCount) {
             return { [key]: runtime.storage.get(key) };
           }
           if (Array.isArray(key)) {
-            return Object.fromEntries(key.map((entryKey) => [entryKey, runtime.storage.get(entryKey)]));
+            return Object.fromEntries(
+              key.map((entryKey) => [entryKey, runtime.storage.get(entryKey)])
+            );
           }
           if (key && typeof key === "object") {
             return Object.fromEntries(
@@ -205,7 +205,13 @@ function makeStartupRuntime(tabCount, liveTabCount, shape) {
   const runtime = makeRuntime(liveTabCount);
   const state = makeSidebarStartupState({ shape, tabs: tabCount, liveTabs: liveTabCount });
   runtime.startupShapeStats = sidebarStartupShapeStats(state);
-  runtime.storage = new Map(Object.entries(JSON.parse(JSON.stringify(outlineStateV4Snapshot(state, { epoch: 1, journalSeqIncluded: 0 }).setItems))));
+  runtime.storage = new Map(
+    Object.entries(
+      JSON.parse(
+        JSON.stringify(outlineStateV4Snapshot(state, { epoch: 1, journalSeqIncluded: 0 }).setItems)
+      )
+    )
+  );
   return runtime;
 }
 
@@ -273,7 +279,11 @@ async function runOpenTabStorm(runtime, updateCount) {
       url: index === updateCount - 1 ? "https://opened.example/" : newTab.url
     };
     runtime.tabs[runtime.tabs.length - 1] = updated;
-    runtime.events.tabUpdated.dispatch(updated.id, { title: updated.title, url: updated.url }, { ...updated });
+    runtime.events.tabUpdated.dispatch(
+      updated.id,
+      { title: updated.title, url: updated.url },
+      { ...updated }
+    );
   }
   runtime.events.tabActivated.dispatch({ tabId: newTabId, windowId: 10, previousTabId: 1 });
 
@@ -305,9 +315,17 @@ async function runNewWindowStorm(runtime, updateCount) {
       url: index === updateCount - 1 ? "https://new-window.example/" : newTab.url
     };
     runtime.tabs[runtime.tabs.length - 1] = updated;
-    runtime.events.tabUpdated.dispatch(updated.id, { title: updated.title, url: updated.url }, { ...updated });
+    runtime.events.tabUpdated.dispatch(
+      updated.id,
+      { title: updated.title, url: updated.url },
+      { ...updated }
+    );
   }
-  runtime.events.tabActivated.dispatch({ tabId: newTabId, windowId: newWindowId, previousTabId: 1 });
+  runtime.events.tabActivated.dispatch({
+    tabId: newTabId,
+    windowId: newWindowId,
+    previousTabId: 1
+  });
 
   await flushProfileEvents(runtime.events);
 }
@@ -320,11 +338,15 @@ async function runNoopUpdate(runtime) {
 
 async function runMetadataNoopUpdate(runtime) {
   const tab = { ...runtime.tabs[0] };
-  runtime.events.tabUpdated.dispatch(tab.id, {
-    title: tab.title,
-    url: tab.url,
-    favIconUrl: tab.favIconUrl
-  }, tab);
+  runtime.events.tabUpdated.dispatch(
+    tab.id,
+    {
+      title: tab.title,
+      url: tab.url,
+      favIconUrl: tab.favIconUrl
+    },
+    tab
+  );
   await flushProfileEvents(runtime.events);
 }
 
@@ -332,10 +354,14 @@ async function runRuntimeRefreshBacklog(runtime, controller, focusStarted, relea
   const focusPromise = controller.handleMessage({ type: "focusNode", nodeId: "tab:1" });
   await focusStarted.promise;
   const targetTab = runtime.tabs[1] ?? runtime.tabs[0];
-  runtime.tabs = runtime.tabs.map((tab) => tab.windowId === targetTab.windowId
-    ? { ...tab, active: tab.id === targetTab.id }
-    : { ...tab });
-  runtime.events.tabActivated.dispatch({ tabId: targetTab.id, windowId: targetTab.windowId, previousTabId: 1 });
+  runtime.tabs = runtime.tabs.map((tab) =>
+    tab.windowId === targetTab.windowId ? { ...tab, active: tab.id === targetTab.id } : { ...tab }
+  );
+  runtime.events.tabActivated.dispatch({
+    tabId: targetTab.id,
+    windowId: targetTab.windowId,
+    previousTabId: 1
+  });
   await waitForMacrotask();
 
   const commandStart = performance.now();
@@ -354,9 +380,11 @@ async function runRuntimeRefreshBacklog(runtime, controller, focusStarted, relea
   const mutationStarts = Array.isArray(trace?.entries)
     ? trace.entries.filter((entry) => entry.name === "background.mutation.start")
     : [];
-  const runtimeRefreshJobs = mutationStarts.filter((entry) => entry.detail?.reason === "refreshFromRuntime").length;
-  const lowRuntimeRefreshJobs = mutationStarts.filter((entry) =>
-    entry.detail?.reason === "refreshFromRuntime" && entry.detail?.priority === "low"
+  const runtimeRefreshJobs = mutationStarts.filter(
+    (entry) => entry.detail?.reason === "refreshFromRuntime"
+  ).length;
+  const lowRuntimeRefreshJobs = mutationStarts.filter(
+    (entry) => entry.detail?.reason === "refreshFromRuntime" && entry.detail?.priority === "low"
   ).length;
 
   return {
@@ -412,7 +440,12 @@ async function profile({ shape, tabs, liveTabs, updates, scenario }) {
   } else if (scenario === "new-window-storm") {
     await runNewWindowStorm(runtime, updates);
   } else if (scenario === "runtime-refresh-backlog") {
-    scenarioMetrics = await runRuntimeRefreshBacklog(runtime, controller, focusStarted, releaseFocus);
+    scenarioMetrics = await runRuntimeRefreshBacklog(
+      runtime,
+      controller,
+      focusStarted,
+      releaseFocus
+    );
   } else if (scenario === "metadata-noop-update") {
     await runMetadataNoopUpdate(runtime);
   } else {
@@ -592,12 +625,18 @@ async function profileStartupRealBrowserFanout({ shape, tabs, liveTabs }) {
   const totalMs = performance.now() - start;
   const trace = await controller.handleMessage({ type: "getPerformanceTrace" });
   const startupEventDurations = startupEventDurationsFromTrace(trace);
-  const snapshotRows = Math.max(0, ...initialSnapshots.map(({ value }) =>
-    Array.isArray(value?.projection?.rows) ? value.projection.rows.length : 0
-  ));
-  const snapshotNodes = Math.max(0, ...initialSnapshots.map(({ value }) =>
-    value?.state?.nodes ? Object.keys(value.state.nodes).length : 0
-  ));
+  const snapshotRows = Math.max(
+    0,
+    ...initialSnapshots.map(({ value }) =>
+      Array.isArray(value?.projection?.rows) ? value.projection.rows.length : 0
+    )
+  );
+  const snapshotNodes = Math.max(
+    0,
+    ...initialSnapshots.map(({ value }) =>
+      value?.state?.nodes ? Object.keys(value.state.nodes).length : 0
+    )
+  );
 
   return {
     scenario: "startup-real-browser-fanout",
@@ -656,7 +695,11 @@ async function runStartupEventBurst(runtime) {
       url: index === 1 ? "https://startup.example/" : newTab.url
     };
     runtime.tabs[runtime.tabs.length - 1] = updated;
-    runtime.events.tabUpdated.dispatch(updated.id, { title: updated.title, url: updated.url }, { ...updated });
+    runtime.events.tabUpdated.dispatch(
+      updated.id,
+      { title: updated.title, url: updated.url },
+      { ...updated }
+    );
   }
 
   await flushProfileEvents(runtime.events);
@@ -673,10 +716,11 @@ async function timed(operation) {
 
 function startupEventDurationsFromTrace(trace) {
   const durations = (trace?.entries ?? [])
-    .filter((entry) =>
-      typeof entry?.name === "string" &&
-      /^background\.event\.(tabs|windows)\./.test(entry.name) &&
-      typeof entry.durationMs === "number"
+    .filter(
+      (entry) =>
+        typeof entry?.name === "string" &&
+        /^background\.event\.(tabs|windows)\./.test(entry.name) &&
+        typeof entry.durationMs === "number"
     )
     .map((entry) => entry.durationMs);
   return {

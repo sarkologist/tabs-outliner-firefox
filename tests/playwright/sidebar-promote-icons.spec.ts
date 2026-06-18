@@ -6,7 +6,9 @@ type ConsoleIssue = {
 };
 
 test.describe("sidebar promote children and icons", () => {
-  test("discovers flatten/promote actions through icons and updates outline state", async ({ page }) => {
+  test("discovers flatten/promote actions through icons and updates outline state", async ({
+    page
+  }) => {
     const issues = collectPageIssues(page);
     await loadSidebar(page);
 
@@ -37,7 +39,10 @@ test.describe("sidebar promote children and icons", () => {
     await page.locator("#clear-search").click();
 
     await nodeRow(page, "tab:a").hover();
-    const promote = nodeRow(page, "tab:a").getByRole("button", { name: "Promote children", exact: true });
+    const promote = nodeRow(page, "tab:a").getByRole("button", {
+      name: "Promote children",
+      exact: true
+    });
     const flatten = nodeRow(page, "tab:a").getByRole("button", { name: "Flatten", exact: true });
     await expect(promote).toHaveAttribute("title", "Promote children");
     await expect(promote.locator("svg")).toHaveCount(1);
@@ -46,7 +51,12 @@ test.describe("sidebar promote children and icons", () => {
     await expect(nodeRow(page, "tab:b").locator(".twisty svg")).toHaveCount(1);
 
     await promote.click();
-    await expect(outlineChildIds(page, "window:1")).resolves.toEqual(["tab:a", "tab:a1", "tab:b", "tab:c"]);
+    await expect(outlineChildIds(page, "window:1")).resolves.toEqual([
+      "tab:a",
+      "tab:a1",
+      "tab:b",
+      "tab:c"
+    ]);
     await expect(outlineChildIds(page, "tab:a")).resolves.toEqual([]);
     await expect(outlineParentId(page, "tab:a1")).resolves.toBe("window:1");
     await expect(page.locator(".node[data-node-id='tab:a1']")).toHaveAttribute("aria-level", "2");
@@ -77,17 +87,27 @@ test.describe("sidebar promote children and icons", () => {
     await loadSidebar(page);
 
     await nodeRow(page, "tab:a").hover();
-    const moveToTop = nodeRow(page, "tab:a").getByRole("button", { name: "Move to top level", exact: true });
+    const moveToTop = nodeRow(page, "tab:a").getByRole("button", {
+      name: "Move to top level",
+      exact: true
+    });
     await expect(moveToTop).toHaveAttribute("title", "Move to top level");
     await expect(moveToTop.locator("svg")).toHaveCount(1);
 
     await moveToTop.click();
 
-    await expect(outlineRootIds(page)).resolves.toEqual(["window:1", "window:top:tab:a", "window:2"]);
+    await expect(outlineRootIds(page)).resolves.toEqual([
+      "window:1",
+      "window:top:tab:a",
+      "window:2"
+    ]);
     await expect(outlineChildIds(page, "window:1")).resolves.toEqual(["tab:b", "tab:c"]);
     await expect(outlineChildIds(page, "window:top:tab:a")).resolves.toEqual(["tab:a"]);
     await expect(outlineParentId(page, "tab:a")).resolves.toBe("window:top:tab:a");
-    await expect(page.locator(".node[data-node-id='window:top:tab:a']")).toHaveAttribute("aria-level", "1");
+    await expect(page.locator(".node[data-node-id='window:top:tab:a']")).toHaveAttribute(
+      "aria-level",
+      "1"
+    );
     await expect(visibleNodeOrder(page)).resolves.toEqual([
       "window:1",
       "tab:b",
@@ -110,17 +130,27 @@ test.describe("sidebar promote children and icons", () => {
     await loadSidebar(page);
 
     await nodeRow(page, "tab:a").hover();
-    const moveToBottom = nodeRow(page, "tab:a").getByRole("button", { name: "Move to bottom", exact: true });
+    const moveToBottom = nodeRow(page, "tab:a").getByRole("button", {
+      name: "Move to bottom",
+      exact: true
+    });
     await expect(moveToBottom).toHaveAttribute("title", "Move to bottom");
     await expect(moveToBottom.locator("svg")).toHaveCount(1);
 
     await moveToBottom.click();
 
-    await expect(outlineRootIds(page)).resolves.toEqual(["window:1", "window:2", "window:bottom:tab:a"]);
+    await expect(outlineRootIds(page)).resolves.toEqual([
+      "window:1",
+      "window:2",
+      "window:bottom:tab:a"
+    ]);
     await expect(outlineChildIds(page, "window:1")).resolves.toEqual(["tab:b", "tab:c"]);
     await expect(outlineChildIds(page, "window:bottom:tab:a")).resolves.toEqual(["tab:a"]);
     await expect(outlineParentId(page, "tab:a")).resolves.toBe("window:bottom:tab:a");
-    await expect(page.locator(".node[data-node-id='window:bottom:tab:a']")).toHaveAttribute("aria-level", "1");
+    await expect(page.locator(".node[data-node-id='window:bottom:tab:a']")).toHaveAttribute(
+      "aria-level",
+      "1"
+    );
     await expect(visibleNodeOrder(page)).resolves.toEqual([
       "window:1",
       "tab:b",
@@ -143,7 +173,10 @@ test.describe("sidebar promote children and icons", () => {
     await loadSidebar(page);
 
     await nodeRow(page, "window:1").hover();
-    const moveToBottom = nodeRow(page, "window:1").getByRole("button", { name: "Move to bottom", exact: true });
+    const moveToBottom = nodeRow(page, "window:1").getByRole("button", {
+      name: "Move to bottom",
+      exact: true
+    });
     await expect(moveToBottom).toHaveAttribute("title", "Move to bottom");
     await expect(moveToBottom.locator("svg")).toHaveCount(1);
 
@@ -208,7 +241,11 @@ async function loadSidebar(page: Page): Promise<void> {
       const nextParent = next.nodes[node.parentId]!;
       const promotedChildIds = [...nextNode.childIds];
       const index = nextParent.childIds.indexOf(nodeId);
-      nextParent.childIds.splice(index >= 0 ? index + 1 : nextParent.childIds.length, 0, ...promotedChildIds);
+      nextParent.childIds.splice(
+        index >= 0 ? index + 1 : nextParent.childIds.length,
+        0,
+        ...promotedChildIds
+      );
       nextNode.childIds = [];
       for (const childId of promotedChildIds) {
         next.nodes[childId]!.parentId = node.parentId;
@@ -258,7 +295,9 @@ async function loadSidebar(page: Page): Promise<void> {
 
       if (!isGroupLike(node)) {
         const wrapperId = `window:top:${nodeId}`;
-        const oldSiblings = nextNode.parentId ? next.nodes[nextNode.parentId]?.childIds : next.rootIds;
+        const oldSiblings = nextNode.parentId
+          ? next.nodes[nextNode.parentId]?.childIds
+          : next.rootIds;
         if (!oldSiblings) {
           return state;
         }
@@ -318,7 +357,9 @@ async function loadSidebar(page: Page): Promise<void> {
 
       if (!isGroupLike(node)) {
         const wrapperId = `window:bottom:${nodeId}`;
-        const oldSiblings = nextNode.parentId ? next.nodes[nextNode.parentId]?.childIds : next.rootIds;
+        const oldSiblings = nextNode.parentId
+          ? next.nodes[nextNode.parentId]?.childIds
+          : next.rootIds;
         if (!oldSiblings) {
           return state;
         }
@@ -376,7 +417,10 @@ async function loadSidebar(page: Page): Promise<void> {
     window.browser = {
       runtime: {
         sendMessage: async (message: unknown) => {
-          const type = typeof message === "object" && message ? (message as { type?: unknown }).type : undefined;
+          const type =
+            typeof message === "object" && message
+              ? (message as { type?: unknown }).type
+              : undefined;
           if (type === "getInitialTreeSnapshot") {
             return undefined;
           }
@@ -453,27 +497,41 @@ function nodeRow(page: Page, nodeId: string) {
 }
 
 async function visibleNodeOrder(page: Page): Promise<string[]> {
-  return page.locator(".node").evaluateAll((nodes) =>
-    nodes.map((node) => (node as HTMLElement).dataset.nodeId ?? "")
-  );
+  return page
+    .locator(".node")
+    .evaluateAll((nodes) => nodes.map((node) => (node as HTMLElement).dataset.nodeId ?? ""));
 }
 
 async function outlineRootIds(page: Page): Promise<string[]> {
-  return page.evaluate(() =>
-    (window as typeof window & { __outlineState?: { rootIds: string[] } })
-      .__outlineState?.rootIds ?? []);
+  return page.evaluate(
+    () =>
+      (window as typeof window & { __outlineState?: { rootIds: string[] } }).__outlineState
+        ?.rootIds ?? []
+  );
 }
 
 async function outlineChildIds(page: Page, nodeId: string): Promise<string[]> {
-  return page.evaluate((id) =>
-    (window as typeof window & { __outlineState?: { nodes: Record<string, { childIds: string[] }> } })
-      .__outlineState?.nodes[id]?.childIds ?? [], nodeId);
+  return page.evaluate(
+    (id) =>
+      (
+        window as typeof window & {
+          __outlineState?: { nodes: Record<string, { childIds: string[] }> };
+        }
+      ).__outlineState?.nodes[id]?.childIds ?? [],
+    nodeId
+  );
 }
 
 async function outlineParentId(page: Page, nodeId: string): Promise<string | undefined> {
-  return page.evaluate((id) =>
-    (window as typeof window & { __outlineState?: { nodes: Record<string, { parentId?: string }> } })
-      .__outlineState?.nodes[id]?.parentId, nodeId);
+  return page.evaluate(
+    (id) =>
+      (
+        window as typeof window & {
+          __outlineState?: { nodes: Record<string, { parentId?: string }> };
+        }
+      ).__outlineState?.nodes[id]?.parentId,
+    nodeId
+  );
 }
 
 function collectPageIssues(page: Page): ConsoleIssue[] {
@@ -487,7 +545,10 @@ function collectPageIssues(page: Page): ConsoleIssue[] {
     issues.push({ kind: "pageerror", text: error.message });
   });
   page.on("requestfailed", (request) => {
-    issues.push({ kind: "requestfailed", text: `${request.url()} ${request.failure()?.errorText ?? ""}` });
+    issues.push({
+      kind: "requestfailed",
+      text: `${request.url()} ${request.failure()?.errorText ?? ""}`
+    });
   });
   return issues;
 }

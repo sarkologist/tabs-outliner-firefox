@@ -42,9 +42,9 @@ test.describe("sidebar restore title stability", () => {
 async function loadSidebar(page: Page): Promise<void> {
   await page.addInitScript((state) => {
     const listeners: Array<(message: unknown) => void> = [];
-    (window as typeof window & { __dispatchSidebarMessage?: (message: unknown) => void }).__dispatchSidebarMessage = (
-      message
-    ) => {
+    (
+      window as typeof window & { __dispatchSidebarMessage?: (message: unknown) => void }
+    ).__dispatchSidebarMessage = (message) => {
       for (const listener of listeners) {
         listener(structuredClone(message));
       }
@@ -52,7 +52,10 @@ async function loadSidebar(page: Page): Promise<void> {
     window.browser = {
       runtime: {
         sendMessage: async (message: unknown) => {
-          const type = typeof message === "object" && message ? (message as { type?: unknown }).type : undefined;
+          const type =
+            typeof message === "object" && message
+              ? (message as { type?: unknown }).type
+              : undefined;
           if (type === "getState") {
             return structuredClone(state);
           }
@@ -95,8 +98,9 @@ async function loadSidebar(page: Page): Promise<void> {
 
 async function dispatchSidebarMessage(page: Page, message: unknown): Promise<void> {
   await page.evaluate((payload) => {
-    const dispatch = (window as typeof window & { __dispatchSidebarMessage?: (message: unknown) => void })
-      .__dispatchSidebarMessage;
+    const dispatch = (
+      window as typeof window & { __dispatchSidebarMessage?: (message: unknown) => void }
+    ).__dispatchSidebarMessage;
     if (!dispatch) {
       throw new Error("Missing sidebar message dispatcher");
     }
@@ -129,12 +133,15 @@ async function recordNodeTitleChanges(page: Page, nodeId: string): Promise<void>
 }
 
 async function nextAnimationFrame(page: Page): Promise<void> {
-  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => resolve(undefined))));
+  await page.evaluate(
+    () => new Promise((resolve) => requestAnimationFrame(() => resolve(undefined)))
+  );
 }
 
 function titleSamples(page: Page): Promise<string[]> {
   return page.evaluate(() => [
-    ...((window as typeof window & { __restoreTitleSamples?: string[] }).__restoreTitleSamples ?? [])
+    ...((window as typeof window & { __restoreTitleSamples?: string[] }).__restoreTitleSamples ??
+      [])
   ]);
 }
 
@@ -165,7 +172,10 @@ function collectPageIssues(page: Page): ConsoleIssue[] {
     issues.push({ kind: "pageerror", text: error.message });
   });
   page.on("requestfailed", (request) => {
-    issues.push({ kind: "requestfailed", text: `${request.url()} ${request.failure()?.errorText ?? ""}` });
+    issues.push({
+      kind: "requestfailed",
+      text: `${request.url()} ${request.failure()?.errorText ?? ""}`
+    });
   });
   return issues;
 }

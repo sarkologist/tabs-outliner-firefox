@@ -106,9 +106,10 @@ export async function measureStorageCensus(
     }
   }
 
-  const probe = options.probe === false
-    ? { probeSetMs: null, probeSetWarmMs: null }
-    : await runStorageProbe(api, now);
+  const probe =
+    options.probe === false
+      ? { probeSetMs: null, probeSetWarmMs: null }
+      : await runStorageProbe(api, now);
 
   return {
     totalKeys,
@@ -130,7 +131,9 @@ export function storageCensusIncidentDetail(result: StorageCensusResult): Incide
     nodeShardDistinctGenerations: result.nodeShardDistinctGenerations,
     probeSetMs: result.probeSetMs,
     probeSetWarmMs: result.probeSetWarmMs,
-    byPrefix: JSON.stringify(result.byPrefix.map((entry) => [entry.prefix, entry.keyCount, entry.bytes]))
+    byPrefix: JSON.stringify(
+      result.byPrefix.map((entry) => [entry.prefix, entry.keyCount, entry.bytes])
+    )
   };
   if (result.probeError !== undefined) {
     detail.probeError = result.probeError;

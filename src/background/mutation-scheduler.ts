@@ -128,7 +128,11 @@ export function createMutationScheduler(deps: MutationSchedulerDeps): MutationSc
     });
     runningMutationPriority = mutation.priority;
     try {
-      const result = await perfTrace.measureAsync("background.mutation.run", mutationDetail, mutation.operation);
+      const result = await perfTrace.measureAsync(
+        "background.mutation.run",
+        mutationDetail,
+        mutation.operation
+      );
       mutation.resolve(result);
     } catch (error) {
       mutation.reject(error);
@@ -159,11 +163,13 @@ export function createMutationScheduler(deps: MutationSchedulerDeps): MutationSc
   }
 
   function isSchedulerIdle(): boolean {
-    return !schedulerRunning &&
+    return (
+      !schedulerRunning &&
       !schedulerDrainQueued &&
       highPriorityMutations.length === 0 &&
       lowPriorityMutations.length === 0 &&
-      !hasPendingRuntimeRefresh();
+      !hasPendingRuntimeRefresh()
+    );
   }
 
   function isHighPrioritySchedulerIdle(): boolean {
@@ -192,5 +198,10 @@ export function createMutationScheduler(deps: MutationSchedulerDeps): MutationSc
     }
   }
 
-  return { enqueueMutation, waitForSchedulerIdle, waitForHighPrioritySchedulerIdle, isHighPrioritySchedulerIdle };
+  return {
+    enqueueMutation,
+    waitForSchedulerIdle,
+    waitForHighPrioritySchedulerIdle,
+    isHighPrioritySchedulerIdle
+  };
 }

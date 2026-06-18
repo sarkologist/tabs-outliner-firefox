@@ -68,7 +68,10 @@ export function parseArgs(argv) {
       options.tabs = Number.parseInt(next, 10);
       index += 1;
     } else if (arg === "--scenarios" && next) {
-      options.scenarios = next.split(",").map((scenario) => scenario.trim()).filter(Boolean);
+      options.scenarios = next
+        .split(",")
+        .map((scenario) => scenario.trim())
+        .filter(Boolean);
       index += 1;
     } else if (arg === "--tag" && next) {
       options.tag = next;
@@ -103,7 +106,10 @@ export function parseArgs(argv) {
   if (!Number.isFinite(options.tabs) || options.tabs < 2) {
     throw new Error("--tabs must be an integer >= 2");
   }
-  if (options.baselineMs !== undefined && (!Number.isFinite(options.baselineMs) || options.baselineMs <= 0)) {
+  if (
+    options.baselineMs !== undefined &&
+    (!Number.isFinite(options.baselineMs) || options.baselineMs <= 0)
+  ) {
     throw new Error("--baseline-ms must be a positive number");
   }
   for (const scenario of options.scenarios) {
@@ -119,11 +125,13 @@ export async function runBackgroundReconciliationLoop(options) {
   const results = [];
   for (let runIndex = 0; runIndex < options.runs; runIndex += 1) {
     for (const scenario of options.scenarios) {
-      results.push(await runCommandProfile({
-        run: runIndex + 1,
-        scenario,
-        tabs: options.tabs
-      }));
+      results.push(
+        await runCommandProfile({
+          run: runIndex + 1,
+          scenario,
+          tabs: options.tabs
+        })
+      );
     }
   }
 
@@ -137,9 +145,12 @@ export async function runBackgroundReconciliationLoop(options) {
     baselineMs: options.baselineMs,
     baselineSummary
   });
-  const exportedProfile = options.exportProfilePath && existsSync(options.exportProfilePath)
-    ? analyzeBackgroundProfileExport(JSON.parse(await readFile(options.exportProfilePath, "utf8")))
-    : undefined;
+  const exportedProfile =
+    options.exportProfilePath && existsSync(options.exportProfilePath)
+      ? analyzeBackgroundProfileExport(
+          JSON.parse(await readFile(options.exportProfilePath, "utf8"))
+        )
+      : undefined;
   const timestamp = new Date().toISOString();
   const commit = await currentCommit();
   const tsvRow = formatBackgroundReconciliationTsvRow(summary, {
@@ -170,21 +181,18 @@ export async function runBackgroundReconciliationLoop(options) {
 
 async function runCommandProfile({ run, scenario, tabs }) {
   try {
-    const { stdout, stderr } = await execFileAsync("pnpm", [
-      "profile:command",
-      "--",
-      "--tabs",
-      String(tabs),
-      "--scenario",
-      scenario
-    ], {
-      cwd: rootDir,
-      env: {
-        ...process.env,
-        PROFILE_BACKGROUND_TRACE: "1"
-      },
-      maxBuffer: 1024 * 1024 * 64
-    });
+    const { stdout, stderr } = await execFileAsync(
+      "pnpm",
+      ["profile:command", "--", "--tabs", String(tabs), "--scenario", scenario],
+      {
+        cwd: rootDir,
+        env: {
+          ...process.env,
+          PROFILE_BACKGROUND_TRACE: "1"
+        },
+        maxBuffer: 1024 * 1024 * 64
+      }
+    );
 
     return {
       run,
@@ -220,21 +228,29 @@ export function parseCommandProfileJson(output) {
 
 export function summarizeBackgroundReconciliationRuns(results, options = {}) {
   const scenarios = options.scenarios ?? inferredScenarios(results);
-  const scenarioSummaries = Object.fromEntries(scenarios.map((scenario) => [
-    scenario,
-    summarizeScenario(results.filter((result) => result.scenario === scenario), {
-      runs: options.runs ?? results.filter((result) => result.scenario === scenario).length,
-      tabs: options.tabs
-    })
-  ]));
-  const primary = Object.values(scenarioSummaries)
-    .sort((left, right) => right.totalWithSaveFlushMedianMs - left.totalWithSaveFlushMedianMs)[0] ??
-    summarizeScenario([], { runs: 0, tabs: options.tabs });
+  const scenarioSummaries = Object.fromEntries(
+    scenarios.map((scenario) => [
+      scenario,
+      summarizeScenario(
+        results.filter((result) => result.scenario === scenario),
+        {
+          runs: options.runs ?? results.filter((result) => result.scenario === scenario).length,
+          tabs: options.tabs
+        }
+      )
+    ])
+  );
+  const primary =
+    Object.values(scenarioSummaries).sort(
+      (left, right) => right.totalWithSaveFlushMedianMs - left.totalWithSaveFlushMedianMs
+    )[0] ?? summarizeScenario([], { runs: 0, tabs: options.tabs });
   const baselineMs = options.baselineMs;
-  const requiredImprovementMs = typeof baselineMs === "number" ? round(Math.min(baselineMs * 0.1, 50)) : undefined;
-  const targetPrimaryMs = typeof baselineMs === "number" && typeof requiredImprovementMs === "number"
-    ? round(baselineMs - requiredImprovementMs)
-    : undefined;
+  const requiredImprovementMs =
+    typeof baselineMs === "number" ? round(Math.min(baselineMs * 0.1, 50)) : undefined;
+  const targetPrimaryMs =
+    typeof baselineMs === "number" && typeof requiredImprovementMs === "number"
+      ? round(baselineMs - requiredImprovementMs)
+      : undefined;
   const summary = {
     runs: options.runs ?? 0,
     tabs: options.tabs ?? 0,
@@ -242,11 +258,21 @@ export function summarizeBackgroundReconciliationRuns(results, options = {}) {
     primaryScenario: primary.scenario,
     primaryMedianMs: primary.totalWithSaveFlushMedianMs,
     primaryMaxMs: primary.totalWithSaveFlushMaxMs,
-    saveFlushMaxMs: max(Object.values(scenarioSummaries).map((scenario) => scenario.saveFlushMaxMs)),
-    eventEchoMaxMs: max(Object.values(scenarioSummaries).map((scenario) => scenario.eventEchoMaxMs)),
-    runtimeGetWindowsCountMax: max(Object.values(scenarioSummaries).map((scenario) => scenario.runtimeGetWindowsCountMax)),
-    runtimeGetWindowsMaxMs: max(Object.values(scenarioSummaries).map((scenario) => scenario.runtimeGetWindowsMaxMs)),
-    storageSetCallsMax: max(Object.values(scenarioSummaries).map((scenario) => scenario.storageSetCallsMax)),
+    saveFlushMaxMs: max(
+      Object.values(scenarioSummaries).map((scenario) => scenario.saveFlushMaxMs)
+    ),
+    eventEchoMaxMs: max(
+      Object.values(scenarioSummaries).map((scenario) => scenario.eventEchoMaxMs)
+    ),
+    runtimeGetWindowsCountMax: max(
+      Object.values(scenarioSummaries).map((scenario) => scenario.runtimeGetWindowsCountMax)
+    ),
+    runtimeGetWindowsMaxMs: max(
+      Object.values(scenarioSummaries).map((scenario) => scenario.runtimeGetWindowsMaxMs)
+    ),
+    storageSetCallsMax: max(
+      Object.values(scenarioSummaries).map((scenario) => scenario.storageSetCallsMax)
+    ),
     stateSavesMax: max(Object.values(scenarioSummaries).map((scenario) => scenario.stateSavesMax)),
     ...(typeof baselineMs === "number" ? { baselineMs } : {}),
     ...(typeof requiredImprovementMs === "number" ? { requiredImprovementMs } : {}),
@@ -273,41 +299,82 @@ function inferredScenarios(results) {
 }
 
 function summarizeScenario(results, options = {}) {
-  const profiles = results.flatMap((result) => result.profile ? [result.profile] : []);
+  const profiles = results.flatMap((result) => (result.profile ? [result.profile] : []));
   const scenario = results[0]?.scenario ?? "";
   return {
     scenario,
     runs: results.length,
     profileCount: profiles.length,
     commandFailureCount: results.filter((result) => result.commandFailed).length,
-    totalWithSaveFlushMedianMs: median(profiles.map((profile) => profile.totalWithSaveFlushMs).filter(isFiniteNumber)),
-    totalWithSaveFlushMaxMs: max(profiles.map((profile) => profile.totalWithSaveFlushMs).filter(isFiniteNumber)),
+    totalWithSaveFlushMedianMs: median(
+      profiles.map((profile) => profile.totalWithSaveFlushMs).filter(isFiniteNumber)
+    ),
+    totalWithSaveFlushMaxMs: max(
+      profiles.map((profile) => profile.totalWithSaveFlushMs).filter(isFiniteNumber)
+    ),
     commandMedianMs: median(profiles.map((profile) => profile.commandMs).filter(isFiniteNumber)),
     commandMaxMs: max(profiles.map((profile) => profile.commandMs).filter(isFiniteNumber)),
-    followUpCommandMedianMs: median(profiles.map((profile) => profile.followUpCommandMs).filter(isFiniteNumber)),
-    followUpCommandMaxMs: max(profiles.map((profile) => profile.followUpCommandMs).filter(isFiniteNumber)),
-    stateSaveStartedBeforeAckCount: profiles.filter((profile) => profile.stateSaveStartedBeforeAck === true).length,
-    delayedStateSaveCountMax: max(profiles.map((profile) => profile.delayedStateSaveCount).filter(isFiniteNumber)),
-    eventEchoMedianMs: median(profiles.map((profile) => profile.eventEchoMs).filter(isFiniteNumber)),
+    followUpCommandMedianMs: median(
+      profiles.map((profile) => profile.followUpCommandMs).filter(isFiniteNumber)
+    ),
+    followUpCommandMaxMs: max(
+      profiles.map((profile) => profile.followUpCommandMs).filter(isFiniteNumber)
+    ),
+    stateSaveStartedBeforeAckCount: profiles.filter(
+      (profile) => profile.stateSaveStartedBeforeAck === true
+    ).length,
+    delayedStateSaveCountMax: max(
+      profiles.map((profile) => profile.delayedStateSaveCount).filter(isFiniteNumber)
+    ),
+    eventEchoMedianMs: median(
+      profiles.map((profile) => profile.eventEchoMs).filter(isFiniteNumber)
+    ),
     eventEchoMaxMs: max(profiles.map((profile) => profile.eventEchoMs).filter(isFiniteNumber)),
-    saveFlushMedianMs: median(profiles.map((profile) => profile.saveFlushMs).filter(isFiniteNumber)),
+    saveFlushMedianMs: median(
+      profiles.map((profile) => profile.saveFlushMs).filter(isFiniteNumber)
+    ),
     saveFlushMaxMs: max(profiles.map((profile) => profile.saveFlushMs).filter(isFiniteNumber)),
-    firstBroadcastMedianMs: median(profiles.map((profile) => profile.firstBroadcastMs).filter(isFiniteNumber)),
-    storageSetCallsMax: max(profiles.map((profile) => profile.storageSetCalls).filter(isFiniteNumber)),
+    firstBroadcastMedianMs: median(
+      profiles.map((profile) => profile.firstBroadcastMs).filter(isFiniteNumber)
+    ),
+    storageSetCallsMax: max(
+      profiles.map((profile) => profile.storageSetCalls).filter(isFiniteNumber)
+    ),
     stateSavesMax: max(profiles.map((profile) => profile.stateSaves).filter(isFiniteNumber)),
-    fullStateBroadcastsMax: max(profiles.map((profile) => profile.fullStateBroadcasts ?? 0).filter(isFiniteNumber)),
-    sameParentReorderBroadcastsMin: min(profiles.map((profile) => profile.sameParentReorderBroadcasts ?? 0).filter(isFiniteNumber)),
-    treeStructureBroadcastsMax: max(profiles.map((profile) => profile.treeStructureBroadcasts ?? 0).filter(isFiniteNumber)),
+    fullStateBroadcastsMax: max(
+      profiles.map((profile) => profile.fullStateBroadcasts ?? 0).filter(isFiniteNumber)
+    ),
+    sameParentReorderBroadcastsMin: min(
+      profiles.map((profile) => profile.sameParentReorderBroadcasts ?? 0).filter(isFiniteNumber)
+    ),
+    treeStructureBroadcastsMax: max(
+      profiles.map((profile) => profile.treeStructureBroadcasts ?? 0).filter(isFiniteNumber)
+    ),
     projectionMaxMs: max(profiles.map((profile) => profile.projectionMs).filter(isFiniteNumber)),
     treePatchMaxMs: max(profiles.map((profile) => profile.treePatchMs).filter(isFiniteNumber)),
-    runtimeGetWindowsCountMax: max(profiles.map((profile) => traceMetric(profile, "background.runtime.getWindows", "count")).filter(isFiniteNumber)),
-    runtimeGetWindowsMaxMs: max(profiles.map((profile) => traceMetric(profile, "background.runtime.getWindows", "maxMs")).filter(isFiniteNumber)),
-    backgroundStateSaveMaxMs: max(profiles.map((profile) => traceMetric(profile, "background.state.save", "maxMs")).filter(isFiniteNumber)),
+    runtimeGetWindowsCountMax: max(
+      profiles
+        .map((profile) => traceMetric(profile, "background.runtime.getWindows", "count"))
+        .filter(isFiniteNumber)
+    ),
+    runtimeGetWindowsMaxMs: max(
+      profiles
+        .map((profile) => traceMetric(profile, "background.runtime.getWindows", "maxMs"))
+        .filter(isFiniteNumber)
+    ),
+    backgroundStateSaveMaxMs: max(
+      profiles
+        .map((profile) => traceMetric(profile, "background.state.save", "maxMs"))
+        .filter(isFiniteNumber)
+    ),
     runtimeEventMaxMs: max(profiles.map(runtimeEventMaxMs).filter(isFiniteNumber)),
     expectedNodeCount: expectedNodeCount(scenario, options.tabs),
     badAckCount: profiles.filter((profile) => profile.ack?.stateChanged !== true).length,
-    badNodeCount: profiles.filter((profile) => profile.nodes !== expectedNodeCount(scenario, options.tabs)).length,
-    badRootShapeCount: profiles.filter((profile) => !rootShapeMatches(profile.rootShape, scenario)).length
+    badNodeCount: profiles.filter(
+      (profile) => profile.nodes !== expectedNodeCount(scenario, options.tabs)
+    ).length,
+    badRootShapeCount: profiles.filter((profile) => !rootShapeMatches(profile.rootShape, scenario))
+      .length
   };
 }
 
@@ -343,7 +410,10 @@ export function backgroundReconciliationGuardFailures(summary, context = {}) {
     if (scenario === "move-leaf" && scenarioSummary.treePatchMaxMs !== 0) {
       failures.push("move-leaf must not spend synthetic tree patch time");
     }
-    if (isCommandRelocationEchoScenario(scenario) && scenarioSummary.runtimeGetWindowsCountMax > 0) {
+    if (
+      isCommandRelocationEchoScenario(scenario) &&
+      scenarioSummary.runtimeGetWindowsCountMax > 0
+    ) {
       failures.push(`${scenario} must absorb native echoes without runtime.getWindows`);
     }
     if (isCommandRelocationEchoScenario(scenario) && scenarioSummary.stateSavesMax > 1) {
@@ -355,11 +425,16 @@ export function backgroundReconciliationGuardFailures(summary, context = {}) {
     if (isCommandRelocationEchoScenario(scenario) && scenarioSummary.eventEchoMaxMs > 25) {
       failures.push(`${scenario} native echo flush must stay below 25ms`);
     }
-    if (scenario === "structural-save-pressure" && scenarioSummary.stateSaveStartedBeforeAckCount > 0) {
+    if (
+      scenario === "structural-save-pressure" &&
+      scenarioSummary.stateSaveStartedBeforeAckCount > 0
+    ) {
       failures.push("structural-save-pressure must not start V3 state saves before command ack");
     }
     if (scenario === "structural-save-pressure" && scenarioSummary.followUpCommandMaxMs > 25) {
-      failures.push("structural-save-pressure follow-up command must not wait for deferred state save");
+      failures.push(
+        "structural-save-pressure follow-up command must not wait for deferred state save"
+      );
     }
     if (scenario === "structural-save-pressure" && scenarioSummary.runtimeGetWindowsCountMax > 0) {
       failures.push("structural-save-pressure must not add runtime.getWindows");
@@ -377,7 +452,9 @@ export function backgroundReconciliationGuardFailures(summary, context = {}) {
     typeof summary.targetPrimaryMs === "number" &&
     summary.primaryMedianMs > summary.targetPrimaryMs
   ) {
-    failures.push(`primary median must improve by at least ${summary.requiredImprovementMs}ms from baseline`);
+    failures.push(
+      `primary median must improve by at least ${summary.requiredImprovementMs}ms from baseline`
+    );
   }
   if (context.baselineSummary) {
     for (const [scenario, baseline] of Object.entries(context.baselineSummary.scenarios ?? {})) {
@@ -413,20 +490,43 @@ export function analyzeBackgroundProfileExport(profile) {
   return {
     exportedAt: profile?.exportedAt,
     entryCount: entries.length,
-    backgroundStateSave: summarizeMatchingEntries(entries, (entry) => entry.name === "background.state.save"),
-    refreshFromRuntime: summarizeMatchingEntries(entries, (entry) =>
-      entry.name === "background.mutation.run" && entry.detail?.reason === "refreshFromRuntime"
+    backgroundStateSave: summarizeMatchingEntries(
+      entries,
+      (entry) => entry.name === "background.state.save"
     ),
-    runtimeGetWindows: summarizeMatchingEntries(entries, (entry) => entry.name === "background.runtime.getWindows"),
-    runtimeEvents: summarizeMatchingEntries(entries, (entry) => /^background\.event\./.test(entry.name)),
-    sidebarTreeStructure: summarizeMatchingEntries(entries, (entry) => entry.name === "sidebar.patch.treeStructure"),
+    refreshFromRuntime: summarizeMatchingEntries(
+      entries,
+      (entry) =>
+        entry.name === "background.mutation.run" && entry.detail?.reason === "refreshFromRuntime"
+    ),
+    runtimeGetWindows: summarizeMatchingEntries(
+      entries,
+      (entry) => entry.name === "background.runtime.getWindows"
+    ),
+    runtimeEvents: summarizeMatchingEntries(entries, (entry) =>
+      /^background\.event\./.test(entry.name)
+    ),
+    sidebarTreeStructure: summarizeMatchingEntries(
+      entries,
+      (entry) => entry.name === "sidebar.patch.treeStructure"
+    ),
     sidebarRender: summarizeMatchingEntries(entries, (entry) => entry.name === "sidebar.render"),
-    sidebarProjectionBuild: summarizeMatchingEntries(entries, (entry) => entry.name === "sidebar.projection.build"),
-    diagnostics: summarizeMatchingEntries(entries, (entry) =>
-      entry.name === "background.diagnostics" || entry.name === "sidebar.diagnostics"
+    sidebarProjectionBuild: summarizeMatchingEntries(
+      entries,
+      (entry) => entry.name === "sidebar.projection.build"
     ),
-    diagnosticsDefer: summarizeMatchingEntries(entries, (entry) => entry.name === "sidebar.diagnostics.defer"),
-    topTotals: summarizeBy(entries.filter((entry) => typeof entry.durationMs === "number"), (entry) => entry.name).slice(0, 15)
+    diagnostics: summarizeMatchingEntries(
+      entries,
+      (entry) => entry.name === "background.diagnostics" || entry.name === "sidebar.diagnostics"
+    ),
+    diagnosticsDefer: summarizeMatchingEntries(
+      entries,
+      (entry) => entry.name === "sidebar.diagnostics.defer"
+    ),
+    topTotals: summarizeBy(
+      entries.filter((entry) => typeof entry.durationMs === "number"),
+      (entry) => entry.name
+    ).slice(0, 15)
   };
 }
 
@@ -452,7 +552,9 @@ export function formatBackgroundReconciliationTsvRow(summary, fields) {
     summary.runtimeGetWindowsMaxMs,
     summary.status,
     fields.description
-  ].map(tsvCell).join("\t");
+  ]
+    .map(tsvCell)
+    .join("\t");
 }
 
 function collectTraceEntries(profile) {
@@ -462,18 +564,24 @@ function collectTraceEntries(profile) {
   }
   const entries = [];
   if (Array.isArray(snapshot.background?.entries)) {
-    entries.push(...snapshot.background.entries.map((entry) => ({ ...entry, profileSource: "background" })));
+    entries.push(
+      ...snapshot.background.entries.map((entry) => ({ ...entry, profileSource: "background" }))
+    );
   }
   if (Array.isArray(snapshot.sidebar?.entries)) {
-    entries.push(...snapshot.sidebar.entries.map((entry) => ({ ...entry, profileSource: "sidebar" })));
+    entries.push(
+      ...snapshot.sidebar.entries.map((entry) => ({ ...entry, profileSource: "sidebar" }))
+    );
   }
   if (Array.isArray(snapshot.sidebars)) {
     for (const sidebar of snapshot.sidebars) {
       if (Array.isArray(sidebar?.snapshot?.entries)) {
-        entries.push(...sidebar.snapshot.entries.map((entry) => ({
-          ...entry,
-          profileSource: sidebar.label ?? sidebar.id ?? "sidebar"
-        })));
+        entries.push(
+          ...sidebar.snapshot.entries.map((entry) => ({
+            ...entry,
+            profileSource: sidebar.label ?? sidebar.id ?? "sidebar"
+          }))
+        );
       }
     }
   }
@@ -481,7 +589,9 @@ function collectTraceEntries(profile) {
 }
 
 function summarizeMatchingEntries(entries, predicate) {
-  return summarizeEntries(entries.filter((entry) => predicate(entry) && typeof entry.durationMs === "number"));
+  return summarizeEntries(
+    entries.filter((entry) => predicate(entry) && typeof entry.durationMs === "number")
+  );
 }
 
 function summarizeEntries(entries) {
@@ -525,14 +635,16 @@ function traceMetric(profile, name, metric) {
 }
 
 function runtimeEventMaxMs(profile) {
-  const rows = Object.values(profile.traceSummary?.byName ?? {})
-    .filter((row) => row.name?.startsWith("background.event."));
+  const rows = Object.values(profile.traceSummary?.byName ?? {}).filter((row) =>
+    row.name?.startsWith("background.event.")
+  );
   return max(rows.map((row) => row.maxMs).filter(isFiniteNumber));
 }
 
 function isCommandRelocationEchoScenario(scenario) {
-  return scenario === "command-relocation-echo" ||
-    scenario === "command-existing-window-relocation-echo";
+  return (
+    scenario === "command-relocation-echo" || scenario === "command-existing-window-relocation-echo"
+  );
 }
 
 function expectedNodeCount(scenario, tabs) {
@@ -559,11 +671,13 @@ function rootShapeMatches(rootShape, scenario) {
   if (!expected) {
     return true;
   }
-  return rootShape?.rootCount === expected.rootCount &&
+  return (
+    rootShape?.rootCount === expected.rootCount &&
     rootShape?.missingRootCount === 0 &&
     rootShape?.liveWindowRootCount === expected.liveWindowRootCount &&
     rootShape?.tabRootCount === 0 &&
-    rootShape?.groupRootCount === 0;
+    rootShape?.groupRootCount === 0
+  );
 }
 
 function expectedRootShape(scenario) {
@@ -588,7 +702,9 @@ async function readBaselineSummary(path) {
 
 async function currentCommit() {
   try {
-    const { stdout } = await execFileAsync("git", ["rev-parse", "--short=7", "HEAD"], { cwd: rootDir });
+    const { stdout } = await execFileAsync("git", ["rev-parse", "--short=7", "HEAD"], {
+      cwd: rootDir
+    });
     return stdout.trim();
   } catch {
     return "unknown";
@@ -597,7 +713,10 @@ async function currentCommit() {
 
 async function appendResultsTsv(resultsPath, row) {
   await mkdir(dirname(resultsPath), { recursive: true });
-  if (!existsSync(resultsPath) || (await readFile(resultsPath, "utf8").catch(() => "")).trim() === "") {
+  if (
+    !existsSync(resultsPath) ||
+    (await readFile(resultsPath, "utf8").catch(() => "")).trim() === ""
+  ) {
     await writeFile(resultsPath, `${BACKGROUND_RECONCILIATION_RESULTS_TSV_HEADER}\n`);
   }
   await appendFile(resultsPath, `${row}\n`);
@@ -643,7 +762,9 @@ function round(value) {
 }
 
 function tsvCell(value) {
-  return String(value).replace(/[\t\r\n]+/g, " ").trim();
+  return String(value)
+    .replace(/[\t\r\n]+/g, " ")
+    .trim();
 }
 
 async function main() {

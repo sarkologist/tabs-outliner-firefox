@@ -18,16 +18,16 @@ const EXPORT_FILE = {
     {
       kind: "window",
       title: "Saved Window",
-      children: [
-        { kind: "tab", title: "Saved Tab", url: "https://saved.example/", children: [] }
-      ]
+      children: [{ kind: "tab", title: "Saved Tab", url: "https://saved.example/", children: [] }]
     },
     { kind: "tab", title: "Loose Saved Tab", url: "https://loose.example/", children: [] }
   ]
 };
 
 test.describe("exported-tree viewer", () => {
-  test("renders like the main tree (read-only), expands/collapses, and imports to top level", async ({ page }) => {
+  test("renders like the main tree (read-only), expands/collapses, and imports to top level", async ({
+    page
+  }) => {
     const harness = createHarness(runtimeFixture(1, ["Alpha"]));
     const viewer = await loadViewer(harness, page);
     const rootCountBefore = (await harness.state()).rootIds.length;
@@ -44,7 +44,17 @@ test.describe("exported-tree viewer", () => {
 
     // Read-only: the only per-node controls are the twisty and the (hover-revealed) Import action —
     // no rename/move/delete/close/restore/cut/group, and rows are not draggable.
-    for (const action of ["Close", "Delete", "Restore", "Rename", "Move", "Group", "Cut", "Paste", "Flatten"]) {
+    for (const action of [
+      "Close",
+      "Delete",
+      "Restore",
+      "Rename",
+      "Move",
+      "Group",
+      "Cut",
+      "Paste",
+      "Flatten"
+    ]) {
       await expect(page.getByRole("button", { name: new RegExp(action, "i") })).toHaveCount(0);
     }
     await expect(page.locator("[draggable=true]")).toHaveCount(0);
@@ -72,7 +82,11 @@ test.describe("exported-tree viewer", () => {
       .find((child) => child?.title === "Saved Tab");
     expect(importedChild?.status).toBe("closed");
     expect(importedChild?.restore).toEqual({ url: "https://saved.example/", title: "Saved Tab" });
-    expect(Object.values(afterImport.nodes).some((node) => node.title === "Alpha" && node.status === "live")).toBe(true);
+    expect(
+      Object.values(afterImport.nodes).some(
+        (node) => node.title === "Alpha" && node.status === "live"
+      )
+    ).toBe(true);
 
     // The exported view itself is never mutated by an import.
     await expect(page.locator("#viewer-tree .node")).toHaveCount(3);
@@ -80,7 +94,9 @@ test.describe("exported-tree viewer", () => {
     expect(viewer.issues).toEqual([]);
   });
 
-  test("importing the same node twice creates independent top-level nodes (no dedupe)", async ({ page }) => {
+  test("importing the same node twice creates independent top-level nodes (no dedupe)", async ({
+    page
+  }) => {
     const harness = createHarness(runtimeFixture(1, ["Alpha"]));
     const viewer = await loadViewer(harness, page);
 
@@ -142,7 +158,9 @@ test.describe("exported-tree viewer", () => {
 
     await harness.controller.handleMessage({ type: "openImportViewerWindow" });
 
-    const created = harness.runtime.sideEffects.filter((effect) => effect.kind === "windows.create");
+    const created = harness.runtime.sideEffects.filter(
+      (effect) => effect.kind === "windows.create"
+    );
     expect(created).toHaveLength(1);
     expect(created[0]!.args[0]).toMatchObject({
       url: "moz-extension://extension-id/viewer/viewer.html",
@@ -151,7 +169,10 @@ test.describe("exported-tree viewer", () => {
   });
 });
 
-async function loadViewer(harness: SidebarRuntimeHarness, page: Page): Promise<AttachedSidebarPage> {
+async function loadViewer(
+  harness: SidebarRuntimeHarness,
+  page: Page
+): Promise<AttachedSidebarPage> {
   const viewer = await harness.attachPage(page);
   await page.goto("/viewer/viewer.html");
   await expect(page.getByRole("heading", { name: "Exported tree viewer" })).toBeVisible();
@@ -171,7 +192,9 @@ async function loadExport(page: Page, payload: unknown): Promise<void> {
 // thus absent from the a11y tree until shown, so locate the row by its always-visible title text,
 // hover to reveal the action, then click — mirrors how the sidebar spec drives row actions.
 async function importByLabel(page: Page, label: string): Promise<void> {
-  const row: Locator = page.locator(".node-row", { has: page.getByText(label, { exact: true }) }).first();
+  const row: Locator = page
+    .locator(".node-row", { has: page.getByText(label, { exact: true }) })
+    .first();
   await row.hover();
   await page.getByRole("button", { name: `Import ${label} to top level` }).click();
 }
@@ -182,11 +205,17 @@ function topLevelNodesByTitle(state: OutlineState, title: string) {
     .filter((node): node is NonNullable<typeof node> => Boolean(node) && node!.title === title);
 }
 
-function createHarness(fixture: { windows: RuntimeWindow[]; tabs: RuntimeTab[] }): SidebarRuntimeHarness {
+function createHarness(fixture: {
+  windows: RuntimeWindow[];
+  tabs: RuntimeTab[];
+}): SidebarRuntimeHarness {
   return createSidebarRuntimeHarness({ ...fixture, now: () => NOW });
 }
 
-function runtimeFixture(windowId: number, titles: string[]): { windows: RuntimeWindow[]; tabs: RuntimeTab[] } {
+function runtimeFixture(
+  windowId: number,
+  titles: string[]
+): { windows: RuntimeWindow[]; tabs: RuntimeTab[] } {
   return {
     windows: [{ id: windowId, focused: true, incognito: false }],
     tabs: titles.map((title, index) => ({

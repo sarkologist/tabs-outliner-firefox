@@ -4,13 +4,13 @@ import type { NodeId, OutlineState } from "../model/types.js";
 export function isRestoreScope(value: unknown): value is RestoreScope {
   return Boolean(
     value &&
-      typeof value === "object" &&
-      Array.isArray((value as { nodeIds?: unknown }).nodeIds) &&
-      typeof (value as { totalCount?: unknown }).totalCount === "number" &&
-      typeof (value as { tabCount?: unknown }).tabCount === "number" &&
-      typeof (value as { windowCount?: unknown }).windowCount === "number" &&
-      typeof (value as { threshold?: unknown }).threshold === "number" &&
-      typeof (value as { requiresConfirmation?: unknown }).requiresConfirmation === "boolean"
+    typeof value === "object" &&
+    Array.isArray((value as { nodeIds?: unknown }).nodeIds) &&
+    typeof (value as { totalCount?: unknown }).totalCount === "number" &&
+    typeof (value as { tabCount?: unknown }).tabCount === "number" &&
+    typeof (value as { windowCount?: unknown }).windowCount === "number" &&
+    typeof (value as { threshold?: unknown }).threshold === "number" &&
+    typeof (value as { requiresConfirmation?: unknown }).requiresConfirmation === "boolean"
   );
 }
 
@@ -63,7 +63,9 @@ export function largeRestoreConfirmationPrompt(scope: RestoreScope): string {
 function restoreScopeSummary(scope: RestoreScope): string {
   const parts = [
     scope.tabCount > 0 ? `${scope.tabCount} ${pluralize(scope.tabCount, "tab")}` : undefined,
-    scope.windowCount > 0 ? `${scope.windowCount} ${pluralize(scope.windowCount, "window")}` : undefined
+    scope.windowCount > 0
+      ? `${scope.windowCount} ${pluralize(scope.windowCount, "window")}`
+      : undefined
   ].filter((part): part is string => Boolean(part));
 
   return `${scope.totalCount} ${pluralize(scope.totalCount, "restorable closed node")}${parts.length ? ` (${parts.join(", ")})` : ""}`;

@@ -9,7 +9,11 @@ describe("faulty storage helper", () => {
     await faulty.api.storage.local.set({ a: "x", b: "y" });
 
     expect(await faulty.api.storage.local.get("a")).toEqual({ a: "x" });
-    expect(await faulty.api.storage.local.get(["a", "b", "missing"])).toEqual({ a: "x", b: "y", missing: undefined });
+    expect(await faulty.api.storage.local.get(["a", "b", "missing"])).toEqual({
+      a: "x",
+      b: "y",
+      missing: undefined
+    });
     expect(faulty.snapshot()).toEqual({ existing: 1, a: "x", b: "y" });
   });
 

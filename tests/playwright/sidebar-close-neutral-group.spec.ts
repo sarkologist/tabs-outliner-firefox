@@ -16,17 +16,25 @@ test.describe("sidebar neutral group close action", () => {
 
     const closedOnlyGroup = nodeRow(page, "group:closed-only");
     await closedOnlyGroup.hover();
-    await expect(closedOnlyGroup.getByRole("button", { name: "Close", exact: true })).toHaveCount(0);
-    await expect(closedOnlyGroup.getByRole("button", { name: "Restore", exact: true })).toHaveCount(0);
+    await expect(closedOnlyGroup.getByRole("button", { name: "Close", exact: true })).toHaveCount(
+      0
+    );
+    await expect(closedOnlyGroup.getByRole("button", { name: "Restore", exact: true })).toHaveCount(
+      0
+    );
 
     await outerGroup.hover();
     await outerGroup.getByRole("button", { name: "Close", exact: true }).click();
 
-    await expect(sentSidebarCommands(page)).resolves.toEqual([{ type: "closeNode", nodeId: "group:outer" }]);
+    await expect(sentSidebarCommands(page)).resolves.toEqual([
+      { type: "closeNode", nodeId: "group:outer" }
+    ]);
     expect(issues).toEqual([]);
   });
 
-  test("uses the closed row title for restore while keeping Close for live descendants", async ({ page }) => {
+  test("uses the closed row title for restore while keeping Close for live descendants", async ({
+    page
+  }) => {
     const issues = collectPageIssues(page);
     await loadSidebar(page);
 
@@ -34,31 +42,45 @@ test.describe("sidebar neutral group close action", () => {
     await closedParent.hover();
     await expect(closedParent.getByRole("button", { name: "Close", exact: true })).toBeVisible();
     await expect(closedParent.getByRole("button", { name: "Restore", exact: true })).toHaveCount(0);
-    await expect(closedParent.getByRole("button", { name: "Restore Closed parent", exact: true })).toBeVisible();
+    await expect(
+      closedParent.getByRole("button", { name: "Restore Closed parent", exact: true })
+    ).toBeVisible();
 
     await closedParent.getByRole("button", { name: "Close", exact: true }).click();
 
-    await expect(sentSidebarCommands(page)).resolves.toEqual([{ type: "closeNode", nodeId: "window:closed-parent" }]);
+    await expect(sentSidebarCommands(page)).resolves.toEqual([
+      { type: "closeNode", nodeId: "window:closed-parent" }
+    ]);
     await clearSentSidebarCommands(page);
 
     await closedParent.getByRole("button", { name: "Restore Closed parent", exact: true }).click();
 
-    await expect(sentSidebarCommands(page)).resolves.toEqual([{ type: "restoreNode", nodeId: "window:closed-parent" }]);
+    await expect(sentSidebarCommands(page)).resolves.toEqual([
+      { type: "restoreNode", nodeId: "window:closed-parent" }
+    ]);
     expect(issues).toEqual([]);
   });
 
-  test("restores an imported closed group through its descendant restore scope", async ({ page }) => {
+  test("restores an imported closed group through its descendant restore scope", async ({
+    page
+  }) => {
     const issues = collectPageIssues(page);
     await loadSidebar(page);
 
     const importedGroup = nodeRow(page, "window:imported-group");
-    await importedGroup.getByRole("button", { name: "Restore Imported group", exact: true }).click();
+    await importedGroup
+      .getByRole("button", { name: "Restore Imported group", exact: true })
+      .click();
 
-    await expect(sentSidebarCommands(page)).resolves.toEqual([{ type: "restoreNode", nodeId: "window:imported-group" }]);
+    await expect(sentSidebarCommands(page)).resolves.toEqual([
+      { type: "restoreNode", nodeId: "window:imported-group" }
+    ]);
     expect(issues).toEqual([]);
   });
 
-  test("offers restore for live containers that still have closed descendants", async ({ page }) => {
+  test("offers restore for live containers that still have closed descendants", async ({
+    page
+  }) => {
     const issues = collectPageIssues(page);
     await loadSidebar(page);
 
@@ -66,7 +88,9 @@ test.describe("sidebar neutral group close action", () => {
     await partiallyRestored.hover();
     await partiallyRestored.getByRole("button", { name: "Restore", exact: true }).click();
 
-    await expect(sentSidebarCommands(page)).resolves.toEqual([{ type: "restoreNode", nodeId: "window:1" }]);
+    await expect(sentSidebarCommands(page)).resolves.toEqual([
+      { type: "restoreNode", nodeId: "window:1" }
+    ]);
     expect(issues).toEqual([]);
   });
 
@@ -74,9 +98,13 @@ test.describe("sidebar neutral group close action", () => {
     const issues = collectPageIssues(page);
     await loadSidebar(page);
 
-    await nodeRow(page, "window:1").getByRole("button", { name: "Restore Window", exact: true }).click();
+    await nodeRow(page, "window:1")
+      .getByRole("button", { name: "Restore Window", exact: true })
+      .click();
 
-    await expect(sentSidebarCommands(page)).resolves.toEqual([{ type: "restoreNode", nodeId: "window:1" }]);
+    await expect(sentSidebarCommands(page)).resolves.toEqual([
+      { type: "restoreNode", nodeId: "window:1" }
+    ]);
     expect(issues).toEqual([]);
   });
 });
@@ -85,12 +113,16 @@ async function loadSidebar(page: Page): Promise<void> {
   await page.addInitScript((state) => {
     const listeners: Array<(message: unknown) => void> = [];
     const sentCommands: unknown[] = [];
-    (window as typeof window & { __sentSidebarCommands?: unknown[] }).__sentSidebarCommands = sentCommands;
+    (window as typeof window & { __sentSidebarCommands?: unknown[] }).__sentSidebarCommands =
+      sentCommands;
 
     window.browser = {
       runtime: {
         sendMessage: async (message: unknown) => {
-          const type = typeof message === "object" && message ? (message as { type?: unknown }).type : undefined;
+          const type =
+            typeof message === "object" && message
+              ? (message as { type?: unknown }).type
+              : undefined;
           if (type === "getState") {
             return structuredClone(state);
           }
@@ -153,13 +185,15 @@ function nodeRow(page: Page, nodeId: string) {
 
 async function sentSidebarCommands(page: Page): Promise<unknown[]> {
   return page.evaluate(() => [
-    ...((window as typeof window & { __sentSidebarCommands?: unknown[] }).__sentSidebarCommands ?? [])
+    ...((window as typeof window & { __sentSidebarCommands?: unknown[] }).__sentSidebarCommands ??
+      [])
   ]);
 }
 
 async function clearSentSidebarCommands(page: Page): Promise<void> {
   await page.evaluate(() => {
-    const commands = (window as typeof window & { __sentSidebarCommands?: unknown[] }).__sentSidebarCommands;
+    const commands = (window as typeof window & { __sentSidebarCommands?: unknown[] })
+      .__sentSidebarCommands;
     commands?.splice(0, commands.length);
   });
 }
@@ -175,7 +209,10 @@ function collectPageIssues(page: Page): ConsoleIssue[] {
     issues.push({ kind: "pageerror", text: error.message });
   });
   page.on("requestfailed", (request) => {
-    issues.push({ kind: "requestfailed", text: `${request.url()} ${request.failure()?.errorText ?? ""}` });
+    issues.push({
+      kind: "requestfailed",
+      text: `${request.url()} ${request.failure()?.errorText ?? ""}`
+    });
   });
   return issues;
 }

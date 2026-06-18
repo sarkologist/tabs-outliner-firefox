@@ -7,7 +7,8 @@ import { fileURLToPath } from "node:url";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const distDir = path.join(repoRoot, "dist");
-const firefoxBinary = process.env.FIREFOX_BINARY ?? "/Applications/Firefox.app/Contents/MacOS/firefox";
+const firefoxBinary =
+  process.env.FIREFOX_BINARY ?? "/Applications/Firefox.app/Contents/MacOS/firefox";
 const resultPrefix = "TABS_OUTLINER_RESTORE_ORDER_RESULT_BASE64";
 const errorPrefix = "TABS_OUTLINER_RESTORE_ORDER_ERROR_BASE64";
 const options = parseArgs(process.argv.slice(2));
@@ -50,7 +51,10 @@ async function installProbe(sourceDir, options) {
     type: "module"
   };
   await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
-  await writeFile(path.join(sourceDir, "probe-tree.json"), JSON.stringify(await probeTree(options)));
+  await writeFile(
+    path.join(sourceDir, "probe-tree.json"),
+    JSON.stringify(await probeTree(options))
+  );
   await writeFile(path.join(sourceDir, "probe-index.js"), probeSource(options));
 }
 
@@ -117,13 +121,19 @@ async function runProbe(sourceDir, options) {
     child.on("exit", (code, signal) => {
       if (!settled) {
         finish(() =>
-          reject(new Error(`web-ext exited before probe result (code ${code}, signal ${signal})\n${output}`))
+          reject(
+            new Error(
+              `web-ext exited before probe result (code ${code}, signal ${signal})\n${output}`
+            )
+          )
         );
       }
     });
 
     timeout = setTimeout(() => {
-      finish(() => reject(new Error(`Timed out waiting for Firefox restore-order probe\n${output}`)));
+      finish(() =>
+        reject(new Error(`Timed out waiting for Firefox restore-order probe\n${output}`))
+      );
     }, 45_000);
   });
 }

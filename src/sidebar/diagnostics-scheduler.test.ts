@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { createDiagnosticsScheduler, type DiagnosticsSchedulerClock } from "./diagnostics-scheduler.js";
+import {
+  createDiagnosticsScheduler,
+  type DiagnosticsSchedulerClock
+} from "./diagnostics-scheduler.js";
 
 describe("createDiagnosticsScheduler", () => {
   it("coalesces burst requests into one delayed diagnostics load", async () => {
@@ -41,7 +44,9 @@ describe("createDiagnosticsScheduler", () => {
   it("runs one follow-up load for requests made while diagnostics are in flight", async () => {
     const clock = new FakeClock();
     const firstLoad = deferred();
-    const load = vi.fn(() => (load.mock.calls.length === 1 ? firstLoad.promise : Promise.resolve()));
+    const load = vi.fn(() =>
+      load.mock.calls.length === 1 ? firstLoad.promise : Promise.resolve()
+    );
     const scheduler = createDiagnosticsScheduler(load, { clock, delayMs: 250 });
 
     scheduler.request();
@@ -68,9 +73,7 @@ describe("createDiagnosticsScheduler", () => {
   it("defers a pending diagnostics load when more idle time is requested", async () => {
     const clock = new FakeClock();
     const load = vi.fn().mockResolvedValue(undefined);
-    const defer = vi.fn()
-      .mockReturnValueOnce(125)
-      .mockReturnValueOnce(0);
+    const defer = vi.fn().mockReturnValueOnce(125).mockReturnValueOnce(0);
     const scheduler = createDiagnosticsScheduler(load, { clock, delayMs: 250, defer });
 
     scheduler.request();

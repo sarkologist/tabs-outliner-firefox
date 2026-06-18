@@ -105,7 +105,9 @@ describe("segmentSearchText", () => {
   });
 
   it("returns unhighlighted text for an empty query or title-only miss", () => {
-    expect(segmentSearchText("Project Docs", "   ")).toEqual([{ text: "Project Docs", isMatch: false }]);
+    expect(segmentSearchText("Project Docs", "   ")).toEqual([
+      { text: "Project Docs", isMatch: false }
+    ]);
     expect(segmentSearchText("Docs", "spec")).toEqual([{ text: "Docs", isMatch: false }]);
   });
 

@@ -11,7 +11,9 @@ type ConsoleIssue = {
 };
 
 test.describe("extension options page", () => {
-  test("saves preferences, validates duplicate shortcuts, and resets defaults", async ({ page }) => {
+  test("saves preferences, validates duplicate shortcuts, and resets defaults", async ({
+    page
+  }) => {
     const issues = collectPageIssues(page);
     await loadOptions(page);
 
@@ -29,7 +31,9 @@ test.describe("extension options page", () => {
     await page.getByRole("button", { name: "Record Focus search shortcut" }).click();
     await page.keyboard.press("Control+Alt+U");
     await page.getByRole("button", { name: "Save options" }).click();
-    await expect(page.getByRole("alert")).toContainText("Shortcut Accel+Alt+U is assigned more than once.");
+    await expect(page.getByRole("alert")).toContainText(
+      "Shortcut Accel+Alt+U is assigned more than once."
+    );
     await expect(savedPreferences(page)).resolves.toBeUndefined();
 
     await page.getByRole("button", { name: "Reset Focus search shortcut" }).click();
@@ -89,9 +93,7 @@ test.describe("extension options page", () => {
       background: {
         enabled: true,
         maxEntries: 500,
-        entries: [
-          { source: "background", name: "background.save", atMs: 1, durationMs: 12 }
-        ]
+        entries: [{ source: "background", name: "background.save", atMs: 1, durationMs: 12 }]
       },
       incidentLog: [
         {
@@ -127,9 +129,7 @@ test.describe("extension options page", () => {
           snapshot: {
             enabled: true,
             maxEntries: 500,
-            entries: [
-              { source: "sidebar", name: "sidebar.render", atMs: 2, durationMs: 6 }
-            ]
+            entries: [{ source: "sidebar", name: "sidebar.render", atMs: 2, durationMs: 6 }]
           }
         }
       ]
@@ -145,9 +145,7 @@ test.describe("extension options page", () => {
       background: {
         enabled: true,
         maxEntries: 500,
-        entries: [
-          { source: "background", name: "background.save", atMs: 3, durationMs: 8 }
-        ]
+        entries: [{ source: "background", name: "background.save", atMs: 3, durationMs: 8 }]
       },
       incidentLog: [
         {
@@ -183,9 +181,7 @@ test.describe("extension options page", () => {
           snapshot: {
             enabled: true,
             maxEntries: 500,
-            entries: [
-              { source: "sidebar", name: "sidebar.render", atMs: 4, durationMs: 4 }
-            ]
+            entries: [{ source: "sidebar", name: "sidebar.render", atMs: 4, durationMs: 4 }]
           }
         },
         {
@@ -195,9 +191,7 @@ test.describe("extension options page", () => {
           snapshot: {
             enabled: true,
             maxEntries: 500,
-            entries: [
-              { source: "sidebar", name: "sidebar.virtualRows", atMs: 5, durationMs: 3 }
-            ]
+            entries: [{ source: "sidebar", name: "sidebar.virtualRows", atMs: 5, durationMs: 3 }]
           }
         }
       ]
@@ -230,10 +224,12 @@ test.describe("extension options page", () => {
     expect(payload.snapshot?.incidentLog).toEqual([
       expect.objectContaining({ event: "startupStateLoaded" })
     ]);
-    expect(payload.snapshot?.portableTree).toEqual(expect.objectContaining({
-      schema: "tabs-outliner-tree",
-      roots: expect.any(Array)
-    }));
+    expect(payload.snapshot?.portableTree).toEqual(
+      expect.objectContaining({
+        schema: "tabs-outliner-tree",
+        roots: expect.any(Array)
+      })
+    );
     expect(payload.snapshot?.sidebars).toEqual([
       expect.objectContaining({
         id: "sidebar-window-10",
@@ -289,177 +285,202 @@ test.describe("extension options page", () => {
 });
 
 async function loadOptions(page: Page): Promise<void> {
-  await page.addInitScript(({ preferencesKey, profileKey, incidentKey, incidentEntries }) => {
-    let savedPreferences: AppPreferences | undefined;
-    let updatedCommandShortcut: string | undefined;
-    const resetCommands: string[] = [];
-    let profileSnapshot = {
-      background: {
-        enabled: false,
-        maxEntries: 500,
-        entries: [] as unknown[]
-      },
-      incidentLog: [
-        {
-          version: 1,
-          at: "2026-06-07T12:00:00.000Z",
-          event: "startupStateLoaded"
-        }
-      ],
-      sidebars: [] as unknown[]
-    };
-    const runtimeMessages: unknown[] = [];
+  await page.addInitScript(
+    ({ preferencesKey, profileKey, incidentKey, incidentEntries }) => {
+      let savedPreferences: AppPreferences | undefined;
+      let updatedCommandShortcut: string | undefined;
+      const resetCommands: string[] = [];
+      let profileSnapshot = {
+        background: {
+          enabled: false,
+          maxEntries: 500,
+          entries: [] as unknown[]
+        },
+        incidentLog: [
+          {
+            version: 1,
+            at: "2026-06-07T12:00:00.000Z",
+            event: "startupStateLoaded"
+          }
+        ],
+        sidebars: [] as unknown[]
+      };
+      const runtimeMessages: unknown[] = [];
 
-    (window as typeof window & {
-      __savedPreferences?: () => AppPreferences | undefined;
-      __updatedCommandShortcut?: () => string | undefined;
-      __resetCommands?: () => string[];
-      __runtimeMessages?: () => unknown[];
-      __profileEnabledFlag?: () => boolean;
-      __setProfileSnapshot?: (snapshot: typeof profileSnapshot) => void;
-    }).__savedPreferences = () => savedPreferences ? structuredClone(savedPreferences) : undefined;
-    (window as typeof window & { __updatedCommandShortcut?: () => string | undefined }).__updatedCommandShortcut =
-      () => updatedCommandShortcut;
-    (window as typeof window & { __resetCommands?: () => string[] }).__resetCommands = () => [...resetCommands];
-    (window as typeof window & { __runtimeMessages?: () => unknown[] }).__runtimeMessages =
-      () => structuredClone(runtimeMessages);
-    (window as typeof window & { __profileEnabledFlag?: () => boolean }).__profileEnabledFlag =
-      () => window.localStorage.getItem(profileKey) === "true";
-    (window as typeof window & { __setProfileSnapshot?: (snapshot: typeof profileSnapshot) => void })
-      .__setProfileSnapshot = (snapshot) => {
+      (
+        window as typeof window & {
+          __savedPreferences?: () => AppPreferences | undefined;
+          __updatedCommandShortcut?: () => string | undefined;
+          __resetCommands?: () => string[];
+          __runtimeMessages?: () => unknown[];
+          __profileEnabledFlag?: () => boolean;
+          __setProfileSnapshot?: (snapshot: typeof profileSnapshot) => void;
+        }
+      ).__savedPreferences = () =>
+        savedPreferences ? structuredClone(savedPreferences) : undefined;
+      (
+        window as typeof window & { __updatedCommandShortcut?: () => string | undefined }
+      ).__updatedCommandShortcut = () => updatedCommandShortcut;
+      (window as typeof window & { __resetCommands?: () => string[] }).__resetCommands = () => [
+        ...resetCommands
+      ];
+      (window as typeof window & { __runtimeMessages?: () => unknown[] }).__runtimeMessages = () =>
+        structuredClone(runtimeMessages);
+      (window as typeof window & { __profileEnabledFlag?: () => boolean }).__profileEnabledFlag =
+        () => window.localStorage.getItem(profileKey) === "true";
+      (
+        window as typeof window & {
+          __setProfileSnapshot?: (snapshot: typeof profileSnapshot) => void;
+        }
+      ).__setProfileSnapshot = (snapshot) => {
         profileSnapshot = structuredClone(snapshot);
       };
 
-    window.browser = {
-      commands: {
-        getAll: async () => [
-          {
-            name: "toggle-sidebar",
-            description: "Open or close the Tab Session Outliner sidebar",
-            shortcut: ""
-          }
-        ],
-        update: async (details: { name: string; shortcut?: string }) => {
-          if (details.name === "toggle-sidebar") {
-            updatedCommandShortcut = details.shortcut ?? "";
-          }
-        },
-        reset: async (name: string) => {
-          resetCommands.push(name);
-          if (name === "toggle-sidebar") {
-            updatedCommandShortcut = "";
-          }
-        },
-        onCommand: {
-          addListener: () => undefined
-        }
-      },
-      storage: {
-        onChanged: {
-          addListener: () => undefined
-        },
-        local: {
-          get: async (key?: string) => {
-            if (key === preferencesKey) {
-              return { [preferencesKey]: savedPreferences };
+      window.browser = {
+        commands: {
+          getAll: async () => [
+            {
+              name: "toggle-sidebar",
+              description: "Open or close the Tab Session Outliner sidebar",
+              shortcut: ""
             }
-            if (key === incidentKey) {
-              return { [incidentKey]: { version: 1, entries: incidentEntries } };
+          ],
+          update: async (details: { name: string; shortcut?: string }) => {
+            if (details.name === "toggle-sidebar") {
+              updatedCommandShortcut = details.shortcut ?? "";
             }
-            return {};
           },
-          set: async (items: Record<string, unknown>) => {
-            savedPreferences = items[preferencesKey] as AppPreferences;
+          reset: async (name: string) => {
+            resetCommands.push(name);
+            if (name === "toggle-sidebar") {
+              updatedCommandShortcut = "";
+            }
           },
-          remove: async () => undefined
-        }
-      },
-      action: {
-        onClicked: {
-          addListener: () => undefined
-        }
-      },
-      sidebarAction: {
-        open: async () => undefined,
-        toggle: async () => undefined
-      },
-      runtime: {
-        onInstalled: {
-          addListener: () => undefined
+          onCommand: {
+            addListener: () => undefined
+          }
         },
-        onStartup: {
-          addListener: () => undefined
+        storage: {
+          onChanged: {
+            addListener: () => undefined
+          },
+          local: {
+            get: async (key?: string) => {
+              if (key === preferencesKey) {
+                return { [preferencesKey]: savedPreferences };
+              }
+              if (key === incidentKey) {
+                return { [incidentKey]: { version: 1, entries: incidentEntries } };
+              }
+              return {};
+            },
+            set: async (items: Record<string, unknown>) => {
+              savedPreferences = items[preferencesKey] as AppPreferences;
+            },
+            remove: async () => undefined
+          }
         },
-        onMessage: {
-          addListener: () => undefined
+        action: {
+          onClicked: {
+            addListener: () => undefined
+          }
         },
-        sendMessage: async (message: unknown) => {
-          runtimeMessages.push(structuredClone(message));
-          const type = typeof message === "object" && message ? (message as { type?: unknown }).type : undefined;
-          if (type === "setPerformanceTraceEnabled") {
-            const enabled = Boolean((message as { enabled?: unknown }).enabled);
-            profileSnapshot = {
-              background: {
-                ...profileSnapshot.background,
-                enabled
-              },
-              sidebars: profileSnapshot.sidebars.map((sidebar) =>
-                typeof sidebar === "object" && sidebar
-                  ? {
-                      ...sidebar,
-                      snapshot: {
-                        ...(sidebar as { snapshot?: Record<string, unknown> }).snapshot,
-                        enabled
+        sidebarAction: {
+          open: async () => undefined,
+          toggle: async () => undefined
+        },
+        runtime: {
+          onInstalled: {
+            addListener: () => undefined
+          },
+          onStartup: {
+            addListener: () => undefined
+          },
+          onMessage: {
+            addListener: () => undefined
+          },
+          sendMessage: async (message: unknown) => {
+            runtimeMessages.push(structuredClone(message));
+            const type =
+              typeof message === "object" && message
+                ? (message as { type?: unknown }).type
+                : undefined;
+            if (type === "setPerformanceTraceEnabled") {
+              const enabled = Boolean((message as { enabled?: unknown }).enabled);
+              profileSnapshot = {
+                background: {
+                  ...profileSnapshot.background,
+                  enabled
+                },
+                sidebars: profileSnapshot.sidebars.map((sidebar) =>
+                  typeof sidebar === "object" && sidebar
+                    ? {
+                        ...sidebar,
+                        snapshot: {
+                          ...(sidebar as { snapshot?: Record<string, unknown> }).snapshot,
+                          enabled
+                        }
                       }
-                    }
-                  : sidebar
-              )
-            };
-            return { ok: true };
-          }
-          if (type === "clearPerformanceTrace") {
-            profileSnapshot = {
-              background: {
-                ...profileSnapshot.background,
-                entries: []
-              },
-              sidebars: profileSnapshot.sidebars.map((sidebar) =>
-                typeof sidebar === "object" && sidebar
-                  ? {
-                      ...sidebar,
-                      snapshot: {
-                        ...(sidebar as { snapshot?: Record<string, unknown> }).snapshot,
-                        entries: []
+                    : sidebar
+                )
+              };
+              return { ok: true };
+            }
+            if (type === "clearPerformanceTrace") {
+              profileSnapshot = {
+                background: {
+                  ...profileSnapshot.background,
+                  entries: []
+                },
+                sidebars: profileSnapshot.sidebars.map((sidebar) =>
+                  typeof sidebar === "object" && sidebar
+                    ? {
+                        ...sidebar,
+                        snapshot: {
+                          ...(sidebar as { snapshot?: Record<string, unknown> }).snapshot,
+                          entries: []
+                        }
                       }
-                    }
-                  : sidebar
-              )
-            };
-            return { ok: true };
+                    : sidebar
+                )
+              };
+              return { ok: true };
+            }
+            if (type === "getPerformanceProfile") {
+              return structuredClone(profileSnapshot);
+            }
+            if (type === "getPerformanceTrace") {
+              return structuredClone(profileSnapshot.background);
+            }
+            return undefined;
           }
-          if (type === "getPerformanceProfile") {
-            return structuredClone(profileSnapshot);
-          }
-          if (type === "getPerformanceTrace") {
-            return structuredClone(profileSnapshot.background);
-          }
-          return undefined;
-        }
-      },
-      windows: {},
-      tabs: {},
-      sessions: {}
-    };
-  }, {
-    preferencesKey: APP_PREFERENCES_STORAGE_KEY,
-    profileKey: PROFILE_STORAGE_KEY,
-    incidentKey: INCIDENT_LOG_STORAGE_KEY,
-    incidentEntries: [
-      { version: 1, at: "2026-06-07T12:00:00.000Z", event: "startupStateLoaded", detail: { nodeCount: 12 } },
-      { version: 1, at: "2026-06-07T12:00:01.000Z", event: "v4MigrationComplete", detail: { nodeCount: 12 } },
-      { version: 1, at: "2026-06-07T12:00:02.000Z", event: "journalSpillGap", detail: { seq: 3 } }
-    ]
-  });
+        },
+        windows: {},
+        tabs: {},
+        sessions: {}
+      };
+    },
+    {
+      preferencesKey: APP_PREFERENCES_STORAGE_KEY,
+      profileKey: PROFILE_STORAGE_KEY,
+      incidentKey: INCIDENT_LOG_STORAGE_KEY,
+      incidentEntries: [
+        {
+          version: 1,
+          at: "2026-06-07T12:00:00.000Z",
+          event: "startupStateLoaded",
+          detail: { nodeCount: 12 }
+        },
+        {
+          version: 1,
+          at: "2026-06-07T12:00:01.000Z",
+          event: "v4MigrationComplete",
+          detail: { nodeCount: 12 }
+        },
+        { version: 1, at: "2026-06-07T12:00:02.000Z", event: "journalSpillGap", detail: { seq: 3 } }
+      ]
+    }
+  );
 
   await page.goto("/options/options.html");
   await expect(page.getByRole("heading", { name: "Options" })).toBeVisible();
@@ -467,8 +488,9 @@ async function loadOptions(page: Page): Promise<void> {
 
 async function savedPreferences(page: Page): Promise<AppPreferences | undefined> {
   return page.evaluate(() => {
-    const read = (window as typeof window & { __savedPreferences?: () => AppPreferences | undefined })
-      .__savedPreferences;
+    const read = (
+      window as typeof window & { __savedPreferences?: () => AppPreferences | undefined }
+    ).__savedPreferences;
     return read?.();
   });
 }
@@ -490,22 +512,24 @@ async function resetCommands(page: Page): Promise<string[]> {
 
 async function runtimeMessages(page: Page): Promise<unknown[]> {
   return page.evaluate(() => {
-    const read = (window as typeof window & { __runtimeMessages?: () => unknown[] }).__runtimeMessages;
+    const read = (window as typeof window & { __runtimeMessages?: () => unknown[] })
+      .__runtimeMessages;
     return read?.() ?? [];
   });
 }
 
 async function setProfileSnapshot(page: Page, snapshot: unknown): Promise<void> {
   await page.evaluate((nextSnapshot) => {
-    (window as typeof window & { __setProfileSnapshot?: (snapshot: unknown) => void }).__setProfileSnapshot?.(
-      nextSnapshot
-    );
+    (
+      window as typeof window & { __setProfileSnapshot?: (snapshot: unknown) => void }
+    ).__setProfileSnapshot?.(nextSnapshot);
   }, snapshot);
 }
 
 async function profileEnabledFlag(page: Page): Promise<boolean> {
   return page.evaluate(() => {
-    const read = (window as typeof window & { __profileEnabledFlag?: () => boolean }).__profileEnabledFlag;
+    const read = (window as typeof window & { __profileEnabledFlag?: () => boolean })
+      .__profileEnabledFlag;
     return read?.() ?? false;
   });
 }
@@ -521,7 +545,10 @@ function collectPageIssues(page: Page): ConsoleIssue[] {
     issues.push({ kind: "pageerror", text: error.message });
   });
   page.on("requestfailed", (request) => {
-    issues.push({ kind: "requestfailed", text: `${request.url()} ${request.failure()?.errorText ?? ""}` });
+    issues.push({
+      kind: "requestfailed",
+      text: `${request.url()} ${request.failure()?.errorText ?? ""}`
+    });
   });
   return issues;
 }

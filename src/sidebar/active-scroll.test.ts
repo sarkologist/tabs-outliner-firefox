@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { NodeId, OutlineNode, OutlineState } from "../model/types.js";
-import { generatedTraceConfig, generatedTraceTimeoutMs } from "../test/generated-traces.test-support.js";
+import {
+  generatedTraceConfig,
+  generatedTraceTimeoutMs
+} from "../test/generated-traces.test-support.js";
 import {
   createActiveTabScrollTracker,
   findActiveTabNodeId,
@@ -83,8 +86,12 @@ describe("observeActiveTabScrollTarget", () => {
       tabNode("tab:hidden", "window:1", { active: true })
     ]);
 
-    expect(observeActiveTabScrollTarget(tracker, state, { hasRenderedNode: () => false })).toBeUndefined();
-    expect(observeActiveTabScrollTarget(tracker, state, { hasRenderedNode: () => true })).toBe("tab:hidden");
+    expect(
+      observeActiveTabScrollTarget(tracker, state, { hasRenderedNode: () => false })
+    ).toBeUndefined();
+    expect(observeActiveTabScrollTarget(tracker, state, { hasRenderedNode: () => true })).toBe(
+      "tab:hidden"
+    );
   });
 
   it("can observe a precomputed active node without rescanning state", () => {
@@ -92,7 +99,9 @@ describe("observeActiveTabScrollTarget", () => {
 
     expect(observeActiveTabNodeId(tracker, "tab:1")).toBe("tab:1");
     expect(observeActiveTabNodeId(tracker, "tab:1")).toBeUndefined();
-    expect(observeActiveTabNodeId(tracker, "tab:2", { hasRenderedNode: () => false })).toBeUndefined();
+    expect(
+      observeActiveTabNodeId(tracker, "tab:2", { hasRenderedNode: () => false })
+    ).toBeUndefined();
     expect(observeActiveTabNodeId(tracker, "tab:2", { hasRenderedNode: () => true })).toBe("tab:2");
   });
 
@@ -104,18 +113,32 @@ describe("observeActiveTabScrollTarget", () => {
       scrollHeight: 500
     };
 
-    expect(scrollActiveTabIntoView(tracker, {
-      activeTabNodeId: "tab:20",
-      activeTabRowIndex: 20,
-      visibleNodeIdSet: new Set(["tab:20"])
-    }, viewport, 10)).toBe(true);
+    expect(
+      scrollActiveTabIntoView(
+        tracker,
+        {
+          activeTabNodeId: "tab:20",
+          activeTabRowIndex: 20,
+          visibleNodeIdSet: new Set(["tab:20"])
+        },
+        viewport,
+        10
+      )
+    ).toBe(true);
 
     expect(viewport.scrollTop).toBe(175);
-    expect(scrollActiveTabIntoView(tracker, {
-      activeTabNodeId: "tab:20",
-      activeTabRowIndex: 20,
-      visibleNodeIdSet: new Set(["tab:20"])
-    }, viewport, 10)).toBe(false);
+    expect(
+      scrollActiveTabIntoView(
+        tracker,
+        {
+          activeTabNodeId: "tab:20",
+          activeTabRowIndex: 20,
+          visibleNodeIdSet: new Set(["tab:20"])
+        },
+        viewport,
+        10
+      )
+    ).toBe(false);
     expect(viewport.scrollTop).toBe(175);
   });
 
@@ -127,11 +150,18 @@ describe("observeActiveTabScrollTarget", () => {
       scrollHeight: 500
     };
 
-    expect(scrollActiveTabIntoView(tracker, {
-      activeTabNodeId: "tab:47",
-      activeTabRowIndex: 47,
-      visibleNodeIdSet: new Set(["tab:47"])
-    }, viewport, 10)).toBe(true);
+    expect(
+      scrollActiveTabIntoView(
+        tracker,
+        {
+          activeTabNodeId: "tab:47",
+          activeTabRowIndex: 47,
+          visibleNodeIdSet: new Set(["tab:47"])
+        },
+        viewport,
+        10
+      )
+    ).toBe(true);
 
     expect(viewport.scrollTop).toBe(440);
   });
@@ -144,19 +174,33 @@ describe("observeActiveTabScrollTarget", () => {
       scrollHeight: 0
     };
 
-    expect(scrollActiveTabIntoView(tracker, {
-      activeTabNodeId: "tab:20",
-      activeTabRowIndex: 20,
-      visibleNodeIdSet: new Set(["tab:20"])
-    }, viewport, 10)).toBe(false);
+    expect(
+      scrollActiveTabIntoView(
+        tracker,
+        {
+          activeTabNodeId: "tab:20",
+          activeTabRowIndex: 20,
+          visibleNodeIdSet: new Set(["tab:20"])
+        },
+        viewport,
+        10
+      )
+    ).toBe(false);
 
     viewport.clientHeight = 60;
     viewport.scrollHeight = 500;
-    expect(scrollActiveTabIntoView(tracker, {
-      activeTabNodeId: "tab:20",
-      activeTabRowIndex: 20,
-      visibleNodeIdSet: new Set(["tab:20"])
-    }, viewport, 10)).toBe(true);
+    expect(
+      scrollActiveTabIntoView(
+        tracker,
+        {
+          activeTabNodeId: "tab:20",
+          activeTabRowIndex: 20,
+          visibleNodeIdSet: new Set(["tab:20"])
+        },
+        viewport,
+        10
+      )
+    ).toBe(true);
     expect(viewport.scrollTop).toBe(175);
   });
 
@@ -174,11 +218,18 @@ describe("observeActiveTabScrollTarget", () => {
       scrollHeight: 0
     };
 
-    expect(scrollActiveTabIntoView(tracker, {
-      activeTabNodeId: "tab:20",
-      activeTabRowIndex: 20,
-      visibleNodeIdSet: new Set(["tab:20"])
-    }, clampedViewport, 10)).toBe(false);
+    expect(
+      scrollActiveTabIntoView(
+        tracker,
+        {
+          activeTabNodeId: "tab:20",
+          activeTabRowIndex: 20,
+          visibleNodeIdSet: new Set(["tab:20"])
+        },
+        clampedViewport,
+        10
+      )
+    ).toBe(false);
     expect(clampedViewport.scrollTop).toBe(0);
 
     const readyViewport = {
@@ -186,11 +237,18 @@ describe("observeActiveTabScrollTarget", () => {
       clientHeight: 60,
       scrollHeight: 500
     };
-    expect(scrollActiveTabIntoView(tracker, {
-      activeTabNodeId: "tab:20",
-      activeTabRowIndex: 20,
-      visibleNodeIdSet: new Set(["tab:20"])
-    }, readyViewport, 10)).toBe(true);
+    expect(
+      scrollActiveTabIntoView(
+        tracker,
+        {
+          activeTabNodeId: "tab:20",
+          activeTabRowIndex: 20,
+          visibleNodeIdSet: new Set(["tab:20"])
+        },
+        readyViewport,
+        10
+      )
+    ).toBe(true);
     expect(readyViewport.scrollTop).toBe(175);
   });
 
@@ -202,10 +260,17 @@ describe("observeActiveTabScrollTarget", () => {
       scrollHeight: 500
     };
 
-    expect(scrollActiveTabIntoView(tracker, {
-      activeTabNodeId: "tab:20",
-      visibleNodeIdSet: new Set()
-    }, hiddenViewport, 10)).toBe(false);
+    expect(
+      scrollActiveTabIntoView(
+        tracker,
+        {
+          activeTabNodeId: "tab:20",
+          visibleNodeIdSet: new Set()
+        },
+        hiddenViewport,
+        10
+      )
+    ).toBe(false);
     expect(hiddenViewport.scrollTop).toBe(0);
 
     const readyViewport = {
@@ -213,11 +278,18 @@ describe("observeActiveTabScrollTarget", () => {
       clientHeight: 60,
       scrollHeight: 500
     };
-    expect(scrollActiveTabIntoView(tracker, {
-      activeTabNodeId: "tab:20",
-      activeTabRowIndex: 20,
-      visibleNodeIdSet: new Set(["tab:20"])
-    }, readyViewport, 10)).toBe(true);
+    expect(
+      scrollActiveTabIntoView(
+        tracker,
+        {
+          activeTabNodeId: "tab:20",
+          activeTabRowIndex: 20,
+          visibleNodeIdSet: new Set(["tab:20"])
+        },
+        readyViewport,
+        10
+      )
+    ).toBe(true);
     expect(readyViewport.scrollTop).toBe(175);
   });
 
@@ -229,41 +301,66 @@ describe("observeActiveTabScrollTarget", () => {
       scrollHeight: 500
     };
 
-    expect(scrollActiveTabIntoView(tracker, {
-      activeTabNodeId: "tab:20",
-      activeTabRowIndex: 20,
-      visibleNodeIdSet: new Set(["tab:20"])
-    }, viewport, 10)).toBe(true);
+    expect(
+      scrollActiveTabIntoView(
+        tracker,
+        {
+          activeTabNodeId: "tab:20",
+          activeTabRowIndex: 20,
+          visibleNodeIdSet: new Set(["tab:20"])
+        },
+        viewport,
+        10
+      )
+    ).toBe(true);
 
     viewport.scrollTop = 0;
-    expect(scrollActiveTabIntoView(tracker, {
-      activeTabNodeId: "tab:20",
-      activeTabRowIndex: 20,
-      visibleNodeIdSet: new Set(["tab:20"])
-    }, viewport, 10)).toBe(false);
+    expect(
+      scrollActiveTabIntoView(
+        tracker,
+        {
+          activeTabNodeId: "tab:20",
+          activeTabRowIndex: 20,
+          visibleNodeIdSet: new Set(["tab:20"])
+        },
+        viewport,
+        10
+      )
+    ).toBe(false);
 
     resetActiveTabScrollTracker(tracker);
-    expect(scrollActiveTabIntoView(tracker, {
-      activeTabNodeId: "tab:20",
-      activeTabRowIndex: 20,
-      visibleNodeIdSet: new Set(["tab:20"])
-    }, viewport, 10)).toBe(true);
+    expect(
+      scrollActiveTabIntoView(
+        tracker,
+        {
+          activeTabNodeId: "tab:20",
+          activeTabRowIndex: 20,
+          visibleNodeIdSet: new Set(["tab:20"])
+        },
+        viewport,
+        10
+      )
+    ).toBe(true);
     expect(viewport.scrollTop).toBe(175);
   });
 });
 
 describe("active scroll generated search/collapse traces", () => {
-  it("scrolls newly visible active tabs across deterministic search and collapse interleavings", () => {
-    const config = generatedTraceConfig({
-      defaultSeedCount: 32,
-      defaultSteps: 6,
-      soakSeedCount: 96,
-      soakSteps: 24
-    });
-    for (const seed of config.seeds) {
-      runSearchCollapseTrace(seed, config.steps);
-    }
-  }, generatedTraceTimeoutMs(10_000, 120_000));
+  it(
+    "scrolls newly visible active tabs across deterministic search and collapse interleavings",
+    () => {
+      const config = generatedTraceConfig({
+        defaultSeedCount: 32,
+        defaultSteps: 6,
+        soakSeedCount: 96,
+        soakSteps: 24
+      });
+      for (const seed of config.seeds) {
+        runSearchCollapseTrace(seed, config.steps);
+      }
+    },
+    generatedTraceTimeoutMs(10_000, 120_000)
+  );
 });
 
 function outlineState(nodes: OutlineNode[]): OutlineState {
@@ -386,7 +483,10 @@ function runSearchCollapseTrace(seed: number, cycles: number): void {
     render("revealed after search clear");
 
     const collapseParent = pickOne(rng, fixture.parentIds);
-    const collapseTarget = pickOne(rng, fixture.leavesByParent.get(collapseParent) ?? fixture.leafIds);
+    const collapseTarget = pickOne(
+      rng,
+      fixture.leavesByParent.get(collapseParent) ?? fixture.leafIds
+    );
     query = "";
     ensureExpanded(fixture.state, collapseParent);
     history.push(`cycle ${cycle}: reset ${collapseParent} expanded`);
@@ -450,14 +550,21 @@ function assertTraceScrollState(
     return;
   }
 
-  if (!previouslyObserved && typeof expectedScrollTop === "number" && viewport.scrollHeight > viewport.clientHeight) {
+  if (
+    !previouslyObserved &&
+    typeof expectedScrollTop === "number" &&
+    viewport.scrollHeight > viewport.clientHeight
+  ) {
     traceInvariant(
       Math.abs(viewport.scrollTop - expectedScrollTop) < 0.001,
       history,
       `expected newly visible active ${activeNodeId} to scroll to ${expectedScrollTop}, got ${viewport.scrollTop}`
     );
   }
-  if (typeof expectedScrollTop === "number" && Math.abs(viewport.scrollTop - expectedScrollTop) < 0.001) {
+  if (
+    typeof expectedScrollTop === "number" &&
+    Math.abs(viewport.scrollTop - expectedScrollTop) < 0.001
+  ) {
     oracle.observedActiveNodeId = activeNodeId;
   }
 }
@@ -467,7 +574,10 @@ function expectedCenteredScrollTop(
   viewport: { clientHeight: number; scrollHeight: number },
   rowHeight: number
 ): number {
-  const centeredScrollTop = Math.max(0, rowIndex * rowHeight + rowHeight / 2 - viewport.clientHeight / 2);
+  const centeredScrollTop = Math.max(
+    0,
+    rowIndex * rowHeight + rowHeight / 2 - viewport.clientHeight / 2
+  );
   return Math.min(centeredScrollTop, Math.max(0, viewport.scrollHeight - viewport.clientHeight));
 }
 
@@ -532,7 +642,10 @@ function searchCollapseTraceState(): SearchCollapseTraceState {
 
   let tabId = 2;
   for (const [parentIndex, parentId] of parentIds.entries()) {
-    const children = Array.from({ length: 12 }, (_value, childIndex) => `tab:${parentIndex + 1}:${childIndex + 1}`);
+    const children = Array.from(
+      { length: 12 },
+      (_value, childIndex) => `tab:${parentIndex + 1}:${childIndex + 1}`
+    );
     leavesByParent.set(parentId, children);
     nodes[parentId] = {
       id: parentId,
@@ -612,7 +725,7 @@ function parentIdForLeaf(nodeId: NodeId): NodeId {
 function seededRandom(seed: number): () => number {
   let value = seed >>> 0;
   return () => {
-    value += 0x6D2B79F5;
+    value += 0x6d2b79f5;
     let next = value;
     next = Math.imul(next ^ (next >>> 15), next | 1);
     next ^= next + Math.imul(next ^ (next >>> 7), next | 61);

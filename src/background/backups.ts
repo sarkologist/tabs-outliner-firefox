@@ -1,4 +1,8 @@
-import { exportPortableTree, portableTreeBackupFilename, serializePortableTreeFile } from "../model/portable-tree.js";
+import {
+  exportPortableTree,
+  portableTreeBackupFilename,
+  serializePortableTreeFile
+} from "../model/portable-tree.js";
 import type { OutlineState } from "../model/types.js";
 
 export const AUTOMATIC_BACKUP_ALARM_NAME = "tabs-outliner-automatic-backup";
@@ -23,7 +27,9 @@ export async function saveAutomaticBackupStatus(
   status: AutomaticBackupStatus,
   api: WebExtensionBrowser = browser
 ): Promise<void> {
-  await api.storage.local.set({ [AUTOMATIC_BACKUP_STATUS_STORAGE_KEY]: normalizeAutomaticBackupStatus(status) });
+  await api.storage.local.set({
+    [AUTOMATIC_BACKUP_STATUS_STORAGE_KEY]: normalizeAutomaticBackupStatus(status)
+  });
 }
 
 export function normalizeAutomaticBackupStatus(value: unknown): AutomaticBackupStatus {
@@ -46,10 +52,16 @@ export function normalizeAutomaticBackupStatus(value: unknown): AutomaticBackupS
 export function automaticBackupDue(status: AutomaticBackupStatus, now: number): boolean {
   const lastSuccessfulBackupAt = parseStoredTime(status.lastSuccessfulBackupAt);
   const lastAttemptedBackupAt = parseStoredTime(status.lastAttemptedBackupAt);
-  if (lastAttemptedBackupAt !== undefined && lastAttemptedBackupAt > (lastSuccessfulBackupAt ?? 0)) {
+  if (
+    lastAttemptedBackupAt !== undefined &&
+    lastAttemptedBackupAt > (lastSuccessfulBackupAt ?? 0)
+  ) {
     return now - lastAttemptedBackupAt >= AUTOMATIC_BACKUP_INTERVAL_MS;
   }
-  return lastSuccessfulBackupAt === undefined || now - lastSuccessfulBackupAt >= AUTOMATIC_BACKUP_INTERVAL_MS;
+  return (
+    lastSuccessfulBackupAt === undefined ||
+    now - lastSuccessfulBackupAt >= AUTOMATIC_BACKUP_INTERVAL_MS
+  );
 }
 
 export function nextAutomaticBackupTime(status: AutomaticBackupStatus, now: number): number {

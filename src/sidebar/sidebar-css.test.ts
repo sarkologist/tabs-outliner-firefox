@@ -1,7 +1,10 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-const sidebarCss = readFileSync(new URL("../../public/sidebar/sidebar.css", import.meta.url), "utf8");
+const sidebarCss = readFileSync(
+  new URL("../../public/sidebar/sidebar.css", import.meta.url),
+  "utf8"
+);
 
 describe("sidebar active row CSS", () => {
   it("uses active-row tokens with dark-mode and forced-colors fallbacks", () => {

@@ -60,7 +60,10 @@ export type InsertTreeStructurePatch = DeleteTreeStructurePatch;
 // A delete delta whose nodes are already gone from local state has nothing left to apply -- it is the
 // echo of an optimistically-applied delete (or a duplicated broadcast). Re-running the delete patch
 // would decrement node/closed counts a second time, so callers detect and skip it before mutating.
-export function isAlreadyAppliedDeletePatch(state: OutlineState, deletedNodeIds: readonly NodeId[]): boolean {
+export function isAlreadyAppliedDeletePatch(
+  state: OutlineState,
+  deletedNodeIds: readonly NodeId[]
+): boolean {
   return deletedNodeIds.length > 0 && deletedNodeIds.every((nodeId) => !state.nodes[nodeId]);
 }
 
@@ -88,7 +91,10 @@ type InsertedRowsPlan = {
   removedRanges: RowRemovalRange[];
 };
 
-export function buildVisibleTreeProjection(state: OutlineState, rawQuery: string): VisibleTreeProjection {
+export function buildVisibleTreeProjection(
+  state: OutlineState,
+  rawQuery: string
+): VisibleTreeProjection {
   const query = normalizeSearchQuery(rawQuery);
   const entries = collectOutlineOrderEntries(state);
   const matchingNodeIds = new Set<NodeId>();
@@ -262,7 +268,9 @@ export function applyDeleteTreeStructurePatchToProjection(
     }
   }
 
-  projection.rows = projection.rows.filter((row) => !deletedNodeIds.has(row.nodeId) && Boolean(state.nodes[row.nodeId]));
+  projection.rows = projection.rows.filter(
+    (row) => !deletedNodeIds.has(row.nodeId) && Boolean(state.nodes[row.nodeId])
+  );
   projection.nodeCount = Math.max(0, projection.nodeCount - patch.deletedNodeIds.length);
   projection.closedCount = Math.max(0, projection.closedCount - patch.deletedClosedCount);
   projection.matchCount = Math.max(0, projection.matchCount - deletedMatches);
@@ -322,8 +330,11 @@ export function applyCrossParentLeafMoveTreeStructurePatchToProjection(
     projection.rows.length === 0 ||
     projection.visibleNodeIds.length !== projection.rows.length ||
     !sameNodeIdList(patch.rootIds, state.rootIds) ||
-    (typeof projection.totalRowCount === "number" && projection.totalRowCount !== projection.rows.length) ||
-    !projection.rows.every((row, index) => row.index === index && projection.visibleNodeIds[index] === row.nodeId)
+    (typeof projection.totalRowCount === "number" &&
+      projection.totalRowCount !== projection.rows.length) ||
+    !projection.rows.every(
+      (row, index) => row.index === index && projection.visibleNodeIds[index] === row.nodeId
+    )
   ) {
     return false;
   }
@@ -332,14 +343,18 @@ export function applyCrossParentLeafMoveTreeStructurePatchToProjection(
   const movedEntries = patch.updatedNodes
     .map((node) => {
       const row = projection.rows.find((candidate) => candidate.nodeId === node.id);
-      const previousParentId = row && typeof row.parentRowIndex === "number"
-        ? projection.rows[row.parentRowIndex]?.nodeId
-        : undefined;
+      const previousParentId =
+        row && typeof row.parentRowIndex === "number"
+          ? projection.rows[row.parentRowIndex]?.nodeId
+          : undefined;
       return row && previousParentId && node.parentId && previousParentId !== node.parentId
         ? { node, row, previousParentId }
         : undefined;
     })
-    .filter((entry): entry is { node: OutlineNode; row: VisibleTreeRow; previousParentId: NodeId } => Boolean(entry));
+    .filter(
+      (entry): entry is { node: OutlineNode; row: VisibleTreeRow; previousParentId: NodeId } =>
+        Boolean(entry)
+    );
   if (movedEntries.length !== 1) {
     return false;
   }
@@ -381,7 +396,11 @@ export function applyCrossParentLeafMoveTreeStructurePatchToProjection(
     sourceParent.childIds.length !== sourceParentRow.childCount - 1 ||
     destinationParent.childIds.length !== destinationParentRow.childCount + 1 ||
     !projectionHasAllDirectChildren(projection, sourceParentRow, sourceParentRow.childCount) ||
-    !projectionHasAllDirectChildren(projection, destinationParentRow, destinationParentRow.childCount)
+    !projectionHasAllDirectChildren(
+      projection,
+      destinationParentRow,
+      destinationParentRow.childCount
+    )
   ) {
     return false;
   }
@@ -414,9 +433,10 @@ export function applyCrossParentLeafMoveTreeStructurePatchToProjection(
     return false;
   }
 
-  const insertionIndex = insertionIndexBeforeRemoval > movedIndex
-    ? insertionIndexBeforeRemoval - 1
-    : insertionIndexBeforeRemoval;
+  const insertionIndex =
+    insertionIndexBeforeRemoval > movedIndex
+      ? insertionIndexBeforeRemoval - 1
+      : insertionIndexBeforeRemoval;
   if (insertionIndex < 0 || insertionIndex > projection.rows.length - 1) {
     return false;
   }
@@ -435,7 +455,8 @@ export function applyCrossParentLeafMoveTreeStructurePatchToProjection(
   };
   const finalEndForOldEnd = (oldEnd: number, includeInsertionBoundary = false): number => {
     const afterRemoval = oldEnd > movedIndex ? oldEnd - 1 : oldEnd;
-    return afterRemoval > insertionIndex || (includeInsertionBoundary && afterRemoval === insertionIndex)
+    return afterRemoval > insertionIndex ||
+      (includeInsertionBoundary && afterRemoval === insertionIndex)
       ? afterRemoval + 1
       : afterRemoval;
   };
@@ -504,7 +525,9 @@ export function sameParentReorderTreeStructurePatchInfo(
   }
 
   const updatedNodeIds = new Set(patch.updatedNodes.map((node) => node.id));
-  const movedNodes = patch.updatedNodes.filter((node) => node.parentId && updatedNodeIds.has(node.parentId));
+  const movedNodes = patch.updatedNodes.filter(
+    (node) => node.parentId && updatedNodeIds.has(node.parentId)
+  );
   if (movedNodes.length !== 1) {
     return undefined;
   }
@@ -518,12 +541,20 @@ export function sameParentReorderTreeStructurePatchInfo(
 
   const parentRow = projection.rows.find((row) => row.nodeId === parentId);
   const movedRow = projection.rows.find((row) => row.nodeId === movedNode.id);
-  if (!parentRow || !movedRow || !parentRow.expanded || movedRow.parentRowIndex !== parentRow.index) {
+  if (
+    !parentRow ||
+    !movedRow ||
+    !parentRow.expanded ||
+    movedRow.parentRowIndex !== parentRow.index
+  ) {
     return undefined;
   }
 
   const targetChildOffset = parentNode.childIds.indexOf(movedNode.id);
-  if (targetChildOffset < 0 || !projectionHasAllDirectChildren(projection, parentRow, parentNode.childIds.length)) {
+  if (
+    targetChildOffset < 0 ||
+    !projectionHasAllDirectChildren(projection, parentRow, parentNode.childIds.length)
+  ) {
     return undefined;
   }
 
@@ -598,13 +629,19 @@ function projectionHasAllDirectChildren(
   parentRow: VisibleTreeRow,
   childCount: number
 ): boolean {
-  if (typeof projection.totalRowCount !== "number" || projection.totalRowCount === projection.rows.length) {
+  if (
+    typeof projection.totalRowCount !== "number" ||
+    projection.totalRowCount === projection.rows.length
+  ) {
     return parentRow.visibleChildCount === childCount;
   }
   return directChildCountForRow(projection.rows, parentRow) === childCount;
 }
 
-function directChildCountForRow(rows: readonly VisibleTreeRow[], parentRow: VisibleTreeRow): number {
+function directChildCountForRow(
+  rows: readonly VisibleTreeRow[],
+  parentRow: VisibleTreeRow
+): number {
   const childDepth = parentRow.depth + 1;
   let count = 0;
   let index = parentRow.index + 1;
@@ -711,7 +748,10 @@ function applyTrailingLeafDeletePatchToProjection(
   ) {
     return false;
   }
-  if (typeof projection.activeTabRowIndex === "number" && projection.activeTabRowIndex >= startIndex) {
+  if (
+    typeof projection.activeTabRowIndex === "number" &&
+    projection.activeTabRowIndex >= startIndex
+  ) {
     return false;
   }
 
@@ -727,7 +767,10 @@ function applyTrailingLeafDeletePatchToProjection(
       if (!parentRow) {
         return false;
       }
-      removedCountByAncestorIndex.set(parentRowIndex, (removedCountByAncestorIndex.get(parentRowIndex) ?? 0) + 1);
+      removedCountByAncestorIndex.set(
+        parentRowIndex,
+        (removedCountByAncestorIndex.get(parentRowIndex) ?? 0) + 1
+      );
       refreshRowIndexes.add(parentRowIndex);
       parentRowIndex = parentRow.parentRowIndex;
     }
@@ -742,7 +785,11 @@ function applyTrailingLeafDeletePatchToProjection(
   }
 
   for (const node of patch.updatedNodes) {
-    if (deletedNodeIds.has(node.id) || !state.nodes[node.id] || !refreshRowIndexByNodeId.has(node.id)) {
+    if (
+      deletedNodeIds.has(node.id) ||
+      !state.nodes[node.id] ||
+      !refreshRowIndexByNodeId.has(node.id)
+    ) {
       return false;
     }
   }
@@ -791,9 +838,10 @@ function deletePatchRelocatesVisibleRows(
       continue;
     }
 
-    const previousParentId = typeof row.parentRowIndex === "number"
-      ? projection.rows[row.parentRowIndex]?.nodeId
-      : undefined;
+    const previousParentId =
+      typeof row.parentRowIndex === "number"
+        ? projection.rows[row.parentRowIndex]?.nodeId
+        : undefined;
     if (previousParentId !== node.parentId) {
       return true;
     }
@@ -806,7 +854,11 @@ export function applyInsertTreeStructurePatchToProjection(
   projection: VisibleTreeProjection,
   patch: InsertTreeStructurePatch
 ): boolean {
-  if (projection.isSearchActive || patch.deletedNodeIds.length > 0 || patch.deletedClosedCount !== 0) {
+  if (
+    projection.isSearchActive ||
+    patch.deletedNodeIds.length > 0 ||
+    patch.deletedClosedCount !== 0
+  ) {
     return false;
   }
 
@@ -827,7 +879,12 @@ export function applyInsertTreeStructurePatchToProjection(
   });
 
   for (const rootNodeId of insertionRoots) {
-    const insertionContext = insertionContextForNode(state, projection, rootNodeId, insertedNodeIds);
+    const insertionContext = insertionContextForNode(
+      state,
+      projection,
+      rootNodeId,
+      insertedNodeIds
+    );
     if (!insertionContext) {
       return false;
     }
@@ -871,19 +928,25 @@ export function applyInsertTreeStructurePatchToProjection(
           }
         : undefined;
     })
-    .filter((entry): entry is {
-      nodeId: NodeId;
-      index: number;
-      rows: VisibleTreeRow[];
-      removedRanges: RowRemovalRange[];
-    } => Boolean(entry))
+    .filter(
+      (
+        entry
+      ): entry is {
+        nodeId: NodeId;
+        index: number;
+        rows: VisibleTreeRow[];
+        removedRanges: RowRemovalRange[];
+      } => Boolean(entry)
+    )
     .sort((left, right) => left.index - right.index);
 
   if (orderedInsertions.length !== insertionRoots.length) {
     return false;
   }
 
-  const removalRanges = normalizedRemovalRanges(orderedInsertions.flatMap((insertion) => insertion.removedRanges));
+  const removalRanges = normalizedRemovalRanges(
+    orderedInsertions.flatMap((insertion) => insertion.removedRanges)
+  );
   if (!removalRanges) {
     return false;
   }
@@ -904,13 +967,16 @@ export function applyInsertTreeStructurePatchToProjection(
 
   let insertedBefore = 0;
   for (const insertion of orderedInsertions) {
-    const index = insertion.index - removedRowCountBeforeIndex(removalRanges, insertion.index) + insertedBefore;
+    const index =
+      insertion.index - removedRowCountBeforeIndex(removalRanges, insertion.index) + insertedBefore;
     projection.rows.splice(index, 0, ...insertion.rows);
     insertedBefore += insertion.rows.length;
   }
 
   projection.nodeCount += insertedNodeIds.size;
-  projection.closedCount += [...insertedNodeIds].filter((nodeId) => state.nodes[nodeId]?.status === "closed").length;
+  projection.closedCount += [...insertedNodeIds].filter(
+    (nodeId) => state.nodes[nodeId]?.status === "closed"
+  ).length;
   projection.matchCount = 0;
   projection.matchingNodeIds.clear();
   refreshVisibleRowStructure(projection.rows);
@@ -932,8 +998,10 @@ function projectionPatchIndexesFitRenderedRows(
   }
 
   const rowCount = projection.rows.length;
-  return insertions.every((insertion) => insertion.index >= 0 && insertion.index <= rowCount) &&
-    removalRanges.every((range) => range.start >= 0 && range.end <= rowCount);
+  return (
+    insertions.every((insertion) => insertion.index >= 0 && insertion.index <= rowCount) &&
+    removalRanges.every((range) => range.start >= 0 && range.end <= rowCount)
+  );
 }
 
 function normalizedRemovalRanges(ranges: RowRemovalRange[]): RowRemovalRange[] | undefined {
@@ -956,7 +1024,10 @@ function normalizedRemovalRanges(ranges: RowRemovalRange[]): RowRemovalRange[] |
   return normalized;
 }
 
-function insertionIndexSplitsRemovalRange(index: number, ranges: readonly RowRemovalRange[]): boolean {
+function insertionIndexSplitsRemovalRange(
+  index: number,
+  ranges: readonly RowRemovalRange[]
+): boolean {
   return ranges.some((range) => range.start < index && index < range.end);
 }
 
@@ -1015,7 +1086,8 @@ function insertionContextForNode(
     return undefined;
   }
   const previousSiblingId = previousExistingSiblingId(parent.childIds, childIndex, insertedNodeIds);
-  const insideActiveWindow = parentRow.insideActiveWindow || Boolean(parent.kind === "window" && parent.active);
+  const insideActiveWindow =
+    parentRow.insideActiveWindow || Boolean(parent.kind === "window" && parent.active);
   if (!previousSiblingId) {
     return {
       index: parentRow.index + 1,
@@ -1056,12 +1128,14 @@ function rowsForInsertedSubtree(
   rootInsideActiveWindow: boolean
 ): VisibleTreeRow[] | undefined {
   const rows: VisibleTreeRow[] = [];
-  const stack: StackEntry[] = [{
-    nodeId: rootNodeId,
-    depth: rootDepth,
-    hiddenByCollapse: false,
-    insideActiveWindow: rootInsideActiveWindow
-  }];
+  const stack: StackEntry[] = [
+    {
+      nodeId: rootNodeId,
+      depth: rootDepth,
+      hiddenByCollapse: false,
+      insideActiveWindow: rootInsideActiveWindow
+    }
+  ];
 
   while (stack.length > 0) {
     const entry = stack.pop()!;
@@ -1094,7 +1168,8 @@ function rowsForInsertedSubtree(
       insideActiveWindow: entry.insideActiveWindow
     });
 
-    const childInsideActiveWindow = entry.insideActiveWindow || Boolean(node.kind === "window" && node.active);
+    const childInsideActiveWindow =
+      entry.insideActiveWindow || Boolean(node.kind === "window" && node.active);
     for (let index = childIds.length - 1; index >= 0; index -= 1) {
       stack.push({
         nodeId: childIds[index]!,
@@ -1211,7 +1286,10 @@ function refreshRowsFromPatchNodes(
   }
 }
 
-function refreshProjectionActiveWindowFlags(state: OutlineState, projection: VisibleTreeProjection): void {
+function refreshProjectionActiveWindowFlags(
+  state: OutlineState,
+  projection: VisibleTreeProjection
+): void {
   const activeByDepth: boolean[] = [];
 
   for (const row of projection.rows) {
@@ -1219,11 +1297,15 @@ function refreshProjectionActiveWindowFlags(state: OutlineState, projection: Vis
     const parentInsideActiveWindow = row.depth > 0 ? activeByDepth[row.depth - 1] === true : false;
     const node = state.nodes[row.nodeId];
     row.insideActiveWindow = parentInsideActiveWindow;
-    activeByDepth[row.depth] = parentInsideActiveWindow || Boolean(node?.kind === "window" && node.active);
+    activeByDepth[row.depth] =
+      parentInsideActiveWindow || Boolean(node?.kind === "window" && node.active);
   }
 }
 
-function refreshProjectionActiveTabTarget(state: OutlineState, projection: VisibleTreeProjection): void {
+function refreshProjectionActiveTabTarget(
+  state: OutlineState,
+  projection: VisibleTreeProjection
+): void {
   delete projection.activeTabNodeId;
   delete projection.activeTabRowIndex;
 
@@ -1297,7 +1379,8 @@ function collectOutlineOrderEntries(state: OutlineState): OutlineOrderEntry[] {
     }
 
     result.push(entry);
-    const childInsideActiveWindow = entry.insideActiveWindow || Boolean(node.kind === "window" && node.active);
+    const childInsideActiveWindow =
+      entry.insideActiveWindow || Boolean(node.kind === "window" && node.active);
     const childrenHiddenByCollapse = entry.hiddenByCollapse || node.collapsed;
     for (let index = node.childIds.length - 1; index >= 0; index -= 1) {
       stack.push({
@@ -1401,7 +1484,11 @@ function pruneEmptySearchPathRows(
   return prunedRows;
 }
 
-function refreshRowFromState(state: OutlineState, projection: VisibleTreeProjection, row: VisibleTreeRow): void {
+function refreshRowFromState(
+  state: OutlineState,
+  projection: VisibleTreeProjection,
+  row: VisibleTreeRow
+): void {
   const node = state.nodes[row.nodeId];
   if (!node) {
     return;
@@ -1413,22 +1500,21 @@ function refreshRowFromState(state: OutlineState, projection: VisibleTreeProject
     : node.childIds.length;
   row.expanded = projection.isSearchActive ? row.visibleChildCount > 0 : !node.collapsed;
   row.searchRevealsCollapsedChildren = Boolean(
-    projection.isSearchActive &&
-      node.collapsed &&
-      row.visibleChildCount > 0
+    projection.isSearchActive && node.collapsed && row.visibleChildCount > 0
   );
   row.isSearchMatch = projection.isSearchActive && projection.matchingNodeIds.has(row.nodeId);
   row.isSearchPath = projection.isSearchActive && !row.isSearchMatch;
 }
 
-function refreshVisibleRowStructureAfterDelete(rows: VisibleTreeRow[], removedRows: VisibleTreeRow[]): void {
+function refreshVisibleRowStructureAfterDelete(
+  rows: VisibleTreeRow[],
+  removedRows: VisibleTreeRow[]
+): void {
   if (removedRows.length === 0) {
     return;
   }
 
-  const removedIndexes = removedRows
-    .map((row) => row.index)
-    .sort((left, right) => left - right);
+  const removedIndexes = removedRows.map((row) => row.index).sort((left, right) => left - right);
   const firstRemovedIndex = removedIndexes[0]!;
   for (const row of rows) {
     if (

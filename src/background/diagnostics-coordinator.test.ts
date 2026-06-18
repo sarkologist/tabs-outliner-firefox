@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { createDiagnosticsCoordinator, type DiagnosticsCoordinatorDeps } from "./diagnostics-coordinator.js";
+import {
+  createDiagnosticsCoordinator,
+  type DiagnosticsCoordinatorDeps
+} from "./diagnostics-coordinator.js";
 import { createPerformanceTracer } from "../perf/trace.js";
 import { bootstrapFromWindows } from "../model/outline.js";
 import type { RuntimeWindow } from "../model/types.js";
@@ -11,8 +14,22 @@ const RUNTIME_WINDOWS: RuntimeWindow[] = [
     focused: true,
     incognito: false,
     tabs: [
-      { id: 1, windowId: 10, index: 0, active: true, url: "https://example.com/", title: "Example" },
-      { id: 2, windowId: 10, index: 1, active: false, url: "https://example.com/child", title: "Child" }
+      {
+        id: 1,
+        windowId: 10,
+        index: 0,
+        active: true,
+        url: "https://example.com/",
+        title: "Example"
+      },
+      {
+        id: 2,
+        windowId: 10,
+        index: 1,
+        active: false,
+        url: "https://example.com/child",
+        title: "Child"
+      }
     ]
   }
 ];

@@ -16,7 +16,7 @@ interface Baseline {
   allowedLargeFiles: string[];
 }
 const baseline = JSON.parse(
-  readFileSync(path.join(ROOT, "debt-baseline.json"), "utf8"),
+  readFileSync(path.join(ROOT, "debt-baseline.json"), "utf8")
 ) as Baseline;
 
 const topDir = (rel: string): string => {
@@ -56,7 +56,7 @@ let sidebarToBackground = 0;
 for (const { full, rel } of files) {
   if (topDir(rel) !== "sidebar") continue;
   for (const m of readFileSync(full, "utf8").matchAll(
-    /(?:from|import)\s*\(?\s*["']([^"']+)["']/g,
+    /(?:from|import)\s*\(?\s*["']([^"']+)["']/g
   )) {
     const spec = m[1];
     if (spec === undefined || !spec.startsWith(".")) continue;
@@ -80,7 +80,7 @@ it("sidebar→background imports do not increase (target 0)", () => {
     sidebarToBackground,
     "sidebar→background imports rose above the baseline; this may only go DOWN. Remove an " +
       "import (the sidebar is migrating to a pure projection client, see " +
-      "REMOTE_PROJECTION_REWRITE.md), or — only if truly intended — lower it in debt-baseline.json.",
+      "REMOTE_PROJECTION_REWRITE.md), or — only if truly intended — lower it in debt-baseline.json."
   ).toBeLessThanOrEqual(baseline.sidebarToBackgroundEdges);
 });
 
@@ -88,7 +88,7 @@ it("no TODO/FIXME/XXX/HACK markers are added to production code", () => {
   expect(
     todos,
     "production debt markers rose above the baseline. Resolve the issue instead of leaving " +
-      "a marker, or capture it in docs/PROJECT_STATE.md.",
+      "a marker, or capture it in docs/PROJECT_STATE.md."
   ).toBeLessThanOrEqual(baseline.todoComments);
 });
 
@@ -97,6 +97,6 @@ it("no new production file crosses the large-file threshold", () => {
     newLargeFiles,
     `new production file(s) exceed ${baseline.largeFileThresholdLines} lines: ` +
       `${newLargeFiles.join(", ")}. Keep new modules small, or deliberately add the path to ` +
-      "allowedLargeFiles in debt-baseline.json.",
+      "allowedLargeFiles in debt-baseline.json."
   ).toEqual([]);
 });

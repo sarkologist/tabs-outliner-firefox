@@ -42,7 +42,8 @@ export function buildRuntimeStateIndex(state: OutlineState): RuntimeStateIndex {
 
     if (isLiveTabNode(node)) {
       index.liveTabNodeIdsByRuntimeId.set(node.live.tabId, node.id);
-      const windowTabNodeIds = index.liveTabNodeIdsByWindowId.get(node.live.windowId) ?? new Set<NodeId>();
+      const windowTabNodeIds =
+        index.liveTabNodeIdsByWindowId.get(node.live.windowId) ?? new Set<NodeId>();
       windowTabNodeIds.add(node.id);
       index.liveTabNodeIdsByWindowId.set(node.live.windowId, windowTabNodeIds);
       if (node.active) {
@@ -52,7 +53,9 @@ export function buildRuntimeStateIndex(state: OutlineState): RuntimeStateIndex {
   }
 
   const visited = new Set<NodeId>();
-  const stack: Array<{ nodeId: NodeId; ownerWindowNodeId?: NodeId }> = state.rootIds.map((nodeId) => ({ nodeId }));
+  const stack: Array<{ nodeId: NodeId; ownerWindowNodeId?: NodeId }> = state.rootIds.map(
+    (nodeId) => ({ nodeId })
+  );
   while (stack.length > 0) {
     const entry = stack.pop()!;
     if (visited.has(entry.nodeId)) {
@@ -66,7 +69,12 @@ export function buildRuntimeStateIndex(state: OutlineState): RuntimeStateIndex {
     }
 
     const ownerWindowNodeId = node.kind === "window" ? node.id : entry.ownerWindowNodeId;
-    if (ownerWindowNodeId && node.id !== ownerWindowNodeId && node.kind === "tab" && node.status === "closed") {
+    if (
+      ownerWindowNodeId &&
+      node.id !== ownerWindowNodeId &&
+      node.kind === "tab" &&
+      node.status === "closed"
+    ) {
       const count = index.closedRestoreCandidateCountsByWindowNodeId.get(ownerWindowNodeId) ?? 0;
       index.closedRestoreCandidateCountsByWindowNodeId.set(ownerWindowNodeId, count + 1);
       index.windowNodeIdsWithClosedRestoreCandidates.add(ownerWindowNodeId);
@@ -83,7 +91,10 @@ export function buildRuntimeStateIndex(state: OutlineState): RuntimeStateIndex {
   return index;
 }
 
-export function buildRuntimeStateIndexFromLookup(state: OutlineState, lookup: OutlineLookup): RuntimeStateIndex {
+export function buildRuntimeStateIndexFromLookup(
+  state: OutlineState,
+  lookup: OutlineLookup
+): RuntimeStateIndex {
   const index: RuntimeStateIndex = {
     state,
     liveTabNodeIdsByRuntimeId: new Map(),
@@ -111,7 +122,8 @@ export function buildRuntimeStateIndexFromLookup(state: OutlineState, lookup: Ou
       continue;
     }
     index.liveTabNodeIdsByRuntimeId.set(runtimeTabId, nodeId);
-    const windowTabNodeIds = index.liveTabNodeIdsByWindowId.get(node.live.windowId) ?? new Set<NodeId>();
+    const windowTabNodeIds =
+      index.liveTabNodeIdsByWindowId.get(node.live.windowId) ?? new Set<NodeId>();
     windowTabNodeIds.add(nodeId);
     index.liveTabNodeIdsByWindowId.set(node.live.windowId, windowTabNodeIds);
     if (node.active) {
@@ -119,8 +131,12 @@ export function buildRuntimeStateIndexFromLookup(state: OutlineState, lookup: Ou
     }
   }
 
-  index.closedRestoreCandidateCountsByWindowNodeId = new Map(lookup.closedRestoreCandidateCountsByWindowNodeId);
-  index.windowNodeIdsWithClosedRestoreCandidates = new Set(lookup.windowNodeIdsWithClosedRestoreCandidates);
+  index.closedRestoreCandidateCountsByWindowNodeId = new Map(
+    lookup.closedRestoreCandidateCountsByWindowNodeId
+  );
+  index.windowNodeIdsWithClosedRestoreCandidates = new Set(
+    lookup.windowNodeIdsWithClosedRestoreCandidates
+  );
 
   return index;
 }
@@ -163,7 +179,10 @@ export function runtimeIndexForStateTransition(
   return index;
 }
 
-export function pruneRuntimeIndexWindowTabSets(index: RuntimeStateIndex, state: OutlineState): void {
+export function pruneRuntimeIndexWindowTabSets(
+  index: RuntimeStateIndex,
+  state: OutlineState
+): void {
   for (const [windowId, nodeIds] of index.liveTabNodeIdsByWindowId) {
     const windowNodeId = index.liveWindowNodeIdsByRuntimeId.get(windowId);
     const windowNode = windowNodeId ? state.nodes[windowNodeId] : undefined;
@@ -173,12 +192,16 @@ export function pruneRuntimeIndexWindowTabSets(index: RuntimeStateIndex, state: 
   }
 }
 
-export function runtimeStateIndexMismatchReason(actual: RuntimeStateIndex, expected: RuntimeStateIndex): string | undefined {
-  return mapMismatchReason(
-    actual.liveTabNodeIdsByRuntimeId,
-    expected.liveTabNodeIdsByRuntimeId,
-    "liveTabNodeIdsByRuntimeId"
-  ) ??
+export function runtimeStateIndexMismatchReason(
+  actual: RuntimeStateIndex,
+  expected: RuntimeStateIndex
+): string | undefined {
+  return (
+    mapMismatchReason(
+      actual.liveTabNodeIdsByRuntimeId,
+      expected.liveTabNodeIdsByRuntimeId,
+      "liveTabNodeIdsByRuntimeId"
+    ) ??
     mapMismatchReason(
       actual.liveWindowNodeIdsByRuntimeId,
       expected.liveWindowNodeIdsByRuntimeId,
@@ -206,10 +229,15 @@ export function runtimeStateIndexMismatchReason(actual: RuntimeStateIndex, expec
     ) ??
     (actual.activeWindowNodeId === expected.activeWindowNodeId
       ? undefined
-      : `activeWindowNodeId expected ${expected.activeWindowNodeId ?? "none"} got ${actual.activeWindowNodeId ?? "none"}`);
+      : `activeWindowNodeId expected ${expected.activeWindowNodeId ?? "none"} got ${actual.activeWindowNodeId ?? "none"}`)
+  );
 }
 
-export function mapMismatchReason<K, V>(actual: Map<K, V>, expected: Map<K, V>, label: string): string | undefined {
+export function mapMismatchReason<K, V>(
+  actual: Map<K, V>,
+  expected: Map<K, V>,
+  label: string
+): string | undefined {
   if (actual.size !== expected.size) {
     return `${label} size expected ${expected.size} got ${actual.size}`;
   }
@@ -242,7 +270,11 @@ export function setMapMismatchReason<K, V>(
   return undefined;
 }
 
-export function setMismatchReason<V>(actual: Set<V>, expected: Set<V>, label: string): string | undefined {
+export function setMismatchReason<V>(
+  actual: Set<V>,
+  expected: Set<V>,
+  label: string
+): string | undefined {
   if (actual.size !== expected.size) {
     return `${label} size expected ${expected.size} got ${actual.size}`;
   }
@@ -300,7 +332,8 @@ export function addRuntimeIndexNode(index: RuntimeStateIndex, node: OutlineNode)
   }
 
   index.liveTabNodeIdsByRuntimeId.set(node.live.tabId, node.id);
-  const windowTabNodeIds = index.liveTabNodeIdsByWindowId.get(node.live.windowId) ?? new Set<NodeId>();
+  const windowTabNodeIds =
+    index.liveTabNodeIdsByWindowId.get(node.live.windowId) ?? new Set<NodeId>();
   windowTabNodeIds.add(node.id);
   index.liveTabNodeIdsByWindowId.set(node.live.windowId, windowTabNodeIds);
   if (node.active) {
@@ -334,7 +367,10 @@ export function updateRuntimeIndexClosedRestoreCandidateCount(
   index.windowNodeIdsWithClosedRestoreCandidates.delete(windowNodeId);
 }
 
-export function pruneRuntimeIndexClosedRestoreCandidates(index: RuntimeStateIndex, state: OutlineState): void {
+export function pruneRuntimeIndexClosedRestoreCandidates(
+  index: RuntimeStateIndex,
+  state: OutlineState
+): void {
   for (const windowNodeId of index.windowNodeIdsWithClosedRestoreCandidates) {
     const windowNode = state.nodes[windowNodeId];
     if (!windowNode || windowNode.kind !== "window") {
@@ -368,9 +404,14 @@ export function runtimeIndexCandidateNodeIdsForCommand(
 ): NodeId[] | undefined {
   switch (command.type) {
     case "restoreNode":
-      return collectRuntimeIndexCandidateNodeIds(previous, next, options.restorePatchNodeIds ?? [command.nodeId], {
-        includeSeedSubtrees: false
-      });
+      return collectRuntimeIndexCandidateNodeIds(
+        previous,
+        next,
+        options.restorePatchNodeIds ?? [command.nodeId],
+        {
+          includeSeedSubtrees: false
+        }
+      );
 
     case "moveNode":
     case "moveNodeToNewWindow":
@@ -385,12 +426,19 @@ export function runtimeIndexCandidateNodeIdsForCommand(
 
     case "toggleCollapsed":
     case "renameGroup":
-      return collectRuntimeIndexCandidateNodeIds(previous, next, [command.nodeId], { includeSeedSubtrees: false });
-
-    case "expandAncestors":
-      return collectRuntimeIndexCandidateNodeIds(previous, next, options.expandAncestorNodeIds ?? [], {
+      return collectRuntimeIndexCandidateNodeIds(previous, next, [command.nodeId], {
         includeSeedSubtrees: false
       });
+
+    case "expandAncestors":
+      return collectRuntimeIndexCandidateNodeIds(
+        previous,
+        next,
+        options.expandAncestorNodeIds ?? [],
+        {
+          includeSeedSubtrees: false
+        }
+      );
 
     case "importTree":
     case "importSubtreeToTopLevel":
@@ -432,7 +480,8 @@ export function runtimeIndexCandidateNodeIdsForWindowRemoval(
   index: RuntimeStateIndex,
   windowId: number
 ): NodeId[] {
-  const nodeId = index.liveWindowNodeIdsByRuntimeId.get(windowId) ?? windowNodeIdForRuntime(windowId);
+  const nodeId =
+    index.liveWindowNodeIdsByRuntimeId.get(windowId) ?? windowNodeIdForRuntime(windowId);
   return collectRuntimeIndexCandidateNodeIds(previous, next, [nodeId]);
 }
 
@@ -491,7 +540,12 @@ export function indexedLiveTabNodeByRuntimeId(
   return isLiveTabNode(node) && node.live.tabId === tabId ? node : undefined;
 }
 
-export function runtimeTabNodeForFastPath(tab: RuntimeTab, nodeId: NodeId, parentId: NodeId, now: number): OutlineNode {
+export function runtimeTabNodeForFastPath(
+  tab: RuntimeTab,
+  nodeId: NodeId,
+  parentId: NodeId,
+  now: number
+): OutlineNode {
   const node: OutlineNode = {
     id: nodeId,
     kind: "tab",
@@ -516,7 +570,11 @@ export function runtimeTabNodeForFastPath(tab: RuntimeTab, nodeId: NodeId, paren
   return node;
 }
 
-export function updateRuntimeTabNodeForFastPath(node: OutlineNode, tab: RuntimeTab, now: number): void {
+export function updateRuntimeTabNodeForFastPath(
+  node: OutlineNode,
+  tab: RuntimeTab,
+  now: number
+): void {
   node.status = "live";
   node.title = runtimeTitleForOutlineTab(node, tab);
   node.active = tab.active;
@@ -544,4 +602,3 @@ export function canonicalWindowIdFromNodeId(nodeId: NodeId): number | undefined 
   const match = /^window:(\d+)$/.exec(nodeId);
   return match ? Number(match[1]) : undefined;
 }
-

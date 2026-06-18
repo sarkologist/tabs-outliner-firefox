@@ -1,7 +1,11 @@
 import type { NodeId, OutlineNode, OutlineState } from "../model/types.js";
 import { cloneOutlineNode } from "../model/outline.js";
 import { storageLocalKvStore, type KeyValueStore } from "./key-value-store.js";
-import { normalizeLoadedOutlineStructure, outlineNodeShardIndex, type StateStructureRepair } from "./storage.js";
+import {
+  normalizeLoadedOutlineStructure,
+  outlineNodeShardIndex,
+  type StateStructureRepair
+} from "./storage.js";
 
 // v4 snapshot store: STATE_V4_NODE_SHARD_COUNT (256) generation-stamped node shards (childIds inline -- no order pages)
 // plus double-buffered manifests. Consistency is verifiable from storage alone: a shard is
@@ -113,9 +117,7 @@ export function outlineStateV4Snapshot(
 ): OutlineStateV4Snapshot {
   const previous = options.previous;
   const generation = (previous?.manifest.generation ?? 0) + 1;
-  const dirty = previous && options.dirtyShardIndexes
-    ? options.dirtyShardIndexes
-    : undefined;
+  const dirty = previous && options.dirtyShardIndexes ? options.dirtyShardIndexes : undefined;
 
   const nodesByShard = new Map<number, OutlineNode[]>();
   let nodeCount = 0;
@@ -243,9 +245,10 @@ export async function loadStateV4(
   if (!salvage) {
     return undefined;
   }
-  const journalSeqIncluded = candidates.length > 0
-    ? Math.min(...candidates.map((candidate) => candidate.manifest.journalSeqIncluded))
-    : 0;
+  const journalSeqIncluded =
+    candidates.length > 0
+      ? Math.min(...candidates.map((candidate) => candidate.manifest.journalSeqIncluded))
+      : 0;
   const repair = normalizeLoadedOutlineStructure(salvage.state, "v4");
   return {
     state: salvage.state,
@@ -278,7 +281,10 @@ export async function sweepOrphanedV4Shards(
   api: WebExtensionBrowser,
   shardStore: KeyValueStore = storageLocalKvStore(api)
 ): Promise<SweepOrphanedV4ShardsResult> {
-  const manifestStore = await api.storage.local.get([STATE_V4_MANIFEST_A_KEY, STATE_V4_MANIFEST_B_KEY]);
+  const manifestStore = await api.storage.local.get([
+    STATE_V4_MANIFEST_A_KEY,
+    STATE_V4_MANIFEST_B_KEY
+  ]);
   const referenced = new Set<string>();
   for (const slotKey of [STATE_V4_MANIFEST_A_KEY, STATE_V4_MANIFEST_B_KEY]) {
     const manifest = manifestStore[slotKey];
@@ -351,7 +357,9 @@ export async function copyStateV4Shards(
 // (the keys are not enumerable otherwise); a one-time cost on the migration path.
 export async function deleteAllStateV4ShardKeys(store: KeyValueStore): Promise<number> {
   const everything = await store.get(null);
-  const shardKeys = Object.keys(everything).filter((key) => key.startsWith(STATE_V4_NODE_SHARD_PREFIX));
+  const shardKeys = Object.keys(everything).filter((key) =>
+    key.startsWith(STATE_V4_NODE_SHARD_PREFIX)
+  );
   for (let index = 0; index < shardKeys.length; index += STATE_V4_ORPHAN_SWEEP_REMOVE_CHUNK) {
     await store.remove(shardKeys.slice(index, index + STATE_V4_ORPHAN_SWEEP_REMOVE_CHUNK));
   }
@@ -451,16 +459,20 @@ export async function hasAnyStateV4Keys(
   shardStore: KeyValueStore = storageLocalKvStore(api)
 ): Promise<boolean> {
   const stored = await api.storage.local.get([STATE_V4_MANIFEST_A_KEY, STATE_V4_MANIFEST_B_KEY]);
-  if (stored[STATE_V4_MANIFEST_A_KEY] !== undefined || stored[STATE_V4_MANIFEST_B_KEY] !== undefined) {
+  if (
+    stored[STATE_V4_MANIFEST_A_KEY] !== undefined ||
+    stored[STATE_V4_MANIFEST_B_KEY] !== undefined
+  ) {
     return true;
   }
   // The shard store carries both the shards and (after Step 4) the manifest, so a present manifest
   // OR any shard key there counts as existing v4 state.
   const everything = await shardStore.get(null);
-  return Object.keys(everything).some((key) =>
-    key.startsWith(STATE_V4_NODE_SHARD_PREFIX) ||
-    key === STATE_V4_MANIFEST_A_KEY ||
-    key === STATE_V4_MANIFEST_B_KEY
+  return Object.keys(everything).some(
+    (key) =>
+      key.startsWith(STATE_V4_NODE_SHARD_PREFIX) ||
+      key === STATE_V4_MANIFEST_A_KEY ||
+      key === STATE_V4_MANIFEST_B_KEY
   );
 }
 
@@ -469,7 +481,8 @@ function isStateV4Manifest(value: unknown): value is StateV4Manifest {
     return false;
   }
   const manifest = value as StateV4Manifest;
-  return manifest.version === 4 &&
+  return (
+    manifest.version === 4 &&
     typeof manifest.generation === "number" &&
     typeof manifest.epoch === "number" &&
     typeof manifest.journalSeqIncluded === "number" &&
@@ -480,7 +493,8 @@ function isStateV4Manifest(value: unknown): value is StateV4Manifest {
     (manifest.shardGenerations.length === STATE_V4_NODE_SHARD_COUNT ||
       STATE_V4_LEGACY_SHARD_COUNTS.has(manifest.shardGenerations.length)) &&
     manifest.shardGenerations.every((generation) => typeof generation === "number") &&
-    typeof manifest.savedAt === "number";
+    typeof manifest.savedAt === "number"
+  );
 }
 
 function isStateV4NodeShard(value: unknown): value is StateV4NodeShard {
@@ -488,11 +502,13 @@ function isStateV4NodeShard(value: unknown): value is StateV4NodeShard {
     return false;
   }
   const shard = value as StateV4NodeShard;
-  return shard.version === 4 &&
+  return (
+    shard.version === 4 &&
     typeof shard.shardIndex === "number" &&
     typeof shard.generation === "number" &&
     Array.isArray(shard.nodes) &&
-    shard.nodes.every(isStoredOutlineNode);
+    shard.nodes.every(isStoredOutlineNode)
+  );
 }
 
 function isStoredOutlineNode(value: unknown): value is OutlineNode {
@@ -500,9 +516,11 @@ function isStoredOutlineNode(value: unknown): value is OutlineNode {
     return false;
   }
   const node = value as OutlineNode;
-  return typeof node.id === "string" &&
+  return (
+    typeof node.id === "string" &&
     typeof node.kind === "string" &&
     typeof node.status === "string" &&
     Array.isArray(node.childIds) &&
-    typeof node.title === "string";
+    typeof node.title === "string"
+  );
 }

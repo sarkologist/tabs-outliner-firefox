@@ -98,7 +98,11 @@ export function createPerformanceTracer(
     });
   }
 
-  function measure<T>(name: string, detailOrFn: TraceDetail | (() => T) | undefined, maybeFn?: () => T): T {
+  function measure<T>(
+    name: string,
+    detailOrFn: TraceDetail | (() => T) | undefined,
+    maybeFn?: () => T
+  ): T {
     const detail = typeof detailOrFn === "function" ? undefined : detailOrFn;
     const fn = typeof detailOrFn === "function" ? detailOrFn : maybeFn;
     if (!fn) {
@@ -221,13 +225,17 @@ function currentTimeMs(clock: PerformanceTracerClock): number {
   return clock.timeOrigin + clock.now();
 }
 
-function normalizedDetail(detail: TraceDetail | undefined): { detail?: Record<string, string | number | boolean | null> } {
+function normalizedDetail(detail: TraceDetail | undefined): {
+  detail?: Record<string, string | number | boolean | null>;
+} {
   if (!detail) {
     return {};
   }
 
   const normalized = Object.fromEntries(
-    Object.entries(detail).filter((entry): entry is [string, string | number | boolean | null] => entry[1] !== undefined)
+    Object.entries(detail).filter(
+      (entry): entry is [string, string | number | boolean | null] => entry[1] !== undefined
+    )
   );
   return Object.keys(normalized).length > 0 ? { detail: normalized } : {};
 }

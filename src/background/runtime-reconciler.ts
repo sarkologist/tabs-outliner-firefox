@@ -15,7 +15,13 @@ import {
   type LiveTabNode,
   type LiveWindowNode
 } from "../model/live-nodes.js";
-import type { NodeId, OutlineNode, OutlineState, RuntimeTab, RuntimeWindow } from "../model/types.js";
+import type {
+  NodeId,
+  OutlineNode,
+  OutlineState,
+  RuntimeTab,
+  RuntimeWindow
+} from "../model/types.js";
 
 export type RuntimeStateIndexForReconciliation = {
   state: OutlineState;
@@ -129,12 +135,14 @@ export class RuntimeReconciler {
     ledger: RuntimeFactLedger,
     tab: RuntimeTab
   ): boolean {
-    return this.decideCommandRestoredTabEcho({
-      evidence: runtimeTabEvidenceFromInput(tab, ledger),
-      state,
-      index,
-      ledger
-    }).action === "absorb";
+    return (
+      this.decideCommandRestoredTabEcho({
+        evidence: runtimeTabEvidenceFromInput(tab, ledger),
+        state,
+        index,
+        ledger
+      }).action === "absorb"
+    );
   }
 
   isCommandRestoredAbsorbableTabEvent(
@@ -161,12 +169,14 @@ export class RuntimeReconciler {
     ledger: RuntimeFactLedger,
     tab: RuntimeTab
   ): boolean {
-    return this.decideCommandRelocatedTabEcho({
-      evidence: runtimeTabEvidenceFromInput(tab, ledger),
-      state,
-      index,
-      ledger
-    }).action === "absorb";
+    return (
+      this.decideCommandRelocatedTabEcho({
+        evidence: runtimeTabEvidenceFromInput(tab, ledger),
+        state,
+        index,
+        ledger
+      }).action === "absorb"
+    );
   }
 
   isCommandRelocatedStaleTabEvent(
@@ -181,7 +191,9 @@ export class RuntimeReconciler {
     }
 
     const node = indexedLiveTabNodeByRuntimeId(state, index, tab.id);
-    return Boolean(node && node.live.windowId === echo.toWindowId && echo.fromWindowIds.has(tab.windowId));
+    return Boolean(
+      node && node.live.windowId === echo.toWindowId && echo.fromWindowIds.has(tab.windowId)
+    );
   }
 
   decideRuntimeTabEcho(input: RuntimeTabEchoDecisionInput): RuntimeEchoDecision {
@@ -289,16 +301,25 @@ export class RuntimeReconciler {
   }
 
   eventTabsNeedShapeCorroboration(input: RuntimeEventTabFilterInput): boolean {
-    return input.eventTabs.map((eventTab) => runtimeTabEvidenceFromInput(eventTab, input.ledger)).some((evidence) => {
-      const tab = evidence.tab;
-      const node = indexedLiveTabNodeByRuntimeId(input.state, input.index, tab.id);
-      return Boolean(node && (
-        tabEvidenceConflictsWithCurrentShape(input.state, input.index, input.ledger, evidence, node) ||
-        node.restoredFromClosed === true ||
-        input.ledger.hasCommandRestoredTab(tab.id) ||
-        input.ledger.isRestoredRuntimeScopeForTab(tab.id)
-      ));
-    });
+    return input.eventTabs
+      .map((eventTab) => runtimeTabEvidenceFromInput(eventTab, input.ledger))
+      .some((evidence) => {
+        const tab = evidence.tab;
+        const node = indexedLiveTabNodeByRuntimeId(input.state, input.index, tab.id);
+        return Boolean(
+          node &&
+          (tabEvidenceConflictsWithCurrentShape(
+            input.state,
+            input.index,
+            input.ledger,
+            evidence,
+            node
+          ) ||
+            node.restoredFromClosed === true ||
+            input.ledger.hasCommandRestoredTab(tab.id) ||
+            input.ledger.isRestoredRuntimeScopeForTab(tab.id))
+        );
+      });
   }
 
   classifyMissingLiveTabRemoval(
@@ -321,7 +342,9 @@ export class RuntimeReconciler {
       hasRecentClosedWindowSession: boolean;
     }
   ): MissingLiveWindowRemovalDecision {
-    const node = liveWindowNodes(state).find((candidate) => candidate.live.windowId === input.windowId);
+    const node = liveWindowNodes(state).find(
+      (candidate) => candidate.live.windowId === input.windowId
+    );
     const scope = ledger.windowScope(input.windowId);
     if (node?.runtimeProvenance === "commandCreated" || scope?.provenance === "commandCreated") {
       return "delete-tabs";
@@ -343,7 +366,11 @@ export class RuntimeReconciler {
       return "delete-tabs";
     }
 
-    if (!node.runtimeProvenance || node.restoredFromClosed || node.runtimeProvenance === "browserCreated") {
+    if (
+      !node.runtimeProvenance ||
+      node.restoredFromClosed ||
+      node.runtimeProvenance === "browserCreated"
+    ) {
       return "close-window";
     }
 
@@ -358,14 +385,20 @@ export class RuntimeReconciler {
 
     return liveTabNodes(input.state)
       .filter((node) => {
-        if (openTabIds.has(node.live.tabId) || input.ledger.isTabIgnoredForRefresh(node.live.tabId)) {
+        if (
+          openTabIds.has(node.live.tabId) ||
+          input.ledger.isTabIgnoredForRefresh(node.live.tabId)
+        ) {
           return false;
         }
         if (openWindowIds.has(node.live.windowId)) {
           return true;
         }
         const relocationEcho = input.ledger.commandRelocatedTabEcho(node.live.tabId);
-        return relocationEcho?.toWindowId === node.live.windowId && !input.ledger.isWindowIgnoredForRefresh(node.live.windowId);
+        return (
+          relocationEcho?.toWindowId === node.live.windowId &&
+          !input.ledger.isWindowIgnoredForRefresh(node.live.windowId)
+        );
       })
       .map((node) => node.live.tabId);
   }
@@ -373,10 +406,11 @@ export class RuntimeReconciler {
   missingBrowserCreatedWindowIds(input: MissingLiveTabsInput): number[] {
     const openWindowIds = new Set(input.windows.map((windowInfo) => windowInfo.id));
     return liveWindowNodes(input.state)
-      .filter((node) =>
-        !openWindowIds.has(node.live.windowId) &&
-        !input.ledger.isWindowIgnoredForRefresh(node.live.windowId) &&
-        input.ledger.isBrowserCreatedRuntimeWindow(node.live.windowId)
+      .filter(
+        (node) =>
+          !openWindowIds.has(node.live.windowId) &&
+          !input.ledger.isWindowIgnoredForRefresh(node.live.windowId) &&
+          input.ledger.isBrowserCreatedRuntimeWindow(node.live.windowId)
       )
       .map((node) => node.live.windowId);
   }
@@ -395,13 +429,17 @@ export class RuntimeReconciler {
 
     return liveWindowNodes(input.state)
       .filter((node) => {
-        if (openWindowIds.has(node.live.windowId) || input.ledger.isWindowIgnoredForRefresh(node.live.windowId)) {
+        if (
+          openWindowIds.has(node.live.windowId) ||
+          input.ledger.isWindowIgnoredForRefresh(node.live.windowId)
+        ) {
           return false;
         }
         const tabNodes = liveTabsByWindowId.get(node.live.windowId) ?? [];
-        return tabNodes.every((tabNode) =>
-          !openTabIds.has(tabNode.live.tabId) &&
-          !input.ledger.isTabIgnoredForRefresh(tabNode.live.tabId)
+        return tabNodes.every(
+          (tabNode) =>
+            !openTabIds.has(tabNode.live.tabId) &&
+            !input.ledger.isTabIgnoredForRefresh(tabNode.live.tabId)
         );
       })
       .map((node) => node.live.windowId);
@@ -441,11 +479,7 @@ export class RuntimeReconciler {
         }
 
         const node = indexedLiveTabNodeByRuntimeId(input.state, input.index, tab.id);
-        if (
-          node &&
-          node.live.windowId === tab.windowId &&
-          liveTabNodeWouldChange(node, tab)
-        ) {
+        if (node && node.live.windowId === tab.windowId && liveTabNodeWouldChange(node, tab)) {
           suspiciousTabIds.add(tab.id);
         }
       }
@@ -470,7 +504,12 @@ export class RuntimeReconciler {
         .filter((tab) => !tab.incognito && !input.ledger.isTabIgnoredForRefresh(tab.id))
         .sort((left, right) => left.index - right.index)
         .map((tab) => tab.id);
-      const outlineTabIds = liveTabIdsInWindowPreorder(input.state, windowNode.id, windowInfo.id, input.ledger);
+      const outlineTabIds = liveTabIdsInWindowPreorder(
+        input.state,
+        windowNode.id,
+        windowInfo.id,
+        input.ledger
+      );
       if (!sameNumberList(runtimeTabIds, outlineTabIds)) {
         mismatchedWindowIds.add(windowInfo.id);
       }
@@ -502,7 +541,11 @@ function liveTabIdsInWindowPreorder(
     if (!node) {
       return;
     }
-    if (isLiveTabNode(node) && node.live.windowId === runtimeWindowId && !ledger.isTabIgnoredForRefresh(node.live.tabId)) {
+    if (
+      isLiveTabNode(node) &&
+      node.live.windowId === runtimeWindowId &&
+      !ledger.isTabIgnoredForRefresh(node.live.tabId)
+    ) {
       tabIds.push(node.live.tabId);
     }
     for (const childId of node.childIds) {
@@ -514,7 +557,9 @@ function liveTabIdsInWindowPreorder(
   return tabIds;
 }
 
-export function buildRuntimeStateIndexForReconciliation(state: OutlineState): RuntimeStateIndexForReconciliation {
+export function buildRuntimeStateIndexForReconciliation(
+  state: OutlineState
+): RuntimeStateIndexForReconciliation {
   const index: RuntimeStateIndexForReconciliation = {
     state,
     liveTabNodeIdsByRuntimeId: new Map(),
@@ -536,7 +581,8 @@ export function buildRuntimeStateIndexForReconciliation(state: OutlineState): Ru
 
     if (isLiveTabNode(node)) {
       index.liveTabNodeIdsByRuntimeId.set(node.live.tabId, node.id);
-      const windowTabNodeIds = index.liveTabNodeIdsByWindowId.get(node.live.windowId) ?? new Set<NodeId>();
+      const windowTabNodeIds =
+        index.liveTabNodeIdsByWindowId.get(node.live.windowId) ?? new Set<NodeId>();
       windowTabNodeIds.add(node.id);
       index.liveTabNodeIdsByWindowId.set(node.live.windowId, windowTabNodeIds);
       if (node.active) {
@@ -554,7 +600,9 @@ function populateClosedRestoreCandidateCounts(
   index: RuntimeStateIndexForReconciliation
 ): void {
   const visited = new Set<NodeId>();
-  const stack: Array<{ nodeId: NodeId; ownerWindowNodeId?: NodeId }> = state.rootIds.map((nodeId) => ({ nodeId }));
+  const stack: Array<{ nodeId: NodeId; ownerWindowNodeId?: NodeId }> = state.rootIds.map(
+    (nodeId) => ({ nodeId })
+  );
 
   while (stack.length > 0) {
     const entry = stack.pop()!;
@@ -569,7 +617,12 @@ function populateClosedRestoreCandidateCounts(
     }
 
     const ownerWindowNodeId = node.kind === "window" ? node.id : entry.ownerWindowNodeId;
-    if (ownerWindowNodeId && node.id !== ownerWindowNodeId && node.kind === "tab" && node.status === "closed") {
+    if (
+      ownerWindowNodeId &&
+      node.id !== ownerWindowNodeId &&
+      node.kind === "tab" &&
+      node.status === "closed"
+    ) {
       const count = index.closedRestoreCandidateCountsByWindowNodeId.get(ownerWindowNodeId) ?? 0;
       index.closedRestoreCandidateCountsByWindowNodeId.set(ownerWindowNodeId, count + 1);
       index.windowNodeIdsWithClosedRestoreCandidates.add(ownerWindowNodeId);
@@ -584,7 +637,10 @@ function populateClosedRestoreCandidateCounts(
   }
 }
 
-function filterIgnoredTabsFromWindows(windows: RuntimeWindow[], ledger: RuntimeFactLedger): RuntimeWindow[] {
+function filterIgnoredTabsFromWindows(
+  windows: RuntimeWindow[],
+  ledger: RuntimeFactLedger
+): RuntimeWindow[] {
   let changed = false;
   const next = windows.map((windowInfo) => {
     const tabs = windowInfo.tabs ?? [];
@@ -602,7 +658,10 @@ function filterIgnoredTabsFromWindows(windows: RuntimeWindow[], ledger: RuntimeF
   return changed ? next : windows;
 }
 
-function filterIgnoredWindowsFromWindows(windows: RuntimeWindow[], ledger: RuntimeFactLedger): RuntimeWindow[] {
+function filterIgnoredWindowsFromWindows(
+  windows: RuntimeWindow[],
+  ledger: RuntimeFactLedger
+): RuntimeWindow[] {
   const next = windows.filter((windowInfo) => !ledger.isWindowIgnoredForRefresh(windowInfo.id));
   return next.length === windows.length ? windows : next;
 }
@@ -622,12 +681,15 @@ function addMissingTabsForEmptyOpenWindowSnapshots(
     }
 
     const additions = liveTabNodes(state)
-      .filter((node) =>
-        node.live.windowId === windowInfo.id &&
-        !ignoredTabIds.has(node.live.tabId)
-      )
+      .filter((node) => node.live.windowId === windowInfo.id && !ignoredTabIds.has(node.live.tabId))
       .flatMap((node) => {
-        const tab = commandRelocatedTabFromCurrentState(state, index, node.live.tabId, ignoredTabIds, ignoredWindowIds);
+        const tab = commandRelocatedTabFromCurrentState(
+          state,
+          index,
+          node.live.tabId,
+          ignoredTabIds,
+          ignoredWindowIds
+        );
         return tab ? [tab] : [];
       });
 
@@ -707,7 +769,13 @@ function filterCommandRelocatedStaleTabsFromWindows(
       if (echo.fromWindowIds.has(tab.windowId)) {
         changed = true;
         if (!freshEchoTabIds.has(tab.id)) {
-          const fallbackTab = commandRelocatedTabFromCurrentState(state, index, tab, ignoredTabIds, ignoredWindowIds);
+          const fallbackTab = commandRelocatedTabFromCurrentState(
+            state,
+            index,
+            tab,
+            ignoredTabIds,
+            ignoredWindowIds
+          );
           if (fallbackTab) {
             fallbackTabs.push(fallbackTab);
           }
@@ -730,8 +798,9 @@ function filterCommandRelocatedStaleTabsFromWindows(
     return changed ? filtered : windows;
   }
 
-  const missingFallbackTabs = fallbackTabs.filter((tab) =>
-    !filtered.some((windowInfo) => windowInfo.tabs?.some((candidate) => candidate.id === tab.id))
+  const missingFallbackTabs = fallbackTabs.filter(
+    (tab) =>
+      !filtered.some((windowInfo) => windowInfo.tabs?.some((candidate) => candidate.id === tab.id))
   );
   if (missingFallbackTabs.length === 0) {
     return changed ? filtered : windows;
@@ -745,7 +814,9 @@ function filterCommandRelocatedStaleTabsFromWindows(
 
     return {
       ...windowInfo,
-      tabs: [...(windowInfo.tabs ?? []), ...additions].sort((left, right) => left.index - right.index)
+      tabs: [...(windowInfo.tabs ?? []), ...additions].sort(
+        (left, right) => left.index - right.index
+      )
     };
   });
 }
@@ -762,7 +833,9 @@ function addMissingCommandRelocatedTabsFromCurrentState(
     return windows;
   }
 
-  const presentTabIds = new Set(windows.flatMap((windowInfo) => windowInfo.tabs ?? []).map((tab) => tab.id));
+  const presentTabIds = new Set(
+    windows.flatMap((windowInfo) => windowInfo.tabs ?? []).map((tab) => tab.id)
+  );
   const windowIds = new Set(windows.map((windowInfo) => windowInfo.id));
   const additionsByWindowId = new Map<number, RuntimeTab[]>();
 
@@ -784,7 +857,13 @@ function addMissingCommandRelocatedTabsFromCurrentState(
       continue;
     }
 
-    const fallbackTab = commandRelocatedTabFromCurrentState(state, index, tabId, ignoredTabIds, ignoredWindowIds);
+    const fallbackTab = commandRelocatedTabFromCurrentState(
+      state,
+      index,
+      tabId,
+      ignoredTabIds,
+      ignoredWindowIds
+    );
     if (!fallbackTab) {
       continue;
     }
@@ -805,7 +884,9 @@ function addMissingCommandRelocatedTabsFromCurrentState(
 
     return {
       ...windowInfo,
-      tabs: [...(windowInfo.tabs ?? []), ...additions].sort((left, right) => left.index - right.index)
+      tabs: [...(windowInfo.tabs ?? []), ...additions].sort(
+        (left, right) => left.index - right.index
+      )
     };
   });
 }
@@ -871,20 +952,19 @@ function isRestoredOrCommandCreatedWindowScope(
   const scope = ledger.windowScope(runtimeWindowId);
   return Boolean(
     isLiveWindowNode(node) &&
-      (
-        node.restoredFromClosed === true ||
-        node.runtimeProvenance === "commandCreated" ||
-        scope?.provenance === "restored" ||
-        scope?.provenance === "commandCreated"
-      )
+    (node.restoredFromClosed === true ||
+      node.runtimeProvenance === "commandCreated" ||
+      scope?.provenance === "restored" ||
+      scope?.provenance === "commandCreated")
   );
 }
 
 function closedBlankRestoreCandidateCount(state: OutlineState, windowNodeId: NodeId): number {
   let count = 0;
   const visited = new Set<NodeId>();
-  const stack: Array<{ nodeId: NodeId; ownerWindowNodeId: NodeId }> =
-    (state.nodes[windowNodeId]?.childIds ?? []).map((nodeId) => ({ nodeId, ownerWindowNodeId: windowNodeId }));
+  const stack: Array<{ nodeId: NodeId; ownerWindowNodeId: NodeId }> = (
+    state.nodes[windowNodeId]?.childIds ?? []
+  ).map((nodeId) => ({ nodeId, ownerWindowNodeId: windowNodeId }));
 
   while (stack.length > 0) {
     const entry = stack.pop()!;
@@ -993,7 +1073,9 @@ function commandRelocatedTabFromCurrentState(
   }
 
   const staleTab = typeof staleTabOrId === "number" ? undefined : staleTabOrId;
-  const projectedIndex = projectLiveTabs(state, windowNode.id).findIndex((tab) => tab.tabId === tabId);
+  const projectedIndex = projectLiveTabs(state, windowNode.id).findIndex(
+    (tab) => tab.tabId === tabId
+  );
   return {
     ...(staleTab ?? {
       id: tabId,
@@ -1084,7 +1166,9 @@ function commandRelocatedMetadataEvidenceForCurrentScope(
     tab: {
       ...evidence.tab,
       windowId: node.live.windowId,
-      index: projectedRuntimeTabIndex(state, index, evidence.tab.id, node.live.windowId) ?? evidence.tab.index,
+      index:
+        projectedRuntimeTabIndex(state, index, evidence.tab.id, node.live.windowId) ??
+        evidence.tab.index,
       active: node.active === true
     }
   };
@@ -1122,16 +1206,19 @@ function tabEvidenceConflictsWithCurrentShape(
     acceptedFact &&
     tabMetadataEvidenceChanged(evidence) &&
     liveTabNodeWouldChange(node, evidence.tab) &&
-    (
-      acceptedFact.windowId !== evidence.tab.windowId ||
+    (acceptedFact.windowId !== evidence.tab.windowId ||
       (acceptedFact.index !== undefined && acceptedFact.index !== evidence.tab.index) ||
-      (acceptedFact.active !== undefined && acceptedFact.active !== evidence.tab.active)
-    )
+      (acceptedFact.active !== undefined && acceptedFact.active !== evidence.tab.active))
   ) {
     return true;
   }
 
-  const projectedIndex = projectedRuntimeTabIndex(state, index, evidence.tab.id, evidence.tab.windowId);
+  const projectedIndex = projectedRuntimeTabIndex(
+    state,
+    index,
+    evidence.tab.id,
+    evidence.tab.windowId
+  );
   if (
     projectedIndex !== undefined &&
     !evidence.changedFields.has("index") &&
@@ -1144,11 +1231,19 @@ function tabEvidenceConflictsWithCurrentShape(
     return true;
   }
 
-  if (!evidence.changedFields.has("title") && evidence.tab.title !== undefined && evidence.tab.title !== node.title) {
+  if (
+    !evidence.changedFields.has("title") &&
+    evidence.tab.title !== undefined &&
+    evidence.tab.title !== node.title
+  ) {
     return true;
   }
 
-  if (!evidence.changedFields.has("url") && evidence.tab.url !== undefined && evidence.tab.url !== node.url) {
+  if (
+    !evidence.changedFields.has("url") &&
+    evidence.tab.url !== undefined &&
+    evidence.tab.url !== node.url
+  ) {
     return true;
   }
 
@@ -1164,9 +1259,11 @@ function tabEvidenceConflictsWithCurrentShape(
 }
 
 function tabMetadataEvidenceChanged(evidence: RuntimeTabEvidence): boolean {
-  return evidence.changedFields.has("title") ||
+  return (
+    evidence.changedFields.has("title") ||
     evidence.changedFields.has("url") ||
-    evidence.changedFields.has("favIconUrl");
+    evidence.changedFields.has("favIconUrl")
+  );
 }
 
 function projectedRuntimeTabIndex(
@@ -1179,24 +1276,22 @@ function projectedRuntimeTabIndex(
   if (!windowNode) {
     return undefined;
   }
-  const projectedIndex = projectLiveTabs(state, windowNode.id).findIndex((tab) =>
-    tab.windowId === windowId &&
-    tab.tabId === tabId
+  const projectedIndex = projectLiveTabs(state, windowNode.id).findIndex(
+    (tab) => tab.windowId === windowId && tab.tabId === tabId
   );
   return projectedIndex >= 0 ? projectedIndex : undefined;
 }
 
 function liveTabNodeWouldChange(node: LiveTabNode, tab: RuntimeTab): boolean {
   const nextTitle = runtimeTitleForOutlineTab(node, tab);
-  return node.active !== tab.active ||
+  return (
+    node.active !== tab.active ||
     (tab.url !== undefined && node.url !== tab.url) ||
     node.title !== nextTitle ||
-    (tab.favIconUrl !== undefined && node.favIconUrl !== tab.favIconUrl);
+    (tab.favIconUrl !== undefined && node.favIconUrl !== tab.favIconUrl)
+  );
 }
 
 function isTransientRestoredTabEcho(tab: RuntimeTab): boolean {
-  return tab.url === "about:blank" ||
-    tab.url === "about:newtab" ||
-    tab.title === "New Tab";
+  return tab.url === "about:blank" || tab.url === "about:newtab" || tab.title === "New Tab";
 }
-

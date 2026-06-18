@@ -107,8 +107,9 @@ export async function appendRuntimeLifecycleJournalEntry(
   const journal = await loadRuntimeLifecycleJournal(api);
   await saveRuntimeLifecycleJournal(api, {
     version: RUNTIME_LIFECYCLE_JOURNAL_VERSION,
-    entries: [...journal.entries.filter((candidate) => candidate.id !== entry.id), entry]
-      .slice(-RUNTIME_LIFECYCLE_JOURNAL_LIMIT)
+    entries: [...journal.entries.filter((candidate) => candidate.id !== entry.id), entry].slice(
+      -RUNTIME_LIFECYCLE_JOURNAL_LIMIT
+    )
   });
 }
 
@@ -118,7 +119,7 @@ export async function replaceRuntimeLifecycleJournalEntry(
 ): Promise<void> {
   const journal = await loadRuntimeLifecycleJournal(api);
   const entries = journal.entries.some((candidate) => candidate.id === entry.id)
-    ? journal.entries.map((candidate) => candidate.id === entry.id ? entry : candidate)
+    ? journal.entries.map((candidate) => (candidate.id === entry.id ? entry : candidate))
     : [...journal.entries, entry];
   await saveRuntimeLifecycleJournal(api, {
     version: RUNTIME_LIFECYCLE_JOURNAL_VERSION,
@@ -161,13 +162,18 @@ function normalizeRuntimeLifecycleJournal(value: unknown): RuntimeLifecycleJourn
     return emptyRuntimeLifecycleJournal();
   }
   const candidate = value as { version?: unknown; entries?: unknown };
-  if (candidate.version !== RUNTIME_LIFECYCLE_JOURNAL_VERSION || !Array.isArray(candidate.entries)) {
+  if (
+    candidate.version !== RUNTIME_LIFECYCLE_JOURNAL_VERSION ||
+    !Array.isArray(candidate.entries)
+  ) {
     return emptyRuntimeLifecycleJournal();
   }
 
   return {
     version: RUNTIME_LIFECYCLE_JOURNAL_VERSION,
-    entries: candidate.entries.filter(isRuntimeLifecycleJournalEntry).slice(-RUNTIME_LIFECYCLE_JOURNAL_LIMIT)
+    entries: candidate.entries
+      .filter(isRuntimeLifecycleJournalEntry)
+      .slice(-RUNTIME_LIFECYCLE_JOURNAL_LIMIT)
   };
 }
 
@@ -176,38 +182,52 @@ function isRuntimeLifecycleJournalEntry(value: unknown): value is RuntimeLifecyc
     return false;
   }
   const entry = value as RuntimeLifecycleJournalEntry;
-  if (entry.version !== RUNTIME_LIFECYCLE_JOURNAL_VERSION || typeof entry.id !== "string" || typeof entry.createdAt !== "number") {
+  if (
+    entry.version !== RUNTIME_LIFECYCLE_JOURNAL_VERSION ||
+    typeof entry.id !== "string" ||
+    typeof entry.createdAt !== "number"
+  ) {
     return false;
   }
   if (entry.kind === "closeNode" || entry.kind === "deleteNode") {
     return typeof entry.nodeId === "string" && isRuntimeClosePlan(entry.plan);
   }
   if (entry.kind === "restoreNode") {
-    return typeof entry.nodeId === "string" &&
+    return (
+      typeof entry.nodeId === "string" &&
       Array.isArray(entry.before?.tabIds) &&
       Array.isArray(entry.before?.windowIds) &&
-      Array.isArray(entry.attempts);
+      Array.isArray(entry.attempts)
+    );
   }
   if (entry.kind === "relocation") {
-    return typeof entry.nodeId === "string" &&
+    return (
+      typeof entry.nodeId === "string" &&
       typeof entry.tabId === "number" &&
-      typeof entry.sourceWindowId === "number";
+      typeof entry.sourceWindowId === "number"
+    );
   }
   if (entry.kind === "history") {
-    return (entry.direction === "undo" || entry.direction === "redo") &&
+    return (
+      (entry.direction === "undo" || entry.direction === "redo") &&
       Boolean(entry.entry) &&
       Boolean(entry.poppedHistory) &&
-      Boolean(entry.delta);
+      Boolean(entry.delta)
+    );
   }
   if (entry.kind === "nativeTabClose") {
-    return typeof entry.tabId === "number" &&
+    return (
+      typeof entry.tabId === "number" &&
       (entry.windowId === undefined || typeof entry.windowId === "number") &&
-      isRuntimeClosePlan(entry.plan);
+      isRuntimeClosePlan(entry.plan)
+    );
   }
   if (entry.kind === "nativeWindowClose") {
-    return typeof entry.windowId === "number" &&
+    return (
+      typeof entry.windowId === "number" &&
       isRuntimeClosePlan(entry.plan) &&
-      (entry.sessionId === undefined || typeof entry.sessionId === "string");
+      (entry.sessionId === undefined || typeof entry.sessionId === "string")
+    );
   }
   return false;
 }
@@ -217,8 +237,10 @@ function isRuntimeClosePlan(value: unknown): value is RuntimeClosePlan {
     return false;
   }
   const plan = value as RuntimeClosePlan;
-  return Array.isArray(plan.tabIds) &&
+  return (
+    Array.isArray(plan.tabIds) &&
     plan.tabIds.every((tabId) => typeof tabId === "number") &&
     Array.isArray(plan.windowIds) &&
-    plan.windowIds.every((windowId) => typeof windowId === "number");
+    plan.windowIds.every((windowId) => typeof windowId === "number")
+  );
 }

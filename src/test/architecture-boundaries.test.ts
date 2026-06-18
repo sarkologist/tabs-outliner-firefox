@@ -29,28 +29,28 @@ const FORBIDDEN: { from: string; to: string[]; why: string }[] = [
   {
     from: "model",
     to: ["background", "sidebar", "options", "viewer", "perf", "(root)"],
-    why: "model/ is the pure domain core; it must not import other layers.",
+    why: "model/ is the pure domain core; it must not import other layers."
   },
   {
     from: "background",
     to: ["sidebar", "options", "viewer"],
-    why: "background/ owns the outline; it must not depend on the UI (sidebar/options/viewer).",
+    why: "background/ owns the outline; it must not depend on the UI (sidebar/options/viewer)."
   },
   {
     from: "perf",
     to: ["sidebar", "options", "viewer"],
-    why: "perf/ instrumentation must not depend on the UI layers.",
+    why: "perf/ instrumentation must not depend on the UI layers."
   },
   {
     from: "sidebar",
     to: ["options", "viewer"],
-    why: "the sidebar must not depend on the options page or the viewer page.",
+    why: "the sidebar must not depend on the options page or the viewer page."
   },
   {
     from: "viewer",
     to: ["background", "sidebar", "options"],
-    why: "the viewer is a leaf UI surface; it uses only model/ and talks to the background via messages.",
-  },
+    why: "the viewer is a leaf UI surface; it uses only model/ and talks to the background via messages."
+  }
 ];
 
 const topDir = (relPosix: string): string => {
@@ -114,7 +114,7 @@ it("production modules respect the layer dependency boundaries", () => {
       `Module boundary violation(s) — see the layering note in this test file:\n\n` +
         violations.join("\n\n") +
         `\n\nFix: depend "forward" through the layers (e.g. share types via model/), or, if ` +
-        `a layer genuinely needs to widen, update FORBIDDEN here with the rationale.`,
+        `a layer genuinely needs to widen, update FORBIDDEN here with the rationale.`
     );
   }
 });

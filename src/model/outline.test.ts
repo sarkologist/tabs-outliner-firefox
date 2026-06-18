@@ -26,7 +26,10 @@ import {
 import { buildOutlineLookup } from "./outline-lookup.js";
 import type { NodeId, OutlineNode, OutlineState, RuntimeWindow } from "./types.js";
 import { makeSidebarStartupState } from "../perf/sidebar-startup-shapes.js";
-import { generatedTraceConfig, generatedTraceTimeoutMs } from "../test/generated-traces.test-support.js";
+import {
+  generatedTraceConfig,
+  generatedTraceTimeoutMs
+} from "../test/generated-traces.test-support.js";
 
 const windows: RuntimeWindow[] = [
   {
@@ -223,41 +226,44 @@ describe("outline model", () => {
   });
 
   it("keeps blank opener tabs as window siblings", () => {
-    const state = bootstrapFromWindows([
-      {
-        id: 10,
-        incognito: false,
-        focused: true,
-        tabs: [
-          {
-            id: 1,
-            windowId: 10,
-            index: 0,
-            active: false,
-            url: "https://calendar.example/week",
-            title: "Google Calendar"
-          },
-          {
-            id: 2,
-            windowId: 10,
-            index: 1,
-            active: false,
-            openerTabId: 1,
-            url: "about:newtab",
-            title: "New Tab"
-          },
-          {
-            id: 3,
-            windowId: 10,
-            index: 2,
-            active: true,
-            openerTabId: 2,
-            url: "about:blank",
-            title: "New Tab"
-          }
-        ]
-      }
-    ], { now: 1000 });
+    const state = bootstrapFromWindows(
+      [
+        {
+          id: 10,
+          incognito: false,
+          focused: true,
+          tabs: [
+            {
+              id: 1,
+              windowId: 10,
+              index: 0,
+              active: false,
+              url: "https://calendar.example/week",
+              title: "Google Calendar"
+            },
+            {
+              id: 2,
+              windowId: 10,
+              index: 1,
+              active: false,
+              openerTabId: 1,
+              url: "about:newtab",
+              title: "New Tab"
+            },
+            {
+              id: 3,
+              windowId: 10,
+              index: 2,
+              active: true,
+              openerTabId: 2,
+              url: "about:blank",
+              title: "New Tab"
+            }
+          ]
+        }
+      ],
+      { now: 1000 }
+    );
 
     expect(state.nodes["window:10"]?.childIds).toEqual(["tab:1", "tab:2", "tab:3"]);
     expect(state.nodes["tab:1"]?.childIds).toEqual([]);
@@ -290,9 +296,14 @@ describe("outline model", () => {
   });
 
   it("clears blank group names back to the generic label", () => {
-    const renamed = renameGroup(bootstrapFromWindows(windows, { now: 1000 }), "window:10", "Research", {
-      now: 2000
-    });
+    const renamed = renameGroup(
+      bootstrapFromWindows(windows, { now: 1000 }),
+      "window:10",
+      "Research",
+      {
+        now: 2000
+      }
+    );
 
     const cleared = renameGroup(renamed, "window:10", "   ", { now: 3000 });
 
@@ -311,39 +322,42 @@ describe("outline model", () => {
   });
 
   it("keeps tabs under their owning window when opener metadata crosses windows", () => {
-    const state = bootstrapFromWindows([
-      {
-        id: 10,
-        incognito: false,
-        focused: true,
-        tabs: [
-          {
-            id: 1,
-            windowId: 10,
-            index: 0,
-            active: true,
-            url: "https://source.example/",
-            title: "Source"
-          }
-        ]
-      },
-      {
-        id: 20,
-        incognito: false,
-        focused: false,
-        tabs: [
-          {
-            id: 5,
-            windowId: 20,
-            index: 0,
-            active: true,
-            openerTabId: 1,
-            url: "https://target.example/",
-            title: "Target"
-          }
-        ]
-      }
-    ], { now: 1000 });
+    const state = bootstrapFromWindows(
+      [
+        {
+          id: 10,
+          incognito: false,
+          focused: true,
+          tabs: [
+            {
+              id: 1,
+              windowId: 10,
+              index: 0,
+              active: true,
+              url: "https://source.example/",
+              title: "Source"
+            }
+          ]
+        },
+        {
+          id: 20,
+          incognito: false,
+          focused: false,
+          tabs: [
+            {
+              id: 5,
+              windowId: 20,
+              index: 0,
+              active: true,
+              openerTabId: 1,
+              url: "https://target.example/",
+              title: "Target"
+            }
+          ]
+        }
+      ],
+      { now: 1000 }
+    );
 
     expect(state.nodes["window:20"]?.childIds).toEqual(["tab:5"]);
     expect(state.nodes["tab:1"]?.childIds).toEqual([]);
@@ -652,23 +666,26 @@ describe("outline model", () => {
   });
 
   it("removes an empty window after deleting its only live tab node by runtime id", () => {
-    const state = bootstrapFromWindows([
-      {
-        id: 10,
-        incognito: false,
-        focused: true,
-        tabs: [
-          {
-            id: 1,
-            windowId: 10,
-            index: 0,
-            active: true,
-            url: "https://solo.example/",
-            title: "Solo"
-          }
-        ]
-      }
-    ], { now: 1000 });
+    const state = bootstrapFromWindows(
+      [
+        {
+          id: 10,
+          incognito: false,
+          focused: true,
+          tabs: [
+            {
+              id: 1,
+              windowId: 10,
+              index: 0,
+              active: true,
+              url: "https://solo.example/",
+              title: "Solo"
+            }
+          ]
+        }
+      ],
+      { now: 1000 }
+    );
 
     const deleted = deleteLiveTabNodeByTabId(state, 1);
 
@@ -693,40 +710,46 @@ describe("outline model", () => {
   });
 
   it("keeps a closed single-tab window session with its tab when the tab is moved out", () => {
-    const state = bootstrapFromWindows([
-      {
-        id: 10,
-        incognito: false,
-        focused: true,
-        tabs: [
-          {
-            id: 1,
-            windowId: 10,
-            index: 0,
-            active: true,
-            url: "https://source.example/",
-            title: "Source"
-          }
-        ]
-      },
-      {
-        id: 20,
-        incognito: false,
-        focused: false,
-        tabs: [
-          {
-            id: 2,
-            windowId: 20,
-            index: 0,
-            active: true,
-            url: "https://target.example/",
-            title: "Target"
-          }
-        ]
-      }
-    ], { now: 1000 });
+    const state = bootstrapFromWindows(
+      [
+        {
+          id: 10,
+          incognito: false,
+          focused: true,
+          tabs: [
+            {
+              id: 1,
+              windowId: 10,
+              index: 0,
+              active: true,
+              url: "https://source.example/",
+              title: "Source"
+            }
+          ]
+        },
+        {
+          id: 20,
+          incognito: false,
+          focused: false,
+          tabs: [
+            {
+              id: 2,
+              windowId: 20,
+              index: 0,
+              active: true,
+              url: "https://target.example/",
+              title: "Target"
+            }
+          ]
+        }
+      ],
+      { now: 1000 }
+    );
     const closedSource = closeWindow(state, 10, { now: 2000, sessionId: "source-window-session" });
-    const closedTarget = closeWindow(closedSource, 20, { now: 3000, sessionId: "target-window-session" });
+    const closedTarget = closeWindow(closedSource, 20, {
+      now: 3000,
+      sessionId: "target-window-session"
+    });
 
     const moved = moveNode(closedTarget, "tab:1", { parentId: "window:20", index: 1 });
 
@@ -828,59 +851,62 @@ describe("outline model", () => {
   });
 
   it("flattens one subtree level below a node while preserving preorder", () => {
-    const state = bootstrapFromWindows([
-      {
-        id: 10,
-        incognito: false,
-        focused: true,
-        tabs: [
-          {
-            id: 1,
-            windowId: 10,
-            index: 0,
-            active: true,
-            url: "https://parent.example/",
-            title: "Parent"
-          },
-          {
-            id: 2,
-            windowId: 10,
-            index: 1,
-            active: false,
-            openerTabId: 1,
-            url: "https://child-a.example/",
-            title: "Child A"
-          },
-          {
-            id: 3,
-            windowId: 10,
-            index: 2,
-            active: false,
-            openerTabId: 2,
-            url: "https://grandchild-a.example/",
-            title: "Grandchild A"
-          },
-          {
-            id: 4,
-            windowId: 10,
-            index: 3,
-            active: false,
-            openerTabId: 1,
-            url: "https://child-b.example/",
-            title: "Child B"
-          },
-          {
-            id: 5,
-            windowId: 10,
-            index: 4,
-            active: false,
-            openerTabId: 4,
-            url: "https://grandchild-b.example/",
-            title: "Grandchild B"
-          }
-        ]
-      }
-    ], { now: 1000 });
+    const state = bootstrapFromWindows(
+      [
+        {
+          id: 10,
+          incognito: false,
+          focused: true,
+          tabs: [
+            {
+              id: 1,
+              windowId: 10,
+              index: 0,
+              active: true,
+              url: "https://parent.example/",
+              title: "Parent"
+            },
+            {
+              id: 2,
+              windowId: 10,
+              index: 1,
+              active: false,
+              openerTabId: 1,
+              url: "https://child-a.example/",
+              title: "Child A"
+            },
+            {
+              id: 3,
+              windowId: 10,
+              index: 2,
+              active: false,
+              openerTabId: 2,
+              url: "https://grandchild-a.example/",
+              title: "Grandchild A"
+            },
+            {
+              id: 4,
+              windowId: 10,
+              index: 3,
+              active: false,
+              openerTabId: 1,
+              url: "https://child-b.example/",
+              title: "Child B"
+            },
+            {
+              id: 5,
+              windowId: 10,
+              index: 4,
+              active: false,
+              openerTabId: 4,
+              url: "https://grandchild-b.example/",
+              title: "Grandchild B"
+            }
+          ]
+        }
+      ],
+      { now: 1000 }
+    );
 
     const flattened = flattenSubtreeOneLevel(state, "tab:1");
 
@@ -899,49 +925,52 @@ describe("outline model", () => {
   });
 
   it("flattens one subtree level without copying unrelated nodes", () => {
-    const state = bootstrapFromWindows([
-      {
-        id: 10,
-        incognito: false,
-        focused: true,
-        tabs: [
-          {
-            id: 1,
-            windowId: 10,
-            index: 0,
-            active: true,
-            url: "https://parent.example/",
-            title: "Parent"
-          },
-          {
-            id: 2,
-            windowId: 10,
-            index: 1,
-            active: false,
-            openerTabId: 1,
-            url: "https://child.example/",
-            title: "Child"
-          },
-          {
-            id: 3,
-            windowId: 10,
-            index: 2,
-            active: false,
-            openerTabId: 2,
-            url: "https://grandchild.example/",
-            title: "Grandchild"
-          },
-          {
-            id: 4,
-            windowId: 10,
-            index: 3,
-            active: false,
-            url: "https://sibling.example/",
-            title: "Sibling"
-          }
-        ]
-      }
-    ], { now: 1000 });
+    const state = bootstrapFromWindows(
+      [
+        {
+          id: 10,
+          incognito: false,
+          focused: true,
+          tabs: [
+            {
+              id: 1,
+              windowId: 10,
+              index: 0,
+              active: true,
+              url: "https://parent.example/",
+              title: "Parent"
+            },
+            {
+              id: 2,
+              windowId: 10,
+              index: 1,
+              active: false,
+              openerTabId: 1,
+              url: "https://child.example/",
+              title: "Child"
+            },
+            {
+              id: 3,
+              windowId: 10,
+              index: 2,
+              active: false,
+              openerTabId: 2,
+              url: "https://grandchild.example/",
+              title: "Grandchild"
+            },
+            {
+              id: 4,
+              windowId: 10,
+              index: 3,
+              active: false,
+              url: "https://sibling.example/",
+              title: "Sibling"
+            }
+          ]
+        }
+      ],
+      { now: 1000 }
+    );
 
     const flattened = flattenSubtreeOneLevel(state, "tab:1");
 
@@ -969,49 +998,52 @@ describe("outline model", () => {
   });
 
   it("promotes one node's children without flattening sibling subtrees", () => {
-    const state = bootstrapFromWindows([
-      {
-        id: 10,
-        incognito: false,
-        focused: true,
-        tabs: [
-          {
-            id: 1,
-            windowId: 10,
-            index: 0,
-            active: true,
-            url: "https://a.example/",
-            title: "A"
-          },
-          {
-            id: 2,
-            windowId: 10,
-            index: 1,
-            active: false,
-            openerTabId: 1,
-            url: "https://a-child.example/",
-            title: "a1"
-          },
-          {
-            id: 3,
-            windowId: 10,
-            index: 2,
-            active: false,
-            url: "https://b.example/",
-            title: "B"
-          },
-          {
-            id: 4,
-            windowId: 10,
-            index: 3,
-            active: false,
-            openerTabId: 3,
-            url: "https://b-child.example/",
-            title: "b1"
-          }
-        ]
-      }
-    ], { now: 1000 });
+    const state = bootstrapFromWindows(
+      [
+        {
+          id: 10,
+          incognito: false,
+          focused: true,
+          tabs: [
+            {
+              id: 1,
+              windowId: 10,
+              index: 0,
+              active: true,
+              url: "https://a.example/",
+              title: "A"
+            },
+            {
+              id: 2,
+              windowId: 10,
+              index: 1,
+              active: false,
+              openerTabId: 1,
+              url: "https://a-child.example/",
+              title: "a1"
+            },
+            {
+              id: 3,
+              windowId: 10,
+              index: 2,
+              active: false,
+              url: "https://b.example/",
+              title: "B"
+            },
+            {
+              id: 4,
+              windowId: 10,
+              index: 3,
+              active: false,
+              openerTabId: 3,
+              url: "https://b-child.example/",
+              title: "b1"
+            }
+          ]
+        }
+      ],
+      { now: 1000 }
+    );
 
     const promoted = promoteChildrenOneLevel(state, "tab:1");
 
@@ -1061,11 +1093,16 @@ describe("outline model", () => {
 
   it("wraps a live tab subtree in a new live window", () => {
     const state = bootstrapFromWindows(windows, { now: 1000 });
-    const moved = moveTabToNewLiveWindow(state, "tab:1", {
-      id: 42,
-      focused: true,
-      incognito: false
-    }, { now: 2000 });
+    const moved = moveTabToNewLiveWindow(
+      state,
+      "tab:1",
+      {
+        id: 42,
+        focused: true,
+        incognito: false
+      },
+      { now: 2000 }
+    );
 
     expect(moved.rootIds).toEqual(["window:10", "window:42"]);
     expect(moved.nodes["window:10"]?.childIds).toEqual(["tab:3"]);
@@ -1086,30 +1123,38 @@ describe("outline model", () => {
   });
 
   it("inserts a new live window at the requested root index", () => {
-    const state = bootstrapFromWindows([
-      ...windows,
-      {
-        id: 20,
-        incognito: false,
-        focused: false,
-        tabs: [
-          {
-            id: 5,
-            windowId: 20,
-            index: 0,
-            active: true,
-            url: "https://target.example/",
-            title: "Target"
-          }
-        ]
-      }
-    ], { now: 1000 });
+    const state = bootstrapFromWindows(
+      [
+        ...windows,
+        {
+          id: 20,
+          incognito: false,
+          focused: false,
+          tabs: [
+            {
+              id: 5,
+              windowId: 20,
+              index: 0,
+              active: true,
+              url: "https://target.example/",
+              title: "Target"
+            }
+          ]
+        }
+      ],
+      { now: 1000 }
+    );
 
-    const moved = moveTabToNewLiveWindow(state, "tab:1", {
-      id: 42,
-      focused: true,
-      incognito: false
-    }, { now: 2000, rootIndex: 1 });
+    const moved = moveTabToNewLiveWindow(
+      state,
+      "tab:1",
+      {
+        id: 42,
+        focused: true,
+        incognito: false
+      },
+      { now: 2000, rootIndex: 1 }
+    );
 
     expect(moved.rootIds).toEqual(["window:10", "window:42", "window:20"]);
     expect(moved.nodes["window:42"]?.childIds).toEqual(["tab:1"]);
@@ -1136,10 +1181,12 @@ describe("outline model", () => {
     expect(moved.nodes[placeholderId]?.restore).toBeUndefined();
     expect(moved.nodes["tab:1"]?.parentId).toBe(placeholderId);
     expect(moved.nodes["tab:1"]?.status).toBe("closed");
-    expect(planRestore(moved, placeholderId).map((plan) => ({
-      ...plan,
-      windowNodeId: plan.windowNodeId
-    }))).toEqual([
+    expect(
+      planRestore(moved, placeholderId).map((plan) => ({
+        ...plan,
+        windowNodeId: plan.windowNodeId
+      }))
+    ).toEqual([
       {
         nodeId: "tab:1",
         kind: "session",
@@ -1232,7 +1279,9 @@ describe("outline model", () => {
   });
 
   it("wraps existing neutral group rows in another neutral group", () => {
-    const state = wrapNodeInGroup(bootstrapFromWindows(windows, { now: 1000 }), "window:10", { now: 3000 });
+    const state = wrapNodeInGroup(bootstrapFromWindows(windows, { now: 1000 }), "window:10", {
+      now: 3000
+    });
 
     const wrapped = wrapNodeInGroup(state, "group:3000", { now: 4000 });
 
@@ -1265,27 +1314,34 @@ describe("outline model", () => {
   });
 
   it("preserves the source window session when wrapping its only closed tab", () => {
-    const state = closeWindow(bootstrapFromWindows([
-      ...windows,
-      {
-        id: 20,
-        incognito: false,
-        focused: false,
-        tabs: [
+    const state = closeWindow(
+      bootstrapFromWindows(
+        [
+          ...windows,
           {
-            id: 5,
-            windowId: 20,
-            index: 0,
-            active: true,
-            url: "about:debugging#/runtime/this-firefox",
-            title: "Debugging - Runtime / this-firefox"
+            id: 20,
+            incognito: false,
+            focused: false,
+            tabs: [
+              {
+                id: 5,
+                windowId: 20,
+                index: 0,
+                active: true,
+                url: "about:debugging#/runtime/this-firefox",
+                title: "Debugging - Runtime / this-firefox"
+              }
+            ]
           }
-        ]
+        ],
+        { now: 1000 }
+      ),
+      20,
+      {
+        now: 2000,
+        sessionId: "session-window-20"
       }
-    ], { now: 1000 }), 20, {
-      now: 2000,
-      sessionId: "session-window-20"
-    });
+    );
     const moved = moveTabToNewClosedWindow(state, "tab:5", { now: 3000 });
     const placeholderId = moved.rootIds.at(-1)!;
 
@@ -1342,31 +1398,38 @@ describe("outline model", () => {
   });
 
   it("plans blank create targets for closed about blank and newtab nodes", () => {
-    const state = closeWindow(bootstrapFromWindows([
-      {
-        id: 10,
-        focused: true,
-        incognito: false,
-        tabs: [
+    const state = closeWindow(
+      bootstrapFromWindows(
+        [
           {
-            id: 1,
-            windowId: 10,
-            index: 0,
-            active: true,
-            url: "about:newtab",
-            title: "New Tab"
-          },
-          {
-            id: 2,
-            windowId: 10,
-            index: 1,
-            active: false,
-            url: "about:blank",
-            title: "New Tab"
+            id: 10,
+            focused: true,
+            incognito: false,
+            tabs: [
+              {
+                id: 1,
+                windowId: 10,
+                index: 0,
+                active: true,
+                url: "about:newtab",
+                title: "New Tab"
+              },
+              {
+                id: 2,
+                windowId: 10,
+                index: 1,
+                active: false,
+                url: "about:blank",
+                title: "New Tab"
+              }
+            ]
           }
-        ]
-      }
-    ], { now: 1000 }), 10, { now: 2000 });
+        ],
+        { now: 1000 }
+      ),
+      10,
+      { now: 2000 }
+    );
 
     expect(planRestore(state, "window:10")).toEqual([
       {
@@ -1392,15 +1455,22 @@ describe("outline model", () => {
 
   it("counts unique restorable closed nodes in a restore subtree", () => {
     const tabCount = LARGE_RESTORE_NODE_THRESHOLD + 1;
-    const state = closeWindow(bootstrapFromWindows([windowWithTabs(10, tabCount)], { now: 1000 }), 10, {
-      now: 2000,
-      sessionId: "session-window-10"
-    });
+    const state = closeWindow(
+      bootstrapFromWindows([windowWithTabs(10, tabCount)], { now: 1000 }),
+      10,
+      {
+        now: 2000,
+        sessionId: "session-window-10"
+      }
+    );
 
     const scope = analyzeRestoreScope(state, "window:10");
 
     expect(scope).toEqual({
-      nodeIds: ["window:10", ...Array.from({ length: tabCount }, (_value, index) => `tab:${index + 1}`)],
+      nodeIds: [
+        "window:10",
+        ...Array.from({ length: tabCount }, (_value, index) => `tab:${index + 1}`)
+      ],
       totalCount: tabCount + 1,
       tabCount,
       windowCount: 1,
@@ -2002,26 +2072,33 @@ describe("outline model", () => {
     expect(restoredRootUrl.nodes["tab:1"]?.title).toBe("Example");
     expect(restoredRootUrl.nodes["tab:1"]?.url).toBe("https://example.com/");
 
-    const localState = closeTab(bootstrapFromWindows([
-      {
-        id: 20,
-        incognito: false,
-        focused: true,
-        tabs: [
+    const localState = closeTab(
+      bootstrapFromWindows(
+        [
           {
             id: 20,
-            windowId: 20,
-            index: 0,
-            active: true,
-            url: "http://localhost:8089/restored",
-            title: "Saved Local"
+            incognito: false,
+            focused: true,
+            tabs: [
+              {
+                id: 20,
+                windowId: 20,
+                index: 0,
+                active: true,
+                url: "http://localhost:8089/restored",
+                title: "Saved Local"
+              }
+            ]
           }
-        ]
+        ],
+        { now: 1000 }
+      ),
+      20,
+      {
+        now: 2000,
+        sessionId: "session-local"
       }
-    ], { now: 1000 }), 20, {
-      now: 2000,
-      sessionId: "session-local"
-    });
+    );
     const restoredLocal = restoreNodes(localState, [
       {
         nodeId: "tab:20",
@@ -2053,31 +2130,35 @@ describe("outline model", () => {
       }
     ]);
 
-    const reconciled = reconcileWithWindows(restored, [
-      {
-        id: 10,
-        incognito: false,
-        focused: true,
-        tabs: [
-          {
-            id: 1,
-            windowId: 10,
-            index: 0,
-            active: true,
-            url: "https://example.com/",
-            title: "Example"
-          },
-          {
-            id: 22,
-            windowId: 10,
-            index: 1,
-            active: false,
-            url: "https://example.com/child",
-            title: "Loaded child"
-          }
-        ]
-      }
-    ], { now: 5000 });
+    const reconciled = reconcileWithWindows(
+      restored,
+      [
+        {
+          id: 10,
+          incognito: false,
+          focused: true,
+          tabs: [
+            {
+              id: 1,
+              windowId: 10,
+              index: 0,
+              active: true,
+              url: "https://example.com/",
+              title: "Example"
+            },
+            {
+              id: 22,
+              windowId: 10,
+              index: 1,
+              active: false,
+              url: "https://example.com/child",
+              title: "Loaded child"
+            }
+          ]
+        }
+      ],
+      { now: 5000 }
+    );
 
     expect(restored.nodes["tab:2"]?.title).toBe("Child");
     expect(reconciled.nodes["tab:2"]?.title).toBe("Loaded child");
@@ -2109,38 +2190,41 @@ describe("outline model", () => {
   });
 
   it("preserves a restored closed window under closed ancestors", () => {
-    let state = bootstrapFromWindows([
-      {
-        id: 10,
-        incognito: false,
-        focused: true,
-        tabs: [
-          {
-            id: 1,
-            windowId: 10,
-            index: 0,
-            active: true,
-            url: "https://parent.example/",
-            title: "Parent"
-          }
-        ]
-      },
-      {
-        id: 20,
-        incognito: false,
-        focused: false,
-        tabs: [
-          {
-            id: 2,
-            windowId: 20,
-            index: 0,
-            active: true,
-            url: "https://child.example/",
-            title: "Child"
-          }
-        ]
-      }
-    ], { now: 1000 });
+    let state = bootstrapFromWindows(
+      [
+        {
+          id: 10,
+          incognito: false,
+          focused: true,
+          tabs: [
+            {
+              id: 1,
+              windowId: 10,
+              index: 0,
+              active: true,
+              url: "https://parent.example/",
+              title: "Parent"
+            }
+          ]
+        },
+        {
+          id: 20,
+          incognito: false,
+          focused: false,
+          tabs: [
+            {
+              id: 2,
+              windowId: 20,
+              index: 0,
+              active: true,
+              url: "https://child.example/",
+              title: "Child"
+            }
+          ]
+        }
+      ],
+      { now: 1000 }
+    );
     state = closeWindow(state, 20, { now: 2000, sessionId: "session-window-20" });
     state = closeWindow(state, 10, { now: 3000, sessionId: "session-window-10" });
     state = {
@@ -2336,31 +2420,35 @@ describe("outline model", () => {
       }
     ]);
 
-    const reconciled = reconcileWithWindows(restored, [
-      {
-        id: 50,
-        incognito: false,
-        focused: true,
-        tabs: [
-          {
-            id: 10,
-            windowId: 50,
-            index: 0,
-            active: true,
-            url: "https://subgroup.example/",
-            title: "Imported subgroup"
-          },
-          {
-            id: 11,
-            windowId: 50,
-            index: 1,
-            active: false,
-            url: "https://subgroup.example/child",
-            title: "Imported child"
-          }
-        ]
-      }
-    ], { now: 2000 });
+    const reconciled = reconcileWithWindows(
+      restored,
+      [
+        {
+          id: 50,
+          incognito: false,
+          focused: true,
+          tabs: [
+            {
+              id: 10,
+              windowId: 50,
+              index: 0,
+              active: true,
+              url: "https://subgroup.example/",
+              title: "Imported subgroup"
+            },
+            {
+              id: 11,
+              windowId: 50,
+              index: 1,
+              active: false,
+              url: "https://subgroup.example/child",
+              title: "Imported child"
+            }
+          ]
+        }
+      ],
+      { now: 2000 }
+    );
 
     expect(reconciled.rootIds).toEqual(["window:parent"]);
     expect(reconciled.nodes["window:parent"]?.status).toBe("closed");
@@ -2430,43 +2518,86 @@ describe("outline model", () => {
       }
     };
     const restored = restoreNodes(state, [
-      { nodeId: "tab:subgroup", tabId: 10, windowId: 50, url: "https://subgroup.example/", title: "Imported subgroup" },
-      { nodeId: "tab:child", tabId: 11, windowId: 50, url: "https://subgroup.example/child", title: "Imported child" }
+      {
+        nodeId: "tab:subgroup",
+        tabId: 10,
+        windowId: 50,
+        url: "https://subgroup.example/",
+        title: "Imported subgroup"
+      },
+      {
+        nodeId: "tab:child",
+        tabId: 11,
+        windowId: 50,
+        url: "https://subgroup.example/child",
+        title: "Imported child"
+      }
     ]);
 
     // Runtime now reports tab 10 dragged into a brand-new window 60; tab 11 stays.
-    const reconciled = reconcileWithWindows(restored, [
-      {
-        id: 50,
-        incognito: false,
-        focused: false,
-        tabs: [{ id: 11, windowId: 50, index: 0, active: true, url: "https://subgroup.example/child", title: "Imported child" }]
-      },
-      {
-        id: 60,
-        incognito: false,
-        focused: true,
-        tabs: [{ id: 10, windowId: 60, index: 0, active: true, url: "https://subgroup.example/", title: "Imported subgroup" }]
-      }
-    ], { now: 3000 });
+    const reconciled = reconcileWithWindows(
+      restored,
+      [
+        {
+          id: 50,
+          incognito: false,
+          focused: false,
+          tabs: [
+            {
+              id: 11,
+              windowId: 50,
+              index: 0,
+              active: true,
+              url: "https://subgroup.example/child",
+              title: "Imported child"
+            }
+          ]
+        },
+        {
+          id: 60,
+          incognito: false,
+          focused: true,
+          tabs: [
+            {
+              id: 10,
+              windowId: 60,
+              index: 0,
+              active: true,
+              url: "https://subgroup.example/",
+              title: "Imported subgroup"
+            }
+          ]
+        }
+      ],
+      { now: 3000 }
+    );
 
     const liveWindowForRuntime = (runtimeWindowId: number): OutlineNode | undefined =>
       Object.values(reconciled.nodes).find(
-        (node) => node.kind === "window" && node.status === "live" && node.live?.windowId === runtimeWindowId
+        (node) =>
+          node.kind === "window" &&
+          node.status === "live" &&
+          node.live?.windowId === runtimeWindowId
       );
 
     // The new window 60 must have a surviving live window node, and the dragged
     // subgroup owner must be reattached under it (out of the closed parent).
     const window60 = liveWindowForRuntime(60);
     expect(window60).toBeDefined();
-    expect(reconciled.nodes["tab:subgroup"]).toMatchObject({ status: "live", live: { tabId: 10, windowId: 60 } });
+    expect(reconciled.nodes["tab:subgroup"]).toMatchObject({
+      status: "live",
+      live: { tabId: 10, windowId: 60 }
+    });
     expect(reconciled.nodes["tab:subgroup"]?.parentId).toBe(window60!.id);
     expect(window60!.childIds).toContain("tab:subgroup");
 
     // The child stays in window 50, under a surviving live window node for 50.
     const window50 = liveWindowForRuntime(50);
     expect(window50).toBeDefined();
-    expect(reconciled.nodes["tab:child"]).toMatchObject({ status: "live", live: { tabId: 11, windowId: 50 } });
+    expect(reconciled.nodes["tab:child"]).toMatchObject({
+      status: "live",
+      live: { tabId: 11, windowId: 50 }
+    });
   });
 
   it("keeps a flattened restored subgroup's live tabs under the closed parent window", () => {
@@ -2525,17 +2656,35 @@ describe("outline model", () => {
     const flattened = flattenSubtreeOneLevel(state, "window:parent");
     expect(flattened.nodes["window:parent"]?.childIds).toEqual(["tab:subgroup", "tab:child"]);
 
-    const reconciled = reconcileWithWindows(flattened, [
-      {
-        id: 50,
-        incognito: false,
-        focused: true,
-        tabs: [
-          { id: 10, windowId: 50, index: 0, active: true, url: "https://subgroup.example/", title: "Subgroup" },
-          { id: 11, windowId: 50, index: 1, active: false, url: "https://subgroup.example/child", title: "Child" }
-        ]
-      }
-    ], { now: 3000 });
+    const reconciled = reconcileWithWindows(
+      flattened,
+      [
+        {
+          id: 50,
+          incognito: false,
+          focused: true,
+          tabs: [
+            {
+              id: 10,
+              windowId: 50,
+              index: 0,
+              active: true,
+              url: "https://subgroup.example/",
+              title: "Subgroup"
+            },
+            {
+              id: 11,
+              windowId: 50,
+              index: 1,
+              active: false,
+              url: "https://subgroup.example/child",
+              title: "Child"
+            }
+          ]
+        }
+      ],
+      { now: 3000 }
+    );
 
     expect(reconciled.nodes["tab:subgroup"]).toMatchObject({
       status: "live",
@@ -2634,23 +2783,26 @@ describe("outline model", () => {
   });
 
   it("updates stale browser-created provenance when a closed window is restored live", () => {
-    const browserCreated = bootstrapFromWindows([
-      {
-        id: 21,
-        incognito: false,
-        focused: true,
-        tabs: [
-          {
-            id: 100,
-            windowId: 21,
-            index: 0,
-            active: true,
-            url: "https://external.example/",
-            title: "External"
-          }
-        ]
-      }
-    ], { now: 1000 });
+    const browserCreated = bootstrapFromWindows(
+      [
+        {
+          id: 21,
+          incognito: false,
+          focused: true,
+          tabs: [
+            {
+              id: 100,
+              windowId: 21,
+              index: 0,
+              active: true,
+              url: "https://external.example/",
+              title: "External"
+            }
+          ]
+        }
+      ],
+      { now: 1000 }
+    );
     browserCreated.nodes["window:21"]!.runtimeProvenance = "browserCreated";
     const state = closeWindow(browserCreated, 21, { now: 2000 });
 
@@ -2676,41 +2828,48 @@ describe("outline model", () => {
   });
 
   it("marks restored focused windows active and clears the previous active window", () => {
-    const state = closeWindow(bootstrapFromWindows([
-      {
-        id: 10,
-        incognito: false,
-        focused: true,
-        tabs: [
+    const state = closeWindow(
+      bootstrapFromWindows(
+        [
           {
-            id: 1,
-            windowId: 10,
-            index: 0,
-            active: true,
-            url: "https://active.example/",
-            title: "Active"
-          }
-        ]
-      },
-      {
-        id: 20,
-        incognito: false,
-        focused: false,
-        tabs: [
+            id: 10,
+            incognito: false,
+            focused: true,
+            tabs: [
+              {
+                id: 1,
+                windowId: 10,
+                index: 0,
+                active: true,
+                url: "https://active.example/",
+                title: "Active"
+              }
+            ]
+          },
           {
-            id: 2,
-            windowId: 20,
-            index: 0,
-            active: true,
-            url: "https://restored.example/",
-            title: "Restored"
+            id: 20,
+            incognito: false,
+            focused: false,
+            tabs: [
+              {
+                id: 2,
+                windowId: 20,
+                index: 0,
+                active: true,
+                url: "https://restored.example/",
+                title: "Restored"
+              }
+            ]
           }
-        ]
+        ],
+        { now: 1000 }
+      ),
+      20,
+      {
+        now: 2000,
+        sessionId: "session-window-20"
       }
-    ], { now: 1000 }), 20, {
-      now: 2000,
-      sessionId: "session-window-20"
-    });
+    );
 
     const restored = restoreNodes(state, [
       {
@@ -2733,41 +2892,48 @@ describe("outline model", () => {
   });
 
   it("keeps the current active window when restoring an unfocused window", () => {
-    const state = closeWindow(bootstrapFromWindows([
-      {
-        id: 10,
-        incognito: false,
-        focused: true,
-        tabs: [
+    const state = closeWindow(
+      bootstrapFromWindows(
+        [
           {
-            id: 1,
-            windowId: 10,
-            index: 0,
-            active: true,
-            url: "https://active.example/",
-            title: "Active"
-          }
-        ]
-      },
-      {
-        id: 20,
-        incognito: false,
-        focused: false,
-        tabs: [
+            id: 10,
+            incognito: false,
+            focused: true,
+            tabs: [
+              {
+                id: 1,
+                windowId: 10,
+                index: 0,
+                active: true,
+                url: "https://active.example/",
+                title: "Active"
+              }
+            ]
+          },
           {
-            id: 2,
-            windowId: 20,
-            index: 0,
-            active: true,
-            url: "https://restored.example/",
-            title: "Restored"
+            id: 20,
+            incognito: false,
+            focused: false,
+            tabs: [
+              {
+                id: 2,
+                windowId: 20,
+                index: 0,
+                active: true,
+                url: "https://restored.example/",
+                title: "Restored"
+              }
+            ]
           }
-        ]
+        ],
+        { now: 1000 }
+      ),
+      20,
+      {
+        now: 2000,
+        sessionId: "session-window-20"
       }
-    ], { now: 1000 }), 20, {
-      now: 2000,
-      sessionId: "session-window-20"
-    });
+    );
 
     const restored = restoreNodes(state, [
       {
@@ -2959,23 +3125,26 @@ describe("outline model", () => {
   });
 
   it("removes a window when its only child is deleted", () => {
-    const state = bootstrapFromWindows([
-      {
-        id: 10,
-        incognito: false,
-        focused: true,
-        tabs: [
-          {
-            id: 1,
-            windowId: 10,
-            index: 0,
-            active: true,
-            url: "https://solo.example/",
-            title: "Solo"
-          }
-        ]
-      }
-    ], { now: 1000 });
+    const state = bootstrapFromWindows(
+      [
+        {
+          id: 10,
+          incognito: false,
+          focused: true,
+          tabs: [
+            {
+              id: 1,
+              windowId: 10,
+              index: 0,
+              active: true,
+              url: "https://solo.example/",
+              title: "Solo"
+            }
+          ]
+        }
+      ],
+      { now: 1000 }
+    );
 
     const deleted = deleteNode(state, "tab:1", { allowLive: true });
 
@@ -2985,38 +3154,41 @@ describe("outline model", () => {
   });
 
   it("removes a window when its only child is moved elsewhere", () => {
-    const state = bootstrapFromWindows([
-      {
-        id: 10,
-        incognito: false,
-        focused: true,
-        tabs: [
-          {
-            id: 1,
-            windowId: 10,
-            index: 0,
-            active: true,
-            url: "https://solo.example/",
-            title: "Solo"
-          }
-        ]
-      },
-      {
-        id: 20,
-        incognito: false,
-        focused: false,
-        tabs: [
-          {
-            id: 2,
-            windowId: 20,
-            index: 0,
-            active: true,
-            url: "https://target.example/",
-            title: "Target"
-          }
-        ]
-      }
-    ], { now: 1000 });
+    const state = bootstrapFromWindows(
+      [
+        {
+          id: 10,
+          incognito: false,
+          focused: true,
+          tabs: [
+            {
+              id: 1,
+              windowId: 10,
+              index: 0,
+              active: true,
+              url: "https://solo.example/",
+              title: "Solo"
+            }
+          ]
+        },
+        {
+          id: 20,
+          incognito: false,
+          focused: false,
+          tabs: [
+            {
+              id: 2,
+              windowId: 20,
+              index: 0,
+              active: true,
+              url: "https://target.example/",
+              title: "Target"
+            }
+          ]
+        }
+      ],
+      { now: 1000 }
+    );
 
     const moved = moveNode(state, "tab:1", { parentId: "window:20", index: 1 });
 
@@ -3027,38 +3199,45 @@ describe("outline model", () => {
   });
 
   it("removes a neutral group when its only child is moved elsewhere", () => {
-    const state = wrapNodeInGroup(bootstrapFromWindows([
-      {
-        id: 10,
-        incognito: false,
-        focused: true,
-        tabs: [
+    const state = wrapNodeInGroup(
+      bootstrapFromWindows(
+        [
           {
-            id: 1,
-            windowId: 10,
-            index: 0,
-            active: true,
-            url: "https://one.example/",
-            title: "One"
-          }
-        ]
-      },
-      {
-        id: 20,
-        incognito: false,
-        focused: false,
-        tabs: [
+            id: 10,
+            incognito: false,
+            focused: true,
+            tabs: [
+              {
+                id: 1,
+                windowId: 10,
+                index: 0,
+                active: true,
+                url: "https://one.example/",
+                title: "One"
+              }
+            ]
+          },
           {
-            id: 2,
-            windowId: 20,
-            index: 0,
-            active: true,
-            url: "https://two.example/",
-            title: "Two"
+            id: 20,
+            incognito: false,
+            focused: false,
+            tabs: [
+              {
+                id: 2,
+                windowId: 20,
+                index: 0,
+                active: true,
+                url: "https://two.example/",
+                title: "Two"
+              }
+            ]
           }
-        ]
-      }
-    ], { now: 1000 }), "window:10", { now: 3000 });
+        ],
+        { now: 1000 }
+      ),
+      "window:10",
+      { now: 3000 }
+    );
     const wrapperId = state.nodes["window:10"]?.parentId;
 
     const moved = moveNode(state, "window:10", { index: 2 });
@@ -3070,38 +3249,45 @@ describe("outline model", () => {
   });
 
   it("moves nested group-like subtrees to root after their ultimate ancestor", () => {
-    const wrapped = wrapNodeInGroup(bootstrapFromWindows([
-      {
-        id: 10,
-        incognito: false,
-        focused: true,
-        tabs: [
+    const wrapped = wrapNodeInGroup(
+      bootstrapFromWindows(
+        [
           {
-            id: 1,
-            windowId: 10,
-            index: 0,
-            active: true,
-            url: "https://one.example/",
-            title: "One"
-          }
-        ]
-      },
-      {
-        id: 20,
-        incognito: false,
-        focused: false,
-        tabs: [
+            id: 10,
+            incognito: false,
+            focused: true,
+            tabs: [
+              {
+                id: 1,
+                windowId: 10,
+                index: 0,
+                active: true,
+                url: "https://one.example/",
+                title: "One"
+              }
+            ]
+          },
           {
-            id: 2,
-            windowId: 20,
-            index: 0,
-            active: true,
-            url: "https://two.example/",
-            title: "Two"
+            id: 20,
+            incognito: false,
+            focused: false,
+            tabs: [
+              {
+                id: 2,
+                windowId: 20,
+                index: 0,
+                active: true,
+                url: "https://two.example/",
+                title: "Two"
+              }
+            ]
           }
-        ]
-      }
-    ], { now: 1000 }), "window:10", { now: 3000 });
+        ],
+        { now: 1000 }
+      ),
+      "window:10",
+      { now: 3000 }
+    );
     const wrapperId = wrapped.nodes["window:10"]?.parentId;
     const nested = moveNode(wrapped, "window:20", { parentId: wrapperId!, index: 1 });
 
@@ -3168,23 +3354,26 @@ describe("outline model", () => {
   });
 
   it("removes emptied ancestors when moving a wrapped tab to top level", () => {
-    const state = bootstrapFromWindows([
-      {
-        id: 10,
-        incognito: false,
-        focused: true,
-        tabs: [
-          {
-            id: 1,
-            windowId: 10,
-            index: 0,
-            active: true,
-            url: "https://solo.example/",
-            title: "Solo"
-          }
-        ]
-      }
-    ], { now: 1000 });
+    const state = bootstrapFromWindows(
+      [
+        {
+          id: 10,
+          incognito: false,
+          focused: true,
+          tabs: [
+            {
+              id: 1,
+              windowId: 10,
+              index: 0,
+              active: true,
+              url: "https://solo.example/",
+              title: "Solo"
+            }
+          ]
+        }
+      ],
+      { now: 1000 }
+    );
 
     const moved = moveSubtreeToTopLevel(state, "tab:1", {
       now: 3000,
@@ -3202,24 +3391,27 @@ describe("outline model", () => {
   });
 
   it("wraps live tabs before moving them to the bottom top level", () => {
-    const state = bootstrapFromWindows([
-      ...windows,
-      {
-        id: 20,
-        incognito: false,
-        focused: false,
-        tabs: [
-          {
-            id: 20,
-            windowId: 20,
-            index: 0,
-            active: true,
-            url: "https://last.example/",
-            title: "Last"
-          }
-        ]
-      }
-    ], { now: 1000 });
+    const state = bootstrapFromWindows(
+      [
+        ...windows,
+        {
+          id: 20,
+          incognito: false,
+          focused: false,
+          tabs: [
+            {
+              id: 20,
+              windowId: 20,
+              index: 0,
+              active: true,
+              url: "https://last.example/",
+              title: "Last"
+            }
+          ]
+        }
+      ],
+      { now: 1000 }
+    );
 
     const moved = moveSubtreeToBottomTopLevel(state, "tab:1", {
       now: 3000,
@@ -3239,53 +3431,60 @@ describe("outline model", () => {
   });
 
   it("moves nested group-like subtrees to the bottom top level", () => {
-    const wrapped = wrapNodeInGroup(bootstrapFromWindows([
-      {
-        id: 10,
-        incognito: false,
-        focused: true,
-        tabs: [
+    const wrapped = wrapNodeInGroup(
+      bootstrapFromWindows(
+        [
           {
-            id: 1,
-            windowId: 10,
-            index: 0,
-            active: true,
-            url: "https://one.example/",
-            title: "One"
-          }
-        ]
-      },
-      {
-        id: 20,
-        incognito: false,
-        focused: false,
-        tabs: [
+            id: 10,
+            incognito: false,
+            focused: true,
+            tabs: [
+              {
+                id: 1,
+                windowId: 10,
+                index: 0,
+                active: true,
+                url: "https://one.example/",
+                title: "One"
+              }
+            ]
+          },
           {
-            id: 2,
-            windowId: 20,
-            index: 0,
-            active: true,
-            url: "https://two.example/",
-            title: "Two"
-          }
-        ]
-      },
-      {
-        id: 30,
-        incognito: false,
-        focused: false,
-        tabs: [
+            id: 20,
+            incognito: false,
+            focused: false,
+            tabs: [
+              {
+                id: 2,
+                windowId: 20,
+                index: 0,
+                active: true,
+                url: "https://two.example/",
+                title: "Two"
+              }
+            ]
+          },
           {
-            id: 3,
-            windowId: 30,
-            index: 0,
-            active: true,
-            url: "https://three.example/",
-            title: "Three"
+            id: 30,
+            incognito: false,
+            focused: false,
+            tabs: [
+              {
+                id: 3,
+                windowId: 30,
+                index: 0,
+                active: true,
+                url: "https://three.example/",
+                title: "Three"
+              }
+            ]
           }
-        ]
-      }
-    ], { now: 1000 }), "window:10", { now: 3000 });
+        ],
+        { now: 1000 }
+      ),
+      "window:10",
+      { now: 3000 }
+    );
     const wrapperId = wrapped.nodes["window:10"]?.parentId;
     const nested = moveNode(wrapped, "window:20", { parentId: wrapperId!, index: 1 });
 
@@ -3298,24 +3497,27 @@ describe("outline model", () => {
   });
 
   it("moves root group-like rows to the bottom top level", () => {
-    const state = bootstrapFromWindows([
-      ...windows,
-      {
-        id: 20,
-        incognito: false,
-        focused: false,
-        tabs: [
-          {
-            id: 20,
-            windowId: 20,
-            index: 0,
-            active: true,
-            url: "https://last.example/",
-            title: "Last"
-          }
-        ]
-      }
-    ], { now: 1000 });
+    const state = bootstrapFromWindows(
+      [
+        ...windows,
+        {
+          id: 20,
+          incognito: false,
+          focused: false,
+          tabs: [
+            {
+              id: 20,
+              windowId: 20,
+              index: 0,
+              active: true,
+              url: "https://last.example/",
+              title: "Last"
+            }
+          ]
+        }
+      ],
+      { now: 1000 }
+    );
 
     const moved = moveSubtreeToBottomTopLevel(state, "window:10", { now: 3000 });
 
@@ -3357,9 +3559,14 @@ describe("outline model", () => {
   });
 
   it("preserves custom group titles during repair", () => {
-    const state = renameGroup(bootstrapFromWindows(windows, { now: 1000 }), "window:10", "Research", {
-      now: 2000
-    });
+    const state = renameGroup(
+      bootstrapFromWindows(windows, { now: 1000 }),
+      "window:10",
+      "Research",
+      {
+        now: 2000
+      }
+    );
 
     const repaired = repairState(state);
 
@@ -3546,32 +3753,36 @@ describe("outline model", () => {
     });
     stored.nodes["window:10"]!.title = "Current window";
 
-    const reconciled = reconcileWithWindows(stored, [
-      {
-        id: 10,
-        incognito: false,
-        focused: true,
-        tabs: [
-          {
-            id: 1,
-            windowId: 10,
-            index: 0,
-            active: true,
-            url: "https://example.com/",
-            title: "Example updated"
-          },
-          {
-            id: 5,
-            windowId: 10,
-            index: 1,
-            active: false,
-            openerTabId: 1,
-            url: "https://new.example/",
-            title: "New child"
-          }
-        ]
-      }
-    ], { now: 4000 });
+    const reconciled = reconcileWithWindows(
+      stored,
+      [
+        {
+          id: 10,
+          incognito: false,
+          focused: true,
+          tabs: [
+            {
+              id: 1,
+              windowId: 10,
+              index: 0,
+              active: true,
+              url: "https://example.com/",
+              title: "Example updated"
+            },
+            {
+              id: 5,
+              windowId: 10,
+              index: 1,
+              active: false,
+              openerTabId: 1,
+              url: "https://new.example/",
+              title: "New child"
+            }
+          ]
+        }
+      ],
+      { now: 4000 }
+    );
 
     expect(reconciled.nodes["tab:2"]?.status).toBe("closed");
     expect(reconciled.nodes["window:10"]?.title).toBe("Group");
@@ -3597,23 +3808,27 @@ describe("outline model", () => {
     };
     stored.rootIds.push("window:closed-empty");
 
-    const reconciled = reconcileWithWindows(stored, [
-      {
-        id: 10,
-        incognito: false,
-        focused: true,
-        tabs: [
-          {
-            id: 1,
-            windowId: 10,
-            index: 0,
-            active: true,
-            url: "https://example.com/",
-            title: "Example"
-          }
-        ]
-      }
-    ], { now: 4000 });
+    const reconciled = reconcileWithWindows(
+      stored,
+      [
+        {
+          id: 10,
+          incognito: false,
+          focused: true,
+          tabs: [
+            {
+              id: 1,
+              windowId: 10,
+              index: 0,
+              active: true,
+              url: "https://example.com/",
+              title: "Example"
+            }
+          ]
+        }
+      ],
+      { now: 4000 }
+    );
 
     expect(reconciled.nodes["window:closed-empty"]).toMatchObject({
       kind: "window",
@@ -3625,27 +3840,36 @@ describe("outline model", () => {
   });
 
   it("preserves custom group titles during reconciliation", () => {
-    const stored = renameGroup(bootstrapFromWindows(windows, { now: 1000 }), "window:10", "Research", {
-      now: 2000
-    });
-
-    const reconciled = reconcileWithWindows(stored, [
+    const stored = renameGroup(
+      bootstrapFromWindows(windows, { now: 1000 }),
+      "window:10",
+      "Research",
       {
-        id: 10,
-        incognito: false,
-        focused: true,
-        tabs: [
-          {
-            id: 1,
-            windowId: 10,
-            index: 0,
-            active: true,
-            url: "https://example.com/",
-            title: "Example updated"
-          }
-        ]
+        now: 2000
       }
-    ], { now: 4000 });
+    );
+
+    const reconciled = reconcileWithWindows(
+      stored,
+      [
+        {
+          id: 10,
+          incognito: false,
+          focused: true,
+          tabs: [
+            {
+              id: 1,
+              windowId: 10,
+              index: 0,
+              active: true,
+              url: "https://example.com/",
+              title: "Example updated"
+            }
+          ]
+        }
+      ],
+      { now: 4000 }
+    );
 
     expect(reconciled.nodes["window:10"]?.title).toBe("Research");
     expect(reconciled.nodes["window:10"]?.customTitle).toBe("Research");
@@ -3654,31 +3878,35 @@ describe("outline model", () => {
   it("deletes missing live tabs in open windows during full reconciliation", () => {
     const state = bootstrapFromWindows(windows, { now: 1000 });
 
-    const reconciled = reconcileWithWindows(state, [
-      {
-        id: 10,
-        incognito: false,
-        focused: true,
-        tabs: [
-          {
-            id: 2,
-            windowId: 10,
-            index: 0,
-            active: true,
-            url: "https://example.com/child",
-            title: "Child"
-          },
-          {
-            id: 3,
-            windowId: 10,
-            index: 1,
-            active: false,
-            url: "about:blank",
-            title: "Blank"
-          }
-        ]
-      }
-    ], { now: 4000 });
+    const reconciled = reconcileWithWindows(
+      state,
+      [
+        {
+          id: 10,
+          incognito: false,
+          focused: true,
+          tabs: [
+            {
+              id: 2,
+              windowId: 10,
+              index: 0,
+              active: true,
+              url: "https://example.com/child",
+              title: "Child"
+            },
+            {
+              id: 3,
+              windowId: 10,
+              index: 1,
+              active: false,
+              url: "about:blank",
+              title: "Blank"
+            }
+          ]
+        }
+      ],
+      { now: 4000 }
+    );
 
     expect(reconciled.nodes["tab:1"]).toBeUndefined();
     expect(reconciled.nodes["tab:2"]?.status).toBe("live");
@@ -3700,14 +3928,18 @@ describe("outline model", () => {
       };
     });
 
-    const reconciled = reconcileWithWindows(state, [
-      {
-        id: 10,
-        incognito: false,
-        focused: true,
-        tabs
-      }
-    ], { now: 4000 });
+    const reconciled = reconcileWithWindows(
+      state,
+      [
+        {
+          id: 10,
+          incognito: false,
+          focused: true,
+          tabs
+        }
+      ],
+      { now: 4000 }
+    );
 
     expect(reconciled.nodes["tab:1"]).toBeUndefined();
     expect(reconciled.nodes["window:10"]?.childIds).toHaveLength(49_999);
@@ -3718,23 +3950,28 @@ describe("outline model", () => {
   it("does not close absent live tabs during partial event reconciliation", () => {
     const state = bootstrapFromWindows(windows, { now: 1000 });
 
-    const reconciled = reconcileWithWindows(state, [
-      {
-        id: 10,
-        incognito: false,
-        focused: true,
-        tabs: [
-          {
-            id: 5,
-            windowId: 10,
-            index: 3,
-            active: true,
-            url: "about:newtab",
-            title: "New Tab"
-          }
-        ]
-      }
-    ], { now: 2000 }, { closeMissing: false });
+    const reconciled = reconcileWithWindows(
+      state,
+      [
+        {
+          id: 10,
+          incognito: false,
+          focused: true,
+          tabs: [
+            {
+              id: 5,
+              windowId: 10,
+              index: 3,
+              active: true,
+              url: "about:newtab",
+              title: "New Tab"
+            }
+          ]
+        }
+      ],
+      { now: 2000 },
+      { closeMissing: false }
+    );
 
     expect(reconciled.nodes["tab:1"]?.status).toBe("live");
     expect(reconciled.nodes["tab:2"]?.status).toBe("live");
@@ -3748,7 +3985,12 @@ describe("outline model", () => {
       index: 0
     });
 
-    const reconciled = reconcileWithWindows(state, windows, { now: 2000 }, { respectRuntimeTabOrder: true });
+    const reconciled = reconcileWithWindows(
+      state,
+      windows,
+      { now: 2000 },
+      { respectRuntimeTabOrder: true }
+    );
 
     expect(reconciled.nodes["tab:1"]?.childIds).toEqual(["tab:2", "tab:3"]);
     expect(reconciled.nodes["tab:3"]?.parentId).toBe("tab:1");
@@ -3775,46 +4017,60 @@ describe("outline model", () => {
     });
 
     const start = performance.now();
-    const reconciled = reconcileWithWindows(state, [
+    const reconciled = reconcileWithWindows(
+      state,
+      [
+        {
+          id: 10,
+          incognito: false,
+          focused: true,
+          tabs
+        }
+      ],
+      { now: 2000 },
       {
-        id: 10,
-        incognito: false,
-        focused: true,
-        tabs
+        closeMissing: false,
+        respectRuntimeTabOrder: true
       }
-    ], { now: 2000 }, {
-      closeMissing: false,
-      respectRuntimeTabOrder: true
-    });
+    );
     const durationMs = performance.now() - start;
 
     expect(durationMs).toBeLessThan(1500);
     expect(reconciled.nodes["tab:19434"]?.parentId).toBe("window:10");
     expect(reconciled.nodes["tab:19434"]?.active).toBe(true);
-    expect(projectLiveTabs(reconciled, "window:10").map((tab) => tab.tabId).at(-1)).toBe(19_434);
+    expect(
+      projectLiveTabs(reconciled, "window:10")
+        .map((tab) => tab.tabId)
+        .at(-1)
+    ).toBe(19_434);
   }, 25_000);
 
   it("keeps existing parent links during partial event reconciliation", () => {
     const state = bootstrapFromWindows(windows, { now: 1000 });
 
-    const reconciled = reconcileWithWindows(state, [
-      {
-        id: 10,
-        incognito: false,
-        focused: true,
-        tabs: [
-          {
-            id: 2,
-            windowId: 10,
-            index: 1,
-            active: true,
-            openerTabId: 1,
-            url: "https://example.com/child",
-            title: "Child"
-          }
-        ]
-      }
-    ], { now: 2000 }, { closeMissing: false });
+    const reconciled = reconcileWithWindows(
+      state,
+      [
+        {
+          id: 10,
+          incognito: false,
+          focused: true,
+          tabs: [
+            {
+              id: 2,
+              windowId: 10,
+              index: 1,
+              active: true,
+              openerTabId: 1,
+              url: "https://example.com/child",
+              title: "Child"
+            }
+          ]
+        }
+      ],
+      { now: 2000 },
+      { closeMissing: false }
+    );
 
     expect(reconciled.nodes["tab:1"]?.childIds).toEqual(["tab:2"]);
     expect(reconciled.nodes["tab:2"]?.parentId).toBe("tab:1");
@@ -3851,23 +4107,28 @@ describe("outline model", () => {
     delete state.nodes["tab:3"]!.parentId;
     state.rootIds = ["window:10", "tab:3"];
 
-    const reconciled = reconcileWithWindows(state, [
-      {
-        id: 10,
-        incognito: false,
-        focused: true,
-        tabs: [
-          {
-            id: 5,
-            windowId: 10,
-            index: 3,
-            active: true,
-            url: "https://new.example/",
-            title: "New"
-          }
-        ]
-      }
-    ], { now: 2000 }, { closeMissing: false });
+    const reconciled = reconcileWithWindows(
+      state,
+      [
+        {
+          id: 10,
+          incognito: false,
+          focused: true,
+          tabs: [
+            {
+              id: 5,
+              windowId: 10,
+              index: 3,
+              active: true,
+              url: "https://new.example/",
+              title: "New"
+            }
+          ]
+        }
+      ],
+      { now: 2000 },
+      { closeMissing: false }
+    );
 
     expect(reconciled.rootIds).toEqual(["window:10"]);
     expect(reconciled.nodes["tab:3"]?.parentId).toBe("window:10");
@@ -3877,23 +4138,26 @@ describe("outline model", () => {
 
   it("does not reuse a closed window node when a new runtime window has the same id", () => {
     const closed = closeWindow(
-      bootstrapFromWindows([
-        {
-          id: 10,
-          incognito: false,
-          focused: true,
-          tabs: [
-            {
-              id: 1,
-              windowId: 10,
-              index: 0,
-              active: true,
-              url: "https://saved.example/",
-              title: "Saved"
-            }
-          ]
-        }
-      ], { now: 1000 }),
+      bootstrapFromWindows(
+        [
+          {
+            id: 10,
+            incognito: false,
+            focused: true,
+            tabs: [
+              {
+                id: 1,
+                windowId: 10,
+                index: 0,
+                active: true,
+                url: "https://saved.example/",
+                title: "Saved"
+              }
+            ]
+          }
+        ],
+        { now: 1000 }
+      ),
       10,
       { now: 1500 }
     );
@@ -3937,23 +4201,26 @@ describe("outline model", () => {
 
   it("does not reattach tabs from a closed window whose root was temporarily omitted", () => {
     const closed = closeWindow(
-      bootstrapFromWindows([
-        {
-          id: 10,
-          incognito: false,
-          focused: true,
-          tabs: [
-            {
-              id: 1,
-              windowId: 10,
-              index: 0,
-              active: true,
-              url: "https://saved.example/",
-              title: "Saved"
-            }
-          ]
-        }
-      ], { now: 1000 }),
+      bootstrapFromWindows(
+        [
+          {
+            id: 10,
+            incognito: false,
+            focused: true,
+            tabs: [
+              {
+                id: 1,
+                windowId: 10,
+                index: 0,
+                active: true,
+                url: "https://saved.example/",
+                title: "Saved"
+              }
+            ]
+          }
+        ],
+        { now: 1000 }
+      ),
       10,
       { now: 1500 }
     );
@@ -4024,31 +4291,35 @@ describe("outline model", () => {
       sessionId: "session-tab-2"
     });
 
-    const reconciled = reconcileWithWindows(stored, [
-      {
-        id: 10,
-        incognito: false,
-        focused: true,
-        tabs: [
-          {
-            id: 1,
-            windowId: 10,
-            index: 0,
-            active: true,
-            url: "https://example.com/",
-            title: "Example"
-          },
-          {
-            id: 22,
-            windowId: 10,
-            index: 1,
-            active: false,
-            url: "https://example.com/child",
-            title: "Child"
-          }
-        ]
-      }
-    ], { now: 5000 });
+    const reconciled = reconcileWithWindows(
+      stored,
+      [
+        {
+          id: 10,
+          incognito: false,
+          focused: true,
+          tabs: [
+            {
+              id: 1,
+              windowId: 10,
+              index: 0,
+              active: true,
+              url: "https://example.com/",
+              title: "Example"
+            },
+            {
+              id: 22,
+              windowId: 10,
+              index: 1,
+              active: false,
+              url: "https://example.com/child",
+              title: "Child"
+            }
+          ]
+        }
+      ],
+      { now: 5000 }
+    );
 
     expect(reconciled.nodes["tab:2"]?.status).toBe("live");
     expect(reconciled.nodes["tab:2"]?.live).toEqual({ tabId: 22, windowId: 10 });
@@ -4079,31 +4350,36 @@ describe("outline model", () => {
       }
     ]);
 
-    const reconciled = reconcileWithWindows(restored, [
-      {
-        id: 20,
-        incognito: false,
-        focused: true,
-        tabs: [
-          {
-            id: 11,
-            windowId: 20,
-            index: 0,
-            active: false,
-            url: "https://example.com/",
-            title: "Example"
-          },
-          {
-            id: 22,
-            windowId: 20,
-            index: 1,
-            active: true,
-            url: "about:newtab",
-            title: "New Tab"
-          }
-        ]
-      }
-    ], { now: 5000 }, { excludedClosedRestoreNodeIds: new Set(["tab:3"]) });
+    const reconciled = reconcileWithWindows(
+      restored,
+      [
+        {
+          id: 20,
+          incognito: false,
+          focused: true,
+          tabs: [
+            {
+              id: 11,
+              windowId: 20,
+              index: 0,
+              active: false,
+              url: "https://example.com/",
+              title: "Example"
+            },
+            {
+              id: 22,
+              windowId: 20,
+              index: 1,
+              active: true,
+              url: "about:newtab",
+              title: "New Tab"
+            }
+          ]
+        }
+      ],
+      { now: 5000 },
+      { excludedClosedRestoreNodeIds: new Set(["tab:3"]) }
+    );
 
     expect(reconciled.nodes["tab:3"]?.status).toBe("closed");
     expect(reconciled.nodes["tab:22"]).toMatchObject({
@@ -4119,60 +4395,68 @@ describe("outline model", () => {
       now: 2000,
       sessionId: "session-tab-2"
     });
-    const withPlaceholder = reconcileWithWindows(stored, [
-      {
-        id: 10,
-        incognito: false,
-        focused: true,
-        tabs: [
-          {
-            id: 1,
-            windowId: 10,
-            index: 0,
-            active: true,
-            url: "https://example.com/",
-            title: "Example"
-          },
-          {
-            id: 22,
-            windowId: 10,
-            index: 1,
-            active: false,
-            url: "about:blank",
-            title: "New Tab"
-          }
-        ]
-      }
-    ], { now: 5000 });
+    const withPlaceholder = reconcileWithWindows(
+      stored,
+      [
+        {
+          id: 10,
+          incognito: false,
+          focused: true,
+          tabs: [
+            {
+              id: 1,
+              windowId: 10,
+              index: 0,
+              active: true,
+              url: "https://example.com/",
+              title: "Example"
+            },
+            {
+              id: 22,
+              windowId: 10,
+              index: 1,
+              active: false,
+              url: "about:blank",
+              title: "New Tab"
+            }
+          ]
+        }
+      ],
+      { now: 5000 }
+    );
 
     expect(withPlaceholder.nodes["tab:22"]?.status).toBe("live");
     expect(withPlaceholder.nodes["tab:2"]?.status).toBe("closed");
 
-    const reconciled = reconcileWithWindows(withPlaceholder, [
-      {
-        id: 10,
-        incognito: false,
-        focused: true,
-        tabs: [
-          {
-            id: 1,
-            windowId: 10,
-            index: 0,
-            active: true,
-            url: "https://example.com/",
-            title: "Example"
-          },
-          {
-            id: 22,
-            windowId: 10,
-            index: 1,
-            active: false,
-            url: "https://example.com/child",
-            title: "Child"
-          }
-        ]
-      }
-    ], { now: 6000 });
+    const reconciled = reconcileWithWindows(
+      withPlaceholder,
+      [
+        {
+          id: 10,
+          incognito: false,
+          focused: true,
+          tabs: [
+            {
+              id: 1,
+              windowId: 10,
+              index: 0,
+              active: true,
+              url: "https://example.com/",
+              title: "Example"
+            },
+            {
+              id: 22,
+              windowId: 10,
+              index: 1,
+              active: false,
+              url: "https://example.com/child",
+              title: "Child"
+            }
+          ]
+        }
+      ],
+      { now: 6000 }
+    );
 
     expect(reconciled.nodes["tab:2"]?.status).toBe("live");
     expect(reconciled.nodes["tab:2"]?.live).toEqual({ tabId: 22, windowId: 10 });
@@ -4181,83 +4465,94 @@ describe("outline model", () => {
   });
 
   it("reconciles cross-window opener tabs back into their owning window", () => {
-    const stored = bootstrapFromWindows([
-      {
-        id: 10,
-        incognito: false,
-        focused: true,
-        tabs: [
-          {
-            id: 1,
-            windowId: 10,
-            index: 0,
-            active: true,
-            url: "https://source.example/",
-            title: "Source"
-          },
-          {
-            id: 5,
-            windowId: 20,
-            index: 0,
-            active: true,
-            openerTabId: 1,
-            url: "https://target.example/",
-            title: "Target"
-          }
-        ]
-      }
-    ], { now: 1000 });
+    const stored = bootstrapFromWindows(
+      [
+        {
+          id: 10,
+          incognito: false,
+          focused: true,
+          tabs: [
+            {
+              id: 1,
+              windowId: 10,
+              index: 0,
+              active: true,
+              url: "https://source.example/",
+              title: "Source"
+            },
+            {
+              id: 5,
+              windowId: 20,
+              index: 0,
+              active: true,
+              openerTabId: 1,
+              url: "https://target.example/",
+              title: "Target"
+            }
+          ]
+        }
+      ],
+      { now: 1000 }
+    );
 
-    const reconciled = reconcileWithWindows(stored, [
-      {
-        id: 10,
-        incognito: false,
-        focused: true,
-        tabs: [
-          {
-            id: 1,
-            windowId: 10,
-            index: 0,
-            active: true,
-            url: "https://source.example/",
-            title: "Source"
-          }
-        ]
-      },
-      {
-        id: 20,
-        incognito: false,
-        focused: false,
-        tabs: [
-          {
-            id: 5,
-            windowId: 20,
-            index: 0,
-            active: true,
-            openerTabId: 1,
-            url: "https://target.example/",
-            title: "Target"
-          }
-        ]
-      }
-    ], { now: 2000 });
+    const reconciled = reconcileWithWindows(
+      stored,
+      [
+        {
+          id: 10,
+          incognito: false,
+          focused: true,
+          tabs: [
+            {
+              id: 1,
+              windowId: 10,
+              index: 0,
+              active: true,
+              url: "https://source.example/",
+              title: "Source"
+            }
+          ]
+        },
+        {
+          id: 20,
+          incognito: false,
+          focused: false,
+          tabs: [
+            {
+              id: 5,
+              windowId: 20,
+              index: 0,
+              active: true,
+              openerTabId: 1,
+              url: "https://target.example/",
+              title: "Target"
+            }
+          ]
+        }
+      ],
+      { now: 2000 }
+    );
 
     expect(reconciled.nodes["window:20"]?.childIds).toEqual(["tab:5"]);
     expect(reconciled.nodes["tab:1"]?.childIds).toEqual([]);
     expect(reconciled.nodes["tab:5"]?.parentId).toBe("window:20");
   });
 
-  it("preserves model invariants and previous states across generated structural traces", () => {
-    const config = generatedTraceConfig({
-      defaultSeedCount: 24,
-      defaultSteps: 18,
-      soakSeedCount: 96,
-      soakSteps: 48
-    });
-    for (const seed of config.seeds) {
-      runGeneratedModelTrace(seed, config.steps);
-    }
-  }, generatedTraceTimeoutMs(10_000, 120_000));
+  it(
+    "preserves model invariants and previous states across generated structural traces",
+    () => {
+      const config = generatedTraceConfig({
+        defaultSeedCount: 24,
+        defaultSteps: 18,
+        soakSeedCount: 96,
+        soakSteps: 48
+      });
+      for (const seed of config.seeds) {
+        runGeneratedModelTrace(seed, config.steps);
+      }
+    },
+    generatedTraceTimeoutMs(10_000, 120_000)
+  );
 });
 
 function runGeneratedModelTrace(seed: number, steps: number): void {
@@ -4299,12 +4594,17 @@ function generatedModelOperation(
 
   for (const operation of operationOrder) {
     const result =
-      operation === 0 ? generatedModelMove(state, rng, now) :
-      operation === 1 ? generatedModelWrap(state, rng, now) :
-      operation === 2 ? generatedModelFlatten(state, rng) :
-      operation === 3 ? generatedModelPromote(state, rng) :
-      operation === 4 ? generatedModelRename(state, rng, now) :
-      generatedModelDelete(state, rng);
+      operation === 0
+        ? generatedModelMove(state, rng, now)
+        : operation === 1
+          ? generatedModelWrap(state, rng, now)
+          : operation === 2
+            ? generatedModelFlatten(state, rng)
+            : operation === 3
+              ? generatedModelPromote(state, rng)
+              : operation === 4
+                ? generatedModelRename(state, rng, now)
+                : generatedModelDelete(state, rng);
     if (result && result.next !== state) {
       return result;
     }
@@ -4312,13 +4612,19 @@ function generatedModelOperation(
   return undefined;
 }
 
-function generatedModelMove(state: OutlineState, rng: () => number, now: number): GeneratedModelOperation | undefined {
+function generatedModelMove(
+  state: OutlineState,
+  rng: () => number,
+  now: number
+): GeneratedModelOperation | undefined {
   const nodeId = pickOne(rng, generatedMovableNodeIds(state));
   if (!nodeId) {
     return undefined;
   }
   const parentId = pickOne(rng, generatedValidMoveParentIds(state, nodeId));
-  const siblingCount = parentId ? state.nodes[parentId]?.childIds.length ?? 0 : state.rootIds.length;
+  const siblingCount = parentId
+    ? (state.nodes[parentId]?.childIds.length ?? 0)
+    : state.rootIds.length;
   return {
     name: `move ${nodeId} under ${parentId ?? "root"}`,
     next: moveNode(state, nodeId, {
@@ -4329,18 +4635,27 @@ function generatedModelMove(state: OutlineState, rng: () => number, now: number)
   };
 }
 
-function generatedModelWrap(state: OutlineState, rng: () => number, now: number): GeneratedModelOperation | undefined {
+function generatedModelWrap(
+  state: OutlineState,
+  rng: () => number,
+  now: number
+): GeneratedModelOperation | undefined {
   const nodeId = pickOne(rng, generatedMovableNodeIds(state));
   return nodeId
     ? { name: `wrap ${nodeId}`, next: wrapNodeInGroup(state, nodeId, { now }) }
     : undefined;
 }
 
-function generatedModelFlatten(state: OutlineState, rng: () => number): GeneratedModelOperation | undefined {
+function generatedModelFlatten(
+  state: OutlineState,
+  rng: () => number
+): GeneratedModelOperation | undefined {
   const nodeId = pickOne(
     rng,
     Object.values(state.nodes)
-      .filter((node) => node.childIds.some((childId) => (state.nodes[childId]?.childIds.length ?? 0) > 0))
+      .filter((node) =>
+        node.childIds.some((childId) => (state.nodes[childId]?.childIds.length ?? 0) > 0)
+      )
       .map((node) => node.id)
   );
   return nodeId
@@ -4348,11 +4663,19 @@ function generatedModelFlatten(state: OutlineState, rng: () => number): Generate
     : undefined;
 }
 
-function generatedModelPromote(state: OutlineState, rng: () => number): GeneratedModelOperation | undefined {
+function generatedModelPromote(
+  state: OutlineState,
+  rng: () => number
+): GeneratedModelOperation | undefined {
   const nodeId = pickOne(
     rng,
     Object.values(state.nodes)
-      .filter((node) => node.parentId && node.childIds.length > 0 && !(node.kind === "window" && node.status === "live"))
+      .filter(
+        (node) =>
+          node.parentId &&
+          node.childIds.length > 0 &&
+          !(node.kind === "window" && node.status === "live")
+      )
       .map((node) => node.id)
   );
   return nodeId
@@ -4360,7 +4683,11 @@ function generatedModelPromote(state: OutlineState, rng: () => number): Generate
     : undefined;
 }
 
-function generatedModelRename(state: OutlineState, rng: () => number, now: number): GeneratedModelOperation | undefined {
+function generatedModelRename(
+  state: OutlineState,
+  rng: () => number,
+  now: number
+): GeneratedModelOperation | undefined {
   const nodeId = pickOne(
     rng,
     Object.values(state.nodes)
@@ -4372,11 +4699,12 @@ function generatedModelRename(state: OutlineState, rng: () => number, now: numbe
     : undefined;
 }
 
-function generatedModelDelete(state: OutlineState, rng: () => number): GeneratedModelOperation | undefined {
+function generatedModelDelete(
+  state: OutlineState,
+  rng: () => number
+): GeneratedModelOperation | undefined {
   const nodeId = pickOne(rng, generatedMovableNodeIds(state));
-  return nodeId
-    ? { name: `delete ${nodeId}`, next: deleteNode(state, nodeId) }
-    : undefined;
+  return nodeId ? { name: `delete ${nodeId}`, next: deleteNode(state, nodeId) } : undefined;
 }
 
 function generatedModelState(seed: number): OutlineState {
@@ -4385,7 +4713,11 @@ function generatedModelState(seed: number): OutlineState {
     version: 1,
     rootIds: ["window:generated"],
     nodes: {
-      "window:generated": generatedClosedWindow("window:generated", ["tab:a", "tab:b", "group:g"], now),
+      "window:generated": generatedClosedWindow(
+        "window:generated",
+        ["tab:a", "tab:b", "group:g"],
+        now
+      ),
       "tab:a": generatedClosedTab("tab:a", "window:generated", ["tab:a1", "tab:a2"], now),
       "tab:a1": generatedClosedTab("tab:a1", "tab:a", [], now),
       "tab:a2": generatedClosedTab("tab:a2", "tab:a", ["tab:a2i"], now),
@@ -4399,7 +4731,12 @@ function generatedModelState(seed: number): OutlineState {
   };
 }
 
-function generatedClosedWindow(id: NodeId, childIds: NodeId[], now: number, parentId?: NodeId): OutlineNode {
+function generatedClosedWindow(
+  id: NodeId,
+  childIds: NodeId[],
+  now: number,
+  parentId?: NodeId
+): OutlineNode {
   return {
     id,
     kind: "window",
@@ -4414,7 +4751,12 @@ function generatedClosedWindow(id: NodeId, childIds: NodeId[], now: number, pare
   };
 }
 
-function generatedClosedTab(id: NodeId, parentId: NodeId, childIds: NodeId[], now: number): OutlineNode {
+function generatedClosedTab(
+  id: NodeId,
+  parentId: NodeId,
+  childIds: NodeId[],
+  now: number
+): OutlineNode {
   return {
     id,
     kind: "tab",
@@ -4460,7 +4802,11 @@ function generatedValidMoveParentIds(state: OutlineState, nodeId: NodeId): NodeI
     .map((node) => node.id);
 }
 
-function generatedIsDescendant(state: OutlineState, candidateId: NodeId, ancestorId: NodeId): boolean {
+function generatedIsDescendant(
+  state: OutlineState,
+  candidateId: NodeId,
+  ancestorId: NodeId
+): boolean {
   let current = state.nodes[candidateId];
   const visited = new Set<NodeId>();
   while (current?.parentId && !visited.has(current.id)) {

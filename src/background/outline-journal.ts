@@ -165,7 +165,11 @@ export function createOutlineJournal(
 
     for (let batch = meta.firstBatch; batch < meta.nextBatch; batch += 1) {
       const slot = slotStore[slotKey(batch)];
-      if (!isJournalSlot(slot) || slot.batch !== batch || !slotEntriesValid(slot.entries, lastSeq)) {
+      if (
+        !isJournalSlot(slot) ||
+        slot.batch !== batch ||
+        !slotEntriesValid(slot.entries, lastSeq)
+      ) {
         // A corrupt or torn slot: stop at the last good seq, discard the rest.
         truncatedAtSeq = lastSeq;
         break;
@@ -248,9 +252,10 @@ export function createOutlineJournal(
     let removed = 0;
     const removeKeys: string[] = [];
     for (const liveBatch of liveBatches) {
-      const maxSeq = liveBatch.entries.length > 0
-        ? liveBatch.entries[liveBatch.entries.length - 1]!.seq
-        : Number.NEGATIVE_INFINITY;
+      const maxSeq =
+        liveBatch.entries.length > 0
+          ? liveBatch.entries[liveBatch.entries.length - 1]!.seq
+          : Number.NEGATIVE_INFINITY;
       if (maxSeq <= throughSeq) {
         removeKeys.push(slotKey(liveBatch.batch));
         removed += 1;
@@ -291,7 +296,10 @@ export function createOutlineJournal(
     if (liveBatches.length === 0) {
       return 0;
     }
-    return liveBatches.reduce((total, liveBatch) => total + JSON.stringify(liveBatch.entries).length, 0);
+    return liveBatches.reduce(
+      (total, liveBatch) => total + JSON.stringify(liveBatch.entries).length,
+      0
+    );
   }
 
   return {
@@ -312,7 +320,10 @@ export function createOutlineJournal(
 // (to.set failed -> source intact, retried next run) or leaves only harmless source garbage
 // (from.remove failed -> destination authoritative, source ignored). A no-op when the destination
 // already has a journal (it is authoritative) or the source has none; safe when from === to.
-export async function migrateJournalStore(from: KeyValueStore, to: KeyValueStore): Promise<boolean> {
+export async function migrateJournalStore(
+  from: KeyValueStore,
+  to: KeyValueStore
+): Promise<boolean> {
   const destinationMeta = normalizeMeta((await to.get(JOURNAL_META_KEY))[JOURNAL_META_KEY]);
   if (destinationMeta) {
     return false;
@@ -369,7 +380,10 @@ export function journalTouchedNodeIds(entries: readonly OutlineJournalEntry[]): 
 
 // Pure clone-on-write replay of journal deltas in seq order. Spill markers carry no delta
 // and are skipped (the loader compacts rather than relying on replay past a spill).
-export function replayJournal(state: OutlineState, entries: readonly OutlineJournalEntry[]): OutlineState {
+export function replayJournal(
+  state: OutlineState,
+  entries: readonly OutlineJournalEntry[]
+): OutlineState {
   if (entries.length === 0) {
     return state;
   }
@@ -457,11 +471,16 @@ export function replayJournalWithHistory(
             ...(delta.updatedNodes ?? []).map((node) => node.id),
             ...(delta.deletedNodeIds ?? [])
           ];
-          const rebuilt = createHistoryEntry(entry.label as TrackableHistoryCommandType, current, next, {
-            candidateNodeIds: touchedNodeIds,
-            diffMode: "material",
-            id: entryId
-          });
+          const rebuilt = createHistoryEntry(
+            entry.label as TrackableHistoryCommandType,
+            current,
+            next,
+            {
+              candidateNodeIds: touchedNodeIds,
+              diffMode: "material",
+              id: entryId
+            }
+          );
           if (rebuilt) {
             history = pushUndoEntry(history, rebuilt, options.limit);
             historyChanged = true;
@@ -512,8 +531,11 @@ function applyJournalDelta(state: OutlineState, delta: OutlineJournalDelta): Out
 // data-URI favicons) and only runs when the weight check passed.
 export function outlineJournalDeltaWeight(delta: OutlineJournalDelta): number {
   const updatedNodes = delta.updatedNodes ?? [];
-  return updatedNodes.length + (delta.deletedNodeIds?.length ?? 0) +
-    updatedNodes.reduce((sum, node) => sum + node.childIds.length, 0);
+  return (
+    updatedNodes.length +
+    (delta.deletedNodeIds?.length ?? 0) +
+    updatedNodes.reduce((sum, node) => sum + node.childIds.length, 0)
+  );
 }
 
 function deltaExceedsSpillLimit(delta: OutlineJournalDelta): boolean {
@@ -561,7 +583,11 @@ function isJournalSlot(value: unknown): value is JournalSlot {
     return false;
   }
   const slot = value as JournalSlot;
-  return slot.version === JOURNAL_VERSION && typeof slot.batch === "number" && Array.isArray(slot.entries);
+  return (
+    slot.version === JOURNAL_VERSION &&
+    typeof slot.batch === "number" &&
+    Array.isArray(slot.entries)
+  );
 }
 
 function isJournalEntry(value: unknown): value is OutlineJournalEntry {
@@ -569,6 +595,10 @@ function isJournalEntry(value: unknown): value is OutlineJournalEntry {
     return false;
   }
   const entry = value as OutlineJournalEntry;
-  return typeof entry.seq === "number" && typeof entry.epoch === "number" && typeof entry.at === "number" &&
-    typeof entry.kind === "string";
+  return (
+    typeof entry.seq === "number" &&
+    typeof entry.epoch === "number" &&
+    typeof entry.at === "number" &&
+    typeof entry.kind === "string"
+  );
 }

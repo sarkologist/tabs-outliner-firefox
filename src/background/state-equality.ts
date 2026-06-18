@@ -4,7 +4,9 @@ import type { NodeId, OutlineNode, OutlineState, RuntimeWindow } from "../model/
 // Pure functions over outline state and runtime-window shape; no closure or controller state.
 
 export function sameNodeIdList(previous: NodeId[], next: NodeId[]): boolean {
-  return previous.length === next.length && previous.every((nodeId, index) => nodeId === next[index]);
+  return (
+    previous.length === next.length && previous.every((nodeId, index) => nodeId === next[index])
+  );
 }
 
 // Node ids added, removed, or materially changed between two states. Used to scope an incremental
@@ -52,9 +54,11 @@ export function runtimeWindowOrdersMatch(
   return windowIds.every((windowId) => {
     const previousWindow = previousById.get(windowId);
     const nextWindow = nextById.get(windowId);
-    return previousWindow &&
+    return (
+      previousWindow &&
       nextWindow &&
-      sameNumberList(runtimeWindowTabOrder(previousWindow), runtimeWindowTabOrder(nextWindow));
+      sameNumberList(runtimeWindowTabOrder(previousWindow), runtimeWindowTabOrder(nextWindow))
+    );
   });
 }
 
@@ -100,7 +104,8 @@ export function statesEqualIgnoringUpdatedAt(previous: OutlineState, next: Outli
 }
 
 export function nodesMateriallyEqual(previous: OutlineNode, next: OutlineNode): boolean {
-  return previous.id === next.id &&
+  return (
+    previous.id === next.id &&
     previous.kind === next.kind &&
     previous.status === next.status &&
     previous.parentId === next.parentId &&
@@ -115,11 +120,13 @@ export function nodesMateriallyEqual(previous: OutlineNode, next: OutlineNode): 
     previous.closedAt === next.closedAt &&
     previous.restoredFromClosed === next.restoredFromClosed &&
     liveRefsEqual(previous.live, next.live) &&
-    restoreRefsEqual(previous.restore, next.restore);
+    restoreRefsEqual(previous.restore, next.restore)
+  );
 }
 
 export function nodesEqualIgnoringUpdatedAt(previous: OutlineNode, next: OutlineNode): boolean {
-  return previous.id === next.id &&
+  return (
+    previous.id === next.id &&
     previous.kind === next.kind &&
     previous.status === next.status &&
     previous.parentId === next.parentId &&
@@ -134,16 +141,22 @@ export function nodesEqualIgnoringUpdatedAt(previous: OutlineNode, next: Outline
     previous.closedAt === next.closedAt &&
     previous.restoredFromClosed === next.restoredFromClosed &&
     liveRefsEqual(previous.live, next.live) &&
-    restoreRefsEqual(previous.restore, next.restore);
+    restoreRefsEqual(previous.restore, next.restore)
+  );
 }
 
 export function liveRefsEqual(previous: OutlineNode["live"], next: OutlineNode["live"]): boolean {
   return previous?.tabId === next?.tabId && previous?.windowId === next?.windowId;
 }
 
-export function restoreRefsEqual(previous: OutlineNode["restore"], next: OutlineNode["restore"]): boolean {
-  return previous?.sessionId === next?.sessionId &&
+export function restoreRefsEqual(
+  previous: OutlineNode["restore"],
+  next: OutlineNode["restore"]
+): boolean {
+  return (
+    previous?.sessionId === next?.sessionId &&
     previous?.url === next?.url &&
     previous?.title === next?.title &&
-    previous?.favIconUrl === next?.favIconUrl;
+    previous?.favIconUrl === next?.favIconUrl
+  );
 }

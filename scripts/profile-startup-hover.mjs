@@ -98,16 +98,14 @@ export async function runStartupHoverLoop(options) {
 }
 
 async function runProfile(run) {
-  const { stdout, stderr } = await execFileAsync("pnpm", [
-    "exec",
-    "playwright",
-    "test",
-    testFile,
-    "--reporter=list"
-  ], {
-    cwd: rootDir,
-    maxBuffer: 1024 * 1024 * 32
-  });
+  const { stdout, stderr } = await execFileAsync(
+    "pnpm",
+    ["exec", "playwright", "test", testFile, "--reporter=list"],
+    {
+      cwd: rootDir,
+      maxBuffer: 1024 * 1024 * 32
+    }
+  );
 
   return {
     run,
@@ -133,18 +131,26 @@ export function summarize(results) {
   const sparseIdleProfiles = profileValues(results, "startup-hover-sparse-idle");
   const remoteIdleProfiles = profileValues(results, "startup-remote-interaction-sparse-idle");
 
-  const firstPaintDurations = firstPaintProfiles.map((profile) => profile.initialSnapshotRender?.maxMs)
+  const firstPaintDurations = firstPaintProfiles
+    .map((profile) => profile.initialSnapshotRender?.maxMs)
     .filter(isFiniteNumber);
-  const firstPaintActionButtons = firstPaintProfiles.map((profile) => profile.actionButtons).filter(isFiniteNumber);
-  const sparseHoverFrameMaxValues = sparseHoverProfiles.map((profile) => profile.hoverFrameDelay?.maxMs)
+  const firstPaintActionButtons = firstPaintProfiles
+    .map((profile) => profile.actionButtons)
     .filter(isFiniteNumber);
-  const sparseHoverFeedbackMaxValues = sparseHoverProfiles.map((profile) => profile.hoverFeedbackDelay?.maxMs)
+  const sparseHoverFrameMaxValues = sparseHoverProfiles
+    .map((profile) => profile.hoverFrameDelay?.maxMs)
     .filter(isFiniteNumber);
-  const sparseHoverActionButtons = sparseHoverProfiles.map((profile) => profile.actionButtonsAfterHover)
+  const sparseHoverFeedbackMaxValues = sparseHoverProfiles
+    .map((profile) => profile.hoverFeedbackDelay?.maxMs)
     .filter(isFiniteNumber);
-  const sparseIdleActionButtons = sparseIdleProfiles.map((profile) => profile.actionButtonsAfterIdle)
+  const sparseHoverActionButtons = sparseHoverProfiles
+    .map((profile) => profile.actionButtonsAfterHover)
     .filter(isFiniteNumber);
-  const sparseIdleHydrationRequests = sparseIdleProfiles.map((profile) => profile.hydrationRequestsAfterIdle)
+  const sparseIdleActionButtons = sparseIdleProfiles
+    .map((profile) => profile.actionButtonsAfterIdle)
+    .filter(isFiniteNumber);
+  const sparseIdleHydrationRequests = sparseIdleProfiles
+    .map((profile) => profile.hydrationRequestsAfterIdle)
     .filter(isFiniteNumber);
   const remoteIdleHydrationRequests = remoteIdleProfiles
     .map((profile) => profile.hydrationRequestsAfterIdle)
@@ -200,15 +206,35 @@ export function startupHoverGuardFailures(summary, profiles) {
   if (summary.sparseIdleActionButtonsMin <= 0) {
     failures.push("hovered row actions must survive sparse idle");
   }
-  if (!profilesHaveActionLabels(profiles.sparseHoverProfiles, "actionButtonLabelsAfterHover", REQUIRED_SPARSE_HOVER_ACTIONS)) {
+  if (
+    !profilesHaveActionLabels(
+      profiles.sparseHoverProfiles,
+      "actionButtonLabelsAfterHover",
+      REQUIRED_SPARSE_HOVER_ACTIONS
+    )
+  ) {
     failures.push("sparse hover actions must include Cut and Move to top level");
   }
-  if (!profilesHaveActionLabels(profiles.sparseIdleProfiles, "actionButtonLabelsAfterIdle", REQUIRED_SPARSE_HOVER_ACTIONS)) {
+  if (
+    !profilesHaveActionLabels(
+      profiles.sparseIdleProfiles,
+      "actionButtonLabelsAfterIdle",
+      REQUIRED_SPARSE_HOVER_ACTIONS
+    )
+  ) {
     failures.push("sparse idle actions must keep Cut and Move to top level");
   }
   if (
-    profilesHaveAnyActionLabel(profiles.sparseHoverProfiles, "actionButtonLabelsAfterHover", DISALLOWED_SPARSE_HOVER_ACTIONS) ||
-    profilesHaveAnyActionLabel(profiles.sparseIdleProfiles, "actionButtonLabelsAfterIdle", DISALLOWED_SPARSE_HOVER_ACTIONS)
+    profilesHaveAnyActionLabel(
+      profiles.sparseHoverProfiles,
+      "actionButtonLabelsAfterHover",
+      DISALLOWED_SPARSE_HOVER_ACTIONS
+    ) ||
+    profilesHaveAnyActionLabel(
+      profiles.sparseIdleProfiles,
+      "actionButtonLabelsAfterIdle",
+      DISALLOWED_SPARSE_HOVER_ACTIONS
+    )
   ) {
     failures.push("sparse partial actions must not include Paste");
   }
@@ -235,10 +261,13 @@ function profileValues(results, label) {
 }
 
 function profilesHaveActionLabels(profiles, key, labels) {
-  return profiles.length > 0 && profiles.every((profile) => {
-    const values = new Set(Array.isArray(profile[key]) ? profile[key] : []);
-    return labels.every((label) => values.has(label));
-  });
+  return (
+    profiles.length > 0 &&
+    profiles.every((profile) => {
+      const values = new Set(Array.isArray(profile[key]) ? profile[key] : []);
+      return labels.every((label) => values.has(label));
+    })
+  );
 }
 
 function profilesHaveAnyActionLabel(profiles, key, labels) {
@@ -265,12 +294,16 @@ function formatTsvRow(summary, fields) {
     summary.remoteIdleHydrationRequestsMax,
     summary.status,
     fields.description
-  ].map(tsvCell).join("\t");
+  ]
+    .map(tsvCell)
+    .join("\t");
 }
 
 async function currentCommit() {
   try {
-    const { stdout } = await execFileAsync("git", ["rev-parse", "--short=7", "HEAD"], { cwd: rootDir });
+    const { stdout } = await execFileAsync("git", ["rev-parse", "--short=7", "HEAD"], {
+      cwd: rootDir
+    });
     return stdout.trim();
   } catch {
     return "unknown";
@@ -279,7 +312,10 @@ async function currentCommit() {
 
 async function appendResultsTsv(resultsPath, row) {
   await mkdir(dirname(resultsPath), { recursive: true });
-  if (!existsSync(resultsPath) || (await readFile(resultsPath, "utf8").catch(() => "")).trim() === "") {
+  if (
+    !existsSync(resultsPath) ||
+    (await readFile(resultsPath, "utf8").catch(() => "")).trim() === ""
+  ) {
     await writeFile(resultsPath, `${STARTUP_HOVER_RESULTS_TSV_HEADER}\n`);
   }
   await appendFile(resultsPath, `${row}\n`);
@@ -321,7 +357,9 @@ function round(value) {
 }
 
 function tsvCell(value) {
-  return String(value).replace(/[\t\r\n]+/g, " ").trim();
+  return String(value)
+    .replace(/[\t\r\n]+/g, " ")
+    .trim();
 }
 
 async function main() {

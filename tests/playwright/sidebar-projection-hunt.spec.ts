@@ -15,14 +15,22 @@ type HarnessHistoryStatus = {
 };
 
 test.describe("sidebar projection hunt", () => {
-  test("psh stale restored subgroup slice after external delete does not repaint", async ({ page }) => {
+  test("psh stale restored subgroup slice after external delete does not repaint", async ({
+    page
+  }) => {
     const issues = collectPageIssues(page);
     await loadRestoredSubgroupSidebar(page, { fullStatePending: true });
     await page.locator("#search").fill("restored-subgroup.example");
 
     const result = await page.evaluate(async () => {
       const staleQuery = "restored-subgroup.example";
-      const deletedNodeIds = ["window:restored-subgroup", "tab:performance", "tab:annotate", "tab:s3", "tab:offscreen"];
+      const deletedNodeIds = [
+        "window:restored-subgroup",
+        "tab:performance",
+        "tab:annotate",
+        "tab:s3",
+        "tab:offscreen"
+      ];
       const api = projectionHuntApi();
       await api.waitForProjectionRequest(staleQuery);
       api.emitDeletePatch(deletedNodeIds);
@@ -48,17 +56,21 @@ test.describe("sidebar projection hunt", () => {
           hasPerformance: Boolean(document.querySelector("[data-node-id='tab:performance']")),
           hasAnnotate: Boolean(document.querySelector("[data-node-id='tab:annotate']")),
           hasS3: Boolean(document.querySelector("[data-node-id='tab:s3']")),
-          hasStaleActionButton: Boolean(document.querySelector("[data-node-id='window:restored-subgroup'] button"))
+          hasStaleActionButton: Boolean(
+            document.querySelector("[data-node-id='window:restored-subgroup'] button")
+          )
         }
       };
     });
 
     expect(result.commands).toEqual([]);
     expect(result.requests.length).toBeGreaterThanOrEqual(1);
-    expect(result.requests[0]).toEqual(expect.objectContaining({
-      query: "restored-subgroup.example",
-      targetNodeId: undefined
-    }));
+    expect(result.requests[0]).toEqual(
+      expect.objectContaining({
+        query: "restored-subgroup.example",
+        targetNodeId: undefined
+      })
+    );
     expect(result.stateRequests).toBe(0);
     expect(result.afterDelete.visibleRows).not.toContain(0);
     expect(result.afterDelete.hasGroup).toBe(false);
@@ -400,7 +412,9 @@ test.describe("sidebar projection hunt", () => {
     await row.hover();
     await row.getByRole("button", { name: "Collapse", exact: true }).click();
 
-    await expect(sentCommands(page)).resolves.toEqual([{ type: "toggleCollapsed", nodeId: "window:1" }]);
+    await expect(sentCommands(page)).resolves.toEqual([
+      { type: "toggleCollapsed", nodeId: "window:1" }
+    ]);
     expect(issues).toEqual([]);
   });
 
@@ -434,7 +448,9 @@ test.describe("sidebar projection hunt", () => {
     await expect(row.getByRole("button", { name: "Paste", exact: true })).toHaveCount(0);
     await row.getByRole("button", { name: "Move to top level", exact: true }).click();
 
-    await expect(sentCommands(page)).resolves.toEqual([{ type: "moveSubtreeToTopLevel", nodeId: "tab:800" }]);
+    await expect(sentCommands(page)).resolves.toEqual([
+      { type: "moveSubtreeToTopLevel", nodeId: "tab:800" }
+    ]);
     expect(issues).toEqual([]);
   });
 
@@ -473,7 +489,9 @@ test.describe("sidebar projection hunt", () => {
     await nodeRow(page, "tab:800").getByRole("button", { name: "Cut", exact: true }).click();
     await expect(page.locator(nodeSelector("tab:800"))).toHaveClass(/is-cut/);
     await nodeRow(page, "tab:801").hover();
-    await expect(nodeRow(page, "tab:801").getByRole("button", { name: "Paste", exact: true })).toHaveCount(0);
+    await expect(
+      nodeRow(page, "tab:801").getByRole("button", { name: "Paste", exact: true })
+    ).toHaveCount(0);
 
     await page.evaluate(async () => {
       const api = projectionHuntApi();
@@ -495,7 +513,13 @@ test.describe("sidebar projection hunt", () => {
     const issues = collectPageIssues(page);
     await loadLargeSparseSidebar(page, {
       fullStatePending: true,
-      historyStatus: { canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "remote edit" }
+      historyStatus: {
+        canUndo: true,
+        canRedo: false,
+        undoDepth: 1,
+        redoDepth: 0,
+        undoLabel: "remote edit"
+      }
     });
 
     await nodeRow(page, "tab:800").hover();
@@ -504,7 +528,13 @@ test.describe("sidebar projection hunt", () => {
 
     await page.evaluate(async () => {
       const api = projectionHuntApi();
-      api.emitHistoryStatus({ canUndo: true, canRedo: false, undoDepth: 2, redoDepth: 0, undoLabel: "cut source" });
+      api.emitHistoryStatus({
+        canUndo: true,
+        canRedo: false,
+        undoDepth: 2,
+        redoDepth: 0,
+        undoLabel: "cut source"
+      });
       api.resolveFullState();
       await api.waitForIdleFrames(8);
     });
@@ -540,7 +570,9 @@ test.describe("sidebar projection hunt", () => {
 
     await expect(page.locator(nodeSelector("tab:800"))).toHaveCount(0);
     await nodeRow(page, "tab:801").hover();
-    await expect(nodeRow(page, "tab:801").getByRole("button", { name: "Paste", exact: true })).toHaveCount(0);
+    await expect(
+      nodeRow(page, "tab:801").getByRole("button", { name: "Paste", exact: true })
+    ).toHaveCount(0);
     expect(result.visibleRows).toContain(801);
     expect(result.commands).toEqual([]);
     expect(issues).toEqual([]);
@@ -550,7 +582,13 @@ test.describe("sidebar projection hunt", () => {
     const issues = collectPageIssues(page);
     await loadLargeSparseSidebar(page, {
       fullStatePending: true,
-      historyStatus: { canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "sparse edit" }
+      historyStatus: {
+        canUndo: true,
+        canRedo: false,
+        undoDepth: 1,
+        redoDepth: 0,
+        undoLabel: "sparse edit"
+      }
     });
 
     await expect(page.getByRole("button", { name: "Undo", exact: true })).toBeEnabled();
@@ -593,7 +631,13 @@ test.describe("sidebar projection hunt", () => {
     const issues = collectPageIssues(page);
     await loadLargeSparseSidebar(page, {
       fullStatePending: true,
-      historyStatus: { canUndo: false, canRedo: true, undoDepth: 0, redoDepth: 1, redoLabel: "sparse redo" }
+      historyStatus: {
+        canUndo: false,
+        canRedo: true,
+        undoDepth: 0,
+        redoDepth: 1,
+        redoLabel: "sparse redo"
+      }
     });
 
     await expect(page.getByRole("button", { name: "Redo", exact: true })).toBeEnabled();
@@ -631,7 +675,13 @@ test.describe("sidebar projection hunt", () => {
     const issues = collectPageIssues(page);
     await loadLargeSparseSidebar(page, {
       fullStatePending: true,
-      historyStatus: { canUndo: false, canRedo: true, undoDepth: 0, redoDepth: 1, redoLabel: "toolbar redo" }
+      historyStatus: {
+        canUndo: false,
+        canRedo: true,
+        undoDepth: 0,
+        redoDepth: 1,
+        redoLabel: "toolbar redo"
+      }
     });
 
     await expect(page.getByRole("button", { name: "Redo", exact: true })).toBeEnabled();
@@ -647,7 +697,13 @@ test.describe("sidebar projection hunt", () => {
 
     const result = await page.evaluate(async () => {
       const api = projectionHuntApi();
-      api.emitHistoryStatus({ canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "toolbar redo" });
+      api.emitHistoryStatus({
+        canUndo: true,
+        canRedo: false,
+        undoDepth: 1,
+        redoDepth: 0,
+        undoLabel: "toolbar redo"
+      });
       api.resolveSliceAt(0, { start: 700, end: 760 });
       await api.waitForSparseRequestCount(2);
       api.resolveSliceAt(0);
@@ -672,7 +728,13 @@ test.describe("sidebar projection hunt", () => {
     const issues = collectPageIssues(page);
     await loadLargeSparseSidebar(page, {
       fullStatePending: true,
-      historyStatus: { canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "sparse edit" }
+      historyStatus: {
+        canUndo: true,
+        canRedo: false,
+        undoDepth: 1,
+        redoDepth: 0,
+        undoLabel: "sparse edit"
+      }
     });
 
     const result = await page.evaluate(async () => {
@@ -715,7 +777,13 @@ test.describe("sidebar projection hunt", () => {
     await loadLargeSparseSidebar(page, {
       includeCoverage: false,
       fullStatePending: true,
-      historyStatus: { canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "remote edit" }
+      historyStatus: {
+        canUndo: true,
+        canRedo: false,
+        undoDepth: 1,
+        redoDepth: 0,
+        undoLabel: "remote edit"
+      }
     });
 
     const row = nodeRow(page, "tab:799");
@@ -734,7 +802,9 @@ test.describe("sidebar projection hunt", () => {
     await expect(row).toContainText("Readonly patched row");
     await row.hover();
     await expect(row.getByRole("button", { name: "Close", exact: true })).toHaveCount(0);
-    await expect(row.getByRole("button", { name: "Move to top level", exact: true })).toHaveCount(0);
+    await expect(row.getByRole("button", { name: "Move to top level", exact: true })).toHaveCount(
+      0
+    );
     await expect(sentCommands(page)).resolves.toEqual([{ type: "undo" }]);
     expect(issues).toEqual([]);
   });
@@ -755,14 +825,21 @@ test.describe("sidebar projection hunt", () => {
     });
 
     expect(result.commands).toEqual([
-      expect.objectContaining({ type: "moveNode", nodeId: "tab:800", parentId: "window:1", index: 800 })
+      expect.objectContaining({
+        type: "moveNode",
+        nodeId: "tab:800",
+        parentId: "window:1",
+        index: 800
+      })
     ]);
     expect(result.stateRequests).toBe(0);
     expect(result.visibleRows).toContain(800);
     expect(issues).toEqual([]);
   });
 
-  test("psh-missing-coverage-drag-drop-requests-sparse-refill-without-hydration", async ({ page }) => {
+  test("psh-missing-coverage-drag-drop-requests-sparse-refill-without-hydration", async ({
+    page
+  }) => {
     const issues = collectPageIssues(page);
     await loadLargeSparseSidebar(page, { includeCoverage: false, fullStatePending: true });
 
@@ -834,11 +911,19 @@ test.describe("sidebar projection hunt", () => {
     expect(issues).toEqual([]);
   });
 
-  test("psh-move-to-root-history-status-stale-slice-keeps-command-and-viewport", async ({ page }) => {
+  test("psh-move-to-root-history-status-stale-slice-keeps-command-and-viewport", async ({
+    page
+  }) => {
     const issues = collectPageIssues(page);
     await loadLargeSparseSidebar(page, {
       fullStatePending: true,
-      historyStatus: { canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "remote edit" }
+      historyStatus: {
+        canUndo: true,
+        canRedo: false,
+        undoDepth: 1,
+        redoDepth: 0,
+        undoLabel: "remote edit"
+      }
     });
 
     const row = nodeRow(page, "tab:800");
@@ -850,7 +935,13 @@ test.describe("sidebar projection hunt", () => {
       const api = projectionHuntApi();
       await api.scrollToRow(900);
       await api.waitForSparseRequestCount(1);
-      api.emitHistoryStatus({ canUndo: true, canRedo: false, undoDepth: 2, redoDepth: 0, undoLabel: "move to root" });
+      api.emitHistoryStatus({
+        canUndo: true,
+        canRedo: false,
+        undoDepth: 2,
+        redoDepth: 0,
+        undoLabel: "move to root"
+      });
       api.resolveSliceAt(0, { start: 760, end: 840 });
       await api.waitForSparseRequestCount(2);
       api.resolveSliceAt(0);
@@ -870,7 +961,9 @@ test.describe("sidebar projection hunt", () => {
     expect(issues).toEqual([]);
   });
 
-  test("psh-drag-after-hydration-history-status-broadcast-keeps-command-and-viewport", async ({ page }) => {
+  test("psh-drag-after-hydration-history-status-broadcast-keeps-command-and-viewport", async ({
+    page
+  }) => {
     const issues = collectPageIssues(page);
     await loadLargeSparseSidebar(page, {
       includeCoverage: false,
@@ -889,7 +982,13 @@ test.describe("sidebar projection hunt", () => {
 
     const result = await page.evaluate(async () => {
       const api = projectionHuntApi();
-      api.emitHistoryStatus({ canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "drag move" });
+      api.emitHistoryStatus({
+        canUndo: true,
+        canRedo: false,
+        undoDepth: 1,
+        redoDepth: 0,
+        undoLabel: "drag move"
+      });
       api.emitFullStateBroadcast();
       await api.waitForIdleFrames(6);
       return {
@@ -921,7 +1020,9 @@ test.describe("sidebar projection hunt", () => {
     await tabRow.hover();
     await expect(tabRow.getByRole("button", { name: "Close", exact: true })).toBeVisible();
     await expect(tabRow.getByRole("button", { name: "Cut", exact: true })).toBeVisible();
-    await expect(tabRow.getByRole("button", { name: "Move to top level", exact: true })).toBeVisible();
+    await expect(
+      tabRow.getByRole("button", { name: "Move to top level", exact: true })
+    ).toBeVisible();
     await expect(tabRow.getByRole("button", { name: "Delete", exact: true })).toBeVisible();
 
     const result = await page.evaluate(() => ({
@@ -933,7 +1034,9 @@ test.describe("sidebar projection hunt", () => {
     expect(issues).toEqual([]);
   });
 
-  test("psh move to bottom visible for sparse root named group with unloaded tail", async ({ page }) => {
+  test("psh move to bottom visible for sparse root named group with unloaded tail", async ({
+    page
+  }) => {
     const issues = collectPageIssues(page);
     await loadSparseNamedGroupSidebar(page, { fullStatePending: true });
 
@@ -958,7 +1061,14 @@ test.describe("sidebar projection hunt", () => {
     const issues = collectPageIssues(page);
     await loadLargeSparseSidebar(page, {
       fullStatePending: true,
-      historyStatus: { canUndo: true, canRedo: true, undoDepth: 1, redoDepth: 1, undoLabel: "remote undo", redoLabel: "remote redo" }
+      historyStatus: {
+        canUndo: true,
+        canRedo: true,
+        undoDepth: 1,
+        redoDepth: 1,
+        undoLabel: "remote undo",
+        redoLabel: "remote redo"
+      }
     });
 
     const row = nodeRow(page, "window:1");
@@ -985,7 +1095,9 @@ test.describe("sidebar projection hunt", () => {
     expect(issues).toEqual([]);
   });
 
-  test("psh-cut-source-delete-stale-slice-clears-cut-and-refills-current-window", async ({ page }) => {
+  test("psh-cut-source-delete-stale-slice-clears-cut-and-refills-current-window", async ({
+    page
+  }) => {
     const issues = collectPageIssues(page);
     await loadLargeSparseSidebar(page, { fullStatePending: true });
 
@@ -1012,17 +1124,23 @@ test.describe("sidebar projection hunt", () => {
     });
 
     expect(result.requests).toHaveLength(2);
-    expect(result.requests.every((request) => request.query === "" && request.targetNodeId === undefined)).toBe(true);
+    expect(
+      result.requests.every((request) => request.query === "" && request.targetNodeId === undefined)
+    ).toBe(true);
     expect(result.visibleRows).toContain(250);
     expect(result.cutMarkers).toBe(0);
     expect(result.deletedCutExists).toBe(false);
     await nodeRow(page, "tab:250").hover();
-    await expect(nodeRow(page, "tab:250").getByRole("button", { name: "Paste", exact: true })).toHaveCount(0);
+    await expect(
+      nodeRow(page, "tab:250").getByRole("button", { name: "Paste", exact: true })
+    ).toHaveCount(0);
     await expect(sentCommands(page)).resolves.toEqual([]);
     expect(issues).toEqual([]);
   });
 
-  test("psh-missing-coverage-refill-enables-next-covered-drag-without-hydration", async ({ page }) => {
+  test("psh-missing-coverage-refill-enables-next-covered-drag-without-hydration", async ({
+    page
+  }) => {
     const issues = collectPageIssues(page);
     await loadLargeSparseSidebar(page, { includeCoverage: false, fullStatePending: true });
 
@@ -1057,7 +1175,12 @@ test.describe("sidebar projection hunt", () => {
     });
 
     expect(result.commands).toEqual([
-      expect.objectContaining({ type: "moveNode", nodeId: "tab:800", parentId: "window:1", index: 800 })
+      expect.objectContaining({
+        type: "moveNode",
+        nodeId: "tab:800",
+        parentId: "window:1",
+        index: 800
+      })
     ]);
     expect(result.stateRequests).toBe(0);
     expect(result.visibleRows).toContain(800);
@@ -1120,7 +1243,9 @@ test.describe("sidebar projection hunt", () => {
     expect(afterAbandonedDrag.commands).toEqual([]);
     expect(afterAbandonedDrag.requests).toHaveLength(1);
     expect(afterAbandonedDrag.stateRequests).toBe(0);
-    expect(afterAbandonedDrag.markerClassName).not.toMatch(/drop-root|drop-before|drop-after|drop-inside/);
+    expect(afterAbandonedDrag.markerClassName).not.toMatch(
+      /drop-root|drop-before|drop-after|drop-inside/
+    );
     expect(afterAbandonedDrag.rootDropTarget).toBe(false);
     expect(afterAbandonedDrag.visibleRows).toContain(800);
 
@@ -1191,9 +1316,18 @@ test.describe("sidebar projection hunt", () => {
       ]);
 
       expect(resultA.commands).toEqual([
-        expect.objectContaining({ type: "moveNode", nodeId: "tab:800", parentId: "window:1", index: 800 })
+        expect.objectContaining({
+          type: "moveNode",
+          nodeId: "tab:800",
+          parentId: "window:1",
+          index: 800
+        })
       ]);
-      expect(resultA.requests.every((request) => request.query === "" && request.targetNodeId === undefined)).toBe(true);
+      expect(
+        resultA.requests.every(
+          (request) => request.query === "" && request.targetNodeId === undefined
+        )
+      ).toBe(true);
       expect(resultA.stateRequests).toBe(0);
       expect(resultA.searchValue).toBe("");
       expect(resultA.visibleRows).toContain(800);
@@ -1250,7 +1384,9 @@ test.describe("sidebar projection hunt", () => {
     expect(issues).toEqual([]);
   });
 
-  test("psh-covered-row-drop-move-patch-clears-drag-preview-and-keeps-actions", async ({ page }) => {
+  test("psh-covered-row-drop-move-patch-clears-drag-preview-and-keeps-actions", async ({
+    page
+  }) => {
     const issues = collectPageIssues(page);
     await loadLargeSparseSidebar(page, { includeCoverage: true, fullStatePending: true });
 
@@ -1274,9 +1410,16 @@ test.describe("sidebar projection hunt", () => {
     });
 
     expect(result.commands).toEqual([
-      expect.objectContaining({ type: "moveNode", nodeId: "tab:800", parentId: "window:1", index: 800 })
+      expect.objectContaining({
+        type: "moveNode",
+        nodeId: "tab:800",
+        parentId: "window:1",
+        index: 800
+      })
     ]);
-    expect(result.requests.every((request) => request.query === "" && request.targetNodeId === undefined)).toBe(true);
+    expect(
+      result.requests.every((request) => request.query === "" && request.targetNodeId === undefined)
+    ).toBe(true);
     expect(result.stateRequests).toBe(0);
     expect(result.markerClassName).not.toMatch(/drop-root|drop-before|drop-after|drop-inside/);
     expect(result.rootDropTarget).toBe(false);
@@ -1331,7 +1474,9 @@ test.describe("sidebar projection hunt", () => {
 
     expect(result.commands).toEqual([{ type: "focusNode", nodeId: "tab:260" }]);
     expect(result.requests).toHaveLength(3);
-    expect(result.requests.every((request) => request.query === "" && request.targetNodeId === undefined)).toBe(true);
+    expect(
+      result.requests.every((request) => request.query === "" && request.targetNodeId === undefined)
+    ).toBe(true);
     expect(result.stateRequests).toBe(0);
     expect(result.visibleRows).toContain(500);
     expect(result.deletedFocusedExists).toBe(false);
@@ -1373,7 +1518,9 @@ test.describe("sidebar projection hunt", () => {
     expect(issues).toEqual([]);
   });
 
-  test("psh-keyboard-cut-delete-patch-stale-refill-clears-local-cut-before-paste", async ({ page }) => {
+  test("psh-keyboard-cut-delete-patch-stale-refill-clears-local-cut-before-paste", async ({
+    page
+  }) => {
     const issues = collectPageIssues(page);
     await loadLargeSparseSidebar(page, { fullStatePending: true });
 
@@ -1496,7 +1643,13 @@ test.describe("sidebar projection hunt", () => {
 
     const result = await page.evaluate(async () => {
       const api = projectionHuntApi();
-      api.emitHistoryStatus({ canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "close tab" });
+      api.emitHistoryStatus({
+        canUndo: true,
+        canRedo: false,
+        undoDepth: 1,
+        redoDepth: 0,
+        undoLabel: "close tab"
+      });
       api.emitDeletePatch(["tab:800"]);
       await api.scrollToRow(250);
       await api.waitForSparseRequestCount(1);
@@ -1515,17 +1668,23 @@ test.describe("sidebar projection hunt", () => {
 
     expect(result.commands).toEqual([{ type: "closeNode", nodeId: "tab:800" }]);
     expect(result.requests).toHaveLength(2);
-    expect(result.requests.every((request) => request.query === "" && request.targetNodeId === undefined)).toBe(true);
+    expect(
+      result.requests.every((request) => request.query === "" && request.targetNodeId === undefined)
+    ).toBe(true);
     expect(result.stateRequests).toBe(0);
     expect(result.visibleRows).toContain(250);
     expect(result.deletedClosedExists).toBe(false);
     await nodeRow(page, "tab:250").hover();
-    await expect(nodeRow(page, "tab:250").getByRole("button", { name: "Close", exact: true })).toBeVisible();
+    await expect(
+      nodeRow(page, "tab:250").getByRole("button", { name: "Close", exact: true })
+    ).toBeVisible();
     await expect(page.getByRole("button", { name: "Undo", exact: true })).toBeEnabled();
     expect(issues).toEqual([]);
   });
 
-  test("psh-root-drop-history-full-broadcast-clears-preview-without-hydration", async ({ page }) => {
+  test("psh-root-drop-history-full-broadcast-clears-preview-without-hydration", async ({
+    page
+  }) => {
     const issues = collectPageIssues(page);
     await loadLargeSparseSidebar(page, {
       includeCoverage: true,
@@ -1538,7 +1697,13 @@ test.describe("sidebar projection hunt", () => {
 
     const result = await page.evaluate(async () => {
       const api = projectionHuntApi();
-      api.emitHistoryStatus({ canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "move to root" });
+      api.emitHistoryStatus({
+        canUndo: true,
+        canRedo: false,
+        undoDepth: 1,
+        redoDepth: 0,
+        undoLabel: "move to root"
+      });
       api.emitFullStateBroadcast();
       await api.waitForIdleFrames(6);
       const marker = document.querySelector<HTMLElement>("[data-testid='drop-marker']");
@@ -1556,7 +1721,9 @@ test.describe("sidebar projection hunt", () => {
     expect(result.commands).toEqual([
       expect.objectContaining({ type: "moveNodeToNewWindow", nodeId: "tab:800", index: 1 })
     ]);
-    expect(result.requests.every((request) => request.query === "" && request.targetNodeId === undefined)).toBe(true);
+    expect(
+      result.requests.every((request) => request.query === "" && request.targetNodeId === undefined)
+    ).toBe(true);
     expect(result.stateRequests).toBe(0);
     expect(result.markerClassName).not.toMatch(/drop-root|drop-before|drop-after|drop-inside/);
     expect(result.rootDropTarget).toBe(false);
@@ -1616,7 +1783,9 @@ test.describe("sidebar projection hunt", () => {
             stateRequests: api.stateRequestCount(),
             searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
             visibleRows: api.visibleRows(),
-            hasRevealHighlight: Boolean(document.querySelector("[data-node-id='tab:900'].is-reveal-highlight"))
+            hasRevealHighlight: Boolean(
+              document.querySelector("[data-node-id='tab:900'].is-reveal-highlight")
+            )
           };
         })
       ]);
@@ -1624,16 +1793,24 @@ test.describe("sidebar projection hunt", () => {
       expect(resultA.commands).toEqual([
         expect.objectContaining({ type: "moveNodeToNewWindow", nodeId: "tab:800", index: 1 })
       ]);
-      expect(resultA.requests.every((request) => request.query === "" && request.targetNodeId === undefined)).toBe(true);
+      expect(
+        resultA.requests.every(
+          (request) => request.query === "" && request.targetNodeId === undefined
+        )
+      ).toBe(true);
       expect(resultA.stateRequests).toBe(0);
       expect(resultA.searchValue).toBe("");
       expect(resultA.visibleRows).toContain(800);
 
       expect(resultB.commands).toContainEqual({ type: "expandAncestors", nodeId: "tab:900" });
-      expect(resultB.requests.map((request) => ({
-        query: request.query,
-        targetNodeId: request.targetNodeId
-      })).slice(0, 2)).toEqual([
+      expect(
+        resultB.requests
+          .map((request) => ({
+            query: request.query,
+            targetNodeId: request.targetNodeId
+          }))
+          .slice(0, 2)
+      ).toEqual([
         { query: "Tab 900", targetNodeId: undefined },
         { query: "", targetNodeId: "tab:900" }
       ]);
@@ -1654,7 +1831,13 @@ test.describe("sidebar projection hunt", () => {
     const issues = collectPageIssues(page);
     await loadLargeSparseSidebar(page, {
       fullStatePending: true,
-      historyStatus: { canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "remote edit" }
+      historyStatus: {
+        canUndo: true,
+        canRedo: false,
+        undoDepth: 1,
+        redoDepth: 0,
+        undoLabel: "remote edit"
+      }
     });
 
     await page.evaluate(async () => {
@@ -1752,7 +1935,13 @@ test.describe("sidebar projection hunt", () => {
     const issues = collectPageIssues(page);
     await loadLargeSparseSidebar(page, {
       fullStatePending: true,
-      historyStatus: { canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "temporal edit" }
+      historyStatus: {
+        canUndo: true,
+        canRedo: false,
+        undoDepth: 1,
+        redoDepth: 0,
+        undoLabel: "temporal edit"
+      }
     });
 
     await page.evaluate(async () => {
@@ -1798,7 +1987,11 @@ test.describe("sidebar projection hunt", () => {
     });
 
     expect(result.commands).toContainEqual({ type: "undo" });
-    expect(result.requests.slice(0, 3).map((request) => request.query)).toEqual(["", "Tab 900", ""]);
+    expect(result.requests.slice(0, 3).map((request) => request.query)).toEqual([
+      "",
+      "Tab 900",
+      ""
+    ]);
     expect(result.requests.slice(3).every((request) => request.query === "")).toBe(true);
     expect(result.afterStaleSearch.searchValue).toBe("");
     expect(result.afterStaleSearch.targetExists).toBe(false);
@@ -1814,7 +2007,13 @@ test.describe("sidebar projection hunt", () => {
     const issues = collectPageIssues(page);
     await loadLargeSparseSidebar(page, {
       fullStatePending: true,
-      historyStatus: { canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "pending sparse edit" }
+      historyStatus: {
+        canUndo: true,
+        canRedo: false,
+        undoDepth: 1,
+        redoDepth: 0,
+        undoLabel: "pending sparse edit"
+      }
     });
 
     await page.evaluate(async () => {
@@ -1828,7 +2027,13 @@ test.describe("sidebar projection hunt", () => {
 
     const result = await page.evaluate(async () => {
       const api = projectionHuntApi();
-      api.emitHistoryStatus({ canUndo: false, canRedo: true, undoDepth: 0, redoDepth: 1, redoLabel: "pending sparse edit" });
+      api.emitHistoryStatus({
+        canUndo: false,
+        canRedo: true,
+        undoDepth: 0,
+        redoDepth: 1,
+        redoLabel: "pending sparse edit"
+      });
       await api.waitForIdleFrames(2);
       api.resolveSliceAt(0);
       await api.waitForIdleFrames(4);
@@ -1848,11 +2053,19 @@ test.describe("sidebar projection hunt", () => {
     expect(issues).toEqual([]);
   });
 
-  test("psh-redo-delete-broadcast-during-pending-slice-refills-current-window", async ({ page }) => {
+  test("psh-redo-delete-broadcast-during-pending-slice-refills-current-window", async ({
+    page
+  }) => {
     const issues = collectPageIssues(page);
     await loadLargeSparseSidebar(page, {
       fullStatePending: true,
-      historyStatus: { canUndo: false, canRedo: true, undoDepth: 0, redoDepth: 1, redoLabel: "remote delete" }
+      historyStatus: {
+        canUndo: false,
+        canRedo: true,
+        undoDepth: 0,
+        redoDepth: 1,
+        redoLabel: "remote delete"
+      }
     });
 
     await page.evaluate(async () => {
@@ -1870,7 +2083,13 @@ test.describe("sidebar projection hunt", () => {
       const api = projectionHuntApi();
       api.emitDeletePatch(Array.from({ length: 28 }, (_value, index) => `tab:${250 + index}`));
       await api.waitForSparseRequestCount(2);
-      api.emitHistoryStatus({ canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "remote delete" });
+      api.emitHistoryStatus({
+        canUndo: true,
+        canRedo: false,
+        undoDepth: 1,
+        redoDepth: 0,
+        undoLabel: "remote delete"
+      });
       api.resolveSliceAt(0);
       await api.waitForIdleFrames(4);
       return {
@@ -1894,7 +2113,13 @@ test.describe("sidebar projection hunt", () => {
     const issues = collectPageIssues(page);
     await loadLargeSparseSidebar(page, {
       fullStatePending: true,
-      historyStatus: { canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "remote edit" }
+      historyStatus: {
+        canUndo: true,
+        canRedo: false,
+        undoDepth: 1,
+        redoDepth: 0,
+        undoLabel: "remote edit"
+      }
     });
 
     await nodeRow(page, "tab:800").hover();
@@ -1906,7 +2131,13 @@ test.describe("sidebar projection hunt", () => {
 
     const result = await page.evaluate(async () => {
       const api = projectionHuntApi();
-      api.emitHistoryStatus({ canUndo: false, canRedo: true, undoDepth: 0, redoDepth: 1, redoLabel: "remote edit" });
+      api.emitHistoryStatus({
+        canUndo: false,
+        canRedo: true,
+        undoDepth: 0,
+        redoDepth: 1,
+        redoLabel: "remote edit"
+      });
       api.emitDeletePatch(["tab:800"]);
       await api.waitForIdleFrames(4);
       return {
@@ -1921,18 +2152,28 @@ test.describe("sidebar projection hunt", () => {
     expect(result.cutMarkers).toBe(0);
     await expect(page.locator(nodeSelector("tab:800"))).toHaveCount(0);
     await nodeRow(page, "tab:801").hover();
-    await expect(nodeRow(page, "tab:801").getByRole("button", { name: "Paste", exact: true })).toHaveCount(0);
+    await expect(
+      nodeRow(page, "tab:801").getByRole("button", { name: "Paste", exact: true })
+    ).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Undo", exact: true })).toBeDisabled();
     await expect(page.getByRole("button", { name: "Redo", exact: true })).toBeEnabled();
     expect(issues).toEqual([]);
   });
 
-  test("psh-missing-coverage-redo-full-hydration-restores-actions-after-status", async ({ page }) => {
+  test("psh-missing-coverage-redo-full-hydration-restores-actions-after-status", async ({
+    page
+  }) => {
     const issues = collectPageIssues(page);
     await loadLargeSparseSidebar(page, {
       includeCoverage: false,
       fullStatePending: true,
-      historyStatus: { canUndo: false, canRedo: true, undoDepth: 0, redoDepth: 1, redoLabel: "remote redo" }
+      historyStatus: {
+        canUndo: false,
+        canRedo: true,
+        undoDepth: 0,
+        redoDepth: 1,
+        redoLabel: "remote redo"
+      }
     });
 
     const row = nodeRow(page, "tab:799");
@@ -1943,7 +2184,13 @@ test.describe("sidebar projection hunt", () => {
 
     await page.evaluate(async () => {
       const api = projectionHuntApi();
-      api.emitHistoryStatus({ canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "remote redo" });
+      api.emitHistoryStatus({
+        canUndo: true,
+        canRedo: false,
+        undoDepth: 1,
+        redoDepth: 0,
+        undoLabel: "remote redo"
+      });
       api.resolveFullState();
       await api.waitForIdleFrames(10);
     });
@@ -2093,9 +2340,13 @@ test.describe("sidebar projection hunt", () => {
     const issues = collectPageIssues(page);
     await loadClosedRestoreSidebar(page, { fullStatePending: true, invalidRestoreScope: true });
 
-    await nodeRow(page, "window:30").getByRole("button", { name: "Restore Closed Window", exact: true }).click();
+    await nodeRow(page, "window:30")
+      .getByRole("button", { name: "Restore Closed Window", exact: true })
+      .click();
 
-    await expect(sentCommands(page)).resolves.toEqual([{ type: "analyzeRestoreScope", nodeId: "window:30" }]);
+    await expect(sentCommands(page)).resolves.toEqual([
+      { type: "analyzeRestoreScope", nodeId: "window:30" }
+    ]);
     expect(issues).toEqual([]);
   });
 
@@ -2107,7 +2358,9 @@ test.describe("sidebar projection hunt", () => {
       expect(dialog.message()).toContain("Restore 4 restorable closed nodes");
       await dialog.accept();
     });
-    await nodeRow(page, "window:30").getByRole("button", { name: "Restore Closed Window", exact: true }).click();
+    await nodeRow(page, "window:30")
+      .getByRole("button", { name: "Restore Closed Window", exact: true })
+      .click();
 
     await expect(sentCommands(page)).resolves.toEqual([
       { type: "analyzeRestoreScope", nodeId: "window:30" },
@@ -2125,7 +2378,9 @@ test.describe("sidebar projection hunt", () => {
     });
     await loadClosedRestoreSidebar(page, { fullStatePending: true, delayRestoreScope: true });
 
-    await nodeRow(page, "window:30").getByRole("button", { name: "Restore Closed Window", exact: true }).click();
+    await nodeRow(page, "window:30")
+      .getByRole("button", { name: "Restore Closed Window", exact: true })
+      .click();
     await page.waitForFunction(() => projectionHuntApi().sentCommands().length === 1);
 
     const result = await page.evaluate(async () => {
@@ -2173,7 +2428,9 @@ test.describe("sidebar projection hunt", () => {
       api.resolveSliceForQuery("Closed tab 30");
       await api.waitForVisibleRow(1);
     });
-    await nodeRow(page, "tab:30").getByRole("button", { name: /Restore Closed tab 30/ }).click();
+    await nodeRow(page, "tab:30")
+      .getByRole("button", { name: /Restore Closed tab 30/ })
+      .click();
 
     const result = await page.evaluate(async () => {
       const api = projectionHuntApi();
@@ -2192,9 +2449,14 @@ test.describe("sidebar projection hunt", () => {
     });
 
     expect(result.commands).toEqual([{ type: "restoreNode", nodeId: "tab:30" }]);
-    expect(result.requests).toContainEqual(expect.objectContaining({ query: "Closed tab 30", targetNodeId: undefined }));
-    expect(result.requests.every((request) => request.query === "Closed tab 30" && request.targetNodeId === undefined))
-      .toBe(true);
+    expect(result.requests).toContainEqual(
+      expect.objectContaining({ query: "Closed tab 30", targetNodeId: undefined })
+    );
+    expect(
+      result.requests.every(
+        (request) => request.query === "Closed tab 30" && request.targetNodeId === undefined
+      )
+    ).toBe(true);
     expect(result.stateRequests).toBe(0);
     expect(result.searchValue).toBe("Closed tab 30");
     expect(result.closedWindowExists).toBe(false);
@@ -2203,10 +2465,14 @@ test.describe("sidebar projection hunt", () => {
     expect(issues).toEqual([]);
   });
 
-  test("psh-two-sidebars-closed-tab-restore-and-target-owner-stay-independent", async ({ page }) => {
+  test("psh-two-sidebars-closed-tab-restore-and-target-owner-stay-independent", async ({
+    page
+  }) => {
     const issuesA = collectPageIssues(page);
     await loadClosedRestoreSidebar(page, { fullStatePending: true });
-    await nodeRow(page, "tab:30").getByRole("button", { name: /Restore Closed tab 30/ }).click();
+    await nodeRow(page, "tab:30")
+      .getByRole("button", { name: /Restore Closed tab 30/ })
+      .click();
 
     const pageB = await page.context().newPage();
     const issuesB = collectPageIssues(pageB);
@@ -2220,13 +2486,25 @@ test.describe("sidebar projection hunt", () => {
         await api.waitForVisibleRow(1);
       });
       await nodeRow(pageB, "tab:900").hover();
-      await nodeRow(pageB, "tab:900").getByRole("button", { name: "Show in tree", exact: true }).click();
-      await pageB.waitForFunction(() => projectionHuntApi().projectionRequests().some((request) => request.targetNodeId === "tab:900"));
+      await nodeRow(pageB, "tab:900")
+        .getByRole("button", { name: "Show in tree", exact: true })
+        .click();
+      await pageB.waitForFunction(() =>
+        projectionHuntApi()
+          .projectionRequests()
+          .some((request) => request.targetNodeId === "tab:900")
+      );
 
       const [resultA, resultB] = await Promise.all([
         page.evaluate(async () => {
           const api = projectionHuntApi();
-          api.emitHistoryStatus({ canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "restore closed tab" });
+          api.emitHistoryStatus({
+            canUndo: true,
+            canRedo: false,
+            undoDepth: 1,
+            redoDepth: 0,
+            undoLabel: "restore closed tab"
+          });
           api.emitDeletePatch(["tab:30"]);
           await api.waitForIdleFrames(4);
           return {
@@ -2240,7 +2518,13 @@ test.describe("sidebar projection hunt", () => {
         }),
         pageB.evaluate(async () => {
           const api = projectionHuntApi();
-          api.emitHistoryStatus({ canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "peer restore" });
+          api.emitHistoryStatus({
+            canUndo: true,
+            canRedo: false,
+            undoDepth: 1,
+            redoDepth: 0,
+            undoLabel: "peer restore"
+          });
           api.resolveSliceForTarget("tab:900", { start: 880, end: 940 });
           await api.waitForVisibleRow(900);
           await api.waitForIdleFrames(4);
@@ -2250,8 +2534,12 @@ test.describe("sidebar projection hunt", () => {
             stateRequests: api.stateRequestCount(),
             searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
             visibleRows: api.visibleRows(),
-            hasTargetHighlight: Boolean(document.querySelector("[data-node-id='tab:900'].is-reveal-highlight")),
-            hasSearchRow: Boolean(document.querySelector("[data-node-id='tab:900'].is-search-match"))
+            hasTargetHighlight: Boolean(
+              document.querySelector("[data-node-id='tab:900'].is-reveal-highlight")
+            ),
+            hasSearchRow: Boolean(
+              document.querySelector("[data-node-id='tab:900'].is-search-match")
+            )
           };
         })
       ]);
@@ -2264,8 +2552,12 @@ test.describe("sidebar projection hunt", () => {
       expect(resultA.countText).toBe("3 items / 3 saved");
 
       expect(resultB.commands).toEqual([{ type: "expandAncestors", nodeId: "tab:900" }]);
-      expect(resultB.requests).toContainEqual(expect.objectContaining({ query: "Tab 900", targetNodeId: undefined }));
-      expect(resultB.requests).toContainEqual(expect.objectContaining({ query: "", targetNodeId: "tab:900" }));
+      expect(resultB.requests).toContainEqual(
+        expect.objectContaining({ query: "Tab 900", targetNodeId: undefined })
+      );
+      expect(resultB.requests).toContainEqual(
+        expect.objectContaining({ query: "", targetNodeId: "tab:900" })
+      );
       expect(resultB.stateRequests).toBe(0);
       expect(resultB.searchValue).toBe("");
       expect(resultB.visibleRows).toContain(900);
@@ -2278,7 +2570,9 @@ test.describe("sidebar projection hunt", () => {
     }
   });
 
-  test("psh-two-sidebars-root-drop-and-delayed-restore-prompt-stay-independent", async ({ page }) => {
+  test("psh-two-sidebars-root-drop-and-delayed-restore-prompt-stay-independent", async ({
+    page
+  }) => {
     const issuesA = collectPageIssues(page);
     await loadRestoredWindowSidebar(page, { fullStatePending: true });
     await dragToRoot(page, "tab:2");
@@ -2292,13 +2586,21 @@ test.describe("sidebar projection hunt", () => {
     });
     try {
       await loadClosedRestoreSidebar(pageB, { fullStatePending: true, delayRestoreScope: true });
-      await nodeRow(pageB, "window:30").getByRole("button", { name: "Restore Closed Window", exact: true }).click();
+      await nodeRow(pageB, "window:30")
+        .getByRole("button", { name: "Restore Closed Window", exact: true })
+        .click();
       await pageB.waitForFunction(() => projectionHuntApi().sentCommands().length === 1);
 
       const [resultA, resultB] = await Promise.all([
         page.evaluate(async () => {
           const api = projectionHuntApi();
-          api.emitHistoryStatus({ canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "root drop" });
+          api.emitHistoryStatus({
+            canUndo: true,
+            canRedo: false,
+            undoDepth: 1,
+            redoDepth: 0,
+            undoLabel: "root drop"
+          });
           await api.waitForIdleFrames(4);
           const marker = document.querySelector<HTMLElement>("[data-testid='drop-marker']");
           const root = document.querySelector<HTMLElement>("main");
@@ -2334,7 +2636,9 @@ test.describe("sidebar projection hunt", () => {
         })
       ]);
 
-      expect(resultA.commands).toEqual([{ type: "moveNodeToNewWindow", nodeId: "tab:2", index: 2 }]);
+      expect(resultA.commands).toEqual([
+        { type: "moveNodeToNewWindow", nodeId: "tab:2", index: 2 }
+      ]);
       expect(resultA.requests).toEqual([]);
       expect(resultA.stateRequests).toBe(0);
       expect(resultA.visibleRows).toContain(3);
@@ -2460,7 +2764,9 @@ test.describe("sidebar projection hunt", () => {
         afterLocalDelete,
         afterRefill: api.visibleRows(),
         requests: api.projectionRequests(),
-        deletedStillRendered: deletedNodeIds.some((nodeId) => Boolean(document.querySelector(`[data-node-id="${nodeId}"]`)))
+        deletedStillRendered: deletedNodeIds.some((nodeId) =>
+          Boolean(document.querySelector(`[data-node-id="${nodeId}"]`))
+        )
       };
     });
 
@@ -2488,11 +2794,13 @@ test.describe("sidebar projection hunt", () => {
 
       search.focus();
       search.value = "Tab 900";
-      search.dispatchEvent(new InputEvent("input", {
-        bubbles: true,
-        inputType: "insertText",
-        data: "Tab 900"
-      }));
+      search.dispatchEvent(
+        new InputEvent("input", {
+          bubbles: true,
+          inputType: "insertText",
+          data: "Tab 900"
+        })
+      );
       await api.waitForSparseRequestCount(1);
 
       clear.click();
@@ -2534,11 +2842,13 @@ test.describe("sidebar projection hunt", () => {
 
       search.focus();
       search.value = "Tab 900";
-      search.dispatchEvent(new InputEvent("input", {
-        bubbles: true,
-        inputType: "insertText",
-        data: "Tab 900"
-      }));
+      search.dispatchEvent(
+        new InputEvent("input", {
+          bubbles: true,
+          inputType: "insertText",
+          data: "Tab 900"
+        })
+      );
       await api.waitForSparseRequestCount(1);
       api.rejectSliceAt(0);
       await api.waitForIdleFrames(4);
@@ -2604,7 +2914,13 @@ test.describe("sidebar projection hunt", () => {
     const issues = collectPageIssues(page);
     await loadLargeSparseSidebar(page, {
       fullStatePending: true,
-      historyStatus: { canUndo: false, canRedo: true, undoDepth: 0, redoDepth: 1, redoLabel: "remote edit" }
+      historyStatus: {
+        canUndo: false,
+        canRedo: true,
+        undoDepth: 0,
+        redoDepth: 1,
+        redoLabel: "remote edit"
+      }
     });
 
     await page.locator("#search").fill("Tab 900");
@@ -2621,7 +2937,13 @@ test.describe("sidebar projection hunt", () => {
 
     const result = await page.evaluate(async () => {
       const api = projectionHuntApi();
-      api.emitHistoryStatus({ canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "remote edit" });
+      api.emitHistoryStatus({
+        canUndo: true,
+        canRedo: false,
+        undoDepth: 1,
+        redoDepth: 0,
+        undoLabel: "remote edit"
+      });
       api.rejectSliceAt(0);
       await api.waitForIdleFrames(4);
       return {
@@ -2676,7 +2998,9 @@ test.describe("sidebar projection hunt", () => {
 
     await expect(page.locator(`${nodeSelector("tab:900")}.is-reveal-highlight`)).toBeVisible();
     await expect(page.locator("#search")).toHaveValue("");
-    expect(result.requests).toContainEqual(expect.objectContaining({ query: "", targetNodeId: "tab:900" }));
+    expect(result.requests).toContainEqual(
+      expect.objectContaining({ query: "", targetNodeId: "tab:900" })
+    );
     expect(result.requests.at(-1)).toMatchObject({ query: "" });
     expect(result.visibleRows).toContain(900);
     expect(result.viewportStartRow).toBeGreaterThanOrEqual(880);
@@ -2688,7 +3012,13 @@ test.describe("sidebar projection hunt", () => {
     const issues = collectPageIssues(page);
     await loadLargeSparseSidebar(page, {
       fullStatePending: true,
-      historyStatus: { canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "remote edit" }
+      historyStatus: {
+        canUndo: true,
+        canRedo: false,
+        undoDepth: 1,
+        redoDepth: 0,
+        undoLabel: "remote edit"
+      }
     });
 
     await page.locator("#search").fill("Tab 900");
@@ -2710,7 +3040,13 @@ test.describe("sidebar projection hunt", () => {
     const result = await page.evaluate(async () => {
       const api = projectionHuntApi();
       await api.waitForIdleFrames(4);
-      api.emitHistoryStatus({ canUndo: false, canRedo: true, undoDepth: 0, redoDepth: 1, redoLabel: "remote edit" });
+      api.emitHistoryStatus({
+        canUndo: false,
+        canRedo: true,
+        undoDepth: 0,
+        redoDepth: 1,
+        redoLabel: "remote edit"
+      });
       await api.waitForIdleFrames(2);
       api.resolveSliceAt(0);
       await api.waitForIdleFrames(4);
@@ -2724,7 +3060,9 @@ test.describe("sidebar projection hunt", () => {
     });
 
     expect(result.commands).toContainEqual({ type: "undo" });
-    expect(result.requests).toContainEqual(expect.objectContaining({ query: "", targetNodeId: "tab:900" }));
+    expect(result.requests).toContainEqual(
+      expect.objectContaining({ query: "", targetNodeId: "tab:900" })
+    );
     expect(result.searchValue).toBe("");
     expect(result.visibleRows).toContain(900);
     expect(result.viewportStartRow).toBeGreaterThanOrEqual(880);
@@ -2735,11 +3073,19 @@ test.describe("sidebar projection hunt", () => {
     expect(issues).toEqual([]);
   });
 
-  test("psh-show-in-tree-rejected-target-after-history-status-keeps-outline-painted", async ({ page }) => {
+  test("psh-show-in-tree-rejected-target-after-history-status-keeps-outline-painted", async ({
+    page
+  }) => {
     const issues = collectPageIssues(page);
     await loadLargeSparseSidebar(page, {
       fullStatePending: true,
-      historyStatus: { canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "remote edit" }
+      historyStatus: {
+        canUndo: true,
+        canRedo: false,
+        undoDepth: 1,
+        redoDepth: 0,
+        undoLabel: "remote edit"
+      }
     });
 
     await page.locator("#search").fill("Tab 900");
@@ -2758,7 +3104,13 @@ test.describe("sidebar projection hunt", () => {
 
     const result = await page.evaluate(async () => {
       const api = projectionHuntApi();
-      api.emitHistoryStatus({ canUndo: false, canRedo: true, undoDepth: 0, redoDepth: 1, redoLabel: "remote edit" });
+      api.emitHistoryStatus({
+        canUndo: false,
+        canRedo: true,
+        undoDepth: 0,
+        redoDepth: 1,
+        redoLabel: "remote edit"
+      });
       api.rejectSliceAt(0);
       await api.waitForIdleFrames(4);
       return {
@@ -2772,7 +3124,9 @@ test.describe("sidebar projection hunt", () => {
     });
 
     expect(result.commands).toEqual([{ type: "expandAncestors", nodeId: "tab:900" }]);
-    expect(result.requests).toContainEqual(expect.objectContaining({ query: "", targetNodeId: "tab:900" }));
+    expect(result.requests).toContainEqual(
+      expect.objectContaining({ query: "", targetNodeId: "tab:900" })
+    );
     expect(result.searchValue).toBe("");
     expect(result.countText).toBe("1001 items / 0 saved");
     expect(result.visibleRows.length).toBeGreaterThan(0);
@@ -2782,11 +3136,19 @@ test.describe("sidebar projection hunt", () => {
     expect(issues.filter((issue) => issue.kind !== "console")).toEqual([]);
   });
 
-  test("psh-show-in-tree-target-deleted-after-history-status-keeps-outline-painted", async ({ page }) => {
+  test("psh-show-in-tree-target-deleted-after-history-status-keeps-outline-painted", async ({
+    page
+  }) => {
     const issues = collectPageIssues(page);
     await loadLargeSparseSidebar(page, {
       fullStatePending: true,
-      historyStatus: { canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "remote edit" }
+      historyStatus: {
+        canUndo: true,
+        canRedo: false,
+        undoDepth: 1,
+        redoDepth: 0,
+        undoLabel: "remote edit"
+      }
     });
 
     await page.locator("#search").fill("Tab 900");
@@ -2805,7 +3167,13 @@ test.describe("sidebar projection hunt", () => {
     const result = await page.evaluate(async () => {
       const api = projectionHuntApi();
       await api.waitForSparseRequestCount(2);
-      api.emitHistoryStatus({ canUndo: false, canRedo: true, undoDepth: 0, redoDepth: 1, redoLabel: "remote edit" });
+      api.emitHistoryStatus({
+        canUndo: false,
+        canRedo: true,
+        undoDepth: 0,
+        redoDepth: 1,
+        redoLabel: "remote edit"
+      });
       api.emitDeletePatch(["tab:900"]);
       await api.waitForIdleFrames(2);
       api.resolveSliceAt(0);
@@ -2821,7 +3189,9 @@ test.describe("sidebar projection hunt", () => {
     });
 
     expect(result.commands).toEqual([{ type: "expandAncestors", nodeId: "tab:900" }]);
-    expect(result.requests).toContainEqual(expect.objectContaining({ query: "", targetNodeId: "tab:900" }));
+    expect(result.requests).toContainEqual(
+      expect.objectContaining({ query: "", targetNodeId: "tab:900" })
+    );
     expect(result.searchValue).toBe("");
     expect(result.targetExists).toBe(false);
     expect(result.visibleRows.length).toBeGreaterThan(0);
@@ -2831,11 +3201,19 @@ test.describe("sidebar projection hunt", () => {
     expect(issues).toEqual([]);
   });
 
-  test("psh-show-in-tree-full-broadcast-after-history-status-keeps-target-intent", async ({ page }) => {
+  test("psh-show-in-tree-full-broadcast-after-history-status-keeps-target-intent", async ({
+    page
+  }) => {
     const issues = collectPageIssues(page);
     await loadLargeSparseSidebar(page, {
       fullStatePending: true,
-      historyStatus: { canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "remote edit" }
+      historyStatus: {
+        canUndo: true,
+        canRedo: false,
+        undoDepth: 1,
+        redoDepth: 0,
+        undoLabel: "remote edit"
+      }
     });
 
     await page.locator("#search").fill("Tab 900");
@@ -2854,7 +3232,13 @@ test.describe("sidebar projection hunt", () => {
     const result = await page.evaluate(async () => {
       const api = projectionHuntApi();
       await api.waitForSparseRequestCount(2);
-      api.emitHistoryStatus({ canUndo: false, canRedo: true, undoDepth: 0, redoDepth: 1, redoLabel: "remote edit" });
+      api.emitHistoryStatus({
+        canUndo: false,
+        canRedo: true,
+        undoDepth: 0,
+        redoDepth: 1,
+        redoLabel: "remote edit"
+      });
       api.emitFullStateBroadcast();
       await api.waitForIdleFrames(2);
       api.resolveSliceAt(0);
@@ -2870,7 +3254,9 @@ test.describe("sidebar projection hunt", () => {
     });
 
     expect(result.commands).toEqual([{ type: "expandAncestors", nodeId: "tab:900" }]);
-    expect(result.requests).toContainEqual(expect.objectContaining({ query: "", targetNodeId: "tab:900" }));
+    expect(result.requests).toContainEqual(
+      expect.objectContaining({ query: "", targetNodeId: "tab:900" })
+    );
     expect(result.searchValue).toBe("");
     expect(result.visibleRows).toContain(900);
     expect(result.viewportStartRow).toBeGreaterThanOrEqual(880);
@@ -2885,7 +3271,13 @@ test.describe("sidebar projection hunt", () => {
     const issues = collectPageIssues(page);
     await loadLargeSparseSidebar(page, {
       fullStatePending: true,
-      historyStatus: { canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "remote edit" }
+      historyStatus: {
+        canUndo: true,
+        canRedo: false,
+        undoDepth: 1,
+        redoDepth: 0,
+        undoLabel: "remote edit"
+      }
     });
 
     await page.locator("#search").fill("Tab 900");
@@ -2903,13 +3295,26 @@ test.describe("sidebar projection hunt", () => {
     await page.waitForFunction(() => projectionHuntApi().sparseRequestCount() >= 2);
     await row.locator(".node-label").focus();
     await page.keyboard.press("Control+Z");
-    await page.waitForFunction(() => projectionHuntApi().sentCommands().some((command) => (
-      typeof command === "object" && command !== null && (command as { type?: unknown }).type === "undo"
-    )));
+    await page.waitForFunction(() =>
+      projectionHuntApi()
+        .sentCommands()
+        .some(
+          (command) =>
+            typeof command === "object" &&
+            command !== null &&
+            (command as { type?: unknown }).type === "undo"
+        )
+    );
 
     const result = await page.evaluate(async () => {
       const api = projectionHuntApi();
-      api.emitHistoryStatus({ canUndo: false, canRedo: true, undoDepth: 0, redoDepth: 1, redoLabel: "remote edit" });
+      api.emitHistoryStatus({
+        canUndo: false,
+        canRedo: true,
+        undoDepth: 0,
+        redoDepth: 1,
+        redoLabel: "remote edit"
+      });
       api.resolveSliceAt(0);
       await api.waitForIdleFrames(4);
       return {
@@ -2925,7 +3330,9 @@ test.describe("sidebar projection hunt", () => {
       { type: "expandAncestors", nodeId: "tab:900" },
       { type: "undo" }
     ]);
-    expect(result.requests).toContainEqual(expect.objectContaining({ query: "", targetNodeId: "tab:900" }));
+    expect(result.requests).toContainEqual(
+      expect.objectContaining({ query: "", targetNodeId: "tab:900" })
+    );
     expect(result.searchValue).toBe("");
     expect(result.visibleRows).toContain(900);
     expect(result.viewportStartRow).toBeGreaterThanOrEqual(880);
@@ -2968,7 +3375,9 @@ test.describe("sidebar projection hunt", () => {
       };
     });
 
-    expect(result.requests).toContainEqual(expect.objectContaining({ query: "", targetNodeId: "tab:900" }));
+    expect(result.requests).toContainEqual(
+      expect.objectContaining({ query: "", targetNodeId: "tab:900" })
+    );
     expect(result.requests.at(-1)).toMatchObject({ query: "" });
     expect(result.searchValue).toBe("");
     expect(result.targetExists).toBe(false);
@@ -3033,7 +3442,9 @@ test.describe("sidebar projection hunt", () => {
     await expect(nodeRow(page, "tab:900")).toBeVisible();
     await expect(nodeRow(page, "tab:901")).toBeVisible();
     await nodeRow(page, "tab:900").hover();
-    await nodeRow(page, "tab:900").getByRole("button", { name: "Show in tree", exact: true }).click();
+    await nodeRow(page, "tab:900")
+      .getByRole("button", { name: "Show in tree", exact: true })
+      .click();
     await page.waitForFunction(() => projectionHuntApi().sparseRequestCount() >= 2);
 
     await page.locator("#search").fill("Tab 901");
@@ -3046,7 +3457,9 @@ test.describe("sidebar projection hunt", () => {
 
     await expect(nodeRow(page, "tab:901")).toBeVisible();
     await nodeRow(page, "tab:901").hover();
-    await nodeRow(page, "tab:901").getByRole("button", { name: "Show in tree", exact: true }).click();
+    await nodeRow(page, "tab:901")
+      .getByRole("button", { name: "Show in tree", exact: true })
+      .click();
 
     const result = await page.evaluate(async () => {
       const api = projectionHuntApi();
@@ -3055,8 +3468,12 @@ test.describe("sidebar projection hunt", () => {
       await api.waitForIdleFrames(3);
       const afterStaleFirstTarget = {
         visibleRows: api.visibleRows(),
-        hasTab900Highlight: Boolean(document.querySelector("[data-node-id='tab:900'].is-reveal-highlight")),
-        hasTab901Highlight: Boolean(document.querySelector("[data-node-id='tab:901'].is-reveal-highlight")),
+        hasTab900Highlight: Boolean(
+          document.querySelector("[data-node-id='tab:900'].is-reveal-highlight")
+        ),
+        hasTab901Highlight: Boolean(
+          document.querySelector("[data-node-id='tab:901'].is-reveal-highlight")
+        ),
         searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? ""
       };
 
@@ -3069,15 +3486,21 @@ test.describe("sidebar projection hunt", () => {
         finalVisibleRows: api.visibleRows(),
         finalSearchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
         finalViewportStartRow: api.viewportStartRow(),
-        hasTab900Highlight: Boolean(document.querySelector("[data-node-id='tab:900'].is-reveal-highlight")),
-        hasTab901Highlight: Boolean(document.querySelector("[data-node-id='tab:901'].is-reveal-highlight"))
+        hasTab900Highlight: Boolean(
+          document.querySelector("[data-node-id='tab:900'].is-reveal-highlight")
+        ),
+        hasTab901Highlight: Boolean(
+          document.querySelector("[data-node-id='tab:901'].is-reveal-highlight")
+        )
       };
     });
 
-    expect(result.requests.map((request) => ({
-      query: request.query,
-      targetNodeId: request.targetNodeId
-    }))).toEqual([
+    expect(
+      result.requests.map((request) => ({
+        query: request.query,
+        targetNodeId: request.targetNodeId
+      }))
+    ).toEqual([
       { query: "Tab 90", targetNodeId: undefined },
       { query: "", targetNodeId: "tab:900" },
       { query: "Tab 901", targetNodeId: undefined },
@@ -3109,7 +3532,9 @@ test.describe("sidebar projection hunt", () => {
 
     await expect(nodeRow(page, "tab:900")).toBeVisible();
     await nodeRow(page, "tab:900").hover();
-    await nodeRow(page, "tab:900").getByRole("button", { name: "Show in tree", exact: true }).click();
+    await nodeRow(page, "tab:900")
+      .getByRole("button", { name: "Show in tree", exact: true })
+      .click();
 
     await page.evaluate(async () => {
       const api = projectionHuntApi();
@@ -3124,7 +3549,9 @@ test.describe("sidebar projection hunt", () => {
     await expect(page.locator(`${nodeSelector("tab:900")}.is-reveal-highlight`)).toBeVisible();
     await targetRow.hover();
     await expect(targetRow.getByRole("button", { name: "Cut", exact: true })).toBeVisible();
-    await expect(targetRow.getByRole("button", { name: "Move to top level", exact: true })).toBeVisible();
+    await expect(
+      targetRow.getByRole("button", { name: "Move to top level", exact: true })
+    ).toBeVisible();
     await expect(targetRow.getByRole("button", { name: "Close", exact: true })).toBeVisible();
     await expect(targetRow.getByRole("button", { name: "Delete", exact: true })).toBeVisible();
 
@@ -3140,10 +3567,12 @@ test.describe("sidebar projection hunt", () => {
         requests: api.projectionRequests(),
         searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
         visibleRows: api.visibleRows(),
-        hasRevealHighlight: Boolean(document.querySelector("[data-node-id='tab:900'].is-reveal-highlight")),
-        deletedStillRendered: Array.from({ length: 28 }, (_value, index) => (
+        hasRevealHighlight: Boolean(
+          document.querySelector("[data-node-id='tab:900'].is-reveal-highlight")
+        ),
+        deletedStillRendered: Array.from({ length: 28 }, (_value, index) =>
           Boolean(document.querySelector(`[data-node-id="tab:${901 + index}"]`))
-        )).some(Boolean)
+        ).some(Boolean)
       };
     });
 
@@ -3153,13 +3582,19 @@ test.describe("sidebar projection hunt", () => {
     expect(result.deletedStillRendered).toBe(false);
     await targetRow.hover();
     await expect(targetRow.getByRole("button", { name: "Cut", exact: true })).toBeVisible();
-    await expect(targetRow.getByRole("button", { name: "Move to top level", exact: true })).toBeVisible();
+    await expect(
+      targetRow.getByRole("button", { name: "Move to top level", exact: true })
+    ).toBeVisible();
     await expect(targetRow.getByRole("button", { name: "Close", exact: true })).toBeVisible();
-    await expect(result.requests).toContainEqual(expect.objectContaining({ query: "", targetNodeId: "tab:900" }));
+    await expect(result.requests).toContainEqual(
+      expect.objectContaining({ query: "", targetNodeId: "tab:900" })
+    );
     expect(issues).toEqual([]);
   });
 
-  test("psh-target-response-after-rejected-new-query-does-not-reveal-stale-target", async ({ page }) => {
+  test("psh-target-response-after-rejected-new-query-does-not-reveal-stale-target", async ({
+    page
+  }) => {
     const issues = collectPageIssues(page);
     await loadLargeSparseSidebar(page, { fullStatePending: true });
 
@@ -3197,10 +3632,12 @@ test.describe("sidebar projection hunt", () => {
       };
     });
 
-    expect(result.requests.map((request) => ({
-      query: request.query,
-      targetNodeId: request.targetNodeId
-    }))).toEqual([
+    expect(
+      result.requests.map((request) => ({
+        query: request.query,
+        targetNodeId: request.targetNodeId
+      }))
+    ).toEqual([
       { query: "Tab 900", targetNodeId: undefined },
       { query: "", targetNodeId: "tab:900" },
       { query: "Tab 91", targetNodeId: undefined }
@@ -3228,7 +3665,9 @@ test.describe("sidebar projection hunt", () => {
 
     await expect(nodeRow(page, "tab:900")).toBeVisible();
     await nodeRow(page, "tab:900").hover();
-    await nodeRow(page, "tab:900").getByRole("button", { name: "Show in tree", exact: true }).click();
+    await nodeRow(page, "tab:900")
+      .getByRole("button", { name: "Show in tree", exact: true })
+      .click();
     await page.waitForFunction(() => projectionHuntApi().sparseRequestCount() >= 2);
 
     await page.locator("#search").fill("Tab 91");
@@ -3273,10 +3712,12 @@ test.describe("sidebar projection hunt", () => {
       };
     });
 
-    expect(result.requests.map((request) => ({
-      query: request.query,
-      targetNodeId: request.targetNodeId
-    }))).toEqual([
+    expect(
+      result.requests.map((request) => ({
+        query: request.query,
+        targetNodeId: request.targetNodeId
+      }))
+    ).toEqual([
       { query: "Tab 900", targetNodeId: undefined },
       { query: "", targetNodeId: "tab:900" },
       { query: "Tab 91", targetNodeId: undefined },
@@ -3314,7 +3755,9 @@ test.describe("sidebar projection hunt", () => {
 
     await expect(nodeRow(page, "tab:900")).toBeVisible();
     await nodeRow(page, "tab:900").hover();
-    await nodeRow(page, "tab:900").getByRole("button", { name: "Show in tree", exact: true }).click();
+    await nodeRow(page, "tab:900")
+      .getByRole("button", { name: "Show in tree", exact: true })
+      .click();
 
     await page.evaluate(async () => {
       const api = projectionHuntApi();
@@ -3329,7 +3772,9 @@ test.describe("sidebar projection hunt", () => {
     await expect(page.locator(`${nodeSelector("tab:900")}.is-reveal-highlight`)).toBeVisible();
     await targetRow.hover();
     await expect(targetRow.getByRole("button", { name: "Cut", exact: true })).toHaveCount(0);
-    await expect(targetRow.getByRole("button", { name: "Move to top level", exact: true })).toHaveCount(0);
+    await expect(
+      targetRow.getByRole("button", { name: "Move to top level", exact: true })
+    ).toHaveCount(0);
     await expect(targetRow.getByRole("button", { name: "Close", exact: true })).toHaveCount(0);
 
     const result = await page.evaluate(async () => {
@@ -3340,14 +3785,18 @@ test.describe("sidebar projection hunt", () => {
         requests: api.projectionRequests(),
         visibleRows: api.visibleRows(),
         searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
-        hasRevealHighlight: Boolean(document.querySelector("[data-node-id='tab:900'].is-reveal-highlight"))
+        hasRevealHighlight: Boolean(
+          document.querySelector("[data-node-id='tab:900'].is-reveal-highlight")
+        )
       };
     });
 
-    expect(result.requests.map((request) => ({
-      query: request.query,
-      targetNodeId: request.targetNodeId
-    }))).toEqual([
+    expect(
+      result.requests.map((request) => ({
+        query: request.query,
+        targetNodeId: request.targetNodeId
+      }))
+    ).toEqual([
       { query: "Tab 900", targetNodeId: undefined },
       { query: "", targetNodeId: "tab:900" }
     ]);
@@ -3356,12 +3805,16 @@ test.describe("sidebar projection hunt", () => {
     expect(result.hasRevealHighlight).toBe(true);
     await targetRow.hover();
     await expect(targetRow.getByRole("button", { name: "Cut", exact: true })).toBeVisible();
-    await expect(targetRow.getByRole("button", { name: "Move to top level", exact: true })).toBeVisible();
+    await expect(
+      targetRow.getByRole("button", { name: "Move to top level", exact: true })
+    ).toBeVisible();
     await expect(targetRow.getByRole("button", { name: "Close", exact: true })).toBeVisible();
     expect(issues).toEqual([]);
   });
 
-  test("psh-two-sidebars-target-and-search-intents-survive-shared-title-patch", async ({ page }) => {
+  test("psh-two-sidebars-target-and-search-intents-survive-shared-title-patch", async ({
+    page
+  }) => {
     const issuesA = collectPageIssues(page);
     await loadLargeSparseSidebar(page, { fullStatePending: true });
 
@@ -3389,7 +3842,9 @@ test.describe("sidebar projection hunt", () => {
       await expect(nodeRow(page, "tab:900")).toBeVisible();
       await expect(nodeRow(pageB, "tab:91")).toBeVisible();
       await nodeRow(page, "tab:900").hover();
-      await nodeRow(page, "tab:900").getByRole("button", { name: "Show in tree", exact: true }).click();
+      await nodeRow(page, "tab:900")
+        .getByRole("button", { name: "Show in tree", exact: true })
+        .click();
 
       await page.evaluate(async () => {
         const api = projectionHuntApi();
@@ -3409,7 +3864,9 @@ test.describe("sidebar projection hunt", () => {
             requests: api.projectionRequests(),
             searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
             visibleRows: api.visibleRows(),
-            hasTab900Highlight: Boolean(document.querySelector("[data-node-id='tab:900'].is-reveal-highlight")),
+            hasTab900Highlight: Boolean(
+              document.querySelector("[data-node-id='tab:900'].is-reveal-highlight")
+            ),
             hasTab91: Boolean(document.querySelector("[data-node-id='tab:91']"))
           };
         }),
@@ -3433,10 +3890,12 @@ test.describe("sidebar projection hunt", () => {
       ]);
 
       expect(resultA.commands).toContainEqual({ type: "expandAncestors", nodeId: "tab:900" });
-      expect(resultA.requests.map((request) => ({
-        query: request.query,
-        targetNodeId: request.targetNodeId
-      }))).toEqual([
+      expect(
+        resultA.requests.map((request) => ({
+          query: request.query,
+          targetNodeId: request.targetNodeId
+        }))
+      ).toEqual([
         { query: "Tab 900", targetNodeId: undefined },
         { query: "", targetNodeId: "tab:900" }
       ]);
@@ -3460,7 +3919,9 @@ test.describe("sidebar projection hunt", () => {
     }
   });
 
-  test("psh-two-sidebars-search-and-scroll-intents-survive-shared-title-patch", async ({ page }) => {
+  test("psh-two-sidebars-search-and-scroll-intents-survive-shared-title-patch", async ({
+    page
+  }) => {
     const issuesA = collectPageIssues(page);
     await loadLargeSparseSidebar(page, { fullStatePending: true });
 
@@ -3548,7 +4009,13 @@ test.describe("sidebar projection hunt", () => {
     const issuesA = collectPageIssues(page);
     await loadLargeSparseSidebar(page, {
       fullStatePending: true,
-      historyStatus: { canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "remote edit" }
+      historyStatus: {
+        canUndo: true,
+        canRedo: false,
+        undoDepth: 1,
+        redoDepth: 0,
+        undoLabel: "remote edit"
+      }
     });
 
     const pageB = await page.context().newPage();
@@ -3556,7 +4023,13 @@ test.describe("sidebar projection hunt", () => {
     try {
       await loadLargeSparseSidebar(pageB, {
         fullStatePending: true,
-        historyStatus: { canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "remote edit" }
+        historyStatus: {
+          canUndo: true,
+          canRedo: false,
+          undoDepth: 1,
+          redoDepth: 0,
+          undoLabel: "remote edit"
+        }
       });
 
       await page.locator("#search").fill("Tab 91");
@@ -3581,7 +4054,13 @@ test.describe("sidebar projection hunt", () => {
       const [resultA, resultB] = await Promise.all([
         page.evaluate(async () => {
           const api = projectionHuntApi();
-          api.emitHistoryStatus({ canUndo: false, canRedo: true, undoDepth: 0, redoDepth: 1, redoLabel: "remote edit" });
+          api.emitHistoryStatus({
+            canUndo: false,
+            canRedo: true,
+            undoDepth: 0,
+            redoDepth: 1,
+            redoLabel: "remote edit"
+          });
           api.emitTitlePatch("tab:91", "Tab 91 shared history patched");
           await api.waitForIdleFrames(4);
           if (api.sparseRequestCount() > 1) {
@@ -3601,7 +4080,13 @@ test.describe("sidebar projection hunt", () => {
         }),
         pageB.evaluate(async () => {
           const api = projectionHuntApi();
-          api.emitHistoryStatus({ canUndo: false, canRedo: true, undoDepth: 0, redoDepth: 1, redoLabel: "remote edit" });
+          api.emitHistoryStatus({
+            canUndo: false,
+            canRedo: true,
+            undoDepth: 0,
+            redoDepth: 1,
+            redoLabel: "remote edit"
+          });
           api.emitTitlePatch("tab:900", "Tab 900 shared history patched");
           await api.waitForIdleFrames(4);
           if (api.sparseRequestCount() > 1) {
@@ -3753,7 +4238,13 @@ test.describe("sidebar projection hunt", () => {
     const issuesA = collectPageIssues(page);
     await loadLargeSparseSidebar(page, {
       fullStatePending: true,
-      historyStatus: { canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "remote edit" }
+      historyStatus: {
+        canUndo: true,
+        canRedo: false,
+        undoDepth: 1,
+        redoDepth: 0,
+        undoLabel: "remote edit"
+      }
     });
 
     const pageB = await page.context().newPage();
@@ -3761,7 +4252,13 @@ test.describe("sidebar projection hunt", () => {
     try {
       await loadLargeSparseSidebar(pageB, {
         fullStatePending: true,
-        historyStatus: { canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "remote edit" }
+        historyStatus: {
+          canUndo: true,
+          canRedo: false,
+          undoDepth: 1,
+          redoDepth: 0,
+          undoLabel: "remote edit"
+        }
       });
 
       await page.evaluate(async () => {
@@ -3773,19 +4270,23 @@ test.describe("sidebar projection hunt", () => {
 
         search.focus();
         search.value = "Tab 90";
-        search.dispatchEvent(new InputEvent("input", {
-          bubbles: true,
-          inputType: "insertText",
-          data: "Tab 90"
-        }));
+        search.dispatchEvent(
+          new InputEvent("input", {
+            bubbles: true,
+            inputType: "insertText",
+            data: "Tab 90"
+          })
+        );
         await api.waitForSparseRequestCount(1);
 
         search.value = "Tab 91";
-        search.dispatchEvent(new InputEvent("input", {
-          bubbles: true,
-          inputType: "insertReplacementText",
-          data: "Tab 91"
-        }));
+        search.dispatchEvent(
+          new InputEvent("input", {
+            bubbles: true,
+            inputType: "insertReplacementText",
+            data: "Tab 91"
+          })
+        );
         await api.waitForSparseRequestCount(2);
       });
 
@@ -3801,7 +4302,13 @@ test.describe("sidebar projection hunt", () => {
       const [resultA, resultB] = await Promise.all([
         page.evaluate(async () => {
           const api = projectionHuntApi();
-          api.emitHistoryStatus({ canUndo: false, canRedo: true, undoDepth: 0, redoDepth: 1, redoLabel: "remote edit" });
+          api.emitHistoryStatus({
+            canUndo: false,
+            canRedo: true,
+            undoDepth: 0,
+            redoDepth: 1,
+            redoLabel: "remote edit"
+          });
           api.resolveSliceAt(0);
           await api.waitForIdleFrames(3);
           const afterStale = {
@@ -3827,7 +4334,13 @@ test.describe("sidebar projection hunt", () => {
         }),
         pageB.evaluate(async () => {
           const api = projectionHuntApi();
-          api.emitHistoryStatus({ canUndo: false, canRedo: true, undoDepth: 0, redoDepth: 1, redoLabel: "remote edit" });
+          api.emitHistoryStatus({
+            canUndo: false,
+            canRedo: true,
+            undoDepth: 0,
+            redoDepth: 1,
+            redoLabel: "remote edit"
+          });
           api.emitTitlePatch("tab:900", "Tab 900 independent query patched");
           await api.waitForIdleFrames(4);
           if (api.sparseRequestCount() > 1) {
@@ -3964,7 +4477,11 @@ test.describe("sidebar projection hunt", () => {
 
       expect(resultB.commands).toEqual([]);
       expect(resultB.requests.length).toBeGreaterThanOrEqual(1);
-      expect(resultB.requests.every((request) => request.query === "" && request.targetNodeId === undefined)).toBe(true);
+      expect(
+        resultB.requests.every(
+          (request) => request.query === "" && request.targetNodeId === undefined
+        )
+      ).toBe(true);
       expect(resultB.stateRequestCount).toBe(0);
       expect(resultB.searchValue).toBe("");
       expect(resultB.countText).toBe("1001 items / 0 saved");
@@ -4048,7 +4565,11 @@ test.describe("sidebar projection hunt", () => {
 
       expect(resultA.commands).toEqual([]);
       expect(resultA.requests).toHaveLength(2);
-      expect(resultA.requests.every((request) => request.query === "" && request.targetNodeId === undefined)).toBe(true);
+      expect(
+        resultA.requests.every(
+          (request) => request.query === "" && request.targetNodeId === undefined
+        )
+      ).toBe(true);
       expect(resultA.stateRequestCount).toBe(0);
       expect(resultA.searchValue).toBe("");
       expect(resultA.countText).toBe("1001 items / 0 saved");
@@ -4057,7 +4578,11 @@ test.describe("sidebar projection hunt", () => {
 
       expect(resultB.commands).toEqual([]);
       expect(resultB.requests).toHaveLength(1);
-      expect(resultB.requests.every((request) => request.query === "" && request.targetNodeId === undefined)).toBe(true);
+      expect(
+        resultB.requests.every(
+          (request) => request.query === "" && request.targetNodeId === undefined
+        )
+      ).toBe(true);
       expect(resultB.stateRequestCount).toBe(0);
       expect(resultB.searchValue).toBe("");
       expect(resultB.countText).toBe("1001 items / 0 saved");
@@ -4076,7 +4601,13 @@ test.describe("sidebar projection hunt", () => {
     const issuesA = collectPageIssues(page);
     await loadLargeSparseSidebar(page, {
       fullStatePending: true,
-      historyStatus: { canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "remote edit" }
+      historyStatus: {
+        canUndo: true,
+        canRedo: false,
+        undoDepth: 1,
+        redoDepth: 0,
+        undoLabel: "remote edit"
+      }
     });
 
     const pageB = await page.context().newPage();
@@ -4084,7 +4615,13 @@ test.describe("sidebar projection hunt", () => {
     try {
       await loadLargeSparseSidebar(pageB, {
         fullStatePending: true,
-        historyStatus: { canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "remote edit" }
+        historyStatus: {
+          canUndo: true,
+          canRedo: false,
+          undoDepth: 1,
+          redoDepth: 0,
+          undoLabel: "remote edit"
+        }
       });
 
       await page.locator("#search").fill("Tab 91");
@@ -4104,7 +4641,13 @@ test.describe("sidebar projection hunt", () => {
       const [resultA, resultB] = await Promise.all([
         page.evaluate(async () => {
           const api = projectionHuntApi();
-          api.emitHistoryStatus({ canUndo: false, canRedo: true, undoDepth: 0, redoDepth: 1, redoLabel: "remote edit" });
+          api.emitHistoryStatus({
+            canUndo: false,
+            canRedo: true,
+            undoDepth: 0,
+            redoDepth: 1,
+            redoLabel: "remote edit"
+          });
           api.emitTitlePatch("tab:91", "Tab 91 temporal patched");
           api.resolveSliceAt(0);
           await api.waitForIdleFrames(5);
@@ -4119,7 +4662,13 @@ test.describe("sidebar projection hunt", () => {
         }),
         pageB.evaluate(async () => {
           const api = projectionHuntApi();
-          api.emitHistoryStatus({ canUndo: false, canRedo: true, undoDepth: 0, redoDepth: 1, redoLabel: "remote edit" });
+          api.emitHistoryStatus({
+            canUndo: false,
+            canRedo: true,
+            undoDepth: 0,
+            redoDepth: 1,
+            redoLabel: "remote edit"
+          });
           api.emitTitlePatch("tab:91", "Tab 91 temporal patched");
           api.resolveSliceAt(0, { start: 240, end: 310 });
           await api.waitForIdleFrames(2);
@@ -4190,11 +4739,13 @@ test.describe("sidebar projection hunt", () => {
 
       search.focus();
       search.value = "Tab 91";
-      search.dispatchEvent(new InputEvent("input", {
-        bubbles: true,
-        inputType: "insertText",
-        data: "Tab 91"
-      }));
+      search.dispatchEvent(
+        new InputEvent("input", {
+          bubbles: true,
+          inputType: "insertText",
+          data: "Tab 91"
+        })
+      );
       await api.waitForSparseRequestCount(3);
 
       api.resolveSliceAt(0);
@@ -4216,10 +4767,12 @@ test.describe("sidebar projection hunt", () => {
       };
     });
 
-    expect(result.requests.map((request) => ({
-      query: request.query,
-      targetNodeId: request.targetNodeId
-    }))).toEqual([
+    expect(
+      result.requests.map((request) => ({
+        query: request.query,
+        targetNodeId: request.targetNodeId
+      }))
+    ).toEqual([
       { query: "Tab 900", targetNodeId: undefined },
       { query: "", targetNodeId: "tab:900" },
       { query: "Tab 91", targetNodeId: undefined }
@@ -4260,11 +4813,13 @@ test.describe("sidebar projection hunt", () => {
 
       search.focus();
       search.value = "Tab 91";
-      search.dispatchEvent(new InputEvent("input", {
-        bubbles: true,
-        inputType: "insertText",
-        data: "Tab 91"
-      }));
+      search.dispatchEvent(
+        new InputEvent("input", {
+          bubbles: true,
+          inputType: "insertText",
+          data: "Tab 91"
+        })
+      );
       await api.waitForSparseRequestCount(3);
 
       api.emitFullStateBroadcast();
@@ -4289,10 +4844,12 @@ test.describe("sidebar projection hunt", () => {
       };
     });
 
-    expect(result.requests.map((request) => ({
-      query: request.query,
-      targetNodeId: request.targetNodeId
-    }))).toEqual([
+    expect(
+      result.requests.map((request) => ({
+        query: request.query,
+        targetNodeId: request.targetNodeId
+      }))
+    ).toEqual([
       { query: "Tab 900", targetNodeId: undefined },
       { query: "", targetNodeId: "tab:900" },
       { query: "Tab 91", targetNodeId: undefined }
@@ -4372,7 +4929,13 @@ test.describe("sidebar projection hunt", () => {
     const issues = collectPageIssues(page);
     await loadLargeSparseSidebar(page, {
       fullStatePending: true,
-      historyStatus: { canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "remote edit" }
+      historyStatus: {
+        canUndo: true,
+        canRedo: false,
+        undoDepth: 1,
+        redoDepth: 0,
+        undoLabel: "remote edit"
+      }
     });
 
     await page.locator("#search").fill("Tab 900");
@@ -4381,7 +4944,14 @@ test.describe("sidebar projection hunt", () => {
       await api.waitForSparseRequestCount(1);
       api.resolveSliceAt(0);
       await api.waitForIdleFrames(3);
-      api.emitHistoryStatus({ canUndo: true, canRedo: true, undoDepth: 2, redoDepth: 1, undoLabel: "rename", redoLabel: "rename" });
+      api.emitHistoryStatus({
+        canUndo: true,
+        canRedo: true,
+        undoDepth: 2,
+        redoDepth: 1,
+        undoLabel: "rename",
+        redoLabel: "rename"
+      });
       api.emitTitlePatch("tab:900", "Tab 900 history patched");
       await api.waitForIdleFrames(3);
       if (api.sparseRequestCount() > 1) {
@@ -4430,19 +5000,23 @@ test.describe("sidebar projection hunt", () => {
 
       search.focus();
       search.value = "Tab 90";
-      search.dispatchEvent(new InputEvent("input", {
-        bubbles: true,
-        inputType: "insertText",
-        data: "Tab 90"
-      }));
+      search.dispatchEvent(
+        new InputEvent("input", {
+          bubbles: true,
+          inputType: "insertText",
+          data: "Tab 90"
+        })
+      );
       await api.waitForSparseRequestCount(1);
 
       search.value = "Tab 900";
-      search.dispatchEvent(new InputEvent("input", {
-        bubbles: true,
-        inputType: "insertText",
-        data: "0"
-      }));
+      search.dispatchEvent(
+        new InputEvent("input", {
+          bubbles: true,
+          inputType: "insertText",
+          data: "0"
+        })
+      );
       await api.waitForSparseRequestCount(2);
 
       api.resolveSliceAt(0);
@@ -4497,11 +5071,13 @@ test.describe("sidebar projection hunt", () => {
 
       search.focus();
       search.value = "Tab 900";
-      search.dispatchEvent(new InputEvent("input", {
-        bubbles: true,
-        inputType: "insertText",
-        data: "Tab 900"
-      }));
+      search.dispatchEvent(
+        new InputEvent("input", {
+          bubbles: true,
+          inputType: "insertText",
+          data: "Tab 900"
+        })
+      );
       await api.waitForSparseRequestCount(2);
 
       api.emitFullStateBroadcast();
@@ -4575,19 +5151,23 @@ test.describe("sidebar projection hunt", () => {
 
       search.focus();
       search.value = "Tab 90";
-      search.dispatchEvent(new InputEvent("input", {
-        bubbles: true,
-        inputType: "insertText",
-        data: "Tab 90"
-      }));
+      search.dispatchEvent(
+        new InputEvent("input", {
+          bubbles: true,
+          inputType: "insertText",
+          data: "Tab 90"
+        })
+      );
       await api.waitForSparseRequestCount(1);
 
       search.value = "Tab 900";
-      search.dispatchEvent(new InputEvent("input", {
-        bubbles: true,
-        inputType: "insertText",
-        data: "0"
-      }));
+      search.dispatchEvent(
+        new InputEvent("input", {
+          bubbles: true,
+          inputType: "insertText",
+          data: "0"
+        })
+      );
       await api.waitForSparseRequestCount(2);
 
       api.resolveSliceAt(0);
@@ -4729,15 +5309,19 @@ test.describe("sidebar projection hunt", () => {
         searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
         countText: document.querySelector("#state-count")?.textContent ?? "",
         visibleRows: api.visibleRows(),
-        hasRevealHighlight: Boolean(document.querySelector("[data-node-id='tab:900'].is-reveal-highlight")),
+        hasRevealHighlight: Boolean(
+          document.querySelector("[data-node-id='tab:900'].is-reveal-highlight")
+        ),
         targetText: document.querySelector("[data-node-id='tab:900']")?.textContent ?? ""
       };
     });
 
-    expect(result.requests.map((request) => ({
-      query: request.query,
-      targetNodeId: request.targetNodeId
-    }))).toEqual([
+    expect(
+      result.requests.map((request) => ({
+        query: request.query,
+        targetNodeId: request.targetNodeId
+      }))
+    ).toEqual([
       { query: "Tab 900", targetNodeId: undefined },
       { query: "", targetNodeId: "tab:900" }
     ]);
@@ -4759,7 +5343,9 @@ test.describe("sidebar projection hunt", () => {
     await expect(coveredRow).toBeVisible();
     await coveredRow.hover();
     await expect(coveredRow.getByRole("button", { name: "Cut", exact: true })).toBeVisible();
-    await expect(coveredRow.getByRole("button", { name: "Move to top level", exact: true })).toBeVisible();
+    await expect(
+      coveredRow.getByRole("button", { name: "Move to top level", exact: true })
+    ).toBeVisible();
 
     await page.locator("#search").fill("Tab 900");
     await page.evaluate(async () => {
@@ -4788,10 +5374,12 @@ test.describe("sidebar projection hunt", () => {
       };
     });
 
-    expect(result.requests.map((request) => ({
-      query: request.query,
-      targetNodeId: request.targetNodeId
-    }))).toEqual([
+    expect(
+      result.requests.map((request) => ({
+        query: request.query,
+        targetNodeId: request.targetNodeId
+      }))
+    ).toEqual([
       { query: "Tab 900", targetNodeId: undefined },
       { query: "", targetNodeId: "tab:900" }
     ]);
@@ -4804,7 +5392,9 @@ test.describe("sidebar projection hunt", () => {
     await expect(searchRow).toBeVisible();
     await searchRow.hover();
     await expect(searchRow.getByRole("button", { name: "Cut", exact: true })).toHaveCount(0);
-    await expect(searchRow.getByRole("button", { name: "Move to top level", exact: true })).toHaveCount(0);
+    await expect(
+      searchRow.getByRole("button", { name: "Move to top level", exact: true })
+    ).toHaveCount(0);
     await expect(searchRow.getByRole("button", { name: "Close", exact: true })).toHaveCount(0);
 
     await page.evaluate(async () => {
@@ -4814,7 +5404,9 @@ test.describe("sidebar projection hunt", () => {
     });
     await searchRow.hover();
     await expect(searchRow.getByRole("button", { name: "Cut", exact: true })).toBeVisible();
-    await expect(searchRow.getByRole("button", { name: "Move to top level", exact: true })).toBeVisible();
+    await expect(
+      searchRow.getByRole("button", { name: "Move to top level", exact: true })
+    ).toBeVisible();
     await expect(searchRow.getByRole("button", { name: "Close", exact: true })).toBeVisible();
     expect(issues).toEqual([]);
   });
@@ -4860,7 +5452,9 @@ test.describe("sidebar projection hunt", () => {
     });
 
     expect(result.commands).toEqual([{ type: "expandAncestors", nodeId: "tab:900" }]);
-    expect(result.requests).toContainEqual(expect.objectContaining({ query: "", targetNodeId: "tab:900" }));
+    expect(result.requests).toContainEqual(
+      expect.objectContaining({ query: "", targetNodeId: "tab:900" })
+    );
     expect(result.stateRequestCount).toBe(0);
     expect(result.searchValue).toBe("");
     expect(result.countText).toBe("1000 items / 0 saved");
@@ -4978,7 +5572,9 @@ test.describe("sidebar projection hunt", () => {
       };
     });
 
-    expect(result.requests.map((request) => request.query).every((query) => query === "")).toBe(true);
+    expect(result.requests.map((request) => request.query).every((query) => query === "")).toBe(
+      true
+    );
     expect(result.afterStaleScroll.hasDeletedRow).toBe(false);
     expect(result.stateRequestCount).toBe(0);
     expect(result.searchValue).toBe("");
@@ -4996,7 +5592,13 @@ test.describe("sidebar projection hunt", () => {
     const issuesA = collectPageIssues(page);
     await loadLargeSparseSidebar(page, {
       fullStatePending: true,
-      historyStatus: { canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "remote edit" }
+      historyStatus: {
+        canUndo: true,
+        canRedo: false,
+        undoDepth: 1,
+        redoDepth: 0,
+        undoLabel: "remote edit"
+      }
     });
 
     const pageB = await page.context().newPage();
@@ -5004,7 +5606,13 @@ test.describe("sidebar projection hunt", () => {
     try {
       await loadLargeSparseSidebar(pageB, {
         fullStatePending: true,
-        historyStatus: { canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "remote edit" }
+        historyStatus: {
+          canUndo: true,
+          canRedo: false,
+          undoDepth: 1,
+          redoDepth: 0,
+          undoLabel: "remote edit"
+        }
       });
 
       await page.locator("#search").fill("Tab 900");
@@ -5031,7 +5639,13 @@ test.describe("sidebar projection hunt", () => {
       const [resultA, resultB] = await Promise.all([
         page.evaluate(async () => {
           const api = projectionHuntApi();
-          api.emitHistoryStatus({ canUndo: false, canRedo: true, undoDepth: 0, redoDepth: 1, redoLabel: "remote edit" });
+          api.emitHistoryStatus({
+            canUndo: false,
+            canRedo: true,
+            undoDepth: 0,
+            redoDepth: 1,
+            redoLabel: "remote edit"
+          });
           api.emitFullStateBroadcast();
           await api.waitForIdleFrames(5);
           if (api.sparseRequestCount() > 1) {
@@ -5052,7 +5666,13 @@ test.describe("sidebar projection hunt", () => {
         pageB.evaluate(async () => {
           const api = projectionHuntApi();
           await api.waitForIdleFrames(2);
-          api.emitHistoryStatus({ canUndo: false, canRedo: true, undoDepth: 0, redoDepth: 1, redoLabel: "remote edit" });
+          api.emitHistoryStatus({
+            canUndo: false,
+            canRedo: true,
+            undoDepth: 0,
+            redoDepth: 1,
+            redoLabel: "remote edit"
+          });
           api.emitFullStateBroadcast();
           await api.waitForIdleFrames(5);
           if (api.sparseRequestCount() > 1) {
@@ -5184,7 +5804,9 @@ test.describe("sidebar projection hunt", () => {
       };
     });
 
-    expect(result.requests.map((request) => request.query).every((query) => query === "")).toBe(true);
+    expect(result.requests.map((request) => request.query).every((query) => query === "")).toBe(
+      true
+    );
     expect(result.stateRequestCount).toBe(0);
     expect(result.searchValue).toBe("");
     expect(result.countText).toBe("1001 items / 0 saved");
@@ -5399,7 +6021,13 @@ test.describe("sidebar projection hunt", () => {
     const issues = collectPageIssues(page);
     await loadLargeSparseSidebar(page, {
       fullStatePending: true,
-      historyStatus: { canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "remote edit" }
+      historyStatus: {
+        canUndo: true,
+        canRedo: false,
+        undoDepth: 1,
+        redoDepth: 0,
+        undoLabel: "remote edit"
+      }
     });
 
     await page.evaluate(async () => {
@@ -5409,7 +6037,14 @@ test.describe("sidebar projection hunt", () => {
       api.resolveSliceAt(0, { start: 240, end: 310 });
       await api.waitForVisibleRow(260);
       api.emitMovePatch("tab:260", "window:1", 899);
-      api.emitHistoryStatus({ canUndo: true, canRedo: true, undoDepth: 2, redoDepth: 1, undoLabel: "move", redoLabel: "move" });
+      api.emitHistoryStatus({
+        canUndo: true,
+        canRedo: true,
+        undoDepth: 2,
+        redoDepth: 1,
+        undoLabel: "move",
+        redoLabel: "move"
+      });
       await api.waitForIdleFrames(4);
       if (api.sparseRequestCount() > 1) {
         api.resolveSliceAt(0, { start: 240, end: 310 });
@@ -5439,7 +6074,9 @@ test.describe("sidebar projection hunt", () => {
     });
 
     expect(result.commands).toEqual([]);
-    expect(result.requests.every((request) => request.query === "" && request.targetNodeId === undefined)).toBe(true);
+    expect(
+      result.requests.every((request) => request.query === "" && request.targetNodeId === undefined)
+    ).toBe(true);
     expect(result.stateRequestCount).toBe(0);
     expect(result.searchValue).toBe("");
     expect(result.countText).toBe("1001 items / 0 saved");
@@ -5484,7 +6121,9 @@ test.describe("sidebar projection hunt", () => {
     });
 
     expect(result.commands).toEqual([]);
-    expect(result.requests.every((request) => request.query === "" && request.targetNodeId === undefined)).toBe(true);
+    expect(
+      result.requests.every((request) => request.query === "" && request.targetNodeId === undefined)
+    ).toBe(true);
     expect(result.stateRequestCount).toBe(0);
     expect(result.searchValue).toBe("");
     expect(result.countText).toBe("1001 items / 0 saved");
@@ -5522,7 +6161,9 @@ test.describe("sidebar projection hunt", () => {
     });
 
     expect(result.commands).toEqual([]);
-    expect(result.requests.every((request) => request.query === "" && request.targetNodeId === undefined)).toBe(true);
+    expect(
+      result.requests.every((request) => request.query === "" && request.targetNodeId === undefined)
+    ).toBe(true);
     expect(result.stateRequestCount).toBe(0);
     expect(result.searchValue).toBe("");
     expect(result.countText).toBe("1001 items / 0 saved");
@@ -5533,7 +6174,9 @@ test.describe("sidebar projection hunt", () => {
     expect(issues).toEqual([]);
   });
 
-  test("psh-search-missing-coverage-title-patch-restores-actions-after-hydration", async ({ page }) => {
+  test("psh-search-missing-coverage-title-patch-restores-actions-after-hydration", async ({
+    page
+  }) => {
     const issues = collectPageIssues(page);
     await loadLargeSparseSidebar(page, { fullStatePending: true });
 
@@ -5554,7 +6197,9 @@ test.describe("sidebar projection hunt", () => {
     await expect(resultRow).toContainText("Tab 900 search coverage patched");
     await resultRow.hover();
     await expect(resultRow.getByRole("button", { name: "Cut", exact: true })).toHaveCount(0);
-    await expect(resultRow.getByRole("button", { name: "Move to top level", exact: true })).toHaveCount(0);
+    await expect(
+      resultRow.getByRole("button", { name: "Move to top level", exact: true })
+    ).toHaveCount(0);
     await expect(resultRow.getByRole("button", { name: "Close", exact: true })).toHaveCount(0);
 
     const beforeHydration = await page.evaluate(() => {
@@ -5583,16 +6228,26 @@ test.describe("sidebar projection hunt", () => {
     await expect(page.locator("#search")).toHaveValue("Tab 900");
     await resultRow.hover();
     await expect(resultRow.getByRole("button", { name: "Cut", exact: true })).toBeVisible();
-    await expect(resultRow.getByRole("button", { name: "Move to top level", exact: true })).toBeVisible();
+    await expect(
+      resultRow.getByRole("button", { name: "Move to top level", exact: true })
+    ).toBeVisible();
     await expect(resultRow.getByRole("button", { name: "Close", exact: true })).toBeVisible();
     expect(issues).toEqual([]);
   });
 
-  test("psh-show-in-tree-missing-coverage-history-status-keeps-reveal-readonly", async ({ page }) => {
+  test("psh-show-in-tree-missing-coverage-history-status-keeps-reveal-readonly", async ({
+    page
+  }) => {
     const issues = collectPageIssues(page);
     await loadLargeSparseSidebar(page, {
       fullStatePending: true,
-      historyStatus: { canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "remote edit" }
+      historyStatus: {
+        canUndo: true,
+        canRedo: false,
+        undoDepth: 1,
+        redoDepth: 0,
+        undoLabel: "remote edit"
+      }
     });
 
     await page.locator("#search").fill("Tab 900");
@@ -5611,7 +6266,13 @@ test.describe("sidebar projection hunt", () => {
     const beforeHydration = await page.evaluate(async () => {
       const api = projectionHuntApi();
       await api.waitForSparseRequestCount(2);
-      api.emitHistoryStatus({ canUndo: false, canRedo: true, undoDepth: 0, redoDepth: 1, redoLabel: "remote edit" });
+      api.emitHistoryStatus({
+        canUndo: false,
+        canRedo: true,
+        undoDepth: 0,
+        redoDepth: 1,
+        redoLabel: "remote edit"
+      });
       api.resolveSliceAt(0, { includeCoverage: false });
       await api.waitForIdleFrames(5);
       return {
@@ -5621,15 +6282,19 @@ test.describe("sidebar projection hunt", () => {
         searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
         countText: document.querySelector("#state-count")?.textContent ?? "",
         visibleRows: api.visibleRows(),
-        hasRevealHighlight: Boolean(document.querySelector("[data-node-id='tab:900'].is-reveal-highlight"))
+        hasRevealHighlight: Boolean(
+          document.querySelector("[data-node-id='tab:900'].is-reveal-highlight")
+        )
       };
     });
 
     expect(beforeHydration.commands).toContainEqual({ type: "expandAncestors", nodeId: "tab:900" });
-    expect(beforeHydration.requests.map((request) => ({
-      query: request.query,
-      targetNodeId: request.targetNodeId
-    }))).toEqual([
+    expect(
+      beforeHydration.requests.map((request) => ({
+        query: request.query,
+        targetNodeId: request.targetNodeId
+      }))
+    ).toEqual([
       { query: "Tab 900", targetNodeId: undefined },
       { query: "", targetNodeId: "tab:900" }
     ]);
@@ -5642,7 +6307,9 @@ test.describe("sidebar projection hunt", () => {
     const targetRow = nodeRow(page, "tab:900");
     await targetRow.hover();
     await expect(targetRow.getByRole("button", { name: "Cut", exact: true })).toHaveCount(0);
-    await expect(targetRow.getByRole("button", { name: "Move to top level", exact: true })).toHaveCount(0);
+    await expect(
+      targetRow.getByRole("button", { name: "Move to top level", exact: true })
+    ).toHaveCount(0);
     await expect(targetRow.getByRole("button", { name: "Close", exact: true })).toHaveCount(0);
 
     await page.evaluate(async () => {
@@ -5654,7 +6321,9 @@ test.describe("sidebar projection hunt", () => {
     await expect(page.locator(`${nodeSelector("tab:900")}.is-reveal-highlight`)).toBeVisible();
     await targetRow.hover();
     await expect(targetRow.getByRole("button", { name: "Cut", exact: true })).toBeVisible();
-    await expect(targetRow.getByRole("button", { name: "Move to top level", exact: true })).toBeVisible();
+    await expect(
+      targetRow.getByRole("button", { name: "Move to top level", exact: true })
+    ).toBeVisible();
     await expect(targetRow.getByRole("button", { name: "Close", exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "Undo", exact: true })).toBeDisabled();
     await expect(page.getByRole("button", { name: "Redo", exact: true })).toBeEnabled();
@@ -5677,9 +6346,15 @@ test.describe("sidebar projection hunt", () => {
     const coveredByRowsOnly = nodeRow(page, "tab:260");
     await expect(coveredByRowsOnly).toBeVisible();
     await coveredByRowsOnly.hover();
-    await expect(coveredByRowsOnly.getByRole("button", { name: "Cut", exact: true })).toHaveCount(0);
-    await expect(coveredByRowsOnly.getByRole("button", { name: "Move to top level", exact: true })).toHaveCount(0);
-    await expect(coveredByRowsOnly.getByRole("button", { name: "Close", exact: true })).toHaveCount(0);
+    await expect(coveredByRowsOnly.getByRole("button", { name: "Cut", exact: true })).toHaveCount(
+      0
+    );
+    await expect(
+      coveredByRowsOnly.getByRole("button", { name: "Move to top level", exact: true })
+    ).toHaveCount(0);
+    await expect(coveredByRowsOnly.getByRole("button", { name: "Close", exact: true })).toHaveCount(
+      0
+    );
 
     const beforeHydration = await page.evaluate(() => {
       const api = projectionHuntApi();
@@ -5695,7 +6370,11 @@ test.describe("sidebar projection hunt", () => {
     });
 
     expect(beforeHydration.commands).toEqual([]);
-    expect(beforeHydration.requests.every((request) => request.query === "" && request.targetNodeId === undefined)).toBe(true);
+    expect(
+      beforeHydration.requests.every(
+        (request) => request.query === "" && request.targetNodeId === undefined
+      )
+    ).toBe(true);
     expect(beforeHydration.stateRequestCount).toBe(0);
     expect(beforeHydration.searchValue).toBe("");
     expect(beforeHydration.countText).toBe("1001 items / 0 saved");
@@ -5714,8 +6393,12 @@ test.describe("sidebar projection hunt", () => {
 
     await coveredByRowsOnly.hover();
     await expect(coveredByRowsOnly.getByRole("button", { name: "Cut", exact: true })).toBeVisible();
-    await expect(coveredByRowsOnly.getByRole("button", { name: "Move to top level", exact: true })).toBeVisible();
-    await expect(coveredByRowsOnly.getByRole("button", { name: "Close", exact: true })).toBeVisible();
+    await expect(
+      coveredByRowsOnly.getByRole("button", { name: "Move to top level", exact: true })
+    ).toBeVisible();
+    await expect(
+      coveredByRowsOnly.getByRole("button", { name: "Close", exact: true })
+    ).toBeVisible();
     expect(issues).toEqual([]);
   });
 
@@ -5807,7 +6490,9 @@ test.describe("sidebar projection hunt", () => {
     await expect(resultRow).toBeVisible();
     await resultRow.hover();
     await expect(resultRow.getByRole("button", { name: "Cut", exact: true })).toHaveCount(0);
-    await expect(resultRow.getByRole("button", { name: "Move to top level", exact: true })).toHaveCount(0);
+    await expect(
+      resultRow.getByRole("button", { name: "Move to top level", exact: true })
+    ).toHaveCount(0);
     await expect(resultRow.getByRole("button", { name: "Close", exact: true })).toHaveCount(0);
 
     const result = await page.evaluate(async () => {
@@ -5838,7 +6523,9 @@ test.describe("sidebar projection hunt", () => {
     expect(result.hasRevealHighlight).toBe(false);
     await resultRow.hover();
     await expect(resultRow.getByRole("button", { name: "Cut", exact: true })).toBeVisible();
-    await expect(resultRow.getByRole("button", { name: "Move to top level", exact: true })).toBeVisible();
+    await expect(
+      resultRow.getByRole("button", { name: "Move to top level", exact: true })
+    ).toBeVisible();
     await expect(resultRow.getByRole("button", { name: "Close", exact: true })).toBeVisible();
     expect(issues).toEqual([]);
   });
@@ -5868,7 +6555,9 @@ test.describe("sidebar projection hunt", () => {
     });
 
     expect(result.commands).toEqual([]);
-    expect(result.requests.every((request) => request.query === "" && request.targetNodeId === undefined)).toBe(true);
+    expect(
+      result.requests.every((request) => request.query === "" && request.targetNodeId === undefined)
+    ).toBe(true);
     expect(result.stateRequestCount).toBe(0);
     expect(result.searchValue).toBe("");
     expect(result.countText).toBe("1001 items / 0 saved");
@@ -5963,15 +6652,19 @@ test.describe("sidebar projection hunt", () => {
         countText: document.querySelector("#state-count")?.textContent ?? "",
         visibleRows: api.visibleRows(),
         tab900Text: document.querySelector("[data-node-id='tab:900']")?.textContent ?? "",
-        hasRevealHighlight: Boolean(document.querySelector("[data-node-id='tab:900'].is-reveal-highlight"))
+        hasRevealHighlight: Boolean(
+          document.querySelector("[data-node-id='tab:900'].is-reveal-highlight")
+        )
       };
     });
 
     expect(result.commands).toContainEqual({ type: "expandAncestors", nodeId: "tab:900" });
-    expect(result.requests.map((request) => ({
-      query: request.query,
-      targetNodeId: request.targetNodeId
-    }))).toEqual([
+    expect(
+      result.requests.map((request) => ({
+        query: request.query,
+        targetNodeId: request.targetNodeId
+      }))
+    ).toEqual([
       { query: "Tab 900", targetNodeId: undefined },
       { query: "", targetNodeId: "tab:900" }
     ]);
@@ -5986,7 +6679,9 @@ test.describe("sidebar projection hunt", () => {
     await expect(targetRow).toContainText("Tab 900 reveal patched");
     await targetRow.hover();
     await expect(targetRow.getByRole("button", { name: "Cut", exact: true })).toBeVisible();
-    await expect(targetRow.getByRole("button", { name: "Move to top level", exact: true })).toBeVisible();
+    await expect(
+      targetRow.getByRole("button", { name: "Move to top level", exact: true })
+    ).toBeVisible();
     await expect(targetRow.getByRole("button", { name: "Close", exact: true })).toBeVisible();
     expect(issues).toEqual([]);
   });
@@ -5995,7 +6690,13 @@ test.describe("sidebar projection hunt", () => {
     const issues = collectPageIssues(page);
     await loadLargeSparseSidebar(page, {
       fullStatePending: true,
-      historyStatus: { canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "remote edit" }
+      historyStatus: {
+        canUndo: true,
+        canRedo: false,
+        undoDepth: 1,
+        redoDepth: 0,
+        undoLabel: "remote edit"
+      }
     });
 
     const result = await page.evaluate(async () => {
@@ -6004,7 +6705,13 @@ test.describe("sidebar projection hunt", () => {
       await api.waitForSparseRequestCount(1);
       api.resolveSliceAt(0, { start: 240, end: 310 });
       await api.waitForVisibleRow(260);
-      api.emitHistoryStatus({ canUndo: false, canRedo: true, undoDepth: 0, redoDepth: 1, redoLabel: "remote edit" });
+      api.emitHistoryStatus({
+        canUndo: false,
+        canRedo: true,
+        undoDepth: 0,
+        redoDepth: 1,
+        redoLabel: "remote edit"
+      });
       api.emitTitlePatch("tab:260", "Tab 260 history patched");
       await api.waitForIdleFrames(4);
       return {
@@ -6020,7 +6727,9 @@ test.describe("sidebar projection hunt", () => {
     });
 
     expect(result.commands).toEqual([]);
-    expect(result.requests.every((request) => request.query === "" && request.targetNodeId === undefined)).toBe(true);
+    expect(
+      result.requests.every((request) => request.query === "" && request.targetNodeId === undefined)
+    ).toBe(true);
     expect(result.stateRequestCount).toBe(0);
     expect(result.searchValue).toBe("");
     expect(result.countText).toBe("1001 items / 0 saved");
@@ -6114,7 +6823,11 @@ test.describe("sidebar projection hunt", () => {
       expect(resultA.hasRevealHighlight).toBe(false);
 
       expect(resultB.commands).toEqual([]);
-      expect(resultB.requests.every((request) => request.query === "" && request.targetNodeId === undefined)).toBe(true);
+      expect(
+        resultB.requests.every(
+          (request) => request.query === "" && request.targetNodeId === undefined
+        )
+      ).toBe(true);
       expect(resultB.stateRequestCount).toBe(0);
       expect(resultB.searchValue).toBe("");
       expect(resultB.countText).toBe("1001 items / 0 saved");
@@ -6161,11 +6874,13 @@ test.describe("sidebar projection hunt", () => {
       }
       search.focus();
       search.value = "";
-      search.dispatchEvent(new InputEvent("input", {
-        bubbles: true,
-        inputType: "deleteContentBackward",
-        data: null
-      }));
+      search.dispatchEvent(
+        new InputEvent("input", {
+          bubbles: true,
+          inputType: "deleteContentBackward",
+          data: null
+        })
+      );
       await api.waitForIdleFrames(8);
       if (api.sparseRequestCount() > 2) {
         api.resolveSliceAt(0, { start: 240, end: 310 });
@@ -6193,7 +6908,11 @@ test.describe("sidebar projection hunt", () => {
       { query: "", targetNodeId: undefined },
       { query: "Tab 900", targetNodeId: undefined }
     ]);
-    expect(requestOwners.slice(2).every((request) => request.query === "" && request.targetNodeId === undefined)).toBe(true);
+    expect(
+      requestOwners
+        .slice(2)
+        .every((request) => request.query === "" && request.targetNodeId === undefined)
+    ).toBe(true);
     expect(result.stateRequestCount).toBe(0);
     expect(result.searchValue).toBe("");
     expect(result.countText).toBe("1001 items / 0 saved");
@@ -6233,11 +6952,13 @@ test.describe("sidebar projection hunt", () => {
       }
       search.focus();
       search.value = "";
-      search.dispatchEvent(new InputEvent("input", {
-        bubbles: true,
-        inputType: "deleteContentBackward",
-        data: null
-      }));
+      search.dispatchEvent(
+        new InputEvent("input", {
+          bubbles: true,
+          inputType: "deleteContentBackward",
+          data: null
+        })
+      );
       await api.waitForIdleFrames(8);
       if (api.sparseRequestCount() > 1) {
         api.resolveSliceAt(0, { start: 1, end: 64 });
@@ -6257,10 +6978,13 @@ test.describe("sidebar projection hunt", () => {
     });
 
     expect(result.commands).toEqual([]);
-    expect(result.requests.every((request) => (
-      (request.query === "Tab 900" || request.query === "") &&
-      request.targetNodeId === undefined
-    ))).toBe(true);
+    expect(
+      result.requests.every(
+        (request) =>
+          (request.query === "Tab 900" || request.query === "") &&
+          request.targetNodeId === undefined
+      )
+    ).toBe(true);
     expect(result.stateRequestCount).toBe(0);
     expect(result.searchValue).toBe("");
     expect(result.countText).toBe("1001 items / 0 saved");
@@ -6296,7 +7020,9 @@ test.describe("sidebar projection hunt", () => {
     });
 
     expect(result.commands).toEqual([]);
-    expect(result.requests.every((request) => request.query === "" && request.targetNodeId === undefined)).toBe(true);
+    expect(
+      result.requests.every((request) => request.query === "" && request.targetNodeId === undefined)
+    ).toBe(true);
     expect(result.stateRequestCount).toBe(0);
     expect(result.searchValue).toBe("");
     expect(result.countText).toBe("1001 items / 0 saved");
@@ -6338,11 +7064,13 @@ test.describe("sidebar projection hunt", () => {
       }
       search.focus();
       search.value = "";
-      search.dispatchEvent(new InputEvent("input", {
-        bubbles: true,
-        inputType: "deleteContentBackward",
-        data: null
-      }));
+      search.dispatchEvent(
+        new InputEvent("input", {
+          bubbles: true,
+          inputType: "deleteContentBackward",
+          data: null
+        })
+      );
       await api.waitForIdleFrames(8);
       if (api.sparseRequestCount() > 1) {
         api.resolveSliceAt(0);
@@ -6362,10 +7090,13 @@ test.describe("sidebar projection hunt", () => {
     });
 
     expect(result.commands).toEqual([]);
-    expect(result.requests.every((request) => (
-      (request.query === "Tab 900" || request.query === "") &&
-      request.targetNodeId === undefined
-    ))).toBe(true);
+    expect(
+      result.requests.every(
+        (request) =>
+          (request.query === "Tab 900" || request.query === "") &&
+          request.targetNodeId === undefined
+      )
+    ).toBe(true);
     expect(result.stateRequestCount).toBe(0);
     expect(result.searchValue).toBe("");
     expect(result.countText).toBe("1001 items / 0 saved");
@@ -6419,11 +7150,13 @@ test.describe("sidebar projection hunt", () => {
           }
           search.focus();
           search.value = "";
-          search.dispatchEvent(new InputEvent("input", {
-            bubbles: true,
-            inputType: "deleteContentBackward",
-            data: null
-          }));
+          search.dispatchEvent(
+            new InputEvent("input", {
+              bubbles: true,
+              inputType: "deleteContentBackward",
+              data: null
+            })
+          );
           await api.waitForIdleFrames(8);
           if (api.sparseRequestCount() > 2) {
             api.resolveSliceAt(0, { start: 1, end: 64 });
@@ -6458,7 +7191,11 @@ test.describe("sidebar projection hunt", () => {
 
       expect(resultA.commands).toEqual([]);
       expect(resultA.requests.at(0)).toMatchObject({ query: "Tab 900", targetNodeId: undefined });
-      expect(resultA.requests.slice(1).every((request) => request.query === "" && request.targetNodeId === undefined)).toBe(true);
+      expect(
+        resultA.requests
+          .slice(1)
+          .every((request) => request.query === "" && request.targetNodeId === undefined)
+      ).toBe(true);
       expect(resultA.stateRequestCount).toBe(0);
       expect(resultA.searchValue).toBe("");
       expect(resultA.countText).toBe("1001 items / 0 saved");
@@ -6467,7 +7204,11 @@ test.describe("sidebar projection hunt", () => {
       expect(resultA.hasRevealHighlight).toBe(false);
 
       expect(resultB.commands).toEqual([]);
-      expect(resultB.requests.every((request) => request.query === "" && request.targetNodeId === undefined)).toBe(true);
+      expect(
+        resultB.requests.every(
+          (request) => request.query === "" && request.targetNodeId === undefined
+        )
+      ).toBe(true);
       expect(resultB.stateRequestCount).toBe(0);
       expect(resultB.searchValue).toBe("");
       expect(resultB.countText).toBe("1001 items / 0 saved");
@@ -6486,12 +7227,24 @@ test.describe("sidebar projection hunt", () => {
     const issues = collectPageIssues(page);
     await loadLargeSparseSidebar(page, {
       fullStatePending: true,
-      historyStatus: { canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "remote edit" }
+      historyStatus: {
+        canUndo: true,
+        canRedo: false,
+        undoDepth: 1,
+        redoDepth: 0,
+        undoLabel: "remote edit"
+      }
     });
 
     const result = await page.evaluate(async () => {
       const api = projectionHuntApi();
-      api.emitHistoryStatus({ canUndo: false, canRedo: true, undoDepth: 0, redoDepth: 1, redoLabel: "remote edit" });
+      api.emitHistoryStatus({
+        canUndo: false,
+        canRedo: true,
+        undoDepth: 0,
+        redoDepth: 1,
+        redoLabel: "remote edit"
+      });
       api.emitTitlePatch("tab:800", "Tab 800 active broadcast patched");
       api.emitFullStateBroadcast();
       await api.waitForIdleFrames(6);
@@ -6564,7 +7317,14 @@ test.describe("sidebar projection hunt", () => {
         }),
         pageB.evaluate(async () => {
           const api = projectionHuntApi();
-          api.emitHistoryStatus({ canUndo: true, canRedo: true, undoDepth: 2, redoDepth: 1, undoLabel: "scroll edit", redoLabel: "scroll edit" });
+          api.emitHistoryStatus({
+            canUndo: true,
+            canRedo: true,
+            undoDepth: 2,
+            redoDepth: 1,
+            undoLabel: "scroll edit",
+            redoLabel: "scroll edit"
+          });
           api.emitTitlePatch("tab:260", "Tab 260 sidebar B scroll patched");
           await api.waitForIdleFrames(6);
           return {
@@ -6592,7 +7352,11 @@ test.describe("sidebar projection hunt", () => {
       expect(resultA.hasRevealHighlight).toBe(false);
 
       expect(resultB.commands).toEqual([]);
-      expect(resultB.requests.every((request) => request.query === "" && request.targetNodeId === undefined)).toBe(true);
+      expect(
+        resultB.requests.every(
+          (request) => request.query === "" && request.targetNodeId === undefined
+        )
+      ).toBe(true);
       expect(resultB.stateRequestCount).toBe(0);
       expect(resultB.searchValue).toBe("");
       expect(resultB.countText).toBe("1001 items / 0 saved");
@@ -6663,10 +7427,12 @@ test.describe("sidebar projection hunt", () => {
     });
 
     expect(result.commands).toEqual([]);
-    expect(result.requests.map((request) => ({
-      query: request.query,
-      targetNodeId: request.targetNodeId
-    }))).toEqual([
+    expect(
+      result.requests.map((request) => ({
+        query: request.query,
+        targetNodeId: request.targetNodeId
+      }))
+    ).toEqual([
       { query: "", targetNodeId: undefined },
       { query: "", targetNodeId: undefined },
       { query: "Tab 900", targetNodeId: undefined }
@@ -6692,7 +7458,13 @@ test.describe("sidebar projection hunt", () => {
     const issues = collectPageIssues(page);
     await loadLargeSparseSidebar(page, {
       fullStatePending: true,
-      historyStatus: { canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "remote edit" }
+      historyStatus: {
+        canUndo: true,
+        canRedo: false,
+        undoDepth: 1,
+        redoDepth: 0,
+        undoLabel: "remote edit"
+      }
     });
 
     await page.locator("#search").fill("Tab 900");
@@ -6713,7 +7485,13 @@ test.describe("sidebar projection hunt", () => {
       await api.waitForSparseRequestCount(2);
       api.resolveSliceAt(0);
       await api.waitForVisibleRow(900);
-      api.emitHistoryStatus({ canUndo: false, canRedo: true, undoDepth: 0, redoDepth: 1, redoLabel: "remote edit" });
+      api.emitHistoryStatus({
+        canUndo: false,
+        canRedo: true,
+        undoDepth: 0,
+        redoDepth: 1,
+        redoLabel: "remote edit"
+      });
       api.emitTitlePatch("tab:900", "Tab 900 reveal history patched");
       await api.waitForIdleFrames(5);
       if (api.sparseRequestCount() > 2) {
@@ -6728,15 +7506,19 @@ test.describe("sidebar projection hunt", () => {
         countText: document.querySelector("#state-count")?.textContent ?? "",
         visibleRows: api.visibleRows(),
         tab900Text: document.querySelector("[data-node-id='tab:900']")?.textContent ?? "",
-        hasRevealHighlight: Boolean(document.querySelector("[data-node-id='tab:900'].is-reveal-highlight"))
+        hasRevealHighlight: Boolean(
+          document.querySelector("[data-node-id='tab:900'].is-reveal-highlight")
+        )
       };
     });
 
     expect(result.commands).toContainEqual({ type: "expandAncestors", nodeId: "tab:900" });
-    expect(result.requests.map((request) => ({
-      query: request.query,
-      targetNodeId: request.targetNodeId
-    }))).toEqual([
+    expect(
+      result.requests.map((request) => ({
+        query: request.query,
+        targetNodeId: request.targetNodeId
+      }))
+    ).toEqual([
       { query: "Tab 900", targetNodeId: undefined },
       { query: "", targetNodeId: "tab:900" }
     ]);
@@ -6751,7 +7533,9 @@ test.describe("sidebar projection hunt", () => {
     await expect(targetRow).toContainText("Tab 900 reveal history patched");
     await targetRow.hover();
     await expect(targetRow.getByRole("button", { name: "Cut", exact: true })).toBeVisible();
-    await expect(targetRow.getByRole("button", { name: "Move to top level", exact: true })).toBeVisible();
+    await expect(
+      targetRow.getByRole("button", { name: "Move to top level", exact: true })
+    ).toBeVisible();
     await expect(targetRow.getByRole("button", { name: "Close", exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "Undo", exact: true })).toBeDisabled();
     await expect(page.getByRole("button", { name: "Redo", exact: true })).toBeEnabled();
@@ -6762,7 +7546,13 @@ test.describe("sidebar projection hunt", () => {
     const issuesA = collectPageIssues(page);
     await loadLargeSparseSidebar(page, {
       fullStatePending: true,
-      historyStatus: { canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "remote delete" }
+      historyStatus: {
+        canUndo: true,
+        canRedo: false,
+        undoDepth: 1,
+        redoDepth: 0,
+        undoLabel: "remote delete"
+      }
     });
 
     const pageB = await page.context().newPage();
@@ -6770,7 +7560,13 @@ test.describe("sidebar projection hunt", () => {
     try {
       await loadLargeSparseSidebar(pageB, {
         fullStatePending: true,
-        historyStatus: { canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "remote delete" }
+        historyStatus: {
+          canUndo: true,
+          canRedo: false,
+          undoDepth: 1,
+          redoDepth: 0,
+          undoLabel: "remote delete"
+        }
       });
 
       await page.locator("#search").fill("Tab 900");
@@ -6792,7 +7588,13 @@ test.describe("sidebar projection hunt", () => {
       const [resultA, resultB] = await Promise.all([
         page.evaluate(async () => {
           const api = projectionHuntApi();
-          api.emitHistoryStatus({ canUndo: false, canRedo: true, undoDepth: 0, redoDepth: 1, redoLabel: "remote delete" });
+          api.emitHistoryStatus({
+            canUndo: false,
+            canRedo: true,
+            undoDepth: 0,
+            redoDepth: 1,
+            redoLabel: "remote delete"
+          });
           api.emitDeletePatch(["tab:900"]);
           await api.waitForIdleFrames(4);
           if (api.sparseRequestCount() > 1) {
@@ -6819,7 +7621,13 @@ test.describe("sidebar projection hunt", () => {
         }),
         pageB.evaluate(async () => {
           const api = projectionHuntApi();
-          api.emitHistoryStatus({ canUndo: false, canRedo: true, undoDepth: 0, redoDepth: 1, redoLabel: "remote delete" });
+          api.emitHistoryStatus({
+            canUndo: false,
+            canRedo: true,
+            undoDepth: 0,
+            redoDepth: 1,
+            redoLabel: "remote delete"
+          });
           api.emitDeletePatch(["tab:900"]);
           await api.waitForIdleFrames(4);
           if (api.sparseRequestCount() > 1) {
@@ -6847,7 +7655,11 @@ test.describe("sidebar projection hunt", () => {
       ]);
 
       expect(resultA.commands).toEqual([]);
-      expect(resultA.requests.every((request) => request.query === "Tab 900" && request.targetNodeId === undefined)).toBe(true);
+      expect(
+        resultA.requests.every(
+          (request) => request.query === "Tab 900" && request.targetNodeId === undefined
+        )
+      ).toBe(true);
       expect(resultA.stateRequestCount).toBe(0);
       expect(resultA.searchValue).toBe("Tab 900");
       expect(resultA.countText).toMatch(/^0 matches \/ \d+ items$/);
@@ -6857,7 +7669,11 @@ test.describe("sidebar projection hunt", () => {
       expect(resultA.hasRevealHighlight).toBe(false);
 
       expect(resultB.commands).toEqual([]);
-      expect(resultB.requests.every((request) => request.query === "" && request.targetNodeId === undefined)).toBe(true);
+      expect(
+        resultB.requests.every(
+          (request) => request.query === "" && request.targetNodeId === undefined
+        )
+      ).toBe(true);
       expect(resultB.stateRequestCount).toBe(0);
       expect(resultB.searchValue).toBe("");
       expect(resultB.countText).toMatch(/^\d+ items \/ 0 saved$/);
@@ -6913,19 +7729,29 @@ test.describe("sidebar projection hunt", () => {
         visibleRows: api.visibleRows(),
         hasTarget: Boolean(document.querySelector("[data-node-id='tab:900']")),
         hasDeletedNeighbor: Boolean(document.querySelector("[data-node-id='tab:899']")),
-        hasRevealHighlight: Boolean(document.querySelector("[data-node-id='tab:900'].is-reveal-highlight"))
+        hasRevealHighlight: Boolean(
+          document.querySelector("[data-node-id='tab:900'].is-reveal-highlight")
+        )
       };
     });
 
     expect(result.commands).toContainEqual({ type: "expandAncestors", nodeId: "tab:900" });
-    expect(result.requests.map((request) => ({
-      query: request.query,
-      targetNodeId: request.targetNodeId
-    })).slice(0, 2)).toEqual([
+    expect(
+      result.requests
+        .map((request) => ({
+          query: request.query,
+          targetNodeId: request.targetNodeId
+        }))
+        .slice(0, 2)
+    ).toEqual([
       { query: "Tab 900", targetNodeId: undefined },
       { query: "", targetNodeId: "tab:900" }
     ]);
-    expect(result.requests.slice(2).every((request) => request.query === "" && request.targetNodeId === undefined)).toBe(true);
+    expect(
+      result.requests
+        .slice(2)
+        .every((request) => request.query === "" && request.targetNodeId === undefined)
+    ).toBe(true);
     expect(result.stateRequestCount).toBe(0);
     expect(result.searchValue).toBe("");
     expect(result.countText).toMatch(/^\d+ items \/ 0 saved$/);
@@ -6939,7 +7765,9 @@ test.describe("sidebar projection hunt", () => {
     await expect(page.locator(`${nodeSelector("tab:900")}.is-reveal-highlight`)).toBeVisible();
     await targetRow.hover();
     await expect(targetRow.getByRole("button", { name: "Cut", exact: true })).toBeVisible();
-    await expect(targetRow.getByRole("button", { name: "Move to top level", exact: true })).toBeVisible();
+    await expect(
+      targetRow.getByRole("button", { name: "Move to top level", exact: true })
+    ).toBeVisible();
     await expect(targetRow.getByRole("button", { name: "Close", exact: true })).toBeVisible();
     expect(issues).toEqual([]);
   });
@@ -6997,13 +7825,21 @@ test.describe("sidebar projection hunt", () => {
     });
 
     await nodeRow(page, "tab:250").hover();
-    await nodeRow(page, "tab:250").getByRole("button", { name: "Move to top level", exact: true }).click();
+    await nodeRow(page, "tab:250")
+      .getByRole("button", { name: "Move to top level", exact: true })
+      .click();
 
     const result = await page.evaluate(async () => {
       const api = projectionHuntApi();
       await api.scrollToRow(500);
       await api.waitForSparseRequestCount(2);
-      api.emitHistoryStatus({ canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "move to root" });
+      api.emitHistoryStatus({
+        canUndo: true,
+        canRedo: false,
+        undoDepth: 1,
+        redoDepth: 0,
+        undoLabel: "move to root"
+      });
       api.resolveSliceAt(0, { start: 240, end: 310 });
       await api.waitForSparseRequestCount(3);
       api.resolveSliceAt(0, { start: 480, end: 540 });
@@ -7018,12 +7854,16 @@ test.describe("sidebar projection hunt", () => {
 
     expect(result.commands).toEqual([{ type: "moveSubtreeToTopLevel", nodeId: "tab:250" }]);
     expect(result.requests).toHaveLength(3);
-    expect(result.requests.every((request) => request.query === "" && request.targetNodeId === undefined)).toBe(true);
+    expect(
+      result.requests.every((request) => request.query === "" && request.targetNodeId === undefined)
+    ).toBe(true);
     expect(result.stateRequests).toBe(0);
     expect(result.visibleRows).toContain(500);
     await expect(nodeRow(page, "tab:500")).toBeVisible();
     await nodeRow(page, "tab:500").hover();
-    await expect(nodeRow(page, "tab:500").getByRole("button", { name: "Move to top level", exact: true })).toBeVisible();
+    await expect(
+      nodeRow(page, "tab:500").getByRole("button", { name: "Move to top level", exact: true })
+    ).toBeVisible();
     expect(issues).toEqual([]);
   });
 
@@ -7035,7 +7875,9 @@ test.describe("sidebar projection hunt", () => {
       expect(dialog.message()).toContain("Restore 4 restorable closed nodes");
       await dialog.accept();
     });
-    await nodeRow(page, "window:30").getByRole("button", { name: "Restore Closed Window", exact: true }).click();
+    await nodeRow(page, "window:30")
+      .getByRole("button", { name: "Restore Closed Window", exact: true })
+      .click();
 
     const result = await page.evaluate(async () => {
       const api = projectionHuntApi();
@@ -7065,11 +7907,19 @@ test.describe("sidebar projection hunt", () => {
     const issues = collectPageIssues(page);
     await loadClosedRestoreSidebar(page, { fullStatePending: true, invalidRestoreScope: true });
 
-    await nodeRow(page, "window:30").getByRole("button", { name: "Restore Closed Window", exact: true }).click();
+    await nodeRow(page, "window:30")
+      .getByRole("button", { name: "Restore Closed Window", exact: true })
+      .click();
 
     const result = await page.evaluate(async () => {
       const api = projectionHuntApi();
-      api.emitHistoryStatus({ canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "background restore" });
+      api.emitHistoryStatus({
+        canUndo: true,
+        canRedo: false,
+        undoDepth: 1,
+        redoDepth: 0,
+        undoLabel: "background restore"
+      });
       await api.waitForIdleFrames(3);
       return {
         commands: api.sentCommands(),
@@ -7081,7 +7931,9 @@ test.describe("sidebar projection hunt", () => {
     expect(result.commands).toEqual([{ type: "analyzeRestoreScope", nodeId: "window:30" }]);
     expect(result.stateRequests).toBe(0);
     expect(result.visibleRows).toContain(0);
-    await expect(nodeRow(page, "window:30").getByRole("button", { name: "Restore Closed Window", exact: true })).toBeVisible();
+    await expect(
+      nodeRow(page, "window:30").getByRole("button", { name: "Restore Closed Window", exact: true })
+    ).toBeVisible();
     await expect(page.getByRole("button", { name: "Undo", exact: true })).toBeEnabled();
     expect(issues).toEqual([]);
   });
@@ -7090,7 +7942,9 @@ test.describe("sidebar projection hunt", () => {
     const issues = collectPageIssues(page);
     await loadClosedRestoreSidebar(page, { fullStatePending: true, invalidRestoreScope: true });
 
-    await nodeRow(page, "window:30").getByRole("button", { name: "Restore Closed Window", exact: true }).click();
+    await nodeRow(page, "window:30")
+      .getByRole("button", { name: "Restore Closed Window", exact: true })
+      .click();
     await page.waitForFunction(() => projectionHuntApi().sentCommands().length === 1);
     await page.locator("#search").fill("Closed tab 30");
     await expect(nodeRow(page, "tab:30")).toBeVisible();
@@ -7098,7 +7952,13 @@ test.describe("sidebar projection hunt", () => {
 
     const result = await page.evaluate(async () => {
       const api = projectionHuntApi();
-      api.emitHistoryStatus({ canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "restore check" });
+      api.emitHistoryStatus({
+        canUndo: true,
+        canRedo: false,
+        undoDepth: 1,
+        redoDepth: 0,
+        undoLabel: "restore check"
+      });
       await api.waitForIdleFrames(4);
       return {
         commands: api.sentCommands(),
@@ -7113,14 +7973,18 @@ test.describe("sidebar projection hunt", () => {
     });
 
     expect(result.commands).toEqual([{ type: "analyzeRestoreScope", nodeId: "window:30" }]);
-    expect(result.requests).toEqual([expect.objectContaining({ query: "", targetNodeId: undefined })]);
+    expect(result.requests).toEqual([
+      expect.objectContaining({ query: "", targetNodeId: undefined })
+    ]);
     expect(result.stateRequests).toBe(0);
     expect(result.searchValue).toBe("");
     expect(result.visibleRows).toContain(0);
     expect(result.closedWindowExists).toBe(true);
     expect(result.closedTabExists).toBe(true);
     expect(result.countText).toBe("4 items / 4 saved");
-    await expect(nodeRow(page, "window:30").getByRole("button", { name: "Restore Closed Window", exact: true })).toBeVisible();
+    await expect(
+      nodeRow(page, "window:30").getByRole("button", { name: "Restore Closed Window", exact: true })
+    ).toBeVisible();
     await expect(page.getByRole("button", { name: "Undo", exact: true })).toBeEnabled();
     expect(issues).toEqual([]);
   });
@@ -7157,8 +8021,11 @@ test.describe("sidebar projection hunt", () => {
 
     expect(result.commands).toEqual([]);
     expect(result.requests[0]).toMatchObject({ query: "Closed tab 31", targetNodeId: undefined });
-    expect(result.requests.slice(1).every((request) => request.query === "" && request.targetNodeId === undefined))
-      .toBe(true);
+    expect(
+      result.requests
+        .slice(1)
+        .every((request) => request.query === "" && request.targetNodeId === undefined)
+    ).toBe(true);
     expect(result.stateRequests).toBe(0);
     expect(result.searchValue).toBe("");
     expect(result.visibleRows).toContain(0);
@@ -7166,7 +8033,9 @@ test.describe("sidebar projection hunt", () => {
     expect(result.closedTab30Exists).toBe(true);
     expect(result.staleClosedTabExists).toBe(false);
     expect(result.countText).toBe("4 items / 4 saved");
-    await expect(nodeRow(page, "window:30").getByRole("button", { name: "Restore Closed Window", exact: true })).toBeVisible();
+    await expect(
+      nodeRow(page, "window:30").getByRole("button", { name: "Restore Closed Window", exact: true })
+    ).toBeVisible();
     expect(issues).toEqual([]);
   });
 
@@ -7191,7 +8060,9 @@ test.describe("sidebar projection hunt", () => {
 
     await expect(page.locator(nodeSelector("tab:30"))).toHaveCount(0);
     await expect(nodeRow(page, "tab:31")).toBeVisible();
-    await nodeRow(page, "tab:31").getByRole("button", { name: /Restore Closed tab 31/ }).click();
+    await nodeRow(page, "tab:31")
+      .getByRole("button", { name: /Restore Closed tab 31/ })
+      .click();
 
     const result = await page.evaluate(async () => {
       const api = projectionHuntApi();
@@ -7227,7 +8098,9 @@ test.describe("sidebar projection hunt", () => {
     });
     await loadClosedRestoreSidebar(page, { fullStatePending: true, delayRestoreScope: true });
 
-    await nodeRow(page, "window:30").getByRole("button", { name: "Restore Closed Window", exact: true }).click();
+    await nodeRow(page, "window:30")
+      .getByRole("button", { name: "Restore Closed Window", exact: true })
+      .click();
     await page.waitForFunction(() => projectionHuntApi().sentCommands().length === 1);
     await page.locator("#search").fill("Closed tab 31");
     await page.evaluate(async () => {
@@ -7236,12 +8109,20 @@ test.describe("sidebar projection hunt", () => {
       api.resolveSliceForQuery("Closed tab 31");
       await api.waitForVisibleRow(1);
     });
-    await nodeRow(page, "tab:31").getByRole("button", { name: /Restore Closed tab 31/ }).click();
+    await nodeRow(page, "tab:31")
+      .getByRole("button", { name: /Restore Closed tab 31/ })
+      .click();
     await page.waitForFunction(() => projectionHuntApi().sentCommands().length === 2);
 
     await page.evaluate(async () => {
       const api = projectionHuntApi();
-      api.emitHistoryStatus({ canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "restore closed child" });
+      api.emitHistoryStatus({
+        canUndo: true,
+        canRedo: false,
+        undoDepth: 1,
+        redoDepth: 0,
+        undoLabel: "restore closed child"
+      });
       api.emitDeletePatch(["tab:31"]);
       api.resolveRestoreScope();
       await api.waitForIdleFrames(8);
@@ -7270,9 +8151,11 @@ test.describe("sidebar projection hunt", () => {
       { type: "analyzeRestoreScope", nodeId: "window:30" },
       { type: "restoreNode", nodeId: "tab:31" }
     ]);
-    expect(result.requests.slice(0, -1).every((request) => (
-      request.query === "Closed tab 31" && request.targetNodeId === undefined
-    ))).toBe(true);
+    expect(
+      result.requests
+        .slice(0, -1)
+        .every((request) => request.query === "Closed tab 31" && request.targetNodeId === undefined)
+    ).toBe(true);
     expect(result.requests.at(-1)).toMatchObject({ query: "", targetNodeId: undefined });
     expect(result.stateRequests).toBe(0);
     expect(result.searchValue).toBe("");
@@ -7282,11 +8165,15 @@ test.describe("sidebar projection hunt", () => {
     expect(result.restoredChildExists).toBe(false);
     expect(result.undoEnabled).toBe(true);
     expect(dialogMessages).toEqual([]);
-    await expect(nodeRow(page, "window:30").getByRole("button", { name: "Restore Closed Window", exact: true })).toBeVisible();
+    await expect(
+      nodeRow(page, "window:30").getByRole("button", { name: "Restore Closed Window", exact: true })
+    ).toBeVisible();
     expect(issues).toEqual([]);
   });
 
-  test("psh-restore-scope-response-after-delete-does-not-prompt-stale-restore", async ({ page }) => {
+  test("psh-restore-scope-response-after-delete-does-not-prompt-stale-restore", async ({
+    page
+  }) => {
     const issues = collectPageIssues(page);
     const dialogMessages: string[] = [];
     page.on("dialog", async (dialog) => {
@@ -7295,12 +8182,20 @@ test.describe("sidebar projection hunt", () => {
     });
     await loadClosedRestoreSidebar(page, { fullStatePending: true, delayRestoreScope: true });
 
-    await nodeRow(page, "window:30").getByRole("button", { name: "Restore Closed Window", exact: true }).click();
+    await nodeRow(page, "window:30")
+      .getByRole("button", { name: "Restore Closed Window", exact: true })
+      .click();
     await page.waitForFunction(() => projectionHuntApi().sentCommands().length === 1);
 
     const result = await page.evaluate(async () => {
       const api = projectionHuntApi();
-      api.emitHistoryStatus({ canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "delete closed window" });
+      api.emitHistoryStatus({
+        canUndo: true,
+        canRedo: false,
+        undoDepth: 1,
+        redoDepth: 0,
+        undoLabel: "delete closed window"
+      });
       api.emitDeletePatch(["window:30", "tab:30", "tab:31", "tab:32"]);
       api.resolveRestoreScope();
       await api.waitForIdleFrames(8);
@@ -7333,12 +8228,20 @@ test.describe("sidebar projection hunt", () => {
     });
     await loadClosedRestoreSidebar(page, { fullStatePending: true, delayRestoreScope: true });
 
-    await nodeRow(page, "window:30").getByRole("button", { name: "Restore Closed Window", exact: true }).click();
+    await nodeRow(page, "window:30")
+      .getByRole("button", { name: "Restore Closed Window", exact: true })
+      .click();
     await page.waitForFunction(() => projectionHuntApi().sentCommands().length === 1);
 
     const result = await page.evaluate(async () => {
       const api = projectionHuntApi();
-      api.emitHistoryStatus({ canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "delete closed tab" });
+      api.emitHistoryStatus({
+        canUndo: true,
+        canRedo: false,
+        undoDepth: 1,
+        redoDepth: 0,
+        undoLabel: "delete closed tab"
+      });
       api.emitDeletePatch(["tab:30"]);
       api.resolveRestoreScope();
       await api.waitForIdleFrames(8);
@@ -7364,7 +8267,9 @@ test.describe("sidebar projection hunt", () => {
     expect(issues).toEqual([]);
   });
 
-  test("psh-restored-delete-neighbor-title-patch-before-tree-patch-keeps-live-actions", async ({ page }) => {
+  test("psh-restored-delete-neighbor-title-patch-before-tree-patch-keeps-live-actions", async ({
+    page
+  }) => {
     const issues = collectPageIssues(page);
     await loadRestoredWindowSidebar(page, { fullStatePending: true });
 
@@ -7375,7 +8280,13 @@ test.describe("sidebar projection hunt", () => {
     const result = await page.evaluate(async () => {
       const api = projectionHuntApi();
       api.emitTitlePatch("tab:1", "Existing tab patched before restored delete");
-      api.emitHistoryStatus({ canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "delete restored tab" });
+      api.emitHistoryStatus({
+        canUndo: true,
+        canRedo: false,
+        undoDepth: 1,
+        redoDepth: 0,
+        undoLabel: "delete restored tab"
+      });
       api.emitDeletePatch(["tab:2", "window:20"]);
       await api.waitForIdleFrames(5);
       return {
@@ -7397,10 +8308,16 @@ test.describe("sidebar projection hunt", () => {
     expect(result.liveTabText).toContain("Existing tab patched before restored delete");
     expect(result.countText).toBe("2 items / 0 saved");
     await expect(nodeRow(page, "tab:1")).toBeVisible();
-    await expect(nodeRow(page, "tab:1")).toContainText("Existing tab patched before restored delete");
+    await expect(nodeRow(page, "tab:1")).toContainText(
+      "Existing tab patched before restored delete"
+    );
     await nodeRow(page, "tab:1").hover();
-    await expect(nodeRow(page, "tab:1").getByRole("button", { name: "Close", exact: true })).toBeVisible();
-    await expect(nodeRow(page, "tab:1").getByRole("button", { name: "Cut", exact: true })).toBeVisible();
+    await expect(
+      nodeRow(page, "tab:1").getByRole("button", { name: "Close", exact: true })
+    ).toBeVisible();
+    await expect(
+      nodeRow(page, "tab:1").getByRole("button", { name: "Cut", exact: true })
+    ).toBeVisible();
     await expect(page.getByRole("button", { name: "Undo", exact: true })).toBeEnabled();
     expect(issues).toEqual([]);
   });
@@ -7416,7 +8333,13 @@ test.describe("sidebar projection hunt", () => {
 
     const result = await page.evaluate(async () => {
       const api = projectionHuntApi();
-      api.emitHistoryStatus({ canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "delete restored tab" });
+      api.emitHistoryStatus({
+        canUndo: true,
+        canRedo: false,
+        undoDepth: 1,
+        redoDepth: 0,
+        undoLabel: "delete restored tab"
+      });
       api.emitDeletePatch(["tab:2", "window:20"]);
       await api.waitForVisibleRow(1);
       await api.waitForIdleFrames(4);
@@ -7457,7 +8380,9 @@ test.describe("sidebar projection hunt", () => {
         cancelable: true,
         dataTransfer
       });
-      const clientY = await nodeRow(page, "tab:801").evaluate((row) => row.getBoundingClientRect().bottom - 1);
+      const clientY = await nodeRow(page, "tab:801").evaluate(
+        (row) => row.getBoundingClientRect().bottom - 1
+      );
       await nodeRow(page, "tab:801").dispatchEvent("dragover", {
         bubbles: true,
         cancelable: true,
@@ -7497,7 +8422,9 @@ test.describe("sidebar projection hunt", () => {
     });
 
     expect(result.commands).toEqual([]);
-    expect(result.requests).toEqual([expect.objectContaining({ query: "Tab 900", targetNodeId: undefined })]);
+    expect(result.requests).toEqual([
+      expect.objectContaining({ query: "Tab 900", targetNodeId: undefined })
+    ]);
     expect(result.stateRequests).toBe(0);
     expect(result.searchValue).toBe("Tab 900");
     expect(result.visibleRows).toContain(1);
@@ -7512,7 +8439,13 @@ test.describe("sidebar projection hunt", () => {
     await loadLargeSparseSidebar(page, {
       includeCoverage: true,
       fullStatePending: true,
-      historyStatus: { canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "remote edit" }
+      historyStatus: {
+        canUndo: true,
+        canRedo: false,
+        undoDepth: 1,
+        redoDepth: 0,
+        undoLabel: "remote edit"
+      }
     });
 
     const dataTransfer = await page.evaluateHandle(() => new DataTransfer());
@@ -7522,7 +8455,9 @@ test.describe("sidebar projection hunt", () => {
         cancelable: true,
         dataTransfer
       });
-      const clientY = await nodeRow(page, "tab:801").evaluate((row) => row.getBoundingClientRect().bottom - 1);
+      const clientY = await nodeRow(page, "tab:801").evaluate(
+        (row) => row.getBoundingClientRect().bottom - 1
+      );
       await nodeRow(page, "tab:801").dispatchEvent("dragover", {
         bubbles: true,
         cancelable: true,
@@ -7545,7 +8480,13 @@ test.describe("sidebar projection hunt", () => {
 
     const result = await page.evaluate(async () => {
       const api = projectionHuntApi();
-      api.emitHistoryStatus({ canUndo: false, canRedo: true, undoDepth: 0, redoDepth: 1, redoLabel: "remote edit" });
+      api.emitHistoryStatus({
+        canUndo: false,
+        canRedo: true,
+        undoDepth: 0,
+        redoDepth: 1,
+        redoLabel: "remote edit"
+      });
       await api.waitForProjectionRequest("Tab 900");
       api.resolveSliceForQuery("Tab 900");
       await api.waitForVisibleRow(1);
@@ -7565,7 +8506,9 @@ test.describe("sidebar projection hunt", () => {
     });
 
     expect(result.commands).toEqual([{ type: "undo" }]);
-    expect(result.requests).toEqual([expect.objectContaining({ query: "Tab 900", targetNodeId: undefined })]);
+    expect(result.requests).toEqual([
+      expect.objectContaining({ query: "Tab 900", targetNodeId: undefined })
+    ]);
     expect(result.stateRequests).toBe(0);
     expect(result.searchValue).toBe("Tab 900");
     expect(result.visibleRows).toContain(1);
@@ -7593,7 +8536,9 @@ test.describe("sidebar projection hunt", () => {
       await api.waitForVisibleRow(1);
     });
     await nodeRow(page, "tab:900").hover();
-    await nodeRow(page, "tab:900").getByRole("button", { name: "Show in tree", exact: true }).click();
+    await nodeRow(page, "tab:900")
+      .getByRole("button", { name: "Show in tree", exact: true })
+      .click();
 
     const result = await page.evaluate(async () => {
       const api = projectionHuntApi();
@@ -7613,16 +8558,24 @@ test.describe("sidebar projection hunt", () => {
         searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
         visibleRows: api.visibleRows(),
         hasTarget: Boolean(document.querySelector("[data-node-id='tab:900']")),
-        hasTargetHighlight: Boolean(document.querySelector("[data-node-id='tab:900'].is-reveal-highlight")),
+        hasTargetHighlight: Boolean(
+          document.querySelector("[data-node-id='tab:900'].is-reveal-highlight")
+        ),
         markerClassName: marker?.className ?? "",
         rootDropTarget: root?.classList.contains("root-drop-target") ?? false
       };
     });
 
     expect(result.commands).toEqual([{ type: "expandAncestors", nodeId: "tab:900" }]);
-    expect(result.requests).toContainEqual(expect.objectContaining({ query: "", targetNodeId: undefined }));
-    expect(result.requests).toContainEqual(expect.objectContaining({ query: "Tab 900", targetNodeId: undefined }));
-    expect(result.requests).toContainEqual(expect.objectContaining({ query: "", targetNodeId: "tab:900" }));
+    expect(result.requests).toContainEqual(
+      expect.objectContaining({ query: "", targetNodeId: undefined })
+    );
+    expect(result.requests).toContainEqual(
+      expect.objectContaining({ query: "Tab 900", targetNodeId: undefined })
+    );
+    expect(result.requests).toContainEqual(
+      expect.objectContaining({ query: "", targetNodeId: "tab:900" })
+    );
     expect(result.stateRequests).toBe(0);
     expect(result.searchValue).toBe("");
     expect(result.visibleRows).toContain(900);
@@ -7638,7 +8591,13 @@ test.describe("sidebar projection hunt", () => {
     await loadLargeSparseSidebar(page, {
       includeCoverage: true,
       fullStatePending: true,
-      historyStatus: { canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "remote edit" }
+      historyStatus: {
+        canUndo: true,
+        canRedo: false,
+        undoDepth: 1,
+        redoDepth: 0,
+        undoLabel: "remote edit"
+      }
     });
 
     await nodeRow(page, "tab:800").locator(".node-label").focus();
@@ -7654,13 +8613,26 @@ test.describe("sidebar projection hunt", () => {
     });
     await nodeRow(page, "tab:800").locator(".node-label").focus();
     await page.keyboard.press("Control+Z");
-    await page.waitForFunction(() => projectionHuntApi().sentCommands().some((command) => (
-      typeof command === "object" && command !== null && (command as { type?: unknown }).type === "undo"
-    )));
+    await page.waitForFunction(() =>
+      projectionHuntApi()
+        .sentCommands()
+        .some(
+          (command) =>
+            typeof command === "object" &&
+            command !== null &&
+            (command as { type?: unknown }).type === "undo"
+        )
+    );
 
     const result = await page.evaluate(async () => {
       const api = projectionHuntApi();
-      api.emitHistoryStatus({ canUndo: false, canRedo: true, undoDepth: 0, redoDepth: 1, redoLabel: "remote edit" });
+      api.emitHistoryStatus({
+        canUndo: false,
+        canRedo: true,
+        undoDepth: 0,
+        redoDepth: 1,
+        redoLabel: "remote edit"
+      });
       api.resolveSliceForQuery("Tab 90");
       await api.waitForIdleFrames(2);
       api.resolveSliceForQuery("Tab 91");
@@ -7736,7 +8708,9 @@ test.describe("sidebar projection hunt", () => {
     expect(result.commands).toEqual([
       { type: "renameGroup", nodeId: "window:1", title: "Renamed during search replacement" }
     ]);
-    expect(result.requests).toContainEqual(expect.objectContaining({ query: "Tab 900", targetNodeId: undefined }));
+    expect(result.requests).toContainEqual(
+      expect.objectContaining({ query: "Tab 900", targetNodeId: undefined })
+    );
     expect(result.requests.at(-1)).toMatchObject({ query: "Tab 900", targetNodeId: undefined });
     expect(result.stateRequests).toBe(0);
     expect(result.searchValue).toBe("Tab 900");
@@ -7794,8 +8768,14 @@ test.describe("sidebar projection hunt", () => {
     await nodeRow(page, "tab:801").getByRole("button", { name: "Paste", exact: true }).click();
 
     expect(beforePaste.commands).toEqual([]);
-    expect(beforePaste.requests[0]).toEqual(expect.objectContaining({ query: "Tab 900", targetNodeId: undefined }));
-    expect(beforePaste.requests.slice(1).every((request) => request.query === "" && request.targetNodeId === undefined)).toBe(true);
+    expect(beforePaste.requests[0]).toEqual(
+      expect.objectContaining({ query: "Tab 900", targetNodeId: undefined })
+    );
+    expect(
+      beforePaste.requests
+        .slice(1)
+        .every((request) => request.query === "" && request.targetNodeId === undefined)
+    ).toBe(true);
     expect(beforePaste.stateRequests).toBe(1);
     expect(beforePaste.searchValue).toBe("");
     expect(beforePaste.visibleRows).toContain(801);
@@ -7824,7 +8804,9 @@ test.describe("sidebar projection hunt", () => {
         await api.waitForVisibleRow(1);
       });
       await nodeRow(pageB, "tab:900").hover();
-      await nodeRow(pageB, "tab:900").getByRole("button", { name: "Show in tree", exact: true }).click();
+      await nodeRow(pageB, "tab:900")
+        .getByRole("button", { name: "Show in tree", exact: true })
+        .click();
       await pageB.evaluate(async () => {
         const api = projectionHuntApi();
         await api.waitForSparseRequestCount(2);
@@ -7867,7 +8849,9 @@ test.describe("sidebar projection hunt", () => {
             stateRequests: api.stateRequestCount(),
             searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
             visibleRows: api.visibleRows(),
-            hasRevealHighlight: Boolean(document.querySelector("[data-node-id='tab:900'].is-reveal-highlight")),
+            hasRevealHighlight: Boolean(
+              document.querySelector("[data-node-id='tab:900'].is-reveal-highlight")
+            ),
             hasTarget: Boolean(document.querySelector("[data-node-id='tab:900']"))
           };
         })
@@ -7876,17 +8860,25 @@ test.describe("sidebar projection hunt", () => {
       expect(resultA.commands).toEqual([
         { type: "moveNode", nodeId: "tab:800", parentId: "window:1", index: 800 }
       ]);
-      expect(resultA.requests.every((request) => request.query === "" && request.targetNodeId === undefined)).toBe(true);
+      expect(
+        resultA.requests.every(
+          (request) => request.query === "" && request.targetNodeId === undefined
+        )
+      ).toBe(true);
       expect(resultA.stateRequests).toBe(1);
       expect(resultA.searchValue).toBe("");
       expect(resultA.visibleRows).toContain(800);
       expect(resultA.cutMarkers).toBe(0);
 
       expect(resultB.commands).toContainEqual({ type: "expandAncestors", nodeId: "tab:900" });
-      expect(resultB.requests.map((request) => ({
-        query: request.query,
-        targetNodeId: request.targetNodeId
-      })).slice(0, 2)).toEqual([
+      expect(
+        resultB.requests
+          .map((request) => ({
+            query: request.query,
+            targetNodeId: request.targetNodeId
+          }))
+          .slice(0, 2)
+      ).toEqual([
         { query: "Tab 900", targetNodeId: undefined },
         { query: "", targetNodeId: "tab:900" }
       ]);
@@ -7902,12 +8894,20 @@ test.describe("sidebar projection hunt", () => {
     }
   });
 
-  test("psh-two-sidebars-keyboard-undo-and-target-stale-scroll-stay-independent", async ({ page }) => {
+  test("psh-two-sidebars-keyboard-undo-and-target-stale-scroll-stay-independent", async ({
+    page
+  }) => {
     const issuesA = collectPageIssues(page);
     await loadLargeSparseSidebar(page, {
       includeCoverage: true,
       fullStatePending: true,
-      historyStatus: { canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "sidebar A edit" }
+      historyStatus: {
+        canUndo: true,
+        canRedo: false,
+        undoDepth: 1,
+        redoDepth: 0,
+        undoLabel: "sidebar A edit"
+      }
     });
 
     await page.evaluate(async () => {
@@ -7922,7 +8922,13 @@ test.describe("sidebar projection hunt", () => {
       await loadLargeSparseSidebar(pageB, {
         includeCoverage: true,
         fullStatePending: true,
-        historyStatus: { canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "sidebar B edit" }
+        historyStatus: {
+          canUndo: true,
+          canRedo: false,
+          undoDepth: 1,
+          redoDepth: 0,
+          undoLabel: "sidebar B edit"
+        }
       });
       await pageB.locator("#search").fill("Tab 900");
       await pageB.evaluate(async () => {
@@ -7932,18 +8938,37 @@ test.describe("sidebar projection hunt", () => {
         await api.waitForVisibleRow(1);
       });
       await nodeRow(pageB, "tab:900").hover();
-      await nodeRow(pageB, "tab:900").getByRole("button", { name: "Show in tree", exact: true }).click();
-      await pageB.waitForFunction(() => projectionHuntApi().projectionRequests().some((request) => request.targetNodeId === "tab:900"));
+      await nodeRow(pageB, "tab:900")
+        .getByRole("button", { name: "Show in tree", exact: true })
+        .click();
+      await pageB.waitForFunction(() =>
+        projectionHuntApi()
+          .projectionRequests()
+          .some((request) => request.targetNodeId === "tab:900")
+      );
 
       await page.keyboard.press("Control+Z");
-      await page.waitForFunction(() => projectionHuntApi().sentCommands().some((command) => (
-        typeof command === "object" && command !== null && (command as { type?: unknown }).type === "undo"
-      )));
+      await page.waitForFunction(() =>
+        projectionHuntApi()
+          .sentCommands()
+          .some(
+            (command) =>
+              typeof command === "object" &&
+              command !== null &&
+              (command as { type?: unknown }).type === "undo"
+          )
+      );
 
       const [resultA, resultB] = await Promise.all([
         page.evaluate(async () => {
           const api = projectionHuntApi();
-          api.emitHistoryStatus({ canUndo: false, canRedo: true, undoDepth: 0, redoDepth: 1, redoLabel: "sidebar A edit" });
+          api.emitHistoryStatus({
+            canUndo: false,
+            canRedo: true,
+            undoDepth: 0,
+            redoDepth: 1,
+            redoLabel: "sidebar A edit"
+          });
           api.emitTitlePatch("tab:250", "Tab 250 stale scroll patched");
           api.resolveSliceAt(0, { start: 240, end: 310 });
           await api.waitForVisibleRow(250);
@@ -7959,7 +8984,13 @@ test.describe("sidebar projection hunt", () => {
         }),
         pageB.evaluate(async () => {
           const api = projectionHuntApi();
-          api.emitHistoryStatus({ canUndo: false, canRedo: true, undoDepth: 0, redoDepth: 1, redoLabel: "sidebar B edit" });
+          api.emitHistoryStatus({
+            canUndo: false,
+            canRedo: true,
+            undoDepth: 0,
+            redoDepth: 1,
+            redoLabel: "sidebar B edit"
+          });
           api.emitTitlePatch("tab:900", "Tab 900 target temporal patched");
           api.resolveSliceForTarget("tab:900", { start: 880, end: 940 });
           await api.waitForVisibleRow(900);
@@ -7970,14 +9001,18 @@ test.describe("sidebar projection hunt", () => {
             stateRequests: api.stateRequestCount(),
             searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
             visibleRows: api.visibleRows(),
-            hasTargetHighlight: Boolean(document.querySelector("[data-node-id='tab:900'].is-reveal-highlight")),
+            hasTargetHighlight: Boolean(
+              document.querySelector("[data-node-id='tab:900'].is-reveal-highlight")
+            ),
             targetText: document.querySelector("[data-node-id='tab:900']")?.textContent ?? ""
           };
         })
       ]);
 
       expect(resultA.commands).toEqual([{ type: "undo" }]);
-      expect(resultA.requests).toEqual([expect.objectContaining({ query: "", targetNodeId: undefined })]);
+      expect(resultA.requests).toEqual([
+        expect.objectContaining({ query: "", targetNodeId: undefined })
+      ]);
       expect(resultA.stateRequests).toBe(0);
       expect(resultA.searchValue).toBe("");
       expect(resultA.visibleRows).toContain(250);
@@ -7986,8 +9021,12 @@ test.describe("sidebar projection hunt", () => {
       await expect(page.getByRole("button", { name: "Redo", exact: true })).toBeEnabled();
 
       expect(resultB.commands).toEqual([{ type: "expandAncestors", nodeId: "tab:900" }]);
-      expect(resultB.requests).toContainEqual(expect.objectContaining({ query: "Tab 900", targetNodeId: undefined }));
-      expect(resultB.requests).toContainEqual(expect.objectContaining({ query: "", targetNodeId: "tab:900" }));
+      expect(resultB.requests).toContainEqual(
+        expect.objectContaining({ query: "Tab 900", targetNodeId: undefined })
+      );
+      expect(resultB.requests).toContainEqual(
+        expect.objectContaining({ query: "", targetNodeId: "tab:900" })
+      );
       expect(resultB.stateRequests).toBe(0);
       expect(resultB.searchValue).toBe("");
       expect(resultB.visibleRows).toContain(900);
@@ -8002,12 +9041,20 @@ test.describe("sidebar projection hunt", () => {
     }
   });
 
-  test("psh-two-sidebars-keyboard-undo-and-target-history-only-stay-independent", async ({ page }) => {
+  test("psh-two-sidebars-keyboard-undo-and-target-history-only-stay-independent", async ({
+    page
+  }) => {
     const issuesA = collectPageIssues(page);
     await loadLargeSparseSidebar(page, {
       includeCoverage: true,
       fullStatePending: true,
-      historyStatus: { canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "sidebar A edit" }
+      historyStatus: {
+        canUndo: true,
+        canRedo: false,
+        undoDepth: 1,
+        redoDepth: 0,
+        undoLabel: "sidebar A edit"
+      }
     });
 
     await page.evaluate(async () => {
@@ -8022,7 +9069,13 @@ test.describe("sidebar projection hunt", () => {
       await loadLargeSparseSidebar(pageB, {
         includeCoverage: true,
         fullStatePending: true,
-        historyStatus: { canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "sidebar B edit" }
+        historyStatus: {
+          canUndo: true,
+          canRedo: false,
+          undoDepth: 1,
+          redoDepth: 0,
+          undoLabel: "sidebar B edit"
+        }
       });
       await pageB.locator("#search").fill("Tab 900");
       await pageB.evaluate(async () => {
@@ -8032,18 +9085,37 @@ test.describe("sidebar projection hunt", () => {
         await api.waitForVisibleRow(1);
       });
       await nodeRow(pageB, "tab:900").hover();
-      await nodeRow(pageB, "tab:900").getByRole("button", { name: "Show in tree", exact: true }).click();
-      await pageB.waitForFunction(() => projectionHuntApi().projectionRequests().some((request) => request.targetNodeId === "tab:900"));
+      await nodeRow(pageB, "tab:900")
+        .getByRole("button", { name: "Show in tree", exact: true })
+        .click();
+      await pageB.waitForFunction(() =>
+        projectionHuntApi()
+          .projectionRequests()
+          .some((request) => request.targetNodeId === "tab:900")
+      );
 
       await page.keyboard.press("Control+Z");
-      await page.waitForFunction(() => projectionHuntApi().sentCommands().some((command) => (
-        typeof command === "object" && command !== null && (command as { type?: unknown }).type === "undo"
-      )));
+      await page.waitForFunction(() =>
+        projectionHuntApi()
+          .sentCommands()
+          .some(
+            (command) =>
+              typeof command === "object" &&
+              command !== null &&
+              (command as { type?: unknown }).type === "undo"
+          )
+      );
 
       const [resultA, resultB] = await Promise.all([
         page.evaluate(async () => {
           const api = projectionHuntApi();
-          api.emitHistoryStatus({ canUndo: false, canRedo: true, undoDepth: 0, redoDepth: 1, redoLabel: "sidebar A edit" });
+          api.emitHistoryStatus({
+            canUndo: false,
+            canRedo: true,
+            undoDepth: 0,
+            redoDepth: 1,
+            redoLabel: "sidebar A edit"
+          });
           api.resolveSliceAt(0, { start: 240, end: 310 });
           await api.waitForVisibleRow(250);
           await api.waitForIdleFrames(4);
@@ -8057,7 +9129,13 @@ test.describe("sidebar projection hunt", () => {
         }),
         pageB.evaluate(async () => {
           const api = projectionHuntApi();
-          api.emitHistoryStatus({ canUndo: false, canRedo: true, undoDepth: 0, redoDepth: 1, redoLabel: "sidebar B edit" });
+          api.emitHistoryStatus({
+            canUndo: false,
+            canRedo: true,
+            undoDepth: 0,
+            redoDepth: 1,
+            redoLabel: "sidebar B edit"
+          });
           api.resolveSliceForTarget("tab:900", { start: 880, end: 940 });
           await api.waitForVisibleRow(900);
           await api.waitForIdleFrames(4);
@@ -8067,14 +9145,20 @@ test.describe("sidebar projection hunt", () => {
             stateRequests: api.stateRequestCount(),
             searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
             visibleRows: api.visibleRows(),
-            hasTargetHighlight: Boolean(document.querySelector("[data-node-id='tab:900'].is-reveal-highlight")),
-            hasSearchRow: Boolean(document.querySelector("[data-node-id='tab:900'].is-search-match"))
+            hasTargetHighlight: Boolean(
+              document.querySelector("[data-node-id='tab:900'].is-reveal-highlight")
+            ),
+            hasSearchRow: Boolean(
+              document.querySelector("[data-node-id='tab:900'].is-search-match")
+            )
           };
         })
       ]);
 
       expect(resultA.commands).toEqual([{ type: "undo" }]);
-      expect(resultA.requests).toEqual([expect.objectContaining({ query: "", targetNodeId: undefined })]);
+      expect(resultA.requests).toEqual([
+        expect.objectContaining({ query: "", targetNodeId: undefined })
+      ]);
       expect(resultA.stateRequests).toBe(0);
       expect(resultA.searchValue).toBe("");
       expect(resultA.visibleRows).toContain(250);
@@ -8082,8 +9166,12 @@ test.describe("sidebar projection hunt", () => {
       await expect(page.getByRole("button", { name: "Redo", exact: true })).toBeEnabled();
 
       expect(resultB.commands).toEqual([{ type: "expandAncestors", nodeId: "tab:900" }]);
-      expect(resultB.requests).toContainEqual(expect.objectContaining({ query: "Tab 900", targetNodeId: undefined }));
-      expect(resultB.requests).toContainEqual(expect.objectContaining({ query: "", targetNodeId: "tab:900" }));
+      expect(resultB.requests).toContainEqual(
+        expect.objectContaining({ query: "Tab 900", targetNodeId: undefined })
+      );
+      expect(resultB.requests).toContainEqual(
+        expect.objectContaining({ query: "", targetNodeId: "tab:900" })
+      );
       expect(resultB.stateRequests).toBe(0);
       expect(resultB.searchValue).toBe("");
       expect(resultB.visibleRows).toContain(900);
@@ -8136,7 +9224,9 @@ test.describe("sidebar projection hunt", () => {
     });
 
     expect(result.commands).toEqual([]);
-    expect(result.requests).toContainEqual(expect.objectContaining({ query: "Tab 900", targetNodeId: undefined }));
+    expect(result.requests).toContainEqual(
+      expect.objectContaining({ query: "Tab 900", targetNodeId: undefined })
+    );
     expect(result.requests.at(-1)).toMatchObject({ query: "Tab 900", targetNodeId: undefined });
     expect(result.stateRequests).toBe(0);
     expect(result.searchValue).toBe("Tab 900");
@@ -8187,7 +9277,9 @@ test.describe("sidebar projection hunt", () => {
     expect(result.commands).toEqual([
       { type: "renameGroup", nodeId: "window:1", title: "Committed before search" }
     ]);
-    expect(result.requests).toContainEqual(expect.objectContaining({ query: "Tab 900", targetNodeId: undefined }));
+    expect(result.requests).toContainEqual(
+      expect.objectContaining({ query: "Tab 900", targetNodeId: undefined })
+    );
     expect(result.requests.at(-1)).toMatchObject({ query: "Tab 900", targetNodeId: undefined });
     expect(result.stateRequests).toBe(0);
     expect(result.searchValue).toBe("Tab 900");
@@ -8225,7 +9317,9 @@ test.describe("sidebar projection hunt", () => {
     });
 
     await nodeRow(page, "tab:900").hover();
-    await nodeRow(page, "tab:900").getByRole("button", { name: "Show in tree", exact: true }).click();
+    await nodeRow(page, "tab:900")
+      .getByRole("button", { name: "Show in tree", exact: true })
+      .click();
 
     const result = await page.evaluate(async () => {
       const api = projectionHuntApi();
@@ -8240,14 +9334,18 @@ test.describe("sidebar projection hunt", () => {
         searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
         visibleRows: api.visibleRows(),
         renameInputs: document.querySelectorAll(".node-rename-input").length,
-        hasTargetHighlight: Boolean(document.querySelector("[data-node-id='tab:900'].is-reveal-highlight")),
+        hasTargetHighlight: Boolean(
+          document.querySelector("[data-node-id='tab:900'].is-reveal-highlight")
+        ),
         hasSearchRow: Boolean(document.querySelector("[data-node-id='tab:900'].is-search-match")),
         countText: document.querySelector("#state-count")?.textContent ?? ""
       };
     });
 
     expect(result.commands).toEqual([{ type: "expandAncestors", nodeId: "tab:900" }]);
-    expect(result.requests).toContainEqual(expect.objectContaining({ query: "Tab 900", targetNodeId: undefined }));
+    expect(result.requests).toContainEqual(
+      expect.objectContaining({ query: "Tab 900", targetNodeId: undefined })
+    );
     expect(result.requests.at(-1)).toMatchObject({ query: "", targetNodeId: "tab:900" });
     expect(result.stateRequests).toBe(0);
     expect(result.searchValue).toBe("");
@@ -8286,7 +9384,9 @@ test.describe("sidebar projection hunt", () => {
     });
 
     await nodeRow(page, "tab:900").hover();
-    await nodeRow(page, "tab:900").getByRole("button", { name: "Show in tree", exact: true }).click();
+    await nodeRow(page, "tab:900")
+      .getByRole("button", { name: "Show in tree", exact: true })
+      .click();
 
     const result = await page.evaluate(async () => {
       const api = projectionHuntApi();
@@ -8301,7 +9401,9 @@ test.describe("sidebar projection hunt", () => {
         searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
         visibleRows: api.visibleRows(),
         renameInputs: document.querySelectorAll(".node-rename-input").length,
-        hasTargetHighlight: Boolean(document.querySelector("[data-node-id='tab:900'].is-reveal-highlight")),
+        hasTargetHighlight: Boolean(
+          document.querySelector("[data-node-id='tab:900'].is-reveal-highlight")
+        ),
         hasSearchRow: Boolean(document.querySelector("[data-node-id='tab:900'].is-search-match")),
         countText: document.querySelector("#state-count")?.textContent ?? ""
       };
@@ -8311,7 +9413,9 @@ test.describe("sidebar projection hunt", () => {
       { type: "renameGroup", nodeId: "window:1", title: "Committed before target replacement" },
       { type: "expandAncestors", nodeId: "tab:900" }
     ]);
-    expect(result.requests).toContainEqual(expect.objectContaining({ query: "Tab 900", targetNodeId: undefined }));
+    expect(result.requests).toContainEqual(
+      expect.objectContaining({ query: "Tab 900", targetNodeId: undefined })
+    );
     expect(result.requests.at(-1)).toMatchObject({ query: "", targetNodeId: "tab:900" });
     expect(result.stateRequests).toBe(0);
     expect(result.searchValue).toBe("");
@@ -8350,7 +9454,9 @@ test.describe("sidebar projection hunt", () => {
     });
 
     expect(result.commands).toEqual([{ type: "closeNode", nodeId: "tab:800" }]);
-    expect(result.requests).toEqual([expect.objectContaining({ query: "Tab 900", targetNodeId: undefined })]);
+    expect(result.requests).toEqual([
+      expect.objectContaining({ query: "Tab 900", targetNodeId: undefined })
+    ]);
     expect(result.stateRequests).toBe(0);
     expect(result.searchValue).toBe("Tab 900");
     expect(result.visibleRows).toContain(1);
@@ -8364,7 +9470,9 @@ test.describe("sidebar projection hunt", () => {
     await loadLargeSparseSidebar(page, { includeCoverage: true, fullStatePending: true });
 
     await nodeRow(page, "tab:800").hover();
-    await nodeRow(page, "tab:800").getByRole("button", { name: "Move to top level", exact: true }).click();
+    await nodeRow(page, "tab:800")
+      .getByRole("button", { name: "Move to top level", exact: true })
+      .click();
     await page.locator("#search").fill("Tab 900");
     await page.waitForFunction(() => projectionHuntApi().sentCommands().length === 1);
 
@@ -8386,7 +9494,9 @@ test.describe("sidebar projection hunt", () => {
     });
 
     expect(result.commands).toEqual([{ type: "moveSubtreeToTopLevel", nodeId: "tab:800" }]);
-    expect(result.requests).toEqual([expect.objectContaining({ query: "Tab 900", targetNodeId: undefined })]);
+    expect(result.requests).toEqual([
+      expect.objectContaining({ query: "Tab 900", targetNodeId: undefined })
+    ]);
     expect(result.stateRequests).toBe(0);
     expect(result.searchValue).toBe("Tab 900");
     expect(result.visibleRows).toContain(1);
@@ -8436,8 +9546,14 @@ test.describe("sidebar projection hunt", () => {
     });
 
     expect(result.commands).toEqual([{ type: "closeNode", nodeId: "tab:800" }]);
-    expect(result.requests[0]).toEqual(expect.objectContaining({ query: "Tab 900", targetNodeId: undefined }));
-    expect(result.requests.slice(1).every((request) => request.query === "" && request.targetNodeId === undefined)).toBe(true);
+    expect(result.requests[0]).toEqual(
+      expect.objectContaining({ query: "Tab 900", targetNodeId: undefined })
+    );
+    expect(
+      result.requests
+        .slice(1)
+        .every((request) => request.query === "" && request.targetNodeId === undefined)
+    ).toBe(true);
     expect(result.stateRequests).toBe(0);
     expect(result.searchValue).toBe("");
     expect(result.visibleRows).toContain(800);
@@ -8456,7 +9572,13 @@ test.describe("sidebar projection hunt", () => {
 
     const result = await page.evaluate(async () => {
       const api = projectionHuntApi();
-      api.emitHistoryStatus({ canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "delete restored tab" });
+      api.emitHistoryStatus({
+        canUndo: true,
+        canRedo: false,
+        undoDepth: 1,
+        redoDepth: 0,
+        undoLabel: "delete restored tab"
+      });
       api.emitDeletePatch(["tab:2", "window:20"]);
       api.emitFullStateBroadcast();
       await api.waitForIdleFrames(5);
@@ -8541,7 +9663,9 @@ test.describe("sidebar projection hunt", () => {
       expect(resultA.countText).toBe("2 items / 0 saved");
 
       expect(resultB.commands).toEqual([]);
-      expect(resultB.requests).toEqual([expect.objectContaining({ query: "Tab 900", targetNodeId: undefined })]);
+      expect(resultB.requests).toEqual([
+        expect.objectContaining({ query: "Tab 900", targetNodeId: undefined })
+      ]);
       expect(resultB.stateRequests).toBe(0);
       expect(resultB.searchValue).toBe("Tab 900");
       expect(resultB.visibleRows).toContain(1);
@@ -8571,7 +9695,9 @@ test.describe("sidebar projection hunt", () => {
     });
 
     await nodeRow(page, "tab:900").hover();
-    await nodeRow(page, "tab:900").getByRole("button", { name: "Show in tree", exact: true }).click();
+    await nodeRow(page, "tab:900")
+      .getByRole("button", { name: "Show in tree", exact: true })
+      .click();
 
     const result = await page.evaluate(async () => {
       const api = projectionHuntApi();
@@ -8586,7 +9712,9 @@ test.describe("sidebar projection hunt", () => {
         stateRequests: api.stateRequestCount(),
         searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
         visibleRows: api.visibleRows(),
-        hasTargetHighlight: Boolean(document.querySelector("[data-node-id='tab:900'].is-reveal-highlight")),
+        hasTargetHighlight: Boolean(
+          document.querySelector("[data-node-id='tab:900'].is-reveal-highlight")
+        ),
         closedSourceExists: Boolean(document.querySelector("[data-node-id='tab:800']"))
       };
     });
@@ -8595,7 +9723,9 @@ test.describe("sidebar projection hunt", () => {
       { type: "closeNode", nodeId: "tab:800" },
       { type: "expandAncestors", nodeId: "tab:900" }
     ]);
-    expect(result.requests).toContainEqual(expect.objectContaining({ query: "Tab 900", targetNodeId: undefined }));
+    expect(result.requests).toContainEqual(
+      expect.objectContaining({ query: "Tab 900", targetNodeId: undefined })
+    );
     expect(result.requests.at(-1)).toMatchObject({ query: "", targetNodeId: "tab:900" });
     expect(result.stateRequests).toBe(0);
     expect(result.searchValue).toBe("");
@@ -8617,7 +9747,9 @@ test.describe("sidebar projection hunt", () => {
       await api.waitForVisibleRow(1);
     });
     await nodeRow(page, "tab:900").hover();
-    await nodeRow(page, "tab:900").getByRole("button", { name: "Show in tree", exact: true }).click();
+    await nodeRow(page, "tab:900")
+      .getByRole("button", { name: "Show in tree", exact: true })
+      .click();
     await page.evaluate(async () => {
       const api = projectionHuntApi();
       await api.waitForSparseRequestCount(2);
@@ -8636,7 +9768,9 @@ test.describe("sidebar projection hunt", () => {
         api.resolveSliceAt(0);
         await api.waitForVisibleRow(1);
       });
-      const beforeClearRequestCount = await pageB.evaluate(() => projectionHuntApi().sparseRequestCount());
+      const beforeClearRequestCount = await pageB.evaluate(() =>
+        projectionHuntApi().sparseRequestCount()
+      );
       await pageB.locator("#clear-search").click();
       await pageB.evaluate(async (previousRequestCount) => {
         const api = projectionHuntApi();
@@ -8663,7 +9797,9 @@ test.describe("sidebar projection hunt", () => {
             stateRequests: api.stateRequestCount(),
             searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
             visibleRows: api.visibleRows(),
-            hasTargetHighlight: Boolean(document.querySelector("[data-node-id='tab:900'].is-reveal-highlight"))
+            hasTargetHighlight: Boolean(
+              document.querySelector("[data-node-id='tab:900'].is-reveal-highlight")
+            )
           };
         }),
         pageB.evaluate(async () => {
@@ -8681,13 +9817,17 @@ test.describe("sidebar projection hunt", () => {
         })
       ]);
 
-      expect(resultA.requests).toContainEqual(expect.objectContaining({ query: "", targetNodeId: "tab:900" }));
+      expect(resultA.requests).toContainEqual(
+        expect.objectContaining({ query: "", targetNodeId: "tab:900" })
+      );
       expect(resultA.stateRequests).toBe(0);
       expect(resultA.searchValue).toBe("");
       expect(resultA.visibleRows).toContain(900);
       expect(resultA.hasTargetHighlight).toBe(true);
 
-      expect(resultB.requests[0]).toEqual(expect.objectContaining({ query: "Tab 91", targetNodeId: undefined }));
+      expect(resultB.requests[0]).toEqual(
+        expect.objectContaining({ query: "Tab 91", targetNodeId: undefined })
+      );
       expect(resultB.stateRequests).toBe(0);
       expect(resultB.searchValue).toBe("");
       expect(resultB.visibleRows).toContain(800);
@@ -8716,7 +9856,9 @@ test.describe("sidebar projection hunt", () => {
       await api.waitForVisibleRow(1);
     });
 
-    const beforeClearRequestCount = await page.evaluate(() => projectionHuntApi().sparseRequestCount());
+    const beforeClearRequestCount = await page.evaluate(() =>
+      projectionHuntApi().sparseRequestCount()
+    );
     await page.locator("#clear-search").click();
     const result = await page.evaluate(async (previousRequestCount) => {
       const api = projectionHuntApi();
@@ -8742,10 +9884,14 @@ test.describe("sidebar projection hunt", () => {
     }, beforeClearRequestCount);
 
     await nodeRow(page, "tab:801").hover();
-    await expect(nodeRow(page, "tab:801").getByRole("button", { name: "Paste", exact: true })).toHaveCount(0);
+    await expect(
+      nodeRow(page, "tab:801").getByRole("button", { name: "Paste", exact: true })
+    ).toHaveCount(0);
 
     expect(result.commands).toEqual([]);
-    expect(result.requests[0]).toEqual(expect.objectContaining({ query: "Tab 900", targetNodeId: undefined }));
+    expect(result.requests[0]).toEqual(
+      expect.objectContaining({ query: "Tab 900", targetNodeId: undefined })
+    );
     expect(result.searchValue).toBe("");
     expect(result.visibleRows).toContain(801);
     expect(result.cutMarkers).toBe(1);
@@ -8770,8 +9916,14 @@ test.describe("sidebar projection hunt", () => {
     });
 
     await nodeRow(page, "tab:900").hover();
-    await nodeRow(page, "tab:900").getByRole("button", { name: "Show in tree", exact: true }).click();
-    await page.waitForFunction(() => projectionHuntApi().projectionRequests().some((request) => request.targetNodeId === "tab:900"));
+    await nodeRow(page, "tab:900")
+      .getByRole("button", { name: "Show in tree", exact: true })
+      .click();
+    await page.waitForFunction(() =>
+      projectionHuntApi()
+        .projectionRequests()
+        .some((request) => request.targetNodeId === "tab:900")
+    );
     await nodeRow(page, "tab:900").locator(".node-label").focus();
     await page.keyboard.press("Control+V");
 
@@ -8787,14 +9939,20 @@ test.describe("sidebar projection hunt", () => {
         searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
         visibleRows: api.visibleRows(),
         cutMarkers: document.querySelectorAll(".is-cut").length,
-        hasTargetHighlight: Boolean(document.querySelector("[data-node-id='tab:900'].is-reveal-highlight")),
+        hasTargetHighlight: Boolean(
+          document.querySelector("[data-node-id='tab:900'].is-reveal-highlight")
+        ),
         hasSearchRow: Boolean(document.querySelector("[data-node-id='tab:900'].is-search-match"))
       };
     });
 
     expect(result.commands).toEqual([{ type: "expandAncestors", nodeId: "tab:900" }]);
-    expect(result.requests).toContainEqual(expect.objectContaining({ query: "Tab 900", targetNodeId: undefined }));
-    expect(result.requests).toContainEqual(expect.objectContaining({ query: "", targetNodeId: "tab:900" }));
+    expect(result.requests).toContainEqual(
+      expect.objectContaining({ query: "Tab 900", targetNodeId: undefined })
+    );
+    expect(result.requests).toContainEqual(
+      expect.objectContaining({ query: "", targetNodeId: "tab:900" })
+    );
     expect(result.stateRequests).toBe(1);
     expect(result.searchValue).toBe("");
     expect(result.visibleRows).toContain(900);
@@ -8802,11 +9960,15 @@ test.describe("sidebar projection hunt", () => {
     expect(result.hasTargetHighlight).toBe(true);
     expect(result.hasSearchRow).toBe(false);
     await nodeRow(page, "tab:900").hover();
-    await expect(nodeRow(page, "tab:900").getByRole("button", { name: "Paste", exact: true })).toHaveCount(0);
+    await expect(
+      nodeRow(page, "tab:900").getByRole("button", { name: "Paste", exact: true })
+    ).toHaveCount(0);
     expect(issues).toEqual([]);
   });
 
-  test("psh-delayed-restore-scope-search-input-keeps-local-restore-after-dismiss", async ({ page }) => {
+  test("psh-delayed-restore-scope-search-input-keeps-local-restore-after-dismiss", async ({
+    page
+  }) => {
     const issues = collectPageIssues(page);
     const dialogMessages: string[] = [];
     page.on("dialog", async (dialog) => {
@@ -8815,14 +9977,22 @@ test.describe("sidebar projection hunt", () => {
     });
     await loadClosedRestoreSidebar(page, { fullStatePending: true, delayRestoreScope: true });
 
-    await nodeRow(page, "window:30").getByRole("button", { name: "Restore Closed Window", exact: true }).click();
+    await nodeRow(page, "window:30")
+      .getByRole("button", { name: "Restore Closed Window", exact: true })
+      .click();
     await page.waitForFunction(() => projectionHuntApi().sentCommands().length === 1);
     await page.locator("#search").fill("Closed tab 30");
     await expect(nodeRow(page, "tab:30")).toBeVisible();
 
     const result = await page.evaluate(async () => {
       const api = projectionHuntApi();
-      api.emitHistoryStatus({ canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "restore check" });
+      api.emitHistoryStatus({
+        canUndo: true,
+        canRedo: false,
+        undoDepth: 1,
+        redoDepth: 0,
+        undoLabel: "restore check"
+      });
       api.resolveRestoreScope();
       await api.waitForIdleFrames(8);
       return {
@@ -8851,7 +10021,13 @@ test.describe("sidebar projection hunt", () => {
     await loadLargeSparseSidebar(page, {
       includeCoverage: true,
       fullStatePending: true,
-      historyStatus: { canUndo: false, canRedo: true, undoDepth: 0, redoDepth: 1, redoLabel: "remote edit" }
+      historyStatus: {
+        canUndo: false,
+        canRedo: true,
+        undoDepth: 0,
+        redoDepth: 1,
+        redoLabel: "remote edit"
+      }
     });
 
     await page.locator("#search").fill("Tab 90");
@@ -8864,13 +10040,26 @@ test.describe("sidebar projection hunt", () => {
     });
     await nodeRow(page, "tab:800").locator(".node-label").focus();
     await page.keyboard.press("Control+Shift+Z");
-    await page.waitForFunction(() => projectionHuntApi().sentCommands().some((command) => (
-      typeof command === "object" && command !== null && (command as { type?: unknown }).type === "redo"
-    )));
+    await page.waitForFunction(() =>
+      projectionHuntApi()
+        .sentCommands()
+        .some(
+          (command) =>
+            typeof command === "object" &&
+            command !== null &&
+            (command as { type?: unknown }).type === "redo"
+        )
+    );
 
     const result = await page.evaluate(async () => {
       const api = projectionHuntApi();
-      api.emitHistoryStatus({ canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "remote edit" });
+      api.emitHistoryStatus({
+        canUndo: true,
+        canRedo: false,
+        undoDepth: 1,
+        redoDepth: 0,
+        undoLabel: "remote edit"
+      });
       api.resolveSliceForQuery("Tab 90");
       await api.waitForIdleFrames(2);
       api.resolveSliceForQuery("Tab 91");
@@ -8912,7 +10101,9 @@ test.describe("sidebar projection hunt", () => {
       await dialog.dismiss();
     });
     await loadClosedRestoreSidebar(page, { fullStatePending: true, delayRestoreScope: true });
-    await nodeRow(page, "window:30").getByRole("button", { name: "Restore Closed Window", exact: true }).click();
+    await nodeRow(page, "window:30")
+      .getByRole("button", { name: "Restore Closed Window", exact: true })
+      .click();
     await page.waitForFunction(() => projectionHuntApi().sentCommands().length === 1);
 
     const pageB = await page.context().newPage();
@@ -8927,13 +10118,25 @@ test.describe("sidebar projection hunt", () => {
         await api.waitForVisibleRow(1);
       });
       await nodeRow(pageB, "tab:900").hover();
-      await nodeRow(pageB, "tab:900").getByRole("button", { name: "Show in tree", exact: true }).click();
-      await pageB.waitForFunction(() => projectionHuntApi().projectionRequests().some((request) => request.targetNodeId === "tab:900"));
+      await nodeRow(pageB, "tab:900")
+        .getByRole("button", { name: "Show in tree", exact: true })
+        .click();
+      await pageB.waitForFunction(() =>
+        projectionHuntApi()
+          .projectionRequests()
+          .some((request) => request.targetNodeId === "tab:900")
+      );
 
       const [resultA, resultB] = await Promise.all([
         page.evaluate(async () => {
           const api = projectionHuntApi();
-          api.emitHistoryStatus({ canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "restore check" });
+          api.emitHistoryStatus({
+            canUndo: true,
+            canRedo: false,
+            undoDepth: 1,
+            redoDepth: 0,
+            undoLabel: "restore check"
+          });
           api.resolveRestoreScope();
           await api.waitForIdleFrames(8);
           return {
@@ -8945,7 +10148,13 @@ test.describe("sidebar projection hunt", () => {
         }),
         pageB.evaluate(async () => {
           const api = projectionHuntApi();
-          api.emitHistoryStatus({ canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "target check" });
+          api.emitHistoryStatus({
+            canUndo: true,
+            canRedo: false,
+            undoDepth: 1,
+            redoDepth: 0,
+            undoLabel: "target check"
+          });
           api.resolveSliceForTarget("tab:900", { start: 880, end: 940 });
           await api.waitForVisibleRow(900);
           await api.waitForIdleFrames(4);
@@ -8955,8 +10164,12 @@ test.describe("sidebar projection hunt", () => {
             stateRequests: api.stateRequestCount(),
             searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
             visibleRows: api.visibleRows(),
-            hasTargetHighlight: Boolean(document.querySelector("[data-node-id='tab:900'].is-reveal-highlight")),
-            hasSearchRow: Boolean(document.querySelector("[data-node-id='tab:900'].is-search-match"))
+            hasTargetHighlight: Boolean(
+              document.querySelector("[data-node-id='tab:900'].is-reveal-highlight")
+            ),
+            hasSearchRow: Boolean(
+              document.querySelector("[data-node-id='tab:900'].is-search-match")
+            )
           };
         })
       ]);
@@ -8969,8 +10182,12 @@ test.describe("sidebar projection hunt", () => {
       expect(dialogMessages[0]).toContain("Restore 4 restorable closed nodes");
 
       expect(resultB.commands).toEqual([{ type: "expandAncestors", nodeId: "tab:900" }]);
-      expect(resultB.requests).toContainEqual(expect.objectContaining({ query: "Tab 900", targetNodeId: undefined }));
-      expect(resultB.requests).toContainEqual(expect.objectContaining({ query: "", targetNodeId: "tab:900" }));
+      expect(resultB.requests).toContainEqual(
+        expect.objectContaining({ query: "Tab 900", targetNodeId: undefined })
+      );
+      expect(resultB.requests).toContainEqual(
+        expect.objectContaining({ query: "", targetNodeId: "tab:900" })
+      );
       expect(resultB.stateRequests).toBe(0);
       expect(resultB.searchValue).toBe("");
       expect(resultB.visibleRows).toContain(900);
@@ -8983,7 +10200,9 @@ test.describe("sidebar projection hunt", () => {
     }
   });
 
-  test("psh-delayed-restore-scope-search-clear-keeps-local-restore-after-dismiss", async ({ page }) => {
+  test("psh-delayed-restore-scope-search-clear-keeps-local-restore-after-dismiss", async ({
+    page
+  }) => {
     const issues = collectPageIssues(page);
     const dialogMessages: string[] = [];
     page.on("dialog", async (dialog) => {
@@ -8992,7 +10211,9 @@ test.describe("sidebar projection hunt", () => {
     });
     await loadClosedRestoreSidebar(page, { fullStatePending: true, delayRestoreScope: true });
 
-    await nodeRow(page, "window:30").getByRole("button", { name: "Restore Closed Window", exact: true }).click();
+    await nodeRow(page, "window:30")
+      .getByRole("button", { name: "Restore Closed Window", exact: true })
+      .click();
     await page.waitForFunction(() => projectionHuntApi().sentCommands().length === 1);
     await page.locator("#search").fill("Closed tab 30");
     await expect(nodeRow(page, "tab:30")).toBeVisible();
@@ -9000,7 +10221,13 @@ test.describe("sidebar projection hunt", () => {
 
     const result = await page.evaluate(async () => {
       const api = projectionHuntApi();
-      api.emitHistoryStatus({ canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "restore check" });
+      api.emitHistoryStatus({
+        canUndo: true,
+        canRedo: false,
+        undoDepth: 1,
+        redoDepth: 0,
+        undoLabel: "restore check"
+      });
       api.resolveRestoreScope();
       await api.waitForIdleFrames(8);
       return {
@@ -9016,7 +10243,9 @@ test.describe("sidebar projection hunt", () => {
     });
 
     expect(result.commands).toEqual([{ type: "analyzeRestoreScope", nodeId: "window:30" }]);
-    expect(result.requests).toEqual([expect.objectContaining({ query: "", targetNodeId: undefined })]);
+    expect(result.requests).toEqual([
+      expect.objectContaining({ query: "", targetNodeId: undefined })
+    ]);
     expect(result.stateRequests).toBe(0);
     expect(result.searchValue).toBe("");
     expect(result.visibleRows).toContain(0);
@@ -9028,12 +10257,20 @@ test.describe("sidebar projection hunt", () => {
     expect(issues).toEqual([]);
   });
 
-  test("psh-keyboard-redo-during-pending-show-in-tree-target-keeps-target-owner", async ({ page }) => {
+  test("psh-keyboard-redo-during-pending-show-in-tree-target-keeps-target-owner", async ({
+    page
+  }) => {
     const issues = collectPageIssues(page);
     await loadLargeSparseSidebar(page, {
       includeCoverage: true,
       fullStatePending: true,
-      historyStatus: { canUndo: false, canRedo: true, undoDepth: 0, redoDepth: 1, redoLabel: "target redo" }
+      historyStatus: {
+        canUndo: false,
+        canRedo: true,
+        undoDepth: 0,
+        redoDepth: 1,
+        redoLabel: "target redo"
+      }
     });
 
     await page.locator("#search").fill("Tab 900");
@@ -9044,17 +10281,36 @@ test.describe("sidebar projection hunt", () => {
       await api.waitForVisibleRow(1);
     });
     await nodeRow(page, "tab:900").hover();
-    await nodeRow(page, "tab:900").getByRole("button", { name: "Show in tree", exact: true }).click();
-    await page.waitForFunction(() => projectionHuntApi().projectionRequests().some((request) => request.targetNodeId === "tab:900"));
+    await nodeRow(page, "tab:900")
+      .getByRole("button", { name: "Show in tree", exact: true })
+      .click();
+    await page.waitForFunction(() =>
+      projectionHuntApi()
+        .projectionRequests()
+        .some((request) => request.targetNodeId === "tab:900")
+    );
     await nodeRow(page, "tab:900").locator(".node-label").focus();
     await page.keyboard.press("Control+Shift+Z");
-    await page.waitForFunction(() => projectionHuntApi().sentCommands().some((command) => (
-      typeof command === "object" && command !== null && (command as { type?: unknown }).type === "redo"
-    )));
+    await page.waitForFunction(() =>
+      projectionHuntApi()
+        .sentCommands()
+        .some(
+          (command) =>
+            typeof command === "object" &&
+            command !== null &&
+            (command as { type?: unknown }).type === "redo"
+        )
+    );
 
     const result = await page.evaluate(async () => {
       const api = projectionHuntApi();
-      api.emitHistoryStatus({ canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "target redo" });
+      api.emitHistoryStatus({
+        canUndo: true,
+        canRedo: false,
+        undoDepth: 1,
+        redoDepth: 0,
+        undoLabel: "target redo"
+      });
       api.resolveSliceForTarget("tab:900", { start: 880, end: 940 });
       await api.waitForVisibleRow(900);
       await api.waitForIdleFrames(4);
@@ -9064,7 +10320,9 @@ test.describe("sidebar projection hunt", () => {
         stateRequests: api.stateRequestCount(),
         searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
         visibleRows: api.visibleRows(),
-        hasTargetHighlight: Boolean(document.querySelector("[data-node-id='tab:900'].is-reveal-highlight")),
+        hasTargetHighlight: Boolean(
+          document.querySelector("[data-node-id='tab:900'].is-reveal-highlight")
+        ),
         hasSearchRow: Boolean(document.querySelector("[data-node-id='tab:900'].is-search-match"))
       };
     });
@@ -9073,8 +10331,12 @@ test.describe("sidebar projection hunt", () => {
       { type: "expandAncestors", nodeId: "tab:900" },
       { type: "redo" }
     ]);
-    expect(result.requests).toContainEqual(expect.objectContaining({ query: "Tab 900", targetNodeId: undefined }));
-    expect(result.requests).toContainEqual(expect.objectContaining({ query: "", targetNodeId: "tab:900" }));
+    expect(result.requests).toContainEqual(
+      expect.objectContaining({ query: "Tab 900", targetNodeId: undefined })
+    );
+    expect(result.requests).toContainEqual(
+      expect.objectContaining({ query: "", targetNodeId: "tab:900" })
+    );
     expect(result.stateRequests).toBe(0);
     expect(result.searchValue).toBe("");
     expect(result.visibleRows).toContain(900);
@@ -9093,7 +10355,9 @@ test.describe("sidebar projection hunt", () => {
       await dialog.dismiss();
     });
     await loadClosedRestoreSidebar(page, { fullStatePending: true, delayRestoreScope: true });
-    await nodeRow(page, "window:30").getByRole("button", { name: "Restore Closed Window", exact: true }).click();
+    await nodeRow(page, "window:30")
+      .getByRole("button", { name: "Restore Closed Window", exact: true })
+      .click();
     await page.waitForFunction(() => projectionHuntApi().sentCommands().length === 1);
 
     const pageB = await page.context().newPage();
@@ -9102,7 +10366,13 @@ test.describe("sidebar projection hunt", () => {
       await loadLargeSparseSidebar(pageB, {
         includeCoverage: true,
         fullStatePending: true,
-        historyStatus: { canUndo: false, canRedo: true, undoDepth: 0, redoDepth: 1, redoLabel: "remote edit" }
+        historyStatus: {
+          canUndo: false,
+          canRedo: true,
+          undoDepth: 0,
+          redoDepth: 1,
+          redoLabel: "remote edit"
+        }
       });
       await pageB.locator("#search").fill("Tab 90");
       await pageB.evaluate(async () => {
@@ -9114,9 +10384,16 @@ test.describe("sidebar projection hunt", () => {
       });
       await nodeRow(pageB, "tab:800").locator(".node-label").focus();
       await pageB.keyboard.press("Control+Shift+Z");
-      await pageB.waitForFunction(() => projectionHuntApi().sentCommands().some((command) => (
-        typeof command === "object" && command !== null && (command as { type?: unknown }).type === "redo"
-      )));
+      await pageB.waitForFunction(() =>
+        projectionHuntApi()
+          .sentCommands()
+          .some(
+            (command) =>
+              typeof command === "object" &&
+              command !== null &&
+              (command as { type?: unknown }).type === "redo"
+          )
+      );
 
       const [resultA, resultB] = await Promise.all([
         page.evaluate(async () => {
@@ -9132,7 +10409,13 @@ test.describe("sidebar projection hunt", () => {
         }),
         pageB.evaluate(async () => {
           const api = projectionHuntApi();
-          api.emitHistoryStatus({ canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "remote edit" });
+          api.emitHistoryStatus({
+            canUndo: true,
+            canRedo: false,
+            undoDepth: 1,
+            redoDepth: 0,
+            undoLabel: "remote edit"
+          });
           api.resolveSliceForQuery("Tab 90");
           await api.waitForIdleFrames(2);
           api.resolveSliceForQuery("Tab 91");
@@ -9193,7 +10476,9 @@ test.describe("sidebar projection hunt", () => {
       };
     });
 
-    expect(result.commands).toEqual([{ type: "moveNode", nodeId: "tab:800", parentId: "window:1", index: 838 }]);
+    expect(result.commands).toEqual([
+      { type: "moveNode", nodeId: "tab:800", parentId: "window:1", index: 838 }
+    ]);
     expect(result.requests).toEqual([]);
     expect(result.stateRequests).toBe(0);
     expect(result.visibleRows).toContain(800);
@@ -9222,7 +10507,9 @@ test.describe("sidebar projection hunt", () => {
     });
 
     expect(result.commands).toEqual([]);
-    expect(result.requests).toEqual([expect.objectContaining({ query: "", targetNodeId: undefined })]);
+    expect(result.requests).toEqual([
+      expect.objectContaining({ query: "", targetNodeId: undefined })
+    ]);
     expect(result.stateRequests).toBe(0);
     expect(result.visibleRows).toContain(800);
     expect(result.markerClassName).not.toMatch(/drop-root|drop-before|drop-after|drop-inside/);
@@ -9257,8 +10544,12 @@ test.describe("sidebar projection hunt", () => {
       };
     });
 
-    expect(result.commands).toEqual([{ type: "moveNode", nodeId: "tab:800", parentId: "window:1", index: 838 }]);
-    expect(result.requests).toEqual([expect.objectContaining({ query: "", targetNodeId: undefined })]);
+    expect(result.commands).toEqual([
+      { type: "moveNode", nodeId: "tab:800", parentId: "window:1", index: 838 }
+    ]);
+    expect(result.requests).toEqual([
+      expect.objectContaining({ query: "", targetNodeId: undefined })
+    ]);
     expect(result.stateRequests).toBe(0);
     expect(result.visibleRows).toContain(800);
     expect(result.markerClassName).not.toMatch(/drop-root|drop-before|drop-after|drop-inside/);
@@ -9281,7 +10572,9 @@ test.describe("sidebar projection hunt", () => {
         await api.waitForVisibleRow(1);
       });
       await nodeRow(pageB, "tab:900").hover();
-      await nodeRow(pageB, "tab:900").getByRole("button", { name: "Show in tree", exact: true }).click();
+      await nodeRow(pageB, "tab:900")
+        .getByRole("button", { name: "Show in tree", exact: true })
+        .click();
       await pageB.evaluate(async () => {
         const api = projectionHuntApi();
         await api.waitForTargetProjectionRequest("tab:900");
@@ -9315,21 +10608,33 @@ test.describe("sidebar projection hunt", () => {
             stateRequests: api.stateRequestCount(),
             searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
             visibleRows: api.visibleRows(),
-            hasTargetHighlight: Boolean(document.querySelector("[data-node-id='tab:900'].is-reveal-highlight")),
-            hasSearchRow: Boolean(document.querySelector("[data-node-id='tab:900'].is-search-match"))
+            hasTargetHighlight: Boolean(
+              document.querySelector("[data-node-id='tab:900'].is-reveal-highlight")
+            ),
+            hasSearchRow: Boolean(
+              document.querySelector("[data-node-id='tab:900'].is-search-match")
+            )
           };
         })
       ]);
 
-      expect(resultA.commands).toEqual([{ type: "moveNode", nodeId: "tab:800", parentId: "window:1", index: 838 }]);
-      expect(resultA.requests).toEqual([expect.objectContaining({ query: "", targetNodeId: undefined })]);
+      expect(resultA.commands).toEqual([
+        { type: "moveNode", nodeId: "tab:800", parentId: "window:1", index: 838 }
+      ]);
+      expect(resultA.requests).toEqual([
+        expect.objectContaining({ query: "", targetNodeId: undefined })
+      ]);
       expect(resultA.stateRequests).toBe(0);
       expect(resultA.searchValue).toBe("");
       expect(resultA.visibleRows).toContain(800);
 
       expect(resultB.commands).toEqual([{ type: "expandAncestors", nodeId: "tab:900" }]);
-      expect(resultB.requests).toContainEqual(expect.objectContaining({ query: "Tab 900", targetNodeId: undefined }));
-      expect(resultB.requests).toContainEqual(expect.objectContaining({ query: "", targetNodeId: "tab:900" }));
+      expect(resultB.requests).toContainEqual(
+        expect.objectContaining({ query: "Tab 900", targetNodeId: undefined })
+      );
+      expect(resultB.requests).toContainEqual(
+        expect.objectContaining({ query: "", targetNodeId: "tab:900" })
+      );
       expect(resultB.stateRequests).toBe(0);
       expect(resultB.searchValue).toBe("");
       expect(resultB.visibleRows).toContain(900);
@@ -9368,7 +10673,9 @@ test.describe("sidebar projection hunt", () => {
     });
 
     expect(result.commands).toEqual([]);
-    expect(result.requests).toEqual([expect.objectContaining({ query: "", targetNodeId: undefined })]);
+    expect(result.requests).toEqual([
+      expect.objectContaining({ query: "", targetNodeId: undefined })
+    ]);
     expect(result.stateRequests).toBe(0);
     expect(result.visibleRows).toEqual([0, 1, 2, 3]);
     expect(result.hasHiddenChild).toBe(false);
@@ -9400,7 +10707,9 @@ test.describe("sidebar projection hunt", () => {
       };
     });
 
-    expect(result.commands).toEqual([{ type: "moveNode", nodeId: "tab:10", parentId: "group:collapsed", index: 2 }]);
+    expect(result.commands).toEqual([
+      { type: "moveNode", nodeId: "tab:10", parentId: "group:collapsed", index: 2 }
+    ]);
     expect(result.requests).toEqual([]);
     expect(result.stateRequests).toBe(0);
     expect(result.visibleRows).toEqual([0, 1, 2, 3]);
@@ -9437,7 +10746,9 @@ test.describe("sidebar projection hunt", () => {
       };
     });
 
-    expect(result.commands).toEqual([{ type: "moveNode", nodeId: "tab:10", parentId: "group:collapsed", index: 2 }]);
+    expect(result.commands).toEqual([
+      { type: "moveNode", nodeId: "tab:10", parentId: "group:collapsed", index: 2 }
+    ]);
     expect(result.stateRequests).toBe(0);
     expect(result.visibleRows).toContain(0);
     expect(result.hasSource).toBe(false);
@@ -9448,7 +10759,9 @@ test.describe("sidebar projection hunt", () => {
     expect(issues).toEqual([]);
   });
 
-  test("psh-collapsed-search-hidden-child-missing-order-refills-without-command", async ({ page }) => {
+  test("psh-collapsed-search-hidden-child-missing-order-refills-without-command", async ({
+    page
+  }) => {
     const issues = collectPageIssues(page);
     await loadCollapsedBoundarySidebar(page, {
       includeCoverage: true,
@@ -9529,8 +10842,12 @@ test.describe("sidebar projection hunt", () => {
       };
     });
 
-    expect(result.commands).toEqual([{ type: "moveNode", nodeId: "tab:50", parentId: "group:collapsed", index: 1 }]);
-    expect(result.requests).toEqual([expect.objectContaining({ query: "Hidden child", targetNodeId: undefined })]);
+    expect(result.commands).toEqual([
+      { type: "moveNode", nodeId: "tab:50", parentId: "group:collapsed", index: 1 }
+    ]);
+    expect(result.requests).toEqual([
+      expect.objectContaining({ query: "Hidden child", targetNodeId: undefined })
+    ]);
     expect(result.stateRequests).toBe(0);
     expect(result.searchValue).toBe("Hidden child");
     expect(result.visibleRows).toContain(2);
@@ -9596,8 +10913,12 @@ test.describe("sidebar projection hunt", () => {
         })
       ]);
 
-      expect(resultA.commands).toEqual([{ type: "moveNode", nodeId: "tab:50", parentId: "group:collapsed", index: 1 }]);
-      expect(resultA.requests).toEqual([expect.objectContaining({ query: "Hidden child", targetNodeId: undefined })]);
+      expect(resultA.commands).toEqual([
+        { type: "moveNode", nodeId: "tab:50", parentId: "group:collapsed", index: 1 }
+      ]);
+      expect(resultA.requests).toEqual([
+        expect.objectContaining({ query: "Hidden child", targetNodeId: undefined })
+      ]);
       expect(resultA.stateRequests).toBe(0);
       expect(resultA.searchValue).toBe("Hidden child");
       expect(resultA.visibleRows).toContain(2);
@@ -9626,7 +10947,9 @@ test.describe("sidebar projection hunt", () => {
       coverCollapsedParent: false
     });
 
-    await nodeRow(page, "group:collapsed").getByRole("button", { name: "Expand", exact: true }).click();
+    await nodeRow(page, "group:collapsed")
+      .getByRole("button", { name: "Expand", exact: true })
+      .click();
 
     const result = await page.evaluate(async () => {
       const api = projectionHuntApi();
@@ -9642,12 +10965,16 @@ test.describe("sidebar projection hunt", () => {
         visibleRows: api.visibleRows(),
         hasHiddenChild50: Boolean(document.querySelector("[data-node-id='tab:50']")),
         hasHiddenChild51: Boolean(document.querySelector("[data-node-id='tab:51']")),
-        groupExpanded: Boolean(document.querySelector("[data-node-id='group:collapsed'] [title='Collapse']"))
+        groupExpanded: Boolean(
+          document.querySelector("[data-node-id='group:collapsed'] [title='Collapse']")
+        )
       };
     });
 
     expect(result.commands).toEqual([{ type: "toggleCollapsed", nodeId: "group:collapsed" }]);
-    expect(result.requests).toEqual([expect.objectContaining({ query: "", targetNodeId: undefined })]);
+    expect(result.requests).toEqual([
+      expect.objectContaining({ query: "", targetNodeId: undefined })
+    ]);
     expect(result.stateRequests).toBe(0);
     expect(result.visibleRows).toContain(3);
     expect(result.hasHiddenChild50).toBe(true);
@@ -9665,7 +10992,9 @@ test.describe("sidebar projection hunt", () => {
       startExpanded: true
     });
 
-    await nodeRow(page, "group:collapsed").getByRole("button", { name: "Collapse", exact: true }).click();
+    await nodeRow(page, "group:collapsed")
+      .getByRole("button", { name: "Collapse", exact: true })
+      .click();
 
     const result = await page.evaluate(async () => {
       const api = projectionHuntApi();
@@ -9678,7 +11007,9 @@ test.describe("sidebar projection hunt", () => {
         visibleRows: api.visibleRows(),
         hasHiddenChild50: Boolean(document.querySelector("[data-node-id='tab:50']")),
         hasHiddenChild51: Boolean(document.querySelector("[data-node-id='tab:51']")),
-        groupCollapsed: Boolean(document.querySelector("[data-node-id='group:collapsed'] [title='Expand']"))
+        groupCollapsed: Boolean(
+          document.querySelector("[data-node-id='group:collapsed'] [title='Expand']")
+        )
       };
     });
 
@@ -9691,7 +11022,9 @@ test.describe("sidebar projection hunt", () => {
     expect(issues).toEqual([]);
   });
 
-  test("psh-collapsed-hidden-child-show-in-tree-expand-patch-keeps-target-owner", async ({ page }) => {
+  test("psh-collapsed-hidden-child-show-in-tree-expand-patch-keeps-target-owner", async ({
+    page
+  }) => {
     const issues = collectPageIssues(page);
     await loadCollapsedBoundarySidebar(page, {
       includeCoverage: true,
@@ -9709,7 +11042,9 @@ test.describe("sidebar projection hunt", () => {
     });
 
     await nodeRow(page, "tab:50").hover();
-    await nodeRow(page, "tab:50").getByRole("button", { name: "Show in tree", exact: true }).click();
+    await nodeRow(page, "tab:50")
+      .getByRole("button", { name: "Show in tree", exact: true })
+      .click();
 
     const result = await page.evaluate(async () => {
       const api = projectionHuntApi();
@@ -9726,22 +11061,31 @@ test.describe("sidebar projection hunt", () => {
         visibleRows: api.visibleRows(),
         hasHiddenChild50: Boolean(document.querySelector("[data-node-id='tab:50']")),
         hasHiddenChild51: Boolean(document.querySelector("[data-node-id='tab:51']")),
-        hasRevealHighlight: Boolean(document.querySelector("[data-node-id='tab:50'].is-reveal-highlight")),
+        hasRevealHighlight: Boolean(
+          document.querySelector("[data-node-id='tab:50'].is-reveal-highlight")
+        ),
         hasSearchMatch: Boolean(document.querySelector("[data-node-id='tab:50'].is-search-match")),
-        groupExpanded: Boolean(document.querySelector("[data-node-id='group:collapsed'] [title='Collapse']"))
+        groupExpanded: Boolean(
+          document.querySelector("[data-node-id='group:collapsed'] [title='Collapse']")
+        )
       };
     });
 
     expect(result.commands).toEqual([{ type: "expandAncestors", nodeId: "tab:50" }]);
-    expect(result.requests.slice(0, 2).map((request) => ({
-      query: request.query,
-      targetNodeId: request.targetNodeId
-    }))).toEqual([
+    expect(
+      result.requests.slice(0, 2).map((request) => ({
+        query: request.query,
+        targetNodeId: request.targetNodeId
+      }))
+    ).toEqual([
       { query: "Hidden child", targetNodeId: undefined },
       { query: "", targetNodeId: "tab:50" }
     ]);
-    expect(result.requests.slice(2).every((request) => request.query === "" && request.targetNodeId === undefined))
-      .toBe(true);
+    expect(
+      result.requests
+        .slice(2)
+        .every((request) => request.query === "" && request.targetNodeId === undefined)
+    ).toBe(true);
     expect(result.stateRequests).toBe(0);
     expect(result.searchValue).toBe("");
     expect(result.visibleRows).toContain(3);
@@ -9794,13 +11138,18 @@ test.describe("sidebar projection hunt", () => {
         hasHiddenChild50: Boolean(document.querySelector("[data-node-id='tab:50']")),
         hasHiddenChild51: Boolean(document.querySelector("[data-node-id='tab:51']")),
         hasSearchChrome: Boolean(document.querySelector(".is-search-match, .is-search-path")),
-        groupCollapsed: Boolean(document.querySelector("[data-node-id='group:collapsed'] [title='Expand']"))
+        groupCollapsed: Boolean(
+          document.querySelector("[data-node-id='group:collapsed'] [title='Expand']")
+        )
       };
     });
 
     expect(result.requests[0]).toMatchObject({ query: "Hidden child", targetNodeId: undefined });
-    expect(result.requests.slice(1).every((request) => request.query === "" && request.targetNodeId === undefined))
-      .toBe(true);
+    expect(
+      result.requests
+        .slice(1)
+        .every((request) => request.query === "" && request.targetNodeId === undefined)
+    ).toBe(true);
     expect(result.afterStaleSearch.searchValue).toBe("");
     expect(result.afterStaleSearch.countText).toBe("6 items / 0 saved");
     expect(result.afterStaleSearch.hasHiddenChild50).toBe(false);
@@ -9846,11 +11195,16 @@ test.describe("sidebar projection hunt", () => {
       visibleRows: projectionHuntApi().visibleRows(),
       hasHiddenChild50: Boolean(document.querySelector("[data-node-id='tab:50']")),
       hasHiddenChild51: Boolean(document.querySelector("[data-node-id='tab:51']")),
-      hasGroupPath: Boolean(document.querySelector("[data-node-id='group:collapsed'].is-search-path")),
+      hasGroupPath: Boolean(
+        document.querySelector("[data-node-id='group:collapsed'].is-search-path")
+      ),
       hasOutlineTail: Boolean(document.querySelector("[data-node-id='tab:90']"))
     }));
 
-    expect(result.requests.map((request) => request.query)).toEqual(["Hidden child", "Hidden child"]);
+    expect(result.requests.map((request) => request.query)).toEqual([
+      "Hidden child",
+      "Hidden child"
+    ]);
     expect(result.stateRequests).toBe(0);
     expect(result.searchValue).toBe("Hidden child");
     expect(result.countText).toBe("1 match / 6 items");
@@ -9862,7 +11216,9 @@ test.describe("sidebar projection hunt", () => {
     expect(issues).toEqual([]);
   });
 
-  test("psh-collapsed-search-hidden-child-delete-history-refills-current-query", async ({ page }) => {
+  test("psh-collapsed-search-hidden-child-delete-history-refills-current-query", async ({
+    page
+  }) => {
     const issues = collectPageIssues(page);
     await loadCollapsedBoundarySidebar(page, {
       includeCoverage: true,
@@ -9878,7 +11234,13 @@ test.describe("sidebar projection hunt", () => {
       api.resolveSliceForQuery("Hidden child");
       await api.waitForVisibleRow(2);
       await api.waitForIdleFrames(3);
-      api.emitHistoryStatus({ canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "delete child" });
+      api.emitHistoryStatus({
+        canUndo: true,
+        canRedo: false,
+        undoDepth: 1,
+        redoDepth: 0,
+        undoLabel: "delete child"
+      });
       api.emitDeletePatch(["tab:50"]);
       await api.waitForSparseRequestCount(2);
       api.resolveSliceForQuery("Hidden child");
@@ -9893,11 +11255,16 @@ test.describe("sidebar projection hunt", () => {
       visibleRows: projectionHuntApi().visibleRows(),
       hasHiddenChild50: Boolean(document.querySelector("[data-node-id='tab:50']")),
       hasHiddenChild51: Boolean(document.querySelector("[data-node-id='tab:51']")),
-      hasGroupPath: Boolean(document.querySelector("[data-node-id='group:collapsed'].is-search-path")),
+      hasGroupPath: Boolean(
+        document.querySelector("[data-node-id='group:collapsed'].is-search-path")
+      ),
       hasRevealHighlight: Boolean(document.querySelector(".is-reveal-highlight"))
     }));
 
-    expect(result.requests.map((request) => request.query)).toEqual(["Hidden child", "Hidden child"]);
+    expect(result.requests.map((request) => request.query)).toEqual([
+      "Hidden child",
+      "Hidden child"
+    ]);
     expect(result.stateRequests).toBe(0);
     expect(result.searchValue).toBe("Hidden child");
     expect(result.countText).toBe("1 match / 5 items");
@@ -9920,8 +11287,12 @@ test.describe("sidebar projection hunt", () => {
     });
 
     await nodeRow(page, "tab:50").hover();
-    await expect(nodeRow(page, "tab:50").getByRole("button", { name: "Cut", exact: true })).toBeVisible();
-    await nodeRow(page, "group:collapsed").getByRole("button", { name: "Collapse", exact: true }).click();
+    await expect(
+      nodeRow(page, "tab:50").getByRole("button", { name: "Cut", exact: true })
+    ).toBeVisible();
+    await nodeRow(page, "group:collapsed")
+      .getByRole("button", { name: "Collapse", exact: true })
+      .click();
 
     const result = await page.evaluate(async () => {
       const api = projectionHuntApi();
@@ -9935,7 +11306,9 @@ test.describe("sidebar projection hunt", () => {
         hasHiddenChild50: Boolean(document.querySelector("[data-node-id='tab:50']")),
         hasHiddenChild51: Boolean(document.querySelector("[data-node-id='tab:51']")),
         hiddenChildActionCount: document.querySelectorAll("[data-node-id='tab:50'] button").length,
-        groupCollapsed: Boolean(document.querySelector("[data-node-id='group:collapsed'] [title='Expand']"))
+        groupCollapsed: Boolean(
+          document.querySelector("[data-node-id='group:collapsed'] [title='Expand']")
+        )
       };
     });
 
@@ -9966,7 +11339,13 @@ test.describe("sidebar projection hunt", () => {
       api.resolveSliceForQuery("Hidden child");
       await api.waitForVisibleRow(2);
       await api.waitForIdleFrames(3);
-      api.emitHistoryStatus({ canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "delete group" });
+      api.emitHistoryStatus({
+        canUndo: true,
+        canRedo: false,
+        undoDepth: 1,
+        redoDepth: 0,
+        undoLabel: "delete group"
+      });
       api.emitDeletePatch(["group:collapsed", "tab:50", "tab:51"]);
       await api.waitForIdleFrames(4);
       if (api.sparseRequestCount() > 1) {
@@ -9985,12 +11364,17 @@ test.describe("sidebar projection hunt", () => {
       hasHiddenChild50: Boolean(document.querySelector("[data-node-id='tab:50']")),
       hasHiddenChild51: Boolean(document.querySelector("[data-node-id='tab:51']")),
       hasOutlineTail: Boolean(document.querySelector("[data-node-id='tab:90']")),
-      hiddenActionCount: document.querySelectorAll("[data-node-id='tab:50'] button, [data-node-id='tab:51'] button").length
+      hiddenActionCount: document.querySelectorAll(
+        "[data-node-id='tab:50'] button, [data-node-id='tab:51'] button"
+      ).length
     }));
 
     expect(result.requests[0]).toMatchObject({ query: "Hidden child", targetNodeId: undefined });
-    expect(result.requests.slice(1).every((request) => request.query === "Hidden child" && request.targetNodeId === undefined))
-      .toBe(true);
+    expect(
+      result.requests
+        .slice(1)
+        .every((request) => request.query === "Hidden child" && request.targetNodeId === undefined)
+    ).toBe(true);
     expect(result.stateRequests).toBe(0);
     expect(result.searchValue).toBe("Hidden child");
     expect(result.countText).toBe("0 matches / 3 items");
@@ -10021,7 +11405,9 @@ test.describe("sidebar projection hunt", () => {
       await api.waitForIdleFrames(3);
     });
     await nodeRow(page, "tab:50").hover();
-    await expect(nodeRow(page, "tab:50").getByRole("button", { name: "Cut", exact: true })).toBeVisible();
+    await expect(
+      nodeRow(page, "tab:50").getByRole("button", { name: "Cut", exact: true })
+    ).toBeVisible();
     await page.locator("#clear-search").click();
 
     const result = await page.evaluate(async () => {
@@ -10038,14 +11424,21 @@ test.describe("sidebar projection hunt", () => {
         hasHiddenChild50: Boolean(document.querySelector("[data-node-id='tab:50']")),
         hasHiddenChild51: Boolean(document.querySelector("[data-node-id='tab:51']")),
         hasSearchChrome: Boolean(document.querySelector(".is-search-match, .is-search-path")),
-        hiddenActionCount: document.querySelectorAll("[data-node-id='tab:50'] button, [data-node-id='tab:51'] button").length,
-        groupCollapsed: Boolean(document.querySelector("[data-node-id='group:collapsed'] [title='Expand']"))
+        hiddenActionCount: document.querySelectorAll(
+          "[data-node-id='tab:50'] button, [data-node-id='tab:51'] button"
+        ).length,
+        groupCollapsed: Boolean(
+          document.querySelector("[data-node-id='group:collapsed'] [title='Expand']")
+        )
       };
     });
 
     expect(result.requests[0]).toMatchObject({ query: "Hidden child", targetNodeId: undefined });
-    expect(result.requests.slice(1).every((request) => request.query === "" && request.targetNodeId === undefined))
-      .toBe(true);
+    expect(
+      result.requests
+        .slice(1)
+        .every((request) => request.query === "" && request.targetNodeId === undefined)
+    ).toBe(true);
     expect(result.stateRequests).toBe(0);
     expect(result.searchValue).toBe("");
     expect(result.countText).toBe("6 items / 0 saved");
@@ -10074,7 +11467,9 @@ test.describe("sidebar projection hunt", () => {
         cancelable: true,
         dataTransfer
       });
-      const clientY = await nodeRow(page, "tab:51").evaluate((row) => row.getBoundingClientRect().bottom - 1);
+      const clientY = await nodeRow(page, "tab:51").evaluate(
+        (row) => row.getBoundingClientRect().bottom - 1
+      );
       await nodeRow(page, "tab:51").dispatchEvent("dragover", {
         bubbles: true,
         cancelable: true,
@@ -10097,7 +11492,9 @@ test.describe("sidebar projection hunt", () => {
           hasHiddenChild51: Boolean(document.querySelector("[data-node-id='tab:51']")),
           markerBeforeClassName: markerBefore?.className ?? "",
           markerAfterClassName: markerAfter?.className ?? "",
-          rootDropTarget: document.querySelector<HTMLElement>("main")?.classList.contains("root-drop-target") ?? false
+          rootDropTarget:
+            document.querySelector<HTMLElement>("main")?.classList.contains("root-drop-target") ??
+            false
         };
       });
       await page.locator("main").dispatchEvent("dragend", {
@@ -10113,7 +11510,9 @@ test.describe("sidebar projection hunt", () => {
       expect(result.hasHiddenChild50).toBe(false);
       expect(result.hasHiddenChild51).toBe(false);
       expect(result.markerBeforeClassName).toMatch(/drop-after/);
-      expect(result.markerAfterClassName).not.toMatch(/drop-root|drop-before|drop-after|drop-inside/);
+      expect(result.markerAfterClassName).not.toMatch(
+        /drop-root|drop-before|drop-after|drop-inside/
+      );
       expect(result.rootDropTarget).toBe(false);
       expect(issues).toEqual([]);
     } finally {
@@ -10147,7 +11546,9 @@ test.describe("sidebar projection hunt", () => {
         await api.waitForIdleFrames(3);
       });
 
-      await nodeRow(page, "group:collapsed").getByRole("button", { name: "Collapse", exact: true }).click();
+      await nodeRow(page, "group:collapsed")
+        .getByRole("button", { name: "Collapse", exact: true })
+        .click();
 
       const [resultA, resultB] = await Promise.all([
         page.evaluate(async () => {
@@ -10161,7 +11562,9 @@ test.describe("sidebar projection hunt", () => {
             searchValue: document.querySelector<HTMLInputElement>("#search")?.value ?? "",
             visibleRows: api.visibleRows(),
             hasHiddenChild50: Boolean(document.querySelector("[data-node-id='tab:50']")),
-            groupCollapsed: Boolean(document.querySelector("[data-node-id='group:collapsed'] [title='Expand']"))
+            groupCollapsed: Boolean(
+              document.querySelector("[data-node-id='group:collapsed'] [title='Expand']")
+            )
           };
         }),
         pageB.evaluate(async () => {
@@ -10177,7 +11580,9 @@ test.describe("sidebar projection hunt", () => {
             visibleRows: api.visibleRows(),
             hasHiddenChild50: Boolean(document.querySelector("[data-node-id='tab:50']")),
             hasHiddenChild51: Boolean(document.querySelector("[data-node-id='tab:51']")),
-            hasGroupPath: Boolean(document.querySelector("[data-node-id='group:collapsed'].is-search-path"))
+            hasGroupPath: Boolean(
+              document.querySelector("[data-node-id='group:collapsed'].is-search-path")
+            )
           };
         })
       ]);
@@ -10191,7 +11596,9 @@ test.describe("sidebar projection hunt", () => {
       expect(resultA.groupCollapsed).toBe(true);
 
       expect(resultB.commands).toEqual([]);
-      expect(resultB.requests).toEqual([expect.objectContaining({ query: "Hidden child", targetNodeId: undefined })]);
+      expect(resultB.requests).toEqual([
+        expect.objectContaining({ query: "Hidden child", targetNodeId: undefined })
+      ]);
       expect(resultB.stateRequests).toBe(0);
       expect(resultB.searchValue).toBe("Hidden child");
       expect(resultB.countText).toBe("2 matches / 6 items");
@@ -10218,7 +11625,13 @@ test.describe("sidebar projection hunt", () => {
 
     const result = await page.evaluate(async () => {
       const api = projectionHuntApi();
-      api.emitHistoryStatus({ canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "delete child" });
+      api.emitHistoryStatus({
+        canUndo: true,
+        canRedo: false,
+        undoDepth: 1,
+        redoDepth: 0,
+        undoLabel: "delete child"
+      });
       api.emitDeletePatch(["tab:50"]);
       await api.waitForIdleFrames(6);
       return {
@@ -10230,12 +11643,16 @@ test.describe("sidebar projection hunt", () => {
         hasHiddenChild50: Boolean(document.querySelector("[data-node-id='tab:50']")),
         hasHiddenChild51: Boolean(document.querySelector("[data-node-id='tab:51']")),
         hasTail: Boolean(document.querySelector("[data-node-id='tab:90']")),
-        groupExpanded: Boolean(document.querySelector("[data-node-id='group:collapsed'] [title='Collapse']"))
+        groupExpanded: Boolean(
+          document.querySelector("[data-node-id='group:collapsed'] [title='Collapse']")
+        )
       };
     });
 
     expect(result.commands).toEqual([]);
-    expect(result.requests.every((request) => request.query === "" && request.targetNodeId === undefined)).toBe(true);
+    expect(
+      result.requests.every((request) => request.query === "" && request.targetNodeId === undefined)
+    ).toBe(true);
     expect(result.stateRequests).toBe(0);
     expect(result.countText).toBe("5 items / 0 saved");
     expect(result.visibleRows).toContain(3);
@@ -10272,13 +11689,17 @@ test.describe("sidebar projection hunt", () => {
         visibleRows: api.visibleRows(),
         hasHiddenChild50: Boolean(document.querySelector("[data-node-id='tab:50']")),
         hasHiddenChild51: Boolean(document.querySelector("[data-node-id='tab:51']")),
-        hasGroupPath: Boolean(document.querySelector("[data-node-id='group:collapsed'].is-search-path")),
+        hasGroupPath: Boolean(
+          document.querySelector("[data-node-id='group:collapsed'].is-search-path")
+        ),
         hasRevealHighlight: Boolean(document.querySelector(".is-reveal-highlight"))
       };
     });
 
     expect(result.commands).toEqual([]);
-    expect(result.requests).toEqual([expect.objectContaining({ query: "Hidden child", targetNodeId: undefined })]);
+    expect(result.requests).toEqual([
+      expect.objectContaining({ query: "Hidden child", targetNodeId: undefined })
+    ]);
     expect(result.stateRequests).toBe(0);
     expect(result.searchValue).toBe("Hidden child");
     expect(result.countText).toBe("2 matches / 6 items");
@@ -10307,7 +11728,9 @@ test.describe("sidebar projection hunt", () => {
       await api.waitForIdleFrames(3);
     });
     await nodeRow(page, "tab:50").hover();
-    await nodeRow(page, "tab:50").getByRole("button", { name: "Show in tree", exact: true }).click();
+    await nodeRow(page, "tab:50")
+      .getByRole("button", { name: "Show in tree", exact: true })
+      .click();
 
     const result = await page.evaluate(async () => {
       const api = projectionHuntApi();
@@ -10325,22 +11748,31 @@ test.describe("sidebar projection hunt", () => {
         countText: document.querySelector("#state-count")?.textContent ?? "",
         visibleRows: api.visibleRows(),
         hasHiddenChild50: Boolean(document.querySelector("[data-node-id='tab:50']")),
-        hasRevealHighlight: Boolean(document.querySelector("[data-node-id='tab:50'].is-reveal-highlight")),
+        hasRevealHighlight: Boolean(
+          document.querySelector("[data-node-id='tab:50'].is-reveal-highlight")
+        ),
         hasSearchMatch: Boolean(document.querySelector("[data-node-id='tab:50'].is-search-match")),
-        groupExpanded: Boolean(document.querySelector("[data-node-id='group:collapsed'] [title='Collapse']"))
+        groupExpanded: Boolean(
+          document.querySelector("[data-node-id='group:collapsed'] [title='Collapse']")
+        )
       };
     });
 
     expect(result.commands).toEqual([{ type: "expandAncestors", nodeId: "tab:50" }]);
-    expect(result.requests.slice(0, 2).map((request) => ({
-      query: request.query,
-      targetNodeId: request.targetNodeId
-    }))).toEqual([
+    expect(
+      result.requests.slice(0, 2).map((request) => ({
+        query: request.query,
+        targetNodeId: request.targetNodeId
+      }))
+    ).toEqual([
       { query: "Hidden child", targetNodeId: undefined },
       { query: "", targetNodeId: "tab:50" }
     ]);
-    expect(result.requests.slice(2).every((request) => request.query === "" && request.targetNodeId === undefined))
-      .toBe(true);
+    expect(
+      result.requests
+        .slice(2)
+        .every((request) => request.query === "" && request.targetNodeId === undefined)
+    ).toBe(true);
     expect(result.stateRequests).toBe(0);
     expect(result.searchValue).toBe("");
     expect(result.countText).toBe("6 items / 0 saved");
@@ -10352,7 +11784,9 @@ test.describe("sidebar projection hunt", () => {
     expect(issues).toEqual([]);
   });
 
-  test("psh-collapsed-hidden-child-move-before-target-response-reveals-moved-row", async ({ page }) => {
+  test("psh-collapsed-hidden-child-move-before-target-response-reveals-moved-row", async ({
+    page
+  }) => {
     const issues = collectPageIssues(page);
     await loadCollapsedBoundarySidebar(page, {
       includeCoverage: true,
@@ -10369,7 +11803,9 @@ test.describe("sidebar projection hunt", () => {
       await api.waitForIdleFrames(3);
     });
     await nodeRow(page, "tab:50").hover();
-    await nodeRow(page, "tab:50").getByRole("button", { name: "Show in tree", exact: true }).click();
+    await nodeRow(page, "tab:50")
+      .getByRole("button", { name: "Show in tree", exact: true })
+      .click();
 
     const result = await page.evaluate(async () => {
       const api = projectionHuntApi();
@@ -10389,22 +11825,31 @@ test.describe("sidebar projection hunt", () => {
         targetRowIndex: targetNode?.dataset.rowIndex ?? "",
         hasHiddenChild50: Boolean(targetNode),
         hasHiddenChild51: Boolean(document.querySelector("[data-node-id='tab:51']")),
-        hasRevealHighlight: Boolean(document.querySelector("[data-node-id='tab:50'].is-reveal-highlight")),
+        hasRevealHighlight: Boolean(
+          document.querySelector("[data-node-id='tab:50'].is-reveal-highlight")
+        ),
         hasSearchMatch: Boolean(document.querySelector("[data-node-id='tab:50'].is-search-match")),
-        groupCollapsed: Boolean(document.querySelector("[data-node-id='group:collapsed'] [title='Expand']"))
+        groupCollapsed: Boolean(
+          document.querySelector("[data-node-id='group:collapsed'] [title='Expand']")
+        )
       };
     });
 
     expect(result.commands).toEqual([{ type: "expandAncestors", nodeId: "tab:50" }]);
-    expect(result.requests.slice(0, 2).map((request) => ({
-      query: request.query,
-      targetNodeId: request.targetNodeId
-    }))).toEqual([
+    expect(
+      result.requests.slice(0, 2).map((request) => ({
+        query: request.query,
+        targetNodeId: request.targetNodeId
+      }))
+    ).toEqual([
       { query: "Hidden child", targetNodeId: undefined },
       { query: "", targetNodeId: "tab:50" }
     ]);
-    expect(result.requests.slice(2).every((request) => request.query === "" && request.targetNodeId === undefined))
-      .toBe(true);
+    expect(
+      result.requests
+        .slice(2)
+        .every((request) => request.query === "" && request.targetNodeId === undefined)
+    ).toBe(true);
     expect(result.stateRequests).toBe(0);
     expect(result.searchValue).toBe("");
     expect(result.countText).toBe("6 items / 0 saved");
@@ -10457,7 +11902,13 @@ test.describe("sidebar projection hunt", () => {
 
     const result = await page.evaluate(async () => {
       const api = projectionHuntApi();
-      api.emitHistoryStatus({ canUndo: true, canRedo: false, undoDepth: 1, redoDepth: 0, undoLabel: "root drop" });
+      api.emitHistoryStatus({
+        canUndo: true,
+        canRedo: false,
+        undoDepth: 1,
+        redoDepth: 0,
+        undoLabel: "root drop"
+      });
       await api.waitForIdleFrames(4);
       const marker = document.querySelector<HTMLElement>("[data-testid='drop-marker']");
       const root = document.querySelector<HTMLElement>("main");
@@ -10489,24 +11940,31 @@ test.describe("sidebar projection hunt", () => {
 
 async function loadLargeSparseSidebar(
   page: Page,
-  options: { fullStatePending?: boolean; includeCoverage?: boolean; historyStatus?: HarnessHistoryStatus } = {}
+  options: {
+    fullStatePending?: boolean;
+    includeCoverage?: boolean;
+    historyStatus?: HarnessHistoryStatus;
+  } = {}
 ): Promise<void> {
-  await page.addInitScript(({ installerSource, harnessOptions }) => {
-    const install = (0, eval)(`(${installerSource})`) as typeof installProjectionHuntHarness;
-    install(harnessOptions);
-  }, {
-    installerSource: installProjectionHuntHarness.toString(),
-    harnessOptions: {
-      totalRows: 1001,
-      initialStart: 760,
-      initialEnd: 840,
-      activeTabId: 800,
-      fullStatePending: Boolean(options.fullStatePending),
-      includeCoverage: options.includeCoverage !== false,
-      ...(options.historyStatus ? { historyStatus: options.historyStatus } : {}),
-      restoredFixture: false
+  await page.addInitScript(
+    ({ installerSource, harnessOptions }) => {
+      const install = (0, eval)(`(${installerSource})`) as typeof installProjectionHuntHarness;
+      install(harnessOptions);
+    },
+    {
+      installerSource: installProjectionHuntHarness.toString(),
+      harnessOptions: {
+        totalRows: 1001,
+        initialStart: 760,
+        initialEnd: 840,
+        activeTabId: 800,
+        fullStatePending: Boolean(options.fullStatePending),
+        includeCoverage: options.includeCoverage !== false,
+        ...(options.historyStatus ? { historyStatus: options.historyStatus } : {}),
+        restoredFixture: false
+      }
     }
-  });
+  );
 
   await page.goto("/sidebar/sidebar.html");
   await waitForSidebarAppReady(page);
@@ -10517,21 +11975,24 @@ async function loadRestoredWindowSidebar(
   page: Page,
   options: { fullStatePending?: boolean } = {}
 ): Promise<void> {
-  await page.addInitScript(({ installerSource, harnessOptions }) => {
-    const install = (0, eval)(`(${installerSource})`) as typeof installProjectionHuntHarness;
-    install(harnessOptions);
-  }, {
-    installerSource: installProjectionHuntHarness.toString(),
-    harnessOptions: {
-      totalRows: 4,
-      initialStart: 1,
-      initialEnd: 4,
-      activeTabId: 2,
-      fullStatePending: Boolean(options.fullStatePending),
-      includeCoverage: true,
-      restoredFixture: true
+  await page.addInitScript(
+    ({ installerSource, harnessOptions }) => {
+      const install = (0, eval)(`(${installerSource})`) as typeof installProjectionHuntHarness;
+      install(harnessOptions);
+    },
+    {
+      installerSource: installProjectionHuntHarness.toString(),
+      harnessOptions: {
+        totalRows: 4,
+        initialStart: 1,
+        initialEnd: 4,
+        activeTabId: 2,
+        fullStatePending: Boolean(options.fullStatePending),
+        includeCoverage: true,
+        restoredFixture: true
+      }
     }
-  });
+  );
 
   await page.goto("/sidebar/sidebar.html");
   await waitForSidebarAppReady(page);
@@ -10542,22 +12003,25 @@ async function loadRestoredSubgroupSidebar(
   page: Page,
   options: { fullStatePending?: boolean } = {}
 ): Promise<void> {
-  await page.addInitScript(({ installerSource, harnessOptions }) => {
-    const install = (0, eval)(`(${installerSource})`) as typeof installProjectionHuntHarness;
-    install(harnessOptions);
-  }, {
-    installerSource: installProjectionHuntHarness.toString(),
-    harnessOptions: {
-      totalRows: 5,
-      initialStart: 0,
-      initialEnd: 4,
-      activeTabId: 0,
-      fullStatePending: Boolean(options.fullStatePending),
-      includeCoverage: true,
-      restoredFixture: false,
-      restoredSubgroupFixture: true
+  await page.addInitScript(
+    ({ installerSource, harnessOptions }) => {
+      const install = (0, eval)(`(${installerSource})`) as typeof installProjectionHuntHarness;
+      install(harnessOptions);
+    },
+    {
+      installerSource: installProjectionHuntHarness.toString(),
+      harnessOptions: {
+        totalRows: 5,
+        initialStart: 0,
+        initialEnd: 4,
+        activeTabId: 0,
+        fullStatePending: Boolean(options.fullStatePending),
+        includeCoverage: true,
+        restoredFixture: false,
+        restoredSubgroupFixture: true
+      }
     }
-  });
+  );
 
   await page.goto("/sidebar/sidebar.html");
   await waitForSidebarAppReady(page);
@@ -10571,22 +12035,25 @@ async function loadSparseNamedGroupSidebar(
   page: Page,
   options: { fullStatePending?: boolean } = {}
 ): Promise<void> {
-  await page.addInitScript(({ installerSource, harnessOptions }) => {
-    const install = (0, eval)(`(${installerSource})`) as typeof installProjectionHuntHarness;
-    install(harnessOptions);
-  }, {
-    installerSource: installProjectionHuntHarness.toString(),
-    harnessOptions: {
-      totalRows: 6,
-      initialStart: 0,
-      initialEnd: 4,
-      activeTabId: 0,
-      fullStatePending: Boolean(options.fullStatePending),
-      includeCoverage: true,
-      restoredFixture: false,
-      namedGroupRootsFixture: true
+  await page.addInitScript(
+    ({ installerSource, harnessOptions }) => {
+      const install = (0, eval)(`(${installerSource})`) as typeof installProjectionHuntHarness;
+      install(harnessOptions);
+    },
+    {
+      installerSource: installProjectionHuntHarness.toString(),
+      harnessOptions: {
+        totalRows: 6,
+        initialStart: 0,
+        initialEnd: 4,
+        activeTabId: 0,
+        fullStatePending: Boolean(options.fullStatePending),
+        includeCoverage: true,
+        restoredFixture: false,
+        namedGroupRootsFixture: true
+      }
     }
-  });
+  );
 
   await page.goto("/sidebar/sidebar.html");
   await waitForSidebarAppReady(page);
@@ -10596,26 +12063,33 @@ async function loadSparseNamedGroupSidebar(
 
 async function loadClosedRestoreSidebar(
   page: Page,
-  options: { fullStatePending?: boolean; invalidRestoreScope?: boolean; delayRestoreScope?: boolean } = {}
+  options: {
+    fullStatePending?: boolean;
+    invalidRestoreScope?: boolean;
+    delayRestoreScope?: boolean;
+  } = {}
 ): Promise<void> {
-  await page.addInitScript(({ installerSource, harnessOptions }) => {
-    const install = (0, eval)(`(${installerSource})`) as typeof installProjectionHuntHarness;
-    install(harnessOptions);
-  }, {
-    installerSource: installProjectionHuntHarness.toString(),
-    harnessOptions: {
-      totalRows: 4,
-      initialStart: 0,
-      initialEnd: 4,
-      activeTabId: 0,
-      fullStatePending: Boolean(options.fullStatePending),
-      includeCoverage: true,
-      restoredFixture: false,
-      closedRestoreFixture: true,
-      invalidRestoreScope: Boolean(options.invalidRestoreScope),
-      delayRestoreScope: Boolean(options.delayRestoreScope)
+  await page.addInitScript(
+    ({ installerSource, harnessOptions }) => {
+      const install = (0, eval)(`(${installerSource})`) as typeof installProjectionHuntHarness;
+      install(harnessOptions);
+    },
+    {
+      installerSource: installProjectionHuntHarness.toString(),
+      harnessOptions: {
+        totalRows: 4,
+        initialStart: 0,
+        initialEnd: 4,
+        activeTabId: 0,
+        fullStatePending: Boolean(options.fullStatePending),
+        includeCoverage: true,
+        restoredFixture: false,
+        closedRestoreFixture: true,
+        invalidRestoreScope: Boolean(options.invalidRestoreScope),
+        delayRestoreScope: Boolean(options.delayRestoreScope)
+      }
     }
-  });
+  );
 
   await page.goto("/sidebar/sidebar.html");
   await waitForSidebarAppReady(page);
@@ -10632,27 +12106,30 @@ async function loadCollapsedBoundarySidebar(
     historyStatus?: HarnessHistoryStatus;
   } = {}
 ): Promise<void> {
-  await page.addInitScript(({ installerSource, harnessOptions }) => {
-    const install = (0, eval)(`(${installerSource})`) as typeof installProjectionHuntHarness;
-    install(harnessOptions);
-  }, {
-    installerSource: installProjectionHuntHarness.toString(),
-    harnessOptions: {
-      totalRows: options.startExpanded ? 6 : 4,
-      initialStart: 0,
-      initialEnd: options.startExpanded ? 6 : 4,
-      activeTabId: 10,
-      fullStatePending: Boolean(options.fullStatePending),
-      includeCoverage: options.includeCoverage !== false,
-      restoredFixture: false,
-      collapsedBoundaryFixture: true,
-      collapsedBoundaryInitiallyExpanded: Boolean(options.startExpanded),
-      coveredSiblingParentIds: options.coverCollapsedParent
-        ? ["window:1", "group:collapsed"]
-        : ["window:1"],
-      historyStatus: options.historyStatus
+  await page.addInitScript(
+    ({ installerSource, harnessOptions }) => {
+      const install = (0, eval)(`(${installerSource})`) as typeof installProjectionHuntHarness;
+      install(harnessOptions);
+    },
+    {
+      installerSource: installProjectionHuntHarness.toString(),
+      harnessOptions: {
+        totalRows: options.startExpanded ? 6 : 4,
+        initialStart: 0,
+        initialEnd: options.startExpanded ? 6 : 4,
+        activeTabId: 10,
+        fullStatePending: Boolean(options.fullStatePending),
+        includeCoverage: options.includeCoverage !== false,
+        restoredFixture: false,
+        collapsedBoundaryFixture: true,
+        collapsedBoundaryInitiallyExpanded: Boolean(options.startExpanded),
+        coveredSiblingParentIds: options.coverCollapsedParent
+          ? ["window:1", "group:collapsed"]
+          : ["window:1"],
+        historyStatus: options.historyStatus
+      }
     }
-  });
+  );
 
   await page.goto("/sidebar/sidebar.html");
   await waitForSidebarAppReady(page);
@@ -10665,7 +12142,9 @@ async function loadCollapsedBoundarySidebar(
 }
 
 async function waitForSidebarAppReady(page: Page): Promise<void> {
-  await page.waitForFunction(() => performance.getEntriesByName("tabs-outliner.boot.fullAppImport.end").length > 0);
+  await page.waitForFunction(
+    () => performance.getEntriesByName("tabs-outliner.boot.fullAppImport.end").length > 0
+  );
 }
 
 function nodeRow(page: Page, nodeId: string) {
@@ -10701,7 +12180,9 @@ async function dragAfter(page: Page, sourceId: string, targetId: string): Promis
       cancelable: true,
       dataTransfer
     });
-    const clientY = await nodeRow(page, targetId).evaluate((row) => row.getBoundingClientRect().bottom - 1);
+    const clientY = await nodeRow(page, targetId).evaluate(
+      (row) => row.getBoundingClientRect().bottom - 1
+    );
     await nodeRow(page, targetId).dispatchEvent("dragover", {
       bubbles: true,
       cancelable: true,
@@ -10799,7 +12280,10 @@ function collectPageIssues(page: Page): ConsoleIssue[] {
     issues.push({ kind: "pageerror", text: error.message });
   });
   page.on("requestfailed", (request) => {
-    issues.push({ kind: "requestfailed", text: `${request.url()} ${request.failure()?.errorText ?? ""}` });
+    issues.push({
+      kind: "requestfailed",
+      text: `${request.url()} ${request.failure()?.errorText ?? ""}`
+    });
   });
   return issues;
 }
@@ -10843,7 +12327,12 @@ type ProjectionHuntApi = {
   emitHistoryStatus(status: HarnessHistoryStatus): void;
   sentCommands(): unknown[];
   stateRequestCount(): number;
-  projectionRequests(): Array<{ centerRowIndex: number; rowLimit: number; query: string; targetNodeId?: string }>;
+  projectionRequests(): Array<{
+    centerRowIndex: number;
+    rowLimit: number;
+    query: string;
+    targetNodeId?: string;
+  }>;
 };
 
 type ProjectionSliceRequest = {
@@ -10903,7 +12392,12 @@ function installProjectionHuntHarness(options: {
   let fullStateResolver: ((value: unknown) => void) | undefined;
   let fullStateResolveQueued = false;
   let restoreScopeResolver: ((value: unknown) => void) | undefined;
-  let currentHistoryStatus = options.historyStatus ?? { canUndo: false, canRedo: false, undoDepth: 0, redoDepth: 0 };
+  let currentHistoryStatus = options.historyStatus ?? {
+    canUndo: false,
+    canRedo: false,
+    undoDepth: 0,
+    redoDepth: 0
+  };
 
   window.projectionHuntApi = () => ({
     nextFrame,
@@ -10940,19 +12434,24 @@ function installProjectionHuntHarness(options: {
   window.browser = {
     runtime: {
       sendMessage: async (message: unknown) => {
-        const type = typeof message === "object" && message ? String((message as { type?: unknown }).type) : "";
+        const type =
+          typeof message === "object" && message
+            ? String((message as { type?: unknown }).type)
+            : "";
         if (type === "getInitialTreeSnapshot") {
           return snapshotFromRows(initialRows(), { hydrating: true });
         }
         if (type === "getTreeProjectionSlice") {
           const centerRowIndex = Number((message as { centerRowIndex?: unknown }).centerRowIndex);
           const rowLimit = Number((message as { rowLimit?: unknown }).rowLimit);
-          const query = typeof (message as { query?: unknown }).query === "string"
-            ? (message as { query: string }).query
-            : "";
-          const targetNodeId = typeof (message as { targetNodeId?: unknown }).targetNodeId === "string"
-            ? (message as { targetNodeId: string }).targetNodeId
-            : undefined;
+          const query =
+            typeof (message as { query?: unknown }).query === "string"
+              ? (message as { query: string }).query
+              : "";
+          const targetNodeId =
+            typeof (message as { targetNodeId?: unknown }).targetNodeId === "string"
+              ? (message as { targetNodeId: string }).targetNodeId
+              : undefined;
           const request: ProjectionSliceRequest = { centerRowIndex, rowLimit, query, targetNodeId };
           const stateAtRequest = structuredClone(fullState) as ReturnType<typeof initialFullState>;
           sliceRequests.push(request);
@@ -11041,19 +12540,24 @@ function installProjectionHuntHarness(options: {
     pendingSlices.splice(index, 1);
     const sourceState = override.staleAtRequest ? pending.stateAtRequest : fullState;
     const projection = rowsForProjectionRequest(pending.request, override, sourceState);
-    pending.resolve(snapshotFromRows(projection.rows, {
-      hydrating: true,
-      query: pending.request.query,
-      totalRowCount: projection.totalRowCount,
-      matchingNodeIds: projection.matchingNodeIds,
-      ...(typeof override.includeCoverage === "boolean" ? { includeCoverage: override.includeCoverage } : {})
-    }, sourceState));
+    pending.resolve(
+      snapshotFromRows(
+        projection.rows,
+        {
+          hydrating: true,
+          query: pending.request.query,
+          totalRowCount: projection.totalRowCount,
+          matchingNodeIds: projection.matchingNodeIds,
+          ...(typeof override.includeCoverage === "boolean"
+            ? { includeCoverage: override.includeCoverage }
+            : {})
+        },
+        sourceState
+      )
+    );
   }
 
-  function resolveSliceForQuery(
-    query: string,
-    override: ProjectionSliceOverride = {}
-  ) {
+  function resolveSliceForQuery(query: string, override: ProjectionSliceOverride = {}) {
     const index = pendingSlices.findIndex((pending) => pending.request.query === query);
     if (index < 0) {
       throw new Error(`No pending sparse slice request for query ${JSON.stringify(query)}`);
@@ -11061,11 +12565,10 @@ function installProjectionHuntHarness(options: {
     resolveSliceAt(index, override);
   }
 
-  function resolveSliceForTarget(
-    targetNodeId: string,
-    override: ProjectionSliceOverride = {}
-  ) {
-    const index = pendingSlices.findIndex((pending) => pending.request.targetNodeId === targetNodeId);
+  function resolveSliceForTarget(targetNodeId: string, override: ProjectionSliceOverride = {}) {
+    const index = pendingSlices.findIndex(
+      (pending) => pending.request.targetNodeId === targetNodeId
+    );
     if (index < 0) {
       throw new Error(`No pending sparse slice request for target ${JSON.stringify(targetNodeId)}`);
     }
@@ -11196,11 +12699,19 @@ function installProjectionHuntHarness(options: {
     }
   }
 
-  function treeStructureUpdate(previous: typeof fullState, next: typeof fullState, deletedNodeIds: string[]) {
+  function treeStructureUpdate(
+    previous: typeof fullState,
+    next: typeof fullState,
+    deletedNodeIds: string[]
+  ) {
     const updatedNodes = Object.keys(next.nodes)
-      .filter((nodeId) => JSON.stringify(previous.nodes[nodeId]) !== JSON.stringify(next.nodes[nodeId]))
+      .filter(
+        (nodeId) => JSON.stringify(previous.nodes[nodeId]) !== JSON.stringify(next.nodes[nodeId])
+      )
       .map((nodeId) => structuredClone(next.nodes[nodeId]));
-    const deletedClosedCount = deletedNodeIds.filter((nodeId) => previous.nodes[nodeId]?.status === "closed").length;
+    const deletedClosedCount = deletedNodeIds.filter(
+      (nodeId) => previous.nodes[nodeId]?.status === "closed"
+    ).length;
     return {
       type: "treeStructureUpdated",
       deletedNodeIds,
@@ -11292,35 +12803,62 @@ function installProjectionHuntHarness(options: {
       };
     }
     if (options.closedRestoreFixture) {
-      return { rows: closedRestoreRows(), matchingNodeIds: [], totalRowCount: closedRestoreRows().length };
+      return {
+        rows: closedRestoreRows(),
+        matchingNodeIds: [],
+        totalRowCount: closedRestoreRows().length
+      };
     }
     if (options.restoredFixture) {
       return { rows: restoredRows(), matchingNodeIds: [], totalRowCount: restoredRows().length };
     }
     if (options.restoredSubgroupFixture) {
-      const centerRowIndex = request.targetNodeId ? rowIndexForNodeId(request.targetNodeId, sourceState) : request.centerRowIndex;
-      const start = override.start ?? Math.max(0, Math.floor(centerRowIndex - request.rowLimit / 2));
-      const end = override.end ?? Math.min(currentTotalRows(sourceState), Math.floor(centerRowIndex + request.rowLimit / 2));
-      const rows = restoredSubgroupRows(sourceState).filter((row) => row.index >= start && row.index < end);
+      const centerRowIndex = request.targetNodeId
+        ? rowIndexForNodeId(request.targetNodeId, sourceState)
+        : request.centerRowIndex;
+      const start =
+        override.start ?? Math.max(0, Math.floor(centerRowIndex - request.rowLimit / 2));
+      const end =
+        override.end ??
+        Math.min(currentTotalRows(sourceState), Math.floor(centerRowIndex + request.rowLimit / 2));
+      const rows = restoredSubgroupRows(sourceState).filter(
+        (row) => row.index >= start && row.index < end
+      );
       return { rows, matchingNodeIds: [], totalRowCount: currentTotalRows(sourceState) };
     }
     if (options.namedGroupRootsFixture) {
-      const centerRowIndex = request.targetNodeId ? rowIndexForNodeId(request.targetNodeId, sourceState) : request.centerRowIndex;
-      const start = override.start ?? Math.max(0, Math.floor(centerRowIndex - request.rowLimit / 2));
-      const end = override.end ?? Math.min(currentTotalRows(sourceState), Math.floor(centerRowIndex + request.rowLimit / 2));
-      const rows = namedGroupRootRows(sourceState).filter((row) => row.index >= start && row.index < end);
+      const centerRowIndex = request.targetNodeId
+        ? rowIndexForNodeId(request.targetNodeId, sourceState)
+        : request.centerRowIndex;
+      const start =
+        override.start ?? Math.max(0, Math.floor(centerRowIndex - request.rowLimit / 2));
+      const end =
+        override.end ??
+        Math.min(currentTotalRows(sourceState), Math.floor(centerRowIndex + request.rowLimit / 2));
+      const rows = namedGroupRootRows(sourceState).filter(
+        (row) => row.index >= start && row.index < end
+      );
       return { rows, matchingNodeIds: [], totalRowCount: currentTotalRows(sourceState) };
     }
     if (options.collapsedBoundaryFixture) {
-      const centerRowIndex = request.targetNodeId ? rowIndexForNodeId(request.targetNodeId, sourceState) : request.centerRowIndex;
-      const start = override.start ?? Math.max(0, Math.floor(centerRowIndex - request.rowLimit / 2));
-      const end = override.end ?? Math.min(currentTotalRows(), Math.floor(centerRowIndex + request.rowLimit / 2));
+      const centerRowIndex = request.targetNodeId
+        ? rowIndexForNodeId(request.targetNodeId, sourceState)
+        : request.centerRowIndex;
+      const start =
+        override.start ?? Math.max(0, Math.floor(centerRowIndex - request.rowLimit / 2));
+      const end =
+        override.end ??
+        Math.min(currentTotalRows(), Math.floor(centerRowIndex + request.rowLimit / 2));
       const rows = collapsedBoundaryRows().filter((row) => row.index >= start && row.index < end);
       return { rows, matchingNodeIds: [], totalRowCount: currentTotalRows() };
     }
-    const centerRowIndex = request.targetNodeId ? rowIndexForNodeId(request.targetNodeId, sourceState) : request.centerRowIndex;
+    const centerRowIndex = request.targetNodeId
+      ? rowIndexForNodeId(request.targetNodeId, sourceState)
+      : request.centerRowIndex;
     const start = override.start ?? Math.max(1, Math.floor(centerRowIndex - request.rowLimit / 2));
-    const end = override.end ?? Math.min(currentTotalRows(), Math.floor(centerRowIndex + request.rowLimit / 2));
+    const end =
+      override.end ??
+      Math.min(currentTotalRows(), Math.floor(centerRowIndex + request.rowLimit / 2));
     return { rows: tabRows(start, end), matchingNodeIds: [], totalRowCount: currentTotalRows() };
   }
 
@@ -11336,13 +12874,16 @@ function installProjectionHuntHarness(options: {
       return collapsedBoundarySearchRowsForQuery(normalizedQuery);
     }
     const matches = Object.values(sourceState.nodes)
-      .filter((node): node is ReturnType<typeof tabNode> => (
-        node.kind === "tab" &&
-        (
-          String(node.title ?? "").toLocaleLowerCase().includes(normalizedQuery) ||
-          String(node.url ?? "").toLocaleLowerCase().includes(normalizedQuery)
-        )
-      ))
+      .filter(
+        (node): node is ReturnType<typeof tabNode> =>
+          node.kind === "tab" &&
+          (String(node.title ?? "")
+            .toLocaleLowerCase()
+            .includes(normalizedQuery) ||
+            String(node.url ?? "")
+              .toLocaleLowerCase()
+              .includes(normalizedQuery))
+      )
       .map((node) => Number.parseInt(String(node.id).slice("tab:".length), 10))
       .filter((tabId) => Number.isFinite(tabId))
       .sort((left, right) => left - right);
@@ -11363,16 +12904,20 @@ function installProjectionHuntHarness(options: {
   }
 
   function restoredSubgroupSearchRowsForQuery(normalizedQuery: string, sourceState = fullState) {
-    const window = sourceState.nodes["window:restored-subgroup"] as { childIds?: string[] } | undefined;
+    const window = sourceState.nodes["window:restored-subgroup"] as
+      | { childIds?: string[] }
+      | undefined;
     const childIds = Array.isArray(window?.childIds) ? window.childIds : [];
     const matchingChildIds = childIds.filter((nodeId) => {
       const node = sourceState.nodes[nodeId] as { title?: string; url?: string } | undefined;
       return Boolean(
         node &&
-        (
-          String(node.title ?? "").toLocaleLowerCase().includes(normalizedQuery) ||
-          String(node.url ?? "").toLocaleLowerCase().includes(normalizedQuery)
-        )
+        (String(node.title ?? "")
+          .toLocaleLowerCase()
+          .includes(normalizedQuery) ||
+          String(node.url ?? "")
+            .toLocaleLowerCase()
+            .includes(normalizedQuery))
       );
     });
     if (!window || matchingChildIds.length === 0) {
@@ -11415,14 +12960,17 @@ function installProjectionHuntHarness(options: {
     const childIds = Array.isArray(group?.childIds) ? group.childIds : [];
     const matches = childIds
       .map((nodeId) => fullState.nodes[nodeId])
-      .filter((node): node is ReturnType<typeof tabNode> => (
-        Boolean(node) &&
-        node.kind === "tab" &&
-        (
-          String(node.title ?? "").toLocaleLowerCase().includes(normalizedQuery) ||
-          String(node.url ?? "").toLocaleLowerCase().includes(normalizedQuery)
-        )
-      ))
+      .filter(
+        (node): node is ReturnType<typeof tabNode> =>
+          Boolean(node) &&
+          node.kind === "tab" &&
+          (String(node.title ?? "")
+            .toLocaleLowerCase()
+            .includes(normalizedQuery) ||
+            String(node.url ?? "")
+              .toLocaleLowerCase()
+              .includes(normalizedQuery))
+      )
       .map((node) => Number.parseInt(String(node.id).slice("tab:".length), 10))
       .filter((tabId) => Number.isFinite(tabId))
       .sort((left, right) => left - right);
@@ -11463,7 +13011,9 @@ function installProjectionHuntHarness(options: {
 
   function rowIndexForNodeId(nodeId: string, sourceState = fullState) {
     if (options.restoredSubgroupFixture) {
-      const row = restoredSubgroupRows(sourceState).find((candidate) => candidate.nodeId === nodeId);
+      const row = restoredSubgroupRows(sourceState).find(
+        (candidate) => candidate.nodeId === nodeId
+      );
       if (row) {
         return row.index;
       }
@@ -11521,10 +13071,14 @@ function installProjectionHuntHarness(options: {
       return collapsedBoundaryRows();
     }
     if (options.restoredSubgroupFixture) {
-      return restoredSubgroupRows().filter((row) => row.index >= options.initialStart && row.index < options.initialEnd);
+      return restoredSubgroupRows().filter(
+        (row) => row.index >= options.initialStart && row.index < options.initialEnd
+      );
     }
     if (options.namedGroupRootsFixture) {
-      return namedGroupRootRows().filter((row) => row.index >= options.initialStart && row.index < options.initialEnd);
+      return namedGroupRootRows().filter(
+        (row) => row.index >= options.initialStart && row.index < options.initialEnd
+      );
     }
     return options.restoredFixture
       ? restoredRows()
@@ -11564,7 +13118,9 @@ function installProjectionHuntHarness(options: {
 
   function completeSubtreeNodeIdsForRows(rows: Array<{ nodeId: string }>) {
     const nodeIds = rows.map((row) => row.nodeId);
-    return options.closedRestoreFixture ? nodeIds.filter((nodeId) => nodeId !== "window:30") : nodeIds;
+    return options.closedRestoreFixture
+      ? nodeIds.filter((nodeId) => nodeId !== "window:30")
+      : nodeIds;
   }
 
   function completeSiblingParentIdsForRows() {
@@ -11587,23 +13143,29 @@ function installProjectionHuntHarness(options: {
   }
 
   function largeState() {
-    const childIds = Array.from({ length: options.totalRows - 1 }, (_value, index) => `tab:${index + 1}`);
+    const childIds = Array.from(
+      { length: options.totalRows - 1 },
+      (_value, index) => `tab:${index + 1}`
+    );
     return {
       version: 1,
       rootIds: ["window:1"],
       nodes: Object.fromEntries([
-        ["window:1", {
-          id: "window:1",
-          kind: "window",
-          status: "live",
-          title: "Window",
-          active: true,
-          collapsed: false,
-          childIds,
-          createdAt: now,
-          updatedAt: now,
-          live: { windowId: 1 }
-        }],
+        [
+          "window:1",
+          {
+            id: "window:1",
+            kind: "window",
+            status: "live",
+            title: "Window",
+            active: true,
+            collapsed: false,
+            childIds,
+            createdAt: now,
+            updatedAt: now,
+            live: { windowId: 1 }
+          }
+        ],
         ...childIds.map((nodeId, index) => {
           const tabId = index + 1;
           return [nodeId, tabNode(tabId)];
@@ -11671,9 +13233,24 @@ function installProjectionHuntHarness(options: {
           closedAt: now,
           restore: { sessionId: "session-window-30" }
         },
-        "tab:30": tabNode(30, { parentId: "window:30", title: "Closed tab 30", active: false, closed: true }),
-        "tab:31": tabNode(31, { parentId: "window:30", title: "Closed tab 31", active: false, closed: true }),
-        "tab:32": tabNode(32, { parentId: "window:30", title: "Closed tab 32", active: false, closed: true })
+        "tab:30": tabNode(30, {
+          parentId: "window:30",
+          title: "Closed tab 30",
+          active: false,
+          closed: true
+        }),
+        "tab:31": tabNode(31, {
+          parentId: "window:30",
+          title: "Closed tab 31",
+          active: false,
+          closed: true
+        }),
+        "tab:32": tabNode(32, {
+          parentId: "window:30",
+          title: "Closed tab 32",
+          active: false,
+          closed: true
+        })
       }
     };
   }
@@ -11704,7 +13281,12 @@ function installProjectionHuntHarness(options: {
           false
         ),
         "tab:s3": restoredSubgroupTabNode("tab:s3", 302, "djvu2pdf - S3 bucket", false),
-        "tab:offscreen": restoredSubgroupTabNode("tab:offscreen", 303, "Offscreen restored child", false)
+        "tab:offscreen": restoredSubgroupTabNode(
+          "tab:offscreen",
+          303,
+          "Offscreen restored child",
+          false
+        )
       }
     };
   }
@@ -11746,7 +13328,14 @@ function installProjectionHuntHarness(options: {
           restoredFromClosed: true,
           live: { windowId: 40 }
         },
-        "tab:rare-earth": namedGroupTabNode("tab:rare-earth", 401, "window:named-group", "Rare Earth - YouTube", true, 40),
+        "tab:rare-earth": namedGroupTabNode(
+          "tab:rare-earth",
+          401,
+          "window:named-group",
+          "Rare Earth - YouTube",
+          true,
+          40
+        ),
         "window:earth": {
           id: "window:earth",
           kind: "window",
@@ -11762,7 +13351,14 @@ function installProjectionHuntHarness(options: {
           restoredFromClosed: true,
           live: { windowId: 41 }
         },
-        "tab:google-maps": namedGroupTabNode("tab:google-maps", 402, "window:earth", "Google Maps", false, 41),
+        "tab:google-maps": namedGroupTabNode(
+          "tab:google-maps",
+          402,
+          "window:earth",
+          "Google Maps",
+          false,
+          41
+        ),
         "window:tail": {
           id: "window:tail",
           kind: "window",
@@ -11835,8 +13431,16 @@ function installProjectionHuntHarness(options: {
           createdAt: now,
           updatedAt: now
         },
-        "tab:50": tabNode(50, { parentId: "group:collapsed", title: "Hidden child 50", active: false }),
-        "tab:51": tabNode(51, { parentId: "group:collapsed", title: "Hidden child 51", active: false }),
+        "tab:50": tabNode(50, {
+          parentId: "group:collapsed",
+          title: "Hidden child 50",
+          active: false
+        }),
+        "tab:51": tabNode(51, {
+          parentId: "group:collapsed",
+          title: "Hidden child 51",
+          active: false
+        }),
         "tab:90": tabNode(90, { parentId: "window:1", title: "Boundary tail", active: false })
       }
     };
@@ -11844,7 +13448,13 @@ function installProjectionHuntHarness(options: {
 
   function tabNode(
     tabId: number,
-    overrides: { parentId?: string; title?: string; active?: boolean; restoredFromClosed?: boolean; closed?: boolean } = {}
+    overrides: {
+      parentId?: string;
+      title?: string;
+      active?: boolean;
+      restoredFromClosed?: boolean;
+      closed?: boolean;
+    } = {}
   ) {
     return {
       id: `tab:${tabId}`,
@@ -11858,9 +13468,13 @@ function installProjectionHuntHarness(options: {
       childIds: [],
       createdAt: now,
       updatedAt: now,
-      ...(overrides.closed ? { closedAt: now, restore: { url: `https://projection.example/${tabId}` } } : {}),
+      ...(overrides.closed
+        ? { closedAt: now, restore: { url: `https://projection.example/${tabId}` } }
+        : {}),
       ...(overrides.restoredFromClosed ? { restoredFromClosed: true } : {}),
-      ...(overrides.closed ? {} : { live: { tabId, windowId: overrides.parentId === "window:20" ? 20 : 1 } })
+      ...(overrides.closed
+        ? {}
+        : { live: { tabId, windowId: overrides.parentId === "window:20" ? 20 : 1 } })
     };
   }
 
@@ -12001,7 +13615,9 @@ function installProjectionHuntHarness(options: {
   }
 
   function restoredSubgroupRows(sourceState = fullState) {
-    const window = sourceState.nodes["window:restored-subgroup"] as { childIds?: string[] } | undefined;
+    const window = sourceState.nodes["window:restored-subgroup"] as
+      | { childIds?: string[] }
+      | undefined;
     if (!window) {
       return [];
     }
@@ -12039,7 +13655,9 @@ function installProjectionHuntHarness(options: {
   }
 
   function namedGroupRootRows(sourceState = fullState) {
-    const namedGroup = sourceState.nodes["window:named-group"] as { childIds?: string[] } | undefined;
+    const namedGroup = sourceState.nodes["window:named-group"] as
+      | { childIds?: string[] }
+      | undefined;
     const earthGroup = sourceState.nodes["window:earth"] as { childIds?: string[] } | undefined;
     const tailGroup = sourceState.nodes["window:tail"] as { childIds?: string[] } | undefined;
     const rows: Array<Record<string, unknown> & { nodeId: string; index: number }> = [];
@@ -12147,7 +13765,9 @@ function installProjectionHuntHarness(options: {
 
     for (const childId of windowChildIds) {
       if (childId === "group:collapsed") {
-        const group = fullState.nodes[childId] as { collapsed?: boolean; childIds?: string[] } | undefined;
+        const group = fullState.nodes[childId] as
+          | { collapsed?: boolean; childIds?: string[] }
+          | undefined;
         if (!group) {
           continue;
         }
@@ -12272,7 +13892,9 @@ function installProjectionHuntHarness(options: {
       }
       await new Promise<void>((resolve) => window.setTimeout(resolve, 16));
     }
-    throw new Error(`Timed out waiting for sparse slice request with query ${JSON.stringify(query)}`);
+    throw new Error(
+      `Timed out waiting for sparse slice request with query ${JSON.stringify(query)}`
+    );
   }
 
   async function waitForTargetProjectionRequest(targetNodeId: string) {
@@ -12282,7 +13904,9 @@ function installProjectionHuntHarness(options: {
       }
       await new Promise<void>((resolve) => window.setTimeout(resolve, 16));
     }
-    throw new Error(`Timed out waiting for sparse slice request with target ${JSON.stringify(targetNodeId)}`);
+    throw new Error(
+      `Timed out waiting for sparse slice request with target ${JSON.stringify(targetNodeId)}`
+    );
   }
 
   async function waitForVisibleRow(rowIndex: number) {

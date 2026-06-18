@@ -64,7 +64,13 @@ const LANE_COMMANDS = {
     {
       label: "storage vitest corpus",
       command: "pnpm",
-      args: ["test", "--", "src/background/storage-v2.test.ts", "src/background/storage-v4.test.ts", "src/background/outline-journal.test.ts"]
+      args: [
+        "test",
+        "--",
+        "src/background/storage-v2.test.ts",
+        "src/background/storage-v4.test.ts",
+        "src/background/outline-journal.test.ts"
+      ]
     },
     {
       label: "storage build",
@@ -291,7 +297,9 @@ export function formatAcceptanceTsvRow(fields) {
     fields.correctnessCommands.join(" && "),
     fields.finalStatus,
     fields.description
-  ].map(tsvCell).join("\t");
+  ]
+    .map(tsvCell)
+    .join("\t");
 }
 
 function normalizedPerfStatus(profile) {
@@ -331,7 +339,9 @@ async function runCommand(command) {
 
 async function currentCommit() {
   try {
-    const { stdout } = await execFileAsync("git", ["rev-parse", "--short=7", "HEAD"], { cwd: rootDir });
+    const { stdout } = await execFileAsync("git", ["rev-parse", "--short=7", "HEAD"], {
+      cwd: rootDir
+    });
     return stdout.trim();
   } catch {
     return "unknown";
@@ -340,7 +350,10 @@ async function currentCommit() {
 
 async function appendResultsTsv(resultsPath, row) {
   await mkdir(dirname(resultsPath), { recursive: true });
-  if (!existsSync(resultsPath) || (await readFile(resultsPath, "utf8").catch(() => "")).trim() === "") {
+  if (
+    !existsSync(resultsPath) ||
+    (await readFile(resultsPath, "utf8").catch(() => "")).trim() === ""
+  ) {
     await writeFile(resultsPath, `${AUTORESEARCH_ACCEPTANCE_TSV_HEADER}\n`);
   }
   await appendFile(resultsPath, `${row}\n`);
@@ -350,7 +363,10 @@ function csvList(value) {
   if (!value) {
     return [];
   }
-  return String(value).split(",").map((item) => item.trim()).filter(Boolean);
+  return String(value)
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
 }
 
 function localDateTag(date) {
@@ -365,7 +381,9 @@ function formatCommand(command) {
 }
 
 function tsvCell(value) {
-  return String(value).replace(/[\t\r\n]+/g, " ").trim();
+  return String(value)
+    .replace(/[\t\r\n]+/g, " ")
+    .trim();
 }
 
 function formatSummary(result) {

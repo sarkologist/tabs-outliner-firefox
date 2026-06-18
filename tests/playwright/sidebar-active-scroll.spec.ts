@@ -56,7 +56,9 @@ test.describe("sidebar active-tab scrolling", () => {
     expect(issues).toEqual([]);
   });
 
-  test("does not scroll a sidebar away from its own window after a later focus echo", async ({ page }) => {
+  test("does not scroll a sidebar away from its own window after a later focus echo", async ({
+    page
+  }) => {
     const issues = collectPageIssues(page);
     const state = groupedWindowFixtureState();
     await loadSidebar(page, state, { currentWindowId: 42 });
@@ -85,13 +87,18 @@ test.describe("sidebar active-tab scrolling", () => {
     expect(issues).toEqual([]);
   });
 
-  test("follows a scoped active tab after move to top level relocates its window", async ({ page }) => {
+  test("follows a scoped active tab after move to top level relocates its window", async ({
+    page
+  }) => {
     const issues = collectPageIssues(page);
     const state = moveToTopLevelFixtureState();
     await loadSidebar(page, state, { currentWindowId: 42 });
 
     await expect(page.locator(nodeSelector("tab:scoped-active"))).toBeVisible();
-    await expect(page.locator(nodeSelector("tab:scoped-active"))).toHaveAttribute("data-row-index", "4");
+    await expect(page.locator(nodeSelector("tab:scoped-active"))).toHaveAttribute(
+      "data-row-index",
+      "4"
+    );
     const initialScrollTop = await scrollTop(page);
     expect(initialScrollTop).toBeLessThan(100);
 
@@ -118,69 +125,78 @@ async function loadSidebar(
   state: SidebarFixtureState = fixtureState(),
   options: { currentWindowId?: number } = {}
 ): Promise<void> {
-  await page.addInitScript((state) => {
-    const listeners: Array<(message: unknown) => void> = [];
-    (window as typeof window & { __dispatchSidebarMessage?: (message: unknown) => void }).__dispatchSidebarMessage = (
-      message
-    ) => {
-      for (const listener of listeners) {
-        listener(structuredClone(message));
-      }
-    };
-    window.browser = {
-      runtime: {
-        sendMessage: async (message: unknown) => {
-          const type = typeof message === "object" && message ? (message as { type?: unknown }).type : undefined;
-          if (type === "getState") {
-            return structuredClone(state);
+  await page.addInitScript(
+    (state) => {
+      const listeners: Array<(message: unknown) => void> = [];
+      (
+        window as typeof window & { __dispatchSidebarMessage?: (message: unknown) => void }
+      ).__dispatchSidebarMessage = (message) => {
+        for (const listener of listeners) {
+          listener(structuredClone(message));
+        }
+      };
+      window.browser = {
+        runtime: {
+          sendMessage: async (message: unknown) => {
+            const type =
+              typeof message === "object" && message
+                ? (message as { type?: unknown }).type
+                : undefined;
+            if (type === "getState") {
+              return structuredClone(state);
+            }
+            if (type === "getDiagnostics") {
+              const tabCount = Object.values(state.nodes).filter(
+                (node) => node.kind === "tab" && node.status === "live"
+              ).length;
+              return {
+                runtimeTabCount: tabCount,
+                liveTabNodeCount: tabCount,
+                visibleLiveTabNodeCount: tabCount,
+                hiddenLiveTabNodeCount: 0,
+                missingRuntimeTabIds: []
+              };
+            }
+            if (type === "getPerformanceTrace") {
+              return undefined;
+            }
+            if (type === "setPerformanceTraceEnabled" || type === "clearPerformanceTrace") {
+              return undefined;
+            }
+            return { ok: true };
+          },
+          onMessage: {
+            addListener: (listener: (message: unknown) => void) => {
+              listeners.push(listener);
+            }
           }
-          if (type === "getDiagnostics") {
-            const tabCount = Object.values(state.nodes).filter((node) =>
-              node.kind === "tab" && node.status === "live"
-            ).length;
-            return {
-              runtimeTabCount: tabCount,
-              liveTabNodeCount: tabCount,
-              visibleLiveTabNodeCount: tabCount,
-              hiddenLiveTabNodeCount: 0,
-              missingRuntimeTabIds: []
-            };
-          }
-          if (type === "getPerformanceTrace") {
-            return undefined;
-          }
-          if (type === "setPerformanceTraceEnabled" || type === "clearPerformanceTrace") {
-            return undefined;
-          }
-          return { ok: true };
         },
-        onMessage: {
-          addListener: (listener: (message: unknown) => void) => {
-            listeners.push(listener);
+        windows: {
+          getCurrent: async () =>
+            typeof state.currentWindowId === "number" ? { id: state.currentWindowId } : undefined
+        },
+        storage: {
+          local: {
+            get: async () => ({}),
+            set: async () => undefined
           }
         }
-      },
-      windows: {
-        getCurrent: async () =>
-          typeof state.currentWindowId === "number" ? { id: state.currentWindowId } : undefined
-      },
-      storage: {
-        local: {
-          get: async () => ({}),
-          set: async () => undefined
-        }
-      }
-    };
-  }, { ...state, currentWindowId: options.currentWindowId });
+      };
+    },
+    { ...state, currentWindowId: options.currentWindowId }
+  );
 
   await page.goto("/sidebar/sidebar.html");
-  await expect(page.locator("#state-count")).toHaveText(`${Object.keys(state.nodes).length} items / 0 saved`);
+  await expect(page.locator("#state-count")).toHaveText(
+    `${Object.keys(state.nodes).length} items / 0 saved`
+  );
 }
 
 async function dispatchSidebarMessage(page: Page, message: unknown): Promise<void> {
   await page.evaluate((payload) => {
-    const dispatch = (window as typeof window & { __dispatchSidebarMessage?: (message: unknown) => void })
-      .__dispatchSidebarMessage;
+    const dispatch = (
+      window as typeof window & { __dispatchSidebarMessage?: (message: unknown) => void }
+    ).__dispatchSidebarMessage;
     if (!dispatch) {
       throw new Error("Missing sidebar message dispatcher");
     }
@@ -211,7 +227,10 @@ function collectPageIssues(page: Page): ConsoleIssue[] {
     issues.push({ kind: "pageerror", text: error.message });
   });
   page.on("requestfailed", (request) => {
-    issues.push({ kind: "requestfailed", text: `${request.url()} ${request.failure()?.errorText ?? ""}` });
+    issues.push({
+      kind: "requestfailed",
+      text: `${request.url()} ${request.failure()?.errorText ?? ""}`
+    });
   });
   return issues;
 }
@@ -329,7 +348,10 @@ function groupedWindowFixtureState(): SidebarFixtureState {
 
 function moveToTopLevelFixtureState(): SidebarFixtureState {
   const now = 1_700_000_000_000;
-  const spacerIds = Array.from({ length: MOVE_TO_TOP_SPACER_COUNT }, (_value, index) => `group:spacer-${index + 1}`);
+  const spacerIds = Array.from(
+    { length: MOVE_TO_TOP_SPACER_COUNT },
+    (_value, index) => `group:spacer-${index + 1}`
+  );
   return {
     version: 1,
     rootIds: ["window:global", "group:container"],

@@ -155,7 +155,9 @@ function makeRuntime(options) {
         measureRuntimeJson(runtime, "broadcast", message);
         if (message?.type === "stateUpdated" && message.state) {
           runtime.sidebarState = message.state;
-          const projection = measure(() => buildVisibleTreeProjection(message.state, runtime.query));
+          const projection = measure(() =>
+            buildVisibleTreeProjection(message.state, runtime.query)
+          );
           runtime.sidebarProjection = projection.value;
           runtime.projectionMs += projection.ms;
         } else if (message?.type === "treeStructureUpdated") {
@@ -265,9 +267,11 @@ function closeRuntimeTab(runtime, tabId) {
 
   runtime.tabs = runtime.tabs
     .filter((candidate) => candidate.id !== tabId)
-    .map((candidate) => candidate.windowId === tab.windowId && candidate.index > tab.index
-      ? { ...candidate, index: candidate.index - 1 }
-      : candidate);
+    .map((candidate) =>
+      candidate.windowId === tab.windowId && candidate.index > tab.index
+        ? { ...candidate, index: candidate.index - 1 }
+        : candidate
+    );
   runtime.events.tabRemoved.dispatch(tab.id, {
     windowId: tab.windowId,
     isWindowClosing: false
@@ -318,8 +322,16 @@ function applyTreeStructureUpdate(runtime, update) {
   }
   runtime.sidebarState.rootIds = [...update.rootIds];
 
-  if (!applyDeleteTreeStructurePatchToProjection(runtime.sidebarState, runtime.sidebarProjection, update)) {
-    const projection = measure(() => buildVisibleTreeProjection(runtime.sidebarState, runtime.query));
+  if (
+    !applyDeleteTreeStructurePatchToProjection(
+      runtime.sidebarState,
+      runtime.sidebarProjection,
+      update
+    )
+  ) {
+    const projection = measure(() =>
+      buildVisibleTreeProjection(runtime.sidebarState, runtime.query)
+    );
     runtime.sidebarProjection = projection.value;
     runtime.projectionMs += projection.ms;
   }
@@ -352,7 +364,9 @@ async function profile(options) {
   let eventEchoMs = 0;
   let lastAck;
   for (const nodeId of nodeIds) {
-    const command = await measureAsync(() => controller.handleMessage({ type: "deleteNode", nodeId }));
+    const command = await measureAsync(() =>
+      controller.handleMessage({ type: "deleteNode", nodeId })
+    );
     const eventEcho = await measureAsync(() => flushProfileEvents(runtime.events));
     commandMs += command.ms;
     eventEchoMs += eventEcho.ms;

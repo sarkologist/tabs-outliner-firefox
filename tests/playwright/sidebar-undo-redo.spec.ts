@@ -1,6 +1,10 @@
 import { expect, test, type Page } from "@playwright/test";
 
-import { APP_PREFERENCES_STORAGE_KEY, DEFAULT_APP_PREFERENCES, type AppPreferences } from "../../src/preferences";
+import {
+  APP_PREFERENCES_STORAGE_KEY,
+  DEFAULT_APP_PREFERENCES,
+  type AppPreferences
+} from "../../src/preferences";
 
 type ConsoleIssue = {
   kind: "console" | "pageerror" | "requestfailed";
@@ -75,21 +79,27 @@ test.describe("sidebar undo/redo controls", () => {
     await page.keyboard.press("Control+Shift+Z");
     await page.keyboard.press("Control+Y");
 
-    await expect(sentCommands(page)).resolves.toEqual(expect.arrayContaining(["undo", "redo", "redo"]));
+    await expect(sentCommands(page)).resolves.toEqual(
+      expect.arrayContaining(["undo", "redo", "redo"])
+    );
     expect(issues).toEqual([]);
   });
 
   test("uses stored shortcut preferences for undo and redo", async ({ page }) => {
     const issues = collectPageIssues(page);
-    await loadSidebar(page, { canUndo: true, canRedo: true, undoLabel: "Move", redoLabel: "Move" }, {
-      ...DEFAULT_APP_PREFERENCES,
-      shortcuts: {
-        ...DEFAULT_APP_PREFERENCES.shortcuts,
-        undo: { enabled: true, combo: "Accel+Alt+U" },
-        redo: { enabled: false, combo: "Accel+Shift+Z" },
-        redoAlternate: { enabled: false, combo: "Accel+Y" }
+    await loadSidebar(
+      page,
+      { canUndo: true, canRedo: true, undoLabel: "Move", redoLabel: "Move" },
+      {
+        ...DEFAULT_APP_PREFERENCES,
+        shortcuts: {
+          ...DEFAULT_APP_PREFERENCES.shortcuts,
+          undo: { enabled: true, combo: "Accel+Alt+U" },
+          redo: { enabled: false, combo: "Accel+Shift+Z" },
+          redoAlternate: { enabled: false, combo: "Accel+Y" }
+        }
       }
-    });
+    );
     await clearSentCommands(page);
 
     await page.keyboard.press("Control+Z");
@@ -140,92 +150,110 @@ async function loadSidebar(
   historyStatus: { canUndo: boolean; canRedo: boolean; undoLabel?: string; redoLabel?: string },
   preferences?: AppPreferences
 ): Promise<void> {
-  await page.addInitScript(({ state, initialHistoryStatus, initialPreferences, preferencesKey }) => {
-    const listeners: Array<(message: unknown) => void> = [];
-    const storageListeners: Array<(changes: Record<string, { newValue?: unknown }>, areaName: string) => void> = [];
-    const sent: string[] = [];
-    (window as typeof window & {
-      __dispatchSidebarMessage?: (message: unknown) => void;
-      __dispatchStorageChange?: (preferences: unknown) => void;
-      __sentSidebarCommands?: string[];
-      __optionsOpenCount?: number;
-    }).__dispatchSidebarMessage = (message) => {
-      for (const listener of listeners) {
-        listener(structuredClone(message));
-      }
-    };
-    (window as typeof window & { __dispatchStorageChange?: (preferences: unknown) => void }).__dispatchStorageChange =
-      (nextPreferences) => {
+  await page.addInitScript(
+    ({ state, initialHistoryStatus, initialPreferences, preferencesKey }) => {
+      const listeners: Array<(message: unknown) => void> = [];
+      const storageListeners: Array<
+        (changes: Record<string, { newValue?: unknown }>, areaName: string) => void
+      > = [];
+      const sent: string[] = [];
+      (
+        window as typeof window & {
+          __dispatchSidebarMessage?: (message: unknown) => void;
+          __dispatchStorageChange?: (preferences: unknown) => void;
+          __sentSidebarCommands?: string[];
+          __optionsOpenCount?: number;
+        }
+      ).__dispatchSidebarMessage = (message) => {
+        for (const listener of listeners) {
+          listener(structuredClone(message));
+        }
+      };
+      (
+        window as typeof window & { __dispatchStorageChange?: (preferences: unknown) => void }
+      ).__dispatchStorageChange = (nextPreferences) => {
         for (const listener of storageListeners) {
           listener({ [preferencesKey]: { newValue: structuredClone(nextPreferences) } }, "local");
         }
       };
-    (window as typeof window & { __sentSidebarCommands?: string[] }).__sentSidebarCommands = sent;
-    (window as typeof window & { __optionsOpenCount?: number }).__optionsOpenCount = 0;
+      (window as typeof window & { __sentSidebarCommands?: string[] }).__sentSidebarCommands = sent;
+      (window as typeof window & { __optionsOpenCount?: number }).__optionsOpenCount = 0;
 
-    window.browser = {
-      runtime: {
-        sendMessage: async (message: unknown) => {
-          const type = typeof message === "object" && message ? (message as { type?: unknown }).type : undefined;
-          if (typeof type === "string") {
-            sent.push(type);
-          }
-          if (type === "getState") {
-            return structuredClone(state);
-          }
-          if (type === "getHistoryStatus") {
-            return {
-              type: "historyStatus",
-              undoDepth: initialHistoryStatus.canUndo ? 1 : 0,
-              redoDepth: initialHistoryStatus.canRedo ? 1 : 0,
-              ...initialHistoryStatus
-            };
-          }
-          if (type === "getDiagnostics") {
-            return {
-              runtimeTabCount: 1,
-              liveTabNodeCount: 1,
-              visibleLiveTabNodeCount: 1,
-              hiddenLiveTabNodeCount: 0,
-              missingRuntimeTabIds: []
-            };
-          }
-          if (type === "getPerformanceTrace") {
-            return undefined;
-          }
-          if (type === "setPerformanceTraceEnabled" || type === "clearPerformanceTrace") {
-            return undefined;
-          }
-          return { type: "commandAck", stateChanged: true };
-        },
-        openOptionsPage: async () => {
-          const testWindow = window as typeof window & { __optionsOpenCount?: number };
-          testWindow.__optionsOpenCount = (testWindow.__optionsOpenCount ?? 0) + 1;
-        },
-        onMessage: {
-          addListener: (listener: (message: unknown) => void) => {
-            listeners.push(listener);
-          }
-        }
-      },
-      storage: {
-        onChanged: {
-          addListener: (listener: (changes: Record<string, { newValue?: unknown }>, areaName: string) => void) => {
-            storageListeners.push(listener);
-          }
-        },
-        local: {
-          get: async (key?: string) => {
-            if (key === preferencesKey) {
-              return { [preferencesKey]: structuredClone(initialPreferences) };
+      window.browser = {
+        runtime: {
+          sendMessage: async (message: unknown) => {
+            const type =
+              typeof message === "object" && message
+                ? (message as { type?: unknown }).type
+                : undefined;
+            if (typeof type === "string") {
+              sent.push(type);
             }
-            return {};
+            if (type === "getState") {
+              return structuredClone(state);
+            }
+            if (type === "getHistoryStatus") {
+              return {
+                type: "historyStatus",
+                undoDepth: initialHistoryStatus.canUndo ? 1 : 0,
+                redoDepth: initialHistoryStatus.canRedo ? 1 : 0,
+                ...initialHistoryStatus
+              };
+            }
+            if (type === "getDiagnostics") {
+              return {
+                runtimeTabCount: 1,
+                liveTabNodeCount: 1,
+                visibleLiveTabNodeCount: 1,
+                hiddenLiveTabNodeCount: 0,
+                missingRuntimeTabIds: []
+              };
+            }
+            if (type === "getPerformanceTrace") {
+              return undefined;
+            }
+            if (type === "setPerformanceTraceEnabled" || type === "clearPerformanceTrace") {
+              return undefined;
+            }
+            return { type: "commandAck", stateChanged: true };
           },
-          set: async () => undefined
+          openOptionsPage: async () => {
+            const testWindow = window as typeof window & { __optionsOpenCount?: number };
+            testWindow.__optionsOpenCount = (testWindow.__optionsOpenCount ?? 0) + 1;
+          },
+          onMessage: {
+            addListener: (listener: (message: unknown) => void) => {
+              listeners.push(listener);
+            }
+          }
+        },
+        storage: {
+          onChanged: {
+            addListener: (
+              listener: (changes: Record<string, { newValue?: unknown }>, areaName: string) => void
+            ) => {
+              storageListeners.push(listener);
+            }
+          },
+          local: {
+            get: async (key?: string) => {
+              if (key === preferencesKey) {
+                return { [preferencesKey]: structuredClone(initialPreferences) };
+              }
+              return {};
+            },
+            set: async () => undefined
+          }
         }
-      }
-    };
-  }, { state: fixtureState(), initialHistoryStatus: historyStatus, initialPreferences: preferences, preferencesKey: APP_PREFERENCES_STORAGE_KEY });
+      };
+    },
+    {
+      state: fixtureState(),
+      initialHistoryStatus: historyStatus,
+      initialPreferences: preferences,
+      preferencesKey: APP_PREFERENCES_STORAGE_KEY
+    }
+  );
 
   await page.goto("/sidebar/sidebar.html");
   await expect(page.getByRole("treeitem")).toHaveCount(2);
@@ -233,8 +261,9 @@ async function loadSidebar(
 
 async function dispatchSidebarMessage(page: Page, message: unknown): Promise<void> {
   await page.evaluate((payload) => {
-    const dispatch = (window as typeof window & { __dispatchSidebarMessage?: (message: unknown) => void })
-      .__dispatchSidebarMessage;
+    const dispatch = (
+      window as typeof window & { __dispatchSidebarMessage?: (message: unknown) => void }
+    ).__dispatchSidebarMessage;
     if (!dispatch) {
       throw new Error("Missing sidebar message dispatcher");
     }
@@ -244,25 +273,30 @@ async function dispatchSidebarMessage(page: Page, message: unknown): Promise<voi
 
 async function sentCommands(page: Page): Promise<string[]> {
   return page.evaluate(() => [
-    ...((window as typeof window & { __sentSidebarCommands?: string[] }).__sentSidebarCommands ?? [])
+    ...((window as typeof window & { __sentSidebarCommands?: string[] }).__sentSidebarCommands ??
+      [])
   ]);
 }
 
 async function optionsOpenCount(page: Page): Promise<number> {
-  return page.evaluate(() => (window as typeof window & { __optionsOpenCount?: number }).__optionsOpenCount ?? 0);
+  return page.evaluate(
+    () => (window as typeof window & { __optionsOpenCount?: number }).__optionsOpenCount ?? 0
+  );
 }
 
 async function clearSentCommands(page: Page): Promise<void> {
   await page.evaluate(() => {
-    const sent = (window as typeof window & { __sentSidebarCommands?: string[] }).__sentSidebarCommands;
+    const sent = (window as typeof window & { __sentSidebarCommands?: string[] })
+      .__sentSidebarCommands;
     sent?.splice(0, sent.length);
   });
 }
 
 async function dispatchStorageChange(page: Page, preferences: AppPreferences): Promise<void> {
   await page.evaluate((payload) => {
-    const dispatch = (window as typeof window & { __dispatchStorageChange?: (preferences: unknown) => void })
-      .__dispatchStorageChange;
+    const dispatch = (
+      window as typeof window & { __dispatchStorageChange?: (preferences: unknown) => void }
+    ).__dispatchStorageChange;
     if (!dispatch) {
       throw new Error("Missing storage change dispatcher");
     }
@@ -281,7 +315,10 @@ function collectPageIssues(page: Page): ConsoleIssue[] {
     issues.push({ kind: "pageerror", text: error.message });
   });
   page.on("requestfailed", (request) => {
-    issues.push({ kind: "requestfailed", text: `${request.url()} ${request.failure()?.errorText ?? ""}` });
+    issues.push({
+      kind: "requestfailed",
+      text: `${request.url()} ${request.failure()?.errorText ?? ""}`
+    });
   });
   return issues;
 }

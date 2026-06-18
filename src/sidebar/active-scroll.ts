@@ -100,7 +100,10 @@ export function scrollActiveTabIntoView(
     return false;
   }
 
-  if (!projection.visibleNodeIdSet.has(activeNodeId) || typeof projection.activeTabRowIndex !== "number") {
+  if (
+    !projection.visibleNodeIdSet.has(activeNodeId) ||
+    typeof projection.activeTabRowIndex !== "number"
+  ) {
     return false;
   }
 
@@ -116,7 +119,10 @@ export function scrollActiveTabIntoView(
   const effectiveRowHeight = Number.isFinite(rowHeight) && rowHeight > 0 ? rowHeight : 1;
   const rowTop = projection.activeTabRowIndex * effectiveRowHeight;
   const viewportTop = viewport.scrollTop;
-  const centeredScrollTop = Math.max(0, rowTop + effectiveRowHeight / 2 - viewport.clientHeight / 2);
+  const centeredScrollTop = Math.max(
+    0,
+    rowTop + effectiveRowHeight / 2 - viewport.clientHeight / 2
+  );
   let nextScrollTop = centeredScrollTop;
   const scrollHeight = viewport.scrollHeight;
 

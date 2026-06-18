@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { RuntimeFactLedger, type RuntimeTabEvidence, type RuntimeTabEvidenceField } from "./runtime-facts.js";
+import {
+  RuntimeFactLedger,
+  type RuntimeTabEvidence,
+  type RuntimeTabEvidenceField
+} from "./runtime-facts.js";
 import { RuntimeWindowScopeIndex } from "./runtime-window-scope.js";
 import {
   RuntimeReconciler,
@@ -43,7 +47,10 @@ function windowInfo(id: number, tabs: RuntimeTab[], focused = true): RuntimeWind
   };
 }
 
-function updatedEvidence(tab: RuntimeTab, changedFields: RuntimeTabEvidenceField[]): RuntimeTabEvidence {
+function updatedEvidence(
+  tab: RuntimeTab,
+  changedFields: RuntimeTabEvidenceField[]
+): RuntimeTabEvidence {
   return {
     kind: "updated",
     tab,
@@ -58,7 +65,15 @@ function createdEvidence(tab: RuntimeTab): RuntimeTabEvidence {
   return {
     kind: "created",
     tab,
-    changedFields: new Set<RuntimeTabEvidenceField>(["windowId", "index", "active", "openerTabId", "url", "title", "favIconUrl"]),
+    changedFields: new Set<RuntimeTabEvidenceField>([
+      "windowId",
+      "index",
+      "active",
+      "openerTabId",
+      "url",
+      "title",
+      "favIconUrl"
+    ]),
     confidence: "eventLocal",
     scopeGeneration: 0,
     sequence: 1
@@ -69,12 +84,7 @@ describe("runtime reconciliation ledger", () => {
   it("filters stale old-window relocation echoes and restores the current destination tab", () => {
     const base = bootstrapFromWindows([windowInfo(10, [tabOne, tabTwo])], { now: 1000 });
     const movedTab = { ...tabOne, windowId: 20, index: 0, active: true };
-    const moved = moveTabToNewLiveWindow(
-      base,
-      "tab:1",
-      windowInfo(20, [movedTab]),
-      { now: 2000 }
-    );
+    const moved = moveTabToNewLiveWindow(base, "tab:1", windowInfo(20, [movedTab]), { now: 2000 });
     const ledger = new RuntimeFactLedger();
     ledger.recordCommandRelocatedTab(1, 10, 20);
 
@@ -89,7 +99,9 @@ describe("runtime reconciliation ledger", () => {
       confidence: "staleSuspect"
     });
 
-    expect(normalized.find((windowValue) => windowValue.id === 10)?.tabs?.map((tab) => tab.id)).toEqual([2]);
+    expect(
+      normalized.find((windowValue) => windowValue.id === 10)?.tabs?.map((tab) => tab.id)
+    ).toEqual([2]);
     expect(normalized.find((windowValue) => windowValue.id === 20)?.tabs).toMatchObject([
       {
         id: 1,
@@ -102,12 +114,7 @@ describe("runtime reconciliation ledger", () => {
   it("records typed expected effects for command-owned runtime echoes", () => {
     const base = bootstrapFromWindows([windowInfo(10, [tabOne, tabTwo])], { now: 1000 });
     const movedTab = { ...tabOne, windowId: 20, index: 0, active: true };
-    const moved = moveTabToNewLiveWindow(
-      base,
-      "tab:1",
-      windowInfo(20, [movedTab]),
-      { now: 2000 }
-    );
+    const moved = moveTabToNewLiveWindow(base, "tab:1", windowInfo(20, [movedTab]), { now: 2000 });
     const ledger = new RuntimeFactLedger();
 
     const focusTransaction = ledger.beginCommandTransactionForCommand("focusNode", {
@@ -138,46 +145,43 @@ describe("runtime reconciliation ledger", () => {
         skippedBeforeRemoval: 0
       }
     ]);
-    expect(ledger.debugSnapshot().expectedEffects).toEqual(expect.arrayContaining([
-      {
-        kind: "focus",
-        tabId: 2,
-        windowId: 10,
-        tabActivationExpected: true,
-        windowFocusExpected: true
-      },
-      {
-        kind: "closeSession",
-        pendingTabRemovals: 1,
-        echoesToSkip: 0,
-        skippedBeforeRemoval: 0
-      },
-      {
-        kind: "tabRelocation",
-        tabId: 1,
-        fromWindowIds: [10],
-        sequence: expect.any(Number),
-        sourceIndex: 0,
-        sourceWindowId: 10,
-        toWindowId: 20
-      },
-      {
-        kind: "tabRestore",
-        tabId: 3,
-        windowId: 20
-      }
-    ]));
+    expect(ledger.debugSnapshot().expectedEffects).toEqual(
+      expect.arrayContaining([
+        {
+          kind: "focus",
+          tabId: 2,
+          windowId: 10,
+          tabActivationExpected: true,
+          windowFocusExpected: true
+        },
+        {
+          kind: "closeSession",
+          pendingTabRemovals: 1,
+          echoesToSkip: 0,
+          skippedBeforeRemoval: 0
+        },
+        {
+          kind: "tabRelocation",
+          tabId: 1,
+          fromWindowIds: [10],
+          sequence: expect.any(Number),
+          sourceIndex: 0,
+          sourceWindowId: 10,
+          toWindowId: 20
+        },
+        {
+          kind: "tabRestore",
+          tabId: 3,
+          windowId: 20
+        }
+      ])
+    );
   });
 
   it("classifies command-owned relocated tab echoes through a uniform decision API", () => {
     const base = bootstrapFromWindows([windowInfo(10, [tabOne, tabTwo])], { now: 1000 });
     const movedTab = { ...tabOne, windowId: 20, index: 0, active: true };
-    const moved = moveTabToNewLiveWindow(
-      base,
-      "tab:1",
-      windowInfo(20, [movedTab]),
-      { now: 2000 }
-    );
+    const moved = moveTabToNewLiveWindow(base, "tab:1", windowInfo(20, [movedTab]), { now: 2000 });
     const ledger = new RuntimeFactLedger();
     const reconciler = new RuntimeReconciler();
     const index = buildRuntimeStateIndexForReconciliation(moved);
@@ -192,19 +196,23 @@ describe("runtime reconciliation ledger", () => {
     ledger.recordCommandObserved(transaction.id);
     ledger.recordCommandRelocatedTabs(base, moved, ["tab:1"]);
 
-    expect(reconciler.decideRuntimeTabEcho({
-      state: moved,
-      index,
-      ledger,
-      evidence: updatedEvidence({ ...tabOne, active: false }, ["windowId"])
-    })).toEqual({ action: "absorb", effect: "tabRelocation" });
+    expect(
+      reconciler.decideRuntimeTabEcho({
+        state: moved,
+        index,
+        ledger,
+        evidence: updatedEvidence({ ...tabOne, active: false }, ["windowId"])
+      })
+    ).toEqual({ action: "absorb", effect: "tabRelocation" });
 
-    expect(reconciler.decideRuntimeTabEcho({
-      state: moved,
-      index,
-      ledger,
-      evidence: preCommandMetadata.evidence
-    })).toMatchObject({
+    expect(
+      reconciler.decideRuntimeTabEcho({
+        state: moved,
+        index,
+        ledger,
+        evidence: preCommandMetadata.evidence
+      })
+    ).toMatchObject({
       action: "remapToCurrentScope",
       effect: "tabRelocation",
       evidence: {
@@ -216,12 +224,14 @@ describe("runtime reconciliation ledger", () => {
       }
     });
 
-    expect(reconciler.decideRuntimeTabEcho({
-      state: moved,
-      index,
-      ledger: new RuntimeFactLedger(),
-      evidence: updatedEvidence({ ...tabOne, active: false }, ["windowId"])
-    })).toEqual({ action: "accept" });
+    expect(
+      reconciler.decideRuntimeTabEcho({
+        state: moved,
+        index,
+        ledger: new RuntimeFactLedger(),
+        evidence: updatedEvidence({ ...tabOne, active: false }, ["windowId"])
+      })
+    ).toEqual({ action: "accept" });
   });
 
   it("retires relocation effects when current state no longer matches the command destination", () => {
@@ -230,13 +240,17 @@ describe("runtime reconciliation ledger", () => {
     const reconciler = new RuntimeReconciler();
     ledger.recordCommandRelocatedTab(1, 10, 20);
 
-    expect(reconciler.decideRuntimeTabEcho({
-      state,
-      index: buildRuntimeStateIndexForReconciliation(state),
-      ledger,
-      evidence: updatedEvidence({ ...tabOne, active: false }, ["windowId"])
-    })).toEqual({ action: "accept" });
-    expect(ledger.debugSnapshot().expectedEffects.filter((effect) => effect.kind === "tabRelocation")).toEqual([]);
+    expect(
+      reconciler.decideRuntimeTabEcho({
+        state,
+        index: buildRuntimeStateIndexForReconciliation(state),
+        ledger,
+        evidence: updatedEvidence({ ...tabOne, active: false }, ["windowId"])
+      })
+    ).toEqual({ action: "accept" });
+    expect(
+      ledger.debugSnapshot().expectedEffects.filter((effect) => effect.kind === "tabRelocation")
+    ).toEqual([]);
   });
 
   it("classifies focus command echoes as fast-path effects", () => {
@@ -246,8 +260,14 @@ describe("runtime reconciliation ledger", () => {
 
     ledger.markCommandFocusTarget(1, 10, false);
 
-    expect(ledger.recordNativeTabActivated(1, 10)).toEqual({ action: "applyFastPath", effect: "focus" });
-    expect(ledger.recordNativeWindowFocused(10)).toEqual({ action: "applyFastPath", effect: "focus" });
+    expect(ledger.recordNativeTabActivated(1, 10)).toEqual({
+      action: "applyFastPath",
+      effect: "focus"
+    });
+    expect(ledger.recordNativeWindowFocused(10)).toEqual({
+      action: "applyFastPath",
+      effect: "focus"
+    });
   });
 
   it("treats an empty still-open window snapshot as partial evidence", () => {
@@ -272,7 +292,12 @@ describe("runtime reconciliation ledger", () => {
 
     expect(reconciler.consumeCommandRestoredTabEvent(state, index, ledger, tabOne)).toBe(true);
     expect(reconciler.consumeCommandRestoredTabEvent(state, index, ledger, tabOne)).toBe(true);
-    expect(reconciler.consumeCommandRestoredTabEvent(state, index, ledger, { ...tabOne, title: "Fresh title" })).toBe(false);
+    expect(
+      reconciler.consumeCommandRestoredTabEvent(state, index, ledger, {
+        ...tabOne,
+        title: "Fresh title"
+      })
+    ).toBe(false);
   });
 
   it("filters event-local tabs through command echo and no-op rules", () => {
@@ -282,42 +307,45 @@ describe("runtime reconciliation ledger", () => {
     const reconciler = new RuntimeReconciler();
     ledger.recordCommandRestoredTab(1);
 
-    expect(reconciler.filterEventTabsForReconciliation({
-      eventTabs: [
-        tabOne,
-        tabTwo,
-        { ...tabTwo, title: "Two updated" }
-      ],
-      state,
-      index,
-      ledger
-    }).map((evidence) => evidence.tab.title)).toEqual(["Two updated"]);
+    expect(
+      reconciler
+        .filterEventTabsForReconciliation({
+          eventTabs: [tabOne, tabTwo, { ...tabTwo, title: "Two updated" }],
+          state,
+          index,
+          ledger
+        })
+        .map((evidence) => evidence.tab.title)
+    ).toEqual(["Two updated"]);
   });
 
   it("treats event-local tabs for known runtime ids in new windows as structural changes", () => {
     const base = bootstrapFromWindows([windowInfo(10, [tabOne, tabTwo])], { now: 1000 });
     const movedTab = { ...tabOne, windowId: 20, index: 0, active: true };
-    const moved = moveTabToNewLiveWindow(
-      base,
-      "tab:1",
-      windowInfo(20, [movedTab]),
-      { now: 2000 }
-    );
+    const moved = moveTabToNewLiveWindow(base, "tab:1", windowInfo(20, [movedTab]), { now: 2000 });
     const reconciler = new RuntimeReconciler();
 
-    expect(reconciler.filterEventTabsForReconciliation({
-      eventTabs: [{ ...tabOne, title: "Stale old window" }],
-      state: moved,
-      index: buildRuntimeStateIndexForReconciliation(moved),
-      ledger: new RuntimeFactLedger()
-    }).map((evidence) => evidence.tab.title)).toEqual(["Stale old window"]);
+    expect(
+      reconciler
+        .filterEventTabsForReconciliation({
+          eventTabs: [{ ...tabOne, title: "Stale old window" }],
+          state: moved,
+          index: buildRuntimeStateIndexForReconciliation(moved),
+          ledger: new RuntimeFactLedger()
+        })
+        .map((evidence) => evidence.tab.title)
+    ).toEqual(["Stale old window"]);
 
-    expect(reconciler.filterEventTabsForReconciliation({
-      eventTabs: [{ ...movedTab, title: "Fresh current window" }],
-      state: moved,
-      index: buildRuntimeStateIndexForReconciliation(moved),
-      ledger: new RuntimeFactLedger()
-    }).map((evidence) => evidence.tab.title)).toEqual(["Fresh current window"]);
+    expect(
+      reconciler
+        .filterEventTabsForReconciliation({
+          eventTabs: [{ ...movedTab, title: "Fresh current window" }],
+          state: moved,
+          index: buildRuntimeStateIndexForReconciliation(moved),
+          ledger: new RuntimeFactLedger()
+        })
+        .map((evidence) => evidence.tab.title)
+    ).toEqual(["Fresh current window"]);
   });
 
   it("requires corroboration for created events on already-known tabs", () => {
@@ -326,12 +354,14 @@ describe("runtime reconciliation ledger", () => {
     const ledger = new RuntimeFactLedger();
     const reconciler = new RuntimeReconciler();
 
-    expect(reconciler.eventTabsNeedShapeCorroboration({
-      eventTabs: [createdEvidence({ ...tabTwo, active: true })],
-      state,
-      index,
-      ledger
-    })).toBe(true);
+    expect(
+      reconciler.eventTabsNeedShapeCorroboration({
+        eventTabs: [createdEvidence({ ...tabTwo, active: true })],
+        state,
+        index,
+        ledger
+      })
+    ).toBe(true);
   });
 
   it("keeps plain metadata updates eligible for the fast path", () => {
@@ -340,12 +370,14 @@ describe("runtime reconciliation ledger", () => {
     const ledger = new RuntimeFactLedger();
     const reconciler = new RuntimeReconciler();
 
-    expect(reconciler.eventTabsNeedShapeCorroboration({
-      eventTabs: [updatedEvidence({ ...tabTwo, title: "Two updated" }, ["title"])],
-      state,
-      index,
-      ledger
-    })).toBe(false);
+    expect(
+      reconciler.eventTabsNeedShapeCorroboration({
+        eventTabs: [updatedEvidence({ ...tabTwo, title: "Two updated" }, ["title"])],
+        state,
+        index,
+        ledger
+      })
+    ).toBe(false);
   });
 
   it("uses update field masks to reject stale active/index bundled with metadata", () => {
@@ -354,12 +386,16 @@ describe("runtime reconciliation ledger", () => {
     const ledger = new RuntimeFactLedger();
     const reconciler = new RuntimeReconciler();
 
-    expect(reconciler.eventTabsNeedShapeCorroboration({
-      eventTabs: [updatedEvidence({ ...tabTwo, index: 0, active: true, title: "Two updated" }, ["title"])],
-      state,
-      index,
-      ledger
-    })).toBe(true);
+    expect(
+      reconciler.eventTabsNeedShapeCorroboration({
+        eventTabs: [
+          updatedEvidence({ ...tabTwo, index: 0, active: true, title: "Two updated" }, ["title"])
+        ],
+        state,
+        index,
+        ledger
+      })
+    ).toBe(true);
   });
 
   it("does not corroborate no-op updated evidence", () => {
@@ -368,12 +404,14 @@ describe("runtime reconciliation ledger", () => {
     const ledger = new RuntimeFactLedger();
     const reconciler = new RuntimeReconciler();
 
-    expect(reconciler.eventTabsNeedShapeCorroboration({
-      eventTabs: [updatedEvidence(tabTwo, ["title"])],
-      state,
-      index,
-      ledger
-    })).toBe(false);
+    expect(
+      reconciler.eventTabsNeedShapeCorroboration({
+        eventTabs: [updatedEvidence(tabTwo, ["title"])],
+        state,
+        index,
+        ledger
+      })
+    ).toBe(false);
   });
 
   it("marks tabs as shape-protected when an update event reveals structural drift", () => {
@@ -381,7 +419,10 @@ describe("runtime reconciliation ledger", () => {
     const ledger = new RuntimeFactLedger();
     ledger.reconstructFromState(state, [windowInfo(10, [tabOne, tabTwo])]);
 
-    ledger.recordNativeTabUpdated({ ...tabTwo, index: 0 }, { ...(tabTwo.title !== undefined ? { title: tabTwo.title } : {}) });
+    ledger.recordNativeTabUpdated(
+      { ...tabTwo, index: 0 },
+      { ...(tabTwo.title !== undefined ? { title: tabTwo.title } : {}) }
+    );
 
     expect(ledger.tabNeedsShapeCorroboration(2)).toBe(true);
   });
@@ -393,7 +434,12 @@ describe("runtime reconciliation ledger", () => {
     ledger.reconstructFromState(state, [window]);
     const generation = ledger.currentScopeGeneration();
 
-    ledger.recordNativeWindowBoundsChanged({ id: 10, focused: true, incognito: false, state: "fullscreen" });
+    ledger.recordNativeWindowBoundsChanged({
+      id: 10,
+      focused: true,
+      incognito: false,
+      state: "fullscreen"
+    });
 
     expect(ledger.acceptedWindowShapeFact(10)).toMatchObject({
       windowId: 10,
@@ -463,7 +509,11 @@ describe("runtime reconciliation ledger", () => {
   });
 
   it("reconstructs restart tombstones for old canonical runtime ids", () => {
-    const state = closeTab(bootstrapFromWindows([windowInfo(10, [tabOne, tabTwo])], { now: 1000 }), 1, { now: 2000 });
+    const state = closeTab(
+      bootstrapFromWindows([windowInfo(10, [tabOne, tabTwo])], { now: 1000 }),
+      1,
+      { now: 2000 }
+    );
     const ledger = new RuntimeFactLedger();
     ledger.reconstructFromState(state, [windowInfo(10, [tabTwo])]);
 
@@ -487,12 +537,14 @@ describe("runtime reconciliation ledger", () => {
     ledger.reconstructFromState(state, [windowInfo(10, [tabTwo])]);
     const reconciler = new RuntimeReconciler();
 
-    expect(reconciler.filterEventTabsForReconciliation({
-      eventTabs: [{ ...tabOne, active: false }],
-      state,
-      index: buildRuntimeStateIndexForReconciliation(state),
-      ledger
-    })).toEqual([]);
+    expect(
+      reconciler.filterEventTabsForReconciliation({
+        eventTabs: [{ ...tabOne, active: false }],
+        state,
+        index: buildRuntimeStateIndexForReconciliation(state),
+        ledger
+      })
+    ).toEqual([]);
 
     const normalized = reconciler.normalizeSnapshot({
       windows: [windowInfo(10, [tabTwo, { ...tabOne, index: 1, active: false }])],
@@ -511,35 +563,42 @@ describe("runtime reconciliation ledger", () => {
 
     ledger.recordNativeTabRemoved(1, 10);
     ledger.recordNativeTabRemoved(2, 10);
-    expect(reconciler.classifyWindowClosingTabRemoval(ledger, {
-      windowId: 10,
-      liveTabIds: [1, 2],
-      runtimeWindowOpen: false
-    })).toBe("close-window");
+    expect(
+      reconciler.classifyWindowClosingTabRemoval(ledger, {
+        windowId: 10,
+        liveTabIds: [1, 2],
+        runtimeWindowOpen: false
+      })
+    ).toBe("close-window");
 
-    expect(reconciler.classifyWindowClosingTabRemoval(ledger, {
-      windowId: 10,
-      liveTabIds: [1, 2],
-      runtimeWindowOpen: true
-    })).toBe("wait-for-runtime-window");
+    expect(
+      reconciler.classifyWindowClosingTabRemoval(ledger, {
+        windowId: 10,
+        liveTabIds: [1, 2],
+        runtimeWindowOpen: true
+      })
+    ).toBe("wait-for-runtime-window");
 
     const commandOwned = new RuntimeFactLedger();
     commandOwned.markDeleteClosePlan({ tabIds: [], windowIds: [10] });
-    expect(reconciler.classifyWindowClosingTabRemoval(commandOwned, {
-      windowId: 10,
-      liveTabIds: [1],
-      runtimeWindowOpen: false
-    })).toBe("ignore-command-owned");
+    expect(
+      reconciler.classifyWindowClosingTabRemoval(commandOwned, {
+        windowId: 10,
+        liveTabIds: [1],
+        runtimeWindowOpen: false
+      })
+    ).toBe("ignore-command-owned");
   });
 
   it("classifies missing live tabs from command ownership and restored state", () => {
     const state = bootstrapFromWindows([windowInfo(10, [tabOne, tabTwo])], { now: 1000 });
-    const tabNode = Object.values(state.nodes).find((node) =>
-      node.kind === "tab" &&
-      node.status === "live" &&
-      node.live &&
-      "tabId" in node.live &&
-      node.live.tabId === 2
+    const tabNode = Object.values(state.nodes).find(
+      (node) =>
+        node.kind === "tab" &&
+        node.status === "live" &&
+        node.live &&
+        "tabId" in node.live &&
+        node.live.tabId === 2
     );
     expect(tabNode).toBeDefined();
     const restoredState = {
@@ -566,18 +625,22 @@ describe("runtime reconciliation ledger", () => {
     const reconciler = new RuntimeReconciler();
     const ledger = new RuntimeFactLedger();
 
-    expect(reconciler.missingLiveTabIdsInOpenWindows({
-      windows: [windowInfo(10, [tabOne])],
-      state,
-      ledger
-    })).toEqual([2]);
+    expect(
+      reconciler.missingLiveTabIdsInOpenWindows({
+        windows: [windowInfo(10, [tabOne])],
+        state,
+        ledger
+      })
+    ).toEqual([2]);
 
     ledger.recordMissingLiveTab(2);
-    expect(reconciler.missingLiveTabIdsInOpenWindows({
-      windows: [windowInfo(10, [tabOne])],
-      state,
-      ledger
-    })).toEqual([]);
+    expect(
+      reconciler.missingLiveTabIdsInOpenWindows({
+        windows: [windowInfo(10, [tabOne])],
+        state,
+        ledger
+      })
+    ).toEqual([]);
   });
 
   it("finds missing browser-created live windows without treating saved windows as session-close evidence", () => {
@@ -589,32 +652,38 @@ describe("runtime reconciliation ledger", () => {
       url: "https://three.example/",
       title: "Three"
     };
-    const state = bootstrapFromWindows([
-      windowInfo(10, [tabOne]),
-      windowInfo(20, [tabThree], false)
-    ], { now: 1000 });
+    const state = bootstrapFromWindows(
+      [windowInfo(10, [tabOne]), windowInfo(20, [tabThree], false)],
+      { now: 1000 }
+    );
     const reconciler = new RuntimeReconciler();
     const ledger = new RuntimeFactLedger();
 
-    expect(reconciler.missingBrowserCreatedWindowIds({
-      windows: [windowInfo(10, [tabOne])],
-      state,
-      ledger
-    })).toEqual([]);
+    expect(
+      reconciler.missingBrowserCreatedWindowIds({
+        windows: [windowInfo(10, [tabOne])],
+        state,
+        ledger
+      })
+    ).toEqual([]);
 
     ledger.recordBrowserCreatedRuntimeWindow(20);
-    expect(reconciler.missingBrowserCreatedWindowIds({
-      windows: [windowInfo(10, [tabOne])],
-      state,
-      ledger
-    })).toEqual([20]);
+    expect(
+      reconciler.missingBrowserCreatedWindowIds({
+        windows: [windowInfo(10, [tabOne])],
+        state,
+        ledger
+      })
+    ).toEqual([20]);
 
     ledger.recordClosedRuntimeWindow(20, [3]);
-    expect(reconciler.missingBrowserCreatedWindowIds({
-      windows: [windowInfo(10, [tabOne])],
-      state,
-      ledger
-    })).toEqual([]);
+    expect(
+      reconciler.missingBrowserCreatedWindowIds({
+        windows: [windowInfo(10, [tabOne])],
+        state,
+        ledger
+      })
+    ).toEqual([]);
   });
 
   it("finds missing live window scopes from complete session snapshots", () => {
@@ -626,32 +695,38 @@ describe("runtime reconciliation ledger", () => {
       url: "https://three.example/",
       title: "Three"
     };
-    const state = bootstrapFromWindows([
-      windowInfo(10, [tabOne]),
-      windowInfo(20, [tabThree], false)
-    ], { now: 1000 });
+    const state = bootstrapFromWindows(
+      [windowInfo(10, [tabOne]), windowInfo(20, [tabThree], false)],
+      { now: 1000 }
+    );
     const reconciler = new RuntimeReconciler();
     const ledger = new RuntimeFactLedger();
 
-    expect(reconciler.missingLiveWindowIds({
-      windows: [windowInfo(10, [tabOne])],
-      state,
-      ledger
-    })).toEqual([20]);
+    expect(
+      reconciler.missingLiveWindowIds({
+        windows: [windowInfo(10, [tabOne])],
+        state,
+        ledger
+      })
+    ).toEqual([20]);
 
     const movedTabThree = { ...tabThree, windowId: 10, index: 1, active: false };
-    expect(reconciler.missingLiveWindowIds({
-      windows: [windowInfo(10, [tabOne, movedTabThree])],
-      state,
-      ledger
-    })).toEqual([]);
+    expect(
+      reconciler.missingLiveWindowIds({
+        windows: [windowInfo(10, [tabOne, movedTabThree])],
+        state,
+        ledger
+      })
+    ).toEqual([]);
 
     ledger.recordClosedRuntimeWindow(20, [3]);
-    expect(reconciler.missingLiveWindowIds({
-      windows: [windowInfo(10, [tabOne])],
-      state,
-      ledger
-    })).toEqual([]);
+    expect(
+      reconciler.missingLiveWindowIds({
+        windows: [windowInfo(10, [tabOne])],
+        state,
+        ledger
+      })
+    ).toEqual([]);
   });
 
   it("classifies corroborated missing live windows by reconstructed provenance", () => {
@@ -663,18 +738,23 @@ describe("runtime reconciliation ledger", () => {
       url: "https://three.example/",
       title: "Three"
     };
-    const state = bootstrapFromWindows([
-      windowInfo(10, [tabOne]),
-      windowInfo(20, [tabThree], false)
-    ], { now: 1000 });
+    const state = bootstrapFromWindows(
+      [windowInfo(10, [tabOne]), windowInfo(20, [tabThree], false)],
+      { now: 1000 }
+    );
     const reconciler = new RuntimeReconciler();
     const savedLedger = new RuntimeFactLedger();
-    savedLedger.reconstructFromState(state, [windowInfo(10, [tabOne]), windowInfo(20, [tabThree], false)]);
+    savedLedger.reconstructFromState(state, [
+      windowInfo(10, [tabOne]),
+      windowInfo(20, [tabThree], false)
+    ]);
 
-    expect(reconciler.classifyMissingLiveWindowRemoval(state, savedLedger, {
-      windowId: 20,
-      hasRecentClosedWindowSession: false
-    })).toBe("close-window");
+    expect(
+      reconciler.classifyMissingLiveWindowRemoval(state, savedLedger, {
+        windowId: 20,
+        hasRecentClosedWindowSession: false
+      })
+    ).toBe("close-window");
 
     const browserCreatedState = {
       ...state,
@@ -692,10 +772,12 @@ describe("runtime reconciliation ledger", () => {
       windowInfo(20, [tabThree], false)
     ]);
 
-    expect(reconciler.classifyMissingLiveWindowRemoval(browserCreatedState, browserLedger, {
-      windowId: 20,
-      hasRecentClosedWindowSession: false
-    })).toBe("close-window");
+    expect(
+      reconciler.classifyMissingLiveWindowRemoval(browserCreatedState, browserLedger, {
+        windowId: 20,
+        hasRecentClosedWindowSession: false
+      })
+    ).toBe("close-window");
 
     const commandRestoredState = {
       ...state,
@@ -714,32 +796,31 @@ describe("runtime reconciliation ledger", () => {
       windowInfo(20, [tabThree], false)
     ]);
 
-    expect(reconciler.classifyMissingLiveWindowRemoval(commandRestoredState, commandRestoredLedger, {
-      windowId: 20,
-      hasRecentClosedWindowSession: false
-    })).toBe("delete-tabs");
+    expect(
+      reconciler.classifyMissingLiveWindowRemoval(commandRestoredState, commandRestoredLedger, {
+        windowId: 20,
+        hasRecentClosedWindowSession: false
+      })
+    ).toBe("delete-tabs");
   });
 
   it("finds live tabs that appear in the wrong runtime window snapshot", () => {
     const base = bootstrapFromWindows([windowInfo(10, [tabOne, tabTwo])], { now: 1000 });
     const movedTab = { ...tabOne, windowId: 20, index: 0, active: true };
-    const moved = moveTabToNewLiveWindow(
-      base,
-      "tab:1",
-      windowInfo(20, [movedTab]),
-      { now: 2000 }
-    );
+    const moved = moveTabToNewLiveWindow(base, "tab:1", windowInfo(20, [movedTab]), { now: 2000 });
     const reconciler = new RuntimeReconciler();
 
-    expect(reconciler.mismatchedLiveTabIdsInWindows({
-      windows: [
-        windowInfo(10, [{ ...tabOne, active: false }, tabTwo], false),
-        windowInfo(20, [], true)
-      ],
-      state: moved,
-      index: buildRuntimeStateIndexForReconciliation(moved),
-      ledger: new RuntimeFactLedger()
-    })).toEqual([1]);
+    expect(
+      reconciler.mismatchedLiveTabIdsInWindows({
+        windows: [
+          windowInfo(10, [{ ...tabOne, active: false }, tabTwo], false),
+          windowInfo(20, [], true)
+        ],
+        state: moved,
+        index: buildRuntimeStateIndexForReconciliation(moved),
+        ledger: new RuntimeFactLedger()
+      })
+    ).toEqual([1]);
   });
 
   it("records command transaction provenance for partial side-effect recovery", () => {
@@ -809,7 +890,9 @@ describe("runtime reconciliation ledger", () => {
   });
 
   it("resolves durable and runtime-only window provenance before canonical fallback", () => {
-    const state = bootstrapFromWindows([windowInfo(21, [{ ...tabOne, windowId: 21 }])], { now: 1000 });
+    const state = bootstrapFromWindows([windowInfo(21, [{ ...tabOne, windowId: 21 }])], {
+      now: 1000
+    });
     const explicitBrowserNode = {
       ...state.nodes["window:21"]!,
       runtimeProvenance: "browserCreated" as const
@@ -828,35 +911,45 @@ describe("runtime reconciliation ledger", () => {
     };
     const ledger = new RuntimeFactLedger();
 
-    expect(ledger.resolveRuntimeWindowScopeProvenance({
-      runtimeWindowId: 21,
-      outlineWindowNode: explicitBrowserNode,
-      hasRuntimeWindow: true,
-      runtimeOnly: false
-    })).toBe("browserCreated");
-    expect(ledger.resolveRuntimeWindowScopeProvenance({
-      runtimeWindowId: 21,
-      outlineWindowNode: explicitCommandNode,
-      hasRuntimeWindow: true,
-      runtimeOnly: false
-    })).toBe("commandCreated");
-    expect(ledger.resolveRuntimeWindowScopeProvenance({
-      runtimeWindowId: 21,
-      outlineWindowNode: restoredNode,
-      hasRuntimeWindow: true,
-      runtimeOnly: false
-    })).toBe("restored");
-    expect(ledger.resolveRuntimeWindowScopeProvenance({
-      runtimeWindowId: 22,
-      hasRuntimeWindow: true,
-      runtimeOnly: true
-    })).toBe("browserCreated");
-    expect(ledger.resolveRuntimeWindowScopeProvenance({
-      runtimeWindowId: 21,
-      outlineWindowNode: nestedCanonicalNode,
-      hasRuntimeWindow: true,
-      runtimeOnly: false
-    })).toBe("commandCreated");
+    expect(
+      ledger.resolveRuntimeWindowScopeProvenance({
+        runtimeWindowId: 21,
+        outlineWindowNode: explicitBrowserNode,
+        hasRuntimeWindow: true,
+        runtimeOnly: false
+      })
+    ).toBe("browserCreated");
+    expect(
+      ledger.resolveRuntimeWindowScopeProvenance({
+        runtimeWindowId: 21,
+        outlineWindowNode: explicitCommandNode,
+        hasRuntimeWindow: true,
+        runtimeOnly: false
+      })
+    ).toBe("commandCreated");
+    expect(
+      ledger.resolveRuntimeWindowScopeProvenance({
+        runtimeWindowId: 21,
+        outlineWindowNode: restoredNode,
+        hasRuntimeWindow: true,
+        runtimeOnly: false
+      })
+    ).toBe("restored");
+    expect(
+      ledger.resolveRuntimeWindowScopeProvenance({
+        runtimeWindowId: 22,
+        hasRuntimeWindow: true,
+        runtimeOnly: true
+      })
+    ).toBe("browserCreated");
+    expect(
+      ledger.resolveRuntimeWindowScopeProvenance({
+        runtimeWindowId: 21,
+        outlineWindowNode: nestedCanonicalNode,
+        hasRuntimeWindow: true,
+        runtimeOnly: false
+      })
+    ).toBe("commandCreated");
   });
 
   it("keeps removed tab tombstones ahead of installed-state rebuilds", () => {
@@ -884,10 +977,14 @@ describe("runtime reconciliation ledger", () => {
     ledger.reconstructFromState(state, [windowInfo(10, [tabOne, tabTwo])]);
 
     expect(ledger.windowScopesMatchRuntimeWindows([windowInfo(10, [tabOne, tabTwo])])).toBe(true);
-    expect(ledger.windowScopesMatchRuntimeWindows([windowInfo(10, [
-      { ...tabTwo, index: 0 },
-      { ...tabOne, index: 1 }
-    ])])).toBe(false);
+    expect(
+      ledger.windowScopesMatchRuntimeWindows([
+        windowInfo(10, [
+          { ...tabTwo, index: 0 },
+          { ...tabOne, index: 1 }
+        ])
+      ])
+    ).toBe(false);
   });
 
   it("updates touched installed-state window scopes without rebuilding unrelated scopes", () => {
@@ -896,7 +993,9 @@ describe("runtime reconciliation ledger", () => {
     const ledger = new RuntimeFactLedger();
     ledger.reconstructFromState(state, [windowInfo(10, [tabOne, tabTwo])]);
 
-    expect(ledger.updateWindowScopesFromStateTransition(state, moved, ["tab:2", "window:10"])).toBe(true);
+    expect(ledger.updateWindowScopesFromStateTransition(state, moved, ["tab:2", "window:10"])).toBe(
+      true
+    );
 
     expect(ledger.windowScope(10)?.tabOrder).toEqual([2, 1]);
     expect(ledger.acceptedWindowShapeFact(10)?.tabOrder).toEqual([2, 1]);
@@ -914,10 +1013,12 @@ describe("runtime reconciliation ledger", () => {
     ledger.reconstructFromState(state, [windowInfo(10, [tabOne, tabTwo])]);
 
     const nested = moveNode(state, "tab:2", { parentId: "tab:1", index: 0, now: 2000 });
-    ledger.reconstructFromState(nested, [windowInfo(10, [
-      { ...tabTwo, index: 0 },
-      { ...tabOne, index: 1 }
-    ])]);
+    ledger.reconstructFromState(nested, [
+      windowInfo(10, [
+        { ...tabTwo, index: 0 },
+        { ...tabOne, index: 1 }
+      ])
+    ]);
 
     const moved = moveTabToNewLiveWindow(
       nested,
@@ -1034,7 +1135,7 @@ describe("runtime window scope index", () => {
       ignoredTabIds: new Set([2]),
       ignoredWindowIds: new Set<number>(),
       resolveProvenance: ({ runtimeOnly, outlineWindowNode }) =>
-        runtimeOnly ? "browserCreated" : outlineWindowNode?.runtimeProvenance ?? "saved"
+        runtimeOnly ? "browserCreated" : (outlineWindowNode?.runtimeProvenance ?? "saved")
     });
 
     expect(scopes.scopeForWindow(10)?.tabOrder).toEqual([1]);
@@ -1107,7 +1208,10 @@ describe("runtime window scope index", () => {
 
   it("routes moved runtime tabs through their current window scope", () => {
     const destinationTab = { ...tabTwo, windowId: 20, index: 0 };
-    const base = bootstrapFromWindows([windowInfo(10, [tabOne]), windowInfo(20, [destinationTab])], { now: 1000 });
+    const base = bootstrapFromWindows(
+      [windowInfo(10, [tabOne]), windowInfo(20, [destinationTab])],
+      { now: 1000 }
+    );
     const movedTab = { ...tabOne, windowId: 20, index: 1, active: false };
     const state = {
       ...base,
@@ -1131,10 +1235,7 @@ describe("runtime window scope index", () => {
     const scopes = new RuntimeWindowScopeIndex();
     scopes.rebuild({
       state,
-      windows: [
-        windowInfo(10, []),
-        windowInfo(20, [destinationTab, movedTab])
-      ]
+      windows: [windowInfo(10, []), windowInfo(20, [destinationTab, movedTab])]
     });
 
     expect(scopes.scopeForTab(1)?.runtimeWindowId).toBe(20);

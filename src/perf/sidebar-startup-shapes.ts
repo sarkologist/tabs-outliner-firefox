@@ -6,13 +6,14 @@ export const SIDEBAR_STARTUP_SHAPES = [
   "real-browser-20260526"
 ] as const;
 
-export type SidebarStartupShape = typeof SIDEBAR_STARTUP_SHAPES[number];
+export type SidebarStartupShape = (typeof SIDEBAR_STARTUP_SHAPES)[number];
 
 export const DEFAULT_CLOSED_HEAVY_TAB_NODES = 50_000;
 export const DEFAULT_ORDER_PAGE_HEAVY_TAB_NODES = 19_433;
 export const ORDER_PAGE_HEAVY_SECTION_GROUPS = 100;
 export const ORDER_PAGE_HEAVY_LEAF_GROUPS = 6_961;
-export const ORDER_PAGE_HEAVY_PARENT_COUNT = 1 + ORDER_PAGE_HEAVY_SECTION_GROUPS + ORDER_PAGE_HEAVY_LEAF_GROUPS;
+export const ORDER_PAGE_HEAVY_PARENT_COUNT =
+  1 + ORDER_PAGE_HEAVY_SECTION_GROUPS + ORDER_PAGE_HEAVY_LEAF_GROUPS;
 export const ORDER_PAGE_HEAVY_ORDER_PAGE_SIZE = 1_024;
 
 export type SidebarStartupShapeOptions = {

@@ -67,8 +67,10 @@ export function buildOutlineLookup(state: OutlineState): OutlineLookup {
     liveWindowNodeIdsByRuntimeId,
     liveTabProjectionsByWindowNodeId: ownerWindowScan.liveTabProjectionsByWindowNodeId,
     closedTabNodeIdsByUrl,
-    closedRestoreCandidateCountsByWindowNodeId: ownerWindowScan.closedRestoreCandidateCountsByWindowNodeId,
-    windowNodeIdsWithClosedRestoreCandidates: ownerWindowScan.windowNodeIdsWithClosedRestoreCandidates,
+    closedRestoreCandidateCountsByWindowNodeId:
+      ownerWindowScan.closedRestoreCandidateCountsByWindowNodeId,
+    windowNodeIdsWithClosedRestoreCandidates:
+      ownerWindowScan.windowNodeIdsWithClosedRestoreCandidates,
     ownerWindowNodeIdsByNodeId: ownerWindowScan.ownerWindowNodeIdsByNodeId
   };
 }
@@ -144,7 +146,9 @@ function drainOwnerWindowScanStack(
         } else if (isLiveTabNode(node)) {
           const ownerWindow = state.nodes[ownerWindowNodeId];
           const targetWindowId =
-            ownerWindow?.live && "windowId" in ownerWindow.live ? ownerWindow.live.windowId : node.live.windowId;
+            ownerWindow?.live && "windowId" in ownerWindow.live
+              ? ownerWindow.live.windowId
+              : node.live.windowId;
           scan.liveTabProjectionsByWindowNodeId.get(ownerWindowNodeId)?.push({
             tabId: node.live.tabId,
             windowId: targetWindowId
@@ -181,10 +185,16 @@ function unvisitedComponentRootId(
   }
 }
 
-function isLiveTabNode(node: OutlineNode): node is OutlineNode & { live: { tabId: number; windowId: number } } {
-  return Boolean(node.kind === "tab" && node.status === "live" && node.live && "tabId" in node.live);
+function isLiveTabNode(
+  node: OutlineNode
+): node is OutlineNode & { live: { tabId: number; windowId: number } } {
+  return Boolean(
+    node.kind === "tab" && node.status === "live" && node.live && "tabId" in node.live
+  );
 }
 
 function isLiveWindowNode(node: OutlineNode): node is OutlineNode & { live: { windowId: number } } {
-  return Boolean(node.kind === "window" && node.status === "live" && node.live && "windowId" in node.live);
+  return Boolean(
+    node.kind === "window" && node.status === "live" && node.live && "windowId" in node.live
+  );
 }

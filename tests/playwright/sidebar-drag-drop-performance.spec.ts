@@ -20,46 +20,52 @@ test.describe("sidebar drag/drop performance", () => {
       await window.tabsOutlinerProfile?.clear();
     });
 
-    const result = await page.evaluate(async ({ samples, targetId }) => {
-      const row = document.querySelector(`.node[data-node-id="${CSS.escape(targetId)}"] > .node-row`);
-      if (!(row instanceof HTMLElement)) {
-        throw new Error(`Missing target row for ${targetId}`);
-      }
+    const result = await page.evaluate(
+      async ({ samples, targetId }) => {
+        const row = document.querySelector(
+          `.node[data-node-id="${CSS.escape(targetId)}"] > .node-row`
+        );
+        if (!(row instanceof HTMLElement)) {
+          throw new Error(`Missing target row for ${targetId}`);
+        }
 
-      const rect = row.getBoundingClientRect();
-      const durations: number[] = [];
-      for (let index = 0; index < samples; index += 1) {
-        const event = new PointerEvent("pointerover", {
-          bubbles: true,
-          clientX: rect.left + 20,
-          clientY: rect.top + rect.height / 2,
-          pointerType: "mouse"
-        });
-        const startedAt = performance.now();
-        row.dispatchEvent(event);
-        durations.push(performance.now() - startedAt);
-      }
+        const rect = row.getBoundingClientRect();
+        const durations: number[] = [];
+        for (let index = 0; index < samples; index += 1) {
+          const event = new PointerEvent("pointerover", {
+            bubbles: true,
+            clientX: rect.left + 20,
+            clientY: rect.top + rect.height / 2,
+            pointerType: "mouse"
+          });
+          const startedAt = performance.now();
+          row.dispatchEvent(event);
+          durations.push(performance.now() - startedAt);
+        }
 
-      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
-      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+        await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+        await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
 
-      const sorted = [...durations].sort((left, right) => left - right);
-      const percentile = (ratio: number) => sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * ratio))] ?? 0;
-      const snapshot = await window.tabsOutlinerProfile?.snapshot();
-      const summary = await window.tabsOutlinerProfile?.summary();
-      const hoverEntries =
-        snapshot?.sidebar.entries.filter((entry) => entry.name === "sidebar.hoverGuide") ?? [];
+        const sorted = [...durations].sort((left, right) => left - right);
+        const percentile = (ratio: number) =>
+          sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * ratio))] ?? 0;
+        const snapshot = await window.tabsOutlinerProfile?.snapshot();
+        const summary = await window.tabsOutlinerProfile?.summary();
+        const hoverEntries =
+          snapshot?.sidebar.entries.filter((entry) => entry.name === "sidebar.hoverGuide") ?? [];
 
-      return {
-        samples,
-        avgMs: durations.reduce((sum, value) => sum + value, 0) / durations.length,
-        p50Ms: percentile(0.5),
-        p95Ms: percentile(0.95),
-        maxMs: sorted.at(-1) ?? 0,
-        hoverGuide: summary?.find((row) => row.name === "sidebar.hoverGuide"),
-        hoverEntries: hoverEntries.map((entry) => entry.detail)
-      };
-    }, { samples: HOVER_SAMPLES, targetId: "window:1" });
+        return {
+          samples,
+          avgMs: durations.reduce((sum, value) => sum + value, 0) / durations.length,
+          p50Ms: percentile(0.5),
+          p95Ms: percentile(0.95),
+          maxMs: sorted.at(-1) ?? 0,
+          hoverGuide: summary?.find((row) => row.name === "sidebar.hoverGuide"),
+          hoverEntries: hoverEntries.map((entry) => entry.detail)
+        };
+      },
+      { samples: HOVER_SAMPLES, targetId: "window:1" }
+    );
 
     await testInfo.attach("hover-guide-50k-profile.json", {
       body: JSON.stringify(result, null, 2),
@@ -69,11 +75,13 @@ test.describe("sidebar drag/drop performance", () => {
 
     expect(result.p95Ms).toBeLessThan(4);
     expect(result.hoverGuide?.maxMs).toBeLessThan(8);
-    expect(result.hoverEntries).toContainEqual(expect.objectContaining({
-      skipped: true,
-      skipReason: "large-subtree",
-      subtreeRows: TAB_COUNT + 1
-    }));
+    expect(result.hoverEntries).toContainEqual(
+      expect.objectContaining({
+        skipped: true,
+        skipReason: "large-subtree",
+        subtreeRows: TAB_COUNT + 1
+      })
+    );
     expect(issues).toEqual([]);
   });
 
@@ -88,19 +96,23 @@ test.describe("sidebar drag/drop performance", () => {
     });
 
     const result = await page.evaluate(async () => {
-      const row = document.querySelector(`.node[data-node-id="${CSS.escape("window:1")}"] > .node-row`);
+      const row = document.querySelector(
+        `.node[data-node-id="${CSS.escape("window:1")}"] > .node-row`
+      );
       const viewport = document.querySelector("main");
       if (!(row instanceof HTMLElement) || !(viewport instanceof HTMLElement)) {
         throw new Error("Missing sidebar row or viewport");
       }
 
       const rect = row.getBoundingClientRect();
-      row.dispatchEvent(new PointerEvent("pointerover", {
-        bubbles: true,
-        clientX: rect.left + 20,
-        clientY: rect.top + rect.height / 2,
-        pointerType: "mouse"
-      }));
+      row.dispatchEvent(
+        new PointerEvent("pointerover", {
+          bubbles: true,
+          clientX: rect.left + 20,
+          clientY: rect.top + rect.height / 2,
+          pointerType: "mouse"
+        })
+      );
       await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
 
       viewport.scrollTop = 4000;
@@ -133,18 +145,24 @@ test.describe("sidebar drag/drop performance", () => {
     expect(result.scrollTop).toBeGreaterThan(0);
     expect(result.hoverGuide?.maxMs).toBeLessThan(8);
     expect(result.virtualRows?.maxMs).toBeLessThan(16);
-    expect(result.hoverEntries).toContainEqual(expect.objectContaining({
-      reason: "scroll",
-      skipped: true,
-      skipReason: "clear"
-    }));
-    expect(result.virtualRowsEntries).toContainEqual(expect.objectContaining({
-      hoverGuideActive: false
-    }));
+    expect(result.hoverEntries).toContainEqual(
+      expect.objectContaining({
+        reason: "scroll",
+        skipped: true,
+        skipReason: "clear"
+      })
+    );
+    expect(result.virtualRowsEntries).toContainEqual(
+      expect.objectContaining({
+        hoverGuideActive: false
+      })
+    );
     expect(issues).toEqual([]);
   });
 
-  test("profiles queued pointer, hover feedback, and scroll input delay", async ({ page }, testInfo) => {
+  test("profiles queued pointer, hover feedback, and scroll input delay", async ({
+    page
+  }, testInfo) => {
     test.setTimeout(90_000);
     const issues = collectPageIssues(page);
 
@@ -155,7 +173,9 @@ test.describe("sidebar drag/drop performance", () => {
     });
 
     const result = await page.evaluate(async () => {
-      const row = document.querySelector(`.node[data-node-id="${CSS.escape("tab:40")}"] > .node-row`);
+      const row = document.querySelector(
+        `.node[data-node-id="${CSS.escape("tab:40")}"] > .node-row`
+      );
       const viewport = document.querySelector("main");
       if (!(row instanceof HTMLElement) || !(viewport instanceof HTMLElement)) {
         throw new Error("Missing sidebar row or viewport");
@@ -196,39 +216,55 @@ test.describe("sidebar drag/drop performance", () => {
     });
     console.log(`input-delay-profile ${JSON.stringify(result)}`);
 
-    expect(result.summary?.find((row) => row.name === "sidebar.input.pointerDelay")?.maxMs).toBeGreaterThanOrEqual(15);
-    expect(result.summary?.find((row) => row.name === "sidebar.input.hoverFeedbackDelay")?.maxMs).toBeGreaterThanOrEqual(15);
-    expect(result.summary?.find((row) => row.name === "sidebar.input.hoverFrameDelay")?.maxMs).toBeGreaterThanOrEqual(15);
-    expect(result.summary?.find((row) => row.name === "sidebar.input.scrollDelay")?.maxMs).toBeGreaterThanOrEqual(15);
-    expect(result.inputDelayEntries).toContainEqual(expect.objectContaining({
-      name: "sidebar.input.pointerDelay",
-      detail: expect.objectContaining({
-        event: "pointerover",
-        outcome: "hover-row"
+    expect(
+      result.summary?.find((row) => row.name === "sidebar.input.pointerDelay")?.maxMs
+    ).toBeGreaterThanOrEqual(15);
+    expect(
+      result.summary?.find((row) => row.name === "sidebar.input.hoverFeedbackDelay")?.maxMs
+    ).toBeGreaterThanOrEqual(15);
+    expect(
+      result.summary?.find((row) => row.name === "sidebar.input.hoverFrameDelay")?.maxMs
+    ).toBeGreaterThanOrEqual(15);
+    expect(
+      result.summary?.find((row) => row.name === "sidebar.input.scrollDelay")?.maxMs
+    ).toBeGreaterThanOrEqual(15);
+    expect(result.inputDelayEntries).toContainEqual(
+      expect.objectContaining({
+        name: "sidebar.input.pointerDelay",
+        detail: expect.objectContaining({
+          event: "pointerover",
+          outcome: "hover-row"
+        })
       })
-    }));
-    expect(result.inputDelayEntries).toContainEqual(expect.objectContaining({
-      name: "sidebar.input.hoverFeedbackDelay",
-      detail: expect.objectContaining({
-        event: "pointerover",
-        outcome: "hover-row",
-        reason: "pointer"
+    );
+    expect(result.inputDelayEntries).toContainEqual(
+      expect.objectContaining({
+        name: "sidebar.input.hoverFeedbackDelay",
+        detail: expect.objectContaining({
+          event: "pointerover",
+          outcome: "hover-row",
+          reason: "pointer"
+        })
       })
-    }));
-    expect(result.inputDelayEntries).toContainEqual(expect.objectContaining({
-      name: "sidebar.input.hoverFrameDelay",
-      detail: expect.objectContaining({
-        event: "pointerover",
-        outcome: "hover-row",
-        reason: "pointer"
+    );
+    expect(result.inputDelayEntries).toContainEqual(
+      expect.objectContaining({
+        name: "sidebar.input.hoverFrameDelay",
+        detail: expect.objectContaining({
+          event: "pointerover",
+          outcome: "hover-row",
+          reason: "pointer"
+        })
       })
-    }));
-    expect(result.inputDelayEntries).toContainEqual(expect.objectContaining({
-      name: "sidebar.input.scrollDelay",
-      detail: expect.objectContaining({
-        event: "scroll"
+    );
+    expect(result.inputDelayEntries).toContainEqual(
+      expect.objectContaining({
+        name: "sidebar.input.scrollDelay",
+        detail: expect.objectContaining({
+          event: "scroll"
+        })
       })
-    }));
+    );
     expect(issues).toEqual([]);
   });
 
@@ -241,7 +277,9 @@ test.describe("sidebar drag/drop performance", () => {
 
     const result = await page.evaluate(
       ({ samples, targetId }) => {
-        const row = document.querySelector(`.node[data-node-id="${CSS.escape(targetId)}"] > .node-row`);
+        const row = document.querySelector(
+          `.node[data-node-id="${CSS.escape(targetId)}"] > .node-row`
+        );
         if (!(row instanceof HTMLElement)) {
           throw new Error(`Missing target row for ${targetId}`);
         }
@@ -263,7 +301,8 @@ test.describe("sidebar drag/drop performance", () => {
         }
 
         const sorted = [...durations].sort((left, right) => left - right);
-        const percentile = (ratio: number) => sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * ratio))] ?? 0;
+        const percentile = (ratio: number) =>
+          sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * ratio))] ?? 0;
         const marker = document.querySelector<HTMLElement>("[data-testid='drop-marker']");
         const tree = document.querySelector<HTMLElement>("#tree");
         const rowHeight = Number.parseFloat(
@@ -276,9 +315,16 @@ test.describe("sidebar drag/drop performance", () => {
           p50Ms: percentile(0.5),
           p95Ms: percentile(0.95),
           maxMs: sorted.at(-1) ?? 0,
-          markerDepth: marker ? Number.parseInt(marker.style.getPropertyValue("--depth"), 10) : undefined,
+          markerDepth: marker
+            ? Number.parseInt(marker.style.getPropertyValue("--depth"), 10)
+            : undefined,
           markerRowIndex:
-            marker && tree ? Math.round((marker.getBoundingClientRect().top - tree.getBoundingClientRect().top) / rowHeight) : undefined
+            marker && tree
+              ? Math.round(
+                  (marker.getBoundingClientRect().top - tree.getBoundingClientRect().top) /
+                    rowHeight
+                )
+              : undefined
         };
       },
       { samples: DRAGOVER_SAMPLES, targetId: "tab:40" }
@@ -311,58 +357,69 @@ test.describe("sidebar drag/drop performance", () => {
     const totalStartedAt = await page.evaluate(() => performance.now());
     await dragOverBefore(page, "tab:1");
     const dropClientY = await rowClientY(page, "tab:1", "before");
-    const result = await page.locator(nodeRowSelector("tab:1")).evaluate(async (row, { clientY, totalStart }) => {
-      const movedNode = document.querySelector<HTMLElement>(".node[data-node-id='tab:40']");
-      if (!movedNode) {
-        throw new Error("Missing moved row for tab:40");
-      }
-
-      const rowIndexIsUpdated = () => movedNode.getAttribute("data-row-index") === "1";
-      const waitForVisibleUpdate = async (): Promise<number> => {
-        if (rowIndexIsUpdated()) {
-          return performance.now();
+    const result = await page.locator(nodeRowSelector("tab:1")).evaluate(
+      async (row, { clientY, totalStart }) => {
+        const movedNode = document.querySelector<HTMLElement>(".node[data-node-id='tab:40']");
+        if (!movedNode) {
+          throw new Error("Missing moved row for tab:40");
         }
-        await new Promise<void>((resolve, reject) => {
-          const observer = new MutationObserver(() => {
-            if (rowIndexIsUpdated()) {
-              window.clearTimeout(timeout);
-              observer.disconnect();
-              resolve();
-            }
-          });
-          const timeout = window.setTimeout(() => {
-            observer.disconnect();
-            reject(new Error("Timed out waiting for dropped row to become visible at row index 1"));
-          }, 5000);
-          observer.observe(document.body, {
-            childList: true,
-            subtree: true,
-            attributes: true,
-            attributeFilter: ["data-row-index"]
-          });
-        });
-        return performance.now();
-      };
 
-      const dropStart = performance.now();
-      row.dispatchEvent(new DragEvent("drop", {
-        bubbles: true,
-        cancelable: true,
-        clientY,
-        dataTransfer: new DataTransfer()
-      }));
-      const finishedAt = await waitForVisibleUpdate();
-      const profile = (window as typeof window & { __lastMoveProfile?: unknown }).__lastMoveProfile;
-      const summary = await window.tabsOutlinerProfile?.summary();
-      return {
-        elapsedMs: finishedAt - totalStart,
-        dragoverSetupMs: dropStart - totalStart,
-        dropDispatchToVisibleMs: finishedAt - dropStart,
-        profile,
-        summary
-      };
-    }, { clientY: dropClientY, totalStart: totalStartedAt });
-    await expect(page.locator(".node[data-node-id='tab\\:40']")).toHaveAttribute("data-row-index", "1");
+        const rowIndexIsUpdated = () => movedNode.getAttribute("data-row-index") === "1";
+        const waitForVisibleUpdate = async (): Promise<number> => {
+          if (rowIndexIsUpdated()) {
+            return performance.now();
+          }
+          await new Promise<void>((resolve, reject) => {
+            const observer = new MutationObserver(() => {
+              if (rowIndexIsUpdated()) {
+                window.clearTimeout(timeout);
+                observer.disconnect();
+                resolve();
+              }
+            });
+            const timeout = window.setTimeout(() => {
+              observer.disconnect();
+              reject(
+                new Error("Timed out waiting for dropped row to become visible at row index 1")
+              );
+            }, 5000);
+            observer.observe(document.body, {
+              childList: true,
+              subtree: true,
+              attributes: true,
+              attributeFilter: ["data-row-index"]
+            });
+          });
+          return performance.now();
+        };
+
+        const dropStart = performance.now();
+        row.dispatchEvent(
+          new DragEvent("drop", {
+            bubbles: true,
+            cancelable: true,
+            clientY,
+            dataTransfer: new DataTransfer()
+          })
+        );
+        const finishedAt = await waitForVisibleUpdate();
+        const profile = (window as typeof window & { __lastMoveProfile?: unknown })
+          .__lastMoveProfile;
+        const summary = await window.tabsOutlinerProfile?.summary();
+        return {
+          elapsedMs: finishedAt - totalStart,
+          dragoverSetupMs: dropStart - totalStart,
+          dropDispatchToVisibleMs: finishedAt - dropStart,
+          profile,
+          summary
+        };
+      },
+      { clientY: dropClientY, totalStart: totalStartedAt }
+    );
+    await expect(page.locator(".node[data-node-id='tab\\:40']")).toHaveAttribute(
+      "data-row-index",
+      "1"
+    );
 
     await testInfo.attach("drag-drop-50k-drop-profile.json", {
       body: JSON.stringify(result, null, 2),
@@ -427,7 +484,10 @@ async function loadLargeSidebar(page: Page, tabCount: number): Promise<void> {
     window.browser = {
       runtime: {
         sendMessage: async (message: unknown) => {
-          const type = typeof message === "object" && message ? (message as { type?: unknown }).type : undefined;
+          const type =
+            typeof message === "object" && message
+              ? (message as { type?: unknown }).type
+              : undefined;
           if (type === "getState") {
             return structuredClone(state);
           }
@@ -464,28 +524,36 @@ async function loadLargeSidebar(page: Page, tabCount: number): Promise<void> {
             newParent.childIds.splice(boundedIndex, 0, command.nodeId);
             node.parentId = command.parentId;
 
-            const update = oldParent.id === newParent.id
-              ? {
-                  type: "sameParentReorderUpdated",
-                  parentId: newParent.id,
-                  movedNodeId: command.nodeId,
-                  fromIndex: sourceIndex,
-                  toIndex: boundedIndex,
-                  rootIds: [...state.rootIds]
-                }
-              : {
-                  type: "treeStructureUpdated",
-                  deletedNodeIds: [],
-                  updatedNodes: [structuredClone(oldParent), structuredClone(newParent), structuredClone(node)],
-                  rootIds: [...state.rootIds],
-                  deletedClosedCount: 0
-                };
+            const update =
+              oldParent.id === newParent.id
+                ? {
+                    type: "sameParentReorderUpdated",
+                    parentId: newParent.id,
+                    movedNodeId: command.nodeId,
+                    fromIndex: sourceIndex,
+                    toIndex: boundedIndex,
+                    rootIds: [...state.rootIds]
+                  }
+                : {
+                    type: "treeStructureUpdated",
+                    deletedNodeIds: [],
+                    updatedNodes: [
+                      structuredClone(oldParent),
+                      structuredClone(newParent),
+                      structuredClone(node)
+                    ],
+                    rootIds: [...state.rootIds],
+                    deletedClosedCount: 0
+                  };
             for (const listener of listeners) {
               listener(structuredClone(update));
             }
             (window as typeof window & { __lastMoveProfile?: unknown }).__lastMoveProfile = {
               commandMs: performance.now() - startedAt,
-              updatedNodes: "updatedNodes" in update ? update.updatedNodes.map((updatedNode) => updatedNode.id) : []
+              updatedNodes:
+                "updatedNodes" in update
+                  ? update.updatedNodes.map((updatedNode) => updatedNode.id)
+                  : []
             };
             return { type: "commandAck", stateChanged: true };
           }
@@ -507,7 +575,9 @@ async function loadLargeSidebar(page: Page, tabCount: number): Promise<void> {
   }, tabCount);
 
   await page.goto("/sidebar/sidebar.html");
-  await expect(page.locator("#state-count")).toHaveText(`${tabCount + 1} items / 0 saved`, { timeout: 60_000 });
+  await expect(page.locator("#state-count")).toHaveText(`${tabCount + 1} items / 0 saved`, {
+    timeout: 60_000
+  });
   await expect(page.locator(nodeRowSelector("tab:40"))).toBeVisible();
 }
 
@@ -554,7 +624,10 @@ function collectPageIssues(page: Page): ConsoleIssue[] {
     issues.push({ kind: "pageerror", text: error.message });
   });
   page.on("requestfailed", (request) => {
-    issues.push({ kind: "requestfailed", text: `${request.url()} ${request.failure()?.errorText ?? ""}` });
+    issues.push({
+      kind: "requestfailed",
+      text: `${request.url()} ${request.failure()?.errorText ?? ""}`
+    });
   });
   return issues;
 }

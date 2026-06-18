@@ -8,11 +8,7 @@ const REPO_ROOT = path.resolve(SCRIPT_DIR, "..");
 const DEFAULT_BUDGET_FILE = path.join(SCRIPT_DIR, "runtime-perf-budgets.json");
 const DEFAULT_TOLERANCE = 0.15;
 
-const TIMING_METRICS = new Set([
-  "firstBroadcastMs",
-  "totalMeasuredMs",
-  "totalWithSaveFlushMs"
-]);
+const TIMING_METRICS = new Set(["firstBroadcastMs", "totalMeasuredMs", "totalWithSaveFlushMs"]);
 
 const DISPLAY_METRICS = [
   "firstBroadcastMs",
@@ -168,7 +164,7 @@ export async function runRuntimePerfGuard(options = {}) {
 
 export function runProfileScenario(scenario, options = {}) {
   const smoke = Boolean(options.smoke);
-  const args = smoke && scenario.smoke?.args ? scenario.smoke.args : scenario.args ?? [];
+  const args = smoke && scenario.smoke?.args ? scenario.smoke.args : (scenario.args ?? []);
   const command = scenario.command
     ? [...scenario.command, ...args]
     : ["pnpm", scenario.pnpmScript, "--", ...args];
@@ -186,12 +182,16 @@ export function runProfileScenario(scenario, options = {}) {
     }
   });
   if (child.status !== 0) {
-    throw new Error([
-      `Runtime perf scenario ${scenario.id} failed with exit ${child.status}`,
-      `$ ${command.join(" ")}`,
-      child.stdout,
-      child.stderr
-    ].filter(Boolean).join("\n"));
+    throw new Error(
+      [
+        `Runtime perf scenario ${scenario.id} failed with exit ${child.status}`,
+        `$ ${command.join(" ")}`,
+        child.stdout,
+        child.stderr
+      ]
+        .filter(Boolean)
+        .join("\n")
+    );
   }
   return {
     command,
@@ -207,14 +207,15 @@ export function formatGuardSummary(summary) {
   ];
   for (const result of summary.results) {
     const status = result.passed ? "PASS" : "FAIL";
-    const metrics = DISPLAY_METRICS
-      .filter((metric) => typeof result.result[metric] === "number")
+    const metrics = DISPLAY_METRICS.filter((metric) => typeof result.result[metric] === "number")
       .map((metric) => `${metric}=${result.result[metric]}`)
       .join(" ");
     lines.push(`${status} ${result.id}${metrics ? ` ${metrics}` : ""}`);
     for (const failure of result.failures) {
       const reportOnly = summary.hardOnly && failure.reason === "timing" ? ", report-only" : "";
-      lines.push(`  ${failure.metric}: ${failure.actual ?? "missing"} > ${failure.limit} (${failure.reason}, budget ${failure.expected}${reportOnly})`);
+      lines.push(
+        `  ${failure.metric}: ${failure.actual ?? "missing"} > ${failure.limit} (${failure.reason}, budget ${failure.expected}${reportOnly})`
+      );
     }
   }
   return `${lines.join("\n")}\n`;
