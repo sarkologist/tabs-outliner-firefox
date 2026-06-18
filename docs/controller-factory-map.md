@@ -134,19 +134,31 @@ unmodified (its 40 backup assertions are the oracle); new `backup-coordinator.te
 the backup primitives and locks the enabled/disabled branches, run-if-due vs run-immediately, the alarm
 scheduling/clearing, and the in-flight guard.
 
+**Then `HistoryLoader` (`history-loader.ts`) — the partial History cut:** the History cluster is _not_
+a disjoint slice (`historyState` is mutated by the core command path `applyHistoryCommand` /
+`recordHistoryEntry`, by boot lifecycle recovery, and by the preference-limit trim), so it stays a
+controller binding. But the two vars touched _only_ by load/warmup — `historyLoadInFlight` +
+`historyWarmupTimer` — and the `ensureHistory` / `warmHistoryCache` / `scheduleHistoryWarmup` functions
+_are_ separable. They move to a `HistoryLoader` exposing `ensure` / `scheduleWarmup`; it reads and seeds
+`historyState` through injected `getHistoryState` / `setHistoryState` callbacks (the shape
+`PersistenceCoordinator` uses for `state`). 7 call sites move; `historyState` and all its core mutations
+are untouched. Verbatim move (the `??=` single-flight rewritten as `?? (assign)` only so the awaited
+value types as `HistoryState`); `controller.test.ts` unmodified; new `history-loader.test.ts` (7 tests)
+locks the lazy single-flight load, the cached short-circuit, the seed, and the warmup-timer guards.
+
 **Remaining seams — honest disposition (diminishing returns from here):**
 
 | Cluster | Verdict | Why |
 |---|---|---|
-| History (`historyState`/`historyLoadInFlight`/`historyWarmupTimer`) | **Entangled — weigh later** | The load/warmup state is separable, but `applyHistoryCommand` advances the canonical state through `installStateTransition` (the core). A `HistoryCoordinator` could own load/warmup only; the command path stays. |
+| History `historyState` mutation path (after the `HistoryLoader` load-slice cut) | **Irreducible — leave** | The load/warmup slice is now extracted (`HistoryLoader`). What remains — `historyState` itself — is mutated by `applyHistoryCommand` / `recordHistoryEntry` (the core command path), boot recovery, and the pref-limit trim; not a disjoint slice. Relocating it behind a setter would thread `set()` through ~7 core sites for little gain. |
 | Sidebar window/profile (`sidebarWindowCreationInFlight`, `fullSizeOutlinerWindowIds`, profile-collection vars) | **Wider seam** | Not one concept: `fullSizeOutlinerWindowIds` is read by the browser event handlers (#3); profile collection is its own thing. Partial cuts only. |
 | Runtime-refresh coalescing (`pendingRuntimeRefresh`, `sessionChangedQueued`, …) + the refresh orchestrator (#5) | **Near-core — leave** | Cohesive ("make state match observed runtime") but it *reconciles into* the canonical state via `installStateTransition`. Extracting it is the reconciler rewrite already ruled out (`reconciliation-state-model.md`: complexity is substantially essential). |
 | State triad + `runtimeFacts` + `installStateTransition` + command-exec (#4) + lifecycle recovery (#2) | **Irreducible core — leave** | The §3 verdict; the clean-room rewrite we declined. |
 
-**Bottom line:** `DiagnosticsCoordinator`, `StorageMaintenanceCoordinator`, and `BackupCoordinator`
-exhaust the cheap, state-owning leaf cuts. What remains is either the irreducible reconciliation/command
-core or wider/entangled seams (history reads core via `installStateTransition`; the refresh orchestrator
-reconciles *into* state; sidebar window/profile is read by the event handlers) — none worth the
-risk-to-value at this point. Fear-reduction here came from named, disjoint, explicitly-wired
+**Bottom line:** `DiagnosticsCoordinator`, `StorageMaintenanceCoordinator`, `BackupCoordinator`, and the
+`HistoryLoader` load-slice exhaust the cleanly-separable cuts. What remains is the irreducible
+reconciliation/command core or wider/entangled seams (the `historyState` mutations live in the command
+path; the refresh orchestrator reconciles *into* state; sidebar window/profile is read by the event
+handlers) — none worth the risk-to-value. Fear-reduction here came from named, disjoint, explicitly-wired
 collaborators with the test net as backstop, not from maximising lines removed. **Stop here** unless a
 specific maintenance need reopens one of the entangled seams.
