@@ -1,20 +1,11 @@
 import type { BrowserAdapter } from "./adapter.js";
-import {
-  AUTOMATIC_BACKUP_ALARM_NAME,
-  AUTOMATIC_BACKUP_INTERVAL_MINUTES,
-  automaticBackupDue,
-  downloadAutomaticBackup,
-  errorText as backupErrorText,
-  loadAutomaticBackupStatus,
-  nextAutomaticBackupTime,
-  saveAutomaticBackupStatus,
-  type AutomaticBackupStatus
-} from "./backups.js";
+import { AUTOMATIC_BACKUP_ALARM_NAME } from "./backups.js";
 import { createBrowserAdapter } from "./browser-adapter.js";
 import { createSidebarBroadcaster } from "./sidebar-broadcaster.js";
 import { createMutationScheduler } from "./mutation-scheduler.js";
 import { createDiagnosticsCoordinator } from "./diagnostics-coordinator.js";
 import { createStorageMaintenanceCoordinator } from "./storage-maintenance-coordinator.js";
+import { createBackupCoordinator } from "./backup-coordinator.js";
 import { outlineStateCountDetail } from "./outline-state-metrics.js";
 import { createPersistenceCoordinator, type SaveSchedule } from "./persistence-coordinator.js";
 import {
@@ -444,7 +435,6 @@ export function createBackgroundController(
       completedWindowIds: Set<number>;
     }
   >();
-  let automaticBackupInFlight: Promise<AutomaticBackupStatus> | undefined;
   let sidebarProfileRequestSequence = 0;
   let sidebarWindowCreationInFlight = 0;
   const fullSizeOutlinerWindowIds = new Set<number>();
@@ -512,6 +502,16 @@ export function createBackgroundController(
     recordIncidentLog
   });
 
+  const backup = createBackupCoordinator({
+    api,
+    perfTrace,
+    now,
+    ensureState,
+    ensurePreferences,
+    waitForSchedulerIdle,
+    recordIncidentLog
+  });
+
   api.runtime.onInstalled.addListener(() => {
     return initializeExtensionLifecycle().catch((error) => {
       perfTrace.mark("background.lifecycle.installed.error", { message: errorText(error) });
@@ -543,7 +543,7 @@ export function createBackgroundController(
     if (alarm.name !== AUTOMATIC_BACKUP_ALARM_NAME) {
       return;
     }
-    return handleAutomaticBackupAlarm().catch((error) => {
+    return backup.handleAlarm().catch((error) => {
       perfTrace.mark("background.backup.alarm.error", { message: errorText(error) });
     });
   });
@@ -2250,80 +2250,7 @@ export function createBackgroundController(
   async function initializeExtensionLifecycle(): Promise<void> {
     await ensureState();
     scheduleHistoryWarmup();
-    await configureAutomaticBackups({ runIfDue: true });
-  }
-
-  async function configureAutomaticBackups(
-    options: { runIfDue?: boolean; runImmediately?: boolean } = {}
-  ): Promise<void> {
-    const activePreferences = await ensurePreferences();
-    if (!activePreferences.automaticBackups.enabled) {
-      await api.alarms.clear(AUTOMATIC_BACKUP_ALARM_NAME).catch(() => false);
-      return;
-    }
-
-    let status = await loadAutomaticBackupStatus(api).catch(() => ({}));
-    if (options.runImmediately || (options.runIfDue && automaticBackupDue(status, now()))) {
-      status = await runAutomaticBackup();
-    }
-    scheduleAutomaticBackupAlarm(status);
-  }
-
-  function scheduleAutomaticBackupAlarm(status: AutomaticBackupStatus): void {
-    api.alarms.create(AUTOMATIC_BACKUP_ALARM_NAME, {
-      when: nextAutomaticBackupTime(status, now()),
-      periodInMinutes: AUTOMATIC_BACKUP_INTERVAL_MINUTES
-    });
-  }
-
-  async function handleAutomaticBackupAlarm(): Promise<void> {
-    const activePreferences = await ensurePreferences();
-    if (!activePreferences.automaticBackups.enabled) {
-      await api.alarms.clear(AUTOMATIC_BACKUP_ALARM_NAME).catch(() => false);
-      return;
-    }
-
-    const status = await runAutomaticBackup();
-    scheduleAutomaticBackupAlarm(status);
-  }
-
-  async function runAutomaticBackup(): Promise<AutomaticBackupStatus> {
-    automaticBackupInFlight ??= perfTrace
-      .measureAsync("background.backup.export", async () => {
-        const attemptedAtMs = now();
-        const attemptedAt = new Date(attemptedAtMs).toISOString();
-        const previousStatus = await loadAutomaticBackupStatus(api).catch(() => ({}));
-        await recordIncidentLog("automaticBackupStart", { attemptedAt });
-        try {
-          await waitForSchedulerIdle();
-          await downloadAutomaticBackup(await ensureState(), api, attemptedAtMs);
-          const nextStatus: AutomaticBackupStatus = {
-            ...previousStatus,
-            lastAttemptedBackupAt: attemptedAt,
-            lastSuccessfulBackupAt: attemptedAt
-          };
-          delete nextStatus.lastError;
-          await saveAutomaticBackupStatus(nextStatus, api);
-          await recordIncidentLog("automaticBackupSuccess", { attemptedAt });
-          return nextStatus;
-        } catch (error) {
-          const nextStatus: AutomaticBackupStatus = {
-            ...previousStatus,
-            lastAttemptedBackupAt: attemptedAt,
-            lastError: backupErrorText(error)
-          };
-          await saveAutomaticBackupStatus(nextStatus, api);
-          await recordIncidentLog("automaticBackupFailure", {
-            attemptedAt,
-            error: backupErrorText(error)
-          });
-          return nextStatus;
-        }
-      })
-      .finally(() => {
-        automaticBackupInFlight = undefined;
-      });
-    return automaticBackupInFlight;
+    await backup.configure({ runIfDue: true });
   }
 
   // Open an extension page in its own maximized popup window and track it in
@@ -3563,9 +3490,9 @@ export function createBackgroundController(
     const previousAutomaticBackupsEnabled = previousPreferences.automaticBackups.enabled;
     preferences = nextPreferences;
     if (nextPreferences.automaticBackups.enabled) {
-      await configureAutomaticBackups({ runImmediately: !previousAutomaticBackupsEnabled });
+      await backup.configure({ runImmediately: !previousAutomaticBackupsEnabled });
     } else if (previousAutomaticBackupsEnabled) {
-      await api.alarms.clear(AUTOMATIC_BACKUP_ALARM_NAME).catch(() => false);
+      await backup.disable();
     }
 
     if (!historyState || previousLimit === nextPreferences.undoHistoryLimit) {
