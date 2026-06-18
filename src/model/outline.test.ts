@@ -3585,6 +3585,105 @@ describe("outline model", () => {
     expect(moveSubtreeToBottomTopLevel(state, "missing", { now: 3000 })).toBe(state);
   });
 
+  // The cell that escaped the suite was {move-to-bottom} x {emptied source} x {other roots present}:
+  // the prior move-to-bottom test used a surviving multi-tab window, and the emptied-source test only
+  // exercised move-to-TOP with a single window (top == bottom, so position was unobservable). This
+  // matrix asserts the general postcondition -- whatever top-level node carries the moved subtree must
+  // be the LAST root -- across the source shapes that decide whether a wrapper is created and whether
+  // the source window survives.
+  describe("move-to-bottom-top-level lands the moved subtree at the last root", () => {
+    const liveWindow = { id: 99, focused: true, incognito: false };
+    const scenarios: Array<{
+      name: string;
+      build: () => OutlineState;
+      target: NodeId;
+      usesLiveWindow: boolean;
+      sourceWindowId?: NodeId;
+      sourceSurvives?: boolean;
+    }> = [
+      {
+        name: "live tab that is its window's only tab (source emptied, other roots present)",
+        build: () =>
+          bootstrapFromWindows(
+            liveWindowsFixture([
+              { id: 10, tabs: [1] },
+              { id: 20, tabs: [2, 3] }
+            ]),
+            { now: 1000 }
+          ),
+        target: "tab:1",
+        usesLiveWindow: true,
+        sourceWindowId: "window:10",
+        sourceSurvives: false
+      },
+      {
+        name: "live tab in a window that keeps other tabs (source survives)",
+        build: () =>
+          bootstrapFromWindows(
+            liveWindowsFixture([
+              { id: 10, tabs: [1, 2] },
+              { id: 20, tabs: [3] }
+            ]),
+            { now: 1000 }
+          ),
+        target: "tab:1",
+        usesLiveWindow: true,
+        sourceWindowId: "window:10",
+        sourceSurvives: true
+      },
+      {
+        name: "nested closed tab wraps into a placeholder window (source survives)",
+        build: () =>
+          closeTab(
+            bootstrapFromWindows(
+              liveWindowsFixture([
+                { id: 10, tabs: [1, 2] },
+                { id: 20, tabs: [3] }
+              ]),
+              { now: 1000 }
+            ),
+            2,
+            { now: 2000 }
+          ),
+        target: "tab:2",
+        usesLiveWindow: false,
+        sourceWindowId: "window:10",
+        sourceSurvives: true
+      },
+      {
+        name: "top-level window (group-like, no wrap; reorder to the bottom)",
+        build: () =>
+          bootstrapFromWindows(
+            liveWindowsFixture([
+              { id: 10, tabs: [1] },
+              { id: 20, tabs: [2] }
+            ]),
+            { now: 1000 }
+          ),
+        target: "window:10",
+        usesLiveWindow: false
+      }
+    ];
+
+    for (const scenario of scenarios) {
+      it(scenario.name, () => {
+        const state = scenario.build();
+        const next = moveSubtreeToBottomTopLevel(state, scenario.target, {
+          now: 3000,
+          ...(scenario.usesLiveWindow ? { liveWindow } : {})
+        });
+
+        expect(next).not.toBe(state);
+        expect(rootAncestorIdOf(next, scenario.target)).toBe(next.rootIds.at(-1));
+        if (scenario.sourceWindowId) {
+          expect(Boolean(next.nodes[scenario.sourceWindowId])).toBe(
+            scenario.sourceSurvives ?? true
+          );
+        }
+      });
+    }
+  });
+
   it("repairs cyclic and duplicate child links in stored state", () => {
     const state = bootstrapFromWindows(windows, { now: 1000 });
     state.nodes["tab:1"]!.childIds = ["tab:2", "tab:2", "tab:1", "missing"];
@@ -4934,4 +5033,34 @@ function windowWithTabs(windowId: number, tabCount: number): RuntimeWindow {
       title: `Tab ${index + 1}`
     }))
   };
+}
+
+function liveWindowsFixture(spec: Array<{ id: number; tabs: number[] }>): RuntimeWindow[] {
+  return spec.map((windowSpec, windowIndex) => ({
+    id: windowSpec.id,
+    incognito: false,
+    focused: windowIndex === 0,
+    tabs: windowSpec.tabs.map((tabId, tabIndex) => ({
+      id: tabId,
+      windowId: windowSpec.id,
+      index: tabIndex,
+      active: tabIndex === 0,
+      url: `https://example.test/${tabId}`,
+      title: `Tab ${tabId}`
+    }))
+  }));
+}
+
+function rootAncestorIdOf(state: OutlineState, nodeId: NodeId): NodeId | undefined {
+  let current: NodeId | undefined = nodeId;
+  const seen = new Set<NodeId>();
+  while (current && !seen.has(current)) {
+    seen.add(current);
+    const node: OutlineNode | undefined = state.nodes[current];
+    if (!node || !node.parentId) {
+      return current;
+    }
+    current = node.parentId;
+  }
+  return current;
 }
