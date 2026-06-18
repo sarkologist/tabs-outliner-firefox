@@ -3235,36 +3235,39 @@ function removeRelocatedRowsFromSparseOutlineProjection(
   const rowIndexes = new Set(projection.rows.map((row) => row.index));
   const rowsToRemove = new Set<NodeId>();
   const rowsByNodeId = new Map(projection.rows.map((row) => [row.nodeId, row]));
+
+  // A node whose top-level slot changed -- moved to, from, or within the roots (e.g. "Move to
+  // bottom" makes it the last root, past any unloaded tail) -- is no longer where its visible rows
+  // sit. The childIndex heuristic below only catches nested same-window shuffles and skips top-level
+  // nodes, so without this a relocated group lingered in its old slot until the background refill
+  // landed (slow on a large store). Detect these by an exact rootIds index compare (NOT the
+  // parentRowIndex slot, which is a global row index that does not address a scrolled slice array,
+  // so it would mis-flag unchanged rows) and drop every visible row that IS one of them or DESCENDS
+  // from one, walking state ancestry so a slice starting inside the moved subtree is covered even
+  // when the moved node's own row scrolled off. The refill repaints them at their new home.
+  const relocatedTopLevelIds = new Set<NodeId>();
   for (const node of update.updatedNodes) {
-    const row = rowsByNodeId.get(node.id);
-    // A node whose parent changed (including to/from the top level) or whose top-level slot moved is
-    // no longer where its visible row sits -- e.g. "Move to bottom" makes it the last root, past
-    // any unloaded tail. The childIndex heuristic below only catches nested same-window shuffles and
-    // skips top-level nodes, so without this a relocated group lingered in its old slot until the
-    // background refill landed (slow on a large store). Drop its whole visible subtree now; the
-    // refill re-renders it at its new position if that intersects the viewport.
-    if (row) {
-      const previousParentId =
-        typeof row.parentRowIndex === "number"
-          ? projection.rows[row.parentRowIndex]?.nodeId
-          : undefined;
-      const parentChanged = previousParentId !== node.parentId;
-      const rootSlotChanged = previousRootIds.indexOf(node.id) !== update.rootIds.indexOf(node.id);
-      if (parentChanged || rootSlotChanged) {
-        const startPosition = projection.rows.indexOf(row);
-        if (startPosition >= 0) {
+    if (previousRootIds.indexOf(node.id) !== update.rootIds.indexOf(node.id)) {
+      relocatedTopLevelIds.add(node.id);
+    }
+  }
+  if (relocatedTopLevelIds.size > 0) {
+    for (const row of projection.rows) {
+      let ancestorId: NodeId | undefined = row.nodeId;
+      const visited = new Set<NodeId>();
+      while (ancestorId && !visited.has(ancestorId)) {
+        if (relocatedTopLevelIds.has(ancestorId)) {
           rowsToRemove.add(row.nodeId);
-          for (let position = startPosition + 1; position < projection.rows.length; position += 1) {
-            const subtreeRow = projection.rows[position];
-            if (!subtreeRow || subtreeRow.depth <= row.depth) {
-              break;
-            }
-            rowsToRemove.add(subtreeRow.nodeId);
-          }
+          break;
         }
-        continue;
+        visited.add(ancestorId);
+        ancestorId = state.nodes[ancestorId]?.parentId;
       }
     }
+  }
+
+  for (const node of update.updatedNodes) {
+    const row = rowsByNodeId.get(node.id);
     const parent = node.parentId ? state.nodes[node.parentId] : undefined;
     if (node.childIds.length > 0) {
       for (const candidate of projection.rows) {

@@ -1065,6 +1065,8 @@ test.describe("sidebar projection hunt", () => {
     await expect(nodeRow(page, "window:named-group")).toBeVisible();
 
     const result = await page.evaluate(async () => {
+      const present = (nodeId: string) =>
+        Boolean(document.querySelector(`[data-node-id='${nodeId}']`));
       const api = projectionHuntApi();
       const sparseBefore = api.sparseRequestCount();
       // Another sidebar moved window:named-group to the bottom (after the unloaded window:tail).
@@ -1074,14 +1076,18 @@ test.describe("sidebar projection hunt", () => {
         sparseRequested: api.sparseRequestCount() - sparseBefore,
         // It is now the last root, past the unloaded tail, so it must leave the top viewport
         // immediately -- not linger in its old slot until a slow background refill lands.
-        stillShowsRelocatedNodeAtTop: Boolean(
-          document.querySelector("[data-node-id='window:named-group']")
-        ),
+        stillShowsRelocatedNodeAtTop: present("window:named-group"),
+        // Its whole visible subtree goes with it -- no orphaned descendants left behind.
+        stillShowsDescendants:
+          present("tab:rare-earth") || present("window:earth") || present("tab:google-maps"),
         visibleRows: api.visibleRows()
       };
     });
 
     expect(result.stillShowsRelocatedNodeAtTop).toBe(false);
+    expect(result.stillShowsDescendants).toBe(false);
+    // The relocation must be applied locally, not deferred to a full re-hydration.
+    expect(result.sparseRequested).toBeGreaterThan(0);
     expect(issues).toEqual([]);
   });
 
