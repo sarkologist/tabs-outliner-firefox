@@ -1483,8 +1483,21 @@ function collectOutlineOrderEntries(state: OutlineState): OutlineOrderEntry[] {
       entry.insideActiveWindow || Boolean(node.kind === "window" && node.active);
     const childrenHiddenByCollapse = entry.hiddenByCollapse || node.collapsed;
     for (let index = node.childIds.length - 1; index >= 0; index -= 1) {
+      const childId = node.childIds[index]!;
+      // `parentId` is authoritative for placement. Skip a stale `childIds` reference whose child no
+      // longer points back here -- e.g. a node relocated to the top level whose old parent's
+      // `childIds` was not updated in a sidebar whose in-memory state diverged (a structural patch
+      // applied the moved node + rootIds, but the stale parent's update never reached this view).
+      // Without this, the visited-dedup renders the node at its stale OLD position (reached first
+      // via this parent) and skips its real root position, so the node looks unmoved. The child is
+      // still rendered wherever its `parentId`/rootIds actually place it; a missing child node is
+      // left for the existing absent-node filter below.
+      const childNode = state.nodes[childId];
+      if (childNode && childNode.parentId !== node.id) {
+        continue;
+      }
       stack.push({
-        nodeId: node.childIds[index]!,
+        nodeId: childId,
         depth: entry.depth + 1,
         hiddenByCollapse: childrenHiddenByCollapse,
         insideActiveWindow: childInsideActiveWindow
