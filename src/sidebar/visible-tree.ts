@@ -374,6 +374,25 @@ export function applyCrossParentLeafMoveTreeStructurePatchToProjection(
     return false;
   }
 
+  // Bail if the patch bundles a window focus change with the move. A leaf move never changes which
+  // window is focused, so the fast path only re-points at the existing active tab. But a
+  // treeStructureUpdated patch may carry unrelated active-flag flips (e.g. a reconcile where the
+  // destination window also gained focus). If any updated window's new active flag disagrees with
+  // whether it currently holds the projection's active tab, a focus flip rode along and which tab is
+  // active must be recomputed across rows the fast path doesn't touch -- that is the rebuild's job.
+  const activeTabWindowNodeId =
+    projection.activeTabNodeId !== undefined
+      ? nearestWindowNodeId(state, projection.activeTabNodeId)
+      : undefined;
+  for (const updatedNode of patch.updatedNodes) {
+    if (
+      updatedNode.kind === "window" &&
+      (updatedNode.active === true) !== (updatedNode.id === activeTabWindowNodeId)
+    ) {
+      return false;
+    }
+  }
+
   const nextMovedNode = state.nodes[movedNode.id];
   const sourceParent = state.nodes[previousParentId];
   const destinationParentId = movedNode.parentId;
@@ -1572,6 +1591,22 @@ function pruneEmptySearchPathRows(
 // tab's current row so the projection matches a fresh rebuild. Callers that can change WHICH node is
 // active (e.g. moving the active tab across windows) must bail to a rebuild instead -- this only
 // re-finds an unchanged active node's row.
+// The window ancestor of a node (or the node itself if it is a window). Used to test whether a
+// patch's window active-flag flips agree with where the projection currently thinks the active tab
+// lives -- a disagreement means a focus change rode along with a move and the fast path must bail.
+function nearestWindowNodeId(state: OutlineState, nodeId: NodeId): NodeId | undefined {
+  let current: OutlineNode | undefined = state.nodes[nodeId];
+  const visited = new Set<NodeId>();
+  while (current && !visited.has(current.id)) {
+    if (current.kind === "window") {
+      return current.id;
+    }
+    visited.add(current.id);
+    current = current.parentId ? state.nodes[current.parentId] : undefined;
+  }
+  return undefined;
+}
+
 function refreshActiveTabRowIndex(projection: VisibleTreeProjection): void {
   if (!projection.activeTabNodeId) {
     return;

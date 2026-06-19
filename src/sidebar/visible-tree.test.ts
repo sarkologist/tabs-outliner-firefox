@@ -675,9 +675,15 @@ describe("cross-parent move repro", () => {
         soakSeedCount: 120,
         soakSteps: 48
       });
+      const pathCounts: Record<string, number> = {};
       for (const seed of config.seeds) {
-        runGeneratedMoveEquivalenceTrace(seed, config.steps);
+        runGeneratedMoveEquivalenceTrace(seed, config.steps, pathCounts);
       }
+      // Guard against the trace passing vacuously: equivalence to a rebuild is only meaningful when
+      // the fast paths actually RUN. If a change makes them always bail, every step would
+      // "rebuild" and trivially match -- so require both targeted fast paths to have been exercised.
+      expect(pathCounts.crossParentLeafMove ?? 0, JSON.stringify(pathCounts)).toBeGreaterThan(0);
+      expect(pathCounts.reorder ?? 0, JSON.stringify(pathCounts)).toBeGreaterThan(0);
     },
     generatedTraceTimeoutMs(10_000, 120_000)
   );
@@ -704,7 +710,11 @@ function applyHydratedTreePatch(
   return "rebuild";
 }
 
-function runGeneratedMoveEquivalenceTrace(seed: number, steps: number): void {
+function runGeneratedMoveEquivalenceTrace(
+  seed: number,
+  steps: number,
+  pathCounts: Record<string, number>
+): void {
   let state = generatedMoveState(seed);
   const rng = seededRandom(seed);
   const history = [`seed ${seed}`];
@@ -727,6 +737,7 @@ function runGeneratedMoveEquivalenceTrace(seed: number, steps: number): void {
       deletedClosedCount: 0
     };
     const appliedPath = applyHydratedTreePatch(operation.next, projection, patch);
+    pathCounts[appliedPath] = (pathCounts[appliedPath] ?? 0) + 1;
     history[history.length - 1] += ` [${appliedPath}]`;
     const result =
       appliedPath !== "rebuild" ? projection : buildVisibleTreeProjection(operation.next, "");
