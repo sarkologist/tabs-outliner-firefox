@@ -2703,8 +2703,21 @@ export function createBackgroundController(
         state = statesEqualIgnoringUpdatedAt(startupBase, guarded.state)
           ? startupBase
           : guarded.state;
-        if (!statesMateriallyEqual(stored, state) || loadedRequiresFullSave) {
+        const startupReconcileChangedState = !statesMateriallyEqual(stored, state);
+        if (startupReconcileChangedState || loadedRequiresFullSave) {
           scheduleStateSave(state, "normal", startupSaveCandidateNodeIds(state));
+        }
+        if (startupReconcileChangedState) {
+          // The cold-wake startup reconcile just absorbed runtime changes that happened while the
+          // event page was suspended (e.g. a tab opened via an external link, or a tab closed)
+          // WITHOUT emitting a structural broadcast -- the later event handler sees them already
+          // applied, so it never sends the insertion/removal. Sidebars connected to the now-dead
+          // worker would stay stale until manually reopened. Nudge any open sidebar to re-sync; on a
+          // cold worker sidebarPorts is empty, so this falls back to runtime.sendMessage and reaches
+          // already-open sidebars via runtime.onMessage. It is a tiny signal (no payload), not a
+          // structural diff, so it avoids the startup-latency and boot-hydration-race costs of
+          // broadcasting the full startup delta.
+          sidebarBroadcaster.broadcast({ type: "stateMayHaveChanged" });
         }
       }
     } else {

@@ -48369,6 +48369,105 @@ describe("background controller lifecycle", () => {
     );
   });
 
+  it("nudges open sidebars to re-sync when the startup reconcile absorbs a tab opened while suspended", async () => {
+    // Models a cold event-page wake: the persisted tree has window 10 with one live tab, but a
+    // second tab was opened (e.g. via an external link) while the worker was suspended. The startup
+    // reconcile merges it in silently -- the later event handler then sees it already present and
+    // never broadcasts the insertion -- so the cold wake must emit a stateMayHaveChanged nudge for
+    // sidebars still connected to the now-dead worker.
+    const storedState: OutlineState = {
+      version: 1,
+      rootIds: ["window:10"],
+      nodes: {
+        "window:10": {
+          id: "window:10",
+          kind: "window",
+          status: "live",
+          childIds: ["tab:1"],
+          title: "Window",
+          active: true,
+          collapsed: false,
+          createdAt: 1000,
+          updatedAt: 1000,
+          live: { windowId: 10 }
+        },
+        "tab:1": {
+          id: "tab:1",
+          kind: "tab",
+          status: "live",
+          parentId: "window:10",
+          childIds: [],
+          title: "One",
+          url: "https://one.example/",
+          active: true,
+          collapsed: false,
+          createdAt: 1000,
+          updatedAt: 1000,
+          live: { tabId: 1, windowId: 10 }
+        }
+      }
+    };
+    const runtime = fakeRuntime(
+      [{ id: 10, focused: true, incognito: false }],
+      [
+        { id: 1, windowId: 10, index: 0, active: true, url: "https://one.example/", title: "One" },
+        { id: 2, windowId: 10, index: 1, active: false, url: "https://two.example/", title: "Two" }
+      ],
+      { initialStorage: outlineStateV3Items(storedState) }
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+
+    const state = await controller.ensureState();
+
+    expect(state.nodes["window:10"]?.childIds).toHaveLength(2);
+    expect(runtime.broadcasts).toContainEqual({ type: "stateMayHaveChanged" });
+  });
+
+  it("does not nudge sidebars when the startup snapshot already matches the runtime", async () => {
+    const storedState: OutlineState = {
+      version: 1,
+      rootIds: ["window:10"],
+      nodes: {
+        "window:10": {
+          id: "window:10",
+          kind: "window",
+          status: "live",
+          childIds: ["tab:1"],
+          title: "Window",
+          active: true,
+          collapsed: false,
+          createdAt: 1000,
+          updatedAt: 1000,
+          live: { windowId: 10 }
+        },
+        "tab:1": {
+          id: "tab:1",
+          kind: "tab",
+          status: "live",
+          parentId: "window:10",
+          childIds: [],
+          title: "One",
+          url: "https://one.example/",
+          active: true,
+          collapsed: false,
+          createdAt: 1000,
+          updatedAt: 1000,
+          live: { tabId: 1, windowId: 10 }
+        }
+      }
+    };
+    const runtime = fakeRuntime(
+      [{ id: 10, focused: true, incognito: false }],
+      [{ id: 1, windowId: 10, index: 0, active: true, url: "https://one.example/", title: "One" }],
+      { initialStorage: outlineStateV3Items(storedState) }
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+
+    await controller.ensureState();
+
+    expect(runtime.broadcasts).not.toContainEqual({ type: "stateMayHaveChanged" });
+  });
+
   it("startup salvages closed v3 nodes instead of bootstrapping over them", async () => {
     const closedChildIds = Array.from({ length: 40 }, (_value, index) => `tab:${index + 100}`);
     const storedState: OutlineState = {
