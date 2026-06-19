@@ -46951,6 +46951,131 @@ describe("background controller lifecycle", () => {
     expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(0);
   });
 
+  it("switches to the existing full-size sidebar when reopened from a regular sidebar", async () => {
+    const runtime = fakeRuntime(
+      [{ id: 10, focused: true, incognito: false }],
+      [{ id: 1, windowId: 10, index: 0, active: true, url: "https://one.example/", title: "One" }]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+
+    // First open from the regular sidebar (window 10): no full-size exists yet -> creates one.
+    await controller.handleMessage({ type: "openSidebarWindow", sourceWindowId: 10 });
+    const popupWindowId = runtime.windows.find((windowInfo) => windowInfo.type === "popup")?.id;
+    if (typeof popupWindowId !== "number") {
+      throw new Error("Expected popup window to be created");
+    }
+    vi.mocked(runtime.api.windows.create).mockClear();
+    vi.mocked(runtime.api.windows.update).mockClear();
+    runtime.broadcasts.length = 0;
+    vi.mocked(runtime.api.storage.local.set).mockClear();
+
+    // Reopen from the regular sidebar: the full-size sidebar already exists -> focus it, don't spawn.
+    const result = await controller.handleMessage({
+      type: "openSidebarWindow",
+      sourceWindowId: 10
+    });
+    await runtime.events.windowFocusChanged.flush();
+
+    expect(result).toEqual({ ok: true });
+    expect(runtime.api.windows.create).not.toHaveBeenCalled();
+    expect(runtime.api.windows.update).toHaveBeenCalledWith(popupWindowId, { focused: true });
+    expect(stateBroadcasts(runtime.broadcasts)).toHaveLength(0);
+    expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(0);
+  });
+
+  it("opens another full-size sidebar when reopened from within a full-size sidebar", async () => {
+    const runtime = fakeRuntime(
+      [{ id: 10, focused: true, incognito: false }],
+      [{ id: 1, windowId: 10, index: 0, active: true, url: "https://one.example/", title: "One" }]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+
+    await controller.handleMessage({ type: "openSidebarWindow", sourceWindowId: 10 });
+    const popupWindowId = runtime.windows.find((windowInfo) => windowInfo.type === "popup")?.id;
+    if (typeof popupWindowId !== "number") {
+      throw new Error("Expected popup window to be created");
+    }
+    vi.mocked(runtime.api.windows.create).mockClear();
+    vi.mocked(runtime.api.windows.update).mockClear();
+
+    // The button was clicked on the full-size sidebar itself -> spawn another instance.
+    const result = await controller.handleMessage({
+      type: "openSidebarWindow",
+      sourceWindowId: popupWindowId
+    });
+
+    expect(result).toEqual({ ok: true });
+    expect(runtime.api.windows.create).toHaveBeenCalledTimes(1);
+    expect(runtime.api.windows.update).not.toHaveBeenCalled();
+    const popupWindows = runtime.windows.filter((windowInfo) => windowInfo.type === "popup");
+    expect(popupWindows).toHaveLength(2);
+  });
+
+  it("switches to the most recently focused full-size sidebar among several", async () => {
+    const runtime = fakeRuntime(
+      [{ id: 10, focused: true, incognito: false }],
+      [{ id: 1, windowId: 10, index: 0, active: true, url: "https://one.example/", title: "One" }]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+
+    // Open the first full-size sidebar from the regular sidebar.
+    await controller.handleMessage({ type: "openSidebarWindow", sourceWindowId: 10 });
+    const firstPopupId = runtime.windows.find((windowInfo) => windowInfo.type === "popup")?.id;
+    if (typeof firstPopupId !== "number") {
+      throw new Error("Expected first popup window");
+    }
+    // Open a second full-size sidebar from within the first one.
+    await controller.handleMessage({ type: "openSidebarWindow", sourceWindowId: firstPopupId });
+    const secondPopupId = runtime.windows
+      .filter((windowInfo) => windowInfo.type === "popup")
+      .map((windowInfo) => windowInfo.id)
+      .find((id) => id !== firstPopupId);
+    if (typeof secondPopupId !== "number") {
+      throw new Error("Expected second popup window");
+    }
+
+    // The user focuses the FIRST full-size sidebar again -> it becomes the most recent.
+    await runtime.events.windowFocusChanged.emit(firstPopupId);
+
+    vi.mocked(runtime.api.windows.create).mockClear();
+    vi.mocked(runtime.api.windows.update).mockClear();
+
+    await controller.handleMessage({ type: "openSidebarWindow", sourceWindowId: 10 });
+
+    expect(runtime.api.windows.create).not.toHaveBeenCalled();
+    expect(runtime.api.windows.update).toHaveBeenCalledWith(firstPopupId, { focused: true });
+  });
+
+  it("opens a fresh full-size sidebar after the tracked one was closed", async () => {
+    const runtime = fakeRuntime(
+      [{ id: 10, focused: true, incognito: false }],
+      [{ id: 1, windowId: 10, index: 0, active: true, url: "https://one.example/", title: "One" }]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+
+    await controller.handleMessage({ type: "openSidebarWindow", sourceWindowId: 10 });
+    const popupWindowId = runtime.windows.find((windowInfo) => windowInfo.type === "popup")?.id;
+    if (typeof popupWindowId !== "number") {
+      throw new Error("Expected popup window to be created");
+    }
+
+    // The full-size sidebar window is closed.
+    await runtime.events.windowRemoved.emit(popupWindowId);
+
+    vi.mocked(runtime.api.windows.create).mockClear();
+    vi.mocked(runtime.api.windows.update).mockClear();
+
+    // Reopening from the regular sidebar must create a new one (nothing to switch to).
+    await controller.handleMessage({ type: "openSidebarWindow", sourceWindowId: 10 });
+
+    expect(runtime.api.windows.update).not.toHaveBeenCalled();
+    expect(runtime.api.windows.create).toHaveBeenCalledTimes(1);
+  });
+
   it("skips the runtime refresh when focus leaves all browser windows (WINDOW_ID_NONE)", async () => {
     const runtime = fakeRuntime(
       [

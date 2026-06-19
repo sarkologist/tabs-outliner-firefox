@@ -437,6 +437,10 @@ export function createBackgroundController(
   let sidebarProfileRequestSequence = 0;
   let sidebarWindowCreationInFlight = 0;
   const fullSizeOutlinerWindowIds = new Set<number>();
+  // Full-size *sidebar* popup window ids in focus order (most recently focused last). A subset of
+  // fullSizeOutlinerWindowIds that excludes the exported-tree viewer popup, so the toolbar button can
+  // switch to the most recently focused full-size sidebar instead of always spawning a new one.
+  const fullSizeSidebarWindowsByFocusRecency: number[] = [];
   const pendingSidebarProfileCollections = new Map<string, PendingSidebarProfileCollection>();
 
   const mutationScheduler = createMutationScheduler({
@@ -801,6 +805,7 @@ export function createBackgroundController(
   api.windows.onRemoved.addListener(async (windowId) => {
     await perfTrace.measureAsync("background.event.windows.onRemoved", { windowId }, async () => {
       if (fullSizeOutlinerWindowIds.delete(windowId)) {
+        forgetFullSizeSidebarWindow(windowId);
         return;
       }
       if (runtimeFacts.recordNativeWindowRemoved(windowId) !== "close-window") {
@@ -836,6 +841,13 @@ export function createBackgroundController(
         // always runs the full O(w log w + n) reconciliation on the single background thread, exactly
         // when the user is switching windows/apps. Skip it; the next real focus event does the work.
         if (windowId === api.windows.WINDOW_ID_NONE) {
+          return;
+        }
+        // A full-size sidebar gaining focus does not change the tab tree (so it is ignored for
+        // reconciliation, like every fullSizeOutlinerWindowIds member), but we record its recency so
+        // the toolbar button can switch back to the most recently focused one.
+        if (fullSizeSidebarWindowsByFocusRecency.includes(windowId)) {
+          noteFullSizeSidebarWindowFocused(windowId);
           return;
         }
         if (await shouldIgnoreSidebarWindowFocus(windowId)) {
@@ -1295,7 +1307,7 @@ export function createBackgroundController(
     }
 
     if (isOpenSidebarWindowMessage(message)) {
-      return openSidebarWindow();
+      return openSidebarWindow(message.sourceWindowId);
     }
 
     if (isOpenImportViewerWindowMessage(message)) {
@@ -2267,7 +2279,11 @@ export function createBackgroundController(
   // fullSizeOutlinerWindowIds. The window is type:"popup" so getNormalWindows filters it out of
   // reconciliation, and the in-flight counter keeps its transient focus from being treated as a
   // real-window focus change. Both the full-size sidebar and the exported-tree viewer use this.
-  async function openTrackedOutlinerPopup(path: string, traceLabel: string): Promise<{ ok: true }> {
+  async function openTrackedOutlinerPopup(
+    path: string,
+    traceLabel: string,
+    onWindowCreated?: (windowId: number) => void
+  ): Promise<{ ok: true }> {
     sidebarWindowCreationInFlight += 1;
     try {
       const windowInfo = await perfTrace.measureAsync(traceLabel, () =>
@@ -2279,14 +2295,67 @@ export function createBackgroundController(
         })
       );
       fullSizeOutlinerWindowIds.add(windowInfo.id);
+      onWindowCreated?.(windowInfo.id);
       return { ok: true };
     } finally {
       sidebarWindowCreationInFlight = Math.max(0, sidebarWindowCreationInFlight - 1);
     }
   }
 
-  function openSidebarWindow(): Promise<{ ok: true }> {
-    return openTrackedOutlinerPopup(SIDEBAR_WINDOW_PATH, "background.sidebarWindow.open");
+  // Move a full-size sidebar window to the most-recently-focused position (or register it if new).
+  function noteFullSizeSidebarWindowFocused(windowId: number): void {
+    const existingIndex = fullSizeSidebarWindowsByFocusRecency.indexOf(windowId);
+    if (existingIndex !== -1) {
+      fullSizeSidebarWindowsByFocusRecency.splice(existingIndex, 1);
+    }
+    fullSizeSidebarWindowsByFocusRecency.push(windowId);
+  }
+
+  function forgetFullSizeSidebarWindow(windowId: number): void {
+    const index = fullSizeSidebarWindowsByFocusRecency.indexOf(windowId);
+    if (index !== -1) {
+      fullSizeSidebarWindowsByFocusRecency.splice(index, 1);
+    }
+  }
+
+  function mostRecentFullSizeSidebarWindowId(): number | undefined {
+    return fullSizeSidebarWindowsByFocusRecency[fullSizeSidebarWindowsByFocusRecency.length - 1];
+  }
+
+  function openNewFullSizeSidebarWindow(): Promise<{ ok: true }> {
+    return openTrackedOutlinerPopup(
+      SIDEBAR_WINDOW_PATH,
+      "background.sidebarWindow.open",
+      noteFullSizeSidebarWindowFocused
+    );
+  }
+
+  async function focusExistingFullSizeSidebarWindow(windowId: number): Promise<{ ok: true }> {
+    try {
+      await api.windows.update(windowId, { focused: true });
+      // Focusing it makes it the most recent; record explicitly so we don't depend on observing the
+      // resulting onFocusChanged event (which we deliberately ignore for reconciliation).
+      noteFullSizeSidebarWindowFocused(windowId);
+      return { ok: true };
+    } catch {
+      // The window was closed between focus order tracking and now; drop it and open a fresh one.
+      forgetFullSizeSidebarWindow(windowId);
+      return openNewFullSizeSidebarWindow();
+    }
+  }
+
+  function openSidebarWindow(sourceWindowId?: number): Promise<{ ok: true }> {
+    // When the click came from within a full-size sidebar itself, always spawn another instance.
+    const clickedFromFullSizeSidebar =
+      typeof sourceWindowId === "number" &&
+      fullSizeSidebarWindowsByFocusRecency.includes(sourceWindowId);
+    if (!clickedFromFullSizeSidebar) {
+      const target = mostRecentFullSizeSidebarWindowId();
+      if (typeof target === "number") {
+        return focusExistingFullSizeSidebarWindow(target);
+      }
+    }
+    return openNewFullSizeSidebarWindow();
   }
 
   function openImportViewerWindow(): Promise<{ ok: true }> {
