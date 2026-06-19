@@ -4162,27 +4162,51 @@ export function createBackgroundController(
     index: RuntimeStateIndex,
     eventEvidence: RuntimeTabEvidence[]
   ): Promise<RuntimeTabEvidence[]> {
-    const needsCorroboration = eventEvidence.some((evidence) =>
-      metadataEvidenceWouldChangeKnownNode(current, index, evidence)
-    );
+    let needsCorroboration = false;
+    let requiresGlobalQuery = false;
+    const corroborationWindowIds = new Set<number>();
+    for (const evidence of eventEvidence) {
+      if (!metadataEvidenceWouldChangeKnownNode(current, index, evidence)) {
+        continue;
+      }
+      needsCorroboration = true;
+      if (typeof evidence.tab.windowId === "number") {
+        corroborationWindowIds.add(evidence.tab.windowId);
+      } else {
+        // A changed tab with no resolvable window id: fall back to the global view rather than
+        // silently skip corroboration.
+        requiresGlobalQuery = true;
+      }
+    }
     if (!needsCorroboration) {
       return eventEvidence;
     }
 
-    // One query may be the event-local stale query result; use the next browser view as the current shape.
+    // The corroboration only ever reads back each changed tab's own fresh row
+    // (currentTabsById.get(evidence.tab.id)), so re-query just the windows those tabs live in
+    // rather than every window. A global all-windows tabs.query is the dominant cost of an
+    // event-echo reconcile on a multi-window session -- it scales with total live tabs, not the
+    // handful that changed. Two reads still defeat the event-local stale-first-query quirk; the
+    // second browser view is the current shape.
+    const queryCorroborationTabs = () =>
+      requiresGlobalQuery || corroborationWindowIds.size === 0
+        ? api.tabs.query({})
+        : Promise.all(
+            [...corroborationWindowIds].map((windowId) => api.tabs.query({ windowId }))
+          ).then((tabsByWindow) => tabsByWindow.flat());
+    const corroborationScope = {
+      eventTabCount: eventEvidence.length,
+      windowCount: requiresGlobalQuery ? ("all" as const) : corroborationWindowIds.size
+    };
     await perfTrace.measureAsync(
       "background.runtime.queryTabs.corroborateEventMetadata.first",
-      {
-        eventTabCount: eventEvidence.length
-      },
-      () => api.tabs.query({})
+      corroborationScope,
+      queryCorroborationTabs
     );
     const currentTabs = await perfTrace.measureAsync(
       "background.runtime.queryTabs.corroborateEventMetadata.second",
-      {
-        eventTabCount: eventEvidence.length
-      },
-      () => api.tabs.query({})
+      corroborationScope,
+      queryCorroborationTabs
     );
     const currentTabsById = new Map(
       currentTabs.filter((tab) => !tab.incognito).map((tab) => [tab.id, tab])

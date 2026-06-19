@@ -47067,6 +47067,52 @@ describe("background controller lifecycle", () => {
     expect(runtime.api.tabs.query).not.toHaveBeenCalled();
   });
 
+  it("scopes the metadata corroboration re-query to the changed tab's window", async () => {
+    const runtime = fakeRuntime(
+      [
+        { id: 10, focused: true, incognito: false },
+        { id: 20, focused: false, incognito: false },
+        { id: 30, focused: false, incognito: false }
+      ],
+      [
+        { id: 1, windowId: 10, index: 0, active: true, url: "https://one.example/", title: "One" },
+        { id: 2, windowId: 20, index: 0, active: true, url: "https://two.example/", title: "Two" },
+        {
+          id: 3,
+          windowId: 30,
+          index: 0,
+          active: true,
+          url: "https://three.example/",
+          title: "Three"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    vi.mocked(runtime.api.tabs.query).mockClear();
+    runtime.broadcasts.length = 0;
+
+    // A title/favicon onUpdated for tab 1 corroborates its fresh metadata with a re-query before
+    // trusting the (possibly event-local stale) change. That corroboration only ever reads back
+    // the changed tab's own row, so it must re-query just that tab's window -- not run a global
+    // all-windows tabs.query, which is the dominant cost of an event-echo reconcile on a
+    // multi-window session (windows 20 and 30 are irrelevant to a metadata change in window 10).
+    await updateTabFromBrowser(
+      runtime,
+      1,
+      { title: "One Updated", favIconUrl: "https://one.example/new-icon.ico" },
+      { awaitListeners: true }
+    );
+    await waitForMacrotask();
+
+    // The metadata still lands on the node...
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(state.nodes["tab:1"]?.title).toBe("One Updated");
+    // ...and it did so via a window-scoped re-query, never a global one.
+    expect(runtime.api.tabs.query).toHaveBeenCalledWith({ windowId: 10 });
+    expect(runtime.api.tabs.query).not.toHaveBeenCalledWith({});
+  });
+
   it("falls back to a full snapshot when a native focus-gain targets an unknown window", async () => {
     const runtime = fakeRuntime(
       [{ id: 10, focused: true, incognito: false }],
