@@ -47063,7 +47063,8 @@ describe("background controller lifecycle", () => {
       throw new Error("Expected popup window to be created");
     }
 
-    // The full-size sidebar window is closed.
+    // The full-size sidebar window is closed (gone from the browser, onRemoved fires).
+    runtime.windows = runtime.windows.filter((windowInfo) => windowInfo.id !== popupWindowId);
     await runtime.events.windowRemoved.emit(popupWindowId);
 
     vi.mocked(runtime.api.windows.create).mockClear();
@@ -47074,6 +47075,43 @@ describe("background controller lifecycle", () => {
 
     expect(runtime.api.windows.update).not.toHaveBeenCalled();
     expect(runtime.api.windows.create).toHaveBeenCalledTimes(1);
+  });
+
+  it("switches to an existing full-size sidebar this background session never opened (post-wake)", async () => {
+    // The non-persistent background is woken on demand and loses all in-memory tracking. Simulate a
+    // full-size sidebar popup that is really open but was opened before the current worker woke: the
+    // controller never created window 999, so its focus-recency list is empty. The click must still
+    // switch to the open popup instead of spawning a duplicate (the reported bug).
+    const sidebarUrl = "moz-extension://extension-id/sidebar/sidebar.html";
+    const runtime = fakeRuntime(
+      [{ id: 10, focused: true, incognito: false }],
+      [{ id: 1, windowId: 10, index: 0, active: true, url: "https://one.example/", title: "One" }]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+
+    // A full-size sidebar popup is open from before the worker woke -- present in the browser but
+    // absent from the freshly-restarted controller's in-memory tracking.
+    runtime.windows.push({ id: 999, focused: false, incognito: false, type: "popup" });
+    runtime.tabs.push({
+      id: 2,
+      windowId: 999,
+      index: 0,
+      active: true,
+      url: sidebarUrl,
+      title: "Tabs Outliner"
+    });
+    vi.mocked(runtime.api.windows.create).mockClear();
+    vi.mocked(runtime.api.windows.update).mockClear();
+
+    const result = await controller.handleMessage({
+      type: "openSidebarWindow",
+      sourceWindowId: 10
+    });
+
+    expect(result).toEqual({ ok: true });
+    expect(runtime.api.windows.create).not.toHaveBeenCalled();
+    expect(runtime.api.windows.update).toHaveBeenCalledWith(999, { focused: true });
   });
 
   it("skips the runtime refresh when focus leaves all browser windows (WINDOW_ID_NONE)", async () => {

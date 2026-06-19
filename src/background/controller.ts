@@ -2318,8 +2318,50 @@ export function createBackgroundController(
     }
   }
 
-  function mostRecentFullSizeSidebarWindowId(): number | undefined {
-    return fullSizeSidebarWindowsByFocusRecency[fullSizeSidebarWindowsByFocusRecency.length - 1];
+  // Find the full-size sidebar windows that are actually open right now, by asking the browser for
+  // popup windows showing the sidebar page. This is authoritative across background suspensions: the
+  // non-persistent background is woken on demand and loses all in-memory state
+  // (fullSizeSidebarWindowsByFocusRecency / fullSizeOutlinerWindowIds), so trusting only that
+  // tracking made the toolbar button spawn a duplicate every time the worker had slept since the
+  // sidebar was opened.
+  async function findOpenFullSizeSidebarWindows(): Promise<
+    Array<{ windowId: number; focused: boolean }>
+  > {
+    const sidebarUrl = api.runtime.getURL(SIDEBAR_WINDOW_PATH);
+    const windows = await api.windows
+      .getAll({ populate: true, windowTypes: ["popup"] })
+      .catch(() => []);
+    const open: Array<{ windowId: number; focused: boolean }> = [];
+    for (const windowInfo of windows) {
+      const showsSidebar = (windowInfo.tabs ?? []).some(
+        (tab) => tab.url?.startsWith(sidebarUrl) === true
+      );
+      if (showsSidebar) {
+        open.push({ windowId: windowInfo.id, focused: windowInfo.focused });
+      }
+    }
+    return open;
+  }
+
+  // Choose which open full-size sidebar to switch to: the most recently focused one we still have
+  // recency for this session, else (recency wiped by a wake) the focused one, else the highest
+  // window id as a reasonable "most recently opened" proxy.
+  function pickFullSizeSidebarToFocus(
+    open: ReadonlyArray<{ windowId: number; focused: boolean }>
+  ): number | undefined {
+    const openIds = new Set(open.map((entry) => entry.windowId));
+    for (let index = fullSizeSidebarWindowsByFocusRecency.length - 1; index >= 0; index -= 1) {
+      const windowId = fullSizeSidebarWindowsByFocusRecency[index];
+      if (windowId !== undefined && openIds.has(windowId)) {
+        return windowId;
+      }
+    }
+    const focused = open.find((entry) => entry.focused);
+    if (focused) {
+      return focused.windowId;
+    }
+    const ids = open.map((entry) => entry.windowId);
+    return ids.length > 0 ? Math.max(...ids) : undefined;
   }
 
   function openNewFullSizeSidebarWindow(): Promise<{ ok: true }> {
@@ -2338,19 +2380,21 @@ export function createBackgroundController(
       noteFullSizeSidebarWindowFocused(windowId);
       return { ok: true };
     } catch {
-      // The window was closed between focus order tracking and now; drop it and open a fresh one.
+      // The window was closed between the query and now; drop it and open a fresh one.
       forgetFullSizeSidebarWindow(windowId);
       return openNewFullSizeSidebarWindow();
     }
   }
 
-  function openSidebarWindow(sourceWindowId?: number): Promise<{ ok: true }> {
-    // When the click came from within a full-size sidebar itself, always spawn another instance.
+  async function openSidebarWindow(sourceWindowId?: number): Promise<{ ok: true }> {
+    const openFullSizeSidebars = await findOpenFullSizeSidebarWindows();
+    // A click from within a full-size sidebar always spawns another instance. Decide this from the
+    // live window set (not in-memory tracking) so it stays correct after a background wake.
     const clickedFromFullSizeSidebar =
       typeof sourceWindowId === "number" &&
-      fullSizeSidebarWindowsByFocusRecency.includes(sourceWindowId);
+      openFullSizeSidebars.some((entry) => entry.windowId === sourceWindowId);
     if (!clickedFromFullSizeSidebar) {
-      const target = mostRecentFullSizeSidebarWindowId();
+      const target = pickFullSizeSidebarToFocus(openFullSizeSidebars);
       if (typeof target === "number") {
         return focusExistingFullSizeSidebarWindow(target);
       }
