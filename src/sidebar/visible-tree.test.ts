@@ -665,6 +665,188 @@ describe("visible tree projection", () => {
   );
 });
 
+describe("cross-parent move repro", () => {
+  it(
+    "keeps incremental cross-parent move patches equivalent to fresh projections across generated traces",
+    () => {
+      const config = generatedTraceConfig({
+        defaultSeedCount: 40,
+        defaultSteps: 16,
+        soakSeedCount: 120,
+        soakSteps: 48
+      });
+      for (const seed of config.seeds) {
+        runGeneratedMoveEquivalenceTrace(seed, config.steps);
+      }
+    },
+    generatedTraceTimeoutMs(10_000, 120_000)
+  );
+});
+
+// Mirrors the sidebar's fast-path order for a non-delete tree patch (sidebar.ts:2988-3033): try
+// same-parent reorder, then cross-parent leaf move, then insert. When none apply the sidebar
+// rebuilds, so the test rebuilds too. The invariant: whichever path runs, the result must equal a
+// fresh projection of the post-move state -- a fast path that applies but diverges is the bug.
+function applyHydratedTreePatch(
+  next: OutlineState,
+  projection: VisibleTreeProjection,
+  patch: DeleteTreeStructurePatch
+): string {
+  if (applySameParentReorderTreeStructurePatchToProjection(next, projection, patch)) {
+    return "reorder";
+  }
+  if (applyCrossParentLeafMoveTreeStructurePatchToProjection(next, projection, patch)) {
+    return "crossParentLeafMove";
+  }
+  if (applyInsertTreeStructurePatchToProjection(next, projection, patch)) {
+    return "insert";
+  }
+  return "rebuild";
+}
+
+function runGeneratedMoveEquivalenceTrace(seed: number, steps: number): void {
+  let state = generatedMoveState(seed);
+  const rng = seededRandom(seed);
+  const history = [`seed ${seed}`];
+
+  for (let step = 0; step < steps; step += 1) {
+    const operation =
+      step % 3 === 2
+        ? (reorderVisibleChildrenOperation(state, rng) ?? moveVisibleNodeOperation(state, rng))
+        : (moveVisibleNodeOperation(state, rng) ?? reorderVisibleChildrenOperation(state, rng));
+    if (!operation) {
+      continue;
+    }
+    history.push(`step ${step + 1}: ${operation.name}`);
+
+    const projection = buildVisibleTreeProjection(state, "");
+    const patch: DeleteTreeStructurePatch = {
+      deletedNodeIds: [],
+      updatedNodes: operation.updatedNodes,
+      rootIds: operation.next.rootIds,
+      deletedClosedCount: 0
+    };
+    const appliedPath = applyHydratedTreePatch(operation.next, projection, patch);
+    history[history.length - 1] += ` [${appliedPath}]`;
+    const result =
+      appliedPath !== "rebuild" ? projection : buildVisibleTreeProjection(operation.next, "");
+
+    expect(projectionSnapshot(result), history.join("\n")).toEqual(
+      projectionSnapshot(buildVisibleTreeProjection(operation.next, ""))
+    );
+    state = operation.next;
+  }
+}
+
+function generatedMoveState(seed: number): OutlineState {
+  const tag = seed * 100;
+  return outlineState([
+    windowNode("window:1", ["tab:1a", "tab:1b", "grp:1"], { active: true }),
+    tabNode("tab:1a", "window:1", "1A", [], { active: true }),
+    tabNode("tab:1b", "window:1", "1B", ["tab:1b-i"]),
+    tabNode("tab:1b-i", "tab:1b", "1B inner"),
+    groupNode("grp:1", ["tab:1c", `tab:seed:${tag}`], "window:1"),
+    tabNode("tab:1c", "grp:1", "1C"),
+    tabNode(`tab:seed:${tag}`, "grp:1", `Seed ${seed}`),
+    windowNode("window:2", ["tab:2a", "tab:2b"]),
+    tabNode("tab:2a", "window:2", "2A"),
+    tabNode("tab:2b", "window:2", "2B", ["tab:2b-i"]),
+    tabNode("tab:2b-i", "tab:2b", "2B inner"),
+    windowNode("window:3", ["tab:3a"]),
+    tabNode("tab:3a", "window:3", "3A")
+  ]);
+}
+
+function moveVisibleNodeOperation(
+  state: OutlineState,
+  rng: () => number
+): GeneratedPatchOperation | undefined {
+  const projection = buildVisibleTreeProjection(state, "");
+  const visibleIds = projection.rows.map((row) => row.nodeId);
+  const targetId = pickOne(
+    rng,
+    visibleIds.filter((nodeId) => Boolean(state.nodes[nodeId]?.parentId))
+  );
+  const target = targetId ? state.nodes[targetId] : undefined;
+  if (!target?.parentId) {
+    return undefined;
+  }
+
+  const subtree = new Set(collectSubtreeIds(state, target.id));
+  const destinationId = pickOne(
+    rng,
+    visibleIds.filter((nodeId) => !subtree.has(nodeId) && nodeId !== target.parentId)
+  );
+  const destination = destinationId ? state.nodes[destinationId] : undefined;
+  if (!destination) {
+    return undefined;
+  }
+
+  const next = cloneOutlineStateForTest(state);
+  const oldParent = next.nodes[target.parentId];
+  const newParent = next.nodes[destination.id];
+  const moving = next.nodes[target.id];
+  if (!oldParent || !newParent || !moving) {
+    return undefined;
+  }
+
+  oldParent.childIds = oldParent.childIds.filter((childId) => childId !== moving.id);
+  const insertionIndex = Math.floor(rng() * (newParent.childIds.length + 1));
+  newParent.childIds.splice(insertionIndex, 0, moving.id);
+  moving.parentId = newParent.id;
+
+  return {
+    name: `move ${target.id} -> ${destination.id} @${insertionIndex}`,
+    kind: "move",
+    next,
+    deletedNodeIds: [],
+    updatedNodes: [oldParent, newParent, moving]
+  };
+}
+
+function reorderVisibleChildrenOperation(
+  state: OutlineState,
+  rng: () => number
+): GeneratedPatchOperation | undefined {
+  const projection = buildVisibleTreeProjection(state, "");
+  const parentId = pickOne(
+    rng,
+    projection.rows.filter((row) => row.expanded && row.childCount >= 2).map((row) => row.nodeId)
+  );
+  const parent = parentId ? state.nodes[parentId] : undefined;
+  if (!parent || parent.childIds.length < 2) {
+    return undefined;
+  }
+
+  const fromIndex = Math.floor(rng() * parent.childIds.length);
+  let toIndex = Math.floor(rng() * parent.childIds.length);
+  if (toIndex === fromIndex) {
+    toIndex = (fromIndex + 1) % parent.childIds.length;
+  }
+
+  const next = cloneOutlineStateForTest(state);
+  const nextParent = next.nodes[parent.id]!;
+  const [moved] = nextParent.childIds.splice(fromIndex, 1);
+  const movedChild = moved ? next.nodes[moved] : undefined;
+  if (!moved || !movedChild) {
+    return undefined;
+  }
+  nextParent.childIds.splice(toIndex, 0, moved);
+
+  // A same-parent reorder changes the parent's childIds order; the moved child node itself is
+  // unchanged. A moveNode command's candidate patch carries BOTH the parent and the moved node,
+  // which is what the same-parent-reorder fast path needs to identify the move (it filters for an
+  // updated node whose parent is also updated). Including the moved node keeps this trace exercising
+  // that fast path rather than vacuously falling through to a rebuild.
+  return {
+    name: `reorder ${parent.id} ${fromIndex}->${toIndex}`,
+    kind: "move",
+    next,
+    deletedNodeIds: [],
+    updatedNodes: [nextParent, movedChild]
+  };
+}
+
 describe("isAlreadyAppliedDeletePatch", () => {
   it("recognises a delete already reflected in state so the broadcast echo can be skipped", () => {
     const state = outlineState([
@@ -713,7 +895,7 @@ describe("isAlreadyAppliedDeletePatch", () => {
 
 type GeneratedPatchOperation = {
   name: string;
-  kind: "insert" | "delete";
+  kind: "insert" | "delete" | "move";
   next: OutlineState;
   deletedNodeIds: NodeId[];
   updatedNodes: OutlineNode[];
