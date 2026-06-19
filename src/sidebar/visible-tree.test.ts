@@ -62,6 +62,38 @@ describe("visible tree projection", () => {
     });
   });
 
+  it("renders a relocated node at its parentId/root position, not a stale childIds reference", () => {
+    // Models a diverged sidebar: a structural patch relocated group:moved to a top-level root at the
+    // bottom (parentId cleared, added to rootIds), but the stale old parent's childIds update never
+    // reached this view, so group:old.childIds still lists it. parentId is authoritative: the node
+    // must render at the BOTTOM (after window:2), not back in its old middle slot under group:old.
+    const state = outlineState([
+      windowNode("window:1", ["tab:a", "group:old"], { active: true }),
+      tabNode("tab:a", "window:1", "A"),
+      groupNode("group:old", ["group:moved"], "window:1"),
+      windowNode("window:2", ["tab:b"]),
+      tabNode("tab:b", "window:2", "B"),
+      groupNode("group:moved", ["tab:m"]),
+      tabNode("tab:m", "group:moved", "M")
+    ]);
+
+    const projection = buildVisibleTreeProjection(state, "");
+
+    expect(projection.rows.map((row) => row.nodeId)).toEqual([
+      "window:1",
+      "tab:a",
+      "group:old",
+      "window:2",
+      "tab:b",
+      "group:moved",
+      "tab:m"
+    ]);
+    // group:moved is a top-level node (depth 0), not nested under its stale old parent.
+    const moved = projection.rows.find((row) => row.nodeId === "group:moved");
+    expect(moved?.depth).toBe(0);
+    expect(moved?.parentRowIndex).toBeUndefined();
+  });
+
   it("tracks parent row indexes and exclusive subtree boundaries for visible rows", () => {
     const state = outlineState([
       windowNode("window:1", ["tab:a", "tab:d"], { active: true }),
