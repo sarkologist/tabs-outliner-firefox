@@ -49,7 +49,7 @@ This is the maintained asymptotics table. Dated tables in the `Progress Log` are
 | Path | Current Asymptotic | Theoretical Optimum | Gap / Next Work |
 | --- | --- | --- | --- |
 | Pure drops: irrelevant `tabs.onUpdated`, command focus active-update echoes, delete/close-owned echoes, sidebar focus noise, absorbed native relocation attach/detach/move echoes | `O(1)` | `O(1)` | At optimum; keep these paths out of saves, broadcasts, diagnostics, projection rebuilds, and runtime snapshots. |
-| Command-owned restore and relocation echoes | steady-state `O(u)` with a warm runtime index | `O(u)` | At optimum for command-created restore and relocation echoes. June relocation work keeps existing-window drag/drop echoes off full reconciliation. |
+| Command-owned restore and relocation echoes | steady-state `O(u)` with a warm runtime index | `O(u)` | At optimum for command-created restore and relocation echoes. June relocation work keeps existing-window drag/drop echoes off full reconciliation. Absorbing an `attached`/`moved` relocation echo now also consumes the tab's structural freshness (2026-06-19), so a following genuine metadata echo (favicon re-resolve) on the relocated tab no longer forces a full `getNormalWindows` snapshot — it takes the in-place fast path. |
 | Small runtime update/create fast path | `O(u + k)` normally; `O(u * d + k)` for opener placement; `O(k)` transport | `O(u + k)` CPU, `O(k)` transport | Remaining gap is opener ancestor validation; maintain owner-window or nearest-window data before trying to remove the `d` factor. |
 | Runtime-index maintenance for narrow transitions | `O(c)` | `O(c)` | At optimum for candidate-backed command/native transitions. Broad import and full reconciliation intentionally rebuild in `O(n)`. |
 | Structural command patch construction and transport | `O(k)` when candidate ids exist, including non-same-parent `moveNode`; generic fallback `O(n)` | `O(k)` for narrow commands, `O(n)` for broad commands | Keep threading candidate ids through new narrow commands. Reserve generic whole-state diffing for genuinely broad changes. |
@@ -121,6 +121,18 @@ Use these as starting targets, not hard promises:
 - Existing lifecycle behavior must remain intact for browser-native close, outliner close, delete-owned removals, restore, and stale events.
 
 ## Progress Log
+
+### 2026-06-19: Consume structural freshness when a command relocation echo is absorbed
+
+A command that relocates a live tab across windows (drag in the outline, flatten, move-to-bottom) physically moves the browser tab, and the browser echoes that with `tabs.onDetached`/`onAttached`/`onMoved`. Those echoes are already absorbed as pure drops (`absorbCommandRelocationNativeEcho`). But each echo first calls `runtimeFacts.recordNativeTab*`, which adds the tab to `structurallyFreshTabIds` — and that set is **sticky** (only cleared on tab removal). So after an absorbed relocation the tab stays flagged "needs shape corroboration" indefinitely.
+
+The bite comes on the **next genuine metadata change**: the browser re-resolves the moved tab's favicon and fires a real `tabs.onUpdated`. Because the tab is still flagged structurally-fresh, `eventTabsNeedShapeCorroboration` returns true (`tabEvidenceConflictsWithCurrentShape`, freshness branch), so the metadata reconcile takes the full-snapshot path — `getNormalWindows` (the global `windows.getAll` + `tabs.query`) — only to find `candidateNodeCount=0`. In `dist/tabs-outliner-profile-2026-06-19.json` this is the convoy amplifier: a single-tab cross-window move applied in 48ms, then ~600ms+ of full-snapshot reconcile whose only real delta was a favicon.
+
+Fix: when an `attached`/`moved` relocation echo is absorbed — i.e. the command's destination window is confirmed by the browser — consume the tab's structural freshness (`consumeStructuralFreshnessForAbsorbedRelocation`). The command authoritatively owns the destination window, and the absorbed move echo carried the browser's final index, so a following metadata-only change now takes the in-place fast path instead of a whole-session snapshot. `detached` is left alone (mid-relocation, tab not yet at destination), and **any subsequent non-command structural event re-adds the tab**, so genuine post-relocation shape drift is still corroborated. This is a `closeMissing:false` metadata path — it never proves absence — so narrowing it forfeits no close/delete detection.
+
+- **Asymptotics:** post-relocation metadata echo `O(w log w + n)` full snapshot → `O(u + k)` in-place fast path (table row updated). No save-shape/timing change.
+- **Tests:** new deterministic `controller.test.ts` test — a changed-favicon `onUpdated` after an absorbed cross-window relocation lands the favicon and asserts `windows.getAll` is **not** called (verified red→green: 2 → 0 `getAll` calls). The existing relocation-absorption tests are unchanged.
+- **Safety / oracle:** full suite green (843) incl. the PureScript-oracle comparison traces; the runtime-trace **regression corpus** (284 traces) runs clean with 0 findings — this is the absence-proof that broadening absorption dropped no real reconciliation. `perf:runtime-guard` hard counters green (`--hard-only` PASS); the only timing overage (`command-group-live-leaf`) is the pre-existing machine-bound one (reproduces on `main`; a group command never reaches the relocation path). Not a sidebar-projection or save-timing change, so those lanes do not apply.
 
 ### 2026-06-19: Scope the metadata-corroboration re-query to the changed tab's window
 

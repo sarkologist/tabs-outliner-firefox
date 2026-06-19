@@ -52958,6 +52958,72 @@ describe("background controller lifecycle", () => {
     ]);
   });
 
+  it("applies a changed-favicon echo after an absorbed relocation without a full snapshot", async () => {
+    const runtime = fakeRuntime(
+      [{ id: 10, focused: true, incognito: false }],
+      [
+        { id: 1, windowId: 10, index: 0, active: true, url: "https://one.example/", title: "One" },
+        { id: 2, windowId: 10, index: 1, active: false, url: "https://two.example/", title: "Two" }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+
+    // Move tab 2 into its own new window, then deliver the command's native relocation echoes.
+    expectCommandAck(
+      await controller.handleMessage({ type: "moveNode", nodeId: "tab:2", index: 0 }),
+      true
+    );
+    await controller.flushPendingSaves();
+    const moved = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    const destinationWindowId = moved.nodes["tab:2"]?.parentId;
+    if (!destinationWindowId) {
+      throw new Error("Expected tab:2 to be moved into a live window");
+    }
+    const destRt = moved.nodes[destinationWindowId]?.live?.windowId;
+    if (typeof destRt !== "number") {
+      throw new Error("Expected command destination window to be live");
+    }
+
+    await runtime.events.tabDetached.emit(2, { oldWindowId: 10, oldPosition: 1 });
+    await runtime.events.tabAttached.emit(2, { newWindowId: destRt, newPosition: 0 });
+    await runtime.events.tabMoved.emit(2, { windowId: destRt, fromIndex: 0, toIndex: 0 });
+
+    await controller.handleMessage({ type: "setPerformanceTraceEnabled", enabled: true });
+    await controller.handleMessage({ type: "clearPerformanceTrace" });
+    runtime.broadcasts.length = 0;
+    vi.mocked(runtime.api.windows.getAll).mockClear();
+
+    // The browser re-resolves the moved tab's favicon and fires a genuine metadata onUpdated. Because
+    // the absorbed relocation already corroborated tab 2's shape, this must apply via the in-place
+    // fast path -- NOT force a full getNormalWindows snapshot just to re-confirm the window the
+    // command owns. (Before the fix, the relocation left tab 2 flagged structurally-fresh, so this
+    // changed-metadata echo ran the whole-session snapshot and yielded candidateNodeCount=0.)
+    runtime.tabs = runtime.tabs.map((tab) =>
+      tab.id === 2 ? { ...tab, favIconUrl: "https://two.example/new-icon.ico" } : tab
+    );
+    await runtime.events.tabUpdated.emit(
+      2,
+      { favIconUrl: "https://two.example/new-icon.ico" },
+      {
+        id: 2,
+        windowId: destRt,
+        index: 0,
+        active: false,
+        url: "https://two.example/",
+        title: "Two",
+        favIconUrl: "https://two.example/new-icon.ico"
+      }
+    );
+    await waitForMacrotask();
+
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(state.nodes["tab:2"]?.favIconUrl).toBe("https://two.example/new-icon.ico");
+    expect(state.nodes["tab:2"]?.live).toEqual({ tabId: 2, windowId: destRt });
+    // The favicon landed via the narrow path: no whole-session snapshot.
+    expect(vi.mocked(runtime.api.windows.getAll)).not.toHaveBeenCalled();
+  });
+
   it("keeps stale relocation updates ignored after absorbing native echoes", async () => {
     const runtime = fakeRuntime(
       [
