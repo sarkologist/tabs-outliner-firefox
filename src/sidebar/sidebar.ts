@@ -549,6 +549,12 @@ function attachBackgroundPortListeners(port: WebExtensionPort | undefined): void
     });
   });
   port?.onDisconnect.addListener(() => {
+    // Ignore disconnects from a superseded port: recovery replaces backgroundPort, and the old dead
+    // port can fire onDisconnect later -- honoring it would falsely mark the healthy new connection
+    // stale. Only the current port losing its connection means the background actually went away.
+    if (port !== backgroundPort) {
+      return;
+    }
     perfTrace.mark("sidebar.runtime.port.disconnect");
     // The background event page was suspended (or restarted): this port is dead, and a structural
     // change the worker absorbs on its next cold wake may never be broadcast to us. Mark ourselves
@@ -558,11 +564,23 @@ function attachBackgroundPortListeners(port: WebExtensionPort | undefined): void
   });
 }
 
-// One-shot recovery after the background port dropped. Re-establish the port (so the next eviction
-// re-arms the onDisconnect signal) and re-sync this sidebar's view from background truth in whatever
-// mode it runs in: a sparse background sidebar re-fetches its viewport slice; a fully hydrated
-// (focused) sidebar re-fetches getState. The hydrate/slice paths guard their own re-entry, and
-// clearing the flag first keeps concurrent triggers from each kicking off a fetch.
+// Re-sync this sidebar's view from background truth in whatever mode it runs in: a sparse background
+// sidebar re-fetches its viewport slice; a fully hydrated (focused) sidebar re-fetches getState.
+// The hydrate/slice paths guard their own re-entry. An unfocused sidebar that is not already fully
+// loaded must stay sparse -- full-hydrating it here would defeat focus-gated hydration -- so skip the
+// getState fall-through for it (its slice refetch covers the viewport; it hydrates fully on focus).
+function resyncFromBackgroundTruth(): void {
+  if (refreshSparseRemoteProjectionAfterStateChange()) {
+    return;
+  }
+  if (currentStateFullyLoaded || sidebarWindowFocused !== false) {
+    void hydrateFullState();
+  }
+}
+
+// Recovery after our port actually dropped (background suspended/restarted): re-establish the port so
+// the next eviction re-arms onDisconnect, then re-sync. One-shot -- clearing the flag first keeps
+// concurrent triggers from each reconnecting, and means later duplicate triggers no-op.
 function recoverFromPossibleBackgroundRestart(): void {
   if (!backgroundConnectionMayBeStale) {
     return;
@@ -570,10 +588,7 @@ function recoverFromPossibleBackgroundRestart(): void {
   backgroundConnectionMayBeStale = false;
   backgroundPort = connectToBackgroundPort();
   attachBackgroundPortListeners(backgroundPort);
-  if (refreshSparseRemoteProjectionAfterStateChange()) {
-    return;
-  }
-  void hydrateFullState();
+  resyncFromBackgroundTruth();
 }
 
 function handleBackgroundMessage(message: unknown): unknown {
@@ -582,17 +597,25 @@ function handleBackgroundMessage(message: unknown): unknown {
   }
 
   if (isStateMayHaveChanged(message)) {
-    // Explicit "you may have missed changes while the worker was suspended" nudge from the
-    // background's cold-wake startup reconcile. Treat it as a staleness signal and re-sync.
-    backgroundConnectionMayBeStale = true;
-    recoverFromPossibleBackgroundRestart();
+    // The background's cold-wake startup reconcile changed state we may have missed. If our port
+    // actually dropped, recover (reconnect + resync); otherwise the port is alive (the nudge reached
+    // us over it), so only resync our view -- reconnecting a healthy port would duplicate it.
+    if (backgroundConnectionMayBeStale) {
+      recoverFromPossibleBackgroundRestart();
+    } else {
+      resyncFromBackgroundTruth();
+    }
     return undefined;
   }
   if (backgroundConnectionMayBeStale) {
-    // A broadcast arrived while we were disconnected, so the worker is active again -- but we may
-    // have missed earlier updates, and a single incremental patch can't be trusted to bring us
-    // current. Recover with a full re-sync instead of applying this one message.
+    // A broadcast arrived while our port was down, so the worker is active again -- but we may have
+    // missed earlier updates, and a single incremental patch can't be trusted to bring us current.
+    // Recover with a full re-sync instead of applying this one structural message. historyStatus is
+    // independent of structural state and is NOT covered by the resync, so still apply it.
     recoverFromPossibleBackgroundRestart();
+    if (isHistoryStatus(message)) {
+      updateHistoryControls(message);
+    }
     return undefined;
   }
 
