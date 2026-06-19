@@ -315,6 +315,7 @@ export function applySameParentReorderTreeStructurePatchToProjection(
     refreshVisibleRowStructure(projection.rows);
   }
   refreshRowsFromUpdatedNodes(state, projection, patch.updatedNodes);
+  refreshActiveTabRowIndex(projection);
   return true;
 }
 
@@ -360,7 +361,16 @@ export function applyCrossParentLeafMoveTreeStructurePatchToProjection(
   }
 
   const { node: movedNode, row: movedRow, previousParentId } = movedEntries[0]!;
-  if (projection.activeTabNodeId === movedNode.id || !updatedNodeIds.has(movedNode.id)) {
+  // Bail for an active moved tab. Moving an active tab across windows can change which tab the
+  // projection recognises as the active one (a tab only counts when it is inside the active window),
+  // and that recomputation is exactly the rebuild's job. `activeTabNodeId === movedNode.id` only
+  // catches a tab already recognised as active; `movedNode.active` also catches an active tab that
+  // was not recognised yet (it was outside the active window) and is now moving into it.
+  if (
+    projection.activeTabNodeId === movedNode.id ||
+    movedNode.active ||
+    !updatedNodeIds.has(movedNode.id)
+  ) {
     return false;
   }
 
@@ -441,26 +451,14 @@ export function applyCrossParentLeafMoveTreeStructurePatchToProjection(
     return false;
   }
 
-  const sourceParentIndex = sourceParentRow.index;
-  const sourceParentEnd = sourceParentRow.subtreeEndIndex;
-  const destinationParentIndex = destinationParentRow.index;
-  const destinationParentEnd = destinationParentRow.subtreeEndIndex;
-
-  const finalIndexForOldIndex = (oldIndex: number): number => {
-    if (oldIndex === movedIndex) {
-      return insertionIndex;
-    }
-    const afterRemoval = oldIndex > movedIndex ? oldIndex - 1 : oldIndex;
-    return afterRemoval >= insertionIndex ? afterRemoval + 1 : afterRemoval;
-  };
-  const finalEndForOldEnd = (oldEnd: number, includeInsertionBoundary = false): number => {
-    const afterRemoval = oldEnd > movedIndex ? oldEnd - 1 : oldEnd;
-    return afterRemoval > insertionIndex ||
-      (includeInsertionBoundary && afterRemoval === insertionIndex)
-      ? afterRemoval + 1
-      : afterRemoval;
-  };
-
+  // Move the row to its new slot, then recompute the row structure (index, parentRowIndex,
+  // subtreeEndIndex) for the whole projection from each row's depth -- the same pass the full
+  // rebuild uses. The previous hand-rolled index arithmetic only patched rows inside the moved span
+  // plus the two parent rows, so a row OUTSIDE that span whose parent row shifted (e.g. a sibling
+  // subtree below the destination window) kept a stale parentRowIndex and diverged from a rebuild.
+  // Recomputing from depth removes that whole class of off-by-one bugs; it is O(rows) but still
+  // skips the rebuild's O(nodes) traversal and projection-set rebuild, so the fast path stays worth
+  // taking.
   const movedRows = projection.rows.splice(movedIndex, 1);
   const [movedRowAfterRemoval] = movedRows;
   if (!movedRowAfterRemoval) {
@@ -471,34 +469,8 @@ export function applyCrossParentLeafMoveTreeStructurePatchToProjection(
   projection.visibleNodeIds.splice(movedIndex, 1);
   projection.visibleNodeIds.splice(insertionIndex, 0, movedNode.id);
 
-  const changedStart = Math.min(movedIndex, insertionIndex);
-  const changedEnd = Math.max(movedIndex, insertionIndex) + 1;
-  for (let index = changedStart; index < changedEnd; index += 1) {
-    const row = projection.rows[index];
-    if (!row) {
-      return false;
-    }
-    const previousParentRowIndex = row.parentRowIndex;
-    row.index = index;
-    if (row === movedRowAfterRemoval) {
-      row.depth = destinationParentRow.depth + 1;
-      row.parentRowIndex = finalIndexForOldIndex(destinationParentIndex);
-      row.subtreeEndIndex = index + 1;
-      continue;
-    }
-    row.subtreeEndIndex = finalEndForOldEnd(row.subtreeEndIndex);
-    if (typeof previousParentRowIndex === "number") {
-      row.parentRowIndex = finalIndexForOldIndex(previousParentRowIndex);
-    }
-  }
-
-  sourceParentRow.index = finalIndexForOldIndex(sourceParentIndex);
-  sourceParentRow.subtreeEndIndex = finalEndForOldEnd(sourceParentEnd);
-  destinationParentRow.index = finalIndexForOldIndex(destinationParentIndex);
-  destinationParentRow.subtreeEndIndex = finalEndForOldEnd(destinationParentEnd, true);
-  delete sourceParentRow.parentRowIndex;
-  delete destinationParentRow.parentRowIndex;
-  movedRowAfterRemoval.parentRowIndex = destinationParentRow.index;
+  movedRowAfterRemoval.depth = destinationParentRow.depth + 1;
+  refreshVisibleRowStructure(projection.rows);
 
   refreshRowFromState(state, projection, sourceParentRow);
   refreshRowFromState(state, projection, destinationParentRow);
@@ -509,9 +481,7 @@ export function applyCrossParentLeafMoveTreeStructurePatchToProjection(
     destinationParent.kind === "window" && destinationParent.active
   );
 
-  if (typeof projection.activeTabRowIndex === "number") {
-    projection.activeTabRowIndex = finalIndexForOldIndex(projection.activeTabRowIndex);
-  }
+  refreshActiveTabRowIndex(projection);
   return true;
 }
 
@@ -1595,6 +1565,21 @@ function pruneEmptySearchPathRows(
     projection.rows = projection.rows.filter((row) => !prunedNodeIds.has(row.nodeId));
   }
   return prunedRows;
+}
+
+// After an incremental fast path reorders rows, the active tab's row may have shifted index even
+// though it is still the same node in the same window. Re-point activeTabRowIndex at the active
+// tab's current row so the projection matches a fresh rebuild. Callers that can change WHICH node is
+// active (e.g. moving the active tab across windows) must bail to a rebuild instead -- this only
+// re-finds an unchanged active node's row.
+function refreshActiveTabRowIndex(projection: VisibleTreeProjection): void {
+  if (!projection.activeTabNodeId) {
+    return;
+  }
+  const activeRow = projection.rows.find((row) => row.nodeId === projection.activeTabNodeId);
+  if (activeRow) {
+    projection.activeTabRowIndex = activeRow.index;
+  }
 }
 
 function refreshRowFromState(
