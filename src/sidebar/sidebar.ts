@@ -76,6 +76,7 @@ import {
   isNodeStateUpdated,
   isOutlineState,
   isSameParentReorderUpdated,
+  isStateMayHaveChanged,
   isStateUpdated,
   isTreeStructureUpdated,
   messageType,
@@ -431,6 +432,9 @@ const diagnosticsNotice = createDiagnosticsNotice({
 // A hidden sidebar stops polling getDiagnostics; refresh the count once it becomes visible again.
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden) {
+    // Becoming visible covers the already-focused-window case the focus listener misses: if we
+    // dropped the port while hidden/suspended, re-sync now that the user is looking at us again.
+    recoverFromPossibleBackgroundRestart();
     diagnosticsNotice.scheduleLoad();
   }
 });
@@ -524,15 +528,9 @@ rootDropSurface?.addEventListener("drop", (event) => {
   performDrop(placement);
 });
 
-const backgroundPort = connectToBackgroundPort();
-backgroundPort?.onMessage.addListener((message) => {
-  void Promise.resolve(handleBackgroundMessage(message)).catch((error) => {
-    perfTrace.mark("sidebar.runtime.port.message.error", { message: commandErrorText(error) });
-  });
-});
-backgroundPort?.onDisconnect.addListener(() => {
-  perfTrace.mark("sidebar.runtime.port.disconnect");
-});
+let backgroundPort = connectToBackgroundPort();
+let backgroundConnectionMayBeStale = false;
+attachBackgroundPortListeners(backgroundPort);
 
 browser.runtime.onMessage.addListener((message) => handleBackgroundMessage(message));
 
@@ -544,9 +542,81 @@ function connectToBackgroundPort(): WebExtensionPort | undefined {
   }
 }
 
+function attachBackgroundPortListeners(port: WebExtensionPort | undefined): void {
+  port?.onMessage.addListener((message) => {
+    void Promise.resolve(handleBackgroundMessage(message)).catch((error) => {
+      perfTrace.mark("sidebar.runtime.port.message.error", { message: commandErrorText(error) });
+    });
+  });
+  port?.onDisconnect.addListener(() => {
+    // Ignore disconnects from a superseded port: recovery replaces backgroundPort, and the old dead
+    // port can fire onDisconnect later -- honoring it would falsely mark the healthy new connection
+    // stale. Only the current port losing its connection means the background actually went away.
+    if (port !== backgroundPort) {
+      return;
+    }
+    perfTrace.mark("sidebar.runtime.port.disconnect");
+    // The background event page was suspended (or restarted): this port is dead, and a structural
+    // change the worker absorbs on its next cold wake may never be broadcast to us. Mark ourselves
+    // possibly-stale and recover the next time the worker is provably active again. We deliberately
+    // do NOT reconnect here -- reconnecting would immediately wake the worker just to poll it.
+    backgroundConnectionMayBeStale = true;
+  });
+}
+
+// Re-sync this sidebar's view from background truth in whatever mode it runs in: a sparse background
+// sidebar re-fetches its viewport slice; a fully hydrated (focused) sidebar re-fetches getState.
+// The hydrate/slice paths guard their own re-entry. An unfocused sidebar that is not already fully
+// loaded must stay sparse -- full-hydrating it here would defeat focus-gated hydration -- so skip the
+// getState fall-through for it (its slice refetch covers the viewport; it hydrates fully on focus).
+function resyncFromBackgroundTruth(): void {
+  if (refreshSparseRemoteProjectionAfterStateChange()) {
+    return;
+  }
+  if (currentStateFullyLoaded || sidebarWindowFocused !== false) {
+    void hydrateFullState();
+  }
+}
+
+// Recovery after our port actually dropped (background suspended/restarted): re-establish the port so
+// the next eviction re-arms onDisconnect, then re-sync. One-shot -- clearing the flag first keeps
+// concurrent triggers from each reconnecting, and means later duplicate triggers no-op.
+function recoverFromPossibleBackgroundRestart(): void {
+  if (!backgroundConnectionMayBeStale) {
+    return;
+  }
+  backgroundConnectionMayBeStale = false;
+  backgroundPort = connectToBackgroundPort();
+  attachBackgroundPortListeners(backgroundPort);
+  resyncFromBackgroundTruth();
+}
+
 function handleBackgroundMessage(message: unknown): unknown {
   if (isSidebarPerformanceTraceMessage(message)) {
     return handleSidebarPerformanceTraceMessage(message);
+  }
+
+  if (isStateMayHaveChanged(message)) {
+    // The background's cold-wake startup reconcile changed state we may have missed. If our port
+    // actually dropped, recover (reconnect + resync); otherwise the port is alive (the nudge reached
+    // us over it), so only resync our view -- reconnecting a healthy port would duplicate it.
+    if (backgroundConnectionMayBeStale) {
+      recoverFromPossibleBackgroundRestart();
+    } else {
+      resyncFromBackgroundTruth();
+    }
+    return undefined;
+  }
+  if (backgroundConnectionMayBeStale) {
+    // A broadcast arrived while our port was down, so the worker is active again -- but we may have
+    // missed earlier updates, and a single incremental patch can't be trusted to bring us current.
+    // Recover with a full re-sync instead of applying this one structural message. historyStatus is
+    // independent of structural state and is NOT covered by the resync, so still apply it.
+    recoverFromPossibleBackgroundRestart();
+    if (isHistoryStatus(message)) {
+      updateHistoryControls(message);
+    }
+    return undefined;
   }
 
   perfTrace.measure("sidebar.runtime.message", { type: messageType(message) }, () => {
@@ -1347,6 +1417,9 @@ function registerSidebarWindowFocusListener(): void {
     }
     sidebarWindowFocused = focused;
     if (focused) {
+      // Regaining focus is a reliable "the worker is active and the user is looking here" moment, so
+      // recover first if we dropped the port while suspended, then run the usual focus hydration.
+      recoverFromPossibleBackgroundRestart();
       scheduleFullStateHydration(0);
     }
   });

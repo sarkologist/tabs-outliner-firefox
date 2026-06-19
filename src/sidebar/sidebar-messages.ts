@@ -59,6 +59,19 @@ export function isStateUpdated(
   );
 }
 
+// Sent by the background when its startup reconcile (after a cold event-page wake) materially
+// changed state -- i.e. tabs/windows changed while the worker was suspended and were absorbed
+// silently without a structural broadcast. Open sidebars treat it as "you may be stale, re-sync".
+export function isStateMayHaveChanged(
+  message: unknown
+): message is { type: "stateMayHaveChanged" } {
+  return Boolean(
+    message &&
+    typeof message === "object" &&
+    (message as { type?: unknown }).type === "stateMayHaveChanged"
+  );
+}
+
 export function isInitialTreeSnapshot(message: unknown): message is InitialTreeSnapshot {
   return Boolean(
     message &&
