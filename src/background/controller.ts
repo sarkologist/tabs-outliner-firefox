@@ -6473,18 +6473,29 @@ function isRestoredSubgroupRootForClosedParentPatch(
   return Boolean(node?.kind === "window" || (node?.kind === "tab" && node.childIds.length > 0));
 }
 
-function addAncestorNodeIds(
+export function addAncestorNodeIds(
   previous: OutlineState,
   next: OutlineState,
   nodeId: NodeId,
   result: Set<NodeId>
 ): void {
-  const visited = new Set<NodeId>([nodeId]);
-  let parentId = next.nodes[nodeId]?.parentId ?? previous.nodes[nodeId]?.parentId;
-  while (parentId && !visited.has(parentId)) {
-    visited.add(parentId);
-    result.add(parentId);
-    parentId = next.nodes[parentId]?.parentId ?? previous.nodes[parentId]?.parentId;
+  // Walk BOTH the next and previous ancestor chains. A restore that promotes a live node out of a
+  // closed ancestor re-parents it (its old parent's childIds loses it), so the old parent appears
+  // only on the PREVIOUS chain. A single `next ?? previous` walk follows the new chain and never
+  // visits the old parent, so its childIds-removal would be omitted from the restore patch -- a
+  // sidebar that applies the delta then keeps listing the promoted node under its old parent, and
+  // renders it at that stale position (visible after a later move). Including both chains puts the
+  // changed old parent in the candidate set. The restore patch builds with includeUnchanged, so the
+  // extra previous-chain ancestors ride along even when unchanged; that is harmless (re-emitting an
+  // unchanged node is an idempotent no-op for receivers) and bounded by ancestor depth.
+  for (const source of [next, previous]) {
+    const visited = new Set<NodeId>([nodeId]);
+    let parentId = source.nodes[nodeId]?.parentId;
+    while (parentId && !visited.has(parentId)) {
+      visited.add(parentId);
+      result.add(parentId);
+      parentId = source.nodes[parentId]?.parentId;
+    }
   }
 }
 

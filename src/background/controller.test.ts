@@ -9,7 +9,11 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { BrowserAdapter } from "./adapter.js";
 import { AUTOMATIC_BACKUP_ALARM_NAME, AUTOMATIC_BACKUP_STATUS_STORAGE_KEY } from "./backups.js";
-import { createBackgroundController, type BackgroundController } from "./controller.js";
+import {
+  addAncestorNodeIds,
+  createBackgroundController,
+  type BackgroundController
+} from "./controller.js";
 import { createOutlineJournal, replayJournal } from "./outline-journal.js";
 import { indexedDbKvStore } from "./indexed-db-kv-store.js";
 import { statesMateriallyEqual } from "./state-equality.js";
@@ -46499,6 +46503,112 @@ function safeJson(value: unknown): string {
     return `<<unserializable: ${generatedErrorText(error)}>>`;
   }
 }
+
+describe("addAncestorNodeIds", () => {
+  function ancestorNode(
+    id: NodeId,
+    overrides: Partial<OutlineNode> & Pick<OutlineNode, "kind">
+  ): OutlineNode {
+    return {
+      id,
+      status: "live",
+      title: id,
+      collapsed: false,
+      childIds: [],
+      createdAt: 1000,
+      updatedAt: 1000,
+      ...overrides
+    };
+  }
+
+  function ancestorState(rootIds: NodeId[], nodes: OutlineNode[]): OutlineState {
+    return {
+      version: 1,
+      rootIds,
+      nodes: Object.fromEntries(nodes.map((node) => [node.id, node]))
+    };
+  }
+
+  // Regression for the restore->move stale-old-position divergence. When a restore promotes a node
+  // out of a closed ancestor it is re-parented, so the OLD parent (whose childIds dropped the node)
+  // shows up only on the PREVIOUS ancestor chain. The candidate-id collector must include it, or the
+  // emitted tree-structure patch omits the old parent's childIds change and a fully hydrated sidebar
+  // that applies the delta keeps the node under its old parent -- rendering it at the stale slot.
+  it("includes the old parent chain for a node that was re-parented across the patch", () => {
+    const previous = ancestorState(
+      ["window:old"],
+      [
+        ancestorNode("window:old", { kind: "window", status: "closed", childIds: ["tab:x"] }),
+        ancestorNode("tab:x", { kind: "tab", status: "closed", parentId: "window:old" })
+      ]
+    );
+    const next = ancestorState(
+      ["window:old", "window:new"],
+      [
+        ancestorNode("window:old", { kind: "window", status: "closed", childIds: [] }),
+        ancestorNode("window:new", {
+          kind: "window",
+          childIds: ["tab:x"],
+          live: { windowId: 99 }
+        }),
+        ancestorNode("tab:x", { kind: "tab", parentId: "window:new" })
+      ]
+    );
+
+    const result = new Set<NodeId>();
+    addAncestorNodeIds(previous, next, "tab:x", result);
+
+    expect(result.has("window:new")).toBe(true);
+    expect(result.has("window:old")).toBe(true);
+  });
+
+  it("walks deeper ancestors on both the previous and next chains", () => {
+    const previous = ancestorState(
+      ["group:old-top"],
+      [
+        ancestorNode("group:old-top", {
+          kind: "window",
+          status: "closed",
+          childIds: ["window:old"]
+        }),
+        ancestorNode("window:old", {
+          kind: "window",
+          status: "closed",
+          parentId: "group:old-top",
+          childIds: ["tab:x"]
+        }),
+        ancestorNode("tab:x", { kind: "tab", status: "closed", parentId: "window:old" })
+      ]
+    );
+    const next = ancestorState(
+      ["group:old-top", "group:new-top"],
+      [
+        ancestorNode("group:old-top", {
+          kind: "window",
+          status: "closed",
+          childIds: ["window:old"]
+        }),
+        ancestorNode("window:old", {
+          kind: "window",
+          status: "closed",
+          parentId: "group:old-top",
+          childIds: []
+        }),
+        ancestorNode("group:new-top", {
+          kind: "window",
+          childIds: ["tab:x"],
+          live: { windowId: 99 }
+        }),
+        ancestorNode("tab:x", { kind: "tab", parentId: "group:new-top" })
+      ]
+    );
+
+    const result = new Set<NodeId>();
+    addAncestorNodeIds(previous, next, "tab:x", result);
+
+    expect([...result].sort()).toEqual(["group:new-top", "group:old-top", "window:old"].sort());
+  });
+});
 
 describe("background controller lifecycle", () => {
   it("toggles the sidebar from the native extension command", async () => {
