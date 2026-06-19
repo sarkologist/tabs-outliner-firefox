@@ -321,6 +321,9 @@ type TreeProjectionSliceRequest = {
 
 type OpenSidebarWindowRequest = {
   type: "openSidebarWindow";
+  // This sidebar's own window id, so the background can tell a click from within a full-size sidebar
+  // (spawn another instance) apart from one in a regular docked sidebar (switch to the existing one).
+  sourceWindowId?: number;
 };
 
 type OpenImportViewerWindowRequest = {
@@ -5502,7 +5505,11 @@ function canDeleteNodeOptimistically(state: OutlineState, node: OutlineNode): bo
 
 async function openFullSizeSidebarWindow(): Promise<void> {
   try {
-    await sendCommand({ type: "openSidebarWindow" });
+    await loadSidebarWindowId();
+    await sendCommand({
+      type: "openSidebarWindow",
+      ...(typeof sidebarWindowId === "number" ? { sourceWindowId: sidebarWindowId } : {})
+    });
   } catch (error) {
     diagnosticsNotice.show(commandErrorText(error), { error: true });
   }

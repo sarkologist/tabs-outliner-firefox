@@ -39,6 +39,10 @@ export type InitialTreeSnapshotWindowMessage = {
 
 export type OpenSidebarWindowMessage = {
   type: "openSidebarWindow";
+  // The window the click came from (the sidebar's own window id). When it is itself a tracked
+  // full-size sidebar window, the background spawns another instance; otherwise it switches to the
+  // most recently focused existing full-size sidebar. Optional for backward compatibility.
+  sourceWindowId?: number;
 };
 
 export type OpenImportViewerWindowMessage = {
