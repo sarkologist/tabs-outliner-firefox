@@ -1554,6 +1554,18 @@ export class RuntimeFactLedger {
     return this.structurallyFreshTabIds.has(tabId);
   }
 
+  // When a command-owned relocation native echo is absorbed, the command already established the
+  // tab's destination window (and the absorbed move echo carried the browser's final index), so the
+  // structural freshness the detach/attach/move events flagged is already corroborated. Consuming it
+  // keeps the absorbed echo a true pure drop: a later genuine metadata change (e.g. the browser
+  // re-resolving the moved tab's favicon) then takes the in-place fast path instead of forcing a
+  // full getNormalWindows snapshot just to re-confirm a shape the command owns. Any subsequent
+  // non-command structural event re-adds the tab here, so real post-relocation shape drift is still
+  // corroborated.
+  consumeStructuralFreshnessForAbsorbedRelocation(tabId: number): void {
+    this.structurallyFreshTabIds.delete(tabId);
+  }
+
   recordNativeTabActivated(tabId: number, windowId: number | undefined): NativeFocusEventDecision {
     this.observeLiveTabIdIfAccepted(tabId, windowId);
     this.structurallyFreshTabIds.add(tabId);

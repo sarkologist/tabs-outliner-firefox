@@ -4173,6 +4173,14 @@ export function createBackgroundController(
       return false;
     }
 
+    // attached/moved confirm the tab landed at the command's destination window, so the structural
+    // freshness the relocation events flagged is command-corroborated -- consume it so a following
+    // genuine metadata echo (favicon/title re-resolve) takes the in-place fast path rather than
+    // forcing a full snapshot. detached is mid-relocation (tab not yet at destination), so leave it.
+    if (event === "attached" || event === "moved") {
+      runtimeFacts.consumeStructuralFreshnessForAbsorbedRelocation(tabId);
+    }
+
     perfTrace.mark("background.runtime.commandRelocationEcho.absorbed", {
       event,
       tabId,
