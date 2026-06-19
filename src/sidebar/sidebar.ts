@@ -92,6 +92,7 @@ import {
   buildVisibleTreeProjection,
   calculateVirtualRange,
   isAlreadyAppliedDeletePatch,
+  removeRelocatedRowsFromSparseOutlineProjection,
   sameParentReorderTreeStructurePatchInfo,
   type SameParentReorderPatchInfo,
   type VirtualRange,
@@ -2931,6 +2932,7 @@ function applyTreeStructureUpdate(update: TreeStructureUpdate): void {
       const shouldRefreshSparseProjectionAfterLocalPatch = Boolean(
         currentProjection && hydratingFullState && isSparseInitialProjection(currentProjection)
       );
+      const previousRootIds = state.rootIds;
       const deletedNodeIds = new Set(update.deletedNodeIds);
       recordDeletedNodeIds(deletedNodeIds);
       for (const nodeId of deletedNodeIds) {
@@ -3027,7 +3029,15 @@ function applyTreeStructureUpdate(update: TreeStructureUpdate): void {
           return;
         }
 
-        if (removeRelocatedRowsFromSparseOutlineProjection(state, currentProjection, update)) {
+        if (
+          hydratingFullState &&
+          removeRelocatedRowsFromSparseOutlineProjection(
+            state,
+            currentProjection,
+            update,
+            previousRootIds
+          )
+        ) {
           refreshProjectionActiveTabTarget(state, currentProjection);
           currentCutRowRange = cutSubtreeRowRange(currentProjection.rows, pendingCutNodeId);
           updateProjectionChrome(currentProjection);
@@ -3207,69 +3217,6 @@ function refreshLastOutlineProjectionAfterTreeStructureUpdate(
   }
 
   delete entry.coverage;
-}
-
-function removeRelocatedRowsFromSparseOutlineProjection(
-  state: OutlineState,
-  projection: VisibleTreeProjection,
-  update: TreeStructureUpdate
-): boolean {
-  if (
-    projection.isSearchActive ||
-    update.deletedNodeIds.length > 0 ||
-    !hydratingFullState ||
-    !isSparseInitialProjection(projection)
-  ) {
-    return false;
-  }
-
-  const rowIndexes = new Set(projection.rows.map((row) => row.index));
-  const rowsToRemove = new Set<NodeId>();
-  const rowsByNodeId = new Map(projection.rows.map((row) => [row.nodeId, row]));
-  for (const node of update.updatedNodes) {
-    const row = rowsByNodeId.get(node.id);
-    const parent = node.parentId ? state.nodes[node.parentId] : undefined;
-    if (node.childIds.length > 0) {
-      for (const candidate of projection.rows) {
-        const candidateNode = state.nodes[candidate.nodeId];
-        if (candidateNode?.parentId !== node.id) {
-          continue;
-        }
-        const nextRowIndex = node.childIds.indexOf(candidate.nodeId) + 1;
-        if (nextRowIndex > 0 && nextRowIndex !== candidate.index && !rowIndexes.has(nextRowIndex)) {
-          rowsToRemove.add(candidate.nodeId);
-        }
-      }
-    }
-    if (!row || !parent) {
-      continue;
-    }
-
-    const childIndex = parent.childIds.indexOf(node.id);
-    if (childIndex < 0) {
-      continue;
-    }
-    const nextRowIndex = childIndex + 1;
-    if (nextRowIndex !== row.index && !rowIndexes.has(nextRowIndex)) {
-      rowsToRemove.add(node.id);
-    }
-    if (nextRowIndex !== row.index && node.kind !== "window") {
-      rowsToRemove.add(node.id);
-    }
-  }
-
-  if (rowsToRemove.size === 0) {
-    return false;
-  }
-
-  projection.rows = projection.rows.filter((row) => !rowsToRemove.has(row.nodeId));
-  projection.visibleNodeIds = projection.rows.map((row) => row.nodeId);
-  projection.visibleNodeIdSet = new Set(projection.visibleNodeIds);
-  for (const nodeId of rowsToRemove) {
-    projection.matchingNodeIds.delete(nodeId);
-  }
-  projection.matchCount = projection.matchingNodeIds.size;
-  return true;
 }
 
 function invalidateProjectionCache(): void {

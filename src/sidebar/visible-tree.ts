@@ -988,6 +988,106 @@ export function applyInsertTreeStructurePatchToProjection(
   return true;
 }
 
+// Sparse-projection local patch for a structural relocation the apply* strategies above cannot place
+// (a node moved to/from/within the top level, e.g. "Move to bottom"). It drops the relocated nodes'
+// stale visible rows so they do not linger in their old slot until the background refill lands. Pure
+// and unit-testable; the sidebar caller gates it on `hydratingFullState`. INVARIANT (see
+// visible-tree.test.ts): after this runs, the still-visible rows must remain a subsequence of the
+// post-patch full projection -- no row may sit at a position the new tree no longer puts it.
+export function removeRelocatedRowsFromSparseOutlineProjection(
+  state: OutlineState,
+  projection: VisibleTreeProjection,
+  update: DeleteTreeStructurePatch,
+  previousRootIds: readonly NodeId[]
+): boolean {
+  const isSparseProjection =
+    typeof projection.totalRowCount === "number" &&
+    projection.totalRowCount !== projection.rows.length;
+  if (projection.isSearchActive || update.deletedNodeIds.length > 0 || !isSparseProjection) {
+    return false;
+  }
+
+  const rowIndexes = new Set(projection.rows.map((row) => row.index));
+  const rowsToRemove = new Set<NodeId>();
+  const rowsByNodeId = new Map(projection.rows.map((row) => [row.nodeId, row]));
+
+  // A node whose top-level slot changed -- moved to, from, or within the roots (e.g. "Move to
+  // bottom" makes it the last root, past any unloaded tail) -- is no longer where its visible rows
+  // sit. The childIndex heuristic below only catches nested same-window shuffles and skips top-level
+  // nodes, so without this a relocated group lingered in its old slot until the background refill
+  // landed (slow on a large store). Detect these by an exact rootIds index compare (NOT the
+  // parentRowIndex slot, which is a global row index that does not address a scrolled slice array,
+  // so it would mis-flag unchanged rows) and drop every visible row that IS one of them or DESCENDS
+  // from one, walking state ancestry so a slice starting inside the moved subtree is covered even
+  // when the moved node's own row scrolled off. (An unloaded intermediate ancestor breaks the walk;
+  // that residual visible descendant is repainted by the refill -- bounded and self-healing.)
+  const relocatedTopLevelIds = new Set<NodeId>();
+  for (const node of update.updatedNodes) {
+    if (previousRootIds.indexOf(node.id) !== update.rootIds.indexOf(node.id)) {
+      relocatedTopLevelIds.add(node.id);
+    }
+  }
+  if (relocatedTopLevelIds.size > 0) {
+    for (const row of projection.rows) {
+      let ancestorId: NodeId | undefined = row.nodeId;
+      const visited = new Set<NodeId>();
+      while (ancestorId && !visited.has(ancestorId)) {
+        if (relocatedTopLevelIds.has(ancestorId)) {
+          rowsToRemove.add(row.nodeId);
+          break;
+        }
+        visited.add(ancestorId);
+        ancestorId = state.nodes[ancestorId]?.parentId;
+      }
+    }
+  }
+
+  for (const node of update.updatedNodes) {
+    const row = rowsByNodeId.get(node.id);
+    const parent = node.parentId ? state.nodes[node.parentId] : undefined;
+    if (node.childIds.length > 0) {
+      for (const candidate of projection.rows) {
+        const candidateNode = state.nodes[candidate.nodeId];
+        if (candidateNode?.parentId !== node.id) {
+          continue;
+        }
+        const nextRowIndex = node.childIds.indexOf(candidate.nodeId) + 1;
+        if (nextRowIndex > 0 && nextRowIndex !== candidate.index && !rowIndexes.has(nextRowIndex)) {
+          rowsToRemove.add(candidate.nodeId);
+        }
+      }
+    }
+    if (!row || !parent) {
+      continue;
+    }
+
+    const childIndex = parent.childIds.indexOf(node.id);
+    if (childIndex < 0) {
+      continue;
+    }
+    const nextRowIndex = childIndex + 1;
+    if (nextRowIndex !== row.index && !rowIndexes.has(nextRowIndex)) {
+      rowsToRemove.add(node.id);
+    }
+    if (nextRowIndex !== row.index && node.kind !== "window") {
+      rowsToRemove.add(node.id);
+    }
+  }
+
+  if (rowsToRemove.size === 0) {
+    return false;
+  }
+
+  projection.rows = projection.rows.filter((row) => !rowsToRemove.has(row.nodeId));
+  projection.visibleNodeIds = projection.rows.map((row) => row.nodeId);
+  projection.visibleNodeIdSet = new Set(projection.visibleNodeIds);
+  for (const nodeId of rowsToRemove) {
+    projection.matchingNodeIds.delete(nodeId);
+  }
+  projection.matchCount = projection.matchingNodeIds.size;
+  return true;
+}
+
 function projectionPatchIndexesFitRenderedRows(
   projection: VisibleTreeProjection,
   insertions: readonly { index: number }[],
