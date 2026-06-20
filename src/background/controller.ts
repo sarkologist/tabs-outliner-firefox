@@ -113,6 +113,7 @@ import {
   isPerformanceTraceMessage,
   isSidebarNonEditInteractionMessage,
   isSidebarPerformanceTraceCollectedMessage,
+  isWriteLogMessage,
   messageType
 } from "./message-guards.js";
 import {
@@ -227,6 +228,7 @@ import type {
   RuntimeWindowProvenance
 } from "../model/types.js";
 import { createPerformanceTracer, type TraceDetail, type TraceSnapshot } from "../perf/trace.js";
+import { WRITE_LOG_SESSION_KEY, createWriteLog, type WriteLogSnapshot } from "./write-log.js";
 import {
   PROFILE_STORAGE_KEY,
   type LabeledTraceSnapshot,
@@ -390,6 +392,12 @@ export function createBackgroundController(
   const shardStore: KeyValueStore = options.shardStore ?? storageLocalKvStore(api);
   const shardStoreExternal = options.shardStore !== undefined;
   const perfTrace = createPerformanceTracer("background");
+  // Always-on write-activity debug log surfaced live in the options page (see write-log.ts). It
+  // records the durability chain so the user can confirm every change persists with no data loss.
+  // Mirrored to ephemeral storage.session (no disk write) so it survives the event page's idle/wake
+  // cycles within a browser session; hydrated from there at startup.
+  const writeLog = createWriteLog({ now, persist: persistWriteLogToSession });
+  void hydrateWriteLogFromSession();
   const sidebarBroadcaster = createSidebarBroadcaster({
     perfTrace,
     sendRuntimeMessage: (message) => api.runtime.sendMessage(message)
@@ -468,6 +476,7 @@ export function createBackgroundController(
     },
     deferPersistedStateBaselineClone,
     recordIncidentLog,
+    recordWriteEvent: (event) => writeLog.record(event),
     clearCompletedRuntimeLifecycleJournalEntriesAfterSave
   });
   const {
@@ -934,6 +943,14 @@ export function createBackgroundController(
 
     if (isPerformanceTraceMessage(message)) {
       return handlePerformanceTraceMessage(message);
+    }
+
+    if (isWriteLogMessage(message)) {
+      if (message.type === "clearWriteLog") {
+        writeLog.clear();
+        return Promise.resolve({ ok: true });
+      }
+      return Promise.resolve(writeLog.snapshot());
     }
 
     return perfTrace.measureAsync(
@@ -6166,6 +6183,28 @@ export function createBackgroundController(
         event,
         message: errorText(error)
       });
+    }
+  }
+
+  // Mirror the write-activity log to ephemeral session storage (in-memory, no disk write) so it
+  // survives the background event page's idle/wake cycles. A no-op when storage.session is absent
+  // (older browsers, test fakes) -- the log then lives only for the current event-page lifetime.
+  function persistWriteLogToSession(snapshot: WriteLogSnapshot): void {
+    const session = api.storage.session;
+    if (!session) {
+      return;
+    }
+    void session.set({ [WRITE_LOG_SESSION_KEY]: snapshot }).catch(() => undefined);
+  }
+
+  async function hydrateWriteLogFromSession(): Promise<void> {
+    try {
+      const stored = await api.storage.session?.get(WRITE_LOG_SESSION_KEY);
+      if (stored) {
+        writeLog.hydrate(stored[WRITE_LOG_SESSION_KEY]);
+      }
+    } catch {
+      // Best-effort: a missing/disabled session store just means the log starts empty.
     }
   }
 

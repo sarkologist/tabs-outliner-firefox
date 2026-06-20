@@ -35,6 +35,7 @@ import { exportPortableTree } from "../model/portable-tree.js";
 import type { NodeId, OutlineState } from "../model/types.js";
 import type { NodeStateUpdate, TreeStructureUpdate } from "./patch-updates.js";
 import type { IncidentLogDetail } from "./incident-log.js";
+import type { WriteLogInput } from "./write-log.js";
 import type { PerformanceTracer } from "../perf/trace.js";
 import {
   outlineStateCountDetail,
@@ -98,6 +99,11 @@ export type PersistenceCoordinatorDeps = {
   setLastPersistedState: (state: OutlineState | undefined) => void;
   deferPersistedStateBaselineClone: (persisted: OutlineState) => void;
   recordIncidentLog: (event: string, detail?: IncidentLogDetail) => Promise<void>;
+  // Append to the user-facing write-activity debug log (in-memory, surfaced in the options page).
+  // Records the durability chain -- journal append, snapshot save, prune, boot snapshot, failures --
+  // so the user can confirm every change persists. Cheap (a synchronous push); never on a measured
+  // path, so it does not affect the perf budgets.
+  recordWriteEvent: (event: WriteLogInput) => void;
   clearCompletedRuntimeLifecycleJournalEntriesAfterSave: () => Promise<void>;
 };
 
@@ -112,6 +118,7 @@ export function createPersistenceCoordinator(deps: PersistenceCoordinatorDeps) {
     setLastPersistedState,
     deferPersistedStateBaselineClone,
     recordIncidentLog,
+    recordWriteEvent,
     clearCompletedRuntimeLifecycleJournalEntriesAfterSave
   } = deps;
   // Shards live in shardStore when one is injected (IndexedDB in production); otherwise they stay
@@ -197,8 +204,10 @@ export function createPersistenceCoordinator(deps: PersistenceCoordinatorDeps) {
       await perfTrace.measureAsync("background.state.bootSnapshot.write", () =>
         api.storage.local.set(outlineBootSnapshotItem(current, now()))
       );
+      recordWriteEvent({ kind: "bootSnapshot", ok: true });
     } catch (error) {
       perfTrace.mark("background.state.bootSnapshot.error", { message: errorText(error) });
+      recordWriteEvent({ kind: "bootSnapshot", ok: false, detail: { message: errorText(error) } });
     }
   }
 
@@ -382,6 +391,11 @@ export function createPersistenceCoordinator(deps: PersistenceCoordinatorDeps) {
     // on failure. Items queued during the write stay queued (they may postdate nextState).
     const subsumedEventItems =
       journalSeqIncluded !== undefined ? drainPendingEventJournalItems() : [];
+    // Captured inside the save closure so the write-log snapshotSave entry can report what the
+    // compaction did (full vs incremental, how many shards, which generation).
+    let compactionDetail:
+      | { fullCompaction: boolean; dirtyShardCount: number; generation: number }
+      | undefined;
     try {
       await perfTrace.measureAsync("background.state.save", async () => {
         const setItems: Record<string, unknown> = {};
@@ -421,14 +435,17 @@ export function createPersistenceCoordinator(deps: PersistenceCoordinatorDeps) {
             ...(dirtyShardIndexes ? { dirtyShardIndexes } : {})
           });
           Object.assign(setItems, v4Snapshot.setItems);
-          perfTrace.mark("background.state.save.v4.compact", {
+          compactionDetail = {
             fullCompaction,
             dirtyShardCount: dirtyShardIndexes
               ? dirtyShardIndexes.size
               : v4Snapshot.manifest.shardGenerations.length,
-            setKeys: Object.keys(v4Snapshot.setItems).length,
-            removeKeys: v4Snapshot.removeKeysAfterCommit.length,
             generation: v4Snapshot.manifest.generation
+          };
+          perfTrace.mark("background.state.save.v4.compact", {
+            ...compactionDetail,
+            setKeys: Object.keys(v4Snapshot.setItems).length,
+            removeKeys: v4Snapshot.removeKeysAfterCommit.length
           });
         }
         if (nextHistory) {
@@ -455,16 +472,39 @@ export function createPersistenceCoordinator(deps: PersistenceCoordinatorDeps) {
         pendingEventJournalItems = [...subsumedEventItems, ...pendingEventJournalItems];
         armEventJournalTimers();
       }
+      recordWriteEvent({ kind: "saveFailed", ok: false, detail: { message: errorText(error) } });
       handleStateSaveFailure(nextState, nextHistory, error);
       throw error;
     }
     saveFailureBackoffIndex = 0;
+    if (nextState && nextCountDetail) {
+      recordWriteEvent({
+        kind: "snapshotSave",
+        ok: true,
+        detail: {
+          nodeCount: nextCountDetail.nodeCount,
+          closedCount: nextCountDetail.closedCount,
+          nodeDelta: nextCountDetail.nodeCount - previousCountDetail.nodeCount,
+          closedDelta: nextCountDetail.closedCount - previousCountDetail.closedCount,
+          hasHistory: Boolean(nextHistory),
+          ...(journalSeqIncluded !== undefined ? { journalSeqIncluded } : {}),
+          ...(compactionDetail ?? {})
+        }
+      });
+    } else if (nextHistory) {
+      recordWriteEvent({ kind: "historySave", ok: true });
+    }
     if (
       journalSeqIncluded !== undefined &&
       outlineJournal &&
       outlineJournal.pendingEntryCount() > 0
     ) {
       await outlineJournal.prune(journalSeqIncluded);
+      recordWriteEvent({
+        kind: "journalPrune",
+        ok: true,
+        detail: { throughSeq: journalSeqIncluded }
+      });
     }
     if (saveIncidentDetail && nextCountDetail) {
       const closedCountDelta = nextCountDetail.closedCount - previousCountDetail.closedCount;
@@ -754,8 +794,20 @@ export function createPersistenceCoordinator(deps: PersistenceCoordinatorDeps) {
           journalTouchedSinceCompaction.add(stateV4ShardIndexForNodeId(nodeId));
         }
       }
+      const labels = journalItemLabels(items);
+      recordWriteEvent({
+        kind: "journalAppend",
+        ok: true,
+        detail: {
+          seq: result.seq,
+          entries: items.length,
+          ...(labels ? { labels } : {}),
+          ...(result.spilled ? { spilled: true } : {})
+        }
+      });
       if (result.spilled) {
         perfTrace.mark("background.journal.spill", { entries: items.length });
+        recordWriteEvent({ kind: "journalSpill", ok: false, detail: { entries: items.length } });
         tightenPendingSaveScheduleAfterSpill();
       }
       return result.spilled;
@@ -1244,4 +1296,16 @@ export function createPersistenceCoordinator(deps: PersistenceCoordinatorDeps) {
 
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+// A compact, unique list of the journal items' labels (e.g. "deleteNode", "runtimeEvent") for the
+// write-activity log, so a journal-append row reads as the change it carried.
+function journalItemLabels(items: OutlineJournalAppendItem[]): string {
+  const labels = new Set<string>();
+  for (const item of items) {
+    if (item.label) {
+      labels.add(item.label);
+    }
+  }
+  return [...labels].join(", ");
 }

@@ -110,6 +110,17 @@ type WebExtensionBrowserApi = {
       set(items: Record<string, unknown>): Promise<void>;
       remove(keys: string | string[]): Promise<void>;
     };
+    // Ephemeral, in-memory, browser-session-scoped storage (Firefox 115+, MV3). Optional because
+    // older callers and test fakes only stub `local`; feature-detect before use. Used to keep the
+    // write-activity debug log alive across the background event page's idle/wake cycles without
+    // any disk write (storage.local writes are a tracked perf cost; see write-log.ts).
+    session?: {
+      get(
+        key?: string | string[] | Record<string, unknown> | null
+      ): Promise<Record<string, unknown>>;
+      set(items: Record<string, unknown>): Promise<void>;
+      remove(keys: string | string[]): Promise<void>;
+    };
   };
   windows: {
     WINDOW_ID_NONE: number;

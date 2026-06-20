@@ -282,6 +282,61 @@ test.describe("extension options page", () => {
     await expect(page.locator("#incident-summary")).toHaveText("3 incidents · 1 warning");
     expect(issues).toEqual([]);
   });
+
+  test("shows the write-activity durability chain, flags failures, and clears", async ({
+    page
+  }) => {
+    const issues = collectPageIssues(page);
+    await loadOptions(page);
+
+    // The default fixture is a healthy chain: journal append -> snapshot save -> prune.
+    await expect(page.locator("#write-log-health")).toContainText("99 nodes");
+    await expect(page.locator("#write-log-health")).toContainText("no errors");
+    await expect(page.locator("#write-log-health")).toHaveClass(/is-ok/);
+
+    const rows = page.locator("#write-log-list .write-log-row");
+    await expect(rows).toHaveCount(3);
+    // Newest first.
+    await expect(rows.first()).toContainText("Trimmed journal");
+    await expect(rows.nth(1)).toContainText("Saved snapshot");
+    await expect(rows.nth(1)).toContainText("99 nodes");
+    await expect(rows.last()).toContainText("Journaled 1 change");
+
+    // A spill (warning) and a failed save (error) light up the health line and row severities.
+    await setWriteLog(page, {
+      version: 1,
+      entries: [
+        {
+          version: 1,
+          seq: 4,
+          at: "2026-06-20T10:01:00.000Z",
+          kind: "journalSpill",
+          ok: false,
+          detail: { entries: 1 }
+        },
+        {
+          version: 1,
+          seq: 5,
+          at: "2026-06-20T10:01:01.000Z",
+          kind: "saveFailed",
+          ok: false,
+          detail: { message: "quota exceeded" }
+        }
+      ]
+    });
+    await page.locator("#write-log-refresh").click();
+    await expect(page.locator("#write-log-health")).toContainText("1 error");
+    await expect(page.locator("#write-log-health")).toHaveClass(/is-error/);
+    await expect(page.locator("#write-log-list .write-log-row.is-error")).toContainText("FAILED");
+    await expect(page.locator("#write-log-list .write-log-row.is-warn")).toContainText("spill");
+
+    // Clear empties the timeline.
+    await page.locator("#write-log-clear").click();
+    await expect(page.locator("#write-log-list .write-log-empty")).toBeVisible();
+    await expect(page.locator("#write-log-health")).toContainText("No write activity yet");
+
+    expect(issues).toEqual([]);
+  });
 });
 
 async function loadOptions(page: Page): Promise<void> {
@@ -304,6 +359,43 @@ async function loadOptions(page: Page): Promise<void> {
           }
         ],
         sidebars: [] as unknown[]
+      };
+      let writeLogSnapshot: { version: 1; entries: unknown[] } = {
+        version: 1,
+        entries: [
+          {
+            version: 1,
+            seq: 1,
+            at: "2026-06-20T10:00:00.000Z",
+            kind: "journalAppend",
+            ok: true,
+            detail: { seq: 10, entries: 1, labels: "deleteNode" }
+          },
+          {
+            version: 1,
+            seq: 2,
+            at: "2026-06-20T10:00:01.000Z",
+            kind: "snapshotSave",
+            ok: true,
+            detail: {
+              nodeCount: 99,
+              closedCount: 5,
+              nodeDelta: -1,
+              closedDelta: 0,
+              journalSeqIncluded: 10,
+              dirtyShardCount: 2,
+              generation: 7
+            }
+          },
+          {
+            version: 1,
+            seq: 3,
+            at: "2026-06-20T10:00:02.000Z",
+            kind: "journalPrune",
+            ok: true,
+            detail: { throughSeq: 10 }
+          }
+        ]
       };
       const runtimeMessages: unknown[] = [];
 
@@ -334,6 +426,13 @@ async function loadOptions(page: Page): Promise<void> {
         }
       ).__setProfileSnapshot = (snapshot) => {
         profileSnapshot = structuredClone(snapshot);
+      };
+      (
+        window as typeof window & {
+          __setWriteLog?: (snapshot: { version: 1; entries: unknown[] }) => void;
+        }
+      ).__setWriteLog = (snapshot) => {
+        writeLogSnapshot = structuredClone(snapshot);
       };
 
       window.browser = {
@@ -452,6 +551,13 @@ async function loadOptions(page: Page): Promise<void> {
             if (type === "getPerformanceTrace") {
               return structuredClone(profileSnapshot.background);
             }
+            if (type === "getWriteLog") {
+              return structuredClone(writeLogSnapshot);
+            }
+            if (type === "clearWriteLog") {
+              writeLogSnapshot = { version: 1, entries: [] };
+              return { ok: true };
+            }
             return undefined;
           }
         },
@@ -484,6 +590,19 @@ async function loadOptions(page: Page): Promise<void> {
 
   await page.goto("/options/options.html");
   await expect(page.getByRole("heading", { name: "Options" })).toBeVisible();
+}
+
+async function setWriteLog(
+  page: Page,
+  snapshot: { version: 1; entries: unknown[] }
+): Promise<void> {
+  await page.evaluate((value) => {
+    (
+      window as typeof window & {
+        __setWriteLog?: (snapshot: { version: 1; entries: unknown[] }) => void;
+      }
+    ).__setWriteLog?.(value);
+  }, snapshot);
 }
 
 async function savedPreferences(page: Page): Promise<AppPreferences | undefined> {

@@ -33,6 +33,14 @@ import {
   loadIncidentLog,
   type IncidentLogEntry
 } from "../background/incident-log.js";
+import {
+  describeWriteLogEntry,
+  normalizeWriteLogEntries,
+  summarizeWriteLog,
+  type WriteLogEntry,
+  type WriteLogHealth,
+  type WriteLogSeverity
+} from "../background/write-log.js";
 
 const TOGGLE_SIDEBAR_COMMAND = "toggle-sidebar";
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -94,6 +102,13 @@ const profileStatus = document.querySelector<HTMLElement>("#profile-status");
 const incidentRefresh = document.querySelector<HTMLButtonElement>("#incident-refresh");
 const incidentSummary = document.querySelector<HTMLElement>("#incident-summary");
 const incidentList = document.querySelector<HTMLOListElement>("#incident-list");
+const writeLogHealth = document.querySelector<HTMLElement>("#write-log-health");
+const writeLogList = document.querySelector<HTMLOListElement>("#write-log-list");
+const writeLogRefresh = document.querySelector<HTMLButtonElement>("#write-log-refresh");
+const writeLogClear = document.querySelector<HTMLButtonElement>("#write-log-clear");
+const writeLogLive = document.querySelector<HTMLInputElement>("#write-log-live");
+
+const WRITE_LOG_POLL_INTERVAL_MS = 1500;
 
 type RecordingTarget =
   | {
@@ -108,6 +123,9 @@ let preferences: AppPreferences = DEFAULT_APP_PREFERENCES;
 let automaticBackupStatus: AutomaticBackupStatus = {};
 let nativeSidebarShortcut = "";
 let recordingTarget: RecordingTarget | undefined;
+let writeLogEntries: WriteLogEntry[] = [];
+let writeLogRenderedSeq = -1;
+let writeLogPollTimer: number | undefined;
 
 void initializeOptions();
 
@@ -121,6 +139,8 @@ async function initializeOptions(): Promise<void> {
   registerEvents();
   void refreshPerformanceProfileStatus();
   void refreshIncidentLog();
+  void refreshWriteLog();
+  startWriteLogPolling();
 }
 
 function registerEvents(): void {
@@ -225,6 +245,32 @@ function registerEvents(): void {
 
   incidentRefresh?.addEventListener("click", () => {
     void refreshIncidentLog();
+  });
+
+  writeLogRefresh?.addEventListener("click", () => {
+    void refreshWriteLog();
+  });
+
+  writeLogClear?.addEventListener("click", () => {
+    void clearWriteLog();
+  });
+
+  writeLogLive?.addEventListener("change", () => {
+    if (writeLogLive.checked) {
+      startWriteLogPolling();
+      void refreshWriteLog();
+    } else {
+      stopWriteLogPolling();
+    }
+  });
+
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) {
+      stopWriteLogPolling();
+    } else {
+      startWriteLogPolling();
+      void refreshWriteLog();
+    }
   });
 
   document.addEventListener(
@@ -665,6 +711,160 @@ function incidentDetailText(detail: IncidentLogEntry["detail"]): string {
   return Object.entries(detail)
     .map(([key, value]) => `${key}=${value}`)
     .join(" · ");
+}
+
+async function refreshWriteLog(): Promise<void> {
+  const entries = await loadWriteLog();
+  const latestSeq = entries.length > 0 ? entries[entries.length - 1]!.seq : 0;
+  // Skip the re-render (and the scroll reset it causes) when nothing new has been recorded.
+  if (entries.length === writeLogEntries.length && latestSeq === writeLogRenderedSeq) {
+    return;
+  }
+  writeLogEntries = entries;
+  writeLogRenderedSeq = latestSeq;
+  renderWriteLog(entries);
+}
+
+async function clearWriteLog(): Promise<void> {
+  await browser.runtime.sendMessage({ type: "clearWriteLog" }).catch(() => undefined);
+  await refreshWriteLog();
+}
+
+async function loadWriteLog(): Promise<WriteLogEntry[]> {
+  const response = await browser.runtime
+    .sendMessage({ type: "getWriteLog" })
+    .catch(() => undefined);
+  return normalizeWriteLogEntries(response);
+}
+
+function startWriteLogPolling(): void {
+  stopWriteLogPolling();
+  if (!(writeLogLive?.checked ?? true) || document.hidden) {
+    return;
+  }
+  // A light poll keeps the view live; messaging the background also keeps its event page awake
+  // while the user is watching, so the in-memory log is not wiped mid-session.
+  writeLogPollTimer = window.setInterval(() => {
+    void refreshWriteLog();
+  }, WRITE_LOG_POLL_INTERVAL_MS);
+}
+
+function stopWriteLogPolling(): void {
+  if (writeLogPollTimer !== undefined) {
+    window.clearInterval(writeLogPollTimer);
+    writeLogPollTimer = undefined;
+  }
+}
+
+function renderWriteLog(entries: WriteLogEntry[]): void {
+  const health = summarizeWriteLog(entries);
+  if (writeLogHealth) {
+    writeLogHealth.textContent = writeLogHealthText(health);
+    const severity = writeLogHealthSeverity(health);
+    writeLogHealth.classList.toggle("is-ok", severity === "ok");
+    writeLogHealth.classList.toggle("is-warn", severity === "warn");
+    writeLogHealth.classList.toggle("is-error", severity === "error");
+  }
+  if (!writeLogList) {
+    return;
+  }
+  if (entries.length === 0) {
+    writeLogList.replaceChildren(writeLogEmptyRow());
+    return;
+  }
+  // Newest first: entries are appended chronologically.
+  writeLogList.replaceChildren(...[...entries].reverse().map(writeLogRow));
+}
+
+function writeLogHealthText(health: WriteLogHealth): string {
+  if (health.total === 0) {
+    return "No write activity yet — perform an action and it will appear here.";
+  }
+  const parts: string[] = [];
+  if (health.nodeCount !== undefined) {
+    parts.push(`${health.nodeCount.toLocaleString("en-US")} nodes`);
+  }
+  if (health.closedCount !== undefined) {
+    parts.push(`${health.closedCount.toLocaleString("en-US")} closed`);
+  }
+  if (health.lastSaveAt) {
+    parts.push(`last save ${writeLogTimeLabel(health.lastSaveAt)}`);
+  }
+  if (health.pendingJournalCount !== undefined) {
+    parts.push(
+      health.pendingJournalCount === 0
+        ? "snapshot covers the journal"
+        : `${health.pendingJournalCount} journaled, awaiting snapshot`
+    );
+  }
+  parts.push(
+    health.errorCount === 0
+      ? "no errors"
+      : `${health.errorCount} ${health.errorCount === 1 ? "error" : "errors"}`
+  );
+  if (health.spillCount > 0) {
+    parts.push(`${health.spillCount} ${health.spillCount === 1 ? "spill" : "spills"}`);
+  }
+  return parts.join(" · ");
+}
+
+function writeLogHealthSeverity(health: WriteLogHealth): WriteLogSeverity | "neutral" {
+  if (health.total === 0) {
+    return "neutral";
+  }
+  if (health.errorCount > 0) {
+    return "error";
+  }
+  if (
+    health.spillCount > 0 ||
+    (health.lastNodeDelta ?? 0) <= -50 ||
+    (health.lastClosedDelta ?? 0) <= -25
+  ) {
+    return "warn";
+  }
+  return "ok";
+}
+
+function writeLogRow(entry: WriteLogEntry): HTMLLIElement {
+  const { title, severity, detailText } = describeWriteLogEntry(entry);
+  const row = document.createElement("li");
+  row.className = `write-log-row is-${severity}`;
+
+  const header = document.createElement("div");
+  header.className = "write-log-row-header";
+
+  const titleEl = document.createElement("span");
+  titleEl.className = "write-log-title";
+  titleEl.textContent = title;
+
+  const time = document.createElement("time");
+  time.className = "write-log-time";
+  time.dateTime = entry.at;
+  time.title = entry.at;
+  time.textContent = writeLogTimeLabel(entry.at);
+
+  header.append(titleEl, time);
+  row.append(header);
+
+  if (detailText) {
+    const detail = document.createElement("p");
+    detail.className = "write-log-detail";
+    detail.textContent = detailText;
+    row.append(detail);
+  }
+  return row;
+}
+
+function writeLogEmptyRow(): HTMLLIElement {
+  const row = document.createElement("li");
+  row.className = "write-log-empty";
+  row.textContent = "No write activity yet — perform an action and it will appear here.";
+  return row;
+}
+
+function writeLogTimeLabel(at: string): string {
+  const date = new Date(at);
+  return Number.isNaN(date.getTime()) ? at : date.toLocaleTimeString();
 }
 
 function showErrors(messages: string[]): void {
