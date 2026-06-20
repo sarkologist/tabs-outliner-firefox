@@ -5,8 +5,8 @@ import {
   type PersistenceCoordinatorDeps
 } from "./persistence-coordinator.js";
 import { createPerformanceTracer } from "../perf/trace.js";
-import type { OutlineState } from "../model/types.js";
-import type { WriteLogInput } from "./write-log.js";
+import type { OutlineNode, OutlineState } from "../model/types.js";
+import type { WriteLogChangeInput, WriteLogInput } from "./write-log.js";
 
 // Focused coverage for the write-activity instrumentation's safety contract: the debug log is
 // observational and must never affect persistence. The broader save/journal behavior is covered by
@@ -80,6 +80,46 @@ describe("persistence coordinator write-activity safety", () => {
     await coordinator.flushPendingSaves();
 
     expect(events.some((event) => event.kind === "snapshotSave" && event.ok)).toBe(true);
+  });
+
+  it("names deleted nodes from the runtime fast path using the pre-update state", async () => {
+    const changes: WriteLogChangeInput[] = [];
+    const tab: OutlineNode = {
+      id: "tab:1",
+      kind: "tab",
+      status: "live",
+      childIds: [],
+      title: "Gmail",
+      collapsed: false,
+      createdAt: 0,
+      updatedAt: 0
+    };
+    const previous: OutlineState = { version: 1, rootIds: ["tab:1"], nodes: { "tab:1": tab } };
+    const coordinator = createPersistenceCoordinator(
+      makeDeps({
+        // getState() returns the post-delete state; `previous` carries the node's title.
+        getState: () => emptyState(),
+        recordWriteChange: (change) => changes.push(change)
+      })
+    );
+    await coordinator.createAndInitJournal();
+
+    coordinator.queueRuntimeEventJournalFromUpdate(
+      {
+        type: "treeStructureUpdated",
+        updatedNodes: [],
+        deletedNodeIds: ["tab:1"],
+        deletedClosedCount: 0,
+        rootIds: []
+      },
+      "runtimeFastPath",
+      previous
+    );
+    await coordinator.flushEventJournalQueue();
+
+    expect(changes).toHaveLength(1);
+    expect(changes[0]!.headline).toContain("Deleted");
+    expect(changes[0]!.lines).toContain("'Gmail'");
   });
 
   it("never lets a throwing write-activity logger break the save (durability is independent)", async () => {

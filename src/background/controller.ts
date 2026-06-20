@@ -4689,8 +4689,9 @@ export function createBackgroundController(
         runtimeFacts.recordAcceptedRuntimeTabScopeUpdates(fastPath.runtimeScopeUpdates);
         persistKnownRuntimeFastPathUpdate(fastPath.update, state);
         // The fast path mutates state in place, so the journal delta comes from the update
-        // payload; when queued, the coalesced append replaces the checkpoint flush.
-        if (!queueRuntimeEventJournalFromUpdate(fastPath.update, "runtimeFastPath")) {
+        // payload; when queued, the coalesced append replaces the checkpoint flush. `current` is
+        // the pre-update state, so deleted nodes can be named in the write-activity change log.
+        if (!queueRuntimeEventJournalFromUpdate(fastPath.update, "runtimeFastPath", current)) {
           await flushRuntimeTruthFastPathSaveIfNeeded(
             state,
             fastPath.update,

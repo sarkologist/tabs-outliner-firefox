@@ -12,8 +12,19 @@
 // ephemeral storage.session (in-memory, no disk I/O) so it survives the background event page's
 // idle/wake cycles within a browser session. The options page pulls it over the getWriteLog message.
 
-export const WRITE_LOG_SESSION_KEY = "tabsOutlinerWriteLog:v1";
-export const WRITE_LOG_LIMIT = 400;
+// v2: the entry shape gained the "change" kind + structured `change` field. A bumped key drops any
+// stale v1 session rows (which carried the domain text on journalAppend.detail) rather than letting
+// them leak into the storage list after an in-session upgrade.
+export const WRITE_LOG_SESSION_KEY = "tabsOutlinerWriteLog:v2";
+// Separate caps so a burst of domain "change" rows can't evict the storage diagnostics (and vice
+// versa); the two are rendered as separate lists.
+export const WRITE_LOG_STORAGE_LIMIT = 400;
+export const WRITE_LOG_CHANGE_LIMIT = 150;
+// The most affected-node names a single change row stores (and the UI shows + 'N more'). Bounds
+// session-storage growth while still naming every node for a realistic window delete.
+export const WRITE_LOG_CHANGE_LINE_LIMIT = 100;
+// Coarse upper bound for a hydrated snapshot before per-category trimming.
+export const WRITE_LOG_LIMIT = WRITE_LOG_STORAGE_LIMIT + WRITE_LOG_CHANGE_LIMIT;
 
 const WRITE_LOG_VERSION = 1;
 const DEFAULT_PERSIST_DEBOUNCE_MS = 500;
@@ -115,13 +126,16 @@ const CLOSED_DROP_WARN_THRESHOLD = -25;
 export function createWriteLog(
   options: {
     now?: () => number;
+    // Storage-diagnostic cap; `changeLimit` caps the domain-change rows independently.
     limit?: number;
+    changeLimit?: number;
     persist?: (snapshot: WriteLogSnapshot) => void;
     persistDebounceMs?: number;
   } = {}
 ): WriteLog {
   const now = options.now ?? Date.now;
-  const limit = options.limit ?? WRITE_LOG_LIMIT;
+  const storageLimit = options.limit ?? WRITE_LOG_STORAGE_LIMIT;
+  const changeLimit = options.changeLimit ?? WRITE_LOG_CHANGE_LIMIT;
   const persist = options.persist;
   const persistDebounceMs = options.persistDebounceMs ?? DEFAULT_PERSIST_DEBOUNCE_MS;
 
@@ -129,11 +143,13 @@ export function createWriteLog(
   let nextSeq = 1;
   let persistTimer: ReturnType<typeof setTimeout> | undefined;
 
+  function trimToCaps(): void {
+    entries = trimWriteLogEntries(entries, storageLimit, changeLimit);
+  }
+
   function pushEntry(entry: WriteLogEntry): void {
     entries.push(entry);
-    if (entries.length > limit) {
-      entries.splice(0, entries.length - limit);
-    }
+    trimToCaps();
     schedulePersist();
   }
 
@@ -154,6 +170,8 @@ export function createWriteLog(
   }
 
   function recordChange(input: WriteLogChangeInput): void {
+    const lines = input.lines.slice(0, WRITE_LOG_CHANGE_LINE_LIMIT);
+    const droppedHere = input.lines.length - lines.length;
     const entry: WriteLogEntry = {
       version: WRITE_LOG_VERSION,
       seq: nextSeq,
@@ -162,8 +180,8 @@ export function createWriteLog(
       ok: true,
       change: {
         headline: input.headline,
-        lines: [...input.lines],
-        overflow: input.overflow ?? 0
+        lines,
+        overflow: Math.max(0, Math.floor(input.overflow ?? 0)) + droppedHere
       }
     };
     nextSeq += 1;
@@ -196,8 +214,8 @@ export function createWriteLog(
     if (restored.length === 0) {
       return;
     }
-    entries = restored;
-    nextSeq = Math.max(0, ...restored.map((entry) => entry.seq)) + 1;
+    entries = trimWriteLogEntries(restored, storageLimit, changeLimit);
+    nextSeq = Math.max(0, ...entries.map((entry) => entry.seq)) + 1;
   }
 
   function schedulePersist(): void {
@@ -214,6 +232,35 @@ export function createWriteLog(
   }
 
   return { record, recordChange, snapshot, clear, hydrate };
+}
+
+// Drop the oldest entries of each category that exceed its cap, preserving chronological order.
+// The two categories are capped independently so a burst of one kind can't evict the other.
+function trimWriteLogEntries(
+  entries: WriteLogEntry[],
+  storageLimit: number,
+  changeLimit: number
+): WriteLogEntry[] {
+  const isChange = (entry: WriteLogEntry): boolean => entry.kind === "change";
+  let changeOverflow = entries.filter(isChange).length - changeLimit;
+  let storageOverflow = entries.length - entries.filter(isChange).length - storageLimit;
+  if (changeOverflow <= 0 && storageOverflow <= 0) {
+    return entries;
+  }
+  return entries.filter((entry) => {
+    if (isChange(entry)) {
+      if (changeOverflow > 0) {
+        changeOverflow -= 1;
+        return false;
+      }
+      return true;
+    }
+    if (storageOverflow > 0) {
+      storageOverflow -= 1;
+      return false;
+    }
+    return true;
+  });
 }
 
 export function normalizeWriteLogEntries(value: unknown): WriteLogEntry[] {
@@ -435,10 +482,18 @@ function normalizeChange(value: unknown): WriteLogChange | undefined {
   if (typeof candidate.headline !== "string" || !Array.isArray(candidate.lines)) {
     return undefined;
   }
+  // Defend against a corrupted/oversized session snapshot: bound the line list (the producer
+  // already caps it) and clamp overflow to a finite non-negative integer.
+  const allLines = candidate.lines.filter((line): line is string => typeof line === "string");
+  const lines = allLines.slice(0, WRITE_LOG_CHANGE_LINE_LIMIT);
+  const storedOverflow =
+    typeof candidate.overflow === "number" && Number.isFinite(candidate.overflow)
+      ? Math.max(0, Math.floor(candidate.overflow))
+      : 0;
   return {
     headline: candidate.headline,
-    lines: candidate.lines.filter((line): line is string => typeof line === "string"),
-    overflow: typeof candidate.overflow === "number" ? candidate.overflow : 0
+    lines,
+    overflow: storedOverflow + (allLines.length - lines.length)
   };
 }
 

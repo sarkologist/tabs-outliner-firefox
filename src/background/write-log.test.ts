@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  WRITE_LOG_CHANGE_LINE_LIMIT,
   WRITE_LOG_LIMIT,
   createWriteLog,
   describeWriteLogEntry,
@@ -79,6 +80,34 @@ describe("createWriteLog", () => {
     expect(entries.map((entry) => entry.detail?.seq)).toEqual([2, 3, 4]);
     // seq keeps climbing even after eviction so the UI can dedupe stably.
     expect(entries.map((entry) => entry.seq)).toEqual([3, 4, 5]);
+  });
+
+  it("caps change and storage rows independently (a storage burst keeps change rows)", () => {
+    const log = createWriteLog({ now, limit: 2, changeLimit: 2 });
+    log.recordChange({ headline: "Deleted 'Work'", lines: ["'Work'"] });
+    for (let index = 0; index < 6; index += 1) {
+      log.record({ kind: "journalAppend", ok: true, detail: { seq: index } });
+    }
+    const { entries } = log.snapshot();
+    expect(entries.filter((entry) => entry.kind !== "change")).toHaveLength(2);
+    // The single change row is NOT evicted by the storage burst.
+    expect(entries.filter((entry) => entry.kind === "change")).toHaveLength(1);
+  });
+
+  it("caps the per-change line list on hydrate and clamps overflow", () => {
+    const lines = Array.from({ length: WRITE_LOG_CHANGE_LINE_LIMIT + 40 }, (_unused, i) => `n${i}`);
+    const restored = normalizeWriteLogEntries([
+      {
+        version: 1,
+        seq: 1,
+        at: "2026-06-20T00:00:00.000Z",
+        kind: "change",
+        ok: true,
+        change: { headline: "Deleted many", lines, overflow: 5 }
+      }
+    ]);
+    expect(restored[0]!.change?.lines).toHaveLength(WRITE_LOG_CHANGE_LINE_LIMIT);
+    expect(restored[0]!.change?.overflow).toBe(5 + 40);
   });
 
   it("clear() empties the buffer", () => {

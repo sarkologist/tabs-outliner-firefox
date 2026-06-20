@@ -35,7 +35,11 @@ import { exportPortableTree } from "../model/portable-tree.js";
 import type { NodeId, OutlineState } from "../model/types.js";
 import type { NodeStateUpdate, TreeStructureUpdate } from "./patch-updates.js";
 import type { IncidentLogDetail } from "./incident-log.js";
-import type { WriteLogChangeInput, WriteLogInput } from "./write-log.js";
+import {
+  WRITE_LOG_CHANGE_LINE_LIMIT,
+  type WriteLogChangeInput,
+  type WriteLogInput
+} from "./write-log.js";
 import { buildOutlineChangeDescription } from "./outline-change-summary.js";
 import type { PerformanceTracer } from "../perf/trace.js";
 import {
@@ -608,7 +612,11 @@ export function createPersistenceCoordinator(deps: PersistenceCoordinatorDeps) {
       }
     };
     // Domain-level description for the write-activity log (reuses the delta + states just built).
-    const changeDescription = buildOutlineChangeDescription(item.delta!, { previous, next });
+    const changeDescription = buildOutlineChangeDescription(item.delta!, {
+      previous,
+      next,
+      maxLines: WRITE_LOG_CHANGE_LINE_LIMIT
+    });
     if (changeDescription) {
       item.changeDescription = changeDescription;
     }
@@ -711,10 +719,12 @@ export function createPersistenceCoordinator(deps: PersistenceCoordinatorDeps) {
   }
 
   // The runtime fast path mutates the live state in place, so its delta cannot be diffed
-  // from previous/next -- the broadcast update payload already enumerates the changed nodes.
+  // from previous/next -- the broadcast update payload already enumerates the changed nodes. The
+  // caller passes the pre-update state so deleted nodes can still be named in the change log.
   function queueRuntimeEventJournalFromUpdate(
     update: TreeStructureUpdate | NodeStateUpdate,
-    label: string
+    label: string,
+    previous?: OutlineState
   ): boolean {
     if (!outlineJournal) {
       return false;
@@ -729,11 +739,13 @@ export function createPersistenceCoordinator(deps: PersistenceCoordinatorDeps) {
       ...(deletedNodeIds.length > 0 ? { deletedNodeIds } : {}),
       ...(update.type === "treeStructureUpdated" ? { rootIds: [...update.rootIds] } : {})
     };
-    // No before-image on the in-place fast path; describe from the current state (named updates,
-    // deletions by count).
     const current = getState();
     const changeDescription = current
-      ? buildOutlineChangeDescription(delta, { next: current })
+      ? buildOutlineChangeDescription(delta, {
+          ...(previous ? { previous } : {}),
+          next: current,
+          maxLines: WRITE_LOG_CHANGE_LINE_LIMIT
+        })
       : undefined;
     return queueEventJournalItem({
       kind: "runtimeEvent",
