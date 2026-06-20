@@ -200,6 +200,21 @@ describe("describeWriteLogEntry", () => {
     expect(save.title).toContain("100");
   });
 
+  it("promotes a domain-level change description to the journalAppend title", () => {
+    const described = describeWriteLogEntry(
+      entry(1, "journalAppend", true, {
+        seq: 12,
+        entries: 1,
+        change: "Deleted 'Work' (window) (+12 descendants)",
+        labels: "deleteNode"
+      })
+    );
+    expect(described.title).toBe("Deleted 'Work' (window) (+12 descendants)");
+    // The change is the title, so it is not repeated in the detail line.
+    expect(described.detailText).not.toContain("change=");
+    expect(described.detailText).toContain("seq=12");
+  });
+
   it("flags spills and failures as warn/error", () => {
     expect(describeWriteLogEntry(entry(1, "journalSpill", false)).severity).toBe("warn");
     expect(

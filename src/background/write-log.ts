@@ -242,6 +242,12 @@ export function describeWriteLogEntry(entry: WriteLogEntry): {
 function writeLogTitle(entry: WriteLogEntry): string {
   switch (entry.kind) {
     case "journalAppend": {
+      // Prefer the domain-level description ("Deleted 'Work' (window) (+12 descendants)") so an
+      // unexpected change is obvious; fall back to the generic durability phrasing.
+      const change = stringDetail(entry, "change");
+      if (change) {
+        return change;
+      }
       const count = numberDetail(entry, "entries") ?? 1;
       const seq = numberDetail(entry, "seq");
       return `Journaled ${count} ${count === 1 ? "change" : "changes"}${
@@ -304,6 +310,7 @@ function writeLogDetailText(detail: WriteLogEntry["detail"]): string {
     return "";
   }
   return Object.entries(detail)
+    .filter(([key]) => key !== "change") // promoted to the row title
     .map(([key, value]) => `${key}=${value}`)
     .join(" · ");
 }
@@ -322,6 +329,11 @@ function formatDelta(delta: number | undefined): string {
 function numberDetail(entry: WriteLogEntry, key: string): number | undefined {
   const value = entry.detail?.[key];
   return typeof value === "number" ? value : undefined;
+}
+
+function stringDetail(entry: WriteLogEntry, key: string): string | undefined {
+  const value = entry.detail?.[key];
+  return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
 function cloneEntry(entry: WriteLogEntry): WriteLogEntry {

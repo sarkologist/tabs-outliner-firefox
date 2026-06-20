@@ -300,7 +300,9 @@ test.describe("extension options page", () => {
     await expect(rows.first()).toContainText("Trimmed journal");
     await expect(rows.nth(1)).toContainText("Saved snapshot");
     await expect(rows.nth(1)).toContainText("99 nodes");
-    await expect(rows.last()).toContainText("Journaled 1 change");
+    // The journal-append row shows the domain-level description (named deletion), not just a count.
+    await expect(rows.last()).toContainText("Deleted 'Work' (window)");
+    await expect(rows.last()).toContainText("2 descendants");
 
     // A spill (warning) and a failed save (error) light up the health line and row severities.
     await setWriteLog(page, {
@@ -418,7 +420,12 @@ async function loadOptions(page: Page): Promise<void> {
             at: "2026-06-20T10:00:00.000Z",
             kind: "journalAppend",
             ok: true,
-            detail: { seq: 10, entries: 1, labels: "deleteNode" }
+            detail: {
+              seq: 10,
+              entries: 1,
+              change: "Deleted 'Work' (window) (+2 descendants)",
+              labels: "deleteNode"
+            }
           },
           {
             version: 1,

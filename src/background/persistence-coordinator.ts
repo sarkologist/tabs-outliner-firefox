@@ -36,6 +36,7 @@ import type { NodeId, OutlineState } from "../model/types.js";
 import type { NodeStateUpdate, TreeStructureUpdate } from "./patch-updates.js";
 import type { IncidentLogDetail } from "./incident-log.js";
 import type { WriteLogInput } from "./write-log.js";
+import { describeOutlineDelta } from "./outline-change-summary.js";
 import type { PerformanceTracer } from "../perf/trace.js";
 import {
   outlineStateCountDetail,
@@ -588,7 +589,7 @@ export function createPersistenceCoordinator(deps: PersistenceCoordinatorDeps) {
     if (delta.updatedNodes.length === 0 && delta.deletedNodeIds.length === 0 && !rootsChanged) {
       return undefined;
     }
-    return {
+    const item: OutlineJournalAppendItem = {
       kind,
       label,
       ...(historyEntryId !== undefined ? { historyEntryId } : {}),
@@ -598,6 +599,12 @@ export function createPersistenceCoordinator(deps: PersistenceCoordinatorDeps) {
         ...(rootsChanged ? { rootIds: [...next.rootIds] } : {})
       }
     };
+    // Domain-level description for the write-activity log (reuses the delta + states just built).
+    const changeText = describeOutlineDelta(item.delta!, { previous, next });
+    if (changeText) {
+      item.changeText = changeText;
+    }
+    return item;
   }
 
   // Append a command's delta to the journal before its ack so the change survives a restart
@@ -709,14 +716,20 @@ export function createPersistenceCoordinator(deps: PersistenceCoordinatorDeps) {
     if (updatedNodes.length === 0 && deletedNodeIds.length === 0) {
       return true;
     }
+    const delta = {
+      ...(updatedNodes.length > 0 ? { updatedNodes } : {}),
+      ...(deletedNodeIds.length > 0 ? { deletedNodeIds } : {}),
+      ...(update.type === "treeStructureUpdated" ? { rootIds: [...update.rootIds] } : {})
+    };
+    // No before-image on the in-place fast path; describe from the current state (named updates,
+    // deletions by count).
+    const current = getState();
+    const changeText = current ? describeOutlineDelta(delta, { next: current }) : "";
     return queueEventJournalItem({
       kind: "runtimeEvent",
       label,
-      delta: {
-        ...(updatedNodes.length > 0 ? { updatedNodes } : {}),
-        ...(deletedNodeIds.length > 0 ? { deletedNodeIds } : {}),
-        ...(update.type === "treeStructureUpdated" ? { rootIds: [...update.rootIds] } : {})
-      }
+      delta,
+      ...(changeText ? { changeText } : {})
     });
   }
 
@@ -805,12 +818,14 @@ export function createPersistenceCoordinator(deps: PersistenceCoordinatorDeps) {
         }
       }
       const labels = journalItemLabels(items);
+      const change = journalItemChangeText(items);
       recordWriteEvent({
         kind: "journalAppend",
         ok: true,
         detail: {
           seq: result.seq,
           entries: items.length,
+          ...(change ? { change } : {}),
           ...(labels ? { labels } : {}),
           ...(result.spilled ? { spilled: true } : {})
         }
@@ -1318,4 +1333,16 @@ function journalItemLabels(items: OutlineJournalAppendItem[]): string {
     }
   }
   return [...labels].join(", ");
+}
+
+// The combined domain-level change description for a journal-append batch (a command plus any
+// runtime echoes coalesced before it), for the write-activity log.
+function journalItemChangeText(items: OutlineJournalAppendItem[]): string {
+  const texts: string[] = [];
+  for (const item of items) {
+    if (item.changeText && !texts.includes(item.changeText)) {
+      texts.push(item.changeText);
+    }
+  }
+  return texts.join(" · ");
 }

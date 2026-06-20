@@ -57,6 +57,10 @@ export type OutlineJournalAppendItem = {
   // a loader that replays past an unfolded marker knows the snapshot may miss a broad change.
   spill?: true;
   historyEntryId?: string;
+  // In-memory-only, human-readable description of the change for the write-activity debug log
+  // (e.g. "Deleted 'Work' (window) (+12 descendants)"). NOT persisted: appendNow copies only the
+  // durable fields above into the stored entry, so this never reaches the journal slot.
+  changeText?: string;
 };
 
 export type OutlineJournalAppendResult = {

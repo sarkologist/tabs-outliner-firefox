@@ -48097,6 +48097,14 @@ describe("background controller lifecycle", () => {
     // The deletion is visible as a negative node delta.
     expect(save?.detail?.nodeDelta).toBeLessThan(0);
 
+    // The journal-append row carries a domain-level description naming the deleted node, so an
+    // unexpected deletion is obvious at a glance.
+    const append = [...snapshot.entries]
+      .reverse()
+      .find((entry) => entry.kind === "journalAppend" && typeof entry.detail?.change === "string");
+    expect(append?.detail?.change).toContain("Two");
+    expect(append?.detail?.change).toContain("Deleted");
+
     expect(await controller.handleMessage({ type: "clearWriteLog" })).toEqual({ ok: true });
     expect(await controller.handleMessage({ type: "getWriteLog" })).toMatchObject({ entries: [] });
   });
