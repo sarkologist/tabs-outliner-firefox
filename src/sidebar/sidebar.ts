@@ -64,6 +64,7 @@ import { mergePartialOutlineState } from "./partial-outline-state.js";
 import {
   isRestoreScope,
   largeRestoreConfirmationPrompt,
+  pluralize,
   restoreScopeTargetsNodeOrDescendants
 } from "./restore-scope.js";
 import { normalizeSearchQuery, segmentSearchText } from "./search.js";
@@ -3408,13 +3409,6 @@ function canMoveSparseHydratingRootSubtreeToBottom(rowInfo: VisibleTreeRow): boo
 
 function isRenamableGroup(node: OutlineNode): boolean {
   return node.kind === "window" || node.kind === "group";
-}
-
-function pluralize(count: number, noun: string): string {
-  if (noun.endsWith("ch") || noun.endsWith("sh")) {
-    return count === 1 ? noun : `${noun}es`;
-  }
-  return count === 1 ? noun : `${noun}s`;
 }
 
 function visibleProjectionFor(state: OutlineState, query: string): VisibleTreeProjection {

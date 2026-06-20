@@ -71,7 +71,7 @@ function restoreScopeSummary(scope: RestoreScope): string {
   return `${scope.totalCount} ${pluralize(scope.totalCount, "restorable closed node")}${parts.length ? ` (${parts.join(", ")})` : ""}`;
 }
 
-function pluralize(count: number, noun: string): string {
+export function pluralize(count: number, noun: string): string {
   if (noun.endsWith("ch") || noun.endsWith("sh")) {
     return count === 1 ? noun : `${noun}es`;
   }
