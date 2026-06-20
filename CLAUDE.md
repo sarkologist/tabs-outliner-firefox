@@ -1,29 +1,11 @@
 # Project working agreements
 
-These instructions are authoritative and override default assistant behavior
-(including the default "commit only when asked").
+**[AGENTS.md](AGENTS.md) is the single source of truth for all working
+agreements** — orientation, git workflow, testing, performance, and review
+policy. Read it first and follow it: it is authoritative and overrides default
+assistant behavior (including the default "commit only when asked").
+[REPO_MAP.md](REPO_MAP.md) is the knowledge-base index.
 
-## Orientation
-
-Start at [AGENTS.md](AGENTS.md) (working agreements + a start-here map) and
-[REPO_MAP.md](REPO_MAP.md) (the knowledge-base index). Read the doc cluster relevant to
-your task rather than the whole tree.
-
-## Git workflow
-
-When making any code change in this repository:
-
-1. **Always commit finished work.** Do not leave changes uncommitted or wait to
-   be asked. Use a clear, conventional commit message and end it with the
-   standard `Co-Authored-By` trailer.
-2. **Always work on a feature branch** — never commit directly to `main`. Branch
-   from an up-to-date `main` before starting.
-3. **If the working tree is already dirty** with changes you did not just make,
-   create a git worktree (`git worktree add <path> -b <branch> main`) and do the
-   new work there so it stays isolated from the existing changes.
-4. **Open a pull request for all work.** `main` is protected — direct commits and
-   pushes are blocked — so every branch lands on `main` through a PR. Open one for
-   the work (even small changes); never merge to `main` directly, and merge only
-   when the user is satisfied.
-
-Keep unrelated changes on separate branches and in separate commits.
+Policy: keep this file a thin pointer. Working-agreement content lives in
+AGENTS.md so there is one source and no drift; CLAUDE.md and any other agent
+entry point link there rather than duplicating it.
