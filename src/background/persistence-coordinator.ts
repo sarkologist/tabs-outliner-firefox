@@ -35,8 +35,8 @@ import { exportPortableTree } from "../model/portable-tree.js";
 import type { NodeId, OutlineState } from "../model/types.js";
 import type { NodeStateUpdate, TreeStructureUpdate } from "./patch-updates.js";
 import type { IncidentLogDetail } from "./incident-log.js";
-import type { WriteLogInput } from "./write-log.js";
-import { describeOutlineDelta } from "./outline-change-summary.js";
+import type { WriteLogChangeInput, WriteLogInput } from "./write-log.js";
+import { buildOutlineChangeDescription } from "./outline-change-summary.js";
 import type { PerformanceTracer } from "../perf/trace.js";
 import {
   outlineStateCountDetail,
@@ -101,10 +101,11 @@ export type PersistenceCoordinatorDeps = {
   deferPersistedStateBaselineClone: (persisted: OutlineState) => void;
   recordIncidentLog: (event: string, detail?: IncidentLogDetail) => Promise<void>;
   // Append to the user-facing write-activity debug log (in-memory, surfaced in the options page).
-  // Records the durability chain -- journal append, snapshot save, prune, boot snapshot, failures --
-  // so the user can confirm every change persists. Cheap (a synchronous push); never on a measured
-  // path, so it does not affect the perf budgets.
+  // recordWriteEvent = the storage-diagnostic list (journal append, snapshot save, prune, boot
+  // snapshot, failures); recordWriteChange = the domain-level "what changed" list (deleted/moved/
+  // renamed with node names). Both are cheap synchronous pushes off any measured path.
   recordWriteEvent: (event: WriteLogInput) => void;
+  recordWriteChange: (change: WriteLogChangeInput) => void;
   clearCompletedRuntimeLifecycleJournalEntriesAfterSave: () => Promise<void>;
 };
 
@@ -128,6 +129,13 @@ export function createPersistenceCoordinator(deps: PersistenceCoordinatorDeps) {
   function recordWriteEvent(event: WriteLogInput): void {
     try {
       deps.recordWriteEvent(event);
+    } catch {
+      // Intentionally swallowed; the debug log never affects durability.
+    }
+  }
+  function recordWriteChange(change: WriteLogChangeInput): void {
+    try {
+      deps.recordWriteChange(change);
     } catch {
       // Intentionally swallowed; the debug log never affects durability.
     }
@@ -600,9 +608,9 @@ export function createPersistenceCoordinator(deps: PersistenceCoordinatorDeps) {
       }
     };
     // Domain-level description for the write-activity log (reuses the delta + states just built).
-    const changeText = describeOutlineDelta(item.delta!, { previous, next });
-    if (changeText) {
-      item.changeText = changeText;
+    const changeDescription = buildOutlineChangeDescription(item.delta!, { previous, next });
+    if (changeDescription) {
+      item.changeDescription = changeDescription;
     }
     return item;
   }
@@ -724,12 +732,14 @@ export function createPersistenceCoordinator(deps: PersistenceCoordinatorDeps) {
     // No before-image on the in-place fast path; describe from the current state (named updates,
     // deletions by count).
     const current = getState();
-    const changeText = current ? describeOutlineDelta(delta, { next: current }) : "";
+    const changeDescription = current
+      ? buildOutlineChangeDescription(delta, { next: current })
+      : undefined;
     return queueEventJournalItem({
       kind: "runtimeEvent",
       label,
       delta,
-      ...(changeText ? { changeText } : {})
+      ...(changeDescription ? { changeDescription } : {})
     });
   }
 
@@ -817,15 +827,25 @@ export function createPersistenceCoordinator(deps: PersistenceCoordinatorDeps) {
           journalTouchedSinceCompaction.add(stateV4ShardIndexForNodeId(nodeId));
         }
       }
+      // Domain-level "what changed" rows (one per item that touched the tree) go to the Changes
+      // list; the storage journalAppend row below is the durability mechanic.
+      for (const item of items) {
+        if (item.changeDescription) {
+          recordWriteChange({
+            headline: item.changeDescription.headline,
+            lines: item.changeDescription.lines,
+            overflow: item.changeDescription.overflow,
+            ...(item.label ? { label: item.label } : {})
+          });
+        }
+      }
       const labels = journalItemLabels(items);
-      const change = journalItemChangeText(items);
       recordWriteEvent({
         kind: "journalAppend",
         ok: true,
         detail: {
           seq: result.seq,
           entries: items.length,
-          ...(change ? { change } : {}),
           ...(labels ? { labels } : {}),
           ...(result.spilled ? { spilled: true } : {})
         }
@@ -1333,16 +1353,4 @@ function journalItemLabels(items: OutlineJournalAppendItem[]): string {
     }
   }
   return [...labels].join(", ");
-}
-
-// The combined domain-level change description for a journal-append batch (a command plus any
-// runtime echoes coalesced before it), for the write-activity log.
-function journalItemChangeText(items: OutlineJournalAppendItem[]): string {
-  const texts: string[] = [];
-  for (const item of items) {
-    if (item.changeText && !texts.includes(item.changeText)) {
-      texts.push(item.changeText);
-    }
-  }
-  return texts.join(" · ");
 }

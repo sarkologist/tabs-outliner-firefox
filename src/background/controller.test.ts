@@ -48083,11 +48083,16 @@ describe("background controller lifecycle", () => {
     await controller.flushPendingSaves();
 
     const snapshot = (await controller.handleMessage({ type: "getWriteLog" })) as {
-      entries: { kind: string; ok: boolean; detail?: Record<string, unknown> }[];
+      entries: {
+        kind: string;
+        ok: boolean;
+        detail?: Record<string, unknown>;
+        change?: { headline: string; lines: string[] };
+      }[];
     };
     const kinds = snapshot.entries.map((entry) => entry.kind);
-    // The chain the user watches to confirm a change persisted with no data loss: journaled at
-    // ack, then folded into the snapshot.
+    // The storage-diagnostic list records the chain the user watches to confirm a change persisted
+    // with no data loss: journaled at ack, then folded into the snapshot.
     expect(kinds).toContain("journalAppend");
     expect(kinds).toContain("snapshotSave");
 
@@ -48097,13 +48102,10 @@ describe("background controller lifecycle", () => {
     // The deletion is visible as a negative node delta.
     expect(save?.detail?.nodeDelta).toBeLessThan(0);
 
-    // The journal-append row carries a domain-level description naming the deleted node, so an
-    // unexpected deletion is obvious at a glance.
-    const append = [...snapshot.entries]
-      .reverse()
-      .find((entry) => entry.kind === "journalAppend" && typeof entry.detail?.change === "string");
-    expect(append?.detail?.change).toContain("Two");
-    expect(append?.detail?.change).toContain("Deleted");
+    // The separate domain "change" row names the deleted node, so an unexpected deletion is obvious.
+    const change = [...snapshot.entries].reverse().find((entry) => entry.kind === "change");
+    expect(change?.change?.headline).toContain("Deleted");
+    expect(change?.change?.lines).toContain("'Two'");
 
     expect(await controller.handleMessage({ type: "clearWriteLog" })).toEqual({ ok: true });
     expect(await controller.handleMessage({ type: "getWriteLog" })).toMatchObject({ entries: [] });

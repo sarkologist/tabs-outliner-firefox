@@ -328,6 +328,36 @@ main {
   font-size: 12px;
 }
 
+.write-log-subheading {
+  margin: 16px 0 0;
+  font-size: 12px;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: color-mix(in srgb, CanvasText 58%, transparent);
+}
+
+.write-log-change {
+  border-left-color: color-mix(in srgb, Highlight 55%, transparent);
+}
+
+.write-log-nodes {
+  margin: 4px 0 0;
+  padding: 0 0 0 16px;
+  list-style: disc;
+}
+
+.write-log-nodes li {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.write-log-nodes-more {
+  list-style: none;
+  margin-left: -16px;
+  color: color-mix(in srgb, CanvasText 55%, transparent);
+}
+
 .shortcut-enabled {
   width: 18px;
   height: 18px;

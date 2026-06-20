@@ -55,6 +55,7 @@ function makeDeps(
     deferPersistedStateBaselineClone: () => undefined,
     recordIncidentLog: async () => undefined,
     recordWriteEvent: () => undefined,
+    recordWriteChange: () => undefined,
     clearCompletedRuntimeLifecycleJournalEntriesAfterSave: async () => undefined,
     ...overrides
   };

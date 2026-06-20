@@ -477,6 +477,7 @@ export function createBackgroundController(
     deferPersistedStateBaselineClone,
     recordIncidentLog,
     recordWriteEvent: (event) => writeLog.record(event),
+    recordWriteChange: (change) => writeLog.recordChange(change),
     clearCompletedRuntimeLifecycleJournalEntriesAfterSave
   });
   const {

@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { describeOutlineDelta, summarizeOutlineDelta } from "./outline-change-summary.js";
+import {
+  buildOutlineChangeDescription,
+  describeOutlineDelta,
+  summarizeOutlineDelta
+} from "./outline-change-summary.js";
 import type { OutlineNode, OutlineState } from "../model/types.js";
 
 function node(partial: Partial<OutlineNode> & { id: string }): OutlineNode {
@@ -73,6 +77,41 @@ describe("summarizeOutlineDelta / describeOutlineDelta", () => {
 
     const text = describeOutlineDelta(delta, { previous, next });
     expect(text).toBe("Moved 'Gmail' from 'Work' to 'Personal'");
+  });
+
+  it("lists EVERY affected node name (not just the subtree root) in the description", () => {
+    const previous = state(
+      [
+        node({ id: "w", kind: "window", title: "Work" }),
+        node({ id: "t1", parentId: "w", title: "Gmail" }),
+        node({ id: "t2", parentId: "w", title: "Calendar" }),
+        node({ id: "t3", parentId: "w", title: "GitHub" })
+      ],
+      ["w"]
+    );
+    const description = buildOutlineChangeDescription(
+      { deletedNodeIds: ["w", "t1", "t2", "t3"], rootIds: [] },
+      { previous, next: state([], []) }
+    );
+    expect(description?.headline).toBe("Deleted 'Work' (window) (+3 descendants)");
+    expect(description?.lines).toEqual(["'Work' (window)", "'Gmail'", "'Calendar'", "'GitHub'"]);
+    expect(description?.overflow).toBe(0);
+  });
+
+  it("caps the name list with an overflow count past maxLines", () => {
+    const nodes = Array.from({ length: 10 }, (_unused, index) =>
+      node({ id: `t${index}`, title: `Tab ${index}` })
+    );
+    const previous = state(
+      nodes,
+      nodes.map((entry) => entry.id)
+    );
+    const description = buildOutlineChangeDescription(
+      { deletedNodeIds: nodes.map((entry) => entry.id), rootIds: [] },
+      { previous, next: state([], []), maxLines: 4 }
+    );
+    expect(description?.lines).toHaveLength(4);
+    expect(description?.overflow).toBe(6);
   });
 
   it("describes a same-parent reorder as a move within the parent", () => {

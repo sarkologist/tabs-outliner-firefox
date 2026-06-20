@@ -103,7 +103,8 @@ const incidentRefresh = document.querySelector<HTMLButtonElement>("#incident-ref
 const incidentSummary = document.querySelector<HTMLElement>("#incident-summary");
 const incidentList = document.querySelector<HTMLOListElement>("#incident-list");
 const writeLogHealth = document.querySelector<HTMLElement>("#write-log-health");
-const writeLogList = document.querySelector<HTMLOListElement>("#write-log-list");
+const writeLogChangesList = document.querySelector<HTMLOListElement>("#write-log-changes");
+const writeLogStorageList = document.querySelector<HTMLOListElement>("#write-log-storage");
 const writeLogRefresh = document.querySelector<HTMLButtonElement>("#write-log-refresh");
 const writeLogClear = document.querySelector<HTMLButtonElement>("#write-log-clear");
 const writeLogLive = document.querySelector<HTMLInputElement>("#write-log-live");
@@ -774,15 +775,28 @@ function renderWriteLog(entries: WriteLogEntry[]): void {
     writeLogHealth.classList.toggle("is-warn", severity === "warn");
     writeLogHealth.classList.toggle("is-error", severity === "error");
   }
-  if (!writeLogList) {
+  // Two separate lists: domain-level changes vs storage-diagnostic events.
+  const changes = entries.filter((entry) => entry.kind === "change");
+  const storage = entries.filter((entry) => entry.kind !== "change");
+  renderWriteLogList(writeLogChangesList, changes, "No changes recorded yet.", writeLogChangeRow);
+  renderWriteLogList(writeLogStorageList, storage, "No storage activity yet.", writeLogRow);
+}
+
+function renderWriteLogList(
+  list: HTMLOListElement | null,
+  entries: WriteLogEntry[],
+  emptyText: string,
+  row: (entry: WriteLogEntry) => HTMLLIElement
+): void {
+  if (!list) {
     return;
   }
   if (entries.length === 0) {
-    writeLogList.replaceChildren(writeLogEmptyRow());
+    list.replaceChildren(writeLogEmptyRow(emptyText));
     return;
   }
   // Newest first: entries are appended chronologically.
-  writeLogList.replaceChildren(...[...entries].reverse().map(writeLogRow));
+  list.replaceChildren(...[...entries].reverse().map(row));
 }
 
 function writeLogHealthText(health: WriteLogHealth): string {
@@ -864,10 +878,50 @@ function writeLogRow(entry: WriteLogEntry): HTMLLIElement {
   return row;
 }
 
-function writeLogEmptyRow(): HTMLLIElement {
+function writeLogChangeRow(entry: WriteLogEntry): HTMLLIElement {
+  const row = document.createElement("li");
+  row.className = "write-log-row write-log-change";
+
+  const header = document.createElement("div");
+  header.className = "write-log-row-header";
+
+  const titleEl = document.createElement("span");
+  titleEl.className = "write-log-title";
+  titleEl.textContent = entry.change?.headline ?? "Change";
+
+  const time = document.createElement("time");
+  time.className = "write-log-time";
+  time.dateTime = entry.at;
+  time.title = entry.at;
+  time.textContent = writeLogTimeLabel(entry.at);
+
+  header.append(titleEl, time);
+  row.append(header);
+
+  const lines = entry.change?.lines ?? [];
+  if (lines.length > 0) {
+    const list = document.createElement("ul");
+    list.className = "write-log-nodes";
+    for (const line of lines) {
+      const item = document.createElement("li");
+      item.textContent = line;
+      list.append(item);
+    }
+    if (entry.change && entry.change.overflow > 0) {
+      const more = document.createElement("li");
+      more.className = "write-log-nodes-more";
+      more.textContent = `…and ${entry.change.overflow} more`;
+      list.append(more);
+    }
+    row.append(list);
+  }
+  return row;
+}
+
+function writeLogEmptyRow(text: string): HTMLLIElement {
   const row = document.createElement("li");
   row.className = "write-log-empty";
-  row.textContent = "No write activity yet — perform an action and it will appear here.";
+  row.textContent = text;
   return row;
 }
 

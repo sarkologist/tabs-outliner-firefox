@@ -37,6 +37,27 @@ describe("createWriteLog", () => {
     expect(entries[1]!.at).toBe(new Date(1_700_000_001_000).toISOString());
   });
 
+  it("records a domain change row carrying the full affected-node list", () => {
+    const log = createWriteLog({ now });
+    log.recordChange({
+      headline: "Deleted 'Work' (window) (+2 descendants)",
+      lines: ["'Work' (window)", "'Gmail'", "'Calendar'"],
+      label: "deleteNode"
+    });
+    const { entries } = log.snapshot();
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      kind: "change",
+      ok: true,
+      detail: { label: "deleteNode" },
+      change: {
+        headline: "Deleted 'Work' (window) (+2 descendants)",
+        lines: ["'Work' (window)", "'Gmail'", "'Calendar'"],
+        overflow: 0
+      }
+    });
+  });
+
   it("drops undefined detail values and omits empty detail", () => {
     const log = createWriteLog({ now });
     log.record({ kind: "bootSnapshot", ok: true, detail: { message: undefined } });
@@ -200,19 +221,22 @@ describe("describeWriteLogEntry", () => {
     expect(save.title).toContain("100");
   });
 
-  it("promotes a domain-level change description to the journalAppend title", () => {
-    const described = describeWriteLogEntry(
-      entry(1, "journalAppend", true, {
-        seq: 12,
-        entries: 1,
-        change: "Deleted 'Work' (window) (+12 descendants)",
-        labels: "deleteNode"
-      })
+  it("renders a change row from its headline", () => {
+    const changeEntry: WriteLogEntry = {
+      version: 1,
+      seq: 1,
+      at: "2026-06-20T00:00:00.000Z",
+      kind: "change",
+      ok: true,
+      change: {
+        headline: "Deleted 'Work' (window) (+12 descendants)",
+        lines: ["'Work' (window)", "'Gmail'"],
+        overflow: 0
+      }
+    };
+    expect(describeWriteLogEntry(changeEntry).title).toBe(
+      "Deleted 'Work' (window) (+12 descendants)"
     );
-    expect(described.title).toBe("Deleted 'Work' (window) (+12 descendants)");
-    // The change is the title, so it is not repeated in the detail line.
-    expect(described.detailText).not.toContain("change=");
-    expect(described.detailText).toContain("seq=12");
   });
 
   it("flags spills and failures as warn/error", () => {

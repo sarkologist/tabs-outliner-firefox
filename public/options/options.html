@@ -88,9 +88,10 @@
             <h2 id="write-log-heading">Write activity</h2>
           </div>
           <p class="write-log-help">
-            Every change is written to the journal (durable immediately), then folded into a
-            snapshot, then the journal is trimmed. Watch the node counts to confirm nothing is
-            dropped. Live; kept for the current browser session.
+            <strong>Changes</strong> lists what happened to your tree, naming every affected node.
+            <strong>Storage activity</strong> shows how it persisted: each change is journaled
+            (durable immediately), folded into a snapshot, then the journal is trimmed. Live; kept
+            for the current browser session.
           </p>
           <p id="write-log-health" class="write-log-health" aria-live="polite">
             No write activity yet.
@@ -109,7 +110,10 @@
               <span>Live</span>
             </label>
           </div>
-          <ol id="write-log-list" class="write-log-list"></ol>
+          <h3 class="write-log-subheading">Changes</h3>
+          <ol id="write-log-changes" class="write-log-list"></ol>
+          <h3 class="write-log-subheading">Storage activity</h3>
+          <ol id="write-log-storage" class="write-log-list"></ol>
         </section>
 
         <section class="settings-section" aria-labelledby="incident-heading">

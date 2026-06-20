@@ -1,15 +1,15 @@
 import type { NodeId, OutlineNode, OutlineNodeKind, OutlineState } from "../model/types.js";
 
-// Turns a persistence delta into a short, user-facing, domain-level description of what changed --
-// the subtree that was deleted (root + descendant count), what moved where, what was renamed,
-// created, or closed/restored -- with node NAMES, not just counts. Surfaced on the write-activity
-// log's journal-append rows so an unexpected change (e.g. a whole window deleted when only one tab
-// was meant to go) is immediately obvious. Pure; works off the already-computed delta plus the
-// before/after states, so it adds no extra tree walk.
+// Turns a persistence delta into a user-facing, domain-level description of what changed -- the
+// subtree that was deleted, what moved where, what was renamed/created/closed -- with the NAME of
+// every affected node, not just a count. Surfaced on the write-activity log's "Changes" list so an
+// unexpected change (a whole window deleted when only one tab was meant to go) is obvious. Pure;
+// works off the already-computed delta plus the before/after states, so it adds no extra tree walk.
 
-const DEFAULT_MAX_NAMES = 3;
+const DEFAULT_MAX_NAMES = 3; // headline name cap (the one-line summary)
 // Above this many touched nodes (a bulk import/flatten, often spill-sized) we skip the per-node
-// classification on the ack path and report coarse counts instead.
+// classification on the ack path and report coarse counts instead. The full name list is bounded by
+// the same limit, so a normal window delete lists every tab while a 10k import does not.
 const CHANGE_SUMMARY_DETAIL_LIMIT = 200;
 
 // Structurally compatible with OutlineJournalDelta; kept local so this module stays independent.
@@ -44,9 +44,17 @@ export type OutlineChangeStatus = {
   to: "closed" | "restored";
 };
 
+export type OutlineChangeGroup = {
+  // The subtree roots (a deleted/created node whose parent is not itself deleted/created).
+  roots: OutlineChangeNodeRef[];
+  // Every affected node (roots + descendants), capped at the detail limit; used for the full list.
+  all: OutlineChangeNodeRef[];
+  total: number;
+};
+
 export type OutlineChangeSummary = {
-  deleted: { roots: OutlineChangeNodeRef[]; total: number };
-  created: { roots: OutlineChangeNodeRef[]; total: number };
+  deleted: OutlineChangeGroup;
+  created: OutlineChangeGroup;
   moved: OutlineChangeMove[];
   renamed: OutlineChangeRename[];
   statusChanged: OutlineChangeStatus[];
@@ -55,6 +63,14 @@ export type OutlineChangeSummary = {
   // Count of touched nodes left unclassified because the delta exceeded the detail limit.
   otherChanges: number;
   reorderedTopLevel: boolean;
+};
+
+// What the write-activity "Changes" list stores per change: a one-line headline plus the full
+// (bounded) list of affected node descriptions.
+export type OutlineChangeDescription = {
+  headline: string;
+  lines: string[];
+  overflow: number;
 };
 
 export function summarizeOutlineDelta(
@@ -70,22 +86,25 @@ export function summarizeOutlineDelta(
   if (deletedIds.length + updatedNodes.length > CHANGE_SUMMARY_DETAIL_LIMIT) {
     return {
       ...emptySummary(),
-      deleted: { roots: [], total: deletedIds.length },
+      deleted: { roots: [], all: [], total: deletedIds.length },
       otherChanges: updatedNodes.length
     };
   }
 
   const deletedSet = new Set(deletedIds);
 
-  // Name the deleted subtree roots only when we have the before-image to read their titles from;
-  // without it (the in-place runtime fast path) report a bare count rather than "(unknown)" names.
+  // Name the deleted nodes only when we have the before-image to read their titles from; without it
+  // (the in-place runtime fast path) report a bare count rather than "(unknown)" names.
   const deletedRoots: OutlineChangeNodeRef[] = [];
+  const deletedAll: OutlineChangeNodeRef[] = [];
   if (previous) {
     for (const id of deletedIds) {
+      const ref = refFor(id, previous, next);
+      deletedAll.push(ref);
       const parentId = previous.nodes[id]?.parentId;
       // A subtree root is a deleted node whose parent is not itself deleted.
       if (parentId === undefined || !deletedSet.has(parentId)) {
-        deletedRoots.push(refFor(id, previous, next));
+        deletedRoots.push(ref);
       }
     }
   }
@@ -134,6 +153,7 @@ export function summarizeOutlineDelta(
     // Otherwise a metadata-only change (favicon/url/active) -- not worth a domain description.
   }
 
+  const createdRefs = created.map((id) => refFor(id, next, previous));
   const createdRoots = created
     .filter((id) => {
       const parentId = next.nodes[id]?.parentId;
@@ -145,8 +165,8 @@ export function summarizeOutlineDelta(
   const reorderedTopLevel = Boolean(delta.rootIds) && !structural;
 
   return {
-    deleted: { roots: deletedRoots, total: deletedIds.length },
-    created: { roots: createdRoots, total: created.length },
+    deleted: { roots: deletedRoots, all: deletedAll, total: deletedIds.length },
+    created: { roots: createdRoots, all: createdRefs, total: created.length },
     moved,
     renamed,
     statusChanged,
@@ -156,38 +176,7 @@ export function summarizeOutlineDelta(
   };
 }
 
-function emptySummary(): OutlineChangeSummary {
-  return {
-    deleted: { roots: [], total: 0 },
-    created: { roots: [], total: 0 },
-    moved: [],
-    renamed: [],
-    statusChanged: [],
-    updated: [],
-    otherChanges: 0,
-    reorderedTopLevel: false
-  };
-}
-
-// A node is reordered when its index within its sibling list (its parent's childIds, or the root
-// list) changed. moveNode's same-parent path journals the moved node, so only it is inspected here.
-function isReordered(
-  id: NodeId,
-  parentId: NodeId | undefined,
-  previous: OutlineState,
-  next: OutlineState
-): boolean {
-  const prevSiblings =
-    parentId !== undefined ? previous.nodes[parentId]?.childIds : previous.rootIds;
-  const nextSiblings = parentId !== undefined ? next.nodes[parentId]?.childIds : next.rootIds;
-  if (!prevSiblings || !nextSiblings) {
-    return false;
-  }
-  const prevIndex = prevSiblings.indexOf(id);
-  const nextIndex = nextSiblings.indexOf(id);
-  return prevIndex !== -1 && nextIndex !== -1 && prevIndex !== nextIndex;
-}
-
+// The concise one-line headline (capped node names) -- the row title in the Changes list.
 export function renderOutlineChangeSummary(
   summary: OutlineChangeSummary,
   options: { maxNames?: number } = {}
@@ -239,19 +228,52 @@ export function renderOutlineChangeSummary(
   return parts.join(" · ");
 }
 
-function renderMove(move: OutlineChangeMove): string {
-  if (move.within) {
-    return move.to === "top level"
-      ? `${quote(move.ref.title)} within top level`
-      : `${quote(move.ref.title)} within ${quote(move.to)}`;
+// One line per affected node (the full, un-capped-by-name list) -- the expandable detail in the
+// Changes list. Order: deleted, moved, created, renamed, status, updated.
+export function outlineChangeLines(summary: OutlineChangeSummary): string[] {
+  const lines: string[] = [];
+  for (const ref of summary.deleted.all) {
+    lines.push(nameWithKind(ref));
   }
-  return `${quote(move.ref.title)} from ${renderParent(move.from)} to ${renderParent(move.to)}`;
+  for (const move of summary.moved) {
+    lines.push(
+      move.within
+        ? `${nameWithKind(move.ref)} within ${renderParent(move.to)}`
+        : `${nameWithKind(move.ref)}: ${renderParent(move.from)} → ${renderParent(move.to)}`
+    );
+  }
+  for (const ref of summary.created.all) {
+    lines.push(nameWithKind(ref));
+  }
+  for (const rename of summary.renamed) {
+    lines.push(`${quote(rename.from)} → ${quote(rename.to)}`);
+  }
+  for (const status of summary.statusChanged) {
+    lines.push(`${nameWithKind(status.ref)} (${status.to})`);
+  }
+  for (const ref of summary.updated) {
+    lines.push(nameWithKind(ref));
+  }
+  return lines;
 }
 
-function renderParent(title: string): string {
-  return title === "top level" ? "top level" : quote(title);
+// The full change description for the Changes list: headline + every affected name (bounded).
+export function buildOutlineChangeDescription(
+  delta: OutlineChangeDelta,
+  options: { previous?: OutlineState; next: OutlineState; maxLines?: number }
+): OutlineChangeDescription | undefined {
+  const summary = summarizeOutlineDelta(delta, options);
+  const headline = renderOutlineChangeSummary(summary);
+  if (!headline) {
+    return undefined;
+  }
+  const maxLines = options.maxLines ?? CHANGE_SUMMARY_DETAIL_LIMIT;
+  const allLines = outlineChangeLines(summary);
+  const lines = allLines.slice(0, maxLines);
+  return { headline, lines, overflow: Math.max(0, allLines.length - lines.length) };
 }
 
+// Headline-only convenience (used in tests).
 export function describeOutlineDelta(
   delta: OutlineChangeDelta,
   options: { previous?: OutlineState; next: OutlineState; maxNames?: number }
@@ -261,11 +283,39 @@ export function describeOutlineDelta(
   });
 }
 
-function renderDeletedOrCreated(
-  verb: string,
-  group: { roots: OutlineChangeNodeRef[]; total: number },
-  maxNames: number
-): string {
+function emptySummary(): OutlineChangeSummary {
+  return {
+    deleted: { roots: [], all: [], total: 0 },
+    created: { roots: [], all: [], total: 0 },
+    moved: [],
+    renamed: [],
+    statusChanged: [],
+    updated: [],
+    otherChanges: 0,
+    reorderedTopLevel: false
+  };
+}
+
+// A node is reordered when its index within its sibling list (its parent's childIds, or the root
+// list) changed. moveNode's same-parent path journals the moved node, so only it is inspected here.
+function isReordered(
+  id: NodeId,
+  parentId: NodeId | undefined,
+  previous: OutlineState,
+  next: OutlineState
+): boolean {
+  const prevSiblings =
+    parentId !== undefined ? previous.nodes[parentId]?.childIds : previous.rootIds;
+  const nextSiblings = parentId !== undefined ? next.nodes[parentId]?.childIds : next.rootIds;
+  if (!prevSiblings || !nextSiblings) {
+    return false;
+  }
+  const prevIndex = prevSiblings.indexOf(id);
+  const nextIndex = nextSiblings.indexOf(id);
+  return prevIndex !== -1 && nextIndex !== -1 && prevIndex !== nextIndex;
+}
+
+function renderDeletedOrCreated(verb: string, group: OutlineChangeGroup, maxNames: number): string {
   const { roots, total } = group;
   if (roots.length === 1 && total > 1) {
     const descendants = total - 1;
@@ -282,6 +332,19 @@ function renderDeletedOrCreated(
     .join(", ");
   const extra = total - Math.min(roots.length, maxNames);
   return `${verb} ${shown}${extra > 0 ? ` (+${extra} more)` : ""}`;
+}
+
+function renderMove(move: OutlineChangeMove): string {
+  if (move.within) {
+    return move.to === "top level"
+      ? `${quote(move.ref.title)} within top level`
+      : `${quote(move.ref.title)} within ${quote(move.to)}`;
+  }
+  return `${quote(move.ref.title)} from ${renderParent(move.from)} to ${renderParent(move.to)}`;
+}
+
+function renderParent(title: string): string {
+  return title === "top level" ? "top level" : quote(title);
 }
 
 function refFor(

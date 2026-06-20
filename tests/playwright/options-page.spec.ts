@@ -289,22 +289,29 @@ test.describe("extension options page", () => {
     const issues = collectPageIssues(page);
     await loadOptions(page);
 
-    // The default fixture is a healthy chain: journal append -> snapshot save -> prune.
+    // The default fixture is a healthy chain: a domain change + journal append -> snapshot -> prune.
     await expect(page.locator("#write-log-health")).toContainText("99 nodes");
     await expect(page.locator("#write-log-health")).toContainText("no errors");
     await expect(page.locator("#write-log-health")).toHaveClass(/is-ok/);
 
-    const rows = page.locator("#write-log-list .write-log-row");
-    await expect(rows).toHaveCount(3);
-    // Newest first.
-    await expect(rows.first()).toContainText("Trimmed journal");
-    await expect(rows.nth(1)).toContainText("Saved snapshot");
-    await expect(rows.nth(1)).toContainText("99 nodes");
-    // The journal-append row shows the domain-level description (named deletion), not just a count.
-    await expect(rows.last()).toContainText("Deleted 'Work' (window)");
-    await expect(rows.last()).toContainText("2 descendants");
+    // The Changes list names the deletion AND every affected node (not just a count).
+    const changeRows = page.locator("#write-log-changes .write-log-row");
+    await expect(changeRows).toHaveCount(1);
+    await expect(changeRows.first()).toContainText("Deleted 'Work' (window)");
+    const changeNodes = page.locator("#write-log-changes .write-log-nodes li");
+    await expect(changeNodes).toContainText(["'Work' (window)", "'Gmail'", "'Calendar'"]);
 
-    // A spill (warning) and a failed save (error) light up the health line and row severities.
+    // The Storage activity list shows the durability mechanics only.
+    const storageRows = page.locator("#write-log-storage .write-log-row");
+    await expect(storageRows).toHaveCount(3);
+    await expect(storageRows.first()).toContainText("Trimmed journal");
+    await expect(storageRows.nth(1)).toContainText("Saved snapshot");
+    await expect(storageRows.nth(1)).toContainText("99 nodes");
+    await expect(storageRows.last()).toContainText("Journaled");
+    // Domain descriptions live in the Changes list, not the Storage list.
+    await expect(page.locator("#write-log-storage")).not.toContainText("Deleted 'Work'");
+
+    // A spill (warning) and a failed save (error) light up the health line and storage-row severities.
     await setWriteLog(page, {
       version: 1,
       entries: [
@@ -329,12 +336,15 @@ test.describe("extension options page", () => {
     await page.locator("#write-log-refresh").click();
     await expect(page.locator("#write-log-health")).toContainText("1 error");
     await expect(page.locator("#write-log-health")).toHaveClass(/is-error/);
-    await expect(page.locator("#write-log-list .write-log-row.is-error")).toContainText("FAILED");
-    await expect(page.locator("#write-log-list .write-log-row.is-warn")).toContainText("spill");
+    await expect(page.locator("#write-log-storage .write-log-row.is-error")).toContainText(
+      "FAILED"
+    );
+    await expect(page.locator("#write-log-storage .write-log-row.is-warn")).toContainText("spill");
 
-    // Clear empties the timeline.
+    // Clear empties both lists.
     await page.locator("#write-log-clear").click();
-    await expect(page.locator("#write-log-list .write-log-empty")).toBeVisible();
+    await expect(page.locator("#write-log-changes .write-log-empty")).toBeVisible();
+    await expect(page.locator("#write-log-storage .write-log-empty")).toBeVisible();
     await expect(page.locator("#write-log-health")).toContainText("No write activity yet");
 
     expect(issues).toEqual([]);
@@ -418,19 +428,27 @@ async function loadOptions(page: Page): Promise<void> {
             version: 1,
             seq: 1,
             at: "2026-06-20T10:00:00.000Z",
-            kind: "journalAppend",
+            kind: "change",
             ok: true,
-            detail: {
-              seq: 10,
-              entries: 1,
-              change: "Deleted 'Work' (window) (+2 descendants)",
-              labels: "deleteNode"
+            detail: { label: "deleteNode" },
+            change: {
+              headline: "Deleted 'Work' (window) (+2 descendants)",
+              lines: ["'Work' (window)", "'Gmail'", "'Calendar'"],
+              overflow: 0
             }
           },
           {
             version: 1,
             seq: 2,
             at: "2026-06-20T10:00:01.000Z",
+            kind: "journalAppend",
+            ok: true,
+            detail: { seq: 10, entries: 1, labels: "deleteNode" }
+          },
+          {
+            version: 1,
+            seq: 3,
+            at: "2026-06-20T10:00:02.000Z",
             kind: "snapshotSave",
             ok: true,
             detail: {
@@ -445,8 +463,8 @@ async function loadOptions(page: Page): Promise<void> {
           },
           {
             version: 1,
-            seq: 3,
-            at: "2026-06-20T10:00:02.000Z",
+            seq: 4,
+            at: "2026-06-20T10:00:03.000Z",
             kind: "journalPrune",
             ok: true,
             detail: { throughSeq: 10 }

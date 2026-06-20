@@ -13,12 +13,16 @@
 // idle/wake cycles within a browser session. The options page pulls it over the getWriteLog message.
 
 export const WRITE_LOG_SESSION_KEY = "tabsOutlinerWriteLog:v1";
-export const WRITE_LOG_LIMIT = 300;
+export const WRITE_LOG_LIMIT = 400;
 
 const WRITE_LOG_VERSION = 1;
 const DEFAULT_PERSIST_DEBOUNCE_MS = 500;
 
+// "change" rows are the domain-level "what happened to my tree" list (deleted/moved/renamed with
+// names); the rest are the storage-diagnostic "how it persisted" list (journal/snapshot/prune).
+// The options page renders them as two separate lists.
 export type WriteLogKind =
+  | "change"
   | "journalAppend"
   | "journalSpill"
   | "journalPrune"
@@ -31,6 +35,14 @@ export type WriteLogDetailValue = string | number | boolean | null | undefined;
 export type WriteLogDetail = Record<string, WriteLogDetailValue>;
 type StoredDetail = Record<string, string | number | boolean | null>;
 
+// The domain-level change content for a "change" row: a one-line headline plus every affected node
+// name (bounded). Plain strings so it serializes into session storage unchanged.
+export type WriteLogChange = {
+  headline: string;
+  lines: string[];
+  overflow: number;
+};
+
 export type WriteLogEntry = {
   version: 1;
   // A monotonic id local to this log (NOT the journal seq) so the UI can order and dedupe entries
@@ -40,18 +52,31 @@ export type WriteLogEntry = {
   kind: WriteLogKind;
   ok: boolean;
   detail?: StoredDetail;
+  // Present on "change" rows only.
+  change?: WriteLogChange;
 };
 
 export type WriteLogInput = {
-  kind: WriteLogKind;
+  kind: Exclude<WriteLogKind, "change">;
   ok: boolean;
   detail?: WriteLogDetail;
+};
+
+export type WriteLogChangeInput = {
+  headline: string;
+  lines: string[];
+  overflow?: number;
+  label?: string;
 };
 
 export type WriteLogSnapshot = {
   version: 1;
   entries: WriteLogEntry[];
 };
+
+export function isWriteLogChangeEntry(entry: WriteLogEntry): boolean {
+  return entry.kind === "change";
+}
 
 export type WriteLogSeverity = "ok" | "warn" | "error";
 
@@ -75,6 +100,7 @@ export type WriteLogHealth = {
 
 export type WriteLog = {
   record(input: WriteLogInput): void;
+  recordChange(input: WriteLogChangeInput): void;
   snapshot(): WriteLogSnapshot;
   clear(): void;
   hydrate(value: unknown): void;
@@ -103,6 +129,14 @@ export function createWriteLog(
   let nextSeq = 1;
   let persistTimer: ReturnType<typeof setTimeout> | undefined;
 
+  function pushEntry(entry: WriteLogEntry): void {
+    entries.push(entry);
+    if (entries.length > limit) {
+      entries.splice(0, entries.length - limit);
+    }
+    schedulePersist();
+  }
+
   function record(input: WriteLogInput): void {
     const entry: WriteLogEntry = {
       version: WRITE_LOG_VERSION,
@@ -116,11 +150,27 @@ export function createWriteLog(
     if (detail) {
       entry.detail = detail;
     }
-    entries.push(entry);
-    if (entries.length > limit) {
-      entries.splice(0, entries.length - limit);
+    pushEntry(entry);
+  }
+
+  function recordChange(input: WriteLogChangeInput): void {
+    const entry: WriteLogEntry = {
+      version: WRITE_LOG_VERSION,
+      seq: nextSeq,
+      at: new Date(now()).toISOString(),
+      kind: "change",
+      ok: true,
+      change: {
+        headline: input.headline,
+        lines: [...input.lines],
+        overflow: input.overflow ?? 0
+      }
+    };
+    nextSeq += 1;
+    if (input.label) {
+      entry.detail = { label: input.label };
     }
-    schedulePersist();
+    pushEntry(entry);
   }
 
   function snapshot(): WriteLogSnapshot {
@@ -163,7 +213,7 @@ export function createWriteLog(
     }, persistDebounceMs);
   }
 
-  return { record, snapshot, clear, hydrate };
+  return { record, recordChange, snapshot, clear, hydrate };
 }
 
 export function normalizeWriteLogEntries(value: unknown): WriteLogEntry[] {
@@ -241,13 +291,9 @@ export function describeWriteLogEntry(entry: WriteLogEntry): {
 
 function writeLogTitle(entry: WriteLogEntry): string {
   switch (entry.kind) {
+    case "change":
+      return entry.change?.headline ?? "Change";
     case "journalAppend": {
-      // Prefer the domain-level description ("Deleted 'Work' (window) (+12 descendants)") so an
-      // unexpected change is obvious; fall back to the generic durability phrasing.
-      const change = stringDetail(entry, "change");
-      if (change) {
-        return change;
-      }
       const count = numberDetail(entry, "entries") ?? 1;
       const seq = numberDetail(entry, "seq");
       return `Journaled ${count} ${count === 1 ? "change" : "changes"}${
@@ -310,7 +356,6 @@ function writeLogDetailText(detail: WriteLogEntry["detail"]): string {
     return "";
   }
   return Object.entries(detail)
-    .filter(([key]) => key !== "change") // promoted to the row title
     .map(([key, value]) => `${key}=${value}`)
     .join(" · ");
 }
@@ -331,13 +376,12 @@ function numberDetail(entry: WriteLogEntry, key: string): number | undefined {
   return typeof value === "number" ? value : undefined;
 }
 
-function stringDetail(entry: WriteLogEntry, key: string): string | undefined {
-  const value = entry.detail?.[key];
-  return typeof value === "string" && value.length > 0 ? value : undefined;
-}
-
 function cloneEntry(entry: WriteLogEntry): WriteLogEntry {
-  return { ...entry, ...(entry.detail ? { detail: { ...entry.detail } } : {}) };
+  return {
+    ...entry,
+    ...(entry.detail ? { detail: { ...entry.detail } } : {}),
+    ...(entry.change ? { change: { ...entry.change, lines: [...entry.change.lines] } } : {})
+  };
 }
 
 function normalizeEntry(value: unknown): WriteLogEntry[] {
@@ -351,6 +395,7 @@ function normalizeEntry(value: unknown): WriteLogEntry[] {
     kind?: unknown;
     ok?: unknown;
     detail?: unknown;
+    change?: unknown;
   };
   if (
     candidate.version !== WRITE_LOG_VERSION ||
@@ -375,10 +420,30 @@ function normalizeEntry(value: unknown): WriteLogEntry[] {
   if (detail) {
     entry.detail = detail;
   }
+  const change = normalizeChange(candidate.change);
+  if (change) {
+    entry.change = change;
+  }
   return [entry];
 }
 
+function normalizeChange(value: unknown): WriteLogChange | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+  const candidate = value as { headline?: unknown; lines?: unknown; overflow?: unknown };
+  if (typeof candidate.headline !== "string" || !Array.isArray(candidate.lines)) {
+    return undefined;
+  }
+  return {
+    headline: candidate.headline,
+    lines: candidate.lines.filter((line): line is string => typeof line === "string"),
+    overflow: typeof candidate.overflow === "number" ? candidate.overflow : 0
+  };
+}
+
 const WRITE_LOG_KINDS: ReadonlySet<string> = new Set<WriteLogKind>([
+  "change",
   "journalAppend",
   "journalSpill",
   "journalPrune",
