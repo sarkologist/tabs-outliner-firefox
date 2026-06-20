@@ -64,6 +64,7 @@ import { mergePartialOutlineState } from "./partial-outline-state.js";
 import {
   isRestoreScope,
   largeRestoreConfirmationPrompt,
+  pluralize,
   restoreScopeTargetsNodeOrDescendants
 } from "./restore-scope.js";
 import { normalizeSearchQuery, segmentSearchText } from "./search.js";
@@ -3050,12 +3051,30 @@ function applyTreeStructureUpdate(update: TreeStructureUpdate): void {
         return;
       }
 
-      if (!currentProjection) {
+      const acceptProjectionPatch = (projection: VisibleTreeProjection): void => {
+        currentCutRowRange = cutSubtreeRowRange(projection.rows, pendingCutNodeId);
+        updateProjectionChrome(projection);
+        rememberAcceptedRenderedProjection(projection, { forceOutline: true });
+        scrollToObservedActiveTab(projection, {
+          ignoreSparseViewportIntent: Boolean(activeRevealNodeId)
+        });
+        clearHoverLineScope();
+        scheduleCurrentRowsRender();
+        refreshSparseProjectionAfterLocalTreePatch();
+      };
+      const fallBackToFullRender = (checkReveal: boolean): void => {
+        if (checkReveal && revealSparseActiveNodeRemotelyIfNeeded(activeRevealNodeId)) {
+          return;
+        }
         if (refreshSparseRemoteProjectionAfterStateChange()) {
           return;
         }
         invalidateProjectionCache();
         render();
+      };
+
+      if (!currentProjection) {
+        fallBackToFullRender(false);
         return;
       }
       if (deletedNodeIds.size === 0) {
@@ -3080,28 +3099,12 @@ function applyTreeStructureUpdate(update: TreeStructureUpdate): void {
         if (
           applyCrossParentLeafMoveTreeStructurePatchToProjection(state, currentProjection, update)
         ) {
-          currentCutRowRange = cutSubtreeRowRange(currentProjection.rows, pendingCutNodeId);
-          updateProjectionChrome(currentProjection);
-          rememberAcceptedRenderedProjection(currentProjection, { forceOutline: true });
-          scrollToObservedActiveTab(currentProjection, {
-            ignoreSparseViewportIntent: Boolean(activeRevealNodeId)
-          });
-          clearHoverLineScope();
-          scheduleCurrentRowsRender();
-          refreshSparseProjectionAfterLocalTreePatch();
+          acceptProjectionPatch(currentProjection);
           return;
         }
 
         if (applyInsertTreeStructurePatchToProjection(state, currentProjection, update)) {
-          currentCutRowRange = cutSubtreeRowRange(currentProjection.rows, pendingCutNodeId);
-          updateProjectionChrome(currentProjection);
-          rememberAcceptedRenderedProjection(currentProjection, { forceOutline: true });
-          scrollToObservedActiveTab(currentProjection, {
-            ignoreSparseViewportIntent: Boolean(activeRevealNodeId)
-          });
-          clearHoverLineScope();
-          scheduleCurrentRowsRender();
-          refreshSparseProjectionAfterLocalTreePatch();
+          acceptProjectionPatch(currentProjection);
           return;
         }
 
@@ -3130,39 +3133,17 @@ function applyTreeStructureUpdate(update: TreeStructureUpdate): void {
           return;
         }
 
-        if (revealSparseActiveNodeRemotelyIfNeeded(activeRevealNodeId)) {
-          return;
-        }
-        if (refreshSparseRemoteProjectionAfterStateChange()) {
-          return;
-        }
-        invalidateProjectionCache();
-        render();
+        fallBackToFullRender(true);
         return;
       }
 
       if (!applyDeleteTreeStructurePatchToProjection(state, currentProjection, update)) {
-        if (revealSparseActiveNodeRemotelyIfNeeded(activeRevealNodeId)) {
-          return;
-        }
-        if (refreshSparseRemoteProjectionAfterStateChange()) {
-          return;
-        }
-        invalidateProjectionCache();
-        render();
+        fallBackToFullRender(true);
         return;
       }
 
       refreshProjectionActiveTabTarget(state, currentProjection);
-      currentCutRowRange = cutSubtreeRowRange(currentProjection.rows, pendingCutNodeId);
-      updateProjectionChrome(currentProjection);
-      rememberAcceptedRenderedProjection(currentProjection, { forceOutline: true });
-      scrollToObservedActiveTab(currentProjection, {
-        ignoreSparseViewportIntent: Boolean(activeRevealNodeId)
-      });
-      clearHoverLineScope();
-      scheduleCurrentRowsRender();
-      refreshSparseProjectionAfterLocalTreePatch();
+      acceptProjectionPatch(currentProjection);
     }
   );
 }
@@ -3408,13 +3389,6 @@ function canMoveSparseHydratingRootSubtreeToBottom(rowInfo: VisibleTreeRow): boo
 
 function isRenamableGroup(node: OutlineNode): boolean {
   return node.kind === "window" || node.kind === "group";
-}
-
-function pluralize(count: number, noun: string): string {
-  if (noun.endsWith("ch") || noun.endsWith("sh")) {
-    return count === 1 ? noun : `${noun}es`;
-  }
-  return count === 1 ? noun : `${noun}s`;
 }
 
 function visibleProjectionFor(state: OutlineState, query: string): VisibleTreeProjection {
