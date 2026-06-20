@@ -1,5 +1,11 @@
 # Repository Instructions
 
+**This file is the single, tool-agnostic source of truth for the project's working
+agreements, and it is authoritative — it overrides default assistant behavior (including the
+default "commit only when asked").** Policy: keep working-agreement content here;
+[CLAUDE.md](CLAUDE.md) and any other agent entry point must point to this file rather than
+duplicate it (one source, no drift).
+
 ## Start here (map)
 
 New to this repo, or a fresh agent run? **[REPO_MAP.md](REPO_MAP.md) is the full
@@ -13,7 +19,8 @@ pointers:
 - **Hunting a bug class?** Use the runbook: runtime →
   [RUNTIME_TRACE_HUNT_RUNBOOK.md](RUNTIME_TRACE_HUNT_RUNBOOK.md), sidebar projection →
   [SIDEBAR_PROJECTION_HUNT_RUNBOOK.md](SIDEBAR_PROJECTION_HUNT_RUNBOOK.md).
-- **Git workflow:** [CLAUDE.md](CLAUDE.md).
+- **Git workflow & independent review:** see [Git workflow](#git-workflow) and
+  [Independent review](#independent-review) below.
 
 The map is mechanically checked: when you add a doc, add it to `REPO_MAP.md` (the vitest
 `docs-index` test and `node scripts/check-docs-index.mjs` fail otherwise).
@@ -21,7 +28,7 @@ The map is mechanically checked: when you add a doc, add it to `REPO_MAP.md` (th
 ## Working agreements
 
 - Feel free to challenge assumptions and suggest a better way.
-- When working on a new feature, use a feature branch, make incremental commits, and open a pull request to land it; merge to `main` only when the user is satisfied (`main` is protected, so a PR is the only path — see [CLAUDE.md](CLAUDE.md)).
+- When working on a new feature, use a feature branch, make incremental commits, and open a pull request to land it; merge to `main` only when the user is satisfied (`main` is protected, so a PR is the only path — see [Git workflow](#git-workflow) below).
 - Use red-green TDD for behavior changes: write or update a failing test first, make it pass with the smallest change, then refactor if needed.
 - For browser UI behavior, prefer Playwright tests that drive the real built extension/UI with deterministic fixtures. Run them with `pnpm exec playwright test`.
 - In Playwright coverage, assert both visible behavior and app/runtime state where practical: DOM/accessibility state, console errors, failed network requests, tree invariants, persisted state, and `tabsOutlinerProfile` traces when relevant.
@@ -40,3 +47,48 @@ The map is mechanically checked: when you add a doc, add it to `REPO_MAP.md` (th
 - Avoid full-state transport and full sidebar renders for small changes. Prefer compact semantic patches (`nodeStateUpdated`, `treeStructureUpdated`, `activeStateUpdated`) and reserve full `stateUpdated` for compatibility or genuinely whole-tree-sized changes.
 - Preserve object identity for unchanged outline nodes when practical, filter no-op/stale browser events, and absorb command-owned runtime echoes before they trigger saves, broadcasts, diagnostics, or projection rebuilds.
 - When replacing a full render with an incremental patch, audit the side effects that used to happen during `render()`: active-tab scrolling, counters, empty states, rename/drop cleanup, diagnostics scheduling, and virtual-row refresh.
+
+## Git workflow
+
+When making any code change in this repository:
+
+1. **Always commit finished work.** Do not leave changes uncommitted or wait to
+   be asked. Use a clear, conventional commit message and end it with the
+   standard `Co-Authored-By` trailer.
+2. **Always work on a feature branch** — never commit directly to `main`. Branch
+   from an up-to-date `main` before starting.
+3. **If the working tree is already dirty** with changes you did not just make,
+   create a git worktree (`git worktree add <path> -b <branch> main`) and do the
+   new work there so it stays isolated from the existing changes.
+4. **Open a pull request for all work.** `main` is protected — direct commits and
+   pushes are blocked — so every branch lands on `main` through a PR. Open one for
+   the work (even small changes); never merge to `main` directly, and merge only
+   when the user is satisfied.
+
+Keep unrelated changes on separate branches and in separate commits.
+
+## Independent review
+
+Before opening a pull request for substantive work — and again before asking to
+merge after later changes — get an **independent review from `codex-cli`** over
+the diff, then act on its findings:
+
+1. Run it non-interactively and read-only (so it cannot edit files), pointed at
+   the branch diff. For example:
+
+   ```bash
+   codex exec -s read-only -C <repo-or-worktree> \
+     "Adversarially review the changes on this branch (run: git --no-pager diff
+      origin/main...HEAD). Assess correctness, completeness (other affected code
+      paths), edge cases, regression risk, and test adequacy. Rank each finding
+      Bug / Risk / Nit with file:line and a suggested fix. Do not modify files."
+   ```
+
+2. **Judge each finding on its merits** — codex can be wrong. Verify it against
+   the code before acting; fix real issues with a test that fails pre-fix, and
+   record why any finding is declined.
+3. Note the review outcome and how the findings were resolved in the PR (a
+   comment is fine).
+
+Skip only for trivial, mechanical changes (typo, comment, formatting, pure
+rename).
