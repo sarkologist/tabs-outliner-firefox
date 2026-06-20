@@ -15,7 +15,7 @@ import {
   deleteTreeStructureCandidateNodeIds,
   treeStructureUpdateFromCandidateNodeIds
 } from "../background/patch-updates.js";
-import { isOutlinerSidebarNode } from "../model/outliner-page.js";
+import { isFullSizeSidebarSearch, isOutlinerSidebarNode } from "../model/outliner-page.js";
 import type { NodeId, OutlineNode, OutlineState } from "../model/types.js";
 import {
   createPerformanceTracer,
@@ -161,6 +161,14 @@ let revealHighlightNodeId: NodeId | undefined;
 let revealHighlightTimer: number | undefined;
 let sidebarWindowId: number | undefined;
 let sidebarWindowIdLoaded = false;
+// True when this page is the detached full-size sidebar (its own popup window, opened by the toolbar
+// button) rather than a docked per-window sidebar. The background marks the popup URL; the docked
+// sidebar is loaded from the manifest panel URL with no query string. A docked sidebar follows its
+// own window's active tab; a full-size sidebar is a whole-tree view that must not chase whichever
+// window currently has focus (otherwise it "jumps to the last-focused window" on every focus change).
+const isFullSizeSidebarWindow = isFullSizeSidebarSearch(
+  typeof window === "undefined" ? undefined : window.location.search
+);
 // Whether this sidebar's browser window is the focused one. Only the focused window's sidebar fully
 // hydrates the tree; background sidebars stay on the sparse projection. undefined = unknown (no
 // windows API / query failed) -> treated as "may hydrate" so behavior is unchanged where we cannot tell.
@@ -671,6 +679,17 @@ function handleBackgroundMessage(message: unknown): unknown {
 async function loadState(): Promise<void> {
   try {
     await loadSidebarWindowId();
+    // A full-size sidebar is the whole-tree view: always fully hydrated (never focus-gated to a sparse
+    // projection) and must not auto-scroll to the focused window's active tab. The sparse boot/initial
+    // snapshots are centered on that active tab; with active-scroll suppressed they would render an
+    // offscreen slice and leave the popup blank until hydration. Skip them and load the full tree
+    // directly -- a full-size window hydrates anyway, so this only drops an active-centered first paint
+    // it should not show.
+    if (isFullSizeSidebarWindow) {
+      delete window.__tabsOutlinerBootSnapshot;
+      await hydrateFullState();
+      return;
+    }
     const bootSnapshot = window.__tabsOutlinerBootSnapshot;
     if (isInitialTreeSnapshot(bootSnapshot)) {
       delete window.__tabsOutlinerBootSnapshot;
@@ -5182,6 +5201,11 @@ function shouldSuppressObservedActiveScroll(
   options: { ignoreSparseViewportIntent?: boolean } = {}
 ): boolean {
   return (
+    // A detached full-size sidebar must never auto-scroll to the active tab: its own popup window owns
+    // no browser tabs, so the active-tab target falls back to the focused window's active tab and the
+    // view "jumps to the last-focused window" on every focus/active-tab change. Only docked per-window
+    // sidebars follow their own window. Explicit user navigation (show-in-tree) uses a separate path.
+    isFullSizeSidebarWindow ||
     currentProjectionOwner.kind === "showInTree" ||
     (!options.ignoreSparseViewportIntent && shouldPreserveSparseViewportScrollIntent())
   );

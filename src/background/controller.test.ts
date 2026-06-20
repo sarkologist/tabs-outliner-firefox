@@ -46904,7 +46904,10 @@ describe("background controller lifecycle", () => {
 
     expect(result).toEqual({ ok: true });
     expect(runtime.api.windows.create).toHaveBeenCalledWith({
-      url: "moz-extension://extension-id/sidebar/sidebar.html",
+      // The `?view=window` marker tells the page it is a detached full-size sidebar (so it does not
+      // auto-scroll to follow the focused window's active tab); it rides the query string, leaving
+      // the pathname-based sidebar-URL matchers and the popup `startsWith` probe unaffected.
+      url: "moz-extension://extension-id/sidebar/sidebar.html?view=window",
       type: "popup",
       state: "maximized",
       focused: true

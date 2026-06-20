@@ -210,6 +210,7 @@ import {
   liveTabNodes,
   liveWindowNodes
 } from "../model/live-nodes.js";
+import { fullSizeSidebarSearch } from "../model/outliner-page.js";
 import {
   exportPortableTree,
   portableTreeFilename,
@@ -2365,8 +2366,12 @@ export function createBackgroundController(
   }
 
   function openNewFullSizeSidebarWindow(): Promise<{ ok: true }> {
+    // Mark the popup URL so the page knows it is a detached full-size sidebar (and must not auto-scroll
+    // to follow the focused window's active tab the way a docked per-window sidebar does). The marker
+    // is a query string, so it leaves the pathname -- and `findOpenFullSizeSidebarWindows`'s
+    // `startsWith` probe -- working unchanged.
     return openTrackedOutlinerPopup(
-      SIDEBAR_WINDOW_PATH,
+      `${SIDEBAR_WINDOW_PATH}${fullSizeSidebarSearch()}`,
       "background.sidebarWindow.open",
       noteFullSizeSidebarWindowFocused
     );
