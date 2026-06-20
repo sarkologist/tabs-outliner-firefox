@@ -56,6 +56,36 @@ test.describe("sidebar active-tab scrolling", () => {
     expect(issues).toEqual([]);
   });
 
+  test("does not scroll a full-size sidebar to the focused window's active tab", async ({
+    page
+  }) => {
+    const issues = collectPageIssues(page);
+    // A full-size sidebar is the detached, whole-tree popup (opened via ?view=window). Its own popup
+    // window owns no browser tabs, so -- unlike a docked per-window sidebar -- it must NOT follow the
+    // focused window's active tab; otherwise it "jumps to the last-focused window" on every focus or
+    // active-tab change. The currentWindowId is the popup's own id, absent from the outline.
+    await loadSidebar(page, fixtureState(), { currentWindowId: 999, fullSizeView: true });
+
+    // tab:1 is the active tab and sits at the top, so the view starts unscrolled.
+    await expect(page.locator(`${nodeSelector("tab:1")}.is-active`)).toBeVisible();
+    expect(await scrollTop(page)).toBeLessThan(100);
+
+    // The focused window switches its active tab to one far down the outline.
+    await dispatchSidebarMessage(page, {
+      type: "activeStateUpdated",
+      updates: [
+        { nodeId: "tab:1", active: false },
+        { nodeId: "tab:100", active: true }
+      ]
+    });
+
+    // The update is applied (tab:1 is no longer the active row) but the full-size view stays put --
+    // pre-fix it scrolled down to tab:100, the focused window's active tab.
+    await expect(page.locator(`${nodeSelector("tab:1")}.is-active`)).toHaveCount(0);
+    expect(await scrollTop(page)).toBeLessThan(100);
+    expect(issues).toEqual([]);
+  });
+
   test("does not scroll a sidebar away from its own window after a later focus echo", async ({
     page
   }) => {
@@ -123,7 +153,7 @@ test.describe("sidebar active-tab scrolling", () => {
 async function loadSidebar(
   page: Page,
   state: SidebarFixtureState = fixtureState(),
-  options: { currentWindowId?: number } = {}
+  options: { currentWindowId?: number; fullSizeView?: boolean } = {}
 ): Promise<void> {
   await page.addInitScript(
     (state) => {
@@ -186,7 +216,11 @@ async function loadSidebar(
     { ...state, currentWindowId: options.currentWindowId }
   );
 
-  await page.goto("/sidebar/sidebar.html");
+  // The full-size sidebar is the same page opened in its own popup window; the background marks that
+  // URL with `?view=window` so the page can tell itself apart from a docked per-window sidebar.
+  await page.goto(
+    options.fullSizeView ? "/sidebar/sidebar.html?view=window" : "/sidebar/sidebar.html"
+  );
   await expect(page.locator("#state-count")).toHaveText(
     `${Object.keys(state.nodes).length} items / 0 saved`
   );
