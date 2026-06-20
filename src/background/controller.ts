@@ -6191,15 +6191,25 @@ export function createBackgroundController(
   // (older browsers, test fakes) -- the log then lives only for the current event-page lifetime.
   function persistWriteLogToSession(snapshot: WriteLogSnapshot): void {
     const session = api.storage.session;
-    if (!session) {
+    // Guard against absent or partial/non-callable session implementations: this runs in a
+    // debounce timer, where a synchronous throw would otherwise be unhandled.
+    if (!session || typeof session.set !== "function") {
       return;
     }
-    void session.set({ [WRITE_LOG_SESSION_KEY]: snapshot }).catch(() => undefined);
+    try {
+      void session.set({ [WRITE_LOG_SESSION_KEY]: snapshot }).catch(() => undefined);
+    } catch {
+      // Best-effort: the session mirror never affects the in-memory log or persistence.
+    }
   }
 
   async function hydrateWriteLogFromSession(): Promise<void> {
     try {
-      const stored = await api.storage.session?.get(WRITE_LOG_SESSION_KEY);
+      const session = api.storage.session;
+      if (!session || typeof session.get !== "function") {
+        return;
+      }
+      const stored = await session.get(WRITE_LOG_SESSION_KEY);
       if (stored) {
         writeLog.hydrate(stored[WRITE_LOG_SESSION_KEY]);
       }

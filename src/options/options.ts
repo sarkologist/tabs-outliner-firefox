@@ -126,6 +126,9 @@ let recordingTarget: RecordingTarget | undefined;
 let writeLogEntries: WriteLogEntry[] = [];
 let writeLogRenderedSeq = -1;
 let writeLogPollTimer: number | undefined;
+// Monotonic token so a slow in-flight getWriteLog response can never render after a newer
+// refresh/clear has superseded it (out-of-order completion).
+let writeLogRequestSeq = 0;
 
 void initializeOptions();
 
@@ -714,7 +717,13 @@ function incidentDetailText(detail: IncidentLogEntry["detail"]): string {
 }
 
 async function refreshWriteLog(): Promise<void> {
+  const requestId = (writeLogRequestSeq += 1);
   const entries = await loadWriteLog();
+  // Drop a response superseded by a newer refresh/clear so a slow getWriteLog can't render stale
+  // rows (or undo a clear) after it.
+  if (requestId !== writeLogRequestSeq) {
+    return;
+  }
   const latestSeq = entries.length > 0 ? entries[entries.length - 1]!.seq : 0;
   // Skip the re-render (and the scroll reset it causes) when nothing new has been recorded.
   if (entries.length === writeLogEntries.length && latestSeq === writeLogRenderedSeq) {

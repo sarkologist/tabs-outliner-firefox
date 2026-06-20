@@ -98,6 +98,26 @@ describe("createWriteLog", () => {
     const { entries } = log.snapshot();
     expect(entries.map((entry) => entry.seq)).toEqual([41, 42]);
   });
+
+  it("hydrate() is ignored once the buffer already has entries (no clobber, no seq rewind)", () => {
+    const log = createWriteLog({ now });
+    // A record landed before the async session read resolved.
+    log.record({ kind: "journalAppend", ok: true, detail: { seq: 7 } });
+    log.hydrate({
+      version: 1,
+      entries: [
+        { version: 1, seq: 99, at: "2026-06-20T00:00:00.000Z", kind: "snapshotSave", ok: true }
+      ]
+    } satisfies WriteLogSnapshot);
+
+    const { entries } = log.snapshot();
+    // The live record survives; the older session contents are discarded.
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({ seq: 1, kind: "journalAppend" });
+    // And the next record continues the in-memory seq, not the session's.
+    log.record({ kind: "snapshotSave", ok: true });
+    expect(log.snapshot().entries.map((entry) => entry.seq)).toEqual([1, 2]);
+  });
 });
 
 describe("normalizeWriteLogEntries", () => {

@@ -136,6 +136,12 @@ export function createWriteLog(
   }
 
   function hydrate(value: unknown): void {
+    // Seed only an empty buffer. Hydration runs once at startup; it must never clobber write
+    // events already recorded this session, nor rewind nextSeq behind them, if a record happened
+    // to land before the async session read resolved.
+    if (entries.length > 0) {
+      return;
+    }
     const restored = normalizeWriteLogEntries(value);
     if (restored.length === 0) {
       return;

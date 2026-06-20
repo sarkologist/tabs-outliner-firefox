@@ -118,9 +118,19 @@ export function createPersistenceCoordinator(deps: PersistenceCoordinatorDeps) {
     setLastPersistedState,
     deferPersistedStateBaselineClone,
     recordIncidentLog,
-    recordWriteEvent,
     clearCompletedRuntimeLifecycleJournalEntriesAfterSave
   } = deps;
+  // The write-activity log is observational and strictly best-effort: a fault in it must never
+  // disrupt persistence. Notably the save-failure path records BEFORE handleStateSaveFailure arms
+  // the retry/backoff, so an unguarded throw there could drop a pending change. Wrap the injected
+  // writer once so every call site below is safe.
+  function recordWriteEvent(event: WriteLogInput): void {
+    try {
+      deps.recordWriteEvent(event);
+    } catch {
+      // Intentionally swallowed; the debug log never affects durability.
+    }
+  }
   // Shards live in shardStore when one is injected (IndexedDB in production); otherwise they stay
   // on storage.local exactly as before. `shardStoreExternal` gates the save split, the migration,
   // and the storage.local-shard deletion so the default path is byte-identical to today.

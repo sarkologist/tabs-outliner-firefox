@@ -337,6 +337,55 @@ test.describe("extension options page", () => {
 
     expect(issues).toEqual([]);
   });
+
+  test("ignores a stale out-of-order write-log response", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadOptions(page);
+
+    // Pause live polling so only the explicit refreshes below race.
+    await page.locator("#write-log-live").uncheck();
+
+    // Refresh A captures the STALE snapshot but resolves slowly.
+    await setWriteLog(page, {
+      version: 1,
+      entries: [
+        {
+          version: 1,
+          seq: 7,
+          at: "2026-06-20T10:02:00.000Z",
+          kind: "snapshotSave",
+          ok: true,
+          detail: { nodeCount: 111 }
+        }
+      ]
+    });
+    await setWriteLogDelay(page, 400);
+    await page.locator("#write-log-refresh").click();
+
+    // Refresh B captures the FRESH snapshot and resolves immediately, superseding A.
+    await setWriteLog(page, {
+      version: 1,
+      entries: [
+        {
+          version: 1,
+          seq: 8,
+          at: "2026-06-20T10:02:01.000Z",
+          kind: "snapshotSave",
+          ok: true,
+          detail: { nodeCount: 222 }
+        }
+      ]
+    });
+    await page.locator("#write-log-refresh").click();
+    await expect(page.locator("#write-log-health")).toContainText("222 nodes");
+
+    // When A's delayed response lands it must NOT overwrite the newer B render.
+    await page.waitForTimeout(500);
+    await expect(page.locator("#write-log-health")).toContainText("222 nodes");
+    await expect(page.locator("#write-log-health")).not.toContainText("111 nodes");
+
+    expect(issues).toEqual([]);
+  });
 });
 
 async function loadOptions(page: Page): Promise<void> {
@@ -398,6 +447,9 @@ async function loadOptions(page: Page): Promise<void> {
         ]
       };
       const runtimeMessages: unknown[] = [];
+      // Lets a test force an out-of-order getWriteLog response: the next getWriteLog captures the
+      // snapshot now but resolves after this delay.
+      let nextWriteLogDelayMs = 0;
 
       (
         window as typeof window & {
@@ -434,6 +486,10 @@ async function loadOptions(page: Page): Promise<void> {
       ).__setWriteLog = (snapshot) => {
         writeLogSnapshot = structuredClone(snapshot);
       };
+      (window as typeof window & { __setWriteLogDelay?: (ms: number) => void }).__setWriteLogDelay =
+        (ms) => {
+          nextWriteLogDelayMs = ms;
+        };
 
       window.browser = {
         commands: {
@@ -552,7 +608,13 @@ async function loadOptions(page: Page): Promise<void> {
               return structuredClone(profileSnapshot.background);
             }
             if (type === "getWriteLog") {
-              return structuredClone(writeLogSnapshot);
+              const captured = structuredClone(writeLogSnapshot);
+              const delay = nextWriteLogDelayMs;
+              nextWriteLogDelayMs = 0;
+              if (delay > 0) {
+                await new Promise((resolve) => setTimeout(resolve, delay));
+              }
+              return captured;
             }
             if (type === "clearWriteLog") {
               writeLogSnapshot = { version: 1, entries: [] };
@@ -603,6 +665,14 @@ async function setWriteLog(
       }
     ).__setWriteLog?.(value);
   }, snapshot);
+}
+
+async function setWriteLogDelay(page: Page, ms: number): Promise<void> {
+  await page.evaluate((value) => {
+    (window as typeof window & { __setWriteLogDelay?: (ms: number) => void }).__setWriteLogDelay?.(
+      value
+    );
+  }, ms);
 }
 
 async function savedPreferences(page: Page): Promise<AppPreferences | undefined> {
