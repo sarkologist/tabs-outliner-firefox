@@ -8,6 +8,9 @@ import type { NodeId, OutlineNode, OutlineNodeKind, OutlineState } from "../mode
 // before/after states, so it adds no extra tree walk.
 
 const DEFAULT_MAX_NAMES = 3;
+// Above this many touched nodes (a bulk import/flatten, often spill-sized) we skip the per-node
+// classification on the ack path and report coarse counts instead.
+const CHANGE_SUMMARY_DETAIL_LIMIT = 200;
 
 // Structurally compatible with OutlineJournalDelta; kept local so this module stays independent.
 export type OutlineChangeDelta = {
@@ -25,7 +28,9 @@ export type OutlineChangeNodeRef = {
 export type OutlineChangeMove = {
   ref: OutlineChangeNodeRef;
   to: string;
-  from?: string;
+  from: string;
+  // True for a same-parent reorder (drag within a window): `from` === `to` === the parent.
+  within: boolean;
 };
 
 export type OutlineChangeRename = {
@@ -47,6 +52,8 @@ export type OutlineChangeSummary = {
   statusChanged: OutlineChangeStatus[];
   // Updated nodes we could not classify (no previous state); shown as a plain "Updated" list.
   updated: OutlineChangeNodeRef[];
+  // Count of touched nodes left unclassified because the delta exceeded the detail limit.
+  otherChanges: number;
   reorderedTopLevel: boolean;
 };
 
@@ -57,15 +64,29 @@ export function summarizeOutlineDelta(
   const { previous, next } = options;
   const deletedIds = delta.deletedNodeIds ?? [];
   const updatedNodes = delta.updatedNodes ?? [];
+
+  // Bound the ack-path cost: a bulk delta (import/flatten, often spill-sized) gets coarse counts
+  // instead of an O(delta) per-node classification.
+  if (deletedIds.length + updatedNodes.length > CHANGE_SUMMARY_DETAIL_LIMIT) {
+    return {
+      ...emptySummary(),
+      deleted: { roots: [], total: deletedIds.length },
+      otherChanges: updatedNodes.length
+    };
+  }
+
   const deletedSet = new Set(deletedIds);
 
+  // Name the deleted subtree roots only when we have the before-image to read their titles from;
+  // without it (the in-place runtime fast path) report a bare count rather than "(unknown)" names.
   const deletedRoots: OutlineChangeNodeRef[] = [];
-  for (const id of deletedIds) {
-    const prev = previous?.nodes[id];
-    const parentId = prev?.parentId;
-    // A subtree root is a deleted node whose parent is not itself deleted.
-    if (parentId === undefined || !deletedSet.has(parentId)) {
-      deletedRoots.push(refFor(id, previous, next));
+  if (previous) {
+    for (const id of deletedIds) {
+      const parentId = previous.nodes[id]?.parentId;
+      // A subtree root is a deleted node whose parent is not itself deleted.
+      if (parentId === undefined || !deletedSet.has(parentId)) {
+        deletedRoots.push(refFor(id, previous, next));
+      }
     }
   }
 
@@ -88,15 +109,23 @@ export function summarizeOutlineDelta(
       createdSet.add(node.id);
       continue;
     }
+    // Classify each aspect independently: a node can be moved AND renamed AND closed in one delta
+    // (e.g. restore re-parents and reopens), and the user should see every part.
     if (prev.parentId !== node.parentId) {
       moved.push({
         ref: refForNode(node),
         to: parentTitle(node.parentId, next, previous),
-        from: parentTitle(prev.parentId, previous, next)
+        from: parentTitle(prev.parentId, previous, next),
+        within: false
       });
-    } else if (displayTitle(prev) !== displayTitle(node)) {
+    } else if (isReordered(node.id, node.parentId, previous, next)) {
+      const where = parentTitle(node.parentId, next, previous);
+      moved.push({ ref: refForNode(node), to: where, from: where, within: true });
+    }
+    if (displayTitle(prev) !== displayTitle(node)) {
       renamed.push({ ref: refForNode(node), from: displayTitle(prev), to: displayTitle(node) });
-    } else if (prev.status !== node.status) {
+    }
+    if (prev.status !== node.status) {
       statusChanged.push({
         ref: refForNode(node),
         to: node.status === "closed" ? "closed" : "restored"
@@ -122,8 +151,41 @@ export function summarizeOutlineDelta(
     renamed,
     statusChanged,
     updated,
+    otherChanges: 0,
     reorderedTopLevel
   };
+}
+
+function emptySummary(): OutlineChangeSummary {
+  return {
+    deleted: { roots: [], total: 0 },
+    created: { roots: [], total: 0 },
+    moved: [],
+    renamed: [],
+    statusChanged: [],
+    updated: [],
+    otherChanges: 0,
+    reorderedTopLevel: false
+  };
+}
+
+// A node is reordered when its index within its sibling list (its parent's childIds, or the root
+// list) changed. moveNode's same-parent path journals the moved node, so only it is inspected here.
+function isReordered(
+  id: NodeId,
+  parentId: NodeId | undefined,
+  previous: OutlineState,
+  next: OutlineState
+): boolean {
+  const prevSiblings =
+    parentId !== undefined ? previous.nodes[parentId]?.childIds : previous.rootIds;
+  const nextSiblings = parentId !== undefined ? next.nodes[parentId]?.childIds : next.rootIds;
+  if (!prevSiblings || !nextSiblings) {
+    return false;
+  }
+  const prevIndex = prevSiblings.indexOf(id);
+  const nextIndex = nextSiblings.indexOf(id);
+  return prevIndex !== -1 && nextIndex !== -1 && prevIndex !== nextIndex;
 }
 
 export function renderOutlineChangeSummary(
@@ -137,10 +199,7 @@ export function renderOutlineChangeSummary(
     parts.push(renderDeletedOrCreated("Deleted", summary.deleted, maxNames));
   }
   if (summary.moved.length > 0) {
-    const shown = summary.moved
-      .slice(0, maxNames)
-      .map((move) => `${quote(move.ref.title)} → ${quote(move.to)}`)
-      .join(", ");
+    const shown = summary.moved.slice(0, maxNames).map(renderMove).join(", ");
     parts.push(`Moved ${shown}${overflow(summary.moved.length, maxNames)}`);
   }
   if (summary.created.total > 0) {
@@ -170,11 +229,27 @@ export function renderOutlineChangeSummary(
       .join(", ");
     parts.push(`Updated ${shown}${overflow(summary.updated.length, maxNames)}`);
   }
+  if (summary.otherChanges > 0) {
+    parts.push(`${summary.otherChanges} node ${summary.otherChanges === 1 ? "change" : "changes"}`);
+  }
   if (parts.length === 0 && summary.reorderedTopLevel) {
     parts.push("Reordered top level");
   }
 
   return parts.join(" · ");
+}
+
+function renderMove(move: OutlineChangeMove): string {
+  if (move.within) {
+    return move.to === "top level"
+      ? `${quote(move.ref.title)} within top level`
+      : `${quote(move.ref.title)} within ${quote(move.to)}`;
+  }
+  return `${quote(move.ref.title)} from ${renderParent(move.from)} to ${renderParent(move.to)}`;
+}
+
+function renderParent(title: string): string {
+  return title === "top level" ? "top level" : quote(title);
 }
 
 export function describeOutlineDelta(

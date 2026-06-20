@@ -72,9 +72,70 @@ describe("summarizeOutlineDelta / describeOutlineDelta", () => {
     expect(summary.moved[0]).toMatchObject({ from: "Work", to: "Personal" });
 
     const text = describeOutlineDelta(delta, { previous, next });
-    expect(text).toContain("Moved");
-    expect(text).toContain("Gmail");
-    expect(text).toContain("Personal");
+    expect(text).toBe("Moved 'Gmail' from 'Work' to 'Personal'");
+  });
+
+  it("describes a same-parent reorder as a move within the parent", () => {
+    const previous = state(
+      [
+        node({ id: "w", kind: "window", title: "Work", childIds: ["a", "b"] }),
+        node({ id: "a", parentId: "w", title: "Gmail" }),
+        node({ id: "b", parentId: "w", title: "Docs" })
+      ],
+      ["w"]
+    );
+    const next = state(
+      [
+        node({ id: "w", kind: "window", title: "Work", childIds: ["b", "a"] }),
+        node({ id: "a", parentId: "w", title: "Gmail" }),
+        node({ id: "b", parentId: "w", title: "Docs" })
+      ],
+      ["w"]
+    );
+    // moveNode's same-parent path journals [parent, movedNode].
+    const text = describeOutlineDelta(
+      { updatedNodes: [next.nodes["w"]!, next.nodes["b"]!] },
+      { previous, next }
+    );
+    expect(text).toBe("Moved 'Docs' within 'Work'");
+  });
+
+  it("reports every aspect of a node that both moved and was renamed", () => {
+    const previous = state(
+      [
+        node({ id: "w", kind: "window", title: "Work" }),
+        node({ id: "h", kind: "window", title: "Home" }),
+        node({ id: "t", parentId: "w", title: "Old" })
+      ],
+      ["w", "h"]
+    );
+    const next = state(
+      [
+        node({ id: "w", kind: "window", title: "Work" }),
+        node({ id: "h", kind: "window", title: "Home" }),
+        node({ id: "t", parentId: "h", title: "Old", customTitle: "New" })
+      ],
+      ["w", "h"]
+    );
+    const text = describeOutlineDelta({ updatedNodes: [next.nodes["t"]!] }, { previous, next });
+    expect(text).toContain("Moved 'New' from 'Work' to 'Home'");
+    expect(text).toContain("Renamed 'Old' → 'New'");
+  });
+
+  it("reports coarse counts for a delta past the detail limit", () => {
+    const updatedNodes = Array.from({ length: 300 }, (_unused, index) =>
+      node({ id: `n${index}`, title: `N${index}` })
+    );
+    const next = state(
+      updatedNodes,
+      updatedNodes.map((entry) => entry.id)
+    );
+    const summary = summarizeOutlineDelta({ updatedNodes, deletedNodeIds: ["x", "y"] }, { next });
+    expect(summary.moved).toEqual([]);
+    expect(summary.otherChanges).toBe(300);
+    const text = describeOutlineDelta({ updatedNodes, deletedNodeIds: ["x", "y"] }, { next });
+    expect(text).toContain("Deleted 2 nodes");
+    expect(text).toContain("300 node changes");
   });
 
   it("describes a move to the top level", () => {
@@ -143,6 +204,12 @@ describe("summarizeOutlineDelta / describeOutlineDelta", () => {
     const next = state([node({ id: "t", title: "Gmail" })]);
     const text = describeOutlineDelta({ updatedNodes: [next.nodes["t"]!] }, { next });
     expect(text).toContain("Gmail");
+  });
+
+  it("reports deletions by count (not '(unknown)') when there is no previous state", () => {
+    const text = describeOutlineDelta({ deletedNodeIds: ["a", "b"] }, { next: state([], []) });
+    expect(text).toBe("Deleted 2 nodes");
+    expect(text).not.toContain("unknown");
   });
 
   it("returns an empty description for a metadata-only change", () => {
