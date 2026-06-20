@@ -86,6 +86,25 @@ test.describe("sidebar active-tab scrolling", () => {
     expect(issues).toEqual([]);
   });
 
+  test("a full-size sidebar opens at the top, not the focused window's deep active tab", async ({
+    page
+  }) => {
+    const issues = collectPageIssues(page);
+    const state = fixtureState();
+    // The focused window's active tab is far down the outline.
+    state.nodes["tab:1"]!.active = false;
+    state.nodes["tab:100"]!.active = true;
+    await loadSidebar(page, state, { currentWindowId: 999, fullSizeView: true });
+
+    // The full-size view opens anchored at the top (window:1 at row 0), NOT centered/scrolled on the
+    // deep active tab -- pre-fix the active-centered first paint scrolled it down (and an active-
+    // centered sparse boot could leave the top blank).
+    await expect(page.locator(nodeSelector("window:1"))).toHaveAttribute("data-row-index", "0");
+    await expect(page.locator(nodeSelector("window:1"))).toBeVisible();
+    expect(await scrollTop(page)).toBeLessThan(100);
+    expect(issues).toEqual([]);
+  });
+
   test("does not scroll a sidebar away from its own window after a later focus echo", async ({
     page
   }) => {

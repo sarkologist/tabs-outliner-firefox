@@ -679,6 +679,17 @@ function handleBackgroundMessage(message: unknown): unknown {
 async function loadState(): Promise<void> {
   try {
     await loadSidebarWindowId();
+    // A full-size sidebar is the whole-tree view: always fully hydrated (never focus-gated to a sparse
+    // projection) and must not auto-scroll to the focused window's active tab. The sparse boot/initial
+    // snapshots are centered on that active tab; with active-scroll suppressed they would render an
+    // offscreen slice and leave the popup blank until hydration. Skip them and load the full tree
+    // directly -- a full-size window hydrates anyway, so this only drops an active-centered first paint
+    // it should not show.
+    if (isFullSizeSidebarWindow) {
+      delete window.__tabsOutlinerBootSnapshot;
+      await hydrateFullState();
+      return;
+    }
     const bootSnapshot = window.__tabsOutlinerBootSnapshot;
     if (isInitialTreeSnapshot(bootSnapshot)) {
       delete window.__tabsOutlinerBootSnapshot;
