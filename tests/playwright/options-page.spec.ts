@@ -282,6 +282,122 @@ test.describe("extension options page", () => {
     await expect(page.locator("#incident-summary")).toHaveText("3 incidents · 1 warning");
     expect(issues).toEqual([]);
   });
+
+  test("shows the write-activity durability chain, flags failures, and clears", async ({
+    page
+  }) => {
+    const issues = collectPageIssues(page);
+    await loadOptions(page);
+
+    // The default fixture is a healthy chain: a domain change + journal append -> snapshot -> prune.
+    await expect(page.locator("#write-log-health")).toContainText("99 nodes");
+    await expect(page.locator("#write-log-health")).toContainText("no errors");
+    await expect(page.locator("#write-log-health")).toHaveClass(/is-ok/);
+
+    // The Changes list names the deletion AND every affected node (not just a count).
+    const changeRows = page.locator("#write-log-changes .write-log-row");
+    await expect(changeRows).toHaveCount(1);
+    await expect(changeRows.first()).toContainText("Deleted 'Work' (window)");
+    const changeNodes = page.locator("#write-log-changes .write-log-nodes li");
+    await expect(changeNodes).toContainText(["'Work' (window)", "'Gmail'", "'Calendar'"]);
+
+    // The Storage activity list shows the durability mechanics only.
+    const storageRows = page.locator("#write-log-storage .write-log-row");
+    await expect(storageRows).toHaveCount(3);
+    await expect(storageRows.first()).toContainText("Trimmed journal");
+    await expect(storageRows.nth(1)).toContainText("Saved snapshot");
+    await expect(storageRows.nth(1)).toContainText("99 nodes");
+    await expect(storageRows.last()).toContainText("Journaled");
+    // Domain descriptions live in the Changes list, not the Storage list.
+    await expect(page.locator("#write-log-storage")).not.toContainText("Deleted 'Work'");
+
+    // A spill (warning) and a failed save (error) light up the health line and storage-row severities.
+    await setWriteLog(page, {
+      version: 1,
+      entries: [
+        {
+          version: 1,
+          seq: 4,
+          at: "2026-06-20T10:01:00.000Z",
+          kind: "journalSpill",
+          ok: false,
+          detail: { entries: 1 }
+        },
+        {
+          version: 1,
+          seq: 5,
+          at: "2026-06-20T10:01:01.000Z",
+          kind: "saveFailed",
+          ok: false,
+          detail: { message: "quota exceeded" }
+        }
+      ]
+    });
+    await page.locator("#write-log-refresh").click();
+    await expect(page.locator("#write-log-health")).toContainText("1 error");
+    await expect(page.locator("#write-log-health")).toHaveClass(/is-error/);
+    await expect(page.locator("#write-log-storage .write-log-row.is-error")).toContainText(
+      "FAILED"
+    );
+    await expect(page.locator("#write-log-storage .write-log-row.is-warn")).toContainText("spill");
+
+    // Clear empties both lists.
+    await page.locator("#write-log-clear").click();
+    await expect(page.locator("#write-log-changes .write-log-empty")).toBeVisible();
+    await expect(page.locator("#write-log-storage .write-log-empty")).toBeVisible();
+    await expect(page.locator("#write-log-health")).toContainText("No write activity yet");
+
+    expect(issues).toEqual([]);
+  });
+
+  test("ignores a stale out-of-order write-log response", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadOptions(page);
+
+    // Pause live polling so only the explicit refreshes below race.
+    await page.locator("#write-log-live").uncheck();
+
+    // Refresh A captures the STALE snapshot but resolves slowly.
+    await setWriteLog(page, {
+      version: 1,
+      entries: [
+        {
+          version: 1,
+          seq: 7,
+          at: "2026-06-20T10:02:00.000Z",
+          kind: "snapshotSave",
+          ok: true,
+          detail: { nodeCount: 111 }
+        }
+      ]
+    });
+    await setWriteLogDelay(page, 400);
+    await page.locator("#write-log-refresh").click();
+
+    // Refresh B captures the FRESH snapshot and resolves immediately, superseding A.
+    await setWriteLog(page, {
+      version: 1,
+      entries: [
+        {
+          version: 1,
+          seq: 8,
+          at: "2026-06-20T10:02:01.000Z",
+          kind: "snapshotSave",
+          ok: true,
+          detail: { nodeCount: 222 }
+        }
+      ]
+    });
+    await page.locator("#write-log-refresh").click();
+    await expect(page.locator("#write-log-health")).toContainText("222 nodes");
+
+    // When A's delayed response lands it must NOT overwrite the newer B render.
+    await page.waitForTimeout(500);
+    await expect(page.locator("#write-log-health")).toContainText("222 nodes");
+    await expect(page.locator("#write-log-health")).not.toContainText("111 nodes");
+
+    expect(issues).toEqual([]);
+  });
 });
 
 async function loadOptions(page: Page): Promise<void> {
@@ -305,7 +421,60 @@ async function loadOptions(page: Page): Promise<void> {
         ],
         sidebars: [] as unknown[]
       };
+      let writeLogSnapshot: { version: 1; entries: unknown[] } = {
+        version: 1,
+        entries: [
+          {
+            version: 1,
+            seq: 1,
+            at: "2026-06-20T10:00:00.000Z",
+            kind: "change",
+            ok: true,
+            detail: { label: "deleteNode" },
+            change: {
+              headline: "Deleted 'Work' (window) (+2 descendants)",
+              lines: ["'Work' (window)", "'Gmail'", "'Calendar'"],
+              overflow: 0
+            }
+          },
+          {
+            version: 1,
+            seq: 2,
+            at: "2026-06-20T10:00:01.000Z",
+            kind: "journalAppend",
+            ok: true,
+            detail: { seq: 10, entries: 1, labels: "deleteNode" }
+          },
+          {
+            version: 1,
+            seq: 3,
+            at: "2026-06-20T10:00:02.000Z",
+            kind: "snapshotSave",
+            ok: true,
+            detail: {
+              nodeCount: 99,
+              closedCount: 5,
+              nodeDelta: -1,
+              closedDelta: 0,
+              journalSeqIncluded: 10,
+              dirtyShardCount: 2,
+              generation: 7
+            }
+          },
+          {
+            version: 1,
+            seq: 4,
+            at: "2026-06-20T10:00:03.000Z",
+            kind: "journalPrune",
+            ok: true,
+            detail: { throughSeq: 10 }
+          }
+        ]
+      };
       const runtimeMessages: unknown[] = [];
+      // Lets a test force an out-of-order getWriteLog response: the next getWriteLog captures the
+      // snapshot now but resolves after this delay.
+      let nextWriteLogDelayMs = 0;
 
       (
         window as typeof window & {
@@ -335,6 +504,17 @@ async function loadOptions(page: Page): Promise<void> {
       ).__setProfileSnapshot = (snapshot) => {
         profileSnapshot = structuredClone(snapshot);
       };
+      (
+        window as typeof window & {
+          __setWriteLog?: (snapshot: { version: 1; entries: unknown[] }) => void;
+        }
+      ).__setWriteLog = (snapshot) => {
+        writeLogSnapshot = structuredClone(snapshot);
+      };
+      (window as typeof window & { __setWriteLogDelay?: (ms: number) => void }).__setWriteLogDelay =
+        (ms) => {
+          nextWriteLogDelayMs = ms;
+        };
 
       window.browser = {
         commands: {
@@ -452,6 +632,19 @@ async function loadOptions(page: Page): Promise<void> {
             if (type === "getPerformanceTrace") {
               return structuredClone(profileSnapshot.background);
             }
+            if (type === "getWriteLog") {
+              const captured = structuredClone(writeLogSnapshot);
+              const delay = nextWriteLogDelayMs;
+              nextWriteLogDelayMs = 0;
+              if (delay > 0) {
+                await new Promise((resolve) => setTimeout(resolve, delay));
+              }
+              return captured;
+            }
+            if (type === "clearWriteLog") {
+              writeLogSnapshot = { version: 1, entries: [] };
+              return { ok: true };
+            }
             return undefined;
           }
         },
@@ -484,6 +677,27 @@ async function loadOptions(page: Page): Promise<void> {
 
   await page.goto("/options/options.html");
   await expect(page.getByRole("heading", { name: "Options" })).toBeVisible();
+}
+
+async function setWriteLog(
+  page: Page,
+  snapshot: { version: 1; entries: unknown[] }
+): Promise<void> {
+  await page.evaluate((value) => {
+    (
+      window as typeof window & {
+        __setWriteLog?: (snapshot: { version: 1; entries: unknown[] }) => void;
+      }
+    ).__setWriteLog?.(value);
+  }, snapshot);
+}
+
+async function setWriteLogDelay(page: Page, ms: number): Promise<void> {
+  await page.evaluate((value) => {
+    (window as typeof window & { __setWriteLogDelay?: (ms: number) => void }).__setWriteLogDelay?.(
+      value
+    );
+  }, ms);
 }
 
 async function savedPreferences(page: Page): Promise<AppPreferences | undefined> {

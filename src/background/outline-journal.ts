@@ -1,5 +1,6 @@
 import type { NodeId, OutlineNode, OutlineState } from "../model/types.js";
 import type { KeyValueStore } from "./key-value-store.js";
+import type { OutlineChangeDescription } from "./outline-change-summary.js";
 import {
   createHistoryEntry,
   historyContainsEntryId,
@@ -57,6 +58,10 @@ export type OutlineJournalAppendItem = {
   // a loader that replays past an unfolded marker knows the snapshot may miss a broad change.
   spill?: true;
   historyEntryId?: string;
+  // In-memory-only, domain-level description of the change for the write-activity debug log
+  // (headline + the name of every affected node). NOT persisted: appendNow copies only the durable
+  // fields above into the stored entry, so this never reaches the journal slot or replay.
+  changeDescription?: OutlineChangeDescription;
 };
 
 export type OutlineJournalAppendResult = {

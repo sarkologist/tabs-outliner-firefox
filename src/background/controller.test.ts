@@ -48325,6 +48325,53 @@ describe("background controller lifecycle", () => {
     });
   });
 
+  it("records the persistence durability chain in the write-activity log", async () => {
+    const runtime = fakeRuntime(
+      [{ id: 10, focused: true, incognito: false }],
+      [
+        { id: 1, windowId: 10, index: 0, active: true, url: "https://one.example/", title: "One" },
+        { id: 2, windowId: 10, index: 1, active: false, url: "https://two.example/", title: "Two" }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    await controller.flushPendingSaves();
+
+    expectCommandAck(await controller.handleMessage({ type: "deleteNode", nodeId: "tab:2" }), true);
+    await controller.flushPendingSaves();
+
+    const snapshot = (await controller.handleMessage({ type: "getWriteLog" })) as {
+      entries: {
+        kind: string;
+        ok: boolean;
+        detail?: Record<string, unknown>;
+        change?: { headline: string; lines: string[] };
+      }[];
+    };
+    const kinds = snapshot.entries.map((entry) => entry.kind);
+    // The storage-diagnostic list records the chain the user watches to confirm a change persisted
+    // with no data loss: journaled at ack, then folded into the snapshot.
+    expect(kinds).toContain("journalAppend");
+    expect(kinds).toContain("snapshotSave");
+
+    const save = [...snapshot.entries].reverse().find((entry) => entry.kind === "snapshotSave");
+    expect(save?.ok).toBe(true);
+    expect(typeof save?.detail?.nodeCount).toBe("number");
+    // The deletion is visible as a negative node delta.
+    expect(save?.detail?.nodeDelta).toBeLessThan(0);
+
+    // The separate domain "change" row names the deleted node, so an unexpected deletion is obvious.
+    // Exactly one change row: the journaled command must NOT also be re-logged by the save-time
+    // (non-journaled) describe.
+    const changeRows = snapshot.entries.filter((entry) => entry.kind === "change");
+    expect(changeRows).toHaveLength(1);
+    expect(changeRows[0]?.change?.headline).toContain("Deleted");
+    expect(changeRows[0]?.change?.lines).toContain("'Two'");
+
+    expect(await controller.handleMessage({ type: "clearWriteLog" })).toEqual({ ok: true });
+    expect(await controller.handleMessage({ type: "getWriteLog" })).toMatchObject({ entries: [] });
+  });
+
   it("restores background performance tracing from the profile flag", async () => {
     const runtime = fakeRuntime([], [], {
       initialStorage: {

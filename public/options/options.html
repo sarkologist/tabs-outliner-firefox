@@ -83,6 +83,39 @@
           </div>
         </section>
 
+        <section class="settings-section" aria-labelledby="write-log-heading">
+          <div class="section-heading">
+            <h2 id="write-log-heading">Write activity</h2>
+          </div>
+          <p class="write-log-help">
+            <strong>Changes</strong> lists what happened to your tree, naming every affected node.
+            <strong>Storage activity</strong> shows how it persisted: each change is journaled
+            (durable immediately), folded into a snapshot, then the journal is trimmed. Live; kept
+            for the current browser session.
+          </p>
+          <p id="write-log-health" class="write-log-health" aria-live="polite">
+            No write activity yet.
+          </p>
+          <div class="write-log-controls">
+            <button id="write-log-refresh" class="secondary-button" type="button">Refresh</button>
+            <button id="write-log-clear" class="secondary-button" type="button">Clear</button>
+            <label class="write-log-live">
+              <input
+                id="write-log-live"
+                class="shortcut-enabled"
+                type="checkbox"
+                checked
+                aria-label="Stream write activity live"
+              />
+              <span>Live</span>
+            </label>
+          </div>
+          <h3 class="write-log-subheading">Changes</h3>
+          <ol id="write-log-changes" class="write-log-list"></ol>
+          <h3 class="write-log-subheading">Storage activity</h3>
+          <ol id="write-log-storage" class="write-log-list"></ol>
+        </section>
+
         <section class="settings-section" aria-labelledby="incident-heading">
           <div class="section-heading">
             <h2 id="incident-heading">Storage incidents</h2>

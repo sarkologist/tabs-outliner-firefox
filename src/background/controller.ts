@@ -113,6 +113,7 @@ import {
   isPerformanceTraceMessage,
   isSidebarNonEditInteractionMessage,
   isSidebarPerformanceTraceCollectedMessage,
+  isWriteLogMessage,
   messageType
 } from "./message-guards.js";
 import {
@@ -227,6 +228,7 @@ import type {
   RuntimeWindowProvenance
 } from "../model/types.js";
 import { createPerformanceTracer, type TraceDetail, type TraceSnapshot } from "../perf/trace.js";
+import { WRITE_LOG_SESSION_KEY, createWriteLog, type WriteLogSnapshot } from "./write-log.js";
 import {
   PROFILE_STORAGE_KEY,
   type LabeledTraceSnapshot,
@@ -390,6 +392,12 @@ export function createBackgroundController(
   const shardStore: KeyValueStore = options.shardStore ?? storageLocalKvStore(api);
   const shardStoreExternal = options.shardStore !== undefined;
   const perfTrace = createPerformanceTracer("background");
+  // Always-on write-activity debug log surfaced live in the options page (see write-log.ts). It
+  // records the durability chain so the user can confirm every change persists with no data loss.
+  // Mirrored to ephemeral storage.session (no disk write) so it survives the event page's idle/wake
+  // cycles within a browser session; hydrated from there at startup.
+  const writeLog = createWriteLog({ now, persist: persistWriteLogToSession });
+  void hydrateWriteLogFromSession();
   const sidebarBroadcaster = createSidebarBroadcaster({
     perfTrace,
     sendRuntimeMessage: (message) => api.runtime.sendMessage(message)
@@ -468,6 +476,8 @@ export function createBackgroundController(
     },
     deferPersistedStateBaselineClone,
     recordIncidentLog,
+    recordWriteEvent: (event) => writeLog.record(event),
+    recordWriteChange: (change) => writeLog.recordChange(change),
     clearCompletedRuntimeLifecycleJournalEntriesAfterSave
   });
   const {
@@ -937,6 +947,14 @@ export function createBackgroundController(
       return handlePerformanceTraceMessage(message);
     }
 
+    if (isWriteLogMessage(message)) {
+      if (message.type === "clearWriteLog") {
+        writeLog.clear();
+        return Promise.resolve({ ok: true });
+      }
+      return Promise.resolve(writeLog.snapshot());
+    }
+
     return perfTrace.measureAsync(
       "background.runtime.message",
       { type: messageType(message) },
@@ -1053,7 +1071,8 @@ export function createBackgroundController(
             runtimeIndexCandidateNodeIds,
             message.type,
             "command",
-            recordedHistoryEntryId
+            recordedHistoryEntryId,
+            commandSubjectNodeId(message)
           ))
         )
       ) {
@@ -1091,7 +1110,8 @@ export function createBackgroundController(
           runtimeIndexCandidateNodeIds,
           message.type,
           "command",
-          recordedHistoryEntryId
+          recordedHistoryEntryId,
+          commandSubjectNodeId(message)
         ))
       ) {
         await flushRuntimeProvenanceSaveIfChanged(current, next, runtimeIndexCandidateNodeIds, {
@@ -1246,7 +1266,8 @@ export function createBackgroundController(
             [sameParentReorder.parentId, sameParentReorder.movedNodeId],
             message.type,
             "command",
-            recordedHistoryEntryId
+            recordedHistoryEntryId,
+            sameParentReorder.movedNodeId
           ))
         ) {
           await flushRuntimeProvenanceSaveIfChanged(
@@ -4751,8 +4772,9 @@ export function createBackgroundController(
         runtimeFacts.recordAcceptedRuntimeTabScopeUpdates(fastPath.runtimeScopeUpdates);
         persistKnownRuntimeFastPathUpdate(fastPath.update, state);
         // The fast path mutates state in place, so the journal delta comes from the update
-        // payload; when queued, the coalesced append replaces the checkpoint flush.
-        if (!queueRuntimeEventJournalFromUpdate(fastPath.update, "runtimeFastPath")) {
+        // payload; when queued, the coalesced append replaces the checkpoint flush. `current` is
+        // the pre-update state, so deleted nodes can be named in the write-activity change log.
+        if (!queueRuntimeEventJournalFromUpdate(fastPath.update, "runtimeFastPath", current)) {
           await flushRuntimeTruthFastPathSaveIfNeeded(
             state,
             fastPath.update,
@@ -6253,6 +6275,38 @@ export function createBackgroundController(
     }
   }
 
+  // Mirror the write-activity log to ephemeral session storage (in-memory, no disk write) so it
+  // survives the background event page's idle/wake cycles. A no-op when storage.session is absent
+  // (older browsers, test fakes) -- the log then lives only for the current event-page lifetime.
+  function persistWriteLogToSession(snapshot: WriteLogSnapshot): void {
+    const session = api.storage.session;
+    // Guard against absent or partial/non-callable session implementations: this runs in a
+    // debounce timer, where a synchronous throw would otherwise be unhandled.
+    if (!session || typeof session.set !== "function") {
+      return;
+    }
+    try {
+      void session.set({ [WRITE_LOG_SESSION_KEY]: snapshot }).catch(() => undefined);
+    } catch {
+      // Best-effort: the session mirror never affects the in-memory log or persistence.
+    }
+  }
+
+  async function hydrateWriteLogFromSession(): Promise<void> {
+    try {
+      const session = api.storage.session;
+      if (!session || typeof session.get !== "function") {
+        return;
+      }
+      const stored = await session.get(WRITE_LOG_SESSION_KEY);
+      if (stored) {
+        writeLog.hydrate(stored[WRITE_LOG_SESSION_KEY]);
+      }
+    } catch {
+      // Best-effort: a missing/disabled session store just means the log starts empty.
+    }
+  }
+
   async function applyStoredPerformanceTracePreference(): Promise<void> {
     try {
       const stored = await api.storage.local.get(PROFILE_STORAGE_KEY);
@@ -6636,6 +6690,12 @@ function historyCandidateNodeIds(
 
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+// The node a command acts on (e.g. moveNode's nodeId). Passed to the journal so the write-activity
+// change log can name a position-only reorder, which is otherwise absent from the material delta.
+function commandSubjectNodeId(message: BackgroundCommand): NodeId | undefined {
+  return "nodeId" in message ? message.nodeId : undefined;
 }
 
 function focusTargetForNode(

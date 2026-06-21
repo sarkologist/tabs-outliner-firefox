@@ -149,6 +149,13 @@ export function isPerformanceTraceMessage(message: unknown): message is Performa
   );
 }
 
+export type WriteLogMessage = { type: "getWriteLog" } | { type: "clearWriteLog" };
+
+export function isWriteLogMessage(message: unknown): message is WriteLogMessage {
+  const type = (message as { type?: unknown } | null | undefined)?.type;
+  return type === "getWriteLog" || type === "clearWriteLog";
+}
+
 export function isSidebarPerformanceTraceCollectedMessage(
   message: unknown
 ): message is SidebarPerformanceTraceCollectedMessage {

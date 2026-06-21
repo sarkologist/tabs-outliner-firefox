@@ -218,6 +218,146 @@ main {
   font-size: 12px;
 }
 
+.write-log-help {
+  margin-bottom: 12px;
+  color: color-mix(in srgb, CanvasText 62%, transparent);
+  font-size: 12px;
+}
+
+.write-log-health {
+  padding: 8px 10px;
+  border-left: 3px solid color-mix(in srgb, CanvasText 24%, transparent);
+  border-radius: 4px;
+  background: color-mix(in srgb, CanvasText 4%, Canvas);
+  font-size: 13px;
+}
+
+.write-log-health.is-ok {
+  border-left-color: #2f855a;
+  background: color-mix(in srgb, #2f855a 8%, Canvas);
+}
+
+.write-log-health.is-warn {
+  border-left-color: #b7791f;
+  background: color-mix(in srgb, #b7791f 8%, Canvas);
+}
+
+.write-log-health.is-error {
+  border-left-color: #c92525;
+  background: color-mix(in srgb, #c92525 8%, Canvas);
+}
+
+.write-log-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.write-log-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: color-mix(in srgb, CanvasText 62%, transparent);
+  font-size: 12px;
+}
+
+.write-log-list {
+  display: grid;
+  gap: 6px;
+  max-height: 360px;
+  margin: 12px 0 0;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+}
+
+.write-log-row {
+  padding: 6px 10px;
+  border-left: 3px solid color-mix(in srgb, #2f855a 50%, transparent);
+  border-radius: 4px;
+  background: color-mix(in srgb, CanvasText 4%, Canvas);
+}
+
+.write-log-row.is-warn {
+  border-left-color: #b7791f;
+  background: color-mix(in srgb, #b7791f 8%, Canvas);
+}
+
+.write-log-row.is-error {
+  border-left-color: #c92525;
+  background: color-mix(in srgb, #c92525 8%, Canvas);
+}
+
+.write-log-row-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.write-log-title {
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.write-log-time {
+  color: color-mix(in srgb, CanvasText 55%, transparent);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.write-log-detail {
+  margin-top: 2px;
+  color: color-mix(in srgb, CanvasText 60%, transparent);
+  font-family:
+    ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    Consolas,
+    monospace;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.write-log-empty {
+  padding: 8px 0;
+  color: color-mix(in srgb, CanvasText 55%, transparent);
+  font-size: 12px;
+}
+
+.write-log-subheading {
+  margin: 16px 0 0;
+  font-size: 12px;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: color-mix(in srgb, CanvasText 58%, transparent);
+}
+
+.write-log-change {
+  border-left-color: color-mix(in srgb, Highlight 55%, transparent);
+}
+
+.write-log-nodes {
+  margin: 4px 0 0;
+  padding: 0 0 0 16px;
+  list-style: disc;
+}
+
+.write-log-nodes li {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.write-log-nodes-more {
+  list-style: none;
+  margin-left: -16px;
+  color: color-mix(in srgb, CanvasText 55%, transparent);
+}
+
 .shortcut-enabled {
   width: 18px;
   height: 18px;

@@ -35,6 +35,12 @@ import { exportPortableTree } from "../model/portable-tree.js";
 import type { NodeId, OutlineState } from "../model/types.js";
 import type { NodeStateUpdate, TreeStructureUpdate } from "./patch-updates.js";
 import type { IncidentLogDetail } from "./incident-log.js";
+import {
+  WRITE_LOG_CHANGE_LINE_LIMIT,
+  type WriteLogChangeInput,
+  type WriteLogInput
+} from "./write-log.js";
+import { buildOutlineChangeDescription } from "./outline-change-summary.js";
 import type { PerformanceTracer } from "../perf/trace.js";
 import {
   outlineStateCountDetail,
@@ -75,6 +81,9 @@ const EVENT_JOURNAL_MAX_DELAY_MS = 250;
 // rather than embedded in every save's manifest. Staleness up to this window is harmless:
 // it is superseded by full hydration immediately after first paint.
 const BOOT_SNAPSHOT_WRITE_DELAY_MS = 10000;
+// Cap on how many unjournaled candidate nodes a single save will describe in the write-activity
+// "Changes" list. A bulk reconcile catch-up beyond this is left to the snapshotSave count delta.
+const RECONCILE_DESCRIBE_LIMIT = 200;
 
 export type SaveSchedule = "normal" | "interaction";
 
@@ -98,6 +107,12 @@ export type PersistenceCoordinatorDeps = {
   setLastPersistedState: (state: OutlineState | undefined) => void;
   deferPersistedStateBaselineClone: (persisted: OutlineState) => void;
   recordIncidentLog: (event: string, detail?: IncidentLogDetail) => Promise<void>;
+  // Append to the user-facing write-activity debug log (in-memory, surfaced in the options page).
+  // recordWriteEvent = the storage-diagnostic list (journal append, snapshot save, prune, boot
+  // snapshot, failures); recordWriteChange = the domain-level "what changed" list (deleted/moved/
+  // renamed with node names). Both are cheap synchronous pushes off any measured path.
+  recordWriteEvent: (event: WriteLogInput) => void;
+  recordWriteChange: (change: WriteLogChangeInput) => void;
   clearCompletedRuntimeLifecycleJournalEntriesAfterSave: () => Promise<void>;
 };
 
@@ -114,6 +129,24 @@ export function createPersistenceCoordinator(deps: PersistenceCoordinatorDeps) {
     recordIncidentLog,
     clearCompletedRuntimeLifecycleJournalEntriesAfterSave
   } = deps;
+  // The write-activity log is observational and strictly best-effort: a fault in it must never
+  // disrupt persistence. Notably the save-failure path records BEFORE handleStateSaveFailure arms
+  // the retry/backoff, so an unguarded throw there could drop a pending change. Wrap the injected
+  // writer once so every call site below is safe.
+  function recordWriteEvent(event: WriteLogInput): void {
+    try {
+      deps.recordWriteEvent(event);
+    } catch {
+      // Intentionally swallowed; the debug log never affects durability.
+    }
+  }
+  function recordWriteChange(change: WriteLogChangeInput): void {
+    try {
+      deps.recordWriteChange(change);
+    } catch {
+      // Intentionally swallowed; the debug log never affects durability.
+    }
+  }
   // Shards live in shardStore when one is injected (IndexedDB in production); otherwise they stay
   // on storage.local exactly as before. `shardStoreExternal` gates the save split, the migration,
   // and the storage.local-shard deletion so the default path is byte-identical to today.
@@ -145,6 +178,11 @@ export function createPersistenceCoordinator(deps: PersistenceCoordinatorDeps) {
   // Shard indexes touched by journal appends since the last compaction that folded them in.
   // Unioned with the pending save's candidate shards to compute a compaction's dirty set.
   let journalTouchedSinceCompaction = new Set<number>();
+  // Node ids carried by journal appends since the last state save. The save uses these to EXCLUDE
+  // already-journaled (and already-logged) nodes when it describes the changes it is persisting, so
+  // a non-journaled tree change (startup/reconciliation) still gets a named "Changes" row without
+  // double-logging journaled command/event changes.
+  let journaledNodeIdsSinceSave = new Set<NodeId>();
   let pendingEventJournalItems: OutlineJournalAppendItem[] = [];
   let eventJournalQuietTimer: ReturnType<typeof setTimeout> | undefined;
   let eventJournalMaxTimer: ReturnType<typeof setTimeout> | undefined;
@@ -197,8 +235,10 @@ export function createPersistenceCoordinator(deps: PersistenceCoordinatorDeps) {
       await perfTrace.measureAsync("background.state.bootSnapshot.write", () =>
         api.storage.local.set(outlineBootSnapshotItem(current, now()))
       );
+      recordWriteEvent({ kind: "bootSnapshot", ok: true });
     } catch (error) {
       perfTrace.mark("background.state.bootSnapshot.error", { message: errorText(error) });
+      recordWriteEvent({ kind: "bootSnapshot", ok: false, detail: { message: errorText(error) } });
     }
   }
 
@@ -382,6 +422,18 @@ export function createPersistenceCoordinator(deps: PersistenceCoordinatorDeps) {
     // on failure. Items queued during the write stay queued (they may postdate nextState).
     const subsumedEventItems =
       journalSeqIncluded !== undefined ? drainPendingEventJournalItems() : [];
+    // Rotate the journaled-id exclusion set for THIS state save up front: appends that land during
+    // the save's await then belong to the next save (and aren't wrongly cleared), and a failure can
+    // union them back. Only state saves consume it (a history-only save must not clear it).
+    const journaledNodeIdsForThisSave = nextState ? journaledNodeIdsSinceSave : new Set<NodeId>();
+    if (nextState) {
+      journaledNodeIdsSinceSave = new Set();
+    }
+    // Captured inside the save closure so the write-log snapshotSave entry can report what the
+    // compaction did (full vs incremental, how many shards, which generation).
+    let compactionDetail:
+      | { fullCompaction: boolean; dirtyShardCount: number; generation: number }
+      | undefined;
     try {
       await perfTrace.measureAsync("background.state.save", async () => {
         const setItems: Record<string, unknown> = {};
@@ -421,14 +473,17 @@ export function createPersistenceCoordinator(deps: PersistenceCoordinatorDeps) {
             ...(dirtyShardIndexes ? { dirtyShardIndexes } : {})
           });
           Object.assign(setItems, v4Snapshot.setItems);
-          perfTrace.mark("background.state.save.v4.compact", {
+          compactionDetail = {
             fullCompaction,
             dirtyShardCount: dirtyShardIndexes
               ? dirtyShardIndexes.size
               : v4Snapshot.manifest.shardGenerations.length,
-            setKeys: Object.keys(v4Snapshot.setItems).length,
-            removeKeys: v4Snapshot.removeKeysAfterCommit.length,
             generation: v4Snapshot.manifest.generation
+          };
+          perfTrace.mark("background.state.save.v4.compact", {
+            ...compactionDetail,
+            setKeys: Object.keys(v4Snapshot.setItems).length,
+            removeKeys: v4Snapshot.removeKeysAfterCommit.length
           });
         }
         if (nextHistory) {
@@ -455,16 +510,54 @@ export function createPersistenceCoordinator(deps: PersistenceCoordinatorDeps) {
         pendingEventJournalItems = [...subsumedEventItems, ...pendingEventJournalItems];
         armEventJournalTimers();
       }
+      recordWriteEvent({ kind: "saveFailed", ok: false, detail: { message: errorText(error) } });
+      if (nextState) {
+        // The save did not land; the ids journaled before it are still pending the next state save.
+        journaledNodeIdsSinceSave = new Set([
+          ...journaledNodeIdsForThisSave,
+          ...journaledNodeIdsSinceSave
+        ]);
+      }
       handleStateSaveFailure(nextState, nextHistory, error);
       throw error;
     }
     saveFailureBackoffIndex = 0;
+    if (nextState && nextCountDetail) {
+      recordWriteEvent({
+        kind: "snapshotSave",
+        ok: true,
+        detail: {
+          nodeCount: nextCountDetail.nodeCount,
+          closedCount: nextCountDetail.closedCount,
+          nodeDelta: nextCountDetail.nodeCount - previousCountDetail.nodeCount,
+          closedDelta: nextCountDetail.closedCount - previousCountDetail.closedCount,
+          hasHistory: Boolean(nextHistory),
+          ...(journalSeqIncluded !== undefined ? { journalSeqIncluded } : {}),
+          ...(compactionDetail ?? {})
+        }
+      });
+    } else if (nextHistory) {
+      recordWriteEvent({ kind: "historySave", ok: true });
+    }
+    if (nextState) {
+      // Name tree changes that reached this snapshot WITHOUT a journal append (startup/reconciliation
+      // catch-up) so they appear in the "Changes" list, not just as a node-count bump. Journaled
+      // changes already produced their own rows and are excluded. (A transient save failure that
+      // promotes the retry to a full diff drops this one row; the change still persists and shows as
+      // a Storage count delta -- acceptable for a best-effort debug log.)
+      recordUnjournaledChange(baseline, nextState, candidateNodeIds, journaledNodeIdsForThisSave);
+    }
     if (
       journalSeqIncluded !== undefined &&
       outlineJournal &&
       outlineJournal.pendingEntryCount() > 0
     ) {
       await outlineJournal.prune(journalSeqIncluded);
+      recordWriteEvent({
+        kind: "journalPrune",
+        ok: true,
+        detail: { throughSeq: journalSeqIncluded }
+      });
     }
     if (saveIncidentDetail && nextCountDetail) {
       const closedCountDelta = nextCountDetail.closedCount - previousCountDetail.closedCount;
@@ -531,14 +624,20 @@ export function createPersistenceCoordinator(deps: PersistenceCoordinatorDeps) {
     candidateNodeIds: readonly NodeId[] | undefined,
     kind: OutlineJournalAppendItem["kind"],
     label: string,
-    historyEntryId?: string
+    historyEntryId?: string,
+    // The command's subject node, so a position-only reorder (absent from the material delta) can
+    // still be named in the write-activity change log.
+    primaryNodeId?: NodeId,
+    // Commands/undo-redo allow a generic "Reordered top level" row when a reorder can't be named;
+    // runtime/reconciliation callers leave this false so a reload's window re-sort produces no noise.
+    allowGenericReorder = false
   ): OutlineJournalAppendItem | undefined {
     const delta = outlineMaterialDelta(previous, next, candidateNodeIds);
     const rootsChanged = !sameNodeIdList(previous.rootIds, next.rootIds);
     if (delta.updatedNodes.length === 0 && delta.deletedNodeIds.length === 0 && !rootsChanged) {
       return undefined;
     }
-    return {
+    const item: OutlineJournalAppendItem = {
       kind,
       label,
       ...(historyEntryId !== undefined ? { historyEntryId } : {}),
@@ -548,6 +647,58 @@ export function createPersistenceCoordinator(deps: PersistenceCoordinatorDeps) {
         ...(rootsChanged ? { rootIds: [...next.rootIds] } : {})
       }
     };
+    // Domain-level description for the write-activity log (reuses the delta + states just built).
+    const changeDescription = buildOutlineChangeDescription(item.delta!, {
+      previous,
+      next,
+      ...(primaryNodeId !== undefined ? { primaryNodeId } : {}),
+      allowGenericReorder,
+      maxLines: WRITE_LOG_CHANGE_LINE_LIMIT
+    });
+    if (changeDescription) {
+      item.changeDescription = changeDescription;
+    }
+    return item;
+  }
+
+  // Surface tree changes that reached a snapshot save WITHOUT a journal append (startup/reconciliation
+  // catch-up, where the moved/added nodes are persisted but never journaled) as named "Changes" rows.
+  // Scoped to the save's candidate ids and excluding ids already journaled this save window, so it
+  // never double-logs a command/event change. Reorders stay suppressed (allowGenericReorder unset).
+  function recordUnjournaledChange(
+    baseline: OutlineState | undefined,
+    next: OutlineState,
+    candidateNodeIds: readonly NodeId[] | undefined,
+    journaledNodeIds: ReadonlySet<NodeId>
+  ): void {
+    // No baseline = the first save (the initial load, not a change); no candidates = a full-diff save
+    // with no cheap scope (and the whole tree is not a "change"). Skip both.
+    if (!baseline || !candidateNodeIds) {
+      return;
+    }
+    const unjournaled = candidateNodeIds.filter((id) => !journaledNodeIds.has(id));
+    // Bound the clone cost: a bulk reconcile catch-up is summarized by the snapshotSave count delta;
+    // describing every node here would clone the whole candidate set before the summary cap applies.
+    if (unjournaled.length === 0 || unjournaled.length > RECONCILE_DESCRIBE_LIMIT) {
+      return;
+    }
+    const delta = outlineMaterialDelta(baseline, next, unjournaled);
+    if (delta.updatedNodes.length === 0 && delta.deletedNodeIds.length === 0) {
+      return;
+    }
+    // Intentionally NO rootIds: created/deleted/moved are driven by the node ids above; a reorder is
+    // owned by the journal path (or suppressed for reconciliation), and including the (globally
+    // computed) root order here could double-log a journaled top-level reorder.
+    const description = buildOutlineChangeDescription(
+      {
+        ...(delta.updatedNodes.length > 0 ? { updatedNodes: delta.updatedNodes } : {}),
+        ...(delta.deletedNodeIds.length > 0 ? { deletedNodeIds: delta.deletedNodeIds } : {})
+      },
+      { previous: baseline, next, maxLines: WRITE_LOG_CHANGE_LINE_LIMIT }
+    );
+    if (description) {
+      recordWriteChange({ ...description, label: "reconcile" });
+    }
   }
 
   // Append a command's delta to the journal before its ack so the change survives a restart
@@ -561,7 +712,10 @@ export function createPersistenceCoordinator(deps: PersistenceCoordinatorDeps) {
     candidateNodeIds: readonly NodeId[] | undefined,
     label: string,
     kind: "command" | "historyReplay" = "command",
-    historyEntryId?: string
+    historyEntryId?: string,
+    // The command's subject node (e.g. moveNode's nodeId), used only to name a position-only
+    // reorder in the write-activity change log.
+    primaryNodeId?: NodeId
   ): Promise<boolean> {
     if (!outlineJournal) {
       return false;
@@ -569,7 +723,18 @@ export function createPersistenceCoordinator(deps: PersistenceCoordinatorDeps) {
     // Any coalesced event deltas captured before this command must land first so journal
     // seq order stays chronological (replay applies absolute node records in seq order).
     const queuedEventItems = drainPendingEventJournalItems();
-    const item = journalDeltaItem(previous, next, candidateNodeIds, kind, label, historyEntryId);
+    const item = journalDeltaItem(
+      previous,
+      next,
+      candidateNodeIds,
+      kind,
+      label,
+      historyEntryId,
+      primaryNodeId,
+      // A command (or undo/redo) is a user action: allow a generic reorder row when it can't be
+      // attributed to one node. Runtime/reconciliation appends (queueRuntimeEventJournal) don't.
+      true
+    );
     if (!item) {
       // No durable change to record (e.g. a no-op move); nothing for the checkpoint to flush.
       await appendOutlineJournalItems(queuedEventItems);
@@ -646,10 +811,12 @@ export function createPersistenceCoordinator(deps: PersistenceCoordinatorDeps) {
   }
 
   // The runtime fast path mutates the live state in place, so its delta cannot be diffed
-  // from previous/next -- the broadcast update payload already enumerates the changed nodes.
+  // from previous/next -- the broadcast update payload already enumerates the changed nodes. The
+  // caller passes the pre-update state so deleted nodes can still be named in the change log.
   function queueRuntimeEventJournalFromUpdate(
     update: TreeStructureUpdate | NodeStateUpdate,
-    label: string
+    label: string,
+    previous?: OutlineState
   ): boolean {
     if (!outlineJournal) {
       return false;
@@ -659,14 +826,24 @@ export function createPersistenceCoordinator(deps: PersistenceCoordinatorDeps) {
     if (updatedNodes.length === 0 && deletedNodeIds.length === 0) {
       return true;
     }
+    const delta = {
+      ...(updatedNodes.length > 0 ? { updatedNodes } : {}),
+      ...(deletedNodeIds.length > 0 ? { deletedNodeIds } : {}),
+      ...(update.type === "treeStructureUpdated" ? { rootIds: [...update.rootIds] } : {})
+    };
+    const current = getState();
+    const changeDescription = current
+      ? buildOutlineChangeDescription(delta, {
+          ...(previous ? { previous } : {}),
+          next: current,
+          maxLines: WRITE_LOG_CHANGE_LINE_LIMIT
+        })
+      : undefined;
     return queueEventJournalItem({
       kind: "runtimeEvent",
       label,
-      delta: {
-        ...(updatedNodes.length > 0 ? { updatedNodes } : {}),
-        ...(deletedNodeIds.length > 0 ? { deletedNodeIds } : {}),
-        ...(update.type === "treeStructureUpdated" ? { rootIds: [...update.rootIds] } : {})
-      }
+      delta,
+      ...(changeDescription ? { changeDescription } : {})
     });
   }
 
@@ -749,13 +926,39 @@ export function createPersistenceCoordinator(deps: PersistenceCoordinatorDeps) {
       for (const item of items) {
         for (const node of item.delta?.updatedNodes ?? []) {
           journalTouchedSinceCompaction.add(stateV4ShardIndexForNodeId(node.id));
+          journaledNodeIdsSinceSave.add(node.id);
         }
         for (const nodeId of item.delta?.deletedNodeIds ?? []) {
           journalTouchedSinceCompaction.add(stateV4ShardIndexForNodeId(nodeId));
+          journaledNodeIdsSinceSave.add(nodeId);
         }
       }
+      // Domain-level "what changed" rows (one per item that touched the tree) go to the Changes
+      // list; the storage journalAppend row below is the durability mechanic.
+      for (const item of items) {
+        if (item.changeDescription) {
+          recordWriteChange({
+            headline: item.changeDescription.headline,
+            lines: item.changeDescription.lines,
+            overflow: item.changeDescription.overflow,
+            ...(item.label ? { label: item.label } : {})
+          });
+        }
+      }
+      const labels = journalItemLabels(items);
+      recordWriteEvent({
+        kind: "journalAppend",
+        ok: true,
+        detail: {
+          seq: result.seq,
+          entries: items.length,
+          ...(labels ? { labels } : {}),
+          ...(result.spilled ? { spilled: true } : {})
+        }
+      });
       if (result.spilled) {
         perfTrace.mark("background.journal.spill", { entries: items.length });
+        recordWriteEvent({ kind: "journalSpill", ok: false, detail: { entries: items.length } });
         tightenPendingSaveScheduleAfterSpill();
       }
       return result.spilled;
@@ -1244,4 +1447,16 @@ export function createPersistenceCoordinator(deps: PersistenceCoordinatorDeps) {
 
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+// A compact, unique list of the journal items' labels (e.g. "deleteNode", "runtimeEvent") for the
+// write-activity log, so a journal-append row reads as the change it carried.
+function journalItemLabels(items: OutlineJournalAppendItem[]): string {
+  const labels = new Set<string>();
+  for (const item of items) {
+    if (item.label) {
+      labels.add(item.label);
+    }
+  }
+  return [...labels].join(", ");
 }

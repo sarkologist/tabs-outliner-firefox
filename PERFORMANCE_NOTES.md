@@ -122,6 +122,18 @@ Use these as starting targets, not hard promises:
 
 ## Progress Log
 
+### 2026-06-20: Write-activity debug log in the options page (perf-neutral instrumentation)
+
+Added a user-facing "Write activity" panel to the options page so the persistence durability chain is observable: each change is journaled (durable at ack, I-1), folded into a snapshot, then the journal is trimmed. New `src/background/write-log.ts` is an in-memory ring buffer (cap 300) recorded at the existing write sites in `persistence-coordinator.ts` (journal append/spill, snapshot save, prune, boot snapshot, save failure) and pulled by the options page over a `getWriteLog` message. It is mirrored to ephemeral `storage.session` (in-memory, no disk write) so it survives the event page's idle/wake cycles within a browser session.
+
+Deliberately **not** backed by `storage.local`: every `storage.local.set` is a tracked hard counter (`storageSetCalls`) and the persistence layer fights write amplification, so a debug log must add zero disk writes. Recording is a synchronous array push placed **outside** every `perfTrace.measureAsync` block, so it does not enter `background.journal.append` / `background.state.save` timings; the session mirror is debounced (500ms) and best-effort.
+
+The panel renders two lists: a **Changes** list (domain-level "what happened" rows naming every affected node — `outline-change-summary.ts`: "Deleted 'Work' (window) (+12 descendants)" with the full tab-name list, "Moved 'Gmail' from 'Work' to 'Personal'", reorders, renames, status) and a **Storage activity** list (the durability mechanics). The description is computed in `journalDeltaItem` from the **already-built** delta plus the before/after states (O(delta), no extra tree walk; short-circuits to coarse counts above a 200-node detail limit so a bulk import stays O(1) on the ack path) and carried on an in-memory-only `changeDescription` field that the journal never persists.
+
+- **Asymptotics:** unchanged. No save shape, save timing, transport, or projection change. The `Current Asymptotics Audit` table is unchanged.
+- **Perf guard:** `node scripts/perf-runtime-guard.mjs --hard-only` PASS — `storageSetCalls`/`saves`/`journalWrites` identical to baseline across all 9 scenarios (the in-memory recorder, and the `storage.session` mirror that is absent in the profile harness, add no `storage.local` writes). `perf:sidebar-projection-guard` PASS. The only local timing overage is the pre-existing machine-bound `command-group-live-leaf` `firstBroadcastMs`, confirmed timing-neutral by measuring with the change stashed (baseline 141–158ms vs 142–154ms with the change; reproduces on `main`).
+- **Tests:** `write-log.test.ts` (ring cap, debounce-persist, hydrate, summarize, describe severities); a `controller.test.ts` integration test (a `deleteNode` records `journalAppend` + `snapshotSave` with a negative node delta, `clearWriteLog` empties it); a Playwright `options-page.spec.ts` test (durability-chain rows, health summary, spill/failure severities, clear). Full unit suite green.
+
 ### 2026-06-19: Consume structural freshness when a command relocation echo is absorbed
 
 A command that relocates a live tab across windows (drag in the outline, flatten, move-to-bottom) physically moves the browser tab, and the browser echoes that with `tabs.onDetached`/`onAttached`/`onMoved`. Those echoes are already absorbed as pure drops (`absorbCommandRelocationNativeEcho`). But each echo first calls `runtimeFacts.recordNativeTab*`, which adds the tab to `structurallyFreshTabIds` — and that set is **sticky** (only cleared on tab removal). So after an absorbed relocation the tab stays flagged "needs shape corroboration" indefinitely.
