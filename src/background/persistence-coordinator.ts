@@ -175,6 +175,11 @@ export function createPersistenceCoordinator(deps: PersistenceCoordinatorDeps) {
   // Shard indexes touched by journal appends since the last compaction that folded them in.
   // Unioned with the pending save's candidate shards to compute a compaction's dirty set.
   let journalTouchedSinceCompaction = new Set<number>();
+  // Node ids carried by journal appends since the last state save. The save uses these to EXCLUDE
+  // already-journaled (and already-logged) nodes when it describes the changes it is persisting, so
+  // a non-journaled tree change (startup/reconciliation) still gets a named "Changes" row without
+  // double-logging journaled command/event changes.
+  let journaledNodeIdsSinceSave = new Set<NodeId>();
   let pendingEventJournalItems: OutlineJournalAppendItem[] = [];
   let eventJournalQuietTimer: ReturnType<typeof setTimeout> | undefined;
   let eventJournalMaxTimer: ReturnType<typeof setTimeout> | undefined;
@@ -517,6 +522,14 @@ export function createPersistenceCoordinator(deps: PersistenceCoordinatorDeps) {
     } else if (nextHistory) {
       recordWriteEvent({ kind: "historySave", ok: true });
     }
+    if (nextState) {
+      // Name tree changes that reached this snapshot WITHOUT a journal append (startup/reconciliation
+      // catch-up) so they appear in the "Changes" list, not just as a node-count bump. Journaled
+      // changes already produced their own rows and are excluded; reorders stay suppressed
+      // (allowGenericReorder defaults false) so a reload's window re-sort adds no noise.
+      recordUnjournaledChange(baseline, nextState, candidateNodeIds, journaledNodeIdsSinceSave);
+      journaledNodeIdsSinceSave = new Set();
+    }
     if (
       journalSeqIncluded !== undefined &&
       outlineJournal &&
@@ -629,6 +642,43 @@ export function createPersistenceCoordinator(deps: PersistenceCoordinatorDeps) {
       item.changeDescription = changeDescription;
     }
     return item;
+  }
+
+  // Surface tree changes that reached a snapshot save WITHOUT a journal append (startup/reconciliation
+  // catch-up, where the moved/added nodes are persisted but never journaled) as named "Changes" rows.
+  // Scoped to the save's candidate ids and excluding ids already journaled this save window, so it
+  // never double-logs a command/event change. Reorders stay suppressed (allowGenericReorder unset).
+  function recordUnjournaledChange(
+    baseline: OutlineState | undefined,
+    next: OutlineState,
+    candidateNodeIds: readonly NodeId[] | undefined,
+    journaledNodeIds: ReadonlySet<NodeId>
+  ): void {
+    // No baseline = the first save (the initial load, not a change); no candidates = a full-diff save
+    // with no cheap scope (and the whole tree is not a "change"). Skip both.
+    if (!baseline || !candidateNodeIds) {
+      return;
+    }
+    const unjournaled = candidateNodeIds.filter((id) => !journaledNodeIds.has(id));
+    if (unjournaled.length === 0) {
+      return;
+    }
+    const delta = outlineMaterialDelta(baseline, next, unjournaled);
+    if (delta.updatedNodes.length === 0 && delta.deletedNodeIds.length === 0) {
+      return;
+    }
+    const rootsChanged = !sameNodeIdList(baseline.rootIds, next.rootIds);
+    const description = buildOutlineChangeDescription(
+      {
+        ...(delta.updatedNodes.length > 0 ? { updatedNodes: delta.updatedNodes } : {}),
+        ...(delta.deletedNodeIds.length > 0 ? { deletedNodeIds: delta.deletedNodeIds } : {}),
+        ...(rootsChanged ? { rootIds: [...next.rootIds] } : {})
+      },
+      { previous: baseline, next, maxLines: WRITE_LOG_CHANGE_LINE_LIMIT }
+    );
+    if (description) {
+      recordWriteChange({ ...description, label: "reconcile" });
+    }
   }
 
   // Append a command's delta to the journal before its ack so the change survives a restart
@@ -856,9 +906,11 @@ export function createPersistenceCoordinator(deps: PersistenceCoordinatorDeps) {
       for (const item of items) {
         for (const node of item.delta?.updatedNodes ?? []) {
           journalTouchedSinceCompaction.add(stateV4ShardIndexForNodeId(node.id));
+          journaledNodeIdsSinceSave.add(node.id);
         }
         for (const nodeId of item.delta?.deletedNodeIds ?? []) {
           journalTouchedSinceCompaction.add(stateV4ShardIndexForNodeId(nodeId));
+          journaledNodeIdsSinceSave.add(nodeId);
         }
       }
       // Domain-level "what changed" rows (one per item that touched the tree) go to the Changes

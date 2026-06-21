@@ -162,6 +162,62 @@ describe("persistence coordinator write-activity safety", () => {
     );
   });
 
+  it("names a non-journaled (startup/reconciliation) tree change at save time", async () => {
+    const changes: WriteLogChangeInput[] = [];
+    const work: OutlineNode = {
+      id: "win:work",
+      kind: "window",
+      status: "closed",
+      childIds: [],
+      title: "Work",
+      collapsed: false,
+      createdAt: 0,
+      updatedAt: 0
+    };
+    const phantom: OutlineNode = {
+      id: "win:phantom",
+      kind: "window",
+      status: "live",
+      childIds: ["tab:new"],
+      title: "Group",
+      collapsed: false,
+      createdAt: 0,
+      updatedAt: 0
+    };
+    const newTab: OutlineNode = {
+      id: "tab:new",
+      kind: "tab",
+      status: "live",
+      parentId: "win:phantom",
+      childIds: [],
+      title: "New Tab",
+      collapsed: false,
+      createdAt: 0,
+      updatedAt: 0
+    };
+    const loaded: OutlineState = { version: 1, rootIds: ["win:work"], nodes: { "win:work": work } };
+    // Startup reconcile added a phantom window+tab (the bug) and persisted it WITHOUT journaling.
+    const reconciled: OutlineState = {
+      version: 1,
+      rootIds: ["win:work", "win:phantom"],
+      nodes: { "win:work": work, "win:phantom": phantom, "tab:new": newTab }
+    };
+    const coordinator = createPersistenceCoordinator(
+      makeDeps({
+        getState: () => reconciled,
+        getLastPersistedState: () => loaded, // the persisted baseline is the loaded tree
+        recordWriteChange: (change) => changes.push(change)
+      })
+    );
+
+    coordinator.scheduleStateSave(reconciled, "normal", ["win:phantom", "tab:new"]);
+    await coordinator.flushPendingSaves();
+
+    expect(changes).toHaveLength(1);
+    expect(changes[0]!.headline).toContain("Added 'Group' (window)");
+    expect(changes[0]!.lines).toContain("'New Tab'");
+  });
+
   it("never lets a throwing write-activity logger break the save (durability is independent)", async () => {
     const setCalls: Record<string, unknown>[] = [];
     const coordinator = createPersistenceCoordinator(
