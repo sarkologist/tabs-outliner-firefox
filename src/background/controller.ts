@@ -5007,10 +5007,28 @@ export function createBackgroundController(
       canScope
         ? async () => {
             const rawSnapshot = options.rawSnapshot!;
+            const rawById = rawWindowsById!;
             const freshTabsByWindowId = await getWindowTabsByIds(
               api,
               scopedCorroborationWindowIds!
             );
+            // The scoped re-read may only re-confirm SHAPE/ORDER of the same tabs; it must not change
+            // any window's tab-id membership. If a re-read window gained or lost a tab id versus the
+            // first raw read, a tab moved across windows (or closed) in the gap between the two reads
+            // -- the destination window is frozen at the first read, so the overlay could show the
+            // tab missing and a closeMissing reconcile would mis-close a tab that actually relocated.
+            // Membership equality guarantees the overlay introduces no new missing/mismatched tab
+            // (both were already 0), so closeMissing stays exactly as safe as the first snapshot; any
+            // membership drift falls back to the global whole-browser view that can place the tab.
+            const membershipPreserved = [...freshTabsByWindowId].every(([windowId, freshTabs]) =>
+              sameNumberSet(
+                (rawById.get(windowId)?.tabs ?? []).map((tab) => tab.id),
+                freshTabs.map((tab) => tab.id)
+              )
+            );
+            if (!membershipPreserved) {
+              return getNormalWindows(api, fullSizeOutlinerWindowIds);
+            }
             return rawSnapshot.map((windowInfo) => {
               const freshTabs = freshTabsByWindowId.get(windowInfo.id);
               return freshTabs ? { ...windowInfo, tabs: freshTabs } : windowInfo;

@@ -47634,6 +47634,71 @@ describe("background controller lifecycle", () => {
     expect(scopedQueries).toEqual([]);
   });
 
+  it("falls back to a global corroboration when a suspicious tab relocates mid-re-query", async () => {
+    const runtime = fakeRuntime(
+      [
+        { id: 10, focused: true, incognito: false },
+        { id: 20, focused: false, incognito: false },
+        { id: 30, focused: false, incognito: false }
+      ],
+      [
+        { id: 1, windowId: 10, index: 0, active: true, url: "https://one.example/", title: "One" },
+        { id: 2, windowId: 20, index: 0, active: true, url: "https://two.example/", title: "Two" }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    vi.mocked(runtime.api.tabs.query).mockClear();
+    runtime.broadcasts.length = 0;
+
+    // The race the scoped path must survive: the first global snapshot flags tab 1 as a suspicious
+    // shape in window 10 (its only symptom), so corroboration scopes to window 10 -- but in the gap
+    // before the scoped re-query, tab 1 actually MOVES to window 30. The scoped re-read of window 10
+    // now shows tab 1 gone; trusting that overlay (window 30 still frozen at the first read) would
+    // make tab 1 look missing and a closeMissing reconcile would wrongly close a tab that relocated.
+    // The membership-change guard must detect window 10 losing a tab id and fall back to the global
+    // read, which sees tab 1 alive in window 30 and relocates it.
+    runtime.queueTabQueryResult([
+      {
+        id: 1,
+        windowId: 10,
+        index: 0,
+        active: true,
+        url: "https://one.example/changed",
+        title: "One"
+      },
+      { id: 2, windowId: 20, index: 0, active: true, url: "https://two.example/", title: "Two" }
+    ]); // base global snapshot: tab 1 suspicious, nothing missing/mismatched
+    runtime.queueTabQueryResult([]); // scoped re-query of window 10: tab 1 already gone
+    runtime.tabs = [
+      {
+        id: 1,
+        windowId: 30,
+        index: 0,
+        active: true,
+        url: "https://one.example/changed",
+        title: "One"
+      },
+      { id: 2, windowId: 20, index: 0, active: true, url: "https://two.example/", title: "Two" }
+    ]; // browser truth for the global fallback read: tab 1 relocated to window 30
+
+    await controller.handleMessage({ type: "refresh" });
+
+    const queries = vi
+      .mocked(runtime.api.tabs.query)
+      .mock.calls.map(([queryInfo]) => (queryInfo ?? {}) as Record<string, unknown>);
+    const globalQueries = queries.filter((queryInfo) => Object.keys(queryInfo).length === 0);
+    const windowTenQueries = queries.filter((queryInfo) => queryInfo.windowId === 10);
+
+    // The guard engaged: it tried the scoped read of window 10, saw membership change, and re-read
+    // globally (base + fallback).
+    expect(windowTenQueries.length).toBeGreaterThanOrEqual(1);
+    expect(globalQueries.length).toBeGreaterThanOrEqual(2);
+    // No data loss: tab 1 is relocated to window 30, not closed.
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(state.nodes["tab:1"]?.live?.windowId).toBe(30);
+  });
+
   it("falls back to a full snapshot when a native focus-gain targets an unknown window", async () => {
     const runtime = fakeRuntime(
       [{ id: 10, focused: true, incognito: false }],
