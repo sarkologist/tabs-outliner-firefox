@@ -77,9 +77,16 @@ export type OutlineChangeDescription = {
 
 export function summarizeOutlineDelta(
   delta: OutlineChangeDelta,
-  options: { previous?: OutlineState; next: OutlineState }
+  options: {
+    previous?: OutlineState;
+    next: OutlineState;
+    // The command's subject node (e.g. moveNode's nodeId). A reorder is position-only, so the moved
+    // node is materially equal and absent from the delta -- this names it authoritatively, which is
+    // the only way to resolve an adjacent swap ([a,b,c]->[a,c,b] fits "b down" OR "c up").
+    primaryNodeId?: NodeId;
+  }
 ): OutlineChangeSummary {
-  const { previous, next } = options;
+  const { previous, next, primaryNodeId } = options;
   const deletedIds = delta.deletedNodeIds ?? [];
   const updatedNodes = delta.updatedNodes ?? [];
 
@@ -117,9 +124,6 @@ export function summarizeOutlineDelta(
   const renamed: OutlineChangeRename[] = [];
   const statusChanged: OutlineChangeStatus[] = [];
   const updated: OutlineChangeNodeRef[] = [];
-  // True once a top-level reorder is named authoritatively from updatedNodes, so the rootId-diff
-  // fallback below doesn't also (possibly mis-)attribute it.
-  let topLevelReorderNamed = false;
 
   for (const node of updatedNodes) {
     const prev = previous?.nodes[node.id];
@@ -134,7 +138,9 @@ export function summarizeOutlineDelta(
       continue;
     }
     // Classify each aspect independently: a node can be moved AND renamed AND closed in one delta
-    // (e.g. restore re-parents and reopens), and the user should see every part.
+    // (e.g. restore re-parents and reopens), and the user should see every part. (A pure reorder is
+    // position-only, so the moved node is materially equal and never reaches updatedNodes -- it is
+    // detected separately below from the command's subject node or the sibling-order diff.)
     if (prev.parentId !== node.parentId) {
       moved.push({
         ref: refForNode(node),
@@ -142,23 +148,6 @@ export function summarizeOutlineDelta(
         from: parentTitle(prev.parentId, previous, next),
         within: false
       });
-    } else if (isReordered(node.id, node.parentId, previous, next)) {
-      // Reorder of a node that IS in updatedNodes -- authoritative, so it names the right node even
-      // for an adjacent swap. (A top-level reorder whose moved root carries no material change never
-      // reaches updatedNodes; that residual case is recovered from the rootId diff after the loop.)
-      const parentId = node.parentId;
-      const where = parentId === undefined ? "top level" : parentTitle(parentId, next, previous);
-      const siblings = parentId === undefined ? next.rootIds : next.nodes[parentId]?.childIds;
-      moved.push({
-        ref: refForNode(node),
-        to: where,
-        from: where,
-        within: true,
-        ...afterField(node.id, siblings, next, previous)
-      });
-      if (parentId === undefined) {
-        topLevelReorderNamed = true;
-      }
     }
     if (displayTitle(prev) !== displayTitle(node)) {
       renamed.push({ ref: refForNode(node), from: displayTitle(prev), to: displayTitle(node) });
@@ -180,14 +169,19 @@ export function summarizeOutlineDelta(
     })
     .map((id) => refFor(id, next, previous));
 
-  // Top-level reorder: the root order changed but the moved root may carry no material change (so
-  // it never reached updatedNodes). Recover the moved node + its new neighbour from the rootId
-  // diff so the row names it ("Moved 'B' after 'A'") instead of a bare "Reordered top level".
-  // Residual top-level reorder: the root order changed but the moved root carried no material
-  // change, so it never reached updatedNodes. Recover the moved node from the rootId diff. Only a
-  // pure reorder (same set, different order) is described here; a root added/removed is already
-  // covered by created/deleted even when the count happens to stay equal.
+  // Reorder detection. A reorder is position-only (the moved node is materially equal), so it is
+  // absent from the delta; name it from the command's subject node when available -- the only way to
+  // resolve an adjacent swap -- and fall back to inferring it from the sibling order otherwise.
   let reorderedTopLevel = false;
+  let topLevelReorderNamed = false;
+  const reorderMove =
+    previous && primaryNodeId !== undefined
+      ? reorderMoveForNode(primaryNodeId, previous, next)
+      : undefined;
+  if (reorderMove) {
+    moved.push(reorderMove);
+    topLevelReorderNamed = reorderMove.to === "top level";
+  }
   if (
     previous &&
     delta.rootIds &&
@@ -195,16 +189,12 @@ export function summarizeOutlineDelta(
     isNodeIdPermutation(previous.rootIds, next.rootIds)
   ) {
     const movedRootId = findReorderedNode(previous.rootIds, next.rootIds);
-    if (movedRootId !== undefined) {
-      moved.push({
-        ref: refFor(movedRootId, next, previous),
-        to: "top level",
-        from: "top level",
-        within: true,
-        ...afterField(movedRootId, next.rootIds, next, previous)
-      });
+    const inferred =
+      movedRootId !== undefined ? reorderMoveForNode(movedRootId, previous, next) : undefined;
+    if (inferred) {
+      moved.push(inferred);
     } else {
-      // A multi-node shuffle we could not isolate to one node.
+      // An adjacent swap or multi-node shuffle we could not isolate to one node.
       reorderedTopLevel = true;
     }
   }
@@ -301,7 +291,12 @@ export function outlineChangeLines(summary: OutlineChangeSummary): string[] {
 // The full change description for the Changes list: headline + every affected name (bounded).
 export function buildOutlineChangeDescription(
   delta: OutlineChangeDelta,
-  options: { previous?: OutlineState; next: OutlineState; maxLines?: number }
+  options: {
+    previous?: OutlineState;
+    next: OutlineState;
+    primaryNodeId?: NodeId;
+    maxLines?: number;
+  }
 ): OutlineChangeDescription | undefined {
   const summary = summarizeOutlineDelta(delta, options);
   const headline = renderOutlineChangeSummary(summary);
@@ -317,7 +312,12 @@ export function buildOutlineChangeDescription(
 // Headline-only convenience (used in tests).
 export function describeOutlineDelta(
   delta: OutlineChangeDelta,
-  options: { previous?: OutlineState; next: OutlineState; maxNames?: number }
+  options: {
+    previous?: OutlineState;
+    next: OutlineState;
+    primaryNodeId?: NodeId;
+    maxNames?: number;
+  }
 ): string {
   return renderOutlineChangeSummary(summarizeOutlineDelta(delta, options), {
     ...(options.maxNames !== undefined ? { maxNames: options.maxNames } : {})
@@ -354,6 +354,34 @@ function isReordered(
   const prevIndex = prevSiblings.indexOf(id);
   const nextIndex = nextSiblings.indexOf(id);
   return prevIndex !== -1 && nextIndex !== -1 && prevIndex !== nextIndex;
+}
+
+// A "within" reorder move for `id` when it stayed under the same parent but changed sibling index;
+// undefined otherwise (created/deleted/cross-parent are handled elsewhere). Names the new position
+// ("after 'X'" / "to the top") from the new sibling list.
+function reorderMoveForNode(
+  id: NodeId,
+  previous: OutlineState,
+  next: OutlineState
+): OutlineChangeMove | undefined {
+  const prevNode = previous.nodes[id];
+  const nextNode = next.nodes[id];
+  if (!prevNode || !nextNode || prevNode.parentId !== nextNode.parentId) {
+    return undefined;
+  }
+  const parentId = nextNode.parentId;
+  if (!isReordered(id, parentId, previous, next)) {
+    return undefined;
+  }
+  const where = parentId === undefined ? "top level" : parentTitle(parentId, next, previous);
+  const siblings = parentId === undefined ? next.rootIds : next.nodes[parentId]?.childIds;
+  return {
+    ref: refForNode(nextNode),
+    to: where,
+    from: where,
+    within: true,
+    ...afterField(id, siblings, next, previous)
+  };
 }
 
 // The single node whose removal makes `prev` and `next` identical -- i.e. the one node that was

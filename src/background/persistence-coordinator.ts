@@ -594,7 +594,10 @@ export function createPersistenceCoordinator(deps: PersistenceCoordinatorDeps) {
     candidateNodeIds: readonly NodeId[] | undefined,
     kind: OutlineJournalAppendItem["kind"],
     label: string,
-    historyEntryId?: string
+    historyEntryId?: string,
+    // The command's subject node, so a position-only reorder (absent from the material delta) can
+    // still be named in the write-activity change log.
+    primaryNodeId?: NodeId
   ): OutlineJournalAppendItem | undefined {
     const delta = outlineMaterialDelta(previous, next, candidateNodeIds);
     const rootsChanged = !sameNodeIdList(previous.rootIds, next.rootIds);
@@ -615,6 +618,7 @@ export function createPersistenceCoordinator(deps: PersistenceCoordinatorDeps) {
     const changeDescription = buildOutlineChangeDescription(item.delta!, {
       previous,
       next,
+      ...(primaryNodeId !== undefined ? { primaryNodeId } : {}),
       maxLines: WRITE_LOG_CHANGE_LINE_LIMIT
     });
     if (changeDescription) {
@@ -634,7 +638,10 @@ export function createPersistenceCoordinator(deps: PersistenceCoordinatorDeps) {
     candidateNodeIds: readonly NodeId[] | undefined,
     label: string,
     kind: "command" | "historyReplay" = "command",
-    historyEntryId?: string
+    historyEntryId?: string,
+    // The command's subject node (e.g. moveNode's nodeId), used only to name a position-only
+    // reorder in the write-activity change log.
+    primaryNodeId?: NodeId
   ): Promise<boolean> {
     if (!outlineJournal) {
       return false;
@@ -642,7 +649,15 @@ export function createPersistenceCoordinator(deps: PersistenceCoordinatorDeps) {
     // Any coalesced event deltas captured before this command must land first so journal
     // seq order stays chronological (replay applies absolute node records in seq order).
     const queuedEventItems = drainPendingEventJournalItems();
-    const item = journalDeltaItem(previous, next, candidateNodeIds, kind, label, historyEntryId);
+    const item = journalDeltaItem(
+      previous,
+      next,
+      candidateNodeIds,
+      kind,
+      label,
+      historyEntryId,
+      primaryNodeId
+    );
     if (!item) {
       // No durable change to record (e.g. a no-op move); nothing for the checkpoint to flush.
       await appendOutlineJournalItems(queuedEventItems);

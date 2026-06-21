@@ -114,7 +114,9 @@ describe("summarizeOutlineDelta / describeOutlineDelta", () => {
     expect(description?.overflow).toBe(6);
   });
 
-  it("describes a same-parent reorder as a move within the parent, with position", () => {
+  it("names a same-parent reorder from the command's subject node (it is absent from the delta)", () => {
+    // A reorder is position-only, so the moved child is materially equal and NOT in updatedNodes;
+    // only the parent's childIds change. The command's subject node (primaryNodeId) names it.
     const previous = state(
       [
         node({ id: "w", kind: "window", title: "Work", childIds: ["a", "b", "c"] }),
@@ -133,15 +135,41 @@ describe("summarizeOutlineDelta / describeOutlineDelta", () => {
       ],
       ["w"]
     );
-    // moveNode's same-parent path journals [parent, movedNode]; Slack moved after Gmail.
     const text = describeOutlineDelta(
-      { updatedNodes: [next.nodes["w"]!, next.nodes["c"]!] },
-      { previous, next }
+      { updatedNodes: [next.nodes["w"]!] }, // only the parent (childIds changed) is material
+      { previous, next, primaryNodeId: "c" }
     );
     expect(text).toBe("Moved 'Slack' within 'Work' after 'Gmail'");
   });
 
-  it("names the moved top-level node and its new position (after X / to the top)", () => {
+  it("names an adjacent top-level reorder from the command's subject node (after X / to the top)", () => {
+    const roots = [
+      node({ id: "a", kind: "window", title: "Inbox" }),
+      node({ id: "b", kind: "window", title: "Work" }),
+      node({ id: "c", kind: "window", title: "Reading" })
+    ];
+    const previous = state(roots, ["a", "b", "c"]);
+    // 'Reading' nudged up one slot -- an adjacent swap that order alone can't attribute, but the
+    // command says nodeId="c". The moved root is materially unchanged, so the delta is rootIds-only.
+    const afterInbox = state(roots, ["a", "c", "b"]);
+    expect(
+      describeOutlineDelta(
+        { rootIds: ["a", "c", "b"] },
+        { previous, next: afterInbox, primaryNodeId: "c" }
+      )
+    ).toBe("Moved 'Reading' after 'Inbox'");
+
+    // 'Work' nudged to the very top.
+    const toTop = state(roots, ["b", "a", "c"]);
+    expect(
+      describeOutlineDelta(
+        { rootIds: ["b", "a", "c"] },
+        { previous, next: toTop, primaryNodeId: "b" }
+      )
+    ).toBe("Moved 'Work' to the top");
+  });
+
+  it("infers an unambiguous top-level reorder even without the subject node", () => {
     const roots = [
       node({ id: "a", kind: "window", title: "Inbox" }),
       node({ id: "b", kind: "window", title: "Work" }),
@@ -149,21 +177,14 @@ describe("summarizeOutlineDelta / describeOutlineDelta", () => {
       node({ id: "d", kind: "window", title: "Archive" })
     ];
     const previous = state(roots, ["a", "b", "c", "d"]);
-    // 'Work' dragged down to the end (after 'Archive') -- an unambiguous single move. The moved
-    // root carries no material change, so the delta only reports the new rootId order.
-    const moved = state(roots, ["a", "c", "d", "b"]);
-    expect(describeOutlineDelta({ rootIds: ["a", "c", "d", "b"] }, { previous, next: moved })).toBe(
+    // 'Work' moved two slots (to the end) -- unambiguous, so order alone names it.
+    const next = state(roots, ["a", "c", "d", "b"]);
+    expect(describeOutlineDelta({ rootIds: ["a", "c", "d", "b"] }, { previous, next })).toBe(
       "Moved 'Work' after 'Archive'"
     );
-
-    // 'Reading' dragged to the very top.
-    const toTop = state(roots, ["c", "a", "b", "d"]);
-    expect(describeOutlineDelta({ rootIds: ["c", "a", "b", "d"] }, { previous, next: toTop })).toBe(
-      "Moved 'Reading' to the top"
-    );
   });
 
-  it("names an adjacent top-level swap when the moved node is in the delta (authoritative)", () => {
+  it("falls back to 'Reordered top level' for an ambiguous adjacent swap with no subject node", () => {
     const roots = [
       node({ id: "a", kind: "window", title: "Inbox" }),
       node({ id: "b", kind: "window", title: "Work" }),
@@ -171,25 +192,8 @@ describe("summarizeOutlineDelta / describeOutlineDelta", () => {
     ];
     const previous = state(roots, ["a", "b", "c"]);
     const next = state(roots, ["a", "c", "b"]);
-    // The command journaled the moved root (Reading), so it is named even though the swap is
-    // otherwise ambiguous from the order alone.
-    expect(
-      describeOutlineDelta(
-        { updatedNodes: [next.nodes["c"]!], rootIds: ["a", "c", "b"] },
-        { previous, next }
-      )
-    ).toBe("Moved 'Reading' after 'Inbox'");
-  });
-
-  it("falls back to 'Reordered top level' for an ambiguous adjacent swap not in the delta", () => {
-    const roots = [
-      node({ id: "a", kind: "window", title: "Inbox" }),
-      node({ id: "b", kind: "window", title: "Work" }),
-      node({ id: "c", kind: "window", title: "Reading" })
-    ];
-    const previous = state(roots, ["a", "b", "c"]);
-    const next = state(roots, ["a", "c", "b"]);
-    // Order alone can't say whether Work moved down or Reading moved up; don't guess.
+    // Order alone can't say whether Work moved down or Reading moved up, and no subject node was
+    // given; don't guess.
     expect(describeOutlineDelta({ rootIds: ["a", "c", "b"] }, { previous, next })).toBe(
       "Reordered top level"
     );

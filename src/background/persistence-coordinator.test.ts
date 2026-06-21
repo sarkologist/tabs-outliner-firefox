@@ -122,6 +122,44 @@ describe("persistence coordinator write-activity safety", () => {
     expect(changes[0]!.lines).toContain("'Gmail'");
   });
 
+  it("names a top-level reorder in the change log from the command's subject node", async () => {
+    const changes: WriteLogChangeInput[] = [];
+    const win = (id: string, title: string): OutlineNode => ({
+      id,
+      kind: "window",
+      status: "live",
+      childIds: [],
+      title,
+      collapsed: false,
+      createdAt: 0,
+      updatedAt: 0
+    });
+    const nodes = {
+      "win:1": win("win:1", "Inbox"),
+      "win:2": win("win:2", "Work"),
+      "win:3": win("win:3", "Reading")
+    };
+    const previous: OutlineState = { version: 1, rootIds: ["win:1", "win:2", "win:3"], nodes };
+    // 'Reading' nudged up one slot -- an adjacent swap that order alone can't attribute.
+    const next: OutlineState = { version: 1, rootIds: ["win:1", "win:3", "win:2"], nodes };
+    const coordinator = createPersistenceCoordinator(
+      makeDeps({ getState: () => next, recordWriteChange: (change) => changes.push(change) })
+    );
+    await coordinator.createAndInitJournal();
+
+    await coordinator.appendCommandJournal(
+      previous,
+      next,
+      ["win:3"],
+      "moveNode",
+      "command",
+      undefined,
+      "win:3"
+    );
+
+    expect(changes.map((change) => change.headline)).toContain("Moved 'Reading' after 'Inbox'");
+  });
+
   it("never lets a throwing write-activity logger break the save (durability is independent)", async () => {
     const setCalls: Record<string, unknown>[] = [];
     const coordinator = createPersistenceCoordinator(

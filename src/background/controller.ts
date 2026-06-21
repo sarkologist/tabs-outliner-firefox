@@ -1070,7 +1070,8 @@ export function createBackgroundController(
             runtimeIndexCandidateNodeIds,
             message.type,
             "command",
-            recordedHistoryEntryId
+            recordedHistoryEntryId,
+            commandSubjectNodeId(message)
           ))
         )
       ) {
@@ -1108,7 +1109,8 @@ export function createBackgroundController(
           runtimeIndexCandidateNodeIds,
           message.type,
           "command",
-          recordedHistoryEntryId
+          recordedHistoryEntryId,
+          commandSubjectNodeId(message)
         ))
       ) {
         await flushRuntimeProvenanceSaveIfChanged(current, next, runtimeIndexCandidateNodeIds, {
@@ -1263,7 +1265,8 @@ export function createBackgroundController(
             [sameParentReorder.parentId, sameParentReorder.movedNodeId],
             message.type,
             "command",
-            recordedHistoryEntryId
+            recordedHistoryEntryId,
+            sameParentReorder.movedNodeId
           ))
         ) {
           await flushRuntimeProvenanceSaveIfChanged(
@@ -6603,6 +6606,12 @@ function historyCandidateNodeIds(
 
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+// The node a command acts on (e.g. moveNode's nodeId). Passed to the journal so the write-activity
+// change log can name a position-only reorder, which is otherwise absent from the material delta.
+function commandSubjectNodeId(message: BackgroundCommand): NodeId | undefined {
+  return "nodeId" in message ? message.nodeId : undefined;
 }
 
 function focusTargetForNode(
