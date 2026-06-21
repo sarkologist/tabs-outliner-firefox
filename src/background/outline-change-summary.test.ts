@@ -157,7 +157,7 @@ describe("summarizeOutlineDelta / describeOutlineDelta", () => {
         { rootIds: ["a", "c", "b"] },
         { previous, next: afterInbox, primaryNodeId: "c" }
       )
-    ).toBe("Moved 'Reading' after 'Inbox'");
+    ).toBe("Moved 'Reading' (window) after 'Inbox'");
 
     // 'Work' nudged to the very top.
     const toTop = state(roots, ["b", "a", "c"]);
@@ -166,7 +166,38 @@ describe("summarizeOutlineDelta / describeOutlineDelta", () => {
         { rootIds: ["b", "a", "c"] },
         { previous, next: toTop, primaryNodeId: "b" }
       )
-    ).toBe("Moved 'Work' to the top");
+    ).toBe("Moved 'Work' (window) to the top");
+  });
+
+  it("lists a moved group's contents so a generic title is identifiable", () => {
+    const previous = state(
+      [
+        node({ id: "home", kind: "window", title: "Personal" }),
+        node({ id: "g", kind: "group", title: "Group", parentId: "home", childIds: ["t1", "t2"] }),
+        node({ id: "t1", parentId: "g", title: "Gmail" }),
+        node({ id: "t2", parentId: "g", title: "Calendar" }),
+        node({ id: "work", kind: "window", title: "Work" })
+      ],
+      ["home", "work"]
+    );
+    // The group 'g' moved from 'Personal' to 'Work'.
+    const next = state(
+      [
+        node({ id: "home", kind: "window", title: "Personal", childIds: [] }),
+        node({ id: "g", kind: "group", title: "Group", parentId: "work", childIds: ["t1", "t2"] }),
+        node({ id: "t1", parentId: "g", title: "Gmail" }),
+        node({ id: "t2", parentId: "g", title: "Calendar" }),
+        node({ id: "work", kind: "window", title: "Work", childIds: ["g"] })
+      ],
+      ["home", "work"]
+    );
+    const description = buildOutlineChangeDescription(
+      { updatedNodes: [next.nodes["g"]!] },
+      { previous, next, primaryNodeId: "g" }
+    );
+    expect(description?.headline).toBe("Moved 'Group' (group) (+2) from 'Personal' to 'Work'");
+    // The contents identify which group moved.
+    expect(description?.lines).toEqual(["'Group' (group)", "'Gmail'", "'Calendar'"]);
   });
 
   it("infers an unambiguous top-level reorder even without the subject node", () => {
@@ -180,11 +211,11 @@ describe("summarizeOutlineDelta / describeOutlineDelta", () => {
     // 'Work' moved two slots (to the end) -- unambiguous, so order alone names it.
     const next = state(roots, ["a", "c", "d", "b"]);
     expect(describeOutlineDelta({ rootIds: ["a", "c", "d", "b"] }, { previous, next })).toBe(
-      "Moved 'Work' after 'Archive'"
+      "Moved 'Work' (window) after 'Archive'"
     );
   });
 
-  it("falls back to 'Reordered top level' for an ambiguous adjacent swap with no subject node", () => {
+  it("emits nothing for an ambiguous adjacent swap with no subject node (no noise row)", () => {
     const roots = [
       node({ id: "a", kind: "window", title: "Inbox" }),
       node({ id: "b", kind: "window", title: "Work" }),
@@ -193,10 +224,11 @@ describe("summarizeOutlineDelta / describeOutlineDelta", () => {
     const previous = state(roots, ["a", "b", "c"]);
     const next = state(roots, ["a", "c", "b"]);
     // Order alone can't say whether Work moved down or Reading moved up, and no subject node was
-    // given; don't guess.
-    expect(describeOutlineDelta({ rootIds: ["a", "c", "b"] }, { previous, next })).toBe(
-      "Reordered top level"
-    );
+    // given; emit no row rather than an uninformative "Reordered top level".
+    expect(describeOutlineDelta({ rootIds: ["a", "c", "b"] }, { previous, next })).toBe("");
+    expect(
+      buildOutlineChangeDescription({ rootIds: ["a", "c", "b"] }, { previous, next })
+    ).toBeUndefined();
   });
 
   it("does not call a same-count add+remove a reorder", () => {
@@ -224,28 +256,16 @@ describe("summarizeOutlineDelta / describeOutlineDelta", () => {
     expect(text).toContain("Added 'New' (window)");
   });
 
-  it("falls back to 'Reordered top level' for an unisolatable multi-node shuffle", () => {
-    const previous = state(
-      [
-        node({ id: "a", kind: "window", title: "A" }),
-        node({ id: "b", kind: "window", title: "B" }),
-        node({ id: "c", kind: "window", title: "C" }),
-        node({ id: "d", kind: "window", title: "D" })
-      ],
-      ["a", "b", "c", "d"]
-    );
-    const next = state(
-      [
-        node({ id: "a", kind: "window", title: "A" }),
-        node({ id: "b", kind: "window", title: "B" }),
-        node({ id: "c", kind: "window", title: "C" }),
-        node({ id: "d", kind: "window", title: "D" })
-      ],
-      ["b", "a", "d", "c"]
-    );
-    expect(describeOutlineDelta({ rootIds: ["b", "a", "d", "c"] }, { previous, next })).toBe(
-      "Reordered top level"
-    );
+  it("emits nothing for an unisolatable multi-node shuffle (no noise row)", () => {
+    const roots = [
+      node({ id: "a", kind: "window", title: "A" }),
+      node({ id: "b", kind: "window", title: "B" }),
+      node({ id: "c", kind: "window", title: "C" }),
+      node({ id: "d", kind: "window", title: "D" })
+    ];
+    const previous = state(roots, ["a", "b", "c", "d"]);
+    const next = state(roots, ["b", "a", "d", "c"]);
+    expect(describeOutlineDelta({ rootIds: ["b", "a", "d", "c"] }, { previous, next })).toBe("");
   });
 
   it("reports every aspect of a node that both moved and was renamed", () => {

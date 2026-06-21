@@ -33,6 +33,9 @@ export type OutlineChangeMove = {
   within: boolean;
   // For a reorder, the title of the sibling it now follows; undefined means it moved to the top.
   after?: string;
+  // The moved node + its descendants (bounded). For a group/window whose title is generic ("Group"),
+  // listing its contents is how the user identifies which one moved -- mirrors the deleted case.
+  contents: OutlineChangeNodeRef[];
 };
 
 export type OutlineChangeRename = {
@@ -64,7 +67,6 @@ export type OutlineChangeSummary = {
   updated: OutlineChangeNodeRef[];
   // Count of touched nodes left unclassified because the delta exceeded the detail limit.
   otherChanges: number;
-  reorderedTopLevel: boolean;
 };
 
 // What the write-activity "Changes" list stores per change: a one-line headline plus the full
@@ -146,7 +148,8 @@ export function summarizeOutlineDelta(
         ref: refForNode(node),
         to: parentTitle(node.parentId, next, previous),
         from: parentTitle(prev.parentId, previous, next),
-        within: false
+        within: false,
+        contents: collectSubtreeRefs(node.id, next)
       });
     }
     if (displayTitle(prev) !== displayTitle(node)) {
@@ -171,8 +174,9 @@ export function summarizeOutlineDelta(
 
   // Reorder detection. A reorder is position-only (the moved node is materially equal), so it is
   // absent from the delta; name it from the command's subject node when available -- the only way to
-  // resolve an adjacent swap -- and fall back to inferring it from the sibling order otherwise.
-  let reorderedTopLevel = false;
+  // resolve an adjacent swap -- and fall back to inferring it from the sibling order otherwise. When
+  // neither names a single node (a multi-node shuffle, or a startup/reconciliation root reorder with
+  // no command subject), emit NOTHING rather than an uninformative "Reordered top level" row.
   let topLevelReorderNamed = false;
   const reorderMove =
     previous && primaryNodeId !== undefined
@@ -193,9 +197,6 @@ export function summarizeOutlineDelta(
       movedRootId !== undefined ? reorderMoveForNode(movedRootId, previous, next) : undefined;
     if (inferred) {
       moved.push(inferred);
-    } else {
-      // An adjacent swap or multi-node shuffle we could not isolate to one node.
-      reorderedTopLevel = true;
     }
   }
 
@@ -206,8 +207,7 @@ export function summarizeOutlineDelta(
     renamed,
     statusChanged,
     updated,
-    otherChanges: 0,
-    reorderedTopLevel
+    otherChanges: 0
   };
 }
 
@@ -256,9 +256,6 @@ export function renderOutlineChangeSummary(
   if (summary.otherChanges > 0) {
     parts.push(`${summary.otherChanges} node ${summary.otherChanges === 1 ? "change" : "changes"}`);
   }
-  if (parts.length === 0 && summary.reorderedTopLevel) {
-    parts.push("Reordered top level");
-  }
 
   return parts.join(" · ");
 }
@@ -271,7 +268,15 @@ export function outlineChangeLines(summary: OutlineChangeSummary): string[] {
     lines.push(nameWithKind(ref));
   }
   for (const move of summary.moved) {
-    lines.push(renderMove(move));
+    // For a moved group/window, list its contents (so a generic "Group" is identifiable); for a
+    // leaf, the one-line move (with position) is enough.
+    if (move.contents.length > 1) {
+      for (const ref of move.contents) {
+        lines.push(nameWithKind(ref));
+      }
+    } else {
+      lines.push(renderMove(move));
+    }
   }
   for (const ref of summary.created.all) {
     lines.push(nameWithKind(ref));
@@ -332,8 +337,7 @@ function emptySummary(): OutlineChangeSummary {
     renamed: [],
     statusChanged: [],
     updated: [],
-    otherChanges: 0,
-    reorderedTopLevel: false
+    otherChanges: 0
   };
 }
 
@@ -380,8 +384,30 @@ function reorderMoveForNode(
     to: where,
     from: where,
     within: true,
+    contents: collectSubtreeRefs(id, next),
     ...afterField(id, siblings, next, previous)
   };
+}
+
+// A node plus its descendants (parent before children), bounded by the detail limit, read from the
+// given state. Used to list a moved subtree's contents in the change log.
+function collectSubtreeRefs(rootId: NodeId, state: OutlineState): OutlineChangeNodeRef[] {
+  const refs: OutlineChangeNodeRef[] = [];
+  const visit = (id: NodeId): void => {
+    if (refs.length >= CHANGE_SUMMARY_DETAIL_LIMIT) {
+      return;
+    }
+    const node = state.nodes[id];
+    if (!node) {
+      return;
+    }
+    refs.push(refForNode(node));
+    for (const childId of node.childIds) {
+      visit(childId);
+    }
+  };
+  visit(rootId);
+  return refs;
 }
 
 // The single node whose removal makes `prev` and `next` identical -- i.e. the one node that was
@@ -463,14 +489,17 @@ function renderDeletedOrCreated(verb: string, group: OutlineChangeGroup, maxName
 }
 
 function renderMove(move: OutlineChangeMove): string {
+  // Show the kind and, for a subtree, the descendant count so a generic "Group" is identifiable.
+  const descendants = move.contents.length - 1;
+  const subject = `${nameWithKind(move.ref)}${descendants > 0 ? ` (+${descendants})` : ""}`;
   if (move.within) {
     const position = move.after !== undefined ? `after ${quote(move.after)}` : "to the top";
     // Top-level reorders read better without the "within top level" prefix.
     return move.to === "top level"
-      ? `${quote(move.ref.title)} ${position}`
-      : `${quote(move.ref.title)} within ${quote(move.to)} ${position}`;
+      ? `${subject} ${position}`
+      : `${subject} within ${quote(move.to)} ${position}`;
   }
-  return `${quote(move.ref.title)} from ${renderParent(move.from)} to ${renderParent(move.to)}`;
+  return `${subject} from ${renderParent(move.from)} to ${renderParent(move.to)}`;
 }
 
 function renderParent(title: string): string {

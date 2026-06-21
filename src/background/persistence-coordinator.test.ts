@@ -157,7 +157,9 @@ describe("persistence coordinator write-activity safety", () => {
       "win:3"
     );
 
-    expect(changes.map((change) => change.headline)).toContain("Moved 'Reading' after 'Inbox'");
+    expect(changes.map((change) => change.headline)).toContain(
+      "Moved 'Reading' (window) after 'Inbox'"
+    );
   });
 
   it("never lets a throwing write-activity logger break the save (durability is independent)", async () => {
