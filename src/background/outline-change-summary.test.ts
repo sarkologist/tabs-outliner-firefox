@@ -114,29 +114,92 @@ describe("summarizeOutlineDelta / describeOutlineDelta", () => {
     expect(description?.overflow).toBe(6);
   });
 
-  it("describes a same-parent reorder as a move within the parent", () => {
+  it("describes a same-parent reorder as a move within the parent, with position", () => {
     const previous = state(
       [
-        node({ id: "w", kind: "window", title: "Work", childIds: ["a", "b"] }),
+        node({ id: "w", kind: "window", title: "Work", childIds: ["a", "b", "c"] }),
         node({ id: "a", parentId: "w", title: "Gmail" }),
-        node({ id: "b", parentId: "w", title: "Docs" })
+        node({ id: "b", parentId: "w", title: "Docs" }),
+        node({ id: "c", parentId: "w", title: "Slack" })
       ],
       ["w"]
     );
     const next = state(
       [
-        node({ id: "w", kind: "window", title: "Work", childIds: ["b", "a"] }),
+        node({ id: "w", kind: "window", title: "Work", childIds: ["a", "c", "b"] }),
         node({ id: "a", parentId: "w", title: "Gmail" }),
-        node({ id: "b", parentId: "w", title: "Docs" })
+        node({ id: "b", parentId: "w", title: "Docs" }),
+        node({ id: "c", parentId: "w", title: "Slack" })
       ],
       ["w"]
     );
-    // moveNode's same-parent path journals [parent, movedNode].
+    // moveNode's same-parent path journals [parent, movedNode]; Slack moved after Gmail.
     const text = describeOutlineDelta(
-      { updatedNodes: [next.nodes["w"]!, next.nodes["b"]!] },
+      { updatedNodes: [next.nodes["w"]!, next.nodes["c"]!] },
       { previous, next }
     );
-    expect(text).toBe("Moved 'Docs' within 'Work'");
+    expect(text).toBe("Moved 'Slack' within 'Work' after 'Gmail'");
+  });
+
+  it("names the moved top-level node and its new position (after X / to the top)", () => {
+    const previous = state(
+      [
+        node({ id: "a", kind: "window", title: "Inbox" }),
+        node({ id: "b", kind: "window", title: "Work" }),
+        node({ id: "c", kind: "window", title: "Reading" })
+      ],
+      ["a", "b", "c"]
+    );
+    // 'Reading' dragged up to after 'Inbox'. The moved root carries no material change, so the
+    // delta only reports the new rootId order.
+    const afterInbox = state(
+      [
+        node({ id: "a", kind: "window", title: "Inbox" }),
+        node({ id: "b", kind: "window", title: "Work" }),
+        node({ id: "c", kind: "window", title: "Reading" })
+      ],
+      ["a", "c", "b"]
+    );
+    expect(describeOutlineDelta({ rootIds: ["a", "c", "b"] }, { previous, next: afterInbox })).toBe(
+      "Moved 'Reading' after 'Inbox'"
+    );
+
+    // 'Work' dragged to the very top.
+    const toTop = state(
+      [
+        node({ id: "a", kind: "window", title: "Inbox" }),
+        node({ id: "b", kind: "window", title: "Work" }),
+        node({ id: "c", kind: "window", title: "Reading" })
+      ],
+      ["b", "a", "c"]
+    );
+    expect(describeOutlineDelta({ rootIds: ["b", "a", "c"] }, { previous, next: toTop })).toBe(
+      "Moved 'Work' to the top"
+    );
+  });
+
+  it("falls back to 'Reordered top level' for an unisolatable multi-node shuffle", () => {
+    const previous = state(
+      [
+        node({ id: "a", kind: "window", title: "A" }),
+        node({ id: "b", kind: "window", title: "B" }),
+        node({ id: "c", kind: "window", title: "C" }),
+        node({ id: "d", kind: "window", title: "D" })
+      ],
+      ["a", "b", "c", "d"]
+    );
+    const next = state(
+      [
+        node({ id: "a", kind: "window", title: "A" }),
+        node({ id: "b", kind: "window", title: "B" }),
+        node({ id: "c", kind: "window", title: "C" }),
+        node({ id: "d", kind: "window", title: "D" })
+      ],
+      ["b", "a", "d", "c"]
+    );
+    expect(describeOutlineDelta({ rootIds: ["b", "a", "d", "c"] }, { previous, next })).toBe(
+      "Reordered top level"
+    );
   });
 
   it("reports every aspect of a node that both moved and was renamed", () => {

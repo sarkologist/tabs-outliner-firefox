@@ -31,6 +31,8 @@ export type OutlineChangeMove = {
   from: string;
   // True for a same-parent reorder (drag within a window): `from` === `to` === the parent.
   within: boolean;
+  // For a reorder, the title of the sibling it now follows; undefined means it moved to the top.
+  after?: string;
 };
 
 export type OutlineChangeRename = {
@@ -137,9 +139,17 @@ export function summarizeOutlineDelta(
         from: parentTitle(prev.parentId, previous, next),
         within: false
       });
-    } else if (isReordered(node.id, node.parentId, previous, next)) {
+    } else if (node.parentId !== undefined && isReordered(node.id, node.parentId, previous, next)) {
+      // Within-parent reorder. (Top-level reorders are handled after the loop from the rootId order,
+      // since the moved root may not appear in updatedNodes.)
       const where = parentTitle(node.parentId, next, previous);
-      moved.push({ ref: refForNode(node), to: where, from: where, within: true });
+      moved.push({
+        ref: refForNode(node),
+        to: where,
+        from: where,
+        within: true,
+        ...afterField(node.id, next.nodes[node.parentId]?.childIds, next, previous)
+      });
     }
     if (displayTitle(prev) !== displayTitle(node)) {
       renamed.push({ ref: refForNode(node), from: displayTitle(prev), to: displayTitle(node) });
@@ -161,8 +171,28 @@ export function summarizeOutlineDelta(
     })
     .map((id) => refFor(id, next, previous));
 
-  const structural = deletedIds.length > 0 || created.length > 0 || moved.length > 0;
-  const reorderedTopLevel = Boolean(delta.rootIds) && !structural;
+  // Top-level reorder: the root order changed but the moved root may carry no material change (so
+  // it never reached updatedNodes). Recover the moved node + its new neighbour from the rootId
+  // diff so the row names it ("Moved 'B' after 'A'") instead of a bare "Reordered top level".
+  let reorderedTopLevel = false;
+  if (previous && delta.rootIds) {
+    const movedRootId = findReorderedNode(previous.rootIds, next.rootIds);
+    if (movedRootId !== undefined) {
+      moved.push({
+        ref: refFor(movedRootId, next, previous),
+        to: "top level",
+        from: "top level",
+        within: true,
+        ...afterField(movedRootId, next.rootIds, next, previous)
+      });
+    } else if (
+      previous.rootIds.length === next.rootIds.length &&
+      !sameNodeIdOrder(previous.rootIds, next.rootIds)
+    ) {
+      // A multi-node shuffle we could not isolate to one node.
+      reorderedTopLevel = true;
+    }
+  }
 
   return {
     deleted: { roots: deletedRoots, all: deletedAll, total: deletedIds.length },
@@ -236,11 +266,7 @@ export function outlineChangeLines(summary: OutlineChangeSummary): string[] {
     lines.push(nameWithKind(ref));
   }
   for (const move of summary.moved) {
-    lines.push(
-      move.within
-        ? `${nameWithKind(move.ref)} within ${renderParent(move.to)}`
-        : `${nameWithKind(move.ref)}: ${renderParent(move.from)} → ${renderParent(move.to)}`
-    );
+    lines.push(renderMove(move));
   }
   for (const ref of summary.created.all) {
     lines.push(nameWithKind(ref));
@@ -315,6 +341,51 @@ function isReordered(
   return prevIndex !== -1 && nextIndex !== -1 && prevIndex !== nextIndex;
 }
 
+// The single node whose removal makes `prev` and `next` identical -- i.e. the one node that was
+// dragged within a same-set reorder. Undefined when the lists are not a permutation (a structural
+// add/remove handles that) or when more than one node shifted (a multi-node shuffle).
+function findReorderedNode(prev: readonly NodeId[], next: readonly NodeId[]): NodeId | undefined {
+  if (prev.length !== next.length || sameNodeIdOrder(prev, next)) {
+    return undefined;
+  }
+  // The isolation scan is O(n^2); bound it so a profile with a very large top level can't add cost
+  // on the ack path. Beyond this the caller reports a generic "Reordered top level".
+  if (prev.length > CHANGE_SUMMARY_DETAIL_LIMIT) {
+    return undefined;
+  }
+  for (const id of next) {
+    if (sameNodeIdOrder(withoutId(prev, id), withoutId(next, id))) {
+      return id;
+    }
+  }
+  return undefined;
+}
+
+function withoutId(ids: readonly NodeId[], omit: NodeId): NodeId[] {
+  return ids.filter((id) => id !== omit);
+}
+
+function sameNodeIdOrder(left: readonly NodeId[], right: readonly NodeId[]): boolean {
+  return left.length === right.length && left.every((id, index) => id === right[index]);
+}
+
+// The "after 'X'" / "to the top" position field for a reordered node, from its new sibling list.
+function afterField(
+  id: NodeId,
+  siblings: readonly NodeId[] | undefined,
+  next: OutlineState,
+  previous: OutlineState | undefined
+): { after?: string } {
+  if (!siblings) {
+    return {};
+  }
+  const index = siblings.indexOf(id);
+  if (index <= 0) {
+    return {}; // moved to the top (or not found)
+  }
+  return { after: refFor(siblings[index - 1]!, next, previous).title };
+}
+
 function renderDeletedOrCreated(verb: string, group: OutlineChangeGroup, maxNames: number): string {
   const { roots, total } = group;
   if (roots.length === 1 && total > 1) {
@@ -336,9 +407,11 @@ function renderDeletedOrCreated(verb: string, group: OutlineChangeGroup, maxName
 
 function renderMove(move: OutlineChangeMove): string {
   if (move.within) {
+    const position = move.after !== undefined ? `after ${quote(move.after)}` : "to the top";
+    // Top-level reorders read better without the "within top level" prefix.
     return move.to === "top level"
-      ? `${quote(move.ref.title)} within top level`
-      : `${quote(move.ref.title)} within ${quote(move.to)}`;
+      ? `${quote(move.ref.title)} ${position}`
+      : `${quote(move.ref.title)} within ${quote(move.to)} ${position}`;
   }
   return `${quote(move.ref.title)} from ${renderParent(move.from)} to ${renderParent(move.to)}`;
 }
