@@ -597,7 +597,10 @@ export function createPersistenceCoordinator(deps: PersistenceCoordinatorDeps) {
     historyEntryId?: string,
     // The command's subject node, so a position-only reorder (absent from the material delta) can
     // still be named in the write-activity change log.
-    primaryNodeId?: NodeId
+    primaryNodeId?: NodeId,
+    // Commands/undo-redo allow a generic "Reordered top level" row when a reorder can't be named;
+    // runtime/reconciliation callers leave this false so a reload's window re-sort produces no noise.
+    allowGenericReorder = false
   ): OutlineJournalAppendItem | undefined {
     const delta = outlineMaterialDelta(previous, next, candidateNodeIds);
     const rootsChanged = !sameNodeIdList(previous.rootIds, next.rootIds);
@@ -619,6 +622,7 @@ export function createPersistenceCoordinator(deps: PersistenceCoordinatorDeps) {
       previous,
       next,
       ...(primaryNodeId !== undefined ? { primaryNodeId } : {}),
+      allowGenericReorder,
       maxLines: WRITE_LOG_CHANGE_LINE_LIMIT
     });
     if (changeDescription) {
@@ -656,7 +660,10 @@ export function createPersistenceCoordinator(deps: PersistenceCoordinatorDeps) {
       kind,
       label,
       historyEntryId,
-      primaryNodeId
+      primaryNodeId,
+      // A command (or undo/redo) is a user action: allow a generic reorder row when it can't be
+      // attributed to one node. Runtime/reconciliation appends (queueRuntimeEventJournal) don't.
+      true
     );
     if (!item) {
       // No durable change to record (e.g. a no-op move); nothing for the checkpoint to flush.

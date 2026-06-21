@@ -67,6 +67,9 @@ export type OutlineChangeSummary = {
   updated: OutlineChangeNodeRef[];
   // Count of touched nodes left unclassified because the delta exceeded the detail limit.
   otherChanges: number;
+  // A root reorder we could not attribute to a single node, from a caller that wants a generic row
+  // (a command/undo-redo). Reconciliation/runtime callers leave this false so reloads stay quiet.
+  reorderedTopLevel: boolean;
 };
 
 // What the write-activity "Changes" list stores per change: a one-line headline plus the full
@@ -86,9 +89,13 @@ export function summarizeOutlineDelta(
     // node is materially equal and absent from the delta -- this names it authoritatively, which is
     // the only way to resolve an adjacent swap ([a,b,c]->[a,c,b] fits "b down" OR "c up").
     primaryNodeId?: NodeId;
+    // Whether to emit a generic "Reordered top level" when a root reorder can't be attributed to a
+    // single node. Commands/undo-redo set this (a user action deserves a row); runtime/reconciliation
+    // leave it false so a reload's window re-sort produces no noise row.
+    allowGenericReorder?: boolean;
   }
 ): OutlineChangeSummary {
-  const { previous, next, primaryNodeId } = options;
+  const { previous, next, primaryNodeId, allowGenericReorder } = options;
   const deletedIds = delta.deletedNodeIds ?? [];
   const updatedNodes = delta.updatedNodes ?? [];
 
@@ -176,8 +183,10 @@ export function summarizeOutlineDelta(
   // absent from the delta; name it from the command's subject node when available -- the only way to
   // resolve an adjacent swap -- and fall back to inferring it from the sibling order otherwise. When
   // neither names a single node (a multi-node shuffle, or a startup/reconciliation root reorder with
-  // no command subject), emit NOTHING rather than an uninformative "Reordered top level" row.
+  // no command subject), emit a generic "Reordered top level" only for command/undo callers
+  // (allowGenericReorder); runtime/reconciliation emits nothing so a reload stays quiet.
   let topLevelReorderNamed = false;
+  let reorderedTopLevel = false;
   const reorderMove =
     previous && primaryNodeId !== undefined
       ? reorderMoveForNode(primaryNodeId, previous, next)
@@ -197,6 +206,10 @@ export function summarizeOutlineDelta(
       movedRootId !== undefined ? reorderMoveForNode(movedRootId, previous, next) : undefined;
     if (inferred) {
       moved.push(inferred);
+    } else if (allowGenericReorder) {
+      // A user action (command/undo-redo) we couldn't attribute to one node; a generic row beats
+      // silently dropping it. Runtime/reconciliation callers don't set the flag, so reloads stay quiet.
+      reorderedTopLevel = true;
     }
   }
 
@@ -207,7 +220,8 @@ export function summarizeOutlineDelta(
     renamed,
     statusChanged,
     updated,
-    otherChanges: 0
+    otherChanges: 0,
+    reorderedTopLevel
   };
 }
 
@@ -256,6 +270,9 @@ export function renderOutlineChangeSummary(
   if (summary.otherChanges > 0) {
     parts.push(`${summary.otherChanges} node ${summary.otherChanges === 1 ? "change" : "changes"}`);
   }
+  if (parts.length === 0 && summary.reorderedTopLevel) {
+    parts.push("Reordered top level");
+  }
 
   return parts.join(" · ");
 }
@@ -300,6 +317,7 @@ export function buildOutlineChangeDescription(
     previous?: OutlineState;
     next: OutlineState;
     primaryNodeId?: NodeId;
+    allowGenericReorder?: boolean;
     maxLines?: number;
   }
 ): OutlineChangeDescription | undefined {
@@ -321,6 +339,7 @@ export function describeOutlineDelta(
     previous?: OutlineState;
     next: OutlineState;
     primaryNodeId?: NodeId;
+    allowGenericReorder?: boolean;
     maxNames?: number;
   }
 ): string {
@@ -337,7 +356,8 @@ function emptySummary(): OutlineChangeSummary {
     renamed: [],
     statusChanged: [],
     updated: [],
-    otherChanges: 0
+    otherChanges: 0,
+    reorderedTopLevel: false
   };
 }
 
@@ -390,19 +410,25 @@ function reorderMoveForNode(
 }
 
 // A node plus its descendants (parent before children), bounded by the detail limit, read from the
-// given state. Used to list a moved subtree's contents in the change log.
+// given state. Used to list a moved subtree's contents in the change log. A visited set guards
+// against a malformed cyclic structure (the tree should have none, but never loop).
 function collectSubtreeRefs(rootId: NodeId, state: OutlineState): OutlineChangeNodeRef[] {
   const refs: OutlineChangeNodeRef[] = [];
+  const seen = new Set<NodeId>();
   const visit = (id: NodeId): void => {
-    if (refs.length >= CHANGE_SUMMARY_DETAIL_LIMIT) {
+    if (refs.length >= CHANGE_SUMMARY_DETAIL_LIMIT || seen.has(id)) {
       return;
     }
+    seen.add(id);
     const node = state.nodes[id];
     if (!node) {
       return;
     }
     refs.push(refForNode(node));
     for (const childId of node.childIds) {
+      if (refs.length >= CHANGE_SUMMARY_DETAIL_LIMIT) {
+        break; // bound the traversal, not just the output, on a huge subtree
+      }
       visit(childId);
     }
   };
@@ -413,13 +439,13 @@ function collectSubtreeRefs(rootId: NodeId, state: OutlineState): OutlineChangeN
 // The single node whose removal makes `prev` and `next` identical -- i.e. the one node that was
 // dragged within a same-set reorder. Undefined when more than one node could be that node (an
 // adjacent swap is genuinely ambiguous -- [a,b,c]->[a,c,b] fits "b down" OR "c up"), so we never
-// guess wrong; the caller then reports a generic "Reordered top level".
+// guess wrong; the caller then suppresses the row or shows a generic one per allowGenericReorder.
 function findReorderedNode(prev: readonly NodeId[], next: readonly NodeId[]): NodeId | undefined {
   if (prev.length !== next.length || sameNodeIdOrder(prev, next)) {
     return undefined;
   }
   // The isolation scan is O(n^2); bound it so a profile with a very large top level can't add cost
-  // on the ack path. Beyond this the caller reports a generic "Reordered top level".
+  // on the ack path. Beyond this the caller falls back to suppress/generic per allowGenericReorder.
   if (prev.length > CHANGE_SUMMARY_DETAIL_LIMIT) {
     return undefined;
   }
@@ -490,8 +516,10 @@ function renderDeletedOrCreated(verb: string, group: OutlineChangeGroup, maxName
 
 function renderMove(move: OutlineChangeMove): string {
   // Show the kind and, for a subtree, the descendant count so a generic "Group" is identifiable.
+  // The count is a lower bound (trailing "+") when the subtree scan hit the cap.
   const descendants = move.contents.length - 1;
-  const subject = `${nameWithKind(move.ref)}${descendants > 0 ? ` (+${descendants})` : ""}`;
+  const capped = move.contents.length >= CHANGE_SUMMARY_DETAIL_LIMIT;
+  const subject = `${nameWithKind(move.ref)}${descendants > 0 ? ` (+${descendants}${capped ? "+" : ""})` : ""}`;
   if (move.within) {
     const position = move.after !== undefined ? `after ${quote(move.after)}` : "to the top";
     // Top-level reorders read better without the "within top level" prefix.

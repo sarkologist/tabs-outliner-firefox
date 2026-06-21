@@ -229,6 +229,13 @@ describe("summarizeOutlineDelta / describeOutlineDelta", () => {
     expect(
       buildOutlineChangeDescription({ rootIds: ["a", "c", "b"] }, { previous, next })
     ).toBeUndefined();
+    // A command/undo (allowGenericReorder) still gets a generic row -- a user action shouldn't vanish.
+    expect(
+      describeOutlineDelta(
+        { rootIds: ["a", "c", "b"] },
+        { previous, next, allowGenericReorder: true }
+      )
+    ).toBe("Reordered top level");
   });
 
   it("does not call a same-count add+remove a reorder", () => {
