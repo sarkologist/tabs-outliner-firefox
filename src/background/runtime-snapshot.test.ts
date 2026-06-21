@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { getNormalWindows, getNormalWindowsIncludingTabs } from "./runtime-snapshot.js";
+import {
+  getNormalWindow,
+  getNormalWindows,
+  getNormalWindowShells,
+  getNormalWindowsIncludingTabs
+} from "./runtime-snapshot.js";
 import type { RuntimeTab, RuntimeWindow } from "../model/types.js";
 
 function snapshotApi(
@@ -259,5 +264,93 @@ describe("runtime snapshot", () => {
         ]
       }
     ]);
+  });
+});
+
+// The extension's own full-size popup windows (sidebars, exported-tree viewer) are tracked by id in
+// the controller. Firefox transiently reports a freshly-created type:"popup" window as
+// type:"normal", so the windowTypes:["normal"] filter alone is not enough to keep the extension's
+// own window out of a reconciliation snapshot -- it would be reconciled into the outline as a
+// phantom "Group" window. excludeWindowIds drops those windows regardless of the reported type.
+describe("runtime snapshot excludeWindowIds", () => {
+  it("getNormalWindows omits an excluded window and its tabs even when reported as normal", async () => {
+    const api = snapshotApi(
+      [
+        { id: 10, focused: false, incognito: false },
+        // A full-size sidebar popup Firefox is momentarily reporting as a normal window.
+        { id: 99, focused: true, incognito: false }
+      ],
+      [
+        {
+          id: 1,
+          windowId: 10,
+          index: 0,
+          active: true,
+          url: "https://real.example/",
+          title: "Real"
+        },
+        { id: 2, windowId: 99, index: 0, active: true, url: "about:blank", title: "New Tab" }
+      ]
+    );
+
+    await expect(getNormalWindows(api, new Set([99]))).resolves.toEqual([
+      {
+        id: 10,
+        focused: false,
+        incognito: false,
+        tabs: [expect.objectContaining({ id: 1 })]
+      }
+    ]);
+  });
+
+  it("getNormalWindowsIncludingTabs drops an event tab whose window is excluded", async () => {
+    const api = snapshotApi(
+      [
+        { id: 10, focused: true, incognito: false },
+        { id: 99, focused: false, incognito: false }
+      ],
+      [{ id: 1, windowId: 10, index: 0, active: true, url: "https://real.example/", title: "Real" }]
+    );
+
+    await expect(
+      getNormalWindowsIncludingTabs(
+        api,
+        [{ id: 2, windowId: 99, index: 0, active: true, url: "about:blank", title: "New Tab" }],
+        new Set([99])
+      )
+    ).resolves.toEqual([
+      {
+        id: 10,
+        focused: true,
+        incognito: false,
+        tabs: [expect.objectContaining({ id: 1 })]
+      }
+    ]);
+  });
+
+  it("getNormalWindowShells omits excluded windows", async () => {
+    const api = snapshotApi(
+      [
+        { id: 10, focused: false, incognito: false },
+        { id: 99, focused: true, incognito: false }
+      ],
+      []
+    );
+
+    await expect(getNormalWindowShells(api, new Set([99]))).resolves.toEqual([
+      { id: 10, focused: false, incognito: false, tabs: [] }
+    ]);
+  });
+
+  it("getNormalWindow returns undefined for an excluded window id", async () => {
+    const api = snapshotApi([{ id: 99, focused: true, incognito: false }], []);
+
+    await expect(getNormalWindow(api, 99, new Set([99]))).resolves.toBeUndefined();
+    await expect(getNormalWindow(api, 99)).resolves.toEqual({
+      id: 99,
+      focused: true,
+      incognito: false,
+      tabs: []
+    });
   });
 });

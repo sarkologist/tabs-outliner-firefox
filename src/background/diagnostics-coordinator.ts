@@ -33,6 +33,12 @@ export type DiagnosticsCoordinatorDeps = {
   waitForSchedulerIdle: () => Promise<void>;
   /** Whether no high-priority mutation is queued/running; a busy scheduler serves the cached readout instead. */
   isHighPrioritySchedulerIdle: () => boolean;
+  /**
+   * The extension's own full-size popup window ids to exclude from the runtime-window snapshot, so a
+   * full-size sidebar (which Firefox may transiently report as type:"normal") is not counted as a
+   * real browser window in the Firefox-vs-outline readout. A getter because the set is live.
+   */
+  excludeWindowIds?: () => ReadonlySet<number>;
 };
 
 export type DiagnosticsCoordinator = {
@@ -52,8 +58,15 @@ export type DiagnosticsCoordinator = {
 export function createDiagnosticsCoordinator(
   deps: DiagnosticsCoordinatorDeps
 ): DiagnosticsCoordinator {
-  const { api, perfTrace, now, ensureState, waitForSchedulerIdle, isHighPrioritySchedulerIdle } =
-    deps;
+  const {
+    api,
+    perfTrace,
+    now,
+    ensureState,
+    waitForSchedulerIdle,
+    isHighPrioritySchedulerIdle,
+    excludeWindowIds
+  } = deps;
 
   let diagnosticsInFlight: Promise<OutlineDiagnostics> | undefined;
   let lastDiagnostics: { value: OutlineDiagnostics; atMs: number } | undefined;
@@ -98,7 +111,7 @@ export function createDiagnosticsCoordinator(
         const windows = await perfTrace.measureAsync(
           "background.diagnostics.getWindows",
           async () => {
-            diagnosticsRuntimeWindows ??= await getNormalWindows(api);
+            diagnosticsRuntimeWindows ??= await getNormalWindows(api, excludeWindowIds?.());
             return diagnosticsRuntimeWindows;
           }
         );

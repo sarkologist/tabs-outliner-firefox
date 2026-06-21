@@ -495,7 +495,8 @@ export function createBackgroundController(
     now,
     ensureState,
     waitForSchedulerIdle,
-    isHighPrioritySchedulerIdle
+    isHighPrioritySchedulerIdle,
+    excludeWindowIds: () => fullSizeOutlinerWindowIds
   });
 
   const storageMaintenance = createStorageMaintenanceCoordinator({
@@ -2277,14 +2278,26 @@ export function createBackgroundController(
   }
 
   // Open an extension page in its own maximized popup window and track it in
-  // fullSizeOutlinerWindowIds. The window is type:"popup" so getNormalWindows filters it out of
-  // reconciliation, and the in-flight counter keeps its transient focus from being treated as a
-  // real-window focus change. Both the full-size sidebar and the exported-tree viewer use this.
+  // fullSizeOutlinerWindowIds. The window is type:"popup", but Firefox transiently reports a
+  // freshly-created popup as type:"normal", so the windowTypes:["normal"] snapshot filter alone is
+  // not enough -- reconciliation must also exclude fullSizeOutlinerWindowIds (every reconcile/focus
+  // window snapshot passes it), or the extension's own window is reconciled into the outline as a
+  // phantom "Group" window, one per open. The in-flight counter keeps its transient focus from being
+  // treated as a real-window focus change. Both the full-size sidebar and the exported-tree viewer
+  // use this.
   async function openTrackedOutlinerPopup(
     path: string,
     traceLabel: string,
     onWindowCreated?: (windowId: number) => void
   ): Promise<{ ok: true }> {
+    // Warm the outline state BEFORE creating the popup. On a cold/just-woken background the popup's
+    // own early tab/focus event would otherwise trigger the first ensureState() -- running the
+    // startup runtime reconcile while the popup is live, unregistered, and (transiently) reported as
+    // type:"normal", which mints a phantom "Group" window. The startup reconcile must also still
+    // discover genuine windows opened since the last save, so it cannot use the mid-creation
+    // unknown-window filter; doing the load here (a no-op when state is already warm, i.e. the common
+    // re-open case) keeps startup off the in-flight window entirely.
+    await ensureState();
     sidebarWindowCreationInFlight += 1;
     try {
       const windowInfo = await perfTrace.measureAsync(traceLabel, () =>
@@ -2426,12 +2439,49 @@ export function createBackgroundController(
     };
   }
 
+  // Whether a runtime window is one of the extension's own full-size popups (sidebar / exported-tree
+  // viewer) that must never be reconciled into the outline. Two cases:
+  //   - an already-registered popup (fullSizeOutlinerWindowIds), and
+  //   - while a popup is mid-creation (sidebarWindowCreationInFlight > 0), any window the outline
+  //     does not own. The popup's own tab/focus events fire from inside windows.create, BEFORE
+  //     openTrackedOutlinerPopup can register its id, and Firefox may still report it as
+  //     type:"normal" -- so the id set alone is not enough during creation, but the popup is
+  //     necessarily a window the outline does not yet know about. A genuine new browser window
+  //     opened in that brief interval is re-discovered by its next runtime event (there is no
+  //     windows.onCreated listener; discovery is event-driven), so treating it as a popup here is
+  //     safe -- it only defers, never drops, the real window.
+  function isExtensionOwnedPopupWindow(windowId: number, index: RuntimeStateIndex): boolean {
+    if (fullSizeOutlinerWindowIds.has(windowId)) {
+      return true;
+    }
+    return sidebarWindowCreationInFlight > 0 && !index.liveWindowNodeIdsByRuntimeId.has(windowId);
+  }
+
+  // Drop the extension's own popups from a runtime-window snapshot before it feeds a window-minting
+  // reconcile (reconcileWithWindows), so a full-size sidebar -- including one still mid-creation that
+  // getNormalWindows could not exclude by id yet -- is never turned into a phantom "Group" window.
+  // Outside popup creation this is a no-op (registered popups are already excluded at the
+  // getNormalWindows query, so they are not in the snapshot). NOT for close-detection snapshots:
+  // dropping a window there could make a real window look missing and be closed.
+  function reconcileSnapshotWithoutOwnedPopups(
+    windows: RuntimeWindow[],
+    index: RuntimeStateIndex
+  ): RuntimeWindow[] {
+    return windows.filter((windowInfo) => !isExtensionOwnedPopupWindow(windowInfo.id, index));
+  }
+
   async function shouldIgnoreSidebarWindowFocus(windowId: number): Promise<boolean> {
     if (fullSizeOutlinerWindowIds.has(windowId)) {
       return true;
     }
     if (sidebarWindowCreationInFlight === 0 || windowId === api.windows.WINDOW_ID_NONE) {
       return false;
+    }
+    // A focus to a window the outline does not own, while a popup is mid-creation, is almost
+    // certainly that popup (its id is not registered yet and Firefox may report it as normal). Ignore
+    // it so the focus refresh does not reconcile it in as a phantom window.
+    if (isExtensionOwnedPopupWindow(windowId, runtimeIndexForState(await ensureState()))) {
+      return true;
     }
     return !(await getNormalWindow(api, windowId));
   }
@@ -2512,7 +2562,9 @@ export function createBackgroundController(
 
   async function initializeState(): Promise<OutlineState> {
     const [windows, v4Loaded, lifecycleJournal, startupKeys] = await Promise.all([
-      perfTrace.measureAsync("background.runtime.getWindows", () => getNormalWindows(api)),
+      perfTrace.measureAsync("background.runtime.getWindows", () =>
+        getNormalWindows(api, fullSizeOutlinerWindowIds)
+      ),
       // Loads the v4 snapshot AND migrates the bulk shards onto the external shard store (IndexedDB)
       // on the first run, returning the authoritative post-migration result -- so the dominant
       // startup read happens once, in parallel with getNormalWindows. Verify-before-delete; a shard-
@@ -3632,7 +3684,7 @@ export function createBackgroundController(
     delta: OutlineDelta,
     commandType: TrackableHistoryCommandType
   ): Promise<HistoryRuntimeApplication> {
-    const windowsBeforeReplay = await getNormalWindows(api);
+    const windowsBeforeReplay = await getNormalWindows(api, fullSizeOutlinerWindowIds);
     let next = repairState(
       preserveClosedNodesDuringHistoryReplay(current, applyOutlineDelta(current, delta))
     );
@@ -3682,7 +3734,7 @@ export function createBackgroundController(
   async function reconcileHistoryReplayResultWithRuntime(
     next: OutlineState
   ): Promise<HistoryRuntimeApplication> {
-    const windowsSnapshot = await getNormalWindows(api);
+    const windowsSnapshot = await getNormalWindows(api, fullSizeOutlinerWindowIds);
     return {
       state: reconcileHistoryReplayResultWithRuntimeSnapshot(next, windowsSnapshot, {
         closeMissing: true,
@@ -3699,7 +3751,9 @@ export function createBackgroundController(
   ): OutlineState {
     const index = buildRuntimeStateIndex(next);
     const windows = runtimeReconciler.normalizeSnapshot({
-      windows: windowsSnapshot,
+      // History replay (undo/redo) can run concurrently with a popup being created; keep the
+      // mid-creation popup out of this window-minting reconcile too (no-op outside creation).
+      windows: reconcileSnapshotWithoutOwnedPopups(windowsSnapshot, index),
       state: next,
       index,
       ledger: runtimeFacts,
@@ -4552,7 +4606,7 @@ export function createBackgroundController(
     const shells = await perfTrace.measureAsync(
       "background.runtime.getWindowShells",
       { focusWindowCount: options.focusWindowIds?.size ?? 0 },
-      () => getNormalWindowShells(api).catch(() => undefined)
+      () => getNormalWindowShells(api, fullSizeOutlinerWindowIds).catch(() => undefined)
     );
     if (!shells) {
       return "fallback";
@@ -4581,8 +4635,34 @@ export function createBackgroundController(
     options: RefreshOptions = {}
   ): Promise<boolean> {
     const current = await ensureState();
-    const closeMissing = options.closeMissing ?? eventTabs.length === 0;
     const index = runtimeIndexForState(current);
+    // The extension's own full-size sidebar / exported-tree viewer popups are not real browser
+    // windows, but Firefox still fires tab events for them (e.g. the about:blank "New Tab" a popup
+    // briefly shows before its page loads). Such an event tab is in a window the outline does not
+    // own (see isExtensionOwnedPopupWindow), so the runtime-event fast path would create a phantom
+    // "Group" window for it -- bypassing the getNormalWindows snapshot that already excludes
+    // fullSizeOutlinerWindowIds. Drop those event tabs. If that leaves no real event tabs AND the
+    // refresh carries no other work, there is nothing to reconcile; otherwise continue with the
+    // remaining (or empty) event tabs so coalesced focus / activation / forceSnapshot / closeMissing
+    // work is still applied.
+    if (eventTabs.length > 0) {
+      const realEventTabs = eventTabs.filter(
+        (evidence) => !isExtensionOwnedPopupWindow(evidence.tab.windowId, index)
+      );
+      if (realEventTabs.length < eventTabs.length) {
+        const hasNonTabRefreshWork =
+          options.forceSnapshot === true ||
+          options.closeMissing === true ||
+          options.focusWindowId !== undefined ||
+          (options.focusWindowIds?.size ?? 0) > 0 ||
+          (options.activationByWindowId?.size ?? 0) > 0;
+        if (realEventTabs.length === 0 && !hasNonTabRefreshWork) {
+          return false;
+        }
+        eventTabs = realEventTabs;
+      }
+    }
+    const closeMissing = options.closeMissing ?? eventTabs.length === 0;
     const nativeFocusGain = await tryNativeFocusGainInPlaceForRefresh(
       current,
       index,
@@ -4689,11 +4769,15 @@ export function createBackgroundController(
       },
       () =>
         currentEventTabs.length > 0 && !eventNeedsShapeCorroboration
-          ? getNormalWindowsIncludingTabs(api, currentEventTabs)
-          : getNormalWindows(api)
+          ? getNormalWindowsIncludingTabs(api, currentEventTabs, fullSizeOutlinerWindowIds)
+          : getNormalWindows(api, fullSizeOutlinerWindowIds)
     );
+    // Keep the extension's own popups out of any window-minting reconcile (see
+    // reconcileSnapshotWithoutOwnedPopups): whatever triggered this reconcile (the popup's own
+    // coalesced activation/focus, a forced snapshot, etc.), a mid-creation popup that getNormalWindows
+    // could not exclude yet is dropped here rather than minted as a phantom "Group" window.
     let windows = runtimeReconciler.normalizeSnapshot({
-      windows: windowsSnapshot,
+      windows: reconcileSnapshotWithoutOwnedPopups(windowsSnapshot, index),
       state: current,
       index,
       ledger: runtimeFacts,
@@ -4833,10 +4917,10 @@ export function createBackgroundController(
         suspiciousShapeTabCount: suspiciousShapeTabIds.length,
         orderMismatchedWindowCount: orderMismatchedWindowIds.length
       },
-      () => getNormalWindows(api)
+      () => getNormalWindows(api, fullSizeOutlinerWindowIds)
     );
     const corroboratingWindows = runtimeReconciler.normalizeSnapshot({
-      windows: corroboratingSnapshot,
+      windows: reconcileSnapshotWithoutOwnedPopups(corroboratingSnapshot, index),
       state: current,
       index,
       ledger: runtimeFacts,
@@ -4873,10 +4957,10 @@ export function createBackgroundController(
       {
         orderConflictWindowCount: conflictWindowIds.length
       },
-      () => getNormalWindows(api)
+      () => getNormalWindows(api, fullSizeOutlinerWindowIds)
     );
     const corroboratingWindows = runtimeReconciler.normalizeSnapshot({
-      windows: corroboratingSnapshot,
+      windows: reconcileSnapshotWithoutOwnedPopups(corroboratingSnapshot, index),
       state: current,
       index,
       ledger: runtimeFacts,
@@ -6280,7 +6364,7 @@ export function createBackgroundController(
   > {
     const current = await ensureState();
     const index = runtimeIndexForState(current);
-    const windowSnapshot = await getNormalWindows(api);
+    const windowSnapshot = await getNormalWindows(api, fullSizeOutlinerWindowIds);
     const windows = runtimeReconciler.normalizeSnapshot({
       windows: windowSnapshot,
       state: current,
@@ -6405,7 +6489,7 @@ export function createBackgroundController(
         {
           missingWindowCount: missingWindowIds.length
         },
-        () => getNormalWindows(api)
+        () => getNormalWindows(api, fullSizeOutlinerWindowIds)
       ),
       state: current,
       index: runtimeIndexForState(current),
