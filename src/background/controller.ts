@@ -49,7 +49,8 @@ import {
   getNormalWindow,
   getNormalWindows,
   getNormalWindowShells,
-  getNormalWindowsIncludingTabs
+  getNormalWindowsIncludingTabs,
+  getWindowTabsByIds
 } from "./runtime-snapshot.js";
 import { createStateCache } from "./state-cache.js";
 import {
@@ -4841,7 +4842,11 @@ export function createBackgroundController(
     }
     if (currentEventTabs.length > 0 || (closeMissing && currentEventTabs.length === 0)) {
       windows = await corroborateMissingOrMismatchedLiveTabs(current, index, windows, {
-        includeOrderMismatches: !noEventOrderCorroborated
+        includeOrderMismatches: !noEventOrderCorroborated,
+        // The raw first snapshot is the overlay base for a scoped re-read. It only corresponds to
+        // `windows` when the no-event order corroboration did not already swap in a different fresh
+        // snapshot; when it did, withhold it so corroboration re-reads globally.
+        rawSnapshot: noEventOrderCorroborated ? undefined : windowsSnapshot
       });
     }
     const acceptedRuntimeWindowsForRefresh =
@@ -4878,11 +4883,43 @@ export function createBackgroundController(
     return state !== current;
   }
 
+  // The windows a snapshot corroboration may re-read SCOPED (one tabs.query per window) instead of
+  // via a global getNormalWindows -- or `undefined` when it must stay global. Scoping is sound only
+  // when every symptom is window-local: a suspicious-shape tab is present in its known window, and an
+  // order mismatch names its window directly. A missing or window-mismatched tab may have relocated
+  // to (or vanished into) an unnamed window, which only the whole-browser view can resolve.
+  function windowIdsForScopedSnapshotCorroboration(
+    windows: RuntimeWindow[],
+    discrepancies: {
+      missingTabIds: number[];
+      mismatchedTabIds: number[];
+      suspiciousShapeTabIds: number[];
+      orderMismatchedWindowIds: number[];
+    }
+  ): Set<number> | undefined {
+    if (discrepancies.missingTabIds.length > 0 || discrepancies.mismatchedTabIds.length > 0) {
+      return undefined;
+    }
+    const suspiciousShapeTabIdSet = new Set(discrepancies.suspiciousShapeTabIds);
+    const affectedWindowIds = new Set(discrepancies.orderMismatchedWindowIds);
+    for (const windowInfo of windows) {
+      for (const tab of windowInfo.tabs ?? []) {
+        if (suspiciousShapeTabIdSet.has(tab.id)) {
+          affectedWindowIds.add(windowInfo.id);
+        }
+      }
+    }
+    return affectedWindowIds;
+  }
+
   async function corroborateMissingOrMismatchedLiveTabs(
     current: OutlineState,
     index: RuntimeStateIndex,
     windows: RuntimeWindow[],
-    options: { includeOrderMismatches?: boolean } = {}
+    options: {
+      includeOrderMismatches?: boolean;
+      rawSnapshot?: RuntimeWindow[] | undefined;
+    } = {}
   ): Promise<RuntimeWindow[]> {
     const includeOrderMismatches = options.includeOrderMismatches ?? true;
     // The discrepancy detectors, each a closure over one snapshot. The same four run on the current
@@ -4931,15 +4968,73 @@ export function createBackgroundController(
       return windows;
     }
 
+    // The corroboration defeats a stale FIRST read by re-reading fresh truth. By default that is a
+    // second global getNormalWindows -- a global tabs.query({}) whose cost scales with total live
+    // tabs across every window, and the single worst convoy in the activation/refresh profiles
+    // (3-5s back-to-back with the first read on a churny multi-window session). When EVERY symptom
+    // is window-local (a present tab whose shape/order changed in a known window), we only need to
+    // re-read those windows: scope to them via getWindowTabsByIds and overlay the fresh tabs onto
+    // the first RAW snapshot, keeping the result globally complete so the downstream closeMissing
+    // reconcile never mistakes an un-requeried window for an emptied one. missing/mismatched stay
+    // global: a tab that vanished from or relocated across windows can only be resolved by the
+    // whole-browser view (proving absence/relocation), per the "narrow only events that can't
+    // require proving absence" rule.
+    const scopedCorroborationWindowIds = windowIdsForScopedSnapshotCorroboration(windows, {
+      missingTabIds,
+      mismatchedTabIds,
+      suspiciousShapeTabIds,
+      orderMismatchedWindowIds
+    });
+    const rawWindowsById =
+      options.rawSnapshot && scopedCorroborationWindowIds
+        ? new Map(options.rawSnapshot.map((windowInfo) => [windowInfo.id, windowInfo]))
+        : undefined;
+    const canScope = Boolean(
+      rawWindowsById &&
+      scopedCorroborationWindowIds &&
+      scopedCorroborationWindowIds.size > 0 &&
+      [...scopedCorroborationWindowIds].every((windowId) => rawWindowsById.has(windowId))
+    );
     const corroboratingSnapshot = await perfTrace.measureAsync(
       "background.runtime.getWindows.corroborate",
       {
         missingTabCount: missingTabIds.length,
         mismatchedTabCount: mismatchedTabIds.length,
         suspiciousShapeTabCount: suspiciousShapeTabIds.length,
-        orderMismatchedWindowCount: orderMismatchedWindowIds.length
+        orderMismatchedWindowCount: orderMismatchedWindowIds.length,
+        ...(canScope ? { scopedWindowCount: scopedCorroborationWindowIds!.size } : {})
       },
-      () => getNormalWindows(api, fullSizeOutlinerWindowIds)
+      canScope
+        ? async () => {
+            const rawSnapshot = options.rawSnapshot!;
+            const rawById = rawWindowsById!;
+            const freshTabsByWindowId = await getWindowTabsByIds(
+              api,
+              scopedCorroborationWindowIds!
+            );
+            // The scoped re-read may only re-confirm SHAPE/ORDER of the same tabs; it must not change
+            // any window's tab-id membership. If a re-read window gained or lost a tab id versus the
+            // first raw read, a tab moved across windows (or closed) in the gap between the two reads
+            // -- the destination window is frozen at the first read, so the overlay could show the
+            // tab missing and a closeMissing reconcile would mis-close a tab that actually relocated.
+            // Membership equality guarantees the overlay introduces no new missing/mismatched tab
+            // (both were already 0), so closeMissing stays exactly as safe as the first snapshot; any
+            // membership drift falls back to the global whole-browser view that can place the tab.
+            const membershipPreserved = [...freshTabsByWindowId].every(([windowId, freshTabs]) =>
+              sameNumberSet(
+                (rawById.get(windowId)?.tabs ?? []).map((tab) => tab.id),
+                freshTabs.map((tab) => tab.id)
+              )
+            );
+            if (!membershipPreserved) {
+              return getNormalWindows(api, fullSizeOutlinerWindowIds);
+            }
+            return rawSnapshot.map((windowInfo) => {
+              const freshTabs = freshTabsByWindowId.get(windowInfo.id);
+              return freshTabs ? { ...windowInfo, tabs: freshTabs } : windowInfo;
+            });
+          }
+        : () => getNormalWindows(api, fullSizeOutlinerWindowIds)
     );
     const corroboratingWindows = runtimeReconciler.normalizeSnapshot({
       windows: reconcileSnapshotWithoutOwnedPopups(corroboratingSnapshot, index),

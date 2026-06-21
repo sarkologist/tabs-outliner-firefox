@@ -4,7 +4,8 @@ import {
   getNormalWindow,
   getNormalWindows,
   getNormalWindowShells,
-  getNormalWindowsIncludingTabs
+  getNormalWindowsIncludingTabs,
+  getWindowTabsByIds
 } from "./runtime-snapshot.js";
 import type { RuntimeTab, RuntimeWindow } from "../model/types.js";
 
@@ -352,5 +353,56 @@ describe("runtime snapshot excludeWindowIds", () => {
       incognito: false,
       tabs: []
     });
+  });
+});
+
+describe("getWindowTabsByIds", () => {
+  const tabsByWindow: Record<number, RuntimeTab[]> = {
+    10: [
+      { id: 1, windowId: 10, index: 1, active: false, url: "https://one-b.example/", title: "1b" },
+      { id: 2, windowId: 10, index: 0, active: true, url: "https://one-a.example/", title: "1a" }
+    ],
+    20: [
+      { id: 3, windowId: 20, index: 0, active: true, url: "https://two.example/", title: "2" },
+      {
+        id: 4,
+        windowId: 20,
+        index: 1,
+        active: false,
+        incognito: true,
+        url: "https://two-private.example/",
+        title: "2p"
+      }
+    ],
+    30: [{ id: 5, windowId: 30, index: 0, active: true, url: "https://three.example/", title: "3" }]
+  };
+
+  function scopedQueryApi(): Pick<WebExtensionBrowser, "windows" | "tabs"> {
+    const api = snapshotApi([], []);
+    api.tabs.query = vi.fn(async (queryInfo: { windowId?: number } = {}) =>
+      typeof queryInfo.windowId === "number" ? (tabsByWindow[queryInfo.windowId] ?? []) : []
+    );
+    return api;
+  }
+
+  it("re-queries only the requested windows, scoped and de-duplicated", async () => {
+    const api = scopedQueryApi();
+
+    const result = await getWindowTabsByIds(api, [10, 30, 10]);
+
+    expect(result.get(10)?.map((tab) => tab.id)).toEqual([2, 1]); // sorted by index
+    expect(result.get(30)?.map((tab) => tab.id)).toEqual([5]);
+    expect(result.has(20)).toBe(false);
+    // One scoped query per distinct window id; never the global all-windows query.
+    expect(vi.mocked(api.tabs.query).mock.calls).toEqual([[{ windowId: 10 }], [{ windowId: 30 }]]);
+    expect(api.tabs.query).not.toHaveBeenCalledWith({});
+  });
+
+  it("drops incognito tabs from a window's re-read", async () => {
+    const api = scopedQueryApi();
+
+    const result = await getWindowTabsByIds(api, [20]);
+
+    expect(result.get(20)?.map((tab) => tab.id)).toEqual([3]);
   });
 });
