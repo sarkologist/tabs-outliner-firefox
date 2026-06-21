@@ -142,40 +142,82 @@ describe("summarizeOutlineDelta / describeOutlineDelta", () => {
   });
 
   it("names the moved top-level node and its new position (after X / to the top)", () => {
-    const previous = state(
-      [
-        node({ id: "a", kind: "window", title: "Inbox" }),
-        node({ id: "b", kind: "window", title: "Work" }),
-        node({ id: "c", kind: "window", title: "Reading" })
-      ],
-      ["a", "b", "c"]
-    );
-    // 'Reading' dragged up to after 'Inbox'. The moved root carries no material change, so the
-    // delta only reports the new rootId order.
-    const afterInbox = state(
-      [
-        node({ id: "a", kind: "window", title: "Inbox" }),
-        node({ id: "b", kind: "window", title: "Work" }),
-        node({ id: "c", kind: "window", title: "Reading" })
-      ],
-      ["a", "c", "b"]
-    );
-    expect(describeOutlineDelta({ rootIds: ["a", "c", "b"] }, { previous, next: afterInbox })).toBe(
-      "Moved 'Reading' after 'Inbox'"
+    const roots = [
+      node({ id: "a", kind: "window", title: "Inbox" }),
+      node({ id: "b", kind: "window", title: "Work" }),
+      node({ id: "c", kind: "window", title: "Reading" }),
+      node({ id: "d", kind: "window", title: "Archive" })
+    ];
+    const previous = state(roots, ["a", "b", "c", "d"]);
+    // 'Work' dragged down to the end (after 'Archive') -- an unambiguous single move. The moved
+    // root carries no material change, so the delta only reports the new rootId order.
+    const moved = state(roots, ["a", "c", "d", "b"]);
+    expect(describeOutlineDelta({ rootIds: ["a", "c", "d", "b"] }, { previous, next: moved })).toBe(
+      "Moved 'Work' after 'Archive'"
     );
 
-    // 'Work' dragged to the very top.
-    const toTop = state(
+    // 'Reading' dragged to the very top.
+    const toTop = state(roots, ["c", "a", "b", "d"]);
+    expect(describeOutlineDelta({ rootIds: ["c", "a", "b", "d"] }, { previous, next: toTop })).toBe(
+      "Moved 'Reading' to the top"
+    );
+  });
+
+  it("names an adjacent top-level swap when the moved node is in the delta (authoritative)", () => {
+    const roots = [
+      node({ id: "a", kind: "window", title: "Inbox" }),
+      node({ id: "b", kind: "window", title: "Work" }),
+      node({ id: "c", kind: "window", title: "Reading" })
+    ];
+    const previous = state(roots, ["a", "b", "c"]);
+    const next = state(roots, ["a", "c", "b"]);
+    // The command journaled the moved root (Reading), so it is named even though the swap is
+    // otherwise ambiguous from the order alone.
+    expect(
+      describeOutlineDelta(
+        { updatedNodes: [next.nodes["c"]!], rootIds: ["a", "c", "b"] },
+        { previous, next }
+      )
+    ).toBe("Moved 'Reading' after 'Inbox'");
+  });
+
+  it("falls back to 'Reordered top level' for an ambiguous adjacent swap not in the delta", () => {
+    const roots = [
+      node({ id: "a", kind: "window", title: "Inbox" }),
+      node({ id: "b", kind: "window", title: "Work" }),
+      node({ id: "c", kind: "window", title: "Reading" })
+    ];
+    const previous = state(roots, ["a", "b", "c"]);
+    const next = state(roots, ["a", "c", "b"]);
+    // Order alone can't say whether Work moved down or Reading moved up; don't guess.
+    expect(describeOutlineDelta({ rootIds: ["a", "c", "b"] }, { previous, next })).toBe(
+      "Reordered top level"
+    );
+  });
+
+  it("does not call a same-count add+remove a reorder", () => {
+    const previous = state(
       [
-        node({ id: "a", kind: "window", title: "Inbox" }),
-        node({ id: "b", kind: "window", title: "Work" }),
-        node({ id: "c", kind: "window", title: "Reading" })
+        node({ id: "a", kind: "window", title: "Keep" }),
+        node({ id: "b", kind: "window", title: "Old" })
       ],
-      ["b", "a", "c"]
+      ["a", "b"]
     );
-    expect(describeOutlineDelta({ rootIds: ["b", "a", "c"] }, { previous, next: toTop })).toBe(
-      "Moved 'Work' to the top"
+    const next = state(
+      [
+        node({ id: "a", kind: "window", title: "Keep" }),
+        node({ id: "c", kind: "window", title: "New" })
+      ],
+      ["a", "c"]
     );
+    // 'Old' removed, 'New' added: same root count, different set.
+    const text = describeOutlineDelta(
+      { deletedNodeIds: ["b"], updatedNodes: [next.nodes["c"]!], rootIds: ["a", "c"] },
+      { previous, next }
+    );
+    expect(text).not.toContain("Reordered");
+    expect(text).toContain("Deleted 'Old' (window)");
+    expect(text).toContain("Added 'New' (window)");
   });
 
   it("falls back to 'Reordered top level' for an unisolatable multi-node shuffle", () => {

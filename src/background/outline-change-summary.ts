@@ -117,6 +117,9 @@ export function summarizeOutlineDelta(
   const renamed: OutlineChangeRename[] = [];
   const statusChanged: OutlineChangeStatus[] = [];
   const updated: OutlineChangeNodeRef[] = [];
+  // True once a top-level reorder is named authoritatively from updatedNodes, so the rootId-diff
+  // fallback below doesn't also (possibly mis-)attribute it.
+  let topLevelReorderNamed = false;
 
   for (const node of updatedNodes) {
     const prev = previous?.nodes[node.id];
@@ -139,17 +142,23 @@ export function summarizeOutlineDelta(
         from: parentTitle(prev.parentId, previous, next),
         within: false
       });
-    } else if (node.parentId !== undefined && isReordered(node.id, node.parentId, previous, next)) {
-      // Within-parent reorder. (Top-level reorders are handled after the loop from the rootId order,
-      // since the moved root may not appear in updatedNodes.)
-      const where = parentTitle(node.parentId, next, previous);
+    } else if (isReordered(node.id, node.parentId, previous, next)) {
+      // Reorder of a node that IS in updatedNodes -- authoritative, so it names the right node even
+      // for an adjacent swap. (A top-level reorder whose moved root carries no material change never
+      // reaches updatedNodes; that residual case is recovered from the rootId diff after the loop.)
+      const parentId = node.parentId;
+      const where = parentId === undefined ? "top level" : parentTitle(parentId, next, previous);
+      const siblings = parentId === undefined ? next.rootIds : next.nodes[parentId]?.childIds;
       moved.push({
         ref: refForNode(node),
         to: where,
         from: where,
         within: true,
-        ...afterField(node.id, next.nodes[node.parentId]?.childIds, next, previous)
+        ...afterField(node.id, siblings, next, previous)
       });
+      if (parentId === undefined) {
+        topLevelReorderNamed = true;
+      }
     }
     if (displayTitle(prev) !== displayTitle(node)) {
       renamed.push({ ref: refForNode(node), from: displayTitle(prev), to: displayTitle(node) });
@@ -174,8 +183,17 @@ export function summarizeOutlineDelta(
   // Top-level reorder: the root order changed but the moved root may carry no material change (so
   // it never reached updatedNodes). Recover the moved node + its new neighbour from the rootId
   // diff so the row names it ("Moved 'B' after 'A'") instead of a bare "Reordered top level".
+  // Residual top-level reorder: the root order changed but the moved root carried no material
+  // change, so it never reached updatedNodes. Recover the moved node from the rootId diff. Only a
+  // pure reorder (same set, different order) is described here; a root added/removed is already
+  // covered by created/deleted even when the count happens to stay equal.
   let reorderedTopLevel = false;
-  if (previous && delta.rootIds) {
+  if (
+    previous &&
+    delta.rootIds &&
+    !topLevelReorderNamed &&
+    isNodeIdPermutation(previous.rootIds, next.rootIds)
+  ) {
     const movedRootId = findReorderedNode(previous.rootIds, next.rootIds);
     if (movedRootId !== undefined) {
       moved.push({
@@ -185,10 +203,7 @@ export function summarizeOutlineDelta(
         within: true,
         ...afterField(movedRootId, next.rootIds, next, previous)
       });
-    } else if (
-      previous.rootIds.length === next.rootIds.length &&
-      !sameNodeIdOrder(previous.rootIds, next.rootIds)
-    ) {
+    } else {
       // A multi-node shuffle we could not isolate to one node.
       reorderedTopLevel = true;
     }
@@ -342,8 +357,9 @@ function isReordered(
 }
 
 // The single node whose removal makes `prev` and `next` identical -- i.e. the one node that was
-// dragged within a same-set reorder. Undefined when the lists are not a permutation (a structural
-// add/remove handles that) or when more than one node shifted (a multi-node shuffle).
+// dragged within a same-set reorder. Undefined when more than one node could be that node (an
+// adjacent swap is genuinely ambiguous -- [a,b,c]->[a,c,b] fits "b down" OR "c up"), so we never
+// guess wrong; the caller then reports a generic "Reordered top level".
 function findReorderedNode(prev: readonly NodeId[], next: readonly NodeId[]): NodeId | undefined {
   if (prev.length !== next.length || sameNodeIdOrder(prev, next)) {
     return undefined;
@@ -353,12 +369,16 @@ function findReorderedNode(prev: readonly NodeId[], next: readonly NodeId[]): No
   if (prev.length > CHANGE_SUMMARY_DETAIL_LIMIT) {
     return undefined;
   }
+  let found: NodeId | undefined;
   for (const id of next) {
     if (sameNodeIdOrder(withoutId(prev, id), withoutId(next, id))) {
-      return id;
+      if (found !== undefined) {
+        return undefined; // ambiguous: more than one node could be the moved one
+      }
+      found = id;
     }
   }
-  return undefined;
+  return found;
 }
 
 function withoutId(ids: readonly NodeId[], omit: NodeId): NodeId[] {
@@ -367,6 +387,15 @@ function withoutId(ids: readonly NodeId[], omit: NodeId): NodeId[] {
 
 function sameNodeIdOrder(left: readonly NodeId[], right: readonly NodeId[]): boolean {
   return left.length === right.length && left.every((id, index) => id === right[index]);
+}
+
+// Same set of ids in any order (ids within a sibling/root list are unique).
+function isNodeIdPermutation(left: readonly NodeId[], right: readonly NodeId[]): boolean {
+  if (left.length !== right.length) {
+    return false;
+  }
+  const rightSet = new Set(right);
+  return left.every((id) => rightSet.has(id));
 }
 
 // The "after 'X'" / "to the top" position field for a reordered node, from its new sibling list.
