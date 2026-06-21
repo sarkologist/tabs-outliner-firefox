@@ -2,8 +2,14 @@ import type { RuntimeTab, RuntimeWindow } from "../model/types.js";
 
 type RuntimeSnapshotApi = Pick<WebExtensionBrowser, "tabs" | "windows">;
 
+// `excludeWindowIds` drops windows the extension owns (full-size sidebar / exported-tree viewer
+// popups, tracked by id in the controller). Firefox transiently reports a freshly-created
+// type:"popup" window as type:"normal", so the windowTypes:["normal"] filter alone is not enough to
+// keep the extension's own window out of a reconciliation snapshot -- without this it gets
+// reconciled into the outline as a phantom "Group" window, one per sidebar open.
 export async function getNormalWindows(
-  api: RuntimeSnapshotApi = browser
+  api: RuntimeSnapshotApi = browser,
+  excludeWindowIds?: ReadonlySet<number>
 ): Promise<RuntimeWindow[]> {
   const windows = await api.windows.getAll({
     populate: false,
@@ -12,7 +18,7 @@ export async function getNormalWindows(
   const windowsById = new Map<number, RuntimeWindow>();
 
   for (const windowInfo of windows) {
-    if (!windowInfo.incognito) {
+    if (!windowInfo.incognito && !excludeWindowIds?.has(windowInfo.id)) {
       windowsById.set(windowInfo.id, {
         ...windowInfo,
         tabs: []
@@ -40,9 +46,10 @@ export async function getNormalWindows(
 
 export async function getNormalWindowsIncludingTabs(
   api: RuntimeSnapshotApi,
-  eventTabs: RuntimeTab[]
+  eventTabs: RuntimeTab[],
+  excludeWindowIds?: ReadonlySet<number>
 ): Promise<RuntimeWindow[]> {
-  const windows = await getNormalWindows(api);
+  const windows = await getNormalWindows(api, excludeWindowIds);
   const windowsById = new Map(windows.map((windowInfo) => [windowInfo.id, windowInfo]));
 
   for (const tab of eventTabs) {
@@ -82,21 +89,26 @@ function windowWithTabId(windows: RuntimeWindow[], tabId: number): RuntimeWindow
 // native window focus-gain against fresh truth (which window is actually focused) before
 // flipping the active flag in place, while skipping the expensive all-tabs snapshot.
 export async function getNormalWindowShells(
-  api: RuntimeSnapshotApi = browser
+  api: RuntimeSnapshotApi = browser,
+  excludeWindowIds?: ReadonlySet<number>
 ): Promise<RuntimeWindow[]> {
   const windows = await api.windows.getAll({
     populate: false,
     windowTypes: ["normal"]
   });
   return windows
-    .filter((windowInfo) => !windowInfo.incognito)
+    .filter((windowInfo) => !windowInfo.incognito && !excludeWindowIds?.has(windowInfo.id))
     .map((windowInfo) => ({ ...windowInfo, tabs: [] }));
 }
 
 export async function getNormalWindow(
   api: RuntimeSnapshotApi,
-  windowId: number
+  windowId: number,
+  excludeWindowIds?: ReadonlySet<number>
 ): Promise<RuntimeWindow | undefined> {
+  if (excludeWindowIds?.has(windowId)) {
+    return undefined;
+  }
   const windowInfo = await api.windows
     .get(windowId, {
       populate: false,

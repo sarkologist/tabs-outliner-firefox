@@ -46954,6 +46954,264 @@ describe("background controller lifecycle", () => {
     expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(0);
   });
 
+  it("does not reconcile the full-size sidebar's own popup into the outline as a phantom window", async () => {
+    const runtime = fakeRuntime(
+      [{ id: 10, focused: true, incognito: false }],
+      [{ id: 1, windowId: 10, index: 0, active: true, url: "https://one.example/", title: "One" }]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    await controller.handleMessage({ type: "openSidebarWindow" });
+    const popupWindow = runtime.windows.find((windowInfo) => windowInfo.type === "popup");
+    if (!popupWindow) {
+      throw new Error("Expected popup window to be created");
+    }
+    const popupWindowId = popupWindow.id;
+    // Reproduce the Firefox race that causes the bug: a freshly-created type:"popup" window is
+    // momentarily reported as type:"normal", so the sidebar's own window (and the about:blank "New
+    // Tab" it briefly shows) comes back from windows.getAll({windowTypes:["normal"]}) on the next
+    // reconcile. Without excluding fullSizeOutlinerWindowIds it gets added as a phantom "Group"
+    // window -- one per sidebar open, accumulating as closed windows once the popup stabilizes.
+    popupWindow.type = "normal";
+    runtime.tabs = runtime.tabs.map((tab) =>
+      tab.windowId === popupWindowId ? { ...tab, url: "about:blank", title: "New Tab" } : tab
+    );
+    const popupTab = runtime.tabs.find((tab) => tab.windowId === popupWindowId);
+    if (!popupTab) {
+      throw new Error("Expected the popup to have a tab");
+    }
+    await controller.flushPendingSaves();
+
+    // The popup's own about:blank tab fires tabs.onCreated (exactly the dogfooding sequence). Its
+    // window is unknown to the outline, so this drives a full getNormalWindows reconcile whose
+    // snapshot now includes the mislabeled popup.
+    await runtime.events.tabCreated.emit(popupTab);
+
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(liveWindowNodeForRuntimeWindow(state, popupWindowId)).toBeUndefined();
+    expect(liveWindowIds(state)).toEqual([10]);
+    // The real reconcile still works: the new tab landed in the real window.
+    expect(liveWindowNodeForRuntimeWindow(state, 10)).toBeDefined();
+  });
+
+  it("does not create a phantom when the popup's tab onCreated fires before the window is registered (creation race)", async () => {
+    const runtime = fakeRuntime(
+      [{ id: 10, focused: true, incognito: false }],
+      [{ id: 1, windowId: 10, index: 0, active: true, url: "https://one.example/", title: "One" }]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+
+    // The Firefox race: windows.create fires the popup's about:blank tab onCreated (and Firefox
+    // momentarily reports the popup as type:"normal") BEFORE the create promise resolves -- i.e.
+    // before openTrackedOutlinerPopup adds the window id to fullSizeOutlinerWindowIds.
+    const createWindow = vi.mocked(runtime.api.windows.create).getMockImplementation();
+    if (!createWindow) {
+      throw new Error("Expected windows.create to have a mock implementation");
+    }
+    vi.mocked(runtime.api.windows.create).mockImplementationOnce(async (createData) => {
+      const created = await createWindow(createData);
+      const popup = runtime.windows.find((windowInfo) => windowInfo.id === created.id);
+      if (popup) {
+        popup.type = "normal";
+      }
+      const popupTab = runtime.tabs.find((tab) => tab.windowId === created.id);
+      if (popupTab) {
+        popupTab.url = "about:blank";
+        popupTab.title = "New Tab";
+        await runtime.events.tabCreated.emit(copyTab(popupTab));
+      }
+      return created;
+    });
+
+    await controller.handleMessage({ type: "openSidebarWindow" });
+    await runtime.events.tabCreated.flush();
+    await controller.flushPendingSaves();
+
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(liveWindowIds(state)).toEqual([10]);
+  });
+
+  it("does not create a phantom when the popup's focus event fires before the window is registered (creation race)", async () => {
+    const runtime = fakeRuntime(
+      [{ id: 10, focused: true, incognito: false }],
+      [{ id: 1, windowId: 10, index: 0, active: true, url: "https://one.example/", title: "One" }]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+
+    // The Firefox race for focus: windows.create focuses the new popup and fires
+    // windowFocusChanged BEFORE the create promise resolves -- before openTrackedOutlinerPopup
+    // registers the window id -- and Firefox momentarily reports the popup as type:"normal".
+    const createWindow = vi.mocked(runtime.api.windows.create).getMockImplementation();
+    if (!createWindow) {
+      throw new Error("Expected windows.create to have a mock implementation");
+    }
+    vi.mocked(runtime.api.windows.create).mockImplementationOnce(async (createData) => {
+      const created = await createWindow(createData);
+      for (const windowInfo of runtime.windows) {
+        windowInfo.focused = windowInfo.id === created.id;
+        if (windowInfo.id === created.id) {
+          windowInfo.type = "normal";
+        }
+      }
+      await runtime.events.windowFocusChanged.emit(created.id);
+      return created;
+    });
+
+    await controller.handleMessage({ type: "openSidebarWindow" });
+    await runtime.events.windowFocusChanged.flush();
+    await controller.flushPendingSaves();
+
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(liveWindowIds(state)).toEqual([10]);
+  });
+
+  it("does not create a phantom when the popup's tab activation fires before the window is registered (creation race)", async () => {
+    const runtime = fakeRuntime(
+      [{ id: 10, focused: true, incognito: false }],
+      [{ id: 1, windowId: 10, index: 0, active: true, url: "https://one.example/", title: "One" }]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+
+    // The popup's about:blank tab becomes active during creation, firing tabs.onActivated BEFORE
+    // registration. With no coalesced event tab this queues an activation + closeMissing refresh
+    // (no event tab), so it bypasses the event-tab drop and reaches the getNormalWindows snapshot --
+    // which, mid-creation, must still keep the unregistered/mislabeled popup out of the outline.
+    const createWindow = vi.mocked(runtime.api.windows.create).getMockImplementation();
+    if (!createWindow) {
+      throw new Error("Expected windows.create to have a mock implementation");
+    }
+    vi.mocked(runtime.api.windows.create).mockImplementationOnce(async (createData) => {
+      const created = await createWindow(createData);
+      const popup = runtime.windows.find((windowInfo) => windowInfo.id === created.id);
+      if (popup) {
+        popup.type = "normal";
+      }
+      const popupTab = runtime.tabs.find((tab) => tab.windowId === created.id);
+      if (popupTab) {
+        popupTab.url = "about:blank";
+        popupTab.title = "New Tab";
+        await runtime.events.tabActivated.emit({ tabId: popupTab.id, windowId: created.id });
+      }
+      return created;
+    });
+
+    await controller.handleMessage({ type: "openSidebarWindow" });
+    await runtime.events.tabActivated.flush();
+    await controller.flushPendingSaves();
+
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(liveWindowIds(state)).toEqual([10]);
+  });
+
+  it("does not create a phantom opening a full-size sidebar on a cold background (startup race)", async () => {
+    // A just-woken background has not loaded state yet. If the popup's own early tab event triggers
+    // the first ensureState(), the startup runtime reconcile would run while the popup is live and
+    // (transiently) reported as type:"normal" -- minting the phantom. openTrackedOutlinerPopup warms
+    // state before creating the popup, so startup runs first (popup absent) and the popup's events
+    // then take the warm path that excludes it.
+    const runtime = fakeRuntime(
+      [{ id: 10, focused: true, incognito: false }],
+      [{ id: 1, windowId: 10, index: 0, active: true, url: "https://one.example/", title: "One" }]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    // Deliberately do NOT call ensureState() -- simulate a cold/just-woken background.
+
+    const createWindow = vi.mocked(runtime.api.windows.create).getMockImplementation();
+    if (!createWindow) {
+      throw new Error("Expected windows.create to have a mock implementation");
+    }
+    vi.mocked(runtime.api.windows.create).mockImplementationOnce(async (createData) => {
+      const created = await createWindow(createData);
+      const popup = runtime.windows.find((windowInfo) => windowInfo.id === created.id);
+      if (popup) {
+        popup.type = "normal";
+      }
+      const popupTab = runtime.tabs.find((tab) => tab.windowId === created.id);
+      if (popupTab) {
+        popupTab.url = "about:blank";
+        popupTab.title = "New Tab";
+        await runtime.events.tabCreated.emit(copyTab(popupTab));
+      }
+      return created;
+    });
+
+    await controller.handleMessage({ type: "openSidebarWindow" });
+    await runtime.events.tabCreated.flush();
+    await controller.flushPendingSaves();
+
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(liveWindowIds(state)).toEqual([10]);
+  });
+
+  it("still runs coalesced non-tab refresh work when the only event tab is a full-size popup's", async () => {
+    // Finding-2 guard: dropping the popup's event tab must not also drop other refresh work
+    // (forceSnapshot / focus / activation / closeMissing) coalesced into the same refresh.
+    const runtime = fakeRuntime(
+      [{ id: 10, focused: true, incognito: false }],
+      [{ id: 1, windowId: 10, index: 0, active: true, url: "https://one.example/", title: "One" }]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    await controller.handleMessage({ type: "openSidebarWindow" });
+    const popupWindow = runtime.windows.find((windowInfo) => windowInfo.type === "popup");
+    if (!popupWindow) {
+      throw new Error("Expected popup window to be created");
+    }
+    const popupTab = runtime.tabs.find((tab) => tab.windowId === popupWindow.id);
+    if (!popupTab) {
+      throw new Error("Expected the popup to have a tab");
+    }
+    await controller.flushPendingSaves();
+    vi.mocked(runtime.api.tabs.query).mockClear();
+
+    // The popup's tab is dropped, but the forceSnapshot reconcile must still run (it queries the
+    // browser via getNormalWindows) rather than being short-circuited to a no-op.
+    await controller.refreshFromRuntime([{ ...popupTab }], { forceSnapshot: true });
+
+    expect(runtime.api.tabs.query).toHaveBeenCalled();
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(liveWindowIds(state)).toEqual([10]);
+  });
+
+  it("excludes a mislabeled full-size sidebar popup from a no-event-tab snapshot reconcile", async () => {
+    // Two live windows active at once forces the focus-gain fast path to fall back to the full
+    // getNormalWindows reconcile (the eventTabCount=0 snapshot path the dogfooding profile showed
+    // creating the phantom). With the popup registered but Firefox still reporting it as
+    // type:"normal", that snapshot must exclude it rather than reconcile it into the outline.
+    const runtime = fakeRuntime(
+      [
+        { id: 10, focused: false, incognito: false },
+        { id: 20, focused: true, incognito: false },
+        { id: 30, focused: true, incognito: false }
+      ],
+      [
+        { id: 1, windowId: 10, index: 0, active: true, url: "https://one.example/", title: "One" },
+        { id: 2, windowId: 20, index: 0, active: true, url: "https://two.example/", title: "Two" },
+        { id: 3, windowId: 30, index: 0, active: true, url: "https://three.example/", title: "T" }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    await controller.handleMessage({ type: "openSidebarWindow" });
+    const popupWindow = runtime.windows.find((windowInfo) => windowInfo.type === "popup");
+    if (!popupWindow) {
+      throw new Error("Expected popup window to be created");
+    }
+    const popupWindowId = popupWindow.id;
+    popupWindow.type = "normal"; // Firefox transient mislabel
+    await controller.flushPendingSaves();
+
+    await focusWindowFromBrowser(runtime, 10);
+    await waitForMacrotask();
+
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(liveWindowNodeForRuntimeWindow(state, popupWindowId)).toBeUndefined();
+    expect(liveWindowIds(state)).toEqual([10, 20, 30]);
+  });
+
   it("switches to the existing full-size sidebar when reopened from a regular sidebar", async () => {
     const runtime = fakeRuntime(
       [{ id: 10, focused: true, incognito: false }],
