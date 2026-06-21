@@ -48103,9 +48103,12 @@ describe("background controller lifecycle", () => {
     expect(save?.detail?.nodeDelta).toBeLessThan(0);
 
     // The separate domain "change" row names the deleted node, so an unexpected deletion is obvious.
-    const change = [...snapshot.entries].reverse().find((entry) => entry.kind === "change");
-    expect(change?.change?.headline).toContain("Deleted");
-    expect(change?.change?.lines).toContain("'Two'");
+    // Exactly one change row: the journaled command must NOT also be re-logged by the save-time
+    // (non-journaled) describe.
+    const changeRows = snapshot.entries.filter((entry) => entry.kind === "change");
+    expect(changeRows).toHaveLength(1);
+    expect(changeRows[0]?.change?.headline).toContain("Deleted");
+    expect(changeRows[0]?.change?.lines).toContain("'Two'");
 
     expect(await controller.handleMessage({ type: "clearWriteLog" })).toEqual({ ok: true });
     expect(await controller.handleMessage({ type: "getWriteLog" })).toMatchObject({ entries: [] });

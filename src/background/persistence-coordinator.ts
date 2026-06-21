@@ -81,6 +81,9 @@ const EVENT_JOURNAL_MAX_DELAY_MS = 250;
 // rather than embedded in every save's manifest. Staleness up to this window is harmless:
 // it is superseded by full hydration immediately after first paint.
 const BOOT_SNAPSHOT_WRITE_DELAY_MS = 10000;
+// Cap on how many unjournaled candidate nodes a single save will describe in the write-activity
+// "Changes" list. A bulk reconcile catch-up beyond this is left to the snapshotSave count delta.
+const RECONCILE_DESCRIBE_LIMIT = 200;
 
 export type SaveSchedule = "normal" | "interaction";
 
@@ -419,6 +422,13 @@ export function createPersistenceCoordinator(deps: PersistenceCoordinatorDeps) {
     // on failure. Items queued during the write stay queued (they may postdate nextState).
     const subsumedEventItems =
       journalSeqIncluded !== undefined ? drainPendingEventJournalItems() : [];
+    // Rotate the journaled-id exclusion set for THIS state save up front: appends that land during
+    // the save's await then belong to the next save (and aren't wrongly cleared), and a failure can
+    // union them back. Only state saves consume it (a history-only save must not clear it).
+    const journaledNodeIdsForThisSave = nextState ? journaledNodeIdsSinceSave : new Set<NodeId>();
+    if (nextState) {
+      journaledNodeIdsSinceSave = new Set();
+    }
     // Captured inside the save closure so the write-log snapshotSave entry can report what the
     // compaction did (full vs incremental, how many shards, which generation).
     let compactionDetail:
@@ -501,6 +511,13 @@ export function createPersistenceCoordinator(deps: PersistenceCoordinatorDeps) {
         armEventJournalTimers();
       }
       recordWriteEvent({ kind: "saveFailed", ok: false, detail: { message: errorText(error) } });
+      if (nextState) {
+        // The save did not land; the ids journaled before it are still pending the next state save.
+        journaledNodeIdsSinceSave = new Set([
+          ...journaledNodeIdsForThisSave,
+          ...journaledNodeIdsSinceSave
+        ]);
+      }
       handleStateSaveFailure(nextState, nextHistory, error);
       throw error;
     }
@@ -525,10 +542,10 @@ export function createPersistenceCoordinator(deps: PersistenceCoordinatorDeps) {
     if (nextState) {
       // Name tree changes that reached this snapshot WITHOUT a journal append (startup/reconciliation
       // catch-up) so they appear in the "Changes" list, not just as a node-count bump. Journaled
-      // changes already produced their own rows and are excluded; reorders stay suppressed
-      // (allowGenericReorder defaults false) so a reload's window re-sort adds no noise.
-      recordUnjournaledChange(baseline, nextState, candidateNodeIds, journaledNodeIdsSinceSave);
-      journaledNodeIdsSinceSave = new Set();
+      // changes already produced their own rows and are excluded. (A transient save failure that
+      // promotes the retry to a full diff drops this one row; the change still persists and shows as
+      // a Storage count delta -- acceptable for a best-effort debug log.)
+      recordUnjournaledChange(baseline, nextState, candidateNodeIds, journaledNodeIdsForThisSave);
     }
     if (
       journalSeqIncluded !== undefined &&
@@ -660,19 +677,22 @@ export function createPersistenceCoordinator(deps: PersistenceCoordinatorDeps) {
       return;
     }
     const unjournaled = candidateNodeIds.filter((id) => !journaledNodeIds.has(id));
-    if (unjournaled.length === 0) {
+    // Bound the clone cost: a bulk reconcile catch-up is summarized by the snapshotSave count delta;
+    // describing every node here would clone the whole candidate set before the summary cap applies.
+    if (unjournaled.length === 0 || unjournaled.length > RECONCILE_DESCRIBE_LIMIT) {
       return;
     }
     const delta = outlineMaterialDelta(baseline, next, unjournaled);
     if (delta.updatedNodes.length === 0 && delta.deletedNodeIds.length === 0) {
       return;
     }
-    const rootsChanged = !sameNodeIdList(baseline.rootIds, next.rootIds);
+    // Intentionally NO rootIds: created/deleted/moved are driven by the node ids above; a reorder is
+    // owned by the journal path (or suppressed for reconciliation), and including the (globally
+    // computed) root order here could double-log a journaled top-level reorder.
     const description = buildOutlineChangeDescription(
       {
         ...(delta.updatedNodes.length > 0 ? { updatedNodes: delta.updatedNodes } : {}),
-        ...(delta.deletedNodeIds.length > 0 ? { deletedNodeIds: delta.deletedNodeIds } : {}),
-        ...(rootsChanged ? { rootIds: [...next.rootIds] } : {})
+        ...(delta.deletedNodeIds.length > 0 ? { deletedNodeIds: delta.deletedNodeIds } : {})
       },
       { previous: baseline, next, maxLines: WRITE_LOG_CHANGE_LINE_LIMIT }
     );
