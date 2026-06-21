@@ -47537,6 +47537,103 @@ describe("background controller lifecycle", () => {
     expect(runtime.api.tabs.query).not.toHaveBeenCalledWith({});
   });
 
+  it("scopes the snapshot corroboration re-query to the suspicious-shape tab's window", async () => {
+    const runtime = fakeRuntime(
+      [
+        { id: 10, focused: true, incognito: false },
+        { id: 20, focused: false, incognito: false },
+        { id: 30, focused: false, incognito: false }
+      ],
+      [
+        { id: 1, windowId: 10, index: 0, active: true, url: "https://one.example/", title: "One" },
+        { id: 2, windowId: 20, index: 0, active: true, url: "https://two.example/", title: "Two" },
+        {
+          id: 3,
+          windowId: 30,
+          index: 0,
+          active: true,
+          url: "https://three.example/",
+          title: "Three"
+        }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    vi.mocked(runtime.api.tabs.query).mockClear();
+    runtime.broadcasts.length = 0;
+
+    // The browser quietly changed tab 1's URL (no onUpdated delivered). A full closeMissing refresh
+    // takes one global snapshot, which flags the divergence as a "suspicious shape" in window 10
+    // only -- tabs 2 and 3 still match. Corroborating that single-window suspicion (re-reading to
+    // defeat a stale first read) must re-query just window 10, not run a SECOND global all-windows
+    // tabs.query. That second global read is the dominant cost of an activation/refresh reconcile on
+    // a multi-window session: it scales with total live tabs, not the one tab that changed.
+    const tabOne = runtime.tabs.find((tab) => tab.id === 1)!;
+    tabOne.url = "https://one.example/changed";
+
+    await controller.handleMessage({ type: "refresh" });
+
+    const queries = vi
+      .mocked(runtime.api.tabs.query)
+      .mock.calls.map(([queryInfo]) => (queryInfo ?? {}) as Record<string, unknown>);
+    const globalQueries = queries.filter((queryInfo) => Object.keys(queryInfo).length === 0);
+    const windowTenQueries = queries.filter((queryInfo) => queryInfo.windowId === 10);
+    const otherWindowQueries = queries.filter(
+      (queryInfo) => typeof queryInfo.windowId === "number" && queryInfo.windowId !== 10
+    );
+
+    // The change still lands on the node...
+    const state = (await controller.handleMessage({ type: "getState" })) as OutlineState;
+    expect(state.nodes["tab:1"]?.url).toBe("https://one.example/changed");
+    // ...the base snapshot is the single global read, and the corroboration was scoped to window 10.
+    expect(globalQueries.length).toBe(1);
+    expect(windowTenQueries.length).toBeGreaterThanOrEqual(1);
+    expect(otherWindowQueries).toEqual([]);
+  });
+
+  it("keeps the snapshot corroboration global when a live tab is missing", async () => {
+    const runtime = fakeRuntime(
+      [
+        { id: 10, focused: true, incognito: false },
+        { id: 20, focused: false, incognito: false }
+      ],
+      [
+        { id: 1, windowId: 10, index: 0, active: true, url: "https://one.example/", title: "One" },
+        {
+          id: 4,
+          windowId: 10,
+          index: 1,
+          active: false,
+          url: "https://four.example/",
+          title: "Four"
+        },
+        { id: 2, windowId: 20, index: 0, active: true, url: "https://two.example/", title: "Two" }
+      ]
+    );
+    const controller = createBackgroundController({ api: runtime.api, now: () => 1000 });
+    await controller.ensureState();
+    vi.mocked(runtime.api.tabs.query).mockClear();
+    runtime.broadcasts.length = 0;
+
+    // Tab 4 vanished from window 10 without an onRemoved (window 10 keeps tab 1, so it is not an
+    // empty-window placeholder that normalize would re-fill). A missing tab could have moved to any
+    // window, so proving its absence requires a fresh GLOBAL snapshot -- the corroboration must NOT
+    // scope to a single window here, or a tab that actually relocated would be wrongly closed.
+    runtime.tabs = runtime.tabs.filter((tab) => tab.id !== 4);
+
+    await controller.handleMessage({ type: "refresh" });
+
+    const queries = vi
+      .mocked(runtime.api.tabs.query)
+      .mock.calls.map(([queryInfo]) => (queryInfo ?? {}) as Record<string, unknown>);
+    const globalQueries = queries.filter((queryInfo) => Object.keys(queryInfo).length === 0);
+    const scopedQueries = queries.filter((queryInfo) => typeof queryInfo.windowId === "number");
+
+    // Base snapshot + corroboration are both global; absence is never proven from a scoped read.
+    expect(globalQueries.length).toBeGreaterThanOrEqual(2);
+    expect(scopedQueries).toEqual([]);
+  });
+
   it("falls back to a full snapshot when a native focus-gain targets an unknown window", async () => {
     const runtime = fakeRuntime(
       [{ id: 10, focused: true, incognito: false }],

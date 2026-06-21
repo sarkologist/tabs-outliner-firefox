@@ -84,6 +84,28 @@ function windowWithTabId(windows: RuntimeWindow[], tabId: number): RuntimeWindow
   return windows.find((windowInfo) => windowInfo.tabs?.some((candidate) => candidate.id === tabId));
 }
 
+// Re-read only the live tabs of specific windows (one scoped `tabs.query({windowId})` each),
+// returning windowId -> sorted, non-incognito tabs. Lets a snapshot corroboration re-read just the
+// handful of windows that looked suspicious WITHOUT the global `tabs.query({})` that dominates
+// getNormalWindows -- the second read then scales with the suspicious windows, not the total live
+// tab count across every open window. Callers stay correct only when the suspicion is window-local
+// (a present tab whose shape/order changed); proving a tab's ABSENCE still needs the global view.
+export async function getWindowTabsByIds(
+  api: RuntimeSnapshotApi,
+  windowIds: Iterable<number>
+): Promise<Map<number, RuntimeTab[]>> {
+  const uniqueWindowIds = [...new Set(windowIds)];
+  const entries = await Promise.all(
+    uniqueWindowIds.map(
+      async (windowId): Promise<readonly [number, RuntimeTab[]]> => [
+        windowId,
+        sortTabs((await api.tabs.query({ windowId })).filter((tab) => !tab.incognito))
+      ]
+    )
+  );
+  return new Map(entries);
+}
+
 // Window shells only: the focused/state flags and ids of the current normal windows,
 // WITHOUT the global `tabs.query` that dominates getNormalWindows. Used to corroborate a
 // native window focus-gain against fresh truth (which window is actually focused) before
