@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { NodeId, OutlineNode, OutlineState } from "../model/types.js";
+import { isLiveTabNode } from "../model/live-nodes.js";
 import {
   generatedTraceConfig,
   generatedTraceTimeoutMs
@@ -49,7 +50,7 @@ describe("visible tree projection", () => {
     const projection = buildVisibleTreeProjection(state, "");
 
     expect(projection.nodeCount).toBe(LARGE_NODE_COUNT + 1);
-    expect(projection.closedCount).toBe(0);
+    expect(projection.liveTabCount).toBe(LARGE_NODE_COUNT);
     expect(projection.rows).toHaveLength(LARGE_NODE_COUNT + 1);
     expect(projection.rows[0]).toMatchObject({
       nodeId: "window:1",
@@ -242,7 +243,7 @@ describe("visible tree projection", () => {
       deletedNodeIds: [deletedNodeId],
       updatedNodes: [root],
       rootIds: ["window:1"],
-      deletedClosedCount: 0
+      deletedLiveTabCount: 0
     });
 
     expect(applied).toBe(true);
@@ -288,7 +289,7 @@ describe("visible tree projection", () => {
       deletedNodeIds: [],
       updatedNodes: [root, next.nodes[movedNodeId]!],
       rootIds: ["window:1"],
-      deletedClosedCount: 0
+      deletedLiveTabCount: 0
     });
 
     expect(applied).toBe(true);
@@ -339,7 +340,7 @@ describe("visible tree projection", () => {
         deletedNodeIds: [],
         updatedNodes: [root, next.nodes[movedNodeId]!],
         rootIds: ["window:1"],
-        deletedClosedCount: 0
+        deletedLiveTabCount: 0
       })
     ).toEqual({
       parentId: "window:1",
@@ -376,7 +377,7 @@ describe("visible tree projection", () => {
       deletedNodeIds: [],
       updatedNodes: [next.nodes["window:1"]!, next.nodes["window:2"]!, next.nodes["tab:b"]!],
       rootIds: ["window:1", "window:2"],
-      deletedClosedCount: 0
+      deletedLiveTabCount: 0
     });
 
     expect(applied).toBe(true);
@@ -437,7 +438,7 @@ describe("visible tree projection", () => {
         deletedNodeIds: [],
         updatedNodes: [root, next.nodes[movedNodeId]!],
         rootIds: ["window:1"],
-        deletedClosedCount: 0
+        deletedLiveTabCount: 0
       })
     ).toBeUndefined();
   });
@@ -459,7 +460,7 @@ describe("visible tree projection", () => {
       deletedNodeIds: ["tab:parent", "tab:child"],
       updatedNodes: [next.nodes["window:1"]!],
       rootIds: ["window:1"],
-      deletedClosedCount: 0
+      deletedLiveTabCount: 2
     });
 
     expect(applied).toBe(true);
@@ -468,7 +469,7 @@ describe("visible tree projection", () => {
     expect(projection.visibleNodeIdSet.size).toBe(0);
     expect(projection.matchingNodeIds.size).toBe(0);
     expect(projection.nodeCount).toBe(2);
-    expect(projection.closedCount).toBe(0);
+    expect(projection.liveTabCount).toBe(1);
     expect(projection.matchCount).toBe(0);
   });
 
@@ -488,7 +489,7 @@ describe("visible tree projection", () => {
       deletedNodeIds: ["tab:child"],
       updatedNodes: [next.nodes["tab:parent"]!],
       rootIds: ["window:1"],
-      deletedClosedCount: 0
+      deletedLiveTabCount: 0
     });
 
     expect(applied).toBe(true);
@@ -528,7 +529,7 @@ describe("visible tree projection", () => {
       deletedNodeIds: ["group:wrapper"],
       updatedNodes: [next.nodes["window:1"]!],
       rootIds: ["window:2", "window:1"],
-      deletedClosedCount: 0
+      deletedLiveTabCount: 0
     });
 
     expect(applied).toBe(false);
@@ -557,7 +558,7 @@ describe("visible tree projection", () => {
       deletedNodeIds: [],
       updatedNodes: [next.nodes["window:1"]!, next.nodes["tab:1"]!, next.nodes["tab:2"]!],
       rootIds: ["window:1"],
-      deletedClosedCount: 0
+      deletedLiveTabCount: 0
     });
 
     expect(applied).toBe(true);
@@ -567,7 +568,7 @@ describe("visible tree projection", () => {
       { nodeId: "tab:2", index: 2, parentRowIndex: 0, subtreeEndIndex: 3 }
     ]);
     expect(projection.nodeCount).toBe(3);
-    expect(projection.closedCount).toBe(0);
+    expect(projection.liveTabCount).toBe(2);
     expect(projection.visibleNodeIds).toEqual(["window:1", "tab:1", "tab:2"]);
     expect(projection.visibleNodeIdSet).toEqual(new Set(["window:1", "tab:1", "tab:2"]));
     expect(projection.activeTabNodeId).toBe("tab:2");
@@ -603,7 +604,7 @@ describe("visible tree projection", () => {
         next.nodes["tab:target"]!
       ],
       rootIds: ["window:1"],
-      deletedClosedCount: 0
+      deletedLiveTabCount: 0
     });
 
     expect(applied).toBe(true);
@@ -641,7 +642,7 @@ describe("visible tree projection", () => {
       deletedNodeIds: [],
       updatedNodes: [next.nodes["window:1"]!, next.nodes["tab:2"]!],
       rootIds: ["window:1"],
-      deletedClosedCount: 0
+      deletedLiveTabCount: 0
     });
 
     expect(applied).toBe(false);
@@ -724,7 +725,7 @@ function runGeneratedMoveEquivalenceTrace(seed: number, steps: number): void {
       deletedNodeIds: [],
       updatedNodes: operation.updatedNodes,
       rootIds: operation.next.rootIds,
-      deletedClosedCount: 0
+      deletedLiveTabCount: 0
     };
     const appliedPath = applyHydratedTreePatch(operation.next, projection, patch);
     history[history.length - 1] += ` [${appliedPath}]`;
@@ -865,7 +866,7 @@ describe("isAlreadyAppliedDeletePatch", () => {
       deletedNodeIds: ["tab:2"],
       updatedNodes: [next.nodes["window:1"]!],
       rootIds: ["window:1"],
-      deletedClosedCount: 0
+      deletedLiveTabCount: 0
     };
 
     // Before the delete is applied, the node is still present -> the patch must run.
@@ -939,7 +940,7 @@ function runGeneratedPatchEquivalenceTrace(seed: number, steps: number): void {
     const label = `step ${step + 1}: ${operation.name}`;
     history.push(label);
     const projection = buildVisibleTreeProjection(state, "");
-    const applied = applyGeneratedPatchOperation(operation, projection);
+    const applied = applyGeneratedPatchOperation(operation, projection, state);
 
     expect(applied, history.join("\n")).toBe(true);
     expect(projectionSnapshot(projection), history.join("\n")).toEqual(
@@ -967,13 +968,16 @@ function generatedPatchOperation(
 
 function applyGeneratedPatchOperation(
   operation: GeneratedPatchOperation,
-  projection: VisibleTreeProjection
+  projection: VisibleTreeProjection,
+  previous: OutlineState
 ): boolean {
   const patch = {
     deletedNodeIds: operation.deletedNodeIds,
     updatedNodes: operation.updatedNodes,
     rootIds: operation.next.rootIds,
-    deletedClosedCount: 0
+    deletedLiveTabCount: operation.deletedNodeIds.filter((nodeId) =>
+      isLiveTabNode(previous.nodes[nodeId])
+    ).length
   };
   return operation.kind === "insert"
     ? applyInsertTreeStructurePatchToProjection(operation.next, projection, patch)
@@ -1070,7 +1074,7 @@ function projectionSnapshot(projection: VisibleTreeProjection) {
     activeTabNodeId: projection.activeTabNodeId,
     activeTabRowIndex: projection.activeTabRowIndex,
     nodeCount: projection.nodeCount,
-    closedCount: projection.closedCount,
+    liveTabCount: projection.liveTabCount,
     matchCount: projection.matchCount
   };
 }
@@ -1468,7 +1472,7 @@ function relocateGroupLikeNodeOperation(
         deletedNodeIds: [],
         updatedNodes,
         rootIds: [...next.rootIds],
-        deletedClosedCount: 0
+        deletedLiveTabCount: 0
       },
       previousRootIds: [...state.rootIds]
     };
@@ -1490,7 +1494,12 @@ function relocateGroupLikeNodeOperation(
   return {
     name: `reorder top-level ${targetId} ${currentIndex}->${insertIndex}`,
     next,
-    update: { deletedNodeIds: [], updatedNodes, rootIds: [...next.rootIds], deletedClosedCount: 0 },
+    update: {
+      deletedNodeIds: [],
+      updatedNodes,
+      rootIds: [...next.rootIds],
+      deletedLiveTabCount: 0
+    },
     previousRootIds: [...state.rootIds]
   };
 }

@@ -20,7 +20,7 @@ export type TreeStructureUpdate = {
   deletedNodeIds: NodeId[];
   updatedNodes: OutlineNode[];
   rootIds: NodeId[];
-  deletedClosedCount: number;
+  deletedLiveTabCount: number;
 };
 
 export type SameParentReorderUpdate = {
@@ -35,7 +35,7 @@ export type SameParentReorderUpdate = {
 export type NodeStateUpdate = {
   type: "nodeStateUpdated";
   updatedNodes: OutlineNode[];
-  closedCountDelta: number;
+  liveTabCountDelta: number;
 };
 
 export type StateDiffMode = "identity" | "material";
@@ -60,8 +60,8 @@ export function treeStructureUpdateFromStateChange(
       updatedNodes.push(node);
     }
   }
-  const deletedClosedCount = deletedNodeIds.filter(
-    (nodeId) => previous.nodes[nodeId]?.status === "closed"
+  const deletedLiveTabCount = deletedNodeIds.filter((nodeId) =>
+    isLiveTabNode(previous.nodes[nodeId])
   ).length;
 
   return {
@@ -69,7 +69,7 @@ export function treeStructureUpdateFromStateChange(
     deletedNodeIds,
     updatedNodes,
     rootIds: next.rootIds,
-    deletedClosedCount
+    deletedLiveTabCount
   };
 }
 
@@ -145,8 +145,8 @@ export function treeStructureUpdateFromCandidateNodeIds(
       updatedNodes.push(node);
     }
   }
-  const deletedClosedCount = deletedNodeIds.filter(
-    (nodeId) => previous.nodes[nodeId]?.status === "closed"
+  const deletedLiveTabCount = deletedNodeIds.filter((nodeId) =>
+    isLiveTabNode(previous.nodes[nodeId])
   ).length;
 
   return {
@@ -154,7 +154,7 @@ export function treeStructureUpdateFromCandidateNodeIds(
     deletedNodeIds,
     updatedNodes,
     rootIds: next.rootIds,
-    deletedClosedCount
+    deletedLiveTabCount
   };
 }
 
@@ -272,7 +272,7 @@ export function nodeStateUpdateFromStateChange(
   }
 
   const updatedNodes: OutlineNode[] = [];
-  let closedCountDelta = 0;
+  let liveTabCountDelta = 0;
   for (const nodeId of nextNodeIds) {
     const previousNode = previous.nodes[nodeId];
     const node = next.nodes[nodeId]!;
@@ -289,15 +289,15 @@ export function nodeStateUpdateFromStateChange(
       return undefined;
     }
     updatedNodes.push(node);
-    const wasClosed = previousNode.status === "closed" ? 1 : 0;
-    const isClosed = node.status === "closed" ? 1 : 0;
-    closedCountDelta += isClosed - wasClosed;
+    const wasLiveTab = isLiveTabNode(previousNode) ? 1 : 0;
+    const isLiveTab = isLiveTabNode(node) ? 1 : 0;
+    liveTabCountDelta += isLiveTab - wasLiveTab;
   }
 
   return {
     type: "nodeStateUpdated",
     updatedNodes,
-    closedCountDelta
+    liveTabCountDelta
   };
 }
 
@@ -313,7 +313,7 @@ export function nodeStateUpdateForNodeIds(
   }
 
   const updatedNodes: OutlineNode[] = [];
-  let closedCountDelta = 0;
+  let liveTabCountDelta = 0;
   for (const nodeId of nodeIds) {
     const previousNode = previous.nodes[nodeId];
     const node = next.nodes[nodeId];
@@ -330,15 +330,15 @@ export function nodeStateUpdateForNodeIds(
       return undefined;
     }
     updatedNodes.push(node);
-    const wasClosed = previousNode.status === "closed" ? 1 : 0;
-    const isClosed = node.status === "closed" ? 1 : 0;
-    closedCountDelta += isClosed - wasClosed;
+    const wasLiveTab = isLiveTabNode(previousNode) ? 1 : 0;
+    const isLiveTab = isLiveTabNode(node) ? 1 : 0;
+    liveTabCountDelta += isLiveTab - wasLiveTab;
   }
 
   return {
     type: "nodeStateUpdated",
     updatedNodes,
-    closedCountDelta
+    liveTabCountDelta
   };
 }
 

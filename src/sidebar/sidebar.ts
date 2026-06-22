@@ -894,7 +894,7 @@ function applySparseScrollWindowSnapshot(
   const nextProjection = projectionFromInitialTreeSnapshot(snapshot);
   if (!nextProjection.isSearchActive && options.countMode !== "snapshot") {
     nextProjection.nodeCount = currentProjection.nodeCount;
-    nextProjection.closedCount = currentProjection.closedCount;
+    nextProjection.liveTabCount = currentProjection.liveTabCount;
     nextProjection.matchCount = currentProjection.matchCount;
   }
   currentProjection = nextProjection;
@@ -2057,9 +2057,9 @@ function refreshPartialSearchProjectionAfterNodeStateUpdate(update: NodeStateUpd
   const localProjection = buildVisibleTreeProjection(currentState, currentSearchQuery);
   const matchingNodeIds = updatedSearchMatchingNodeIds(previousProjection, update);
   localProjection.nodeCount = previousProjection.nodeCount;
-  localProjection.closedCount = Math.max(
+  localProjection.liveTabCount = Math.max(
     0,
-    previousProjection.closedCount + update.closedCountDelta
+    previousProjection.liveTabCount + update.liveTabCountDelta
   );
   localProjection.matchingNodeIds = matchingNodeIds;
   localProjection.matchCount = matchingNodeIds.size;
@@ -2384,7 +2384,7 @@ function updateProjectionChrome(projection: VisibleTreeProjection): void {
   if (stateCount) {
     const countText = projection.isSearchActive
       ? `${projection.matchCount} ${pluralize(projection.matchCount, "match")} / ${projection.nodeCount} items`
-      : `${projection.nodeCount} items / ${projection.closedCount} saved`;
+      : `${projection.nodeCount} items / ${projection.liveTabCount} open`;
     stateCount.textContent = countText;
     // The counter ellipsizes on a narrow toolbar; keep the full value on hover. The hydration hint
     // takes precedence when we are still backfilling from the sparse snapshot.
@@ -2415,7 +2415,7 @@ function projectionFromInitialTreeSnapshot(snapshot: InitialTreeSnapshot): Visib
       : {}),
     totalRowCount: snapshot.projection.totalRowCount,
     nodeCount: snapshot.projection.nodeCount,
-    closedCount: snapshot.projection.closedCount,
+    liveTabCount: snapshot.projection.liveTabCount,
     matchCount: snapshot.projection.matchCount
   };
 }
@@ -2526,7 +2526,7 @@ function cloneVisibleTreeProjection(projection: VisibleTreeProjection): VisibleT
       ? { totalRowCount: projection.totalRowCount }
       : {}),
     nodeCount: projection.nodeCount,
-    closedCount: projection.closedCount,
+    liveTabCount: projection.liveTabCount,
     matchCount: projection.matchCount
   };
 }
@@ -2945,9 +2945,9 @@ function applyNodeStateUpdate(update: NodeStateUpdate): void {
       refreshProjectionActiveWindowFlags(state, currentProjection);
     }
     refreshProjectionActiveTabTarget(state, currentProjection);
-    currentProjection.closedCount = Math.max(
+    currentProjection.liveTabCount = Math.max(
       0,
-      currentProjection.closedCount + update.closedCountDelta
+      currentProjection.liveTabCount + update.liveTabCountDelta
     );
 
     for (const row of currentProjection.rows) {
@@ -3198,7 +3198,7 @@ function applySameParentReorderUpdate(update: SameParentReorderUpdate): void {
         : { ...movedNode, parentId: update.parentId }
     ],
     rootIds: [...update.rootIds],
-    deletedClosedCount: 0
+    deletedLiveTabCount: 0
   });
 }
 

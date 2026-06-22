@@ -1,4 +1,5 @@
 import type { NodeId, OutlineNode, OutlineState } from "../model/types.js";
+import { isLiveTabNode } from "../model/live-nodes.js";
 import { isOutlinerSidebarNode } from "../model/outliner-page.js";
 
 // The sparse first-paint projection: a bounded (256-row) slice of the outline
@@ -53,7 +54,7 @@ export type InitialTreeSnapshot = {
     activeTabRowIndex?: number;
     totalRowCount: number;
     nodeCount: number;
-    closedCount: number;
+    liveTabCount: number;
     matchCount: number;
   };
   coverage?: ProjectionSliceCoverage;
@@ -80,7 +81,7 @@ type InitialTreeProjection = {
   activeTabNodeId?: NodeId;
   activeTabRowIndex?: number;
   nodeCount: number;
-  closedCount: number;
+  liveTabCount: number;
 };
 
 export type InitialTreeSnapshotProjector = {
@@ -249,7 +250,7 @@ function buildInitialTreeProjection(state: OutlineState, query: string): Initial
     ...(activeTabNodeId ? { activeTabNodeId } : {}),
     ...(typeof activeTabRowIndex === "number" ? { activeTabRowIndex } : {}),
     nodeCount: nodeValues.length,
-    closedCount: nodeValues.filter((node) => node.status === "closed").length
+    liveTabCount: nodeValues.filter((node) => isLiveTabNode(node)).length
   };
 }
 
@@ -308,7 +309,7 @@ function initialTreeSnapshotFromProjection(
         : {}),
       totalRowCount: projection.rows.length,
       nodeCount: projection.nodeCount,
-      closedCount: projection.closedCount,
+      liveTabCount: projection.liveTabCount,
       matchCount: projection.matchingNodeIds.size
     },
     coverage,

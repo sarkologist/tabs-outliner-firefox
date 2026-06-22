@@ -60,7 +60,7 @@ function renderInitialSnapshot(snapshot: InitialTreeSnapshot): void {
   tree.append(fragment);
 
   if (stateCount) {
-    const countText = `${snapshot.projection.nodeCount} items / ${snapshot.projection.closedCount} saved`;
+    const countText = `${snapshot.projection.nodeCount} items / ${snapshot.projection.liveTabCount} open`;
     stateCount.textContent = countText;
     // Keep the full counter value on hover (it ellipsizes on a narrow toolbar); the hydration hint
     // wins while the sparse boot snapshot is still being backfilled.

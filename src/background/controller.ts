@@ -5722,12 +5722,12 @@ export function createBackgroundController(
           deletedNodeIds: [],
           updatedNodes,
           rootIds: current.rootIds,
-          deletedClosedCount: 0
+          deletedLiveTabCount: 0
         }
       : {
           type: "nodeStateUpdated",
           updatedNodes,
-          closedCountDelta: 0
+          liveTabCountDelta: 0
         };
     return {
       handled: true,
@@ -6202,7 +6202,7 @@ export function createBackgroundController(
     broadcastNodeStateUpdate({
       type: "nodeStateUpdated",
       updatedNodes,
-      closedCountDelta: 0
+      liveTabCountDelta: 0
     });
     scheduleStateSave(next, "normal", uniqueIds);
   }

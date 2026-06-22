@@ -54377,7 +54377,7 @@ describe("background controller lifecycle", () => {
       | {
           type?: string;
           updatedNodes?: OutlineState["nodes"][string][];
-          closedCountDelta?: number;
+          liveTabCountDelta?: number;
           state?: OutlineState;
         }
       | undefined;
@@ -54389,7 +54389,7 @@ describe("background controller lifecycle", () => {
       live: { tabId: 22, windowId: 10 },
       restoredFromClosed: true
     });
-    expect(restoreBroadcast?.closedCountDelta).toBe(-1);
+    expect(restoreBroadcast?.liveTabCountDelta).toBe(1);
     expect(restoreBroadcast?.state).toBeUndefined();
     await controller.flushPendingSaves();
     expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(1);
@@ -56025,7 +56025,7 @@ describe("background controller lifecycle", () => {
           status: "live"
         })
       ],
-      closedCountDelta: -1
+      liveTabCountDelta: 1
     });
     await controller.flushPendingSaves();
     expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(1);
@@ -56090,7 +56090,7 @@ describe("background controller lifecycle", () => {
       | {
           type?: string;
           updatedNodes?: OutlineState["nodes"][string][];
-          closedCountDelta?: number;
+          liveTabCountDelta?: number;
           state?: OutlineState;
         }
       | undefined;
@@ -56111,7 +56111,7 @@ describe("background controller lifecycle", () => {
       active: true,
       live: { tabId: 2, windowId: restoredRuntimeWindowId }
     });
-    expect(restoreBroadcast?.closedCountDelta).toBe(-2);
+    expect(restoreBroadcast?.liveTabCountDelta).toBe(1);
     expect(restoreBroadcast?.state).toBeUndefined();
     await controller.flushPendingSaves();
     expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(1);
@@ -56398,14 +56398,14 @@ describe("background controller lifecycle", () => {
       | {
           type?: string;
           updatedNodes?: OutlineState["nodes"][string][];
-          closedCountDelta?: number;
+          liveTabCountDelta?: number;
           state?: OutlineState;
         }
       | undefined;
     expect(closeBroadcast?.type).toBe("nodeStateUpdated");
     expect(closeBroadcast?.updatedNodes?.map((node) => node.id)).toEqual(["tab:2"]);
     expect(closeBroadcast?.updatedNodes?.[0]?.status).toBe("closed");
-    expect(closeBroadcast?.closedCountDelta).toBe(1);
+    expect(closeBroadcast?.liveTabCountDelta).toBe(-1);
     expect(closeBroadcast?.state).toBeUndefined();
     await controller.flushPendingSaves();
     expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(1);
@@ -56454,10 +56454,10 @@ describe("background controller lifecycle", () => {
     expect(state.nodes["tab:2"]?.status).toBe("closed");
     expect(stateBroadcasts(runtime.broadcasts)).toHaveLength(1);
     const closeBroadcast = runtime.broadcasts[0] as
-      | { type?: string; closedCountDelta?: number }
+      | { type?: string; liveTabCountDelta?: number }
       | undefined;
     expect(closeBroadcast?.type).toBe("nodeStateUpdated");
-    expect(closeBroadcast?.closedCountDelta).toBe(1);
+    expect(closeBroadcast?.liveTabCountDelta).toBe(-1);
     await controller.flushPendingSaves();
     expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(1);
   });
@@ -56513,7 +56513,7 @@ describe("background controller lifecycle", () => {
           status: "closed"
         })
       ],
-      closedCountDelta: 1
+      liveTabCountDelta: -1
     });
     await controller.flushPendingSaves();
     expect(storageSetCallsExcludingLifecycleJournal(runtime)).toHaveLength(1);
@@ -56618,7 +56618,7 @@ describe("background controller lifecycle", () => {
       | {
           type?: string;
           updatedNodes?: OutlineState["nodes"][string][];
-          closedCountDelta?: number;
+          liveTabCountDelta?: number;
           state?: OutlineState;
         }
       | undefined;
@@ -56627,7 +56627,7 @@ describe("background controller lifecycle", () => {
       "tab:2",
       "window:20"
     ]);
-    expect(closeBroadcast?.closedCountDelta).toBe(2);
+    expect(closeBroadcast?.liveTabCountDelta).toBe(-1);
     expect(closeBroadcast?.state).toBeUndefined();
   });
 
@@ -56695,7 +56695,7 @@ describe("background controller lifecycle", () => {
       | {
           type?: string;
           updatedNodes?: OutlineState["nodes"][string][];
-          closedCountDelta?: number;
+          liveTabCountDelta?: number;
           state?: OutlineState;
         }
       | undefined;
@@ -56704,7 +56704,7 @@ describe("background controller lifecycle", () => {
       "tab:2",
       "window:20"
     ]);
-    expect(closeBroadcast?.closedCountDelta).toBe(2);
+    expect(closeBroadcast?.liveTabCountDelta).toBe(-1);
     expect(closeBroadcast?.state).toBeUndefined();
   });
 
@@ -58276,7 +58276,7 @@ describe("background controller lifecycle", () => {
       | {
           type?: string;
           updatedNodes?: OutlineState["nodes"][string][];
-          closedCountDelta?: number;
+          liveTabCountDelta?: number;
           state?: OutlineState;
         }
       | undefined;
@@ -58291,7 +58291,7 @@ describe("background controller lifecycle", () => {
     expect(restoreBroadcast?.updatedNodes?.find((node) => node.id === "window:10")?.active).toBe(
       false
     );
-    expect(restoreBroadcast?.closedCountDelta).toBe(-1);
+    expect(restoreBroadcast?.liveTabCountDelta).toBe(0);
     expect(restoreBroadcast?.state).toBeUndefined();
 
     runtime.windows = [
@@ -62360,7 +62360,7 @@ describe("background controller lifecycle", () => {
       | {
           type?: string;
           updatedNodes?: OutlineState["nodes"][string][];
-          closedCountDelta?: number;
+          liveTabCountDelta?: number;
           state?: OutlineState;
         }
       | undefined;
@@ -62368,7 +62368,7 @@ describe("background controller lifecycle", () => {
     expect(closeBroadcast?.updatedNodes?.map((node) => node.id).sort()).toEqual(
       [importedChildId, importedRootId, importedSubgroupId].sort()
     );
-    expect(closeBroadcast?.closedCountDelta).toBe(3);
+    expect(closeBroadcast?.liveTabCountDelta).toBe(-2);
     expect(closeBroadcast?.state).toBeUndefined();
   });
 
@@ -62495,7 +62495,7 @@ describe("background controller lifecycle", () => {
       | {
           type?: string;
           updatedNodes?: OutlineState["nodes"][string][];
-          closedCountDelta?: number;
+          liveTabCountDelta?: number;
           state?: OutlineState;
         }
       | undefined;
@@ -62503,7 +62503,7 @@ describe("background controller lifecycle", () => {
     expect(closeBroadcast?.updatedNodes?.map((node) => node.id).sort()).toEqual(
       [importedChildId, importedGrandchildId, importedRootId].sort()
     );
-    expect(closeBroadcast?.closedCountDelta).toBe(3);
+    expect(closeBroadcast?.liveTabCountDelta).toBe(-3);
     expect(closeBroadcast?.state).toBeUndefined();
   });
 

@@ -1,4 +1,5 @@
 import type { NodeId, OutlineNode, OutlineState } from "../model/types.js";
+import { isLiveTabNode } from "../model/live-nodes.js";
 import { isOutlinerSidebarNode } from "../model/outliner-page.js";
 
 export type VisibleTreeRow = {
@@ -27,7 +28,10 @@ export type VisibleTreeProjection = {
   activeTabRowIndex?: number;
   totalRowCount?: number;
   nodeCount: number;
-  closedCount: number;
+  // Count of live tab nodes (currently-open browser tabs) across the whole outline -- the toolbar's
+  // "N open" readout. Kept full-tree even in sparse mode (authored by the background snapshot and
+  // maintained by the patch deltas below), not derived from the loaded row slice.
+  liveTabCount: number;
   matchCount: number;
 };
 
@@ -52,7 +56,7 @@ export type DeleteTreeStructurePatch = {
   deletedNodeIds: NodeId[];
   updatedNodes: OutlineNode[];
   rootIds: NodeId[];
-  deletedClosedCount: number;
+  deletedLiveTabCount: number;
 };
 
 export type InsertTreeStructurePatch = DeleteTreeStructurePatch;
@@ -101,15 +105,15 @@ export function buildVisibleTreeProjection(
   const visibleNodeIdSet = new Set<NodeId>();
   let activeTabNodeId: NodeId | undefined;
   let activeTabRowIndex: number | undefined;
-  let closedCount = 0;
+  let liveTabCount = 0;
 
   for (const entry of entries) {
     const node = state.nodes[entry.nodeId];
     if (!node) {
       continue;
     }
-    if (node.status === "closed") {
-      closedCount += 1;
+    if (isLiveTabNode(node)) {
+      liveTabCount += 1;
     }
     if (
       !activeTabNodeId &&
@@ -186,7 +190,7 @@ export function buildVisibleTreeProjection(
     ...(activeTabNodeId ? { activeTabNodeId } : {}),
     ...(typeof activeTabRowIndex === "number" ? { activeTabRowIndex } : {}),
     nodeCount: entries.length,
-    closedCount,
+    liveTabCount,
     matchCount: matchingNodeIds.size
   };
 }
@@ -272,7 +276,7 @@ export function applyDeleteTreeStructurePatchToProjection(
     (row) => !deletedNodeIds.has(row.nodeId) && Boolean(state.nodes[row.nodeId])
   );
   projection.nodeCount = Math.max(0, projection.nodeCount - patch.deletedNodeIds.length);
-  projection.closedCount = Math.max(0, projection.closedCount - patch.deletedClosedCount);
+  projection.liveTabCount = Math.max(0, projection.liveTabCount - patch.deletedLiveTabCount);
   projection.matchCount = Math.max(0, projection.matchCount - deletedMatches);
 
   if (!projection.isSearchActive) {
@@ -327,7 +331,7 @@ export function applyCrossParentLeafMoveTreeStructurePatchToProjection(
   if (
     projection.isSearchActive ||
     patch.deletedNodeIds.length > 0 ||
-    patch.deletedClosedCount !== 0 ||
+    patch.deletedLiveTabCount !== 0 ||
     projection.rows.length === 0 ||
     projection.visibleNodeIds.length !== projection.rows.length ||
     !sameNodeIdList(patch.rootIds, state.rootIds) ||
@@ -788,7 +792,7 @@ function applyTrailingLeafDeletePatchToProjection(
   }
 
   projection.nodeCount = Math.max(0, projection.nodeCount - patch.deletedNodeIds.length);
-  projection.closedCount = Math.max(0, projection.closedCount - patch.deletedClosedCount);
+  projection.liveTabCount = Math.max(0, projection.liveTabCount - patch.deletedLiveTabCount);
   projection.matchCount = Math.max(0, projection.matchCount - deletedMatches);
   return true;
 }
@@ -827,7 +831,7 @@ export function applyInsertTreeStructurePatchToProjection(
   if (
     projection.isSearchActive ||
     patch.deletedNodeIds.length > 0 ||
-    patch.deletedClosedCount !== 0
+    patch.deletedLiveTabCount !== 0
   ) {
     return false;
   }
@@ -944,8 +948,8 @@ export function applyInsertTreeStructurePatchToProjection(
   }
 
   projection.nodeCount += insertedNodeIds.size;
-  projection.closedCount += [...insertedNodeIds].filter(
-    (nodeId) => state.nodes[nodeId]?.status === "closed"
+  projection.liveTabCount += [...insertedNodeIds].filter((nodeId) =>
+    isLiveTabNode(state.nodes[nodeId])
   ).length;
   projection.matchCount = 0;
   projection.matchingNodeIds.clear();
