@@ -12767,7 +12767,11 @@ function installProjectionHuntHarness(options: {
       .map((nodeId) => structuredClone(next.nodes[nodeId]));
     const deletedLiveTabCount = deletedNodeIds.filter((nodeId) => {
       const node = previous.nodes[nodeId];
-      return node?.kind === "tab" && node?.status === "live" && Boolean(node?.live);
+      return (
+        node?.kind === "tab" &&
+        node?.status === "live" &&
+        Boolean(node?.live && "tabId" in node.live)
+      );
     }).length;
     return {
       type: "treeStructureUpdated",
@@ -12830,7 +12834,10 @@ function installProjectionHuntHarness(options: {
         totalRowCount,
         nodeCount: currentNodeCount(sourceState),
         liveTabCount: Object.values(sourceState.nodes).filter(
-          (node) => node.kind === "tab" && node.status === "live" && Boolean(node.live)
+          (node) =>
+            node.kind === "tab" &&
+            node.status === "live" &&
+            Boolean(node.live && "tabId" in node.live)
         ).length,
         matchCount: matchingNodeIds.length
       },

@@ -243,7 +243,10 @@ async function loadSidebar(
   await expect(page.locator("#state-count")).toHaveText(
     `${Object.keys(state.nodes).length} items / ${
       Object.values(state.nodes).filter(
-        (node) => node.kind === "tab" && node.status === "live" && Boolean(node.live)
+        (node) =>
+          node.kind === "tab" &&
+          node.status === "live" &&
+          Boolean(node.live && "tabId" in node.live)
       ).length
     } open`
   );
