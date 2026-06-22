@@ -41,7 +41,7 @@ test.describe("sidebar toolbar layout", () => {
     await page.setViewportSize({ width: 360, height: 520 });
     await page.goto("/sidebar/sidebar.html");
 
-    await expect(page.locator("#state-count")).toHaveText("20964 items / 20916 saved");
+    await expect(page.locator("#state-count")).toHaveText("20964 items / 48 open");
     await expect(page.locator("header.toolbar h1")).toHaveCount(0);
 
     // The diagnostics line actually loaded and rendered blank -- not merely "not yet loaded".
@@ -76,7 +76,7 @@ test.describe("sidebar toolbar layout", () => {
 
     await page.setViewportSize({ width: 360, height: 520 });
     await page.goto("/sidebar/sidebar.html");
-    await expect(page.locator("#state-count")).toHaveText("20964 items / 20916 saved");
+    await expect(page.locator("#state-count")).toHaveText("20964 items / 48 open");
 
     // Decluttering the all-clear case must not silence warnings -- this is the data-loss signal.
     await triggerDiagnosticsLoad(page);
@@ -237,7 +237,7 @@ function toolbarFixtureSnapshot() {
       // Representative of a large saved session so the counter is long enough to compete with the
       // search box for width.
       nodeCount: 20964,
-      closedCount: 20916,
+      liveTabCount: 48,
       matchCount: 0
     }
   };

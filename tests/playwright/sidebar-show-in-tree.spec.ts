@@ -140,7 +140,7 @@ async function loadSidebar(page: Page): Promise<void> {
               const update = {
                 type: "nodeStateUpdated",
                 updatedNodes,
-                closedCountDelta: 0
+                liveTabCountDelta: 0
               };
               for (const listener of listeners) {
                 listener(structuredClone(update));
@@ -194,7 +194,7 @@ async function loadSidebar(page: Page): Promise<void> {
   }, fixtureState());
 
   await page.goto("/sidebar/sidebar.html");
-  await expect(page.locator("#state-count")).toHaveText("83 items / 0 saved");
+  await expect(page.locator("#state-count")).toHaveText("83 items / 82 open");
 }
 
 async function loadSparseSidebar(page: Page): Promise<void> {
@@ -270,7 +270,7 @@ async function loadSparseSidebar(page: Page): Promise<void> {
               const update = {
                 type: "nodeStateUpdated",
                 updatedNodes: [parentNode({ collapsed: false })],
-                closedCountDelta: 0
+                liveTabCountDelta: 0
               };
               for (const listener of listeners) {
                 listener(structuredClone(update));
@@ -380,7 +380,7 @@ async function loadSparseSidebar(page: Page): Promise<void> {
           activeTabRowIndex: 1,
           totalRowCount: query ? 100 : totalRows,
           nodeCount: totalRows,
-          closedCount: 0,
+          liveTabCount: totalRows - 1,
           matchCount: query ? 1 : 0
         },
         coverage: {

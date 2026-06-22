@@ -52,7 +52,7 @@ test.describe("sidebar first paint", () => {
 
     await page.goto("/sidebar/sidebar.html");
     await expect(page.locator(".node[data-node-id='tab:1']")).toBeVisible();
-    await expect(page.locator("#state-count")).toHaveText("50001 items / 0 saved");
+    await expect(page.locator("#state-count")).toHaveText("50001 items / 50000 open");
 
     const metrics = await page.evaluate(() => {
       const messages =
@@ -427,7 +427,7 @@ test.describe("sidebar first paint", () => {
 
     await page.goto("/sidebar/sidebar.html");
     await expect(page.locator(".node[data-node-id='group:hidden']")).toBeVisible();
-    await expect(page.locator("#state-count")).toHaveText("103 items / 101 saved");
+    await expect(page.locator("#state-count")).toHaveText("103 items / 1 open");
     await expect(page.locator("#export-tree")).toBeHidden();
     await expect(page.locator("#import-tree")).toBeHidden();
     await openToolbarOverflow(page);
@@ -568,7 +568,7 @@ test.describe("sidebar first paint", () => {
     await expect(page.locator(".node[data-node-id='tab:1']")).toBeVisible();
     await expect(page.locator(".node[data-node-id='group:hidden']")).toBeVisible();
     await expect(page.locator(".node[data-node-id='hidden:42']")).toHaveCount(0);
-    await expect(page.locator("#state-count")).toHaveText("103 items / 101 saved");
+    await expect(page.locator("#state-count")).toHaveText("103 items / 1 open");
 
     const clearMetrics = await page.evaluate(() => {
       const messages =
@@ -861,7 +861,7 @@ test.describe("sidebar first paint", () => {
     });
     await expect(page.locator("#search")).toHaveValue("");
     await expect(page.locator(".node[data-node-id='tab\\:1']")).toBeVisible();
-    await expect(page.locator("#state-count")).toHaveText("4 items / 2 saved");
+    await expect(page.locator("#state-count")).toHaveText("4 items / 1 open");
 
     const metrics = await page.evaluate(() => {
       const messages =
@@ -992,7 +992,7 @@ test.describe("sidebar first paint", () => {
       return messages.some((message) => message.type === "getTreeProjectionSlice");
     });
 
-    await expect(page.locator("#state-count")).toHaveText("1001 items / 0 saved");
+    await expect(page.locator("#state-count")).toHaveText("1001 items / 1000 open");
     await expect(page.locator(".node")).toHaveCount(256);
 
     const metrics = await page.evaluate(() => {
@@ -1144,7 +1144,7 @@ test.describe("sidebar first paint", () => {
       ).__emitSidebarMessage?.({
         type: "nodeStateUpdated",
         updatedNodes: [node],
-        closedCountDelta: 0
+        liveTabCountDelta: 0
       });
     }, hiddenTabNode(42));
 
@@ -1257,7 +1257,7 @@ test.describe("sidebar first paint", () => {
       return typeof fullAppImportEnd === "number" && performance.now() - fullAppImportEnd > 900;
     });
     await expect(page.locator("#search")).toBeEnabled();
-    await expect(page.locator("#state-count")).toHaveText("501 items / 0 saved");
+    await expect(page.locator("#state-count")).toHaveText("501 items / 500 open");
 
     const metrics = await page.evaluate(async () => {
       const mark = (name: string) => performance.getEntriesByName(name).at(-1)?.startTime;
@@ -1384,7 +1384,7 @@ function fixtureInitialSnapshot(tabCount: number, options: { activeTabInSnapshot
       ...(activeTabInSnapshot ? { activeTabNodeId: "tab:1", activeTabRowIndex: 1 } : {}),
       totalRowCount: tabCount + 1,
       nodeCount: tabCount + 1,
-      closedCount: 0,
+      liveTabCount: tabCount,
       matchCount: 0
     }
   };
@@ -1478,7 +1478,7 @@ function fixtureStaleBootSnapshot() {
       activeTabRowIndex: 1,
       totalRowCount: tabIds.length + 1,
       nodeCount: tabIds.length + 1,
-      closedCount: 0,
+      liveTabCount: tabIds.length,
       matchCount: 0
     }
   };
@@ -1629,7 +1629,7 @@ function fixtureCollapsedPartialSnapshot(hiddenTabCount: number) {
       activeTabRowIndex: 1,
       totalRowCount: 3,
       nodeCount: hiddenTabCount + 3,
-      closedCount: hiddenTabCount + 1,
+      liveTabCount: 1,
       matchCount: 0
     }
   };
@@ -1819,7 +1819,7 @@ function fixtureCollapsedSearchSnapshot(
       activeTabNodeId: "tab:1",
       totalRowCount: options.totalRowCount ?? 3,
       nodeCount: hiddenTabCount + 3,
-      closedCount: hiddenTabCount + 1,
+      liveTabCount: 1,
       matchCount: 1
     }
   };
@@ -1845,7 +1845,7 @@ function fixtureSparseUnsafeUndoUpdate() {
         live: { windowId: 1 }
       }
     ],
-    deletedClosedCount: 0
+    deletedLiveTabCount: 0
   };
 }
 
@@ -1910,7 +1910,7 @@ function fixtureSparseSearchWindowSnapshot(
       visibleNodeIds: rows.map((row) => row.nodeId),
       totalRowCount,
       nodeCount: totalRowCount,
-      closedCount: totalRowCount,
+      liveTabCount: 0,
       matchCount: totalRowCount
     }
   };
@@ -2003,7 +2003,7 @@ function fixtureActiveCenteredSnapshot(tabCount: number, activeTabId: number) {
       activeTabRowIndex: activeTabId,
       totalRowCount: tabCount + 1,
       nodeCount: tabCount + 1,
-      closedCount: 0,
+      liveTabCount: tabCount,
       matchCount: 0
     }
   };

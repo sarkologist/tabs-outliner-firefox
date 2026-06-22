@@ -18,7 +18,7 @@ test.describe("sidebar restore title stability", () => {
           title: "localhost:8089/"
         })
       ],
-      closedCountDelta: -1
+      liveTabCountDelta: 1
     });
     await nextAnimationFrame(page);
     await expect(nodeTitle(page, "tab:local")).toHaveText("Saved Local");
@@ -30,7 +30,7 @@ test.describe("sidebar restore title stability", () => {
           title: "Loaded Local"
         })
       ],
-      closedCountDelta: 0
+      liveTabCountDelta: 0
     });
 
     await expect(nodeTitle(page, "tab:local")).toHaveText("Loaded Local");

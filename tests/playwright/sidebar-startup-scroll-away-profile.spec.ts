@@ -98,7 +98,7 @@ test.describe("sidebar startup scroll-away profile", () => {
               activeTabRowIndex: activeTabId,
               totalRowCount: tabCount + 1,
               nodeCount: tabCount + 1,
-              closedCount: 0,
+              liveTabCount: 0,
               matchCount: 0
             }
           };

@@ -686,7 +686,7 @@ async function loadSidebar(page: Page): Promise<void> {
               outlineTabNode(duplicateNodeId)
             ],
             rootIds: ["window:1"],
-            deletedClosedCount: 0
+            deletedLiveTabCount: 0
           };
           for (const listener of listeners) {
             listener(structuredClone(message));
@@ -704,7 +704,7 @@ async function loadSidebar(page: Page): Promise<void> {
             deletedNodeIds: [],
             updatedNodes: [windowNode(), detachedWindowNode(), outlineTabNode("tab:800")],
             rootIds: ["window:1", detachedWindowNodeId],
-            deletedClosedCount: 0
+            deletedLiveTabCount: 0
           };
           for (const listener of listeners) {
             listener(structuredClone(message));
@@ -726,7 +726,7 @@ async function loadSidebar(page: Page): Promise<void> {
               outlineTabNode(detachedNewTabNodeId)
             ],
             rootIds: ["window:1", detachedWindowNodeId],
-            deletedClosedCount: 0
+            deletedLiveTabCount: 0
           };
           for (const listener of listeners) {
             listener(structuredClone(message));
@@ -856,7 +856,7 @@ async function loadSidebar(page: Page): Promise<void> {
           activeTabRowIndex,
           totalRowCount: totalRows,
           nodeCount: totalRows,
-          closedCount: query ? totalRows : 0,
+          liveTabCount: query ? 0 : totalRows,
           matchCount: query ? totalRows : 0
         },
         coverage: {
